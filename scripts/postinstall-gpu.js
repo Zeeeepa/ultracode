@@ -215,8 +215,13 @@ async function main() {
   // Build WASM (always attempt, cross-platform)
   results.wasm = await buildWASM();
 
-  // Build CUDA (only on NVIDIA systems)
-  results.cuda = await buildCUDA();
+  // CUDA build is handled by build.cmd/build.sh with proper environment setup
+  // Skipping CUDA build in postinstall to avoid duplicate builds
+  log("\n🚀 CUDA Native Backend", COLORS.bright);
+  log("═".repeat(50), COLORS.gray);
+  log("⚠️  CUDA build skipped during install", COLORS.yellow);
+  log("   Will be built automatically when running build script", COLORS.gray);
+  log("   (Requires: CUDA Toolkit, CMake, Visual Studio C++ Tools)", COLORS.gray);
 
   // Summary
   log("\n" + "═".repeat(70), COLORS.bright);
@@ -233,24 +238,23 @@ async function main() {
     { name: "WebGPU", status: "ℹ️  Runtime detection", speedup: "50-100x" },
     {
       name: "CUDA Native",
-      status: results.cuda ? "✅ Built successfully" : "⚠️  Not built",
+      status: "ℹ️  Build via scripts/build.cmd",
       speedup: "100-200x",
     },
   ];
 
   for (const backend of backends) {
-    log(`  ${backend.name.padEnd(25)} ${backend.status.padEnd(25)} ${backend.speedup}`, COLORS.gray);
+    log(`  ${backend.name.padEnd(25)} ${backend.status.padEnd(30)} ${backend.speedup}`, COLORS.gray);
   }
 
   log("\n" + "═".repeat(70), COLORS.bright);
 
-  if (!results.wasm && !results.cuda) {
-    log("\n⚠️  No GPU backends were built", COLORS.yellow);
-    log("   The project will use Pure JS backend (1.45x speedup)", COLORS.gray);
-    log("   For better performance, install Rust and/or CUDA Toolkit and run npm install again", COLORS.gray);
+  if (!results.wasm) {
+    log("\n⚠️  WASM backend was not built", COLORS.yellow);
+    log("   Install Rust and wasm-pack, then run npm install again", COLORS.gray);
   } else {
-    log("\n✅ GPU acceleration configured successfully!", COLORS.green);
-    log("   The fastest available backend will be selected automatically at runtime", COLORS.gray);
+    log("\n✅ Installation complete!", COLORS.green);
+    log("   Run build script to compile CUDA (if available) and TypeScript", COLORS.gray);
   }
 
   log("\n");
