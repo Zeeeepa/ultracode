@@ -5,6 +5,8 @@
     "includes": [
       "src/**",
       "tests/**",
+      "config/**",
+      "Dev.Scripts/**/*.md",
       "*.ts",
       "*.js",
       "*.json",
