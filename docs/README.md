@@ -118,3 +118,15 @@ MIT License - see [LICENSE](../LICENSE)
 
 **Version:** 3.9.0
 **Last Updated:** 2025-11-18
+
+### 🎯 Examples
+
+Live code examples demonstrating key features:
+
+- **[CUDA Example](examples/cuda-example.ts)** - GPU-accelerated vector operations
+- **[Chaos Analysis](examples/chaos-analysis-example.ts)** - State management analysis
+- **[Code Modification](examples/code-modification-example.ts)** - Advanced code transformations
+- **[Semantic Merge](examples/demo-semantic-merge.ts)** - AI-powered merge resolution
+- **[Layered Indexing](examples/layered-indexing-example.ts)** - Progressive indexing demo
+- **[Parser Agent](examples/parser-agent-demo.ts)** - Multi-language parsing
+

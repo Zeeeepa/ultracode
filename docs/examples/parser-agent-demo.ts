@@ -6,8 +6,8 @@
  */
 
 import { EventEmitter } from "node:events";
-import { ParserAgent } from "../src/agents/parser-agent.js";
-import type { ParserTask } from "../src/types/parser.js";
+import { ParserAgent } from "../../src/agents/parser-agent.js";
+import type { ParserTask } from "../../src/types/parser.js";
 
 async function main() {
   console.log("=".repeat(60));

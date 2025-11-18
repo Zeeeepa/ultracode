@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Source lives in `src/`, organized by MCP domain: protocol adapters in `src/mcp/`, graph analytics in `src/graph/`, and shared utilities under `src/common/`. Integration and regression specs sit in `tests/` alongside fixtures. Example client workflows are in `examples/`, while reusable orchestration scripts live in `scripts/`. Runtime data (SQLite vectors, generated graphs) persists in `data/` and `llm_rag_db/`; keep large artifacts out of version control. Operational logs and session traces are archived under `logs_llm/` and `logs_archive/`.
+Source lives in `src/`, organized by MCP domain: protocol adapters in `src/mcp/`, graph analytics in `src/graph/`, and shared utilities under `src/common/`. Integration and regression specs sit in `tests/` alongside fixtures. Example client workflows are in `docs/examples/`, while reusable orchestration scripts live in `scripts/`. Runtime data (SQLite vectors, generated graphs) persists in `data/` and `llm_rag_db/`; keep large artifacts out of version control. Operational logs and session traces are archived under `logs_llm/` and `logs_archive/`.
 
 ## Build, Test, and Development Commands
 - `bun run tsup` — bundle the TypeScript server into `dist/` for local validation.

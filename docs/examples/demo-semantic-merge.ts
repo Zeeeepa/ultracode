@@ -10,14 +10,14 @@
 * - AI-assisted resolution
 */
 
-import { BranchManager } from "../src/core/branch-manager.js";
-import { GitIntegration } from "../src/merge/integration/git-integration.js";
-import { EmbeddingGenerator } from "../src/semantic/embedding-generator.js";
-import { AIConflictResolver } from "../src/merge/engine/ai-conflict-resolver.js";
-import { ConflictResolver } from "../src/merge/engine/conflict-resolver.js";
-import { IntentClassifier } from "../src/merge/analysis/intent-classifier.js";
-import { ConflictDetector } from "../src/merge/analysis/conflict-detector.js";
-import { CodeUnitType, type CodeUnit } from "../src/merge/models/code-unit.js";
+import { BranchManager } from "../../src/core/branch-manager.js";
+import { GitIntegration } from "../../src/merge/integration/git-integration.js";
+import { EmbeddingGenerator } from "../../src/semantic/embedding-generator.js";
+import { AIConflictResolver } from "../../src/merge/engine/ai-conflict-resolver.js";
+import { ConflictResolver } from "../../src/merge/engine/conflict-resolver.js";
+import { IntentClassifier } from "../../src/merge/analysis/intent-classifier.js";
+import { ConflictDetector } from "../../src/merge/analysis/conflict-detector.js";
+import { CodeUnitType, type CodeUnit } from "../../src/merge/models/code-unit.js";
 import { createHash } from "node:crypto";
 
 // Performance tracking
