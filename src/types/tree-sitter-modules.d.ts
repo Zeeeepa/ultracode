@@ -53,3 +53,15 @@ declare module "tree-sitter-typescript" {
   const _default: { typescript: Language; tsx: Language };
   export default _default;
 }
+
+declare module "tree-sitter-bash" {
+  import type { Language } from "tree-sitter";
+  const Lang: Language;
+  export default Lang;
+}
+
+declare module "tree-sitter-powershell" {
+  import type { Language } from "tree-sitter";
+  const Lang: Language;
+  export default Lang;
+}

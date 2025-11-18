@@ -37,6 +37,9 @@ export const SUPPORTED_LANGUAGES = [
   "html",
   "xml",
   "vba",
+  "bash",
+  "powershell",
+  "batch",
 ] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 

@@ -7,7 +7,7 @@ export default defineConfig([
       index: "src/index.ts",
     },
     sourcemap: true,
-    clean: true,
+    clean: false, // Don't clean - preserve WASM and native modules
     format: ["esm"],
     platform: "node",
     target: "node24",
@@ -18,11 +18,16 @@ export default defineConfig([
     minify: process.env.NODE_ENV === "production",
     treeshake: true,
 
-    // Suppress warnings
+    // Suppress warnings and configure loaders
     esbuildOptions(options) {
       options.logOverride = {
         ...options.logOverride,
         "direct-eval": "silent", // Suppress eval warnings from third-party dependencies (onnxruntime-web)
+      };
+      // Add loader for WASM files
+      options.loader = {
+        ...options.loader,
+        ".wasm": "file",
       };
     },
 
@@ -42,6 +47,8 @@ export default defineConfig([
       "tree-sitter-rust",
       "tree-sitter-go",
       "tree-sitter-java",
+      "tree-sitter-bash",
+      "tree-sitter-powershell",
 
       // Native modules with dynamic requires
       "sharp", // Image processing (optional - used by @xenova/transformers)
@@ -82,11 +89,16 @@ export default defineConfig([
     minify: false, // Keep readable for debugging
     treeshake: true,
 
-    // Suppress warnings
+    // Suppress warnings and configure loaders
     esbuildOptions(options) {
       options.logOverride = {
         ...options.logOverride,
         "direct-eval": "silent",
+      };
+      // Add loader for WASM files
+      options.loader = {
+        ...options.loader,
+        ".wasm": "file",
       };
     },
 
@@ -103,6 +115,8 @@ export default defineConfig([
       "tree-sitter-rust",
       "tree-sitter-go",
       "tree-sitter-java",
+      "tree-sitter-bash",
+      "tree-sitter-powershell",
       "sharp",
       "onnxruntime-node",
       "better-sqlite3",
@@ -128,11 +142,16 @@ export default defineConfig([
     minify: false,
     treeshake: false, // Keep all exports for benchmarking
 
-    // Suppress warnings
+    // Suppress warnings and configure loaders
     esbuildOptions(options) {
       options.logOverride = {
         ...options.logOverride,
         "direct-eval": "silent",
+      };
+      // Add loader for WASM files
+      options.loader = {
+        ...options.loader,
+        ".wasm": "file",
       };
     },
 
