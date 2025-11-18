@@ -1,0 +1,20 @@
+{
+  "name": "ultrascript-cuda-addon",
+  "version": "1.0.0",
+  "description": "CUDA-accelerated vector operations for UltraScript Tools MCP",
+  "main": "../../dist/native/cuda/ultrascript_cuda.node",
+  "scripts": {
+    "build": "cmake-js compile",
+    "clean": "cmake-js clean",
+    "rebuild": "cmake-js rebuild"
+  },
+  "cmake-js": {
+    "runtime": "node",
+    "runtimeVersion": "24.0.0",
+    "arch": "x64"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.2.1",
+    "cmake-js": "^7.3.0"
+  }
+}

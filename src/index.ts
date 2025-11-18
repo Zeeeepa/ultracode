@@ -42,7 +42,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 // Schema and Node.js built-ins
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { zodToJsonSchema as _zodToJsonSchema } from "zod-to-json-schema";
+
+// Helper to convert Zod schemas to JSON Schema with proper typing for Zod v4
+function zodToJsonSchema(schema: z.ZodSchema): Record<string, unknown> {
+  return _zodToJsonSchema(schema as any) as Record<string, unknown>;
+}
+
 // Import our multi-agent components
 import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
 import type { IndexerAgent } from "./agents/indexer-agent.js";
@@ -1142,30 +1148,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "index",
         description: "Index a codebase using multi-agent parsing and analysis",
-        inputSchema: zodToJsonSchema(IndexToolSchema) as any,
+        inputSchema: zodToJsonSchema(IndexToolSchema),
       },
       {
         name: "list_file_entities",
         description:
           "List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
-        inputSchema: zodToJsonSchema(ListEntitiesToolSchema) as any,
+        inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
       },
       {
         name: "get_members",
         description:
           "Alias for list_file_entities. List members/entities within a file. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(ListEntitiesToolSchema) as any,
+        inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
       },
       {
         name: "list_entity_relationships",
         description:
           "List outgoing relationships for an entity (imports, references, containment). Provide either the entity id (preferred) or name+file path to inspect its dependencies.",
-        inputSchema: zodToJsonSchema(ListRelationshipsToolSchema) as any,
+        inputSchema: zodToJsonSchema(ListRelationshipsToolSchema),
       },
       {
         name: "query",
         description: "Query the code graph using natural language or structured queries",
-        inputSchema: zodToJsonSchema(QueryToolSchema) as any,
+        inputSchema: zodToJsonSchema(QueryToolSchema),
       },
       {
         name: "get_metrics",
@@ -1182,75 +1188,75 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "semantic_search",
         description:
           "Search the codebase using natural language keywords or file/module paths. Useful for discovery before diving into structural graph queries.",
-        inputSchema: zodToJsonSchema(SemanticSearchSchema) as any,
+        inputSchema: zodToJsonSchema(SemanticSearchSchema),
       },
       {
         name: "find_similar_code",
         description: "Find code similar to a given snippet using semantic analysis",
-        inputSchema: zodToJsonSchema(FindSimilarCodeSchema) as any,
+        inputSchema: zodToJsonSchema(FindSimilarCodeSchema),
       },
       {
         name: "analyze_code_impact",
         description:
           "Discover entities and files that depend on a given symbol. Use together with list_file_entities to obtain the precise entity id for impact analysis.",
-        inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema) as any,
+        inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema),
       },
       {
         name: "detect_code_clones",
         description: "Find duplicate or similar code blocks across the codebase",
-        inputSchema: zodToJsonSchema(DetectCodeClonesSchema) as any,
+        inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
       },
       {
         name: "find_duplicates",
         description:
           "Alias for detect_code_clones. Find potential duplicate code. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(DetectCodeClonesSchema) as any,
+        inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
       },
       {
         name: "jscpd_detect_clones",
         description: "Run JSCPD clone detection using a lightweight tokenizer",
-        inputSchema: zodToJsonSchema(JscpdCloneDetectionSchema) as any,
+        inputSchema: zodToJsonSchema(JscpdCloneDetectionSchema),
       },
       {
         name: "suggest_refactoring",
         description: "Get refactoring suggestions for improving code quality",
-        inputSchema: zodToJsonSchema(SuggestRefactoringSchema) as any,
+        inputSchema: zodToJsonSchema(SuggestRefactoringSchema),
       },
       {
         name: "cross_language_search",
         description: "Search across multiple programming languages",
-        inputSchema: zodToJsonSchema(CrossLanguageSearchSchema) as any,
+        inputSchema: zodToJsonSchema(CrossLanguageSearchSchema),
       },
       {
         name: "analyze_hotspots",
         description: "Find code hotspots based on complexity, changes, or coupling",
-        inputSchema: zodToJsonSchema(AnalyzeHotspotsSchema) as any,
+        inputSchema: zodToJsonSchema(AnalyzeHotspotsSchema),
       },
       {
         name: "find_related_concepts",
         description: "Find conceptually related code to a given entity",
-        inputSchema: zodToJsonSchema(FindRelatedConceptsSchema) as any,
+        inputSchema: zodToJsonSchema(FindRelatedConceptsSchema),
       },
       {
         name: "analyze_state_chaos",
         description:
           "Analyze state management chaos in TypeScript/Angular codebases. Detects scattered state, measures coupling, identifies mutations, and suggests refactoring strategies. Returns AI-friendly summary or detailed report.",
-        inputSchema: zodToJsonSchema(AnalyzeStateChaosSchema) as any,
+        inputSchema: zodToJsonSchema(AnalyzeStateChaosSchema),
       },
       {
         name: "get_graph",
         description: "Get the code graph with all entities and relationships",
-        inputSchema: zodToJsonSchema(GetGraphSchema) as any,
+        inputSchema: zodToJsonSchema(GetGraphSchema),
       },
       {
         name: "get_graph_stats",
         description: "Get statistics about the code graph",
-        inputSchema: zodToJsonSchema(GetGraphStatsSchema) as any,
+        inputSchema: zodToJsonSchema(GetGraphStatsSchema),
       },
       {
         name: "lerna_project_graph",
         description: "Generate a Lerna workspace dependency graph (if configured)",
-        inputSchema: zodToJsonSchema(GetLernaProjectGraphSchema) as any,
+        inputSchema: zodToJsonSchema(GetLernaProjectGraphSchema),
       },
       {
         name: "reset_graph",
@@ -1260,27 +1266,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "clean_index",
         description: "Reset graph and then perform a full index",
-        inputSchema: zodToJsonSchema(CleanIndexSchema) as any,
+        inputSchema: zodToJsonSchema(CleanIndexSchema),
       },
       {
         name: "get_graph_health",
         description: "Health check for graph storage (totals + sample)",
-        inputSchema: zodToJsonSchema(GetGraphHealthSchema) as any,
+        inputSchema: zodToJsonSchema(GetGraphHealthSchema),
       },
       {
         name: "get_agent_metrics",
         description: "Collect runtime telemetry for conductor and registered agents",
-        inputSchema: zodToJsonSchema(GetAgentMetricsSchema) as any,
+        inputSchema: zodToJsonSchema(GetAgentMetricsSchema),
       },
       {
         name: "get_bus_stats",
         description: "Inspect knowledge bus statistics (topics, entries, subscriptions)",
-        inputSchema: zodToJsonSchema(GetBusStatsSchema) as any,
+        inputSchema: zodToJsonSchema(GetBusStatsSchema),
       },
       {
         name: "clear_bus_topic",
         description: "Remove cached knowledge entries for a specific topic",
-        inputSchema: zodToJsonSchema(ClearBusTopicSchema) as any,
+        inputSchema: zodToJsonSchema(ClearBusTopicSchema),
       },
       // ============================================================================
       // PHASE 8: New Code Modification & Analysis Tools
@@ -1290,112 +1296,112 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "create_snapshot",
         description:
           "Create a version snapshot for rollback. Uses git stash if available, otherwise .backup/ directory. Returns snapshot ID for rollback.",
-        inputSchema: zodToJsonSchema(CreateSnapshotSchema) as any,
+        inputSchema: zodToJsonSchema(CreateSnapshotSchema),
       },
       {
         name: "rollback_snapshot",
         description: "Rollback to a previous snapshot by ID. Restores all files to their snapshot state.",
-        inputSchema: zodToJsonSchema(RollbackSnapshotSchema) as any,
+        inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
       },
       {
         name: "undo",
         description:
           "Alias for rollback_snapshot. Undo last changes by reverting to snapshot. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(RollbackSnapshotSchema) as any,
+        inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
       },
       {
         name: "list_snapshots",
         description: "List available snapshots with creation time and description.",
-        inputSchema: zodToJsonSchema(ListSnapshotsSchema) as any,
+        inputSchema: zodToJsonSchema(ListSnapshotsSchema),
       },
       {
         name: "cleanup_snapshots",
         description: "Delete old snapshots to free disk space.",
-        inputSchema: zodToJsonSchema(CleanupSnapshotsSchema) as any,
+        inputSchema: zodToJsonSchema(CleanupSnapshotsSchema),
       },
       // Code Modification Tool
       {
         name: "modify_entity_code",
         description:
           "Modify code of a specific entity by ID. Automatically creates snapshot, validates before/after, updates embeddings, and can rollback on error. Default preview mode shows changes without applying.",
-        inputSchema: zodToJsonSchema(ModifyEntityCodeSchema) as any,
+        inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
       },
       {
         name: "modify_code",
         description:
           "Alias for modify_entity_code. Modify entity code with validation. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(ModifyEntityCodeSchema) as any,
+        inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
       },
       // File Operations Tools
       {
         name: "copy_file",
         description:
           "Copy file or directory with automatic graph updates. Streaming for large files. Token-efficient alternative to reading full content.",
-        inputSchema: zodToJsonSchema(CopyFileSchema) as any,
+        inputSchema: zodToJsonSchema(CopyFileSchema),
       },
       {
         name: "rename_file",
         description:
           "Rename file with automatic import updates across project. Updates graph and embeddings. Token-efficient alternative to read-write pattern.",
-        inputSchema: zodToJsonSchema(RenameFileSchema) as any,
+        inputSchema: zodToJsonSchema(RenameFileSchema),
       },
       {
         name: "split_file",
         description:
           "Extract entities from a file into separate files. Useful for refactoring large files. Updates graph with new locations.",
-        inputSchema: zodToJsonSchema(SplitFileSchema) as any,
+        inputSchema: zodToJsonSchema(SplitFileSchema),
       },
       {
         name: "synthesize_files",
         description:
           "Combine multiple files into one. Merges entities in graph. Can optionally delete originals. Token-efficient way to consolidate code.",
-        inputSchema: zodToJsonSchema(SynthesizeFilesSchema) as any,
+        inputSchema: zodToJsonSchema(SynthesizeFilesSchema),
       },
       // Unified Tools (cross-compatibility with UltrasharpTools)
       {
         name: "create_file",
         description:
           "Create a new file with content. Automatically parses and adds entities to graph. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(CreateFileSchema) as any,
+        inputSchema: zodToJsonSchema(CreateFileSchema),
       },
       {
         name: "rename_symbol",
         description:
           "Rename a symbol (variable, function, class, etc.) and update all references. Supports entity ID or name-based lookup. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(RenameSymbolSchema) as any,
+        inputSchema: zodToJsonSchema(RenameSymbolSchema),
       },
       {
         name: "add_member",
         description:
           "Add a new member (method, property, field) to a class or interface. Supports precise positioning. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(AddMemberSchema) as any,
+        inputSchema: zodToJsonSchema(AddMemberSchema),
       },
       // Code Validation Tools
       {
         name: "validate_file",
         description:
           "Validate code file using appropriate linter (ESLint for JS/TS, Pylint for Python). Returns problems categorized by severity.",
-        inputSchema: zodToJsonSchema(ValidateFileSchema) as any,
+        inputSchema: zodToJsonSchema(ValidateFileSchema),
       },
       {
         name: "validate_directory",
         description:
           "Validate all code files in directory. Batch processing with concurrency limit. Returns aggregated validation report.",
-        inputSchema: zodToJsonSchema(ValidateDirectorySchema) as any,
+        inputSchema: zodToJsonSchema(ValidateDirectorySchema),
       },
       // Technology Detection Tool
       {
         name: "detect_technology_stack",
         description:
           "Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
-        inputSchema: zodToJsonSchema(DetectTechnologyStackSchema) as any,
+        inputSchema: zodToJsonSchema(DetectTechnologyStackSchema),
       },
       // Pattern Search Tool
       {
         name: "pattern_search",
         description:
           "Advanced search with multiple modes: entity (name/type regex), content (inside entity bodies), semantic (vector similarity), hybrid (all combined). Framework-aware filtering. SIMD-accelerated similarity computation.",
-        inputSchema: zodToJsonSchema(PatternSearchSchema) as any,
+        inputSchema: zodToJsonSchema(PatternSearchSchema),
       },
       // Branch management tools
       ...branchToolDefinitions,
@@ -3932,15 +3938,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
   for (const { parsed, raw } of requests) {
-    let callRequest: z.infer<typeof CallToolRequestSchema>;
-    try {
-      callRequest = CallToolRequestSchema.parse(parsed);
-    } catch (error) {
-      console.error(`[Debug] Invalid tools/call request payload: ${raw}`);
-      throw error;
-    }
+    const callRequest: z.infer<typeof CallToolRequestSchema> = (() => {
+      try {
+        return CallToolRequestSchema.parse(parsed);
+      } catch (error: unknown) {
+        console.error(`[Debug] Invalid tools/call request payload: ${raw}`);
+        throw error;
+      }
+    })();
 
-    const { name, arguments: args } = callRequest.params;
+    const { name, arguments: args } = (callRequest as any).params;
     const parsedObj = parsed as Record<string, unknown>;
     const responseIdValue = parsedObj?.id;
     const responseId =

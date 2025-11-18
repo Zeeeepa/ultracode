@@ -42,7 +42,7 @@ PowerShell -ExecutionPolicy Bypass -File scripts\dev-setup.ps1
 npm install @er77/ultrascript-tools-mcp
 
 # Или из git
-npm install https://github.com/er77/ultrascript-tools-mcp.git
+npm install https://github.com/faxenoff/ultrascript-tools-mcp.git
 ```
 
 **Что происходит автоматически:**
