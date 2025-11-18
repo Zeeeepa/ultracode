@@ -329,11 +329,11 @@ REM Check WASM modules
 set WASM_COUNT=0
 set WASM_DIFF=0
 set WASM_VECTOR=0
-if exist "%PROJECT_ROOT%\dist\wasm\diff-simd\diff_simd.js" (
+if exist "%PROJECT_ROOT%\dist\external-tools\wasm\diff-simd\diff_simd.js" (
     set /a WASM_COUNT+=1
     set WASM_DIFF=1
 )
-if exist "%PROJECT_ROOT%\dist\wasm\vector-ops-simd\vector_ops_simd.js" (
+if exist "%PROJECT_ROOT%\dist\external-tools\wasm\vector-ops-simd\vector_ops_simd.js" (
     set /a WASM_COUNT+=1
     set WASM_VECTOR=1
 )

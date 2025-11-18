@@ -42,7 +42,7 @@ echo ""
 # Build diff-simd module
 echo "📦 Building external-tools/wasm/diff-simd..."
 cd external-tools/wasm/diff-simd
-wasm-pack build --target bundler --out-dir ../../../dist/wasm/diff-simd --release
+wasm-pack build --target bundler --out-dir ../../../dist/external-tools/wasm/diff-simd --release
 cd ../..
 echo "✅ diff-simd built successfully"
 echo ""
@@ -50,7 +50,7 @@ echo ""
 # Build vector-ops-simd module
 echo "📦 Building external-tools/wasm/vector-ops-simd..."
 cd external-tools/wasm/vector-ops-simd
-wasm-pack build --target bundler --out-dir ../../../dist/wasm/vector-ops-simd --release
+wasm-pack build --target bundler --out-dir ../../../dist/external-tools/wasm/vector-ops-simd --release
 cd ../..
 echo "✅ vector-ops-simd built successfully"
 echo ""
