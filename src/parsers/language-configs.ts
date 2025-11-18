@@ -92,6 +92,21 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   bas: "vba",
   cls: "vba",
   frm: "vba",
+
+  // Bash/Shell scripts
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  fish: "bash",
+
+  // PowerShell
+  ps1: "powershell",
+  psm1: "powershell",
+  psd1: "powershell",
+
+  // Batch/CMD
+  bat: "batch",
+  cmd: "batch",
 };
 
 /**
@@ -246,6 +261,30 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: [],
     exports: ["Public", "Global"],
     types: ["Integer", "Long", "Double", "Single", "String", "Boolean", "Variant", "Object", "Date"],
+  },
+
+  bash: {
+    functions: ["function", "declare"],
+    classes: [],
+    imports: ["source", ".", "import"],
+    exports: ["export", "declare"],
+    types: ["local", "declare"],
+  },
+
+  powershell: {
+    functions: ["function", "filter", "workflow"],
+    classes: ["class", "enum"],
+    imports: ["Import-Module", "using", ".", "source"],
+    exports: ["Export-ModuleMember", "Export"],
+    types: ["[string]", "[int]", "[array]", "[hashtable]", "[PSCustomObject]", "[bool]", "[datetime]"],
+  },
+
+  batch: {
+    functions: ["call", "goto", "label"],
+    classes: [],
+    imports: ["call"],
+    exports: ["set", "setx"],
+    types: [],
   },
 };
 
@@ -1206,6 +1245,153 @@ const XML_CONFIG: LanguageConfig = {
 };
 
 /**
+ * Bash/Shell script configuration
+ */
+const BASH_CONFIG: LanguageConfig = {
+  language: "bash",
+  extensions: ["sh", "bash", "zsh", "fish"],
+  keywords: LANGUAGE_KEYWORDS.bash,
+  nodeTypes: {
+    functions: ["function_definition", "command"],
+    classes: [],
+    methods: [],
+    imports: ["source_command", "file_redirect"],
+    exports: ["variable_assignment", "export_command", "declaration_command"],
+    variables: ["variable_assignment", "simple_expansion", "expansion"],
+    types: ["command", "declaration_command"],
+    interfaces: [],
+  },
+  extractors: {
+    extractName: (nodeType: string) => {
+      switch (nodeType) {
+        case "function_definition":
+          return ["word", "identifier"];
+        case "variable_assignment":
+          return ["variable_name"];
+        case "command":
+          return ["command_name", "word"];
+        case "source_command":
+          return ["file_redirect", "word"];
+        default:
+          return ["word", "identifier"];
+      }
+    },
+    extractModifiers: (nodeType: string) => {
+      switch (nodeType) {
+        case "function_definition":
+          return ["function"];
+        case "declaration_command":
+          return ["local", "export", "readonly", "declare"];
+        default:
+          return ["export", "local", "readonly"];
+      }
+    },
+    extractParameters: true,
+    extractReturnType: false,
+    extractReferences: true,
+  },
+};
+
+/**
+ * PowerShell configuration
+ */
+const POWERSHELL_CONFIG: LanguageConfig = {
+  language: "powershell",
+  extensions: ["ps1", "psm1", "psd1"],
+  keywords: LANGUAGE_KEYWORDS.powershell,
+  nodeTypes: {
+    functions: ["function_statement", "filter_statement", "workflow_statement"],
+    classes: ["class_statement", "enum_statement"],
+    methods: ["function_member"],
+    imports: ["using_statement", "import_module_command"],
+    exports: ["export_module_member_command"],
+    variables: ["assignment_statement", "variable"],
+    types: ["type_literal", "type_constraint", "attribute"],
+    interfaces: [],
+  },
+  extractors: {
+    extractName: (nodeType: string) => {
+      switch (nodeType) {
+        case "function_statement":
+        case "filter_statement":
+        case "workflow_statement":
+          return ["command_name", "simple_name"];
+        case "class_statement":
+        case "enum_statement":
+          return ["type_name"];
+        case "variable":
+        case "assignment_statement":
+          return ["variable"];
+        default:
+          return ["simple_name", "identifier"];
+      }
+    },
+    extractModifiers: (nodeType: string) => {
+      switch (nodeType) {
+        case "function_statement":
+          return ["function", "param", "begin", "process", "end"];
+        case "class_statement":
+          return ["class", "public", "private", "static", "hidden"];
+        default:
+          return [];
+      }
+    },
+    extractParameters: true,
+    extractReturnType: true,
+    extractReferences: true,
+  },
+};
+
+/**
+ * Batch/CMD configuration
+ */
+const BATCH_CONFIG: LanguageConfig = {
+  language: "batch",
+  extensions: ["bat", "cmd"],
+  keywords: LANGUAGE_KEYWORDS.batch,
+  nodeTypes: {
+    functions: ["call_statement", "label"],
+    classes: [],
+    methods: [],
+    imports: ["call_statement"],
+    exports: ["set_statement", "setx_statement"],
+    variables: ["set_statement", "variable_expansion", "environment_variable"],
+    types: [],
+    interfaces: [],
+  },
+  extractors: {
+    extractName: (nodeType: string) => {
+      switch (nodeType) {
+        case "label":
+          return ["identifier", "label_name"];
+        case "set_statement":
+        case "setx_statement":
+          return ["variable_name", "identifier"];
+        case "call_statement":
+          return ["command", "identifier"];
+        default:
+          return ["identifier"];
+      }
+    },
+    extractModifiers: (nodeType: string) => {
+      switch (nodeType) {
+        case "call_statement":
+          return ["call"];
+        case "set_statement":
+          return ["set"];
+        case "setx_statement":
+          return ["setx"];
+        default:
+          return [];
+      }
+    },
+    extractParameters: false,
+    extractReturnType: false,
+    extractReferences: true,
+  },
+};
+
+/**
  * Language configuration registry
  */
 export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
@@ -1225,6 +1411,9 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   html: HTML_CONFIG,
   xml: XML_CONFIG,
   vba: VBA_CONFIG,
+  bash: BASH_CONFIG,
+  powershell: POWERSHELL_CONFIG,
+  batch: BATCH_CONFIG,
 };
 
 /**

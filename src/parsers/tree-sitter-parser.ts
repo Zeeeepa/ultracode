@@ -15,6 +15,8 @@ import { LRUCache } from "lru-cache";
 import Parser from "tree-sitter";
 import { ConfigLoader } from "../config/yaml-config.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { BashAnalyzer } from "./bash-analyzer.js";
+import { BatchAnalyzer } from "./batch-analyzer.js";
 import { CAnalyzer } from "./c-analyzer.js";
 import { CppAnalyzer } from "./cpp-analyzer.js";
 import { CSSAnalyzer } from "./css-analyzer.js";
@@ -22,6 +24,7 @@ import { GoAnalyzer } from "./go-analyzer.js";
 import { HTMLAnalyzer } from "./html-analyzer.js";
 import { JavaAnalyzer } from "./java-analyzer.js";
 import { KotlinAnalyzer } from "./kotlin-analyzer.js";
+import { PowerShellAnalyzer } from "./powershell-analyzer.js";
 import { createPythonAnalyzer } from "./python-analyzer.js";
 import { RustAnalyzer } from "./rust-analyzer.js";
 import { SwiftAnalyzer } from "./swift-analyzer.js";
@@ -92,6 +95,14 @@ const LANGUAGE_LOADERS: Partial<Record<SupportedLanguage, () => Promise<any>>> =
   },
   html: async () => {
     const m: any = requireModule("tree-sitter-html");
+    return m.default ?? m;
+  },
+  bash: async () => {
+    const m: any = requireModule("tree-sitter-bash");
+    return m.default ?? m;
+  },
+  powershell: async () => {
+    const m: any = requireModule("tree-sitter-powershell");
     return m.default ?? m;
   },
 };
@@ -177,6 +188,18 @@ function detectLanguage(filePath: string): SupportedLanguage {
     case "cls":
     case "frm":
       return "vba";
+    case "sh":
+    case "bash":
+    case "zsh":
+    case "fish":
+      return "bash";
+    case "ps1":
+    case "psm1":
+    case "psd1":
+      return "powershell";
+    case "bat":
+    case "cmd":
+      return "batch";
     default:
       return "javascript";
   }
@@ -208,6 +231,9 @@ export class TreeSitterParser {
   private htmlAnalyzer = new HTMLAnalyzer();
   private xmlAnalyzer = new XMLAnalyzer();
   private vbaAnalyzer = new VbaAnalyzer();
+  private bashAnalyzer = new BashAnalyzer();
+  private powershellAnalyzer = new PowerShellAnalyzer();
+  private batchAnalyzer = new BatchAnalyzer();
 
   private cacheHits = 0;
   private cacheMisses = 0;
@@ -433,6 +459,27 @@ export class TreeSitterParser {
       await this.htmlAnalyzer.analyze(tree.rootNode as any, filePath, entities, relationships);
       console.log(
         `[TreeSitterParser] HTML analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
+    } else if (language === "bash") {
+      const ba = await this.bashAnalyzer.analyze(tree.rootNode as any, filePath, content);
+      entities = ba.entities || [];
+      relationships = ba.relationships || [];
+      console.log(
+        `[TreeSitterParser] Bash analysis: ${entities.length} entities, ${relationships.length} relationships, ${ba.validationIssues.length} validation issues`,
+      );
+    } else if (language === "powershell") {
+      const ps = await this.powershellAnalyzer.analyze(tree.rootNode as any, filePath, content);
+      entities = ps.entities || [];
+      relationships = ps.relationships || [];
+      console.log(
+        `[TreeSitterParser] PowerShell analysis: ${entities.length} entities, ${relationships.length} relationships, ${ps.validationIssues.length} validation issues`,
+      );
+    } else if (language === "batch") {
+      const bt = await this.batchAnalyzer.analyze(tree.rootNode as any, filePath, content);
+      entities = bt.entities || [];
+      relationships = bt.relationships || [];
+      console.log(
+        `[TreeSitterParser] Batch analysis: ${entities.length} entities, ${relationships.length} relationships, ${bt.validationIssues.length} validation issues`,
       );
     } else {
       // Default parser for JS/TS/etc

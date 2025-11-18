@@ -1,9 +1,6 @@
 ﻿@echo off
 setlocal enabledelayedexpansion
 
-REM Clear screen for clean output
-cls
-
 REM ASCII Art Banner - BBS Graffiti Style
 echo.
 echo.
@@ -256,6 +253,13 @@ if exist "%PROJECT_ROOT%\native\cuda\" (
 
 :skip_cuda_build
 
+REM Clean TypeScript artifacts before build (preserve WASM and native modules)
+if exist "%PROJECT_ROOT%\dist\index.js" del /q "%PROJECT_ROOT%\dist\index.js" >nul 2>&1
+if exist "%PROJECT_ROOT%\dist\index.js.map" del /q "%PROJECT_ROOT%\dist\index.js.map" >nul 2>&1
+if exist "%PROJECT_ROOT%\dist\index.d.ts" del /q "%PROJECT_ROOT%\dist\index.d.ts" >nul 2>&1
+if exist "%PROJECT_ROOT%\dist\agents" rmdir /s /q "%PROJECT_ROOT%\dist\agents" >nul 2>&1
+if exist "%PROJECT_ROOT%\dist\utils" rmdir /s /q "%PROJECT_ROOT%\dist\utils" >nul 2>&1
+
 REM Run build with Bun
 echo [3/4] Building with tsup (Bun runtime)...
 bun run build
@@ -289,21 +293,21 @@ if defined CUDA_BUILD_SUCCESS (
 REM Show output
 echo [4/4] Build artifacts:
 echo.
-if exist "dist\index.js" (
+if exist "%PROJECT_ROOT%\dist\index.js" (
     echo ✓ dist\index.js
-    for %%A in (dist\index.js) do echo   Size: %%~zA bytes
+    for %%A in ("%PROJECT_ROOT%\dist\index.js") do echo   Size: %%~zA bytes
 )
-if exist "dist\index.js.map" (
+if exist "%PROJECT_ROOT%\dist\index.js.map" (
     echo ✓ dist\index.js.map
 )
-if exist "dist\index.d.ts" (
+if exist "%PROJECT_ROOT%\dist\index.d.ts" (
     echo ✓ dist\index.d.ts
 )
 echo.
 
 REM Count native modules
 set /a NODE_COUNT=0
-for %%f in (dist\*.node) do set /a NODE_COUNT+=1
+for %%f in ("%PROJECT_ROOT%\dist\*.node") do set /a NODE_COUNT+=1
 if %NODE_COUNT% gtr 0 (
     echo ✓ %NODE_COUNT% native modules (.node files)
     echo.
@@ -315,7 +319,7 @@ echo ========================================
 echo.
 
 REM Check TypeScript build
-if exist "dist\index.js" (
+if exist "%PROJECT_ROOT%\dist\index.js" (
     echo ✓ TypeScript Build: SUCCESS
 ) else (
     echo ✗ TypeScript Build: FAILED
@@ -325,11 +329,11 @@ REM Check WASM modules
 set WASM_COUNT=0
 set WASM_DIFF=0
 set WASM_VECTOR=0
-if exist "dist\wasm\diff-simd\diff_simd.js" (
+if exist "%PROJECT_ROOT%\dist\wasm\diff-simd\diff_simd.js" (
     set /a WASM_COUNT+=1
     set WASM_DIFF=1
 )
-if exist "dist\wasm\vector-ops-simd\vector_ops_simd.js" (
+if exist "%PROJECT_ROOT%\dist\wasm\vector-ops-simd\vector_ops_simd.js" (
     set /a WASM_COUNT+=1
     set WASM_VECTOR=1
 )
@@ -351,9 +355,9 @@ if %WASM_COUNT% equ 2 (
 )
 
 REM Check CUDA module
-if exist "dist\native\cuda\ultrascript_cuda.node" (
+if exist "%PROJECT_ROOT%\dist\native\cuda\ultrascript_cuda.node" (
     echo ✓ CUDA Module: SUCCESS
-    for %%A in (dist\native\cuda\ultrascript_cuda.node) do echo   - ultrascript_cuda.node ^(%%~zA bytes^)
+    for %%A in ("%PROJECT_ROOT%\dist\native\cuda\ultrascript_cuda.node") do echo   - ultrascript_cuda.node ^(%%~zA bytes^)
     echo   - GPU acceleration enabled
 ) else (
     echo ✗ CUDA Module: NOT BUILT
