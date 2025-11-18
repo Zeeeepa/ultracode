@@ -143,7 +143,7 @@ try {
     Write-Host "Проверка реальных файлов (npm pack --dry-run):" -ForegroundColor Yellow
 
     $ErrorActionPreference = "Continue"
-    $DryRunOutput = npm pack --dry-run 2>&1 | Out-String
+    $DryRunOutput = npm pack --dry-run --loglevel=error 2>&1 | Out-String
     $ErrorActionPreference = "Stop"
 
     # Check for real errors (ignore warnings)
@@ -230,7 +230,7 @@ try {
     # Шаг 7: Запустить npm pack
     Write-Step "Упаковка пакета (npm pack)..."
 
-    $PackOutput = npm pack 2>&1
+    $PackOutput = npm pack --loglevel=error 2>&1
     $TarballName = ($PackOutput | Select-String "\.tgz").ToString().Trim()
 
     if (-not $TarballName) {
