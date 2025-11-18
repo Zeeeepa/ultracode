@@ -1,33 +1,24 @@
-﻿@echo off
+@echo off
 setlocal enabledelayedexpansion
 
 REM Clear screen for clean output
 cls
 
-REM ASCII Art Banner - BBS Graffiti Style
+REM ASCII Art Banner
 echo.
+echo ========================================
+echo    _   _ _ _
+echo   | | | | | |_ _ __ __ _ 
+echo   | | | | | __| '__/ _` |
+echo   | |_| | | |_| | | (_| |
+echo    \___/|_|\__|_|  \__,_|
 echo.
-echo         ██  ██
-echo         ██  ██  ██    ██████ █████▄  ▄████▄
-echo         ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
-echo         ██  ██  ██      ██   ██   ██ ██  ██
-echo         ██  ██  ██████  ██   ██   ██ ██  ██
-echo         ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄
-echo                          ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
-echo                          ▄▄██▀ ▀████ ██ ██ ██ ██     ██
-echo.
-echo                               ░▒▓█████▓▒░
-echo.
-echo      ╔═════════════════════════════════════════════════════╗
-echo      ║            ULTRASCRIPT TOOLS MCP SERVER             ║
-echo      ╚═════════════════════════════════════════════════════╝
-echo.
+echo   SCRIPT TOOLS MCP SERVER
+echo ========================================
 echo.
 
 REM Build script for UltraScript Tools MCP Server using Bun
 REM Compiles TypeScript to dist/ directory using tsup with Bun runtime
-
-REM Get project root (parent of scripts)
 set "SCRIPT_DIR=%~dp0"
 REM Normalize path by using pushd/popd trick
 pushd "%SCRIPT_DIR%.."
