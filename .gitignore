@@ -15,11 +15,13 @@ dist/
 *.tsbuildinfo
 
 # Native modules (CUDA) - platform-specific, built locally
+# Sources moved to external-tools/native (also ignored)
 native/
 *.node
 build/
 
 # WASM modules - built from Rust source
+# Sources moved to external-tools/wasm (also ignored)
 wasm/
 
 # ============================================================================

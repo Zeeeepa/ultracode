@@ -42,10 +42,10 @@ Write-Host "✅ Prerequisites installed" -ForegroundColor Green
 Write-Host ""
 
 # Build diff-simd module
-Write-Host "📦 Building wasm/diff-simd..." -ForegroundColor Cyan
-Push-Location wasm/diff-simd
+Write-Host "📦 Building external-tools/wasm/diff-simd..." -ForegroundColor Cyan
+Push-Location external-tools/wasm/diff-simd
 
-wasm-pack build --target bundler --out-dir ../../dist/wasm/diff-simd --release
+wasm-pack build --target bundler --out-dir ../../../dist/wasm/diff-simd --release
 $diffResult = $LASTEXITCODE
 
 Pop-Location
@@ -59,10 +59,10 @@ if ($diffResult -eq 0) {
 }
 
 # Build vector-ops-simd module
-Write-Host "📦 Building wasm/vector-ops-simd..." -ForegroundColor Cyan
-Push-Location wasm/vector-ops-simd
+Write-Host "📦 Building external-tools/wasm/vector-ops-simd..." -ForegroundColor Cyan
+Push-Location external-tools/wasm/vector-ops-simd
 
-wasm-pack build --target bundler --out-dir ../../dist/wasm/vector-ops-simd --release
+wasm-pack build --target bundler --out-dir ../../../dist/wasm/vector-ops-simd --release
 $vectorResult = $LASTEXITCODE
 
 Pop-Location
@@ -81,12 +81,12 @@ Write-Host "✅ All WASM modules built successfully!" -ForegroundColor Green
 Write-Host "=========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Output directories:" -ForegroundColor Cyan
-Write-Host "  - dist/wasm/diff-simd/"
-Write-Host "  - dist/wasm/vector-ops-simd/"
+Write-Host "  - dist/external-tools/wasm/diff-simd/"
+Write-Host "  - dist/external-tools/wasm/vector-ops-simd/"
 Write-Host ""
 Write-Host "To use in Node.js:" -ForegroundColor Cyan
-Write-Host "  import { compute_diff_simd } from './dist/wasm/diff-simd/diff_simd.js';"
-Write-Host "  import { cosine_similarity_simd } from './dist/wasm/vector-ops-simd/vector_ops_simd.js';"
+Write-Host "  import { compute_diff_simd } from './dist/external-tools/wasm/diff-simd/diff_simd.js';"
+Write-Host "  import { cosine_similarity_simd } from './dist/external-tools/wasm/vector-ops-simd/vector_ops_simd.js';"
 Write-Host ""
 
 # Return to original directory

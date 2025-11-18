@@ -12,7 +12,7 @@
  * - Unified diff format output
  *
  * Architecture References:
- * - WASM Diff: wasm/diff-simd
+ * - WASM Diff: external-tools/wasm/diff-simd
  * - Graph Storage: src/storage/graph-storage.ts
  */
 
