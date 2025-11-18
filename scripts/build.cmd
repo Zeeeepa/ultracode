@@ -1,24 +1,27 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM Clear screen for clean output
-cls
-
-REM ASCII Art Banner
+REM ASCII Banner
 echo.
-echo ========================================
-echo    _   _ _ _
-echo   | | | | | |_ _ __ __ _ 
-echo   | | | | | __| '__/ _` |
-echo   | |_| | | |_| | | (_| |
-echo    \___/|_|\__|_|  \__,_|
+echo =========================================================
 echo.
-echo   SCRIPT TOOLS MCP SERVER
-echo ========================================
+echo   ##     ## ##       ######## ########     ###
+echo   ##     ## ##          ##    ##     ##   ## ##
+echo   ##     ## ##          ##    ##     ##  ##   ##
+echo   ##     ## ##          ##    ########  ##     ##
+echo   ##     ## ##          ##    ##   ##   #########
+echo   ##     ## ##          ##    ##    ##  ##     ##
+echo    #######  ########    ##    ##     ## ##     ##
+echo.
+echo            SCRIPT TOOLS MCP SERVER
+echo.
+echo =========================================================
 echo.
 
 REM Build script for UltraScript Tools MCP Server using Bun
 REM Compiles TypeScript to dist/ directory using tsup with Bun runtime
+
+REM Get project root (parent of Dev.Scripts)
 set "SCRIPT_DIR=%~dp0"
 REM Normalize path by using pushd/popd trick
 pushd "%SCRIPT_DIR%.."
@@ -83,7 +86,7 @@ if not errorlevel 1 (
 )
 
 REM Build CUDA native module if available (Windows only)
-if exist "%PROJECT_ROOT%\native\cuda\" (
+if exist "%PROJECT_ROOT%\external-tools\native\cuda\" (
     echo [INFO] Checking for CUDA Toolkit and Visual Studio Build Tools...
 
     REM Detect CUDA Toolkit
@@ -175,7 +178,7 @@ if exist "%PROJECT_ROOT%\native\cuda\" (
             echo [2/4] Building CUDA native module...
 
             REM Set CUDA working directory (use delayed expansion for nested if blocks)
-            set "CUDA_DIR=!PROJECT_ROOT!\native\cuda"
+            set "CUDA_DIR=!PROJECT_ROOT!\external-tools\native\cuda"
 
             REM Install dependencies if node_modules doesn't exist
             if not exist "!CUDA_DIR!\node_modules\" (
@@ -186,7 +189,7 @@ if exist "%PROJECT_ROOT%\native\cuda\" (
             )
 
             REM Re-set CUDA_DIR after npm install (call may reset environment)
-            set "CUDA_DIR=!PROJECT_ROOT!\native\cuda"
+            set "CUDA_DIR=!PROJECT_ROOT!\external-tools\native\cuda"
 
             REM Install cmake-js if not present
             where cmake-js >nul 2>nul
@@ -241,11 +244,18 @@ if exist "%PROJECT_ROOT%\native\cuda\" (
         echo.
     )
 ) else (
-    echo [SKIP] native\cuda directory not found
+    echo [SKIP] external-tools\native\cuda directory not found
     echo.
 )
 
 :skip_cuda_build
+
+REM Clean TypeScript artifacts before build (preserve WASM and native modules)
+if exist "%PROJECT_ROOT%\dist\index.js" del /q "%PROJECT_ROOT%\dist\index.js" >nul 2>&1
+if exist "%PROJECT_ROOT%\dist\index.js.map" del /q "%PROJECT_ROOT%\dist\index.js.map" >nul 2>&1
+if exist "%PROJECT_ROOT%\dist\index.d.ts" del /q "%PROJECT_ROOT%\dist\index.d.ts" >nul 2>&1
+if exist "%PROJECT_ROOT%\dist\agents" rmdir /s /q "%PROJECT_ROOT%\dist\agents" >nul 2>&1
+if exist "%PROJECT_ROOT%\dist\utils" rmdir /s /q "%PROJECT_ROOT%\dist\utils" >nul 2>&1
 
 REM Run build with Bun
 echo [3/4] Building with tsup (Bun runtime)...
@@ -280,21 +290,21 @@ if defined CUDA_BUILD_SUCCESS (
 REM Show output
 echo [4/4] Build artifacts:
 echo.
-if exist "dist\index.js" (
+if exist "%PROJECT_ROOT%\dist\index.js" (
     echo ✓ dist\index.js
-    for %%A in (dist\index.js) do echo   Size: %%~zA bytes
+    for %%A in ("%PROJECT_ROOT%\dist\index.js") do echo   Size: %%~zA bytes
 )
-if exist "dist\index.js.map" (
+if exist "%PROJECT_ROOT%\dist\index.js.map" (
     echo ✓ dist\index.js.map
 )
-if exist "dist\index.d.ts" (
+if exist "%PROJECT_ROOT%\dist\index.d.ts" (
     echo ✓ dist\index.d.ts
 )
 echo.
 
 REM Count native modules
 set /a NODE_COUNT=0
-for %%f in (dist\*.node) do set /a NODE_COUNT+=1
+for %%f in ("%PROJECT_ROOT%\dist\*.node") do set /a NODE_COUNT+=1
 if %NODE_COUNT% gtr 0 (
     echo ✓ %NODE_COUNT% native modules (.node files)
     echo.
@@ -306,7 +316,7 @@ echo ========================================
 echo.
 
 REM Check TypeScript build
-if exist "dist\index.js" (
+if exist "%PROJECT_ROOT%\dist\index.js" (
     echo ✓ TypeScript Build: SUCCESS
 ) else (
     echo ✗ TypeScript Build: FAILED
@@ -316,11 +326,11 @@ REM Check WASM modules
 set WASM_COUNT=0
 set WASM_DIFF=0
 set WASM_VECTOR=0
-if exist "dist\wasm\diff-simd\diff_simd.js" (
+if exist "%PROJECT_ROOT%\dist\wasm\diff-simd\diff_simd.js" (
     set /a WASM_COUNT+=1
     set WASM_DIFF=1
 )
-if exist "dist\wasm\vector-ops-simd\vector_ops_simd.js" (
+if exist "%PROJECT_ROOT%\dist\wasm\vector-ops-simd\vector_ops_simd.js" (
     set /a WASM_COUNT+=1
     set WASM_VECTOR=1
 )
@@ -342,9 +352,9 @@ if %WASM_COUNT% equ 2 (
 )
 
 REM Check CUDA module
-if exist "dist\native\cuda\ultrascript_cuda.node" (
+if exist "%PROJECT_ROOT%\dist\native\cuda\ultrascript_cuda.node" (
     echo ✓ CUDA Module: SUCCESS
-    for %%A in (dist\native\cuda\ultrascript_cuda.node) do echo   - ultrascript_cuda.node ^(%%~zA bytes^)
+    for %%A in ("%PROJECT_ROOT%\dist\native\cuda\ultrascript_cuda.node") do echo   - ultrascript_cuda.node ^(%%~zA bytes^)
     echo   - GPU acceleration enabled
 ) else (
     echo ✗ CUDA Module: NOT BUILT
@@ -373,3 +383,4 @@ echo   • Drop-in Node.js replacement
 echo.
 
 exit /b 0
+
