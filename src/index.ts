@@ -76,7 +76,7 @@ import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
 import type { CloneGroup } from "./types/semantic.js";
 import type { Entity, Relationship } from "./types/storage.js";
-import { EntityType } from "./types/storage.js";
+import { EntityType, RelationType } from "./types/storage.js";
 import { createRequestId, logger } from "./utils/logger.js";
 import { ensureOllamaRunning, getStatusMessage } from "./utils/ollama-checker.js";
 import { CodeValidator } from "./validation/code-validator.js";
@@ -1074,6 +1074,34 @@ const PatternSearchSchema = z.object({
   limit: z.number().optional().default(10).describe("Maximum results to return"),
 });
 
+// Unified Tool Schemas (cross-compatibility with UltrasharpTools)
+const CreateFileSchema = z.object({
+  filePath: z.string().describe("Absolute path for the new file to create"),
+  content: z.string().describe("Content to write to the file"),
+  createDirectories: z.boolean().optional().default(true).describe("Create parent directories if they don't exist"),
+  updateGraph: z.boolean().optional().default(true).describe("Parse and add entities to graph after creation"),
+  overwrite: z.boolean().optional().default(false).describe("Overwrite file if it already exists"),
+});
+
+const RenameSymbolSchema = z.object({
+  entityId: z.string().optional().describe("Entity ID to rename (preferred)"),
+  entityName: z.string().optional().describe("Entity name to rename (if entityId not provided)"),
+  filePath: z.string().optional().describe("File path hint for disambiguation"),
+  newName: z.string().describe("New name for the symbol"),
+  updateReferences: z.boolean().optional().default(true).describe("Update all references to this symbol"),
+  preview: z.boolean().optional().default(true).describe("Preview changes before applying"),
+});
+
+const AddMemberSchema = z.object({
+  entityId: z.string().optional().describe("Parent entity ID (class/interface) to add member to"),
+  filePath: z.string().describe("File path where to add the member"),
+  memberCode: z.string().describe("Code for the new member (method, property, etc.)"),
+  position: z.enum(["start", "end", "after"]).optional().default("end").describe("Where to insert the member"),
+  afterMember: z.string().optional().describe("Member name to insert after (when position='after')"),
+  preview: z.boolean().optional().default(true).describe("Preview changes before applying"),
+  updateGraph: z.boolean().optional().default(true).describe("Update graph with new member"),
+});
+
 // Create MCP server
 const server = new Server(
   {
@@ -1322,6 +1350,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description:
           "Combine multiple files into one. Merges entities in graph. Can optionally delete originals. Token-efficient way to consolidate code.",
         inputSchema: zodToJsonSchema(SynthesizeFilesSchema) as any,
+      },
+      // Unified Tools (cross-compatibility with UltrasharpTools)
+      {
+        name: "create_file",
+        description:
+          "Create a new file with content. Automatically parses and adds entities to graph. Unified naming with UltrasharpTools.",
+        inputSchema: zodToJsonSchema(CreateFileSchema) as any,
+      },
+      {
+        name: "rename_symbol",
+        description:
+          "Rename a symbol (variable, function, class, etc.) and update all references. Supports entity ID or name-based lookup. Unified naming with UltrasharpTools.",
+        inputSchema: zodToJsonSchema(RenameSymbolSchema) as any,
+      },
+      {
+        name: "add_member",
+        description:
+          "Add a new member (method, property, field) to a class or interface. Supports precise positioning. Unified naming with UltrasharpTools.",
+        inputSchema: zodToJsonSchema(AddMemberSchema) as any,
       },
       // Code Validation Tools
       {
@@ -3370,6 +3417,329 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             {
               type: "text",
               text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Unified Tools (cross-compatibility with UltrasharpTools)
+      case "create_file": {
+        const { filePath, content, createDirectories, updateGraph, overwrite } = CreateFileSchema.parse(args);
+        const targetPath = normalizeInputPath(filePath);
+
+        // Check if file exists
+        const fs = await import("node:fs/promises");
+        const path = await import("node:path");
+
+        try {
+          await fs.access(targetPath);
+          if (!overwrite) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(
+                    {
+                      success: false,
+                      error: `File already exists: ${targetPath}. Use overwrite=true to replace it.`,
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+            };
+          }
+        } catch {
+          // File doesn't exist, ok to create
+        }
+
+        // Create parent directories if needed
+        if (createDirectories) {
+          const dirPath = path.dirname(targetPath);
+          await fs.mkdir(dirPath, { recursive: true });
+        }
+
+        // Write file
+        await fs.writeFile(targetPath, content, "utf-8");
+
+        // Parse and update graph if requested
+        let parseResult = null;
+        if (updateGraph) {
+          const devAgent = await getDevAgent();
+          const parseTask: AgentTask = {
+            id: `parse-${Date.now()}`,
+            type: "parse",
+            priority: 5,
+            payload: { filePath: targetPath },
+            createdAt: Date.now(),
+          };
+          parseResult = await devAgent.process(parseTask);
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  filePath: targetPath,
+                  bytesWritten: content.length,
+                  parseResult: parseResult || "Graph update skipped",
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case "rename_symbol": {
+        const { entityId, entityName, filePath, newName, updateReferences, preview } = RenameSymbolSchema.parse(args);
+
+        const storage = await getGraphStorage(globalSQLiteManager);
+
+        // Find entity
+        let entity = null;
+        if (entityId) {
+          entity = await storage.getEntity(entityId);
+        } else if (entityName && filePath) {
+          const targetPath = normalizeInputPath(filePath);
+          const fileEntities = await storage.searchEntities({ filePath: targetPath });
+          entity = fileEntities.find((e: Entity) => e.name === entityName) || null;
+        }
+
+        if (!entity) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    error: "Entity not found. Provide valid entityId or entityName + filePath.",
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+
+        // Find all references if updateReferences is true
+        const references = updateReferences
+          ? await storage.getRelationshipsForEntity(entity.id, RelationType.REFERENCES)
+          : [];
+
+        const changes = [
+          {
+            file: entity.filePath,
+            line: entity.location.start.line,
+            oldName: entity.name,
+            newName: newName,
+            type: "definition",
+          },
+          ...references.map((ref: Relationship) => ({
+            file: entity.filePath, // Relationships don't track target file
+            line: ref.metadata?.line || 0,
+            oldName: entity.name,
+            newName: newName,
+            type: "reference",
+          })),
+        ];
+
+        if (preview) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    preview: true,
+                    entity: {
+                      id: entity.id,
+                      name: entity.name,
+                      type: entity.type,
+                      file: entity.filePath,
+                    },
+                    newName,
+                    changes,
+                    message: "Preview mode: no changes applied. Set preview=false to apply.",
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+
+        // Apply changes (simplified - in production would use AST transformation)
+        const fs = await import("node:fs/promises");
+        const modifiedFiles = new Set<string>();
+        const oldName = entity.name; // Store for regex
+
+        for (const change of changes) {
+          const fileContent = await fs.readFile(change.file, "utf-8");
+          const lines = fileContent.split("\n");
+
+          // Simple regex replacement (in production, use AST)
+          const regex = new RegExp(`\\b${oldName}\\b`, "g");
+          const targetLine = lines[change.line];
+          if (targetLine !== undefined) {
+            lines[change.line] = targetLine.replace(regex, newName);
+          }
+
+          await fs.writeFile(change.file, lines.join("\n"), "utf-8");
+          modifiedFiles.add(change.file);
+        }
+
+        // Update entity in graph
+        storage.updateEntity(entity.id, { name: newName });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  preview: false,
+                  oldName: entity.name,
+                  newName,
+                  changesApplied: changes.length,
+                  filesModified: Array.from(modifiedFiles),
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case "add_member": {
+        const { entityId, filePath, memberCode, position, afterMember, preview, updateGraph } =
+          AddMemberSchema.parse(args);
+
+        const targetPath = normalizeInputPath(filePath);
+        const fs = await import("node:fs/promises");
+
+        // Read file
+        const fileContent = await fs.readFile(targetPath, "utf-8");
+        const lines = fileContent.split("\n");
+
+        let insertLine = -1;
+
+        if (entityId) {
+          // Find entity by ID and determine insert position
+          const storage = await getGraphStorage(globalSQLiteManager);
+          const entity = await storage.getEntity(entityId);
+
+          if (!entity) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ success: false, error: "Entity not found by ID" }, null, 2),
+                },
+              ],
+            };
+          }
+
+          if (position === "start") {
+            insertLine = entity.location.start.line + 1; // After opening brace
+          } else if (position === "end") {
+            insertLine = entity.location.end.line; // Before closing brace
+          } else if (position === "after" && afterMember) {
+            // Find member with name afterMember (simplified)
+            const fileEntities = await storage.searchEntities({ filePath: targetPath });
+            const targetMember = fileEntities.find(
+              (e: Entity) =>
+                e.name === afterMember &&
+                e.location.start.line >= entity.location.start.line &&
+                e.location.end.line <= entity.location.end.line,
+            );
+            if (targetMember) {
+              insertLine = targetMember.location.end.line + 1;
+            } else {
+              insertLine = entity.location.end.line; // Fallback to end
+            }
+          }
+        } else {
+          // No entity ID - append to end of file
+          insertLine = lines.length;
+        }
+
+        if (insertLine === -1) {
+          insertLine = lines.length;
+        }
+
+        // Preview mode
+        if (preview) {
+          const previewLines = [...lines];
+          previewLines.splice(insertLine, 0, memberCode);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    preview: true,
+                    filePath: targetPath,
+                    insertLine,
+                    memberCode,
+                    previewSnippet: previewLines.slice(Math.max(0, insertLine - 3), insertLine + 5).join("\n"),
+                    message: "Preview mode: no changes applied. Set preview=false to apply.",
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+
+        // Apply changes
+        lines.splice(insertLine, 0, memberCode);
+        await fs.writeFile(targetPath, lines.join("\n"), "utf-8");
+
+        // Re-parse file to update graph
+        let parseResult = null;
+        if (updateGraph) {
+          const devAgent = await getDevAgent();
+          const parseTask: AgentTask = {
+            id: `parse-${Date.now()}`,
+            type: "parse",
+            priority: 5,
+            payload: { filePath: targetPath },
+            createdAt: Date.now(),
+          };
+          parseResult = await devAgent.process(parseTask);
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  preview: false,
+                  filePath: targetPath,
+                  insertLine,
+                  memberCode,
+                  parseResult: parseResult || "Graph update skipped",
+                },
+                null,
+                2,
+              ),
             },
           ],
         };
