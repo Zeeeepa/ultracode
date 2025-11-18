@@ -4,8 +4,8 @@
  * Demonstrates how to use Chaos Analysis to detect and fix state management issues.
  */
 
-import { ChaosAnalyzer } from "../src/analysis/chaos/index.js";
-import type { GraphStorage } from "../src/types/storage.js";
+import { ChaosAnalyzer } from "../../src/analysis/chaos/index.js";
+import type { GraphStorage } from "../../src/types/storage.js";
 
 // ===========================================================================
 // Example 1: Analyze specific state identifier

@@ -13,11 +13,11 @@
  * @see Dev.Docs/LAYERED_INDEXING_IMPLEMENTATION_PLAN.md
  */
 
-import { LayeredIndexManager } from "../src/layered/index.js";
-import type { GraphStorage } from "../src/storage/graph-storage.js";
-import type { VectorStore } from "../src/semantic/vector-store.js";
-import type { BranchManager } from "../src/core/branch-manager.js";
-import type { GitWatcher } from "../src/core/git-watcher.js";
+import { LayeredIndexManager } from "../../src/layered/index.js";
+import type { GraphStorage } from "../../src/storage/graph-storage.js";
+import type { VectorStore } from "../../src/semantic/vector-store.js";
+import type { BranchManager } from "../../src/core/branch-manager.js";
+import type { GitWatcher } from "../../src/core/git-watcher.js";
 
 // =============================================================================
 // EXAMPLE 1: Basic Setup
