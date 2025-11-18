@@ -101,6 +101,13 @@ if %WASM_ALREADY_BUILT% equ 1 (
     )
 )
 
+REM Check if CUDA module already exists (built by postinstall)
+if exist "%PROJECT_ROOT%\dist\native\cuda\ultrascript_cuda.node" (
+    echo [INFO] CUDA module already built, skipping rebuild
+    echo.
+    goto skip_cuda_build
+)
+
 REM Build CUDA native module if available (Windows only)
 if exist "%PROJECT_ROOT%\external-tools\native\cuda\" (
     echo [INFO] Checking for CUDA Toolkit and Visual Studio Build Tools...
