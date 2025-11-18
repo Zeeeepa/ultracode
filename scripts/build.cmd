@@ -1,21 +1,24 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM ASCII Banner
+REM ASCII Art Banner - BBS Graffiti Style
 echo.
-echo =========================================================
 echo.
-echo   ##     ## ##       ######## ########     ###
-echo   ##     ## ##          ##    ##     ##   ## ##
-echo   ##     ## ##          ##    ##     ##  ##   ##
-echo   ##     ## ##          ##    ########  ##     ##
-echo   ##     ## ##          ##    ##   ##   #########
-echo   ##     ## ##          ##    ##    ##  ##     ##
-echo    #######  ########    ##    ##     ## ##     ##
+echo         ██  ██
+echo         ██  ██  ██    ██████ █████▄  ▄████▄
+echo         ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
+echo         ██  ██  ██      ██   ██   ██ ██  ██
+echo         ██  ██  ██████  ██   ██   ██ ██  ██
+echo         ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄
+echo                          ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
+echo                          ▄▄██▀ ▀████ ██ ██ ██ ██     ██
 echo.
-echo            SCRIPT TOOLS MCP SERVER
+echo                               ░▒▓█████▓▒░
 echo.
-echo =========================================================
+echo      ╔═════════════════════════════════════════════════════╗
+echo      ║            ULTRASCRIPT TOOLS MCP SERVER             ║
+echo      ╚═════════════════════════════════════════════════════╝
+echo.
 echo.
 
 REM Build script for UltraScript Tools MCP Server using Bun
