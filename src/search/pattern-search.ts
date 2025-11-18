@@ -79,7 +79,7 @@ export class PatternSearch {
     // try {
     //   // Try to load WASM vector-ops module
     //   // @ts-expect-error - WASM module may not exist at compile time
-    //   const { cosine_similarity_simd } = await import("../../dist/wasm/vector-ops-simd/vector_ops_simd.js");
+    //   const { cosine_similarity_simd } = await import("../../dist/external-tools/wasm/vector-ops-simd/vector_ops_simd.js");
     //   if (cosine_similarity_simd) {
     //     this.wasmSimilarityAvailable = true;
     //     console.log("[PatternSearch] WASM vector-ops-simd loaded successfully");

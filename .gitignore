@@ -75,7 +75,21 @@ build.ps1
 Dev.Scripts/errors.txt
 
 # External tools & dependencies (downloaded during setup)
-/external-tools/
+/external-tools/emsdk/
+/external-tools/nodejs/
+/external-tools/python/
+# But keep source code
+!/external-tools/README.md
+!/external-tools/wasm/
+!/external-tools/native/
+# Ignore build artifacts and dependencies in external-tools
+external-tools/**/target/
+external-tools/**/pkg/
+external-tools/**/build/
+external-tools/**/node_modules/
+external-tools/**/*.node
+external-tools/**/*.exp
+external-tools/**/*.lib
 /tools/
 /emsdk/
 
@@ -106,3 +120,6 @@ src/merge/**/temp/
 /.claude
 /.codex
 /.ultrascript
+external-tools/native/cuda/build/
+external-tools/native/cuda/node_modules/
+external-tools/wasm/**/target/

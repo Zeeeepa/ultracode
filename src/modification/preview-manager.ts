@@ -74,7 +74,7 @@ export class PreviewManager {
   async initialize(): Promise<void> {
     try {
       // Try to load WASM diff module (built separately, may not exist during typecheck)
-      const { compute_diff_simd } = await import("../../dist/wasm/diff-simd/diff_simd.js");
+      const { compute_diff_simd } = await import("../../dist/external-tools/wasm/diff-simd/diff_simd.js");
       // Verify function is actually callable
       if (typeof compute_diff_simd === "function") {
         this.wasmDiffAvailable = true;
@@ -158,7 +158,7 @@ export class PreviewManager {
   private async computeDiff(oldCode: string, newCode: string): Promise<string> {
     if (this.wasmDiffAvailable) {
       try {
-        const { compute_diff_simd } = await import("../../dist/wasm/diff-simd/diff_simd.js");
+        const { compute_diff_simd } = await import("../../dist/external-tools/wasm/diff-simd/diff_simd.js");
         return compute_diff_simd(oldCode, newCode);
       } catch (error) {
         console.warn("[PreviewManager] WASM diff failed, using fallback:", error);
