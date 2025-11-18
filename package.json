@@ -1,9 +1,9 @@
 {
-  "name": "@er77/ultrascript-tools-mcp",
+  "name": "ultrascript-tools-mcp",
   "version": "3.9.0",
   "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
-  "author": "er77",
+  "author": "faxen",
   "homepage": "https://github.com/er77/ultrascript-tools-mcp#readme",
   "repository": {
     "type": "git",
