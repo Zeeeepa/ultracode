@@ -45,7 +45,7 @@ Write-Host ""
 Write-Host "📦 Building external-tools/wasm/diff-simd..." -ForegroundColor Cyan
 Push-Location external-tools/wasm/diff-simd
 
-wasm-pack build --target bundler --out-dir ../../../dist/wasm/diff-simd --release
+wasm-pack build --target bundler --out-dir ../../../dist/external-tools/wasm/diff-simd --release
 $diffResult = $LASTEXITCODE
 
 Pop-Location
@@ -62,7 +62,7 @@ if ($diffResult -eq 0) {
 Write-Host "📦 Building external-tools/wasm/vector-ops-simd..." -ForegroundColor Cyan
 Push-Location external-tools/wasm/vector-ops-simd
 
-wasm-pack build --target bundler --out-dir ../../../dist/wasm/vector-ops-simd --release
+wasm-pack build --target bundler --out-dir ../../../dist/external-tools/wasm/vector-ops-simd --release
 $vectorResult = $LASTEXITCODE
 
 Pop-Location
