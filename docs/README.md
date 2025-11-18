@@ -55,6 +55,8 @@ Complete documentation for UltraScript Tools MCP - Multi-agent LiteRAG server fo
 
 - **[CLAUDE.md](CLAUDE.md)** - Claude AI integration notes
 - **[ULTRA.md](ULTRA.md)** - UltraScript project overview
+- **[NPM README](npm-readme.md)** - Official NPM package documentation (marketing)
+- **[NPM License](npm-license.md)** - MIT License for NPM package
 
 ---
 
