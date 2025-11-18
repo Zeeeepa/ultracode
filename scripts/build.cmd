@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 setlocal enabledelayedexpansion
 
 REM ASCII Art Banner - BBS Graffiti Style
@@ -89,7 +89,7 @@ if not errorlevel 1 (
 )
 
 REM Build CUDA native module if available (Windows only)
-if exist "%PROJECT_ROOT%\native\cuda\" (
+if exist "%PROJECT_ROOT%\external-tools\native\cuda\" (
     echo [INFO] Checking for CUDA Toolkit and Visual Studio Build Tools...
 
     REM Detect CUDA Toolkit
@@ -181,7 +181,7 @@ if exist "%PROJECT_ROOT%\native\cuda\" (
             echo [2/4] Building CUDA native module...
 
             REM Set CUDA working directory (use delayed expansion for nested if blocks)
-            set "CUDA_DIR=!PROJECT_ROOT!\native\cuda"
+            set "CUDA_DIR=!PROJECT_ROOT!\external-tools\native\cuda"
 
             REM Install dependencies if node_modules doesn't exist
             if not exist "!CUDA_DIR!\node_modules\" (
@@ -192,7 +192,7 @@ if exist "%PROJECT_ROOT%\native\cuda\" (
             )
 
             REM Re-set CUDA_DIR after npm install (call may reset environment)
-            set "CUDA_DIR=!PROJECT_ROOT!\native\cuda"
+            set "CUDA_DIR=!PROJECT_ROOT!\external-tools\native\cuda"
 
             REM Install cmake-js if not present
             where cmake-js >nul 2>nul
@@ -247,7 +247,7 @@ if exist "%PROJECT_ROOT%\native\cuda\" (
         echo.
     )
 ) else (
-    echo [SKIP] native\cuda directory not found
+    echo [SKIP] external-tools\native\cuda directory not found
     echo.
 )
 
@@ -386,3 +386,4 @@ echo   • Drop-in Node.js replacement
 echo.
 
 exit /b 0
+
