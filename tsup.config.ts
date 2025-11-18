@@ -23,6 +23,7 @@ export default defineConfig([
       options.logOverride = {
         ...options.logOverride,
         "direct-eval": "silent", // Suppress eval warnings from third-party dependencies (onnxruntime-web)
+        "import-is-undefined": "silent", // Suppress wasm-bindgen __wbindgen_start warnings
       };
       // Add loader for WASM files
       options.loader = {
@@ -94,6 +95,7 @@ export default defineConfig([
       options.logOverride = {
         ...options.logOverride,
         "direct-eval": "silent",
+        "import-is-undefined": "silent", // Suppress wasm-bindgen warnings
       };
       // Add loader for WASM files
       options.loader = {
@@ -147,6 +149,7 @@ export default defineConfig([
       options.logOverride = {
         ...options.logOverride,
         "direct-eval": "silent",
+        "import-is-undefined": "silent", // Suppress wasm-bindgen warnings
       };
       // Add loader for WASM files
       options.loader = {
