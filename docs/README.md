@@ -66,7 +66,7 @@ Complete documentation for UltraScript Tools MCP - Multi-agent LiteRAG server fo
 
 ```bash
 # Clone repository
-git clone https://github.com/er77/ultrascript-tools-mcp.git
+git clone https://github.com/faxenoff/ultrascript-tools-mcp.git
 cd ultrascript-tools-mcp
 
 # Install dependencies

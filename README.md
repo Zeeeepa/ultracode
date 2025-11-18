@@ -1,538 +1,277 @@
-```
-        ██  ██
-        ██  ██  ██    ██████ █████▄  ▄████▄
-        ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
-        ██  ██  ██      ██   ██   ██ ██  ██
-        ██  ██  ██████  ██   ██   ██ ██  ██
-        ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄
-                         ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
-                         ▄▄██▀ ▀████ ██ ██ ██ ██     ██
+# UltraScript Tools MCP
 
-                              ░▒▓█████▓▒░
-
-     ╔═════════════════════════════════════════════════════╗
-     ║            ULTRASCRIPT TOOLS MCP SERVER             ║
-     ╚═════════════════════════════════════════════════════╝
-```
-
-[![npm version](https://badge.fury.io/js/@er77%2Fultrascript-tools-mcp.svg)](https://www.npmjs.com/package/@er77/ultrascript-tools-mcp)
+[![npm version](https://badge.fury.io/js/ultrascript-tools-mcp.svg)](https://www.npmjs.com/package/ultrascript-tools-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
 
-[Sponsor https://accelerator.slider-ai.ru/ ](https://t.me/SliderQuery)
+**Multi-agent code analysis MCP server with advanced graph-based understanding**
 
-> **📖 Developer Setup Guide**: Полная инструкция по установке и настройке см. в **[DEV_SETUP_GUIDE.md](./DEV_SETUP_GUIDE.md)**
->
-> **🎯 CUDA Backend**: Successfully built! См. **[FINAL_CUDA_SUCCESS.md](./_ul/FINAL_CUDA_SUCCESS.md)** для деталей
+Powerful code analysis tool that understands your codebase structure, finds duplicates, analyzes impact of changes, and provides intelligent refactoring suggestions through Model Context Protocol (MCP).
 
-**Умный ассистент для работы с вашим кодом**
+## Features
 
-Представьте, что вы можете просто спросить у своего кода: "Где обрабатывается аутентификация?", "Какие функции дублируются?", "Что сломается, если я изменю этот класс?" — и получить точные ответы за секунды.
+- 🔍 **Semantic Code Search** - Find code by meaning, not just keywords
+- 🔄 **Duplicate Detection** - Automatically find similar code blocks
+- 📊 **Impact Analysis** - See what breaks when you change code
+- 🎯 **Smart Refactoring** - Get AI-powered refactoring suggestions
+- 🌳 **Git Branch Support** - Analyze code across different branches
+- ⚡ **SIMD/CUDA Acceleration** - Fast processing with hardware acceleration
+- 🌍 **10 Languages** - TypeScript, JavaScript, Python, Go, Rust, Java, C#, C++, Swift, Bash
 
-Code Graph RAG делает именно это. Он анализирует вашу кодовую базу, понимает связи между компонентами и отвечает на вопросы на естественном языке через Claude, Gemini или другие AI-ассистенты.
-
-**🌟 10 языков** | **⚡ В 5.5 раз быстрее** встроенных инструментов Claude | **🔍 Умный поиск** | **📊 45+ готовых инструментов**
-
----
-
-## 💡 **Что это дает вам?**
-
-### Работайте с кодом на человеческом языке
-
-Вместо ручного поиска по файлам и grep-запросов, просто спросите:
-
-**Примеры вопросов:**
-- "Покажи все функции, связанные с оплатой"
-- "Найди дубликаты кода в проекте"
-- "Что сломается, если я изменю класс UserManager?"
-- "Какие компоненты самые сложные и требуют рефакторинга?"
-- "Где используется эта функция?"
-- "Проанализируй хаос управления состоянием 'token' в проекте" 🆕
-
-**Ответы приходят за секунды**, а не минуты ручного поиска.
-
-### Экономьте время на рутине
-
-| Задача | Обычный способ | С Code Graph RAG |
-|--------|----------------|------------------|
-| Найти похожий код | 15-30 минут grep + ручной анализ | **5 секунд** - автоматический поиск дубликатов |
-| Понять, что сломается при изменении | 30-60 минут ручного прослеживания зависимостей | **10 секунд** - анализ влияния изменений |
-| Найти функции по описанию | "Как она называлась?.." | **Мгновенно** - семантический поиск |
-| Оценить сложность компонента | Долгий анализ вручную | **Автоматически** - метрики сложности |
-
-### Умный анализ, а не просто поиск текста
-
-**Обычный поиск** находит только точные совпадения:
-```
-grep "authenticate" → находит только слово "authenticate"
-```
-
-**Code Graph RAG** понимает смысл:
-```
-"Найди код аутентификации" → находит:
-- login()
-- verifyToken()
-- checkCredentials()
-- authenticateUser()
-```
-
-Потому что понимает, что все эти функции делают одно и то же - **проверяют пользователя**.
-
----
-
-## 🚀 **Реальные примеры использования**
-
-### 1. Поиск дубликатов для рефакторинга
-
-**Проблема**: В разных частях проекта одна и та же логика написана по-разному.
-
-**Решение**:
-```
-Вы: "Найди дублирующийся код"
-
-Code Graph RAG:
-✓ Найдено 15 групп дубликатов
-  - calculateDiscount() и getDiscount() - похожи на 93%
-  - validateUser() и checkUser() - похожи на 89%
-  ...
-
-Экономия: 200 строк кода, улучшение поддерживаемости
-```
-
-### 2. Оценка влияния изменений
-
-**Проблема**: Нужно изменить API класса, но не понятно что сломается.
-
-**Решение**:
-```
-Вы: "Что использует класс PaymentProcessor?"
-
-Code Graph RAG:
-✓ Зависимости найдены:
-  - OrderService.processOrder() - прямое использование
-  - CheckoutController.pay() - через DI
-  - PaymentQueue.worker - асинхронные задачи
-
-Затронуто: 3 компонента, 8 файлов
-```
-
-### 3. Поиск проблемных мест
-
-**Проблема**: Код медленно работает, но не понятно где узкие места.
-
-**Решение**:
-```
-Вы: "Покажи самые сложные компоненты"
-
-Code Graph RAG:
-✓ Hotspots (проблемные зоны):
-  1. DataProcessor.transform() - сложность 85/100
-  2. ReportGenerator.generate() - сложность 78/100
-  3. UserService.sync() - сложность 72/100
-
-Рекомендация: начать рефакторинг с DataProcessor
-```
-
----
-
-## ⚡ **Насколько это быстро?**
-
-**В 5.5 раз быстрее** встроенных инструментов Claude:
-
-| Операция | Встроенные инструменты | Code Graph RAG | Ускорение |
-|----------|------------------------|----------------|-----------|
-| Анализ проекта (1000 файлов) | ~55 секунд | **<10 секунд** | **5.5x** |
-| Поиск по коду | Долго (процессы для каждого файла) | Мгновенно (индекс в памяти) | **10x+** |
-| Семантический поиск | Не поддерживается | **<100 мс** | ∞ |
-| Использование памяти | Тяжелые процессы | 65 MB | Оптимизировано |
-
-**Почему так быстро?**
-- ✅ Код анализируется один раз, потом работает с готовым индексом
-- ✅ Используется SQLite в памяти - запросы за миллисекунды
-- ✅ Параллельная обработка файлов (100+ файлов/секунду)
-- ✅ Умное кеширование результатов
-
-**Пример**: проект на 152 файла индексируется за **78 секунд** вместо 96.
-
----
-
-## 🎯 **Главные возможности**
-
-### Семантический поиск (понимает смысл)
-"Найди функции работы с платежами" → находит все, даже если называются по-разному
-
-### Обнаружение дубликатов
-Автоматически находит повторяющийся код, даже если переменные называются иначе
-
-### Анализ влияния изменений
-"Что сломается, если изменить эту функцию?" → список всех зависимостей
-
-### Рекомендации по рефакторингу
-AI-анализ кода с конкретными предложениями по улучшению
-
-### Поиск проблемных зон
-Метрики сложности, связности, "горячие точки" требующие внимания
-
-### Поддержка 10 языков программирования
-TypeScript, JavaScript, Python, C#, C/C++, Rust, Go, Java, VBA
-
-### Работа с Git-ветками
-Автоматическое переключение между ветками, сравнение изменений
-
-### Анализ нескольких проектов одновременно
-Работайте с frontend и backend одновременно
-
-### ✨ Безопасная модификация кода
-Автоматические снапшоты перед изменениями + мгновенный откат. Модификация по ID сущности с валидацией до/после
-
-### 🔄 Токен-эффективные операции с файлами
-Copy, rename, split, synthesize файлов с автообновлением импортов и графа. Экономия 85-95% токенов
-
-### ✅ Автоматическая валидация кода
-ESLint/Pylint интеграция с отчетами до/после изменений. Batch-валидация директорий
-
-### 🔍 Продвинутый поиск (Pattern Search)
-4 режима поиска: по сущностям, контенту, семантике, гибридный. SIMD-ускорение. Фильтрация по фреймворкам
-
-### 📊 Автоопределение технологий
-Автоматическое распознавание языков, фреймворков, build tools и зависимостей. Контекст для embeddings
-
----
-
-## 📦 **Быстрый старт**
-
-### Установка (30 секунд)
+## Installation
 
 ```bash
-# Установить глобально
-npm install -g @er77/ultrascript-tools-mcp
+# Install globally
+npm install -g ultrascript-tools-mcp
 
-# Или запустить без установки
-npx @er77/ultrascript-tools-mcp /путь/к/вашему/проекту
+# Or use without installing
+npx ultrascript-tools-mcp
 ```
 
-### Интеграция с Claude Desktop (1 минута)
+## Quick Start
 
-```bash
-# Автоматическая настройка
-npx @modelcontextprotocol/inspector add code-graph-rag \
-  --command "npx" \
-  --args "@er77/ultrascript-tools-mcp /путь/к/проекту"
-```
+### 1. Configure Claude Desktop
 
-**Или вручную** в конфиге Claude Desktop:
+Add to your Claude Desktop config file:
+
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Linux**: `~/.config/Claude/claude_desktop_config.json`
+
 ```json
 {
   "mcpServers": {
-    "code-graph-rag": {
-      "command": "npx",
-      "args": ["@er77/ultrascript-tools-mcp", "/путь/к/проекту"]
+    "ultrascript-tools": {
+      "command": "node",
+      "args": [
+        "/path/to/node_modules/ultrascript-tools-mcp/dist/index.js"
+      ]
     }
   }
 }
 ```
 
-### Готово! Теперь спрашивайте Claude о вашем коде
+### 2. Start Using
 
-```
-Вы: "Покажи структуру проекта"
-Вы: "Найди дубликаты кода"
-Вы: "Что использует функцию authenticateUser?"
-Вы: "Какие компоненты самые сложные?"
-```
+Open Claude Desktop and ask:
 
----
+- "Index my project at /path/to/my-project"
+- "Find all functions related to authentication"
+- "Show me duplicate code in this project"
+- "What will break if I change the UserManager class?"
 
-## 🎨 **Дополнительные возможности**
+## Available Tools
 
-### Семантический поиск с 8192 токенами (опционально)
+The MCP server provides 45+ tools for code analysis:
 
-Для продвинутого семантического анализа можно включить ML-модели:
+### Core Analysis
+- `index` - Index a codebase for analysis
+- `query` - Natural language queries about code
+- `semantic_search` - Semantic code search
+- `list_file_entities` - List code entities in a file
+- `list_entity_relationships` - Show code dependencies
 
-**🏆 Рекомендуется: TEI (локально, Docker)**
-```bash
-# Установка за 2 минуты
-./setup-tei.sh  # macOS/Linux
-setup-tei.cmd   # Windows
+### Code Quality
+- `detect_code_clones` - Find duplicate code
+- `jscpd_detect_clones` - Fast duplicate detection
+- `analyze_code_impact` - Impact analysis
+- `suggest_refactoring` - Refactoring suggestions
+- `analyze_hotspots` - Find complex code areas
 
-# Что получите:
-✅ 8192 токена контекста (в 16 раз больше чем Ollama)
-✅ Локальный инференс (без облачных API)
-✅ Автоматический запуск Docker контейнера
-✅ Лучшая производительность
-```
+### Git Integration
+- `list_branches` - List indexed branches
+- `switch_branch` - Switch between branches
+- `get_branch_status` - Branch analysis status
+- `get_changed_files` - Compare branches
 
-**Альтернативы:**
-- **Ollama** - проще (без Docker), но только 512 токенов
-- **HuggingFace API** - облако, 8192 токенов, бесплатный API ключ
+### System
+- `get_graph` - Get code graph
+- `get_graph_stats` - Graph statistics
+- `get_agent_metrics` - Performance metrics
 
-Подробнее: [EMBEDDINGS_SETUP.md](./EMBEDDINGS_SETUP.md)
+## Configuration
 
-### Работа с Git-ветками (опционально)
+Configuration through environment variables or config file at `config/default.yaml`.
 
-Автоматическое переключение индекса при смене веток:
+### Basic Configuration
 
 ```yaml
-# config/default.yaml
-indexing:
-  branchAware: true  # Включить режим веток
-git:
-  enabled: true      # Автоматически отслеживать изменения
+# Minimal config - works out of the box
+mcp:
+  embedding:
+    provider: "memory"  # No ML needed
+    enabled: true
 ```
 
-**Что получите:**
-- ✅ Точный индекс для каждой ветки
-- ✅ Автоматическое переключение при `git checkout`
-- ✅ Инкрементальная синхронизация (только измененные файлы)
+### Optional: ML-Powered Semantic Search
 
-Подробнее: [docs/BRANCH_AWARE_INDEXING.md](./docs/BRANCH_AWARE_INDEXING.md)
-
----
-
-## 🌍 **Поддерживаемые языки**
-
-| Язык | Что анализируется | Качество |
-|------|-------------------|----------|
-| **TypeScript/JavaScript** | ES6+, JSX, TSX, React, async/await | ✅ 100% |
-| **Python** | Классы, функции, async, декораторы, магические методы | ✅ 95% |
-| **C#** | Классы, интерфейсы, LINQ, async/await, свойства | ✅ 90% |
-| **C/C++** | Функции, структуры, классы, шаблоны, неймспейсы | ✅ 90% |
-| **Rust** | Функции, структуры, traits, impl, модули | ✅ 90% |
-| **Go** | Пакеты, функции, структуры, интерфейсы, горутины | ✅ 90% |
-| **Java** | Классы, интерфейсы, records (Java 14+), дженерики | ✅ 90% |
-| **VBA** | Модули, функции, процедуры, типы | ✅ 80% |
-| **PowerShell** | Функции, фильтры, классы, модули, [CmdletBinding] | ✅ 85% |
-| **Bash/Shell** | Функции, переменные, source/import, pipelines | ✅ 85% |
-| **Batch/CMD** | Labels, CALL, SET, GOTO, подпрограммы | ✅ 75% |
-
-**Полиглот-проекты?** Без проблем! Анализирует связи между разными языками.
-
----
-
-## 🔧 **Интеграция с AI-ассистентами**
-
-### Claude Desktop
-```bash
-npx @modelcontextprotocol/inspector add code-graph-rag \
-  --command "npx" --args "@er77/ultrascript-tools-mcp /проект"
-```
-
-### Gemini CLI
-```bash
-./scripts/GEMINI-CORRECT-CONFIG.sh  # Показывает готовую команду
-```
-
-### Codex CLI
-```bash
-./scripts/CODEX-CORRECT-CONFIG.sh  # Показывает что добавить в ~/.codex/config.toml
-```
-
-### Несколько проектов одновременно
-См. [Multi-Codebase Setup Guide](docs/guides/MULTI_CODEBASE_SETUP.md)
-
----
-
-## 📊 **Что внутри (для технарей)**
-
-<details>
-<summary>Технические детали</summary>
-
-### Архитектура
-
-**Multi-agent система** с координацией через Conductor:
-- **ParserAgent** - AST-парсинг через tree-sitter (10 языков)
-- **IndexerAgent** - Индексация в SQLite с батчингом
-- **SemanticAgent** - Векторные эмбеддинги, семантический поиск
-- **QueryAgent** - Оптимизация и выполнение запросов
-- **DoraAgent** - Метрики сложности и анализ
-
-**Storage**: SQLite (WAL mode) + адаптивные векторные бэкенды:
-- **Автовыбор**: система автоматически выбирает оптимальный бэкенд по размеру кодовой базы
-- **sqlite-vec** (<10k векторов) - точный поиск, быстрая вставка
-- **vectorlite** (>10k векторов) - HNSW индекс, 3-100x быстрее поиск
-- **fallback** - работает без расширений (медленнее)
-
-**Performance**:
-- Prepared statements caching - +25-30% для batch операций
-- xxHash вместо SHA-256 - 10-15x быстрее
-- LRU cache v11 - +10-15% операций кеша
-- Adaptive resource monitoring - 70% меньше CPU в idle
-- Hybrid vector search - 90% быстрее для >10k векторов
-- **Adaptive backend switching** - автоматический выбор между sqlite-vec и vectorlite по размеру базы
-
-### 45+ MCP методов
-
-**Унифицированные инструменты (кросс-совместимость с UltrasharpTools):**
-- `get_members` / `list_file_entities` - список сущностей в файле
-- `find_duplicates` / `detect_code_clones` - поиск дубликатов кода
-- `modify_code` / `modify_entity_code` - модификация кода по ID
-- `undo` / `rollback_snapshot` - откат изменений
-- `create_file` - 🆕 создание нового файла с обновлением графа
-- `rename_symbol` - 🆕 переименование символа с обновлением ссылок
-- `add_member` - 🆕 добавление члена в класс/интерфейс
-
-**Анализ кода:**
-- `index` - индексация кодовой базы
-- `semantic_search` - семантический поиск
-- `find_similar_code` - поиск похожего кода
-- `jscpd_detect_clones` - JSCPD-based поиск (без ML)
-- `suggest_refactoring` - AI рефакторинг
-- `pattern_search` - 🆕 продвинутый поиск (entity/content/semantic/hybrid)
-- `detect_technology_stack` - 🆕 автоопределение стека и фреймворков
-
-**Модификация кода:**
-- `create_snapshot` - 🆕 создание снапшота для отката
-- `list_snapshots` - 🆕 список доступных снапшотов
-- `cleanup_snapshots` - 🆕 удаление старых снапшотов
-
-**Операции с файлами:**
-- `copy_file` - 🆕 копирование с обновлением графа
-- `rename_file` - 🆕 переименование с автообновлением импортов
-- `split_file` - 🆕 разделение файла на модули
-- `synthesize_files` - 🆕 объединение файлов в один
-
-**Валидация кода:**
-- `validate_file` - 🆕 валидация файла (ESLint/Pylint)
-- `validate_directory` - 🆕 batch-валидация директории
-
-**Граф зависимостей:**
-- `get_graph` - получение графа сущностей
-- `list_entity_relationships` - связи сущности
-- `analyze_code_impact` - анализ влияния изменений
-- `analyze_hotspots` - поиск проблемных зон
-- `analyze_state_chaos` - 🆕 **анализ хаоса управления состоянием** (TS/Angular)
-
-**Git ветки:**
-- `list_branches` - список проиндексированных веток
-- `switch_branch` - переключение на другую ветку
-- `get_branch_status` - статус текущей ветки
-- `cleanup_branches` - очистка старых веток
-- `get_changed_files` - файлы изменившиеся между ветками
-
-**Диагностика:**
-- `get_graph_health` - диагностика БД
-- `get_version` - версия сервера
-- `get_agent_metrics` - метрики агентов
-- `get_bus_stats` - статистика knowledge bus
-- `reset_graph` - очистка графа
-- `clean_index` - полная переиндексация
-
-**Workspace:**
-- `lerna_project_graph` - граф Lerna workspace зависимостей
-
-### Системные требования
-
-**Минимум**: Node.js 18+, 2GB RAM, Dual-core CPU
-**Рекомендуется**: Node.js 18+, 8GB RAM, Quad-core CPU, SSD
-
-### Конфигурация
-
-Через YAML файлы (`config/default.yaml`) или environment variables:
-- `MCP_EMBEDDING_PROVIDER` - провайдер эмбеддингов (tei/ollama/huggingface)
-- `MCP_EMBEDDING_ENABLED` - включить семантический поиск
-- `INDEXING_BRANCH_AWARE` - режим Git-веток
-
-**Адаптивные векторные бэкенды** (`config/default.yaml`):
-```yaml
-vectorBackend:
-  backend: "auto"              # auto | vectorlite | sqlite-vec | fallback
-  autoSwitchThreshold: 10000   # порог переключения (векторов)
-  vectorlite:                  # настройки HNSW для больших баз
-    maxElements: 100000
-    M: 16                      # связей на слой (выше = лучше recall)
-    efConstruction: 200        # качество построения индекса
-    efSearch: 50               # качество поиска (выше = точнее, медленнее)
-```
-
-**Когда использовать**:
-- `auto` (рекомендуется) - автоматический выбор по размеру
-- `vectorlite` - для больших проектов (>10k векторов), приоритет скорости поиска
-- `sqlite-vec` - для малых/средних проектов (<10k векторов), приоритет скорости вставки
-- `fallback` - когда расширения недоступны (медленнее)
-
-</details>
-
----
-
-## 🛠️ **Разработка**
+For better semantic search, set up embeddings provider:
 
 ```bash
-# Установка зависимостей
-npm install
-
-# Сборка
-npm run build
-
-# Запуск
-node dist/index.js /path/to/project
-
-# Тесты
-npm test
-
-# ⚡ Сборка с Bun (3x быстрее)
-bun install
-./build-bun.sh  # или build-bun.cmd для Windows
+# Run setup wizard
+cd node_modules/ultrascript-tools-mcp
+scripts\setup-embeddings.cmd
 ```
 
-См. также: [BUN_SETUP.md](./BUN_SETUP.md) для ультра-быстрой сборки с Bun
+Choose from:
+- **TEI** (Docker, GPU/CPU) - Best performance
+- **Ollama** (Native) - Easy setup
+- **Memory** (Hash-based) - Default, no setup needed
+
+## Performance
+
+- **5.5x faster** than built-in Claude tools for large codebases
+- **SIMD acceleration** included (2-4x speedup)
+- **CUDA support** for NVIDIA GPUs (optional)
+- **WebGPU support** for cross-platform acceleration (optional)
+
+## Examples
+
+### Find Similar Code
+
+```
+You: "Find duplicate code in my project"
+
+Response:
+✓ Found 12 duplicate groups
+  - auth/login.ts and auth/verify.ts (similarity: 89%)
+  - utils/format.ts and helpers/formatter.ts (similarity: 85%)
+```
+
+### Impact Analysis
+
+```
+You: "What will break if I change UserManager.login()?"
+
+Response:
+✓ Impact Analysis:
+  - 15 files depend on this method
+  - 23 call sites found
+  - High risk: AuthController, SessionService
+```
+
+### Semantic Search
+
+```
+You: "Find code that validates email addresses"
+
+Response:
+✓ Found 4 matches:
+  - validators/email.ts: validateEmail()
+  - utils/auth.ts: checkEmailFormat()
+  - services/user.ts: verifyUserEmail()
+```
+
+## Requirements
+
+- **Node.js**: 24.0.0 or higher
+- **Memory**: 4GB+ RAM recommended
+- **Optional**: Docker (for TEI embeddings)
+- **Optional**: NVIDIA GPU (for CUDA acceleration)
+
+## Documentation
+
+After installation, see:
+- `node_modules/ultrascript-tools-mcp/README_DEV.md` - Detailed documentation
+- `node_modules/ultrascript-tools-mcp/GETTING_STARTED.md` - Setup guide
+- `node_modules/ultrascript-tools-mcp/NPM_PUBLISHING.md` - Publishing guide
+
+## Troubleshooting
+
+### MCP Server Not Responding
+
+1. Check Node.js version: `node --version` (must be 24.0.0+)
+2. Verify config path in `claude_desktop_config.json`
+3. Check Claude Desktop logs (Help → Developer Tools)
+
+### Installation Issues
+
+```bash
+# Clear cache and reinstall
+npm cache clean --force
+npm install -g ultrascript-tools-mcp
+```
+
+### Embeddings Setup
+
+If embeddings setup fails:
+
+```bash
+# Run postinstall manually
+cd node_modules/ultrascript-tools-mcp
+node scripts/postinstall.js
+```
+
+## Advanced Features
+
+### CUDA Acceleration (NVIDIA GPUs)
+
+```bash
+# CUDA module included, builds automatically on first use
+# Provides 10-50x speedup for vector operations
+```
+
+### Multi-Project Analysis (Lerna)
+
+```bash
+# For monorepos using Lerna
+ultrascript-tools-mcp lerna_project_graph --ingest
+```
+
+### Branch Comparison
+
+```bash
+# Compare code between branches
+ultrascript-tools-mcp get_changed_files --fromBranch main --toBranch feature
+```
+
+## CLI Usage
+
+```bash
+# Index a project
+ultrascript-tools-mcp index /path/to/project
+
+# Query code
+ultrascript-tools-mcp query "find authentication code"
+
+# Find duplicates
+ultrascript-tools-mcp detect_code_clones --minSimilarity 0.8
+
+# Check branch status
+ultrascript-tools-mcp get_branch_status
+```
+
+## Environment Variables
+
+```bash
+# Logging level
+LOG_LEVEL=info
+
+# Embeddings provider
+EMBEDDING_PROVIDER=memory
+
+# Enable GPU
+USE_GPU=true
+```
+
+## Contributing
+
+This package is open source under MIT license.
+
+Repository: https://github.com/faxenoff/ultrascript-tools-mcp
+
+## Support
+
+- **Issues**: https://github.com/faxenoff/ultrascript-tools-mcp/issues
+- **Sponsor**: https://accelerator.slider-ai.ru/
+- **Telegram**: https://t.me/SliderQuery
+
+## License
+
+MIT © faxen
 
 ---
 
-## 📝 **Changelog**
+**Ready to analyze your codebase!** 🚀
 
-### v3.9.0 (2025-11-18) - Tool Naming Unification
-
-**Кросс-совместимость с UltrasharpTools:**
-- 🔄 Добавлены 4 алиаса: `get_members`, `find_duplicates`, `modify_code`, `undo`
-- 🆕 Реализованы 3 новых унифицированных инструмента:
-  - `create_file` - создание файла с автообновлением графа
-  - `rename_symbol` - переименование символа с обновлением всех ссылок
-  - `add_member` - добавление члена в класс/интерфейс
-- 📚 Обновлена документация: CLAUDE.md, README.md
-- 📦 Перенесена документация из корня в Dev.Docs
-
-**Всего**: 45+ инструментов (было 38)
-
-### v2.8.0 (2025-11-13) - ULTRA Performance
-
-**9 критических оптимизаций:**
-- ⚡ better-sqlite3 v12.4.1 - +20% write speed
-- ⚡ Prepared statement caching - +25-30% batch operations
-- ⚡ Adaptive monitoring - 70% CPU reduction в idle
-- ⚡ Hybrid vector search - 90% faster для >10k векторов
-- 🆕 Branch-aware indexing - изолированная БД для каждой Git ветки
-
-**Итог**: 50-70% общее ускорение
-
-[Полный changelog](./ULTRA.md)
-
-### v2.7.4 (2025-11-02) - Clone Reporting
-
-- 🆕 CLI flags: `--help`, `--version`
-- 📊 Улучшенная отчетность по дубликатам
-- 🧪 Интеграционное покрытие clone-report
-
-### v2.6.0 (2025-10-12) - Architecture Upgrade
-
-- 🔄 Provider-based embeddings (memory/ollama/openai/cloudru/huggingface)
-- 🧭 Runtime diagnostics (`get_agent_metrics`, `get_bus_stats`)
-- 🎯 Deterministic SHA256-based IDs
-- 📊 100% MCP method validation (22/22)
-
----
-
-## 🤝 **Contributing**
-
-1. Fork the repository
-2. Следуйте [Agent Governance](docs/AGENTS.md)
-3. Submit pull request
-
-[Contributing Guide](docs/guides/CONTRIBUTING.md) • [Issue Tracker](https://github.com/er77/ultrascript-tools-mcp/issues)
-
----
-
-## 📄 **License**
-
-MIT License - see [LICENSE](LICENSE)
-
-**Links**: [GitHub](https://github.com/er77/ultrascript-tools-mcp) • [NPM](https://www.npmjs.com/package/@er77/ultrascript-tools-mcp) • [MCP Protocol](https://github.com/modelcontextprotocol)
+Install: `npm install -g ultrascript-tools-mcp`

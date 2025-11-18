@@ -1,16 +1,16 @@
 {
   "name": "ultrascript-tools-mcp",
-  "version": "3.9.0",
+  "version": "1.0.0",
   "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
-  "author": "faxen",
-  "homepage": "https://github.com/er77/ultrascript-tools-mcp#readme",
+  "author": "faxenoff",
+  "homepage": "https://github.com/faxenoff/ultrascript-tools-mcp",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/er77/ultrascript-tools-mcp.git"
+    "url": "git+https://github.com/faxenoff/ultrascript-tools-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/er77/ultrascript-tools-mcp/issues"
+    "url": "https://github.com/faxenoff/ultrascript-tools-mcp/issues"
   },
   "keywords": [
     "mcp",
@@ -34,19 +34,16 @@
     "ultrascript-tools-mcp": "dist/index.js"
   },
   "files": [
-    "dist",
-    "src",
-    "external-tools/wasm",
-    "external-tools/native",
-    "scripts",
+    "dist/**/*.js",
+    "dist/**/*.wasm",
+    "dist/**/*.node",
+    "dist/**/*.d.ts",
+    "scripts/postinstall.js",
+    "scripts/setup-embeddings.cmd",
+    "config/embedding-models.json",
+    "config/embedding-models.schema.json",
     "README.md",
-    "LICENSE",
-    "PERFORMANCE_GUIDE.md",
-    "SQLITE_VEC_INSTALLATION.md",
-    "CUDA_INSTALLATION.md",
-    "WEBGPU_INSTALLATION.md",
-    "DEPLOYMENT.md",
-    "CLAUDE.md"
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
@@ -74,6 +71,7 @@
     "smoke:clean": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop --clean",
     "smoke:semantic": "node scripts/smoke-semantic.js /home/er77/_work_fodler/baserow-develop",
     "clean": "rm -rf dist",
+    "postinstall": "node scripts/postinstall.js",
     "prepublishOnly": "npm run build",
     "prepare": "simple-git-hooks"
   },
@@ -84,8 +82,8 @@
     "*.{ts,tsx,js,jsx,json,css,md,yml,yaml}": "biome check --write"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.2.4",
-    "@biomejs/cli-win32-x64": "^2.3.5",
+    "@biomejs/biome": "^2.3.6",
+    "@biomejs/cli-win32-x64": "^2.3.6",
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
     "@rollup/rollup-win32-x64-msvc": "^4.53.2",
@@ -93,52 +91,52 @@
     "@types/bun": "latest",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.10.1",
-    "cmake-js": "^7.3.0",
+    "cmake-js": "^7.4.0",
     "cross-env": "^10.1.0",
     "jest": "^30.2.0",
-    "lint-staged": "^16.2.4",
-    "minimatch": "^10.0.1",
-    "node-addon-api": "^8.2.1",
+    "lint-staged": "^16.2.6",
+    "minimatch": "^10.1.1",
+    "node-addon-api": "^8.5.0",
     "node-gyp": "^12.1.0",
     "simple-git-hooks": "^2.13.1",
-    "ts-jest": "^29.4.4",
-    "tsup": "^8.3.6",
-    "typescript": "^5.9.2"
+    "ts-jest": "^29.4.5",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@huggingface/inference": "^4.13.3",
-    "@modelcontextprotocol/sdk": "^1.5.0",
+    "@modelcontextprotocol/sdk": "^1.22.0",
     "@types/eslint": "^9.6.1",
     "better-sqlite3": "^12.4.1",
-    "eslint": "^9.17.0",
+    "eslint": "^9.39.1",
     "lru-cache": "^11.2.2",
-    "nanoid": "^5.0.0",
+    "nanoid": "^5.1.6",
     "sqlite-vec": "^0.1.6",
-    "tree-sitter": "^0.21.1",
-    "tree-sitter-bash": "^0.21.0",
-    "tree-sitter-c": "0.23.2",
-    "tree-sitter-c-sharp": "0.21.3",
-    "tree-sitter-cpp": "0.23.4",
+    "tree-sitter": "^0.25.0",
+    "tree-sitter-bash": "^0.25.0",
+    "tree-sitter-c": "^0.24.1",
+    "tree-sitter-c-sharp": "^0.23.1",
+    "tree-sitter-cpp": "^0.23.4",
     "tree-sitter-css": "^0.25.0",
-    "tree-sitter-go": "0.23.4",
+    "tree-sitter-go": "^0.25.0",
     "tree-sitter-html": "^0.23.2",
     "tree-sitter-java": "^0.23.5",
-    "tree-sitter-javascript": "0.23.0",
-    "tree-sitter-powershell": "^0.25.9",
-    "tree-sitter-python": "0.23.3",
-    "tree-sitter-rust": "0.21.0",
-    "tree-sitter-swift": "^0.7.1",
-    "tree-sitter-typescript": "0.23.2",
+    "tree-sitter-javascript": "^0.23.0",
+    "tree-sitter-powershell": "^0.25.0",
+    "tree-sitter-python": "^0.25.0",
+    "tree-sitter-rust": "^0.24.0",
+    "tree-sitter-typescript": "^0.23.2",
+    "tree-sitter-kotlin": "^0.3.8",
+    "tree-sitter-swift": "^0.6.0",
     "vectorlite": "^0.2.0",
     "xxhash-wasm": "^1.1.0",
     "yaml": "^2.8.1",
-    "zod": "^3.23.0",
-    "zod-to-json-schema": "^3.23.0"
+    "zod": "^4.1.12",
+    "zod-to-json-schema": "^3.25.0"
   },
   "optionalDependencies": {
     "@webgpu/node": "npm:null@^2.0.0",
     "@webgpu/types": "^0.1.66",
-    "tree-sitter-kotlin": "^0.3.8",
     "webgpu": "^0.3.8"
   },
   "overrides": {

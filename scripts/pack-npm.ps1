@@ -1,0 +1,285 @@
+#!/usr/bin/env pwsh
+<#
+.SYNOPSIS
+    Упаковывает проект в npm-пакет с проверками и резервным копированием
+
+.DESCRIPTION
+    Скрипт выполняет полную упаковку проекта для npm с проверками:
+    - Проверяет наличие всех собранных файлов
+    - Показывает, что войдет в пакет
+    - Создает резервную копию в _bak/
+    - Генерирует .tgz файл через npm pack
+
+.PARAMETER Apply
+    Выполнить реальную упаковку (по умолчанию dry-run)
+
+.PARAMETER SkipBuild
+    Пропустить проверку build (использовать существующие dist/)
+
+.PARAMETER OutputDir
+    Директория для выходного .tgz файла (по умолчанию ./dist-packages)
+
+.EXAMPLE
+    .\scripts\pack-npm.ps1
+    Dry-run режим - показывает что будет упаковано
+
+.EXAMPLE
+    .\scripts\pack-npm.ps1 -Apply
+    Реально упаковывает пакет
+
+.EXAMPLE
+    .\scripts\pack-npm.ps1 -Apply -SkipBuild
+    Упаковывает без проверки build
+#>
+
+param(
+    [switch]$Apply,
+    [switch]$SkipBuild,
+    [string]$OutputDir = "dist-packages"
+)
+
+$ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$BackupRoot = Join-Path $ProjectRoot "_bak"
+$Timestamp = Get-Date -Format "MMddHHmm"
+$BackupDir = Join-Path $BackupRoot "${Timestamp}_pack-npm"
+
+function Write-ColoredHeader {
+    param([string]$Text)
+    Write-Host ""
+    Write-Host ("=" * 70) -ForegroundColor Cyan
+    Write-Host "  $Text" -ForegroundColor Cyan
+    Write-Host ("=" * 70) -ForegroundColor Cyan
+    Write-Host ""
+}
+
+function Write-Step {
+    param([string]$Text)
+    Write-Host "[INFO] $Text" -ForegroundColor Cyan
+}
+
+function Write-Success {
+    param([string]$Text)
+    Write-Host "[OK] $Text" -ForegroundColor Green
+}
+
+function Write-Warning {
+    param([string]$Text)
+    Write-Host "[WARN] $Text" -ForegroundColor Yellow
+}
+
+function Write-Error {
+    param([string]$Text)
+    Write-Host "[FAIL] $Text" -ForegroundColor Red
+}
+
+# Проверка режима
+if (-not $Apply) {
+    Write-ColoredHeader "DRY RUN MODE - Preview Only"
+    Write-Warning "Для реальной упаковки используйте: -Apply"
+} else {
+    Write-ColoredHeader "NPM Package Build"
+}
+
+Push-Location $ProjectRoot
+
+try {
+    # Шаг 1: Проверка package.json
+    Write-Step "Проверка package.json..."
+
+    $PackageJson = Get-Content "package.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+    $PackageName = $PackageJson.name
+    $PackageVersion = $PackageJson.version
+
+    Write-Success "Пакет: $PackageName@$PackageVersion"
+
+    # Шаг 2: Проверка собранных файлов
+    if (-not $SkipBuild) {
+        Write-Step "Проверка собранных файлов..."
+
+        $RequiredFiles = @(
+            "dist/index.js",
+            "dist/external-tools/wasm/diff-simd/diff_simd.js",
+            "dist/external-tools/wasm/vector-ops-simd/vector_ops_simd.js",
+            "scripts/postinstall.js",
+            "scripts/setup-embeddings.cmd",
+            "config/embedding-models.json"
+        )
+
+        $MissingFiles = @()
+        foreach ($File in $RequiredFiles) {
+            if (-not (Test-Path $File)) {
+                $MissingFiles += $File
+            }
+        }
+
+        if ($MissingFiles.Count -gt 0) {
+            Write-Error "Отсутствуют обязательные файлы:"
+            foreach ($File in $MissingFiles) {
+                Write-Host "  - $File" -ForegroundColor Red
+            }
+            Write-Host ""
+            Write-Warning "Запустите сборку: npm run build или .\scripts\build.cmd"
+            exit 1
+        }
+
+        Write-Success "Все обязательные файлы найдены"
+    }
+
+    # Шаг 3: Показать файлы, которые войдут в пакет
+    Write-Step "Файлы, которые войдут в пакет..."
+
+    $FilesSection = $PackageJson.files
+    Write-Host ""
+    Write-Host "Секция 'files' в package.json:" -ForegroundColor Yellow
+    foreach ($Pattern in $FilesSection) {
+        Write-Host "  + $Pattern" -ForegroundColor Gray
+    }
+
+    # Получить реальный список через npm pack --dry-run
+    Write-Host ""
+    Write-Host "Проверка реальных файлов (npm pack --dry-run):" -ForegroundColor Yellow
+
+    $ErrorActionPreference = "Continue"
+    $DryRunOutput = npm pack --dry-run 2>&1 | Out-String
+    $ErrorActionPreference = "Stop"
+
+    # Check for real errors (ignore warnings)
+    $HasRealError = ($DryRunOutput -split "`n") | Where-Object { $_ -match "npm ERR!" }
+    if ($HasRealError) {
+        Write-Host ""
+        Write-Error "npm pack failed with errors:"
+        Write-Host $DryRunOutput -ForegroundColor Red
+        exit 1
+    }
+
+    $FileList = ($DryRunOutput -split "`n") | Where-Object { $_ -match "npm notice \d+\.\d+[kMG]?B" } | ForEach-Object {
+        $_ -replace "npm notice \d+\.\d+[kMG]?B\s+", ""
+    }
+
+    $TotalSizeLine = ($DryRunOutput -split "`n") | Where-Object { $_ -match "unpacked size:" }
+    if ($TotalSizeLine) {
+        $TotalSize = ($TotalSizeLine -replace ".*unpacked size:\s+", "").Trim()
+    } else {
+        $TotalSize = "Unknown"
+    }
+
+    foreach ($File in $FileList) {
+        if ($File -match "package\.json|index\.js|README") {
+            Write-Host "  $File" -ForegroundColor Green
+        } elseif ($File -match "\.wasm|\.node") {
+            Write-Host "  $File" -ForegroundColor Magenta
+        } else {
+            Write-Host "  $File" -ForegroundColor Gray
+        }
+    }
+
+    Write-Host ""
+    Write-Success "Размер распакованного пакета: $TotalSize"
+
+    # Шаг 4: Проверить .npmignore
+    Write-Step "Проверка .npmignore..."
+
+    if (Test-Path ".npmignore") {
+        Write-Success "Найден .npmignore"
+        $IgnoreLines = Get-Content ".npmignore" | Where-Object { $_ -and $_ -notmatch "^\s*#" }
+        Write-Host "  Исключено паттернов: $($IgnoreLines.Count)" -ForegroundColor Gray
+    } else {
+        Write-Warning "Файл .npmignore не найден, используется .gitignore"
+    }
+
+    # Режим dry-run - остановиться здесь
+    if (-not $Apply) {
+        Write-Host ""
+        Write-ColoredHeader "Preview Complete"
+        Write-Host "Для реальной упаковки запустите:" -ForegroundColor Yellow
+        Write-Host "  .\scripts\pack-npm.ps1 -Apply" -ForegroundColor White
+        exit 0
+    }
+
+    # === РЕАЛЬНАЯ УПАКОВКА ===
+
+    # Шаг 5: Создать backup
+    Write-Step "Создание резервной копии..."
+
+    if (-not (Test-Path $BackupRoot)) {
+        New-Item -ItemType Directory -Path $BackupRoot | Out-Null
+    }
+
+    if (-not (Test-Path $BackupDir)) {
+        New-Item -ItemType Directory -Path $BackupDir | Out-Null
+    }
+
+    # Бэкап package.json
+    Copy-Item "package.json" (Join-Path $BackupDir "package.json") -Force
+
+    Write-Success "Backup создан: $BackupDir"
+
+    # Шаг 6: Создать выходную директорию
+    Write-Step "Создание выходной директории..."
+
+    $OutputPath = Join-Path $ProjectRoot $OutputDir
+    if (-not (Test-Path $OutputPath)) {
+        New-Item -ItemType Directory -Path $OutputPath | Out-Null
+    }
+
+    Write-Success "Выходная директория: $OutputDir"
+
+    # Шаг 7: Запустить npm pack
+    Write-Step "Упаковка пакета (npm pack)..."
+
+    $PackOutput = npm pack 2>&1
+    $TarballName = ($PackOutput | Select-String "\.tgz").ToString().Trim()
+
+    if (-not $TarballName) {
+        Write-Error "Не удалось создать .tgz файл"
+        Write-Host $PackOutput
+        exit 1
+    }
+
+    Write-Success "Создан пакет: $TarballName"
+
+    # Шаг 8: Переместить в выходную директорию
+    if (Test-Path $TarballName) {
+        $Destination = Join-Path $OutputPath $TarballName
+        Move-Item $TarballName $Destination -Force
+        Write-Success "Пакет перемещен: $OutputDir\$TarballName"
+
+        # Показать размер файла
+        $FileSize = (Get-Item $Destination).Length
+        $FileSizeMB = [math]::Round($FileSize / 1MB, 2)
+        Write-Host "  Размер: $FileSizeMB MB" -ForegroundColor Gray
+    }
+
+    # Шаг 9: Итоговая информация
+    Write-Host ""
+    Write-ColoredHeader "Package Build Complete"
+
+    Write-Host "Пакет:" -ForegroundColor Cyan
+    Write-Host "  Название: $PackageName" -ForegroundColor White
+    Write-Host "  Версия:   $PackageVersion" -ForegroundColor White
+    Write-Host "  Файл:     $OutputDir\$TarballName" -ForegroundColor White
+    Write-Host ""
+
+    Write-Host "Установка локально:" -ForegroundColor Yellow
+    Write-Host "  npm install ./$OutputDir/$TarballName" -ForegroundColor White
+    Write-Host ""
+
+    Write-Host "Публикация:" -ForegroundColor Yellow
+    Write-Host "  npm publish ./$OutputDir/$TarballName" -ForegroundColor White
+    Write-Host "  или" -ForegroundColor Gray
+    Write-Host "  npm publish" -ForegroundColor White
+    Write-Host ""
+
+    Write-Host "Проверка содержимого:" -ForegroundColor Yellow
+    Write-Host "  tar -tzf ./$OutputDir/$TarballName" -ForegroundColor White
+    Write-Host ""
+
+} catch {
+    Write-Error "Ошибка при упаковке: $_"
+    exit 1
+} finally {
+    Pop-Location
+}

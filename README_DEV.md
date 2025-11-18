@@ -1,8 +1,23 @@
-﻿# UltraScript Tools MCP Server
+```
+        ██  ██
+        ██  ██  ██    ██████ █████▄  ▄████▄
+        ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
+        ██  ██  ██      ██   ██   ██ ██  ██
+        ██  ██  ██████  ██   ██   ██ ██  ██
+        ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄
+                         ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
+                         ▄▄██▀ ▀████ ██ ██ ██ ██     ██
 
-[![npm version](https://badge.fury.io/js/@er77%2Fultrascript-tools-mcp.svg)](https://www.npmjs.com/package/@er77/ultrascript-tools-mcp)
+                              ░▒▓█████▓▒░
+
+     ╔═════════════════════════════════════════════════════╗
+     ║            ULTRASCRIPT TOOLS MCP SERVER             ║
+     ╚═════════════════════════════════════════════════════╝
+```
+
+[![npm version](https://badge.fury.io/js/ultrascript-tools-mcp.svg)](https://www.npmjs.com/package/ultrascript-tools-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
 
 [Sponsor https://accelerator.slider-ai.ru/ ](https://t.me/SliderQuery)
 
@@ -16,7 +31,7 @@
 
 Code Graph RAG делает именно это. Он анализирует вашу кодовую базу, понимает связи между компонентами и отвечает на вопросы на естественном языке через Claude, Gemini или другие AI-ассистенты.
 
-**🌟 10 языков** | **⚡ В 5.5 раз быстрее** встроенных инструментов Claude | **🔍 Умный поиск** | **📊 24 готовых инструмента**
+**🌟 10 языков** | **⚡ В 5.5 раз быстрее** встроенных инструментов Claude | **🔍 Умный поиск** | **📊 45+ готовых инструментов**
 
 ---
 
@@ -32,6 +47,7 @@ Code Graph RAG делает именно это. Он анализирует в�
 - "Что сломается, если я изменю класс UserManager?"
 - "Какие компоненты самые сложные и требуют рефакторинга?"
 - "Где используется эта функция?"
+- "Проанализируй хаос управления состоянием 'token' в проекте" 🆕
 
 **Ответы приходят за секунды**, а не минуты ручного поиска.
 
@@ -166,6 +182,21 @@ TypeScript, JavaScript, Python, C#, C/C++, Rust, Go, Java, VBA
 ### Анализ нескольких проектов одновременно
 Работайте с frontend и backend одновременно
 
+### ✨ Безопасная модификация кода
+Автоматические снапшоты перед изменениями + мгновенный откат. Модификация по ID сущности с валидацией до/после
+
+### 🔄 Токен-эффективные операции с файлами
+Copy, rename, split, synthesize файлов с автообновлением импортов и графа. Экономия 85-95% токенов
+
+### ✅ Автоматическая валидация кода
+ESLint/Pylint интеграция с отчетами до/после изменений. Batch-валидация директорий
+
+### 🔍 Продвинутый поиск (Pattern Search)
+4 режима поиска: по сущностям, контенту, семантике, гибридный. SIMD-ускорение. Фильтрация по фреймворкам
+
+### 📊 Автоопределение технологий
+Автоматическое распознавание языков, фреймворков, build tools и зависимостей. Контекст для embeddings
+
 ---
 
 ## 📦 **Быстрый старт**
@@ -174,10 +205,10 @@ TypeScript, JavaScript, Python, C#, C/C++, Rust, Go, Java, VBA
 
 ```bash
 # Установить глобально
-npm install -g @er77/ultrascript-tools-mcp
+npm install -g ultrascript-tools-mcp
 
 # Или запустить без установки
-npx @er77/ultrascript-tools-mcp /путь/к/вашему/проекту
+npx ultrascript-tools-mcp /путь/к/вашему/проекту
 ```
 
 ### Интеграция с Claude Desktop (1 минута)
@@ -186,7 +217,7 @@ npx @er77/ultrascript-tools-mcp /путь/к/вашему/проекту
 # Автоматическая настройка
 npx @modelcontextprotocol/inspector add code-graph-rag \
   --command "npx" \
-  --args "@er77/ultrascript-tools-mcp /путь/к/проекту"
+  --args "faxenoff/ultrascript-tools-mcp /путь/к/проекту"
 ```
 
 **Или вручную** в конфиге Claude Desktop:
@@ -195,7 +226,7 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
   "mcpServers": {
     "code-graph-rag": {
       "command": "npx",
-      "args": ["@er77/ultrascript-tools-mcp", "/путь/к/проекту"]
+      "args": ["faxenoff/ultrascript-tools-mcp", "/путь/к/проекту"]
     }
   }
 }
@@ -270,6 +301,9 @@ git:
 | **Go** | Пакеты, функции, структуры, интерфейсы, горутины | ✅ 90% |
 | **Java** | Классы, интерфейсы, records (Java 14+), дженерики | ✅ 90% |
 | **VBA** | Модули, функции, процедуры, типы | ✅ 80% |
+| **PowerShell** | Функции, фильтры, классы, модули, [CmdletBinding] | ✅ 85% |
+| **Bash/Shell** | Функции, переменные, source/import, pipelines | ✅ 85% |
+| **Batch/CMD** | Labels, CALL, SET, GOTO, подпрограммы | ✅ 75% |
 
 **Полиглот-проекты?** Без проблем! Анализирует связи между разными языками.
 
@@ -280,7 +314,7 @@ git:
 ### Claude Desktop
 ```bash
 npx @modelcontextprotocol/inspector add code-graph-rag \
-  --command "npx" --args "@er77/ultrascript-tools-mcp /проект"
+  --command "npx" --args "faxenoff/ultrascript-tools-mcp /проект"
 ```
 
 ### Gemini CLI
@@ -326,22 +360,47 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 - Hybrid vector search - 90% быстрее для >10k векторов
 - **Adaptive backend switching** - автоматический выбор между sqlite-vec и vectorlite по размеру базы
 
-### 24 MCP метода
+### 45+ MCP методов
+
+**Унифицированные инструменты (кросс-совместимость с UltrasharpTools):**
+- `get_members` / `list_file_entities` - список сущностей в файле
+- `find_duplicates` / `detect_code_clones` - поиск дубликатов кода
+- `modify_code` / `modify_entity_code` - модификация кода по ID
+- `undo` / `rollback_snapshot` - откат изменений
+- `create_file` - 🆕 создание нового файла с обновлением графа
+- `rename_symbol` - 🆕 переименование символа с обновлением ссылок
+- `add_member` - 🆕 добавление члена в класс/интерфейс
 
 **Анализ кода:**
 - `index` - индексация кодовой базы
 - `semantic_search` - семантический поиск
 - `find_similar_code` - поиск похожего кода
-- `detect_code_clones` - обнаружение дубликатов
 - `jscpd_detect_clones` - JSCPD-based поиск (без ML)
 - `suggest_refactoring` - AI рефакторинг
+- `pattern_search` - 🆕 продвинутый поиск (entity/content/semantic/hybrid)
+- `detect_technology_stack` - 🆕 автоопределение стека и фреймворков
+
+**Модификация кода:**
+- `create_snapshot` - 🆕 создание снапшота для отката
+- `list_snapshots` - 🆕 список доступных снапшотов
+- `cleanup_snapshots` - 🆕 удаление старых снапшотов
+
+**Операции с файлами:**
+- `copy_file` - 🆕 копирование с обновлением графа
+- `rename_file` - 🆕 переименование с автообновлением импортов
+- `split_file` - 🆕 разделение файла на модули
+- `synthesize_files` - 🆕 объединение файлов в один
+
+**Валидация кода:**
+- `validate_file` - 🆕 валидация файла (ESLint/Pylint)
+- `validate_directory` - 🆕 batch-валидация директории
 
 **Граф зависимостей:**
 - `get_graph` - получение графа сущностей
 - `list_entity_relationships` - связи сущности
-- `list_file_entities` - сущности в файле
 - `analyze_code_impact` - анализ влияния изменений
 - `analyze_hotspots` - поиск проблемных зон
+- `analyze_state_chaos` - 🆕 **анализ хаоса управления состоянием** (TS/Angular)
 
 **Git ветки:**
 - `list_branches` - список проиндексированных веток
@@ -421,6 +480,19 @@ bun install
 
 ## 📝 **Changelog**
 
+### v3.9.0 (2025-11-18) - Tool Naming Unification
+
+**Кросс-совместимость с UltrasharpTools:**
+- 🔄 Добавлены 4 алиаса: `get_members`, `find_duplicates`, `modify_code`, `undo`
+- 🆕 Реализованы 3 новых унифицированных инструмента:
+  - `create_file` - создание файла с автообновлением графа
+  - `rename_symbol` - переименование символа с обновлением всех ссылок
+  - `add_member` - добавление члена в класс/интерфейс
+- 📚 Обновлена документация: CLAUDE.md, README.md
+- 📦 Перенесена документация из корня в Dev.Docs
+
+**Всего**: 45+ инструментов (было 38)
+
 ### v2.8.0 (2025-11-13) - ULTRA Performance
 
 **9 критических оптимизаций:**
@@ -463,4 +535,4 @@ bun install
 
 MIT License - see [LICENSE](LICENSE)
 
-**Links**: [GitHub](https://github.com/faxenoff/ultrascript-tools-mcp) • [NPM](https://www.npmjs.com/package/@er77/ultrascript-tools-mcp) • [MCP Protocol](https://github.com/modelcontextprotocol)
+**Links**: [GitHub](https://github.com/faxenoff/ultrascript-tools-mcp) • [NPM](https://www.npmjs.com/package/faxenoff/ultrascript-tools-mcp) • [MCP Protocol](https://github.com/modelcontextprotocol)

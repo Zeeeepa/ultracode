@@ -1,0 +1,87 @@
+# Development files
+.git/
+.github/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Source maps (не нужны в production)
+**/*.map
+dist/**/*.map
+
+# Build artifacts from external-tools
+external-tools/wasm/*/target/
+external-tools/wasm/*/Cargo.lock
+external-tools/native/*/build/
+external-tools/native/*/node_modules/
+external-tools/native/*/*.node
+external-tools/**/*.o
+external-tools/**/*.obj
+external-tools/**/*.exp
+external-tools/**/*.lib
+external-tools/**/*.pdb
+external-tools/**/*.ilk
+
+# Test files
+tests/
+benchmarks/
+coverage/
+.nyc_output/
+
+# Documentation (keep main docs, exclude internal)
+docs/
+.memory_bank/
+Prompts/
+
+# Temporary files
+_bak/
+tmp/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Development configs
+.eslintrc*
+.prettierrc*
+.editorconfig
+tsconfig.json
+tsup.config.ts
+biome.json
+jest.config.*
+.commitlintrc*
+
+# Git
+.gitignore
+.gitattributes
+.git-hooks/
+
+# CI/CD
+.travis.yml
+.gitlab-ci.yml
+azure-pipelines.yml
+circle.yml
+
+# Examples and fixtures
+examples/
+tests/fixtures/
+
+# Build scripts (keep setup-embeddings, exclude dev scripts)
+scripts/smoke-*.js
+scripts/build-wasm.*
+scripts/build.cmd
+scripts/show-build-summary.ps1
+scripts/pack-npm.ps1
+
+# Lock files (users should use their own)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+
+# Environment
+.env
+.env.*
+!.env.example
