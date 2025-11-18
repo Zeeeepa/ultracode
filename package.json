@@ -75,8 +75,7 @@
     "smoke:semantic": "node scripts/smoke-semantic.js /home/er77/_work_fodler/baserow-develop",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build",
-    "prepare": "simple-git-hooks",
-    "postinstall": "node scripts/postinstall-gpu.js"
+    "prepare": "simple-git-hooks"
   },
   "simple-git-hooks": {
     "pre-commit": "npx lint-staged && npm run typecheck"
