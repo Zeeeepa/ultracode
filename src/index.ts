@@ -1123,6 +1123,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: zodToJsonSchema(ListEntitiesToolSchema) as any,
       },
       {
+        name: "get_members",
+        description:
+          "Alias for list_file_entities. List members/entities within a file. Unified naming with UltrasharpTools.",
+        inputSchema: zodToJsonSchema(ListEntitiesToolSchema) as any,
+      },
+      {
         name: "list_entity_relationships",
         description:
           "List outgoing relationships for an entity (imports, references, containment). Provide either the entity id (preferred) or name+file path to inspect its dependencies.",
@@ -1164,6 +1170,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "detect_code_clones",
         description: "Find duplicate or similar code blocks across the codebase",
+        inputSchema: zodToJsonSchema(DetectCodeClonesSchema) as any,
+      },
+      {
+        name: "find_duplicates",
+        description:
+          "Alias for detect_code_clones. Find potential duplicate code. Unified naming with UltrasharpTools.",
         inputSchema: zodToJsonSchema(DetectCodeClonesSchema) as any,
       },
       {
@@ -1258,6 +1270,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: zodToJsonSchema(RollbackSnapshotSchema) as any,
       },
       {
+        name: "undo",
+        description:
+          "Alias for rollback_snapshot. Undo last changes by reverting to snapshot. Unified naming with UltrasharpTools.",
+        inputSchema: zodToJsonSchema(RollbackSnapshotSchema) as any,
+      },
+      {
         name: "list_snapshots",
         description: "List available snapshots with creation time and description.",
         inputSchema: zodToJsonSchema(ListSnapshotsSchema) as any,
@@ -1272,6 +1290,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "modify_entity_code",
         description:
           "Modify code of a specific entity by ID. Automatically creates snapshot, validates before/after, updates embeddings, and can rollback on error. Default preview mode shows changes without applying.",
+        inputSchema: zodToJsonSchema(ModifyEntityCodeSchema) as any,
+      },
+      {
+        name: "modify_code",
+        description:
+          "Alias for modify_entity_code. Modify entity code with validation. Unified naming with UltrasharpTools.",
         inputSchema: zodToJsonSchema(ModifyEntityCodeSchema) as any,
       },
       // File Operations Tools
@@ -1652,6 +1676,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         };
       }
 
+      case "get_members": // Alias for list_file_entities (unified with UltrasharpTools)
       case "list_file_entities": {
         const { filePath, entityTypes } = ListEntitiesToolSchema.parse(args);
         const targetFilePath = normalizeInputPath(filePath);
@@ -2118,6 +2143,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
       // analyze_code_impact handled below (single implementation with fallback)
 
+      case "find_duplicates": // Alias for detect_code_clones (unified with UltrasharpTools)
       case "detect_code_clones": {
         const { minSimilarity } = DetectCodeClonesSchema.parse(args);
         await ensureSemanticsReady(1, 20000);
@@ -3201,6 +3227,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         };
       }
 
+      case "undo": // Alias for rollback_snapshot (unified with UltrasharpTools)
       case "rollback_snapshot": {
         const { snapshotId } = RollbackSnapshotSchema.parse(args);
         const vm = await getVersionManager();
@@ -3271,6 +3298,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       // Code Modification Tool
+      case "modify_code": // Alias for modify_entity_code (unified with UltrasharpTools)
       case "modify_entity_code": {
         const params = ModifyEntityCodeSchema.parse(args);
         const modifier = await getCodeModifier();
