@@ -1,0 +1,384 @@
+﻿@echo off
+setlocal enabledelayedexpansion
+
+REM Clear screen for clean output
+cls
+
+REM ASCII Art Banner - BBS Graffiti Style
+echo.
+echo.
+echo         ██  ██
+echo         ██  ██  ██    ██████ █████▄  ▄████▄
+echo         ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
+echo         ██  ██  ██      ██   ██   ██ ██  ██
+echo         ██  ██  ██████  ██   ██   ██ ██  ██
+echo         ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄
+echo                          ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
+echo                          ▄▄██▀ ▀████ ██ ██ ██ ██     ██
+echo.
+echo                               ░▒▓█████▓▒░
+echo.
+echo      ╔═════════════════════════════════════════════════════╗
+echo      ║            ULTRASCRIPT TOOLS MCP SERVER             ║
+echo      ╚═════════════════════════════════════════════════════╝
+echo.
+echo.
+
+REM Build script for UltraScript Tools MCP Server using Bun
+REM Compiles TypeScript to dist/ directory using tsup with Bun runtime
+
+REM Get project root (parent of Dev.Scripts)
+set "SCRIPT_DIR=%~dp0"
+REM Normalize path by using pushd/popd trick
+pushd "%SCRIPT_DIR%.."
+set "PROJECT_ROOT=%CD%"
+popd
+
+REM Check if Bun is installed
+where bun >nul 2>nul
+if errorlevel 1 (
+    echo ERROR: Bun is not installed!
+    echo.
+    echo Please install Bun from: https://bun.sh
+    echo   Windows: powershell -c "irm bun.sh/install.ps1 | iex"
+    echo   Unix:    curl -fsSL https://bun.sh/install ^| bash
+    echo.
+    exit /b 1
+)
+
+REM Show Bun version
+for /f "tokens=*" %%v in ('bun --version') do set BUN_VERSION=%%v
+echo Using Bun v%BUN_VERSION%
+echo.
+
+REM Check if node_modules exists, install with Bun if not
+if not exist "node_modules\" (
+    echo node_modules not found, installing dependencies with Bun...
+    bun install
+    echo.
+)
+
+REM Run TypeScript type checking first
+echo [1/3] Running TypeScript type check...
+bun run typecheck
+if errorlevel 1 (
+    echo.
+    echo ERROR: TypeScript type check failed!
+    echo Please fix type errors before building.
+    exit /b 1
+)
+echo Type check passed!
+echo.
+
+REM Build WASM modules if Rust/wasm-pack available
+where wasm-pack >nul 2>nul
+if not errorlevel 1 (
+    echo [INFO] Building WASM modules with Rust/wasm-pack...
+
+    REM Use PowerShell script with absolute path
+    if exist "%PROJECT_ROOT%\scripts\build-wasm.ps1" (
+        powershell -ExecutionPolicy Bypass -File "%PROJECT_ROOT%\scripts\build-wasm.ps1"
+        if errorlevel 1 (
+            echo [WARNING] WASM build failed, continuing with TypeScript build...
+        ) else (
+            echo.
+            echo [INFO] WASM modules built successfully
+        )
+    ) else (
+        echo [WARNING] build-wasm.ps1 not found, skipping WASM build
+    )
+
+    echo.
+)
+
+REM Build CUDA native module if available (Windows only)
+if exist "%PROJECT_ROOT%\native\cuda\" (
+    echo [INFO] Checking for CUDA Toolkit and Visual Studio Build Tools...
+
+    REM Detect CUDA Toolkit
+    set "CUDA_PATH="
+    if exist "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin\nvcc.exe" (
+        set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0"
+    ) else if exist "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0\bin\nvcc.exe" (
+        set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0"
+    ) else if exist "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\bin\nvcc.exe" (
+        set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8"
+    )
+
+    if defined CUDA_PATH (
+        echo Found CUDA Toolkit: !CUDA_PATH!
+
+        REM Check for CMake
+        where cmake >nul 2>nul
+        if errorlevel 1 (
+            echo [WARNING] CMake not found - CUDA build skipped
+            echo.
+            echo To enable CUDA acceleration ^(100-200x faster^):
+            echo   1. Install CMake: https://cmake.org/download/
+            echo   2. Add CMake to PATH
+            echo   3. Re-run this build script
+            echo.
+        ) else (
+            REM Check for Visual Studio C++ compiler
+            where cl.exe >nul 2>nul
+            if errorlevel 1 (
+                echo [INFO] Visual Studio C++ compiler not in PATH, searching...
+
+                REM Try to auto-initialize Visual Studio environment
+                REM Priority: 1) VS Build Tools 2022 via vswhere, 2) VS Insiders
+                set "VS_PATH="
+
+                REM First try vswhere to find VS 2022 Build Tools or any compatible VS installation
+                set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+                if exist "!VSWHERE!" (
+                    for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+                        set "VS_PATH=%%i"
+                        echo [INFO] Found Visual Studio at: !VS_PATH!
+                    )
+                )
+
+                REM If vswhere didn't find anything, try VS Insiders manual path
+                if not defined VS_PATH (
+                    if exist "C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\Tools\VsDevCmd.bat" (
+                        set "VS_PATH=C:\Program Files\Microsoft Visual Studio\18\Insiders"
+                        echo [INFO] Found Visual Studio Insiders at: !VS_PATH!
+                    )
+                )
+
+                if defined VS_PATH (
+                    if exist "!VS_PATH!\Common7\Tools\VsDevCmd.bat" (
+                        echo [INFO] Initializing VS environment...
+                        call "!VS_PATH!\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul 2>nul
+
+                        REM Check again after initialization
+                        where cl.exe >nul 2>nul
+                        if errorlevel 1 (
+                            echo [WARNING] Failed to initialize Visual Studio environment
+                            goto :skip_cuda_build
+                        )
+                        echo [INFO] Visual Studio environment initialized successfully
+                    ) else (
+                        echo [WARNING] VsDevCmd.bat not found at: !VS_PATH!
+                        goto :skip_cuda_build
+                    )
+                ) else (
+                    echo [WARNING] Visual Studio not found
+                    echo.
+                    echo To enable CUDA acceleration ^(100-200x faster^):
+                    echo   1. Install Visual Studio 2022 Build Tools
+                    echo      Download: https://aka.ms/vs/17/release/vs_BuildTools.exe
+                    echo   2. Select component: "Desktop development with C++"
+                    echo.
+                    echo Or make sure Visual Studio Insiders is installed at:
+                    echo   C:\Program Files\Microsoft Visual Studio\18\Insiders
+                    echo.
+                    goto :skip_cuda_build
+                )
+            )
+
+            REM If we reach here, cl.exe is available (either was in PATH or initialized)
+            echo Found CMake:
+            cmake --version | findstr /C:"version"
+            echo Found Visual Studio C++ compiler
+            echo.
+            echo [2/4] Building CUDA native module...
+
+            REM Set CUDA working directory (use delayed expansion for nested if blocks)
+            set "CUDA_DIR=!PROJECT_ROOT!\native\cuda"
+
+            REM Install dependencies if node_modules doesn't exist
+            if not exist "!CUDA_DIR!\node_modules\" (
+                echo [INFO] Installing CUDA addon dependencies...
+                pushd "!CUDA_DIR!"
+                call npm install --legacy-peer-deps
+                popd
+            )
+
+            REM Re-set CUDA_DIR after npm install (call may reset environment)
+            set "CUDA_DIR=!PROJECT_ROOT!\native\cuda"
+
+            REM Install cmake-js if not present
+            where cmake-js >nul 2>nul
+            if errorlevel 1 (
+                echo Installing cmake-js...
+                call npm install -g cmake-js
+            )
+
+            REM Build with cmake-js using Ninja generator (works with any VS version)
+            REM First, initialize VS environment to get compiler in PATH
+            call "!VS_PATH!\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul 2>nul
+
+            REM Set CMake environment variables
+            set "CMAKE_GENERATOR=Ninja"
+            set "CMAKE_BUILD_TYPE=Release"
+            set "CMAKE_CUDA_COMPILER=!CUDA_PATH!\bin\nvcc.exe"
+            set "CUDAToolkit_ROOT=!CUDA_PATH!"
+            set "CUDA_TOOLKIT_ROOT_DIR=!CUDA_PATH!"
+
+            REM Check if Ninja is available
+            where ninja >nul 2>nul
+            if errorlevel 1 (
+                echo [INFO] Installing Ninja build system...
+                call npm install -g ninja-build
+            )
+
+            REM Build with Ninja generator - use separate cmd to avoid junction issues
+            REM Use cmd /c with explicit cd to work around junction/symlink issues
+            cmd /c "cd /d !CUDA_DIR! && cmake-js rebuild --CDCUDA_TOOLKIT_ROOT_DIR=!CUDA_PATH! --arch=x64 --generator=Ninja"
+            set "BUILD_EXIT_CODE=!ERRORLEVEL!"
+
+            set "EXIT_CODE_TEMP=!BUILD_EXIT_CODE!"
+            if !EXIT_CODE_TEMP! neq 0 (
+                echo [WARNING] CUDA build failed - exit code: !EXIT_CODE_TEMP!
+                echo [WARNING] Continuing without GPU acceleration...
+                set "CUDA_BUILD_SUCCESS=0"
+            ) else (
+                echo CUDA module built successfully!
+                set "CUDA_BUILD_SUCCESS=1"
+                echo [INFO] CUDA module will be copied to dist after TypeScript build
+            )
+            echo.
+        )
+    ) else (
+        echo [SKIP] CUDA Toolkit not found at standard paths
+        echo.
+        echo To enable CUDA acceleration ^(100-200x faster^):
+        echo   1. Install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads
+        echo      ^(Requires NVIDIA GPU - RTX 2060+ recommended^)
+        echo   2. Install to: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\
+        echo   3. Re-run this build script
+        echo.
+    )
+) else (
+    echo [SKIP] native\cuda directory not found
+    echo.
+)
+
+:skip_cuda_build
+
+REM Run build with Bun
+echo [3/4] Building with tsup (Bun runtime)...
+bun run build
+if errorlevel 1 (
+    echo.
+    echo ERROR: Build failed!
+    exit /b 1
+)
+echo Build completed successfully!
+echo.
+
+REM Copy CUDA module if build was successful (after tsup to avoid it being cleaned)
+if defined CUDA_BUILD_SUCCESS (
+    if "!CUDA_BUILD_SUCCESS!"=="1" (
+        echo [INFO] Copying CUDA module to dist...
+        set "DIST_CUDA_DIR=!PROJECT_ROOT!\dist\native\cuda"
+        if not exist "!DIST_CUDA_DIR!" mkdir "!DIST_CUDA_DIR!"
+
+        for %%f in ("!CUDA_DIR!\build\*.node") do (
+            copy /Y "%%f" "!DIST_CUDA_DIR!\" >nul
+            if errorlevel 1 (
+                echo [WARNING] Failed to copy CUDA module
+            ) else (
+                echo ✓ CUDA module copied to dist\native\cuda\
+            )
+        )
+        echo.
+    )
+)
+
+REM Show output
+echo [4/4] Build artifacts:
+echo.
+if exist "dist\index.js" (
+    echo ✓ dist\index.js
+    for %%A in (dist\index.js) do echo   Size: %%~zA bytes
+)
+if exist "dist\index.js.map" (
+    echo ✓ dist\index.js.map
+)
+if exist "dist\index.d.ts" (
+    echo ✓ dist\index.d.ts
+)
+echo.
+
+REM Count native modules
+set /a NODE_COUNT=0
+for %%f in (dist\*.node) do set /a NODE_COUNT+=1
+if %NODE_COUNT% gtr 0 (
+    echo ✓ %NODE_COUNT% native modules (.node files)
+    echo.
+)
+
+echo ========================================
+echo Build Summary
+echo ========================================
+echo.
+
+REM Check TypeScript build
+if exist "dist\index.js" (
+    echo ✓ TypeScript Build: SUCCESS
+) else (
+    echo ✗ TypeScript Build: FAILED
+)
+
+REM Check WASM modules
+set WASM_COUNT=0
+set WASM_DIFF=0
+set WASM_VECTOR=0
+if exist "dist\wasm\diff-simd\diff_simd.js" (
+    set /a WASM_COUNT+=1
+    set WASM_DIFF=1
+)
+if exist "dist\wasm\vector-ops-simd\vector_ops_simd.js" (
+    set /a WASM_COUNT+=1
+    set WASM_VECTOR=1
+)
+
+if %WASM_COUNT% equ 2 (
+    echo ✓ WASM Modules: SUCCESS ^(2/2^)
+    echo   - diff-simd
+    echo   - vector-ops-simd
+) else if %WASM_COUNT% equ 1 (
+    echo ⚠ WASM Modules: PARTIAL ^(1/2^)
+    if %WASM_DIFF% equ 1 echo   - diff-simd: built
+    if %WASM_DIFF% equ 0 echo   - diff-simd: NOT BUILT
+    if %WASM_VECTOR% equ 1 echo   - vector-ops-simd: built
+    if %WASM_VECTOR% equ 0 echo   - vector-ops-simd: NOT BUILT
+) else (
+    echo ✗ WASM Modules: NOT BUILT
+    echo   - Requires Rust/wasm-pack ^(optional^)
+    echo   - Run: cargo install wasm-pack
+)
+
+REM Check CUDA module
+if exist "dist\native\cuda\ultrascript_cuda.node" (
+    echo ✓ CUDA Module: SUCCESS
+    for %%A in (dist\native\cuda\ultrascript_cuda.node) do echo   - ultrascript_cuda.node ^(%%~zA bytes^)
+    echo   - GPU acceleration enabled
+) else (
+    echo ✗ CUDA Module: NOT BUILT
+    echo   - CPU-only mode
+)
+
+echo.
+echo ========================================
+echo Build completed with Bun
+echo ========================================
+echo.
+echo Output directory: dist\
+echo Entry point: dist\index.js
+echo.
+echo To run the server with Bun:
+echo   bun dist\index.js [directory]
+echo.
+echo To run with Node.js:
+echo   node dist\index.js [directory]
+echo.
+echo Why Bun?
+echo   • 3x faster package installation
+echo   • 2x faster build times
+echo   • Native TypeScript support
+echo   • Drop-in Node.js replacement
+echo.
+
+exit /b 0
