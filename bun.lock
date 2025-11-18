@@ -14,6 +14,7 @@
         "nanoid": "^5.0.0",
         "sqlite-vec": "^0.1.6",
         "tree-sitter": "^0.21.1",
+        "tree-sitter-bash": "^0.21.0",
         "tree-sitter-c": "0.23.2",
         "tree-sitter-c-sharp": "0.21.3",
         "tree-sitter-cpp": "0.23.4",
@@ -22,6 +23,7 @@
         "tree-sitter-html": "^0.23.2",
         "tree-sitter-java": "^0.23.5",
         "tree-sitter-javascript": "0.23.0",
+        "tree-sitter-powershell": "^0.25.9",
         "tree-sitter-python": "0.23.3",
         "tree-sitter-rust": "0.21.0",
         "tree-sitter-swift": "^0.7.1",
@@ -1292,6 +1294,8 @@
 
     "tree-sitter": ["tree-sitter@0.21.1", "", { "dependencies": { "node-addon-api": "^8.0.0", "node-gyp-build": "^4.8.0" } }, "sha512-7dxoA6kYvtgWw80265MyqJlkRl4yawIjO7S5MigytjELkX43fV2WsAXzsNfO7sBpPPCF5Gp0+XzHk0DwLCq3xQ=="],
 
+    "tree-sitter-bash": ["tree-sitter-bash@0.21.0", "", { "dependencies": { "node-addon-api": "^7.1.0", "node-gyp-build": "^4.8.0", "web-tree-sitter": "^0.21.0" }, "peerDependencies": { "tree-sitter": "^0.21.0" } }, "sha512-UuXf+wliu1mmS/O2Iz7OQghExM4a+lk+GaVPndZVpAJnFuzanaN33UcHOsrmngHxaOXHz5JSZrwp6i2qM/PKag=="],
+
     "tree-sitter-c": ["tree-sitter-c@0.23.2", "", { "dependencies": { "node-addon-api": "^8.2.2", "node-gyp-build": "^4.8.2" }, "peerDependencies": { "tree-sitter": "^0.21.1" }, "optionalPeers": ["tree-sitter"] }, "sha512-9kADOx31AF94DHcrsMGW0zM/2LS6v7wFkPHPVm7RQU+vYVVZMKZ2FJ9e99pm5feqsAcjUzB9CarqDLgRT1Fe/w=="],
 
     "tree-sitter-c-sharp": ["tree-sitter-c-sharp@0.21.3", "", { "dependencies": { "node-addon-api": "^8.0.0", "node-gyp-build": "^4.8.1" }, "peerDependencies": { "tree-sitter": "^0.21.0" } }, "sha512-TVsl5EhmqetO/mhzDPVnMK6TPFnpNMKP0OTNuAQIprshk5Hx672ODRxoIoG5WqvUUlsnBu8J0zmn35hmJqelsA=="],
@@ -1311,6 +1315,8 @@
     "tree-sitter-javascript": ["tree-sitter-javascript@0.23.0", "", { "dependencies": { "node-addon-api": "^8.1.0", "node-gyp-build": "^4.8.2" }, "peerDependencies": { "tree-sitter": "^0.21.1" }, "optionalPeers": ["tree-sitter"] }, "sha512-xw0nc8P/u+uhoRuKmalcv/3OGGLtaeVWx/NpqAHXPvJsdSPdkx+IoRod4W4hw1zDNj1V6xzJgdATk0IPNUNy3w=="],
 
     "tree-sitter-kotlin": ["tree-sitter-kotlin@0.3.8", "", { "dependencies": { "node-addon-api": "^7.1.0", "node-gyp-build": "^4.8.0" }, "peerDependencies": { "tree-sitter": "^0.21.0" } }, "sha512-A4obq6bjzmYrA+F0JLLoheFPcofFkctNaZSpnDd+GPn1SfVZLY4/GG4C0cYVBTOShuPBGGAOPLM1JWLZQV4m1g=="],
+
+    "tree-sitter-powershell": ["tree-sitter-powershell@0.25.9", "", { "dependencies": { "node-addon-api": "^7.1.0", "node-gyp-build": "^4.8.0" }, "peerDependencies": { "tree-sitter": "^0.25.0" }, "optionalPeers": ["tree-sitter"] }, "sha512-+qLCFGyWV8b6ZvY7FdF7k8WgdWPEkcNYK2tpjlqAsb3qjbFkjnMhkvcOrojTgr9HfU56tdxaYVFqEYys6BYZnA=="],
 
     "tree-sitter-python": ["tree-sitter-python@0.23.3", "", { "dependencies": { "node-addon-api": "^8.2.1", "node-gyp-build": "^4.8.2" }, "peerDependencies": { "tree-sitter": "^0.21.1" }, "optionalPeers": ["tree-sitter"] }, "sha512-QtxZBwFllhS2XXX3zMwsWhAajMZ36h6rD0TuV1fmNifBI3vqEW8QcXwvzotipdMe6zZiDSZRLezSTl01KVlcfA=="],
 
@@ -1367,6 +1373,8 @@
     "vectorlite": ["vectorlite@0.2.0", "", { "optionalDependencies": { "@1yefuwang1/vectorlite-darwin-arm64": "0.2.0", "@1yefuwang1/vectorlite-darwin-x64": "0.2.0", "@1yefuwang1/vectorlite-linux-x64": "0.2.0", "@1yefuwang1/vectorlite-win32-x64": "0.2.0" } }, "sha512-hHFAISJuUblqTecD/EtNmEhIm4P6vTax4tswN486qCBDtse9uqBPLGdUsW4+CSjyG9Zoc0Jxj+dubQSZjvYGqg=="],
 
     "walker": ["walker@1.0.8", "", { "dependencies": { "makeerror": "1.0.12" } }, "sha512-ts/8E8l5b7kY0vlWLewOkDXMmPdLcVV4GmOQLyxuSswIJsweeFZtAsMF7k1Nszz+TYBQrlYRmzOnr398y1JemQ=="],
+
+    "web-tree-sitter": ["web-tree-sitter@0.21.0", "", {}, "sha512-iJ+QJ6ikN9D9cG7Kh6q3KtAstYFUQbYZ8OjuPEJYWfj2kLrmp5I3C2n6WjE1Y3jvj7nJbkcrJytJGWUEhCxn+g=="],
 
     "webgpu": ["webgpu@0.3.8", "", { "dependencies": { "@webgpu/types": "^0.1.65", "debug": "^4.4.0" } }, "sha512-g2YwfCvzHoQHwSEY3fS95sVKdo/JVLL9AnicJyRQBPwWm4j7zISHvk6P85HaWP0LhtBV+aopsShKIaDi4smECg=="],
 
@@ -1554,7 +1562,11 @@
 
     "tinyglobby/picomatch": ["picomatch@4.0.2", "", {}, "sha512-M7BAV6Rlcy5u+m6oPhAPFgJTzAioX/6B0DxyvDlo9l8+T3nLKbrczg2WLUyzd45L8RqfUMyGPzekbMvX2Ldkwg=="],
 
+    "tree-sitter-bash/node-addon-api": ["node-addon-api@7.1.1", "", {}, "sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ=="],
+
     "tree-sitter-kotlin/node-addon-api": ["node-addon-api@7.1.1", "", {}, "sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ=="],
+
+    "tree-sitter-powershell/node-addon-api": ["node-addon-api@7.1.1", "", {}, "sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ=="],
 
     "tree-sitter-rust/node-addon-api": ["node-addon-api@7.1.1", "", {}, "sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ=="],
 
