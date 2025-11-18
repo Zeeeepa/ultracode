@@ -17,12 +17,16 @@ import { ConfigLoader } from "../config/yaml-config.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { CAnalyzer } from "./c-analyzer.js";
 import { CppAnalyzer } from "./cpp-analyzer.js";
-import { CSharpAnalyzer } from "./csharp-analyzer.js";
+import { CSSAnalyzer } from "./css-analyzer.js";
 import { GoAnalyzer } from "./go-analyzer.js";
+import { HTMLAnalyzer } from "./html-analyzer.js";
 import { JavaAnalyzer } from "./java-analyzer.js";
+import { KotlinAnalyzer } from "./kotlin-analyzer.js";
 import { createPythonAnalyzer } from "./python-analyzer.js";
 import { RustAnalyzer } from "./rust-analyzer.js";
+import { SwiftAnalyzer } from "./swift-analyzer.js";
 import { VbaAnalyzer } from "./vba-analyzer.js";
+import { XMLAnalyzer } from "./xml-analyzer.js";
 
 type TreeSitterNode = Parser.SyntaxNode;
 type TreeSitterTree = Parser.Tree;
@@ -66,16 +70,28 @@ const LANGUAGE_LOADERS: Partial<Record<SupportedLanguage, () => Promise<any>>> =
     const m: any = requireModule("tree-sitter-rust");
     return m.default ?? m;
   },
-  csharp: async () => {
-    const m: any = requireModule("tree-sitter-c-sharp");
-    return m.default ?? m;
-  },
   go: async () => {
     const m: any = requireModule("tree-sitter-go");
     return m.default ?? m;
   },
   java: async () => {
     const m: any = requireModule("tree-sitter-java");
+    return m.default ?? m;
+  },
+  kotlin: async () => {
+    const m: any = requireModule("tree-sitter-kotlin");
+    return m.default ?? m;
+  },
+  swift: async () => {
+    const m: any = requireModule("tree-sitter-swift");
+    return m.default ?? m;
+  },
+  css: async () => {
+    const m: any = requireModule("tree-sitter-css");
+    return m.default ?? m;
+  },
+  html: async () => {
+    const m: any = requireModule("tree-sitter-html");
     return m.default ?? m;
   },
 };
@@ -129,9 +145,6 @@ function detectLanguage(filePath: string): SupportedLanguage {
     case "cxx":
     case "cc":
       return "cpp";
-    case "c#":
-    case "cs":
-      return "csharp";
     case "go":
       return "go";
     case "java":
@@ -144,7 +157,21 @@ function detectLanguage(filePath: string): SupportedLanguage {
       return "cpp";
     case "rs":
       return "rust";
-
+    case "kt":
+    case "kts":
+      return "kotlin";
+    case "swift":
+      return "swift";
+    case "css":
+    case "scss":
+    case "sass":
+    case "less":
+      return "css";
+    case "html":
+    case "htm":
+      return "html";
+    case "xml":
+      return "xml";
     case "vba":
     case "bas":
     case "cls":
@@ -170,12 +197,16 @@ export class TreeSitterParser {
   private disableCache: boolean;
 
   private pythonAnalyzer = createPythonAnalyzer();
-  private csharpAnalyzer = new CSharpAnalyzer();
   private rustAnalyzer = new RustAnalyzer();
   private cAnalyzer = new CAnalyzer();
   private cppAnalyzer = new CppAnalyzer();
   private goAnalyzer = new GoAnalyzer();
   private javaAnalyzer = new JavaAnalyzer();
+  private kotlinAnalyzer = new KotlinAnalyzer();
+  private swiftAnalyzer = new SwiftAnalyzer();
+  private cssAnalyzer = new CSSAnalyzer();
+  private htmlAnalyzer = new HTMLAnalyzer();
+  private xmlAnalyzer = new XMLAnalyzer();
   private vbaAnalyzer = new VbaAnalyzer();
 
   private cacheHits = 0;
@@ -187,10 +218,18 @@ export class TreeSitterParser {
     this.bufferSize = config.getParserConfig().treeSitter?.bufferSize || 1024 * 1024;
     this.disableCache = process.env.PARSER_DISABLE_CACHE === "1" || process.env.NODE_ENV === "test";
 
+    // lru-cache v11: improved eviction and auto-purge
     this.cache = new LRUCache<string, ParseCacheEntry>({
-      maxSize: CACHE_MAX_SIZE,
+      max: 1000, // Maximum number of entries
+      maxSize: CACHE_MAX_SIZE, // Maximum size in bytes
       ttl: CACHE_TTL,
-      sizeCalculation: (entry) => JSON.stringify(entry.entities).length + 1000,
+      ttlAutopurge: true, // Automatic TTL cleanup without polling
+      sizeCalculation: (entry) => {
+        // Estimate size without full serialization for performance
+        // Average entity is ~500 bytes, plus tree overhead
+        return entry.entities.length * 500 + 1000;
+      },
+      updateAgeOnGet: true, // LRU semantics
       dispose: (entry) => {
         entry.tree = null;
       },
@@ -270,18 +309,13 @@ export class TreeSitterParser {
       this.cacheMisses++;
       this.setCache(cacheKey, { tree: null, entities, hash: internalHash, timestamp: Date.now(), relationships });
 
-      const parseTimeMs = Date.now() - startTime;
-      console.log(
-        `[TreeSitterParser] VBA analysis: ${entities.length} entities, ${relationships.length} relationships`,
-      );
-
       const result: ParseResult = {
         filePath,
         language,
         entities,
         contentHash,
         timestamp: Date.now(),
-        parseTimeMs,
+        parseTimeMs: Date.now() - startTime,
         fromCache: false,
       };
       if (relationships.length) {
@@ -290,8 +324,41 @@ export class TreeSitterParser {
       return result;
     }
 
-    const lang = await this.ensureLanguage(language);
-    this.parser.setLanguage(lang);
+    if (language === "xml") {
+      const xmlAnalysis = await this.xmlAnalyzer.analyze(content, filePath);
+      let entities = xmlAnalysis.entities || [];
+      const relationships = xmlAnalysis.relationships || [];
+
+      entities = entities.map((e) => ({ ...e, language }));
+
+      this.cacheMisses++;
+      this.setCache(cacheKey, { tree: null, entities, hash: internalHash, timestamp: Date.now(), relationships });
+
+      const result: ParseResult = {
+        filePath,
+        language,
+        entities,
+        contentHash,
+        timestamp: Date.now(),
+        parseTimeMs: Date.now() - startTime,
+        fromCache: false,
+      };
+      if (relationships.length) {
+        (result as any).relationships = relationships;
+      }
+      return result;
+    }
+
+    try {
+      const lang = await this.ensureLanguage(language);
+      this.parser.setLanguage(lang);
+    } catch (error) {
+      console.error(
+        `[TreeSitterParser] Failed to load language '${language}' for file ${filePath}:`,
+        error instanceof Error ? error.message : error,
+      );
+      throw error;
+    }
 
     const options = { bufferSize: this.bufferSize };
     const tree: TreeSitterTree = oldTree
@@ -307,13 +374,6 @@ export class TreeSitterParser {
       relationships = py.relationships || [];
       console.log(
         `[TreeSitterParser] Python analysis: ${entities.length} entities, ${relationships.length} relationships`,
-      );
-    } else if (language === "csharp") {
-      const cs = await this.csharpAnalyzer.analyze(tree.rootNode as any, filePath);
-      entities = cs.entities || [];
-      relationships = cs.relationships || [];
-      console.log(
-        `[TreeSitterParser] C# analysis: ${entities.length} entities, ${relationships.length} relationships, ${(cs as any).patterns?.length || 0} patterns`,
       );
     } else if (language === "rust") {
       const ru = await this.rustAnalyzer.analyze(tree.rootNode as any, filePath);
@@ -346,6 +406,34 @@ export class TreeSitterParser {
       console.log(
         `[TreeSitterParser] Java analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
+    } else if (language === "kotlin") {
+      entities = [];
+      relationships = [];
+      await this.kotlinAnalyzer.analyze(tree.rootNode as any, filePath, entities, relationships);
+      console.log(
+        `[TreeSitterParser] Kotlin analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
+    } else if (language === "swift") {
+      entities = [];
+      relationships = [];
+      await this.swiftAnalyzer.analyze(tree.rootNode as any, filePath, entities, relationships);
+      console.log(
+        `[TreeSitterParser] Swift analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
+    } else if (language === "css") {
+      entities = [];
+      relationships = [];
+      await this.cssAnalyzer.analyze(tree.rootNode as any, filePath, entities, relationships);
+      console.log(
+        `[TreeSitterParser] CSS analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
+    } else if (language === "html") {
+      entities = [];
+      relationships = [];
+      await this.htmlAnalyzer.analyze(tree.rootNode as any, filePath, entities, relationships);
+      console.log(
+        `[TreeSitterParser] HTML analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
     } else {
       // Default parser for JS/TS/etc
       entities = await this.extractEntities(tree.rootNode as any, content);
@@ -369,7 +457,11 @@ export class TreeSitterParser {
       fromCache: false,
     };
     if (relationships.length) {
-      (result as any).relationships = relationships;
+      // Add filePath to all relationships for DevAgent grouping
+      (result as any).relationships = relationships.map((r: any) => ({
+        ...r,
+        filePath: r.filePath || filePath, // Use existing filePath or current file
+      }));
     }
     return result;
   }

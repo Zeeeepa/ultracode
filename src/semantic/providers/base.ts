@@ -1,4 +1,4 @@
-export type ProviderKind = "memory" | "transformers" | "ollama" | "openai" | "cloudru";
+export type ProviderKind = "memory" | "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "auto";
 
 export interface ProviderInfo {
   name: ProviderKind | string;

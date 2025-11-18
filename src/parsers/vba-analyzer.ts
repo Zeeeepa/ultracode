@@ -21,11 +21,12 @@
  * Implementation uses regex patterns as fallback strategy with graceful degradation.
  */
 
+import { PARSER_CONSTANTS } from "../config/constants.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 
 // Circuit breaker constants
-const MAX_FILE_SIZE = 1024 * 1024; // 1MB max file size for regex parsing
-const PARSE_TIMEOUT_MS = 5000;
+const MAX_FILE_SIZE = PARSER_CONSTANTS.MAX_FILE_SIZE_BYTES;
+const PARSE_TIMEOUT_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
 
 export class VbaAnalyzer {
   private parseStartTime = 0;

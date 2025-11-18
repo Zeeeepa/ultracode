@@ -10,6 +10,7 @@
  * - Base Agent: src/agents/base.ts
  */
 
+import { CACHE_CONSTANTS, DATABASE_CONSTANTS } from "../config/constants.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -20,8 +21,8 @@ export type { ParsedEntity };
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
 export const MAX_BATCH_SIZE = 1000;
-export const DEFAULT_CACHE_TTL = 300000; // 5 minutes
-export const MAX_CONNECTIONS = 5;
+export const DEFAULT_CACHE_TTL = CACHE_CONSTANTS.CACHE_TTL_MS;
+export const MAX_CONNECTIONS = DATABASE_CONSTANTS.CONNECTION_POOL_SIZE;
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
@@ -41,6 +42,7 @@ export enum EntityType {
   VARIABLE = "variable",
   CONSTANT = "constant",
   PACKAGE = "package",
+  COMMENT = "comment",
 }
 
 /**
@@ -55,6 +57,7 @@ export enum RelationType {
   REFERENCES = "references",
   CONTAINS = "contains",
   DEPENDS_ON = "depends_on",
+  DOCUMENTS = "documents", // Comment documents code entity
 }
 
 /**
@@ -285,12 +288,19 @@ export interface GraphStorage {
   getEntity(id: string): Promise<Entity | null>;
   findEntities(query: GraphQuery): Promise<Entity[]>;
 
+  // NEW: Enhanced entity queries for Chaos Analysis and advanced tools
+  getAllEntities(): Promise<Entity[]>;
+  searchEntities(options: { namePattern?: string; types?: EntityType[]; filePath?: string }): Promise<Entity[]>;
+
   // Relationship operations
   insertRelationship(relationship: Relationship): Promise<void>;
   insertRelationships(relationships: Relationship[]): Promise<BatchResult>;
   deleteRelationship(id: string): Promise<void>;
   getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]>;
   findRelationships(query: GraphQuery): Promise<Relationship[]>;
+
+  // NEW: Alias for convenience (used by Chaos Analysis)
+  getRelationships(sourceId: string, type?: RelationType): Promise<Relationship[]>;
 
   // File operations
   updateFileInfo(info: FileInfo): Promise<void>;

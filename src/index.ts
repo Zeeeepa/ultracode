@@ -45,13 +45,27 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 // Import our multi-agent components
 import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
+import type { IndexerAgent } from "./agents/indexer-agent.js";
+import { ChaosAnalyzer } from "./analysis/chaos/index.js";
+import { TechnologyDetector } from "./analysis/technology-detector.js";
 // TASK-001: Import new YAML configuration system
 import { ConfigLoader, initializeConfig, validateConfig } from "./config/yaml-config.js";
+import { getOrCreateAgent, registerAllAgents } from "./core/agent-registry.js";
+// VARIANT-C: DI Container integration
+import { getGlobalContainer } from "./core/di-container.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
 import { resourceManager } from "./core/resource-manager.js";
+import { LayeredIndexManager } from "./layered/index.js";
+import { CodeModifier } from "./modification/code-modifier.js";
+import { FileOperations } from "./modification/file-operations.js";
+import { PreviewManager } from "./modification/preview-manager.js";
+import { PatternSearch } from "./search/pattern-search.js";
 import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
 import { getSQLiteManager } from "./storage/sqlite-manager.js";
 import { collectAgentMetrics } from "./tools/agent-metrics.js";
+import { branchToolDefinitions } from "./tools/branch-schemas.js";
+// Import branch management tools
+import * as branchTools from "./tools/branch-tools.js";
 // Import graph query functions
 import { getGraphStats, queryGraphEntities } from "./tools/graph-query.js";
 import { runJscpdCloneDetection } from "./tools/jscpd.js";
@@ -64,6 +78,10 @@ import type { CloneGroup } from "./types/semantic.js";
 import type { Entity, Relationship } from "./types/storage.js";
 import { EntityType } from "./types/storage.js";
 import { createRequestId, logger } from "./utils/logger.js";
+import { ensureOllamaRunning, getStatusMessage } from "./utils/ollama-checker.js";
+import { CodeValidator } from "./validation/code-validator.js";
+// PHASE 8: Import new code modification and analysis components
+import { VersionManager } from "./versioning/version-manager.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -79,7 +97,7 @@ for (let i = 0; i < args.length; i++) {
     const next = args[++i];
     if (!next) {
       console.error("Error: --config requires a path argument");
-      console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
+      console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
       process.exit(1);
     }
     overrideConfigPath = next;
@@ -87,7 +105,7 @@ for (let i = 0; i < args.length; i++) {
     const value = arg.slice("--config=".length);
     if (!value) {
       console.error("Error: --config requires a non-empty path");
-      console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
+      console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
       process.exit(1);
     }
     overrideConfigPath = value;
@@ -97,7 +115,7 @@ for (let i = 0; i < args.length; i++) {
     versionRequested = true;
   } else if (arg.startsWith("-")) {
     console.error(`Unknown option: ${arg}`);
-    console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
+    console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
     process.exit(1);
   } else {
     positionalArgs.push(arg);
@@ -105,10 +123,10 @@ for (let i = 0; i < args.length; i++) {
 }
 
 function printHelp() {
-  console.log(`Code Graph RAG MCP Server
+  console.log(`UltraScript Tools MCP Server
 
 Usage:
-  code-graph-rag-mcp [options] <directory>
+  ultrascript-tools-mcp [options] <directory>
 
 Options:
   --config <path>   Use an alternate YAML configuration file
@@ -116,9 +134,9 @@ Options:
   --version, -v     Print version information and exit
 
 Examples:
-  code-graph-rag-mcp /path/to/project
-  code-graph-rag-mcp --config config/production.yaml /repo
-  code-graph-rag-mcp --version
+  ultrascript-tools-mcp /path/to/project
+  ultrascript-tools-mcp --config config/production.yaml /repo
+  ultrascript-tools-mcp --version
 `);
 }
 
@@ -234,7 +252,7 @@ if (versionRequested) {
 }
 
 if (positionalArgs.length < 1) {
-  console.error("Usage: code-graph-rag-mcp [--config <path>] <directory>");
+  console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
   process.exit(1);
 }
 
@@ -264,7 +282,7 @@ function getVersionInfo() {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
 
     return {
-      name: packageJson.name || "@er77/code-graph-rag-mcp",
+      name: packageJson.name || "@er77/ultrascript-tools-mcp",
       version: packageJson.version || "unknown",
       description: packageJson.description || "",
       homepage: packageJson.homepage || "",
@@ -276,11 +294,11 @@ function getVersionInfo() {
   } catch (error) {
     // Fallback if package.json cannot be read
     return {
-      name: "@er77/code-graph-rag-mcp",
+      name: "@er77/ultrascript-tools-mcp",
       version: "unknown",
       description: "Multi-agent LiteRAG MCP server for advanced code graph analysis",
-      homepage: "https://github.com/er77/code-graph-rag-mcp",
-      repository: "git+https://github.com/er77/code-graph-rag-mcp.git",
+      homepage: "https://github.com/er77/ultrascript-tools-mcp",
+      repository: "git+https://github.com/er77/ultrascript-tools-mcp.git",
       nodeVersion: process.version,
       platform: process.platform,
       arch: process.arch,
@@ -290,6 +308,16 @@ function getVersionInfo() {
 }
 
 const directory = normalize(resolve(expandHome(positionalArgs[0]!)));
+
+// Global context for current indexing directory (used by SemanticAgent for file count estimation)
+let currentIndexingDirectory: string | undefined;
+
+/**
+ * Get the current directory being indexed (for adaptive vector backend selection)
+ */
+export function getCurrentIndexingDirectory(): string | undefined {
+  return currentIndexingDirectory;
+}
 
 type DebugRequest = {
   raw: string;
@@ -370,6 +398,11 @@ logger.systemEvent("Resource Manager Started", {
   embeddingFallback: config.mcp.embedding?.fallbackToMemory,
 });
 
+// VARIANT-C: Initialize DI Container and register all agents
+const container = getGlobalContainer();
+await registerAllAgents(container);
+console.log("[Main] DI Container initialized with all agents");
+
 // Initialize conductor orchestrator lazily
 let conductor: ConductorOrchestrator | null = null;
 
@@ -381,85 +414,146 @@ function getConductor(): ConductorOrchestrator {
   return conductor;
 }
 
-let semanticAgentInstance: any | null = null;
-let semanticAgentInitPromise: Promise<any> | null = null;
+// Global VectorStore instance (lazy-loaded from SemanticAgent)
+// Used by code modification components (CodeModifier, FileOperations, PatternSearch)
+let globalVectorStore: any = null;
 
+// Initialize globalVectorStore on first semantic agent access
+async function initializeGlobalVectorStore(): Promise<void> {
+  if (!globalVectorStore) {
+    try {
+      const semanticAgent = await getSemanticAgent();
+      globalVectorStore = semanticAgent.getVectorStore();
+    } catch (error) {
+      console.warn("[Main] Failed to get VectorStore:", error);
+      globalVectorStore = null;
+    }
+  }
+}
+
+// ============================================================================
+// PHASE 8: Global instances for code modification components
+// ============================================================================
+let versionManager: VersionManager | null = null;
+let codeModifier: CodeModifier | null = null;
+let fileOperations: FileOperations | null = null;
+let codeValidator: CodeValidator | null = null;
+let technologyDetector: TechnologyDetector | null = null;
+let patternSearch: PatternSearch | null = null;
+
+async function getVersionManager(): Promise<VersionManager> {
+  if (!versionManager) {
+    versionManager = new VersionManager({ workingDirectory: directory });
+    await versionManager.initialize();
+  }
+  return versionManager;
+}
+
+async function getCodeModifier(): Promise<CodeModifier> {
+  if (!codeModifier) {
+    const storage = await getGraphStorage(globalSQLiteManager);
+    const vectorStore = globalVectorStore || null;
+    codeModifier = new CodeModifier(storage, vectorStore, directory);
+    await codeModifier.initialize();
+  }
+  return codeModifier;
+}
+
+async function getFileOperations(): Promise<FileOperations> {
+  if (!fileOperations) {
+    const storage = await getGraphStorage(globalSQLiteManager);
+    const vectorStore = globalVectorStore || null;
+    const previewManager = new PreviewManager(storage, vectorStore);
+    await previewManager.initialize();
+    fileOperations = new FileOperations(storage, vectorStore, previewManager);
+  }
+  return fileOperations;
+}
+
+async function getCodeValidator(): Promise<CodeValidator> {
+  if (!codeValidator) {
+    codeValidator = new CodeValidator();
+  }
+  return codeValidator;
+}
+
+async function getTechnologyDetector(): Promise<TechnologyDetector> {
+  if (!technologyDetector) {
+    const storage = await getGraphStorage(globalSQLiteManager);
+    technologyDetector = new TechnologyDetector(storage, directory);
+  }
+  return technologyDetector;
+}
+
+async function getPatternSearch(): Promise<PatternSearch> {
+  if (!patternSearch) {
+    const storage = await getGraphStorage(globalSQLiteManager);
+    const vectorStore = globalVectorStore || null;
+    const techDetector = await getTechnologyDetector();
+    patternSearch = new PatternSearch(storage, vectorStore, techDetector);
+    await patternSearch.initialize();
+  }
+  return patternSearch;
+}
+
+// Layered Index Manager for branch-aware indexing
+let layeredIndexManager: LayeredIndexManager | null = null;
+
+async function getLayeredIndexManager(): Promise<LayeredIndexManager> {
+  if (!layeredIndexManager) {
+    // Get required components
+    const baseIndex = await getGraphStorage(globalSQLiteManager);
+    const semanticAgent = await getSemanticAgent();
+    const baseVectorStore = semanticAgent.getVectorStore();
+
+    // Get IndexerAgent for BranchManager and GitWatcher
+    const cond = getConductor();
+    await cond.initialize();
+    const indexerAgent = (await getOrCreateAgent(container, cond, AgentType.INDEXER)) as IndexerAgent;
+    const branchManager = indexerAgent.getBranchManager();
+    const gitWatcher = indexerAgent.getGitWatcher();
+
+    // Check if BranchManager is available
+    if (!branchManager) {
+      console.warn("[Main] BranchManager not available, LayeredIndexManager will not be initialized");
+      return null as any;
+    }
+
+    // Estimate file count from current directory (default: 5000)
+    const estimatedFileCount = 5000;
+
+    // Create LayeredIndexManager
+    layeredIndexManager = new LayeredIndexManager(baseIndex, baseVectorStore, branchManager, gitWatcher, {
+      workingDirectory: directory,
+      enableFileWatching: true,
+      enableMaintenance: true,
+      estimatedFileCount,
+      debug: false,
+    });
+
+    await layeredIndexManager.initialize();
+    console.log("[Main] LayeredIndexManager initialized");
+  }
+  return layeredIndexManager;
+}
+
+// VARIANT-C: Unified agent getter using DI Container
 async function getSemanticAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-
-  if (semanticAgentInstance) return semanticAgentInstance;
-  if (semanticAgentInitPromise) return semanticAgentInitPromise;
-
-  semanticAgentInitPromise = (async () => {
-    let agent = cond.getAgentsByType(AgentType.SEMANTIC)[0];
-    if (!agent) {
-      const { SemanticAgent } = await import("./agents/semantic-agent.js");
-      agent = new SemanticAgent();
-      await agent.initialize();
-      cond.register(agent);
-    }
-    semanticAgentInstance = agent;
-    return agent;
-  })().finally(() => {
-    semanticAgentInitPromise = null;
-  });
-
-  return semanticAgentInitPromise;
+  return await getOrCreateAgent(container, cond, AgentType.SEMANTIC);
 }
-
-let devAgentInstance: any | null = null;
-let devAgentInitPromise: Promise<any> | null = null;
 
 async function getDevAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-
-  if (devAgentInstance) return devAgentInstance;
-  if (devAgentInitPromise) return devAgentInitPromise;
-
-  devAgentInitPromise = (async () => {
-    let agent = cond.getAgentsByType(AgentType.DEV)[0];
-    if (!agent) {
-      const { DevAgent } = await import("./agents/dev-agent.js");
-      agent = new DevAgent();
-      await agent.initialize();
-      cond.register(agent);
-    }
-    devAgentInstance = agent;
-    return agent;
-  })().finally(() => {
-    devAgentInitPromise = null;
-  });
-
-  return devAgentInitPromise;
+  return await getOrCreateAgent(container, cond, AgentType.DEV);
 }
-
-let doraAgentInstance: any | null = null;
-let doraAgentInitPromise: Promise<any> | null = null;
 
 async function getDoraAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
-
-  if (doraAgentInstance) return doraAgentInstance;
-  if (doraAgentInitPromise) return doraAgentInitPromise;
-
-  doraAgentInitPromise = (async () => {
-    let agent = cond.getAgentsByType(AgentType.DORA)[0];
-    if (!agent) {
-      const { DoraAgent } = await import("./agents/dora-agent.js");
-      agent = new DoraAgent();
-      await agent.initialize();
-      cond.register(agent);
-    }
-    doraAgentInstance = agent;
-    return agent;
-  })().finally(() => {
-    doraAgentInitPromise = null;
-  });
-
-  return doraAgentInitPromise;
+  return await getOrCreateAgent(container, cond, AgentType.DORA);
 }
 
 async function ensureSemanticsReady(minVectors = 1, timeoutMs = 15000): Promise<boolean> {
@@ -467,6 +561,7 @@ async function ensureSemanticsReady(minVectors = 1, timeoutMs = 15000): Promise<
     return true;
   }
   const agent = await getSemanticAgent();
+  await initializeGlobalVectorStore(); // Initialize global vector store for code modification
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -750,24 +845,28 @@ const ListRelationshipsToolSchema = z
 const QueryToolSchema = z.object({
   query: z.string().describe("Natural language or structured query"),
   limit: z.number().describe("Maximum number of results").optional().default(10),
+  branch: z.string().optional().describe("Branch name (null = main branch)"),
 });
 
 // New semantic tool schemas - TASK-002
 const SemanticSearchSchema = z.object({
   query: z.string().describe("Natural language search query"),
   limit: z.number().optional().default(10).describe("Maximum results to return"),
+  branch: z.string().optional().describe("Branch name (null = main branch)"),
 });
 
 const FindSimilarCodeSchema = z.object({
   code: z.string().describe("Code snippet to find similar code for"),
   threshold: z.number().optional().default(0.5).describe("Similarity threshold (0-1)"),
   limit: z.number().optional().default(10).describe("Maximum results to return"),
+  branch: z.string().optional().describe("Branch name (null = main branch)"),
 });
 
 const AnalyzeCodeImpactSchema = z.object({
   entityId: z.string().describe("Entity ID or name to analyze impact for"),
   filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
   depth: z.number().optional().default(2).describe("Depth of impact analysis"),
+  branch: z.string().optional().describe("Branch name (null = main branch)"),
 });
 
 const DetectCodeClonesSchema = z.object({
@@ -826,6 +925,23 @@ const FindRelatedConceptsSchema = z.object({
   limit: z.number().optional().default(10).describe("Maximum results to return"),
 });
 
+// Chaos Analysis Schema
+const AnalyzeStateChaosSchema = z.object({
+  scope: z.enum(["file", "module", "project"]).describe("Analysis scope"),
+  stateIdentifiers: z
+    .array(z.string())
+    .optional()
+    .describe("Specific state identifiers to analyze (e.g., ['token', 'userId'])"),
+  autoDetect: z.boolean().optional().default(false).describe("Automatically detect state patterns"),
+  format: z
+    .enum(["summary", "detailed", "json"])
+    .optional()
+    .default("summary")
+    .describe("Output format: summary (AI-friendly), detailed (human), json (raw)"),
+  maxDepth: z.number().optional().default(10).describe("Maximum trace depth"),
+  excludePatterns: z.array(z.string()).optional().describe("File patterns to exclude"),
+});
+
 const GetGraphSchema = z.object({
   query: z.string().optional().describe("Optional search query"),
   limit: z.number().optional().default(100).describe("Maximum entities to return"),
@@ -863,6 +979,101 @@ const CleanIndexSchema = z.object({
 
 const GetAgentMetricsSchema = z.object({});
 
+// ============================================================================
+// PHASE 8: NEW TOOL SCHEMAS - Code Modification & Analysis Features
+// ============================================================================
+
+// Version Manager Schemas
+const CreateSnapshotSchema = z.object({
+  description: z.string().describe("Description of the snapshot"),
+  files: z.array(z.string()).optional().describe("Files to include in snapshot (all if not specified)"),
+});
+
+const RollbackSnapshotSchema = z.object({
+  snapshotId: z.string().describe("Snapshot ID to rollback to"),
+});
+
+const ListSnapshotsSchema = z.object({
+  limit: z.number().optional().default(10).describe("Maximum number of snapshots to return"),
+});
+
+const CleanupSnapshotsSchema = z.object({
+  olderThanDays: z.number().optional().default(30).describe("Delete snapshots older than N days"),
+});
+
+// Code Modification Schema
+const ModifyEntityCodeSchema = z.object({
+  entityId: z.string().describe("ID of entity to modify"),
+  newCode: z.string().describe("New code to replace entity"),
+  preserveComments: z.boolean().optional().default(true).describe("Preserve leading comments"),
+  updateImports: z.boolean().optional().default(true).describe("Update imports if signature changed"),
+  preview: z.boolean().optional().default(true).describe("Preview changes before applying"),
+  skipValidation: z.boolean().optional().default(false).describe("Skip validation checks"),
+});
+
+// File Operations Schemas
+const CopyFileSchema = z.object({
+  source: z.string().describe("Source file or directory path"),
+  target: z.string().describe("Target path"),
+  preview: z.boolean().optional().default(true).describe("Preview before copying"),
+  updateGraph: z.boolean().optional().default(true).describe("Update graph with copied entities"),
+});
+
+const RenameFileSchema = z.object({
+  oldPath: z.string().describe("Current file path"),
+  newPath: z.string().describe("New file path"),
+  preview: z.boolean().optional().default(true).describe("Preview before renaming"),
+  updateImports: z.boolean().optional().default(true).describe("Update imports across project"),
+  updateGraph: z.boolean().optional().default(true).describe("Update graph with new paths"),
+});
+
+const SplitFileSchema = z.object({
+  filePath: z.string().describe("File to split"),
+  entityIds: z.array(z.string()).describe("Entity IDs to extract to separate files"),
+  preview: z.boolean().optional().default(true).describe("Preview before splitting"),
+  updateGraph: z.boolean().optional().default(true).describe("Update graph with new file locations"),
+});
+
+const SynthesizeFilesSchema = z.object({
+  files: z.array(z.string()).min(2).describe("Files to combine into one"),
+  targetPath: z.string().describe("Target file path for combined result"),
+  preview: z.boolean().optional().default(true).describe("Preview before synthesizing"),
+  deleteOriginals: z.boolean().optional().default(false).describe("Delete original files after synthesis"),
+  updateGraph: z.boolean().optional().default(true).describe("Update graph with merged entities"),
+});
+
+// Code Validation Schemas
+const ValidateFileSchema = z.object({
+  filePath: z.string().describe("File to validate"),
+  linter: z.string().optional().describe("Specific linter to use (auto-detect if not specified): eslint, pylint"),
+});
+
+const ValidateDirectorySchema = z.object({
+  dirPath: z.string().describe("Directory to validate"),
+  extensions: z.array(z.string()).optional().describe("File extensions to validate (e.g., ['.ts', '.js', '.py'])"),
+  recursive: z.boolean().optional().default(true).describe("Recursively validate subdirectories"),
+});
+
+// Technology Detection Schema
+const DetectTechnologyStackSchema = z.object({
+  generateContext: z.boolean().optional().default(false).describe("Generate tech context string for embeddings"),
+});
+
+// Pattern Search Schema
+const PatternSearchSchema = z.object({
+  pattern: z.string().describe("Regex pattern or semantic query"),
+  mode: z
+    .enum(["entity", "content", "semantic", "hybrid"])
+    .describe("Search mode: entity (name/type), content (inside bodies), semantic (vector), hybrid (all)"),
+  entityTypes: z.array(z.string()).optional().describe("Filter by entity types (function, class, interface, etc.)"),
+  files: z.array(z.string()).optional().describe("Filter by file paths"),
+  frameworks: z.array(z.string()).optional().describe("Filter by frameworks (React, Vue, Angular, etc.)"),
+  contentContains: z.string().optional().describe("Content must contain this string"),
+  contentRegex: z.string().optional().describe("Content must match this regex"),
+  semanticQuery: z.string().optional().describe("Semantic similarity query for content"),
+  limit: z.number().optional().default(10).describe("Maximum results to return"),
+});
+
 // Create MCP server
 const server = new Server(
   {
@@ -879,7 +1090,7 @@ const server = new Server(
 
 // Helper: enforce operation timeouts per SYSTEM_HANG_RECOVERY_PLAN
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, requestId: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       const err = new Error(`${label} timed out after ${ms}ms`);
@@ -981,6 +1192,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: zodToJsonSchema(FindRelatedConceptsSchema) as any,
       },
       {
+        name: "analyze_state_chaos",
+        description:
+          "Analyze state management chaos in TypeScript/Angular codebases. Detects scattered state, measures coupling, identifies mutations, and suggests refactoring strategies. Returns AI-friendly summary or detailed report.",
+        inputSchema: zodToJsonSchema(AnalyzeStateChaosSchema) as any,
+      },
+      {
         name: "get_graph",
         description: "Get the code graph with all entities and relationships",
         inputSchema: zodToJsonSchema(GetGraphSchema) as any,
@@ -1025,6 +1242,92 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Remove cached knowledge entries for a specific topic",
         inputSchema: zodToJsonSchema(ClearBusTopicSchema) as any,
       },
+      // ============================================================================
+      // PHASE 8: New Code Modification & Analysis Tools
+      // ============================================================================
+      // Version Manager Tools
+      {
+        name: "create_snapshot",
+        description:
+          "Create a version snapshot for rollback. Uses git stash if available, otherwise .backup/ directory. Returns snapshot ID for rollback.",
+        inputSchema: zodToJsonSchema(CreateSnapshotSchema) as any,
+      },
+      {
+        name: "rollback_snapshot",
+        description: "Rollback to a previous snapshot by ID. Restores all files to their snapshot state.",
+        inputSchema: zodToJsonSchema(RollbackSnapshotSchema) as any,
+      },
+      {
+        name: "list_snapshots",
+        description: "List available snapshots with creation time and description.",
+        inputSchema: zodToJsonSchema(ListSnapshotsSchema) as any,
+      },
+      {
+        name: "cleanup_snapshots",
+        description: "Delete old snapshots to free disk space.",
+        inputSchema: zodToJsonSchema(CleanupSnapshotsSchema) as any,
+      },
+      // Code Modification Tool
+      {
+        name: "modify_entity_code",
+        description:
+          "Modify code of a specific entity by ID. Automatically creates snapshot, validates before/after, updates embeddings, and can rollback on error. Default preview mode shows changes without applying.",
+        inputSchema: zodToJsonSchema(ModifyEntityCodeSchema) as any,
+      },
+      // File Operations Tools
+      {
+        name: "copy_file",
+        description:
+          "Copy file or directory with automatic graph updates. Streaming for large files. Token-efficient alternative to reading full content.",
+        inputSchema: zodToJsonSchema(CopyFileSchema) as any,
+      },
+      {
+        name: "rename_file",
+        description:
+          "Rename file with automatic import updates across project. Updates graph and embeddings. Token-efficient alternative to read-write pattern.",
+        inputSchema: zodToJsonSchema(RenameFileSchema) as any,
+      },
+      {
+        name: "split_file",
+        description:
+          "Extract entities from a file into separate files. Useful for refactoring large files. Updates graph with new locations.",
+        inputSchema: zodToJsonSchema(SplitFileSchema) as any,
+      },
+      {
+        name: "synthesize_files",
+        description:
+          "Combine multiple files into one. Merges entities in graph. Can optionally delete originals. Token-efficient way to consolidate code.",
+        inputSchema: zodToJsonSchema(SynthesizeFilesSchema) as any,
+      },
+      // Code Validation Tools
+      {
+        name: "validate_file",
+        description:
+          "Validate code file using appropriate linter (ESLint for JS/TS, Pylint for Python). Returns problems categorized by severity.",
+        inputSchema: zodToJsonSchema(ValidateFileSchema) as any,
+      },
+      {
+        name: "validate_directory",
+        description:
+          "Validate all code files in directory. Batch processing with concurrency limit. Returns aggregated validation report.",
+        inputSchema: zodToJsonSchema(ValidateDirectorySchema) as any,
+      },
+      // Technology Detection Tool
+      {
+        name: "detect_technology_stack",
+        description:
+          "Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
+        inputSchema: zodToJsonSchema(DetectTechnologyStackSchema) as any,
+      },
+      // Pattern Search Tool
+      {
+        name: "pattern_search",
+        description:
+          "Advanced search with multiple modes: entity (name/type regex), content (inside entity bodies), semantic (vector similarity), hybrid (all combined). Framework-aware filtering. SIMD-accelerated similarity computation.",
+        inputSchema: zodToJsonSchema(PatternSearchSchema) as any,
+      },
+      // Branch management tools
+      ...branchToolDefinitions,
     ],
   };
 });
@@ -1043,6 +1346,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           logger.systemEvent("Graph storage cleared before indexing", { directory: targetDir });
         }
 
+        // Set current indexing directory for adaptive vector backend selection
+        currentIndexingDirectory = targetDir;
+
         if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
           await getSemanticAgent();
         }
@@ -1054,7 +1360,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         try {
           const { execSync } = await import("node:child_process");
           const fileCount = execSync(
-            `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`,
+            `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" -o -name "*.kt" -o -name "*.kts" -o -name "*.swift" -o -name "*.css" -o -name "*.scss" -o -name "*.sass" -o -name "*.less" -o -name "*.html" -o -name "*.htm" -o -name "*.xml" -o -name "*.vba" \\) | wc -l`,
             { encoding: "utf8" },
           ).trim();
           const numFiles = parseInt(fileCount, 10);
@@ -1149,6 +1455,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           createdAt: Date.now(),
         };
 
+        // Initialize dev-agent BEFORE conductor starts delegating
+        await getDevAgent();
+
         // Process through conductor with mandatory delegation
         const cond = getConductor();
         await cond.initialize();
@@ -1231,7 +1540,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         try {
           const { execSync } = await import("node:child_process");
           const fileCount = execSync(
-            `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" \\) | wc -l`,
+            `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" -o -name "*.kt" -o -name "*.kts" -o -name "*.swift" -o -name "*.css" -o -name "*.scss" -o -name "*.sass" -o -name "*.less" -o -name "*.html" -o -name "*.htm" -o -name "*.xml" -o -name "*.vba" \\) | wc -l`,
             { encoding: "utf8" },
           ).trim();
           const numFiles = parseInt(fileCount, 10);
@@ -1308,6 +1617,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           },
           createdAt: Date.now(),
         };
+
+        // Initialize dev-agent BEFORE conductor starts delegating
+        await getDevAgent();
 
         const cond = getConductor();
         await cond.initialize();
@@ -1462,11 +1774,95 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       case "query": {
-        const { query, limit } = QueryToolSchema.parse(args);
+        const { query, limit, branch } = QueryToolSchema.parse(args);
         await ensureSemanticsReady(1, 20000);
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
         let semanticResult: unknown = [];
 
+        // Branch-aware query via LayeredIndexManager
+        if (branch !== undefined) {
+          try {
+            const layeredManager = await getLayeredIndexManager();
+
+            // Structural query via layered index
+            const entities = await withTimeout(
+              layeredManager.queryEntities(query, branch),
+              timeoutMs,
+              "query:layered_entities",
+              requestId,
+            );
+
+            // Semantic query via layered vector store (if enabled)
+            try {
+              const semanticAgent = await getSemanticAgent();
+              const embedding = await semanticAgent["embeddingGenerator"].generateEmbedding(query);
+              semanticResult = await withTimeout(
+                layeredManager.searchSimilar(embedding, limit ?? 10, branch),
+                timeoutMs,
+                "query:layered_semantic",
+                requestId,
+              );
+            } catch (error) {
+              logger.warn(
+                "SEMANTIC_QUERY",
+                "Layered semantic search failed, continuing with structural only",
+                { query, branch, error: (error as Error).message },
+                requestId,
+              );
+              semanticResult = [];
+            }
+
+            // Get relationships for found entities
+            const relationships: Relationship[] = [];
+            for (const entity of entities.slice(0, 10)) {
+              try {
+                const rels = await layeredManager.queryRelationships(entity.id, undefined, branch);
+                relationships.push(...rels);
+              } catch (error) {
+                logger.warn(
+                  "QUERY",
+                  "Failed to get relationships for entity",
+                  { entityId: entity.id, error: (error as Error).message },
+                  requestId,
+                );
+              }
+            }
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(
+                    {
+                      semantic: semanticResult,
+                      structural: {
+                        entities: entities.map((entity) => mapEntitySummary(entity)),
+                        relationships: relationships.length,
+                        stats: {
+                          totalEntities: entities.length,
+                          totalRelationships: relationships.length,
+                        },
+                      },
+                      branch: branch || "main",
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+            };
+          } catch (error) {
+            logger.error(
+              "QUERY",
+              "Layered query failed, falling back to base index",
+              { query, branch, error: (error as Error).message },
+              requestId,
+            );
+            // Fall through to base query
+          }
+        }
+
+        // Base query (no branch or fallback)
         try {
           const semanticAgent = await getSemanticAgent();
           semanticResult = await withTimeout(
@@ -1588,11 +1984,11 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
       // New semantic tool handlers - TASK-002
       case "semantic_search": {
-        const { query, limit } = SemanticSearchSchema.parse(args);
+        const { query, limit, branch } = SemanticSearchSchema.parse(args);
         await ensureSemanticsReady(1, 20000);
 
-        // Check cache first
-        const cacheKey = `semantic:search:${query}:${limit}`;
+        // Check cache first (include branch in cache key)
+        const cacheKey = `semantic:search:${query}:${limit}:${branch || "main"}`;
         const cached = knowledgeBus.query(cacheKey, 1);
         if (cached.length > 0) {
           const firstCache = cached[0];
@@ -1611,12 +2007,44 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const result = await withTimeout(
-          semanticAgent.semanticSearch(query, limit),
-          timeoutMs,
-          "semantic_search",
-          requestId,
-        );
+        let result: unknown;
+
+        // Branch-aware search via LayeredIndexManager
+        if (branch !== undefined) {
+          try {
+            const layeredManager = await getLayeredIndexManager();
+            const embedding = await semanticAgent["embeddingGenerator"].generateEmbedding(query);
+            result = await withTimeout(
+              layeredManager.searchSimilar(embedding, limit ?? 10, branch),
+              timeoutMs,
+              "semantic_search:layered",
+              requestId,
+            );
+
+            // Cache result
+            knowledgeBus.publish(cacheKey, result, "mcp-server", 30000);
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ results: result, branch: branch || "main" }, null, 2),
+                },
+              ],
+            };
+          } catch (error) {
+            logger.error(
+              "SEMANTIC_SEARCH",
+              "Layered semantic search failed, falling back to base",
+              { query, branch, error: (error as Error).message },
+              requestId,
+            );
+            // Fall through to base search
+          }
+        }
+
+        // Base search (no branch or fallback)
+        result = await withTimeout(semanticAgent.semanticSearch(query, limit), timeoutMs, "semantic_search", requestId);
 
         // Cache result
         knowledgeBus.publish(cacheKey, result, "mcp-server", 30000);
@@ -1632,10 +2060,44 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       case "find_similar_code": {
-        const { code, threshold, limit } = FindSimilarCodeSchema.parse(args);
+        const { code, threshold, limit, branch } = FindSimilarCodeSchema.parse(args);
         await ensureSemanticsReady(1, 20000);
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
+
+        // Branch-aware search via LayeredIndexManager
+        if (branch !== undefined) {
+          try {
+            const layeredManager = await getLayeredIndexManager();
+            const embedding = await semanticAgent["embeddingGenerator"].generateEmbedding(code);
+            const sim = await withTimeout(
+              layeredManager.searchSimilar(embedding, limit ?? 10, branch),
+              timeoutMs,
+              "find_similar_code:layered",
+              requestId,
+            );
+            const result = Array.isArray(sim) && limit ? sim.slice(0, limit) : sim;
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ results: result, branch: branch || "main" }, null, 2),
+                },
+              ],
+            };
+          } catch (error) {
+            logger.error(
+              "FIND_SIMILAR_CODE",
+              "Layered search failed, falling back to base",
+              { branch, error: (error as Error).message },
+              requestId,
+            );
+            // Fall through to base search
+          }
+        }
+
+        // Base search (no branch or fallback)
         const sim = await withTimeout(
           semanticAgent.findSimilarCode(code, threshold ?? 0.5),
           timeoutMs,
@@ -2091,6 +2553,49 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         };
       }
 
+      case "analyze_state_chaos": {
+        const { scope, stateIdentifiers, autoDetect, format, maxDepth, excludePatterns } =
+          AnalyzeStateChaosSchema.parse(args);
+
+        const storage = await getGraphStorage(globalSQLiteManager);
+
+        // Create ChaosAnalyzer
+        const analyzer = new ChaosAnalyzer(storage);
+
+        const options = {
+          scope,
+          stateIdentifiers,
+          autoDetect,
+          maxDepth,
+          excludePatterns,
+        };
+
+        const results = await analyzer.analyze(options);
+
+        let output: string;
+        switch (format) {
+          case "summary":
+            output = analyzer.formatForAI(results);
+            break;
+          case "detailed":
+            output = results.map((r) => analyzer.formatDetailed(r)).join("\n\n---\n\n");
+            break;
+          case "json":
+          default:
+            output = JSON.stringify(results, null, 2);
+            break;
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: output,
+            },
+          ],
+        };
+      }
+
       case "get_graph": {
         const { query, limit } = GetGraphSchema.parse(args);
 
@@ -2131,10 +2636,124 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       case "analyze_code_impact": {
-        const { entityId, filePath: hintFilePath } = AnalyzeCodeImpactSchema.parse(args);
+        const { entityId, filePath: hintFilePath, branch } = AnalyzeCodeImpactSchema.parse(args);
         const storage = await getGraphStorage(globalSQLiteManager);
         const resolvedHintPath = hintFilePath ? normalizeInputPath(hintFilePath) : undefined;
 
+        // Branch-aware impact analysis via LayeredIndexManager
+        if (branch !== undefined) {
+          try {
+            const layeredManager = await getLayeredIndexManager();
+
+            // Find entity in layered index
+            const entities = await layeredManager.queryEntities(entityId, branch);
+            let entity = entities.length > 0 ? entities[0] : null;
+
+            // If not found by name, try by ID
+            if (!entity) {
+              entity = await storage.getEntity(entityId);
+            }
+
+            if (!entity) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}`, branch }, null, 2),
+                  },
+                ],
+              };
+            }
+
+            // Get relationships via layered index
+            const relationships = await layeredManager.queryRelationships(entity.id, undefined, branch);
+            const directIds = new Set<string>();
+            const outboundIds = new Set<string>();
+
+            for (const rel of relationships) {
+              if (rel.toId === entity.id) {
+                directIds.add(rel.fromId);
+              }
+              if (rel.fromId === entity.id) {
+                outboundIds.add(rel.toId);
+              }
+            }
+
+            // Get direct entities from layered index
+            const directEntities: Entity[] = [];
+            for (const id of directIds) {
+              const ent = await storage.getEntity(id);
+              if (ent) directEntities.push(ent);
+            }
+
+            // Get indirect entities (2nd degree)
+            const indirectIds = new Set<string>();
+            for (const direct of directEntities) {
+              const rels = await layeredManager.queryRelationships(direct.id, undefined, branch);
+              for (const rel of rels) {
+                const candidate = rel.fromId === direct.id ? rel.toId : rel.fromId;
+                if (candidate !== entity.id && !directIds.has(candidate)) {
+                  indirectIds.add(candidate);
+                }
+              }
+            }
+
+            const indirectEntities: Entity[] = [];
+            for (const id of indirectIds) {
+              const ent = await storage.getEntity(id);
+              if (ent) indirectEntities.push(ent);
+            }
+
+            const affectedFiles = new Set<string>();
+            for (const sample of [...directEntities, ...indirectEntities]) {
+              affectedFiles.add(normalizeInputPath(sample.filePath) ?? sample.filePath);
+            }
+
+            const totalImpact = directEntities.length + indirectEntities.length;
+            const riskLevel =
+              totalImpact > 50 ? "critical" : totalImpact > 20 ? "high" : totalImpact > 5 ? "medium" : "low";
+
+            const outboundSummaries: ReturnType<typeof mapEntitySummary>[] = [];
+            for (const id of outboundIds) {
+              const dep = await storage.getEntity(id);
+              if (dep) outboundSummaries.push(mapEntitySummary(dep));
+            }
+
+            const impact = {
+              source: mapEntitySummary(entity),
+              directImpacts: directEntities.map((item) => mapEntitySummary(item)),
+              indirectImpacts: indirectEntities.map((item) => mapEntitySummary(item)),
+              outboundDependencies: outboundSummaries,
+              affectedFiles: Array.from(affectedFiles),
+              riskLevel,
+              totals: {
+                direct: directEntities.length,
+                indirect: indirectEntities.length,
+                outbound: outboundIds.size,
+              },
+              branch: branch || "main",
+            };
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(impact, null, 2),
+                },
+              ],
+            };
+          } catch (error) {
+            logger.error(
+              "ANALYZE_CODE_IMPACT",
+              "Layered impact analysis failed, falling back to base",
+              { entityId, branch, error: (error as Error).message },
+              requestId,
+            );
+            // Fall through to base analysis
+          }
+        }
+
+        // Base analysis (no branch or fallback)
         let entity = await storage.getEntity(entityId);
         if (!entity) {
           entity = await resolveEntityWithHint(storage, entityId, resolvedHintPath);
@@ -2451,6 +3070,404 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         };
       }
 
+      // Branch management tools
+      case "list_branches": {
+        if (!conductor) {
+          throw new Error("Conductor not initialized");
+        }
+        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const branchManager = indexerAgent?.getBranchManager() || null;
+        const { repositoryPath } = args as { repositoryPath?: string };
+
+        const result = await branchTools.listBranches(branchManager, repositoryPath);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "switch_branch": {
+        if (!conductor) {
+          throw new Error("Conductor not initialized");
+        }
+        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const branchManager = indexerAgent?.getBranchManager() || null;
+        const { branch, repositoryPath } = args as { branch: string; repositoryPath?: string };
+
+        const result = await branchTools.switchBranch(branchManager, branch, repositoryPath);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_branch_status": {
+        if (!conductor) {
+          throw new Error("Conductor not initialized");
+        }
+        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const branchManager = indexerAgent?.getBranchManager() || null;
+        const { repositoryPath } = args as { repositoryPath?: string };
+
+        const result = await branchTools.getBranchStatus(branchManager, repositoryPath);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "cleanup_branches": {
+        if (!conductor) {
+          throw new Error("Conductor not initialized");
+        }
+        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const branchManager = indexerAgent?.getBranchManager() || null;
+        const { keep } = args as { keep?: number };
+
+        const result = await branchTools.cleanupBranches(branchManager, keep);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_changed_files": {
+        if (!conductor) {
+          throw new Error("Conductor not initialized");
+        }
+        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const gitWatcher = indexerAgent?.getGitWatcher() || null;
+        const { fromBranch, toBranch } = args as { fromBranch: string; toBranch: string };
+
+        const result = await branchTools.getChangedFiles(gitWatcher, fromBranch, toBranch);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      // ============================================================================
+      // PHASE 8: New Code Modification & Analysis Tool Handlers
+      // ============================================================================
+
+      // Version Manager Tools
+      case "create_snapshot": {
+        const { description, files } = CreateSnapshotSchema.parse(args);
+        const vm = await getVersionManager();
+        const snapshotId = await vm.createSnapshot(description, files);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  snapshotId,
+                  description,
+                  filesCount: files?.length || "all",
+                  timestamp: new Date().toISOString(),
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case "rollback_snapshot": {
+        const { snapshotId } = RollbackSnapshotSchema.parse(args);
+        const vm = await getVersionManager();
+        await vm.rollback(snapshotId);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  snapshotId,
+                  message: "Successfully rolled back to snapshot",
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case "list_snapshots": {
+        const { limit } = ListSnapshotsSchema.parse(args);
+        const vm = await getVersionManager();
+        const snapshots = await vm.listSnapshots(limit);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  count: snapshots.length,
+                  snapshots,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case "cleanup_snapshots": {
+        const { olderThanDays } = CleanupSnapshotsSchema.parse(args);
+        const vm = await getVersionManager();
+        const deletedCount = await vm.cleanup(olderThanDays);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  deletedCount,
+                  olderThanDays,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      // Code Modification Tool
+      case "modify_entity_code": {
+        const params = ModifyEntityCodeSchema.parse(args);
+        const modifier = await getCodeModifier();
+        const result = await modifier.modifyEntity(params);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      // File Operations Tools
+      case "copy_file": {
+        const { source, target, preview, updateGraph } = CopyFileSchema.parse(args);
+        const fileOps = await getFileOperations();
+        const result = await fileOps.copy(source, target, { preview, updateGraph });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "rename_file": {
+        const { oldPath, newPath, preview, updateImports, updateGraph } = RenameFileSchema.parse(args);
+        const fileOps = await getFileOperations();
+        const result = await fileOps.rename(oldPath, newPath, { preview, updateImports, updateGraph });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "split_file": {
+        const { filePath, entityIds, preview, updateGraph } = SplitFileSchema.parse(args);
+        const fileOps = await getFileOperations();
+        const result = await fileOps.split(filePath, entityIds, { preview, updateGraph });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "synthesize_files": {
+        const { files, targetPath, preview, deleteOriginals, updateGraph } = SynthesizeFilesSchema.parse(args);
+        const fileOps = await getFileOperations();
+        const result = await fileOps.synthesize(files, targetPath, { preview, deleteOriginals, updateGraph });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Code Validation Tools
+      case "validate_file": {
+        const { filePath } = ValidateFileSchema.parse(args);
+        const validator = await getCodeValidator();
+        const report = await validator.validateFile(filePath);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(report, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "validate_directory": {
+        const { dirPath, extensions } = ValidateDirectorySchema.parse(args);
+        const validator = await getCodeValidator();
+        const reports = await validator.validateDirectory(dirPath, extensions);
+
+        // Aggregate summary
+        const totalProblems = reports.reduce((sum, r) => sum + r.summary.total, 0);
+        const totalErrors = reports.reduce((sum, r) => sum + r.summary.errors, 0);
+        const totalWarnings = reports.reduce((sum, r) => sum + r.summary.warnings, 0);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  filesValidated: reports.length,
+                  summary: {
+                    totalProblems,
+                    totalErrors,
+                    totalWarnings,
+                  },
+                  reports,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      // Technology Detection Tool
+      case "detect_technology_stack": {
+        const { generateContext } = DetectTechnologyStackSchema.parse(args);
+        const detector = await getTechnologyDetector();
+        const stack = await detector.detectStack();
+
+        const result: any = { success: true, stack };
+
+        if (generateContext) {
+          result.techContext = detector.generateTechContext(stack);
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Pattern Search Tool
+      case "pattern_search": {
+        const { pattern, mode, entityTypes, files, frameworks, contentContains, contentRegex, semanticQuery, limit } =
+          PatternSearchSchema.parse(args);
+
+        const search = await getPatternSearch();
+
+        const query: any = {
+          pattern,
+          mode,
+          limit,
+        };
+
+        if (entityTypes || files || frameworks) {
+          query.scope = {
+            entityTypes,
+            files,
+            frameworks,
+          };
+        }
+
+        if (contentContains || contentRegex || semanticQuery) {
+          query.contentFilter = {
+            contains: contentContains,
+            regex: contentRegex,
+            semantic: semanticQuery,
+          };
+        }
+
+        const results = await search.search(query);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  mode,
+                  resultsCount: results.length,
+                  results,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -2551,6 +3568,11 @@ process.on("SIGINT", async () => {
   console.log("\nShutting down gracefully...");
   logger.systemEvent("MCP Server Shutdown Initiated");
 
+  if (layeredIndexManager) {
+    await layeredIndexManager.shutdown();
+    logger.systemEvent("LayeredIndexManager Shutdown Complete");
+  }
+
   if (conductor) {
     await conductor.shutdown();
     logger.systemEvent("Conductor Shutdown Complete");
@@ -2596,6 +3618,34 @@ async function main() {
   console.log("Multi-agent LiteRAG architecture initialized");
   console.log(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
 
+  // Check and auto-start Ollama if embeddings are enabled
+  const config = ConfigLoader.getInstance().getConfig();
+  const embeddingEnabled = config.mcp?.embedding?.enabled ?? false;
+  const embeddingProvider: string = config.mcp?.embedding?.provider ?? "memory";
+
+  if (embeddingEnabled && (embeddingProvider === "auto" || embeddingProvider === "ollama")) {
+    console.log("\n🔍 Checking Ollama service status...");
+    try {
+      const ollamaStatus = await ensureOllamaRunning(true); // auto-start enabled
+      const statusMessage = getStatusMessage(ollamaStatus);
+      console.log(statusMessage);
+
+      if (!ollamaStatus.isRunning) {
+        console.log(
+          "💡 Tip: Install Ollama from https://ollama.com or run setup-embeddings.cmd/sh for automatic setup",
+        );
+      } else if (!ollamaStatus.hasGranite && ollamaStatus.hasModels) {
+        console.log("💡 Tip: Install granite-embedding with: ollama pull granite-embedding");
+      }
+    } catch (error) {
+      logger.warn("STARTUP", "Ollama check failed, continuing with fallback", {
+        error: (error as Error).message,
+      });
+      console.log("⚠️  Ollama check failed, using memory provider fallback");
+    }
+    console.log(""); // Empty line for readability
+  }
+
   // Connect transport FIRST for fast readiness
   logger.systemEvent("MCP Server Transport Connecting", { transport: "stdio" });
   const transport = new StdioServerTransport();
@@ -2632,18 +3682,12 @@ async function main() {
     return;
   }
 
-  // Defer heavy agent initialization in the background
-  (async () => {
-    try {
-      await getDevAgent();
-      await getDoraAgent();
-      await getSemanticAgent();
-      console.log("Core agents initialized (background): DevAgent, DoraAgent, SemanticAgent");
-    } catch (error) {
-      console.error("Background agent init failed:", error);
-      logger.error("AGENT_INIT", "Background agent initialization failed", { error: (error as Error).message });
-    }
-  })();
+  // Set default indexing directory for background agent initialization
+  // Will be updated in case "index" if a different directory is provided
+  currentIndexingDirectory = directory;
+
+  // All agents are initialized lazily when first used (prevents stdio blocking in MCP)
+  console.log("Core agents registered and ready for lazy initialization");
 }
 
 main().catch((error) => {

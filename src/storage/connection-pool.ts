@@ -12,11 +12,11 @@
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ConnectionPool, PoolStats } from "../types/storage.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type Database from "better-sqlite3";
-import type { ConnectionPool, PoolStats } from "../types/storage.js";
+import type { SQLiteDatabase } from "./sqlite-adapter.js";
 import { SQLiteManager } from "./sqlite-manager.js";
 
 // =============================================================================
@@ -34,7 +34,7 @@ const CONNECTION_TEST_INTERVAL = 10000; // ms
 
 interface PooledConnection {
   id: string;
-  db: Database.Database;
+  db: SQLiteDatabase;
   manager: SQLiteManager;
   inUse: boolean;
   lastUsed: number;
@@ -51,7 +51,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
   private waitQueue: Array<{
     resolve: (conn: SQLiteManager) => void;
     reject: (error: Error) => void;
-    timeout: NodeJS.Timeout;
+    timeout: ReturnType<typeof setTimeout>;
   }> = [];
 
   private config: Required<SQLitePoolConfig>;
@@ -63,7 +63,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
     totalReleased: 0,
   };
 
-  private healthCheckInterval?: NodeJS.Timeout;
+  private healthCheckInterval?: ReturnType<typeof setInterval>;
   private closed = false;
 
   constructor(config: SQLitePoolConfig = {}) {

@@ -13,7 +13,7 @@
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { createHash } from "node:crypto";
-import type Database from "better-sqlite3";
+import type { SQLiteDatabase } from "./sqlite-adapter.js";
 import type { SQLiteManager } from "./sqlite-manager.js";
 
 // =============================================================================
@@ -299,7 +299,7 @@ export const migrations: Migration[] = [
 // =============================================================================
 
 export class SchemaMigration {
-  private db: Database.Database;
+  private db: SQLiteDatabase;
 
   constructor(sqliteManager: SQLiteManager) {
     this.db = sqliteManager.getConnection();

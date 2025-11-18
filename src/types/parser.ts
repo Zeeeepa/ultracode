@@ -28,10 +28,14 @@ export const SUPPORTED_LANGUAGES = [
   "python",
   "c",
   "cpp",
-  "csharp",
   "rust",
   "go",
   "java",
+  "kotlin",
+  "swift",
+  "css",
+  "html",
+  "xml",
   "vba",
 ] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];

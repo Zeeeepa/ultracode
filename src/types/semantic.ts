@@ -15,13 +15,15 @@
  * implementation
  */
 
+import { CACHE_CONSTANTS, VECTOR_CONSTANTS } from "../config/constants.js";
+
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-export const VECTOR_DIMENSIONS = 384; // all-MiniLM-L6-v2 dimensions
-export const DEFAULT_SIMILARITY_THRESHOLD = 0.7;
-export const MAX_BATCH_SIZE = 8; // Optimal for 4-core CPU
-export const MAX_CACHE_ENTRIES = 5000;
+export const VECTOR_DIMENSIONS = VECTOR_CONSTANTS.DEFAULT_VECTOR_DIMENSIONS; // all-MiniLM-L6-v2 dimensions
+export const DEFAULT_SIMILARITY_THRESHOLD = VECTOR_CONSTANTS.DEFAULT_SIMILARITY_THRESHOLD;
+export const MAX_BATCH_SIZE = VECTOR_CONSTANTS.MAX_BATCH_SIZE; // Optimal for 4-core CPU
+export const MAX_CACHE_ENTRIES = CACHE_CONSTANTS.MAX_CACHE_ENTRIES;
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
@@ -144,6 +146,11 @@ export interface CacheEntry<T> {
 }
 
 /**
+ * Vector backend types for adaptive switching
+ */
+export type VectorBackend = "auto" | "vectorlite" | "sqlite-vec" | "fallback";
+
+/**
  * Vector store configuration
  */
 export interface VectorStoreConfig {
@@ -151,12 +158,27 @@ export interface VectorStoreConfig {
   dimensions: number;
   cacheSize?: number;
   walMode?: boolean;
+
+  // Vector backend configuration
+  backend?: VectorBackend; // Default: "auto"
+  autoSwitchThreshold?: number; // Default: 10000 vectors
+  estimatedFileCount?: number; // Estimated number of source files for pre-selection
+  workingDirectory?: string; // Working directory for file count estimation
+
+  // Vectorlite HNSW configuration (for large codebases)
+  vectorlite?: {
+    maxElements?: number; // Default: 100000
+    M?: number; // Connections per layer (default: 16)
+    efConstruction?: number; // Construction quality (default: 200)
+    efSearch?: number; // Search quality (default: 50)
+    distanceMetric?: "l2" | "cosine" | "ip"; // Default: l2
+  };
 }
 
 /**
  * Embedding generator configuration
  */
-export type EmbeddingProviderKind = "memory" | "transformers" | "ollama" | "openai" | "cloudru";
+export type EmbeddingProviderKind = "memory" | "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "auto";
 
 export interface EmbeddingConfig {
   modelName: string;
@@ -188,6 +210,19 @@ export interface EmbeddingConfig {
     timeoutMs?: number;
     concurrency?: number;
     maxBatchSize?: number;
+  };
+  huggingface?: {
+    apiKey?: string;
+    baseUrl?: string;
+    timeoutMs?: number;
+    concurrency?: number;
+    warmupText?: string;
+  };
+  tei?: {
+    baseUrl?: string;
+    timeoutMs?: number;
+    concurrency?: number;
+    checkServer?: boolean;
   };
   memory?: {
     dimension?: number;

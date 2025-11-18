@@ -1,4 +1,4 @@
-# Default Configuration for Code Graph RAG MCP
+﻿# Default Configuration for UltraScript Tools MCP
 # This file provides default settings for all environments
 # Override specific values in environment-specific config files
 
@@ -10,31 +10,90 @@ debug: true
 mcp:
   embedding:
     # Embedding model configuration
-    model: "default"
-    provider: "memory"  # Options: memory, openai, huggingface, local
-    enabled: false      # Set to true when embedding provider is configured
-    fallbackToMemory: true  # Gracefully fallback to memory-based similarity when model unavailable
-    apiKey: ""          # Set via environment variable MCP_EMBEDDING_API_KEY
-    
+    #
+    # 🏆 DEFAULT: Best quality with 8192 tokens (TEI Docker - Local Inference)
+    model: "ibm-granite/granite-embedding-english-r2"  # 8192 tokens, English
+    #
+    # ALTERNATIVE OPTIONS:
+    # TEI (Local Docker, 8192 tokens max):
+    # model: "ibm-granite/granite-embedding-small-english-r2"  # 8192 tokens, fast
+    #
+    # OLLAMA (Local inference, 512 tokens max):
+    # model: "ibm/granite-embedding:278m"  # Multilingual (English + Russian)
+    # model: "ibm/granite-embedding:30m"   # Fast English-only version
+    #
+    # HUGGING FACE CLOUD API (8192 tokens, requires API key):
+    # model: "ibm-granite/granite-embedding-english-r2"  # 8192 tokens, English
+
+    provider: "tei"          # Options: tei (local Docker), huggingface (cloud API), ollama, memory, auto
+    enabled: false           # Set to true after running setup-tei.sh/.cmd (or use auto for auto-detection)
+    fallbackToMemory: true   # Gracefully fallback to memory-based similarity when model unavailable
+    apiKey: ""               # Only for cloud providers (huggingface, openai, cloudru)
+
+    # Optional: Two-stage retrieval with reranker (Ollama only, not for HuggingFace)
+    useReranker: false
+    rerankerModel: "ibm/granite-embedding-reranker:149m"
+    rerankerTopK: 100   # First stage candidates
+    rerankerFinalK: 10  # Final refined results
+
+    # Language hint for optimization (doesn't restrict queries)
+    # Options: "english" | "multilingual"
+    queryLanguage: "english"  # Set to "multilingual" if using ibm/granite-embedding:278m or granite-embedding
+
+    # TEI (Text Embeddings Inference) Configuration
+    # Local Docker inference with 8192-token models
+    tei:
+      baseUrl: "http://127.0.0.1:8080"  # TEI server URL (Docker container)
+      timeoutMs: 30000                  # 30 seconds timeout
+      concurrency: 4                    # Parallel requests
+      checkServer: true                 # Auto-start Docker container if stopped
+
+    # HuggingFace Cloud API Configuration (alternative to TEI for cloud usage)
+    # Requires API key from https://huggingface.co/settings/tokens
+    # huggingface:
+    #   apiKey: ""                      # Set via MCP_EMBEDDING_API_KEY env variable
+    #   baseUrl: "https://api-inference.huggingface.co/models"
+    #   timeoutMs: 30000
+    #   concurrency: 4
+
   server:
     host: "localhost"
     port: 3000
-    timeout: 30000      # 30 seconds
-    
+    timeout: 120000     # 2 minutes for large indexing operations
+
   agents:
     maxConcurrent: 5    # Maximum concurrent agent operations
-    defaultTimeout: 10000  # 10 seconds default timeout for agent tasks
+    defaultTimeout: 90000  # 90 seconds for large batches (Python/Kotlin)
     useParser: true     # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
     devIndexBatch: 100  # Batch size for file processing (MCP_DEV_INDEX_BATCH)
 
 # Database Configuration
 database:
-  path: "./vectors.db"
+  path: "./.ultrascript/db/vectors.db"
   mode: "WAL"           # Options: WAL, DELETE, TRUNCATE
   cacheSize: 10000      # SQLite cache size
   mmapSize: 268435456   # 256MB memory mapping size
   synchronous: "NORMAL" # Options: OFF, NORMAL, FULL
   tempStore: "MEMORY"   # Options: DEFAULT, FILE, MEMORY
+
+# Vector Backend Configuration (Adaptive Switching)
+# Automatically selects optimal backend based on codebase size:
+# - Small/Medium (<10k vectors): sqlite-vec (exact search, fast insert)
+# - Large (>10k vectors): vectorlite (HNSW, 3-100x faster search)
+vectorBackend:
+  # Backend selection: "auto" (recommended), "vectorlite", "sqlite-vec", "fallback"
+  backend: "auto"
+
+  # Threshold for automatic switching (in number of vectors)
+  autoSwitchThreshold: 10000
+
+  # Vectorlite HNSW configuration (used for large codebases)
+  vectorlite:
+    maxElements: 100000       # Maximum number of vectors
+    M: 16                     # Connections per layer (higher = better recall, more memory)
+    efConstruction: 200       # Index build quality (higher = better quality, slower build)
+    efSearch: 50              # Search quality (higher = better accuracy, slower search)
+    distanceMetric: "l2"      # Options: l2, cosine, ip
 
 # Logging Configuration
 logging:
@@ -51,15 +110,16 @@ parser:
     enabled: true
     languageConfigs:
       - "typescript"
-      - "javascript" 
+      - "javascript"
       - "python"
       - "c"
       - "cpp"
       - "java"
+      - "kotlin"
       - "rust"
       - "go"
     maxFileSize: 1048576  # 1MB maximum file size for parsing
-    timeout: 5000         # 5 seconds timeout for parsing operations
+    timeout: 60000        # 60 seconds for large batches (Python ~266ms/file × 100 = 26s + overhead)
     bufferSize: 1048576   # 1MB buffer size for tree-sitter parser
     
   incremental:
@@ -83,6 +143,27 @@ indexer:
   batchSize: 1000
   cacheSize: 52428800     # 50MB cache (in bytes)
   cacheTTL: 300000        # 5 minutes (in ms)
+
+# Branch-Aware Indexing Configuration
+# Enables per-branch databases for accurate indexing when switching Git branches
+indexing:
+  branchAware: false                # Enable per-branch databases (RECOMMENDED for Git repositories)
+  autoSwitchOnBranchChange: true    # Automatically switch DB when Git branch changes
+  maxBranchesPerRepo: 10            # Maximum branches to keep indexed per repository
+  maxTotalBranches: 50              # Maximum total branches across all repositories
+  evictionStrategy: "LRU"           # Options: LRU, LFU, FIFO - how to evict old branches
+  cleanupIntervalMs: 3600000        # 1 hour - automatic cleanup interval
+  incrementalThreshold: 20          # If >20 files changed, do full reindex instead of incremental
+  dataDir: "./.ultrascript/branches"  # Directory for branch-scoped databases
+
+# Git Integration Configuration
+# Watches for Git branch changes and triggers automatic reindexing
+git:
+  enabled: false                    # Enable Git integration (requires Git to be installed)
+  watchBranchChanges: true          # Watch .git/HEAD for branch switches
+  autoReindex: true                 # Automatically reindex when branch changes detected
+  diffMode: "incremental"           # Options: incremental, full - how to sync on branch switch
+  pollIntervalMs: 5000              # 5 seconds - how often to check for new commits
 
 # Dev Agent Configuration
 devAgent:

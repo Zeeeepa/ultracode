@@ -21,7 +21,7 @@ import { EventEmitter } from "node:events";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type Database from "better-sqlite3";
+import type { SQLiteDatabase } from "../storage/sqlite-adapter.js";
 import type { SQLiteManager } from "../storage/sqlite-manager.js";
 import type { ConnectionPoolConfig } from "../types/query.js";
 
@@ -44,12 +44,12 @@ export class ConnectionPool extends EventEmitter {
   private config: ConnectionPoolConfig;
   private connections: PooledConnection[] = [];
   private waitingQueue: Array<{
-    resolve: (conn: Database.Database) => void;
+    resolve: (conn: SQLiteDatabase) => void;
     reject: (error: Error) => void;
     timestamp: number;
   }> = [];
   private isShuttingDown = false;
-  private testInterval?: NodeJS.Timeout;
+  private testInterval?: ReturnType<typeof setInterval>;
   private sqliteManager: SQLiteManager;
 
   constructor(config: Partial<ConnectionPoolConfig> & { sqliteManager: SQLiteManager }) {
@@ -89,7 +89,7 @@ export class ConnectionPool extends EventEmitter {
   /**
    * Acquire a connection from the pool
    */
-  async acquire(): Promise<Database.Database> {
+  async acquire(): Promise<SQLiteDatabase> {
     if (this.isShuttingDown) {
       throw new Error("Connection pool is shutting down");
     }
@@ -130,7 +130,7 @@ export class ConnectionPool extends EventEmitter {
       }, this.config.acquireTimeout);
 
       const waiter = {
-        resolve: (conn: Database.Database) => {
+        resolve: (conn: SQLiteDatabase) => {
           clearTimeout(timeoutId);
           resolve(conn);
         },
@@ -149,7 +149,7 @@ export class ConnectionPool extends EventEmitter {
   /**
    * Release a connection back to the pool
    */
-  release(db: Database.Database): void {
+  release(db: SQLiteDatabase): void {
     const connection = this.connections.find((c) => c.db === db);
 
     if (!connection) {
@@ -382,7 +382,7 @@ export class ConnectionPool extends EventEmitter {
 
 interface PooledConnection {
   id: string;
-  db: Database.Database;
+  db: SQLiteDatabase;
   inUse: boolean;
   created: number;
   lastUsed: number;

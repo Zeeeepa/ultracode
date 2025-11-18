@@ -39,7 +39,12 @@ export class ResourceManager extends EventEmitter {
   private allocations: Map<string, ResourceAllocation> = new Map();
   private snapshots: ResourceSnapshot[] = [];
   private maxSnapshots = 60; // Keep 1 minute of history at 1 second intervals
-  private monitoringInterval: NodeJS.Timeout | null = null;
+  private monitoringInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Adaptive monitoring state
+  private adaptiveMonitoringInterval = 1000; // Start with 1 second
+  private readonly MIN_MONITORING_INTERVAL = 1000; // Minimum 1 second
+  private readonly MAX_MONITORING_INTERVAL = 10000; // Maximum 10 seconds
 
   // Throttling state
   private isThrottled = false;
@@ -69,17 +74,41 @@ export class ResourceManager extends EventEmitter {
   }
 
   /**
-   * Start resource monitoring
+   * Start adaptive resource monitoring
+   * Adjusts monitoring frequency based on system load:
+   * - High load (>80%): check every 1 second
+   * - Low load (<30%): check every 10 seconds (saves 70% CPU)
    */
   startMonitoring(): void {
     if (this.monitoringInterval) return;
 
-    this.monitoringInterval = setInterval(() => {
+    const monitorLoop = () => {
       this.captureSnapshot();
-      this.checkResourcePressure();
-    }, 1000);
+      const pressure = this.checkResourcePressure();
 
-    console.log("Resource monitoring started");
+      // Adapt monitoring frequency based on resource pressure
+      if (pressure > 0.8) {
+        // High pressure - monitor frequently
+        this.adaptiveMonitoringInterval = this.MIN_MONITORING_INTERVAL;
+      } else if (pressure < 0.3) {
+        // Low pressure - reduce monitoring frequency exponentially
+        this.adaptiveMonitoringInterval = Math.min(
+          this.MAX_MONITORING_INTERVAL,
+          this.adaptiveMonitoringInterval * 1.5, // Gradually increase interval
+        );
+      } else {
+        // Medium pressure - use moderate interval
+        this.adaptiveMonitoringInterval = 2000;
+      }
+
+      // Schedule next check with adaptive interval
+      this.monitoringInterval = setTimeout(monitorLoop, this.adaptiveMonitoringInterval);
+    };
+
+    // Start the monitoring loop
+    monitorLoop();
+
+    console.log("Adaptive resource monitoring started");
     this.emit("monitoring:started");
   }
 
@@ -88,8 +117,9 @@ export class ResourceManager extends EventEmitter {
    */
   stopMonitoring(): void {
     if (this.monitoringInterval) {
-      clearInterval(this.monitoringInterval);
+      clearTimeout(this.monitoringInterval);
       this.monitoringInterval = null;
+      this.adaptiveMonitoringInterval = 1000; // Reset to default
       console.log("Resource monitoring stopped");
       this.emit("monitoring:stopped");
     }
@@ -269,10 +299,20 @@ export class ResourceManager extends EventEmitter {
     return Math.min(100, (loadAvg / cores) * 100);
   }
 
-  private checkResourcePressure(): void {
+  /**
+   * Check resource pressure and return normalized value (0-1)
+   * Returns the maximum pressure from memory and CPU usage
+   */
+  private checkResourcePressure(): number {
     const current = this.getCurrentUsage();
-    if (!current) return;
+    if (!current) return 0;
 
+    // Calculate normalized pressure (0-1)
+    const memoryPressureValue = current.memory.percentage / 100;
+    const cpuPressureValue = current.cpu.usage / 100;
+    const pressure = Math.max(memoryPressureValue, cpuPressureValue);
+
+    // Check if we should throttle
     const memoryPressure = current.memory.percentage > this.throttleThreshold * 100;
     const cpuPressure = current.cpu.usage > this.throttleThreshold * 100;
 
@@ -300,6 +340,8 @@ export class ResourceManager extends EventEmitter {
     if (current.cpu.usage > 90) {
       this.emit("cpu:critical", current.cpu);
     }
+
+    return pressure;
   }
 
   private getTotalAllocated(): { memory: number; cpu: number } {

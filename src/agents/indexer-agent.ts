@@ -13,9 +13,11 @@
  * - Knowledge Bus: src/core/knowledge-bus.ts
  */
 
-import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
+import xxhash from "xxhash-wasm";
 import { getConfig } from "../config/yaml-config.js";
+import { BranchManager } from "../core/branch-manager.js";
+import { GitWatcher } from "../core/git-watcher.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { BatchOperations } from "../storage/batch-operations.js";
 import { getCacheManager, QueryCacheManager } from "../storage/cache-manager.js";
@@ -55,14 +57,33 @@ function getIndexerConfig() {
 // 3. STABLE ID HELPERS
 // =============================================================================
 const ID_LENGTH = 12;
+let xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
+
+// Initialize xxHash once
+async function initXXHash() {
+  if (!xxhashInstance) {
+    xxhashInstance = await xxhash();
+  }
+}
+
 function stableEntityId(base: Omit<Entity, "id" | "createdAt" | "updatedAt">): string {
-  const s = base.location?.start?.index ?? -1;
-  const eIdx = base.location?.end?.index ?? -1;
-  const key = `${base.filePath}|${base.type}|${base.name}|${s}-${eIdx}`;
-  return createHash("sha256").update(key).digest("base64url").slice(0, ID_LENGTH);
+  // For packages and imports, use global ID (no filePath, no location) since they represent the same entity across files
+  const isGlobal = base.type === "package" || base.type === "import";
+
+  const key = isGlobal
+    ? `${base.type}|${base.name}` // Only type and name for global entities
+    : `${base.filePath}|${base.type}|${base.name}|${base.location?.start?.index ?? -1}-${base.location?.end?.index ?? -1}`; // Full path for file-specific entities
+
+  if (!xxhashInstance) {
+    throw new Error("xxHash not initialized - call initXXHash() first");
+  }
+  return xxhashInstance.h64ToString(key).slice(0, ID_LENGTH);
 }
 function stableRelationshipId(fromId: string, toId: string, type: RelationType | string): string {
-  return createHash("sha256").update(`${fromId}|${toId}|${type}`).digest("base64url").slice(0, ID_LENGTH);
+  if (!xxhashInstance) {
+    throw new Error("xxHash not initialized - call initXXHash() first");
+  }
+  return xxhashInstance.h64ToString(`${fromId}|${toId}|${type}`).slice(0, ID_LENGTH);
 }
 
 // =============================================================================
@@ -99,6 +120,9 @@ export class IndexerAgent extends BaseAgent {
   private graphStorage!: GraphStorageImpl;
   private batchOps!: BatchOperations;
   private cacheManager!: QueryCacheManager;
+  private branchManager: BranchManager | null = null;
+  private gitWatcher: GitWatcher | null = null;
+  private currentRepositoryPath: string | null = null;
   private subscriptionIds: string[] = [];
   private ready = false;
   private indexingStats = {
@@ -121,6 +145,9 @@ export class IndexerAgent extends BaseAgent {
   protected async onInitialize(): Promise<void> {
     console.log(`[${this.id}] Initializing Indexer Agent...`);
 
+    // Initialize xxHash for stable ID generation
+    await initXXHash();
+
     // Ensure SQLite manager is initialized
     if (!this.sqliteManager) {
       throw new Error(`[${this.id}] SQLiteManager is required but not provided`);
@@ -128,6 +155,38 @@ export class IndexerAgent extends BaseAgent {
 
     if (!this.sqliteManager.isOpen()) {
       this.sqliteManager.initialize();
+    }
+
+    // Initialize branch-aware indexing if enabled
+    const appConfig = getConfig();
+    if (appConfig.indexing?.branchAware) {
+      console.log(`[${this.id}] Branch-aware indexing is enabled`);
+
+      this.branchManager = new BranchManager({
+        enabled: true,
+        dataDir: appConfig.indexing.dataDir || "./data",
+        maxBranchesPerRepo: appConfig.indexing.maxBranchesPerRepo || 10,
+        maxTotalBranches: appConfig.indexing.maxTotalBranches || 50,
+        evictionStrategy: appConfig.indexing.evictionStrategy || "LRU",
+      });
+
+      await this.branchManager.initialize();
+
+      // Initialize GitWatcher if Git integration is enabled
+      if (appConfig.git?.enabled && appConfig.git.watchBranchChanges) {
+        console.log(`[${this.id}] Git watching is enabled`);
+
+        this.gitWatcher = new GitWatcher({
+          enabled: true,
+          pollIntervalMs: appConfig.git.pollIntervalMs || 5000,
+          autoReindex: appConfig.git.autoReindex || true,
+        });
+
+        // Setup branch change handler
+        this.gitWatcher.onBranchChange(async (newBranch, oldBranch) => {
+          await this.handleBranchChange(newBranch, oldBranch);
+        });
+      }
     }
 
     // CRITICAL FIX: Use singleton GraphStorage instance
@@ -140,6 +199,7 @@ export class IndexerAgent extends BaseAgent {
 
     const config = getIndexerConfig();
     this.batchOps = new BatchOperations(this.sqliteManager.getConnection(), config.batchSize);
+    await this.batchOps.initialize();
     this.cacheManager = getCacheManager({
       maxSize: config.cacheSize,
       defaultTTL: config.cacheTTL,
@@ -312,6 +372,16 @@ export class IndexerAgent extends BaseAgent {
       console.log(`[${this.id}] Progress: ${processed}/${total} entities`);
     });
 
+    console.log(
+      `[${this.id}] DEBUG: Entity insert result: processed=${entityResult.processed}, failed=${entityResult.failed}, errors=${entityResult.errors.length}`,
+    );
+    if (entityResult.failed > 0) {
+      console.log(
+        `[${this.id}] DEBUG: First 3 entity errors:`,
+        entityResult.errors.slice(0, 3).map((e) => e.error),
+      );
+    }
+
     // Build and insert relationships
     let relationships: Relationship[] = [];
 
@@ -323,6 +393,13 @@ export class IndexerAgent extends BaseAgent {
         arr.push(e);
         byName.set(e.name, arr);
       }
+
+      console.log(`[${this.id}] DEBUG: storageEntities names: ${Array.from(byName.keys()).slice(0, 10).join(", ")}...`);
+      const first3 = providedRelationships.slice(0, 3);
+      console.log(
+        `[${this.id}] DEBUG: First 3 raw relationships:`,
+        JSON.stringify(first3.map((r) => ({ from: r.from, to: r.to, type: r.type }))),
+      );
 
       function resolveByNameAndLine(name: string, line?: number): string | undefined {
         const candidates = byName.get(name);
@@ -342,9 +419,17 @@ export class IndexerAgent extends BaseAgent {
         }
         return best?.id;
       }
+      console.log(`[${this.id}] DEBUG: Processing ${providedRelationships.length} provided relationships`);
       for (const rel of providedRelationships) {
         const fromId = resolveByNameAndLine(rel.from, rel.metadata?.line);
         let toId = resolveByNameAndLine(rel.to, rel.metadata?.line);
+
+        // DEBUG: Log resolution results for first relationship
+        if (relationships.length === 0) {
+          console.log(
+            `[${this.id}] DEBUG: First rel resolution: from="${rel.from}" -> fromId="${fromId}", to="${rel.to}" -> toId="${toId}"`,
+          );
+        }
 
         if (!toId) {
           const src = rel.targetFile || "unknown";
@@ -360,6 +445,8 @@ export class IndexerAgent extends BaseAgent {
             metadata: { line: rel.metadata?.line, context: rel.type },
             createdAt: Date.now(),
           } as Relationship);
+        } else {
+          console.log(`[${this.id}] SKIPPED relationship: ${rel.from} -> ${rel.to} (fromId=${fromId}, toId=${toId})`);
         }
       }
       console.log(`[${this.id}] Using ${relationships.length} provided relationships`);
@@ -411,6 +498,12 @@ export class IndexerAgent extends BaseAgent {
     if (externalPlaceholders.length > 0) {
       await this.batchOps.insertEntities(externalPlaceholders);
     }
+
+    console.log(`[${this.id}] DEBUG: About to insert ${relationships.length} relationships into DB`);
+    console.log(
+      `[${this.id}] DEBUG: First 3 relationships:`,
+      relationships.slice(0, 3).map((r) => `${r.fromId} -> ${r.toId} (${r.type})`),
+    );
 
     const relResult = await this.batchOps.insertRelationships(relationships, (processed, total) => {
       console.log(`[${this.id}] Progress: ${processed}/${total} relationships`);
@@ -723,10 +816,73 @@ export class IndexerAgent extends BaseAgent {
   }
 
   /**
+   * Handle branch change event
+   */
+  private async handleBranchChange(newBranch: string, oldBranch: string): Promise<void> {
+    console.log(`[${this.id}] Branch changed from ${oldBranch} to ${newBranch}`);
+
+    if (!this.branchManager || !this.currentRepositoryPath) {
+      console.warn(`[${this.id}] BranchManager not initialized, skipping branch switch`);
+      return;
+    }
+
+    try {
+      // Switch to new branch database
+      await this.branchManager.switchBranch(newBranch, this.currentRepositoryPath);
+
+      // Emit event for other components
+      knowledgeBus.publish(
+        "indexer:branch:changed",
+        {
+          oldBranch,
+          newBranch,
+          repositoryPath: this.currentRepositoryPath,
+        },
+        this.id,
+      );
+
+      console.log(`[${this.id}] Successfully switched to branch: ${newBranch}`);
+    } catch (error) {
+      console.error(`[${this.id}] Failed to handle branch change:`, error);
+    }
+  }
+
+  /**
+   * Get BranchManager instance
+   */
+  getBranchManager(): BranchManager | null {
+    return this.branchManager;
+  }
+
+  /**
+   * Get GitWatcher instance
+   */
+  getGitWatcher(): GitWatcher | null {
+    return this.gitWatcher;
+  }
+
+  /**
+   * Set current repository path and start watching if Git is enabled
+   */
+  setRepositoryPath(path: string): void {
+    this.currentRepositoryPath = path;
+
+    if (this.gitWatcher && this.branchManager) {
+      this.gitWatcher.startWatching(path);
+      console.log(`[${this.id}] Started watching repository: ${path}`);
+    }
+  }
+
+  /**
    * Shutdown the indexer agent
    */
   protected async onShutdown(): Promise<void> {
     console.log(`[${this.id}] Shutting down Indexer Agent...`);
+
+    // Stop GitWatcher
+    if (this.gitWatcher) {
+      this.gitWatcher.stopWatching();
+    }
 
     // Unsubscribe from knowledge bus
     try {

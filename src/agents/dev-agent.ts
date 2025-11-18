@@ -15,8 +15,30 @@ import { BaseAgent } from "./base.js";
 import { IndexerAgent } from "./indexer-agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
 import { ParserAgent } from "./parser-agent.js";
+import { type ResourceAdjustmentCapable, ResourceAdjustmentMixin } from "./resource-adjustment-mixin.js";
 
-const SUPPORTED_CODE_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".cpp", ".c", ".go", ".rs"] as const;
+const SUPPORTED_CODE_EXTENSIONS = [
+  ".js",
+  ".ts",
+  ".jsx",
+  ".tsx", // JavaScript/TypeScript
+  ".py", // Python
+  ".java", // Java
+  ".cpp",
+  ".c", // C/C++
+  ".go", // Go
+  ".rs", // Rust
+  ".swift", // Swift
+  ".kt",
+  ".kts", // Kotlin
+  ".cs", // C#
+  ".css",
+  ".scss",
+  ".sass",
+  ".less", // CSS
+  ".html",
+  ".htm", // HTML
+] as const;
 
 function getDevAgentConfig() {
   const config = getConfig();
@@ -27,13 +49,14 @@ function getDevAgentConfig() {
   };
 }
 
-export class DevAgent extends BaseAgent {
+export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   private parserAgent: ParserAgent | null = null;
   private indexerAgent: IndexerAgent | null = null;
   private indexBatchSize: number;
   private defaultBatchSize: number;
   private readonly defaultMaxConcurrency: number;
   private readonly defaultMemoryLimit: number;
+  private resourceMixin = new ResourceAdjustmentMixin();
 
   constructor(_agentId?: string) {
     const agentConfig = getDevAgentConfig();
@@ -224,7 +247,13 @@ export class DevAgent extends BaseAgent {
     const configLoader = ConfigLoader.getInstance();
     const isDebugMode = process.env.MCP_DEBUG_MODE === "1";
     const configuredBatchSize = this.indexBatchSize ?? configLoader.getDevIndexBatchSize();
-    const effectiveBatchSize = isDebugMode ? Math.min(configuredBatchSize, 5) : configuredBatchSize;
+    // Removed artificial batch size limit in debug mode to allow worker pool to function effectively
+    // Old: const effectiveBatchSize = isDebugMode ? Math.min(configuredBatchSize, 5) : configuredBatchSize;
+    const effectiveBatchSize = configuredBatchSize;
+
+    console.log(
+      `[${this.id}] Batch configuration: configured=${configuredBatchSize}, effective=${effectiveBatchSize}, debugMode=${isDebugMode}`,
+    );
     const parseOptions: ParserOptions = isDebugMode
       ? {
           batchSize: Math.max(1, Math.min(3, effectiveBatchSize)),
@@ -438,7 +467,12 @@ export class DevAgent extends BaseAgent {
           }
         }
       } catch (error) {
-        console.error(`[DevAgent ${this.id}] Error processing batch ${i}:`, error);
+        console.error(
+          `[DevAgent ${this.id}] Error processing batch ${i} (${batch.length} files):`,
+          error instanceof Error ? error.message : error,
+        );
+        console.error(`[DevAgent ${this.id}] Batch files:`, batch);
+        // Continue processing next batch despite error
       }
 
       if ((i + effectiveBatchSize) % 500 === 0 || i + effectiveBatchSize >= files.length) {
@@ -535,30 +569,27 @@ export class DevAgent extends BaseAgent {
   }
 
   private handleResourceAdjustment(entry: KnowledgeEntry): void {
-    const data = entry.data as {
-      newMemoryLimit?: number;
-      newAgentLimit?: number;
-    };
+    this.resourceMixin.handleResourceAdjustment.call(this, entry);
+  }
 
-    if (typeof data.newAgentLimit === "number" && Number.isFinite(data.newAgentLimit)) {
-      const adjustedConcurrency = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(data.newAgentLimit)));
-      if (this.capabilities.maxConcurrency !== adjustedConcurrency) {
-        console.log(
-          `[DevAgent ${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjustedConcurrency} (resources:adjusted)`,
-        );
-        this.capabilities.maxConcurrency = adjustedConcurrency;
-      }
+  adjustConcurrency(newLimit: number): void {
+    const adjusted = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(newLimit)));
+    if (this.capabilities.maxConcurrency !== adjusted) {
+      console.log(
+        `[DevAgent ${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjusted} (resources:adjusted)`,
+      );
+      this.capabilities.maxConcurrency = adjusted;
     }
+  }
 
-    if (typeof data.newMemoryLimit === "number" && Number.isFinite(data.newMemoryLimit)) {
-      const ratio = Math.max(0.5, Math.min(2, data.newMemoryLimit / this.defaultMemoryLimit));
-      const newBatchSize = Math.max(10, Math.round(this.defaultBatchSize * ratio));
-      if (this.indexBatchSize !== newBatchSize) {
-        console.log(
-          `[DevAgent ${this.id}] Adjusting batch size from ${this.indexBatchSize} to ${newBatchSize} (resources:adjusted)`,
-        );
-        this.indexBatchSize = newBatchSize;
-      }
+  adjustBatchSize(newMemoryLimit: number): void {
+    const ratio = Math.max(0.5, Math.min(2, newMemoryLimit / this.defaultMemoryLimit));
+    const newBatchSize = Math.max(10, Math.round(this.defaultBatchSize * ratio));
+    if (this.indexBatchSize !== newBatchSize) {
+      console.log(
+        `[DevAgent ${this.id}] Adjusting batch size from ${this.indexBatchSize} to ${newBatchSize} (resources:adjusted)`,
+      );
+      this.indexBatchSize = newBatchSize;
     }
   }
 

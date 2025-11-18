@@ -1,4 +1,4 @@
-# Development Configuration for Code Graph RAG MCP
+﻿# Development Configuration for UltraScript Tools MCP
 # This file contains development-specific settings
 # Inherits from default.yaml and overrides for local development
 
@@ -10,26 +10,79 @@ debug: true
 mcp:
   embedding:
     # Development embedding configuration
-    model: "default"
-    provider: "memory"      # Use memory provider for development
-    enabled: false          # Disable by default for faster startup
-    fallbackToMemory: true
-    # No API key needed for memory provider
+    #
+    # 🏆 DEFAULT: Best quality with 8192 tokens (TEI Docker - Local Inference)
+    model: "ibm-granite/granite-embedding-english-r2"  # 8192 tokens, English
+    #
+    # ALTERNATIVE OPTIONS:
+    # TEI (Local Docker, 8192 tokens max):
+    # model: "ibm-granite/granite-embedding-small-english-r2"  # 8192 tokens, fast
+    #
+    # OLLAMA (Local inference, 512 tokens max):
+    # model: "ibm/granite-embedding:278m"  # Multilingual (English + Russian)
+    # model: "ibm/granite-embedding:30m"   # Fast English-only version
+    #
+    # HUGGING FACE CLOUD API (8192 tokens, requires API key):
+    # model: "ibm-granite/granite-embedding-english-r2"  # 8192 tokens, English
+
+    provider: "tei"          # Use TEI for local inference with 8192 tokens
+    enabled: true            # Enabled for development (auto-starts Docker container)
+    fallbackToMemory: true   # Gracefully fallback to memory if Docker not available
+    apiKey: ""               # Only for cloud providers (huggingface, openai, cloudru)
+
+    # Optional: Two-stage retrieval with reranker (Ollama only, not for HuggingFace)
+    # Reranker refines top results after initial embedding search
+    # Set to true for production systems requiring highest precision
+    useReranker: false
+    rerankerModel: "ibm/granite-embedding-reranker:149m"
+    rerankerTopK: 100  # First stage: retrieve 100 candidates
+    rerankerFinalK: 10 # Second stage: rerank to top 10
+
+    # Language hint for model optimization (doesn't restrict actual queries)
+    # Options: "english" | "multilingual"
+    # This helps the system optimize chunking and preprocessing
+    queryLanguage: "english"  # Set to "multilingual" if using ibm/granite-embedding:278m
+
+    # TEI (Text Embeddings Inference) Configuration
+    # Local Docker inference with 8192-token models
+    tei:
+      baseUrl: "http://127.0.0.1:8080"  # TEI server URL (Docker container)
+      timeoutMs: 30000                  # 30 seconds timeout
+      concurrency: 4                    # Parallel requests
+      checkServer: true                 # Auto-start Docker container if stopped
+
+    # HuggingFace Cloud API Configuration (alternative to TEI for cloud usage)
+    # Get API key from https://huggingface.co/settings/tokens
+    # huggingface:
+    #   apiKey: ""  # Or use MCP_EMBEDDING_API_KEY env var
+    #   baseUrl: "https://api-inference.huggingface.co"
+    #   timeoutMs: 30000
+    #   concurrency: 4
+    #   warmupText: "warmup text"
+
+    # Alternative providers:
+    # - "auto": Auto-detect (checks for Ollama + granite models, falls back to memory)
+    # - "ollama": Force local Ollama (requires ollama serve running)
+    # - "openai": OpenAI API (requires OPENAI_API_KEY)
+    # - "cloudru": CloudRU API (requires CLOUDRU_API_KEY)
+    # - "memory": No ML, deterministic hashing (always available)
+    #
+    # To disable embeddings: set enabled: false OR use env var MCP_EMBEDDING_ENABLED=false
     
   server:
     host: "localhost"       # Local development only
     port: 3000             # Standard development port
-    timeout: 15000         # Shorter timeout for quick feedback
-    
+    timeout: 180000        # 3 minutes for large indexing operations
+
   agents:
     maxConcurrent: 10      # Allow sufficient agents for parallel operations
-    defaultTimeout: 5000   # Quick timeout for development
+    defaultTimeout: 180000 # 3 minutes for large batches (Kotlin projects)
     useParser: true        # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
-    devIndexBatch: 100     # Batch size for file processing (MCP_DEV_INDEX_BATCH)
+    devIndexBatch: 20      # Batch size for file processing - matches parser.agent.batchSize
 
 # Database Configuration (Development)
 database:
-  path: "./vectors.db"     # Local development database
+  path: "./.ultrascript/db/vectors.db"     # Local development database
   mode: "WAL"              # WAL mode for development
   cacheSize: 5000          # Smaller cache for development
   mmapSize: 134217728      # 128MB memory mapping
@@ -59,9 +112,10 @@ parser:
       - "rust"             # Rust language support
       - "go"               # Go language support
       - "java"             # Java language support
+      - "kotlin"           # Kotlin language support
       - "vba"              # VBA language support (regex-based)
     maxFileSize: 524288     # 512KB for quick parsing
-    timeout: 3000          # Quick timeout for development
+    timeout: 60000         # 1 minute for large batches (Kotlin projects)
     
   incremental:
     enabled: true
@@ -72,9 +126,9 @@ parser:
     maxConcurrency: 2     # Lower concurrency for development
     memoryLimit: 256      # MB - smaller limit for development
     priority: 8           # High priority for parsing
-    batchSize: 5          # Smaller batch size for development
+    batchSize: 20         # Moderate batch size for worker pool testing (was 5)
     cacheSize: 52428800   # 50MB cache (in bytes)
-    workerPoolSize: 1     # Single worker for easier debugging
+    workerPoolSize: 4     # Multi-worker for testing parallelization
 
 # Indexer Configuration (Development)
 indexer:
@@ -150,7 +204,7 @@ performance:
     metricsInterval: 10000  # 10 seconds for quick feedback
     
   optimization:
-    enableVectorSearch: false  # Disable for faster startup
+    enableVectorSearch: true   # Enable vector search with Ollama + Granite
     enableParallelParsing: false  # Disable for easier debugging
     maxWorkerThreads: 2     # Minimal threads for development
     

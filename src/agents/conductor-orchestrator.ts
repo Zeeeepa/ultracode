@@ -157,7 +157,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   };
 
   // Heartbeat and health tracking
-  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly HEARTBEAT_INTERVAL_MS = 5000;
   private readonly AGENT_STALE_MS = 30000; // 30s without activity => suspect
   private agentLastSeen: Map<string, number> = new Map();

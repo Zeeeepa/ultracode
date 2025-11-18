@@ -5,34 +5,34 @@
  * Implements recommended PRAGMA settings for performance on 4-core CPU, 8GB RAM systems.
  *
  * External Dependencies:
- * - better-sqlite3: https://github.com/WiseLibs/better-sqlite3 - Fast synchronous SQLite3 bindings
+ * - better-sqlite3 (Node.js): https://github.com/WiseLibs/better-sqlite3 - Fast synchronous SQLite3 bindings
+ * - bun:sqlite (Bun): Built-in SQLite module for Bun runtime
+ * - sqlite-adapter: Unified API for both runtimes
  *
  * Architecture References:
  * - Storage Types: src/types/storage.ts
  * - Agent Types: src/types/agent.ts
  */
 
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { createRequire } from "node:module";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { DATABASE_CONSTANTS } from "../config/constants.js";
+import type { StorageMetrics } from "../types/storage.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type Database from "better-sqlite3";
-import type { StorageMetrics } from "../types/storage.js";
+import type { SQLiteDatabase } from "./sqlite-adapter.js";
+import { isBunRuntime, loadSQLiteModule } from "./sqlite-adapter.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-const DEFAULT_DB_PATH = join(homedir(), ".code-graph-rag", "codegraph.db");
-const WAL_AUTOCHECKPOINT = 1000; // Pages before auto-checkpoint
-const CACHE_SIZE_KB = 64000; // 64MB cache
-const MMAP_SIZE = 30000000000; // 30GB mmap
-const PAGE_SIZE = 4096; // 4KB pages
-const BUSY_TIMEOUT = 5000; // 5 seconds
+const DEFAULT_DB_PATH = join(process.cwd(), ".ultrascript", "db", "codegraph.db");
+const WAL_AUTOCHECKPOINT = DATABASE_CONSTANTS.WAL_AUTOCHECKPOINT;
+const CACHE_SIZE_KB = DATABASE_CONSTANTS.CACHE_SIZE_KB;
+const MMAP_SIZE = DATABASE_CONSTANTS.MMAP_SIZE;
+const PAGE_SIZE = DATABASE_CONSTANTS.PAGE_SIZE;
+const BUSY_TIMEOUT = DATABASE_CONSTANTS.BUSY_TIMEOUT;
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
@@ -60,8 +60,6 @@ export interface DatabaseInfo {
 // 4. SQLITE MANAGER IMPLEMENTATION
 // =============================================================================
 
-const require = createRequire(import.meta.url);
-
 function wrapWithTiming<F extends (...a: any[]) => any>(fn: F, ctx: any, record: (ms: number) => void): F {
   return ((...a: any[]) => {
     const start = Date.now();
@@ -72,13 +70,10 @@ function wrapWithTiming<F extends (...a: any[]) => any>(fn: F, ctx: any, record:
 }
 
 export class SQLiteManager {
-  private db: Database.Database | null = null;
+  private db: SQLiteDatabase | null = null;
   private config: Required<SQLiteConfig>;
   private queryCount = 0;
   private totalQueryTime = 0;
-
-  private static cachedModule: typeof Database | null = null;
-  private static rebuildAttempted = false;
 
   constructor(config: SQLiteConfig = {}) {
     this.config = {
@@ -105,14 +100,18 @@ export class SQLiteManager {
     // Ensure directory exists
     if (!this.config.memory && !this.config.readonly) {
       const dir = dirname(this.config.path);
-      if (!existsSync(dir)) {
+      // Skip creating '.' or empty directories (Bun compatibility)
+      if (dir && dir !== "." && !existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }
     }
 
-    // Create database connection
+    // Create database connection using runtime-appropriate module
     const dbPath = this.config.memory ? ":memory:" : this.config.path;
-    const DatabaseModule = SQLiteManager.loadBetterSqlite3();
+    const runtime = isBunRuntime() ? "Bun" : "Node.js";
+    console.log(`[SQLiteManager] Using ${runtime} runtime`);
+
+    const DatabaseModule = loadSQLiteModule();
 
     this.db = new DatabaseModule(dbPath, {
       readonly: this.config.readonly,
@@ -125,70 +124,6 @@ export class SQLiteManager {
     this.ensureEmbeddingsTable();
 
     console.log(`[SQLiteManager] Database initialized at ${dbPath}`);
-  }
-
-  private static loadBetterSqlite3(): typeof Database {
-    if (SQLiteManager.cachedModule) {
-      return SQLiteManager.cachedModule;
-    }
-
-    const tryLoad = () => require("better-sqlite3") as typeof Database;
-
-    try {
-      SQLiteManager.cachedModule = tryLoad();
-      return SQLiteManager.cachedModule;
-    } catch (error) {
-      if (!SQLiteManager.rebuildAttempted && SQLiteManager.isNativeModuleError(error)) {
-        SQLiteManager.rebuildAttempted = true;
-        const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
-        const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-        console.warn(
-          "[SQLiteManager] better-sqlite3 failed to load due to native module mismatch. Attempting automatic rebuild...",
-        );
-        const rebuild = spawnSync(npmCommand, ["rebuild", "better-sqlite3"], {
-          cwd: packageRoot,
-          stdio: "inherit",
-        });
-        if (rebuild.status === 0) {
-          try {
-            const resolvedPath = require.resolve("better-sqlite3");
-            if (require.cache[resolvedPath]) {
-              delete require.cache[resolvedPath];
-            }
-          } catch {
-            // ignore cache resolve errors
-          }
-          try {
-            SQLiteManager.cachedModule = tryLoad();
-            console.log("[SQLiteManager] Automatic rebuild succeeded. Using rebuilt better-sqlite3 binary.");
-            return SQLiteManager.cachedModule;
-          } catch (retryError) {
-            throw SQLiteManager.createLoadError(retryError, true);
-          }
-        }
-
-        throw SQLiteManager.createLoadError(error, true);
-      }
-
-      throw SQLiteManager.createLoadError(error);
-    }
-  }
-
-  private static isNativeModuleError(error: unknown): boolean {
-    if (!(error instanceof Error)) return false;
-    const message = error.message ?? "";
-    return message.includes("NODE_MODULE_VERSION") || (error as any).code === "ERR_DLOPEN_FAILED";
-  }
-
-  private static createLoadError(originalError: unknown, attemptedRebuild = false): Error {
-    const instructions =
-      "Automatic rebuild of better-sqlite3 failed. Please run `npm rebuild better-sqlite3` in the @er77/code-graph-rag-mcp installation directory.";
-    const message = attemptedRebuild
-      ? `[SQLiteManager] Failed to rebuild better-sqlite3 automatically. ${instructions}`
-      : `[SQLiteManager] Failed to load better-sqlite3. ${instructions}`;
-    const error = new Error(message);
-    (error as any).cause = originalError;
-    return error;
   }
 
   private ensureEmbeddingsTable(): void {
@@ -266,13 +201,23 @@ export class SQLiteManager {
     // Enable foreign key constraints
     this.db.pragma("foreign_keys = ON");
 
+    // NEW in better-sqlite3 v12: Optimize JSON operations
+    try {
+      this.db.pragma("json_extract_on_expression = ON");
+    } catch (_error) {
+      // Pragma may not be available in older versions
+      console.debug("[SQLiteManager] json_extract_on_expression not available");
+    }
+
     // Analyze query optimizer statistics on first run
     if (!this.config.memory && !this.config.readonly) {
       try {
         this.db.exec("ANALYZE");
+        // NEW in better-sqlite3 v12: Auto-optimize indexes
+        this.db.pragma("optimize");
       } catch (_error) {
         // ANALYZE may fail on empty database, ignore
-        console.debug("[SQLiteManager] ANALYZE skipped (likely empty database)");
+        console.debug("[SQLiteManager] ANALYZE/OPTIMIZE skipped (likely empty database)");
       }
     }
   }
@@ -280,7 +225,7 @@ export class SQLiteManager {
   /**
    * Get database connection
    */
-  getConnection(): Database.Database {
+  getConnection(): SQLiteDatabase {
     if (!this.db) {
       throw new Error("Database not initialized. Call initialize() first.");
     }
@@ -290,11 +235,9 @@ export class SQLiteManager {
   /**
    * Prepare a statement with timing
    */
-  prepare<BindParams extends unknown[] | Record<string, unknown> = unknown[], Result = unknown>(
-    sql: string,
-  ): Database.Statement<BindParams, Result> {
+  prepare(sql: string): any {
     const db = this.getConnection();
-    const statement = db.prepare<BindParams, Result>(sql);
+    const statement = db.prepare(sql);
 
     statement.run = wrapWithTiming(statement.run, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.run;
     statement.get = wrapWithTiming(statement.get, statement, (ms) => this.recordQueryTime(ms)) as typeof statement.get;
@@ -383,20 +326,28 @@ export class SQLiteManager {
     const fileCount = db.prepare("SELECT COUNT(*) as count FROM files").get() as { count: number };
 
     // Calculate index size (approximate)
-    const indexInfo = db
-      .prepare(`
-      SELECT SUM(pgsize) as size 
-      FROM dbstat 
-      WHERE name LIKE 'idx_%'
-    `)
-      .get() as { size: number } | undefined;
+    // Note: dbstat is a virtual table that may not be available in all SQLite builds
+    let indexSizeMB = 0;
+    try {
+      const indexInfo = db
+        .prepare(`
+        SELECT SUM(pgsize) as size
+        FROM dbstat
+        WHERE name LIKE 'idx_%'
+      `)
+        .get() as { size: number } | undefined;
+      indexSizeMB = (indexInfo?.size || 0) / (1024 * 1024);
+    } catch (_err) {
+      // dbstat not available - use 0 as fallback
+      indexSizeMB = 0;
+    }
 
     return {
       totalEntities: entityCount?.count || 0,
       totalRelationships: relationshipCount?.count || 0,
       totalFiles: fileCount?.count || 0,
       databaseSizeMB: info.sizeBytes / (1024 * 1024),
-      indexSizeMB: (indexInfo?.size || 0) / (1024 * 1024),
+      indexSizeMB,
       averageQueryTimeMs: this.queryCount > 0 ? this.totalQueryTime / this.queryCount : 0,
     };
   }
