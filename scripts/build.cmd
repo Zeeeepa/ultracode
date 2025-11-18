@@ -280,7 +280,7 @@ if defined CUDA_BUILD_SUCCESS (
             if errorlevel 1 (
                 echo [WARNING] Failed to copy CUDA module
             ) else (
-                echo ✓ CUDA module copied to dist\native\cuda\
+                echo [OK] CUDA module copied to dist\native\cuda\
             )
         )
         echo.
@@ -291,14 +291,14 @@ REM Show output
 echo [4/4] Build artifacts:
 echo.
 if exist "%PROJECT_ROOT%\dist\index.js" (
-    echo ✓ dist\index.js
+    echo [OK] dist\index.js
     for %%A in ("%PROJECT_ROOT%\dist\index.js") do echo   Size: %%~zA bytes
 )
 if exist "%PROJECT_ROOT%\dist\index.js.map" (
-    echo ✓ dist\index.js.map
+    echo [OK] dist\index.js.map
 )
 if exist "%PROJECT_ROOT%\dist\index.d.ts" (
-    echo ✓ dist\index.d.ts
+    echo [OK] dist\index.d.ts
 )
 echo.
 
@@ -306,7 +306,7 @@ REM Count native modules
 set /a NODE_COUNT=0
 for %%f in ("%PROJECT_ROOT%\dist\*.node") do set /a NODE_COUNT+=1
 if %NODE_COUNT% gtr 0 (
-    echo ✓ %NODE_COUNT% native modules (.node files)
+    echo [OK] %NODE_COUNT% native modules (.node files)
     echo.
 )
 
@@ -317,9 +317,9 @@ echo.
 
 REM Check TypeScript build
 if exist "%PROJECT_ROOT%\dist\index.js" (
-    echo ✓ TypeScript Build: SUCCESS
+    echo [OK] TypeScript Build: SUCCESS
 ) else (
-    echo ✗ TypeScript Build: FAILED
+    echo [FAIL] TypeScript Build: FAILED
 )
 
 REM Check WASM modules
@@ -336,28 +336,28 @@ if exist "%PROJECT_ROOT%\dist\wasm\vector-ops-simd\vector_ops_simd.js" (
 )
 
 if %WASM_COUNT% equ 2 (
-    echo ✓ WASM Modules: SUCCESS ^(2/2^)
+    echo [OK] WASM Modules: SUCCESS ^(2/2^)
     echo   - diff-simd
     echo   - vector-ops-simd
 ) else if %WASM_COUNT% equ 1 (
-    echo ⚠ WASM Modules: PARTIAL ^(1/2^)
+    echo [WARN] WASM Modules: PARTIAL ^(1/2^)
     if %WASM_DIFF% equ 1 echo   - diff-simd: built
     if %WASM_DIFF% equ 0 echo   - diff-simd: NOT BUILT
     if %WASM_VECTOR% equ 1 echo   - vector-ops-simd: built
     if %WASM_VECTOR% equ 0 echo   - vector-ops-simd: NOT BUILT
 ) else (
-    echo ✗ WASM Modules: NOT BUILT
+    echo [FAIL] WASM Modules: NOT BUILT
     echo   - Requires Rust/wasm-pack ^(optional^)
     echo   - Run: cargo install wasm-pack
 )
 
 REM Check CUDA module
 if exist "%PROJECT_ROOT%\dist\native\cuda\ultrascript_cuda.node" (
-    echo ✓ CUDA Module: SUCCESS
+    echo [OK] CUDA Module: SUCCESS
     for %%A in ("%PROJECT_ROOT%\dist\native\cuda\ultrascript_cuda.node") do echo   - ultrascript_cuda.node ^(%%~zA bytes^)
     echo   - GPU acceleration enabled
 ) else (
-    echo ✗ CUDA Module: NOT BUILT
+    echo [FAIL] CUDA Module: NOT BUILT
     echo   - CPU-only mode
 )
 
@@ -376,10 +376,10 @@ echo To run with Node.js:
 echo   node dist\index.js [directory]
 echo.
 echo Why Bun?
-echo   • 3x faster package installation
-echo   • 2x faster build times
-echo   • Native TypeScript support
-echo   • Drop-in Node.js replacement
+echo   - 3x faster package installation
+echo   - 2x faster build times
+echo   - Native TypeScript support
+echo   - Drop-in Node.js replacement
 echo.
 
 exit /b 0
