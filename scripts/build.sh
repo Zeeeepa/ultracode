@@ -160,9 +160,9 @@ if [ -d "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA" ] || [ -d "/usr/loc
 
     # Verify CMake is now available
     if command -v cmake &> /dev/null; then
-        if [ -d "native/cuda" ]; then
+        if [ -d "external-tools/native/cuda" ]; then
             echo "[INFO] Building CUDA native module..."
-            cd native/cuda
+            cd external-tools/native/cuda
             echo "  → Compiling CUDA module (this may take a few minutes)..."
             if cmake-js compile; then
                 CUDA_BUILT=true
@@ -172,7 +172,7 @@ if [ -d "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA" ] || [ -d "/usr/loc
             fi
             cd ../..
         else
-            echo "[WARNING] native/cuda directory not found"
+            echo "[WARNING] external-tools/native/cuda directory not found"
             echo "[INFO] CUDA module source code not included in this version"
             echo "[INFO] CUDA support will be added in future releases"
         fi

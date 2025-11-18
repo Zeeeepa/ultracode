@@ -106,7 +106,7 @@ async function buildWASM() {
 
 	// Build WASM module
 	log("🔨 Building WASM module with SIMD optimization...", COLORS.blue);
-	const wasmDir = join(rootDir, "wasm", "vector-ops");
+	const wasmDir = join(rootDir, "external-tools", "wasm", "vector-ops");
 
 	if (!existsSync(wasmDir)) {
 		log("❌ WASM source directory not found", COLORS.red);
@@ -123,7 +123,7 @@ async function buildWASM() {
 		return true;
 	} else {
 		log("❌ WASM build failed", COLORS.red);
-		log("   Try manually: cd wasm/vector-ops && wasm-pack build --target nodejs --release", COLORS.gray);
+		log("   Try manually: cd external-tools/wasm/vector-ops && wasm-pack build --target nodejs --release", COLORS.gray);
 		return false;
 	}
 }

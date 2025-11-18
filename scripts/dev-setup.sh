@@ -74,8 +74,8 @@ fi
 
 # Step 5: Build WASM module
 log "\n🔨 Step 5: Building WASM SIMD module..." "$COLORS_BLUE"
-if [ -d "wasm/vector-ops" ]; then
-    cd wasm/vector-ops
+if [ -d "external-tools/wasm/vector-ops" ]; then
+    cd external-tools/wasm/vector-ops
     wasm-pack build --target nodejs --release
     cd ../..
     log "✅ WASM module built (4-8x speedup)" "$COLORS_GREEN"
@@ -172,7 +172,7 @@ separator
 log "\n📊 Installed Backends:" "$COLORS_BOLD"
 log "  • Pure JS (Loop Unrolling) - ✅ Always available (1.45x)" "$COLORS_GRAY"
 
-if [ -f "wasm/vector-ops/pkg/index.js" ]; then
+if [ -f "external-tools/wasm/vector-ops/pkg/index.js" ]; then
     log "  • WASM SIMD                - ✅ Built (4-8x)" "$COLORS_GREEN"
 else
     log "  • WASM SIMD                - ❌ Not built" "$COLORS_RED"

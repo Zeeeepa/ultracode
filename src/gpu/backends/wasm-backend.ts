@@ -6,7 +6,7 @@
  *
  * Performance: ~2-3ms per 10K vectors (384 dim)
  *
- * Build: `cd wasm/vector-ops && wasm-pack build --target nodejs --release`
+ * Build: `cd external-tools/wasm/vector-ops && wasm-pack build --target nodejs --release`
  */
 
 import type { BackendCapabilities, VectorBackend } from "./base.js";
@@ -44,7 +44,9 @@ export class WASMBackend implements VectorBackend {
 
   async initialize(): Promise<void> {
     if (!wasmModule) {
-      throw new Error("WASM module not available. Run: cd wasm/vector-ops && wasm-pack build --target nodejs");
+      throw new Error(
+        "WASM module not available. Run: cd external-tools/wasm/vector-ops && wasm-pack build --target nodejs",
+      );
     }
 
     this.ops = new wasmModule.WASMVectorOps();
