@@ -171,7 +171,7 @@ parser:
 
 ## MCP Tools Structure
 
-24 MCP-метода реализованы в `src/index.ts` + `src/tools/`:
+30+ MCP-методов реализованы в `src/index.ts` + `src/tools/`:
 
 **Core indexing:**
 - `index` - индексация кодовой базы
@@ -181,23 +181,64 @@ parser:
 **Graph queries:**
 - `get_graph` - получение графа сущностей
 - `list_entity_relationships` - связи сущности
-- `query_graph_entities` - поиск по сущностям
+- `list_file_entities` - список сущностей в файле
+- `query` - универсальный запрос к графу
 - `get_graph_health` - диагностика БД
+- `get_graph_stats` - статистика графа
+
+**Unified Tools (cross-compatibility with UltrasharpTools):**
+- `get_members` - alias для list_file_entities
+- `find_duplicates` - alias для detect_code_clones
+- `modify_code` - alias для modify_entity_code
+- `undo` - alias для rollback_snapshot
+- `create_file` - создание файла с auto-parse в граф
+- `rename_symbol` - переименование символа с обновлением ссылок
+- `add_member` - добавление члена в класс/интерфейс
+
+**Code Modification:**
+- `modify_entity_code` - модификация кода сущности
+- `copy_file` - копирование файла с обновлением графа
+- `rename_file` - переименование файла с обновлением импортов
+- `split_file` - разделение файла на части
+- `synthesize_files` - объединение файлов
+
+**Code Validation:**
+- `validate_file` - валидация файла (ESLint/Pylint)
+- `validate_directory` - пакетная валидация директории
 
 **Semantic analysis:**
 - `semantic_search` - семантический поиск по коду
 - `detect_code_clones` - поиск дубликатов (семантический)
 - `jscpd_detect_clones` - JSCPD-based поиск дубликатов (без эмбеддингов)
-- `analyze_code_similarity` - анализ схожести кода
+- `find_similar_code` - поиск похожего кода
 - `suggest_refactoring` - AI рефакторинг
+- `pattern_search` - продвинутый поиск (entity/content/semantic/hybrid)
 
 **Advanced analysis:**
-- `analyze_impact` - анализ влияния изменений
-- `identify_hotspots` - поиск проблемных зон
+- `analyze_code_impact` - анализ влияния изменений
+- `analyze_hotspots` - поиск горячих точек (complexity/changes/coupling)
+- `find_related_concepts` - поиск связанных концепций
+- `cross_language_search` - поиск по нескольким языкам
+- `analyze_state_chaos` - анализ хаоса в управлении состоянием
+- `detect_technology_stack` - определение технологического стека
 - `lerna_project_graph` - граф Lerna workspace зависимостей
+
+**Version Management:**
+- `create_snapshot` - создание snapshot для rollback
+- `rollback_snapshot` - откат к snapshot
+- `list_snapshots` - список доступных snapshot'ов
+- `cleanup_snapshots` - очистка старых snapshot'ов
+
+**Branch Management:**
+- `list_branches` - список проиндексированных веток
+- `switch_branch` - переключение активной ветки
+- `get_branch_status` - статус текущей ветки
+- `cleanup_branches` - очистка старых веток (LRU)
+- `get_changed_files` - измененные файлы между ветками
 
 **Monitoring:**
 - `get_version` - версия сервера
+- `get_metrics` - системные метрики
 - `get_agent_metrics` - метрики агентов
 - `get_bus_stats` - статистика knowledge bus
 - `clear_bus_topic` - очистка топика bus

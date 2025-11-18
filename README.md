@@ -31,7 +31,7 @@
 
 Code Graph RAG делает именно это. Он анализирует вашу кодовую базу, понимает связи между компонентами и отвечает на вопросы на естественном языке через Claude, Gemini или другие AI-ассистенты.
 
-**🌟 10 языков** | **⚡ В 5.5 раз быстрее** встроенных инструментов Claude | **🔍 Умный поиск** | **📊 38 готовых инструментов**
+**🌟 10 языков** | **⚡ В 5.5 раз быстрее** встроенных инструментов Claude | **🔍 Умный поиск** | **📊 45+ готовых инструментов**
 
 ---
 
@@ -357,22 +357,28 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 - Hybrid vector search - 90% быстрее для >10k векторов
 - **Adaptive backend switching** - автоматический выбор между sqlite-vec и vectorlite по размеру базы
 
-### 38 MCP методов
+### 45+ MCP методов
+
+**Унифицированные инструменты (кросс-совместимость с UltrasharpTools):**
+- `get_members` / `list_file_entities` - список сущностей в файле
+- `find_duplicates` / `detect_code_clones` - поиск дубликатов кода
+- `modify_code` / `modify_entity_code` - модификация кода по ID
+- `undo` / `rollback_snapshot` - откат изменений
+- `create_file` - 🆕 создание нового файла с обновлением графа
+- `rename_symbol` - 🆕 переименование символа с обновлением ссылок
+- `add_member` - 🆕 добавление члена в класс/интерфейс
 
 **Анализ кода:**
 - `index` - индексация кодовой базы
 - `semantic_search` - семантический поиск
 - `find_similar_code` - поиск похожего кода
-- `detect_code_clones` - обнаружение дубликатов
 - `jscpd_detect_clones` - JSCPD-based поиск (без ML)
 - `suggest_refactoring` - AI рефакторинг
 - `pattern_search` - 🆕 продвинутый поиск (entity/content/semantic/hybrid)
 - `detect_technology_stack` - 🆕 автоопределение стека и фреймворков
 
 **Модификация кода:**
-- `modify_entity_code` - 🆕 безопасная замена кода по ID сущности
 - `create_snapshot` - 🆕 создание снапшота для отката
-- `rollback_snapshot` - 🆕 откат к предыдущему состоянию
 - `list_snapshots` - 🆕 список доступных снапшотов
 - `cleanup_snapshots` - 🆕 удаление старых снапшотов
 
@@ -389,7 +395,6 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 **Граф зависимостей:**
 - `get_graph` - получение графа сущностей
 - `list_entity_relationships` - связи сущности
-- `list_file_entities` - сущности в файле
 - `analyze_code_impact` - анализ влияния изменений
 - `analyze_hotspots` - поиск проблемных зон
 - `analyze_state_chaos` - 🆕 **анализ хаоса управления состоянием** (TS/Angular)
@@ -471,6 +476,19 @@ bun install
 ---
 
 ## 📝 **Changelog**
+
+### v3.9.0 (2025-11-18) - Tool Naming Unification
+
+**Кросс-совместимость с UltrasharpTools:**
+- 🔄 Добавлены 4 алиаса: `get_members`, `find_duplicates`, `modify_code`, `undo`
+- 🆕 Реализованы 3 новых унифицированных инструмента:
+  - `create_file` - создание файла с автообновлением графа
+  - `rename_symbol` - переименование символа с обновлением всех ссылок
+  - `add_member` - добавление члена в класс/интерфейс
+- 📚 Обновлена документация: CLAUDE.md, README.md
+- 📦 Перенесена документация из корня в Dev.Docs
+
+**Всего**: 45+ инструментов (было 38)
 
 ### v2.8.0 (2025-11-13) - ULTRA Performance
 
