@@ -1,8 +1,8 @@
-#!/bin/bash
+﻿#!/bin/bash
 ###############################################################################
 # MCP Server Restart Script
 #
-# Restarts the Code Graph RAG MCP server by finding and killing existing
+# Restarts the UltraScript Tools MCP server by finding and killing existing
 # processes, then provides instructions for restarting in Claude Desktop.
 #
 # Usage:
@@ -22,8 +22,8 @@ NC='\033[0m' # No Color
 
 # Script configuration
 FORCE_MODE=false
-PACKAGE_NAME="@er77/code-graph-rag-mcp"
-PROCESS_PATTERN="code-graph-rag-mcp"
+PACKAGE_NAME="@er77/ultrascript-tools-mcp"
+PROCESS_PATTERN="ultrascript-tools-mcp"
 
 ###############################################################################
 # Functions
@@ -33,7 +33,7 @@ show_help() {
     cat << EOF
 ${GREEN}MCP Server Restart Script${NC}
 
-Restarts the Code Graph RAG MCP server by killing existing processes.
+Restarts the UltraScript Tools MCP server by killing existing processes.
 
 ${YELLOW}Usage:${NC}
   $0 [OPTIONS]
@@ -47,7 +47,7 @@ ${YELLOW}Examples:${NC}
   $0 --force          # Force restart without confirmation
 
 ${YELLOW}What this script does:${NC}
-  1. Finds all running code-graph-rag-mcp processes
+  1. Finds all running ultrascript-tools-mcp processes
   2. Displays process information (PID, command)
   3. Kills the processes (after confirmation unless --force)
   4. Provides instructions for restarting in Claude Desktop
@@ -67,7 +67,7 @@ print_header() {
 }
 
 find_mcp_processes() {
-    # Find processes related to code-graph-rag-mcp
+    # Find processes related to ultrascript-tools-mcp
     # Using pgrep with full command line search
     if command -v pgrep &> /dev/null; then
         pgrep -f "$PROCESS_PATTERN" || true

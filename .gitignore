@@ -72,11 +72,10 @@ output.txt
 build.ps1
 Dev.Scripts/errors.txt
 
-# Temporary scripts & tools (not part of project)
-scripts/
-examples/
+# External tools & dependencies (downloaded during setup)
+/external-tools/
 /tools/
-Dev.Scripts/tools/
+/emsdk/
 
 # Test snapshots & temp files
 src/merge/**/*.test.ts.snap
