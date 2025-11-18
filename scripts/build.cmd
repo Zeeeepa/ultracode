@@ -67,25 +67,38 @@ if errorlevel 1 (
 echo Type check passed!
 echo.
 
-REM Build WASM modules if Rust/wasm-pack available
-where wasm-pack >nul 2>nul
-if not errorlevel 1 (
-    echo [INFO] Building WASM modules with Rust/wasm-pack...
-
-    REM Use PowerShell script with absolute path
-    if exist "%PROJECT_ROOT%\scripts\build-wasm.ps1" (
-        powershell -ExecutionPolicy Bypass -File "%PROJECT_ROOT%\scripts\build-wasm.ps1"
-        if errorlevel 1 (
-            echo [WARNING] WASM build failed, continuing with TypeScript build...
-        ) else (
-            echo.
-            echo [INFO] WASM modules built successfully
-        )
-    ) else (
-        echo [WARNING] build-wasm.ps1 not found, skipping WASM build
+REM Check if WASM modules already exist (built by postinstall)
+set WASM_ALREADY_BUILT=0
+if exist "%PROJECT_ROOT%\dist\external-tools\wasm\diff-simd\diff_simd.js" (
+    if exist "%PROJECT_ROOT%\dist\external-tools\wasm\vector-ops-simd\vector_ops_simd.js" (
+        set WASM_ALREADY_BUILT=1
     )
+)
 
+if %WASM_ALREADY_BUILT% equ 1 (
+    echo [INFO] WASM modules already built, skipping rebuild
     echo.
+) else (
+    REM Build WASM modules if Rust/wasm-pack available
+    where wasm-pack >nul 2>nul
+    if not errorlevel 1 (
+        echo [INFO] Building WASM modules with Rust/wasm-pack...
+
+        REM Use PowerShell script with absolute path
+        if exist "%PROJECT_ROOT%\scripts\build-wasm.ps1" (
+            powershell -ExecutionPolicy Bypass -File "%PROJECT_ROOT%\scripts\build-wasm.ps1"
+            if errorlevel 1 (
+                echo [WARNING] WASM build failed, continuing with TypeScript build...
+            ) else (
+                echo.
+                echo [INFO] WASM modules built successfully
+            )
+        ) else (
+            echo [WARNING] build-wasm.ps1 not found, skipping WASM build
+        )
+
+        echo.
+    )
 )
 
 REM Build CUDA native module if available (Windows only)
