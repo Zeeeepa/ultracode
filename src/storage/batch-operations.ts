@@ -10,13 +10,13 @@
  * - SQLite Manager: src/storage/sqlite-manager.ts
  */
 
-import { createHash } from "node:crypto";
+import xxhash from "xxhash-wasm";
+import type { BatchResult, Entity, ParsedEntity, Relationship } from "../types/storage.js";
+import { RelationType } from "../types/storage.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type Database from "better-sqlite3";
-import type { BatchResult, Entity, ParsedEntity, Relationship } from "../types/storage.js";
-import { RelationType } from "../types/storage.js";
+import type { SQLiteDatabase, SQLiteStatement } from "./sqlite-adapter.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -33,11 +33,75 @@ const ID_LENGTH = 12;
 
 export class BatchOperations {
   private batchSize: number;
-  private db: Database.Database;
+  private db: SQLiteDatabase;
+  private preparedStatements: Map<string, SQLiteStatement> = new Map();
+  private jsonCache: Map<unknown, string> = new Map();
+  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
 
-  constructor(db: Database.Database, batchSize = DEFAULT_BATCH_SIZE) {
+  constructor(db: SQLiteDatabase, batchSize = DEFAULT_BATCH_SIZE) {
     this.db = db;
     this.batchSize = Math.min(batchSize, MAX_BATCH_SIZE);
+  }
+
+  /**
+   * Initialize xxHash for fast hashing
+   */
+  async initialize(): Promise<void> {
+    this.xxhashInstance = await xxhash();
+  }
+
+  /**
+   * Get or create a cached prepared statement
+   * This significantly improves performance by reusing statements
+   */
+  private getStatement(key: string, sql: string): SQLiteStatement {
+    if (!this.preparedStatements.has(key)) {
+      this.preparedStatements.set(key, this.db.prepare(sql));
+    }
+    return this.preparedStatements.get(key)!;
+  }
+
+  /**
+   * Clean up all prepared statements and caches (call when done)
+   * Note: better-sqlite3 automatically finalizes statements when the database is closed,
+   * so we just need to clear our caches
+   */
+  destroy(): void {
+    this.preparedStatements.clear();
+    this.jsonCache.clear();
+  }
+
+  /**
+   * Cached JSON.stringify to avoid redundant serialization
+   * Uses WeakMap-like behavior for automatic garbage collection
+   */
+  private cachedStringify(obj: unknown): string {
+    // For null/undefined, return directly
+    if (obj === null || obj === undefined) {
+      return JSON.stringify(obj);
+    }
+
+    // For primitive types that can't be used as Map keys, stringify directly
+    if (typeof obj !== "object") {
+      return JSON.stringify(obj);
+    }
+
+    // Check cache
+    if (this.jsonCache.has(obj)) {
+      return this.jsonCache.get(obj)!;
+    }
+
+    // Stringify and cache
+    const result = JSON.stringify(obj);
+    this.jsonCache.set(obj, result);
+
+    // Limit cache size to prevent memory issues (keep last 10000 items)
+    if (this.jsonCache.size > 10000) {
+      const firstKey = this.jsonCache.keys().next().value;
+      this.jsonCache.delete(firstKey);
+    }
+
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -45,15 +109,23 @@ export class BatchOperations {
   // ---------------------------------------------------------------------------
 
   private entityKey(e: Entity): string {
-    const s = e.location?.start?.index ?? -1;
-    const eIdx = e.location?.end?.index ?? -1;
-    const key = `${e.filePath}|${e.type}|${e.name}|${s}-${eIdx}`;
+    // For packages and imports, use global key (no filePath, no location) - matches IndexerAgent logic
+    const isGlobal = e.type === "package" || e.type === "import";
+
+    const key = isGlobal
+      ? `${e.type}|${e.name}` // Only type and name for global entities
+      : `${e.filePath}|${e.type}|${e.name}|${e.location?.start?.index ?? -1}-${e.location?.end?.index ?? -1}`; // Full path for file-specific entities
+
     return key;
   }
 
   private stableEntityId(e: Entity): string {
+    // Use xxHash for fast hashing (matches IndexerAgent)
+    if (!this.xxhashInstance) {
+      throw new Error("BatchOperations not initialized - call initialize() first");
+    }
     const key = this.entityKey(e);
-    return createHash("sha256").update(key).digest("base64url").slice(0, ID_LENGTH);
+    return this.xxhashInstance.h64ToString(key).slice(0, ID_LENGTH);
   }
 
   private relationshipKey(r: { fromId: string; toId: string; type: RelationType }): string {
@@ -61,7 +133,12 @@ export class BatchOperations {
   }
 
   private stableRelationshipId(r: { fromId: string; toId: string; type: RelationType }): string {
-    return createHash("sha256").update(this.relationshipKey(r)).digest("base64url").slice(0, ID_LENGTH);
+    // Use xxHash for fast hashing (matches IndexerAgent)
+    if (!this.xxhashInstance) {
+      throw new Error("BatchOperations not initialized - call initialize() first");
+    }
+    const key = this.relationshipKey(r);
+    return this.xxhashInstance.h64ToString(key).slice(0, ID_LENGTH);
   }
 
   /**
@@ -80,7 +157,10 @@ export class BatchOperations {
     // Log database path for debugging
     console.log("[BatchOperations] Database path:", this.db.name || "unknown");
 
-    const insertStmt = this.db.prepare(`
+    // Use cached prepared statement for better performance
+    const insertStmt = this.getStatement(
+      "insert-entity",
+      `
       INSERT INTO entities
       (id, name, type, file_path, location, metadata, hash, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -92,7 +172,8 @@ export class BatchOperations {
         metadata = excluded.metadata,
         hash = COALESCE(excluded.hash, entities.hash),
         updated_at = excluded.updated_at
-    `);
+    `,
+    );
 
     const seen = new Set<string>();
     const uniq: Entity[] = [];
@@ -119,23 +200,41 @@ export class BatchOperations {
               const now = Date.now();
               const id = this.stableEntityId(entity);
 
-              insertStmt.run(
+              const result = insertStmt.run(
                 id,
                 entity.name,
                 entity.type,
                 entity.filePath,
-                JSON.stringify(entity.location),
-                JSON.stringify(entity.metadata || {}),
+                this.cachedStringify(entity.location),
+                this.cachedStringify(entity.metadata || {}),
                 entity.hash,
                 entity.createdAt || now,
                 entity.updatedAt || now,
               );
+
+              // DEBUG: Log insert result for first entity
+              if (batch.indexOf(entity) === 0) {
+                console.log(`[BatchOperations] DEBUG: INSERT result for ${entity.name} (${id}):`, result);
+              }
             }
           });
 
           transaction(batch);
           totalProcessed += batch.length;
           batchSuccess = true;
+
+          // DEBUG: Verify entities were actually inserted
+          if (i === 0 && batch.length > 0) {
+            const checkStmt = this.db.prepare("SELECT id, name FROM entities WHERE id = ?");
+            const firstEntity = batch[0];
+            if (firstEntity) {
+              const exists = checkStmt.get(firstEntity.id);
+              console.log(
+                `[BatchOperations] DEBUG: After insertEntities, first entity ${firstEntity.id} (${firstEntity.name}) exists=${!!exists}, result:`,
+                exists,
+              );
+            }
+          }
 
           // Report progress
           if (onProgress) {
@@ -181,13 +280,17 @@ export class BatchOperations {
     const errors: Array<{ item: unknown; error: string }> = [];
     let totalProcessed = 0;
 
-    const insertStmt = this.db.prepare(`
+    // Use cached prepared statement for better performance
+    const insertStmt = this.getStatement(
+      "insert-relationship",
+      `
       INSERT INTO relationships
       (id, from_id, to_id, type, metadata)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         metadata = COALESCE(excluded.metadata, relationships.metadata)
-    `);
+    `,
+    );
 
     const seen = new Set<string>();
     const uniq: Relationship[] = [];
@@ -199,6 +302,10 @@ export class BatchOperations {
       }
     }
 
+    console.log(
+      `[BatchOperations] DEBUG: insertRelationships called with ${relationships.length} rels, deduped to ${uniq.length}`,
+    );
+
     // Process in batches
     for (let i = 0; i < uniq.length; i += this.batchSize) {
       const batch = uniq.slice(i, Math.min(i + this.batchSize, uniq.length));
@@ -208,10 +315,29 @@ export class BatchOperations {
 
       while (attempts < RETRY_ATTEMPTS && !batchSuccess) {
         try {
+          // DEBUG: Check if entity IDs exist in DB before inserting relationships
+          if (batch.length > 0) {
+            const checkStmt = this.db.prepare("SELECT id FROM entities WHERE id = ?");
+            const firstRel = batch[0];
+            if (firstRel) {
+              const fromExists = checkStmt.get(firstRel.fromId);
+              const toExists = checkStmt.get(firstRel.toId);
+              console.log(
+                `[BatchOperations] DEBUG: First rel entity check: from=${firstRel.fromId} exists=${!!fromExists}, to=${firstRel.toId} exists=${!!toExists}`,
+              );
+            }
+          }
+
           const transaction = this.db.transaction((batch: Relationship[]) => {
             for (const rel of batch) {
               const id = this.stableRelationshipId({ fromId: rel.fromId, toId: rel.toId, type: rel.type });
-              insertStmt.run(id, rel.fromId, rel.toId, rel.type, rel.metadata ? JSON.stringify(rel.metadata) : null);
+              insertStmt.run(
+                id,
+                rel.fromId,
+                rel.toId,
+                rel.type,
+                rel.metadata ? this.cachedStringify(rel.metadata) : null,
+              );
             }
           });
 
@@ -225,8 +351,13 @@ export class BatchOperations {
           }
         } catch (error) {
           attempts++;
+          console.log(
+            `[BatchOperations] DEBUG: insertRelationships error on attempt ${attempts}:`,
+            error instanceof Error ? error.message : String(error),
+          );
 
           if (attempts >= RETRY_ATTEMPTS) {
+            console.log(`[BatchOperations] DEBUG: Max retries reached, adding ${batch.length} rels to errors`);
             for (const rel of batch) {
               errors.push({
                 item: rel,
@@ -259,7 +390,8 @@ export class BatchOperations {
     const errors: Array<{ item: unknown; error: string }> = [];
     let totalProcessed = 0;
 
-    const deleteStmt = this.db.prepare("DELETE FROM entities WHERE id = ?");
+    // Use cached prepared statement for better performance
+    const deleteStmt = this.getStatement("delete-entity", "DELETE FROM entities WHERE id = ?");
 
     // Process in batches
     for (let i = 0; i < entityIds.length; i += this.batchSize) {
@@ -307,8 +439,11 @@ export class BatchOperations {
     const errors: Array<{ item: unknown; error: string }> = [];
     let totalProcessed = 0;
 
-    const updateStmt = this.db.prepare(`
-      UPDATE entities 
+    // Use cached prepared statement for better performance
+    const updateStmt = this.getStatement(
+      "update-entity",
+      `
+      UPDATE entities
       SET name = COALESCE(?, name),
           type = COALESCE(?, type),
           location = COALESCE(?, location),
@@ -316,7 +451,8 @@ export class BatchOperations {
           hash = COALESCE(?, hash),
           updated_at = ?
       WHERE id = ?
-    `);
+    `,
+    );
 
     // Process in batches
     for (let i = 0; i < updates.length; i += this.batchSize) {
@@ -329,8 +465,8 @@ export class BatchOperations {
             updateStmt.run(
               update.changes.name || null,
               update.changes.type || null,
-              update.changes.location ? JSON.stringify(update.changes.location) : null,
-              update.changes.metadata ? JSON.stringify(update.changes.metadata) : null,
+              update.changes.location ? this.cachedStringify(update.changes.location) : null,
+              update.changes.metadata ? this.cachedStringify(update.changes.metadata) : null,
               update.changes.hash || null,
               now,
               update.id,

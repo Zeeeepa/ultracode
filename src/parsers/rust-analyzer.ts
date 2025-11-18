@@ -28,6 +28,7 @@ import type {
   PatternAnalysis,
   TreeSitterNode,
 } from "../types/parser.js";
+import { getNodeLocation, hasChild } from "./base-parser-utils.js";
 
 // =============================================================================
 // 3. RUST ENTITY EXTRACTION (Layer 1)
@@ -106,7 +107,7 @@ export class RustAnalyzer {
     for (const modNode of moduleNodes) {
       const name = this.resolveName(modNode);
       if (!name) continue;
-      const location = this.getNodeLocation(modNode);
+      const location = getNodeLocation(modNode);
       const visibility = this.extractVisibility(modNode);
       const isInline = this.hasBody(modNode);
 
@@ -153,7 +154,7 @@ export class RustAnalyzer {
     for (const structNode of structNodes) {
       const name = this.resolveName(structNode);
       if (!name) continue;
-      const location = this.getNodeLocation(structNode);
+      const location = getNodeLocation(structNode);
       const visibility = this.extractVisibility(structNode);
       const generics = this.extractGenerics(structNode);
       const lifetimes = this.extractLifetimes(structNode);
@@ -201,7 +202,7 @@ export class RustAnalyzer {
     for (const enumNode of enumNodes) {
       const name = this.resolveName(enumNode);
       if (!name) continue;
-      const location = this.getNodeLocation(enumNode);
+      const location = getNodeLocation(enumNode);
       const visibility = this.extractVisibility(enumNode);
       const generics = this.extractGenerics(enumNode);
       const lifetimes = this.extractLifetimes(enumNode);
@@ -241,7 +242,7 @@ export class RustAnalyzer {
     for (const traitNode of traitNodes) {
       const name = this.resolveName(traitNode);
       if (!name) continue;
-      const location = this.getNodeLocation(traitNode);
+      const location = getNodeLocation(traitNode);
       const visibility = this.extractVisibility(traitNode);
       const generics = this.extractGenerics(traitNode);
       const bounds = this.extractTraitBounds(traitNode);
@@ -289,7 +290,7 @@ export class RustAnalyzer {
     for (const fnNode of functionNodes) {
       const name = this.resolveName(fnNode);
       if (!name) continue;
-      const location = this.getNodeLocation(fnNode);
+      const location = getNodeLocation(fnNode);
       const visibility = this.extractVisibility(fnNode);
       const isAsync = this.hasModifier(fnNode, "async");
       const isConst = this.hasModifier(fnNode, "const");
@@ -329,7 +330,7 @@ export class RustAnalyzer {
     for (const typeNode of typeNodes) {
       const name = this.resolveName(typeNode);
       if (!name) continue;
-      const location = this.getNodeLocation(typeNode);
+      const location = getNodeLocation(typeNode);
       const visibility = this.extractVisibility(typeNode);
       const generics = this.extractGenerics(typeNode);
       const aliasedType = this.extractAliasedType(typeNode);
@@ -359,7 +360,7 @@ export class RustAnalyzer {
     for (const constNode of constNodes) {
       const name = this.resolveName(constNode);
       if (!name) continue;
-      const location = this.getNodeLocation(constNode);
+      const location = getNodeLocation(constNode);
       const visibility = this.extractVisibility(constNode);
       const constType = this.extractConstType(constNode);
 
@@ -383,7 +384,7 @@ export class RustAnalyzer {
     for (const staticNode of staticNodes) {
       const name = this.resolveName(staticNode);
       if (!name) continue;
-      const location = this.getNodeLocation(staticNode);
+      const location = getNodeLocation(staticNode);
       const visibility = this.extractVisibility(staticNode);
       const staticType = this.extractStaticType(staticNode);
       const isMutable = this.hasModifier(staticNode, "mut");
@@ -414,7 +415,7 @@ export class RustAnalyzer {
     for (const macroNode of macroRulesNodes) {
       const name = this.resolveName(macroNode);
       if (!name) continue;
-      const location = this.getNodeLocation(macroNode);
+      const location = getNodeLocation(macroNode);
       const visibility = this.extractVisibility(macroNode);
       const rules = this.extractMacroRules(macroNode);
 
@@ -447,7 +448,7 @@ export class RustAnalyzer {
       if (!nameNode) continue;
 
       const name = this.getNodeText(nameNode);
-      const location = this.getNodeLocation(parent);
+      const location = getNodeLocation(parent);
       const macroType = this.getAttributeName(procMacro);
 
       entities.push({
@@ -484,7 +485,7 @@ export class RustAnalyzer {
         if (!nameNode) continue;
 
         const name = this.getNodeText(nameNode);
-        const location = this.getNodeLocation(fieldNode);
+        const location = getNodeLocation(fieldNode);
         const visibility = this.extractVisibility(fieldNode);
         const fieldType = this.extractFieldType(fieldNode);
         const attributes = this.extractAttributes(fieldNode);
@@ -529,11 +530,11 @@ export class RustAnalyzer {
       for (const variantNode of variantNodes) {
         const name = this.resolveName(variantNode);
         if (!name) continue;
-        const location = this.getNodeLocation(variantNode);
+        const location = getNodeLocation(variantNode);
 
         // Check variant type
-        const hasFields = this.hasChild(variantNode, "field_declaration_list");
-        const hasTuple = this.hasChild(variantNode, "ordered_field_declaration_list");
+        const hasFields = hasChild(variantNode, "field_declaration_list");
+        const hasTuple = hasChild(variantNode, "ordered_field_declaration_list");
         const discriminant = this.extractDiscriminant(variantNode);
 
         variants.push(name);
@@ -580,7 +581,7 @@ export class RustAnalyzer {
         if (!nameNode) continue;
 
         const name = this.getNodeText(nameNode);
-        const location = this.getNodeLocation(methodNode);
+        const location = getNodeLocation(methodNode);
         const parameters = this.extractFunctionParameters(methodNode);
         const returnType = this.extractReturnType(methodNode);
 
@@ -610,7 +611,7 @@ export class RustAnalyzer {
         if (!nameNode) continue;
 
         const name = this.getNodeText(nameNode);
-        const location = this.getNodeLocation(methodNode);
+        const location = getNodeLocation(methodNode);
         const parameters = this.extractFunctionParameters(methodNode);
         const returnType = this.extractReturnType(methodNode);
 
@@ -657,7 +658,7 @@ export class RustAnalyzer {
         if (!nameNode) continue;
 
         const name = this.getNodeText(nameNode);
-        const location = this.getNodeLocation(typeNode);
+        const location = getNodeLocation(typeNode);
         const bounds = this.extractTypeBounds(typeNode);
 
         const associatedType: ParsedEntity = {
@@ -721,7 +722,7 @@ export class RustAnalyzer {
             if (!nameNode) continue;
 
             const methodName = this.getNodeText(nameNode);
-            const location = this.getNodeLocation(method);
+            const location = getNodeLocation(method);
 
             entities.push({
               id: `${filePath}:impl:${typeName}:${traitName}:${methodName}`,
@@ -748,7 +749,7 @@ export class RustAnalyzer {
             if (!nameNode) continue;
 
             const methodName = this.getNodeText(nameNode);
-            const location = this.getNodeLocation(method);
+            const location = getNodeLocation(method);
             const visibility = this.extractVisibility(method);
 
             entities.push({
@@ -803,7 +804,7 @@ export class RustAnalyzer {
           const nameNode = method.childForFieldName("name");
           if (!nameNode) continue;
           const methodName = this.getNodeText(nameNode);
-          const location = this.getNodeLocation(method);
+          const location = getNodeLocation(method);
 
           entities.push({
             id: `${filePath}:impl:${typeName || "unknown"}:${traitName || "inherent"}:${methodName}`,
@@ -1032,7 +1033,7 @@ export class RustAnalyzer {
 
     // Count borrowing patterns
     const references = this.findNodes(node, "reference_type");
-    const mutReferences = references.filter((r) => this.hasChild(r, "mutable_specifier"));
+    const mutReferences = references.filter((r) => hasChild(r, "mutable_specifier"));
 
     if (references.length > 0) {
       patterns.push({
@@ -1123,23 +1124,6 @@ export class RustAnalyzer {
   /**
    * Get location of a node - now returns proper format
    */
-  private getNodeLocation(node: TreeSitterNode): {
-    start: { line: number; column: number; index: number };
-    end: { line: number; column: number; index: number };
-  } {
-    return {
-      start: {
-        line: node.startPosition.row + 1,
-        column: node.startPosition.column,
-        index: node.startIndex,
-      },
-      end: {
-        line: node.endPosition.row + 1,
-        column: node.endPosition.column,
-        index: node.endIndex,
-      },
-    };
-  }
 
   /**
    * Extract visibility modifier
@@ -1261,15 +1245,6 @@ export class RustAnalyzer {
   /**
    * Check if node has child of specific type
    */
-  private hasChild(node: TreeSitterNode, type: string): boolean {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (child && child.type === type) {
-        return true;
-      }
-    }
-    return false;
-  }
 
   /**
    * Count nested items in a module
@@ -1354,8 +1329,8 @@ export class RustAnalyzer {
       const selfParam = this.findNodes(paramList, "self_parameter");
       if (selfParam.length > 0) {
         const selfNode = selfParam[0];
-        const isMut = selfNode ? this.hasChild(selfNode, "mutable_specifier") : false;
-        const isRef = selfNode ? this.hasChild(selfNode, "&") : false;
+        const isMut = selfNode ? hasChild(selfNode, "mutable_specifier") : false;
+        const isRef = selfNode ? hasChild(selfNode, "&") : false;
 
         let selfType = "self";
         if (isRef && isMut) selfType = "&mut self";

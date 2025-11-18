@@ -22,7 +22,7 @@ mcp:
 
 # Database Configuration (Production Optimized)
 database:
-  path: "/tmp/data/vectors.db"  # Persistent volume path
+  path: "./.ultrascript/db/vectors.db"  # Persistent volume path
   mode: "WAL"               # WAL mode for best performance
   cacheSize: 50000          # Larger cache for production
   mmapSize: 1073741824      # 1GB memory mapping for large datasets
@@ -34,7 +34,7 @@ logging:
   level: "warn"             # Only warnings and errors in production
   format: "json"            # Structured JSON logging for log aggregation
   enableConsole: false      # Disable console output in production
-  outputFile: "/tmp/logs_mcp/mcp-server.log"  # Persistent log file
+  outputFile: "./.ultrascript/logs/mcp-server.log"  # Persistent log file
   maxFileSize: "100MB"      # Larger log files for production
   maxFiles: 10              # Keep more log files for debugging
 

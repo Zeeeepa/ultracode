@@ -20,12 +20,21 @@ import { parse as parseYaml } from "yaml";
 export interface MCPConfig {
   embedding?: {
     model?: string;
-    provider?: "memory" | "transformers" | "ollama" | "openai" | "cloudru";
+    provider?: "memory" | "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "auto";
     apiKey?: string;
     enabled?: boolean;
     fallbackToMemory?: boolean;
 
-    // NEW:
+    // Two-stage retrieval with reranker
+    useReranker?: boolean;
+    rerankerModel?: string;
+    rerankerTopK?: number;
+    rerankerFinalK?: number;
+
+    // Language hint for optimization
+    queryLanguage?: "english" | "multilingual";
+
+    // Provider-specific configurations
     ollama?: {
       baseUrl?: string;
       timeout?: number;
@@ -53,7 +62,20 @@ export interface MCPConfig {
       concurrency?: number;
       maxBatchSize?: number;
     };
-    transformers?: { quantized?: boolean; localPath?: string };
+    huggingface?: {
+      apiKey?: string;
+      baseUrl?: string;
+      timeout?: number;
+      timeoutMs?: number;
+      concurrency?: number;
+      warmupText?: string;
+    };
+    tei?: {
+      baseUrl?: string;
+      timeoutMs?: number;
+      concurrency?: number;
+      checkServer?: boolean;
+    };
     memory?: { dimension?: number };
   };
   server?: { host?: string; port?: number; timeout?: number };
@@ -72,10 +94,21 @@ export interface MCPConfig {
 // Resolved embedding configuration returned to callers
 export interface EmbeddingConfigResolved {
   model: string;
-  provider: "memory" | "transformers" | "ollama" | string;
+  provider: "memory" | "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | string;
   apiKey: string;
   enabled: boolean;
   fallbackToMemory: boolean;
+
+  // Two-stage retrieval with reranker
+  useReranker: boolean;
+  rerankerModel: string;
+  rerankerTopK: number;
+  rerankerFinalK: number;
+
+  // Language hint for optimization
+  queryLanguage: "english" | "multilingual";
+
+  // Provider-specific configurations
   ollama?: {
     baseUrl?: string;
     timeout?: number;
@@ -103,7 +136,20 @@ export interface EmbeddingConfigResolved {
     concurrency?: number;
     maxBatchSize?: number;
   };
-  transformers?: { quantized?: boolean; localPath?: string };
+  huggingface?: {
+    apiKey?: string;
+    baseUrl?: string;
+    timeout?: number;
+    timeoutMs?: number;
+    concurrency?: number;
+    warmupText?: string;
+  };
+  tei?: {
+    baseUrl?: string;
+    timeoutMs?: number;
+    concurrency?: number;
+    checkServer?: boolean;
+  };
   memory?: { dimension?: number };
 }
 
@@ -191,12 +237,46 @@ export interface ConductorConfig extends CoordinatorConfig {
   mandatoryDelegation?: boolean;
 }
 
+export interface IndexingConfig {
+  branchAware?: boolean;
+  autoSwitchOnBranchChange?: boolean;
+  maxBranchesPerRepo?: number;
+  maxTotalBranches?: number;
+  evictionStrategy?: "LRU" | "LFU" | "FIFO";
+  cleanupIntervalMs?: number;
+  incrementalThreshold?: number;
+  dataDir?: string;
+}
+
+export interface GitConfig {
+  enabled?: boolean;
+  watchBranchChanges?: boolean;
+  autoReindex?: boolean;
+  diffMode?: "incremental" | "full";
+  pollIntervalMs?: number;
+}
+
+export interface VectorBackendConfig {
+  backend?: "auto" | "vectorlite" | "sqlite-vec" | "fallback";
+  autoSwitchThreshold?: number;
+  vectorlite?: {
+    maxElements?: number;
+    M?: number;
+    efConstruction?: number;
+    efSearch?: number;
+    distanceMetric?: "l2" | "cosine" | "ip";
+  };
+}
+
 export interface AppConfig {
   mcp: MCPConfig;
   database: DatabaseConfig;
   logging: LoggingConfig;
   parser: ParserConfig;
   indexer: IndexerConfig;
+  indexing: IndexingConfig;
+  git: GitConfig;
+  vectorBackend?: VectorBackendConfig;
   devAgent: DevAgentConfig;
   doraAgent: DoraAgentConfig;
   queryAgent: QueryAgentConfig;
@@ -237,7 +317,7 @@ const DEFAULT_CONFIG: AppConfig = {
     },
   },
   database: {
-    path: "./vectors.db",
+    path: "./.ultrascript/db/vectors.db",
     mode: "WAL",
     cacheSize: 10000,
     mmapSize: 268435456, // 256MB
@@ -280,6 +360,23 @@ const DEFAULT_CONFIG: AppConfig = {
     batchSize: 1000,
     cacheSize: 52428800, // 50MB
     cacheTTL: 300000, // 5 minutes
+  },
+  indexing: {
+    branchAware: false, // Disabled by default for backward compatibility
+    autoSwitchOnBranchChange: true,
+    maxBranchesPerRepo: 10,
+    maxTotalBranches: 50,
+    evictionStrategy: "LRU",
+    cleanupIntervalMs: 3600000, // 1 hour
+    incrementalThreshold: 20, // If >20 files changed, do full reindex
+    dataDir: "./.ultrascript/branches",
+  },
+  git: {
+    enabled: false, // Disabled by default
+    watchBranchChanges: true,
+    autoReindex: true,
+    diffMode: "incremental",
+    pollIntervalMs: 5000, // Check for commits every 5 seconds
   },
   devAgent: {
     maxConcurrency: 3,
@@ -443,10 +540,22 @@ export class ConfigLoader {
       apiKey: embeddingConfig.apiKey || "",
       enabled: embeddingConfig.enabled || false,
       fallbackToMemory: embeddingConfig.fallbackToMemory !== false,
+
+      // Two-stage retrieval with reranker
+      useReranker: embeddingConfig.useReranker || false,
+      rerankerModel: embeddingConfig.rerankerModel || "granite-embedding-reranker-english-r2",
+      rerankerTopK: embeddingConfig.rerankerTopK || 100,
+      rerankerFinalK: embeddingConfig.rerankerFinalK || 10,
+
+      // Language hint for optimization
+      queryLanguage: embeddingConfig.queryLanguage || "english",
+
+      // Provider-specific configurations
       ollama: embeddingConfig.ollama || undefined,
       openai: embeddingConfig.openai || undefined,
       cloudru: embeddingConfig.cloudru || undefined,
-      transformers: embeddingConfig.transformers || undefined,
+      huggingface: embeddingConfig.huggingface || undefined,
+      tei: embeddingConfig.tei || undefined,
       memory: embeddingConfig.memory || undefined,
     };
   }
@@ -521,7 +630,14 @@ export class ConfigLoader {
             yamlConfig.mcp?.embedding?.model || process.env.MCP_EMBEDDING_MODEL || DEFAULT_CONFIG.mcp.embedding?.model,
           provider: (yamlConfig.mcp?.embedding?.provider ||
             process.env.MCP_EMBEDDING_PROVIDER ||
-            DEFAULT_CONFIG.mcp.embedding?.provider) as "memory" | "transformers" | "ollama" | "openai" | "cloudru",
+            DEFAULT_CONFIG.mcp.embedding?.provider) as
+            | "memory"
+            | "ollama"
+            | "openai"
+            | "cloudru"
+            | "huggingface"
+            | "tei"
+            | "auto",
           apiKey:
             yamlConfig.mcp?.embedding?.apiKey ||
             process.env.MCP_EMBEDDING_API_KEY ||
@@ -561,13 +677,19 @@ export class ConfigLoader {
             concurrency: Number(process.env.CLOUDRU_CONCURRENCY) || undefined,
             maxBatchSize: Number(process.env.CLOUDRU_MAX_BATCH_SIZE) || undefined,
           },
-          transformers: {
-            quantized:
-              yamlConfig.mcp?.embedding?.transformers?.quantized !== undefined
-                ? yamlConfig.mcp?.embedding?.transformers?.quantized
-                : process.env.TRANSFORMERS_QUANTIZED !== "false" || undefined,
-            localPath:
-              yamlConfig.mcp?.embedding?.transformers?.localPath || process.env.TRANSFORMERS_LOCAL_PATH || undefined,
+          huggingface: yamlConfig.mcp?.embedding?.huggingface || {
+            apiKey: process.env.HUGGINGFACE_API_KEY || undefined,
+            baseUrl: process.env.HUGGINGFACE_BASE_URL || undefined,
+            timeout: Number(process.env.HUGGINGFACE_TIMEOUT_MS) || undefined,
+            timeoutMs: Number(process.env.HUGGINGFACE_TIMEOUT_MS) || undefined,
+            concurrency: Number(process.env.HUGGINGFACE_CONCURRENCY) || undefined,
+            warmupText: process.env.HUGGINGFACE_WARMUP_TEXT || undefined,
+          },
+          tei: yamlConfig.mcp?.embedding?.tei || {
+            baseUrl: process.env.TEI_BASE_URL || undefined,
+            timeoutMs: Number(process.env.TEI_TIMEOUT_MS) || undefined,
+            concurrency: Number(process.env.TEI_CONCURRENCY) || undefined,
+            checkServer: process.env.TEI_CHECK_SERVER !== "false",
           },
           memory: {
             dimension:
@@ -734,6 +856,54 @@ export class ConfigLoader {
           Number(process.env.INDEXER_AGENT_CACHE_TTL) ||
           DEFAULT_CONFIG.indexer?.cacheTTL,
       },
+      indexing: {
+        branchAware:
+          yamlConfig.indexing?.branchAware ??
+          (process.env.INDEXING_BRANCH_AWARE === "true" ? true : undefined) ??
+          DEFAULT_CONFIG.indexing.branchAware,
+        autoSwitchOnBranchChange:
+          yamlConfig.indexing?.autoSwitchOnBranchChange ??
+          (process.env.INDEXING_AUTO_SWITCH === "true" ? true : undefined) ??
+          DEFAULT_CONFIG.indexing.autoSwitchOnBranchChange,
+        maxBranchesPerRepo:
+          yamlConfig.indexing?.maxBranchesPerRepo ||
+          Number(process.env.INDEXING_MAX_BRANCHES_PER_REPO) ||
+          DEFAULT_CONFIG.indexing.maxBranchesPerRepo,
+        maxTotalBranches:
+          yamlConfig.indexing?.maxTotalBranches ||
+          Number(process.env.INDEXING_MAX_TOTAL_BRANCHES) ||
+          DEFAULT_CONFIG.indexing.maxTotalBranches,
+        evictionStrategy:
+          (yamlConfig.indexing?.evictionStrategy as "LRU" | "LFU" | "FIFO") || DEFAULT_CONFIG.indexing.evictionStrategy,
+        cleanupIntervalMs:
+          yamlConfig.indexing?.cleanupIntervalMs ||
+          Number(process.env.INDEXING_CLEANUP_INTERVAL_MS) ||
+          DEFAULT_CONFIG.indexing.cleanupIntervalMs,
+        incrementalThreshold:
+          yamlConfig.indexing?.incrementalThreshold ||
+          Number(process.env.INDEXING_INCREMENTAL_THRESHOLD) ||
+          DEFAULT_CONFIG.indexing.incrementalThreshold,
+        dataDir: yamlConfig.indexing?.dataDir || process.env.INDEXING_DATA_DIR || DEFAULT_CONFIG.indexing.dataDir,
+      },
+      git: {
+        enabled:
+          yamlConfig.git?.enabled ??
+          (process.env.GIT_ENABLED === "true" ? true : undefined) ??
+          DEFAULT_CONFIG.git.enabled,
+        watchBranchChanges:
+          yamlConfig.git?.watchBranchChanges ??
+          (process.env.GIT_WATCH_BRANCH_CHANGES === "true" ? true : undefined) ??
+          DEFAULT_CONFIG.git.watchBranchChanges,
+        autoReindex:
+          yamlConfig.git?.autoReindex ??
+          (process.env.GIT_AUTO_REINDEX === "true" ? true : undefined) ??
+          DEFAULT_CONFIG.git.autoReindex,
+        diffMode: (yamlConfig.git?.diffMode as "incremental" | "full") || DEFAULT_CONFIG.git.diffMode,
+        pollIntervalMs:
+          yamlConfig.git?.pollIntervalMs ||
+          Number(process.env.GIT_POLL_INTERVAL_MS) ||
+          DEFAULT_CONFIG.git.pollIntervalMs,
+      },
       devAgent: {
         maxConcurrency:
           yamlConfig.devAgent?.maxConcurrency ||
@@ -898,6 +1068,18 @@ export class ConfigLoader {
             ? yamlConfig.conductor?.mandatoryDelegation
             : process.env.CONDUCTOR_MANDATORY_DELEGATION !== "false" &&
               (process.env.CONDUCTOR_MANDATORY_DELEGATION === "true" || DEFAULT_CONFIG.conductor.mandatoryDelegation),
+      },
+      vectorBackend: {
+        backend: (yamlConfig.vectorBackend?.backend as any) || (process.env.VECTOR_BACKEND as any) || "auto",
+        autoSwitchThreshold:
+          yamlConfig.vectorBackend?.autoSwitchThreshold || Number(process.env.VECTOR_AUTO_SWITCH_THRESHOLD) || 10000,
+        vectorlite: yamlConfig.vectorBackend?.vectorlite || {
+          maxElements: Number(process.env.VECTORLITE_MAX_ELEMENTS) || undefined,
+          M: Number(process.env.VECTORLITE_M) || undefined,
+          efConstruction: Number(process.env.VECTORLITE_EF_CONSTRUCTION) || undefined,
+          efSearch: Number(process.env.VECTORLITE_EF_SEARCH) || undefined,
+          distanceMetric: (process.env.VECTORLITE_DISTANCE_METRIC as any) || undefined,
+        },
       },
       environment: yamlConfig.environment || process.env.NODE_ENV || DEFAULT_CONFIG.environment,
       debug: yamlConfig.debug !== undefined ? yamlConfig.debug : process.env.DEBUG === "true" || DEFAULT_CONFIG.debug,

@@ -22,19 +22,13 @@
  * pattern from C++ analyzer with Go-specific adaptations.
  */
 
+import { PARSER_CONSTANTS } from "../config/constants.js";
 import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
 // Circuit breaker constants
-const MAX_RECURSION_DEPTH = 50;
-const PARSE_TIMEOUT_MS = 5000;
-
-// Custom error class for circuit breaker failures
-class CircuitBreakerError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CircuitBreakerError";
-  }
-}
+const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
+const PARSE_TIMEOUT_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
 
 export class GoAnalyzer {
   private recursionDepth = 0;
@@ -52,24 +46,6 @@ export class GoAnalyzer {
       return nameField.namedChildren.filter((c) => c.type === "identifier").map((c) => c.text);
     }
     return [];
-  }
-
-  /**
-   * Helper: Convert tree-sitter position to ParsedEntity location
-   */
-  private getNodeLocation(node: TreeSitterNode) {
-    return {
-      start: {
-        line: node.startPosition.row + 1,
-        column: node.startPosition.column,
-        index: node.startIndex,
-      },
-      end: {
-        line: node.endPosition.row + 1,
-        column: node.endPosition.column,
-        index: node.endIndex,
-      },
-    };
   }
 
   /**
@@ -109,22 +85,6 @@ export class GoAnalyzer {
   }
 
   /**
-   * Check circuit breakers
-   */
-  private checkCircuitBreakers(): void {
-    // Recursion depth check
-    if (this.recursionDepth > MAX_RECURSION_DEPTH) {
-      throw new CircuitBreakerError(`Maximum recursion depth ${MAX_RECURSION_DEPTH} exceeded`);
-    }
-
-    // Timeout check
-    const elapsedTime = Date.now() - this.parseStartTime;
-    if (elapsedTime > PARSE_TIMEOUT_MS) {
-      throw new CircuitBreakerError(`Parse timeout ${PARSE_TIMEOUT_MS}ms exceeded`);
-    }
-  }
-
-  /**
    * Extract entities from Go AST
    */
   private extractEntities(
@@ -135,7 +95,7 @@ export class GoAnalyzer {
     parentContext?: string,
   ): void {
     this.recursionDepth++;
-    this.checkCircuitBreakers();
+    checkCircuitBreakers(this.recursionDepth, this.parseStartTime, MAX_RECURSION_DEPTH, PARSE_TIMEOUT_MS);
 
     try {
       switch (node.type) {
@@ -159,7 +119,7 @@ export class GoAnalyzer {
               name: packageName,
               type: "module",
               filePath,
-              location: this.getNodeLocation(node),
+              location: getNodeLocation(node),
               metadata: {
                 isPackage: true,
               },
@@ -336,7 +296,7 @@ export class GoAnalyzer {
         name: functionName,
         type: "function",
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         metadata: {
           isPublic: this.isExported(functionName), // Capital = exported in Go
           package: this.currentPackage,
@@ -390,7 +350,7 @@ export class GoAnalyzer {
         name: methodName,
         type: "method",
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         metadata: {
           isPublic: this.isExported(methodName),
           receiver: receiverType,
@@ -479,7 +439,7 @@ export class GoAnalyzer {
           name: typeName,
           type: entityType,
           filePath,
-          location: this.getNodeLocation(typeSpec),
+          location: getNodeLocation(typeSpec),
           metadata: {
             isPublic: this.isExported(typeName),
             package: this.currentPackage,
@@ -548,7 +508,7 @@ export class GoAnalyzer {
             name: fieldName,
             type: "property",
             filePath,
-            location: this.getNodeLocation(field),
+            location: getNodeLocation(field),
             metadata: {
               isPublic: this.isExported(fieldName),
               fieldType: typeNode?.text || "unknown",
@@ -595,7 +555,7 @@ export class GoAnalyzer {
           name: methodName,
           type: "method",
           filePath,
-          location: this.getNodeLocation(methodSpec),
+          location: getNodeLocation(methodSpec),
           metadata: {
             isAbstract: true, // Interface methods are abstract
             parent: interfaceId,
@@ -685,7 +645,7 @@ export class GoAnalyzer {
             name: constName,
             type: "constant",
             filePath,
-            location: this.getNodeLocation(constSpec),
+            location: getNodeLocation(constSpec),
             metadata: {
               isPublic: this.isExported(constName),
               value: valueNode?.text,
@@ -739,7 +699,7 @@ export class GoAnalyzer {
             name: varName,
             type: "variable",
             filePath,
-            location: this.getNodeLocation(varSpec),
+            location: getNodeLocation(varSpec),
             metadata: {
               isPublic: this.isExported(varName),
               variableType: typeNode?.text,
@@ -784,7 +744,7 @@ export class GoAnalyzer {
     relationships: EntityRelationship[],
   ): void {
     this.recursionDepth++;
-    this.checkCircuitBreakers();
+    checkCircuitBreakers(this.recursionDepth, this.parseStartTime, MAX_RECURSION_DEPTH, PARSE_TIMEOUT_MS);
 
     try {
       if (node.type === "call_expression") {

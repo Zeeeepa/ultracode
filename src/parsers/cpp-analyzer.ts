@@ -22,12 +22,14 @@
  * and comprehensive circuit breakers for safety.
  */
 
+import { PARSER_CONSTANTS } from "../config/constants.js";
 import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import { getNodeLocation } from "./base-parser-utils.js";
 
 // Circuit breaker constants
-const MAX_RECURSION_DEPTH = 50;
-const PARSE_TIMEOUT_MS = 5000;
-const MAX_COMPLEXITY_SCORE = 100;
+const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
+const PARSE_TIMEOUT_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
+const MAX_COMPLEXITY_SCORE = PARSER_CONSTANTS.COMPLEXITY_THRESHOLD;
 const MAX_TEMPLATE_DEPTH = 10;
 
 // Complexity scoring for templates
@@ -53,24 +55,6 @@ export class CppAnalyzer {
 
   // Memoization cache for template patterns
   private templateCache = new Map<string, ParsedEntity>();
-
-  /**
-   * Helper: Convert tree-sitter position to ParsedEntity location
-   */
-  private getNodeLocation(node: TreeSitterNode) {
-    return {
-      start: {
-        line: node.startPosition.row + 1,
-        column: node.startPosition.column,
-        index: node.startIndex,
-      },
-      end: {
-        line: node.endPosition.row + 1,
-        column: node.endPosition.column,
-        index: node.endIndex,
-      },
-    };
-  }
 
   /**
    * Main entry point for analyzing C++ code
@@ -242,7 +226,7 @@ export class CppAnalyzer {
       const entity: ParsedEntity = {
         name: fullName,
         type: "module",
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         modifiers: ["namespace"],
       };
 
@@ -287,7 +271,7 @@ export class CppAnalyzer {
     const entity: ParsedEntity = {
       name: fullName,
       type: "class",
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
       modifiers,
     };
 
@@ -423,7 +407,7 @@ export class CppAnalyzer {
     const entity: ParsedEntity = {
       name: fullName,
       type: entityType,
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
       modifiers,
     };
     entities.push(entity);
@@ -470,7 +454,7 @@ export class CppAnalyzer {
     const entity: ParsedEntity = {
       name: fullName,
       type: "property", // Using 'property' for fields
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
       modifiers,
     };
 
@@ -514,7 +498,7 @@ export class CppAnalyzer {
     const entity: ParsedEntity = {
       name: fullName,
       type: "function",
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
       modifiers,
     };
 
@@ -680,7 +664,7 @@ export class CppAnalyzer {
     const entity: ParsedEntity = {
       name: fullName,
       type: "enum", // This is a valid type in ParsedEntity
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
       modifiers,
     };
 
@@ -697,7 +681,7 @@ export class CppAnalyzer {
             entities.push({
               name: valueName,
               type: "constant", // Using 'constant' for enum values
-              location: this.getNodeLocation(child),
+              location: getNodeLocation(child),
               modifiers: ["enum_value"],
             });
 

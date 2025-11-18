@@ -24,43 +24,19 @@
  * pattern from Go and C++ analyzers with Java-specific adaptations.
  */
 
+import { PARSER_CONSTANTS } from "../config/constants.js";
 import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
 // Circuit breaker constants
-const MAX_RECURSION_DEPTH = 50;
-const PARSE_TIMEOUT_MS = 5000;
-
-// Custom error class for circuit breaker failures
-class CircuitBreakerError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CircuitBreakerError";
-  }
-}
+const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
+const PARSE_TIMEOUT_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
 
 export class JavaAnalyzer {
   private recursionDepth = 0;
   private parseStartTime = 0;
   private currentPackage = "";
   private currentClass: string | null = null;
-
-  /**
-   * Helper: Convert tree-sitter position to ParsedEntity location
-   */
-  private getNodeLocation(node: TreeSitterNode) {
-    return {
-      start: {
-        line: node.startPosition.row + 1,
-        column: node.startPosition.column,
-        index: node.startIndex,
-      },
-      end: {
-        line: node.endPosition.row + 1,
-        column: node.endPosition.column,
-        index: node.endIndex,
-      },
-    };
-  }
 
   /**
    * Ensure a module entity exists for the current package (including default)
@@ -125,22 +101,6 @@ export class JavaAnalyzer {
   }
 
   /**
-   * Check circuit breakers
-   */
-  private checkCircuitBreakers(): void {
-    // Recursion depth check
-    if (this.recursionDepth > MAX_RECURSION_DEPTH) {
-      throw new CircuitBreakerError(`Maximum recursion depth ${MAX_RECURSION_DEPTH} exceeded`);
-    }
-
-    // Timeout check
-    const elapsedTime = Date.now() - this.parseStartTime;
-    if (elapsedTime > PARSE_TIMEOUT_MS) {
-      throw new CircuitBreakerError(`Parse timeout ${PARSE_TIMEOUT_MS}ms exceeded`);
-    }
-  }
-
-  /**
    * Extract entities from Java AST
    */
   private extractEntities(
@@ -151,7 +111,7 @@ export class JavaAnalyzer {
     parentContext?: string,
   ): void {
     this.recursionDepth++;
-    this.checkCircuitBreakers();
+    checkCircuitBreakers(this.recursionDepth, this.parseStartTime, MAX_RECURSION_DEPTH, PARSE_TIMEOUT_MS);
 
     try {
       switch (node.type) {
@@ -249,7 +209,7 @@ export class JavaAnalyzer {
         name: packageName,
         type: "module",
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         metadata: {
           isPackage: true,
         },
@@ -312,7 +272,7 @@ export class JavaAnalyzer {
         name: fullClassName,
         type: "class",
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         modifiers,
         metadata: {
           isAbstract: modifiers.includes("abstract"),
@@ -397,7 +357,7 @@ export class JavaAnalyzer {
         name: fullInterfaceName,
         type: "interface",
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         modifiers,
         metadata: {
           isPublic: modifiers.includes("public"),
@@ -463,7 +423,7 @@ export class JavaAnalyzer {
         name: fullEnumName,
         type: "enum",
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         modifiers,
         metadata: {
           isPublic: modifiers.includes("public"),
@@ -488,7 +448,7 @@ export class JavaAnalyzer {
               name: constantName,
               type: "constant",
               filePath,
-              location: this.getNodeLocation(constant),
+              location: getNodeLocation(constant),
               metadata: {
                 parent: enumId,
                 enumValue: true,
@@ -544,7 +504,7 @@ export class JavaAnalyzer {
         name: fullRecordName,
         type: "class", // Records are special classes
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         modifiers,
         metadata: {
           isRecord: true,
@@ -573,7 +533,7 @@ export class JavaAnalyzer {
               name: componentName,
               type: "property",
               filePath,
-              location: this.getNodeLocation(component),
+              location: getNodeLocation(component),
               metadata: {
                 parent: recordId,
                 fieldType: componentType,
@@ -627,7 +587,7 @@ export class JavaAnalyzer {
         name: `@${fullAnnotationName}`,
         type: "interface", // Annotations are special interfaces
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         modifiers,
         metadata: {
           isAnnotation: true,
@@ -663,7 +623,7 @@ export class JavaAnalyzer {
         name: methodName,
         type: "method",
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         modifiers,
         returnType,
         metadata: {
@@ -733,7 +693,7 @@ export class JavaAnalyzer {
         name: constructorName,
         type: "method",
         filePath,
-        location: this.getNodeLocation(node),
+        location: getNodeLocation(node),
         modifiers,
         metadata: {
           isConstructor: true,
@@ -794,7 +754,7 @@ export class JavaAnalyzer {
           name: fieldName,
           type: modifiers.includes("final") ? "constant" : "property",
           filePath,
-          location: this.getNodeLocation(declarator),
+          location: getNodeLocation(declarator),
           modifiers,
           metadata: {
             fieldType,
@@ -897,7 +857,7 @@ export class JavaAnalyzer {
     relationships: EntityRelationship[],
   ): void {
     this.recursionDepth++;
-    this.checkCircuitBreakers();
+    checkCircuitBreakers(this.recursionDepth, this.parseStartTime, MAX_RECURSION_DEPTH, PARSE_TIMEOUT_MS);
 
     try {
       if (node.type === "method_invocation") {

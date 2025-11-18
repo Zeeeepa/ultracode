@@ -57,9 +57,6 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   hxx: "cpp",
   hh: "cpp",
 
-  // C#
-  cs: "csharp",
-
   // Rust
   rs: "rust",
 
@@ -69,6 +66,26 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
 
   // Java
   java: "java",
+
+  // Kotlin
+  kt: "kotlin",
+  kts: "kotlin",
+
+  // Swift
+  swift: "swift",
+
+  // CSS/SCSS/LESS
+  css: "css",
+  scss: "css",
+  sass: "css",
+  less: "css",
+
+  // HTML
+  html: "html",
+  htm: "html",
+
+  // XML
+  xml: "xml",
 
   // VBA
   vba: "vba",
@@ -167,25 +184,6 @@ export const LANGUAGE_KEYWORDS: Record<
     types: ["type"],
   },
 
-  csharp: {
-    functions: [
-      "void",
-      "public",
-      "private",
-      "protected",
-      "internal",
-      "static",
-      "virtual",
-      "override",
-      "abstract",
-      "async",
-    ],
-    classes: ["class", "struct", "interface", "enum", "record"],
-    imports: ["using"],
-    exports: ["public", "internal", "protected"],
-    types: ["int", "long", "double", "float", "bool", "string", "object", "var", "dynamic"],
-  },
-
   go: {
     functions: ["func"],
     classes: ["type", "struct", "interface"],
@@ -200,6 +198,46 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: ["import"],
     exports: ["public", "protected"],
     types: ["int", "long", "double", "float", "char", "boolean", "String", "void"],
+  },
+
+  kotlin: {
+    functions: ["fun", "suspend", "inline", "operator", "infix"],
+    classes: ["class", "interface", "object", "enum", "data", "sealed", "annotation"],
+    imports: ["import"],
+    exports: ["public", "internal", "protected"],
+    types: ["Int", "Long", "Double", "Float", "String", "Boolean", "Any", "Unit"],
+  },
+
+  swift: {
+    functions: ["func", "async", "throws", "rethrows", "mutating", "nonmutating"],
+    classes: ["class", "struct", "enum", "protocol", "extension", "actor"],
+    imports: ["import"],
+    exports: ["public", "internal", "fileprivate", "private", "open"],
+    types: ["Int", "Double", "Float", "String", "Bool", "Any", "Void"],
+  },
+
+  css: {
+    functions: [],
+    classes: [],
+    imports: ["@import"],
+    exports: [],
+    types: [],
+  },
+
+  html: {
+    functions: [],
+    classes: [],
+    imports: [],
+    exports: [],
+    types: [],
+  },
+
+  xml: {
+    functions: [],
+    classes: [],
+    imports: [],
+    exports: [],
+    types: [],
   },
 
   vba: {
@@ -847,84 +885,6 @@ const RUST_CONFIG: LanguageConfig = {
     extractReferences: true,
   },
 };
-
-/**
- * C# language configuration
- */
-const CSHARP_CONFIG: LanguageConfig = {
-  language: "csharp",
-  extensions: ["cs"],
-  keywords: LANGUAGE_KEYWORDS.csharp,
-  nodeTypes: {
-    functions: ["method_declaration", "constructor_declaration", "destructor_declaration", "local_function_statement"],
-    classes: [
-      "class_declaration",
-      "struct_declaration",
-      "interface_declaration",
-      "enum_declaration",
-      "record_declaration",
-    ],
-    methods: ["method_declaration", "property_declaration", "indexer_declaration", "event_declaration"],
-    imports: ["using_directive", "namespace_declaration"],
-    exports: ["public", "internal", "protected"],
-    variables: ["field_declaration", "local_declaration_statement", "variable_declarator"],
-    types: ["type_declaration", "generic_name", "nullable_type", "array_type"],
-    interfaces: ["interface_declaration"],
-  },
-  extractors: {
-    extractName: (nodeType: string) => {
-      switch (nodeType) {
-        case "method_declaration":
-        case "constructor_declaration":
-        case "destructor_declaration":
-        case "local_function_statement":
-          return ["identifier"];
-        case "class_declaration":
-        case "struct_declaration":
-        case "interface_declaration":
-        case "enum_declaration":
-        case "record_declaration":
-          return ["identifier"];
-        case "property_declaration":
-        case "field_declaration":
-          return ["identifier"];
-        case "using_directive":
-          return ["identifier", "qualified_name"];
-        default:
-          return ["identifier"];
-      }
-    },
-    extractModifiers: (nodeType: string) => {
-      switch (nodeType) {
-        case "method_declaration":
-        case "constructor_declaration":
-          return [
-            "public",
-            "private",
-            "protected",
-            "internal",
-            "static",
-            "virtual",
-            "override",
-            "abstract",
-            "sealed",
-            "async",
-          ];
-        case "class_declaration":
-        case "struct_declaration":
-          return ["public", "private", "protected", "internal", "static", "abstract", "sealed", "partial"];
-        case "field_declaration":
-          return ["public", "private", "protected", "internal", "static", "readonly", "const", "volatile"];
-        default:
-          return ["public", "private", "protected", "internal", "static"];
-      }
-    },
-    extractParameters: true,
-    extractReturnType: true,
-    extractReferences: true,
-  },
-};
-
 /**
  * Go language configuration
  */
@@ -1130,6 +1090,121 @@ const VBA_CONFIG: LanguageConfig = {
   },
 };
 
+const KOTLIN_CONFIG: LanguageConfig = {
+  language: "kotlin",
+  extensions: ["kt", "kts"],
+  keywords: LANGUAGE_KEYWORDS.kotlin,
+  nodeTypes: {
+    functions: ["function_declaration"],
+    classes: ["class_declaration", "object_declaration"],
+    methods: ["function_declaration"],
+    imports: ["import_header"],
+    exports: ["public", "internal"],
+    variables: ["property_declaration"],
+    types: ["type_identifier"],
+    interfaces: ["class_declaration"],
+  },
+  extractors: {
+    extractName: () => ["simple_identifier", "type_identifier"],
+    extractModifiers: () => ["public", "private", "protected", "internal"],
+    extractParameters: true,
+    extractReturnType: true,
+    extractReferences: true,
+  },
+};
+
+const SWIFT_CONFIG: LanguageConfig = {
+  language: "swift",
+  extensions: ["swift"],
+  keywords: LANGUAGE_KEYWORDS.swift,
+  nodeTypes: {
+    functions: ["function_declaration"],
+    classes: ["class_declaration", "struct_declaration", "actor_declaration"],
+    methods: ["function_declaration"],
+    imports: ["import_declaration"],
+    exports: ["public", "internal", "open"],
+    variables: ["property_declaration"],
+    types: ["type_identifier"],
+    interfaces: ["protocol_declaration"],
+  },
+  extractors: {
+    extractName: () => ["simple_identifier", "type_identifier"],
+    extractModifiers: () => ["public", "private", "fileprivate", "internal", "open"],
+    extractParameters: true,
+    extractReturnType: true,
+    extractReferences: true,
+  },
+};
+
+const CSS_CONFIG: LanguageConfig = {
+  language: "css",
+  extensions: ["css", "scss", "sass", "less"],
+  keywords: LANGUAGE_KEYWORDS.css,
+  nodeTypes: {
+    functions: [],
+    classes: [],
+    methods: [],
+    imports: [],
+    exports: [],
+    variables: ["rule_set"],
+    types: [],
+    interfaces: [],
+  },
+  extractors: {
+    extractName: () => ["selectors"],
+    extractModifiers: () => [],
+    extractParameters: false,
+    extractReturnType: false,
+    extractReferences: false,
+  },
+};
+
+const HTML_CONFIG: LanguageConfig = {
+  language: "html",
+  extensions: ["html", "htm"],
+  keywords: LANGUAGE_KEYWORDS.html,
+  nodeTypes: {
+    functions: [],
+    classes: [],
+    methods: [],
+    imports: [],
+    exports: [],
+    variables: ["element"],
+    types: [],
+    interfaces: [],
+  },
+  extractors: {
+    extractName: () => ["tag_name"],
+    extractModifiers: () => [],
+    extractParameters: false,
+    extractReturnType: false,
+    extractReferences: false,
+  },
+};
+
+const XML_CONFIG: LanguageConfig = {
+  language: "xml",
+  extensions: ["xml"],
+  keywords: LANGUAGE_KEYWORDS.xml,
+  nodeTypes: {
+    functions: [],
+    classes: [],
+    methods: [],
+    imports: [],
+    exports: [],
+    variables: ["element"],
+    types: [],
+    interfaces: [],
+  },
+  extractors: {
+    extractName: () => ["tag_name"],
+    extractModifiers: () => [],
+    extractParameters: false,
+    extractReturnType: false,
+    extractReferences: false,
+  },
+};
+
 /**
  * Language configuration registry
  */
@@ -1142,9 +1217,13 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   c: C_CONFIG,
   cpp: CPP_CONFIG,
   rust: RUST_CONFIG,
-  csharp: CSHARP_CONFIG,
   go: GO_CONFIG,
   java: JAVA_CONFIG,
+  kotlin: KOTLIN_CONFIG,
+  swift: SWIFT_CONFIG,
+  css: CSS_CONFIG,
+  html: HTML_CONFIG,
+  xml: XML_CONFIG,
   vba: VBA_CONFIG,
 };
 

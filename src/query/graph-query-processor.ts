@@ -23,7 +23,7 @@ import { createHash } from "node:crypto";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type Database from "better-sqlite3";
+import type { SQLiteDatabase, SQLiteStatement } from "../storage/sqlite-adapter.js";
 import type {
   Change,
   Cycle,
@@ -55,7 +55,7 @@ const MAX_TRAVERSAL_DEPTH = 10;
 
 export class GraphQueryProcessor {
   private optimizer: QueryOptimizer;
-  private preparedStatements: Map<string, Database.Statement> = new Map();
+  private preparedStatements: Map<string, SQLiteStatement> = new Map();
 
   constructor(
     private connectionPool: ConnectionPool,
@@ -544,7 +544,9 @@ export class GraphQueryProcessor {
     const allImpacted = new Set<string>(directImpactIds);
     for (const impactedId of directImpactIds) {
       const secondLevel = await this.getRelatedEntitiesRecursive(impactedId, 2);
-      secondLevel.forEach((e) => allImpacted.add(e.id));
+      for (const e of secondLevel) {
+        allImpacted.add(e.id);
+      }
     }
 
     // Load all impacted entities
@@ -631,7 +633,7 @@ export class GraphQueryProcessor {
   // 7. HELPER METHODS
   // =============================================================================
 
-  private getPreparedStatement(conn: Database.Database, key: string, sql: string): Database.Statement {
+  private getPreparedStatement(conn: SQLiteDatabase, key: string, sql: string): SQLiteStatement {
     const cacheKey = `${conn.name}:${key}`;
     if (!this.preparedStatements.has(cacheKey)) {
       this.preparedStatements.set(cacheKey, conn.prepare(sql));

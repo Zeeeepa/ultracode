@@ -8,15 +8,17 @@
  *  - Macros and preprocessor directives
  *  - Include relationships
  *
- * Implementation follows patterns from CSharpAnalyzer and RustAnalyzer
+ * Implementation follows patterns from RustAnalyzer
  * with circuit breakers for safety.
  */
 
+import { PARSER_CONSTANTS } from "../config/constants.js";
 import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import { getNodeLocation } from "./base-parser-utils.js";
 
 // Circuit breaker constants
-const MAX_RECURSION_DEPTH = 50;
-const PARSE_TIMEOUT_MS = 5000;
+const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
+const PARSE_TIMEOUT_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
 
 export class CAnalyzer {
   private parseStartTime = 0;
@@ -128,7 +130,7 @@ export class CAnalyzer {
     entities.push({
       name,
       type: "function",
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
       modifiers: modifiers.length ? modifiers : undefined,
     });
   }
@@ -154,7 +156,7 @@ export class CAnalyzer {
           entities.push({
             name,
             type: "function",
-            location: this.getNodeLocation(node),
+            location: getNodeLocation(node),
             modifiers: mods.length ? mods : undefined,
           });
         } else {
@@ -164,7 +166,7 @@ export class CAnalyzer {
           entities.push({
             name,
             type: isConst ? "constant" : "variable",
-            location: this.getNodeLocation(node),
+            location: getNodeLocation(node),
             modifiers: mods.length ? mods : undefined,
           });
         }
@@ -180,7 +182,7 @@ export class CAnalyzer {
           entities.push({
             name: this.getNodeText(fname),
             type: "function",
-            location: this.getNodeLocation(node),
+            location: getNodeLocation(node),
             modifiers: mods.length ? mods : undefined,
           });
         }
@@ -191,7 +193,7 @@ export class CAnalyzer {
         entities.push({
           name: this.getNodeText(nameNode),
           type: isConst ? "constant" : "variable",
-          location: this.getNodeLocation(node),
+          location: getNodeLocation(node),
           modifiers: mods.length ? mods : undefined,
         });
       }
@@ -220,7 +222,7 @@ export class CAnalyzer {
             children.push({
               name: fieldName,
               type: "property",
-              location: this.getNodeLocation(child),
+              location: getNodeLocation(child),
             });
           }
         }
@@ -230,7 +232,7 @@ export class CAnalyzer {
     entities.push({
       name,
       type: "class", // Using 'class' for consistency with other analyzers
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
       children: children.length > 0 ? children : undefined,
     });
   }
@@ -246,7 +248,7 @@ export class CAnalyzer {
     entities.push({
       name,
       type: "class",
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
     });
   }
 
@@ -271,7 +273,7 @@ export class CAnalyzer {
             children.push({
               name: enumName,
               type: "constant",
-              location: this.getNodeLocation(child),
+              location: getNodeLocation(child),
             });
           }
         }
@@ -281,7 +283,7 @@ export class CAnalyzer {
     entities.push({
       name: `enum ${name}`,
       type: "enum",
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
       children: children.length > 0 ? children : undefined,
     });
   }
@@ -301,7 +303,7 @@ export class CAnalyzer {
         entities.push({
           name,
           type: "type",
-          location: this.getNodeLocation(node),
+          location: getNodeLocation(node),
         });
       }
       return;
@@ -316,7 +318,7 @@ export class CAnalyzer {
           entities.push({
             name,
             type: "type",
-            location: this.getNodeLocation(node),
+            location: getNodeLocation(node),
           });
         }
       }
@@ -334,7 +336,7 @@ export class CAnalyzer {
     entities.push({
       name: `#define ${name}`,
       type: "constant",
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
     });
   }
 
@@ -349,7 +351,7 @@ export class CAnalyzer {
     entities.push({
       name: `#define ${name}()`,
       type: "function",
-      location: this.getNodeLocation(node),
+      location: getNodeLocation(node),
       modifiers: ["macro"],
     });
   }
@@ -448,20 +450,6 @@ export class CAnalyzer {
   /**
    * Helper: Get node location
    */
-  private getNodeLocation(node: TreeSitterNode) {
-    return {
-      start: {
-        line: node.startPosition.row + 1,
-        column: node.startPosition.column,
-        index: node.startIndex,
-      },
-      end: {
-        line: node.endPosition.row + 1,
-        column: node.endPosition.column,
-        index: node.endIndex,
-      },
-    };
-  }
 
   // Helpers
   private descendantsOfType(node: TreeSitterNode, type: string): TreeSitterNode[] {

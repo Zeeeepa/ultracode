@@ -18,6 +18,7 @@
  *  - 2025-01-14: Created by Dev-Agent - TASK-002: Initial query type definitions
  */
 
+import { CACHE_CONSTANTS } from "../config/constants.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -31,7 +32,7 @@ export const DEFAULT_QUERY_LIMIT = 100;
 export const MAX_CONCURRENT_QUERIES = 10;
 export const CACHE_L1_SIZE = 100; // Hot cache
 export const CACHE_L2_SIZE = 1000; // Warm cache
-export const DEFAULT_TTL_MS = 300000; // 5 minutes
+export const DEFAULT_TTL_MS = CACHE_CONSTANTS.CACHE_TTL_MS;
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS

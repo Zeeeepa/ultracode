@@ -7,8 +7,8 @@
  * Ensures consistency with the main codebase optimizations
  */
 
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 
 interface MigrationResult {
@@ -82,7 +82,16 @@ class VectorDatabaseMigrator {
 
   private async createBackup(): Promise<string> {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const backupPath = `${this.dbPath}.backup-${timestamp}`;
+    const dbDir = dirname(this.dbPath);
+    const projectRoot = dbDir.includes(".ultrascript") ? resolve(dbDir, "../../") : process.cwd();
+    const backupDir = join(projectRoot, ".ultrascript", "backups");
+
+    // Ensure backup directory exists
+    if (!existsSync(backupDir)) {
+      mkdirSync(backupDir, { recursive: true });
+    }
+
+    const backupPath = join(backupDir, `vectors.db.backup-${timestamp}`);
     const sourceDb = new Database(this.dbPath);
     await sourceDb.backup(backupPath);
     sourceDb.close();

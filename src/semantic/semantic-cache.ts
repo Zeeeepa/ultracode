@@ -93,10 +93,11 @@ export class SemanticCache {
       updateAgeOnHas: options.updateAgeOnHas ?? false,
     };
 
-    // Initialize embedding cache
+    // Initialize embedding cache - lru-cache v11 with ttlAutopurge
     this.embeddingCache = new LRUCache<string, Float32Array>({
       max: Math.floor(config.maxSize / 3),
       ttl: config.ttl,
+      ttlAutopurge: true, // Automatic TTL cleanup
       maxSize: 100 * 1024 * 1024, // 100MB max memory
       sizeCalculation: (value) => value.length * 4,
       updateAgeOnGet: config.updateAgeOnGet,
@@ -104,10 +105,11 @@ export class SemanticCache {
       dispose: () => this.stats.evictions++,
     });
 
-    // Initialize result cache
+    // Initialize result cache - lru-cache v11 with ttlAutopurge
     this.resultCache = new LRUCache<string, SimilarityResult[]>({
       max: Math.floor(config.maxSize / 3),
       ttl: config.ttl,
+      ttlAutopurge: true, // Automatic TTL cleanup
       maxSize: 50 * 1024 * 1024, // 50MB max memory
       sizeCalculation: (value) => value.length * 100,
       updateAgeOnGet: config.updateAgeOnGet,
@@ -115,10 +117,11 @@ export class SemanticCache {
       dispose: () => this.stats.evictions++,
     });
 
-    // Initialize general cache
+    // Initialize general cache - lru-cache v11 with ttlAutopurge
     this.generalCache = new LRUCache<string, CacheValue>({
       max: Math.floor(config.maxSize / 3),
       ttl: config.ttl,
+      ttlAutopurge: true, // Automatic TTL cleanup
       maxSize: 50 * 1024 * 1024, // 50MB max memory
       sizeCalculation: estimateMemorySize,
       updateAgeOnGet: config.updateAgeOnGet,

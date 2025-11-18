@@ -27,7 +27,10 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
+
+import { CACHE_CONSTANTS } from "../config/constants.js";
 import type { EmbeddingConfig } from "../types/semantic.js";
+import { hashText } from "../utils/fast-hash.js";
 import type { EmbeddingProvider } from "./providers/base.js";
 import { createProvider } from "./providers/factory.js";
 import { MemoryProvider } from "./providers/memory-provider.js";
@@ -44,8 +47,8 @@ const DEFAULT_CONFIG: EmbeddingConfig = {
   provider: "memory",
 };
 
-const DEFAULT_TTL_MS = 60 * 60 * 1000;
-const MAX_CACHE_ENTRIES = 5000;
+const DEFAULT_TTL_MS = CACHE_CONSTANTS.CACHE_TTL_MS;
+const MAX_CACHE_ENTRIES = CACHE_CONSTANTS.MAX_CACHE_ENTRIES;
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
@@ -60,15 +63,6 @@ interface EmbeddingCache {
 // =============================================================================
 // 4. UTILITY FUNCTIONS AND HELPERS
 // =============================================================================
-function hashText(text: string): string {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    const char = text.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash;
-  }
-  return hash.toString(36);
-}
 
 function normalizeText(text: string): string {
   return text.trim().replace(/\s+/g, " ").slice(0, 512);
@@ -113,16 +107,14 @@ export class EmbeddingGenerator {
     this.initPromise = (async () => {
       try {
         const providerName = this.config.provider ?? "memory";
-        this.provider = createProvider({
+        this.provider = await createProvider({
           provider: providerName,
           modelName: this.config.modelName ?? DEFAULT_MODEL,
-          transformers: {
-            quantized: this.config.quantized,
-            localPath: this.config.localPath,
-          },
           ollama: this.config.ollama,
           openai: this.config.openai,
           cloudru: this.config.cloudru,
+          huggingface: this.config.huggingface,
+          tei: this.config.tei,
           memory: this.config.memory,
         });
 

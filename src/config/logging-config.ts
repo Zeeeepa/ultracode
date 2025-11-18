@@ -11,7 +11,7 @@ import { type LoggerConfig, LogLevel } from "../utils/logger-types.js";
 const projectRoot = process.cwd().includes("examples/") ? resolve(process.cwd(), "../..") : process.cwd();
 
 export const LOGGING_CONFIG: LoggerConfig = {
-  logDir: resolve(projectRoot, "logs_llm"),
+  logDir: resolve(projectRoot, ".ultrascript", "logs"),
   maxFileSize: 10 * 1024 * 1024, // 10MB
   maxFiles: 20,
   logLevel: LogLevel.DEBUG,

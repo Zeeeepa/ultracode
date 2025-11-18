@@ -1,8 +1,21 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.2.5/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.3.5/schema.json",
   "files": {
     "ignoreUnknown": false,
-    "includes": ["src/**", "tests/**", "*.ts", "*.js", "*.json"]
+    "includes": [
+      "src/**",
+      "tests/**",
+      "*.ts",
+      "*.js",
+      "*.json",
+      "*.md",
+      "!!**/package-lock.json",
+      "!!**/bun.lock",
+      "!!**/node_modules",
+      "!!**/dist",
+      "!!**/build",
+      "!!**/.git"
+    ]
   },
   "formatter": {
     "indentStyle": "space",
@@ -20,6 +33,12 @@
       },
       "style": {
         "noNonNullAssertion": "off"
+      },
+      "complexity": {
+        "noStaticOnlyClass": "off"
+      },
+      "performance": {
+        "noAccumulatingSpread": "off"
       }
     }
   }

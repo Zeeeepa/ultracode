@@ -18,11 +18,11 @@
  *  - 2025-01-14: Created by Dev-Agent - TASK-002: Initial QueryCache implementation
  */
 
-import type Database from "better-sqlite3";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { LRUCache } from "lru-cache";
+import type { SQLiteDatabase, SQLiteStatement } from "../storage/sqlite-adapter.js";
 import { SQLiteManager } from "../storage/sqlite-manager.js";
 import type { CacheEntry, CacheStats } from "../types/query.js";
 
@@ -43,7 +43,7 @@ const CACHE_DB_PATH = "./data/query_cache.db";
 export class QueryCache {
   private l1Cache: LRUCache<string, CacheEntry>;
   private l2Cache: LRUCache<string, CacheEntry>;
-  private l3Db: Database.Database | null = null;
+  private l3Db: SQLiteDatabase | null = null;
   private sqliteManager: SQLiteManager;
 
   private stats = {
@@ -56,17 +56,18 @@ export class QueryCache {
 
   // Prepared statements for L3 cache
   private l3Statements: {
-    get?: Database.Statement;
-    set?: Database.Statement;
-    delete?: Database.Statement;
-    cleanup?: Database.Statement;
+    get?: SQLiteStatement;
+    set?: SQLiteStatement;
+    delete?: SQLiteStatement;
+    cleanup?: SQLiteStatement;
   } = {};
 
   constructor() {
-    // Initialize L1 cache (hot)
+    // Initialize L1 cache (hot) - lru-cache v11 with ttlAutopurge
     this.l1Cache = new LRUCache<string, CacheEntry>({
       max: L1_MAX_SIZE,
       ttl: L1_TTL,
+      ttlAutopurge: true, // Automatic TTL cleanup
       updateAgeOnGet: true,
       dispose: (value, key) => {
         // Move to L2 when evicted from L1
@@ -75,10 +76,11 @@ export class QueryCache {
       },
     });
 
-    // Initialize L2 cache (warm)
+    // Initialize L2 cache (warm) - lru-cache v11 with ttlAutopurge
     this.l2Cache = new LRUCache<string, CacheEntry>({
       max: L2_MAX_SIZE,
       ttl: L2_TTL,
+      ttlAutopurge: true, // Automatic TTL cleanup
       updateAgeOnGet: false,
       dispose: (value, key) => {
         // Move to L3 when evicted from L2

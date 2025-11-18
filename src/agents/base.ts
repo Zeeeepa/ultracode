@@ -236,7 +236,7 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   protected abstract handleMessage(message: AgentMessage): Promise<void>;
 
   // Resource monitoring
-  private _resourceMonitorInterval?: NodeJS.Timeout;
+  private _resourceMonitorInterval?: ReturnType<typeof setInterval>;
 
   private startResourceMonitoring(): void {
     this._resourceMonitorInterval = setInterval(() => {

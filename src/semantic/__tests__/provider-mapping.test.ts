@@ -173,7 +173,7 @@ describe("Provider Configuration Mapping", () => {
   });
 
   describe("Provider Creation", () => {
-    it("should create CloudRU provider with correct configuration", () => {
+    it("should create CloudRU provider with correct configuration", async () => {
       const factoryOptions: ProviderFactoryOptions = {
         provider: "cloudru",
         modelName: "BAAI/bge-m3",
@@ -186,7 +186,7 @@ describe("Provider Configuration Mapping", () => {
         },
       };
 
-      const provider = createProvider(factoryOptions);
+      const provider = await createProvider(factoryOptions);
 
       expect(provider).toBeDefined();
       expect(provider.info.name).toBe("cloudru");
@@ -194,7 +194,7 @@ describe("Provider Configuration Mapping", () => {
       expect(provider.info.maxBatchSize).toBe(128);
     });
 
-    it("should create OpenAI provider with correct configuration", () => {
+    it("should create OpenAI provider with correct configuration", async () => {
       const factoryOptions: ProviderFactoryOptions = {
         provider: "openai",
         modelName: "text-embedding-ada-002",
@@ -207,7 +207,7 @@ describe("Provider Configuration Mapping", () => {
         },
       };
 
-      const provider = createProvider(factoryOptions);
+      const provider = await createProvider(factoryOptions);
 
       expect(provider).toBeDefined();
       expect(provider.info.name).toBe("openai");
@@ -215,7 +215,7 @@ describe("Provider Configuration Mapping", () => {
       expect(provider.info.maxBatchSize).toBe(256);
     });
 
-    it("should create Ollama provider with correct configuration", () => {
+    it("should create Ollama provider with correct configuration", async () => {
       const factoryOptions: ProviderFactoryOptions = {
         provider: "ollama",
         modelName: "nomic-embed-text",
@@ -231,28 +231,30 @@ describe("Provider Configuration Mapping", () => {
         },
       };
 
-      const provider = createProvider(factoryOptions);
+      const provider = await createProvider(factoryOptions);
 
       expect(provider).toBeDefined();
       expect(provider.info.name).toBe("ollama");
       expect(provider.info.model).toBe("nomic-embed-text");
     });
 
-    it("should create Transformers provider with correct configuration", () => {
+    it("should create TEI provider with correct configuration", async () => {
       const factoryOptions: ProviderFactoryOptions = {
-        provider: "transformers",
-        modelName: "Xenova/all-MiniLM-L6-v2",
-        transformers: {
-          quantized: false,
-          localPath: "./models",
+        provider: "tei",
+        modelName: "ibm-granite/granite-embedding-english-r2",
+        tei: {
+          baseUrl: "http://127.0.0.1:8080",
+          timeoutMs: 30000,
+          concurrency: 4,
+          checkServer: false,
         },
       };
 
-      const provider = createProvider(factoryOptions);
+      const provider = await createProvider(factoryOptions);
 
       expect(provider).toBeDefined();
-      expect(provider.info.name).toBe("transformers");
-      expect(provider.info.model).toBe("Xenova/all-MiniLM-L6-v2");
+      expect(provider.info.name).toBe("tei");
+      expect(provider.info.model).toBe("ibm-granite/granite-embedding-english-r2");
     });
   });
 
@@ -296,7 +298,7 @@ describe("Provider Configuration Mapping", () => {
   });
 
   describe("Real Configuration Test", () => {
-    it("should load real configuration and create providers", () => {
+    it("should load real configuration and create providers", async () => {
       const config = getConfig();
       const embeddingConfig = config.mcp?.embedding;
 
@@ -321,7 +323,7 @@ describe("Provider Configuration Mapping", () => {
           },
         };
 
-        const provider = createProvider(factoryOptions);
+        const provider = await createProvider(factoryOptions);
         expect(provider).toBeDefined();
         expect(provider.info.name).toBe("cloudru");
       }

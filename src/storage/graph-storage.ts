@@ -13,12 +13,11 @@
  * - Schema Migrations: src/storage/schema-migrations.ts
  */
 
-import { createHash } from "node:crypto";
-import type Database from "better-sqlite3";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { nanoid } from "nanoid";
+import xxhash from "xxhash-wasm";
 import type {
   BatchResult,
   Entity,
@@ -31,6 +30,7 @@ import type {
   RelationType,
   StorageMetrics,
 } from "../types/storage.js";
+import type { SQLiteDatabase, SQLiteStatement } from "./sqlite-adapter.js";
 import type { SQLiteManager } from "./sqlite-manager.js";
 
 // =============================================================================
@@ -46,20 +46,21 @@ const MAX_SUBGRAPH_DEPTH = 5;
 // =============================================================================
 
 export class GraphStorageImpl implements GraphStorage {
-  private db: Database.Database;
+  private db: SQLiteDatabase;
   private sqliteManager: SQLiteManager;
+  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
 
   // Prepared statements for performance
   private statements: {
-    insertEntity?: Database.Statement;
-    updateEntity?: Database.Statement;
-    deleteEntity?: Database.Statement;
-    getEntity?: Database.Statement;
-    insertRelationship?: Database.Statement;
-    deleteRelationship?: Database.Statement;
-    updateFile?: Database.Statement;
-    getFile?: Database.Statement;
-    insertPerformanceMetric?: Database.Statement;
+    insertEntity?: SQLiteStatement;
+    updateEntity?: SQLiteStatement;
+    deleteEntity?: SQLiteStatement;
+    getEntity?: SQLiteStatement;
+    insertRelationship?: SQLiteStatement;
+    deleteRelationship?: SQLiteStatement;
+    updateFile?: SQLiteStatement;
+    getFile?: SQLiteStatement;
+    insertPerformanceMetric?: SQLiteStatement;
   } = {};
 
   constructor(sqliteManager: SQLiteManager) {
@@ -70,6 +71,8 @@ export class GraphStorageImpl implements GraphStorage {
 
   async initialize(): Promise<void> {
     this.ensureReady(true);
+    // Initialize xxHash for fast entity ID generation
+    this.xxhashInstance = await xxhash();
   }
 
   private ensureReady(force = false): void {
@@ -351,6 +354,43 @@ export class GraphStorageImpl implements GraphStorage {
     return rows.map((row) => this.rowToEntity(row));
   }
 
+  /**
+   * Get all entities (NEW - for Chaos Analysis)
+   */
+  async getAllEntities(): Promise<Entity[]> {
+    this.ensureReady();
+    const sql = "SELECT * FROM entities";
+    const rows = this.db.prepare(sql).all() as any[];
+    return rows.map((row) => this.rowToEntity(row));
+  }
+
+  /**
+   * Search entities by pattern (NEW - for Chaos Analysis)
+   */
+  async searchEntities(options: { namePattern?: string; types?: EntityType[]; filePath?: string }): Promise<Entity[]> {
+    this.ensureReady();
+    let sql = "SELECT * FROM entities WHERE 1=1";
+    const params: any[] = [];
+
+    if (options.namePattern) {
+      sql += " AND name LIKE ?";
+      params.push(`%${options.namePattern}%`);
+    }
+
+    if (options.types && options.types.length > 0) {
+      sql += ` AND type IN (${options.types.map(() => "?").join(",")})`;
+      params.push(...options.types);
+    }
+
+    if (options.filePath) {
+      sql += " AND file_path = ?";
+      params.push(options.filePath);
+    }
+
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map((row) => this.rowToEntity(row));
+  }
+
   // =============================================================================
   // 5. RELATIONSHIP OPERATIONS
   // =============================================================================
@@ -467,6 +507,13 @@ export class GraphStorageImpl implements GraphStorage {
 
     const rows = this.db.prepare(sql).all(...params) as any[];
     return rows.map((row) => this.rowToRelationship(row));
+  }
+
+  /**
+   * Get relationships (alias for getRelationshipsForEntity - NEW for Chaos Analysis)
+   */
+  async getRelationships(sourceId: string, type?: RelationType): Promise<Relationship[]> {
+    return this.getRelationshipsForEntity(sourceId, type);
   }
 
   // =============================================================================
@@ -704,11 +751,17 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   /**
-   * Generate stable entity ID
+   * Generate stable entity ID using xxHash (10-15x faster than SHA-256)
    */
   private stableEntityId(e: Entity): string {
+    if (!this.xxhashInstance) {
+      throw new Error("GraphStorage not initialized - call initialize() first");
+    }
     const key = this.entityKey(e);
-    return createHash("sha256").update(key).digest("base64url").slice(0, ID_LENGTH);
+    // Use xxHash64 for fast, deterministic hashing
+    const hash = this.xxhashInstance.h64ToString(key);
+    // Convert to base64url-like format for compatibility
+    return hash.slice(0, ID_LENGTH);
   }
 
   /**
@@ -719,10 +772,15 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   /**
-   * Generate stable relationship ID
+   * Generate stable relationship ID using xxHash (10-15x faster than SHA-256)
    */
   private stableRelationshipId(r: Relationship): string {
-    return createHash("sha256").update(this.relationshipKey(r)).digest("base64url").slice(0, ID_LENGTH);
+    if (!this.xxhashInstance) {
+      throw new Error("GraphStorage not initialized - call initialize() first");
+    }
+    const key = this.relationshipKey(r);
+    const hash = this.xxhashInstance.h64ToString(key);
+    return hash.slice(0, ID_LENGTH);
   }
 
   /**
@@ -814,33 +872,60 @@ export class GraphStorageImpl implements GraphStorage {
     switch (ext) {
       case "ts":
       case "tsx":
+      case "mts":
+      case "cts":
         return "typescript";
       case "js":
       case "jsx":
       case "mjs":
+      case "cjs":
         return "javascript";
       case "py":
+      case "pyi":
+      case "pyw":
         return "python";
       case "java":
         return "java";
       case "c":
+      case "h":
         return "c";
       case "cpp":
       case "cc":
       case "cxx":
+      case "hpp":
+      case "hxx":
+      case "hh":
         return "cpp";
+      case "cs":
+        return "csharp";
       case "rs":
         return "rust";
       case "go":
         return "go";
+      case "kt":
+      case "kts":
+        return "kotlin";
+      case "swift":
+        return "swift";
+      case "css":
+      case "scss":
+      case "sass":
+      case "less":
+        return "css";
+      case "html":
+      case "htm":
+        return "html";
+      case "xml":
+        return "xml";
+      case "vba":
+      case "bas":
+      case "cls":
+      case "frm":
+        return "vba";
       case "php":
         return "php";
       case "rb":
         return "ruby";
-      case "swift":
-        return "swift";
-      case "kt":
-        return "kotlin";
       default:
         return "unknown";
     }
@@ -887,6 +972,7 @@ export class GraphStorageImpl implements GraphStorage {
   async clear(): Promise<void> {
     this.ensureReady();
     const transaction = this.db.transaction(() => {
+      this.db.exec("DELETE FROM embeddings");
       this.db.exec("DELETE FROM relationships");
       this.db.exec("DELETE FROM entities");
       this.db.exec("DELETE FROM files");

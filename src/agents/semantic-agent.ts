@@ -29,6 +29,7 @@
 import { createHash } from "node:crypto";
 import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { getCurrentIndexingDirectory } from "../index.js";
 import { CodeAnalyzer } from "../semantic/code-analyzer.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import { HybridSearchEngine } from "../semantic/hybrid-search.js";
@@ -54,6 +55,7 @@ import { type Entity, EntityType } from "../types/storage.js";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { BaseAgent } from "./base.js";
+import { type ResourceAdjustmentCapable, ResourceAdjustmentMixin } from "./resource-adjustment-mixin.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -111,7 +113,7 @@ interface SemanticTaskPayload {
 // =============================================================================
 // 5. CORE BUSINESS LOGIC
 // =============================================================================
-export class SemanticAgent extends BaseAgent implements SemanticOperations {
+export class SemanticAgent extends BaseAgent implements SemanticOperations, ResourceAdjustmentCapable {
   private vectorStore!: VectorStore;
   private embeddingGen!: EmbeddingGenerator;
   private hybridSearch!: HybridSearchEngine;
@@ -122,6 +124,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   private readonly defaultMaxConcurrency: number;
   private readonly defaultMemoryLimit: number;
   private readonly defaultBatchSize: number = AGENT_CONFIG.batchSize;
+  private resourceMixin = new ResourceAdjustmentMixin();
 
   // TASK-004B: Circuit breaker implementation
   private circuitBreakerState = CircuitBreakerState.CLOSED;
@@ -237,9 +240,22 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     // Initialize components
     const dbPath = config.database?.path || "./vectors.db";
     console.log(`[${this.id}] Initializing VectorStore with dbPath: ${dbPath}`);
+
+    // Get vector backend configuration
+    const vectorBackend = config.vectorBackend || {};
+    console.log(
+      `[${this.id}] Vector backend mode: ${vectorBackend.backend || "auto"}, threshold: ${vectorBackend.autoSwitchThreshold || 10000}`,
+    );
+
+    const workingDir = getCurrentIndexingDirectory() || process.cwd();
+
     this.vectorStore = new VectorStore({
       dbPath: dbPath,
       dimensions: dimensions,
+      backend: vectorBackend.backend || "auto",
+      autoSwitchThreshold: vectorBackend.autoSwitchThreshold || 10000,
+      vectorlite: vectorBackend.vectorlite,
+      workingDirectory: workingDir, // For quick file count estimation
     });
 
     // Wait for vector store to be fully initialized
@@ -764,6 +780,40 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     }
 
     const fs = await import("node:fs/promises");
+    const { CommentExtractor } = await import("../utils/comment-extractor.js");
+
+    // Group entities by file for efficient comment extraction
+    const entitiesByFile = new Map<string, ParsedEntity[]>();
+    for (const entity of entities) {
+      const e: any = entity;
+      if (e.filePath) {
+        if (!entitiesByFile.has(e.filePath)) {
+          entitiesByFile.set(e.filePath, []);
+        }
+        entitiesByFile.get(e.filePath)!.push(entity);
+      }
+    }
+
+    // Extract comments for each file
+    const commentsByFile = new Map<string, ReturnType<typeof CommentExtractor.extractComments>>();
+    const associationsByFile = new Map<string, Map<string, any[]>>();
+
+    for (const [filePath, fileEntities] of entitiesByFile.entries()) {
+      try {
+        const full = await fs.readFile(filePath, "utf8");
+        const commentsResult = CommentExtractor.extractComments(full, filePath);
+        commentsByFile.set(filePath, commentsResult);
+
+        const associations = CommentExtractor.associateCommentsWithEntities(
+          commentsResult.comments,
+          fileEntities,
+          commentsResult.leadingComments,
+        );
+        associationsByFile.set(filePath, associations);
+      } catch (error) {
+        console.warn(`[${this.id}] Failed to extract comments from ${filePath}:`, error);
+      }
+    }
 
     const texts = await Promise.all(
       entities.map(async (ent) => {
@@ -787,6 +837,16 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
         } catch {}
 
         const header = `${e.name ?? ""} ${e.type ?? ""} ${e.signature ?? ""}`.trim();
+
+        // Enhance with comments if available
+        const entityId = e.id || CommentExtractor["generateEntityId"](ent);
+        const associations = associationsByFile.get(e.filePath);
+        const entityComments = associations?.get(entityId) || [];
+
+        if (entityComments.length > 0) {
+          return CommentExtractor.enhanceEntityContentWithComments(code, header, entityComments);
+        }
+
         return `${header}\n${code}`.trim();
       }),
     );
@@ -845,6 +905,95 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
     knowledgeBus.publish("semantic:embeddings:complete", { count: embeddings.length }, this.id);
     console.log(`[${this.id}] Stored ${embeddings.length} new embeddings`);
+
+    // Process standalone comments (comments not associated with any entity)
+    await this.processStandaloneComments(commentsByFile, associationsByFile, storage);
+  }
+
+  /**
+   * Process standalone comments and create comment entities + relationships
+   */
+  private async processStandaloneComments(
+    commentsByFile: Map<string, any>,
+    associationsByFile: Map<string, Map<string, any[]>>,
+    storage: any,
+  ): Promise<void> {
+    const { CommentExtractor } = await import("../utils/comment-extractor.js");
+
+    let totalCommentEntities = 0;
+    let totalRelationships = 0;
+
+    for (const [filePath, commentsResult] of commentsByFile.entries()) {
+      const associations = associationsByFile.get(filePath) || new Map();
+
+      // Get entities for this file from storage
+      const fileEntities = await storage.findEntities({
+        filters: { filePath },
+        limit: 10000,
+      });
+
+      // Create comment entities for standalone comments
+      const commentEntities = CommentExtractor.createCommentEntities(commentsResult.comments, filePath, associations);
+
+      // Create DOCUMENTS relationships
+      const relationships = CommentExtractor.createDocumentationRelationships(
+        commentEntities,
+        fileEntities,
+        associations,
+      );
+
+      // Insert comment entities into storage
+      if (commentEntities.length > 0) {
+        try {
+          for (const commentEntity of commentEntities) {
+            await storage.upsertEntity(commentEntity);
+          }
+          totalCommentEntities += commentEntities.length;
+
+          // Generate embeddings for standalone comments
+          const commentTexts = commentEntities.map((c) => (c.metadata?.content as string) || "");
+          const commentEmbeddings = await this.embeddingGen.generateBatch(commentTexts);
+
+          // Insert into vector store
+          const vectorEmbeddings = commentEntities.map((entity, i) => ({
+            id: `ent:${entity.id}`,
+            content: (commentTexts[i] as string) ?? "",
+            vector: commentEmbeddings[i] ?? new Float32Array(this.embeddingDim),
+            metadata: {
+              path: entity.filePath,
+              type: entity.type,
+              name: entity.name,
+              entityId: entity.id,
+              isComment: true,
+              commentType: entity.metadata?.commentType,
+            },
+            createdAt: Date.now(),
+          }));
+
+          await this.vectorStore.insertBatch(vectorEmbeddings);
+        } catch (error) {
+          console.warn(`[${this.id}] Failed to insert comment entities for ${filePath}:`, error);
+        }
+      }
+
+      // Insert relationships into storage
+      if (relationships.length > 0) {
+        try {
+          for (const relationship of relationships) {
+            await storage.upsertRelationship(relationship);
+          }
+          totalRelationships += relationships.length;
+        } catch (error) {
+          console.warn(`[${this.id}] Failed to insert comment relationships for ${filePath}:`, error);
+        }
+      }
+    }
+
+    if (totalCommentEntities > 0) {
+      console.log(
+        `[${this.id}] Indexed ${totalCommentEntities} standalone comments with ${totalRelationships} documentation relationships`,
+      );
+    }
   }
 
   private async warmupSemanticCache(): Promise<void> {
@@ -1049,33 +1198,30 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
   }
 
   private handleResourceAdjustment(entry: KnowledgeEntry): void {
-    const data = entry.data as {
-      newMemoryLimit?: number;
-      newAgentLimit?: number;
-    };
+    this.resourceMixin.handleResourceAdjustment.call(this, entry);
+  }
 
-    if (typeof data.newAgentLimit === "number" && Number.isFinite(data.newAgentLimit)) {
-      const adjustedConcurrency = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(data.newAgentLimit)));
-      if (this.capabilities.maxConcurrency !== adjustedConcurrency) {
-        console.log(
-          `[${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjustedConcurrency} (resources:adjusted)`,
-        );
-        this.capabilities.maxConcurrency = adjustedConcurrency;
-      }
+  adjustConcurrency(newLimit: number): void {
+    const adjusted = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(newLimit)));
+    if (this.capabilities.maxConcurrency !== adjusted) {
+      console.log(
+        `[${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjusted} (resources:adjusted)`,
+      );
+      this.capabilities.maxConcurrency = adjusted;
     }
+  }
 
-    if (typeof data.newMemoryLimit === "number" && Number.isFinite(data.newMemoryLimit)) {
-      const ratio = Math.max(0.5, Math.min(2, data.newMemoryLimit / this.defaultMemoryLimit));
-      const newBatchSize = Math.max(1, Math.round(this.defaultBatchSize * ratio));
-      if (this.embeddingBatchSize !== newBatchSize) {
-        console.log(
-          `[${this.id}] Adjusting embedding batch size from ${this.embeddingBatchSize} to ${newBatchSize} (resources:adjusted)`,
-        );
-        this.embeddingBatchSize = newBatchSize;
-        const generator = this.embeddingGen as EmbeddingGenerator | undefined;
-        if (generator && typeof (generator as any).setBatchSize === "function") {
-          generator.setBatchSize(newBatchSize);
-        }
+  adjustBatchSize(newMemoryLimit: number): void {
+    const ratio = Math.max(0.5, Math.min(2, newMemoryLimit / this.defaultMemoryLimit));
+    const newBatchSize = Math.max(1, Math.round(this.defaultBatchSize * ratio));
+    if (this.embeddingBatchSize !== newBatchSize) {
+      console.log(
+        `[${this.id}] Adjusting embedding batch size from ${this.embeddingBatchSize} to ${newBatchSize} (resources:adjusted)`,
+      );
+      this.embeddingBatchSize = newBatchSize;
+      const generator = this.embeddingGen as EmbeddingGenerator | undefined;
+      if (generator && typeof (generator as any).setBatchSize === "function") {
+        generator.setBatchSize(newBatchSize);
       }
     }
   }
@@ -1122,6 +1268,14 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations {
    */
   getSemanticMetrics(): SemanticMetrics {
     return { ...this.semanticMetrics };
+  }
+
+  /**
+   * Get vector store instance
+   * Used for layered indexing integration
+   */
+  getVectorStore(): VectorStore {
+    return this.vectorStore;
   }
 
   /**

@@ -1,4 +1,4 @@
-# Production Configuration for Code Graph RAG MCP
+﻿# Production Configuration for UltraScript Tools MCP
 # This file contains production-optimized settings
 # Inherits from default.yaml and overrides specific values
 
@@ -23,17 +23,17 @@ mcp:
   server:
     host: "0.0.0.0"     # Accept connections from any interface
     port: 8080          # Standard HTTP port for containers
-    timeout: 60000      # 60 seconds timeout for production workloads
-    
+    timeout: 180000     # 3 minutes for large indexing operations
+
   agents:
     maxConcurrent: 10   # Higher concurrency for production
-    defaultTimeout: 30000  # 30 seconds for complex operations
+    defaultTimeout: 120000  # 2 minutes for large batches (Python/Kotlin projects)
     useParser: true     # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
-    devIndexBatch: 100  # Batch size for file processing (MCP_DEV_INDEX_BATCH)
+    devIndexBatch: 50   # Batch size for file processing - matches parser.agent.batchSize
 
 # Database Configuration (Production Optimized)
 database:
-  path: "/data/vectors.db"  # Persistent volume path
+  path: "./.ultrascript/db/vectors.db"  # Persistent volume path
   mode: "WAL"               # WAL mode for best performance
   cacheSize: 50000          # Larger cache for production
   mmapSize: 1073741824      # 1GB memory mapping for large datasets
@@ -45,7 +45,7 @@ logging:
   level: "warn"             # Only warnings and errors in production
   format: "json"            # Structured JSON logging for log aggregation
   enableConsole: false      # Disable console output in production
-  outputFile: "/logs/mcp-server.log"  # Persistent log file
+  outputFile: "./.ultrascript/logs/mcp-server.log"  # Persistent log file
   maxFileSize: "100MB"      # Larger log files for production
   maxFiles: 10              # Keep more log files for debugging
 
@@ -67,12 +67,21 @@ parser:
       - "swift"
       - "kotlin"
     maxFileSize: 5242880      # 5MB maximum file size for production
-    timeout: 10000            # 10 seconds timeout for large files
+    timeout: 90000            # 90 seconds for large batches (Python ~266ms/file × 50 = 13s + overhead)
     
   incremental:
     enabled: true
     cacheSize: 5000           # Larger cache for production workloads
     cacheTTL: 1800000         # 30 minutes cache TTL
+
+  # ParserAgent Configuration (Production Optimized for Worker Pools)
+  agent:
+    maxConcurrency: 4         # Number of parallel parsing operations
+    memoryLimit: 512          # MB memory limit for parser
+    priority: 8               # High priority for parsing
+    batchSize: 50             # Large batch size for worker pool efficiency (was 10)
+    cacheSize: 104857600      # 100MB cache (in bytes)
+    workerPoolSize: 4         # Number of worker threads (min(cpus, 4))
 
 # Indexer Configuration
 indexer:
