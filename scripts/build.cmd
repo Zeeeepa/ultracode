@@ -142,23 +142,38 @@ if exist "%PROJECT_ROOT%\external-tools\native\cuda\" (
                 echo [INFO] Visual Studio C++ compiler not in PATH, searching...
 
                 REM Try to auto-initialize Visual Studio environment
-                REM Priority: 1) VS Build Tools 2022 via vswhere, 2) VS Insiders
+                REM Priority: 1) VS 2022 Build Tools, 2) VS 2022 editions, 3) vswhere for others
                 set "VS_PATH="
 
-                REM First try vswhere to find VS 2022 Build Tools or any compatible VS installation
-                set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-                if exist "!VSWHERE!" (
-                    for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
-                        set "VS_PATH=%%i"
-                        echo [INFO] Found Visual Studio at: !VS_PATH!
+                REM Priority 1: VS 2022 Build Tools (most stable for CUDA)
+                if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" (
+                    set "VS_PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools"
+                    echo [INFO] Found VS 2022 Build Tools (prioritized for CUDA)
+                )
+
+                REM Priority 2: VS 2022 Community/Professional/Enterprise
+                if not defined VS_PATH (
+                    if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" (
+                        set "VS_PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Community"
+                        echo [INFO] Found VS 2022 Community
+                    ) else if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" (
+                        set "VS_PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Professional"
+                        echo [INFO] Found VS 2022 Professional
+                    ) else if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" (
+                        set "VS_PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Enterprise"
+                        echo [INFO] Found VS 2022 Enterprise
                     )
                 )
 
-                REM If vswhere didn't find anything, try VS Insiders manual path
+                REM Priority 3: Use vswhere for other versions (VS 2019, VS 2026, etc.)
                 if not defined VS_PATH (
-                    if exist "C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\Tools\VsDevCmd.bat" (
-                        set "VS_PATH=C:\Program Files\Microsoft Visual Studio\18\Insiders"
-                        echo [INFO] Found Visual Studio Insiders at: !VS_PATH!
+                    set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+                    if exist "!VSWHERE!" (
+                        for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+                            set "VS_PATH=%%i"
+                            echo [WARNING] Using Visual Studio at: !VS_PATH!
+                            echo [WARNING] VS 2022 is recommended for CUDA builds
+                        )
                     )
                 )
 
@@ -179,15 +194,16 @@ if exist "%PROJECT_ROOT%\external-tools\native\cuda\" (
                         goto :skip_cuda_build
                     )
                 ) else (
-                    echo [WARNING] Visual Studio not found
+                    echo [WARNING] Visual Studio 2022 with C++ not found
                     echo.
                     echo To enable CUDA acceleration ^(100-200x faster^):
                     echo   1. Install Visual Studio 2022 Build Tools
                     echo      Download: https://aka.ms/vs/17/release/vs_BuildTools.exe
-                    echo   2. Select component: "Desktop development with C++"
+                    echo   2. Select workload: "Desktop development with C++"
+                    echo   3. Re-run this build script
                     echo.
-                    echo Or make sure Visual Studio Insiders is installed at:
-                    echo   C:\Program Files\Microsoft Visual Studio\18\Insiders
+                    echo IMPORTANT: Install VS 2022 BEFORE installing CUDA Toolkit!
+                    echo See CUDA_SETUP_GUIDE.md for detailed instructions.
                     echo.
                     goto :skip_cuda_build
                 )

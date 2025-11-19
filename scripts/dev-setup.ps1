@@ -75,9 +75,9 @@ if (-not (Test-Command "wasm-pack")) {
 
 # Step 5: Build WASM module
 Write-ColorOutput "`n🔨 Step 5: Building WASM SIMD module..." "Blue"
-if (Test-Path "wasm\vector-ops") {
+if (Test-Path "external-tools\wasm\vector-ops-simd") {
     if (Test-Command "wasm-pack") {
-        Push-Location "wasm\vector-ops"
+        Push-Location "external-tools\wasm\vector-ops-simd"
         wasm-pack build --target nodejs --release
         $wasmBuildSuccess = $LASTEXITCODE -eq 0
         Pop-Location
@@ -276,15 +276,90 @@ if (Test-Command "nvidia-smi") {
             Write-ColorOutput "" "Gray"
         }
 
-        # Check for Visual Studio
-        $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-        if (Test-Path $vsWhere) {
-            $vsPath = & $vsWhere -latest -property installationPath
-            if ($vsPath) {
-                Write-ColorOutput "✅ Visual Studio detected" "Green"
+        # Check for Visual Studio (prioritize VS 2022 over newer versions)
+        Write-ColorOutput "`n🔍 Checking Visual Studio installation..." "Blue"
 
-                # Only attempt CUDA build if VS CUDA integration AND headers are present
-                if ($vsCudaIntegration -and $cudaHeadersOk) {
+        $vsPath = $null
+        $vsVersion = $null
+
+        # Priority 1: VS 2022 Build Tools (most stable for CUDA)
+        $vs2022BuildTools = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
+        if (Test-Path $vs2022BuildTools) {
+            $vsPath = $vs2022BuildTools
+            $vsVersion = "VS 2022 Build Tools"
+            Write-ColorOutput "✅ Found VS 2022 Build Tools (prioritized for CUDA)" "Green"
+        }
+
+        # Priority 2: VS 2022 Community/Professional/Enterprise
+        if (-not $vsPath) {
+            $vs2022Editions = @("Community", "Professional", "Enterprise")
+            foreach ($edition in $vs2022Editions) {
+                $path = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\$edition"
+                if (Test-Path $path) {
+                    $vsPath = $path
+                    $vsVersion = "VS 2022 $edition"
+                    Write-ColorOutput "✅ Found VS 2022 $edition" "Green"
+                    break
+                }
+            }
+        }
+
+        # Priority 3: Use vswhere for other versions (VS 2019, VS 2026, etc.)
+        if (-not $vsPath) {
+            $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            if (Test-Path $vsWhere) {
+                $vsPath = & $vsWhere -latest -property installationPath
+                if ($vsPath) {
+                    $vsVersion = "Visual Studio (detected via vswhere)"
+                    Write-ColorOutput "⚠️  Using Visual Studio: $vsPath" "Yellow"
+                    Write-ColorOutput "   Note: VS 2022 is recommended for CUDA builds" "Gray"
+                }
+            }
+        }
+
+        if ($vsPath) {
+            Write-ColorOutput "✅ Active Visual Studio: $vsVersion" "Green"
+            Write-ColorOutput "   Path: $vsPath" "Gray"
+
+                # Check for C++ Build Tools (CRITICAL!)
+                Write-ColorOutput "`n🔍 Checking C++ Build Tools..." "Blue"
+                $vsCppToolsInstalled = $false
+
+                # Check if MSVC C++ compiler is available
+                $vcToolsPath = "$vsPath\VC\Tools\MSVC"
+                if (Test-Path $vcToolsPath) {
+                    $msvcVersions = Get-ChildItem $vcToolsPath -Directory -ErrorAction SilentlyContinue
+                    if ($msvcVersions) {
+                        $latestMsvc = $msvcVersions | Sort-Object Name -Descending | Select-Object -First 1
+                        $clPath = "$($latestMsvc.FullName)\bin\Hostx64\x64\cl.exe"
+                        if (Test-Path $clPath) {
+                            Write-ColorOutput "✅ MSVC C++ compiler found: $($latestMsvc.Name)" "Green"
+                            $vsCppToolsInstalled = $true
+                        }
+                    }
+                }
+
+                if (-not $vsCppToolsInstalled) {
+                    Write-ColorOutput "❌ MSVC C++ Build Tools NOT installed" "Red"
+                    Write-ColorOutput "" "Gray"
+                    Write-ColorOutput "   CRITICAL: CUDA build requires C++ compiler!" "Yellow"
+                    Write-ColorOutput "" "Gray"
+                    Write-ColorOutput "   To install C++ Build Tools:" "Cyan"
+                    Write-ColorOutput "   1. Run Visual Studio Installer" "Gray"
+                    Write-ColorOutput "   2. Click 'Modify' on your Visual Studio installation" "Gray"
+                    Write-ColorOutput "   3. Select one of these workloads:" "Gray"
+                    Write-ColorOutput "      ✓ 'Desktop development with C++' (Recommended)" "Gray"
+                    Write-ColorOutput "      OR go to 'Individual components' and check:" "Gray"
+                    Write-ColorOutput "      ✓ 'MSVC v143 - VS 2022 C++ x64/x86 build tools'" "Gray"
+                    Write-ColorOutput "      ✓ 'C++ CMake tools for Windows'" "Gray"
+                    Write-ColorOutput "      ✓ 'Windows SDK (latest version)'" "Gray"
+                    Write-ColorOutput "   4. Click 'Modify' to install" "Gray"
+                    Write-ColorOutput "   5. Restart PowerShell and run this script again" "Gray"
+                    Write-ColorOutput "" "Gray"
+                }
+
+                # Only attempt CUDA build if ALL requirements are met
+                if ($vsCudaIntegration -and $cudaHeadersOk -and $vsCppToolsInstalled) {
                     Write-ColorOutput "🔨 Building CUDA native addon..." "Blue"
                     npm run build:cuda
                     if ($LASTEXITCODE -eq 0) {
@@ -294,6 +369,9 @@ if (Test-Command "nvidia-smi") {
                         Write-ColorOutput "   Check error logs above for details" "Gray"
                         Write-ColorOutput "   Run 'npm run build:cuda' manually to retry" "Gray"
                     }
+                } elseif (-not $vsCppToolsInstalled) {
+                    Write-ColorOutput "⚠️  Skipping CUDA build - C++ Build Tools required" "Yellow"
+                    Write-ColorOutput "   Follow instructions above to install C++ compiler" "Gray"
                 } elseif (-not $vsCudaIntegration) {
                     Write-ColorOutput "⚠️  Skipping CUDA build - VS CUDA integration required" "Yellow"
                     Write-ColorOutput "   Follow instructions above to install CUDA support" "Gray"
@@ -344,7 +422,7 @@ Write-Separator
 Write-ColorOutput "`n📊 Installed Backends:" "Cyan"
 Write-ColorOutput "  • Pure JS (Loop Unrolling) - ✅ Always available (1.45x)" "Gray"
 
-if (Test-Path "wasm\vector-ops\pkg\index.js") {
+if (Test-Path "external-tools\wasm\vector-ops-simd\pkg\index.js") {
     Write-ColorOutput "  • WASM SIMD                - ✅ Built (4-8x)" "Green"
 } else {
     Write-ColorOutput "  • WASM SIMD                - ❌ Not built" "Red"

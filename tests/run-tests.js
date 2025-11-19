@@ -1,17 +1,18 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 
 const NPX = process.platform === "win32" ? "npx.cmd" : "npx";
 
 function listTests(extraArgs) {
-  const out = execFileSync(NPX, ["jest", "--listTests", ...extraArgs], { encoding: "utf8" });
+  const cmd = `${NPX} jest --listTests ${extraArgs.join(" ")}`;
+  const out = execSync(cmd, { encoding: "utf8", shell: true });
   return out.trim().split(/\r?\n/).filter(Boolean);
 }
 
 function runTestFile(testPath, extraArgs) {
   return new Promise((resolve) => {
     const args = ["jest", "--runInBand", ...extraArgs, testPath];
-    const child = spawn(NPX, args, { stdio: "inherit", env: process.env });
+    const child = spawn(NPX, args, { stdio: "inherit", env: process.env, shell: true });
     child.on("exit", (code, signal) => {
       resolve({ file: testPath, code: code ?? 0, signal: signal ?? null });
     });

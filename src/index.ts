@@ -2994,42 +2994,42 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
               },
             ],
           };
-        }
-
-        logger.warn(
-          "LERNA_GRAPH",
-          "Lerna project graph unavailable",
-          {
-            cwd: result.cwd,
-            reason: result.reason,
-            message: result.message,
-            cached: result.cached ?? false,
-            force,
-          },
-          requestId,
-        );
-
-        return {
-          content: [
+        } else {
+          logger.warn(
+            "LERNA_GRAPH",
+            "Lerna project graph unavailable",
             {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: false,
-                  cwd: result.cwd,
-                  reason: result.reason,
-                  message: result.message,
-                  stdout: result.stdout,
-                  stderr: result.stderr,
-                  cached: result.cached ?? false,
-                  force,
-                },
-                null,
-                2,
-              ),
+              cwd: result.cwd,
+              reason: result.reason,
+              message: result.message,
+              cached: result.cached ?? false,
+              force,
             },
-          ],
-        };
+            requestId,
+          );
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    cwd: result.cwd,
+                    reason: result.reason,
+                    message: result.message,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    cached: result.cached ?? false,
+                    force,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
       }
 
       case "get_graph_health": {
