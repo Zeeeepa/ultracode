@@ -19,7 +19,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
 
-[Sponsor https://accelerator.slider-ai.ru/ ](https://t.me/SliderQuery)
 
 > **📖 Developer Setup Guide**: Полная инструкция по установке и настройке см. в **[DEV_SETUP_GUIDE.md](./DEV_SETUP_GUIDE.md)**
 >

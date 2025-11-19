@@ -1,8 +1,24 @@
-# UltraScript Tools MCP
+```
+        ██  ██
+        ██  ██  ██    ██████ █████▄  ▄████▄
+        ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
+        ██  ██  ██      ██   ██   ██ ██  ██
+        ██  ██  ██████  ██   ██   ██ ██  ██
+        ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄
+                         ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
+                         ▄▄██▀ ▀████ ██ ██ ██ ██     ██
+
+                              ░▒▓█████▓▒░
+
+     ╔═════════════════════════════════════════════════════╗
+     ║            ULTRASCRIPT TOOLS MCP SERVER             ║
+     ╚═════════════════════════════════════════════════════╝
+```
 
 [![npm version](https://badge.fury.io/js/ultrascript-tools-mcp.svg)](https://www.npmjs.com/package/ultrascript-tools-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
+
 
 **Multi-agent code analysis MCP server with advanced graph-based understanding**
 
