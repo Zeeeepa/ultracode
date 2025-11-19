@@ -40,6 +40,32 @@ Write-ColorOutput "✅ Node.js $nodeVersion" "Green"
 Write-ColorOutput "`n📦 Step 2: Installing npm dependencies..." "Blue"
 npm install
 
+# Step 2.1: Patch tree-sitter for Node.js 24 (C++20 compatibility)
+Write-ColorOutput "`n🔧 Step 2.1: Patching tree-sitter for Node.js 24..." "Blue"
+$bindingGypPath = "node_modules\tree-sitter\binding.gyp"
+if (Test-Path $bindingGypPath) {
+    $bindingContent = Get-Content $bindingGypPath -Raw
+
+    # Replace C++17 with C++20 for Node.js 24 compatibility
+    $bindingContent = $bindingContent -replace '"-std:c\+\+17"', '"-std:c++20"'
+    $bindingContent = $bindingContent -replace '"/std:c\+\+17"', '"/std:c++20"'
+    $bindingContent = $bindingContent -replace '"CLANG_CXX_LANGUAGE_STANDARD": "c\+\+17"', '"CLANG_CXX_LANGUAGE_STANDARD": "c++20"'
+
+    Set-Content $bindingGypPath -Value $bindingContent -NoNewline
+
+    # Rebuild tree-sitter with C++20
+    Write-ColorOutput "   Rebuilding tree-sitter with C++20..." "Gray"
+    npm rebuild tree-sitter 2>&1 | Out-Null
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-ColorOutput "✅ tree-sitter patched and rebuilt for Node.js 24" "Green"
+    } else {
+        Write-ColorOutput "⚠️  tree-sitter rebuild failed (may work with older Node.js)" "Yellow"
+    }
+} else {
+    Write-ColorOutput "⚠️  tree-sitter not found, skipping patch" "Yellow"
+}
+
 # Step 3: Install Rust (for WASM)
 Write-ColorOutput "`n🦀 Step 3: Checking Rust toolchain..." "Blue"
 if (-not (Test-Command "rustc")) {
