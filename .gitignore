@@ -120,6 +120,7 @@ src/merge/**/temp/
 /.claude
 /.codex
 /.ultrascript
+/.ultrasharp
 external-tools/native/cuda/build/
 external-tools/native/cuda/node_modules/
 external-tools/wasm/**/target/
