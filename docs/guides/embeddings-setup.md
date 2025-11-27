@@ -24,6 +24,30 @@
 
 ### 🎯 Интерактивная установка (рекомендуется)
 
+**Через npm (самый простой способ):**
+```bash
+# Интерактивный мастер настройки
+npx ultrascript-tools-mcp setup
+
+# Или с указанием провайдера
+npx ultrascript-tools-mcp setup --provider ollama   # Легкая установка
+npx ultrascript-tools-mcp setup --provider tei      # Лучшая производительность (Docker)
+npx ultrascript-tools-mcp setup --provider memory   # Без ML (по умолчанию)
+```
+
+**Что делает мастер настройки:**
+- Автоматически определяет GPU (NVIDIA Turing/Ampere/Ada/Hopper)
+- Помогает выбрать лучшую модель эмбеддингов
+- Устанавливает TEI (Docker) или Ollama автоматически
+- Сохраняет конфигурацию в системную директорию
+
+**Расположение конфигурации:**
+- Windows: `%LOCALAPPDATA%\UltraScriptTools\semantic-config.json`
+- macOS: `~/Library/Application Support/UltraScriptTools/semantic-config.json`
+- Linux: `~/.config/ultrascript-tools/semantic-config.json`
+
+**Альтернатива: скрипты напрямую**
+
 **Windows:**
 ```cmd
 setup-embeddings-interactive.cmd
