@@ -15,9 +15,9 @@
  * - Stream Helpers: src/utils/stream-helpers.ts
  */
 
-import { readFile, stat, writeFile } from "node:fs/promises";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
+import { readText, stat, writeFile } from "../utils/file-ops.js";
 import { streamReplaceRange } from "../utils/stream-helpers.js";
 import { type BeforeAfterReport, CodeValidator } from "../validation/code-validator.js";
 import { VersionManager } from "../versioning/version-manager.js";
@@ -203,7 +203,7 @@ export class CodeModifier {
     newCode: string,
     preserveComments: boolean,
   ): Promise<void> {
-    const content = await readFile(filePath, "utf-8");
+    const content = await readText(filePath);
     const lines = content.split("\n");
 
     // Extract comments if preserving
@@ -267,7 +267,7 @@ export class CodeModifier {
       // Extract and enhance with comments
       const { CommentExtractor } = await import("../utils/comment-extractor.js");
 
-      const fileContent = await readFile(entity.filePath, "utf-8");
+      const fileContent = await readText(entity.filePath);
       const commentsResult = CommentExtractor.extractComments(fileContent, entity.filePath);
 
       const associations = CommentExtractor.associateCommentsWithEntities(
@@ -306,7 +306,7 @@ export class CodeModifier {
       const parser = new IncrementalParser();
       await parser.initialize();
 
-      const content = await readFile(entity.filePath, "utf-8");
+      const content = await readText(entity.filePath);
       const parseResult = await parser.parseFile(entity.filePath, content);
 
       // Find updated entity

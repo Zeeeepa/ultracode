@@ -1470,12 +1470,10 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         // Check codebase size and add adaptive patterns
         try {
-          const { execSync } = await import("node:child_process");
-          const fileCount = execSync(
-            `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" -o -name "*.kt" -o -name "*.kts" -o -name "*.swift" -o -name "*.css" -o -name "*.scss" -o -name "*.sass" -o -name "*.less" -o -name "*.html" -o -name "*.htm" -o -name "*.xml" -o -name "*.vba" \\) | wc -l`,
-            { encoding: "utf8" },
-          ).trim();
-          const numFiles = parseInt(fileCount, 10);
+          const { getCodebaseMetrics } = await import("./utils/shell.js");
+          const metrics = await getCodebaseMetrics(targetDir);
+          const numFiles = metrics.fileCount;
+          const projectSizeMB = metrics.sizeMB;
 
           logger.info(
             "INDEXING",
@@ -1485,9 +1483,6 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           );
 
           // Adjust resource allocation based on codebase size
-          const { execSync: execSync2 } = await import("node:child_process");
-          const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: "utf8" }).trim();
-          const projectSizeMB = Math.floor(parseInt(projectSizeBytes, 10) / (1024 * 1024));
           resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
 
           // For very large codebases (>2000 files), add more aggressive patterns
@@ -1650,21 +1645,17 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         // Adaptive patterns as in index tool
         try {
-          const { execSync } = await import("node:child_process");
-          const fileCount = execSync(
-            `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" -o -name "*.kt" -o -name "*.kts" -o -name "*.swift" -o -name "*.css" -o -name "*.scss" -o -name "*.sass" -o -name "*.less" -o -name "*.html" -o -name "*.htm" -o -name "*.xml" -o -name "*.vba" \\) | wc -l`,
-            { encoding: "utf8" },
-          ).trim();
-          const numFiles = parseInt(fileCount, 10);
+          const { getCodebaseMetrics } = await import("./utils/shell.js");
+          const metrics = await getCodebaseMetrics(targetDir);
+          const numFiles = metrics.fileCount;
+          const projectSizeMB = metrics.sizeMB;
+
           logger.info(
             "INDEXING",
             `Detected ${numFiles} source files in codebase (clean_index)`,
             { directory: targetDir, fileCount: numFiles },
             requestId,
           );
-          const { execSync: execSync2 } = await import("node:child_process");
-          const projectSizeBytes = execSync2(`du -sb "${targetDir}" | cut -f1`, { encoding: "utf8" }).trim();
-          const projectSizeMB = Math.floor(parseInt(projectSizeBytes, 10) / (1024 * 1024));
           resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
           if (numFiles > 2000) {
             enhancedExcludePatterns.push(

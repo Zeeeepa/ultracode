@@ -9,9 +9,9 @@
  * Part of Method 3: Hybrid Targeted Fix with YAML Foundation
  */
 
-import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { existsSync, readTextSync } from "../utils/file-ops.js";
 
 // =============================================================================
 // 1. CONFIGURATION INTERFACES
@@ -604,7 +604,7 @@ export class ConfigLoader {
     // Load YAML configuration if file exists
     if (this.configPath && existsSync(this.configPath)) {
       try {
-        const yamlContent = readFileSync(this.configPath, "utf8");
+        const yamlContent = readTextSync(this.configPath);
         yamlConfig = parseYaml(yamlContent) || {};
         console.log(`[Config] Loaded configuration from: ${this.configPath}`);
       } catch (error) {

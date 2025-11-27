@@ -328,6 +328,74 @@ npm rebuild better-sqlite3
 
 **"Семантический поиск не работает"**: проверить `MCP_EMBEDDING_PROVIDER` env и настройки в `config/default.yaml`
 
+## Bun Runtime Support
+
+Проект поддерживает **Bun runtime** с автоматическим использованием оптимизированных API:
+
+### Runtime Utilities (`src/utils/`)
+
+| Модуль | Описание | Bun оптимизация |
+|--------|----------|-----------------|
+| `runtime.ts` | Определение runtime (Bun/Node/Deno), feature flags | - |
+| `file-ops.ts` | Файловые операции | `Bun.file()`, `Bun.write()` |
+| `shell.ts` | Shell команды, Git helpers | `Bun.$` API |
+| `glob.ts` | Glob поиск файлов | `Bun.Glob` |
+
+### Использование
+
+```typescript
+// Runtime detection
+import { runtime, features } from "./utils/runtime.js";
+if (runtime.isBun) { /* Bun-specific code */ }
+
+// Optimized file ops
+import { readText, writeFile, readJSON } from "./utils/file-ops.js";
+const content = await readText("./file.txt");  // Uses Bun.file() under Bun
+
+// Shell commands
+import { exec, gitDiff, countFiles } from "./utils/shell.js";
+const result = await exec("git status", { cwd: "/project" });
+
+// Glob
+import { glob, match } from "./utils/glob.js";
+const files = await glob("**/*.ts", { cwd: "./src" });
+```
+
+### SQLite Support
+
+`src/storage/sqlite-adapter.ts` уже поддерживает `bun:sqlite`:
+- Автоматический выбор между `better-sqlite3` (Node) и `bun:sqlite` (Bun)
+- API-совместимость через `BunDatabaseAdapter`
+- SQLite производительность схожа (I/O bound)
+
+### Benchmark Results (Node.js vs Bun)
+
+| Операция | Speedup |
+|----------|---------|
+| File Read | 🚀 **1.3-1.8x** faster |
+| fileExists | 🚀 **3.8x** faster |
+| stat | 🚀 **1.4x** faster |
+| readdir | 🚀 **1.4x** faster |
+| glob | 🚀 **1.4-1.6x** faster |
+| writeFile (small) | ~same |
+| writeFile (>50KB, FileSink) | 🚀 **3-4x faster** |
+| Startup time | 🚀 **1.5-1.8x** faster |
+| HTTP fetch | 🚀 **1.7x** faster |
+| SHA-256 (CryptoHasher) | 🚀 **2.8x** faster |
+
+**Общий результат**: Bun быстрее в большинстве операций, особенно с FileSink для больших файлов.
+
+Запуск бенчмарка:
+```bash
+npx tsx scripts/benchmark-runtime.ts  # Node.js
+bun scripts/benchmark-runtime.ts       # Bun
+npx tsx scripts/compare-benchmarks.ts  # Сравнение
+```
+
+### Документация
+
+См. детальный план: `docs/development/bun-optimization-plan.md`
+
 ## Code Style
 
 - **TypeScript strict mode** включен (`tsconfig.json`)

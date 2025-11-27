@@ -8,11 +8,13 @@
  *   Windows: %LOCALAPPDATA%\UltraScriptTools\
  *   macOS:   ~/Library/Application Support/UltraScriptTools/
  *   Linux:   ~/.config/ultrascript-tools/  (or $XDG_CONFIG_HOME)
+ *
+ * Uses runtime-optimized file operations from file-ops.ts
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
+import { existsSync, mkdirSync, readJSONSync, writeFileSync } from "./file-ops.js";
 
 const APP_NAME = "UltraScriptTools";
 const APP_NAME_LINUX = "ultrascript-tools";
@@ -104,7 +106,7 @@ export function getEmbeddingModelsPath(): string {
 export function ensureConfigDir(): string {
   const configDir = getConfigDir();
   if (!existsSync(configDir)) {
-    mkdirSync(configDir, { recursive: true });
+    mkdirSync(configDir, true);
   }
   return configDir;
 }
@@ -115,7 +117,7 @@ export function ensureConfigDir(): string {
 export function ensureDataDir(): string {
   const dataDir = getDataDir();
   if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(dataDir, true);
   }
   return dataDir;
 }
@@ -169,8 +171,7 @@ export function loadSemanticConfig(): SemanticConfig | null {
   }
 
   try {
-    const content = readFileSync(configPath, "utf-8");
-    return JSON.parse(content) as SemanticConfig;
+    return readJSONSync<SemanticConfig>(configPath);
   } catch (error) {
     console.error(`[Config] Failed to load semantic config: ${error}`);
     return null;
@@ -185,7 +186,7 @@ export function saveSemanticConfig(config: SemanticConfig): void {
   const configPath = getSemanticConfigPath();
 
   try {
-    writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    writeFileSync(configPath, JSON.stringify(config, null, 2));
   } catch (error) {
     console.error(`[Config] Failed to save semantic config: ${error}`);
     throw error;

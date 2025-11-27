@@ -8,8 +8,6 @@
                          ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
                          ▄▄██▀ ▀████ ██ ██ ██ ██     ██
 
-                              ░▒▓█████▓▒░
-
      ╔═════════════════════════════════════════════════════╗
      ║            ULTRASCRIPT TOOLS MCP SERVER             ║
      ╚═════════════════════════════════════════════════════╝
@@ -18,328 +16,367 @@
 [![npm version](https://badge.fury.io/js/ultrascript-tools-mcp.svg)](https://www.npmjs.com/package/ultrascript-tools-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
+[![Bun](https://img.shields.io/badge/bun-%3E%3D1.0.0-f472b6)](https://bun.sh)
 
 
-**Multi-agent code analysis MCP server with advanced graph-based understanding**
+**Мультиагентный MCP-сервер для анализа кода с продвинутым графовым пониманием**
 
-Powerful code analysis tool that understands your codebase structure, finds duplicates, analyzes impact of changes, and provides intelligent refactoring suggestions through Model Context Protocol (MCP).
+Мощный инструмент анализа кода, который понимает структуру вашей кодовой базы, находит дубликаты, анализирует влияние изменений и предоставляет интеллектуальные предложения по рефакторингу через Model Context Protocol (MCP).
 
-## Features
+## Возможности
 
-- 🔍 **Semantic Code Search** - Find code by meaning, not just keywords
-- 🔄 **Duplicate Detection** - Automatically find similar code blocks
-- 📊 **Impact Analysis** - See what breaks when you change code
-- 🎯 **Smart Refactoring** - Get AI-powered refactoring suggestions
-- 🌳 **Git Branch Support** - Analyze code across different branches
-- ⚡ **SIMD/CUDA Acceleration** - Fast processing with hardware acceleration
-- 🌍 **10 Languages** - TypeScript, JavaScript, Python, Go, Rust, Java, C#, C++, Swift, Bash
+- 🔍 **Семантический поиск по коду** - Поиск кода по смыслу, а не только по ключевым словам
+- 🔄 **Обнаружение дубликатов** - Автоматический поиск похожих блоков кода
+- 📊 **Анализ влияния** - Узнайте, что сломается при изменении кода
+- 🎯 **Умный рефакторинг** - Получайте AI-предложения по рефакторингу
+- 🌳 **Поддержка Git-веток** - Анализ кода в разных ветках
+- ⚡ **SIMD/CUDA ускорение** - Быстрая обработка с аппаратным ускорением
+- 🌍 **10 языков** - TypeScript, JavaScript, Python, Go, Rust, Java, C++, Swift, Kotlin, Bash
 
-## Installation
+> Для проектов с C# - используйте аналогичный [ultrasharp-tools-mcp](https://github.com/faxenoff/ultrasharp-tools-mcp)
+
+
+## Установка
 
 ```bash
-# Install globally
+# Глобальная установка
 npm install -g ultrascript-tools-mcp
 
-# Or use without installing
+# Или запуск без установки
 npx ultrascript-tools-mcp
 ```
 
-## Quick Start
+### 🚀 Рекомендуется: Используйте Bun для ускорения в 1.5-4x
+Нет причин не использовать [Bun](https://bun.sh), быстрый JavaScript-runtime, который значительно улучшает производительность UltraScript:
 
-### 1. Setup Semantic Embeddings (Optional but Recommended)
+| Операция | Ускорение с Bun |
+|----------|-----------------|
+| Чтение файлов | **1.3-1.8x** быстрее |
+| Запись файлов (FileSink) | **3-4x** быстрее |
+| Сканирование директорий | **1.4-3.8x** быстрее |
+| Glob-поиск | **1.4-1.6x** быстрее |
+| Время запуска | **1.5-1.8x** быстрее |
+| HTTP fetch | **1.7x** быстрее |
+| SQLite операции | ~одинаково (ограничено I/O) |
+| SHA-256 хеширование | **1.3x** быстрее (2.8x с CryptoHasher) |
 
+**Установка Bun** (одной командой):
 ```bash
-# Interactive setup wizard
-npx ultrascript-tools-mcp setup
+# Windows (PowerShell)
+powershell -c "irm bun.sh/install.ps1 | iex"
 
-# Or specify provider directly
-npx ultrascript-tools-mcp setup --provider ollama   # Easy setup
-npx ultrascript-tools-mcp setup --provider tei      # Best performance (Docker)
-npx ultrascript-tools-mcp setup --provider memory   # No ML (default)
+# macOS / Linux
+curl -fsSL https://bun.sh/install | bash
 ```
 
-The setup wizard will:
-- Auto-detect your GPU (NVIDIA Turing/Ampere/Ada/Hopper)
-- Help you choose the best embedding model
-- Install TEI (Docker) or Ollama automatically
-- Save configuration to your system config directory
+**Запуск с Bun:**
+```bash
+# Используйте bunx вместо npx
+bunx ultrascript-tools-mcp /path/to/project
 
-### 2. Configure Claude Desktop
+# Или установите глобально через bun
+bun install -g ultrascript-tools-mcp
+ultrascript-tools-mcp /path/to/project
+```
+> **Примечание:** При установке автоматически компилируются native-компоненты (tree-sitter) для совместимости с Bun. Node.js работает без дополнительной компиляции. Для сборки требуется Visual Studio Build Tools на Windows или build-essential на Linux (скрипт предложит это сделать автоматически).
 
-Add to your Claude Desktop config file:
+**Конфиг Claude Code с Bun:**
+```json
+{
+  "mcpServers": {
+    "ultrascript-tools": {
+      "command": "bunx",
+      "args": ["ultrascript-tools-mcp", "."]
+    }
+  }
+}
+```
 
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Linux**: `~/.config/Claude/claude_desktop_config.json`
+## Быстрый старт
+
+### 1. Настройка семантических эмбеддингов (рекомендуется)
+
+```bash
+# Интерактивный мастер настройки
+npx ultrascript-tools-mcp setup
+
+# Или укажите провайдер напрямую
+npx ultrascript-tools-mcp setup --provider ollama   # Простая настройка
+npx ultrascript-tools-mcp setup --provider tei      # Лучшая производительность (Docker)
+npx ultrascript-tools-mcp setup --provider memory   # Без ML (по умолчанию)
+```
+
+Мастер настройки:
+- Автоматически определит вашу GPU (NVIDIA Turing/Ampere/Ada/Hopper/Blackwood*)
+- Поможет выбрать лучшую модель эмбеддингов
+- Автоматически установит TEI (Docker) или Ollama
+- Сохранит конфигурацию в системную директорию
+
+### 2. Настройка Claude Desktop
+
+Добавьте в конфиг Claude Desktop:
+
+**Windows**: `%userprofile%\claude.json`
+**macOS**: `~/Library/Application Support/Claude/mcp.json`
+**Linux**: `~/.claude/mcp.json`
 
 ```json
 {
   "mcpServers": {
     "ultrascript-tools": {
       "command": "npx",
-      "args": ["ultrascript-tools-mcp", "/path/to/your/project"]
+      "args": ["ultrascript-tools-mcp", "."]
     }
   }
 }
 ```
 
-Or if installed globally:
+Или если установлено глобально:
 
 ```json
 {
   "mcpServers": {
     "ultrascript-tools": {
       "command": "ultrascript-tools-mcp",
-      "args": ["/path/to/your/project"]
+      "args": ["."]
     }
   }
 }
 ```
 
-### 3. Start Using
+### 3. Начало работы
 
-Open Claude Desktop and ask:
+Откройте Claude Desktop и спросите:
 
-- "Index my project at /path/to/my-project"
-- "Find all functions related to authentication"
-- "Show me duplicate code in this project"
-- "What will break if I change the UserManager class?"
+- "Проиндексируй мой проект в /path/to/my-project"
+- "Найди все функции связанные с аутентификацией"
+- "Покажи дублирующийся код в этом проекте"
+- "Что сломается если изменить класс UserManager?"
 
-## Available Tools
+## Доступные инструменты
 
-The MCP server provides 45+ tools for code analysis:
+MCP-сервер предоставляет 45+ инструментов для анализа кода:
 
-### Core Analysis
-- `index` - Index a codebase for analysis
-- `query` - Natural language queries about code
-- `semantic_search` - Semantic code search
-- `list_file_entities` - List code entities in a file
-- `list_entity_relationships` - Show code dependencies
+### Основной анализ
+- `index` - Индексация кодовой базы для анализа
+- `query` - Запросы на естественном языке о коде
+- `semantic_search` - Семантический поиск по коду
+- `list_file_entities` - Список сущностей кода в файле
+- `list_entity_relationships` - Показать зависимости кода
 
-### Code Quality
-- `detect_code_clones` - Find duplicate code
-- `jscpd_detect_clones` - Fast duplicate detection
-- `analyze_code_impact` - Impact analysis
-- `suggest_refactoring` - Refactoring suggestions
-- `analyze_hotspots` - Find complex code areas
+### Качество кода
+- `detect_code_clones` - Поиск дублирующегося кода
+- `jscpd_detect_clones` - Быстрый поиск дубликатов
+- `analyze_code_impact` - Анализ влияния изменений
+- `suggest_refactoring` - Предложения по рефакторингу
+- `analyze_hotspots` - Поиск сложных участков кода
 
-### Git Integration
-- `list_branches` - List indexed branches
-- `switch_branch` - Switch between branches
-- `get_branch_status` - Branch analysis status
-- `get_changed_files` - Compare branches
+### Git-интеграция
+- `list_branches` - Список проиндексированных веток
+- `switch_branch` - Переключение между ветками
+- `get_branch_status` - Статус анализа ветки
+- `get_changed_files` - Сравнение веток
 
-### System
-- `get_graph` - Get code graph
-- `get_graph_stats` - Graph statistics
-- `get_agent_metrics` - Performance metrics
+### Система
+- `get_graph` - Получить граф кода
+- `get_graph_stats` - Статистика графа
+- `get_agent_metrics` - Метрики производительности
 
-## Configuration
+## Конфигурация
 
-Configuration through environment variables or config file at `config/default.yaml`.
+Настройка через переменные окружения или конфиг-файл `config/default.yaml`.
 
-### Basic Configuration
+### Базовая конфигурация
 
 ```yaml
-# Minimal config - works out of the box
+# Минимальный конфиг - работает из коробки
 mcp:
   embedding:
-    provider: "memory"  # No ML needed
+    provider: "memory"  # Без ML
     enabled: true
 ```
 
-### Optional: ML-Powered Semantic Search
+### Опционально: ML-семантический поиск
 
-For better semantic search, run the setup wizard:
+Для улучшенного семантического поиска запустите мастер настройки:
 
 ```bash
-# Interactive setup - recommended
+# Интерактивная настройка - рекомендуется
 npx ultrascript-tools-mcp setup
 
-# Non-interactive options
+# Неинтерактивные варианты
 npx ultrascript-tools-mcp setup --provider tei      # Docker + GPU
-npx ultrascript-tools-mcp setup --provider ollama   # Native install
-npx ultrascript-tools-mcp setup --provider memory   # Hash-based (default)
+npx ultrascript-tools-mcp setup --provider ollama   # Нативная установка
+npx ultrascript-tools-mcp setup --provider memory   # На основе хешей (по умолчанию)
 ```
 
-**Providers comparison:**
+**Сравнение провайдеров:**
 
-| Provider | Setup | Performance | GPU Support | Requirements |
-|----------|-------|-------------|-------------|--------------|
-| **TEI** | Docker | ⭐⭐⭐ Best | RTX 20xx-40xx | Docker Desktop |
-| **Ollama** | Native | ⭐⭐ Good | All GPUs incl. RTX 50xx | None |
-| **Memory** | None | ⭐ Basic | N/A | None |
+| Провайдер | Настройка | Производительность | Поддержка GPU | Требования |
+|-----------|-----------|-------------------|---------------|------------|
+| **TEI** | Docker | ⭐⭐⭐ Лучшая | RTX 20xx-50xx | Docker Desktop |
+| **Ollama** | Нативная | ⭐⭐ Хорошая | Все GPU вкл. RTX 50xx | Нет |
+| **Memory** | Нет | ⭐ Базовая | N/A | Нет |
 
-**Configuration location:**
+**Расположение конфигурации:**
 - Windows: `%LOCALAPPDATA%\UltraScriptTools\semantic-config.json`
 - macOS: `~/Library/Application Support/UltraScriptTools/semantic-config.json`
 - Linux: `~/.config/ultrascript-tools/semantic-config.json`
 
-## Performance
+## Производительность
 
-- **5.5x faster** than built-in Claude tools for large codebases
-- **SIMD acceleration** included (2-4x speedup)
-- **CUDA support** for NVIDIA GPUs (optional)
-- **WebGPU support** for cross-platform acceleration (optional)
+- **В 5.5 раз быстрее** встроенных инструментов Claude для больших кодовых баз
+- **SIMD ускорение** включено (ускорение в 2-4 раза)
+- **Поддержка CUDA** для NVIDIA GPU (опционально)
+- **Поддержка WebGPU** для кросс-платформенного ускорения (опционально)
 
-## Examples
+## Примеры
 
-### Find Similar Code
-
-```
-You: "Find duplicate code in my project"
-
-Response:
-✓ Found 12 duplicate groups
-  - auth/login.ts and auth/verify.ts (similarity: 89%)
-  - utils/format.ts and helpers/formatter.ts (similarity: 85%)
-```
-
-### Impact Analysis
+### Поиск похожего кода
 
 ```
-You: "What will break if I change UserManager.login()?"
+Вы: "Найди дублирующийся код в моём проекте"
 
-Response:
-✓ Impact Analysis:
-  - 15 files depend on this method
-  - 23 call sites found
-  - High risk: AuthController, SessionService
+Ответ:
+✓ Найдено 12 групп дубликатов
+  - auth/login.ts и auth/verify.ts (схожесть: 89%)
+  - utils/format.ts и helpers/formatter.ts (схожесть: 85%)
 ```
 
-### Semantic Search
+### Анализ влияния
 
 ```
-You: "Find code that validates email addresses"
+Вы: "Что сломается если изменить UserManager.login()?"
 
-Response:
-✓ Found 4 matches:
+Ответ:
+✓ Анализ влияния:
+  - 15 файлов зависят от этого метода
+  - Найдено 23 места вызова
+  - Высокий риск: AuthController, SessionService
+```
+
+### Семантический поиск
+
+```
+Вы: "Найди код который валидирует email адреса"
+
+Ответ:
+✓ Найдено 4 совпадения:
   - validators/email.ts: validateEmail()
   - utils/auth.ts: checkEmailFormat()
   - services/user.ts: verifyUserEmail()
 ```
 
-## Requirements
+## Требования
 
-- **Node.js**: 24.0.0 or higher
-- **Memory**: 4GB+ RAM recommended
-- **Optional**: Docker (for TEI embeddings)
-- **Optional**: NVIDIA GPU (for CUDA acceleration)
+- **Node.js**: 24.0.0 или выше
+- **Память**: рекомендуется 4GB+ RAM
+- **Опционально**: Docker (для TEI эмбеддингов)
+- **Опционально**: NVIDIA GPU (для CUDA ускорения)
 
-## Documentation
+## Документация
 
-After installation, see:
-- `node_modules/ultrascript-tools-mcp/README_DEV.md` - Detailed documentation
-- `node_modules/ultrascript-tools-mcp/GETTING_STARTED.md` - Setup guide
-- `node_modules/ultrascript-tools-mcp/NPM_PUBLISHING.md` - Publishing guide
+После установки см.:
+- `node_modules/ultrascript-tools-mcp/README_DEV.md` - Подробная документация
+- `node_modules/ultrascript-tools-mcp/GETTING_STARTED.md` - Руководство по настройке
+- `node_modules/ultrascript-tools-mcp/NPM_PUBLISHING.md` - Руководство по публикации
 
-## Troubleshooting
+## Решение проблем
 
-### MCP Server Not Responding
+### MCP-сервер не отвечает
 
-1. Check Node.js version: `node --version` (must be 24.0.0+)
-2. Verify config path in `claude_desktop_config.json`
-3. Check Claude Desktop logs (Help → Developer Tools)
+1. Проверьте версию Node.js: `node --version` (должна быть 24.0.0+)
+2. Проверьте путь в конфиге `claude_desktop_config.json`
+3. Проверьте логи Claude Desktop (Справка → Инструменты разработчика)
 
-### Installation Issues
+### Проблемы с установкой
 
 ```bash
-# Clear cache and reinstall
+# Очистите кеш и переустановите
 npm cache clean --force
 npm install -g ultrascript-tools-mcp
 ```
 
-### Embeddings Setup
+### Настройка эмбеддингов
 
-If embeddings setup fails or you want to reconfigure:
+Если настройка эмбеддингов не удалась или хотите переконфигурировать:
 
 ```bash
-# Run setup wizard
+# Запустите мастер настройки
 npx ultrascript-tools-mcp setup
 
-# Or run postinstall manually
+# Или запустите postinstall вручную
 cd node_modules/ultrascript-tools-mcp
 node scripts/postinstall.js
 ```
 
-## Advanced Features
+## Продвинутые возможности
 
-### CUDA Acceleration (NVIDIA GPUs)
+### CUDA ускорение (NVIDIA GPU)
 
 ```bash
-# CUDA module included, builds automatically on first use
-# Provides 10-50x speedup for vector operations
+# CUDA модуль включён, собирается автоматически при первом использовании
+# Обеспечивает ускорение в 10-50 раз для векторных операций
 ```
 
-### Multi-Project Analysis (Lerna)
+### Мультипроектный анализ (Lerna)
 
 ```bash
-# For monorepos using Lerna
+# Для монорепозиториев использующих Lerna
 ultrascript-tools-mcp lerna_project_graph --ingest
 ```
 
-### Branch Comparison
+### Сравнение веток
 
 ```bash
-# Compare code between branches
+# Сравнение кода между ветками
 ultrascript-tools-mcp get_changed_files --fromBranch main --toBranch feature
 ```
 
-## CLI Usage
+## Использование CLI
 
 ```bash
-# Setup semantic embeddings (interactive wizard)
+# Настройка семантических эмбеддингов (интерактивный мастер)
 npx ultrascript-tools-mcp setup
 
-# Setup with specific provider
+# Настройка с конкретным провайдером
 npx ultrascript-tools-mcp setup --provider ollama
 npx ultrascript-tools-mcp setup --provider tei
 npx ultrascript-tools-mcp setup --provider memory
 
-# Index a project
+# Индексация проекта
 ultrascript-tools-mcp index /path/to/project
 
-# Query code
-ultrascript-tools-mcp query "find authentication code"
+# Запрос к коду
+ultrascript-tools-mcp query "найди код аутентификации"
 
-# Find duplicates
+# Поиск дубликатов
 ultrascript-tools-mcp detect_code_clones --minSimilarity 0.8
 
-# Check branch status
+# Проверка статуса ветки
 ultrascript-tools-mcp get_branch_status
 ```
 
-## Environment Variables
+## Переменные окружения
 
 ```bash
-# Logging level
+# Уровень логирования
 LOG_LEVEL=info
 
-# Embeddings provider
+# Провайдер эмбеддингов
 EMBEDDING_PROVIDER=memory
 
-# Enable GPU
+# Включить GPU
 USE_GPU=true
 ```
 
-## Contributing
+## Участие в разработке
 
-This package is open source under MIT license.
+Этот пакет с открытым исходным кодом под лицензией MIT.
 
-Repository: https://github.com/faxenoff/ultrascript-tools-mcp
+Репозиторий: https://github.com/faxenoff/ultrascript-tools-mcp
 
-## Support
 
-- **Issues**: https://github.com/faxenoff/ultrascript-tools-mcp/issues
-- **Sponsor**: https://accelerator.slider-ai.ru/
-- **Telegram**: https://t.me/SliderQuery
+## Лицензия
 
-## License
-
-MIT © faxen
-
----
-
-**Ready to analyze your codebase!** 🚀
-
-Install: `npm install -g ultrascript-tools-mcp`
+MIT © faxenoff
