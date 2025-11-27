@@ -46,7 +46,25 @@ npx ultrascript-tools-mcp
 
 ## Quick Start
 
-### 1. Configure Claude Desktop
+### 1. Setup Semantic Embeddings (Optional but Recommended)
+
+```bash
+# Interactive setup wizard
+npx ultrascript-tools-mcp setup
+
+# Or specify provider directly
+npx ultrascript-tools-mcp setup --provider ollama   # Easy setup
+npx ultrascript-tools-mcp setup --provider tei      # Best performance (Docker)
+npx ultrascript-tools-mcp setup --provider memory   # No ML (default)
+```
+
+The setup wizard will:
+- Auto-detect your GPU (NVIDIA Turing/Ampere/Ada/Hopper)
+- Help you choose the best embedding model
+- Install TEI (Docker) or Ollama automatically
+- Save configuration to your system config directory
+
+### 2. Configure Claude Desktop
 
 Add to your Claude Desktop config file:
 
@@ -58,16 +76,27 @@ Add to your Claude Desktop config file:
 {
   "mcpServers": {
     "ultrascript-tools": {
-      "command": "node",
-      "args": [
-        "/path/to/node_modules/ultrascript-tools-mcp/dist/index.js"
-      ]
+      "command": "npx",
+      "args": ["ultrascript-tools-mcp", "/path/to/your/project"]
     }
   }
 }
 ```
 
-### 2. Start Using
+Or if installed globally:
+
+```json
+{
+  "mcpServers": {
+    "ultrascript-tools": {
+      "command": "ultrascript-tools-mcp",
+      "args": ["/path/to/your/project"]
+    }
+  }
+}
+```
+
+### 3. Start Using
 
 Open Claude Desktop and ask:
 
@@ -121,18 +150,30 @@ mcp:
 
 ### Optional: ML-Powered Semantic Search
 
-For better semantic search, set up embeddings provider:
+For better semantic search, run the setup wizard:
 
 ```bash
-# Run setup wizard
-cd node_modules/ultrascript-tools-mcp
-scripts\setup-embeddings.cmd
+# Interactive setup - recommended
+npx ultrascript-tools-mcp setup
+
+# Non-interactive options
+npx ultrascript-tools-mcp setup --provider tei      # Docker + GPU
+npx ultrascript-tools-mcp setup --provider ollama   # Native install
+npx ultrascript-tools-mcp setup --provider memory   # Hash-based (default)
 ```
 
-Choose from:
-- **TEI** (Docker, GPU/CPU) - Best performance
-- **Ollama** (Native) - Easy setup
-- **Memory** (Hash-based) - Default, no setup needed
+**Providers comparison:**
+
+| Provider | Setup | Performance | GPU Support | Requirements |
+|----------|-------|-------------|-------------|--------------|
+| **TEI** | Docker | ⭐⭐⭐ Best | RTX 20xx-40xx | Docker Desktop |
+| **Ollama** | Native | ⭐⭐ Good | All GPUs incl. RTX 50xx | None |
+| **Memory** | None | ⭐ Basic | N/A | None |
+
+**Configuration location:**
+- Windows: `%LOCALAPPDATA%\UltraScriptTools\semantic-config.json`
+- macOS: `~/Library/Application Support/UltraScriptTools/semantic-config.json`
+- Linux: `~/.config/ultrascript-tools/semantic-config.json`
 
 ## Performance
 
@@ -210,10 +251,13 @@ npm install -g ultrascript-tools-mcp
 
 ### Embeddings Setup
 
-If embeddings setup fails:
+If embeddings setup fails or you want to reconfigure:
 
 ```bash
-# Run postinstall manually
+# Run setup wizard
+npx ultrascript-tools-mcp setup
+
+# Or run postinstall manually
 cd node_modules/ultrascript-tools-mcp
 node scripts/postinstall.js
 ```
@@ -244,6 +288,14 @@ ultrascript-tools-mcp get_changed_files --fromBranch main --toBranch feature
 ## CLI Usage
 
 ```bash
+# Setup semantic embeddings (interactive wizard)
+npx ultrascript-tools-mcp setup
+
+# Setup with specific provider
+npx ultrascript-tools-mcp setup --provider ollama
+npx ultrascript-tools-mcp setup --provider tei
+npx ultrascript-tools-mcp setup --provider memory
+
 # Index a project
 ultrascript-tools-mcp index /path/to/project
 

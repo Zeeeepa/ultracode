@@ -94,10 +94,21 @@ const args = process.argv.slice(2);
 let overrideConfigPath: string | undefined;
 let helpRequested = false;
 let versionRequested = false;
+let setupRequested = false;
 const positionalArgs: string[] = [];
+
+// Check for "setup" command first
+if (args[0] === "setup") {
+  setupRequested = true;
+}
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i]!;
+
+  // Skip "setup" and its arguments if setup was requested
+  if (setupRequested && i === 0) {
+    continue;
+  }
 
   if (arg === "--config") {
     const next = args[++i];
@@ -133,15 +144,25 @@ function printHelp() {
 
 Usage:
   ultrascript-tools-mcp [options] <directory>
+  ultrascript-tools-mcp setup [--provider <tei|ollama|memory>]
+
+Commands:
+  setup             Interactive setup for semantic embedding providers
 
 Options:
   --config <path>   Use an alternate YAML configuration file
   --help, -h        Show this help message and exit
   --version, -v     Print version information and exit
 
+Setup Options:
+  --provider <provider>   Choose provider (tei, ollama, memory)
+  --model <model-id>      Choose specific model
+
 Examples:
   ultrascript-tools-mcp /path/to/project
   ultrascript-tools-mcp --config config/production.yaml /repo
+  ultrascript-tools-mcp setup
+  ultrascript-tools-mcp setup --provider ollama
   ultrascript-tools-mcp --version
 `);
 }
@@ -149,6 +170,20 @@ Examples:
 if (helpRequested) {
   printHelp();
   process.exit(0);
+}
+
+// Handle setup command
+if (setupRequested) {
+  // Dynamic import to avoid loading all dependencies for setup
+  import("./cli/setup-command.js")
+    .then(({ runSetup }) => runSetup(args.slice(1)))
+    .then(() => process.exit(0))
+    .catch((error) => {
+      console.error("Setup failed:", error);
+      process.exit(1);
+    });
+  // Prevent rest of the code from executing
+  await new Promise(() => {});
 }
 
 const versionInfo = getVersionInfo();
