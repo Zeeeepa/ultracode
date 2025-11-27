@@ -16,6 +16,9 @@
 .PARAMETER SkipBuild
     Пропустить проверку build (использовать существующие dist/)
 
+.PARAMETER Publish
+    Опубликовать пакет в npm после упаковки (использует --auth-type=legacy)
+
 .PARAMETER OutputDir
     Директория для выходного .tgz файла (по умолчанию ./dist-packages)
 
@@ -30,11 +33,16 @@
 .EXAMPLE
     .\scripts\pack-npm.ps1 -Apply -SkipBuild
     Упаковывает без проверки build
+
+.EXAMPLE
+    .\scripts\pack-npm.ps1 -Apply -Publish
+    Упаковывает и публикует в npm
 #>
 
 param(
     [switch]$Apply,
     [switch]$SkipBuild,
+    [switch]$Publish,
     [string]$OutputDir = "dist-packages"
 )
 
@@ -253,7 +261,34 @@ try {
         Write-Host "  Размер: $FileSizeMB MB" -ForegroundColor Gray
     }
 
-    # Шаг 9: Итоговая информация
+    # Шаг 9: Публикация (если указан -Publish)
+    if ($Publish) {
+        Write-Step "Публикация в npm..."
+
+        # Проверить авторизацию
+        $WhoAmI = npm whoami 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Не авторизован в npm. Выполните: npm login"
+            Write-Host "  Или настройте токен в ~/.npmrc" -ForegroundColor Gray
+            exit 1
+        }
+
+        Write-Host "  Публикация от имени: $WhoAmI" -ForegroundColor Gray
+
+        # Публикация с legacy auth (без web-browser)
+        $PublishOutput = npm publish $Destination --auth-type=legacy 2>&1
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Ошибка публикации:"
+            Write-Host $PublishOutput -ForegroundColor Red
+            exit 1
+        }
+
+        Write-Success "Пакет опубликован: $PackageName@$PackageVersion"
+        Write-Host "  https://www.npmjs.com/package/$PackageName" -ForegroundColor Cyan
+    }
+
+    # Шаг 10: Итоговая информация
     Write-Host ""
     Write-ColoredHeader "Package Build Complete"
 
@@ -267,10 +302,15 @@ try {
     Write-Host "  npm install ./$OutputDir/$TarballName" -ForegroundColor White
     Write-Host ""
 
-    Write-Host "Публикация:" -ForegroundColor Yellow
-    Write-Host "  npm publish ./$OutputDir/$TarballName" -ForegroundColor White
-    Write-Host "  или" -ForegroundColor Gray
-    Write-Host "  npm publish" -ForegroundColor White
+    if ($Publish) {
+        Write-Host "Статус: ОПУБЛИКОВАН" -ForegroundColor Green
+        Write-Host "  https://www.npmjs.com/package/$PackageName" -ForegroundColor Cyan
+    } else {
+        Write-Host "Публикация:" -ForegroundColor Yellow
+        Write-Host "  npm publish ./$OutputDir/$TarballName --auth-type=legacy" -ForegroundColor White
+        Write-Host "  или" -ForegroundColor Gray
+        Write-Host "  .\scripts\pack-npm.ps1 -Apply -Publish" -ForegroundColor White
+    }
     Write-Host ""
 
     Write-Host "Проверка содержимого:" -ForegroundColor Yellow

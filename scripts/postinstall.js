@@ -1,11 +1,13 @@
 #!/usr/bin/env node
+
 /**
  * Post-install script for ultrascript-tools-mcp
  * Runs after npm install to guide users through optional setup
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { platform } from "node:os";
+import { arch, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -80,6 +82,47 @@ function getSetupCommand() {
   return "bash scripts/setup-embeddings.sh";
 }
 
+function rebuildTreeSitterForBun() {
+  const plat = platform();
+  const architecture = arch();
+  const prebuildsDir = `prebuilds/${plat}-${architecture}`;
+
+  const treeSitterDir = join(projectRoot, "node_modules", "tree-sitter");
+  const prebuildsPath = join(treeSitterDir, prebuildsDir);
+  const targetFile = join(prebuildsPath, "tree-sitter.node");
+
+  // Check if tree-sitter exists
+  if (!existsSync(treeSitterDir)) {
+    return { skipped: true, reason: "tree-sitter not in node_modules" };
+  }
+
+  // Check if prebuilds already exist
+  if (existsSync(targetFile)) {
+    return { skipped: true, reason: "prebuilds already exist" };
+  }
+
+  // Run rebuild script
+  const rebuildScript = join(projectRoot, "scripts", "rebuild-tree-sitter.js");
+  if (!existsSync(rebuildScript)) {
+    return { skipped: true, reason: "rebuild script not found" };
+  }
+
+  printInfo("Rebuilding tree-sitter for Bun compatibility...");
+
+  const result = spawnSync("node", [rebuildScript], {
+    cwd: projectRoot,
+    encoding: "utf8",
+    shell: true,
+    stdio: "inherit",
+    timeout: 300000, // 5 minutes
+  });
+
+  if (result.status === 0) {
+    return { success: true };
+  }
+  return { success: false, reason: "rebuild failed" };
+}
+
 async function main() {
   // Skip in CI environments
   if (process.env.CI || process.env.CONTINUOUS_INTEGRATION) {
@@ -120,6 +163,19 @@ async function main() {
     }
     console.log();
     printInfo("These modules will be built on first use if needed");
+  }
+
+  console.log();
+
+  // Rebuild tree-sitter for Bun compatibility (if needed)
+  const treeSitterResult = rebuildTreeSitterForBun();
+  if (treeSitterResult.success) {
+    printSuccess("tree-sitter rebuilt for Bun compatibility");
+  } else if (treeSitterResult.skipped) {
+    // Silent skip - either already built or not needed
+  } else {
+    printWarning(`tree-sitter rebuild: ${treeSitterResult.reason}`);
+    printInfo("Bun users may need to use Node.js instead");
   }
 
   console.log();

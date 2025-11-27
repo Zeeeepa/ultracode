@@ -1,6 +1,6 @@
 {
   "name": "ultrascript-tools-mcp",
-  "version": "1.1.0",
+  "version": "1.2.1",
   "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
   "author": "faxenoff",
@@ -39,6 +39,7 @@
     "dist/**/*.node",
     "dist/**/*.d.ts",
     "scripts/postinstall.js",
+    "scripts/rebuild-tree-sitter.js",
     "scripts/setup-embeddings.cmd",
     "scripts/setup-embeddings.sh",
     "scripts/setup-embeddings-interactive.sh",

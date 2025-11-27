@@ -17,10 +17,10 @@
  * - Preview Manager: src/modification/preview-manager.ts
  */
 
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
+import { mkdir, readdir, readText, rm, stat, writeFile } from "../utils/file-ops.js";
 import { streamCopyFile } from "../utils/stream-helpers.js";
 import type { DiffPreview, PreviewManager } from "./preview-manager.js";
 
@@ -118,10 +118,10 @@ export class FileOperations {
     await mkdir(dirname(newPath), { recursive: true });
 
     // Read file
-    const content = await readFile(oldPath, "utf-8");
+    const content = await readText(oldPath);
 
     // Write to new location
-    await writeFile(newPath, content, "utf-8");
+    await writeFile(newPath, content);
 
     // Update graph
     let entitiesAffected = 0;
@@ -141,8 +141,7 @@ export class FileOperations {
     }
 
     // Delete original file (after successful copy)
-    const { unlink } = await import("node:fs/promises");
-    await unlink(oldPath);
+    await rm(oldPath);
 
     return {
       success: true,
@@ -173,7 +172,7 @@ export class FileOperations {
     const entities = await Promise.all(entityIds.map((id) => this.graphStorage.getEntity(id)));
     const validEntities = entities.filter((e) => e !== null) as Entity[];
 
-    const fileContent = await readFile(filePath, "utf-8");
+    const fileContent = await readText(filePath);
     const lines = fileContent.split("\n");
     const filesCreated: string[] = [];
 
@@ -233,7 +232,7 @@ export class FileOperations {
     const contents: string[] = [];
 
     for (const file of files) {
-      const content = await readFile(file, "utf-8");
+      const content = await readText(file);
       contents.push(content);
     }
 
@@ -289,9 +288,9 @@ export class FileOperations {
       // Large file - streaming
       await streamCopyFile(source, target);
     } else {
-      // Small file - direct copy
-      const content = await readFile(source);
-      await writeFile(target, content);
+      // Small file - direct copy (uses copyFile for Bun optimization)
+      const { copyFile } = await import("../utils/file-ops.js");
+      await copyFile(source, target);
     }
 
     // Update graph
@@ -439,7 +438,7 @@ export class FileOperations {
     const importers = await this.findImporters(oldPath);
 
     for (const importer of importers) {
-      const content = await readFile(importer.filePath, "utf-8");
+      const content = await readText(importer.filePath);
 
       // Update import statements
       const updated = content.replace(new RegExp(`from ['"]${oldPath}['"]`, "g"), `from '${newPath}'`);
@@ -467,7 +466,7 @@ export class FileOperations {
 
     if (validEntities.length === 0) return;
 
-    const content = await readFile(filePath, "utf-8");
+    const content = await readText(filePath);
     const lines = content.split("\n");
 
     // Sort entities by line number (descending) to remove from bottom to top

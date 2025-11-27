@@ -15,8 +15,8 @@
  * - Linters: src/validation/linters/
  */
 
-import { readdir, readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { readdir, readText } from "../utils/file-ops.js";
 
 // =============================================================================
 // TYPES AND INTERFACES
@@ -102,7 +102,7 @@ export class CodeValidator {
     }
 
     // Read file
-    const content = await readFile(filePath, "utf-8");
+    const content = await readText(filePath);
 
     // Run linter
     const problems = await linter.lint(filePath, content);

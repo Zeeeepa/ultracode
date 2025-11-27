@@ -32,6 +32,29 @@ if [ ! -d "node_modules" ]; then
     echo ""
 fi
 
+# Rebuild tree-sitter for Bun compatibility
+echo "[PRE] Checking tree-sitter native bindings for Bun..."
+if [ -d "node_modules/tree-sitter" ]; then
+    PLAT=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+    # Normalize arch names
+    if [ "$ARCH" = "x86_64" ]; then
+        ARCH="x64"
+    elif [ "$ARCH" = "aarch64" ]; then
+        ARCH="arm64"
+    fi
+    PREBUILDS_DIR="node_modules/tree-sitter/prebuilds/${PLAT}-${ARCH}"
+
+    if [ ! -f "${PREBUILDS_DIR}/tree-sitter.node" ]; then
+        echo "[INFO] Building tree-sitter native bindings for Bun compatibility..."
+        node scripts/rebuild-tree-sitter.js
+        echo ""
+    else
+        echo "[OK] tree-sitter prebuilds already exist"
+        echo ""
+    fi
+fi
+
 # Run TypeScript type checking first
 echo "[1/3] Running TypeScript type check..."
 bun run typecheck

@@ -55,6 +55,19 @@ if not exist "node_modules\" (
     echo.
 )
 
+REM Rebuild tree-sitter for Bun compatibility
+echo [PRE] Checking tree-sitter native bindings for Bun...
+if exist "node_modules\tree-sitter\" (
+    if not exist "node_modules\tree-sitter\prebuilds\win32-x64\tree-sitter.node" (
+        echo [INFO] Building tree-sitter native bindings for Bun compatibility...
+        node "%PROJECT_ROOT%\scripts\rebuild-tree-sitter.js"
+        echo.
+    ) else (
+        echo [OK] tree-sitter prebuilds already exist
+        echo.
+    )
+)
+
 REM Run TypeScript type checking first
 echo [1/3] Running TypeScript type check...
 bun run typecheck

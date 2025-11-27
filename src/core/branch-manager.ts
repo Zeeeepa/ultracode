@@ -11,9 +11,17 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, normalize } from "node:path";
 import xxhash from "xxhash-wasm";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readTextSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "../utils/file-ops.js";
 
 // =============================================================================
 // 1. TYPES AND INTERFACES
@@ -240,7 +248,7 @@ export class BranchManager {
     }
 
     try {
-      const data = readFileSync(metadataPath, "utf-8");
+      const data = readTextSync(metadataPath);
       return JSON.parse(data);
     } catch (error) {
       console.error("[BranchManager] Failed to read branch metadata:", error);
@@ -385,7 +393,7 @@ export class BranchManager {
     }
 
     try {
-      const data = readFileSync(this.registryPath, "utf-8");
+      const data = readTextSync(this.registryPath);
       return JSON.parse(data);
     } catch (error) {
       console.error("[BranchManager] Failed to load registry:", error);

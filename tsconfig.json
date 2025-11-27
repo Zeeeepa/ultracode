@@ -36,8 +36,8 @@
     "noImplicitReturns": true,
     "noUncheckedIndexedAccess": true,
 
-    // Explicitly skip automatic type acquisition
-    "types": []
+    // Include Node.js and Bun types
+    "types": ["node", "bun"]
   },
   "include": ["src/**/*", "src/types/**/*.d.ts"],
   "exclude": [
