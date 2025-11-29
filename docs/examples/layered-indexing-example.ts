@@ -13,11 +13,11 @@
  * @see Dev.Docs/LAYERED_INDEXING_IMPLEMENTATION_PLAN.md
  */
 
-import { LayeredIndexManager } from "../../src/layered/index.js";
-import type { GraphStorage } from "../../src/storage/graph-storage.js";
-import type { VectorStore } from "../../src/semantic/vector-store.js";
 import type { BranchManager } from "../../src/core/branch-manager.js";
 import type { GitWatcher } from "../../src/core/git-watcher.js";
+import { LayeredIndexManager } from "../../src/layered/index.js";
+import type { VectorStore } from "../../src/semantic/vector-store.js";
+import type { GraphStorage } from "../../src/storage/graph-storage.js";
 
 // =============================================================================
 // EXAMPLE 1: Basic Setup
@@ -32,19 +32,13 @@ async function basicSetupExample(
   console.log("=== Example 1: Basic Setup ===\n");
 
   // Create LayeredIndexManager
-  const manager = new LayeredIndexManager(
-    baseIndex,
-    baseVectorStore,
-    branchManager,
-    gitWatcher,
-    {
-      workingDirectory: process.cwd(),
-      enableFileWatching: true, // Auto-detect file changes
-      enableMaintenance: true, // Auto-cleanup old deltas
-      estimatedFileCount: 5000, // For adaptive backend selection
-      debug: false,
-    },
-  );
+  const manager = new LayeredIndexManager(baseIndex, baseVectorStore, branchManager, gitWatcher, {
+    workingDirectory: process.cwd(),
+    enableFileWatching: true, // Auto-detect file changes
+    enableMaintenance: true, // Auto-cleanup old deltas
+    estimatedFileCount: 5000, // For adaptive backend selection
+    debug: false,
+  });
 
   // Initialize
   await manager.initialize();
@@ -98,7 +92,7 @@ async function semanticSearchExample(manager: LayeredIndexManager) {
     // Search in feature branch (includes branch delta changes)
     const branchResults = await manager.searchSimilar(queryEmbedding, 10, "feature-branch");
     console.log(`Found ${branchResults.length} similar entities in feature-branch`);
-  } catch (error) {
+  } catch (_error) {
     console.log("⚠️  Vector deltas not enabled or no embeddings available");
   }
 

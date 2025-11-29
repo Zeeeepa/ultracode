@@ -121,7 +121,7 @@ export class HybridSearchEngine {
         this.vectorStore.search(queryEmbedding, fusionOptions.limit * 2),
       ]);
 
-      console.log(
+      console.error(
         `[HybridSearch] Found ${structuralResults.length} structural and ${semanticResults.length} semantic results`,
       );
 
@@ -132,7 +132,7 @@ export class HybridSearchEngine {
       const searchTime = Date.now() - startTime;
       this.updateMetrics(searchTime, fusedResults.length);
 
-      console.log(`[HybridSearch] Returned ${fusedResults.length} results in ${searchTime}ms`);
+      console.error(`[HybridSearch] Returned ${fusedResults.length} results in ${searchTime}ms`);
 
       return fusedResults;
     } catch (error) {
@@ -339,6 +339,6 @@ export class HybridSearchEngine {
    */
   clearCaches(): void {
     this.embeddingGen.clearCache();
-    console.log("[HybridSearch] Caches cleared");
+    console.error("[HybridSearch] Caches cleared");
   }
 }

@@ -20,7 +20,7 @@ export async function getGraphStorage(sqliteManager?: SQLiteManager): Promise<Gr
 
   const needNewInstance = !graphStorage || boundManager !== manager;
   if (needNewInstance) {
-    console.log("[GraphStorageFactory] Creating NEW GraphStorage singleton instance");
+    console.error("[GraphStorageFactory] Creating NEW GraphStorage singleton instance");
     if (!manager.isOpen()) {
       manager.initialize();
     }
@@ -33,7 +33,7 @@ export async function getGraphStorage(sqliteManager?: SQLiteManager): Promise<Gr
     return storage;
   }
 
-  console.log("[GraphStorageFactory] Returning EXISTING GraphStorage singleton instance");
+  console.error("[GraphStorageFactory] Returning EXISTING GraphStorage singleton instance");
 
   const storage = graphStorage as GraphStorageImpl;
   await storage.initialize();

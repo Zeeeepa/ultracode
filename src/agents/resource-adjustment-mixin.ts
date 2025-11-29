@@ -51,7 +51,7 @@ export class ResourceAdjustmentMixin {
  *   adjustConcurrency(newLimit: number): void {
  *     const adjusted = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(newLimit)));
  *     if (this.capabilities.maxConcurrency !== adjusted) {
- *       console.log(`[DevAgent ${this.id}] Adjusting concurrency to ${adjusted}`);
+ *       console.error(`[DevAgent ${this.id}] Adjusting concurrency to ${adjusted}`);
  *       this.capabilities.maxConcurrency = adjusted;
  *     }
  *   }
@@ -60,7 +60,7 @@ export class ResourceAdjustmentMixin {
  *     const ratio = Math.max(0.5, Math.min(2, newMemoryLimit / this.defaultMemoryLimit));
  *     const newBatchSize = Math.max(10, Math.round(this.defaultBatchSize * ratio));
  *     if (this.indexBatchSize !== newBatchSize) {
- *       console.log(`[DevAgent ${this.id}] Adjusting batch size to ${newBatchSize}`);
+ *       console.error(`[DevAgent ${this.id}] Adjusting batch size to ${newBatchSize}`);
  *       this.indexBatchSize = newBatchSize;
  *     }
  *   }

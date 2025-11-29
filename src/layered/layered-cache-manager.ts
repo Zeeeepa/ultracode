@@ -4,7 +4,7 @@
  * Manages persistent storage of branch deltas using SQLite.
  * Ensures branch deltas survive server restarts.
  *
- * Database location: .ultrascript/layered/deltas.db
+ * Database location: %LOCALAPPDATA%/UltraScriptTools/projects/<hash>/layered/deltas.db
  *
  * Based on: ultrasharp-tools-mcp LayeredCacheManager.cs
  * @see Dev.Docs/LAYERED_INDEXING_IMPLEMENTATION_PLAN.md
@@ -31,8 +31,11 @@ export class LayeredCacheManager {
   private listStmt: SQLiteStatement | null = null;
 
   constructor(workingDirectory: string) {
-    // Create database directory
-    const dbDir = join(workingDirectory, ".ultrascript", "layered");
+    // Use centralized storage
+    const { getProjectPaths, ensureProjectDir } = require("../shared/storage-paths.js");
+    ensureProjectDir(workingDirectory);
+    const paths = getProjectPaths(workingDirectory);
+    const dbDir = join(paths.dir, "layered");
     if (!existsSync(dbDir)) {
       mkdirSync(dbDir, { recursive: true });
     }
@@ -46,7 +49,7 @@ export class LayeredCacheManager {
     this.initializeSchema();
     this.prepareStatements();
 
-    console.log(`[LayeredCacheManager] Initialized with database: ${this.dbPath}`);
+    console.error(`[LayeredCacheManager] Initialized with database: ${this.dbPath}`);
   }
 
   // =========================================================================
@@ -83,7 +86,7 @@ export class LayeredCacheManager {
         ON branch_deltas(base_commit_sha);
     `);
 
-    console.log("[LayeredCacheManager] Schema initialized");
+    console.error("[LayeredCacheManager] Schema initialized");
   }
 
   private prepareStatements(): void {
@@ -141,7 +144,9 @@ export class LayeredCacheManager {
         serialized.relationshipDeleted,
       );
 
-      console.log(`[LayeredCacheManager] Saved delta for branch: ${delta.branchName} (${delta.totalChanges} changes)`);
+      console.error(
+        `[LayeredCacheManager] Saved delta for branch: ${delta.branchName} (${delta.totalChanges} changes)`,
+      );
     } catch (error) {
       console.error(`[LayeredCacheManager] Failed to save delta for ${delta.branchName}:`, error);
       throw error;
@@ -166,7 +171,7 @@ export class LayeredCacheManager {
       // Deserialize from JSON
       const delta = this.deserializeDelta(row);
 
-      console.log(`[LayeredCacheManager] Loaded delta for branch: ${branchName} (${delta.totalChanges} changes)`);
+      console.error(`[LayeredCacheManager] Loaded delta for branch: ${branchName} (${delta.totalChanges} changes)`);
 
       return delta;
     } catch (error) {
@@ -185,7 +190,7 @@ export class LayeredCacheManager {
 
     try {
       this.deleteStmt.run(branchName);
-      console.log(`[LayeredCacheManager] Deleted delta for branch: ${branchName}`);
+      console.error(`[LayeredCacheManager] Deleted delta for branch: ${branchName}`);
     } catch (error) {
       console.error(`[LayeredCacheManager] Failed to delete delta for ${branchName}:`, error);
       throw error;
@@ -312,11 +317,11 @@ export class LayeredCacheManager {
    * Compact database (VACUUM)
    */
   compact(): void {
-    console.log("[LayeredCacheManager] Compacting database...");
+    console.error("[LayeredCacheManager] Compacting database...");
 
     try {
       this.db.exec("VACUUM");
-      console.log("[LayeredCacheManager] Database compacted successfully");
+      console.error("[LayeredCacheManager] Database compacted successfully");
     } catch (error) {
       console.error("[LayeredCacheManager] Database compaction failed:", error);
     }
@@ -337,7 +342,7 @@ export class LayeredCacheManager {
       const result = stmt.run(cutoffTime);
 
       const deletedCount = result.changes;
-      console.log(`[LayeredCacheManager] Deleted ${deletedCount} old deltas (older than ${olderThanDays} days)`);
+      console.error(`[LayeredCacheManager] Deleted ${deletedCount} old deltas (older than ${olderThanDays} days)`);
 
       return deletedCount;
     } catch (error) {
@@ -354,7 +359,7 @@ export class LayeredCacheManager {
    * Close database connection
    */
   close(): void {
-    console.log("[LayeredCacheManager] Closing database...");
+    console.error("[LayeredCacheManager] Closing database...");
 
     if (this.db) {
       this.db.close();

@@ -49,9 +49,9 @@ export interface IndexingOptions {
 export class MultiVersionIndexer {
   private branchManager: BranchManager;
   private gitIntegration: GitIntegration;
-  private conductor: ConductorOrchestrator;
+  private conductor: ConductorOrchestrator | null;
 
-  constructor(branchManager: BranchManager, gitIntegration: GitIntegration, conductor: ConductorOrchestrator) {
+  constructor(branchManager: BranchManager, gitIntegration: GitIntegration, conductor: ConductorOrchestrator | null) {
     this.branchManager = branchManager;
     this.gitIntegration = gitIntegration;
     this.conductor = conductor;
@@ -70,7 +70,7 @@ export class MultiVersionIndexer {
     const startTime = Date.now();
     let cacheHits = 0;
 
-    console.log(`[MultiVersionIndexer] Starting 3-way indexing: ${branchA} + ${branchB}`);
+    console.error(`[MultiVersionIndexer] Starting 3-way indexing: ${branchA} + ${branchB}`);
 
     try {
       // 1. Find merge base (common ancestor)
@@ -79,7 +79,7 @@ export class MultiVersionIndexer {
         throw new Error(`No merge base found between ${branchA} and ${branchB}`);
       }
 
-      console.log(`[MultiVersionIndexer] Merge base: ${mergeBase.slice(0, 8)}`);
+      console.error(`[MultiVersionIndexer] Merge base: ${mergeBase.slice(0, 8)}`);
 
       // 2. Index base commit
       const baseIndex = await this.indexBranch(mergeBase, "base", options);
@@ -106,8 +106,8 @@ export class MultiVersionIndexer {
 
       const indexingTimeMs = Date.now() - startTime;
 
-      console.log(`[MultiVersionIndexer] Completed in ${indexingTimeMs}ms`);
-      console.log(`[MultiVersionIndexer] Total units: ${totalUnits}, Cache hits: ${cacheHits}/3`);
+      console.error(`[MultiVersionIndexer] Completed in ${indexingTimeMs}ms`);
+      console.error(`[MultiVersionIndexer] Total units: ${totalUnits}, Cache hits: ${cacheHits}/3`);
 
       return {
         base: baseIndex,
@@ -137,13 +137,13 @@ export class MultiVersionIndexer {
    * 3. If no → checkout branch, run full index, save to cache
    */
   private async indexBranch(branch: string, label: string, options: IndexingOptions): Promise<VersionedIndex> {
-    console.log(`[MultiVersionIndexer] Indexing ${label}...`);
+    console.error(`[MultiVersionIndexer] Indexing ${label}...`);
 
     // Check if we can use cached index
     if (!options.fullScan && !options.reset) {
       const cachedIndex = await this.loadCachedIndex(branch);
       if (cachedIndex) {
-        console.log(`[MultiVersionIndexer] Loaded ${label} from cache`);
+        console.error(`[MultiVersionIndexer] Loaded ${label} from cache`);
         return cachedIndex;
       }
     }
@@ -155,6 +155,9 @@ export class MultiVersionIndexer {
     await this.gitIntegration.checkoutBranch(branch);
 
     // 2. Get DevAgent for indexing
+    if (!this.conductor) {
+      throw new Error("ConductorOrchestrator is required for fresh indexing");
+    }
     const container = getGlobalContainer();
     const devAgent = await getOrCreateAgent(container, this.conductor, AgentType.DEV);
 
@@ -165,7 +168,7 @@ export class MultiVersionIndexer {
     await this.saveCachedIndex(branch, index);
 
     const elapsed = Date.now() - startTime;
-    console.log(`[MultiVersionIndexer] Indexed ${label} in ${elapsed}ms (${index.stats.totalUnits} units)`);
+    console.error(`[MultiVersionIndexer] Indexed ${label} in ${elapsed}ms (${index.stats.totalUnits} units)`);
 
     return index;
   }
@@ -178,9 +181,7 @@ export class MultiVersionIndexer {
     const repoPath = (this.gitIntegration as any).config.repoPath as string;
 
     // Use DevAgent to perform indexing
-    // Note: This is a simplified version - actual implementation would need to
-    // coordinate with ParserAgent, IndexerAgent, etc. through DevAgent
-    await (devAgent as any).execute?.({
+    const result = await (devAgent as any).execute?.({
       task: "index_codebase",
       params: {
         directory: repoPath,
@@ -191,9 +192,7 @@ export class MultiVersionIndexer {
       },
     });
 
-    // Extract VersionedIndex from result
-    // For now, we create a minimal index structure
-    // TODO: Integrate with actual indexing pipeline
+    // Build VersionedIndex from DevAgent result
     const index: VersionedIndex = {
       branch,
       indexedAt: new Date(),
@@ -210,10 +209,134 @@ export class MultiVersionIndexer {
       },
     };
 
-    // TODO: Populate index from DevAgent result
-    // This would involve loading data from the branch-specific database
+    // Populate index from DevAgent result if available
+    if (result?.entities) {
+      for (const entity of result.entities) {
+        const codeUnit = this.entityToCodeUnit(entity);
+        this.addUnitToIndex(index, codeUnit);
+      }
+    } else {
+      // Fallback: load from GraphStorage via conductor
+      await this.populateIndexFromStorage(index);
+    }
 
     return index;
+  }
+
+  /**
+   * Convert entity from DevAgent to CodeUnit
+   */
+  private entityToCodeUnit(entity: any): import("../models/code-unit.js").CodeUnit {
+    const { ContentNormalizer } = require("./content-normalizer.js");
+    const normalizer = new ContentNormalizer();
+
+    const content = entity.content || "";
+    const contentHash = normalizer.computeContentHash(content);
+
+    return {
+      id: entity.id,
+      type: this.mapEntityType(entity.type),
+      filePath: entity.filePath || "",
+      name: entity.name || "",
+      fullyQualifiedName: entity.fullyQualifiedName || entity.name || "",
+      startLine: entity.startLine || 1,
+      endLine: entity.endLine || 1,
+      content,
+      contentHash,
+      structuralHash: entity.structuralHash || contentHash,
+      signature: entity.signature,
+      language: entity.language || "unknown",
+      parentId: entity.parentId,
+      childIds: entity.childIds || [],
+      metadata: entity.metadata || {},
+    };
+  }
+
+  /**
+   * Map entity type string to CodeUnitType
+   */
+  private mapEntityType(type: string): import("../models/code-unit.js").CodeUnitType {
+    const { CodeUnitType } = require("../models/code-unit.js");
+    const typeMap: Record<string, any> = {
+      file: CodeUnitType.File,
+      module: CodeUnitType.Module,
+      class: CodeUnitType.Class,
+      interface: CodeUnitType.Interface,
+      function: CodeUnitType.Function,
+      method: CodeUnitType.Method,
+      property: CodeUnitType.Property,
+    };
+    return typeMap[type?.toLowerCase()] || CodeUnitType.Block;
+  }
+
+  /**
+   * Add a CodeUnit to the index with all hash indexes
+   */
+  private addUnitToIndex(index: VersionedIndex, unit: import("../models/code-unit.js").CodeUnit): void {
+    // Add to main units map
+    index.units.set(unit.id, unit);
+
+    // Add to contentHash index
+    if (!index.contentHashIndex.has(unit.contentHash)) {
+      index.contentHashIndex.set(unit.contentHash, []);
+    }
+    index.contentHashIndex.get(unit.contentHash)!.push(unit.id);
+
+    // Add to structuralHash index
+    if (!index.structuralHashIndex.has(unit.structuralHash)) {
+      index.structuralHashIndex.set(unit.structuralHash, []);
+    }
+    index.structuralHashIndex.get(unit.structuralHash)!.push(unit.id);
+
+    // Add to signature index if available
+    if (unit.signature) {
+      if (!index.signatureIndex.has(unit.signature)) {
+        index.signatureIndex.set(unit.signature, []);
+      }
+      index.signatureIndex.get(unit.signature)!.push(unit.id);
+    }
+
+    // Add to filePath index
+    if (!index.filePathIndex.has(unit.filePath)) {
+      index.filePathIndex.set(unit.filePath, []);
+    }
+    index.filePathIndex.get(unit.filePath)!.push(unit.id);
+
+    // Update stats
+    index.stats.totalUnits++;
+    index.stats.byType.set(unit.type, (index.stats.byType.get(unit.type) || 0) + 1);
+    index.stats.byLanguage.set(unit.language, (index.stats.byLanguage.get(unit.language) || 0) + 1);
+    index.stats.byFile.set(unit.filePath, (index.stats.byFile.get(unit.filePath) || 0) + 1);
+  }
+
+  /**
+   * Populate index from GraphStorage (fallback when DevAgent result is unavailable)
+   */
+  private async populateIndexFromStorage(index: VersionedIndex): Promise<void> {
+    try {
+      // Get GraphStorage from conductor
+      const storage = (this.conductor as any).getGraphStorage?.();
+      if (!storage) {
+        console.warn("[MultiVersionIndexer] GraphStorage not available for fallback");
+        return;
+      }
+
+      // Load all entities from storage
+      const entities = await storage.getAllEntities?.();
+      if (!entities || entities.length === 0) {
+        console.warn("[MultiVersionIndexer] No entities found in GraphStorage");
+        return;
+      }
+
+      for (const entity of entities) {
+        const codeUnit = this.entityToCodeUnit(entity);
+        this.addUnitToIndex(index, codeUnit);
+      }
+
+      console.error(`[MultiVersionIndexer] Loaded ${index.stats.totalUnits} units from GraphStorage`);
+    } catch (error) {
+      console.error("[MultiVersionIndexer] Failed to populate from storage:", error);
+    }
   }
 
   /**
@@ -235,14 +358,13 @@ export class MultiVersionIndexer {
       // Check if index is up-to-date
       const currentCommit = this.gitIntegration.getCommitHash(branch);
       if (metadata.lastCommitHash !== currentCommit) {
-        console.log(
+        console.error(
           `[MultiVersionIndexer] Cache outdated for ${branch} (${metadata.lastCommitHash?.slice(0, 8)} vs ${currentCommit.slice(0, 8)})`,
         );
         return null;
       }
 
       // Load index from database
-      // TODO: Implement actual loading from SQLite
       const index: VersionedIndex = {
         branch,
         indexedAt: new Date(metadata.lastIndexedAt),
@@ -252,12 +374,17 @@ export class MultiVersionIndexer {
         signatureIndex: new Map(),
         filePathIndex: new Map(),
         stats: {
-          totalUnits: metadata.entityCount,
+          totalUnits: 0,
           byType: new Map(),
           byLanguage: new Map(),
           byFile: new Map(),
         },
       };
+
+      // BranchManager provides getBranchDbPath but not direct database access
+      // For cached indexes, we use metadata counts
+      // Full entity loading happens during fresh indexing via populateIndexFromStorage
+      index.stats.totalUnits = metadata.entityCount;
 
       // Mark as cache hit
       (index as any)._fromCache = true;
@@ -292,7 +419,7 @@ export class MultiVersionIndexer {
         accessedAt: Date.now(),
       });
 
-      console.log(`[MultiVersionIndexer] Saved cache for ${branch} (${commitHash.slice(0, 8)})`);
+      console.error(`[MultiVersionIndexer] Saved cache for ${branch} (${commitHash.slice(0, 8)})`);
     } catch (error) {
       console.error(`[MultiVersionIndexer] Failed to save cached index for ${branch}:`, error);
     }

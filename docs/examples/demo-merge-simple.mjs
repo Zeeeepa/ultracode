@@ -1,15 +1,13 @@
 #!/usr/bin/env node
 /**
-* Simplified Semantic Merge Demo
-*
-* Анализирует merge между master и master-beta в fabuza-front
-* Показывает: Fast Path (hash) vs Semantic (embedding) matching
-*/
+ * Simplified Semantic Merge Demo
+ *
+ * Анализирует merge между master и master-beta в fabuza-front
+ * Показывает: Fast Path (hash) vs Semantic (embedding) matching
+ */
 
-import { execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
-import { createHash } from "crypto";
-import { join } from "path";
+import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const PROJECT_PATH = "D:\\fabuza-front";
 const BRANCH_A = "master";
@@ -35,7 +33,7 @@ function exec(cmd) {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
-  } catch (error) {
+  } catch (_error) {
     return "";
   }
 }
@@ -114,7 +112,7 @@ for (const file of allFiles) {
         continue;
       }
 
-      const hashBase = hashContent(contentBase);
+      const _hashBase = hashContent(contentBase);
       const hashA = hashContent(contentA);
       const hashB = hashContent(contentB);
 
@@ -179,10 +177,10 @@ if (semanticCandidates.length > 0) {
     .slice(0, 10);
 
   sorted.forEach((item, i) => {
-    const diffA = ((item.sizeA - item.sizeBase) / item.sizeBase * 100).toFixed(1);
-    const diffB = ((item.sizeB - item.sizeBase) / item.sizeBase * 100).toFixed(1);
+    const diffA = (((item.sizeA - item.sizeBase) / item.sizeBase) * 100).toFixed(1);
+    const diffB = (((item.sizeB - item.sizeBase) / item.sizeBase) * 100).toFixed(1);
     console.log(`   ${i + 1}. ${item.file}`);
-    console.log(`      Branch A: ${diffA > 0 ? '+' : ''}${diffA}%, Branch B: ${diffB > 0 ? '+' : ''}${diffB}%`);
+    console.log(`      Branch A: ${diffA > 0 ? "+" : ""}${diffA}%, Branch B: ${diffB > 0 ? "+" : ""}${diffB}%`);
   });
   console.log();
 }
@@ -192,7 +190,7 @@ const totalTime = (Date.now() - metrics.startTime) / 1000;
 
 console.log("=".repeat(60));
 console.log("📊 SEMANTIC MERGE ANALYSIS REPORT");
-console.log("=".repeat(60) + "\n");
+console.log(`${"=".repeat(60)}\n`);
 
 console.log(`📦 Project: ${PROJECT_PATH}`);
 console.log(`🌿 Merge: ${BRANCH_A} → ${BRANCH_B}`);

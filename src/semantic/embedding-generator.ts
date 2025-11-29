@@ -123,7 +123,7 @@ export class EmbeddingGenerator {
         try {
           await this.provider.initialize();
           if (this.debugMode) {
-            console.log(
+            console.error(
               `[EmbeddingGenerator] Provider initialized: ${this.provider.info.name} (${this.provider.info.model})`,
             );
           }
@@ -150,7 +150,7 @@ export class EmbeddingGenerator {
     if (!this.provider && !this.isInitializing) {
       await this.initialize();
     } else if (this.isInitializing && this.fallback) {
-      if (this.debugMode) console.log("[EmbeddingGenerator] fallback during init");
+      if (this.debugMode) console.error("[EmbeddingGenerator] fallback during init");
       return this.fallback.embed(normalizeText(text));
     }
 
@@ -286,7 +286,7 @@ export class EmbeddingGenerator {
     const normalized = Number.isFinite(size) ? Math.max(1, Math.floor(size)) : (this.config.batchSize ?? 8);
     this.config.batchSize = normalized;
     if (this.debugMode) {
-      console.log(`[EmbeddingGenerator] Batch size updated to ${normalized}`);
+      console.error(`[EmbeddingGenerator] Batch size updated to ${normalized}`);
     }
   }
 
@@ -324,7 +324,7 @@ export class EmbeddingGenerator {
     this.cache.clear();
     this.cacheHits = 0;
     this.cacheMisses = 0;
-    console.log("[EmbeddingGenerator] Cache cleared");
+    console.error("[EmbeddingGenerator] Cache cleared");
   }
 
   getCacheStats(): { size: number; hits: number; misses: number; hitRate: number } {
@@ -344,6 +344,6 @@ export class EmbeddingGenerator {
     this.provider = null;
     this.fallback = null;
     this.initPromise = null;
-    console.log("[EmbeddingGenerator] Cleaned up");
+    console.error("[EmbeddingGenerator] Cleaned up");
   }
 }

@@ -28,7 +28,7 @@ class VectorDatabaseMigrator {
 
   async migrate(): Promise<MigrationResult> {
     try {
-      console.log(`🔧 Starting migration for: ${this.dbPath}`);
+      console.error(`🔧 Starting migration for: ${this.dbPath}`);
 
       if (!existsSync(this.dbPath)) {
         return {
@@ -39,7 +39,7 @@ class VectorDatabaseMigrator {
 
       // Create backup
       const backupPath = await this.createBackup();
-      console.log(`📦 Backup created: ${backupPath}`);
+      console.error(`📦 Backup created: ${backupPath}`);
 
       // Open database
       this.db = new Database(this.dbPath);
@@ -48,7 +48,7 @@ class VectorDatabaseMigrator {
       const hasIssue = await this.checkForeignKeyIssue();
 
       if (!hasIssue) {
-        console.log("✅ Database schema is already correct");
+        console.error("✅ Database schema is already correct");
         return {
           success: true,
           message: "Database schema is already up to date",
@@ -59,7 +59,7 @@ class VectorDatabaseMigrator {
       // Perform migration
       const fixedTables = await this.fixForeignKeyConstraints();
 
-      console.log("✅ Migration completed successfully");
+      console.error("✅ Migration completed successfully");
 
       return {
         success: true,
@@ -116,12 +116,12 @@ class VectorDatabaseMigrator {
       const tableInfo = this.db.prepare("PRAGMA foreign_key_list(embeddings)").all() as Array<any>;
       const hasForeignKey = tableInfo.some((fk) => fk.table === "vec_embeddings");
 
-      console.log(`📊 Tables found: embeddings=${hasEmbeddings}, vec_embeddings=${hasVecEmbeddings}`);
-      console.log(`🔗 Foreign key constraint exists: ${hasForeignKey}`);
+      console.error(`📊 Tables found: embeddings=${hasEmbeddings}, vec_embeddings=${hasVecEmbeddings}`);
+      console.error(`🔗 Foreign key constraint exists: ${hasForeignKey}`);
 
       return hasForeignKey;
     } catch (_error) {
-      console.log("⚠️ Error checking schema, assuming migration needed");
+      console.error("⚠️ Error checking schema, assuming migration needed");
       return true;
     }
   }
@@ -141,7 +141,7 @@ class VectorDatabaseMigrator {
         .get();
 
       if (embeddingsExists) {
-        console.log("🔄 Recreating embeddings table without foreign key constraint...");
+        console.error("🔄 Recreating embeddings table without foreign key constraint...");
 
         // Get current data
         const currentData = this.db.prepare("SELECT * FROM embeddings").all();
@@ -185,7 +185,7 @@ class VectorDatabaseMigrator {
         this.db.exec("DROP TABLE embeddings_old");
 
         fixedTables.push("embeddings");
-        console.log("✅ Embeddings table recreated without foreign key constraint");
+        console.error("✅ Embeddings table recreated without foreign key constraint");
       }
 
       // Ensure vec_embeddings virtual table exists if sqlite-vec is available
@@ -196,9 +196,9 @@ class VectorDatabaseMigrator {
             embedding float[384]
           );
         `);
-        console.log("✅ vec_embeddings virtual table ensured");
+        console.error("✅ vec_embeddings virtual table ensured");
       } catch (_error) {
-        console.log("⚠️ sqlite-vec extension not available, using fallback structure");
+        console.error("⚠️ sqlite-vec extension not available, using fallback structure");
       }
     } finally {
       // Re-enable foreign key checks
@@ -213,19 +213,19 @@ class VectorDatabaseMigrator {
 async function main() {
   const dbPath = process.argv[2] || "./vectors.db";
 
-  console.log("🚀 Vector Database Migration Tool");
-  console.log("==================================");
+  console.error("🚀 Vector Database Migration Tool");
+  console.error("==================================");
 
   const migrator = new VectorDatabaseMigrator(dbPath);
   const result = await migrator.migrate();
 
   if (result.success) {
-    console.log(`✅ ${result.message}`);
+    console.error(`✅ ${result.message}`);
     if (result.backupCreated) {
-      console.log(`📦 Backup: ${result.backupCreated}`);
+      console.error(`📦 Backup: ${result.backupCreated}`);
     }
     if (result.tablesFixed?.length) {
-      console.log(`🔧 Fixed tables: ${result.tablesFixed.join(", ")}`);
+      console.error(`🔧 Fixed tables: ${result.tablesFixed.join(", ")}`);
     }
     process.exit(0);
   } else {

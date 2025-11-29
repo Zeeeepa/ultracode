@@ -3,13 +3,15 @@
  *
  * Priority order (highest to lowest):
  * 1. CUDA (100-200x speedup, NVIDIA only)
- * 2. WebGPU (50-100x speedup, all GPUs)
- * 3. WASM SIMD (4-8x speedup, CPU SIMD)
- * 4. Pure JS (1.45x speedup, baseline)
+ * 2. Metal (50-100x speedup, Apple Silicon only)
+ * 3. WebGPU (50-100x speedup, all GPUs)
+ * 4. WASM SIMD (4-8x speedup, CPU SIMD)
+ * 5. Pure JS (1.45x speedup, baseline)
  *
  * Graceful degradation: tries each backend in order, uses first available.
  */
 
+import { arch, platform } from "node:os";
 import type { VectorBackend } from "./backends/base.js";
 import { JSBackend } from "./backends/js-backend.js";
 import { GPUDetector } from "./detection/gpu-detector.js";
@@ -33,14 +35,14 @@ export class BackendSelector {
    */
   async initialize(): Promise<VectorBackend> {
     if (this.selectedBackend) {
-      console.log(`[BackendSelector] Already initialized: ${this.selectedBackend.name}`);
+      console.error(`[BackendSelector] Already initialized: ${this.selectedBackend.name}`);
       return this.selectedBackend;
     }
 
-    console.log("[BackendSelector] Detecting GPU capabilities...");
+    console.error("[BackendSelector] Detecting GPU capabilities...");
     const gpuInfo = await GPUDetector.detect();
 
-    console.log("[BackendSelector] System GPU:", {
+    console.error("[BackendSelector] System GPU:", {
       vendor: gpuInfo.vendor,
       model: gpuInfo.model,
       computeCapability: gpuInfo.computeCapability,
@@ -67,7 +69,19 @@ export class BackendSelector {
       });
     }
 
-    // 2. WebGPU (universal GPU)
+    // 2. Metal (Apple Silicon only)
+    if (platform() === "darwin" && arch() === "arm64") {
+      candidates.push({
+        name: "Metal",
+        priority: 95,
+        factory: async () => {
+          const { MetalBackend } = await import("./backends/metal-backend.js");
+          return new MetalBackend();
+        },
+      });
+    }
+
+    // 3. WebGPU (universal GPU)
     if (gpuInfo.webgpuAvailable) {
       candidates.push({
         name: "WebGPU",
@@ -79,7 +93,7 @@ export class BackendSelector {
       });
     }
 
-    // 3. WASM SIMD (CPU fallback)
+    // 4. WASM SIMD (CPU fallback)
     candidates.push({
       name: "WASM SIMD",
       priority: 50,
@@ -89,7 +103,7 @@ export class BackendSelector {
       },
     });
 
-    // 4. Pure JS (ultimate fallback, always available)
+    // 5. Pure JS (ultimate fallback, always available)
     candidates.push({
       name: "Pure JS",
       priority: 1,
@@ -99,12 +113,12 @@ export class BackendSelector {
     // Try each backend in priority order
     for (const candidate of candidates) {
       try {
-        console.log(`[BackendSelector] Trying ${candidate.name}...`);
+        console.error(`[BackendSelector] Trying ${candidate.name}...`);
         const backend = await candidate.factory();
 
         const available = await backend.isAvailable();
         if (!available) {
-          console.log(`[BackendSelector] ${candidate.name} not available`);
+          console.error(`[BackendSelector] ${candidate.name} not available`);
           continue;
         }
 
@@ -114,10 +128,10 @@ export class BackendSelector {
         // Select first available (highest priority)
         if (!this.selectedBackend) {
           this.selectedBackend = backend;
-          console.log(`[BackendSelector] ✅ Selected: ${candidate.name} (priority: ${candidate.priority})`);
+          console.error(`[BackendSelector] ✅ Selected: ${candidate.name} (priority: ${candidate.priority})`);
 
           const caps = backend.getCapabilities();
-          console.log("[BackendSelector] Capabilities:", {
+          console.error("[BackendSelector] Capabilities:", {
             maxVectors: caps.maxVectorCount.toLocaleString(),
             maxDim: caps.maxDimension,
             batching: caps.supportsBatching,
@@ -147,7 +161,7 @@ export class BackendSelector {
   /**
    * Force switch to specific backend (for testing/benchmarking)
    */
-  async switchBackend(type: "cuda" | "webgpu" | "wasm" | "js"): Promise<VectorBackend> {
+  async switchBackend(type: "cuda" | "metal" | "webgpu" | "wasm" | "js"): Promise<VectorBackend> {
     const backend = this.availableBackends.find((b) => b.type === type);
     if (!backend) {
       throw new Error(
@@ -156,7 +170,7 @@ export class BackendSelector {
     }
 
     this.selectedBackend = backend;
-    console.log(`[BackendSelector] Switched to: ${backend.name}`);
+    console.error(`[BackendSelector] Switched to: ${backend.name}`);
     return backend;
   }
 
@@ -184,7 +198,7 @@ export class BackendSelector {
    * Cleanup all backends
    */
   async close(): Promise<void> {
-    console.log("[BackendSelector] Closing all backends...");
+    console.error("[BackendSelector] Closing all backends...");
     for (const backend of this.availableBackends) {
       await backend.close();
     }

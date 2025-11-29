@@ -266,7 +266,7 @@ export class TreeSitterParser {
     if (this.initialized) return;
     this.parser = new Parser();
     this.initialized = true;
-    console.log("[TreeSitterParser] Initialization complete");
+    console.error("[TreeSitterParser] Initialization complete");
   }
 
   private getFromCache(key: string): ParseCacheEntry | undefined {
@@ -292,7 +292,7 @@ export class TreeSitterParser {
       const lang = await loader();
       if (!lang) throw new Error(`Language loader returned empty result for ${language}`);
       this.languages.set(language, lang);
-      console.log(`[TreeSitterParser] Loaded language: ${language}`);
+      console.error(`[TreeSitterParser] Loaded language: ${language}`);
       return lang;
     } catch (e: any) {
       throw new Error(`[TreeSitterParser] Language '${language}' is not available: ${e?.message || e}`);
@@ -398,87 +398,91 @@ export class TreeSitterParser {
       const py = await this.pythonAnalyzer.analyzePythonCode(filePath, tree.rootNode as any, content);
       entities = py.entities;
       relationships = py.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] Python analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else if (language === "rust") {
       const ru = await this.rustAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ru.entities || [];
       relationships = ru.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] Rust analysis: ${entities.length} entities, ${relationships.length} relationships, ${(ru as any).patterns?.length || 0} patterns`,
       );
     } else if (language === "c") {
       const ca = await this.cAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ca.entities || [];
       relationships = ca.relationships || [];
-      console.log(`[TreeSitterParser] C analysis: ${entities.length} entities, ${relationships.length} relationships`);
+      console.error(
+        `[TreeSitterParser] C analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
     } else if (language === "cpp") {
       const cp = await this.cppAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = cp.entities || [];
       relationships = cp.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] C++ analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else if (language === "go") {
       const ga = await this.goAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ga.entities || [];
       relationships = ga.relationships || [];
-      console.log(`[TreeSitterParser] Go analysis: ${entities.length} entities, ${relationships.length} relationships`);
+      console.error(
+        `[TreeSitterParser] Go analysis: ${entities.length} entities, ${relationships.length} relationships`,
+      );
     } else if (language === "java") {
       const ja = await this.javaAnalyzer.analyze(tree.rootNode as any, filePath);
       entities = ja.entities || [];
       relationships = ja.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] Java analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else if (language === "kotlin") {
       entities = [];
       relationships = [];
       await this.kotlinAnalyzer.analyze(tree.rootNode as any, filePath, entities, relationships);
-      console.log(
+      console.error(
         `[TreeSitterParser] Kotlin analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else if (language === "swift") {
       entities = [];
       relationships = [];
       await this.swiftAnalyzer.analyze(tree.rootNode as any, filePath, entities, relationships);
-      console.log(
+      console.error(
         `[TreeSitterParser] Swift analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else if (language === "css") {
       entities = [];
       relationships = [];
       await this.cssAnalyzer.analyze(tree.rootNode as any, filePath, entities, relationships);
-      console.log(
+      console.error(
         `[TreeSitterParser] CSS analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else if (language === "html") {
       entities = [];
       relationships = [];
       await this.htmlAnalyzer.analyze(tree.rootNode as any, filePath, entities, relationships);
-      console.log(
+      console.error(
         `[TreeSitterParser] HTML analysis: ${entities.length} entities, ${relationships.length} relationships`,
       );
     } else if (language === "bash") {
       const ba = await this.bashAnalyzer.analyze(tree.rootNode as any, filePath, content);
       entities = ba.entities || [];
       relationships = ba.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] Bash analysis: ${entities.length} entities, ${relationships.length} relationships, ${ba.validationIssues.length} validation issues`,
       );
     } else if (language === "powershell") {
       const ps = await this.powershellAnalyzer.analyze(tree.rootNode as any, filePath, content);
       entities = ps.entities || [];
       relationships = ps.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] PowerShell analysis: ${entities.length} entities, ${relationships.length} relationships, ${ps.validationIssues.length} validation issues`,
       );
     } else if (language === "batch") {
       const bt = await this.batchAnalyzer.analyze(tree.rootNode as any, filePath, content);
       entities = bt.entities || [];
       relationships = bt.relationships || [];
-      console.log(
+      console.error(
         `[TreeSitterParser] Batch analysis: ${entities.length} entities, ${relationships.length} relationships, ${bt.validationIssues.length} validation issues`,
       );
     } else {

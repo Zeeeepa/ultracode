@@ -182,14 +182,14 @@ export function getRuntimeDescription(): string {
  */
 export function logRuntimeInfo(): void {
   const info = runtime.versionInfo;
-  console.log(`[Runtime] ${info.runtime} v${info.version}${info.v8 ? ` (V8: ${info.v8})` : ""}`);
+  console.error(`[Runtime] ${info.runtime} v${info.version}${info.v8 ? ` (V8: ${info.v8})` : ""}`);
 
   if (runtime.isBun) {
     const enabledFeatures = Object.entries(features)
       .filter(([, enabled]) => enabled)
       .map(([name]) => name.replace("bun", "").toLowerCase())
       .join(", ");
-    console.log(`[Runtime] Bun features: ${enabledFeatures}`);
+    console.error(`[Runtime] Bun features: ${enabledFeatures}`);
   }
 }
 

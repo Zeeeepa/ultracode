@@ -18,10 +18,12 @@
 
 import { LRUCache } from "lru-cache";
 import type { ILayeredVectorIndex } from "../core/layered-index.js";
+import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { VectorDelta as IVectorDelta, LayeredIndexConfig } from "../types/layered.js";
 import type { SimilarityResult } from "../types/semantic.js";
 import { cosineSimilarity } from "../utils/simd-vector-ops.js";
+import { VectorCacheManager } from "./vector-cache-manager.js";
 import { VectorDelta } from "./vector-delta.js";
 
 // =============================================================================
@@ -53,10 +55,13 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
   // Configuration
   private config: LayeredIndexConfig;
 
-  // External dependencies (to be injected)
-  private cacheManager: any = null; // TODO: Type when implemented
+  // External dependencies
+  private cacheManager: VectorCacheManager | null = null;
+  private embeddingGenerator: EmbeddingGenerator | null = null;
+  private workingDirectory: string | null = null;
 
-  constructor(baseStore: VectorStore, config: LayeredIndexConfig) {
+  constructor(baseStore: VectorStore, config: LayeredIndexConfig, workingDirectory?: string) {
+    this.workingDirectory = workingDirectory || null;
     this.baseStore = baseStore;
     this.config = config;
 
@@ -68,7 +73,18 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
       },
     });
 
-    console.log(`[LayeredVectorStore] Initialized with max ${this.config.maxBranchDeltas} branch deltas`);
+    // Initialize cache manager for persistence
+    if (this.config.enablePersistence && this.workingDirectory) {
+      this.cacheManager = new VectorCacheManager(this.workingDirectory);
+    }
+
+    // Initialize embedding generator
+    this.embeddingGenerator = new EmbeddingGenerator();
+    this.embeddingGenerator.initialize().catch((err) => {
+      console.warn("[LayeredVectorStore] Failed to initialize embedding generator:", err);
+    });
+
+    console.error(`[LayeredVectorStore] Initialized with max ${this.config.maxBranchDeltas} branch deltas`);
   }
 
   // =========================================================================
@@ -117,13 +133,18 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
       layer1Time = Date.now() - layer1Start;
     }
 
-    // Layer 2: Apply working delta [FUTURE]
+    // Layer 2: Apply working delta
     let finalResults = layer1Results;
     let layer2Time = 0;
 
     if (this.config.enableWorkingDeltas && clientId && branch) {
       const layer2Start = Date.now();
-      // TODO: Apply working delta
+      const workingDelta = this.getWorkingDelta(clientId, branch);
+
+      if (workingDelta) {
+        finalResults = this.applyBranchDelta(layer1Results, workingDelta, queryEmbedding);
+      }
+
       layer2Time = Date.now() - layer2Start;
     }
 
@@ -132,7 +153,7 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
 
     const totalTime = Date.now() - startTime;
 
-    console.log(
+    console.error(
       `[LayeredVectorStore] Search in '${branch || "main"}': ` +
         `${finalResults.length} results, ` +
         `L0=${layer0Time}ms L1=${layer1Time}ms L2=${layer2Time}ms Total=${totalTime}ms`,
@@ -197,17 +218,62 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
    *
    * @param branch - Branch name
    * @param entityIds - Entity IDs to generate embeddings for
+   * @param entityContents - Map of entity ID to content (code/text)
    */
-  async generateDeltaEmbeddings(branch: string, entityIds: string[]): Promise<void> {
-    console.log(`[LayeredVectorStore] Generating embeddings for ${entityIds.length} entities in branch ${branch}`);
+  async generateDeltaEmbeddings(
+    branch: string,
+    entityIds: string[],
+    entityContents?: Map<string, string>,
+  ): Promise<void> {
+    console.error(`[LayeredVectorStore] Generating embeddings for ${entityIds.length} entities in branch ${branch}`);
 
-    // TODO: Implementation
-    // 1. Get entity content by IDs
-    // 2. Generate embeddings using embedding model
-    // 3. Add to branch delta
-    // 4. Save delta
+    if (!this.embeddingGenerator) {
+      console.warn("[LayeredVectorStore] EmbeddingGenerator not available, skipping");
+      return;
+    }
 
-    console.log(`[LayeredVectorStore] TODO: Generate embeddings for branch delta`);
+    // Get or create branch delta
+    let delta = await this.getVectorDelta(branch);
+    if (!delta) {
+      delta = new VectorDelta(branch);
+    }
+
+    // Generate embeddings for each entity
+    for (const entityId of entityIds) {
+      const content = entityContents?.get(entityId);
+      if (!content) {
+        console.warn(`[LayeredVectorStore] No content for entity ${entityId}, skipping`);
+        continue;
+      }
+
+      try {
+        const embedding = await this.embeddingGenerator.generateCodeEmbedding(content);
+        delta.addVector(entityId, embedding);
+      } catch (error) {
+        console.error(`[LayeredVectorStore] Failed to generate embedding for ${entityId}:`, error);
+      }
+    }
+
+    // Save delta
+    await this.setVectorDelta(branch, delta);
+
+    console.error(`[LayeredVectorStore] Generated ${entityIds.length} embeddings for branch ${branch}`);
+  }
+
+  /**
+   * Get working delta for a client
+   */
+  private getWorkingDelta(clientId: string, branch: string): VectorDelta | null {
+    const key = `${clientId}:${branch}`;
+    return this.workingDeltas.get(key) || null;
+  }
+
+  /**
+   * Set working delta for a client
+   */
+  setWorkingDelta(clientId: string, branch: string, delta: VectorDelta): void {
+    const key = `${clientId}:${branch}`;
+    this.workingDeltas.set(key, delta);
   }
 
   // =========================================================================
@@ -281,11 +347,10 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
 
       results.push({
         id,
-        content: "", // TODO: fetch actual content from graph storage
+        content: "", // Content fetched separately from GraphStorage if needed
         similarity,
         layer: "branch" as const,
         branch: delta.branchName,
-        // Note: content/metadata not available in delta, will need to fetch if needed
       });
     }
 
@@ -327,7 +392,7 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
       return;
     }
 
-    console.log(`[LayeredVectorStore] Branch delta evicted from cache, saving: ${branch}`);
+    console.error(`[LayeredVectorStore] Branch delta evicted from cache, saving: ${branch}`);
 
     // Async save (don't block eviction)
     this.cacheManager
@@ -349,13 +414,14 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
    */
   async addVector(id: string, embedding: Float32Array, branch: string | null, _clientId: string | null): Promise<void> {
     if (!branch || this.isMainBranch(branch)) {
-      // TODO: Add to base store (VectorStore.add method needs implementation)
-      // await this.baseStore.add({
-      //   id,
-      //   embedding,
-      //   content: "", // Will be populated from entity data
-      // });
-      console.warn(`[LayeredVectorStore] addVector to base store not implemented (id: ${id})`);
+      // Add to base store
+      await this.baseStore.insert({
+        id,
+        content: "", // Content is stored separately in GraphStorage
+        vector: embedding,
+        metadata: { entityId: id, addedAt: Date.now() },
+        createdAt: Date.now(),
+      });
     } else {
       // Add to branch delta (Layer 1)
       let delta = await this.getVectorDelta(branch);
@@ -380,14 +446,16 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
    */
   async addVectorsBatch(vectors: Map<string, Float32Array>, branch: string | null): Promise<void> {
     if (!branch || this.isMainBranch(branch)) {
-      // TODO: Add to base store (VectorStore.addBatch method needs implementation)
-      // const embeddings = Array.from(vectors.entries()).map(([id, embedding]) => ({
-      //   id,
-      //   embedding,
-      //   content: "",
-      // }));
-      // await this.baseStore.addBatch(embeddings);
-      console.warn(`[LayeredVectorStore] addVectorsBatch to base store not implemented (count: ${vectors.size})`);
+      // Add to base store using insertBatch
+      const now = Date.now();
+      const embeddings = Array.from(vectors.entries()).map(([id, embedding]) => ({
+        id,
+        content: "", // Content is stored separately in GraphStorage
+        vector: embedding,
+        metadata: { entityId: id, addedAt: now },
+        createdAt: now,
+      }));
+      await this.baseStore.insertBatch(embeddings);
     } else {
       // Add to branch delta
       let delta = await this.getVectorDelta(branch);
@@ -434,7 +502,7 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
    * Shutdown vector store gracefully
    */
   async shutdown(): Promise<void> {
-    console.log("[LayeredVectorStore] Shutting down...");
+    console.error("[LayeredVectorStore] Shutting down...");
 
     // Save all cached deltas
     for (const [_branch, delta] of this.branchDeltaCache.entries()) {
@@ -447,6 +515,6 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
     this.branchDeltaCache.clear();
     this.workingDeltas.clear();
 
-    console.log("[LayeredVectorStore] Shutdown complete");
+    console.error("[LayeredVectorStore] Shutdown complete");
   }
 }

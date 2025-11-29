@@ -1,0 +1,15 @@
+# Compiled binaries
+*.com
+*.exe
+*.o
+*.obj
+
+# Debug symbols
+*.com.dbg
+*.aarch64.elf
+
+# Keep source and scripts
+!comm.c
+!Makefile
+!*.ps1
+!README.md

@@ -69,7 +69,7 @@ mcp:
 
 # Database Configuration
 database:
-  path: "./.ultrascript/db/vectors.db"
+  path: ""              # Empty = use centralized storage (%LOCALAPPDATA%/UltraScriptTools/projects/<hash>/)
   mode: "WAL"           # Options: WAL, DELETE, TRUNCATE
   cacheSize: 10000      # SQLite cache size
   mmapSize: 268435456   # 256MB memory mapping size
@@ -154,7 +154,7 @@ indexing:
   evictionStrategy: "LRU"           # Options: LRU, LFU, FIFO - how to evict old branches
   cleanupIntervalMs: 3600000        # 1 hour - automatic cleanup interval
   incrementalThreshold: 20          # If >20 files changed, do full reindex instead of incremental
-  dataDir: "./.ultrascript/branches"  # Directory for branch-scoped databases
+  dataDir: ""                         # Empty = use centralized storage (%LOCALAPPDATA%/UltraScriptTools/projects/<hash>/branches/)
 
 # Git Integration Configuration
 # Watches for Git branch changes and triggers automatic reindexing

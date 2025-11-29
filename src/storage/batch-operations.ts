@@ -155,7 +155,7 @@ export class BatchOperations {
     let totalProcessed = 0;
 
     // Log database path for debugging
-    console.log("[BatchOperations] Database path:", this.db.name || "unknown");
+    console.error("[BatchOperations] Database path:", this.db.name || "unknown");
 
     // Use cached prepared statement for better performance
     const insertStmt = this.getStatement(
@@ -214,7 +214,7 @@ export class BatchOperations {
 
               // DEBUG: Log insert result for first entity
               if (batch.indexOf(entity) === 0) {
-                console.log(`[BatchOperations] DEBUG: INSERT result for ${entity.name} (${id}):`, result);
+                console.error(`[BatchOperations] DEBUG: INSERT result for ${entity.name} (${id}):`, result);
               }
             }
           });
@@ -229,7 +229,7 @@ export class BatchOperations {
             const firstEntity = batch[0];
             if (firstEntity) {
               const exists = checkStmt.get(firstEntity.id);
-              console.log(
+              console.error(
                 `[BatchOperations] DEBUG: After insertEntities, first entity ${firstEntity.id} (${firstEntity.name}) exists=${!!exists}, result:`,
                 exists,
               );
@@ -302,7 +302,7 @@ export class BatchOperations {
       }
     }
 
-    console.log(
+    console.error(
       `[BatchOperations] DEBUG: insertRelationships called with ${relationships.length} rels, deduped to ${uniq.length}`,
     );
 
@@ -322,7 +322,7 @@ export class BatchOperations {
             if (firstRel) {
               const fromExists = checkStmt.get(firstRel.fromId);
               const toExists = checkStmt.get(firstRel.toId);
-              console.log(
+              console.error(
                 `[BatchOperations] DEBUG: First rel entity check: from=${firstRel.fromId} exists=${!!fromExists}, to=${firstRel.toId} exists=${!!toExists}`,
               );
             }
@@ -351,13 +351,13 @@ export class BatchOperations {
           }
         } catch (error) {
           attempts++;
-          console.log(
+          console.error(
             `[BatchOperations] DEBUG: insertRelationships error on attempt ${attempts}:`,
             error instanceof Error ? error.message : String(error),
           );
 
           if (attempts >= RETRY_ATTEMPTS) {
-            console.log(`[BatchOperations] DEBUG: Max retries reached, adding ${batch.length} rels to errors`);
+            console.error(`[BatchOperations] DEBUG: Max retries reached, adding ${batch.length} rels to errors`);
             for (const rel of batch) {
               errors.push({
                 item: rel,
@@ -587,7 +587,7 @@ export class BatchOperations {
       this.batchSize = Math.min(MAX_BATCH_SIZE, Math.floor(this.batchSize * 1.2));
     }
 
-    console.log(`[BatchOperations] Optimized batch size to ${this.batchSize}`);
+    console.error(`[BatchOperations] Optimized batch size to ${this.batchSize}`);
   }
 
   /**

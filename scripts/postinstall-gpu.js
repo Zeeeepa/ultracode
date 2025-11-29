@@ -38,7 +38,7 @@ function execCommand(command, options = {}) {
       ...options,
     });
     return true;
-  } catch (error) {
+  } catch (_error) {
     return false;
   }
 }
@@ -147,7 +147,7 @@ async function buildWASM() {
   }
 }
 
-async function buildCUDA() {
+async function _buildCUDA() {
   log("\n🚀 CUDA Native Backend", COLORS.bright);
   log("═".repeat(50), COLORS.gray);
 

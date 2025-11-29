@@ -86,7 +86,7 @@ export class WorkerPoolManager {
     }
 
     await Promise.all(initPromises);
-    console.log(`[WorkerPoolManager] Initialized ${this.poolSize} workers`);
+    console.error(`[WorkerPoolManager] Initialized ${this.poolSize} workers`);
   }
 
   /**
@@ -278,7 +278,7 @@ export class WorkerPoolManager {
       }
 
       case "initialized":
-        console.log(`[WorkerPoolManager] Worker ${workerId} initialized`);
+        console.error(`[WorkerPoolManager] Worker ${workerId} initialized`);
         break;
 
       case "ready":
@@ -347,7 +347,7 @@ export class WorkerPoolManager {
    * Shutdown the worker pool
    */
   async shutdown(): Promise<void> {
-    console.log(`[WorkerPoolManager] Shutting down ${this.workers.size} workers...`);
+    console.error(`[WorkerPoolManager] Shutting down ${this.workers.size} workers...`);
 
     // Reject all pending tasks
     for (const task of this.pendingTasks.values()) {
@@ -366,7 +366,7 @@ export class WorkerPoolManager {
       state.worker.postMessage({ type: "shutdown" });
       terminationPromises.push(
         state.worker.terminate().then(() => {
-          console.log(`[WorkerPoolManager] Worker ${state.id} terminated`);
+          console.error(`[WorkerPoolManager] Worker ${state.id} terminated`);
         }),
       );
     }
@@ -374,6 +374,6 @@ export class WorkerPoolManager {
     await Promise.all(terminationPromises);
     this.workers.clear();
 
-    console.log("[WorkerPoolManager] Shutdown complete");
+    console.error("[WorkerPoolManager] Shutdown complete");
   }
 }

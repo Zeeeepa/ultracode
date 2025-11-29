@@ -18,11 +18,7 @@ async function example1_createSnapshot() {
   // Create snapshot of specific files
   const result = await mcpClient.callTool("create_snapshot", {
     description: "Before refactoring authentication module",
-    files: [
-      "src/auth/login.ts",
-      "src/auth/register.ts",
-      "src/auth/middleware.ts"
-    ]
+    files: ["src/auth/login.ts", "src/auth/register.ts", "src/auth/middleware.ts"],
   });
 
   console.log("Snapshot created:", result.snapshotId);
@@ -34,11 +30,11 @@ async function example1_createSnapshot() {
  */
 async function example2_listSnapshots() {
   const result = await mcpClient.callTool("list_snapshots", {
-    limit: 10
+    limit: 10,
   });
 
   console.log(`Found ${result.count} snapshots:`);
-  result.snapshots.forEach(snap => {
+  result.snapshots.forEach((snap) => {
     console.log(`  ${snap.id}: ${snap.description} (${snap.timestamp})`);
   });
 }
@@ -49,7 +45,7 @@ async function example2_listSnapshots() {
 async function example3_rollback() {
   // Something went wrong, rollback!
   const result = await mcpClient.callTool("rollback_snapshot", {
-    snapshotId: "snap_20250117_143022"
+    snapshotId: "snap_20250117_143022",
   });
 
   console.log("Rollback successful:", result.message);
@@ -60,7 +56,7 @@ async function example3_rollback() {
  */
 async function example4_cleanup() {
   const result = await mcpClient.callTool("cleanup_snapshots", {
-    olderThanDays: 30
+    olderThanDays: 30,
   });
 
   console.log(`Deleted ${result.deletedCount} old snapshots`);
@@ -76,12 +72,10 @@ async function example4_cleanup() {
 async function example5_previewModification() {
   // First, find the entity to modify
   const entities = await mcpClient.callTool("list_file_entities", {
-    filePath: "src/utils/helpers.ts"
+    filePath: "src/utils/helpers.ts",
   });
 
-  const calculateTotalEntity = entities.find(e =>
-    e.name === "calculateTotal" && e.type === "function"
-  );
+  const calculateTotalEntity = entities.find((e) => e.name === "calculateTotal" && e.type === "function");
 
   // Preview the change (default: preview=true)
   const result = await mcpClient.callTool("modify_entity_code", {
@@ -91,7 +85,7 @@ export function calculateTotal(items: Item[]): number {
   // Improved implementation with reduce
   return items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 }`,
-    preview: true  // Shows diff without applying
+    preview: true, // Shows diff without applying
   });
 
   console.log("Preview:");
@@ -110,10 +104,10 @@ async function example6_applyModification() {
 export function calculateTotal(items: Item[]): number {
   return items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 }`,
-    preview: false,  // Actually apply changes
+    preview: false, // Actually apply changes
     preserveComments: true,
     updateImports: true,
-    skipValidation: false
+    skipValidation: false,
   });
 
   console.log("Modification applied:");
@@ -141,7 +135,7 @@ async function example7_copyFile() {
     source: "src/components/Button.tsx",
     target: "src/components/IconButton.tsx",
     preview: false,
-    updateGraph: true
+    updateGraph: true,
   });
 
   console.log(`Copied file:`);
@@ -157,8 +151,8 @@ async function example8_renameFile() {
     oldPath: "src/utils/string-helpers.ts",
     newPath: "src/utils/text-utilities.ts",
     preview: false,
-    updateImports: true,  // Automatically updates all import statements!
-    updateGraph: true
+    updateImports: true, // Automatically updates all import statements!
+    updateGraph: true,
   });
 
   console.log(`Renamed file:`);
@@ -173,22 +167,22 @@ async function example8_renameFile() {
 async function example9_splitFile() {
   // Find entities to extract
   const entities = await mcpClient.callTool("list_file_entities", {
-    filePath: "src/utils/helpers.ts"
+    filePath: "src/utils/helpers.ts",
   });
 
   // Extract UserHelper and OrderHelper classes to separate files
-  const userHelperEntity = entities.find(e => e.name === "UserHelper");
-  const orderHelperEntity = entities.find(e => e.name === "OrderHelper");
+  const userHelperEntity = entities.find((e) => e.name === "UserHelper");
+  const orderHelperEntity = entities.find((e) => e.name === "OrderHelper");
 
   const result = await mcpClient.callTool("split_file", {
     filePath: "src/utils/helpers.ts",
     entityIds: [userHelperEntity.id, orderHelperEntity.id],
     preview: false,
-    updateGraph: true
+    updateGraph: true,
   });
 
   console.log(`Split file into ${result.filesAffected.length} files:`);
-  result.filesAffected.forEach(f => console.log(`  - ${f}`));
+  result.filesAffected.forEach((f) => console.log(`  - ${f}`));
 }
 
 /**
@@ -196,15 +190,11 @@ async function example9_splitFile() {
  */
 async function example10_synthesizeFiles() {
   const result = await mcpClient.callTool("synthesize_files", {
-    files: [
-      "src/models/user/User.ts",
-      "src/models/user/UserProfile.ts",
-      "src/models/user/UserSettings.ts"
-    ],
+    files: ["src/models/user/User.ts", "src/models/user/UserProfile.ts", "src/models/user/UserSettings.ts"],
     targetPath: "src/models/User.ts",
     preview: false,
-    deleteOriginals: true,  // Clean up old files
-    updateGraph: true
+    deleteOriginals: true, // Clean up old files
+    updateGraph: true,
   });
 
   console.log(`Synthesized ${result.filesAffected.length - 1} files into one:`);
@@ -223,15 +213,15 @@ async function example11_safeRefactoring() {
   // Step 1: Create snapshot
   const snapshot = await mcpClient.callTool("create_snapshot", {
     description: "Before refactoring payment module",
-    files: ["src/payment/**"]
+    files: ["src/payment/**"],
   });
 
   try {
     // Step 2: Preview changes
-    const preview = await mcpClient.callTool("modify_entity_code", {
+    const _preview = await mcpClient.callTool("modify_entity_code", {
       entityId: "payment_process_entity",
       newCode: "// new implementation",
-      preview: true
+      preview: true,
     });
 
     console.log("Preview looks good, applying...");
@@ -240,22 +230,22 @@ async function example11_safeRefactoring() {
     const result = await mcpClient.callTool("modify_entity_code", {
       entityId: "payment_process_entity",
       newCode: "// new implementation",
-      preview: false
+      preview: false,
     });
 
     // Step 4: Check validation
     if (result.validationReport.improvement.netChange > 0) {
       console.log("⚠️ Validation issues increased, rolling back...");
       await mcpClient.callTool("rollback_snapshot", {
-        snapshotId: snapshot.snapshotId
+        snapshotId: snapshot.snapshotId,
       });
     } else {
       console.log("✅ Refactoring successful!");
     }
-  } catch (error) {
+  } catch (_error) {
     console.error("Error during refactoring, rolling back...");
     await mcpClient.callTool("rollback_snapshot", {
-      snapshotId: snapshot.snapshotId
+      snapshotId: snapshot.snapshotId,
     });
   }
 }
@@ -268,12 +258,12 @@ async function example12_batchRestructure() {
   const operations = [
     { old: "src/helpers/userHelpers.ts", new: "src/utils/user.ts" },
     { old: "src/helpers/orderHelpers.ts", new: "src/utils/order.ts" },
-    { old: "src/helpers/paymentHelpers.ts", new: "src/utils/payment.ts" }
+    { old: "src/helpers/paymentHelpers.ts", new: "src/utils/payment.ts" },
   ];
 
   // Create snapshot before batch operations
-  const snapshot = await mcpClient.callTool("create_snapshot", {
-    description: "Before batch restructure"
+  const _snapshot = await mcpClient.callTool("create_snapshot", {
+    description: "Before batch restructure",
   });
 
   for (const op of operations) {
@@ -281,7 +271,7 @@ async function example12_batchRestructure() {
       oldPath: op.old,
       newPath: op.new,
       preview: false,
-      updateImports: true
+      updateImports: true,
     });
   }
 
@@ -300,5 +290,5 @@ export {
   example9_splitFile,
   example10_synthesizeFiles,
   example11_safeRefactoring,
-  example12_batchRestructure
+  example12_batchRestructure,
 };

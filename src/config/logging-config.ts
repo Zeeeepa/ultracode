@@ -2,16 +2,14 @@
  * Centralized Logging Configuration
  *
  * Provides configuration for the rotated logging system
+ * Logs are stored in centralized AppData directory
  */
 
-import { resolve } from "node:path";
+import { getLogsDir } from "../shared/storage-paths.js";
 import { type LoggerConfig, LogLevel } from "../utils/logger-types.js";
 
-// Get the root directory of the project
-const projectRoot = process.cwd().includes("examples/") ? resolve(process.cwd(), "../..") : process.cwd();
-
 export const LOGGING_CONFIG: LoggerConfig = {
-  logDir: resolve(projectRoot, ".ultrascript", "logs"),
+  logDir: getLogsDir(),
   maxFileSize: 10 * 1024 * 1024, // 10MB
   maxFiles: 20,
   logLevel: LogLevel.DEBUG,

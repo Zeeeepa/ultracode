@@ -15,6 +15,7 @@
  * - Stream Helpers: src/utils/stream-helpers.ts
  */
 
+import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
 import { readText, stat, writeFile } from "../utils/file-ops.js";
@@ -72,7 +73,7 @@ export class CodeModifier {
   async initialize(): Promise<void> {
     await this.versionManager.initialize();
     await this.previewManager.initialize();
-    console.log("[CodeModifier] Initialized");
+    console.error("[CodeModifier] Initialized");
   }
 
   /**
@@ -104,14 +105,14 @@ export class CodeModifier {
       entity.filePath,
     ]);
 
-    console.log(`[CodeModifier] Created snapshot: ${snapshotId}`);
+    console.error(`[CodeModifier] Created snapshot: ${snapshotId}`);
 
     try {
       // Phase 4: Validation BEFORE modification
       let beforeValidation: BeforeAfterReport["before"] | undefined;
       if (!request.skipValidation) {
         beforeValidation = await this.validator.validateFile(entity.filePath);
-        console.log(
+        console.error(
           `[CodeModifier] Before: ${beforeValidation.summary.errors} errors, ${beforeValidation.summary.warnings} warnings`,
         );
       }
@@ -140,7 +141,7 @@ export class CodeModifier {
           improvement,
         };
 
-        console.log(
+        console.error(
           `[CodeModifier] After: ${afterValidation.summary.errors} errors, ${afterValidation.summary.warnings} warnings (net change: ${improvement.netChange})`,
         );
       }
@@ -167,7 +168,7 @@ export class CodeModifier {
    */
   async rollback(snapshotId: string): Promise<void> {
     await this.versionManager.rollback(snapshotId);
-    console.log(`[CodeModifier] Rolled back to snapshot: ${snapshotId}`);
+    console.error(`[CodeModifier] Rolled back to snapshot: ${snapshotId}`);
   }
 
   // =============================================================================
@@ -277,18 +278,28 @@ export class CodeModifier {
       );
 
       const entityComments = associations.get(entity.id) || [];
-      // Enhanced content generation (currently not used for embeddings - TODO)
-      CommentExtractor.enhanceEntityContentWithComments(newCode, `${entity.type} ${entity.name}`, entityComments);
+      const enhancedContent = CommentExtractor.enhanceEntityContentWithComments(
+        newCode,
+        `${entity.type} ${entity.name}`,
+        entityComments,
+      );
 
-      // TODO: Generate new embedding (EmbeddingGenerator.generate method needs implementation)
-      // const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
-      // const generator = new EmbeddingGenerator();
-      // const embedding = await generator.generate({ content: enhancedContent });
+      // Generate new embedding
+      const generator = new EmbeddingGenerator();
+      await generator.initialize();
+      const embedding = await generator.generateCodeEmbedding(enhancedContent, entity.language);
 
-      // TODO: Update embedding in vector store (VectorStore.updateEmbedding method needs implementation)
-      // await this.vectorStore.updateEmbedding(entity.id, embedding.embedding);
+      // Update embedding in vector store
+      await this.vectorStore.update(entity.id, embedding, {
+        entityId: entity.id,
+        entityType: entity.type,
+        filePath: entity.filePath,
+        name: entity.name,
+        updatedAt: Date.now(),
+      });
 
-      console.log(`[CodeModifier] Entity updated: ${entity.id} (embedding update skipped - TODO)`);
+      console.error(`[CodeModifier] Entity embedding updated: ${entity.id}`);
+      await generator.cleanup();
       return true;
     } catch (error) {
       console.error("[CodeModifier] Failed to update embedding:", error);
@@ -327,7 +338,7 @@ export class CodeModifier {
       // Signature changed - update relationships
       const relationships = await this.graphStorage.getRelationshipsForEntity(entity.id);
 
-      console.log(`[CodeModifier] Signature changed, updating ${relationships.length} relationships`);
+      console.error(`[CodeModifier] Signature changed, updating ${relationships.length} relationships`);
 
       // For now, just return count
       // In full implementation, would update import statements in dependent files

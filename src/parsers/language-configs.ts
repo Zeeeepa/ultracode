@@ -1617,7 +1617,7 @@ export function getPythonNodeCategory(
  * Validate language configurations on startup
  */
 export function validateConfigurations(): boolean {
-  console.log("[LanguageConfig] Validating configurations...");
+  console.error("[LanguageConfig] Validating configurations...");
 
   for (const [lang, config] of Object.entries(LANGUAGE_CONFIGS)) {
     if (!config.language || !config.extensions.length) {
@@ -1626,6 +1626,6 @@ export function validateConfigurations(): boolean {
     }
   }
 
-  console.log("[LanguageConfig] All configurations valid");
+  console.error("[LanguageConfig] All configurations valid");
   return true;
 }

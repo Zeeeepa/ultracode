@@ -9,7 +9,7 @@
  * - Entity IDs and metadata as TEXT
  * - Compressed storage for large vector sets
  *
- * Database location: .ultrascript/layered/vector-deltas.db
+ * Database location: %LOCALAPPDATA%/UltraScriptTools/projects/<hash>/layered/vector-deltas.db
  *
  * Based on: ultrasharp-tools-mcp VectorCacheManager.cs + LayeredCacheManager.cs
  * @see Dev.Docs/LAYERED_INDEXING_IMPLEMENTATION_PLAN.md
@@ -114,8 +114,11 @@ export class VectorCacheManager {
   private listStmt: SQLiteStatement | null = null;
 
   constructor(workingDirectory: string) {
-    // Create database directory
-    const dbDir = join(workingDirectory, ".ultrascript", "layered");
+    // Use centralized storage
+    const { getProjectPaths, ensureProjectDir } = require("../shared/storage-paths.js");
+    ensureProjectDir(workingDirectory);
+    const paths = getProjectPaths(workingDirectory);
+    const dbDir = join(paths.dir, "layered");
     if (!existsSync(dbDir)) {
       mkdirSync(dbDir, { recursive: true });
     }
@@ -129,7 +132,7 @@ export class VectorCacheManager {
     this.initializeSchema();
     this.prepareStatements();
 
-    console.log(`[VectorCacheManager] Initialized with database: ${this.dbPath}`);
+    console.error(`[VectorCacheManager] Initialized with database: ${this.dbPath}`);
   }
 
   // =========================================================================
@@ -166,7 +169,7 @@ export class VectorCacheManager {
         ON vector_deltas(dimension);
     `);
 
-    console.log("[VectorCacheManager] Schema initialized");
+    console.error("[VectorCacheManager] Schema initialized");
   }
 
   private prepareStatements(): void {
@@ -224,7 +227,7 @@ export class VectorCacheManager {
         delta.getMemoryUsage(),
       );
 
-      console.log(
+      console.error(
         `[VectorCacheManager] Saved delta for branch: ${delta.branchName} ` +
           `(${delta.totalChanges} changes, ${(delta.getMemoryUsage() / 1024 / 1024).toFixed(2)} MB)`,
       );
@@ -271,7 +274,7 @@ export class VectorCacheManager {
         }
       }
 
-      console.log(
+      console.error(
         `[VectorCacheManager] Loaded delta for branch: ${branchName} ` +
           `(${delta.totalChanges} changes, ${(delta.getMemoryUsage() / 1024 / 1024).toFixed(2)} MB)`,
       );
@@ -293,7 +296,7 @@ export class VectorCacheManager {
 
     try {
       this.deleteStmt.run(branchName);
-      console.log(`[VectorCacheManager] Deleted delta for branch: ${branchName}`);
+      console.error(`[VectorCacheManager] Deleted delta for branch: ${branchName}`);
     } catch (error) {
       console.error(`[VectorCacheManager] Failed to delete delta for ${branchName}:`, error);
       throw error;
@@ -362,11 +365,11 @@ export class VectorCacheManager {
    * Compact database (VACUUM)
    */
   compact(): void {
-    console.log("[VectorCacheManager] Compacting database...");
+    console.error("[VectorCacheManager] Compacting database...");
 
     try {
       this.db.exec("VACUUM");
-      console.log("[VectorCacheManager] Database compacted successfully");
+      console.error("[VectorCacheManager] Database compacted successfully");
     } catch (error) {
       console.error("[VectorCacheManager] Database compaction failed:", error);
     }
@@ -387,7 +390,7 @@ export class VectorCacheManager {
       const result = stmt.run(cutoffTime);
 
       const deletedCount = result.changes;
-      console.log(`[VectorCacheManager] Deleted ${deletedCount} old deltas (older than ${olderThanDays} days)`);
+      console.error(`[VectorCacheManager] Deleted ${deletedCount} old deltas (older than ${olderThanDays} days)`);
 
       return deletedCount;
     } catch (error) {
@@ -440,7 +443,7 @@ export class VectorCacheManager {
    * Close database connection
    */
   close(): void {
-    console.log("[VectorCacheManager] Closing database...");
+    console.error("[VectorCacheManager] Closing database...");
 
     if (this.db) {
       this.db.close();

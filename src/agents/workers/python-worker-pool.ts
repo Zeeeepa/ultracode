@@ -98,7 +98,7 @@ export class PythonWorkerPool {
     }
 
     await Promise.all(initPromises);
-    console.log(`[PythonWorkerPool] Initialized ${this.poolSize} Python workers (TASK-003B 4-layer)`);
+    console.error(`[PythonWorkerPool] Initialized ${this.poolSize} Python workers (TASK-003B 4-layer)`);
   }
 
   /**
@@ -268,7 +268,7 @@ export class PythonWorkerPool {
     } else if (message.type === "error") {
       this.handleTaskError(message.taskId, new Error(message.error));
     } else if (message.type === "initialized") {
-      console.log(`[PythonWorkerPool] Worker ${workerId} initialized with ${message.layers}`);
+      console.error(`[PythonWorkerPool] Worker ${workerId} initialized with ${message.layers}`);
     }
   }
 
@@ -422,7 +422,7 @@ export class PythonWorkerPool {
 
     await Promise.all(shutdownPromises);
     this.workers.clear();
-    console.log("[PythonWorkerPool] Shutdown complete");
+    console.error("[PythonWorkerPool] Shutdown complete");
   }
 
   /**

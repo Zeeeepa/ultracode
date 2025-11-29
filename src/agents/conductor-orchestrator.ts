@@ -196,9 +196,9 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   protected async onInitialize(): Promise<void> {
-    console.log(`[CONDUCTOR] Initializing with MANDATORY DELEGATION enabled`);
-    console.log(`[CONDUCTOR] Complexity threshold: ${this.config.complexityThreshold}/10`);
-    console.log(`[CONDUCTOR] All tasks MUST be delegated to dev-agent or Dora`);
+    console.error(`[CONDUCTOR] Initializing with MANDATORY DELEGATION enabled`);
+    console.error(`[CONDUCTOR] Complexity threshold: ${this.config.complexityThreshold}/10`);
+    console.error(`[CONDUCTOR] All tasks MUST be delegated to dev-agent or Dora`);
 
     this.startHealthMonitoring();
     this.startHeartbeat();
@@ -207,12 +207,12 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   protected async onShutdown(): Promise<void> {
-    console.log(`[CONDUCTOR] Shutting down orchestrator and all managed agents...`);
+    console.error(`[CONDUCTOR] Shutting down orchestrator and all managed agents...`);
 
     // Log delegation statistics
-    console.log(`[CONDUCTOR] Delegation Statistics:`);
-    console.log(`  - Direct implementation attempts blocked: ${this.directImplementationAttempts}`);
-    console.log(`  - Total delegations: ${this.delegationLog.size}`);
+    console.error(`[CONDUCTOR] Delegation Statistics:`);
+    console.error(`  - Direct implementation attempts blocked: ${this.directImplementationAttempts}`);
+    console.error(`  - Total delegations: ${this.delegationLog.size}`);
 
     const shutdownPromises = Array.from(this.agents.values()).map((agent) =>
       agent.shutdown().catch((err) => console.error(`Failed to shutdown agent ${agent.id}:`, err)),
@@ -226,7 +226,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   protected async processTask(task: AgentTask): Promise<unknown> {
-    console.log(`[CONDUCTOR] Processing task ${task.id} of type ${task.type}`);
+    console.error(`[CONDUCTOR] Processing task ${task.id} of type ${task.type}`);
 
     // CRITICAL: Enforce delegation
     if (this.config.mandatoryDelegation) {
@@ -242,8 +242,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     const complexity = await this.analyzeTaskComplexity(task);
     this.taskComplexityCache.set(task.id, complexity);
 
-    console.log(`[CONDUCTOR] Task complexity: ${complexity.score}/10`);
-    console.log(`[CONDUCTOR] Delegation strategy: ${complexity.delegationStrategy}`);
+    console.error(`[CONDUCTOR] Task complexity: ${complexity.score}/10`);
+    console.error(`[CONDUCTOR] Delegation strategy: ${complexity.delegationStrategy}`);
 
     // Step 2: Generate method proposals if complexity > threshold
     // Skip approval for automated indexing operations
@@ -256,8 +256,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       const proposals = await this.generateOptimizedMethodProposals(task, complexity);
       this.methodProposals.set(task.id, proposals);
 
-      console.log(`[CONDUCTOR] Generated ${proposals.length} method proposals`);
-      console.log(`[CONDUCTOR] APPROVAL REQUIRED for complexity ${complexity.score}/10`);
+      console.error(`[CONDUCTOR] Generated ${proposals.length} method proposals`);
+      console.error(`[CONDUCTOR] APPROVAL REQUIRED for complexity ${complexity.score}/10`);
 
       // Mark for approval and return proposals
       this.approvalRequired.add(task.id);
@@ -269,13 +269,13 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         message: `Task complexity ${complexity.score}/10 exceeds threshold. Please review proposals and approve.`,
       };
     } else if (complexity.requiresApproval && isIndexingTask) {
-      console.log(`[CONDUCTOR] Bypassing approval for indexing task (complexity ${complexity.score}/10)`);
+      console.error(`[CONDUCTOR] Bypassing approval for indexing task (complexity ${complexity.score}/10)`);
     }
 
     // Step 3: Decompose into subtasks
     const subtasks = complexity.subtasks.length > 0 ? complexity.subtasks : await this.decomposeTask(task, complexity);
 
-    console.log(`[CONDUCTOR] Decomposed into ${subtasks.length} subtasks`);
+    console.error(`[CONDUCTOR] Decomposed into ${subtasks.length} subtasks`);
 
     // Step 4: Delegate subtasks to appropriate agents
     const results = [];
@@ -419,7 +419,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       const isBatchProcessing = payload.excludePatterns?.includes("__batch_processing_enabled__");
 
       if (isBatchProcessing) {
-        console.log(`[CONDUCTOR] Decomposing large indexing task into batches`);
+        console.error(`[CONDUCTOR] Decomposing large indexing task into batches`);
 
         // Remove the batch processing marker before delegating
         const cleanedPatterns = payload.excludePatterns.filter((p: string) => p !== "__batch_processing_enabled__");
@@ -509,7 +509,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private async delegateSubtask(taskId: string, subtask: SubTask): Promise<unknown> {
-    console.log(`[CONDUCTOR] Delegating subtask ${subtask.id} to ${subtask.targetAgent}`);
+    console.error(`[CONDUCTOR] Delegating subtask ${subtask.id} to ${subtask.targetAgent}`);
 
     // Track delegation
     if (!this.delegationLog.has(taskId)) {
@@ -523,7 +523,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     // Check if target agent is available
     const agent = this.getAgentByName(subtask.targetAgent);
     if (!agent) {
-      console.log(`[CONDUCTOR] ${subtask.targetAgent} not available, queuing for later`);
+      console.error(`[CONDUCTOR] ${subtask.targetAgent} not available, queuing for later`);
 
       // Queue for when agent becomes available
       this.pendingTasks.set(subtask.id, {
@@ -554,7 +554,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     // Process through agent
     try {
       const result = await agent.process(agentTask);
-      console.log(`[CONDUCTOR] Subtask ${subtask.id} completed by ${subtask.targetAgent}`);
+      console.error(`[CONDUCTOR] Subtask ${subtask.id} completed by ${subtask.targetAgent}`);
       return result;
     } catch (error) {
       console.error(`[CONDUCTOR] Subtask ${subtask.id} failed:`, error);
@@ -563,7 +563,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private async synthesizeResults(task: AgentTask, results: unknown[]): Promise<unknown> {
-    console.log(`[CONDUCTOR] Synthesizing ${results.length} results for task ${task.id}`);
+    console.error(`[CONDUCTOR] Synthesizing ${results.length} results for task ${task.id}`);
 
     return {
       taskId: task.id,
@@ -619,7 +619,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     }
 
     this.agents.set(agent.id, agent);
-    console.log(`[CONDUCTOR] Registered agent ${agent.id} of type ${agent.type}`);
+    console.error(`[CONDUCTOR] Registered agent ${agent.id} of type ${agent.type}`);
 
     if (isEventfulAgent(agent)) {
       agent.on("task:completed", this.handleTaskCompleted.bind(this));
@@ -633,7 +633,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     const agent = this.agents.get(agentId);
     if (agent) {
       this.agents.delete(agentId);
-      console.log(`[CONDUCTOR] Unregistered agent ${agentId}`);
+      console.error(`[CONDUCTOR] Unregistered agent ${agentId}`);
       this.emit("agent:unregistered", agentId);
     }
   }
@@ -783,10 +783,10 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   protected async handleMessage(message: AgentMessage): Promise<void> {
     switch (message.type) {
       case "register":
-        console.log(`[CONDUCTOR] Registration request from ${message.from}`);
+        console.error(`[CONDUCTOR] Registration request from ${message.from}`);
         break;
       case "health":
-        console.log(`[CONDUCTOR] Health update from ${message.from}:`, message.payload);
+        console.error(`[CONDUCTOR] Health update from ${message.from}:`, message.payload);
         break;
       case "broadcast":
         await this.broadcast(message);
@@ -801,7 +801,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private handleTaskCompleted(data: any): void {
-    console.log(`[CONDUCTOR] Task ${data.task.id} completed by agent ${data.agentId}`);
+    console.error(`[CONDUCTOR] Task ${data.task.id} completed by agent ${data.agentId}`);
     this.emit("task:routed:completed", data);
   }
 
@@ -813,7 +813,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   // TASK-004B: Performance optimization methods
 
   private initializePerformanceOptimizations(): void {
-    console.log(`[CONDUCTOR] TASK-004B: Initializing performance optimizations`);
+    console.error(`[CONDUCTOR] TASK-004B: Initializing performance optimizations`);
 
     // Pre-populate method proposal templates
     this.initializeMethodProposalTemplates();
@@ -824,7 +824,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       this.cleanupCaches();
     }, 10000); // Every 10 seconds
 
-    console.log(`[CONDUCTOR] TASK-004B: Performance optimizations active`);
+    console.error(`[CONDUCTOR] TASK-004B: Performance optimizations active`);
   }
 
   private initializeMethodProposalTemplates(): void {
@@ -835,7 +835,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       this.methodProposalTemplates.set(type, this.createMethodProposalTemplate(type));
     }
 
-    console.log(`[CONDUCTOR] TASK-004B: Method proposal templates cached for ${templateTypes.length} task types`);
+    console.error(`[CONDUCTOR] TASK-004B: Method proposal templates cached for ${templateTypes.length} task types`);
   }
 
   private createMethodProposalTemplate(taskType: string): MethodProposal[] {
@@ -877,7 +877,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     // Log performance improvements every 100 tasks
     if (this.performanceMetrics.totalTasks > 0 && this.performanceMetrics.totalTasks % 100 === 0) {
-      console.log(
+      console.error(
         `[CONDUCTOR] TASK-004B: Performance metrics - overhead reduction: ${this.performanceMetrics.overheadReduction.toFixed(1)}%`,
       );
     }
@@ -926,7 +926,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     if (template) {
       this.performanceMetrics.cacheHitRate++;
-      console.log(`[CONDUCTOR] TASK-004B: Using cached method proposals for ${taskTypeKey}`);
+      console.error(`[CONDUCTOR] TASK-004B: Using cached method proposals for ${taskTypeKey}`);
       return template.map((proposal) => ({
         ...proposal,
         description: proposal.description.replace(taskTypeKey, `${taskTypeKey} for ${task.type}`),
@@ -940,7 +940,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     this.methodProposalTemplates.set(taskTypeKey, proposals);
 
     const duration = Date.now() - startTime;
-    console.log(`[CONDUCTOR] TASK-004B: Generated and cached proposals for ${taskTypeKey} in ${duration}ms`);
+    console.error(`[CONDUCTOR] TASK-004B: Generated and cached proposals for ${taskTypeKey} in ${duration}ms`);
 
     return proposals;
   }

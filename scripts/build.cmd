@@ -3,7 +3,6 @@ setlocal enabledelayedexpansion
 
 REM ASCII Art Banner - BBS Graffiti Style
 echo.
-echo.
 echo         ██  ██
 echo         ██  ██  ██    ██████ █████▄  ▄████▄
 echo         ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
@@ -13,12 +12,9 @@ echo         ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄�
 echo                          ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
 echo                          ▄▄██▀ ▀████ ██ ██ ██ ██     ██
 echo.
-echo                               ░▒▓█████▓▒░
-echo.
 echo      ╔═════════════════════════════════════════════════════╗
 echo      ║            ULTRASCRIPT TOOLS MCP SERVER             ║
 echo      ╚═════════════════════════════════════════════════════╝
-echo.
 echo.
 
 REM Build script for UltraScript Tools MCP Server using Bun
@@ -68,8 +64,67 @@ if exist "node_modules\tree-sitter\" (
     )
 )
 
-REM Run TypeScript type checking first
-echo [1/3] Running TypeScript type check...
+REM ============================================================================
+REM STEP 1: Build/Copy WASM modules (required for TypeScript type checking)
+REM ============================================================================
+REM Check if WASM sources exist in external-tools/wasm/*/pkg/
+set WASM_SRC_EXISTS=0
+if exist "%PROJECT_ROOT%\external-tools\wasm\diff-simd\pkg\diff_simd.js" (
+    if exist "%PROJECT_ROOT%\external-tools\wasm\vector-ops-simd\pkg\vector_ops_simd.js" (
+        set WASM_SRC_EXISTS=1
+    )
+)
+
+if %WASM_SRC_EXISTS% equ 1 (
+    echo [1/4] WASM modules found in external-tools, copying to dist...
+
+    REM Create target directories
+    if not exist "%PROJECT_ROOT%\dist\external-tools\wasm\diff-simd" mkdir "%PROJECT_ROOT%\dist\external-tools\wasm\diff-simd"
+    if not exist "%PROJECT_ROOT%\dist\external-tools\wasm\vector-ops-simd" mkdir "%PROJECT_ROOT%\dist\external-tools\wasm\vector-ops-simd"
+
+    REM Copy WASM modules
+    xcopy /Y /Q "%PROJECT_ROOT%\external-tools\wasm\diff-simd\pkg\*" "%PROJECT_ROOT%\dist\external-tools\wasm\diff-simd\" >nul
+    xcopy /Y /Q "%PROJECT_ROOT%\external-tools\wasm\vector-ops-simd\pkg\*" "%PROJECT_ROOT%\dist\external-tools\wasm\vector-ops-simd\" >nul
+
+    echo [OK] WASM modules copied to dist
+    echo.
+) else (
+    REM Try to build WASM modules if wasm-pack available
+    where wasm-pack >nul 2>nul
+    if not errorlevel 1 (
+        echo [1/4] Building WASM modules with Rust/wasm-pack...
+
+        REM Use PowerShell script with absolute path
+        if exist "%PROJECT_ROOT%\scripts\build-wasm.ps1" (
+            powershell -ExecutionPolicy Bypass -File "%PROJECT_ROOT%\scripts\build-wasm.ps1"
+            if errorlevel 1 (
+                echo [WARNING] WASM build failed, TypeScript check may fail...
+            ) else (
+                echo.
+                echo [OK] WASM modules built successfully
+
+                REM Copy to dist after successful build
+                if not exist "%PROJECT_ROOT%\dist\external-tools\wasm\diff-simd" mkdir "%PROJECT_ROOT%\dist\external-tools\wasm\diff-simd"
+                if not exist "%PROJECT_ROOT%\dist\external-tools\wasm\vector-ops-simd" mkdir "%PROJECT_ROOT%\dist\external-tools\wasm\vector-ops-simd"
+                xcopy /Y /Q "%PROJECT_ROOT%\external-tools\wasm\diff-simd\pkg\*" "%PROJECT_ROOT%\dist\external-tools\wasm\diff-simd\" >nul
+                xcopy /Y /Q "%PROJECT_ROOT%\external-tools\wasm\vector-ops-simd\pkg\*" "%PROJECT_ROOT%\dist\external-tools\wasm\vector-ops-simd\" >nul
+            )
+        ) else (
+            echo [WARNING] build-wasm.ps1 not found, skipping WASM build
+        )
+
+        echo.
+    ) else (
+        echo [1/4] wasm-pack not installed, skipping WASM build
+        echo      Run dev-setup.cmd first or install Rust + wasm-pack
+        echo.
+    )
+)
+
+REM ============================================================================
+REM STEP 2: TypeScript type checking
+REM ============================================================================
+echo [2/4] Running TypeScript type check...
 bun run typecheck
 if errorlevel 1 (
     echo.
@@ -80,50 +135,29 @@ if errorlevel 1 (
 echo Type check passed!
 echo.
 
-REM Check if WASM modules already exist (built by postinstall)
-set WASM_ALREADY_BUILT=0
-if exist "%PROJECT_ROOT%\dist\external-tools\wasm\diff-simd\diff_simd.js" (
-    if exist "%PROJECT_ROOT%\dist\external-tools\wasm\vector-ops-simd\vector_ops_simd.js" (
-        set WASM_ALREADY_BUILT=1
-    )
-)
-
-if %WASM_ALREADY_BUILT% equ 1 (
-    echo [INFO] WASM modules already built, skipping rebuild
+REM ============================================================================
+REM STEP 3: Build/Copy CUDA native module
+REM ============================================================================
+REM Check if CUDA module exists in external-tools (built by dev-setup)
+if exist "%PROJECT_ROOT%\external-tools\native\cuda\build\ultrascript_cuda.node" (
+    echo [3/4] CUDA module found in external-tools, copying to dist...
+    if not exist "%PROJECT_ROOT%\dist\native\cuda" mkdir "%PROJECT_ROOT%\dist\native\cuda"
+    copy /Y "%PROJECT_ROOT%\external-tools\native\cuda\build\ultrascript_cuda.node" "%PROJECT_ROOT%\dist\native\cuda\" >nul
+    echo [OK] CUDA module copied to dist
     echo.
-) else (
-    REM Build WASM modules if Rust/wasm-pack available
-    where wasm-pack >nul 2>nul
-    if not errorlevel 1 (
-        echo [INFO] Building WASM modules with Rust/wasm-pack...
-
-        REM Use PowerShell script with absolute path
-        if exist "%PROJECT_ROOT%\scripts\build-wasm.ps1" (
-            powershell -ExecutionPolicy Bypass -File "%PROJECT_ROOT%\scripts\build-wasm.ps1"
-            if errorlevel 1 (
-                echo [WARNING] WASM build failed, continuing with TypeScript build...
-            ) else (
-                echo.
-                echo [INFO] WASM modules built successfully
-            )
-        ) else (
-            echo [WARNING] build-wasm.ps1 not found, skipping WASM build
-        )
-
-        echo.
-    )
+    goto skip_cuda_build
 )
 
-REM Check if CUDA module already exists (built by postinstall)
+REM Check if CUDA module already in dist
 if exist "%PROJECT_ROOT%\dist\native\cuda\ultrascript_cuda.node" (
-    echo [INFO] CUDA module already built, skipping rebuild
+    echo [3/4] CUDA module already in dist, skipping rebuild
     echo.
     goto skip_cuda_build
 )
 
 REM Build CUDA native module if available (Windows only)
 if exist "%PROJECT_ROOT%\external-tools\native\cuda\" (
-    echo [INFO] Checking for CUDA Toolkit and Visual Studio Build Tools...
+    echo [3/4] Checking for CUDA Toolkit and Visual Studio Build Tools...
 
     REM Detect CUDA Toolkit
     set "CUDA_PATH="
@@ -227,7 +261,7 @@ if exist "%PROJECT_ROOT%\external-tools\native\cuda\" (
             cmake --version | findstr /C:"version"
             echo Found Visual Studio C++ compiler
             echo.
-            echo [2/4] Building CUDA native module...
+            echo [3/4] Building CUDA native module...
 
             REM Set CUDA working directory (use delayed expansion for nested if blocks)
             set "CUDA_DIR=!PROJECT_ROOT!\external-tools\native\cuda"
@@ -302,6 +336,78 @@ if exist "%PROJECT_ROOT%\external-tools\native\cuda\" (
 
 :skip_cuda_build
 
+REM ============================================================================
+REM STEP 3.5: Build Comm proxy (Cosmopolitan binary)
+REM ============================================================================
+echo [3.5/4] Checking Comm proxy (ultrascript-tools.com)...
+
+set "COMM_SRC=%PROJECT_ROOT%\src\comm\comm.c"
+set "COMM_OUT=%PROJECT_ROOT%\src\comm\ultrascript-tools.com"
+
+REM Check if cosmocc is available (APE binary without .exe)
+set "COSMOCC="
+set "COSMOCC_PATH=%LOCALAPPDATA%\cosmocc\bin\cosmocc"
+if exist "!COSMOCC_PATH!" (
+    set "COSMOCC=!COSMOCC_PATH!"
+) else (
+    where cosmocc >nul 2>nul
+    if not errorlevel 1 set "COSMOCC=cosmocc"
+)
+
+if not defined COSMOCC goto :no_cosmocc
+
+REM Check if source is newer than binary
+set "NEED_BUILD=0"
+if not exist "!COMM_OUT!" (
+    set "NEED_BUILD=1"
+    echo [INFO] Comm binary not found, building...
+    goto :do_comm_build_check
+)
+
+REM Compare timestamps using PowerShell
+for /f %%a in ('powershell -Command "(Get-Item '!COMM_SRC!').LastWriteTime -gt (Get-Item '!COMM_OUT!').LastWriteTime"') do (
+    if "%%a"=="True" (
+        set "NEED_BUILD=1"
+        echo [INFO] Comm source updated, rebuilding...
+    )
+)
+
+:do_comm_build_check
+if "!NEED_BUILD!"=="1" (
+    echo [INFO] Building Comm proxy with cosmocc...
+    REM Use Git Bash for APE binaries - convert C:\path to /c/path
+    set "CC_U=!COSMOCC:C:=/c!"
+    set "CC_U=!CC_U:D:=/d!"
+    set "CC_U=!CC_U:\=/!"
+    set "OUT_U=!COMM_OUT:C:=/c!"
+    set "OUT_U=!OUT_U:D:=/d!"
+    set "OUT_U=!OUT_U:\=/!"
+    set "SRC_U=!COMM_SRC:C:=/c!"
+    set "SRC_U=!SRC_U:D:=/d!"
+    set "SRC_U=!SRC_U:\=/!"
+    "%ProgramFiles%\Git\bin\bash.exe" -c "\"!CC_U!\" -Os -DNDEBUG -o \"!OUT_U!\" \"!SRC_U!\""
+    if errorlevel 1 (
+        echo [WARNING] Comm build failed, using existing binary
+    ) else (
+        echo [OK] Comm proxy built successfully
+    )
+) else (
+    echo [OK] Comm binary is up to date
+)
+goto :comm_done
+
+:no_cosmocc
+if exist "!COMM_OUT!" (
+    echo [OK] Using pre-built Comm binary ^(cosmocc not installed^)
+) else (
+    echo [WARNING] cosmocc not found and no pre-built binary!
+    echo          Install cosmocc: https://github.com/jart/cosmopolitan
+    echo          Or run: powershell -File src\comm\setup.ps1
+)
+
+:comm_done
+echo.
+
 REM Clean TypeScript artifacts before build (preserve WASM and native modules)
 if exist "%PROJECT_ROOT%\dist\index.js" del /q "%PROJECT_ROOT%\dist\index.js" >nul 2>&1
 if exist "%PROJECT_ROOT%\dist\index.js.map" del /q "%PROJECT_ROOT%\dist\index.js.map" >nul 2>&1
@@ -310,7 +416,7 @@ if exist "%PROJECT_ROOT%\dist\agents" rmdir /s /q "%PROJECT_ROOT%\dist\agents" >
 if exist "%PROJECT_ROOT%\dist\utils" rmdir /s /q "%PROJECT_ROOT%\dist\utils" >nul 2>&1
 
 REM Run build with Bun
-echo [3/4] Building with tsup (Bun runtime)...
+echo [4/4] Building with tsup (Bun runtime)...
 bun run build
 if errorlevel 1 (
     echo.

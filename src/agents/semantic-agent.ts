@@ -29,12 +29,13 @@
 import { createHash } from "node:crypto";
 import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
-import { getCurrentIndexingDirectory } from "../index.js";
 import { CodeAnalyzer } from "../semantic/code-analyzer.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import { HybridSearchEngine } from "../semantic/hybrid-search.js";
 import { SemanticCache } from "../semantic/semantic-cache.js";
 import { VectorStore } from "../semantic/vector-store.js";
+import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
+import { getProjectPaths } from "../shared/storage-paths.js";
 import { getGraphStorage } from "../storage/graph-storage-factory.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParsedEntity } from "../types/parser.js";
@@ -138,11 +139,11 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    */
   private async getEmbeddingDimensions(): Promise<number> {
     try {
-      console.log(`[${this.id}] Detecting embedding dimensions...`);
+      console.error(`[${this.id}] Detecting embedding dimensions...`);
       const testEmbedding = await this.embeddingGen.generateEmbedding("dimension detection test");
       const dimensions = testEmbedding.length;
       this.embeddingDim = dimensions;
-      console.log(`[${this.id}] Detected ${dimensions} dimensions from embedding provider`);
+      console.error(`[${this.id}] Detected ${dimensions} dimensions from embedding provider`);
       return dimensions;
     } catch (error) {
       console.warn(`[${this.id}] Failed to detect dimensions, using fallback:`, error);
@@ -180,11 +181,11 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
   private async setupComponents(): Promise<void> {
     const config = getConfig();
-    console.log(
+    console.error(
       `[${this.id}] Initializing embedding generator with provider: ${config.mcp?.embedding?.provider || "memory"}`,
     );
-    console.log(`[${this.id}] Embedding model: ${config.mcp?.embedding?.model || "Xenova/all-MiniLM-L6-v2"}`);
-    console.log(`[${this.id}] Database path from config: ${config.database?.path || "undefined"}`);
+    console.error(`[${this.id}] Embedding model: ${config.mcp?.embedding?.model || "Xenova/all-MiniLM-L6-v2"}`);
+    console.error(`[${this.id}] Database path from config: ${config.database?.path || "undefined"}`);
 
     const warmupSettings = config.mcp?.semantic;
     if (warmupSettings?.cacheWarmupLimit && warmupSettings.cacheWarmupLimit > 0) {
@@ -235,19 +236,21 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     // Get dimensions dynamically from actual embedding
     const dimensions = await this.getEmbeddingDimensions();
-    console.log(`[${this.id}] Using ${dimensions} dimensions for vector store`);
+    console.error(`[${this.id}] Using ${dimensions} dimensions for vector store`);
 
-    // Initialize components
-    const dbPath = config.database?.path || "./vectors.db";
-    console.log(`[${this.id}] Initializing VectorStore with dbPath: ${dbPath}`);
+    // Initialize components - use centralized storage path
+    const workingDir = getCurrentIndexingDirectory() || process.cwd();
+    const projectPaths = getProjectPaths(workingDir);
+    // Use centralized path unless explicit path is configured
+    const isExplicitPath = config.database?.path && config.database.path.length > 0;
+    const dbPath = isExplicitPath ? config.database.path : projectPaths.vectorsDbPath;
+    console.error(`[${this.id}] VectorStore path: ${dbPath}`);
 
     // Get vector backend configuration
     const vectorBackend = config.vectorBackend || {};
-    console.log(
+    console.error(
       `[${this.id}] Vector backend mode: ${vectorBackend.backend || "auto"}, threshold: ${vectorBackend.autoSwitchThreshold || 10000}`,
     );
-
-    const workingDir = getCurrentIndexingDirectory() || process.cwd();
 
     this.vectorStore = new VectorStore({
       dbPath: dbPath,
@@ -260,7 +263,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     // Wait for vector store to be fully initialized
     await this.vectorStore.initialize();
-    console.log(`[${this.id}] Vector store initialized successfully`);
+    console.error(`[${this.id}] Vector store initialized successfully`);
 
     this.hybridSearch = new HybridSearchEngine(this.vectorStore, this.embeddingGen);
 
@@ -281,7 +284,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    * Initialize the semantic agent
    */
   protected async onInitialize(): Promise<void> {
-    console.log(`[${this.id}] Initializing semantic components...`);
+    console.error(`[${this.id}] Initializing semantic components...`);
 
     await this.embeddingGen.initialize();
     this.embeddingGen.setBatchSize(this.embeddingBatchSize);
@@ -291,7 +294,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     await this.warmupSemanticCache();
 
-    console.log(`[${this.id}] Semantic agent initialized with ${this.semanticMetrics.vectorsStored} vectors`);
+    console.error(`[${this.id}] Semantic agent initialized with ${this.semanticMetrics.vectorsStored} vectors`);
   }
 
   // TASK-004B: Circuit breaker implementation methods
@@ -312,7 +315,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
           this.circuitBreakerState = CircuitBreakerState.HALF_OPEN;
           this.successCount = 0;
           if (this.debugMode) {
-            console.log(`[${this.id}] TASK-004B: Circuit breaker transitioning to HALF_OPEN`);
+            console.error(`[${this.id}] TASK-004B: Circuit breaker transitioning to HALF_OPEN`);
           }
           return true;
         }
@@ -336,7 +339,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         this.circuitBreakerState = CircuitBreakerState.CLOSED;
         this.failureWindow = [];
         if (this.debugMode) {
-          console.log(`[${this.id}] TASK-004B: Circuit breaker CLOSED after ${this.successCount} successes`);
+          console.error(`[${this.id}] TASK-004B: Circuit breaker CLOSED after ${this.successCount} successes`);
         }
       }
     } else if (this.circuitBreakerState === CircuitBreakerState.CLOSED) {
@@ -359,7 +362,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const recentFailures = this.failureWindow.length;
 
     if (this.debugMode) {
-      console.log(
+      console.error(
         `[${this.id}] TASK-004B: Circuit breaker failure recorded. Recent failures: ${recentFailures}/${CIRCUIT_BREAKER_CONFIG.failureThreshold}`,
       );
     }
@@ -390,7 +393,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   ): Promise<T> {
     if (!this.canExecute()) {
       if (this.debugMode) {
-        console.log(`[${this.id}] TASK-004B: Circuit breaker OPEN, using fallback for ${operationName}`);
+        console.error(`[${this.id}] TASK-004B: Circuit breaker OPEN, using fallback for ${operationName}`);
       }
       return fallback();
     }
@@ -405,7 +408,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
       // Use fallback in case of failure
       if (this.debugMode) {
-        console.log(`[${this.id}] TASK-004B: Using fallback for failed operation: ${operationName}`);
+        console.error(`[${this.id}] TASK-004B: Using fallback for failed operation: ${operationName}`);
       }
       return fallback();
     }
@@ -415,14 +418,14 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    * Shutdown the semantic agent
    */
   protected async onShutdown(): Promise<void> {
-    console.log(`[${this.id}] Shutting down semantic components...`);
+    console.error(`[${this.id}] Shutting down semantic components...`);
 
     // Clean up resources
     await this.embeddingGen.cleanup();
     await this.vectorStore.close();
     this.cache.clear();
 
-    console.log(`[${this.id}] Semantic agent shutdown complete`);
+    console.error(`[${this.id}] Semantic agent shutdown complete`);
   }
 
   /**
@@ -463,7 +466,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    * Handle messages from other agents
    */
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    console.log(`[${this.id}] Received message from ${message.from}: ${message.type}`);
+    console.error(`[${this.id}] Received message from ${message.from}: ${message.type}`);
 
     switch (message.type) {
       case "index:complete":
@@ -475,7 +478,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         break;
 
       default:
-        console.log(`[${this.id}] Unknown message type: ${message.type}`);
+        console.error(`[${this.id}] Unknown message type: ${message.type}`);
     }
   }
 
@@ -732,7 +735,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this));
 
-    console.log(`[${this.id}] Subscribed to knowledge bus events`);
+    console.error(`[${this.id}] Subscribed to knowledge bus events`);
   }
 
   private async handleIndexComplete(entry: KnowledgeEntry): Promise<void> {
@@ -746,7 +749,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     if (entities && entities.length > 0) {
       await this.handleNewEntities(entities);
     } else if (this.debugMode) {
-      console.log(`[${this.id}] index:complete received without entity payload`, payload);
+      console.error(`[${this.id}] index:complete received without entity payload`, payload);
     }
   }
 
@@ -767,24 +770,57 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       name: e.name,
     });
 
-    console.log(`[${this.id}] Updated embedding for entity: ${e.id}`);
+    console.error(`[${this.id}] Updated embedding for entity: ${e.id}`);
   }
 
   private async handleNewEntities(entities: ParsedEntity[]): Promise<void> {
-    console.log(`[${this.id}] Processing ${entities?.length || 0} new entities for embedding`);
-    console.log(`[${this.id}] Entities type: ${typeof entities}, isArray: ${Array.isArray(entities)}`);
+    console.error(`[${this.id}] Processing ${entities?.length || 0} new entities for embedding`);
 
     if (!Array.isArray(entities)) {
       console.error(`[${this.id}] ERROR: entities is not an array!`, entities);
       return;
     }
 
+    // Filter out entities that already have embeddings (optimization for incremental indexing)
+    const filteredEntities: ParsedEntity[] = [];
+    let skippedCount = 0;
+
+    for (const entity of entities) {
+      const e: any = entity;
+      const stableId = e.id
+        ? `ent:${e.id}`
+        : `ent:${e.type}:${e.name}:${(e.filePath || e.path || "").replace(/\\/g, "/")}`;
+
+      try {
+        const existing = await this.vectorStore.get(stableId);
+        if (existing) {
+          skippedCount++;
+          continue;
+        }
+      } catch {
+        // If check fails, include the entity
+      }
+
+      filteredEntities.push(entity);
+    }
+
+    if (skippedCount > 0) {
+      console.error(`[${this.id}] Skipped ${skippedCount} entities (already have embeddings)`);
+    }
+
+    if (filteredEntities.length === 0) {
+      console.error(`[${this.id}] All entities already have embeddings, nothing to process`);
+      return;
+    }
+
+    console.error(`[${this.id}] Generating embeddings for ${filteredEntities.length} new entities`);
+
     const fs = await import("node:fs/promises");
     const { CommentExtractor } = await import("../utils/comment-extractor.js");
 
     // Group entities by file for efficient comment extraction
     const entitiesByFile = new Map<string, ParsedEntity[]>();
-    for (const entity of entities) {
+    for (const entity of filteredEntities) {
       const e: any = entity;
       if (e.filePath) {
         if (!entitiesByFile.has(e.filePath)) {
@@ -816,7 +852,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     }
 
     const texts = await Promise.all(
-      entities.map(async (ent) => {
+      filteredEntities.map(async (ent) => {
         const e: any = ent;
         let code = "";
         try {
@@ -857,7 +893,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const modelName = (this as any).embeddingGen?.modelName || "default";
 
     const entityDataMap = new Map();
-    for (const entity of entities) {
+    for (const entity of filteredEntities) {
       const x: any = entity as any;
       if (x.id && !x.filePath && !x.path) {
         const entityData = await storage.getEntity(x.id);
@@ -865,7 +901,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       }
     }
 
-    const vectorEmbeddings: VectorEmbedding[] = entities.map((entity, i) => {
+    const vectorEmbeddings: VectorEmbedding[] = filteredEntities.map((entity, i) => {
       const x: any = entity as any;
 
       const stableId = x.id
@@ -904,7 +940,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     this.semanticMetrics.embeddingsGenerated += embeddings.length;
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
     knowledgeBus.publish("semantic:embeddings:complete", { count: embeddings.length }, this.id);
-    console.log(`[${this.id}] Stored ${embeddings.length} new embeddings`);
+    console.error(`[${this.id}] Stored ${embeddings.length} new embeddings`);
 
     // Process standalone comments (comments not associated with any entity)
     await this.processStandaloneComments(commentsByFile, associationsByFile, storage);
@@ -990,7 +1026,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     }
 
     if (totalCommentEntities > 0) {
-      console.log(
+      console.error(
         `[${this.id}] Indexed ${totalCommentEntities} standalone comments with ${totalRelationships} documentation relationships`,
       );
     }
@@ -1004,7 +1040,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     if (warmupDisabled) {
       warmupLimit = 1;
       if (this.debugMode) {
-        console.log(`[${this.id}] Semantic cache warmup disabled by configuration; using fallback seed`);
+        console.error(`[${this.id}] Semantic cache warmup disabled by configuration; using fallback seed`);
       }
     }
 
@@ -1072,7 +1108,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
       if (candidates.size === 0) {
         if (this.debugMode) {
-          console.log(`[${this.id}] No semantic warmup candidates discovered`);
+          console.error(`[${this.id}] No semantic warmup candidates discovered`);
         }
         const fallbackId = `semantic-warmup-${Date.now()}`;
         candidates.set(fallbackId, {
@@ -1108,7 +1144,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
       if (texts.length === 0) {
         if (this.debugMode) {
-          console.log(`[${this.id}] Warmup candidates lacked textual content`);
+          console.error(`[${this.id}] Warmup candidates lacked textual content`);
         }
         const fallbackId = `semantic-warmup-${Date.now()}`;
         ids.push(fallbackId);
@@ -1165,7 +1201,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       knowledgeBus.publish("semantic:warmup:complete", { warmed: warmupMap.size, limit: warmupLimit }, this.id, 60000);
 
       if (this.debugMode) {
-        console.log(`[${this.id}] Warmed semantic cache with ${warmupMap.size} embeddings`);
+        console.error(`[${this.id}] Warmed semantic cache with ${warmupMap.size} embeddings`);
       }
     } catch (error) {
       console.warn(
@@ -1204,7 +1240,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   adjustConcurrency(newLimit: number): void {
     const adjusted = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(newLimit)));
     if (this.capabilities.maxConcurrency !== adjusted) {
-      console.log(
+      console.error(
         `[${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjusted} (resources:adjusted)`,
       );
       this.capabilities.maxConcurrency = adjusted;
@@ -1215,7 +1251,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const ratio = Math.max(0.5, Math.min(2, newMemoryLimit / this.defaultMemoryLimit));
     const newBatchSize = Math.max(1, Math.round(this.defaultBatchSize * ratio));
     if (this.embeddingBatchSize !== newBatchSize) {
-      console.log(
+      console.error(
         `[${this.id}] Adjusting embedding batch size from ${this.embeddingBatchSize} to ${newBatchSize} (resources:adjusted)`,
       );
       this.embeddingBatchSize = newBatchSize;
@@ -1283,6 +1319,21 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    */
   setQueryAgent(queryAgent: any): void {
     this.hybridSearch.setQueryAgent(queryAgent);
-    console.log(`[${this.id}] Query agent configured for hybrid search`);
+    console.error(`[${this.id}] Query agent configured for hybrid search`);
+  }
+
+  /**
+   * Export cache for persistence
+   */
+  exportCache() {
+    return this.cache.export();
+  }
+
+  /**
+   * Import cache from persistence
+   */
+  importCache(data: Parameters<typeof this.cache.import>[0]): void {
+    this.cache.import(data);
+    console.error(`[${this.id}] Cache imported`);
   }
 }

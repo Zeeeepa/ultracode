@@ -82,7 +82,7 @@ export class VersionManager {
     // Detect git
     this.hasGit = await this.detectGit();
 
-    console.log(`[VersionManager] Backend: ${this.hasGit ? "git-worktree/stash" : "backup"}`);
+    console.error(`[VersionManager] Backend: ${this.hasGit ? "git-worktree/stash" : "backup"}`);
 
     // Ensure backup directory exists
     const backupPath = join(this.config.workingDirectory, this.config.backupDir);
@@ -122,7 +122,7 @@ export class VersionManager {
       await this.rollbackBackup(metadata);
     }
 
-    console.log(`[VersionManager] Rolled back to snapshot: ${snapshotId}`);
+    console.error(`[VersionManager] Rolled back to snapshot: ${snapshotId}`);
   }
 
   /**
@@ -196,7 +196,7 @@ export class VersionManager {
       await unlink(metadataPath);
     }
 
-    console.log(`[VersionManager] Deleted snapshot: ${snapshotId}`);
+    console.error(`[VersionManager] Deleted snapshot: ${snapshotId}`);
   }
 
   /**
@@ -216,7 +216,7 @@ export class VersionManager {
       }
     }
 
-    console.log(`[VersionManager] Cleaned up ${deletedCount} old snapshots (older than ${days} days)`);
+    console.error(`[VersionManager] Cleaned up ${deletedCount} old snapshots (older than ${days} days)`);
     return deletedCount;
   }
 
@@ -276,10 +276,10 @@ export class VersionManager {
 
       await this.saveMetadata(snapshotId, metadata);
 
-      console.log(`[VersionManager] Created git snapshot: ${snapshotId} (stash: ${stashRef.slice(0, 8)})`);
+      console.error(`[VersionManager] Created git snapshot: ${snapshotId} (stash: ${stashRef.slice(0, 8)})`);
       return snapshotId;
     } catch (error) {
-      throw new Error(`Failed to create git snapshot: ${error}`);
+      throw new Error(`Failed to create git snapshot`, { cause: error });
     }
   }
 
@@ -295,7 +295,7 @@ export class VersionManager {
         encoding: "utf-8",
       });
     } catch (error) {
-      throw new Error(`Failed to apply git stash: ${error}`);
+      throw new Error(`Failed to apply git stash: ${metadata.gitStashRef}`, { cause: error });
     }
   }
 
@@ -382,7 +382,7 @@ export class VersionManager {
 
     await this.saveMetadata(snapshotId, metadata);
 
-    console.log(
+    console.error(
       `[VersionManager] Created backup snapshot: ${snapshotId} (${filesToBackup.length} files, ${(totalSize / 1024 / 1024).toFixed(2)}MB)`,
     );
     return snapshotId;

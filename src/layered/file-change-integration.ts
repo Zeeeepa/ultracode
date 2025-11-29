@@ -95,7 +95,7 @@ export class FileChangeIntegration {
     };
 
     if (this.config.debug) {
-      console.log(
+      console.error(
         `[FileChangeIntegration] Initialized with ` +
           `file=${this.config.enableFileWatching}, ` +
           `branch=${this.config.enableBranchWatching}, ` +
@@ -117,7 +117,7 @@ export class FileChangeIntegration {
     }
 
     if (this.config.debug) {
-      console.log("[FileChangeIntegration] Registering event handlers...");
+      console.error("[FileChangeIntegration] Registering event handlers...");
     }
 
     // Register GitWatcher callbacks
@@ -148,7 +148,7 @@ export class FileChangeIntegration {
     // Subscribe to update queue events (for logging/monitoring)
     this.updateQueue.on("batch-processed", (result) => {
       if (this.config.debug) {
-        console.log(
+        console.error(
           `[FileChangeIntegration] Batch processed: ` +
             `${result.filesProcessed} files in ${result.processingTimeMs}ms`,
         );
@@ -162,7 +162,7 @@ export class FileChangeIntegration {
     this.isInitialized = true;
 
     if (this.config.debug) {
-      console.log("[FileChangeIntegration] Initialization complete");
+      console.error("[FileChangeIntegration] Initialization complete");
     }
   }
 
@@ -182,7 +182,7 @@ export class FileChangeIntegration {
    * @param oldBranch - Old branch name
    */
   private async handleBranchChange(newBranch: string, oldBranch: string): Promise<void> {
-    console.log(`[FileChangeIntegration] Branch changed: ${oldBranch} -> ${newBranch}`);
+    console.error(`[FileChangeIntegration] Branch changed: ${oldBranch} -> ${newBranch}`);
 
     this.currentBranch = newBranch;
     this.stats.totalBranchSwitches++;
@@ -192,13 +192,13 @@ export class FileChangeIntegration {
       // Ensure branch delta exists (will compute from git diff if missing)
       const delta = await this.layeredIndex.ensureBranchDelta(newBranch);
 
-      console.log(`[FileChangeIntegration] Branch delta ready: ${delta.totalChanges} changes`);
+      console.error(`[FileChangeIntegration] Branch delta ready: ${delta.totalChanges} changes`);
 
       // Get changed files between branches
       const changedFiles = await this.gitWatcher.getChangedFilesBetweenBranches(oldBranch, newBranch);
 
       if (this.config.debug) {
-        console.log(`[FileChangeIntegration] ${changedFiles.length} files changed between branches`);
+        console.error(`[FileChangeIntegration] ${changedFiles.length} files changed between branches`);
       }
 
       // Check if we should do incremental update or full rebuild
@@ -230,7 +230,7 @@ export class FileChangeIntegration {
    */
   private async handleCommit(commitHash: string): Promise<void> {
     if (this.config.debug) {
-      console.log(`[FileChangeIntegration] New commit: ${commitHash.slice(0, 8)}`);
+      console.error(`[FileChangeIntegration] New commit: ${commitHash.slice(0, 8)}`);
     }
 
     this.stats.totalCommits++;
@@ -242,7 +242,7 @@ export class FileChangeIntegration {
 
       if (changedFiles.length > 0) {
         if (this.config.debug) {
-          console.log(`[FileChangeIntegration] ${changedFiles.length} files changed in commit`);
+          console.error(`[FileChangeIntegration] ${changedFiles.length} files changed in commit`);
         }
 
         const events = this.convertFileChangesToEvents(changedFiles, this.currentBranch);
@@ -266,7 +266,7 @@ export class FileChangeIntegration {
    */
   private async handleFileChanges(files: string[]): Promise<void> {
     if (this.config.debug) {
-      console.log(`[FileChangeIntegration] ${files.length} files changed`);
+      console.error(`[FileChangeIntegration] ${files.length} files changed`);
     }
 
     this.stats.totalFileChanges += files.length;
@@ -359,11 +359,11 @@ export class FileChangeIntegration {
    * Shutdown integration
    */
   async shutdown(): Promise<void> {
-    console.log("[FileChangeIntegration] Shutting down...");
+    console.error("[FileChangeIntegration] Shutting down...");
 
     // Flush pending changes
     await this.updateQueue.flush();
 
-    console.log("[FileChangeIntegration] Shutdown complete");
+    console.error("[FileChangeIntegration] Shutdown complete");
   }
 }

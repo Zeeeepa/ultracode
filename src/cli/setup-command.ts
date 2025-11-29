@@ -46,31 +46,31 @@ const colors = {
 };
 
 function printBanner(): void {
-  console.log("");
-  console.log(
+  console.error("");
+  console.error(
     `${colors.cyan}${colors.bright}=================================================================${colors.reset}`,
   );
-  console.log(`${colors.cyan}${colors.bright}UltraScript Tools MCP - Semantic Embedding Setup${colors.reset}`);
-  console.log(
+  console.error(`${colors.cyan}${colors.bright}UltraScript Tools MCP - Semantic Embedding Setup${colors.reset}`);
+  console.error(
     `${colors.cyan}${colors.bright}=================================================================${colors.reset}`,
   );
-  console.log("");
+  console.error("");
 }
 
 function printSuccess(msg: string): void {
-  console.log(`${colors.green}[OK]${colors.reset} ${msg}`);
+  console.error(`${colors.green}[OK]${colors.reset} ${msg}`);
 }
 
 function printInfo(msg: string): void {
-  console.log(`${colors.cyan}[INFO]${colors.reset} ${msg}`);
+  console.error(`${colors.cyan}[INFO]${colors.reset} ${msg}`);
 }
 
 function printWarn(msg: string): void {
-  console.log(`${colors.yellow}[WARNING]${colors.reset} ${msg}`);
+  console.error(`${colors.yellow}[WARNING]${colors.reset} ${msg}`);
 }
 
 function printError(msg: string): void {
-  console.log(`${colors.red}[ERROR]${colors.reset} ${msg}`);
+  console.error(`${colors.red}[ERROR]${colors.reset} ${msg}`);
 }
 
 interface EmbeddingModel {
@@ -134,6 +134,7 @@ function detectGpuArchitecture(): string {
     const result = spawnSync("nvidia-smi", ["--query-gpu=name,compute_cap", "--format=csv,noheader"], {
       encoding: "utf-8",
       timeout: 5000,
+      windowsHide: true,
     });
 
     if (result.status !== 0 || !result.stdout) {
@@ -149,7 +150,7 @@ function detectGpuArchitecture(): string {
 
     if (!computeCap) return "cpu";
 
-    console.log(`${colors.green}[OK]${colors.reset} GPU detected: ${gpuName} (CC: ${computeCap})`);
+    console.error(`${colors.green}[OK]${colors.reset} GPU detected: ${gpuName} (CC: ${computeCap})`);
 
     // Map compute capability to architecture
     switch (computeCap) {
@@ -203,15 +204,15 @@ function checkOllama(): boolean {
 }
 
 async function installTei(model: EmbeddingModel, architecture: string): Promise<boolean> {
-  console.log("");
-  console.log(`${colors.cyan}Installing TEI server...${colors.reset}`);
-  console.log("");
+  console.error("");
+  console.error(`${colors.cyan}Installing TEI server...${colors.reset}`);
+  console.error("");
 
   if (!checkDocker()) {
     printError("Docker is not installed or not running");
-    console.log("");
-    console.log("Please install Docker Desktop:");
-    console.log("  https://www.docker.com/products/docker-desktop");
+    console.error("");
+    console.error("Please install Docker Desktop:");
+    console.error("  https://www.docker.com/products/docker-desktop");
     return false;
   }
 
@@ -260,7 +261,7 @@ async function installTei(model: EmbeddingModel, architecture: string): Promise<
 
   // Pull image
   printInfo(`Pulling Docker image: ${imageTag}`);
-  console.log("  This may take a few minutes...");
+  console.error("  This may take a few minutes...");
 
   const pullResult = spawnSync("docker", ["pull", imageTag], {
     stdio: "inherit",
@@ -273,7 +274,7 @@ async function installTei(model: EmbeddingModel, architecture: string): Promise<
   }
 
   printSuccess("Image downloaded");
-  console.log("");
+  console.error("");
 
   // Create container
   printInfo(`Creating TEI container with model: ${model.model_id}`);
@@ -296,7 +297,7 @@ async function installTei(model: EmbeddingModel, architecture: string): Promise<
   }
 
   printSuccess("Container created");
-  console.log("");
+  console.error("");
 
   // Wait for health check
   printInfo("Waiting for TEI to initialize (max 60 seconds)...");
@@ -309,7 +310,7 @@ async function installTei(model: EmbeddingModel, architecture: string): Promise<
         timeout: 2000,
       });
       if (healthResult.status === 0) {
-        console.log("");
+        console.error("");
         printSuccess("TEI server is ready!");
         return true;
       }
@@ -319,23 +320,23 @@ async function installTei(model: EmbeddingModel, architecture: string): Promise<
     process.stdout.write(".");
   }
 
-  console.log("");
+  console.error("");
   printWarn("Health check timed out. Container may still be initializing.");
-  console.log("  Check logs: docker logs tei-server");
+  console.error("  Check logs: docker logs tei-server");
   return true;
 }
 
 async function installOllama(model: EmbeddingModel): Promise<boolean> {
-  console.log("");
-  console.log(`${colors.cyan}Installing Ollama model...${colors.reset}`);
-  console.log("");
+  console.error("");
+  console.error(`${colors.cyan}Installing Ollama model...${colors.reset}`);
+  console.error("");
 
   if (!checkOllama()) {
     printWarn("Ollama is not installed");
-    console.log("");
-    console.log("Please install Ollama first:");
-    console.log("  https://ollama.ai/download");
-    console.log("");
+    console.error("");
+    console.error("Please install Ollama first:");
+    console.error("  https://ollama.ai/download");
+    console.error("");
 
     const install = await prompt("Open download page in browser? [y/N]: ");
     if (install.toLowerCase() === "y") {
@@ -373,12 +374,12 @@ async function installOllama(model: EmbeddingModel): Promise<boolean> {
   }
 
   printSuccess("Ollama service is running");
-  console.log("");
+  console.error("");
 
   // Pull model
   printInfo(`Downloading model: ${model.model_id}`);
-  console.log("  This may take several minutes...");
-  console.log("");
+  console.error("  This may take several minutes...");
+  console.error("");
 
   const pullResult = spawnSync("ollama", ["pull", model.model_id], {
     stdio: "inherit",
@@ -419,8 +420,8 @@ export async function runSetup(args: string[]): Promise<void> {
   }
 
   // Step 1: Detect GPU
-  console.log(`${colors.yellow}[1/3] GPU Architecture Detection${colors.reset}`);
-  console.log("");
+  console.error(`${colors.yellow}[1/3] GPU Architecture Detection${colors.reset}`);
+  console.error("");
 
   const architecture = detectGpuArchitecture();
 
@@ -433,11 +434,11 @@ export async function runSetup(args: string[]): Promise<void> {
     printSuccess(`Detected architecture: ${architecture}`);
   }
 
-  console.log("");
+  console.error("");
 
   // Step 2: Select Provider
-  console.log(`${colors.yellow}[2/3] Provider Selection${colors.reset}`);
-  console.log("");
+  console.error(`${colors.yellow}[2/3] Provider Selection${colors.reset}`);
+  console.error("");
 
   let selectedProvider: string;
 
@@ -451,9 +452,9 @@ export async function runSetup(args: string[]): Promise<void> {
       const entry = providers[i];
       if (!entry) continue;
       const [, info] = entry;
-      console.log(`${colors.bright}${i + 1}) ${info.name}${colors.reset}`);
-      console.log(`   ${info.description.replace(/\\n/g, "\n   ")}`);
-      console.log("");
+      console.error(`${colors.bright}${i + 1}) ${info.name}${colors.reset}`);
+      console.error(`   ${info.description.replace(/\\n/g, "\n   ")}`);
+      console.error("");
     }
 
     const choice = await prompt(`Choose provider [1-${providers.length}]: `);
@@ -466,19 +467,19 @@ export async function runSetup(args: string[]): Promise<void> {
     }
 
     selectedProvider = selectedEntry[0];
-    console.log("");
+    console.error("");
     const providerInfo = modelsConfig.providers[selectedProvider];
     printInfo(`Selected: ${providerInfo?.name ?? selectedProvider}`);
   }
 
-  console.log("");
+  console.error("");
 
   // Memory provider doesn't need model selection
   if (selectedProvider === "memory") {
-    console.log(`${colors.yellow}Memory Provider (No ML)${colors.reset}`);
-    console.log("");
+    console.error(`${colors.yellow}Memory Provider (No ML)${colors.reset}`);
+    console.error("");
     printWarn("Memory provider uses deterministic hashing (no ML embeddings)");
-    console.log("");
+    console.error("");
 
     const config: SemanticConfig = {
       enabled: true,
@@ -495,15 +496,15 @@ export async function runSetup(args: string[]): Promise<void> {
     ensureConfigDir();
     saveSemanticConfig(config);
 
-    console.log("");
+    console.error("");
     printSuccess(`Configuration saved to: ${getDisplayPath(getConfigDir())}/semantic-config.json`);
-    console.log("");
+    console.error("");
     return;
   }
 
   // Step 3: Select Model
-  console.log(`${colors.yellow}[3/3] Model Selection${colors.reset}`);
-  console.log("");
+  console.error(`${colors.yellow}[3/3] Model Selection${colors.reset}`);
+  console.error("");
 
   const providerModels = modelsConfig.models.filter((m) => m.provider === selectedProvider);
 
@@ -529,11 +530,11 @@ export async function runSetup(args: string[]): Promise<void> {
     printInfo(`Using model: ${selectedModel.name}`);
   } else {
     if (gpuModels.length > 0) {
-      console.log(`Available models for your GPU (${architecture}):`);
+      console.error(`Available models for your GPU (${architecture}):`);
     } else {
-      console.log("Available models (CPU mode):");
+      console.error("Available models (CPU mode):");
     }
-    console.log("");
+    console.error("");
 
     for (let i = 0; i < availableModels.length; i++) {
       const model = availableModels[i];
@@ -541,14 +542,14 @@ export async function runSetup(args: string[]): Promise<void> {
       const badge = model.badge ? ` ${model.badge}` : "";
       const gpuIndicator = i < gpuModels.length && gpuModels.length > 0 ? " [GPU]" : "";
 
-      console.log(`${colors.bright}${i + 1}) ${model.name}${badge}${gpuIndicator}${colors.reset}`);
+      console.error(`${colors.bright}${i + 1}) ${model.name}${badge}${gpuIndicator}${colors.reset}`);
 
       const langLabel = model.language === "multi" ? "Multilingual" : model.language === "code" ? "Code" : "English";
-      console.log(
+      console.error(
         `   ${colors.dim}Language: ${langLabel} | Context: ${model.context_tokens} tokens | Dim: ${model.dimensions} | Size: ~${model.size_mb}MB${colors.reset}`,
       );
-      console.log(`   ${colors.dim}${model.description}${colors.reset}`);
-      console.log("");
+      console.error(`   ${colors.dim}${model.description}${colors.reset}`);
+      console.error("");
     }
 
     const modelChoice = await prompt(`Choose model [1-${availableModels.length}]: `);
@@ -561,11 +562,11 @@ export async function runSetup(args: string[]): Promise<void> {
     }
 
     selectedModel = chosenModel;
-    console.log("");
+    console.error("");
     printInfo(`Selected: ${selectedModel.name}`);
   }
 
-  console.log("");
+  console.error("");
 
   // Install provider
   let installSuccess = false;
@@ -577,7 +578,7 @@ export async function runSetup(args: string[]): Promise<void> {
   }
 
   if (!installSuccess) {
-    console.log("");
+    console.error("");
     printWarn("Installation encountered issues, but configuration will be saved");
   }
 
@@ -630,38 +631,38 @@ export async function runSetup(args: string[]): Promise<void> {
   saveSemanticConfig(config);
 
   // Summary
-  console.log("");
-  console.log(
+  console.error("");
+  console.error(
     `${colors.green}${colors.bright}=================================================================${colors.reset}`,
   );
-  console.log(`${colors.green}${colors.bright}Setup Complete!${colors.reset}`);
-  console.log(
+  console.error(`${colors.green}${colors.bright}Setup Complete!${colors.reset}`);
+  console.error(
     `${colors.green}${colors.bright}=================================================================${colors.reset}`,
   );
-  console.log("");
-  console.log(`${colors.cyan}Summary:${colors.reset}`);
-  console.log(`  Platform:     ${selectedProvider}`);
-  console.log(`  Model:        ${selectedModel.name}`);
-  console.log(`  Architecture: ${architecture}`);
-  console.log(`  Config saved: ${getDisplayPath(getConfigDir())}/semantic-config.json`);
-  console.log("");
+  console.error("");
+  console.error(`${colors.cyan}Summary:${colors.reset}`);
+  console.error(`  Platform:     ${selectedProvider}`);
+  console.error(`  Model:        ${selectedModel.name}`);
+  console.error(`  Architecture: ${architecture}`);
+  console.error(`  Config saved: ${getDisplayPath(getConfigDir())}/semantic-config.json`);
+  console.error("");
 
   if (selectedProvider === "tei") {
-    console.log(`${colors.cyan}TEI Management:${colors.reset}`);
-    console.log("  docker logs tei-server        # View logs");
-    console.log("  docker stop tei-server        # Stop");
-    console.log("  docker start tei-server       # Start");
-    console.log("  docker restart tei-server     # Restart");
+    console.error(`${colors.cyan}TEI Management:${colors.reset}`);
+    console.error("  docker logs tei-server        # View logs");
+    console.error("  docker stop tei-server        # Stop");
+    console.error("  docker start tei-server       # Start");
+    console.error("  docker restart tei-server     # Restart");
   } else if (selectedProvider === "ollama") {
-    console.log(`${colors.cyan}Ollama Management:${colors.reset}`);
-    console.log("  ollama list                   # List models");
-    console.log("  ollama pull <model>           # Download model");
-    console.log("  ollama rm <model>             # Remove model");
+    console.error(`${colors.cyan}Ollama Management:${colors.reset}`);
+    console.error("  ollama list                   # List models");
+    console.error("  ollama pull <model>           # Download model");
+    console.error("  ollama rm <model>             # Remove model");
   }
 
-  console.log("");
-  console.log(`${colors.yellow}Next: Restart your MCP client to enable semantic mode${colors.reset}`);
-  console.log("");
+  console.error("");
+  console.error(`${colors.yellow}Next: Restart your MCP client to enable semantic mode${colors.reset}`);
+  console.error("");
 }
 
 // Run if executed directly

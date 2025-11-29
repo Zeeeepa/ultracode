@@ -118,7 +118,7 @@ export class GitIntegration {
 
       return hash;
     } catch (error) {
-      throw new Error(`Failed to get commit hash for ${ref}: ${error}`);
+      throw new Error(`Failed to get commit hash for ${ref}`, { cause: error });
     }
   }
 
@@ -164,7 +164,7 @@ export class GitIntegration {
         stdio: ["pipe", "pipe", "pipe"],
       });
 
-      console.log(`[GitIntegration] Checked out branch: ${branch}`);
+      console.error(`[GitIntegration] Checked out branch: ${branch}`);
     } catch (error) {
       if (this.config.restoreOnError && this.originalBranch) {
         await this.restoreOriginalBranch();
@@ -188,7 +188,7 @@ export class GitIntegration {
         stdio: ["pipe", "pipe", "pipe"],
       });
 
-      console.log(`[GitIntegration] Restored original branch: ${this.originalBranch}`);
+      console.error(`[GitIntegration] Restored original branch: ${this.originalBranch}`);
       this.originalBranch = null;
     } catch (error) {
       console.error(`[GitIntegration] Failed to restore branch: ${error}`);

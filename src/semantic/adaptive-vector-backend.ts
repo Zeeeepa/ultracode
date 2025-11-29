@@ -214,7 +214,7 @@ export class AdaptiveVectorBackend {
       const startTime = Date.now();
       fileCount = this.quickCountFiles(this.config.workingDirectory);
       const elapsed = Date.now() - startTime;
-      console.log(`[AdaptiveVectorBackend] Quick counted ${fileCount} source files in ${elapsed}ms`);
+      console.error(`[AdaptiveVectorBackend] Quick counted ${fileCount} source files in ${elapsed}ms`);
     }
 
     const estimatedCount = fileCount ? this.estimateVectorCount(fileCount) : actualCount;

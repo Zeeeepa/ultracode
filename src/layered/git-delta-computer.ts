@@ -51,7 +51,7 @@ export class GitDeltaComputer {
    * @returns Branch delta with all changes
    */
   async computeDeltaFromGitDiff(branchName: string, baseBranch: string = "main"): Promise<BranchDelta> {
-    console.log(`[GitDeltaComputer] Computing delta: ${branchName} relative to ${baseBranch}`);
+    console.error(`[GitDeltaComputer] Computing delta: ${branchName} relative to ${baseBranch}`);
 
     // Get git diff
     const diffResult = await this.getGitDiff(branchName, baseBranch);
@@ -67,7 +67,7 @@ export class GitDeltaComputer {
       await this.processFileChange(fileChange, delta);
     }
 
-    console.log(
+    console.error(
       `[GitDeltaComputer] Delta computed: ${delta.totalChanges} changes ` +
         `(+${delta.entityDelta.added.size} ~${delta.entityDelta.modified.size} -${delta.entityDelta.deleted.size})`,
     );
@@ -130,7 +130,7 @@ export class GitDeltaComputer {
       }).trim();
 
       return sha;
-    } catch (error) {
+    } catch (_error) {
       console.warn(`[GitDeltaComputer] Could not find merge-base, using ${branch2} HEAD`);
       return this.getCommitSha(branch2);
     }
@@ -148,7 +148,7 @@ export class GitDeltaComputer {
       }).trim();
 
       return sha;
-    } catch (error) {
+    } catch (_error) {
       console.error(`[GitDeltaComputer] Could not get commit SHA for ${branch}`);
       return "";
     }
@@ -395,7 +395,7 @@ export class GitDeltaComputer {
     try {
       const entity = await this.baseIndex.getEntity(entityId);
       return entity !== null;
-    } catch (error) {
+    } catch (_error) {
       // Assume not exists on error
       return false;
     }

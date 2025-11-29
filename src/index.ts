@@ -39,14 +39,24 @@ import { fileURLToPath } from "node:url";
 // Consolidated MCP SDK imports
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 // Schema and Node.js built-ins
 import { z } from "zod";
 import { zodToJsonSchema as _zodToJsonSchema } from "zod-to-json-schema";
 
 // Helper to convert Zod schemas to JSON Schema with proper typing for Zod v4
 function zodToJsonSchema(schema: z.ZodSchema): Record<string, unknown> {
-  return _zodToJsonSchema(schema as any) as Record<string, unknown>;
+  const result = _zodToJsonSchema(schema as any) as Record<string, unknown>;
+  // Ensure type: "object" is present for MCP compatibility
+  if (!result.type) {
+    result.type = "object";
+  }
+  return result;
 }
 
 // Import our multi-agent components
@@ -60,12 +70,15 @@ import { getOrCreateAgent, registerAllAgents } from "./core/agent-registry.js";
 // VARIANT-C: DI Container integration
 import { getGlobalContainer } from "./core/di-container.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
+import { PipeServer } from "./core/pipe-transport.js";
 import { resourceManager } from "./core/resource-manager.js";
 import { LayeredIndexManager } from "./layered/index.js";
 import { CodeModifier } from "./modification/code-modifier.js";
 import { FileOperations } from "./modification/file-operations.js";
 import { PreviewManager } from "./modification/preview-manager.js";
 import { PatternSearch } from "./search/pattern-search.js";
+// Storage initialization
+import { initializeStorageDirs } from "./shared/storage-paths.js";
 import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
 import { getSQLiteManager } from "./storage/sqlite-manager.js";
 import { collectAgentMetrics } from "./tools/agent-metrics.js";
@@ -89,12 +102,17 @@ import { CodeValidator } from "./validation/code-validator.js";
 // PHASE 8: Import new code modification and analysis components
 import { VersionManager } from "./versioning/version-manager.js";
 
+// Initialize centralized storage directories BEFORE any storage operations
+initializeStorageDirs();
+
 // Parse command line arguments
 const args = process.argv.slice(2);
 let overrideConfigPath: string | undefined;
 let helpRequested = false;
 let versionRequested = false;
 let setupRequested = false;
+let noAutoIndex = false;
+let pipeServerMode = false; // Default: use stdio transport (for Claude Code)
 const positionalArgs: string[] = [];
 
 // Check for "setup" command first
@@ -130,9 +148,26 @@ for (let i = 0; i < args.length; i++) {
     helpRequested = true;
   } else if (arg === "--version" || arg === "-v") {
     versionRequested = true;
+  } else if (arg === "--no-auto-index") {
+    noAutoIndex = true;
+  } else if (arg === "--stdio") {
+    pipeServerMode = false; // Use stdio transport (explicit, same as default)
+  } else if (arg === "--pipe") {
+    pipeServerMode = true; // Use pipe/TCP transport for multi-client mode
+  } else if (arg === "-d" || arg === "--directory") {
+    // Support -d <path> for compatibility with other tools
+    const next = args[++i];
+    if (next) {
+      positionalArgs.push(next);
+    }
+  } else if (arg.startsWith("-d=") || arg.startsWith("--directory=")) {
+    const value = arg.includes("=") ? arg.split("=")[1] : undefined;
+    if (value) {
+      positionalArgs.push(value);
+    }
   } else if (arg.startsWith("-")) {
     console.error(`Unknown option: ${arg}`);
-    console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
+    console.error("Usage: ultrascript-tools-mcp [--config <path>] [-d] <directory>");
     process.exit(1);
   } else {
     positionalArgs.push(arg);
@@ -140,17 +175,22 @@ for (let i = 0; i < args.length; i++) {
 }
 
 function printHelp() {
-  console.log(`UltraScript Tools MCP Server
+  console.error(`UltraScript Tools MCP Server
 
 Usage:
   ultrascript-tools-mcp [options] <directory>
+  ultrascript-tools-mcp [options] -d <directory>
   ultrascript-tools-mcp setup [--provider <tei|ollama|memory>]
 
 Commands:
   setup             Interactive setup for semantic embedding providers
 
 Options:
+  -d, --directory   Project directory to index (alternative syntax)
   --config <path>   Use an alternate YAML configuration file
+  --no-auto-index   Disable automatic indexing on startup
+  --stdio           Use stdio transport (default)
+  --pipe            Use pipe transport for multi-client mode
   --help, -h        Show this help message and exit
   --version, -v     Print version information and exit
 
@@ -286,15 +326,15 @@ function normalizeSemanticCloneGroups(
 }
 
 if (versionRequested) {
-  console.log(
+  console.error(
     `${versionInfo.name} ${versionInfo.version}\nNode ${versionInfo.nodeVersion} (${versionInfo.platform} ${versionInfo.arch})`,
   );
   process.exit(0);
 }
 
+// Default to cwd if no directory specified (for Comm proxy mode)
 if (positionalArgs.length < 1) {
-  console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
-  process.exit(1);
+  positionalArgs.push(process.cwd());
 }
 
 function expandHome(filepath: string): string {
@@ -350,15 +390,9 @@ function getVersionInfo() {
 
 const directory = normalize(resolve(expandHome(positionalArgs[0]!)));
 
-// Global context for current indexing directory (used by SemanticAgent for file count estimation)
-let currentIndexingDirectory: string | undefined;
-
-/**
- * Get the current directory being indexed (for adaptive vector backend selection)
- */
-export function getCurrentIndexingDirectory(): string | undefined {
-  return currentIndexingDirectory;
-}
+// Re-export from shared module for backward compatibility
+import { getCurrentIndexingDirectory, setCurrentIndexingDirectory } from "./shared/indexing-context.js";
+export { getCurrentIndexingDirectory };
 
 type DebugRequest = {
   raw: string;
@@ -412,12 +446,12 @@ if (!validation.valid) {
 }
 
 // Initialize global SQLiteManager with database configuration
-console.log("[Main] Initializing global SQLiteManager with config:", config.database.path);
+console.error("[Main] Initializing global SQLiteManager with config:", config.database.path);
 const globalSQLiteManager = getSQLiteManager(config.database);
 globalSQLiteManager.initialize();
 
 // Initialize global GraphStorage
-console.log("[Main] Initializing global GraphStorage");
+console.error("[Main] Initializing global GraphStorage");
 await initializeGraphStorage(globalSQLiteManager);
 
 // Initialize logging system with config
@@ -442,7 +476,7 @@ logger.systemEvent("Resource Manager Started", {
 // VARIANT-C: Initialize DI Container and register all agents
 const container = getGlobalContainer();
 await registerAllAgents(container);
-console.log("[Main] DI Container initialized with all agents");
+console.error("[Main] DI Container initialized with all agents");
 
 // Initialize conductor orchestrator lazily
 let conductor: ConductorOrchestrator | null = null;
@@ -573,7 +607,7 @@ async function getLayeredIndexManager(): Promise<LayeredIndexManager> {
     });
 
     await layeredIndexManager.initialize();
-    console.log("[Main] LayeredIndexManager initialized");
+    console.error("[Main] LayeredIndexManager initialized");
   }
   return layeredIndexManager;
 }
@@ -1143,19 +1177,340 @@ const AddMemberSchema = z.object({
   updateGraph: z.boolean().optional().default(true).describe("Update graph with new member"),
 });
 
-// Create MCP server
-const server = new Server(
-  {
-    name: versionInfo.name,
-    version: versionInfo.version,
-  },
-  {
-    capabilities: {
-      tools: {},
-      resources: {},
+// Full list of available tools (used by all MCP server instances)
+function getToolsList() {
+  return [
+    {
+      name: "index",
+      description: "Index a codebase using multi-agent parsing and analysis",
+      inputSchema: zodToJsonSchema(IndexToolSchema),
     },
-  },
-);
+    {
+      name: "list_file_entities",
+      description:
+        "List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
+      inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
+    },
+    {
+      name: "get_members",
+      description:
+        "Alias for list_file_entities. List members/entities within a file. Unified naming with UltrasharpTools.",
+      inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
+    },
+    {
+      name: "list_entity_relationships",
+      description:
+        "List outgoing relationships for an entity (imports, references, containment). Provide either the entity id (preferred) or name+file path to inspect its dependencies.",
+      inputSchema: zodToJsonSchema(ListRelationshipsToolSchema),
+    },
+    {
+      name: "query",
+      description: "Query the code graph using natural language or structured queries",
+      inputSchema: zodToJsonSchema(QueryToolSchema),
+    },
+    {
+      name: "get_metrics",
+      description: "Get system metrics and agent performance statistics",
+      inputSchema: zodToJsonSchema(z.object({})) as any,
+    },
+    {
+      name: "get_version",
+      description: "Get MCP server version information and runtime details",
+      inputSchema: zodToJsonSchema(z.object({})) as any,
+    },
+    {
+      name: "semantic_search",
+      description:
+        "Search the codebase using natural language keywords or file/module paths. Useful for discovery before diving into structural graph queries.",
+      inputSchema: zodToJsonSchema(SemanticSearchSchema),
+    },
+    {
+      name: "find_similar_code",
+      description: "Find code similar to a given snippet using semantic analysis",
+      inputSchema: zodToJsonSchema(FindSimilarCodeSchema),
+    },
+    {
+      name: "analyze_code_impact",
+      description:
+        "Discover entities and files that depend on a given symbol. Use together with list_file_entities to obtain the precise entity id for impact analysis.",
+      inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema),
+    },
+    {
+      name: "detect_code_clones",
+      description: "Find duplicate or similar code blocks across the codebase",
+      inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
+    },
+    {
+      name: "find_duplicates",
+      description: "Alias for detect_code_clones. Find potential duplicate code. Unified naming with UltrasharpTools.",
+      inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
+    },
+    {
+      name: "jscpd_detect_clones",
+      description: "Run JSCPD clone detection using a lightweight tokenizer",
+      inputSchema: zodToJsonSchema(JscpdCloneDetectionSchema),
+    },
+    {
+      name: "suggest_refactoring",
+      description: "Get refactoring suggestions for improving code quality",
+      inputSchema: zodToJsonSchema(SuggestRefactoringSchema),
+    },
+    {
+      name: "cross_language_search",
+      description: "Search across multiple programming languages",
+      inputSchema: zodToJsonSchema(CrossLanguageSearchSchema),
+    },
+    {
+      name: "analyze_hotspots",
+      description: "Find code hotspots based on complexity, changes, or coupling",
+      inputSchema: zodToJsonSchema(AnalyzeHotspotsSchema),
+    },
+    {
+      name: "find_related_concepts",
+      description: "Find conceptually related code to a given entity",
+      inputSchema: zodToJsonSchema(FindRelatedConceptsSchema),
+    },
+    {
+      name: "analyze_state_chaos",
+      description:
+        "Analyze state management chaos in TypeScript/Angular codebases. Detects scattered state, measures coupling, identifies mutations, and suggests refactoring strategies. Returns AI-friendly summary or detailed report.",
+      inputSchema: zodToJsonSchema(AnalyzeStateChaosSchema),
+    },
+    {
+      name: "get_graph",
+      description: "Get the code graph with all entities and relationships",
+      inputSchema: zodToJsonSchema(GetGraphSchema),
+    },
+    {
+      name: "get_graph_stats",
+      description: "Get statistics about the code graph",
+      inputSchema: zodToJsonSchema(GetGraphStatsSchema),
+    },
+    {
+      name: "lerna_project_graph",
+      description: "Generate a Lerna workspace dependency graph (if configured)",
+      inputSchema: zodToJsonSchema(GetLernaProjectGraphSchema),
+    },
+    {
+      name: "reset_graph",
+      description: "Clear all graph data (entities, relationships, files)",
+      inputSchema: zodToJsonSchema(z.object({})) as any,
+    },
+    {
+      name: "clean_index",
+      description: "Reset graph and then perform a full index",
+      inputSchema: zodToJsonSchema(CleanIndexSchema),
+    },
+    {
+      name: "get_graph_health",
+      description: "Health check for graph storage (totals + sample)",
+      inputSchema: zodToJsonSchema(GetGraphHealthSchema),
+    },
+    {
+      name: "get_agent_metrics",
+      description: "Collect runtime telemetry for conductor and registered agents",
+      inputSchema: zodToJsonSchema(GetAgentMetricsSchema),
+    },
+    {
+      name: "get_bus_stats",
+      description: "Inspect knowledge bus statistics (topics, entries, subscriptions)",
+      inputSchema: zodToJsonSchema(GetBusStatsSchema),
+    },
+    {
+      name: "clear_bus_topic",
+      description: "Remove cached knowledge entries for a specific topic",
+      inputSchema: zodToJsonSchema(ClearBusTopicSchema),
+    },
+    {
+      name: "create_snapshot",
+      description:
+        "Create a version snapshot for rollback. Uses git stash if available, otherwise .backup/ directory. Returns snapshot ID for rollback.",
+      inputSchema: zodToJsonSchema(CreateSnapshotSchema),
+    },
+    {
+      name: "rollback_snapshot",
+      description: "Rollback to a previous snapshot by ID. Restores all files to their snapshot state.",
+      inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
+    },
+    {
+      name: "undo",
+      description:
+        "Alias for rollback_snapshot. Undo last changes by reverting to snapshot. Unified naming with UltrasharpTools.",
+      inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
+    },
+    {
+      name: "list_snapshots",
+      description: "List available snapshots with creation time and description.",
+      inputSchema: zodToJsonSchema(ListSnapshotsSchema),
+    },
+    {
+      name: "cleanup_snapshots",
+      description: "Delete old snapshots to free disk space.",
+      inputSchema: zodToJsonSchema(CleanupSnapshotsSchema),
+    },
+    {
+      name: "modify_entity_code",
+      description:
+        "Modify code of a specific entity by ID. Automatically creates snapshot, validates before/after, updates embeddings, and can rollback on error. Default preview mode shows changes without applying.",
+      inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
+    },
+    {
+      name: "modify_code",
+      description:
+        "Alias for modify_entity_code. Modify entity code with validation. Unified naming with UltrasharpTools.",
+      inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
+    },
+    {
+      name: "copy_file",
+      description:
+        "Copy file or directory with automatic graph updates. Streaming for large files. Token-efficient alternative to reading full content.",
+      inputSchema: zodToJsonSchema(CopyFileSchema),
+    },
+    {
+      name: "rename_file",
+      description:
+        "Rename file with automatic import updates across project. Updates graph and embeddings. Token-efficient alternative to read-write pattern.",
+      inputSchema: zodToJsonSchema(RenameFileSchema),
+    },
+    {
+      name: "split_file",
+      description:
+        "Extract entities from a file into separate files. Useful for refactoring large files. Updates graph with new locations.",
+      inputSchema: zodToJsonSchema(SplitFileSchema),
+    },
+    {
+      name: "synthesize_files",
+      description:
+        "Combine multiple files into one. Merges entities in graph. Can optionally delete originals. Token-efficient way to consolidate code.",
+      inputSchema: zodToJsonSchema(SynthesizeFilesSchema),
+    },
+    {
+      name: "create_file",
+      description:
+        "Create a new file with content. Automatically parses and adds entities to graph. Unified naming with UltrasharpTools.",
+      inputSchema: zodToJsonSchema(CreateFileSchema),
+    },
+    {
+      name: "rename_symbol",
+      description:
+        "Rename a symbol (variable, function, class, etc.) and update all references. Supports entity ID or name-based lookup. Unified naming with UltrasharpTools.",
+      inputSchema: zodToJsonSchema(RenameSymbolSchema),
+    },
+    {
+      name: "add_member",
+      description:
+        "Add a new member (method, property, field) to a class or interface. Supports precise positioning. Unified naming with UltrasharpTools.",
+      inputSchema: zodToJsonSchema(AddMemberSchema),
+    },
+    {
+      name: "validate_file",
+      description:
+        "Validate code file using appropriate linter (ESLint for JS/TS, Pylint for Python). Returns problems categorized by severity.",
+      inputSchema: zodToJsonSchema(ValidateFileSchema),
+    },
+    {
+      name: "validate_directory",
+      description:
+        "Validate all code files in directory. Batch processing with concurrency limit. Returns aggregated validation report.",
+      inputSchema: zodToJsonSchema(ValidateDirectorySchema),
+    },
+    {
+      name: "detect_technology_stack",
+      description:
+        "Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
+      inputSchema: zodToJsonSchema(DetectTechnologyStackSchema),
+    },
+    {
+      name: "pattern_search",
+      description:
+        "Advanced search with multiple modes: entity (name/type regex), content (inside entity bodies), semantic (vector similarity), hybrid (all combined). Framework-aware filtering. SIMD-accelerated similarity computation.",
+      inputSchema: zodToJsonSchema(PatternSearchSchema),
+    },
+    ...branchToolDefinitions,
+  ];
+}
+
+// Function to create MCP server with handlers (supports multiple clients in pipe mode)
+function createMcpServer(): Server {
+  const srv = new Server(
+    {
+      name: versionInfo.name,
+      version: versionInfo.version,
+    },
+    {
+      capabilities: {
+        tools: { listChanged: true },
+        prompts: { listChanged: true },
+      },
+    },
+  );
+
+  // Handler for listing available prompts
+  srv.setRequestHandler(ListPromptsRequestSchema, async () => {
+    return {
+      prompts: [
+        {
+          name: "quick-start",
+          description: "Quick start guide for UltraScript Tools MCP - when and how to use tools",
+        },
+        {
+          name: "tool-reference",
+          description: "Complete reference of all 50+ tools with parameters and examples",
+        },
+        {
+          name: "workflows",
+          description: "Common workflows: analyze project, search & refactor, find duplicates, git integration",
+        },
+      ],
+    };
+  });
+
+  // Handler for getting a specific prompt
+  srv.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name } = request.params;
+    const promptsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "prompts");
+    const promptFile = join(promptsDir, `${name}.md`);
+
+    try {
+      const content = readFileSync(promptFile, "utf-8");
+      return {
+        description: `UltraScript Tools MCP - ${name}`,
+        messages: [
+          {
+            role: "user" as const,
+            content: {
+              type: "text" as const,
+              text: content,
+            },
+          },
+        ],
+      };
+    } catch {
+      throw new Error(`Prompt not found: ${name}`);
+    }
+  });
+
+  // Handler for listing available tools
+  srv.setRequestHandler(ListToolsRequestSchema, async () => {
+    return { tools: getToolsList() };
+  });
+
+  // Handler for tool execution
+  srv.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    const requestId = createRequestId();
+    const startTime = Date.now();
+
+    logger.mcpRequest(name, args, requestId);
+
+    return executeToolCall(name, args, requestId, startTime);
+  });
+
+  return srv;
+}
+
+// Create default MCP server for stdio mode
+const server = createMcpServer();
 
 // Helper: enforce operation timeouts per SYSTEM_HANG_RECOVERY_PLAN
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, requestId: string): Promise<T> {
@@ -1176,274 +1531,6 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, re
   }
 }
 
-// Handler for listing available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: "index",
-        description: "Index a codebase using multi-agent parsing and analysis",
-        inputSchema: zodToJsonSchema(IndexToolSchema),
-      },
-      {
-        name: "list_file_entities",
-        description:
-          "List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
-        inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
-      },
-      {
-        name: "get_members",
-        description:
-          "Alias for list_file_entities. List members/entities within a file. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
-      },
-      {
-        name: "list_entity_relationships",
-        description:
-          "List outgoing relationships for an entity (imports, references, containment). Provide either the entity id (preferred) or name+file path to inspect its dependencies.",
-        inputSchema: zodToJsonSchema(ListRelationshipsToolSchema),
-      },
-      {
-        name: "query",
-        description: "Query the code graph using natural language or structured queries",
-        inputSchema: zodToJsonSchema(QueryToolSchema),
-      },
-      {
-        name: "get_metrics",
-        description: "Get system metrics and agent performance statistics",
-        inputSchema: zodToJsonSchema(z.object({})) as any,
-      },
-      {
-        name: "get_version",
-        description: "Get MCP server version information and runtime details",
-        inputSchema: zodToJsonSchema(z.object({})) as any,
-      },
-      // New semantic tools - TASK-002
-      {
-        name: "semantic_search",
-        description:
-          "Search the codebase using natural language keywords or file/module paths. Useful for discovery before diving into structural graph queries.",
-        inputSchema: zodToJsonSchema(SemanticSearchSchema),
-      },
-      {
-        name: "find_similar_code",
-        description: "Find code similar to a given snippet using semantic analysis",
-        inputSchema: zodToJsonSchema(FindSimilarCodeSchema),
-      },
-      {
-        name: "analyze_code_impact",
-        description:
-          "Discover entities and files that depend on a given symbol. Use together with list_file_entities to obtain the precise entity id for impact analysis.",
-        inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema),
-      },
-      {
-        name: "detect_code_clones",
-        description: "Find duplicate or similar code blocks across the codebase",
-        inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
-      },
-      {
-        name: "find_duplicates",
-        description:
-          "Alias for detect_code_clones. Find potential duplicate code. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
-      },
-      {
-        name: "jscpd_detect_clones",
-        description: "Run JSCPD clone detection using a lightweight tokenizer",
-        inputSchema: zodToJsonSchema(JscpdCloneDetectionSchema),
-      },
-      {
-        name: "suggest_refactoring",
-        description: "Get refactoring suggestions for improving code quality",
-        inputSchema: zodToJsonSchema(SuggestRefactoringSchema),
-      },
-      {
-        name: "cross_language_search",
-        description: "Search across multiple programming languages",
-        inputSchema: zodToJsonSchema(CrossLanguageSearchSchema),
-      },
-      {
-        name: "analyze_hotspots",
-        description: "Find code hotspots based on complexity, changes, or coupling",
-        inputSchema: zodToJsonSchema(AnalyzeHotspotsSchema),
-      },
-      {
-        name: "find_related_concepts",
-        description: "Find conceptually related code to a given entity",
-        inputSchema: zodToJsonSchema(FindRelatedConceptsSchema),
-      },
-      {
-        name: "analyze_state_chaos",
-        description:
-          "Analyze state management chaos in TypeScript/Angular codebases. Detects scattered state, measures coupling, identifies mutations, and suggests refactoring strategies. Returns AI-friendly summary or detailed report.",
-        inputSchema: zodToJsonSchema(AnalyzeStateChaosSchema),
-      },
-      {
-        name: "get_graph",
-        description: "Get the code graph with all entities and relationships",
-        inputSchema: zodToJsonSchema(GetGraphSchema),
-      },
-      {
-        name: "get_graph_stats",
-        description: "Get statistics about the code graph",
-        inputSchema: zodToJsonSchema(GetGraphStatsSchema),
-      },
-      {
-        name: "lerna_project_graph",
-        description: "Generate a Lerna workspace dependency graph (if configured)",
-        inputSchema: zodToJsonSchema(GetLernaProjectGraphSchema),
-      },
-      {
-        name: "reset_graph",
-        description: "Clear all graph data (entities, relationships, files)",
-        inputSchema: zodToJsonSchema(z.object({})) as any,
-      },
-      {
-        name: "clean_index",
-        description: "Reset graph and then perform a full index",
-        inputSchema: zodToJsonSchema(CleanIndexSchema),
-      },
-      {
-        name: "get_graph_health",
-        description: "Health check for graph storage (totals + sample)",
-        inputSchema: zodToJsonSchema(GetGraphHealthSchema),
-      },
-      {
-        name: "get_agent_metrics",
-        description: "Collect runtime telemetry for conductor and registered agents",
-        inputSchema: zodToJsonSchema(GetAgentMetricsSchema),
-      },
-      {
-        name: "get_bus_stats",
-        description: "Inspect knowledge bus statistics (topics, entries, subscriptions)",
-        inputSchema: zodToJsonSchema(GetBusStatsSchema),
-      },
-      {
-        name: "clear_bus_topic",
-        description: "Remove cached knowledge entries for a specific topic",
-        inputSchema: zodToJsonSchema(ClearBusTopicSchema),
-      },
-      // ============================================================================
-      // PHASE 8: New Code Modification & Analysis Tools
-      // ============================================================================
-      // Version Manager Tools
-      {
-        name: "create_snapshot",
-        description:
-          "Create a version snapshot for rollback. Uses git stash if available, otherwise .backup/ directory. Returns snapshot ID for rollback.",
-        inputSchema: zodToJsonSchema(CreateSnapshotSchema),
-      },
-      {
-        name: "rollback_snapshot",
-        description: "Rollback to a previous snapshot by ID. Restores all files to their snapshot state.",
-        inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
-      },
-      {
-        name: "undo",
-        description:
-          "Alias for rollback_snapshot. Undo last changes by reverting to snapshot. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
-      },
-      {
-        name: "list_snapshots",
-        description: "List available snapshots with creation time and description.",
-        inputSchema: zodToJsonSchema(ListSnapshotsSchema),
-      },
-      {
-        name: "cleanup_snapshots",
-        description: "Delete old snapshots to free disk space.",
-        inputSchema: zodToJsonSchema(CleanupSnapshotsSchema),
-      },
-      // Code Modification Tool
-      {
-        name: "modify_entity_code",
-        description:
-          "Modify code of a specific entity by ID. Automatically creates snapshot, validates before/after, updates embeddings, and can rollback on error. Default preview mode shows changes without applying.",
-        inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
-      },
-      {
-        name: "modify_code",
-        description:
-          "Alias for modify_entity_code. Modify entity code with validation. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
-      },
-      // File Operations Tools
-      {
-        name: "copy_file",
-        description:
-          "Copy file or directory with automatic graph updates. Streaming for large files. Token-efficient alternative to reading full content.",
-        inputSchema: zodToJsonSchema(CopyFileSchema),
-      },
-      {
-        name: "rename_file",
-        description:
-          "Rename file with automatic import updates across project. Updates graph and embeddings. Token-efficient alternative to read-write pattern.",
-        inputSchema: zodToJsonSchema(RenameFileSchema),
-      },
-      {
-        name: "split_file",
-        description:
-          "Extract entities from a file into separate files. Useful for refactoring large files. Updates graph with new locations.",
-        inputSchema: zodToJsonSchema(SplitFileSchema),
-      },
-      {
-        name: "synthesize_files",
-        description:
-          "Combine multiple files into one. Merges entities in graph. Can optionally delete originals. Token-efficient way to consolidate code.",
-        inputSchema: zodToJsonSchema(SynthesizeFilesSchema),
-      },
-      // Unified Tools (cross-compatibility with UltrasharpTools)
-      {
-        name: "create_file",
-        description:
-          "Create a new file with content. Automatically parses and adds entities to graph. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(CreateFileSchema),
-      },
-      {
-        name: "rename_symbol",
-        description:
-          "Rename a symbol (variable, function, class, etc.) and update all references. Supports entity ID or name-based lookup. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(RenameSymbolSchema),
-      },
-      {
-        name: "add_member",
-        description:
-          "Add a new member (method, property, field) to a class or interface. Supports precise positioning. Unified naming with UltrasharpTools.",
-        inputSchema: zodToJsonSchema(AddMemberSchema),
-      },
-      // Code Validation Tools
-      {
-        name: "validate_file",
-        description:
-          "Validate code file using appropriate linter (ESLint for JS/TS, Pylint for Python). Returns problems categorized by severity.",
-        inputSchema: zodToJsonSchema(ValidateFileSchema),
-      },
-      {
-        name: "validate_directory",
-        description:
-          "Validate all code files in directory. Batch processing with concurrency limit. Returns aggregated validation report.",
-        inputSchema: zodToJsonSchema(ValidateDirectorySchema),
-      },
-      // Technology Detection Tool
-      {
-        name: "detect_technology_stack",
-        description:
-          "Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
-        inputSchema: zodToJsonSchema(DetectTechnologyStackSchema),
-      },
-      // Pattern Search Tool
-      {
-        name: "pattern_search",
-        description:
-          "Advanced search with multiple modes: entity (name/type regex), content (inside entity bodies), semantic (vector similarity), hybrid (all combined). Framework-aware filtering. SIMD-accelerated similarity computation.",
-        inputSchema: zodToJsonSchema(PatternSearchSchema),
-      },
-      // Branch management tools
-      ...branchToolDefinitions,
-    ],
-  };
-});
-
 async function executeToolCall(name: string, args: unknown, requestId: string, startTime: number) {
   try {
     switch (name) {
@@ -1459,7 +1546,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         }
 
         // Set current indexing directory for adaptive vector backend selection
-        currentIndexingDirectory = targetDir;
+        setCurrentIndexingDirectory(targetDir);
 
         if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
           await getSemanticAgent();
@@ -2685,8 +2772,8 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           case "detailed":
             output = results.map((r) => analyzer.formatDetailed(r)).join("\n\n---\n\n");
             break;
-          case "json":
           default:
+            // "json" or any other format defaults to JSON
             output = JSON.stringify(results, null, 2);
             break;
         }
@@ -3990,13 +4077,13 @@ async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
       result,
     };
 
-    console.log(JSON.stringify(response, null, 2));
+    console.error(JSON.stringify(response, null, 2));
   }
 }
 
 // Graceful shutdown
 process.on("SIGINT", async () => {
-  console.log("\nShutting down gracefully...");
+  console.error("\nShutting down gracefully...");
   logger.systemEvent("MCP Server Shutdown Initiated");
 
   if (layeredIndexManager) {
@@ -4043,11 +4130,262 @@ process.on("SIGUSR1", async () => {
   }
 });
 
+// =============================================================================
+// AUTO-INDEXING: Detect supported project and trigger indexing on startup
+// =============================================================================
+
+/**
+ * Quickly detect if directory contains files with supported extensions.
+ * Uses fast glob with early exit (limit: 1) for performance.
+ */
+async function detectSupportedProject(
+  targetDir: string,
+  extensions: string[],
+): Promise<{ supported: boolean; detectedExt?: string; sampleFile?: string }> {
+  try {
+    const { glob } = await import("glob");
+
+    // Build glob pattern for all supported extensions
+    // e.g., **/*.{ts,tsx,js,jsx,py,go,rs,kt,swift,c,cpp,java}
+    const extList = extensions.map((e) => e.replace(/^\./, "")).join(",");
+    const pattern = `**/*.{${extList}}`;
+
+    // Use glob with limit 1 for fast detection
+    const files = await glob(pattern, {
+      cwd: targetDir,
+      nodir: true,
+      ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/vendor/**", "**/target/**", "**/__pycache__/**"],
+      maxDepth: 5, // Don't go too deep for quick detection
+      absolute: false,
+    });
+
+    if (files.length > 0) {
+      const sampleFile = files[0]!;
+      const ext = "." + sampleFile.split(".").pop();
+      return { supported: true, detectedExt: ext, sampleFile };
+    }
+
+    return { supported: false };
+  } catch (error) {
+    logger.warn("AUTO_INDEX", "Failed to detect project type", { error: (error as Error).message });
+    return { supported: false };
+  }
+}
+
+/**
+ * Build smart exclude patterns for auto-indexing
+ * - Base patterns (node_modules, .git, build artifacts)
+ * - Patterns from .gitignore if exists
+ * - Binary/archive extensions
+ */
+async function buildAutoIndexExcludePatterns(targetDir: string): Promise<string[]> {
+  const patterns: string[] = [
+    // Base directories to always exclude
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/out/**",
+    "**/.next/**",
+    "**/.nuxt/**",
+    "**/coverage/**",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/vendor/**",
+    "**/target/**", // Rust
+    "**/bin/**",
+    "**/obj/**", // .NET
+    "**/.vs/**",
+    "**/.idea/**",
+    "**/.vscode/**",
+    "**/packages/**",
+    // Common non-source directories (often contain tests, scripts, docs)
+    "**/benchmarks/**",
+    "**/benchmark/**",
+    "**/scripts/**",
+    "**/docs/**",
+    "**/examples/**",
+    "**/samples/**",
+    "**/fixtures/**",
+    "**/testdata/**",
+    "**/external-tools/**",
+    "**/third_party/**",
+    "**/third-party/**",
+    "**/thirdparty/**",
+    "**/archives/**",
+    "**/archive/**",
+    "**/backups/**",
+    "**/backup/**",
+    "**/tmp/**",
+    "**/temp/**",
+    // Binary and archive files
+    "**/*.zip",
+    "**/*.tar",
+    "**/*.tar.gz",
+    "**/*.tgz",
+    "**/*.rar",
+    "**/*.7z",
+    "**/*.exe",
+    "**/*.dll",
+    "**/*.so",
+    "**/*.dylib",
+    "**/*.bin",
+    "**/*.iso",
+    "**/*.img",
+    "**/*.dmg",
+    "**/*.wasm",
+    // Large generated files
+    "**/*.min.js",
+    "**/*.min.css",
+    "**/*.bundle.js",
+    "**/*.chunk.js",
+    "**/package-lock.json",
+    "**/yarn.lock",
+    "**/pnpm-lock.yaml",
+    "**/*.lock",
+    // Media files
+    "**/*.jpg",
+    "**/*.jpeg",
+    "**/*.png",
+    "**/*.gif",
+    "**/*.ico",
+    "**/*.svg",
+    "**/*.mp3",
+    "**/*.mp4",
+    "**/*.wav",
+    "**/*.avi",
+    "**/*.mov",
+    "**/*.pdf",
+    // Database files
+    "**/*.db",
+    "**/*.sqlite",
+    "**/*.sqlite3",
+  ];
+
+  // Try to read .gitignore and add patterns
+  try {
+    const { join } = await import("node:path");
+    const gitignorePath = join(targetDir, ".gitignore");
+    const { readTextSync, existsSync } = await import("./utils/file-ops.js");
+
+    if (existsSync(gitignorePath)) {
+      const content = readTextSync(gitignorePath);
+      const lines = content.split("\n");
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        // Skip comments and empty lines
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        // Skip negation patterns (we only want excludes)
+        if (trimmed.startsWith("!")) continue;
+
+        // Convert gitignore pattern to glob pattern
+        let pattern = trimmed;
+        // Handle directory patterns
+        if (pattern.endsWith("/")) {
+          pattern = `**/${pattern}**`;
+        } else if (!pattern.includes("/")) {
+          // Pattern without slash matches anywhere
+          pattern = `**/${pattern}`;
+        } else if (!pattern.startsWith("/") && !pattern.startsWith("**/")) {
+          pattern = `**/${pattern}`;
+        }
+        // Remove leading slash
+        if (pattern.startsWith("/")) {
+          pattern = pattern.slice(1);
+        }
+
+        patterns.push(pattern);
+      }
+      console.error(
+        `   📋 Loaded ${lines.filter((l) => l.trim() && !l.startsWith("#")).length} patterns from .gitignore`,
+      );
+    }
+  } catch (_error) {
+    // .gitignore not found or unreadable - that's fine
+  }
+
+  return patterns;
+}
+
+/**
+ * Perform auto-indexing in background (non-blocking)
+ */
+async function performAutoIndex(targetDir: string, extensions: string[]): Promise<void> {
+  const requestId = createRequestId();
+  const startTime = Date.now();
+
+  logger.systemEvent("Auto-indexing started", { directory: targetDir });
+  console.error(`\n📂 Auto-indexing project: ${targetDir}`);
+
+  try {
+    // Build smart exclude patterns
+    const excludePatterns = await buildAutoIndexExcludePatterns(targetDir);
+    console.error(`   🚫 Excluding ${excludePatterns.length} patterns (node_modules, .git, binaries, .gitignore)`);
+    // TRACE: Show first 10 patterns
+    console.error(`   📋 Sample patterns: ${excludePatterns.slice(0, 10).join(", ")}...`);
+    console.error(`   📋 Extensions: ${extensions.join(", ")}`);
+
+    // Set current indexing directory
+    setCurrentIndexingDirectory(targetDir);
+
+    // NOTE: Do NOT initialize SemanticAgent during auto-index!
+    // SemanticAgent subscribes to index events and generates embeddings synchronously,
+    // which blocks the UI for 30+ seconds. Embeddings will be generated lazily
+    // on first semantic search instead.
+
+    // Create indexing task with smart excludes
+    const task: AgentTask = {
+      id: `auto-index-${Date.now()}`,
+      type: "index",
+      priority: 8,
+      payload: {
+        directory: targetDir,
+        incremental: false,
+        excludePatterns,
+        // Pass extensions to limit file types
+        includeExtensions: extensions,
+      },
+      createdAt: Date.now(),
+    };
+
+    // Initialize agents
+    await getDevAgent();
+    await getDoraAgent();
+
+    // Run indexing via conductor
+    const cond = getConductor();
+    await cond.initialize();
+    const result = (await cond.process(task)) as { success?: boolean; data?: any; entities?: any[] };
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    if (result?.success !== false) {
+      const entityCount = result?.data?.entityCount ?? result?.data?.entities ?? result?.entities?.length ?? "?";
+      console.error(`✅ Auto-indexing complete: ${entityCount} entities indexed in ${duration}s`);
+      logger.systemEvent("Auto-indexing completed", {
+        directory: targetDir,
+        entityCount,
+        durationMs: Date.now() - startTime,
+      });
+    } else {
+      console.error(`⚠️  Auto-indexing completed with warnings in ${duration}s`);
+      logger.warn("AUTO_INDEX", "Auto-indexing completed with issues", { result }, requestId);
+    }
+  } catch (error) {
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.error(`❌ Auto-indexing failed after ${duration}s: ${(error as Error).message}`);
+    logger.error("AUTO_INDEX", "Auto-indexing failed", { error: (error as Error).message }, requestId);
+  }
+}
+
 // Start the server
 async function main() {
-  console.log(`Starting MCP Code Graph Server for directory: ${directory}`);
-  console.log("Multi-agent LiteRAG architecture initialized");
-  console.log(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
+  console.error(`Starting MCP Code Graph Server for directory: ${directory}`);
+  console.error("Multi-agent LiteRAG architecture initialized");
+  console.error(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
 
   // Check and auto-start Ollama if embeddings are enabled
   const config = ConfigLoader.getInstance().getConfig();
@@ -4055,39 +4393,206 @@ async function main() {
   const embeddingProvider: string = config.mcp?.embedding?.provider ?? "memory";
 
   if (embeddingEnabled && (embeddingProvider === "auto" || embeddingProvider === "ollama")) {
-    console.log("\n🔍 Checking Ollama service status...");
+    console.error("\n🔍 Checking Ollama service status...");
     try {
       const ollamaStatus = await ensureOllamaRunning(true); // auto-start enabled
       const statusMessage = getStatusMessage(ollamaStatus);
-      console.log(statusMessage);
+      console.error(statusMessage);
 
       if (!ollamaStatus.isRunning) {
-        console.log(
+        console.error(
           "💡 Tip: Install Ollama from https://ollama.com or run setup-embeddings.cmd/sh for automatic setup",
         );
       } else if (!ollamaStatus.hasGranite && ollamaStatus.hasModels) {
-        console.log("💡 Tip: Install granite-embedding with: ollama pull granite-embedding");
+        console.error("💡 Tip: Install granite-embedding with: ollama pull granite-embedding");
       }
     } catch (error) {
       logger.warn("STARTUP", "Ollama check failed, continuing with fallback", {
         error: (error as Error).message,
       });
-      console.log("⚠️  Ollama check failed, using memory provider fallback");
+      console.error("⚠️  Ollama check failed, using memory provider fallback");
     }
-    console.log(""); // Empty line for readability
+    console.error(""); // Empty line for readability
   }
 
   // Connect transport FIRST for fast readiness
-  logger.systemEvent("MCP Server Transport Connecting", { transport: "stdio" });
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.log("MCP server running on stdio transport");
-  logger.systemEvent("MCP Server Ready", {
-    directory,
-    transport: "stdio",
-    toolsCount: 13,
-    readyTime: Date.now(),
-  });
+  let transportType: string;
+
+  if (pipeServerMode) {
+    // Pipe server mode: multi-client support
+    // Each client gets its own MCP Server instance, sharing the same storage/agents
+    const pipeServer = new PipeServer();
+    let clientCount = 0;
+    let activeClients = 0;
+    let shutdownTimer: ReturnType<typeof setTimeout> | null = null;
+    let isShuttingDown = false;
+
+    // Graceful shutdown delay (ms) - wait briefly before shutdown to allow reconnects
+    const SHUTDOWN_DELAY_MS = 2000;
+
+    /**
+     * Perform graceful shutdown when all clients disconnect
+     */
+    async function performGracefulShutdown() {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+
+      console.error("[PipeServer] All clients disconnected. Starting graceful shutdown...");
+      logger.systemEvent("Auto-Shutdown Initiated", { reason: "all_clients_disconnected" });
+
+      try {
+        // 1. Close pipe server to prevent new connections
+        await pipeServer.close();
+        console.error("[PipeServer] Server closed, no new connections accepted");
+
+        // 2. Wait for pending indexing operations to complete
+        if (conductor) {
+          console.error("[PipeServer] Waiting for pending operations to complete...");
+
+          // Poll until all agent task queues are empty
+          let waitIterations = 0;
+          const maxWaitMs = 30000; // 30 sec max wait
+          const pollIntervalMs = 100;
+          const maxIterations = maxWaitMs / pollIntervalMs;
+
+          while (waitIterations < maxIterations) {
+            let totalPending = 0;
+            for (const agent of conductor.agents.values()) {
+              totalPending += agent.getTaskQueue().length;
+            }
+            if (totalPending === 0) break;
+
+            if (waitIterations % 50 === 0) {
+              // Log every 5 sec
+              console.error(`[PipeServer] Still waiting for ${totalPending} pending tasks...`);
+            }
+            await new Promise((r) => setTimeout(r, pollIntervalMs));
+            waitIterations++;
+          }
+          console.error("[PipeServer] All agents idle");
+        }
+
+        // 3. Shutdown layered index manager (flush caches to disk)
+        if (layeredIndexManager) {
+          console.error("[PipeServer] Flushing LayeredIndexManager...");
+          await layeredIndexManager.shutdown();
+          console.error("[PipeServer] LayeredIndexManager shutdown complete");
+        }
+
+        // 4. Shutdown conductor and agents
+        if (conductor) {
+          console.error("[PipeServer] Shutting down Conductor...");
+          await conductor.shutdown();
+          console.error("[PipeServer] Conductor shutdown complete");
+        }
+
+        // 5. Stop resource monitoring
+        resourceManager.stopMonitoring();
+
+        console.error("[PipeServer] Graceful shutdown complete. Exiting.");
+        logger.systemEvent("Auto-Shutdown Complete", { exitCode: 0 });
+
+        process.exit(0);
+      } catch (error) {
+        console.error("[PipeServer] Shutdown error:", error);
+        logger.error("SHUTDOWN", "Auto-shutdown failed", { error: (error as Error).message });
+        process.exit(1);
+      }
+    }
+
+    /**
+     * Schedule shutdown after delay (allows for quick reconnects)
+     */
+    function scheduleShutdown() {
+      if (shutdownTimer) {
+        clearTimeout(shutdownTimer);
+      }
+
+      console.error(`[PipeServer] No active clients. Shutdown scheduled in ${SHUTDOWN_DELAY_MS}ms...`);
+      logger.systemEvent("Shutdown Scheduled", { delayMs: SHUTDOWN_DELAY_MS, activeClients: 0 });
+
+      shutdownTimer = setTimeout(() => {
+        if (activeClients === 0) {
+          performGracefulShutdown();
+        }
+      }, SHUTDOWN_DELAY_MS);
+    }
+
+    /**
+     * Cancel scheduled shutdown (client reconnected)
+     */
+    function cancelShutdown() {
+      if (shutdownTimer) {
+        clearTimeout(shutdownTimer);
+        shutdownTimer = null;
+        console.error("[PipeServer] Shutdown cancelled - client reconnected");
+        logger.systemEvent("Shutdown Cancelled", { reason: "client_reconnected" });
+      }
+    }
+
+    console.error(`[PipeServer] Starting multi-client mode on ${pipeServer.getPath()}...`);
+    logger.systemEvent("MCP Server Transport Starting", {
+      transport: "pipe",
+      path: pipeServer.getPath(),
+      mode: "multi-client",
+    });
+
+    await pipeServer.start(async (clientTransport) => {
+      clientCount++;
+      activeClients++;
+      const clientId = clientCount;
+
+      // Cancel any pending shutdown
+      cancelShutdown();
+
+      console.error(`[PipeServer] Client #${clientId} connected (active: ${activeClients})`);
+      logger.systemEvent("MCP Client Connected", { clientId, activeClients, transport: "pipe" });
+
+      // Create new MCP Server for this client
+      const clientServer = createMcpServer();
+
+      // Handle client disconnect
+      clientTransport.onclose = () => {
+        activeClients--;
+        console.error(`[PipeServer] Client #${clientId} disconnected (active: ${activeClients})`);
+        logger.systemEvent("MCP Client Disconnected", { clientId, activeClients });
+
+        // Schedule shutdown if no more clients
+        if (activeClients === 0) {
+          scheduleShutdown();
+        }
+      };
+
+      // Connect server to client transport (server.connect() calls transport.start() internally)
+      await clientServer.connect(clientTransport as any);
+
+      console.error(`[PipeServer] Client #${clientId} ready`);
+      logger.systemEvent("MCP Client Ready", { clientId, activeClients });
+    });
+
+    transportType = "pipe-multi";
+    console.error(`MCP server running on pipe transport (multi-client): ${pipeServer.getPath()}`);
+    logger.systemEvent("MCP Server Ready", {
+      directory,
+      transport: transportType,
+      toolsCount: getToolsList().length,
+      readyTime: Date.now(),
+    });
+  } else {
+    // Default: stdio transport (single client)
+    logger.systemEvent("MCP Server Transport Connecting", { transport: "stdio" });
+    const transport = new StdioServerTransport();
+    transportType = "stdio";
+    console.error("MCP server running on stdio transport");
+
+    await server.connect(transport as any);
+    logger.systemEvent("MCP Server Ready", {
+      directory,
+      transport: transportType,
+      toolsCount: getToolsList().length,
+      readyTime: Date.now(),
+    });
+  }
 
   if (debugRequests.length > 0) {
     try {
@@ -4097,7 +4602,7 @@ async function main() {
         await getSemanticAgent();
       }
       await processDebugRequests(debugRequests);
-      console.log("[Debug] Completed processing supplied requests.");
+      console.error("[Debug] Completed processing supplied requests.");
       process.exit(0);
     } catch (error) {
       console.error("[Debug] Request execution failed:", error instanceof Error ? error.message : error);
@@ -4115,10 +4620,74 @@ async function main() {
 
   // Set default indexing directory for background agent initialization
   // Will be updated in case "index" if a different directory is provided
-  currentIndexingDirectory = directory;
+  setCurrentIndexingDirectory(directory);
 
   // All agents are initialized lazily when first used (prevents stdio blocking in MCP)
-  console.log("Core agents registered and ready for lazy initialization");
+  console.error("Core agents registered and ready for lazy initialization");
+
+  // =============================================================================
+  // AUTO-INDEXING: Check and index project on startup
+  // =============================================================================
+  const indexingConfig = config.indexing;
+  const shouldAutoIndex = !noAutoIndex && (indexingConfig?.autoIndex ?? true);
+
+  if (shouldAutoIndex) {
+    const extensions = indexingConfig?.autoIndexExtensions ?? [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".py",
+      ".go",
+      ".rs",
+      ".kt",
+      ".swift",
+      ".c",
+      ".cpp",
+      ".java",
+    ];
+
+    // Run detection and indexing in background (don't block MCP ready state)
+    setImmediate(async () => {
+      try {
+        // Check if we already have entities for THIS directory (not global count)
+        const db = globalSQLiteManager.getConnection();
+        const normalizedDir = directory.replace(/\\/g, "/"); // Normalize path for LIKE query
+        const result = db
+          .prepare("SELECT COUNT(*) as count FROM entities WHERE file_path LIKE ? || '%'")
+          .get(normalizedDir) as { count: number };
+        const entityCount = result?.count ?? 0;
+
+        if (entityCount > 0) {
+          logger.systemEvent("Existing index found for directory, skipping auto-index", { directory, entityCount });
+          console.error(`📊 Existing index found (${entityCount} entities), ready for queries`);
+          return;
+        }
+
+        // Detect if project has supported files
+        const detection = await detectSupportedProject(directory, extensions);
+        if (!detection.supported) {
+          logger.systemEvent("No supported files detected, skipping auto-index", { directory });
+          console.error("ℹ️  No supported source files detected, auto-indexing skipped");
+          console.error(`   Supported extensions: ${extensions.slice(0, 8).join(", ")}...`);
+          return;
+        }
+
+        logger.systemEvent("Supported project detected", {
+          directory,
+          detectedExt: detection.detectedExt,
+          sampleFile: detection.sampleFile,
+        });
+        console.error(`🔍 Detected ${detection.detectedExt} project (${detection.sampleFile})`);
+
+        // Perform indexing with extension filter
+        await performAutoIndex(directory, extensions);
+      } catch (error) {
+        console.error("❌ Auto-index failed:", (error as Error).message);
+        logger.error("AUTO_INDEX", "Auto-index check failed", { error: (error as Error).message });
+      }
+    });
+  }
 }
 
 main().catch((error) => {

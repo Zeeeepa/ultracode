@@ -111,7 +111,7 @@ async function getAnalyzer(language: string): Promise<any> {
     analyzerCache.set(language, analyzer);
     return analyzer;
   } catch (error) {
-    throw new Error(`Failed to load analyzer for ${language}: ${(error as Error).message}`);
+    throw new Error(`Failed to load analyzer for ${language}`, { cause: error });
   }
 }
 

@@ -98,7 +98,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
   // =============================================================================
 
   protected async onInitialize(): Promise<void> {
-    console.log(`[${this.id}] Initializing QueryAgent...`);
+    console.error(`[${this.id}] Initializing QueryAgent...`);
 
     // Initialize components
     const sqliteManager = getSQLiteManager();
@@ -123,17 +123,17 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     // Warm up cache with common queries
     await this.warmupCache();
 
-    console.log(`[${this.id}] QueryAgent initialized successfully`);
+    console.error(`[${this.id}] QueryAgent initialized successfully`);
   }
 
   protected async onShutdown(): Promise<void> {
-    console.log(`[${this.id}] Shutting down QueryAgent...`);
+    console.error(`[${this.id}] Shutting down QueryAgent...`);
 
     // Cleanup resources
     await this.cache.flush();
     await this.connectionPool.shutdown();
 
-    console.log(`[${this.id}] QueryAgent shutdown complete`);
+    console.error(`[${this.id}] QueryAgent shutdown complete`);
   }
 
   // =============================================================================
@@ -441,7 +441,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
   }
 
   private async handleIndexUpdate(entry: KnowledgeEntry): Promise<void> {
-    console.log(`[${this.id}] Handling index update: ${entry.topic}`);
+    console.error(`[${this.id}] Handling index update: ${entry.topic}`);
 
     // Invalidate affected cache entries
     const affectedQueries = await this.cache.findAffectedQueries(entry.data);
@@ -453,7 +453,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
 
   private async handleCacheInvalidation(entry: KnowledgeEntry): Promise<void> {
     const { queries } = entry.data as { queries: string[] };
-    console.log(`[${this.id}] Invalidating ${queries.length} cache entries`);
+    console.error(`[${this.id}] Invalidating ${queries.length} cache entries`);
     await this.cache.invalidate(queries);
   }
 
@@ -478,7 +478,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     if (typeof data.newAgentLimit === "number" && Number.isFinite(data.newAgentLimit)) {
       const adjustedConcurrency = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(data.newAgentLimit)));
       if (this.capabilities.maxConcurrency !== adjustedConcurrency) {
-        console.log(
+        console.error(
           `[${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjustedConcurrency} (resources:adjusted)`,
         );
         this.capabilities.maxConcurrency = adjustedConcurrency;
@@ -488,7 +488,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
   }
 
   private async warmupCache(): Promise<void> {
-    console.log(`[${this.id}] Warming up cache...`);
+    console.error(`[${this.id}] Warming up cache...`);
 
     // Pre-load commonly accessed entities
     const commonQueries = [
@@ -514,7 +514,7 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
       }
     }
 
-    console.log(`[${this.id}] Cache warmup complete`);
+    console.error(`[${this.id}] Cache warmup complete`);
   }
 
   private updateMetrics(duration: number, success: boolean): void {

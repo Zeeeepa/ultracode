@@ -56,7 +56,7 @@ export class ConnectionPool extends EventEmitter {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.sqliteManager = config.sqliteManager;
-    console.log("[ConnectionPool] Using provided SQLiteManager");
+    console.error("[ConnectionPool] Using provided SQLiteManager");
   }
 
   /**
@@ -67,7 +67,7 @@ export class ConnectionPool extends EventEmitter {
       throw new Error("Connection pool already initialized");
     }
 
-    console.log(
+    console.error(
       `[ConnectionPool] Initializing with ${this.config.minConnections}-${this.config.maxConnections} connections`,
     );
 
@@ -238,7 +238,7 @@ export class ConnectionPool extends EventEmitter {
           connection.db.close();
           connection.db = this.sqliteManager.getConnection();
           repaired++;
-          console.log(`[ConnectionPool] Connection ${connection.id} repaired`);
+          console.error(`[ConnectionPool] Connection ${connection.id} repaired`);
         } catch (repairError) {
           console.error(`[ConnectionPool] Failed to repair connection ${connection.id}:`, repairError);
         }
@@ -254,7 +254,7 @@ export class ConnectionPool extends EventEmitter {
    * Shutdown the connection pool
    */
   async shutdown(): Promise<void> {
-    console.log("[ConnectionPool] Shutting down...");
+    console.error("[ConnectionPool] Shutting down...");
     this.isShuttingDown = true;
 
     // Stop health checks
@@ -293,7 +293,7 @@ export class ConnectionPool extends EventEmitter {
     this.connections = [];
     this.emit("shutdown");
 
-    console.log("[ConnectionPool] Shutdown complete");
+    console.error("[ConnectionPool] Shutdown complete");
   }
 
   // =============================================================================
@@ -360,7 +360,7 @@ export class ConnectionPool extends EventEmitter {
           reason: "idle_timeout",
         });
 
-        console.log(`[ConnectionPool] Closed idle connection ${connection.id}`);
+        console.error(`[ConnectionPool] Closed idle connection ${connection.id}`);
       } catch (error) {
         console.error(`[ConnectionPool] Error closing connection ${connection.id}:`, error);
       }

@@ -164,16 +164,16 @@ const validators = {
     if (!body || !Array.isArray(body.results)) return { ok: false, reason: "no results" };
     return { ok: true, warn: body.results.length === 0 ? "empty semantic results" : undefined };
   },
-  find_similar_code: (payload) => ({ ok: true }),
-  detect_code_clones: (payload) => ({ ok: true }),
-  cross_language_search: (payload) => ({ ok: true }),
-  find_related_concepts: (payload) => ({ ok: true }),
+  find_similar_code: (_payload) => ({ ok: true }),
+  detect_code_clones: (_payload) => ({ ok: true }),
+  cross_language_search: (_payload) => ({ ok: true }),
+  find_related_concepts: (_payload) => ({ ok: true }),
   analyze_code_impact: (payload) => {
     const body = tryParseJSON(payload);
     if (!body || !body.source) return { ok: false, reason: "no source" };
     return { ok: true };
   },
-  suggest_refactoring: (payload) => ({ ok: true }),
+  suggest_refactoring: (_payload) => ({ ok: true }),
   get_metrics: (payload) => {
     const body = tryParseJSON(payload);
     if (!body || !body.conductor) return { ok: false, reason: "no conductor" };
@@ -277,7 +277,7 @@ function logAppend(text) {
   let exitScheduled = false;
   let drainTimer = null;
 
-  function scheduleEarlyExit(reason = "all-responses") {
+  function scheduleEarlyExit(_reason = "all-responses") {
     if (exitScheduled) return;
     exitScheduled = true;
     drainTimer = setTimeout(() => {
@@ -411,6 +411,6 @@ function logAppend(text) {
     }
   });
 })().catch((err) => {
-  console.error("Script failed:", (err && err.stack) || err);
+  console.error("Script failed:", err?.stack || err);
   process.exit(1);
 });

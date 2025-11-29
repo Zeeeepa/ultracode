@@ -17,6 +17,16 @@
  */
 
 import type { Dirent } from "node:fs";
+import {
+  createReadStream as nodeCreateReadStream,
+  existsSync as nodeExistsSync,
+  mkdirSync as nodeMkdirSync,
+  readdirSync as nodeReaddirSync,
+  readFileSync as nodeReadFileSync,
+  statSync as nodeStatSync,
+  unlinkSync as nodeUnlinkSync,
+  writeFileSync as nodeWriteFileSync,
+} from "node:fs";
 import { features, runtime } from "./runtime.js";
 
 // =============================================================================
@@ -250,9 +260,7 @@ export async function getFileMimeType(path: string): Promise<string> {
  */
 export function readTextSync(path: string): string {
   // Bun's file API is async-only, use Node's sync version
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { readFileSync } = require("node:fs");
-  return readFileSync(path, "utf-8");
+  return nodeReadFileSync(path, "utf-8");
 }
 
 /**
@@ -274,9 +282,7 @@ export function readJSONSync<T = unknown>(path: string): T {
  * @param encoding - Encoding for string data (default: "utf-8"), ignored for binary
  */
 export function writeFileSync(path: string, data: string | Uint8Array, encoding?: BufferEncoding): void {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { writeFileSync: fsWriteFileSync } = require("node:fs");
-  fsWriteFileSync(path, data, typeof data === "string" ? encoding || "utf-8" : undefined);
+  nodeWriteFileSync(path, data, typeof data === "string" ? encoding || "utf-8" : undefined);
 }
 
 /**
@@ -286,9 +292,7 @@ export function writeFileSync(path: string, data: string | Uint8Array, encoding?
  * @returns true if file exists
  */
 export function existsSync(path: string): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { existsSync: fsExistsSync } = require("node:fs");
-  return fsExistsSync(path);
+  return nodeExistsSync(path);
 }
 
 // =============================================================================
@@ -314,10 +318,8 @@ export async function mkdir(path: string, options?: { recursive?: boolean } | bo
  * @param options - Options object { recursive: boolean } or just boolean for recursive
  */
 export function mkdirSync(path: string, options?: { recursive?: boolean } | boolean): void {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { mkdirSync: fsMkdirSync } = require("node:fs");
   const recursive = typeof options === "boolean" ? options : (options?.recursive ?? true);
-  fsMkdirSync(path, { recursive });
+  nodeMkdirSync(path, { recursive });
 }
 
 /**
@@ -355,21 +357,21 @@ export async function rm(path: string, recursive: boolean = false): Promise<void
  * @param path - Path to remove
  */
 export function unlinkSync(path: string): void {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { unlinkSync: fsUnlinkSync } = require("node:fs");
-  fsUnlinkSync(path);
+  nodeUnlinkSync(path);
 }
 
 /**
  * Synchronously read directory contents
  *
  * @param path - Directory path
- * @returns Array of file/directory names or Dirent objects
+ * @returns Array of file/directory names
  */
 export function readdirSync(path: string, options?: { withFileTypes?: boolean }): string[] {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { readdirSync: fsReaddirSync } = require("node:fs");
-  return fsReaddirSync(path, options);
+  if (options?.withFileTypes) {
+    const entries = nodeReaddirSync(path, { withFileTypes: true }) as Dirent[];
+    return entries.map((e) => e.name);
+  }
+  return nodeReaddirSync(path) as string[];
 }
 
 /**
@@ -384,9 +386,7 @@ export function statSync(path: string): {
   size: number;
   mtimeMs: number;
 } {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { statSync: fsStatSync } = require("node:fs");
-  return fsStatSync(path);
+  return nodeStatSync(path);
 }
 
 /**
@@ -455,12 +455,13 @@ export function createReadStream(path: string): ReadableStream<Uint8Array> {
     return globalThis.Bun.file(path).stream();
   }
   // Node.js fallback - convert Node stream to Web stream
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const fs = require("node:fs");
-  const nodeStream = fs.createReadStream(path);
+  const nodeStream = nodeCreateReadStream(path);
   return new ReadableStream<Uint8Array>({
     start(controller: ReadableStreamDefaultController<Uint8Array>) {
-      nodeStream.on("data", (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
+      nodeStream.on("data", (chunk: string | Buffer) => {
+        const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+        controller.enqueue(new Uint8Array(buffer));
+      });
       nodeStream.on("end", () => controller.close());
       nodeStream.on("error", (err: Error) => controller.error(err));
     },
@@ -644,7 +645,7 @@ export function ensureDirSync(path: string): void {
  * Log file operation statistics (for debugging)
  */
 export function logFileOpsInfo(): void {
-  console.log(`[FileOps] Runtime: ${runtime.name}`);
-  console.log(`[FileOps] Bun.file: ${features.bunFile ? "enabled" : "disabled"}`);
-  console.log(`[FileOps] Bun.write: ${features.bunWrite ? "enabled" : "disabled"}`);
+  console.error(`[FileOps] Runtime: ${runtime.name}`);
+  console.error(`[FileOps] Bun.file: ${features.bunFile ? "enabled" : "disabled"}`);
+  console.error(`[FileOps] Bun.write: ${features.bunWrite ? "enabled" : "disabled"}`);
 }

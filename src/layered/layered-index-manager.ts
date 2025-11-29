@@ -148,7 +148,7 @@ export class LayeredIndexManager {
       debug: config.debug || false,
     });
 
-    console.log(
+    console.error(
       `[LayeredIndexManager] Initialized with preset: ${this.getConfigPresetName()}, ` +
         `fileWatching: ${config.enableFileWatching ?? true}, ` +
         `maintenance: ${config.enableMaintenance ?? true}`,
@@ -167,7 +167,7 @@ export class LayeredIndexManager {
       return;
     }
 
-    console.log("[LayeredIndexManager] Initializing...");
+    console.error("[LayeredIndexManager] Initializing...");
 
     // Initialize layered index
     await this.layeredIndex.initialize();
@@ -229,7 +229,7 @@ export class LayeredIndexManager {
 
     this.isInitialized = true;
 
-    console.log("[LayeredIndexManager] Initialization complete");
+    console.error("[LayeredIndexManager] Initialization complete");
   }
 
   // =========================================================================
@@ -295,7 +295,7 @@ export class LayeredIndexManager {
    * @param branch - Branch name
    */
   async switchBranch(branch: string): Promise<void> {
-    console.log(`[LayeredIndexManager] Switching to branch: ${branch}`);
+    console.error(`[LayeredIndexManager] Switching to branch: ${branch}`);
 
     // Ensure branch delta exists
     await this.layeredIndex.ensureBranchDelta(branch);
@@ -305,7 +305,7 @@ export class LayeredIndexManager {
       this.fileIntegration.setCurrentBranch(branch);
     }
 
-    console.log(`[LayeredIndexManager] Switched to branch: ${branch}`);
+    console.error(`[LayeredIndexManager] Switched to branch: ${branch}`);
   }
 
   /**
@@ -377,7 +377,7 @@ export class LayeredIndexManager {
    * Shutdown gracefully
    */
   async shutdown(): Promise<void> {
-    console.log("[LayeredIndexManager] Shutting down...");
+    console.error("[LayeredIndexManager] Shutting down...");
 
     // Stop maintenance
     if (this.maintenanceService) {
@@ -404,7 +404,7 @@ export class LayeredIndexManager {
     this.cacheManager.close();
     this.vectorCacheManager.close();
 
-    console.log("[LayeredIndexManager] Shutdown complete");
+    console.error("[LayeredIndexManager] Shutdown complete");
   }
 
   // =========================================================================

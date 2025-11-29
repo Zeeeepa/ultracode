@@ -50,7 +50,7 @@ export class WASMBackend implements VectorBackend {
     }
 
     this.ops = new wasmModule.WASMVectorOps();
-    console.log("[WASM Backend] Initialized with SIMD f32x4 instructions");
+    console.error("[WASM Backend] Initialized with SIMD f32x4 instructions");
   }
 
   getCapabilities(): BackendCapabilities {
@@ -94,6 +94,6 @@ export class WASMBackend implements VectorBackend {
 
   async close(): Promise<void> {
     this.ops = null;
-    console.log("[WASM Backend] Closed");
+    console.error("[WASM Backend] Closed");
   }
 }

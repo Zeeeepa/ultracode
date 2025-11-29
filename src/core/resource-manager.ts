@@ -68,7 +68,7 @@ export class ResourceManager extends EventEmitter {
       maxTaskQueueSize: 100,
     };
 
-    console.log(
+    console.error(
       `Resource Manager initialized: ${this.constraints.maxMemoryMB}MB memory, ${this.constraints.maxConcurrentAgents} max agents`,
     );
   }
@@ -108,7 +108,7 @@ export class ResourceManager extends EventEmitter {
     // Start the monitoring loop
     monitorLoop();
 
-    console.log("Adaptive resource monitoring started");
+    console.error("Adaptive resource monitoring started");
     this.emit("monitoring:started");
   }
 
@@ -120,7 +120,7 @@ export class ResourceManager extends EventEmitter {
       clearTimeout(this.monitoringInterval);
       this.monitoringInterval = null;
       this.adaptiveMonitoringInterval = 1000; // Reset to default
-      console.log("Resource monitoring stopped");
+      console.error("Resource monitoring stopped");
       this.emit("monitoring:stopped");
     }
   }
@@ -245,7 +245,7 @@ export class ResourceManager extends EventEmitter {
    */
   requestGarbageCollection(): void {
     if (global.gc) {
-      console.log("Forcing garbage collection...");
+      console.error("Forcing garbage collection...");
       global.gc();
       this.emit("gc:completed");
     } else {
@@ -328,7 +328,7 @@ export class ResourceManager extends EventEmitter {
         this.requestGarbageCollection();
       }
     } else if (!this.isThrottled && wasThrottled) {
-      console.log("Resource pressure relieved, disabling throttling");
+      console.error("Resource pressure relieved, disabling throttling");
       this.emit("throttle:disabled");
     }
 
@@ -366,14 +366,14 @@ export class ResourceManager extends EventEmitter {
     // Large codebase (>2000 files) adjustments
     if (fileCount > 2000) {
       adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 1.5, 3072); // Increase by 50%, cap at 3GB
-      console.log(`Large codebase detected (${fileCount} files), increasing memory limit to ${adjustedMemoryMB}MB`);
+      console.error(`Large codebase detected (${fileCount} files), increasing memory limit to ${adjustedMemoryMB}MB`);
     }
 
     // Very large codebase (>5000 files) adjustments
     if (fileCount > 5000) {
       adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 2, 4096); // Double memory, cap at 4GB
       adjustedConcurrentAgents = Math.max(2, Math.floor(adjustedConcurrentAgents / 2)); // Reduce concurrent agents
-      console.log(
+      console.error(
         `Very large codebase detected (${fileCount} files), memory: ${adjustedMemoryMB}MB, agents: ${adjustedConcurrentAgents}`,
       );
     }
@@ -382,7 +382,7 @@ export class ResourceManager extends EventEmitter {
     if (fileCount > 10000) {
       adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 3, 6144); // Triple memory, cap at 6GB
       adjustedConcurrentAgents = 1; // Single agent for stability
-      console.log(
+      console.error(
         `Extremely large codebase detected (${fileCount} files), switching to single-agent mode with ${adjustedMemoryMB}MB`,
       );
     }

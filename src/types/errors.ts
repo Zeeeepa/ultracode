@@ -15,8 +15,8 @@ export interface AgentBusyDetails {
 export class AgentBusyError extends Error {
   public readonly details: AgentBusyDetails;
 
-  constructor(details: AgentBusyDetails) {
-    super(`Agent ${details.agentId} is busy (${details.reason})`);
+  constructor(details: AgentBusyDetails, options?: ErrorOptions) {
+    super(`Agent ${details.agentId} is busy (${details.reason})`, options);
     this.name = "AgentBusyError";
     this.details = details;
   }

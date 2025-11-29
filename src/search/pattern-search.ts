@@ -21,8 +21,10 @@
 
 import { readFile } from "node:fs/promises";
 import type { TechnologyDetector } from "../analysis/technology-detector.js";
+import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { Entity, EntityType, GraphStorage } from "../types/storage.js";
+import { cosineSimilarity } from "../utils/simd-vector-ops.js";
 
 // =============================================================================
 // TYPES AND INTERFACES
@@ -61,8 +63,7 @@ export interface PatternSearchResult {
 // =============================================================================
 
 export class PatternSearch {
-  // NOTE: WASM similarity was planned but currently unused (commented out in code)
-  // private wasmSimilarityAvailable = false;
+  private embeddingGenerator: EmbeddingGenerator | null = null;
 
   constructor(
     private graphStorage: GraphStorage,
@@ -71,23 +72,17 @@ export class PatternSearch {
   ) {}
 
   /**
-   * Initialize Pattern Search (load WASM modules)
+   * Initialize Pattern Search (load embedding generator for semantic search)
    */
   async initialize(): Promise<void> {
-    // NOTE: WASM similarity support disabled (cosineSimilarity method commented out)
-    // Will be re-enabled when EmbeddingGenerator is implemented
-    // try {
-    //   // Try to load WASM vector-ops module
-    //   // @ts-expect-error - WASM module may not exist at compile time
-    //   const { cosine_similarity_simd } = await import("../../dist/external-tools/wasm/vector-ops-simd/vector_ops_simd.js");
-    //   if (cosine_similarity_simd) {
-    //     this.wasmSimilarityAvailable = true;
-    //     console.log("[PatternSearch] WASM vector-ops-simd loaded successfully");
-    //   }
-    // } catch (error) {
-    //   console.warn("[PatternSearch] WASM vector-ops-simd not available, using fallback");
-    //   this.wasmSimilarityAvailable = false;
-    // }
+    try {
+      this.embeddingGenerator = new EmbeddingGenerator();
+      await this.embeddingGenerator.initialize();
+      console.error("[PatternSearch] EmbeddingGenerator initialized for semantic search");
+    } catch (error) {
+      console.warn("[PatternSearch] Failed to initialize EmbeddingGenerator:", error);
+      this.embeddingGenerator = null;
+    }
   }
 
   /**
@@ -206,36 +201,67 @@ export class PatternSearch {
       return [];
     }
 
+    // Ensure embedding generator is initialized
+    if (!this.embeddingGenerator) {
+      await this.initialize();
+    }
+
     try {
-      // TODO: Generate query embedding (EmbeddingGenerator.generate method needs implementation)
-      // const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
-      // const generator = new EmbeddingGenerator();
-      // const queryEmbedding = await generator.generate({ content: query.pattern });
+      // Generate query embedding
+      if (!this.embeddingGenerator) {
+        console.warn("[PatternSearch] EmbeddingGenerator not available, falling back to entity search");
+        return this.fallbackEntitySearch(query);
+      }
 
-      // TODO: Search vector store (VectorStore.searchSimilar method needs implementation)
-      // const similarEntities = await this.vectorStore.searchSimilar(queryEmbedding.embedding, query.limit || 10);
+      const queryEmbedding = await this.embeddingGenerator.generateEmbedding(query.pattern);
 
-      // Fallback to entity search for now
+      // Search vector store for similar entities
+      const similarResults = await this.vectorStore.search(queryEmbedding, query.limit || 10);
+
       const results: PatternSearchResult[] = [];
-      const entities = await this.graphStorage.searchEntities({ namePattern: query.pattern });
 
-      for (const entity of entities.slice(0, query.limit || 10)) {
+      for (const result of similarResults) {
+        // Get entity from graph storage
+        const entity = await this.graphStorage.getEntity(result.id);
+        if (!entity) continue;
+
         // Apply scope filters
         if (query.scope?.entityTypes && !query.scope.entityTypes.includes(entity.type)) continue;
-        if (query.scope?.files && !query.scope?.files.includes(entity.filePath)) continue;
+        if (query.scope?.files && !query.scope.files.includes(entity.filePath)) continue;
 
         results.push({
           entity,
-          matchType: "name",
-          score: 0.5, // Fallback score (semantic search TODO)
+          matchType: "semantic",
+          score: result.similarity,
         });
       }
 
       return results;
     } catch (error) {
       console.error("[PatternSearch] Semantic search failed:", error);
-      return [];
+      return this.fallbackEntitySearch(query);
     }
+  }
+
+  /**
+   * Fallback to entity name search when semantic search is unavailable
+   */
+  private async fallbackEntitySearch(query: PatternSearchQuery): Promise<PatternSearchResult[]> {
+    const results: PatternSearchResult[] = [];
+    const entities = await this.graphStorage.searchEntities({ namePattern: query.pattern });
+
+    for (const entity of entities.slice(0, query.limit || 10)) {
+      if (query.scope?.entityTypes && !query.scope.entityTypes.includes(entity.type)) continue;
+      if (query.scope?.files && !query.scope.files.includes(entity.filePath)) continue;
+
+      results.push({
+        entity,
+        matchType: "name",
+        score: 0.5, // Fallback score
+      });
+    }
+
+    return results;
   }
 
   // =============================================================================
@@ -314,51 +340,32 @@ export class PatternSearch {
   }
 
   private async computeSemanticSimilarity(content: string, query: string): Promise<number> {
-    if (!this.vectorStore) return 0;
+    // Ensure embedding generator is initialized
+    if (!this.embeddingGenerator) {
+      await this.initialize();
+    }
 
-    try {
-      // TODO: Use SIMD-accelerated cosine similarity (EmbeddingGenerator.generate needs implementation)
-      // const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
-      // const generator = new EmbeddingGenerator();
-      // const contentEmbedding = await generator.generate({ content });
-      // const queryEmbedding = await generator.generate({ content: query });
-      // return this.cosineSimilarity(contentEmbedding.embedding, queryEmbedding.embedding);
-
+    if (!this.embeddingGenerator) {
       // Fallback: string matching
       return content.toLowerCase().includes(query.toLowerCase()) ? 1.0 : 0.0;
+    }
+
+    try {
+      // Generate embeddings and compute cosine similarity
+      const contentEmbedding = await this.embeddingGenerator.generateEmbedding(content);
+      const queryEmbedding = await this.embeddingGenerator.generateEmbedding(query);
+
+      // Use SIMD-accelerated cosine similarity
+      const similarity = cosineSimilarity(contentEmbedding, queryEmbedding);
+
+      // Normalize from [-1, 1] to [0, 1]
+      return (similarity + 1) / 2;
     } catch (error) {
       console.error("[PatternSearch] Semantic similarity computation failed:", error);
-      return 0;
+      // Fallback: string matching
+      return content.toLowerCase().includes(query.toLowerCase()) ? 1.0 : 0.0;
     }
   }
-
-  // NOTE: Cosine similarity computation is available but currently unused
-  // Will be used when EmbeddingGenerator is implemented (see computeSemanticSimilarity)
-  // private cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  //   if (this.wasmSimilarityAvailable) {
-  //     try {
-  //       const { cosine_similarity_simd } = require("../../dist/wasm/vector-ops-simd/vector_ops_simd.js");
-  //       return cosine_similarity_simd(a, b);
-  //     } catch {
-  //       // Fallback to JS
-  //     }
-  //   }
-  //
-  //   // JavaScript fallback
-  //   let dotProduct = 0;
-  //   let normA = 0;
-  //   let normB = 0;
-  //
-  //   for (let i = 0; i < a.length; i++) {
-  //     dotProduct += (a[i] ?? 0) * (b[i] ?? 0);
-  //     normA += (a[i] ?? 0) * (a[i] ?? 0);
-  //     normB += (b[i] ?? 0) * (b[i] ?? 0);
-  //   }
-  //
-  //   if (normA === 0 || normB === 0) return 0;
-  //
-  //   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-  // }
 
   private async getFilesForFrameworks(frameworks: string[], techStack: any): Promise<string[]> {
     // Get all files that use specified frameworks

@@ -246,6 +246,10 @@ export interface IndexingConfig {
   cleanupIntervalMs?: number;
   incrementalThreshold?: number;
   dataDir?: string;
+  /** Auto-index on startup if supported files detected (default: true) */
+  autoIndex?: boolean;
+  /** Supported file extensions for auto-index detection */
+  autoIndexExtensions?: string[];
 }
 
 export interface GitConfig {
@@ -317,7 +321,7 @@ const DEFAULT_CONFIG: AppConfig = {
     },
   },
   database: {
-    path: "./.ultrascript/db/vectors.db",
+    path: "", // Empty = use centralized storage (AppData/UltraScriptTools/projects/<hash>/)
     mode: "WAL",
     cacheSize: 10000,
     mmapSize: 268435456, // 256MB
@@ -369,7 +373,34 @@ const DEFAULT_CONFIG: AppConfig = {
     evictionStrategy: "LRU",
     cleanupIntervalMs: 3600000, // 1 hour
     incrementalThreshold: 20, // If >20 files changed, do full reindex
-    dataDir: "./.ultrascript/branches",
+    dataDir: "", // Empty = use centralized storage (AppData/UltraScriptTools/projects/<hash>/branches/)
+    autoIndex: false, // Disabled: tree-sitter parsing blocks UI 25+ sec. Use `index` command.
+    autoIndexExtensions: [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".mjs",
+      ".cjs", // JavaScript/TypeScript
+      ".py",
+      ".pyw", // Python
+      ".go", // Go
+      ".rs", // Rust
+      ".kt",
+      ".kts", // Kotlin
+      ".swift", // Swift
+      ".c",
+      ".h",
+      ".cpp",
+      ".hpp",
+      ".cc",
+      ".cxx", // C/C++
+      ".java", // Java
+      ".rb", // Ruby
+      ".php", // PHP
+      ".sh",
+      ".bash", // Shell
+    ],
   },
   git: {
     enabled: false, // Disabled by default
@@ -606,13 +637,13 @@ export class ConfigLoader {
       try {
         const yamlContent = readTextSync(this.configPath);
         yamlConfig = parseYaml(yamlContent) || {};
-        console.log(`[Config] Loaded configuration from: ${this.configPath}`);
+        console.error(`[Config] Loaded configuration from: ${this.configPath}`);
       } catch (error) {
         console.warn(`[Config] Failed to load YAML config: ${error instanceof Error ? error.message : error}`);
         console.warn(`[Config] Falling back to environment variables and defaults`);
       }
     } else {
-      console.log(`[Config] No YAML config found, using environment variables and defaults`);
+      console.error(`[Config] No YAML config found, using environment variables and defaults`);
     }
 
     // Merge with defaults and environment variables
@@ -1119,10 +1150,10 @@ export function getMCPConfigSafe(): MCPConfig & { embeddingAvailable: boolean } 
 export function initializeConfig(): AppConfig {
   const config = ConfigLoader.getInstance().getConfig();
 
-  console.log(`[Config] Environment: ${config.environment}`);
-  console.log(`[Config] Debug mode: ${config.debug}`);
-  console.log(`[Config] Embedding enabled: ${config.mcp.embedding?.enabled}`);
-  console.log(`[Config] Database path: ${config.database.path}`);
+  console.error(`[Config] Environment: ${config.environment}`);
+  console.error(`[Config] Debug mode: ${config.debug}`);
+  console.error(`[Config] Embedding enabled: ${config.mcp.embedding?.enabled}`);
+  console.error(`[Config] Database path: ${config.database.path}`);
 
   return config;
 }
@@ -1137,10 +1168,8 @@ export function initializeConfig(): AppConfig {
 export function validateConfig(config: AppConfig): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
-  // Validate database configuration
-  if (!config.database.path) {
-    errors.push("Database path is required");
-  }
+  // Note: database.path can be empty - empty means use centralized storage
+  // (%LOCALAPPDATA%/UltraScriptTools/projects/<hash>/)
 
   // Validate MCP configuration
   if (config.mcp.embedding?.enabled && !config.mcp.embedding.provider) {
