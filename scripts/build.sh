@@ -56,19 +56,69 @@ if [ -d "node_modules/tree-sitter" ]; then
 fi
 
 # Run TypeScript type checking first
-echo "[1/3] Running TypeScript type check..."
+echo "[1/4] Running TypeScript type check..."
 bun run typecheck
 echo "Type check passed!"
 echo ""
 
+# ============================================================================
+# STEP 2: Build Comm proxy (Cosmopolitan binary)
+# ============================================================================
+echo "[2/4] Checking Comm proxy (ultrascript-tools.com)..."
+
+COMM_SRC="$(pwd)/src/comm/comm.c"
+COMM_OUT="$(pwd)/src/comm/ultrascript-tools.com"
+
+# Check for cosmocc
+COSMOCC=""
+if [ -f "$HOME/.cosmo/bin/cosmocc" ]; then
+    COSMOCC="$HOME/.cosmo/bin/cosmocc"
+elif [ -f "$HOME/.local/cosmocc/bin/cosmocc" ]; then
+    COSMOCC="$HOME/.local/cosmocc/bin/cosmocc"
+elif command -v cosmocc &> /dev/null; then
+    COSMOCC="cosmocc"
+fi
+
+if [ -n "$COSMOCC" ]; then
+    # Check if source is newer than binary
+    NEED_BUILD=0
+    if [ ! -f "$COMM_OUT" ]; then
+        NEED_BUILD=1
+        echo "[INFO] Comm binary not found, building..."
+    elif [ "$COMM_SRC" -nt "$COMM_OUT" ]; then
+        NEED_BUILD=1
+        echo "[INFO] Comm source updated, rebuilding..."
+    fi
+
+    if [ "$NEED_BUILD" -eq 1 ]; then
+        echo "[INFO] Building Comm proxy with cosmocc..."
+        if "$COSMOCC" -Os -DNDEBUG -o "$COMM_OUT" "$COMM_SRC"; then
+            echo "[OK] Comm proxy built successfully"
+        else
+            echo "[WARNING] Comm build failed, using existing binary"
+        fi
+    else
+        echo "[OK] Comm binary is up to date"
+    fi
+else
+    if [ -f "$COMM_OUT" ]; then
+        echo "[OK] Using pre-built Comm binary (cosmocc not installed)"
+    else
+        echo "[WARNING] cosmocc not found and no pre-built binary!"
+        echo "         Install cosmocc: https://github.com/jart/cosmopolitan"
+        echo "         Or download: curl -L -o cosmocc.zip https://cosmo.zip/pub/cosmocc/cosmocc.zip"
+    fi
+fi
+echo ""
+
 # Run build with Bun
-echo "[2/5] Building with tsup (Bun runtime)..."
+echo "[3/4] Building with tsup (Bun runtime)..."
 bun run build
 echo "Build completed successfully!"
 echo ""
 
 # Build native modules if toolchains available
-echo "[3/5] Setting up native module toolchains..."
+echo "[4/6] Setting up native module toolchains..."
 echo ""
 
 WASM_BUILT=false
@@ -215,7 +265,7 @@ fi
 echo ""
 
 # Show output
-echo "[4/5] Build artifacts:"
+echo "[5/6] Build artifacts:"
 echo ""
 if [ -f "dist/index.js" ]; then
     size=$(wc -c < "dist/index.js")
@@ -240,7 +290,7 @@ if [ "$wasm_count" -gt 0 ]; then
     echo ""
 fi
 
-echo "[5/5] Build summary:"
+echo "[6/6] Build summary:"
 echo ""
 echo "Core build: ✓ Success"
 [ "$WASM_BUILT" = true ] && echo "WASM modules: ✓ Built" || echo "WASM modules: ⊗ Skipped (no Emscripten)"

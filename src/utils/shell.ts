@@ -604,7 +604,7 @@ export async function commandExists(command: string): Promise<boolean> {
  * Log shell utilities info (for debugging)
  */
 export function logShellInfo(): void {
-  console.log(`[Shell] Runtime: ${runtime.name}`);
-  console.log(`[Shell] Platform: ${process.platform}`);
-  console.log(`[Shell] Bun shell: ${runtime.isBun ? "enabled" : "disabled"}`);
+  console.error(`[Shell] Runtime: ${runtime.name}`);
+  console.error(`[Shell] Platform: ${process.platform}`);
+  console.error(`[Shell] Bun shell: ${runtime.isBun ? "enabled" : "disabled"}`);
 }

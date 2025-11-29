@@ -5,8 +5,10 @@ export class HttpError extends Error {
     public status: number,
     public statusText: string,
     public body?: string,
+    options?: ErrorOptions,
   ) {
-    super(`HTTP ${status} ${statusText}${body ? `: ${body.slice(0, 300)}` : ""}`);
+    super(`HTTP ${status} ${statusText}${body ? `: ${body.slice(0, 300)}` : ""}`, options);
+    this.name = "HttpError";
   }
 }
 

@@ -12,27 +12,23 @@
  * - NVIDIA GPU (GTX 16xx+)
  * - CUDA Toolkit installed
  * - Native addon compiled: `npm run build:cuda`
- *
- * TODO: Full implementation in Phase 4
  */
 
 import type { BackendCapabilities, VectorBackend } from "./base.js";
 
-// CUDA native addon interface (Node.js N-API)
-interface CUDAVectorOpsInstance {
-  batchCosineSimilarity(query: Float32Array, database: Float32Array, numVectors: number): Float32Array;
-  getDeviceInfo(): {
-    name: string;
-    major: number;
-    minor: number;
-    totalMemory: number;
-    clockRate: number;
-    multiProcessorCount: number;
-  };
-}
-
+// CUDA native addon interface (Node.js N-API) - matches binding.cpp exports
 interface CUDAAddon {
-  CUDAVectorOps: new () => CUDAVectorOpsInstance;
+  cosineSimilarity(vecA: number[], vecB: number[]): number;
+  batchCosineSimilarity(vecsA: number[][], vecsB: number[][]): number[];
+  euclideanDistance(vecA: number[], vecB: number[]): number;
+  normalizeVectors(vectors: number[][]): number[][];
+  getDeviceInfo(): {
+    deviceCount: number;
+    deviceName?: string;
+    computeCapability?: string;
+    totalMemoryMB?: number;
+    multiProcessorCount?: number;
+  };
 }
 
 let cudaAddon: CUDAAddon | null = null;
@@ -42,18 +38,41 @@ export class CUDABackend implements VectorBackend {
   readonly type = "cuda" as const;
   readonly priority = 100; // Highest priority
 
-  private cuda: CUDAVectorOpsInstance | null = null;
-  private deviceInfo: any = null;
+  private deviceInfo: CUDAAddon["getDeviceInfo"] extends () => infer R ? R : never = { deviceCount: 0 };
+  private initialized = false;
 
   async isAvailable(): Promise<boolean> {
     try {
-      // Try to load native CUDA addon
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      cudaAddon = require("../../../build/Release/cuda_vector_ops.node");
-      return true;
-    } catch (error) {
-      console.debug("[CUDA Backend] Native addon not available:", (error as Error).message);
+      // Try to load native CUDA addon from multiple possible locations
+      // Priority: bundled in npm package -> local builds
+      const plat = process.platform === "win32" ? "win32" : "linux";
+      const possiblePaths = [
+        // Bundled in npm package (external-libs/)
+        `../../../external-libs/cuda-${plat}-x64/ultrascript_cuda.node`,
+        // Local development builds
+        "../../../dist/native/cuda/ultrascript_cuda.node",
+        "../../../build/Release/ultrascript_cuda.node",
+        "../../../external-tools/native/cuda/build/Release/ultrascript_cuda.node",
+      ];
+
+      for (const addonPath of possiblePaths) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          cudaAddon = require(addonPath);
+          const info = cudaAddon!.getDeviceInfo();
+          if (info.deviceCount > 0) {
+            return true;
+          }
+        } catch {
+          // Try next path
+        }
+      }
+
+      console.debug("[CUDA Backend] Native addon not found in any expected location");
       console.debug("[CUDA Backend] To build: npm run build:cuda (requires CUDA Toolkit)");
+      return false;
+    } catch (error) {
+      console.debug("[CUDA Backend] Error checking availability:", (error as Error).message);
       return false;
     }
   }
@@ -63,14 +82,14 @@ export class CUDABackend implements VectorBackend {
       throw new Error("CUDA addon not available. Build with: npm run build:cuda");
     }
 
-    this.cuda = new cudaAddon.CUDAVectorOps();
-    this.deviceInfo = this.cuda.getDeviceInfo();
+    this.deviceInfo = cudaAddon.getDeviceInfo();
+    this.initialized = true;
 
-    console.log("[CUDA Backend] Initialized:", {
-      device: this.deviceInfo.name,
-      computeCapability: `${this.deviceInfo.major}.${this.deviceInfo.minor}`,
-      memoryGB: (this.deviceInfo.totalMemory / 1024 ** 3).toFixed(2),
-      cores: this.deviceInfo.multiProcessorCount * 64, // Approximate CUDA cores
+    console.error("[CUDA Backend] Initialized:", {
+      device: this.deviceInfo.deviceName || "Unknown",
+      computeCapability: this.deviceInfo.computeCapability || "N/A",
+      memoryMB: this.deviceInfo.totalMemoryMB || 0,
+      multiProcessors: this.deviceInfo.multiProcessorCount || 0,
     });
   }
 
@@ -80,37 +99,69 @@ export class CUDABackend implements VectorBackend {
       maxDimension: 8192,
       supportsBatching: true,
       supportsAsync: true,
-      memoryMB: this.deviceInfo?.totalMemory / (1024 * 1024) || 0,
+      memoryMB: this.deviceInfo.totalMemoryMB || 0,
     };
   }
 
   async cosineSimilarity(a: Float32Array, b: Float32Array): Promise<number> {
-    // Single comparison - use batch with size=1
-    const result = await this.batchCosineSimilarity(a, [b]);
-    return result[0] ?? 0;
-  }
-
-  async batchCosineSimilarity(query: Float32Array, database: Float32Array[]): Promise<Float32Array> {
-    if (!this.cuda) {
+    if (!cudaAddon || !this.initialized) {
       throw new Error("CUDA backend not initialized");
     }
 
-    // Flatten database vectors
-    const dim = query.length;
-    const flatDatabase = new Float32Array(database.length * dim);
-    for (let i = 0; i < database.length; i++) {
-      const vec = database[i];
-      if (vec) flatDatabase.set(vec, i * dim);
+    // Convert Float32Array to number[]
+    const vecA = Array.from(a);
+    const vecB = Array.from(b);
+
+    return cudaAddon.cosineSimilarity(vecA, vecB);
+  }
+
+  async batchCosineSimilarity(query: Float32Array, database: Float32Array[]): Promise<Float32Array> {
+    if (!cudaAddon || !this.initialized) {
+      throw new Error("CUDA backend not initialized");
+    }
+
+    // Convert to format expected by C++ binding: arrays of arrays
+    const queryArr = Array.from(query);
+
+    // Create query array repeated for each database vector
+    const vecsA: number[][] = [];
+    const vecsB: number[][] = [];
+
+    for (const dbVec of database) {
+      vecsA.push(queryArr);
+      vecsB.push(Array.from(dbVec));
     }
 
     // Call CUDA kernel
-    const results = this.cuda.batchCosineSimilarity(query, flatDatabase, database.length);
+    const results = cudaAddon.batchCosineSimilarity(vecsA, vecsB);
 
     return new Float32Array(results);
   }
 
+  async euclideanDistance(a: Float32Array, b: Float32Array): Promise<number> {
+    if (!cudaAddon || !this.initialized) {
+      throw new Error("CUDA backend not initialized");
+    }
+
+    const vecA = Array.from(a);
+    const vecB = Array.from(b);
+
+    return cudaAddon.euclideanDistance(vecA, vecB);
+  }
+
+  async normalizeVectors(vectors: Float32Array[]): Promise<Float32Array[]> {
+    if (!cudaAddon || !this.initialized) {
+      throw new Error("CUDA backend not initialized");
+    }
+
+    const input = vectors.map((v) => Array.from(v));
+    const normalized = cudaAddon.normalizeVectors(input);
+
+    return normalized.map((v) => new Float32Array(v));
+  }
+
   async close(): Promise<void> {
-    this.cuda = null;
-    console.log("[CUDA Backend] Closed");
+    this.initialized = false;
+    console.error("[CUDA Backend] Closed");
   }
 }

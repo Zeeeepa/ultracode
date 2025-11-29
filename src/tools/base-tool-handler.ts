@@ -23,6 +23,9 @@ export interface ToolContext {
   getGraphStorage: (sqliteManager: any) => Promise<any>;
   getSQLiteManager: () => any;
   getSemanticAgent: () => Promise<any>;
+  getBranchManager: () => any;
+  getSnapshotManager: () => any;
+  getKnowledgeBus: () => any;
   normalizeInputPath: (path?: string) => string | undefined;
   withTimeout: <T>(promise: Promise<T>, ms: number, operation: string, reqId: string) => Promise<T>;
 }

@@ -378,5 +378,5 @@ export async function findConfigFiles(cwd: string, options?: GlobOptions): Promi
  * Log glob info (for debugging)
  */
 export function logGlobInfo(): void {
-  console.log(`[Glob] Bun.Glob: ${features.bunGlob ? "enabled" : "disabled (using Node fallback)"}`);
+  console.error(`[Glob] Bun.Glob: ${features.bunGlob ? "enabled" : "disabled (using Node fallback)"}`);
 }

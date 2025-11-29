@@ -86,7 +86,7 @@ export class PylintLinter implements Linter {
   private async checkPylintAvailable(): Promise<boolean> {
     try {
       await execAsync("pylint --version");
-      console.log("[PylintLinter] Pylint detected");
+      console.error("[PylintLinter] Pylint detected");
       return true;
     } catch {
       console.warn("[PylintLinter] Pylint not found in PATH");

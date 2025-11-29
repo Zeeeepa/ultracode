@@ -20,7 +20,7 @@ export async function registerAllAgents(
   container: DIContainer,
   // config parameter reserved for future use (agent-specific configurations)
 ): Promise<void> {
-  console.log(`[AgentRegistry] Registering all agents...`);
+  console.error(`[AgentRegistry] Registering all agents...`);
 
   // DevAgent
   container.registerAgent(AgentType.DEV, async (_c) => {
@@ -59,7 +59,36 @@ export async function registerAllAgents(
     return new QueryAgent();
   });
 
-  console.log(`[AgentRegistry] All agents registered with DI Container`);
+  // MergeAgent - requires config with optional branchManager
+  container.registerAgent(AgentType.MERGE, async (_c) => {
+    const { MergeAgent } = await import("../agents/merge-agent.js");
+    // Try to resolve config from container, fallback to defaults
+    let repoPath = process.cwd();
+    let branchManager: any;
+    try {
+      const config = await _c.resolve<{ directory?: string }>("Config");
+      if (config?.directory) {
+        repoPath = config.directory;
+      }
+    } catch {
+      // Config not registered, use defaults
+    }
+    try {
+      branchManager = await _c.resolve("BranchManager");
+    } catch {
+      // BranchManager not registered
+    }
+    return new MergeAgent({
+      repoPath,
+      fastPathEnabled: true,
+      semanticMatchingEnabled: true,
+      semanticThreshold: 0.7,
+      autoResolveConflicts: false,
+      branchManager,
+    });
+  });
+
+  console.error(`[AgentRegistry] All agents registered with DI Container`);
 }
 
 /**
@@ -73,7 +102,7 @@ export async function registerAgentWithConductor(
   // Check if agent already registered in conductor
   const existing = conductor.getAgentsByType(agentType);
   if (existing.length > 0) {
-    console.log(`[AgentRegistry] ${agentType} already registered with conductor`);
+    console.error(`[AgentRegistry] ${agentType} already registered with conductor`);
     return;
   }
 
@@ -82,7 +111,7 @@ export async function registerAgentWithConductor(
 
   // Register with conductor
   conductor.register(agent);
-  console.log(`[AgentRegistry] ${agentType} registered with conductor`);
+  console.error(`[AgentRegistry] ${agentType} registered with conductor`);
 }
 
 /**
@@ -105,7 +134,7 @@ export async function getOrCreateAgent(container: DIContainer, conductor: any, a
 
   // Initialize agent AFTER resolving (avoids circular dependency)
   await agent.initialize();
-  console.log(`[AgentRegistry] ${agentType} initialized`);
+  console.error(`[AgentRegistry] ${agentType} initialized`);
 
   // Register with conductor
   conductor.register(agent);

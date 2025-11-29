@@ -8,6 +8,7 @@ export enum AgentType {
   DEV = "dev",
   DORA = "dora",
   INDEXER = "indexer",
+  MERGE = "merge",
   PARSER = "parser",
   QUERY = "query",
   SEMANTIC = "semantic",

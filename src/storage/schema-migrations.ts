@@ -361,7 +361,7 @@ export class SchemaMigration {
    * Apply a single migration
    */
   private applyMigration(migration: Migration): void {
-    console.log(`[SchemaMigration] Applying migration ${migration.version}: ${migration.description}`);
+    console.error(`[SchemaMigration] Applying migration ${migration.version}: ${migration.description}`);
 
     const checksum = this.calculateChecksum(migration);
 
@@ -381,7 +381,7 @@ export class SchemaMigration {
 
     transaction();
 
-    console.log(`[SchemaMigration] Migration ${migration.version} applied successfully`);
+    console.error(`[SchemaMigration] Migration ${migration.version} applied successfully`);
   }
 
   /**
@@ -392,7 +392,7 @@ export class SchemaMigration {
       throw new Error(`Migration ${migration.version} does not support rollback`);
     }
 
-    console.log(`[SchemaMigration] Rolling back migration ${migration.version}: ${migration.description}`);
+    console.error(`[SchemaMigration] Rolling back migration ${migration.version}: ${migration.description}`);
 
     // Execute rollback in a transaction
     const transaction = this.db.transaction(() => {
@@ -412,7 +412,7 @@ export class SchemaMigration {
 
     transaction();
 
-    console.log(`[SchemaMigration] Migration ${migration.version} rolled back successfully`);
+    console.error(`[SchemaMigration] Migration ${migration.version} rolled back successfully`);
   }
 
   /**
@@ -425,11 +425,11 @@ export class SchemaMigration {
     const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
 
     if (pendingMigrations.length === 0) {
-      console.log("[SchemaMigration] Database is up to date");
+      console.error("[SchemaMigration] Database is up to date");
       return;
     }
 
-    console.log(`[SchemaMigration] Running ${pendingMigrations.length} pending migrations`);
+    console.error(`[SchemaMigration] Running ${pendingMigrations.length} pending migrations`);
 
     // Sort by version to ensure correct order
     pendingMigrations.sort((a, b) => a.version - b.version);
@@ -441,7 +441,7 @@ export class SchemaMigration {
     // Update database version pragma
     this.db.pragma(`user_version = ${CURRENT_VERSION}`);
 
-    console.log(`[SchemaMigration] All migrations completed. Database at version ${CURRENT_VERSION}`);
+    console.error(`[SchemaMigration] All migrations completed. Database at version ${CURRENT_VERSION}`);
   }
 
   /**
@@ -451,7 +451,7 @@ export class SchemaMigration {
     const currentVersion = this.getCurrentVersion();
 
     if (targetVersion >= currentVersion) {
-      console.log("[SchemaMigration] Target version is not lower than current version");
+      console.error("[SchemaMigration] Target version is not lower than current version");
       return;
     }
 
@@ -468,20 +468,20 @@ export class SchemaMigration {
     // Update database version pragma
     this.db.pragma(`user_version = ${targetVersion}`);
 
-    console.log(`[SchemaMigration] Rolled back to version ${targetVersion}`);
+    console.error(`[SchemaMigration] Rolled back to version ${targetVersion}`);
   }
 
   /**
    * Reset database (rollback all migrations)
    */
   reset(): void {
-    console.log("[SchemaMigration] Resetting database...");
+    console.error("[SchemaMigration] Resetting database...");
     this.rollbackTo(0);
 
     // Drop migrations table
     this.db.exec(`DROP TABLE IF EXISTS ${MIGRATIONS_TABLE}`);
 
-    console.log("[SchemaMigration] Database reset complete");
+    console.error("[SchemaMigration] Database reset complete");
   }
 
   /**

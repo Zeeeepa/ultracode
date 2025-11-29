@@ -94,7 +94,7 @@ export class IncrementalParser {
       updateAgeOnGet: true, // LRU semantics
       dispose: (entry) => {
         // Clean up when evicted
-        console.log(`[IncrementalParser] Evicted cache entry: ${entry.hash}`);
+        console.error(`[IncrementalParser] Evicted cache entry: ${entry.hash}`);
       },
     });
 
@@ -114,7 +114,7 @@ export class IncrementalParser {
    * Initialize the parser and hash function
    */
   async initialize(): Promise<void> {
-    console.log("[IncrementalParser] Initializing...");
+    console.error("[IncrementalParser] Initializing...");
 
     // Initialize tree-sitter parser
     await this.parser.initialize();
@@ -130,7 +130,7 @@ export class IncrementalParser {
       return hash.substring(0, 16); // Match previous hash length for compatibility
     };
 
-    console.log("[IncrementalParser] Initialization complete with xxHash");
+    console.error("[IncrementalParser] Initialization complete with xxHash");
   }
 
   /**
@@ -247,7 +247,7 @@ export class IncrementalParser {
     const startTime = Date.now();
     let fromCache = 0;
 
-    console.log(`[IncrementalParser] Processing ${files.length} files in batches of ${batchSize}`);
+    console.error(`[IncrementalParser] Processing ${files.length} files in batches of ${batchSize}`);
 
     // Process in batches
     for (let i = 0; i < files.length; i += batchSize) {
@@ -290,7 +290,7 @@ export class IncrementalParser {
 
       // Log progress
       if ((i + batchSize) % 100 === 0 || i + batchSize >= files.length) {
-        console.log(
+        console.error(
           `[IncrementalParser] Progress: ${Math.min(i + batchSize, files.length)}/${files.length} ` +
             `(${Math.round(this.stats.throughput)} files/sec)`,
         );
@@ -318,7 +318,7 @@ export class IncrementalParser {
   async processIncremental(changes: FileChange[], options: ParserOptions = {}): Promise<ParseResult[]> {
     const results: ParseResult[] = [];
 
-    console.log(`[IncrementalParser] Processing ${changes.length} incremental changes`);
+    console.error(`[IncrementalParser] Processing ${changes.length} incremental changes`);
 
     for (const change of changes) {
       const { filePath, changeType, content } = change;
@@ -509,21 +509,21 @@ export class IncrementalParser {
     this.fileHashes.clear();
     this.parser.clearCache();
     this.updateCacheStats();
-    console.log("[IncrementalParser] Cache cleared");
+    console.error("[IncrementalParser] Cache cleared");
   }
 
   /**
    * Warm restart from cached data
    */
   async warmRestart(cacheData: Array<{ file: string; hash: string; result: ParseResult }>): Promise<void> {
-    console.log(`[IncrementalParser] Warming cache with ${cacheData.length} entries`);
+    console.error(`[IncrementalParser] Warming cache with ${cacheData.length} entries`);
 
     for (const { file, hash, result } of cacheData) {
       this.addToCache(file, hash, result);
       this.fileHashes.set(file, hash);
     }
 
-    console.log(`[IncrementalParser] Cache warmed, hit rate target: >80%`);
+    console.error(`[IncrementalParser] Cache warmed, hit rate target: >80%`);
   }
 
   /**

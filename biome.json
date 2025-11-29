@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.3.6/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.3.8/schema.json",
   "files": {
     "ignoreUnknown": false,
     "includes": [
@@ -34,16 +34,22 @@
       "suspicious": {
         "noExplicitAny": "off",
         "noDuplicateCase": "warn",
-        "noAssignInExpressions": "off"
+        "noAssignInExpressions": "off",
+        "useIterableCallbackReturn": "off"
       },
       "style": {
-        "noNonNullAssertion": "off"
+        "noNonNullAssertion": "off",
+        "useTemplate": "off"
       },
       "complexity": {
-        "noStaticOnlyClass": "off"
+        "noStaticOnlyClass": "off",
+        "useLiteralKeys": "off"
       },
       "performance": {
         "noAccumulatingSpread": "off"
+      },
+      "correctness": {
+        "noUnusedPrivateClassMembers": "off"
       }
     }
   }

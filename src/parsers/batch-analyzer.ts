@@ -96,7 +96,7 @@ export class BatchAnalyzer {
 
       // Extract labels
       const labelMatch = line.match(/^:([A-Za-z_][A-Za-z0-9_]*)\s*$/);
-      if (labelMatch && labelMatch[1]) {
+      if (labelMatch?.[1]) {
         const labelName = labelMatch[1];
         this.declaredLabels.add(labelName);
 
@@ -119,7 +119,7 @@ export class BatchAnalyzer {
 
       // Extract GOTO statements
       const gotoMatch = line.match(/\bGOTO\s+:?([A-Za-z_][A-Za-z0-9_]*)/i);
-      if (gotoMatch && gotoMatch[1]) {
+      if (gotoMatch?.[1]) {
         const targetLabel = gotoMatch[1];
         this.referencedLabels.add(targetLabel);
 
@@ -135,7 +135,7 @@ export class BatchAnalyzer {
 
       // Extract CALL statements
       const callMatch = line.match(/\bCALL\s+:?([A-Za-z_][A-Za-z0-9_]*|"[^"]+"|[^\s]+)/i);
-      if (callMatch && callMatch[1]) {
+      if (callMatch?.[1]) {
         const target = callMatch[1].replace(/"/g, "");
 
         // Check if it's a label call or external script call
@@ -167,7 +167,7 @@ export class BatchAnalyzer {
 
       // Extract SET statements
       const setMatch = line.match(/\b(?:SET|SETX)\s+([A-Za-z_][A-Za-z0-9_]*)=/i);
-      if (setMatch && setMatch[1]) {
+      if (setMatch?.[1]) {
         const varName = setMatch[1];
         this.declaredVariables.add(varName);
 

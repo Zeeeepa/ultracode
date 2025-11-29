@@ -243,7 +243,7 @@ export class CodeAnalyzer {
     const cloneGroupMap: Map<string, Set<string>> = new Map();
     const processedPairs: Set<string> = new Set();
 
-    console.log(`[CodeAnalyzer] Analyzing ${maxSamples} code fragments for clones (threshold: ${minSimilarity})`);
+    console.error(`[CodeAnalyzer] Analyzing ${maxSamples} code fragments for clones (threshold: ${minSimilarity})`);
 
     // Sample vectors by getting random entities
     // We'll use a simple approach: search with random small vectors to get diverse samples
@@ -332,7 +332,7 @@ export class CodeAnalyzer {
       });
     }
 
-    console.log(`[CodeAnalyzer] Found ${cloneGroups.length} clone groups`);
+    console.error(`[CodeAnalyzer] Found ${cloneGroups.length} clone groups`);
     return cloneGroups;
   }
 

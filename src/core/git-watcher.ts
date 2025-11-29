@@ -59,7 +59,7 @@ export class GitWatcher {
    */
   startWatching(repoPath: string): void {
     if (!this.config.enabled) {
-      console.log("[GitWatcher] Git watching is disabled");
+      console.error("[GitWatcher] Git watching is disabled");
       return;
     }
 
@@ -67,7 +67,7 @@ export class GitWatcher {
     const gitHeadPath = join(repoPath, ".git", "HEAD");
 
     if (!existsSync(gitHeadPath)) {
-      console.log("[GitWatcher] No .git directory found, skipping Git watch");
+      console.error("[GitWatcher] No .git directory found, skipping Git watch");
       return;
     }
 
@@ -75,9 +75,9 @@ export class GitWatcher {
     this.currentBranch = this.getCurrentBranch();
     this.currentCommit = this.getCurrentCommit();
 
-    console.log(`[GitWatcher] Started watching repository: ${repoPath}`);
-    console.log(`[GitWatcher] Current branch: ${this.currentBranch}`);
-    console.log(`[GitWatcher] Current commit: ${this.currentCommit}`);
+    console.error(`[GitWatcher] Started watching repository: ${repoPath}`);
+    console.error(`[GitWatcher] Current branch: ${this.currentBranch}`);
+    console.error(`[GitWatcher] Current commit: ${this.currentCommit}`);
 
     // Watch .git/HEAD for branch changes
     this.watcher = watch(gitHeadPath, (eventType) => {
@@ -106,7 +106,7 @@ export class GitWatcher {
       this.pollInterval = null;
     }
 
-    console.log("[GitWatcher] Stopped watching repository");
+    console.error("[GitWatcher] Stopped watching repository");
   }
 
   /**
@@ -290,7 +290,7 @@ export class GitWatcher {
 
     if (newBranch && newBranch !== this.currentBranch) {
       const oldBranch = this.currentBranch || "unknown";
-      console.log(`[GitWatcher] Branch changed: ${oldBranch} -> ${newBranch}`);
+      console.error(`[GitWatcher] Branch changed: ${oldBranch} -> ${newBranch}`);
 
       this.currentBranch = newBranch;
       this.currentCommit = this.getCurrentCommit();
@@ -310,7 +310,7 @@ export class GitWatcher {
     const newCommit = this.getCurrentCommit();
 
     if (newCommit && newCommit !== this.currentCommit) {
-      console.log(`[GitWatcher] New commit detected: ${newCommit.slice(0, 8)}`);
+      console.error(`[GitWatcher] New commit detected: ${newCommit.slice(0, 8)}`);
 
       const oldCommit = this.currentCommit;
       this.currentCommit = newCommit;

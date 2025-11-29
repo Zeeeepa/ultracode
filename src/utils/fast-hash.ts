@@ -167,7 +167,7 @@ export async function preloadHasher(): Promise<void> {
 
   try {
     await initXXHash();
-    console.log("[FastHash] xxHash WASM preloaded and ready");
+    console.error("[FastHash] xxHash WASM preloaded and ready");
   } catch (error) {
     console.warn("[FastHash] Preload failed, will use fallback:", error);
   }

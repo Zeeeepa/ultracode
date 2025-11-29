@@ -133,7 +133,7 @@ export class WebGPUBackend implements VectorBackend {
     // Request device
     this.device = await this.adapter.requestDevice();
 
-    console.log("[WebGPU Backend] Initialized:", {
+    console.error("[WebGPU Backend] Initialized:", {
       maxBufferSize: this.adapter.limits.maxStorageBufferBindingSize,
       maxWorkgroupSize: this.adapter.limits.maxComputeWorkgroupSizeX,
     });
@@ -272,6 +272,6 @@ export class WebGPUBackend implements VectorBackend {
     }
     this.pipeline = null;
     this.bindGroupLayout = null;
-    console.log("[WebGPU Backend] Closed");
+    console.error("[WebGPU Backend] Closed");
   }
 }

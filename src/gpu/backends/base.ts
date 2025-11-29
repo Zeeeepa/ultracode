@@ -3,6 +3,7 @@
  *
  * Abstract interface for different vector operation backends:
  * - CUDA (NVIDIA GPU, highest performance)
+ * - Metal (Apple Silicon GPU, macOS ARM64)
  * - WebGPU (Universal GPU, all vendors)
  * - WASM SIMD (CPU SIMD, portable)
  * - Pure JS (CPU baseline, always available)
@@ -10,8 +11,8 @@
 
 export interface VectorBackend {
   readonly name: string;
-  readonly type: "cuda" | "webgpu" | "wasm" | "js";
-  readonly priority: number; // Higher = better performance (100 = CUDA, 1 = JS)
+  readonly type: "cuda" | "metal" | "webgpu" | "wasm" | "js";
+  readonly priority: number; // Higher = better performance (100 = CUDA, 95 = Metal, 80 = WebGPU, 50 = WASM, 1 = JS)
 
   // Lifecycle
   initialize(): Promise<void>;

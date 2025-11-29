@@ -10,7 +10,71 @@
  */
 
 import type { BaseToolHandler, ToolContext } from "./base-tool-handler.js";
-import { IndexToolHandler } from "./handlers/index-tool-handler.js";
+
+// Import all handlers
+import {
+  AddMemberToolHandler,
+  AnalyzeCodeImpactToolHandler,
+  AnalyzeHotspotsToolHandler,
+  AnalyzeMergeConflictsToolHandler,
+  AnalyzeStateChaosToolHandler,
+  CleanIndexToolHandler,
+  CleanupBranchesToolHandler,
+  CleanupSnapshotsToolHandler,
+  ClearBusTopicToolHandler,
+  CopyFileToolHandler,
+  CreateFileToolHandler,
+  // Snapshot tools
+  CreateSnapshotToolHandler,
+  CrossLanguageSearchToolHandler,
+  DetectCodeClonesToolHandler,
+  DetectTechnologyStackToolHandler,
+  FindRelatedConceptsToolHandler,
+  FindSimilarCodeToolHandler,
+  GetAgentMetricsToolHandler,
+  GetBranchStatusToolHandler,
+  GetBusStatsToolHandler,
+  GetChangedFilesToolHandler,
+  GetGraphHealthToolHandler,
+  GetGraphStatsToolHandler,
+  GetGraphToolHandler,
+  GetMergeSuggestionsToolHandler,
+  // Metrics tools
+  GetMetricsToolHandler,
+  GetSemanticMergeInfoToolHandler,
+  GetVersionToolHandler,
+  // Index
+  IndexToolHandler,
+  JscpdDetectClonesToolHandler,
+  LernaProjectGraphToolHandler,
+  // Branch tools
+  ListBranchesToolHandler,
+  ListEntityRelationshipsToolHandler,
+  // Entity tools
+  ListFileEntitiesToolHandler,
+  ListSnapshotsToolHandler,
+  // File modification tools
+  ModifyEntityCodeToolHandler,
+  PatternSearchToolHandler,
+  QueryToolHandler,
+  RenameFileToolHandler,
+  RenameSymbolToolHandler,
+  // Graph tools
+  ResetGraphToolHandler,
+  RollbackSnapshotToolHandler,
+  // Merge tools
+  SemanticMergeToolHandler,
+  // Semantic tools
+  SemanticSearchToolHandler,
+  SplitFileToolHandler,
+  // Analysis tools
+  SuggestRefactoringToolHandler,
+  SwitchBranchToolHandler,
+  SynthesizeFilesToolHandler,
+  ValidateDirectoryToolHandler,
+  // Validation tools
+  ValidateFileToolHandler,
+} from "./handlers/index.js";
 
 type ToolHandlerConstructor = new (context: ToolContext) => BaseToolHandler;
 
@@ -56,25 +120,106 @@ export class ToolRegistry {
   }
 
   /**
-   * Register default tool handlers
-   * TODO: Add remaining 29 handlers as they are migrated
+   * Register all tool handlers
    */
   private registerDefaultHandlers(): void {
-    // P0: Critical priority - migrated tools
+    // ==========================================================================
+    // Index tools
+    // ==========================================================================
     this.register("index", IndexToolHandler);
 
-    // P1: High priority - to be migrated
-    // this.register("semantic_search", SemanticSearchToolHandler);
-    // this.register("detect_code_clones", DetectCodeClonesToolHandler);
-    // this.register("suggest_refactoring", SuggestRefactoringToolHandler);
+    // ==========================================================================
+    // Graph tools
+    // ==========================================================================
+    this.register("reset_graph", ResetGraphToolHandler);
+    this.register("clean_index", CleanIndexToolHandler);
+    this.register("get_graph", GetGraphToolHandler);
+    this.register("get_graph_stats", GetGraphStatsToolHandler);
+    this.register("get_graph_health", GetGraphHealthToolHandler);
 
-    // P2: Medium priority - to be migrated
-    // this.register("get_graph", GetGraphToolHandler);
-    // this.register("reset_graph", ResetGraphToolHandler);
-    // this.register("clean_index", CleanIndexToolHandler);
+    // ==========================================================================
+    // Entity tools
+    // ==========================================================================
+    this.register("list_file_entities", ListFileEntitiesToolHandler);
+    this.register("get_members", ListFileEntitiesToolHandler); // Alias for UltrasharpTools compatibility
+    this.register("list_entity_relationships", ListEntityRelationshipsToolHandler);
+    this.register("query", QueryToolHandler);
 
-    // P3: Low priority - to be migrated
-    // ... remaining 23 tools
+    // ==========================================================================
+    // Semantic tools
+    // ==========================================================================
+    this.register("semantic_search", SemanticSearchToolHandler);
+    this.register("find_similar_code", FindSimilarCodeToolHandler);
+    this.register("detect_code_clones", DetectCodeClonesToolHandler);
+    this.register("find_duplicates", DetectCodeClonesToolHandler); // Alias
+    this.register("jscpd_detect_clones", JscpdDetectClonesToolHandler);
+    this.register("cross_language_search", CrossLanguageSearchToolHandler);
+    this.register("pattern_search", PatternSearchToolHandler);
+
+    // ==========================================================================
+    // Analysis tools
+    // ==========================================================================
+    this.register("suggest_refactoring", SuggestRefactoringToolHandler);
+    this.register("analyze_hotspots", AnalyzeHotspotsToolHandler);
+    this.register("find_related_concepts", FindRelatedConceptsToolHandler);
+    this.register("analyze_state_chaos", AnalyzeStateChaosToolHandler);
+    this.register("analyze_code_impact", AnalyzeCodeImpactToolHandler);
+    this.register("detect_technology_stack", DetectTechnologyStackToolHandler);
+    this.register("lerna_project_graph", LernaProjectGraphToolHandler);
+
+    // ==========================================================================
+    // Branch tools
+    // ==========================================================================
+    this.register("list_branches", ListBranchesToolHandler);
+    this.register("switch_branch", SwitchBranchToolHandler);
+    this.register("get_branch_status", GetBranchStatusToolHandler);
+    this.register("cleanup_branches", CleanupBranchesToolHandler);
+    this.register("get_changed_files", GetChangedFilesToolHandler);
+
+    // ==========================================================================
+    // Snapshot tools
+    // ==========================================================================
+    this.register("create_snapshot", CreateSnapshotToolHandler);
+    this.register("rollback_snapshot", RollbackSnapshotToolHandler);
+    this.register("undo", RollbackSnapshotToolHandler); // Alias for UltrasharpTools compatibility
+    this.register("list_snapshots", ListSnapshotsToolHandler);
+    this.register("cleanup_snapshots", CleanupSnapshotsToolHandler);
+
+    // ==========================================================================
+    // File modification tools
+    // ==========================================================================
+    this.register("modify_entity_code", ModifyEntityCodeToolHandler);
+    this.register("modify_code", ModifyEntityCodeToolHandler); // Alias for UltrasharpTools compatibility
+    this.register("copy_file", CopyFileToolHandler);
+    this.register("rename_file", RenameFileToolHandler);
+    this.register("split_file", SplitFileToolHandler);
+    this.register("synthesize_files", SynthesizeFilesToolHandler);
+    this.register("create_file", CreateFileToolHandler);
+    this.register("rename_symbol", RenameSymbolToolHandler);
+    this.register("add_member", AddMemberToolHandler);
+
+    // ==========================================================================
+    // Validation tools
+    // ==========================================================================
+    this.register("validate_file", ValidateFileToolHandler);
+    this.register("validate_directory", ValidateDirectoryToolHandler);
+
+    // ==========================================================================
+    // Metrics tools
+    // ==========================================================================
+    this.register("get_metrics", GetMetricsToolHandler);
+    this.register("get_version", GetVersionToolHandler);
+    this.register("get_agent_metrics", GetAgentMetricsToolHandler);
+    this.register("get_bus_stats", GetBusStatsToolHandler);
+    this.register("clear_bus_topic", ClearBusTopicToolHandler);
+
+    // ==========================================================================
+    // Merge tools
+    // ==========================================================================
+    this.register("semantic_merge", SemanticMergeToolHandler);
+    this.register("analyze_merge_conflicts", AnalyzeMergeConflictsToolHandler);
+    this.register("get_merge_suggestions", GetMergeSuggestionsToolHandler);
+    this.register("get_semantic_merge_info", GetSemanticMergeInfoToolHandler);
   }
 }
 

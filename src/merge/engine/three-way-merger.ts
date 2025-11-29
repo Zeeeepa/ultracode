@@ -4,13 +4,13 @@ import { ConflictDetector } from "../analysis/conflict-detector.js";
 import { IntentClassifier } from "../analysis/intent-classifier.js";
 import { type EmbeddingGeneratorFn, LazyEmbeddingCache } from "../indexing/lazy-embedding-cache.js";
 import { MultiVersionIndexer } from "../indexing/multi-version-indexer.js";
-import type { GitIntegration } from "../integration/git-integration.js";
+import type { GitFileChange, GitIntegration } from "../integration/git-integration.js";
 import { FastPathMatcher } from "../matching/fast-path-matcher.js";
 import { SemanticMatcher } from "../matching/semantic-matcher.js";
 import type { ChangeIntent } from "../models/change-intent.js";
 import type { CodeUnit } from "../models/code-unit.js";
-import type { MergeAction, MergeResult } from "../models/merge-result.js";
-import type { SemanticConflict } from "../models/semantic-conflict.js";
+import type { MergeAction, MergeResult, MergeStats } from "../models/merge-result.js";
+import { ConflictSeverity, ConflictType, type SemanticConflict } from "../models/semantic-conflict.js";
 import type { VersionedIndex } from "../models/versioned-index.js";
 
 /**
@@ -44,7 +44,7 @@ export interface ThreeWayMergerConfig {
 export class ThreeWayMerger {
   private branchManager: BranchManager;
   private gitIntegration: GitIntegration;
-  private conductor: ConductorOrchestrator;
+  private conductor: ConductorOrchestrator | null;
   private config: ThreeWayMergerConfig;
 
   // Components
@@ -57,7 +57,7 @@ export class ThreeWayMerger {
   constructor(
     _branchManager: BranchManager,
     _gitIntegration: GitIntegration,
-    _conductor: ConductorOrchestrator,
+    _conductor: ConductorOrchestrator | null,
     config: Partial<ThreeWayMergerConfig> = {},
   ) {
     this.branchManager = _branchManager;
@@ -91,33 +91,64 @@ export class ThreeWayMerger {
    * @returns MergeResult с matched units, conflicts, и merge actions
    */
   async performMerge(branchA: string, branchB: string): Promise<MergeResult> {
-    console.log(`[ThreeWayMerger] Starting 3-way merge: ${branchA} + ${branchB}`);
+    console.error(`[ThreeWayMerger] Starting 3-way merge: ${branchA} + ${branchB}`);
     const startTime = Date.now();
 
     // === Phase 1: Multi-Version Indexing ===
-    console.log("[ThreeWayMerger] Phase 1: Indexing 3 branches...");
+    console.error("[ThreeWayMerger] Phase 1: Indexing 3 branches...");
     const indexResult = await this.multiVersionIndexer.indexThreeBranches(branchA, branchB);
 
     const { base, branchA: indexA, branchB: indexB, mergeBase } = indexResult;
 
-    console.log(
+    console.error(
       `[ThreeWayMerger] Indexed: base=${base.stats.totalUnits}, A=${indexA.stats.totalUnits}, B=${indexB.stats.totalUnits}`,
     );
 
+    // === Phase 1.5: Get git file changes for rename detection ===
+    console.error("[ThreeWayMerger] Phase 1.5: Detecting file changes from git...");
+    const changesA = await this.gitIntegration.getChangedFilesBetween(mergeBase, branchA);
+    const changesB = await this.gitIntegration.getChangedFilesBetween(mergeBase, branchB);
+    const renamedInA = changesA.filter((c) => c.status === "renamed");
+    const renamedInB = changesB.filter((c) => c.status === "renamed");
+    console.error(
+      `[ThreeWayMerger] Git changes: A=${changesA.length} (${renamedInA.length} renamed), B=${changesB.length} (${renamedInB.length} renamed)`,
+    );
+
     // === Phase 2: Fast Path Matching ===
-    console.log("[ThreeWayMerger] Phase 2: Fast Path matching...");
+    console.error("[ThreeWayMerger] Phase 2: Fast Path matching...");
     const { matchedUnits, unmatchedA, unmatchedB } = await this.fastPathMatch(base, indexA, indexB);
 
-    console.log(
+    console.error(
       `[ThreeWayMerger] Fast Path: ${matchedUnits.length} matched, ${unmatchedA.length} unmapped in A, ${unmatchedB.length} unmapped in B`,
     );
 
+    // === Phase 2.5: Detect added/deleted units ===
+    console.error("[ThreeWayMerger] Phase 2.5: Detecting added/deleted units...");
+    const { addedInA, addedInB, deletedUnits, renamedUnits } = this.detectAddedDeletedRenamed(
+      base,
+      indexA,
+      indexB,
+      unmatchedA,
+      unmatchedB,
+      renamedInA,
+      renamedInB,
+    );
+    console.error(
+      `[ThreeWayMerger] Added: A=${addedInA.length}, B=${addedInB.length}, Deleted=${deletedUnits.length}, Renamed=${renamedUnits.length}`,
+    );
+
     // === Phase 3: Semantic Matching ===
+    // Filter out already-classified units from semantic matching
+    const addedIds = new Set([...addedInA.map((u) => u.id), ...addedInB.map((u) => u.id)]);
+    const renamedIds = new Set(renamedUnits.map((r) => r.unit.id));
+    const remainingUnmatchedA = unmatchedA.filter((u) => !addedIds.has(u.id) && !renamedIds.has(u.id));
+    const remainingUnmatchedB = unmatchedB.filter((u) => !addedIds.has(u.id) && !renamedIds.has(u.id));
+
     let semanticMatches: typeof matchedUnits = [];
-    if (this.config.semanticMatchingEnabled && (unmatchedA.length > 0 || unmatchedB.length > 0)) {
-      console.log("[ThreeWayMerger] Phase 3: Semantic matching...");
-      semanticMatches = await this.semanticMatch(base, unmatchedA, unmatchedB);
-      console.log(`[ThreeWayMerger] Semantic: ${semanticMatches.length} matched`);
+    if (this.config.semanticMatchingEnabled && (remainingUnmatchedA.length > 0 || remainingUnmatchedB.length > 0)) {
+      console.error("[ThreeWayMerger] Phase 3: Semantic matching...");
+      semanticMatches = await this.semanticMatch(base, remainingUnmatchedA, remainingUnmatchedB);
+      console.error(`[ThreeWayMerger] Semantic: ${semanticMatches.length} matched`);
     }
 
     const allMatches = [...matchedUnits, ...semanticMatches];
@@ -126,22 +157,47 @@ export class ThreeWayMerger {
     let intents: Map<string, { branchAIntent?: ChangeIntent; branchBIntent?: ChangeIntent }> = new Map();
 
     if (this.config.classifyIntents) {
-      console.log("[ThreeWayMerger] Phase 4: Classifying intents...");
+      console.error("[ThreeWayMerger] Phase 4: Classifying intents...");
       intents = this.classifyIntents(allMatches);
-      console.log(`[ThreeWayMerger] Classified intents for ${intents.size} unit pairs`);
+      console.error(`[ThreeWayMerger] Classified intents for ${intents.size} unit pairs`);
     }
 
     // === Phase 5: Conflict Detection ===
     let conflicts: SemanticConflict[] = [];
 
     if (this.config.detectConflicts) {
-      console.log("[ThreeWayMerger] Phase 5: Detecting conflicts...");
+      console.error("[ThreeWayMerger] Phase 5: Detecting conflicts...");
       conflicts = this.detectConflicts(allMatches, intents);
-      console.log(`[ThreeWayMerger] Detected ${conflicts.length} conflicts`);
+      // Add delete-modify conflicts
+      const deleteModifyConflicts = this.detectDeleteModifyConflicts(deletedUnits);
+      conflicts = [...conflicts, ...deleteModifyConflicts];
+      console.error(`[ThreeWayMerger] Detected ${conflicts.length} conflicts`);
     }
 
     // === Generate Merge Actions ===
-    const mergeActions = this.generateMergeActions(allMatches, conflicts);
+    const mergeActions = this.generateMergeActions(
+      allMatches,
+      conflicts,
+      addedInA,
+      addedInB,
+      deletedUnits,
+      renamedUnits,
+    );
+
+    const stats: MergeStats = {
+      totalUnitsInBase: base.stats.totalUnits,
+      totalUnitsInA: indexA.stats.totalUnits,
+      totalUnitsInB: indexB.stats.totalUnits,
+      matchedCount: allMatches.length,
+      conflictCount: conflicts.length,
+      autoMergedCount: mergeActions.filter((a) => a.type === "auto-merge").length,
+      manualReviewCount: mergeActions.filter((a) => a.type === "manual-review").length,
+      addedFromACount: addedInA.length,
+      addedFromBCount: addedInB.length,
+      deletedCount: deletedUnits.length,
+      renamedCount: renamedUnits.length,
+      mergeTimeMs: Date.now() - startTime,
+    };
 
     const result: MergeResult = {
       branchA,
@@ -151,22 +207,19 @@ export class ThreeWayMerger {
       branchAIndex: indexA,
       branchBIndex: indexB,
       matchedUnits: allMatches,
+      addedInA,
+      addedInB,
+      deletedUnits,
+      renamedUnits,
       conflicts,
       mergeActions,
-      stats: {
-        totalUnitsInBase: base.stats.totalUnits,
-        totalUnitsInA: indexA.stats.totalUnits,
-        totalUnitsInB: indexB.stats.totalUnits,
-        matchedCount: allMatches.length,
-        conflictCount: conflicts.length,
-        autoMergedCount: mergeActions.filter((a) => a.type === "auto-merge").length,
-        manualReviewCount: mergeActions.filter((a) => a.type === "manual-review").length,
-        mergeTimeMs: Date.now() - startTime,
-      },
+      stats,
     };
 
-    console.log(
-      `[ThreeWayMerger] Merge completed in ${result.stats.mergeTimeMs}ms: ${result.stats.autoMergedCount} auto-merged, ${result.stats.conflictCount} conflicts`,
+    console.error(
+      `[ThreeWayMerger] Merge completed in ${stats.mergeTimeMs}ms: ` +
+        `${stats.autoMergedCount} auto-merged, ${stats.conflictCount} conflicts, ` +
+        `${stats.addedFromACount + stats.addedFromBCount} added, ${stats.deletedCount} deleted, ${stats.renamedCount} renamed`,
     );
 
     return result;
@@ -305,15 +358,167 @@ export class ThreeWayMerger {
   }
 
   /**
+   * Phase 2.5: Detect added, deleted, and renamed units
+   */
+  private detectAddedDeletedRenamed(
+    base: VersionedIndex,
+    indexA: VersionedIndex,
+    indexB: VersionedIndex,
+    unmatchedA: CodeUnit[],
+    unmatchedB: CodeUnit[],
+    renamedInA: GitFileChange[],
+    renamedInB: GitFileChange[],
+  ): {
+    addedInA: CodeUnit[];
+    addedInB: CodeUnit[];
+    deletedUnits: Array<{ baseUnit: CodeUnit; deletedIn: "branchA" | "branchB"; modifiedIn?: "branchA" | "branchB" }>;
+    renamedUnits: Array<{ oldPath: string; newPath: string; unit: CodeUnit; branch: "branchA" | "branchB" }>;
+  } {
+    const addedInA: CodeUnit[] = [];
+    const addedInB: CodeUnit[] = [];
+    const deletedUnits: Array<{
+      baseUnit: CodeUnit;
+      deletedIn: "branchA" | "branchB";
+      modifiedIn?: "branchA" | "branchB";
+    }> = [];
+    const renamedUnits: Array<{ oldPath: string; newPath: string; unit: CodeUnit; branch: "branchA" | "branchB" }> = [];
+
+    // Build lookup maps for renamed files
+    const renameMapA = new Map(renamedInA.map((r) => [r.oldPath, r.path]));
+    const renameMapB = new Map(renamedInB.map((r) => [r.oldPath, r.path]));
+    const renameNewPathsA = new Set(renamedInA.map((r) => r.path));
+    const renameNewPathsB = new Set(renamedInB.map((r) => r.path));
+
+    // Detect added units in branchA (not in base, not a renamed file)
+    for (const unit of unmatchedA) {
+      const existsInBase = base.units.has(unit.id) || (unit.filePath && this.findUnitByPath(base, unit.filePath));
+
+      if (!existsInBase) {
+        // Check if this is a renamed file destination
+        const isRenameDestination = unit.filePath && renameNewPathsA.has(unit.filePath);
+        if (isRenameDestination) {
+          // Find the original path
+          for (const [oldPath, newPath] of renameMapA) {
+            if (newPath === unit.filePath && oldPath) {
+              renamedUnits.push({ oldPath, newPath, unit, branch: "branchA" });
+              break;
+            }
+          }
+        } else {
+          addedInA.push(unit);
+        }
+      }
+    }
+
+    // Detect added units in branchB (not in base, not a renamed file)
+    for (const unit of unmatchedB) {
+      const existsInBase = base.units.has(unit.id) || (unit.filePath && this.findUnitByPath(base, unit.filePath));
+
+      if (!existsInBase) {
+        // Check if this is a renamed file destination
+        const isRenameDestination = unit.filePath && renameNewPathsB.has(unit.filePath);
+        if (isRenameDestination) {
+          // Find the original path
+          for (const [oldPath, newPath] of renameMapB) {
+            if (newPath === unit.filePath && oldPath) {
+              renamedUnits.push({ oldPath, newPath, unit, branch: "branchB" });
+              break;
+            }
+          }
+        } else {
+          addedInB.push(unit);
+        }
+      }
+    }
+
+    // Detect deleted units (in base but not in one of the branches)
+    for (const [unitId, baseUnit] of base.units) {
+      const existsInA = indexA.units.has(unitId) || this.findUnitByPath(indexA, baseUnit.filePath);
+      const existsInB = indexB.units.has(unitId) || this.findUnitByPath(indexB, baseUnit.filePath);
+
+      // Check if it's a renamed file (not truly deleted)
+      const isRenamedInA = renameMapA.has(baseUnit.filePath);
+      const isRenamedInB = renameMapB.has(baseUnit.filePath);
+
+      if (!existsInA && !isRenamedInA && existsInB) {
+        // Deleted in branchA, check if modified in branchB
+        const unitInB = indexB.units.get(unitId) || this.findUnitByPath(indexB, baseUnit.filePath);
+        const modifiedInB = unitInB && unitInB.contentHash !== baseUnit.contentHash;
+        deletedUnits.push({
+          baseUnit,
+          deletedIn: "branchA",
+          modifiedIn: modifiedInB ? "branchB" : undefined,
+        });
+      } else if (!existsInB && !isRenamedInB && existsInA) {
+        // Deleted in branchB, check if modified in branchA
+        const unitInA = indexA.units.get(unitId) || this.findUnitByPath(indexA, baseUnit.filePath);
+        const modifiedInA = unitInA && unitInA.contentHash !== baseUnit.contentHash;
+        deletedUnits.push({
+          baseUnit,
+          deletedIn: "branchB",
+          modifiedIn: modifiedInA ? "branchA" : undefined,
+        });
+      }
+    }
+
+    return { addedInA, addedInB, deletedUnits, renamedUnits };
+  }
+
+  /**
+   * Find unit by file path in an index
+   */
+  private findUnitByPath(index: VersionedIndex, filePath: string | undefined): CodeUnit | undefined {
+    if (!filePath) return undefined;
+    const unitIds = index.filePathIndex.get(filePath);
+    if (unitIds && unitIds.length > 0 && unitIds[0]) {
+      return index.units.get(unitIds[0]);
+    }
+    return undefined;
+  }
+
+  /**
+   * Detect delete-modify conflicts
+   */
+  private detectDeleteModifyConflicts(
+    deletedUnits: Array<{ baseUnit: CodeUnit; deletedIn: "branchA" | "branchB"; modifiedIn?: "branchA" | "branchB" }>,
+  ): SemanticConflict[] {
+    const conflicts: SemanticConflict[] = [];
+
+    for (const deleted of deletedUnits) {
+      if (deleted.modifiedIn) {
+        // This is a delete-modify conflict
+        conflicts.push({
+          id: `conflict-delete-modify-${deleted.baseUnit.id}`,
+          type: ConflictType.DeleteModify,
+          severity: ConflictSeverity.High,
+          description: `File deleted in ${deleted.deletedIn} but modified in ${deleted.modifiedIn}`,
+          baseUnit: deleted.baseUnit,
+          branchAUnit: deleted.baseUnit, // Use base as placeholder
+          branchBUnit: deleted.baseUnit,
+          conflictingRegions: [],
+          autoResolvable: false,
+        });
+      }
+    }
+
+    return conflicts;
+  }
+
+  /**
    * Generate Merge Actions
    */
   private generateMergeActions(
     matches: Array<{ baseUnit: CodeUnit | null; branchAUnit: CodeUnit; branchBUnit: CodeUnit }>,
     conflicts: SemanticConflict[],
+    addedInA: CodeUnit[],
+    addedInB: CodeUnit[],
+    deletedUnits: Array<{ baseUnit: CodeUnit; deletedIn: "branchA" | "branchB"; modifiedIn?: "branchA" | "branchB" }>,
+    renamedUnits: Array<{ oldPath: string; newPath: string; unit: CodeUnit; branch: "branchA" | "branchB" }>,
   ): MergeAction[] {
     const actions: MergeAction[] = [];
     const conflictIds = new Set(conflicts.map((c) => c.branchAUnit.id));
 
+    // === Handle matched units ===
     for (const match of matches) {
       // If conflict exists for this unit - manual review
       if (conflictIds.has(match.branchAUnit.id)) {
@@ -344,6 +549,61 @@ export class ThreeWayMerger {
         type: "manual-review",
         unitId: match.branchAUnit.id,
         description: "Different changes in both branches",
+      });
+    }
+
+    // === Handle added files ===
+    for (const unit of addedInA) {
+      actions.push({
+        type: "add-from-branchA",
+        unitId: unit.id,
+        description: `New file added in branchA: ${unit.filePath}`,
+        mergedUnit: unit,
+        sourceBranch: "branchA",
+      });
+    }
+
+    for (const unit of addedInB) {
+      actions.push({
+        type: "add-from-branchB",
+        unitId: unit.id,
+        description: `New file added in branchB: ${unit.filePath}`,
+        mergedUnit: unit,
+        sourceBranch: "branchB",
+      });
+    }
+
+    // === Handle deleted files ===
+    for (const deleted of deletedUnits) {
+      if (deleted.modifiedIn) {
+        // Delete-modify conflict - already handled in conflicts
+        actions.push({
+          type: "conflict-delete-modify",
+          unitId: deleted.baseUnit.id,
+          description: `Conflict: deleted in ${deleted.deletedIn}, modified in ${deleted.modifiedIn}`,
+        });
+      } else {
+        // Clean delete - no modifications in other branch
+        actions.push({
+          type: deleted.deletedIn === "branchA" ? "delete-from-branchA" : "delete-from-branchB",
+          unitId: deleted.baseUnit.id,
+          description: `File deleted in ${deleted.deletedIn}: ${deleted.baseUnit.filePath}`,
+        });
+      }
+    }
+
+    // === Handle renamed files ===
+    for (const renamed of renamedUnits) {
+      actions.push({
+        type: "rename",
+        unitId: renamed.unit.id,
+        description: `File renamed in ${renamed.branch}: ${renamed.oldPath} -> ${renamed.newPath}`,
+        mergedUnit: renamed.unit,
+        renameInfo: {
+          oldPath: renamed.oldPath,
+          newPath: renamed.newPath,
+          sourceBranch: renamed.branch,
+        },
       });
     }
 

@@ -15,8 +15,10 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { DATABASE_CONSTANTS } from "../config/constants.js";
+import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
+import { getProjectPaths } from "../shared/storage-paths.js";
 import type { StorageMetrics } from "../types/storage.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -27,7 +29,16 @@ import { isBunRuntime, loadSQLiteModule } from "./sqlite-adapter.js";
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-const DEFAULT_DB_PATH = join(process.cwd(), ".ultrascript", "db", "codegraph.db");
+
+/**
+ * Get default database path based on current project context.
+ * Uses centralized storage in AppData if project path is available.
+ */
+function getDefaultDbPath(): string {
+  const projectPath = getCurrentIndexingDirectory() || process.cwd();
+  const paths = getProjectPaths(projectPath);
+  return paths.graphDbPath;
+}
 const WAL_AUTOCHECKPOINT = DATABASE_CONSTANTS.WAL_AUTOCHECKPOINT;
 const CACHE_SIZE_KB = DATABASE_CONSTANTS.CACHE_SIZE_KB;
 const MMAP_SIZE = DATABASE_CONSTANTS.MMAP_SIZE;
@@ -77,7 +88,7 @@ export class SQLiteManager {
 
   constructor(config: SQLiteConfig = {}) {
     this.config = {
-      path: config.path || DEFAULT_DB_PATH,
+      path: config.path || getDefaultDbPath(),
       readonly: config.readonly || false,
       memory: config.memory || false,
       verbose: config.verbose || false,
@@ -95,7 +106,7 @@ export class SQLiteManager {
     }
 
     // Log database path for debugging
-    console.log(`[SQLiteManager] Configured database path: ${this.config.path}`);
+    console.error(`[SQLiteManager] Configured database path: ${this.config.path}`);
 
     // Ensure directory exists
     if (!this.config.memory && !this.config.readonly) {
@@ -109,7 +120,7 @@ export class SQLiteManager {
     // Create database connection using runtime-appropriate module
     const dbPath = this.config.memory ? ":memory:" : this.config.path;
     const runtime = isBunRuntime() ? "Bun" : "Node.js";
-    console.log(`[SQLiteManager] Using ${runtime} runtime`);
+    console.error(`[SQLiteManager] Using ${runtime} runtime`);
 
     const DatabaseModule = loadSQLiteModule();
 
@@ -123,7 +134,7 @@ export class SQLiteManager {
     this.applyOptimizations();
     this.ensureEmbeddingsTable();
 
-    console.log(`[SQLiteManager] Database initialized at ${dbPath}`);
+    console.error(`[SQLiteManager] Database initialized at ${dbPath}`);
   }
 
   private ensureEmbeddingsTable(): void {
@@ -263,13 +274,13 @@ export class SQLiteManager {
    */
   vacuum(): void {
     const db = this.getConnection();
-    console.log("[SQLiteManager] Running VACUUM...");
+    console.error("[SQLiteManager] Running VACUUM...");
     const start = Date.now();
 
     db.exec("VACUUM");
 
     const duration = Date.now() - start;
-    console.log(`[SQLiteManager] VACUUM completed in ${duration}ms`);
+    console.error(`[SQLiteManager] VACUUM completed in ${duration}ms`);
   }
 
   /**
@@ -277,13 +288,13 @@ export class SQLiteManager {
    */
   analyze(): void {
     const db = this.getConnection();
-    console.log("[SQLiteManager] Running ANALYZE...");
+    console.error("[SQLiteManager] Running ANALYZE...");
     const start = Date.now();
 
     db.exec("ANALYZE");
 
     const duration = Date.now() - start;
-    console.log(`[SQLiteManager] ANALYZE completed in ${duration}ms`);
+    console.error(`[SQLiteManager] ANALYZE completed in ${duration}ms`);
   }
 
   /**
@@ -292,7 +303,7 @@ export class SQLiteManager {
   checkpoint(): void {
     const db = this.getConnection();
     const result = db.pragma("wal_checkpoint(TRUNCATE)");
-    console.log("[SQLiteManager] WAL checkpoint completed", result);
+    console.error("[SQLiteManager] WAL checkpoint completed", result);
   }
 
   /**
@@ -359,7 +370,7 @@ export class SQLiteManager {
     if (this.db) {
       this.db.close();
       this.db = null;
-      console.log("[SQLiteManager] Database connection closed");
+      console.error("[SQLiteManager] Database connection closed");
     }
   }
 
@@ -391,7 +402,7 @@ export class SQLiteManager {
    */
   setVerbose(verbose: boolean): void {
     if (this.db) {
-      this.db.function("log", (msg: string) => console.log(`[SQLite] ${msg}`));
+      this.db.function("log", (msg: string) => console.error(`[SQLite] ${msg}`));
       if (verbose) {
         this.db.pragma("vdbe_trace = ON");
       } else {

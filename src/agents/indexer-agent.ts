@@ -19,6 +19,7 @@ import { getConfig } from "../config/yaml-config.js";
 import { BranchManager } from "../core/branch-manager.js";
 import { GitWatcher } from "../core/git-watcher.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { getDataDir } from "../shared/storage-paths.js";
 import { BatchOperations } from "../storage/batch-operations.js";
 import { getCacheManager, QueryCacheManager } from "../storage/cache-manager.js";
 import type { GraphStorageImpl } from "../storage/graph-storage.js";
@@ -136,14 +137,14 @@ export class IndexerAgent extends BaseAgent {
   constructor(sqliteManager: SQLiteManager) {
     super(AgentType.INDEXER, getIndexerConfig());
     this.sqliteManager = sqliteManager;
-    console.log(`[IndexerAgent] Created with ID: ${this.id} and provided SQLiteManager`);
+    console.error(`[IndexerAgent] Created with ID: ${this.id} and provided SQLiteManager`);
   }
 
   /**
    * Initialize the indexer agent
    */
   protected async onInitialize(): Promise<void> {
-    console.log(`[${this.id}] Initializing Indexer Agent...`);
+    console.error(`[${this.id}] Initializing Indexer Agent...`);
 
     // Initialize xxHash for stable ID generation
     await initXXHash();
@@ -160,11 +161,14 @@ export class IndexerAgent extends BaseAgent {
     // Initialize branch-aware indexing if enabled
     const appConfig = getConfig();
     if (appConfig.indexing?.branchAware) {
-      console.log(`[${this.id}] Branch-aware indexing is enabled`);
+      console.error(`[${this.id}] Branch-aware indexing is enabled`);
+
+      // Use centralized storage if no explicit dataDir configured
+      const dataDir = appConfig.indexing.dataDir || getDataDir();
 
       this.branchManager = new BranchManager({
         enabled: true,
-        dataDir: appConfig.indexing.dataDir || "./data",
+        dataDir,
         maxBranchesPerRepo: appConfig.indexing.maxBranchesPerRepo || 10,
         maxTotalBranches: appConfig.indexing.maxTotalBranches || 50,
         evictionStrategy: appConfig.indexing.evictionStrategy || "LRU",
@@ -174,7 +178,7 @@ export class IndexerAgent extends BaseAgent {
 
       // Initialize GitWatcher if Git integration is enabled
       if (appConfig.git?.enabled && appConfig.git.watchBranchChanges) {
-        console.log(`[${this.id}] Git watching is enabled`);
+        console.error(`[${this.id}] Git watching is enabled`);
 
         this.gitWatcher = new GitWatcher({
           enabled: true,
@@ -209,7 +213,7 @@ export class IndexerAgent extends BaseAgent {
     this.subscribeToParseEvents();
 
     this.ready = true;
-    console.log(`[${this.id}] Indexer Agent initialized successfully`);
+    console.error(`[${this.id}] Indexer Agent initialized successfully`);
   }
 
   /**
@@ -228,7 +232,7 @@ export class IndexerAgent extends BaseAgent {
     });
     this.subscriptionIds.push(parseBatchId);
 
-    console.log(`[${this.id}] Subscribed to parse events`);
+    console.error(`[${this.id}] Subscribed to parse events`);
   }
 
   /**
@@ -236,7 +240,7 @@ export class IndexerAgent extends BaseAgent {
    */
   private async handleParseComplete(entry: KnowledgeEntry): Promise<void> {
     const parseResult = entry.data as ParseResult;
-    console.log(`[${this.id}] Received parse result for ${parseResult.filePath}`);
+    console.error(`[${this.id}] Received parse result for ${parseResult.filePath}`);
 
     // Create indexing task
     const config = getIndexerConfig();
@@ -261,7 +265,7 @@ export class IndexerAgent extends BaseAgent {
    */
   private async handleParseBatchComplete(entry: KnowledgeEntry): Promise<void> {
     const results = entry.data as ParseResult[];
-    console.log(`[${this.id}] Received batch parse results for ${results.length} files`);
+    console.error(`[${this.id}] Received batch parse results for ${results.length} files`);
 
     const config = getIndexerConfig();
     for (const result of results) {
@@ -326,7 +330,7 @@ export class IndexerAgent extends BaseAgent {
     providedRelationships?: ProvidedRelationship[],
   ): Promise<BatchResult & { entitiesIndexed: number; relationshipsCreated: number }> {
     const startTime = Date.now();
-    console.log(`[${this.id}] Indexing ${entities.length} entities from ${filePath}`);
+    console.error(`[${this.id}] Indexing ${entities.length} entities from ${filePath}`);
 
     // Validate parsed entities and convert to storage entities
     const storageEntities: Entity[] = [];
@@ -369,14 +373,14 @@ export class IndexerAgent extends BaseAgent {
 
     // Insert entities in batch
     const entityResult = await this.batchOps.insertEntities(storageEntities, (processed, total) => {
-      console.log(`[${this.id}] Progress: ${processed}/${total} entities`);
+      console.error(`[${this.id}] Progress: ${processed}/${total} entities`);
     });
 
-    console.log(
+    console.error(
       `[${this.id}] DEBUG: Entity insert result: processed=${entityResult.processed}, failed=${entityResult.failed}, errors=${entityResult.errors.length}`,
     );
     if (entityResult.failed > 0) {
-      console.log(
+      console.error(
         `[${this.id}] DEBUG: First 3 entity errors:`,
         entityResult.errors.slice(0, 3).map((e) => e.error),
       );
@@ -394,9 +398,11 @@ export class IndexerAgent extends BaseAgent {
         byName.set(e.name, arr);
       }
 
-      console.log(`[${this.id}] DEBUG: storageEntities names: ${Array.from(byName.keys()).slice(0, 10).join(", ")}...`);
+      console.error(
+        `[${this.id}] DEBUG: storageEntities names: ${Array.from(byName.keys()).slice(0, 10).join(", ")}...`,
+      );
       const first3 = providedRelationships.slice(0, 3);
-      console.log(
+      console.error(
         `[${this.id}] DEBUG: First 3 raw relationships:`,
         JSON.stringify(first3.map((r) => ({ from: r.from, to: r.to, type: r.type }))),
       );
@@ -419,14 +425,14 @@ export class IndexerAgent extends BaseAgent {
         }
         return best?.id;
       }
-      console.log(`[${this.id}] DEBUG: Processing ${providedRelationships.length} provided relationships`);
+      console.error(`[${this.id}] DEBUG: Processing ${providedRelationships.length} provided relationships`);
       for (const rel of providedRelationships) {
         const fromId = resolveByNameAndLine(rel.from, rel.metadata?.line);
         let toId = resolveByNameAndLine(rel.to, rel.metadata?.line);
 
         // DEBUG: Log resolution results for first relationship
         if (relationships.length === 0) {
-          console.log(
+          console.error(
             `[${this.id}] DEBUG: First rel resolution: from="${rel.from}" -> fromId="${fromId}", to="${rel.to}" -> toId="${toId}"`,
           );
         }
@@ -446,13 +452,13 @@ export class IndexerAgent extends BaseAgent {
             createdAt: Date.now(),
           } as Relationship);
         } else {
-          console.log(`[${this.id}] SKIPPED relationship: ${rel.from} -> ${rel.to} (fromId=${fromId}, toId=${toId})`);
+          console.error(`[${this.id}] SKIPPED relationship: ${rel.from} -> ${rel.to} (fromId=${fromId}, toId=${toId})`);
         }
       }
-      console.log(`[${this.id}] Using ${relationships.length} provided relationships`);
+      console.error(`[${this.id}] Using ${relationships.length} provided relationships`);
     } else {
       relationships = await this.buildRelationships(validParsed, storageEntities);
-      console.log(`[${this.id}] Built ${relationships.length} relationships automatically`);
+      console.error(`[${this.id}] Built ${relationships.length} relationships automatically`);
     }
 
     // Ensure placeholder entities exist for any external relationship targets
@@ -499,14 +505,14 @@ export class IndexerAgent extends BaseAgent {
       await this.batchOps.insertEntities(externalPlaceholders);
     }
 
-    console.log(`[${this.id}] DEBUG: About to insert ${relationships.length} relationships into DB`);
-    console.log(
+    console.error(`[${this.id}] DEBUG: About to insert ${relationships.length} relationships into DB`);
+    console.error(
       `[${this.id}] DEBUG: First 3 relationships:`,
       relationships.slice(0, 3).map((r) => `${r.fromId} -> ${r.toId} (${r.type})`),
     );
 
     const relResult = await this.batchOps.insertRelationships(relationships, (processed, total) => {
-      console.log(`[${this.id}] Progress: ${processed}/${total} relationships`);
+      console.error(`[${this.id}] Progress: ${processed}/${total} relationships`);
     });
 
     // Update file info
@@ -530,7 +536,7 @@ export class IndexerAgent extends BaseAgent {
     this.indexingStats.lastIndexTime = indexTime;
 
     // Publish indexing complete event
-    console.log(`[IndexerAgent] Publishing index:complete event`);
+    console.error(`[IndexerAgent] Publishing index:complete event`);
     knowledgeBus.publish(
       "index:complete",
       {
@@ -541,7 +547,7 @@ export class IndexerAgent extends BaseAgent {
       },
       this.id,
     );
-    console.log(`[IndexerAgent] Published index:complete event`);
+    console.error(`[IndexerAgent] Published index:complete event`);
 
     if (validParsed.length) {
       const entitiesWithPath = validParsed.map((entity) => ({
@@ -551,7 +557,7 @@ export class IndexerAgent extends BaseAgent {
       knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
     }
 
-    console.log(
+    console.error(
       `[${this.id}] Indexed ${entityResult.processed} entities and ${relResult.processed} relationships in ${indexTime}ms`,
     );
 
@@ -654,7 +660,7 @@ export class IndexerAgent extends BaseAgent {
    * Perform incremental update for changed entities
    */
   async incrementalUpdate(changes: EntityChange[]): Promise<BatchResult> {
-    console.log(`[${this.id}] Processing ${changes.length} incremental changes`);
+    console.error(`[${this.id}] Processing ${changes.length} incremental changes`);
 
     const toAdd: Entity[] = [];
     const toUpdate: Array<{ id: string; changes: Partial<Entity> }> = [];
@@ -730,12 +736,12 @@ export class IndexerAgent extends BaseAgent {
     const cacheKey = QueryCacheManager.createKey(query);
     const cached = this.cacheManager.get<GraphQueryResult>(cacheKey);
     if (cached) {
-      console.log(`[${this.id}] Cache hit for graph query`);
+      console.error(`[${this.id}] Cache hit for graph query`);
       return cached;
     }
 
     // Execute query
-    console.log(`[${this.id}] Executing graph query`);
+    console.error(`[${this.id}] Executing graph query`);
     const result = await this.graphStorage.executeQuery(query);
 
     // Cache result
@@ -752,12 +758,12 @@ export class IndexerAgent extends BaseAgent {
     const cacheKey = QueryCacheManager.createKey({ entityId, depth });
     const cached = this.cacheManager.get<GraphQueryResult>(cacheKey);
     if (cached) {
-      console.log(`[${this.id}] Cache hit for subgraph query`);
+      console.error(`[${this.id}] Cache hit for subgraph query`);
       return cached;
     }
 
     // Execute query
-    console.log(`[${this.id}] Getting subgraph for ${entityId} with depth ${depth}`);
+    console.error(`[${this.id}] Getting subgraph for ${entityId} with depth ${depth}`);
     const result = await this.graphStorage.getSubgraph(entityId, depth);
 
     // Cache result
@@ -770,7 +776,7 @@ export class IndexerAgent extends BaseAgent {
    * Handle incoming messages
    */
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    console.log(`[${this.id}] Received message: ${message.type} from ${message.from}`);
+    console.error(`[${this.id}] Received message: ${message.type} from ${message.from}`);
 
     switch (message.type) {
       case "index:request": {
@@ -819,7 +825,7 @@ export class IndexerAgent extends BaseAgent {
    * Handle branch change event
    */
   private async handleBranchChange(newBranch: string, oldBranch: string): Promise<void> {
-    console.log(`[${this.id}] Branch changed from ${oldBranch} to ${newBranch}`);
+    console.error(`[${this.id}] Branch changed from ${oldBranch} to ${newBranch}`);
 
     if (!this.branchManager || !this.currentRepositoryPath) {
       console.warn(`[${this.id}] BranchManager not initialized, skipping branch switch`);
@@ -841,7 +847,7 @@ export class IndexerAgent extends BaseAgent {
         this.id,
       );
 
-      console.log(`[${this.id}] Successfully switched to branch: ${newBranch}`);
+      console.error(`[${this.id}] Successfully switched to branch: ${newBranch}`);
     } catch (error) {
       console.error(`[${this.id}] Failed to handle branch change:`, error);
     }
@@ -869,7 +875,7 @@ export class IndexerAgent extends BaseAgent {
 
     if (this.gitWatcher && this.branchManager) {
       this.gitWatcher.startWatching(path);
-      console.log(`[${this.id}] Started watching repository: ${path}`);
+      console.error(`[${this.id}] Started watching repository: ${path}`);
     }
   }
 
@@ -877,7 +883,7 @@ export class IndexerAgent extends BaseAgent {
    * Shutdown the indexer agent
    */
   protected async onShutdown(): Promise<void> {
-    console.log(`[${this.id}] Shutting down Indexer Agent...`);
+    console.error(`[${this.id}] Shutting down Indexer Agent...`);
 
     // Stop GitWatcher
     if (this.gitWatcher) {
@@ -913,8 +919,8 @@ export class IndexerAgent extends BaseAgent {
       this.cacheManager?.clear();
     } catch {}
 
-    console.log(`[${this.id}] Indexer Agent shutdown complete`);
-    console.log(`[${this.id}] Final stats:`, this.indexingStats);
+    console.error(`[${this.id}] Indexer Agent shutdown complete`);
+    console.error(`[${this.id}] Final stats:`, this.indexingStats);
   }
 
   /**
@@ -935,7 +941,7 @@ export class IndexerAgent extends BaseAgent {
    * Perform maintenance operations
    */
   async performMaintenance(): Promise<void> {
-    console.log(`[${this.id}] Performing maintenance...`);
+    console.error(`[${this.id}] Performing maintenance...`);
 
     // Vacuum database
     await this.graphStorage.vacuum();
@@ -950,6 +956,6 @@ export class IndexerAgent extends BaseAgent {
     const avgTime = this.indexingStats.totalIndexTime / Math.max(1, this.indexingStats.filesProcessed);
     this.batchOps.optimizeBatchSize(avgTime);
 
-    console.log(`[${this.id}] Maintenance complete`);
+    console.error(`[${this.id}] Maintenance complete`);
   }
 }

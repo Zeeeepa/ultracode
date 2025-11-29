@@ -339,7 +339,7 @@ export class BranchManager {
         }
 
         deletedCount++;
-        console.log(`[BranchManager] Cleaned up branch: ${branch.name}`);
+        console.error(`[BranchManager] Cleaned up branch: ${branch.name}`);
       } catch (error) {
         console.error(`[BranchManager] Failed to cleanup branch ${branch.name}:`, error);
       }
@@ -358,7 +358,7 @@ export class BranchManager {
     this.currentBranch = newBranch;
     this.currentRepoPath = path;
 
-    console.log(`[BranchManager] Switched from ${oldBranch} to ${newBranch}`);
+    console.error(`[BranchManager] Switched from ${oldBranch} to ${newBranch}`);
 
     // Update access time in metadata
     const metadata = this.getBranchMetadata(newBranch, path);

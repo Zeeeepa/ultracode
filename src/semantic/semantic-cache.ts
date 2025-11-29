@@ -129,7 +129,7 @@ export class SemanticCache {
       dispose: () => this.stats.evictions++,
     });
 
-    console.log(`[SemanticCache] Initialized with max size: ${config.maxSize}, TTL: ${config.ttl}ms`);
+    console.error(`[SemanticCache] Initialized with max size: ${config.maxSize}, TTL: ${config.ttl}ms`);
   }
 
   /**
@@ -232,7 +232,7 @@ export class SemanticCache {
     this.resultCache.clear();
     this.generalCache.clear();
     this.stats = { hits: 0, misses: 0, evictions: 0 };
-    console.log("[SemanticCache] All caches cleared");
+    console.error("[SemanticCache] All caches cleared");
   }
 
   /**
@@ -246,7 +246,7 @@ export class SemanticCache {
     this.generalCache.purgeStale();
 
     const pruned = before - this.size();
-    console.log(`[SemanticCache] Pruned ${pruned} expired entries`);
+    console.error(`[SemanticCache] Pruned ${pruned} expired entries`);
 
     return pruned;
   }
@@ -322,7 +322,7 @@ export class SemanticCache {
       loaded++;
     }
 
-    console.log(`[SemanticCache] Warmed up with ${loaded} embeddings`);
+    console.error(`[SemanticCache] Warmed up with ${loaded} embeddings`);
   }
 
   /**
@@ -366,6 +366,6 @@ export class SemanticCache {
       }
     }
 
-    console.log(`[SemanticCache] Imported ${this.size()} entries`);
+    console.error(`[SemanticCache] Imported ${this.size()} entries`);
   }
 }

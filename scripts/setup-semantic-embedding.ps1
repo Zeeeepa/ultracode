@@ -22,11 +22,19 @@ param(
     [switch]$SkipGpuDetection = $false
 )
 
-# Configuration - paths relative to project root
+# Configuration - paths
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $ConfigFile = Join-Path $ProjectRoot "config\embedding-models.json"
-$OutputConfigDir = Join-Path $ProjectRoot ".ultrasharp"
+
+# Centralized config directory: %LOCALAPPDATA%\UltraScriptTools\config
+if ($env:LOCALAPPDATA) {
+    $OutputConfigDir = Join-Path $env:LOCALAPPDATA "UltraScriptTools\config"
+} elseif ($IsLinux -or $IsMacOS) {
+    $OutputConfigDir = Join-Path $HOME ".ultrascript-tools\config"
+} else {
+    $OutputConfigDir = Join-Path $ProjectRoot ".ultrasharp"
+}
 $OutputConfigFile = Join-Path $OutputConfigDir "semantic-config.json"
 
 # Colors

@@ -68,7 +68,7 @@ export class ESLintLinter implements Linter {
       });
 
       this.eslintLoaded = true;
-      console.log("[ESLintLinter] ESLint loaded successfully");
+      console.error("[ESLintLinter] ESLint loaded successfully");
     } catch (error) {
       console.warn("[ESLintLinter] Failed to load ESLint:", error);
       this.eslintLoaded = true; // Don't try again

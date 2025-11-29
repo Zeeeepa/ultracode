@@ -47,7 +47,7 @@ export class GPUDetector {
         info.memoryMB = cudaInfo.totalMemory;
         info.cudaAvailable = true;
 
-        console.log("[GPUDetector] CUDA GPU detected:", {
+        console.error("[GPUDetector] CUDA GPU detected:", {
           model: cudaInfo.name,
           cc: cudaInfo.computeCapability,
           memoryGB: (cudaInfo.totalMemory / 1024).toFixed(1),
@@ -70,7 +70,7 @@ export class GPUDetector {
           info.memoryMB = webgpuInfo.memoryMB;
         }
 
-        console.log("[GPUDetector] WebGPU available:", {
+        console.error("[GPUDetector] WebGPU available:", {
           vendor: webgpuInfo.vendor,
           adapter: webgpuInfo.adapter,
         });
@@ -93,18 +93,23 @@ export class GPUDetector {
   } | null> {
     try {
       // Option 1: Try native CUDA addon (if compiled)
-      try {
-        // @ts-expect-error - Optional native module
-        const cudaAddon = await import("../../../build/Release/cuda_vector_ops.node");
-        const deviceInfo = cudaAddon.getDeviceInfo();
+      // Skip in bundled builds - use nvidia-smi instead
+      if (typeof process !== "undefined" && !process.env.BUNDLED) {
+        try {
+          // Dynamic require to avoid bundler resolution
+          const modulePath = "../../../build/Release/cuda_vector_ops.node";
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const cudaAddon = require(/* webpackIgnore: true */ modulePath);
+          const deviceInfo = cudaAddon.getDeviceInfo();
 
-        return {
-          name: deviceInfo.name,
-          computeCapability: deviceInfo.major + deviceInfo.minor / 10,
-          totalMemory: deviceInfo.totalMemory / (1024 * 1024), // bytes → MB
-        };
-      } catch {
-        // Addon not compiled, try nvidia-smi
+          return {
+            name: deviceInfo.name,
+            computeCapability: deviceInfo.major + deviceInfo.minor / 10,
+            totalMemory: deviceInfo.totalMemory / (1024 * 1024), // bytes → MB
+          };
+        } catch {
+          // Addon not compiled, try nvidia-smi
+        }
       }
 
       // Option 2: nvidia-smi CLI
@@ -112,6 +117,7 @@ export class GPUDetector {
         encoding: "utf8",
         timeout: 2000,
         stdio: ["pipe", "pipe", "ignore"], // Suppress stderr
+        windowsHide: true, // Hide console window on Windows
       }).trim();
 
       if (!output) return null;

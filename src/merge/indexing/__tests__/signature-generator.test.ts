@@ -311,7 +311,7 @@ describe("SignatureGenerator", () => {
         fullyQualifiedName: "main.if-block",
         filePath: "/src/main.ts",
         language: "typescript",
-        content: "if (x > 0) { console.log(x); }",
+        content: "if (x > 0) { console.error(x); }",
         contentHash: "hash1",
         structuralHash: "hash2",
         startLine: 1,

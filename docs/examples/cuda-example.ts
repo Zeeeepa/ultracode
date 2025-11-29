@@ -20,7 +20,7 @@ let cuda: any = null;
 try {
   cuda = require("../../dist/native/cuda/ultrascript_cuda.node");
   console.log("✅ CUDA addon loaded successfully\n");
-} catch (error) {
+} catch (_error) {
   console.log("❌ CUDA addon not available");
   console.log("   Run: ./Dev.Scripts/build-bun.cmd to build CUDA module\n");
   process.exit(1);
@@ -118,20 +118,12 @@ console.log();
 cuda.cosineSimilarity(vec_a, vec_b);
 
 // Benchmark CPU
-const cpuTime = benchmark(
-  "CPU (Pure JS)",
-  () => cosineSimilarityCPU(vec_a, vec_b),
-  100,
-);
+const cpuTime = benchmark("CPU (Pure JS)", () => cosineSimilarityCPU(vec_a, vec_b), 100);
 
 console.log();
 
 // Benchmark CUDA
-const cudaTime = benchmark(
-  "CUDA (GPU)",
-  () => cuda.cosineSimilarity(vec_a, vec_b),
-  100,
-);
+const cudaTime = benchmark("CUDA (GPU)", () => cuda.cosineSimilarity(vec_a, vec_b), 100);
 
 console.log();
 console.log(`Speedup: ${(cpuTime / cudaTime).toFixed(1)}x faster`);
@@ -170,11 +162,7 @@ const cpuBatchTime = benchmark(
 console.log();
 
 // Benchmark CUDA batch
-const cudaBatchTime = benchmark(
-  "CUDA Batch (parallel)",
-  () => cuda.batchCosineSimilarity(queries, documents),
-  10,
-);
+const cudaBatchTime = benchmark("CUDA Batch (parallel)", () => cuda.batchCosineSimilarity(queries, documents), 10);
 
 console.log();
 console.log(`Batch speedup: ${(cpuBatchTime / cudaBatchTime).toFixed(1)}x faster`);
@@ -205,7 +193,11 @@ const normalized = cuda.normalizeVectors(unnormalized);
 console.log("\nNormalized vectors (L2 norm = 1):");
 normalized.forEach((v, i) => {
   const norm = Math.sqrt(v.reduce((sum, x) => sum + x * x, 0));
-  console.log(`  vec[${i}]:`, v.map((x) => x.toFixed(3)), `(norm: ${norm.toFixed(3)})`);
+  console.log(
+    `  vec[${i}]:`,
+    v.map((x) => x.toFixed(3)),
+    `(norm: ${norm.toFixed(3)})`,
+  );
 });
 
 console.log();

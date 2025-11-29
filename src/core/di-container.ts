@@ -102,7 +102,7 @@ export class DIContainer {
     };
 
     this.services.set(name, descriptor);
-    console.log(`[DIContainer] Registered service: ${name} (${lifetime})`);
+    console.error(`[DIContainer] Registered service: ${name} (${lifetime})`);
   }
 
   /**
@@ -145,7 +145,7 @@ export class DIContainer {
     };
 
     this.services.set(name, descriptor);
-    console.log(`[DIContainer] Registered instance: ${name}`);
+    console.error(`[DIContainer] Registered instance: ${name}`);
   }
 
   /**
@@ -262,7 +262,7 @@ export class DIContainer {
         delete descriptor.instance;
       }
     }
-    console.log(`[DIContainer] Cleared transient instances`);
+    console.error(`[DIContainer] Cleared transient instances`);
   }
 
   /**
@@ -272,7 +272,7 @@ export class DIContainer {
     this.services.clear();
     this.resolutionStack.clear();
     this.disposed = false;
-    console.log(`[DIContainer] Container cleared`);
+    console.error(`[DIContainer] Container cleared`);
   }
 
   /**
@@ -283,7 +283,7 @@ export class DIContainer {
       return;
     }
 
-    console.log(`[DIContainer] Disposing container...`);
+    console.error(`[DIContainer] Disposing container...`);
     this.disposed = true;
 
     // Dispose singleton instances in reverse registration order
@@ -293,7 +293,7 @@ export class DIContainer {
       if (descriptor.instance && this.isDisposable(descriptor.instance)) {
         try {
           await descriptor.instance.dispose();
-          console.log(`[DIContainer] Disposed: ${descriptor.name}`);
+          console.error(`[DIContainer] Disposed: ${descriptor.name}`);
         } catch (error) {
           console.error(`[DIContainer] Failed to dispose ${descriptor.name}:`, error);
         }
@@ -302,7 +302,7 @@ export class DIContainer {
 
     this.services.clear();
     this.resolutionStack.clear();
-    console.log(`[DIContainer] Container disposed`);
+    console.error(`[DIContainer] Container disposed`);
   }
 
   /**

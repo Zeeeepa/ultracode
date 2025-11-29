@@ -229,7 +229,7 @@ export class PythonAnalyzer {
     patterns: PatternAnalysis;
     metrics: PythonParserMetrics;
   }> {
-    console.log(`[PythonAnalyzer] Starting analysis of ${filePath}`);
+    console.error(`[PythonAnalyzer] Starting analysis of ${filePath}`);
     const analysisStartTime = Date.now();
 
     // Initialize analysis context
@@ -284,7 +284,7 @@ export class PythonAnalyzer {
         patterns.designPatterns.length +
         patterns.pythonIdioms.length;
 
-      console.log(`[PythonAnalyzer] Analysis complete in ${totalTime}ms - ${context.entities.length} entities`);
+      console.error(`[PythonAnalyzer] Analysis complete in ${totalTime}ms - ${context.entities.length} entities`);
 
       return {
         entities: context.entities,
@@ -307,7 +307,7 @@ export class PythonAnalyzer {
    * complex type hints, and advanced decorator chaining
    */
   private async executeLayer1Analysis(rootNode: TreeSitterNode, context: AnalysisContext): Promise<void> {
-    console.log("[PythonAnalyzer] Executing Layer 1: Enhanced Basic Parsing");
+    console.error("[PythonAnalyzer] Executing Layer 1: Enhanced Basic Parsing");
     const layer1StartTime = Date.now();
 
     await withPerformanceMonitoring(
@@ -319,7 +319,7 @@ export class PythonAnalyzer {
     );
 
     context.metrics.basicParsing.parseTimeMs = Date.now() - layer1StartTime;
-    console.log(
+    console.error(
       `[PythonAnalyzer] Layer 1 complete: ${context.metrics.basicParsing.methodsClassified} methods classified`,
     );
   }
@@ -654,7 +654,7 @@ export class PythonAnalyzer {
    * async patterns, generators, and dataclasses
    */
   private async executeLayer2Analysis(rootNode: TreeSitterNode, context: AnalysisContext): Promise<void> {
-    console.log("[PythonAnalyzer] Executing Layer 2: Advanced Feature Analysis");
+    console.error("[PythonAnalyzer] Executing Layer 2: Advanced Feature Analysis");
     const layer2StartTime = Date.now();
 
     await withPerformanceMonitoring(
@@ -679,7 +679,7 @@ export class PythonAnalyzer {
     );
 
     context.metrics.advancedFeatures.analysisTimeMs = Date.now() - layer2StartTime;
-    console.log(
+    console.error(
       `[PythonAnalyzer] Layer 2 complete: ${context.metrics.advancedFeatures.magicMethodsFound} magic methods found`,
     );
   }
@@ -695,7 +695,7 @@ export class PythonAnalyzer {
    * method overrides, import dependencies, and cross-file references
    */
   private async executeLayer3Analysis(rootNode: TreeSitterNode, context: AnalysisContext): Promise<void> {
-    console.log("[PythonAnalyzer] Executing Layer 3: Relationship Mapping");
+    console.error("[PythonAnalyzer] Executing Layer 3: Relationship Mapping");
     const layer3StartTime = Date.now();
 
     await withPerformanceMonitoring(
@@ -710,7 +710,7 @@ export class PythonAnalyzer {
       context.metrics,
     );
     context.metrics.relationshipMapping.timeMs = Date.now() - layer3StartTime;
-    console.log(`[PythonAnalyzer] Layer 3 completed in ${context.metrics.relationshipMapping.timeMs}ms`);
+    console.error(`[PythonAnalyzer] Layer 3 completed in ${context.metrics.relationshipMapping.timeMs}ms`);
   }
 
   // =============================================================================
@@ -722,7 +722,7 @@ export class PythonAnalyzer {
    * exception handling, design patterns, and Python idioms
    */
   private async executeLayer4Analysis(rootNode: TreeSitterNode, context: AnalysisContext): Promise<PatternAnalysis> {
-    console.log("[PythonAnalyzer] Executing Layer 4: Pattern Recognition");
+    console.error("[PythonAnalyzer] Executing Layer 4: Pattern Recognition");
     const layer4StartTime = Date.now();
 
     const patterns: PatternAnalysis = {
@@ -752,7 +752,7 @@ export class PythonAnalyzer {
       patterns.pythonIdioms.length +
       patterns.circularDependencies.length;
 
-    console.log(`[PythonAnalyzer] Layer 4 completed in ${context.metrics.patternRecognition.timeMs}ms`);
+    console.error(`[PythonAnalyzer] Layer 4 completed in ${context.metrics.patternRecognition.timeMs}ms`);
     return patterns;
   }
 
@@ -1877,4 +1877,4 @@ export async function analyzePythonFile(
 // 7. INITIALIZATION AND STARTUP
 // =============================================================================
 
-console.log("[PythonAnalyzer] Advanced Python Analyzer module loaded - TASK-003B Layer 1-4 Architecture");
+console.error("[PythonAnalyzer] Advanced Python Analyzer module loaded - TASK-003B Layer 1-4 Architecture");

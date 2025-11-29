@@ -4,13 +4,15 @@
  * that are delegated by the Conductor orchestrator
  */
 
-import { lstatSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { getSQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParserOptions } from "../types/parser.js";
+import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 import { IndexerAgent } from "./indexer-agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
@@ -39,6 +41,47 @@ const SUPPORTED_CODE_EXTENSIONS = [
   ".html",
   ".htm", // HTML
 ] as const;
+
+/**
+ * Non-AST файлы для semantic merge.
+ * Эти файлы индексируются как File units с contentHash,
+ * без AST-парсинга, для поддержки merge конфигов, документации и ресурсов.
+ */
+const SUPPORTED_DATA_EXTENSIONS = [
+  ".json", // Configuration, package.json, tsconfig.json
+  ".yaml",
+  ".yml", // Config files
+  ".toml", // Cargo.toml, pyproject.toml
+  ".xml", // Maven pom.xml, Android layouts
+  ".md",
+  ".mdx", // Documentation
+  ".txt", // Plain text
+  ".svg", // Vector graphics (часто в коде)
+  ".graphql",
+  ".gql", // GraphQL schemas
+  ".proto", // Protocol Buffers
+  ".sql", // SQL scripts
+  ".env",
+  ".env.example", // Environment configs
+  ".gitignore",
+  ".dockerignore", // Ignore files
+  ".editorconfig", // Editor config
+  ".prettierrc",
+  ".eslintrc", // Linter configs (without .json)
+] as const;
+
+/** Все поддерживаемые расширения для индексации */
+export const ALL_SUPPORTED_EXTENSIONS = [...SUPPORTED_CODE_EXTENSIONS, ...SUPPORTED_DATA_EXTENSIONS] as const;
+
+/** Проверяет, является ли расширение code-файлом (требует AST-парсинг) */
+function isCodeExtension(ext: string): boolean {
+  return SUPPORTED_CODE_EXTENSIONS.includes(ext as (typeof SUPPORTED_CODE_EXTENSIONS)[number]);
+}
+
+/** Проверяет, является ли расширение data-файлом (без AST-парсинга) */
+function isDataExtension(ext: string): boolean {
+  return SUPPORTED_DATA_EXTENSIONS.includes(ext as (typeof SUPPORTED_DATA_EXTENSIONS)[number]);
+}
 
 function getDevAgentConfig() {
   const config = getConfig();
@@ -83,7 +126,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         try {
           this.parserAgent = new ParserAgent();
           await this.parserAgent.initialize();
-          console.log(`[DevAgent ${this.id}] ParserAgent initialized`);
+          console.error(`[DevAgent ${this.id}] ParserAgent initialized`);
         } catch (e) {
           console.warn(`[DevAgent ${this.id}] ParserAgent unavailable, fallback to heuristic indexing:`, e);
           this.parserAgent = null;
@@ -93,7 +136,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       const sqliteManager = getSQLiteManager();
       this.indexerAgent = new IndexerAgent(sqliteManager);
       await this.indexerAgent.initialize();
-      console.log(`[DevAgent ${this.id}] IndexerAgent initialized`);
+      console.error(`[DevAgent ${this.id}] IndexerAgent initialized`);
     } catch (error) {
       console.error(`[DevAgent ${this.id}] Failed to initialize sub-agents:`, error);
       throw error;
@@ -116,21 +159,27 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
     knowledgeBus.subscribe(this.id, "resources:adjusted", (entry) => this.handleResourceAdjustment(entry));
 
-    console.log(`[DevAgent ${this.id}] Initialized and ready for implementation tasks`);
+    console.error(`[DevAgent ${this.id}] Initialized and ready for implementation tasks`);
   }
 
   protected canProcessTask(task: AgentTask): boolean {
-    // DevAgent can handle index, implementation, and refactor tasks
-    return task.type === "index" || task.type === "implementation" || task.type === "refactor" || task.type === "dev";
+    // DevAgent can handle index, implementation, refactor, dev, and parse tasks
+    return (
+      task.type === "index" ||
+      task.type === "implementation" ||
+      task.type === "refactor" ||
+      task.type === "dev" ||
+      task.type === "parse"
+    );
   }
 
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    console.log(`[DevAgent ${this.id}] Received message from ${message.from}: ${message.type}`);
+    console.error(`[DevAgent ${this.id}] Received message from ${message.from}: ${message.type}`);
     // Handle inter-agent messages if needed
   }
 
   protected async processTask(task: AgentTask): Promise<unknown> {
-    console.log(`[DevAgent ${this.id}] Processing task ${task.id} of type ${task.type}`);
+    console.error(`[DevAgent ${this.id}] Processing task ${task.id} of type ${task.type}`);
 
     try {
       switch (task.type) {
@@ -142,6 +191,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
         case "refactor":
           return await this.handleRefactorTask(task);
+
+        case "parse":
+          return await this.handleParseTask(task);
 
         default:
           // For any other task type, delegate to appropriate agents
@@ -155,7 +207,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
   private async handleIndexTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DevAgent ${this.id}] Starting real indexing for ${payload.directory}`);
+    console.error(`[DevAgent ${this.id}] Starting real indexing for ${payload.directory}`);
 
     if (!this.indexerAgent) {
       throw new Error("Indexer agent not initialized");
@@ -190,7 +242,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
   private async handleImplementationTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DevAgent ${this.id}] Implementing: ${payload.description || "task"}`);
+    console.error(`[DevAgent ${this.id}] Implementing: ${payload.description || "task"}`);
 
     // Implementation tasks would involve code generation, modifications, etc.
     // For now, we'll return a success response
@@ -208,7 +260,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
   private async handleRefactorTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DevAgent ${this.id}] Refactoring: ${payload.target || "code"}`);
+    console.error(`[DevAgent ${this.id}] Refactoring: ${payload.target || "code"}`);
 
     return {
       status: "completed",
@@ -222,8 +274,57 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     };
   }
 
+  /**
+   * Handle parse task - parse a single file and return entities
+   */
+  private async handleParseTask(task: AgentTask): Promise<unknown> {
+    const payload = task.payload as { filePath?: string };
+    const filePath = payload.filePath;
+
+    if (!filePath) {
+      throw new Error("Parse task requires filePath in payload");
+    }
+
+    console.error(`[DevAgent ${this.id}] Parsing file: ${filePath}`);
+
+    if (!this.parserAgent) {
+      console.warn(`[DevAgent ${this.id}] ParserAgent not available, returning empty result`);
+      return {
+        filePath,
+        entities: [],
+        relationships: [],
+        error: "Parser not initialized",
+        timestamp: Date.now(),
+      };
+    }
+
+    try {
+      // Use ParserAgent's parseFile directly for single file parsing
+      const result = await this.parserAgent.parseFile(filePath, {});
+
+      console.error(`[DevAgent ${this.id}] Parsed ${filePath}: ${result.entities?.length || 0} entities`);
+
+      return {
+        filePath,
+        entities: result.entities || [],
+        relationships: result.relationships || [],
+        timestamp: Date.now(),
+      };
+    } catch (error) {
+      console.error(`[DevAgent ${this.id}] Parse error for ${filePath}:`, error);
+      // Return empty result instead of crashing
+      return {
+        filePath,
+        entities: [],
+        relationships: [],
+        error: String(error),
+        timestamp: Date.now(),
+      };
+    }
+  }
+
   private async delegateTask(task: AgentTask): Promise<unknown> {
-    console.log(`[DevAgent ${this.id}] Delegating task ${task.id} to appropriate agent`);
+    console.error(`[DevAgent ${this.id}] Delegating task ${task.id} to appropriate agent`);
 
     // For now, just return success
     // In a full implementation, this would coordinate with other agents
@@ -236,13 +337,17 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   }
 
   private async performRealIndexing(payload: any): Promise<any> {
-    console.log(`[DevAgent ${this.id}] Performing real indexing...`);
-
     const directory = payload.directory;
     const excludePatterns = payload.excludePatterns || [];
 
+    logger.info("DEV_AGENT", "Starting indexing", {
+      directory,
+      excludePatternsCount: excludePatterns.length,
+      samplePatterns: excludePatterns.slice(0, 5),
+    });
+
     const files = await this.collectFiles(directory, excludePatterns);
-    console.log(`[DevAgent ${this.id}] Found ${files.length} files to process`);
+    logger.info("DEV_AGENT", "Files collected", { count: files.length });
 
     const configLoader = ConfigLoader.getInstance();
     const isDebugMode = process.env.MCP_DEBUG_MODE === "1";
@@ -251,7 +356,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     // Old: const effectiveBatchSize = isDebugMode ? Math.min(configuredBatchSize, 5) : configuredBatchSize;
     const effectiveBatchSize = configuredBatchSize;
 
-    console.log(
+    console.error(
       `[${this.id}] Batch configuration: configured=${configuredBatchSize}, effective=${effectiveBatchSize}, debugMode=${isDebugMode}`,
     );
     const parseOptions: ParserOptions = isDebugMode
@@ -341,24 +446,50 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
           for (const file of batch) {
             const extWithDot = extname(file).toLowerCase();
-            if (!SUPPORTED_CODE_EXTENSIONS.includes(extWithDot as (typeof SUPPORTED_CODE_EXTENSIONS)[number])) {
+            const fileName = file.split("/").pop() || "unknown";
+            const fileNameNoExt = fileName.replace(/\.[^/.]+$/, "");
+            const ext = extWithDot.slice(1) || fileName; // For dotfiles like .gitignore
+
+            // Определяем тип файла
+            const isCode = isCodeExtension(extWithDot);
+            const isData = isDataExtension(extWithDot) || isDataExtension("." + fileName.toLowerCase());
+
+            if (!isCode && !isData) {
               continue;
             }
 
-            const fileName = file.split("/").pop() || "unknown";
-            const fileNameNoExt = fileName.replace(/\.[^/.]+$/, "");
-            const ext = extWithDot.slice(1);
+            // Для data-файлов вычисляем contentHash для semantic merge
+            let contentHash: string | undefined;
+            let fileContent: string | undefined;
+            if (isData) {
+              try {
+                fileContent = readFileSync(file, "utf-8");
+                contentHash = createHash("sha256").update(fileContent).digest("hex");
+              } catch {
+                // Не удалось прочитать файл - пропускаем hash
+              }
+            }
 
-            // file entity
+            // file entity - создаём для всех файлов
             entities.push({
               name: fileName,
               type: "file",
               filePath: file,
               location: { start: { line: 1, column: 0 }, end: { line: 1, column: 0 } },
-              metadata: { language: ext, path: file },
+              metadata: {
+                language: ext,
+                path: file,
+                isDataFile: isData,
+                contentHash, // Для semantic merge
+              },
             });
 
-            // module entity
+            // Для data-файлов не создаём дополнительных entities (module, class, function)
+            if (isData) {
+              continue;
+            }
+
+            // module entity - только для code файлов
             if (ext === "py" || ext === "js" || ext === "ts" || ext === "jsx" || ext === "tsx") {
               entities.push({
                 name: fileNameNoExt,
@@ -476,7 +607,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       }
 
       if ((i + effectiveBatchSize) % 500 === 0 || i + effectiveBatchSize >= files.length) {
-        console.log(`[DevAgent ${this.id}] Progress: ${filesProcessed}/${files.length} files processed`);
+        console.error(`[DevAgent ${this.id}] Progress: ${filesProcessed}/${files.length} files processed`);
       }
     }
 
@@ -516,25 +647,48 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     ]);
     const agentId = this.id; // Capture this.id for use in nested function
 
-    function shouldExclude(path: string): boolean {
+    function shouldExclude(filePath: string): boolean {
+      // Normalize path to forward slashes for cross-platform pattern matching
+      const normalizedPath = filePath.replace(/\\/g, "/");
       for (const pattern of excludePatterns) {
         if (pattern.includes("**")) {
-          const regex = pattern.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*");
-          if (new RegExp(regex).test(path)) return true;
-        } else if (path.includes(pattern.replace(/\*/g, ""))) {
-          return true;
+          // Convert glob pattern to regex
+          const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+          const regex = escaped.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*");
+
+          // For patterns like **/dirname/** also match the directory itself
+          // by making trailing .* optional: .*/dirname/.* -> .*/dirname(/.*)?
+          const flexibleRegex = regex.replace(/\/\.\*$/, "(/.*)?");
+
+          if (new RegExp(flexibleRegex).test(normalizedPath)) return true;
+        } else {
+          // Simple pattern matching - extract core path segment
+          const normalizedPattern = pattern.replace(/\*/g, "").replace(/\\/g, "/");
+          if (normalizedPath.includes(normalizedPattern)) {
+            return true;
+          }
         }
       }
       return false;
     }
 
+    // TRACE logging for directory scanning
+    const dirStats: Record<string, number> = {};
+    let excludedByPattern = 0;
+    let excludedByDefault = 0;
+    let scannedDirs = 0;
+
     function walkDir(dir: string) {
       try {
+        scannedDirs++;
         const items = readdirSync(dir);
         for (const item of items) {
           const fullPath = join(dir, item);
 
-          if (shouldExclude(fullPath)) continue;
+          if (shouldExclude(fullPath)) {
+            excludedByPattern++;
+            continue;
+          }
 
           const lstat = lstatSync(fullPath, { throwIfNoEntry: false });
           if (!lstat) {
@@ -547,6 +701,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           if (lstat.isDirectory()) {
             const lowerItem = item.toLowerCase();
             if (defaultExcludedDirNames.has(lowerItem)) {
+              excludedByDefault++;
               continue;
             }
             if (!item.startsWith(".")) {
@@ -554,8 +709,18 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             }
           } else if (lstat.isFile()) {
             const ext = extname(fullPath).toLowerCase();
-            if (SUPPORTED_CODE_EXTENSIONS.includes(ext as (typeof SUPPORTED_CODE_EXTENSIONS)[number])) {
+            // Поддержка code и data файлов для semantic merge
+            const fileName = item.toLowerCase();
+            const isSupported =
+              isCodeExtension(ext) ||
+              isDataExtension(ext) ||
+              // Dotfiles без расширения (e.g. .gitignore, .dockerignore)
+              SUPPORTED_DATA_EXTENSIONS.some((d) => fileName === d.slice(1) || fileName.endsWith(d));
+            if (isSupported) {
               files.push(fullPath);
+              // Track files by directory (relative to root)
+              const relDir = dir.replace(directory, "").replace(/^[\\/]/, "") || ".";
+              dirStats[relDir] = (dirStats[relDir] || 0) + 1;
             }
           }
         }
@@ -565,6 +730,20 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
 
     walkDir(directory);
+
+    // TRACE: Final summary - use structured logger so it appears in log file
+    const sortedDirs = Object.entries(dirStats)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20);
+    logger.info("FILE_SCAN", "File collection complete", {
+      root: directory,
+      dirsScanned: scannedDirs,
+      filesCollected: files.length,
+      excludedByPattern,
+      excludedByDefault,
+      topDirs: Object.fromEntries(sortedDirs),
+    });
+
     return files;
   }
 
@@ -575,7 +754,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   adjustConcurrency(newLimit: number): void {
     const adjusted = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(newLimit)));
     if (this.capabilities.maxConcurrency !== adjusted) {
-      console.log(
+      console.error(
         `[DevAgent ${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjusted} (resources:adjusted)`,
       );
       this.capabilities.maxConcurrency = adjusted;
@@ -586,7 +765,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     const ratio = Math.max(0.5, Math.min(2, newMemoryLimit / this.defaultMemoryLimit));
     const newBatchSize = Math.max(10, Math.round(this.defaultBatchSize * ratio));
     if (this.indexBatchSize !== newBatchSize) {
-      console.log(
+      console.error(
         `[DevAgent ${this.id}] Adjusting batch size from ${this.indexBatchSize} to ${newBatchSize} (resources:adjusted)`,
       );
       this.indexBatchSize = newBatchSize;
@@ -594,7 +773,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   }
 
   protected async onShutdown(): Promise<void> {
-    console.log(`[DevAgent ${this.id}] Shutting down...`);
+    console.error(`[DevAgent ${this.id}] Shutting down...`);
 
     // Shutdown sub-agents
     if (this.parserAgent) {

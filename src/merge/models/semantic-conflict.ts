@@ -21,6 +21,7 @@ export enum ConflictType {
   APIBreakingChange = "APIBreakingChange", // Breaking change в API
   LogicConflict = "LogicConflict", // Конфликт в логике
   MovedAndModified = "MovedAndModified", // Файл перемещён и изменён
+  DeleteModify = "DeleteModify", // Удалён в одной ветке, изменён в другой
 }
 
 /**

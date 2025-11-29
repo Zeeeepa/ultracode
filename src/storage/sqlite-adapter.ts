@@ -59,11 +59,11 @@ export function isBunRuntime(): boolean {
  */
 export function loadSQLiteModule(): SQLiteDatabaseConstructor {
   if (isBunRuntime()) {
-    console.log("[SQLiteAdapter] Detected Bun runtime, using bun:sqlite");
+    console.error("[SQLiteAdapter] Detected Bun runtime, using bun:sqlite");
     return loadBunSQLite();
   }
 
-  console.log("[SQLiteAdapter] Detected Node.js runtime, using better-sqlite3");
+  console.error("[SQLiteAdapter] Detected Node.js runtime, using better-sqlite3");
   return loadBetterSQLite3();
 }
 
@@ -79,7 +79,7 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
     if (process.platform === "darwin" && process.env.SQLITE_LIB_PATH) {
       try {
         Database.setCustomSQLite(process.env.SQLITE_LIB_PATH);
-        console.log(`[SQLiteAdapter] Using custom SQLite from: ${process.env.SQLITE_LIB_PATH}`);
+        console.error(`[SQLiteAdapter] Using custom SQLite from: ${process.env.SQLITE_LIB_PATH}`);
       } catch (error) {
         console.warn(`[SQLiteAdapter] Failed to set custom SQLite: ${(error as Error).message}`);
       }
@@ -248,7 +248,7 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
       }
     } as any;
   } catch (error) {
-    throw new Error(`Failed to load bun:sqlite: ${(error as Error).message}`);
+    throw new Error(`Failed to load bun:sqlite`, { cause: error });
   }
 }
 
@@ -260,7 +260,7 @@ function loadBetterSQLite3(): SQLiteDatabaseConstructor {
     // Use createRequire for ES modules compatibility
     const require = createRequire(import.meta.url);
     const Database = require("better-sqlite3");
-    console.log("[SQLiteAdapter] better-sqlite3 loaded successfully");
+    console.error("[SQLiteAdapter] better-sqlite3 loaded successfully");
     return Database;
   } catch (error) {
     // Try auto-rebuild if native module error
@@ -270,7 +270,7 @@ function loadBetterSQLite3(): SQLiteDatabaseConstructor {
       // Try loading again after rebuild
       try {
         const Database = require("better-sqlite3");
-        console.log("[SQLiteAdapter] better-sqlite3 loaded after rebuild");
+        console.error("[SQLiteAdapter] better-sqlite3 loaded after rebuild");
         return Database;
       } catch (retryError) {
         throw new Error(`Failed to load better-sqlite3 after rebuild: ${(retryError as Error).message}`);

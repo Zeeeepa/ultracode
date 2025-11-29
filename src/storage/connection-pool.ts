@@ -10,8 +10,8 @@
  */
 
 import { EventEmitter } from "node:events";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getDataDir } from "../shared/storage-paths.js";
 import type { ConnectionPool, PoolStats } from "../types/storage.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -70,7 +70,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
     super();
 
     this.config = {
-      dbPath: config.dbPath || join(homedir(), ".code-graph-rag", "codegraph.db"),
+      dbPath: config.dbPath || join(getDataDir(), "codegraph.db"),
       maxConnections: config.maxConnections || DEFAULT_MAX_CONNECTIONS,
       minConnections: config.minConnections || DEFAULT_MIN_CONNECTIONS,
       acquireTimeout: config.acquireTimeout || DEFAULT_ACQUIRE_TIMEOUT,
@@ -92,7 +92,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
    * Initialize the connection pool
    */
   private async initializePool(): Promise<void> {
-    console.log(`[ConnectionPool] Initializing with ${this.config.minConnections} connections`);
+    console.error(`[ConnectionPool] Initializing with ${this.config.minConnections} connections`);
 
     for (let i = 0; i < this.config.minConnections; i++) {
       await this.createConnection();
@@ -133,7 +133,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
     this.stats.totalCreated++;
 
     this.emit("connection:created", id);
-    console.log(`[ConnectionPool] Created connection ${id}`);
+    console.error(`[ConnectionPool] Created connection ${id}`);
 
     return connection;
   }
@@ -256,7 +256,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
     this.stats.totalDestroyed++;
 
     this.emit("connection:destroyed", connectionId);
-    console.log(`[ConnectionPool] Destroyed connection ${connectionId}`);
+    console.error(`[ConnectionPool] Destroyed connection ${connectionId}`);
 
     // Create a replacement if below minimum
     if (this.connections.size < this.config.minConnections && !this.closed) {
@@ -270,7 +270,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
    * Drain and close all connections
    */
   async drain(): Promise<void> {
-    console.log("[ConnectionPool] Draining pool...");
+    console.error("[ConnectionPool] Draining pool...");
     this.closed = true;
 
     // Stop health check
@@ -304,7 +304,7 @@ export class SQLiteConnectionPool extends EventEmitter implements ConnectionPool
     }
 
     this.connections.clear();
-    console.log("[ConnectionPool] Pool drained");
+    console.error("[ConnectionPool] Pool drained");
   }
 
   /**

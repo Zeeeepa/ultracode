@@ -307,8 +307,8 @@ describe("Provider Configuration Mapping", () => {
         return;
       }
 
-      console.log("Real provider:", embeddingConfig.provider);
-      console.log("Real model:", embeddingConfig.model);
+      console.error("Real provider:", embeddingConfig.provider);
+      console.error("Real model:", embeddingConfig.model);
 
       // Test creating provider with real config
       if (embeddingConfig.provider === "cloudru" && embeddingConfig.cloudru) {

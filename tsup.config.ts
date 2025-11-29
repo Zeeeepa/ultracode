@@ -1,21 +1,62 @@
 import { defineConfig } from "tsup";
 
+// Build mode: "dev" (default) or "package" (for npm publishing)
+// dev: sourcemaps, no minification
+// package: minification, no sourcemaps
+const BUILD_MODE = process.env.BUILD_MODE || "dev";
+const isPackageMode = BUILD_MODE === "package";
+
+// Common external dependencies (for reference, actual externals are in noExternal: false)
+const _EXTERNAL_DEPS = [
+  "@modelcontextprotocol/sdk",
+  "web-tree-sitter",
+  "tree-sitter-javascript",
+  "tree-sitter-typescript",
+  "tree-sitter-python",
+  "tree-sitter-c",
+  "tree-sitter-cpp",
+  "tree-sitter-c-sharp",
+  "tree-sitter-rust",
+  "tree-sitter-go",
+  "tree-sitter-java",
+  "tree-sitter-bash",
+  "tree-sitter-powershell",
+  "sharp",
+  "onnxruntime-node",
+  "better-sqlite3",
+  "@xenova/transformers",
+];
+
+// Common esbuild options (kept for potential future use)
+const _commonEsbuildOptions = (options: any) => {
+  options.logOverride = {
+    ...options.logOverride,
+    "direct-eval": "silent",
+    "import-is-undefined": "silent",
+  };
+  options.loader = {
+    ...options.loader,
+    ".wasm": "file",
+  };
+};
+
 export default defineConfig([
-  // Main entry point
+  // Main MCP server
   {
     entry: {
       index: "src/index.ts",
     },
-    sourcemap: true,
+    outDir: "dist",
+    sourcemap: !isPackageMode, // Sourcemaps only in dev mode
     clean: false, // Don't clean - preserve WASM and native modules
     format: ["esm"],
     platform: "node",
     target: "node24",
     shims: false,
 
-    // Optimizations for commodity hardware
-    splitting: false, // Reduce memory usage during build
-    minify: process.env.NODE_ENV === "production",
+    // Optimizations
+    splitting: false,
+    minify: isPackageMode, // Minify only for npm package
     treeshake: true,
 
     // Suppress warnings and configure loaders
@@ -63,14 +104,28 @@ export default defineConfig([
       resolve: true,
     },
 
-    // Ensure executable permissions for CLI
+    // Ensure executable permissions for CLI and copy binaries
     onSuccess: async () => {
+      const { chmod, copyFile, access } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+
       if (process.platform !== "win32") {
-        const { chmod } = await import("node:fs/promises");
         await chmod("./dist/index.js", 0o755);
       }
-      // Note: eval warning from onnxruntime-web is expected and safe
-      // It's used for dynamic require() in Node.js - not a security issue
+
+      // Copy Cosmopolitan binary if it exists (built separately)
+      const commSource = join("src", "comm", "ultrascript-tools.com");
+      const commDest = join("dist", "ultrascript-tools.com");
+      try {
+        await access(commSource);
+        await copyFile(commSource, commDest);
+        if (process.platform !== "win32") {
+          await chmod(commDest, 0o755);
+        }
+        console.log("[tsup] Copied ultrascript-tools.com to dist/");
+      } catch {
+        // Binary not built yet - that's fine, it's optional
+      }
     },
   },
 
@@ -81,13 +136,13 @@ export default defineConfig([
       "agents/workers/generic-language-worker": "src/agents/workers/generic-language-worker.ts",
     },
     outDir: "dist",
-    sourcemap: true,
+    sourcemap: !isPackageMode,
     format: ["esm"],
     platform: "node",
     target: "node24",
     shims: false,
     splitting: false,
-    minify: false, // Keep readable for debugging
+    minify: isPackageMode,
     treeshake: true,
 
     // Suppress warnings and configure loaders
@@ -135,14 +190,14 @@ export default defineConfig([
       "utils/simd-vector-ops": "src/utils/simd-vector-ops.ts",
     },
     outDir: "dist",
-    sourcemap: true,
+    sourcemap: !isPackageMode,
     format: ["esm"],
     platform: "node",
     target: "node24",
     shims: false,
     splitting: false,
-    minify: false,
-    treeshake: false, // Keep all exports for benchmarking
+    minify: isPackageMode,
+    treeshake: true,
 
     // Suppress warnings and configure loaders
     esbuildOptions(options) {
@@ -160,4 +215,11 @@ export default defineConfig([
 
     dts: false,
   },
+
+  // NOTE: Commer (lightweight proxy) is now built as Cosmopolitan C binary
+  // See src/comm/ for the portable ultrascript-tools.com binary
+  // Build with: npm run build:comm
+
+  // NOTE: Old src/core/index.ts IPC server is deprecated
+  // We now use pipe transport in main src/index.ts (MCP JSON-RPC over Named Pipe)
 ]);

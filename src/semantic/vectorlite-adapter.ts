@@ -71,7 +71,7 @@ export class VectorliteAdapter {
 
       // Verify extension loaded
       const info = this.db.prepare("SELECT vectorlite_info()").get();
-      console.log("[VectorliteAdapter] Loaded extension:", info);
+      console.error("[VectorliteAdapter] Loaded extension:", info);
 
       this.isLoaded = true;
       return true;
@@ -114,7 +114,7 @@ export class VectorliteAdapter {
       ON ${this.tableName}_metadata(entity_id);
     `);
 
-    console.log(`[VectorliteAdapter] Initialized with ${this.config.dimensions}D HNSW index`);
+    console.error(`[VectorliteAdapter] Initialized with ${this.config.dimensions}D HNSW index`);
   }
 
   /**

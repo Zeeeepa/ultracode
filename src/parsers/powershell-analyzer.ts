@@ -354,10 +354,10 @@ export class PowerShellAnalyzer {
 
     if (text.startsWith("using")) {
       const match = text.match(/using\s+module\s+(\S+)/);
-      if (match && match[1]) moduleName = match[1];
+      if (match?.[1]) moduleName = match[1];
     } else if (text.includes("Import-Module")) {
       const match = text.match(/Import-Module\s+['"]?([^'";\s]+)/);
-      if (match && match[1]) moduleName = match[1];
+      if (match?.[1]) moduleName = match[1];
     }
 
     if (moduleName) {
@@ -379,7 +379,7 @@ export class PowerShellAnalyzer {
     const text = getNodeText(node, this.sourceCode) || "";
     const cmdletMatch = text.match(/^([A-Z][a-z]+-[A-Z][a-z]+)/);
 
-    if (cmdletMatch && cmdletMatch[1]) {
+    if (cmdletMatch?.[1]) {
       const cmdletName = cmdletMatch[1];
       this.referencedCmdlets.add(cmdletName);
     }
@@ -488,7 +488,7 @@ export class PowerShellAnalyzer {
   private extractParameterName(node: TreeSitterNode): string | null {
     const text = getNodeText(node, this.sourceCode) || "";
     const match = text.match(/\$([A-Za-z_][A-Za-z0-9_]*)/);
-    return match && match[1] ? match[1] : null;
+    return match?.[1] ?? null;
   }
 
   private extractMemberName(node: TreeSitterNode): string | null {

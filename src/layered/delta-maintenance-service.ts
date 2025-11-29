@@ -131,7 +131,7 @@ export class DeltaMaintenanceService {
     };
 
     if (this.config.debug) {
-      console.log(
+      console.error(
         `[DeltaMaintenanceService] Initialized with ` +
           `compactionThreshold=${this.config.compactionThreshold}, ` +
           `orphanedMaxAge=${this.config.orphanedDeltaMaxAgeDays}d, ` +
@@ -149,16 +149,16 @@ export class DeltaMaintenanceService {
    */
   start(): void {
     if (!this.config.enabled) {
-      console.log("[DeltaMaintenanceService] Maintenance is disabled");
+      console.error("[DeltaMaintenanceService] Maintenance is disabled");
       return;
     }
 
     if (this.maintenanceInterval) {
-      console.log("[DeltaMaintenanceService] Already running");
+      console.error("[DeltaMaintenanceService] Already running");
       return;
     }
 
-    console.log(
+    console.error(
       `[DeltaMaintenanceService] Starting maintenance service (interval: ${this.config.maintenanceIntervalMs}ms)`,
     );
 
@@ -182,7 +182,7 @@ export class DeltaMaintenanceService {
     if (this.maintenanceInterval) {
       clearInterval(this.maintenanceInterval);
       this.maintenanceInterval = null;
-      console.log("[DeltaMaintenanceService] Stopped maintenance service");
+      console.error("[DeltaMaintenanceService] Stopped maintenance service");
     }
   }
 
@@ -196,7 +196,7 @@ export class DeltaMaintenanceService {
   async runMaintenance(): Promise<void> {
     if (this.isRunning) {
       if (this.config.debug) {
-        console.log("[DeltaMaintenanceService] Maintenance already running, skipping");
+        console.error("[DeltaMaintenanceService] Maintenance already running, skipping");
       }
       return;
     }
@@ -205,7 +205,7 @@ export class DeltaMaintenanceService {
     const startTime = Date.now();
 
     try {
-      console.log("[DeltaMaintenanceService] Starting maintenance cycle...");
+      console.error("[DeltaMaintenanceService] Starting maintenance cycle...");
 
       // 1. Compact large deltas
       await this.compactLargeDeltas();
@@ -224,7 +224,7 @@ export class DeltaMaintenanceService {
       this.stats.lastRunTime = Date.now();
       this.stats.lastRunDurationMs = Date.now() - startTime;
 
-      console.log(`[DeltaMaintenanceService] Maintenance cycle completed in ${this.stats.lastRunDurationMs}ms`);
+      console.error(`[DeltaMaintenanceService] Maintenance cycle completed in ${this.stats.lastRunDurationMs}ms`);
     } catch (error) {
       console.error("[DeltaMaintenanceService] Maintenance cycle failed:", error);
     } finally {
@@ -244,7 +244,7 @@ export class DeltaMaintenanceService {
       const branches = await this.layeredIndex.getCachedBranches();
 
       if (this.config.debug) {
-        console.log(`[DeltaMaintenanceService] Checking ${branches.length} branches for compaction`);
+        console.error(`[DeltaMaintenanceService] Checking ${branches.length} branches for compaction`);
       }
 
       for (const branch of branches) {
@@ -257,7 +257,7 @@ export class DeltaMaintenanceService {
 
           // Check if compaction needed
           if (delta.totalChanges > this.config.compactionThreshold) {
-            console.log(
+            console.error(
               `[DeltaMaintenanceService] Branch ${branch} has ${delta.totalChanges} changes, ` +
                 `exceeds threshold ${this.config.compactionThreshold} - compacting`,
             );
@@ -316,7 +316,7 @@ export class DeltaMaintenanceService {
 
       result.success = true;
 
-      console.log(
+      console.error(
         `[DeltaMaintenanceService] Compacted ${branch}: ` +
           `${result.changesBefore} → ${result.changesAfter} changes, ` +
           `freed ~${(result.memoryFreed / 1024).toFixed(2)} KB`,
@@ -338,7 +338,7 @@ export class DeltaMaintenanceService {
 
       if (!this.branchManager) {
         if (this.config.debug) {
-          console.log("[DeltaMaintenanceService] No branch manager, skipping orphaned cleanup");
+          console.error("[DeltaMaintenanceService] No branch manager, skipping orphaned cleanup");
         }
         return;
       }
@@ -348,7 +348,7 @@ export class DeltaMaintenanceService {
       // TODO: Add getAllBranches() to BranchManager
 
       if (this.config.debug) {
-        console.log(`[DeltaMaintenanceService] Checking ${cachedBranches.length} cached branches for orphans`);
+        console.error(`[DeltaMaintenanceService] Checking ${cachedBranches.length} cached branches for orphans`);
       }
     } catch (error) {
       console.error("[DeltaMaintenanceService] Failed to cleanup orphaned deltas:", error);
@@ -376,7 +376,7 @@ export class DeltaMaintenanceService {
 
       if (deletedCount > 0) {
         this.stats.deltasDeleted += deletedCount;
-        console.log(`[DeltaMaintenanceService] Deleted ${deletedCount} old deltas`);
+        console.error(`[DeltaMaintenanceService] Deleted ${deletedCount} old deltas`);
       }
     } catch (error) {
       console.error("[DeltaMaintenanceService] Failed to delete old deltas:", error);
@@ -408,7 +408,7 @@ export class DeltaMaintenanceService {
    * Force compaction of all deltas
    */
   async forceCompactAll(): Promise<void> {
-    console.log("[DeltaMaintenanceService] Force compacting all deltas...");
+    console.error("[DeltaMaintenanceService] Force compacting all deltas...");
 
     const branches = await this.layeredIndex.getCachedBranches();
 
@@ -416,16 +416,16 @@ export class DeltaMaintenanceService {
       await this.compactBranchDelta(branch);
     }
 
-    console.log("[DeltaMaintenanceService] Force compaction complete");
+    console.error("[DeltaMaintenanceService] Force compaction complete");
   }
 
   /**
    * Force cleanup of all orphaned deltas
    */
   async forceCleanupOrphaned(): Promise<void> {
-    console.log("[DeltaMaintenanceService] Force cleanup of orphaned deltas...");
+    console.error("[DeltaMaintenanceService] Force cleanup of orphaned deltas...");
     await this.cleanupOrphanedDeltas();
-    console.log("[DeltaMaintenanceService] Force cleanup complete");
+    console.error("[DeltaMaintenanceService] Force cleanup complete");
   }
 
   // =========================================================================

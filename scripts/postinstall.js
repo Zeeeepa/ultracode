@@ -2,13 +2,17 @@
 
 /**
  * Post-install script for ultrascript-tools-mcp
- * Runs after npm install to guide users through optional setup
+ *
+ * - CUDA libraries (win32/linux) are bundled in npm package
+ * - For Apple Silicon: offers to build Metal backend
+ * - For Intel Mac: WASM fallback is used (bundled)
  */
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { arch, platform } from "node:os";
 import { dirname, join } from "node:path";
+import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -24,7 +28,7 @@ const colors = {
   green: "\x1b[32m",
   yellow: "\x1b[33m",
   blue: "\x1b[34m",
-  magenta: "\x1b[35m",
+  red: "\x1b[31m",
 };
 
 function printBox(title, lines) {
@@ -50,77 +54,146 @@ function printInfo(message) {
   console.log(`${colors.blue}ℹ${colors.reset} ${message}`);
 }
 
-function printWarning(message) {
+function _printWarning(message) {
   console.log(`${colors.yellow}⚠${colors.reset} ${message}`);
 }
 
-function checkRequiredFiles() {
-  const requiredFiles = [
-    "dist/index.js",
-    "dist/external-tools/wasm/diff-simd/diff_simd.js",
-    "dist/external-tools/wasm/vector-ops-simd/vector_ops_simd.js",
-  ];
-
-  const missing = requiredFiles.filter((file) => !existsSync(join(projectRoot, file)));
-
-  return { allPresent: missing.length === 0, missing };
+function printError(message) {
+  console.log(`${colors.red}✗${colors.reset} ${message}`);
 }
 
-function detectPlatform() {
-  const plat = platform();
-  if (plat === "win32") return "Windows";
-  if (plat === "darwin") return "macOS";
-  if (plat === "linux") return "Linux";
-  return plat;
+function isAppleSilicon() {
+  return platform() === "darwin" && arch() === "arm64";
 }
 
-function getSetupCommand() {
+function isIntelMac() {
+  return platform() === "darwin" && arch() === "x64";
+}
+
+function checkMetalLibExists() {
+  const metalPath = join(projectRoot, "external-libs", "metal-darwin-arm64", "ultrascript_metal.node");
+  return existsSync(metalPath);
+}
+
+function checkCudaLibExists() {
   const plat = platform();
   if (plat === "win32") {
-    return "scripts\\setup-embeddings.cmd";
+    return existsSync(join(projectRoot, "external-libs", "cuda-win32-x64", "ultrascript_cuda.node"));
   }
-  return "bash scripts/setup-embeddings.sh";
+  if (plat === "linux") {
+    return existsSync(join(projectRoot, "external-libs", "cuda-linux-x64", "ultrascript_cuda.node"));
+  }
+  return false;
 }
 
-function rebuildTreeSitterForBun() {
-  const plat = platform();
-  const architecture = arch();
-  const prebuildsDir = `prebuilds/${plat}-${architecture}`;
-
-  const treeSitterDir = join(projectRoot, "node_modules", "tree-sitter");
-  const prebuildsPath = join(treeSitterDir, prebuildsDir);
-  const targetFile = join(prebuildsPath, "tree-sitter.node");
-
-  // Check if tree-sitter exists
-  if (!existsSync(treeSitterDir)) {
-    return { skipped: true, reason: "tree-sitter not in node_modules" };
-  }
-
-  // Check if prebuilds already exist
-  if (existsSync(targetFile)) {
-    return { skipped: true, reason: "prebuilds already exist" };
-  }
-
-  // Run rebuild script
-  const rebuildScript = join(projectRoot, "scripts", "rebuild-tree-sitter.js");
-  if (!existsSync(rebuildScript)) {
-    return { skipped: true, reason: "rebuild script not found" };
-  }
-
-  printInfo("Rebuilding tree-sitter for Bun compatibility...");
-
-  const result = spawnSync("node", [rebuildScript], {
-    cwd: projectRoot,
-    encoding: "utf8",
-    shell: true,
-    stdio: "inherit",
-    timeout: 300000, // 5 minutes
+async function askYesNo(question) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
   });
 
-  if (result.status === 0) {
-    return { success: true };
+  return new Promise((resolve) => {
+    // Check if stdin is a TTY (interactive terminal)
+    if (!process.stdin.isTTY) {
+      rl.close();
+      resolve(false);
+      return;
+    }
+
+    rl.question(`${question} [y/N]: `, (answer) => {
+      rl.close();
+      resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
+    });
+  });
+}
+
+async function buildMetalBackend() {
+  printInfo("Building Metal backend for Apple Silicon...");
+  console.log();
+
+  const buildScript = join(projectRoot, "scripts", "build-native-libs-macos.sh");
+
+  if (!existsSync(buildScript)) {
+    printError("Build script not found: scripts/build-native-libs-macos.sh");
+    return false;
   }
-  return { success: false, reason: "rebuild failed" };
+
+  // Run non-interactively with option 1 (Metal)
+  const result = spawnSync("bash", ["-c", `echo "1" | bash "${buildScript}"`], {
+    cwd: projectRoot,
+    encoding: "utf8",
+    stdio: "inherit",
+    timeout: 600000, // 10 minutes
+  });
+
+  if (result.status === 0 && checkMetalLibExists()) {
+    printSuccess("Metal backend built successfully!");
+    return true;
+  }
+
+  printError("Metal backend build failed");
+  return false;
+}
+
+async function handleAppleSilicon() {
+  // Check if Metal lib already exists
+  if (checkMetalLibExists()) {
+    printSuccess("Metal GPU acceleration library found");
+    return;
+  }
+
+  printBox("Apple Silicon Detected", [
+    "Your Mac has an Apple Silicon chip (M1/M2/M3/M4).",
+    "",
+    "UltraScript can use Metal for GPU-accelerated vector operations.",
+    "This provides significantly faster semantic search.",
+    "",
+    `${colors.bright}Requirements to build Metal backend:${colors.reset}`,
+    "  • Xcode Command Line Tools (xcode-select --install)",
+    "  • Homebrew (https://brew.sh)",
+    "  • CMake (brew install cmake)",
+    "",
+    `${colors.dim}Without Metal, WASM SIMD fallback will be used (slower).${colors.reset}`,
+  ]);
+
+  const shouldBuild = await askYesNo("Build Metal backend now?");
+
+  if (shouldBuild) {
+    console.log();
+    const success = await buildMetalBackend();
+    if (!success) {
+      console.log();
+      printInfo("You can build later by running:");
+      console.log(
+        `  ${colors.cyan}./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh${colors.reset}`,
+      );
+    }
+  } else {
+    printInfo("Skipping Metal build. Using WASM SIMD fallback.");
+    printInfo("You can build later by running:");
+    console.log(
+      `  ${colors.cyan}./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh${colors.reset}`,
+    );
+  }
+}
+
+function detectPlatformInfo() {
+  const plat = platform();
+  const architecture = arch();
+
+  if (plat === "win32") {
+    return { name: "Windows", hasGPU: checkCudaLibExists(), gpuType: "CUDA" };
+  }
+  if (plat === "linux") {
+    return { name: "Linux", hasGPU: checkCudaLibExists(), gpuType: "CUDA" };
+  }
+  if (plat === "darwin") {
+    if (architecture === "arm64") {
+      return { name: "macOS (Apple Silicon)", hasGPU: checkMetalLibExists(), gpuType: "Metal" };
+    }
+    return { name: "macOS (Intel)", hasGPU: false, gpuType: "None (WASM fallback)" };
+  }
+  return { name: plat, hasGPU: false, gpuType: "Unknown" };
 }
 
 async function main() {
@@ -130,129 +203,52 @@ async function main() {
     return;
   }
 
-  // Skip if --ignore-scripts was used (already skipped, but good practice)
-  if (process.env.npm_config_ignore_scripts === "true") {
+  // Skip if explicitly requested
+  if (process.env.ULTRASCRIPT_SKIP_POSTINSTALL === "1") {
     return;
   }
 
-  printBox("UltraScript Tools MCP - Installation Complete", [
+  const platformInfo = detectPlatformInfo();
+
+  printBox("UltraScript Tools MCP - Installed", [
     `${colors.green}${colors.bright}Thank you for installing UltraScript Tools MCP!${colors.reset}`,
     "",
-    "This package provides advanced code analysis capabilities through",
-    "the Model Context Protocol (MCP) with multi-agent architecture.",
+    `Platform: ${platformInfo.name}`,
+    `GPU Acceleration: ${platformInfo.hasGPU ? colors.green + "Available" : colors.yellow + "Not available"} (${platformInfo.gpuType})${colors.reset}`,
   ]);
 
-  // Check if this is a global install
-  const isGlobal =
-    process.env.npm_config_global === "true" || process.argv.includes("-g") || process.argv.includes("--global");
-
-  if (isGlobal) {
-    printInfo("Global installation detected");
+  // Handle Apple Silicon - offer to build Metal
+  if (isAppleSilicon()) {
+    await handleAppleSilicon();
+    console.log();
+  } else if (isIntelMac()) {
+    printInfo("Intel Mac detected - using WASM SIMD acceleration (GPU not available)");
+    console.log();
+  } else if (platformInfo.hasGPU) {
+    printSuccess(`${platformInfo.gpuType} GPU acceleration library bundled and ready`);
     console.log();
   }
-
-  // Check built files
-  const { allPresent, missing } = checkRequiredFiles();
-
-  if (allPresent) {
-    printSuccess("All core modules are ready");
-  } else {
-    printWarning("Some modules may need building:");
-    for (const file of missing) {
-      console.log(`  ${colors.dim}- ${file}${colors.reset}`);
-    }
-    console.log();
-    printInfo("These modules will be built on first use if needed");
-  }
-
-  console.log();
-
-  // Rebuild tree-sitter for Bun compatibility (if needed)
-  const treeSitterResult = rebuildTreeSitterForBun();
-  if (treeSitterResult.success) {
-    printSuccess("tree-sitter rebuilt for Bun compatibility");
-  } else if (treeSitterResult.skipped) {
-    // Silent skip - either already built or not needed
-  } else {
-    printWarning(`tree-sitter rebuild: ${treeSitterResult.reason}`);
-    printInfo("Bun users may need to use Node.js instead");
-  }
-
-  console.log();
-
-  // Platform info
-  const plat = detectPlatform();
-  printInfo(`Platform: ${plat}`);
-  console.log();
-
-  // Optional setup guide
-  printBox("Optional Setup - Embeddings Provider", [
-    "UltraScript Tools MCP supports optional ML-powered semantic search",
-    "through local embedding providers:",
-    "",
-    `${colors.bright}1. TEI (Text Embeddings Inference)${colors.reset}`,
-    "   • Docker-based, GPU/CPU support",
-    "   • Recommended for best performance",
-    "",
-    `${colors.bright}2. Ollama${colors.reset}`,
-    "   • Native installation, easy setup",
-    "   • Good for quick start",
-    "",
-    `${colors.bright}3. Memory Provider${colors.reset}`,
-    "   • No ML, hash-based (default)",
-    "   • Works out of the box",
-    "",
-    `${colors.yellow}${colors.bright}Setup is optional - the tool works without embeddings!${colors.reset}`,
-  ]);
-
-  const setupCmd = getSetupCommand();
-
-  console.log(`${colors.bright}To configure embeddings provider:${colors.reset}`);
-  console.log(`  ${colors.cyan}cd node_modules/ultrascript-tools-mcp${colors.reset}`);
-  console.log(`  ${colors.cyan}${setupCmd}${colors.reset}`);
-  console.log();
 
   // Quick start
   printBox("Quick Start", [
-    `${colors.bright}1. Configure MCP Client${colors.reset}`,
-    "   Add to your Claude Desktop config:",
+    `${colors.bright}Configure your MCP client (e.g., Claude Desktop):${colors.reset}`,
     "",
-    `   ${colors.dim}"mcpServers": {${colors.reset}`,
-    `   ${colors.dim}  "ultrascript-tools": {${colors.reset}`,
-    `   ${colors.dim}    "command": "node",${colors.reset}`,
-    `   ${colors.dim}    "args": ["node_modules/ultrascript-tools-mcp/dist/index.js"]${colors.reset}`,
-    `   ${colors.dim}  }${colors.reset}`,
-    `   ${colors.dim}}${colors.reset}`,
+    `${colors.dim}"mcpServers": {${colors.reset}`,
+    `${colors.dim}  "ultrascript-tools": {${colors.reset}`,
+    `${colors.dim}    "command": "node",${colors.reset}`,
+    `${colors.dim}    "args": ["node_modules/ultrascript-tools-mcp/dist/index.js"]${colors.reset}`,
+    `${colors.dim}  }${colors.reset}`,
+    `${colors.dim}}${colors.reset}`,
     "",
-    `${colors.bright}2. Start Using${colors.reset}`,
-    "   • Index your codebase: Use MCP tool 'index'",
-    "   • Query code: Use MCP tool 'query'",
-    "   • Semantic search: Use MCP tool 'semantic_search'",
+    `${colors.bright}Available tools:${colors.reset} index, query, semantic_search, modify_code, ...`,
   ]);
 
-  // Documentation links
-  console.log(`${colors.bright}Documentation:${colors.reset}`);
-  console.log(`  ${colors.blue}README:${colors.reset}       node_modules/ultrascript-tools-mcp/README.md`);
-  console.log(`  ${colors.blue}Performance:${colors.reset}  node_modules/ultrascript-tools-mcp/PERFORMANCE_GUIDE.md`);
-  console.log(
-    `  ${colors.blue}Embeddings:${colors.reset}   node_modules/ultrascript-tools-mcp/config/embedding-models.json`,
-  );
-  console.log();
-
-  // Optional backends
-  console.log(`${colors.dim}Optional GPU/SIMD Acceleration:${colors.reset}`);
-  console.log(`  ${colors.dim}CUDA:   See CUDA_INSTALLATION.md (NVIDIA GPUs)${colors.reset}`);
-  console.log(`  ${colors.dim}WebGPU: See WEBGPU_INSTALLATION.md (Cross-platform)${colors.reset}`);
-  console.log(`  ${colors.dim}WASM:   Included (automatic SIMD acceleration)${colors.reset}`);
-  console.log();
-
-  // Final message
-  console.log(`${colors.green}${colors.bright}Ready to analyze your codebase! 🚀${colors.reset}`);
+  console.log(`${colors.green}${colors.bright}Ready to use! 🚀${colors.reset}`);
   console.log();
 }
 
 main().catch((error) => {
-  console.error("Postinstall script failed:", error);
-  // Don't exit with error code - postinstall failures shouldn't break installation
+  console.error("Postinstall script error:", error.message);
+  // Don't exit with error - postinstall failures shouldn't break npm install
   process.exit(0);
 });

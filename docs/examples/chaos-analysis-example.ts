@@ -105,12 +105,12 @@ async function analyzeAuthModule(storage: GraphStorage, projectRoot: string) {
 
   // Aggregate metrics
   let totalOperations = 0;
-  let totalFiles = new Set<string>();
+  const totalFiles = new Set<string>();
   let worstScore = 0;
 
   for (const result of results) {
     totalOperations += result.summary.overview.totalOperations;
-    result.statePattern.operations.forEach(op => totalFiles.add(op.file));
+    result.statePattern.operations.forEach((op) => totalFiles.add(op.file));
     worstScore = Math.max(worstScore, result.metrics.score);
   }
 
@@ -158,7 +158,7 @@ async function findMutationHotspots(storage: GraphStorage, projectRoot: string) 
     const { flowMap } = result;
 
     // Find nodes with mutations
-    const mutationNodes = flowMap.nodes.filter(n => n.hasMutation);
+    const mutationNodes = flowMap.nodes.filter((n) => n.hasMutation);
 
     console.log(`Mutation points: ${mutationNodes.length}`);
 
@@ -234,11 +234,7 @@ async function measureRefactoringImpact(storage: GraphStorage, projectRoot: stri
 
 function countDefensive(defensive: any): number {
   return (
-    defensive.nullChecks +
-    defensive.typeGuards +
-    defensive.defaultValues +
-    defensive.tryCatch +
-    defensive.localCopies
+    defensive.nullChecks + defensive.typeGuards + defensive.defaultValues + defensive.tryCatch + defensive.localCopies
   );
 }
 
@@ -271,7 +267,7 @@ async function integratedAnalysis(storage: GraphStorage, projectRoot: string) {
     });
 
     // Analyze each property
-    for (const prop of properties.filter(p => p.filePath === service.filePath).slice(0, 2)) {
+    for (const prop of properties.filter((p) => p.filePath === service.filePath).slice(0, 2)) {
       const result = await analyzer.analyzeSingle(prop.name, {
         scope: "file",
         maxDepth: 5,

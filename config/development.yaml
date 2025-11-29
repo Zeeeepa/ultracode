@@ -82,7 +82,7 @@ mcp:
 
 # Database Configuration (Development)
 database:
-  path: "./.ultrascript/db/vectors.db"     # Local development database
+  path: ""                                  # Empty = centralized storage (%LOCALAPPDATA%/UltraScriptTools/)
   mode: "WAL"              # WAL mode for development
   cacheSize: 5000          # Smaller cache for development
   mmapSize: 134217728      # 128MB memory mapping

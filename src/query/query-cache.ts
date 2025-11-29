@@ -413,7 +413,7 @@ export class QueryCache {
         const now = Date.now();
         const result = this.l3Statements.cleanup.run(now);
         if (result.changes > 0) {
-          console.log(`[QueryCache] Cleaned up ${result.changes} expired L3 entries`);
+          console.error(`[QueryCache] Cleaned up ${result.changes} expired L3 entries`);
         }
       }
     }, 300000); // 5 minutes

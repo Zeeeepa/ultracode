@@ -17,73 +17,47 @@ import { join } from "node:path";
 import { existsSync, mkdirSync, readJSONSync, writeFileSync } from "./file-ops.js";
 
 const APP_NAME = "UltraScriptTools";
-const APP_NAME_LINUX = "ultrascript-tools";
 
 /**
  * Get the central configuration directory for UltraScript Tools
+ * NOTE: Must match storage-paths.ts getConfigDir() for consistency
  */
 export function getConfigDir(): string {
-  const os = platform();
-
-  let configDir: string;
-
-  switch (os) {
-    case "win32": {
-      // Windows: %LOCALAPPDATA%\UltraScriptTools\
-      const localAppData = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
-      configDir = join(localAppData, APP_NAME);
-      break;
-    }
-
-    case "darwin": {
-      // macOS: ~/Library/Application Support/UltraScriptTools/
-      configDir = join(homedir(), "Library", "Application Support", APP_NAME);
-      break;
-    }
-
-    default: {
-      // Linux and others: ~/.config/ultrascript-tools/ (XDG Base Directory)
-      const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-      configDir = join(xdgConfig, APP_NAME_LINUX);
-      break;
-    }
-  }
-
-  return configDir;
+  // Config is stored inside the data directory
+  return join(getDataDir(), "config");
 }
 
 /**
  * Get the central data directory for UltraScript Tools
  * (for databases, embeddings, cache, etc.)
+ * NOTE: Must match storage-paths.ts getDataDir() for consistency
  */
 export function getDataDir(): string {
   const os = platform();
 
-  let dataDir: string;
+  let baseDir: string;
 
   switch (os) {
     case "win32": {
-      // Windows: %LOCALAPPDATA%\UltraScriptTools\data\
-      const localAppData = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
-      dataDir = join(localAppData, APP_NAME, "data");
+      // Windows: %LOCALAPPDATA%\UltraScriptTools\
+      baseDir = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
       break;
     }
 
     case "darwin": {
-      // macOS: ~/Library/Application Support/UltraScriptTools/data/
-      dataDir = join(homedir(), "Library", "Application Support", APP_NAME, "data");
+      // macOS: ~/Library/Application Support/UltraScriptTools/
+      baseDir = join(homedir(), "Library", "Application Support");
       break;
     }
 
     default: {
-      // Linux: ~/.local/share/ultrascript-tools/ (XDG Base Directory)
-      const xdgData = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
-      dataDir = join(xdgData, APP_NAME_LINUX);
+      // Linux: ~/.local/share/UltraScriptTools/ (XDG Base Directory)
+      baseDir = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
       break;
     }
   }
 
-  return dataDir;
+  return join(baseDir, APP_NAME);
 }
 
 /**

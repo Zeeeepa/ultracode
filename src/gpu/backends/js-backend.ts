@@ -20,7 +20,7 @@ export class JSBackend implements VectorBackend {
   }
 
   async initialize(): Promise<void> {
-    console.log("[JS Backend] Using pure JavaScript with loop unrolling optimization");
+    console.error("[JS Backend] Using pure JavaScript with loop unrolling optimization");
   }
 
   getCapabilities(): BackendCapabilities {

@@ -63,7 +63,7 @@ export class ConflictResolver {
         }
 
         // AI не уверен - продолжаем с fallback логикой
-        console.log(
+        console.error(
           `[ConflictResolver] AI confidence ${aiAnalysis.confidence.toFixed(2)} below threshold ${this.config.minConfidenceThreshold}, using fallback`,
         );
       } catch (error) {

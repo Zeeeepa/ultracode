@@ -59,7 +59,7 @@ export const DATABASE_CONSTANTS = {
   /**
    * Default database path
    */
-  DEFAULT_DB_PATH: "./.ultrascript/db/vectors.db",
+  DEFAULT_DB_PATH: "", // Empty = use centralized storage via getProjectPaths()
 
   /**
    * Page size in bytes (optimal for most systems)

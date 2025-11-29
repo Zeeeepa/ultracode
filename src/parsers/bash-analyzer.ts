@@ -180,7 +180,7 @@ export class BashAnalyzer {
       const bodyText = getNodeText(body, this.sourceCode) || "";
       const paramMatches = bodyText.matchAll(/\$(\d+)/g);
       const paramNumbers = new Set(
-        Array.from(paramMatches, (m) => (m[1] ? Number.parseInt(m[1]) : 0)).filter((n) => n > 0),
+        Array.from(paramMatches, (m) => (m[1] ? Number.parseInt(m[1], 10) : 0)).filter((n) => n > 0),
       );
       if (paramNumbers.size > 0) {
         const maxParam = Math.max(...paramNumbers);

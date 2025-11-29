@@ -103,37 +103,57 @@ try {
 
     Write-Success "Пакет: $PackageName@$PackageVersion"
 
-    # Шаг 2: Проверка собранных файлов
+    # Шаг 2: Сборка с минификацией (BUILD_MODE=package)
     if (-not $SkipBuild) {
-        Write-Step "Проверка собранных файлов..."
+        Write-Step "Сборка с минификацией (BUILD_MODE=package)..."
 
-        $RequiredFiles = @(
-            "dist/index.js",
-            "dist/external-tools/wasm/diff-simd/diff_simd.js",
-            "dist/external-tools/wasm/vector-ops-simd/vector_ops_simd.js",
-            "scripts/postinstall.js",
-            "scripts/setup-embeddings.cmd",
-            "config/embedding-models.json"
-        )
+        $env:BUILD_MODE = "package"
+        $BuildOutput = npm run build 2>&1
+        $env:BUILD_MODE = $null
 
-        $MissingFiles = @()
-        foreach ($File in $RequiredFiles) {
-            if (-not (Test-Path $File)) {
-                $MissingFiles += $File
-            }
-        }
-
-        if ($MissingFiles.Count -gt 0) {
-            Write-Error "Отсутствуют обязательные файлы:"
-            foreach ($File in $MissingFiles) {
-                Write-Host "  - $File" -ForegroundColor Red
-            }
-            Write-Host ""
-            Write-Warning "Запустите сборку: npm run build или .\scripts\build.cmd"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Сборка не удалась:"
+            Write-Host $BuildOutput -ForegroundColor Red
             exit 1
         }
 
-        Write-Success "Все обязательные файлы найдены"
+        Write-Success "TypeScript собран в dist/ (минифицирован, без sourcemaps)"
+
+        # Копирование WASM из external-tools в dist
+        Write-Step "Копирование WASM модулей..."
+
+        $WasmDirs = @(
+            @{ Src = "external-tools/wasm/diff-simd/pkg"; Dst = "dist/external-tools/wasm/diff-simd" },
+            @{ Src = "external-tools/wasm/vector-ops-simd/pkg"; Dst = "dist/external-tools/wasm/vector-ops-simd" }
+        )
+
+        foreach ($Dir in $WasmDirs) {
+            if (Test-Path $Dir.Src) {
+                if (-not (Test-Path $Dir.Dst)) {
+                    New-Item -ItemType Directory -Path $Dir.Dst -Force | Out-Null
+                }
+                Copy-Item "$($Dir.Src)/*" $Dir.Dst -Recurse -Force
+                Write-Host "  + $($Dir.Dst)" -ForegroundColor Gray
+            }
+        }
+
+        # Копирование CUDA если есть
+        if (Test-Path "external-tools/native/cuda/build/ultrascript_cuda.node") {
+            $CudaDst = "dist/native/cuda"
+            if (-not (Test-Path $CudaDst)) {
+                New-Item -ItemType Directory -Path $CudaDst -Force | Out-Null
+            }
+            Copy-Item "external-tools/native/cuda/build/ultrascript_cuda.node" $CudaDst -Force
+            Write-Host "  + $CudaDst/ultrascript_cuda.node" -ForegroundColor Gray
+        }
+
+        # Копирование Comm binary если есть
+        if (Test-Path "src/comm/ultrascript-tools.com") {
+            Copy-Item "src/comm/ultrascript-tools.com" "dist/" -Force
+            Write-Host "  + dist/ultrascript-tools.com" -ForegroundColor Gray
+        }
+
+        Write-Success "Все модули скопированы в dist/"
     }
 
     # Шаг 3: Показать файлы, которые войдут в пакет
@@ -323,3 +343,6 @@ try {
 } finally {
     Pop-Location
 }
+
+# Примечание: После pack-npm dist/ содержит минифицированную версию.
+# Для восстановления dev-версии запустите: npm run build

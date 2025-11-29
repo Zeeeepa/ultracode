@@ -99,24 +99,24 @@ if (-not (Test-Command "wasm-pack")) {
     Write-ColorOutput "✅ $wasmPackVersion" "Green"
 }
 
-# Step 5: Build WASM module
-Write-ColorOutput "`n🔨 Step 5: Building WASM SIMD module..." "Blue"
-if (Test-Path "external-tools\wasm\vector-ops-simd") {
-    if (Test-Command "wasm-pack") {
-        Push-Location "external-tools\wasm\vector-ops-simd"
-        wasm-pack build --target nodejs --release
-        $wasmBuildSuccess = $LASTEXITCODE -eq 0
-        Pop-Location
-        if ($wasmBuildSuccess) {
-            Write-ColorOutput "✅ WASM module built (4-8x speedup)" "Green"
+# Step 5: Build WASM modules (both diff-simd and vector-ops-simd)
+Write-ColorOutput "`n🔨 Step 5: Building WASM SIMD modules..." "Blue"
+if (Test-Command "wasm-pack") {
+    # Use the dedicated build-wasm.ps1 script for proper output paths
+    $buildWasmScript = Join-Path $PSScriptRoot "build-wasm.ps1"
+    if (Test-Path $buildWasmScript) {
+        & $buildWasmScript
+        if ($LASTEXITCODE -eq 0) {
+            Write-ColorOutput "✅ WASM modules built (4-8x speedup)" "Green"
         } else {
             Write-ColorOutput "⚠️  WASM build failed" "Yellow"
         }
     } else {
-        Write-ColorOutput "⚠️  wasm-pack not available - skipping WASM build" "Yellow"
+        Write-ColorOutput "⚠️  build-wasm.ps1 not found - skipping WASM build" "Yellow"
     }
 } else {
-    Write-ColorOutput "⚠️  WASM source directory not found" "Yellow"
+    Write-ColorOutput "⚠️  wasm-pack not available - skipping WASM build" "Yellow"
+    Write-ColorOutput "   Install with: cargo install wasm-pack" "Gray"
 }
 
 # Step 6: Check for CUDA (optional)
@@ -448,8 +448,12 @@ Write-Separator
 Write-ColorOutput "`n📊 Installed Backends:" "Cyan"
 Write-ColorOutput "  • Pure JS (Loop Unrolling) - ✅ Always available (1.45x)" "Gray"
 
-if (Test-Path "external-tools\wasm\vector-ops-simd\pkg\index.js") {
+$wasmDiffOk = Test-Path "external-tools\wasm\diff-simd\pkg\diff_simd.js"
+$wasmVectorOk = Test-Path "external-tools\wasm\vector-ops-simd\pkg\vector_ops_simd.js"
+if ($wasmDiffOk -and $wasmVectorOk) {
     Write-ColorOutput "  • WASM SIMD                - ✅ Built (4-8x)" "Green"
+} elseif ($wasmDiffOk -or $wasmVectorOk) {
+    Write-ColorOutput "  • WASM SIMD                - ⚠️  Partial (run build-wasm.ps1)" "Yellow"
 } else {
     Write-ColorOutput "  • WASM SIMD                - ❌ Not built" "Red"
 }
@@ -461,7 +465,7 @@ if ($webgpuInstalled) {
     Write-ColorOutput "  • WebGPU Compute           - ❌ Not installed" "Red"
 }
 
-if (Test-Path "build\Release\cuda_vector_ops.node") {
+if (Test-Path "external-tools\native\cuda\build\ultrascript_cuda.node") {
     Write-ColorOutput "  • CUDA Native              - ✅ Built (100-200x)" "Green"
 } else {
     Write-ColorOutput "  • CUDA Native              - ⚠️  Not built (optional)" "Yellow"

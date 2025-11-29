@@ -185,7 +185,7 @@ export class ParserAgent extends BaseAgent {
    * Initialize the parser agent
    */
   protected async onInitialize(): Promise<void> {
-    console.log(`[${this.id}] Initializing Parser Agent...`);
+    console.error(`[${this.id}] Initializing Parser Agent...`);
 
     // Initialize incremental parser
     await this.parser.initialize();
@@ -199,7 +199,7 @@ export class ParserAgent extends BaseAgent {
     }
 
     const config = getParserConfig();
-    console.log(`[${this.id}] Parser Agent initialized with ${config.workerPoolSize} workers`);
+    console.error(`[${this.id}] Parser Agent initialized with ${config.workerPoolSize} workers`);
   }
 
   /**
@@ -209,11 +209,11 @@ export class ParserAgent extends BaseAgent {
    * Call destroyWorkerPools() explicitly if you need to cleanup workers.
    */
   protected async onShutdown(): Promise<void> {
-    console.log(`[${this.id}] Shutting down Parser Agent...`);
+    console.error(`[${this.id}] Shutting down Parser Agent...`);
 
     // Optimization 3: Keep worker pools alive for reuse (unless explicitly disabled)
     if (!this.keepPoolsAlive) {
-      console.log(`[${this.id}] Shutting down worker pools...`);
+      console.error(`[${this.id}] Shutting down worker pools...`);
       const shutdownPromises: Promise<void>[] = [];
       for (const [_language, pool] of this.languagePools) {
         shutdownPromises.push(pool.shutdown());
@@ -221,7 +221,7 @@ export class ParserAgent extends BaseAgent {
       await Promise.all(shutdownPromises);
       this.languagePools.clear();
     } else {
-      console.log(`[${this.id}] Worker pools kept alive for reuse (${this.languagePools.size} pools active)`);
+      console.error(`[${this.id}] Worker pools kept alive for reuse (${this.languagePools.size} pools active)`);
     }
 
     // Clear caches
@@ -232,7 +232,7 @@ export class ParserAgent extends BaseAgent {
       this.knowledgeBus.removeAllListeners(TOPICS.FILE_CHANGED);
     }
 
-    console.log(`[${this.id}] Parser Agent shutdown complete`);
+    console.error(`[${this.id}] Parser Agent shutdown complete`);
   }
 
   /**
@@ -244,18 +244,18 @@ export class ParserAgent extends BaseAgent {
    * - For testing cleanup
    */
   async destroyWorkerPools(): Promise<void> {
-    console.log(`[${this.id}] Destroying worker pools...`);
+    console.error(`[${this.id}] Destroying worker pools...`);
 
     const shutdownPromises: Promise<void>[] = [];
     for (const [language, pool] of this.languagePools) {
-      console.log(`[${this.id}] Shutting down ${language} pool...`);
+      console.error(`[${this.id}] Shutting down ${language} pool...`);
       shutdownPromises.push(pool.shutdown());
     }
 
     await Promise.all(shutdownPromises);
     this.languagePools.clear();
 
-    console.log(`[${this.id}] All worker pools destroyed`);
+    console.error(`[${this.id}] All worker pools destroyed`);
   }
 
   /**
@@ -295,7 +295,7 @@ export class ParserAgent extends BaseAgent {
     const parserTask = task as ParserTask;
     const startTime = Date.now();
 
-    console.log(`[${this.id}] Processing task: ${parserTask.type}`);
+    console.error(`[${this.id}] Processing task: ${parserTask.type}`);
 
     try {
       let results: ParseResult[] = [];
@@ -375,7 +375,7 @@ export class ParserAgent extends BaseAgent {
         });
       }
 
-      console.log(
+      console.error(
         `[${this.id}] Task completed: ${results.length} files parsed in ${elapsed}ms ` +
           `(${Math.round((results.length / elapsed) * 1000)} files/sec)`,
       );
@@ -401,7 +401,7 @@ export class ParserAgent extends BaseAgent {
    * Handle incoming messages
    */
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    console.log(`[${this.id}] Received message: ${message.type}`);
+    console.error(`[${this.id}] Received message: ${message.type}`);
 
     switch (message.type) {
       case "parse:request": {
@@ -420,7 +420,7 @@ export class ParserAgent extends BaseAgent {
       case "cache:clear":
         // Clear parser cache
         this.parser.clearCache();
-        console.log(`[${this.id}] Cache cleared`);
+        console.error(`[${this.id}] Cache cleared`);
         break;
 
       case "stats:request":
@@ -460,7 +460,7 @@ export class ParserAgent extends BaseAgent {
       return [];
     }
 
-    console.log(`[${this.id}] Parsing ${supportedFiles.length} files in parallel...`);
+    console.error(`[${this.id}] Parsing ${supportedFiles.length} files in parallel...`);
 
     // Use language-specific worker pools for parallel processing
     // Threshold: 50 files minimum to justify worker pool overhead (optimization)
@@ -470,7 +470,7 @@ export class ParserAgent extends BaseAgent {
       const results = await this.parseWithWorkers(supportedFiles, options);
       const elapsed = Date.now() - startTime;
 
-      console.log(
+      console.error(
         `[${this.id}] Language pool parsing completed: ${supportedFiles.length} files in ${elapsed}ms (${Math.round(supportedFiles.length / (elapsed / 1000))} files/sec)`,
       );
 
@@ -478,7 +478,7 @@ export class ParserAgent extends BaseAgent {
     } else {
       // Fall back to single-threaded batch processing for small batches
       if (supportedFiles.length < WORKER_THRESHOLD && this.useWorkers) {
-        console.log(
+        console.error(
           `[${this.id}] Using single-threaded parser (${supportedFiles.length} files < ${WORKER_THRESHOLD} threshold)`,
         );
       }
@@ -491,7 +491,7 @@ export class ParserAgent extends BaseAgent {
    * Process incremental file changes
    */
   async processIncremental(changes: FileChange[], options?: ParserOptions): Promise<ParseResult[]> {
-    console.log(`[${this.id}] Processing ${changes.length} incremental changes...`);
+    console.error(`[${this.id}] Processing ${changes.length} incremental changes...`);
 
     // TASK-001: Use incremental parsing for maximum performance
     const results = await this.parser.processIncremental(changes, options);
@@ -517,13 +517,13 @@ export class ParserAgent extends BaseAgent {
     const enableWorkers = process.env.PARSER_USE_WORKERS !== "0";
 
     if (!enableWorkers) {
-      console.log(`[${this.id}] Language worker pools disabled via environment variable`);
+      console.error(`[${this.id}] Language worker pools disabled via environment variable`);
       return;
     }
 
     // Enable lazy initialization mode
     this.useWorkers = true;
-    console.log(`[${this.id}] Language worker pools enabled (lazy initialization mode)`);
+    console.error(`[${this.id}] Language worker pools enabled (lazy initialization mode)`);
   }
 
   /**
@@ -537,13 +537,13 @@ export class ParserAgent extends BaseAgent {
 
     // Create new pool for this language
     try {
-      console.log(`[${this.id}] Creating worker pool for language: ${language}`);
+      console.error(`[${this.id}] Creating worker pool for language: ${language}`);
       const pool = new LanguageWorkerPool(language);
       await pool.initialize();
       this.languagePools.set(language, pool);
 
       const stats = pool.getStats();
-      console.log(`[${this.id}] ${language} pool ready: ${stats.totalWorkers} workers`);
+      console.error(`[${this.id}] ${language} pool ready: ${stats.totalWorkers} workers`);
 
       return pool;
     } catch (error) {
@@ -573,7 +573,7 @@ export class ParserAgent extends BaseAgent {
       // Optimization 2: Threshold - skip workers for small batches
       const WORKER_THRESHOLD = 50; // Configurable threshold
       if (files.length < WORKER_THRESHOLD) {
-        console.log(
+        console.error(
           `[${this.id}] File count (${files.length}) below worker threshold (${WORKER_THRESHOLD}), using single-threaded parser`,
         );
         const result = await this.parser.parseBatch(files, options);
@@ -583,7 +583,7 @@ export class ParserAgent extends BaseAgent {
       // Step 1: Group files by programming language
       const languageGroups = groupFilesByLanguage(files);
 
-      console.log(
+      console.error(
         `[${this.id}] Language distribution:`,
         Array.from(languageGroups.entries())
           .map(([lang, files]) => `${lang}:${files.length}`)
@@ -618,12 +618,12 @@ export class ParserAgent extends BaseAgent {
       const flatResults = results.flat();
 
       // Log pool statistics
-      console.log(`[${this.id}] Language pool stats:`);
+      console.error(`[${this.id}] Language pool stats:`);
       for (const language of languagesUsed) {
         const pool = this.languagePools.get(language);
         if (pool) {
           const stats = pool.getStats();
-          console.log(
+          console.error(
             `  - ${language}: ${stats.activeWorkers}/${stats.totalWorkers} workers active, ${stats.completedTasks} tasks completed, ${Math.round(stats.avgProcessingTime)}ms avg`,
           );
         }
@@ -645,7 +645,7 @@ export class ParserAgent extends BaseAgent {
     if (this.isProcessing) return;
 
     const change: FileChange = event.change;
-    console.log(`[${this.id}] File change detected: ${change.filePath}`);
+    console.error(`[${this.id}] File change detected: ${change.filePath}`);
 
     // Create incremental parse task
     const task: ParserTask = {
@@ -680,7 +680,7 @@ export class ParserAgent extends BaseAgent {
 
     // Monitor task completion
     this.on("task:completed", (event) => {
-      console.log(`[${this.id}] Task completed: ${event.task.id}`);
+      console.error(`[${this.id}] Task completed: ${event.task.id}`);
     });
 
     this.on("task:failed", (event) => {
@@ -731,6 +731,6 @@ export class ParserAgent extends BaseAgent {
    */
   async importCache(cacheData: any[]) {
     await this.parser.warmRestart(cacheData);
-    console.log(`[${this.id}] Cache imported with ${cacheData.length} entries`);
+    console.error(`[${this.id}] Cache imported with ${cacheData.length} entries`);
   }
 }

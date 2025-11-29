@@ -13,11 +13,14 @@
  */
 
 import { LRUCache } from "lru-cache";
+import type { BranchManager } from "../core/branch-manager.js";
 import type { ILayeredIndex } from "../core/layered-index.js";
 import type { BranchDelta as IBranchDelta, LayeredIndexConfig, WorkingDelta } from "../types/layered.js";
 import { LayeredIndexConfigPresets } from "../types/layered.js";
 import type { Entity, GraphStorage, Relationship } from "../types/storage.js";
 import { BranchDelta } from "./branch-delta.js";
+import { GitDeltaComputer } from "./git-delta-computer.js";
+import { LayeredCacheManager } from "./layered-cache-manager.js";
 
 // =============================================================================
 // LAYERED GRAPH INDEX CLASS
@@ -40,11 +43,13 @@ export class LayeredGraphIndex implements ILayeredIndex {
   private isInitialized = false;
   private workingDirectory: string | null = null;
 
-  // External dependencies (to be injected later)
-  private gitDeltaComputer: any = null; // TODO: Type when implemented
-  private cacheManager: any = null; // TODO: Type when implemented
+  // External dependencies
+  private gitDeltaComputer: GitDeltaComputer | null = null;
+  private cacheManager: LayeredCacheManager | null = null;
+  private branchManager: BranchManager | null = null;
 
-  constructor(baseIndex: GraphStorage, config?: Partial<LayeredIndexConfig>) {
+  constructor(baseIndex: GraphStorage, config?: Partial<LayeredIndexConfig>, branchManager?: BranchManager) {
+    this.branchManager = branchManager || null;
     this.baseIndex = baseIndex;
 
     // Merge config with defaults
@@ -60,7 +65,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
       },
     });
 
-    console.log(
+    console.error(
       `[LayeredGraphIndex] Initialized with max ${this.config.maxBranchDeltas} branch deltas, ` +
         `persistence: ${this.config.enablePersistence}, ` +
         `vector deltas: ${this.config.enableVectorDeltas}`,
@@ -75,35 +80,39 @@ export class LayeredGraphIndex implements ILayeredIndex {
    * Build base index from directory (Layer 0)
    */
   async buildFromDirectory(directory: string): Promise<void> {
-    console.log(`[LayeredGraphIndex] Building base index (Layer 0) from: ${directory}`);
+    console.error(`[LayeredGraphIndex] Building base index (Layer 0) from: ${directory}`);
     this.workingDirectory = directory;
 
     // Use existing GraphStorage indexing logic
     // (GraphStorage already has index method via agents)
     // We'll just mark it as base layer
 
-    console.log(`[LayeredGraphIndex] Base index built successfully`);
+    console.error(`[LayeredGraphIndex] Base index built successfully`);
 
-    // TODO: Initialize git delta computer when available
-    // if (this.gitService) {
-    //   this.gitDeltaComputer = new GitDeltaComputer(this.gitService, this.baseIndex);
-    // }
+    // Initialize git delta computer
+    if (this.branchManager) {
+      this.gitDeltaComputer = new GitDeltaComputer(this.branchManager, this.baseIndex, directory);
+      console.error(`[LayeredGraphIndex] GitDeltaComputer initialized`);
+    }
 
-    // TODO: Initialize cache manager when available
-    // if (this.config.enablePersistence && this.workingDirectory) {
-    //   this.cacheManager = new LayeredCacheManager(this.workingDirectory);
-    // }
+    // Initialize cache manager for persistence
+    if (this.config.enablePersistence && this.workingDirectory) {
+      this.cacheManager = new LayeredCacheManager(this.workingDirectory);
+      console.error(`[LayeredGraphIndex] LayeredCacheManager initialized`);
+    }
   }
 
   isBuilt(): boolean {
-    // Delegate to base index
-    // TODO: Check base index state
-    return true; // Placeholder
+    // Check if working directory is set (means buildFromDirectory was called)
+    return this.workingDirectory !== null && this.isInitialized;
   }
 
   getTotalEntities(): number {
-    // TODO: Implement when GraphStorage exposes count
-    return 0; // Placeholder
+    // Use GraphStorage count if available
+    if (typeof (this.baseIndex as any).getEntityCount === "function") {
+      return (this.baseIndex as any).getEntityCount();
+    }
+    return 0;
   }
 
   // =========================================================================
@@ -155,7 +164,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
     const totalTime = Date.now() - startTime;
 
-    console.log(
+    console.error(
       `[LayeredGraphIndex] Query '${pattern}' in branch '${branch || "main"}': ` +
         `${finalResults.length} results, ` +
         `L0=${layer0Time}ms L1=${layer1Time}ms L2=${layer2Time}ms Total=${totalTime}ms`,
@@ -215,17 +224,17 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
     // Try load from storage
     if (this.cacheManager) {
-      delta = await this.cacheManager.loadBranchDelta(branch);
+      const loadedDelta = await this.cacheManager.loadBranchDelta(branch);
 
-      if (delta) {
-        this.branchDeltaCache.set(branch, delta);
-        return delta;
+      if (loadedDelta) {
+        this.branchDeltaCache.set(branch, loadedDelta);
+        return loadedDelta;
       }
     }
 
     // Compute from git diff
     if (this.gitDeltaComputer) {
-      console.log(`[LayeredGraphIndex] Computing delta for branch: ${branch}`);
+      console.error(`[LayeredGraphIndex] Computing delta for branch: ${branch}`);
       delta = await this.gitDeltaComputer.computeDeltaFromGitDiff(branch, "main");
       this.branchDeltaCache.set(branch, delta);
 
@@ -316,25 +325,21 @@ export class LayeredGraphIndex implements ILayeredIndex {
   // =========================================================================
 
   async getWorkingDelta(clientId: string, branch: string): Promise<WorkingDelta | null> {
-    // TODO: Layer 2 implementation
     const key = this.getWorkingDeltaKey(clientId, branch);
     return this.workingDeltas.get(key) || null;
   }
 
   async setWorkingDelta(clientId: string, branch: string, delta: WorkingDelta): Promise<void> {
-    // TODO: Layer 2 implementation
     const key = this.getWorkingDeltaKey(clientId, branch);
     this.workingDeltas.set(key, delta);
   }
 
   async clearWorkingDelta(clientId: string, branch: string): Promise<void> {
-    // TODO: Layer 2 implementation
     const key = this.getWorkingDeltaKey(clientId, branch);
     this.workingDeltas.delete(key);
   }
 
   async hasUncommittedChanges(clientId: string, branch: string): Promise<boolean> {
-    // TODO: Layer 2 implementation
     const delta = await this.getWorkingDelta(clientId, branch);
     return delta ? delta.totalChanges > 0 : false;
   }
@@ -348,7 +353,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
   // =========================================================================
 
   async updateEntitiesFromFile(filePath: string, branch: string | null, clientId: string | null): Promise<void> {
-    console.log(`[LayeredGraphIndex] Updating entities from file: ${filePath}`);
+    console.error(`[LayeredGraphIndex] Updating entities from file: ${filePath}`);
 
     try {
       // Extract entities from file
@@ -364,18 +369,30 @@ export class LayeredGraphIndex implements ILayeredIndex {
         await this.updateBranchDeltaWithEntities(branchDelta, entities);
       } else {
         // Layer 0: Base index (main branch)
-        // TODO: Update base index directly (requires GraphStorage.upsertEntities)
-        console.warn(`[LayeredGraphIndex] Base index updates not yet implemented, file: ${filePath}`);
+        // Use GraphStorage upsert if available, otherwise use existing methods
+        if (typeof (this.baseIndex as any).upsertEntities === "function") {
+          await (this.baseIndex as any).upsertEntities(entities);
+        } else {
+          // Fallback: delete old entities and add new ones
+          for (const entity of entities) {
+            try {
+              await this.baseIndex.deleteEntity(entity.id);
+            } catch {
+              // Entity might not exist, ignore
+            }
+            await this.baseIndex.insertEntity(entity);
+          }
+        }
       }
 
-      console.log(`[LayeredGraphIndex] Successfully updated ${entities.length} entities from ${filePath}`);
+      console.error(`[LayeredGraphIndex] Successfully updated ${entities.length} entities from ${filePath}`);
     } catch (error) {
       console.error(`[LayeredGraphIndex] Failed to update entities from ${filePath}:`, error);
     }
   }
 
   async removeEntitiesFromFile(filePath: string, branch: string | null, clientId: string | null): Promise<void> {
-    console.log(`[LayeredGraphIndex] Removing entities from file: ${filePath}`);
+    console.error(`[LayeredGraphIndex] Removing entities from file: ${filePath}`);
 
     try {
       // Get entities by file path from base index
@@ -407,12 +424,17 @@ export class LayeredGraphIndex implements ILayeredIndex {
           await this.setBranchDelta(branch, branchDelta);
         }
       } else {
-        // Layer 0: Base index
-        // TODO: Remove from base index directly
-        console.warn(`[LayeredGraphIndex] Base index removal not yet implemented, file: ${filePath}`);
+        // Layer 0: Base index - remove entities directly
+        for (const entity of entities) {
+          try {
+            await this.baseIndex.deleteEntity(entity.id);
+          } catch (error) {
+            console.warn(`[LayeredGraphIndex] Failed to delete entity ${entity.id}:`, error);
+          }
+        }
       }
 
-      console.log(`[LayeredGraphIndex] Successfully removed ${entities.length} entities from ${filePath}`);
+      console.error(`[LayeredGraphIndex] Successfully removed ${entities.length} entities from ${filePath}`);
     } catch (error) {
       console.error(`[LayeredGraphIndex] Failed to remove entities from ${filePath}:`, error);
     }
@@ -431,16 +453,25 @@ export class LayeredGraphIndex implements ILayeredIndex {
       return;
     }
 
-    console.log("[LayeredGraphIndex] Initializing...");
+    console.error("[LayeredGraphIndex] Initializing...");
 
-    // TODO: Initialize dependencies (git delta computer, cache manager)
+    // Dependencies will be initialized in buildFromDirectory when working directory is known
+    // If working directory already set, initialize now
+    if (this.workingDirectory) {
+      if (this.branchManager && !this.gitDeltaComputer) {
+        this.gitDeltaComputer = new GitDeltaComputer(this.branchManager, this.baseIndex, this.workingDirectory);
+      }
+      if (this.config.enablePersistence && !this.cacheManager) {
+        this.cacheManager = new LayeredCacheManager(this.workingDirectory);
+      }
+    }
 
     this.isInitialized = true;
-    console.log("[LayeredGraphIndex] Initialized successfully");
+    console.error("[LayeredGraphIndex] Initialized successfully");
   }
 
   async shutdown(): Promise<void> {
-    console.log("[LayeredGraphIndex] Shutting down...");
+    console.error("[LayeredGraphIndex] Shutting down...");
 
     // Save all cached deltas
     for (const [_branch, delta] of this.branchDeltaCache.entries()) {
@@ -453,7 +484,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
     this.branchDeltaCache.clear();
     this.workingDeltas.clear();
 
-    console.log("[LayeredGraphIndex] Shutdown complete");
+    console.error("[LayeredGraphIndex] Shutdown complete");
   }
 
   // =========================================================================
@@ -544,7 +575,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
       return;
     }
 
-    console.log(`[LayeredGraphIndex] Branch delta evicted from cache, saving: ${branch}`);
+    console.error(`[LayeredGraphIndex] Branch delta evicted from cache, saving: ${branch}`);
 
     // Async save (don't block eviction)
     this.cacheManager
@@ -681,7 +712,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
     // Save updated delta
     await this.setWorkingDelta(clientId, branch, delta);
 
-    console.log(
+    console.error(
       `[LayeredGraphIndex] Updated working delta for client ${clientId}, branch ${branch}: ${delta.totalChanges} total changes`,
     );
   }
@@ -696,22 +727,22 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
       if (existsInBase) {
         // Modified entity
-        if (branchDelta.entityDelta && branchDelta.entityDelta.modified) {
+        if (branchDelta.entityDelta?.modified) {
           branchDelta.entityDelta.modified.set(entity.id, entity);
         }
         // Remove from deleted if present
-        if (branchDelta.entityDelta && branchDelta.entityDelta.deleted) {
+        if (branchDelta.entityDelta?.deleted) {
           branchDelta.entityDelta.deleted.delete(entity.id);
         }
       } else {
         // New entity
-        if (branchDelta.entityDelta && branchDelta.entityDelta.added) {
+        if (branchDelta.entityDelta?.added) {
           branchDelta.entityDelta.added.set(entity.id, entity);
         }
       }
     }
 
-    console.log(`[LayeredGraphIndex] Updated branch delta: ${branchDelta.totalChanges} total changes`);
+    console.error(`[LayeredGraphIndex] Updated branch delta: ${branchDelta.totalChanges} total changes`);
   }
 
   /**
@@ -721,7 +752,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
     try {
       const entity = await this.baseIndex.getEntity(entityId);
       return entity !== null;
-    } catch (error) {
+    } catch (_error) {
       return false;
     }
   }

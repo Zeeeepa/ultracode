@@ -46,7 +46,7 @@ export class DoraAgent extends BaseAgent {
       }
     });
 
-    console.log(`[DoraAgent ${this.id}] Initialized - Ready to explore and research`);
+    console.error(`[DoraAgent ${this.id}] Initialized - Ready to explore and research`);
   }
 
   protected canProcessTask(task: AgentTask): boolean {
@@ -62,12 +62,12 @@ export class DoraAgent extends BaseAgent {
   }
 
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    console.log(`[DoraAgent ${this.id}] Received message from ${message.from}: ${message.type}`);
+    console.error(`[DoraAgent ${this.id}] Received message from ${message.from}: ${message.type}`);
     // Handle inter-agent messages if needed
   }
 
   protected async processTask(task: AgentTask): Promise<unknown> {
-    console.log(`[DoraAgent ${this.id}] Processing ${task.type} task ${task.id}`);
+    console.error(`[DoraAgent ${this.id}] Processing ${task.type} task ${task.id}`);
 
     try {
       switch (task.type) {
@@ -94,7 +94,7 @@ export class DoraAgent extends BaseAgent {
 
   private async handleResearchTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DoraAgent ${this.id}] Researching: ${payload.description || "best practices"}`);
+    console.error(`[DoraAgent ${this.id}] Researching: ${payload.description || "best practices"}`);
 
     // Simulate research process
     const researchResult = {
@@ -124,7 +124,7 @@ export class DoraAgent extends BaseAgent {
 
   private async handleExplorationTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DoraAgent ${this.id}] Exploring codebase for: ${payload.target || "patterns"}`);
+    console.error(`[DoraAgent ${this.id}] Exploring codebase for: ${payload.target || "patterns"}`);
 
     return {
       status: "completed",
@@ -148,7 +148,7 @@ export class DoraAgent extends BaseAgent {
 
   private async handleDocumentationTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DoraAgent ${this.id}] Documenting: ${payload.target || "implementation"}`);
+    console.error(`[DoraAgent ${this.id}] Documenting: ${payload.target || "implementation"}`);
 
     return {
       status: "completed",
@@ -176,7 +176,7 @@ export class DoraAgent extends BaseAgent {
 
   private async handlePatternDiscoveryTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.log(`[DoraAgent ${this.id}] Discovering patterns in: ${payload.scope || "codebase"}`);
+    console.error(`[DoraAgent ${this.id}] Discovering patterns in: ${payload.scope || "codebase"}`);
 
     return {
       status: "completed",
@@ -209,7 +209,7 @@ export class DoraAgent extends BaseAgent {
   }
 
   private async handleGenericResearch(task: AgentTask): Promise<unknown> {
-    console.log(`[DoraAgent ${this.id}] Performing generic research for task type: ${task.type}`);
+    console.error(`[DoraAgent ${this.id}] Performing generic research for task type: ${task.type}`);
 
     // Default research response for unknown task types
     return {
@@ -225,7 +225,7 @@ export class DoraAgent extends BaseAgent {
   }
 
   protected async onShutdown(): Promise<void> {
-    console.log(`[DoraAgent ${this.id}] Explorer signing off...`);
+    console.error(`[DoraAgent ${this.id}] Explorer signing off...`);
   }
 }
 

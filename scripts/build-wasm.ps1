@@ -1,5 +1,6 @@
 # WASM Build Script for Windows (PowerShell)
 # Builds WASM modules with SIMD optimization using wasm-pack
+# Output: external-tools/wasm/*/pkg/ (build.cmd copies to dist/)
 
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "Building WASM modules with SIMD support" -ForegroundColor Cyan
@@ -22,6 +23,7 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     Write-Host "Please install Rust from: https://rustup.rs/" -ForegroundColor Yellow
     Write-Host "  Windows: Download and run rustup-init.exe" -ForegroundColor Yellow
     Write-Host ""
+    Pop-Location
     exit 1
 }
 
@@ -33,6 +35,7 @@ if (-not (Get-Command wasm-pack -ErrorAction SilentlyContinue)) {
     cargo install wasm-pack
     if ($LASTEXITCODE -ne 0) {
         Write-Host "❌ Failed to install wasm-pack" -ForegroundColor Red
+        Pop-Location
         exit 1
     }
 }
@@ -41,11 +44,11 @@ Write-Host ""
 Write-Host "✅ Prerequisites installed" -ForegroundColor Green
 Write-Host ""
 
-# Build diff-simd module
+# Build diff-simd module (output to pkg/ inside source dir)
 Write-Host "📦 Building external-tools/wasm/diff-simd..." -ForegroundColor Cyan
 Push-Location external-tools/wasm/diff-simd
 
-wasm-pack build --target bundler --out-dir ../../../dist/external-tools/wasm/diff-simd --release
+wasm-pack build --target bundler --out-dir pkg --release
 $diffResult = $LASTEXITCODE
 
 Pop-Location
@@ -55,14 +58,15 @@ if ($diffResult -eq 0) {
     Write-Host ""
 } else {
     Write-Host "❌ diff-simd build failed" -ForegroundColor Red
+    Pop-Location
     exit 1
 }
 
-# Build vector-ops-simd module
+# Build vector-ops-simd module (output to pkg/ inside source dir)
 Write-Host "📦 Building external-tools/wasm/vector-ops-simd..." -ForegroundColor Cyan
 Push-Location external-tools/wasm/vector-ops-simd
 
-wasm-pack build --target bundler --out-dir ../../../dist/external-tools/wasm/vector-ops-simd --release
+wasm-pack build --target bundler --out-dir pkg --release
 $vectorResult = $LASTEXITCODE
 
 Pop-Location
@@ -72,6 +76,7 @@ if ($vectorResult -eq 0) {
     Write-Host ""
 } else {
     Write-Host "❌ vector-ops-simd build failed" -ForegroundColor Red
+    Pop-Location
     exit 1
 }
 
@@ -81,12 +86,10 @@ Write-Host "✅ All WASM modules built successfully!" -ForegroundColor Green
 Write-Host "=========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Output directories:" -ForegroundColor Cyan
-Write-Host "  - dist/external-tools/wasm/diff-simd/"
-Write-Host "  - dist/external-tools/wasm/vector-ops-simd/"
+Write-Host "  - external-tools/wasm/diff-simd/pkg/"
+Write-Host "  - external-tools/wasm/vector-ops-simd/pkg/"
 Write-Host ""
-Write-Host "To use in Node.js:" -ForegroundColor Cyan
-Write-Host "  import { compute_diff_simd } from './dist/external-tools/wasm/diff-simd/diff_simd.js';"
-Write-Host "  import { cosine_similarity_simd } from './dist/external-tools/wasm/vector-ops-simd/vector_ops_simd.js';"
+Write-Host "Note: build.cmd will copy these to dist/" -ForegroundColor Gray
 Write-Host ""
 
 # Return to original directory

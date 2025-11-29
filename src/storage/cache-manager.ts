@@ -120,7 +120,7 @@ export class QueryCacheManager implements CacheManager {
    */
   clear(): void {
     this.cache.clear();
-    console.log("[CacheManager] Cache cleared");
+    console.error("[CacheManager] Cache cleared");
   }
 
   /**
@@ -212,7 +212,7 @@ export class QueryCacheManager implements CacheManager {
   prune(): void {
     const pruned = this.cache.purgeStale();
     if (pruned) {
-      console.log("[CacheManager] Pruned stale entries");
+      console.error("[CacheManager] Pruned stale entries");
     }
   }
 
