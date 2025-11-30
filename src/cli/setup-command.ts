@@ -24,10 +24,50 @@ import {
   saveSemanticConfig,
 } from "../utils/config-paths.js";
 
-// Get package root directory
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PACKAGE_ROOT = join(__dirname, "..", "..");
+// Get package root directory with multiple fallback strategies
+function getPackageRoot(): string {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+
+  // Strategy 1: Standard path (dist/cli/setup-command.js -> package root)
+  const standardRoot = join(__dirname, "..", "..");
+  if (existsSync(join(standardRoot, "config", "embedding-models.json"))) {
+    return standardRoot;
+  }
+
+  // Strategy 2: Look for package.json up the directory tree
+  let current = __dirname;
+  for (let i = 0; i < 10; i++) {
+    if (existsSync(join(current, "package.json"))) {
+      const pkgContent = readFileSync(join(current, "package.json"), "utf-8");
+      try {
+        const pkg = JSON.parse(pkgContent);
+        if (pkg.name === "ultrascript-tools-mcp" && existsSync(join(current, "config", "embedding-models.json"))) {
+          return current;
+        }
+      } catch {
+        // Invalid JSON, continue
+      }
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  // Strategy 3: Check if we're in node_modules structure (bun/npm global)
+  const nodeModulesIdx = __dirname.indexOf("node_modules");
+  if (nodeModulesIdx !== -1) {
+    const potentialRoot = join(__dirname.substring(0, nodeModulesIdx), "node_modules", "ultrascript-tools-mcp");
+    if (existsSync(join(potentialRoot, "config", "embedding-models.json"))) {
+      return potentialRoot;
+    }
+  }
+
+  // Fallback to standard calculation
+  return standardRoot;
+}
+
+const PACKAGE_ROOT = getPackageRoot();
 
 // Embedding models config path (shipped with package)
 const MODELS_CONFIG_PATH = join(PACKAGE_ROOT, "config", "embedding-models.json");

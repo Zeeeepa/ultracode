@@ -15,9 +15,8 @@
 
 [![npm version](https://badge.fury.io/js/ultrascript-tools-mcp.svg)](https://www.npmjs.com/package/ultrascript-tools-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Bun](https://img.shields.io/badge/bun-%3E%3D1.3.2-f472b6)](https://bun.sh)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
-[![Bun](https://img.shields.io/badge/bun-%3E%3D1.0.0-f472b6)](https://bun.sh)
-
 
 **Мультиагентный MCP-сервер для анализа кода с продвинутым графовым пониманием**
 
@@ -36,31 +35,8 @@
 > Для проектов с C# - используйте аналогичный [ultrasharp-tools-mcp](https://github.com/faxenoff/ultrasharp-tools-mcp)
 
 
-## Установка
-
-```bash
-# Глобальная установка
-npm install -g ultrascript-tools-mcp
-
-# Или запуск без установки
-npx ultrascript-tools-mcp
-```
-
-> **Примечание:** При установке могут появиться warnings о peer dependencies (`ERESOLVE overriding peer dependency`). Это безопасно — языковые грамматики tree-sitter имеют устаревшие peerDependencies, но API совместим. Для подавления warnings используйте: `npm install -g ultrascript-tools-mcp --legacy-peer-deps`
-
-### 🚀 Рекомендуется: Используйте Bun для ускорения в 1.5-4x
-Нет причин не использовать [Bun](https://bun.sh), быстрый JavaScript-runtime, который значительно улучшает производительность UltraScript:
-
-| Операция | Ускорение с Bun |
-|----------|-----------------|
-| Чтение файлов | **1.3-1.8x** быстрее |
-| Запись файлов (FileSink) | **3-4x** быстрее |
-| Сканирование директорий | **1.4-3.8x** быстрее |
-| Glob-поиск | **1.4-1.6x** быстрее |
-| Время запуска | **1.5-1.8x** быстрее |
-| HTTP fetch | **1.7x** быстрее |
-| SQLite операции | ~одинаково (ограничено I/O) |
-| SHA-256 хеширование | **1.3x** быстрее (2.8x с CryptoHasher) |
+## 1. Установка
+Проект оптимизирован под [Bun](https://bun.sh) (это альтернативный JavaScript-runtime). Под npm проект тоже работает, но 4-10 раз медленней (нет смысла его так использовать).
 
 **Установка Bun** (одной командой):
 ```bash
@@ -71,41 +47,48 @@ powershell -c "irm bun.sh/install.ps1 | iex"
 curl -fsSL https://bun.sh/install | bash
 ```
 
-**Запуск с Bun:**
+**Установка Ultrascript-tools**
+
 ```bash
-# Используйте bunx вместо npx
-bunx ultrascript-tools-mcp /path/to/project
 
-# Или установите глобально через bun
+# 1. Глобальная установка
 bun install -g ultrascript-tools-mcp
-ultrascript-tools-mcp /path/to/project
-```
-> **Примечание:** При установке автоматически компилируются native-компоненты (tree-sitter) для совместимости с Bun. Node.js работает без дополнительной компиляции. Для сборки требуется Visual Studio Build Tools на Windows или build-essential на Linux (скрипт предложит это сделать автоматически).
 
-**Конфиг Claude Code с Bun:**
+# 2. Разрешение на использование прекомпилированных tree-sitter libs (после установки)
+bun pm trust ultrascript-tools-mcp
+
+# 3. Добавить пакеты после разрешения на их установку
+bun install -g ultrascript-tools-mcp
+
+
+# Установка через npm (не рекомендуется)
+npm install -g ultrascript-tools-mcp --legacy-peer-deps
+```
+
+> При обычной установке появятся warnings о peer dependencies (`ERESOLVE overriding peer dependency`) или ошибки ошибки компиляции node-gyp - всё это можно игнорировать. Просто используемый компонент tree-sitter не успевает вовремя обновляться. Все необходимые для работы пакеты скомпилированы и уже находятся в пакете. Буду искать альтернативу tree-sitter.
+> Отдельный пакет GPU-ускорения для Apple Silicon (M1/M2/M3/M4) пока отсутствует в пакете, скрипт предложит вам собрать его самому.
+
+
+
+**Конфиг Claude Code:**
 ```json
 {
   "mcpServers": {
     "ultrascript-tools": {
-      "command": "bunx",
-      "args": ["ultrascript-tools-mcp", "."]
+      "command": "ultrascript"
     }
   }
 }
 ```
 
-## Быстрый старт
+**Настройка семантических эмбеддингов (локальная LLM)**
+Для небольших интеллектуальных задач по анализу/модификации кода используется небольшая локальная модель, запускаемся через ollama/TEI. Это снимает затраты токенов и времени с вашего основного ИИ-агента. Особенно важно для анализа сотен и тысяч изменений в коде.
 
-### 1. Настройка семантических эмбеддингов (рекомендуется)
+После установки проекта - запустите
 
 ```bash
 # Интерактивный мастер настройки
-npx ultrascript-tools-mcp setup
-
-# Или укажите провайдер напрямую
-npx ultrascript-tools-mcp setup --provider ollama   # Простая настройка
-npx ultrascript-tools-mcp setup --provider tei      # Лучшая производительность (Docker)
-npx ultrascript-tools-mcp setup --provider memory   # Без ML (по умолчанию)
+bunx ultrascript-tools-mcp setup
 ```
 
 Мастер настройки:
@@ -114,78 +97,11 @@ npx ultrascript-tools-mcp setup --provider memory   # Без ML (по умолч
 - Автоматически установит TEI (Docker) или Ollama
 - Сохранит конфигурацию в системную директорию
 
-### 2. Настройка Claude
+*Для Blackwood (GTX 50xxx) используется неофициальный форк TEI
 
-#### Claude Desktop
 
-Добавьте в конфиг Claude Desktop:
 
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Linux**: `~/.config/Claude/claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "ultrascript-tools": {
-      "command": "npx",
-      "args": ["ultrascript-tools-mcp", "/path/to/your/project"]
-    }
-  }
-}
-```
-
-Или если установлено глобально:
-
-```json
-{
-  "mcpServers": {
-    "ultrascript-tools": {
-      "command": "ultrascript-tools-mcp",
-      "args": ["/path/to/your/project"]
-    }
-  }
-}
-```
-
-#### Claude Code (CLI)
-
-Для Claude Code создайте файл `.mcp.json` в корне проекта:
-
-```json
-{
-  "mcpServers": {
-    "ultrascript-tools": {
-      "command": "npx",
-      "args": ["ultrascript-tools-mcp", "."]
-    }
-  }
-}
-```
-
-Или с Bun для лучшей производительности:
-
-```json
-{
-  "mcpServers": {
-    "ultrascript-tools": {
-      "command": "bunx",
-      "args": ["ultrascript-tools-mcp", "."]
-    }
-  }
-}
-```
-
-### 3. Начало работы
-
-Откройте Claude Desktop и спросите:
-
-- "Проиндексируй мой проект в /path/to/my-project"
-- "Найди все функции связанные с аутентификацией"
-- "Покажи дублирующийся код в этом проекте"
-- "Что сломается если изменить класс UserManager?"
-
-### 4. MCP Prompts (встроенная документация)
+### 2. MCP Prompts (встроенная документация)
 
 Сервер предоставляет **MCP Prompts** — встроенную документацию, доступную прямо из Claude:
 
@@ -195,15 +111,13 @@ npx ultrascript-tools-mcp setup --provider memory   # Без ML (по умолч
 | `tool-reference` | Полный справочник 50+ инструментов с параметрами |
 | `workflows` | Типичные сценарии: анализ проекта, рефакторинг, поиск дубликатов |
 
-Документация автоматически загружается из папки `prompts/` и может быть отредактирована под ваши нужды.
-
-> **Совет:** Больше не нужно добавлять инструкции в CLAUDE.md — используйте MCP Prompts!
+> **Совет:** В системные промпты можно добавить [короткий промпт](docs/claude.cfg/add-to-CLAUDE.md) который поможет ИИ-агенту узнать о способе получения информации о работе Ultrascript-tools.
 
 ## Доступные инструменты
 
 MCP-сервер предоставляет **50 инструментов** для анализа и модификации кода:
 
-### Индексация и поиск
+#### Индексация и поиск
 | Инструмент | Описание |
 |------------|----------|
 | `index` | Индексация кодовой базы для анализа |
@@ -214,7 +128,7 @@ MCP-сервер предоставляет **50 инструментов** дл
 | `cross_language_search` | Поиск по нескольким языкам |
 | `find_related_concepts` | Поиск связанных концепций |
 
-### Анализ сущностей
+#### Анализ сущностей
 | Инструмент | Описание |
 |------------|----------|
 | `list_file_entities` | Список сущностей в файле |
@@ -222,7 +136,7 @@ MCP-сервер предоставляет **50 инструментов** дл
 | `list_entity_relationships` | Показать зависимости кода |
 | `detect_technology_stack` | Определить стек технологий проекта |
 
-### Качество кода
+#### Качество кода
 | Инструмент | Описание |
 |------------|----------|
 | `detect_code_clones` | Поиск дублирующегося кода (семантический) |
@@ -235,7 +149,7 @@ MCP-сервер предоставляет **50 инструментов** дл
 | `validate_file` | Валидация файла |
 | `validate_directory` | Валидация директории |
 
-### Модификация кода
+#### Модификация кода
 | Инструмент | Описание |
 |------------|----------|
 | `modify_code` | Модификация кода сущности |
@@ -248,7 +162,7 @@ MCP-сервер предоставляет **50 инструментов** дл
 | `rename_symbol` | Переименование символа во всём проекте |
 | `add_member` | Добавление члена в класс |
 
-### Снапшоты и откат
+#### Снапшоты и откат
 | Инструмент | Описание |
 |------------|----------|
 | `create_snapshot` | Создание снапшота состояния |
@@ -257,7 +171,7 @@ MCP-сервер предоставляет **50 инструментов** дл
 | `list_snapshots` | Список снапшотов |
 | `cleanup_snapshots` | Очистка старых снапшотов |
 
-### Git-интеграция
+#### Git-интеграция
 | Инструмент | Описание |
 |------------|----------|
 | `list_branches` | Список проиндексированных веток |
@@ -266,7 +180,7 @@ MCP-сервер предоставляет **50 инструментов** дл
 | `get_changed_files` | Сравнение файлов между ветками |
 | `cleanup_branches` | Очистка старых веток (LRU) |
 
-### Граф и система
+#### Граф и система
 | Инструмент | Описание |
 |------------|----------|
 | `get_graph` | Получить граф кода |
@@ -276,7 +190,7 @@ MCP-сервер предоставляет **50 инструментов** дл
 | `clean_index` | Очистка индекса |
 | `lerna_project_graph` | Граф Lerna-монорепозитория |
 
-### Метрики и отладка
+#### Метрики и отладка
 | Инструмент | Описание |
 |------------|----------|
 | `get_metrics` | Метрики системы |
@@ -304,13 +218,9 @@ mcp:
 Для улучшенного семантического поиска запустите мастер настройки:
 
 ```bash
-# Интерактивная настройка - рекомендуется
-npx ultrascript-tools-mcp setup
+# Интерактивная настройка
+bunx ultrascript-tools-mcp setup
 
-# Неинтерактивные варианты
-npx ultrascript-tools-mcp setup --provider tei      # Docker + GPU
-npx ultrascript-tools-mcp setup --provider ollama   # Нативная установка
-npx ultrascript-tools-mcp setup --provider memory   # На основе хешей (по умолчанию)
 ```
 
 **Сравнение провайдеров:**
@@ -328,13 +238,23 @@ npx ultrascript-tools-mcp setup --provider memory   # На основе хеше
 
 ## Производительность
 
-- **В 5.5 раз быстрее** встроенных инструментов Claude для больших кодовых баз
-- **WASM SIMD** — встроен в npm-пакет, работает везде (ускорение в 2-4 раза)
-- **CUDA** — встроен в npm-пакет для Windows/Linux с NVIDIA GPU (ускорение в 10-50 раз)
+- **В 5 раз быстрее** встроенных инструментов Claude для больших кодовых баз
+- **WASM SIMD** — встроен в npm-пакет, работает везде (ускорение ещё в 2-4 раза)
+- **CUDA** — встроен в npm-пакет для Windows/Linux с NVIDIA GPU (ускорение ещё в 10-50 раз)
 - **Metal** — для Apple Silicon (предлагается собрать при установке)
 - **WebGPU** — кросс-платформенное ускорение (опционально)
 
-## Примеры
+
+
+### 2. Начало работы
+
+Откройте Claude Desktop и спросите:
+
+- "Проиндексируй мой проект в /path/to/my-project"
+- "Найди все функции связанные с аутентификацией"
+- "Покажи дублирующийся код в этом проекте"
+- "Что сломается если изменить класс UserManager?"
+
 
 ### Поиск похожего кода
 
@@ -371,57 +291,18 @@ npx ultrascript-tools-mcp setup --provider memory   # На основе хеше
   - services/user.ts: verifyUserEmail()
 ```
 
-## Требования
-
-- **Node.js**: 24.0.0 или выше (рекомендуется LTS)
-- **Память**: рекомендуется 4GB+ RAM
-- **Опционально**: [Bun](https://bun.sh) 1.0+ (для ускорения в 1.5-4x)
-- **Опционально**: Docker (для TEI эмбеддингов)
-- **Опционально**: NVIDIA GPU (для CUDA ускорения)
-
-### Node.js 24 и tree-sitter
-
-Node.js 24 требует C++20, но tree-sitter компилируется с C++17. npm-пакет включает **прекомпилированные prebuilds** для всех платформ:
-- Windows x64
-- Linux x64
-- macOS ARM64 (Apple Silicon)
-- macOS x64 (Intel)
-
-Prebuilds автоматически используются при установке — дополнительная компиляция не требуется.
-
-## Документация
-
-После установки см.:
-- `node_modules/ultrascript-tools-mcp/README_DEV.md` - Подробная документация
-- `node_modules/ultrascript-tools-mcp/GETTING_STARTED.md` - Руководство по настройке
-- `node_modules/ultrascript-tools-mcp/NPM_PUBLISHING.md` - Руководство по публикации
-
-## Решение проблем
-
-### MCP-сервер не отвечает
-
-1. Проверьте версию Node.js: `node --version` (должна быть 24.0.0+)
-2. Проверьте путь в конфиге MCP (`.mcp.json` или `claude_desktop_config.json`)
-3. Для Claude Desktop: проверьте логи (Справка → Инструменты разработчика)
-4. Для Claude Code: запустите `claude mcp list` для проверки статуса серверов
 
 ### Проблемы с установкой
 
 ```bash
 # Очистите кеш и переустановите
+
+# Bun
+bun pm cache rm
+bun install -g ultrascript-tools-mcp --legacy-peer-deps
+
+# Node
 npm cache clean --force
-npm install -g ultrascript-tools-mcp
-```
-
-### Peer dependency warnings
-
-При установке могут появиться warnings:
-```
-npm warn ERESOLVE overriding peer dependency
-```
-
-Это **безопасно** — tree-sitter грамматики имеют устаревшие peerDependencies, но API совместим. Для подавления:
-```bash
 npm install -g ultrascript-tools-mcp --legacy-peer-deps
 ```
 
@@ -433,9 +314,9 @@ error C2039: 'IsNullOrUndefined': is not a member of 'Nan'
 ```
 
 Это значит что prebuilds не были найдены. npm-пакет включает прекомпилированные модули для:
-- Windows x64
-- Linux x64
-- macOS ARM64 / x64
+- Windows x64/arm64
+- Linux x64/arm64
+- macOS x64/arm64
 
 Если ваша платформа не поддерживается, можете собрать prebuilds вручную:
 ```bash
@@ -452,23 +333,12 @@ bash scripts/build-tree-sitter-prebuilds.sh
 
 ```bash
 # Запустите мастер настройки
-npx ultrascript-tools-mcp setup
-
-# Или запустите postinstall вручную
-cd node_modules/ultrascript-tools-mcp
-node scripts/postinstall.js
+bunx ultrascript-tools-mcp setup
 ```
 
 ## Продвинутые возможности
 
 ### GPU ускорение
-
-**Windows / Linux (NVIDIA GPU):**
-```bash
-# CUDA уже встроен в npm-пакет — ничего собирать не нужно!
-# Автоматически используется при наличии NVIDIA GPU (GTX 16xx и новее)
-# Обеспечивает ускорение в 10-50 раз для векторных операций
-```
 
 **macOS (Apple Silicon):**
 ```bash
@@ -482,27 +352,7 @@ node scripts/postinstall.js
 ./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh
 ```
 
-**Fallback (все платформы):**
-```bash
-# WASM SIMD встроен в npm-пакет и работает везде
-# Используется автоматически если GPU недоступен
-```
-
-### Мультипроектный анализ (Lerna)
-
-```bash
-# Для монорепозиториев использующих Lerna
-ultrascript-tools-mcp lerna_project_graph --ingest
-```
-
-### Сравнение веток
-
-```bash
-# Сравнение кода между ветками
-ultrascript-tools-mcp get_changed_files --fromBranch main --toBranch feature
-```
-
-## Использование CLI
+## CLI команды
 
 ```bash
 # Настройка семантических эмбеддингов (интерактивный мастер)
