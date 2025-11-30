@@ -212,18 +212,56 @@ if (helpRequested) {
   process.exit(0);
 }
 
-// Handle setup command
+// Handle setup command - launch PowerShell/Bash script
 if (setupRequested) {
-  // Dynamic import to avoid loading all dependencies for setup
-  import("./cli/setup-command.js")
-    .then(({ runSetup }) => runSetup(args.slice(1)))
-    .then(() => process.exit(0))
-    .catch((error) => {
-      console.error("Setup failed:", error);
+  const { spawnSync } = await import("node:child_process");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { existsSync } = await import("node:fs");
+
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+
+  // Find scripts directory (works for both dev and installed package)
+  let scriptsDir = join(__dirname, "..", "scripts");
+  if (!existsSync(scriptsDir)) {
+    scriptsDir = join(__dirname, "scripts");
+  }
+
+  const isWindows = process.platform === "win32";
+
+  if (isWindows) {
+    const ps1Script = join(scriptsDir, "setup-semantic-embedding.ps1");
+    if (existsSync(ps1Script)) {
+      // Try pwsh first, fallback to powershell
+      const pwshResult = spawnSync("pwsh", ["-ExecutionPolicy", "Bypass", "-File", ps1Script], {
+        stdio: "inherit",
+        windowsHide: false,
+      });
+      if (pwshResult.error) {
+        // Fallback to Windows PowerShell
+        const psResult = spawnSync("powershell", ["-ExecutionPolicy", "Bypass", "-File", ps1Script], {
+          stdio: "inherit",
+        });
+        process.exit(psResult.status ?? 1);
+      } else {
+        process.exit(pwshResult.status ?? 0);
+      }
+    } else {
+      console.error(`Setup script not found: ${ps1Script}`);
       process.exit(1);
-    });
-  // Prevent rest of the code from executing
-  await new Promise(() => {});
+    }
+  } else {
+    // Linux/macOS - use bash script
+    const shScript = join(scriptsDir, "setup-embeddings-interactive.sh");
+    if (existsSync(shScript)) {
+      const result = spawnSync("bash", [shScript], { stdio: "inherit" });
+      process.exit(result.status ?? 0);
+    } else {
+      console.error(`Setup script not found: ${shScript}`);
+      process.exit(1);
+    }
+  }
 }
 
 const versionInfo = getVersionInfo();
