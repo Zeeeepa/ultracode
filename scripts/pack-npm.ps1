@@ -108,12 +108,15 @@ try {
         Write-Step "Сборка с минификацией (BUILD_MODE=package)..."
 
         $env:BUILD_MODE = "package"
-        $BuildOutput = npm run build 2>&1
+        # Run build - temporarily allow stderr output (tsup warnings)
+        $ErrorActionPreference = "Continue"
+        npm run build
+        $BuildExitCode = $LASTEXITCODE
+        $ErrorActionPreference = "Stop"
         $env:BUILD_MODE = $null
 
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "Сборка не удалась:"
-            Write-Host $BuildOutput -ForegroundColor Red
+        if ($BuildExitCode -ne 0) {
+            Write-Error "Сборка не удалась (exit code: $BuildExitCode)"
             exit 1
         }
 
@@ -147,10 +150,29 @@ try {
             Write-Host "  + $CudaDst/ultrascript_cuda.node" -ForegroundColor Gray
         }
 
+        # Сборка tree-sitter prebuilds для текущей платформы
+        Write-Step "Сборка tree-sitter prebuilds..."
+        $TreeSitterPrebuildDir = "external-libs/tree-sitter-win32-x64"
+        if (-not (Test-Path "$TreeSitterPrebuildDir/*.node")) {
+            Write-Host "  Собираем prebuilds для Node.js 24..." -ForegroundColor Gray
+            & "$PSScriptRoot/build-tree-sitter-prebuilds.ps1"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  + tree-sitter prebuilds" -ForegroundColor Gray
+            } else {
+                Write-Warning "  tree-sitter prebuilds не собраны"
+            }
+        } else {
+            Write-Host "  + tree-sitter prebuilds уже существуют" -ForegroundColor Gray
+        }
+
         # Копирование Comm binary если есть
         if (Test-Path "src/comm/ultrascript-tools.com") {
-            Copy-Item "src/comm/ultrascript-tools.com" "dist/" -Force
-            Write-Host "  + dist/ultrascript-tools.com" -ForegroundColor Gray
+            try {
+                Copy-Item "src/comm/ultrascript-tools.com" "dist/" -Force -ErrorAction Stop
+                Write-Host "  + dist/ultrascript-tools.com" -ForegroundColor Gray
+            } catch {
+                Write-Warning "  Не удалось скопировать ultrascript-tools.com (файл заблокирован)"
+            }
         }
 
         Write-Success "Все модули скопированы в dist/"

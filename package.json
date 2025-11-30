@@ -1,6 +1,6 @@
 {
   "name": "ultrascript-tools-mcp",
-  "version": "1.5.0",
+  "version": "1.6.3",
   "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
   "license": "MIT",
   "author": "faxenoff",
@@ -76,6 +76,7 @@
     "build:cuda": "pwsh scripts/build-cuda.ps1 || (cd external-tools/native/cuda && cmake-js compile && cd ../../.. && mkdir -p dist/native/cuda && cp external-tools/native/cuda/build/Release/ultrascript_cuda.node dist/native/cuda/)",
     "build:cuda:debug": "pwsh scripts/build-cuda.ps1 -Debug",
     "build:cuda:clean": "pwsh scripts/build-cuda.ps1 -Clean",
+    "build:tree-sitter": "pwsh scripts/build-tree-sitter-prebuilds.ps1",
     "build:comm": "pwsh src/comm/build.ps1",
     "build:comm:setup": "pwsh src/comm/setup.ps1",
     "build:standalone": "bun build --compile dist/index.js --outfile dist/ultrascript-mcp",
@@ -138,11 +139,21 @@
     "@huggingface/inference": "^4.13.4",
     "@modelcontextprotocol/sdk": "^1.23.0",
     "@types/eslint": "^9.6.1",
-    "better-sqlite3": "^12.4.6",
+    "better-sqlite3": "^12.5.0",
     "eslint": "^9.39.1",
     "lru-cache": "^11.2.2",
     "nanoid": "^5.1.6",
     "sqlite-vec": "^0.1.6",
+    "vectorlite": "^0.2.0",
+    "xxhash-wasm": "^1.1.0",
+    "yaml": "^2.8.2",
+    "zod": "^4.1.13",
+    "zod-to-json-schema": "^3.25.0"
+  },
+  "optionalDependencies": {
+    "@webgpu/node": "npm:null@^2.0.0",
+    "@webgpu/types": "^0.1.66",
+    "webgpu": "^0.3.8",
     "tree-sitter": "^0.25.0",
     "tree-sitter-bash": "^0.25.0",
     "tree-sitter-c": "^0.24.1",
@@ -158,17 +169,7 @@
     "tree-sitter-rust": "^0.24.0",
     "tree-sitter-typescript": "^0.23.2",
     "tree-sitter-kotlin": "^0.3.8",
-    "tree-sitter-swift": "^0.7.1",
-    "vectorlite": "^0.2.0",
-    "xxhash-wasm": "^1.1.0",
-    "yaml": "^2.8.1",
-    "zod": "^4.1.13",
-    "zod-to-json-schema": "^3.25.0"
-  },
-  "optionalDependencies": {
-    "@webgpu/node": "npm:null@^2.0.0",
-    "@webgpu/types": "^0.1.66",
-    "webgpu": "^0.3.8"
+    "tree-sitter-swift": "^0.7.1"
   },
   "overrides": {
     "boolean": "3.2.0"

@@ -12,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Сборка проекта
 npm run build                 # Компиляция TypeScript через tsup
 npm run build:watch          # Watch-режим для разработки
+npm run build:tree-sitter    # Сборка tree-sitter prebuilds для Node.js 24+
 make package                 # Сборка NPM-пакета с проверками метаданных
 
 # Проверка кода
@@ -130,6 +131,49 @@ parser:
 - **VBA** (`vba-analyzer.ts`) - модули, функции (regex-based)
 
 Конфигурация языков: `src/parsers/language-configs.ts`
+
+### Tree-sitter Prebuilds (Node.js 24+)
+
+Node.js 24 требует C++20, но tree-sitter компилируется с C++17. Это вызывает ошибки при компиляции:
+```
+error C2039: 'IsNullOrUndefined': is not a member of 'Nan'
+```
+
+**Решение**: Прекомпилированные `.node` файлы для всех платформ:
+
+```
+external-libs/
+├── tree-sitter-win32-x64/      # Windows x64 (~26 MB)
+│   ├── tree-sitter.node
+│   ├── tree-sitter-javascript.node
+│   ├── tree-sitter-typescript.node
+│   └── ... (17 модулей)
+├── tree-sitter-linux-x64/      # Linux x64
+├── tree-sitter-darwin-arm64/   # macOS Apple Silicon
+└── tree-sitter-darwin-x64/     # macOS Intel
+```
+
+**Архитектура загрузки**:
+- `src/parsers/tree-sitter-loader.ts` — универсальный loader для prebuilds
+- `src/parsers/tree-sitter-parser.ts` — использует loader для инициализации парсеров
+
+**Логика загрузки** (приоритет):
+1. Prebuild из `external-libs/tree-sitter-{platform}-{arch}/`
+2. Fallback на npm версию (`node_modules/tree-sitter-xxx/`)
+
+**Сборка prebuilds**:
+```bash
+# Windows
+npm run build:tree-sitter
+# или: powershell scripts/build-tree-sitter-prebuilds.ps1
+
+# Linux/macOS
+bash scripts/build-tree-sitter-prebuilds.sh
+```
+
+**Upstream статус**: tree-sitter PR #240 с фиксом C++20 не мерджится с марта 2025. Есть форк @keqingmoe/tree-sitter с prebuilds, но он не покрывает все грамматики.
+
+Подробности: `docs/TREE_SITTER_PR240.md`
 
 ## Storage Layer
 
@@ -328,6 +372,15 @@ npm rebuild better-sqlite3
 
 **"Семантический поиск не работает"**: проверить `MCP_EMBEDDING_PROVIDER` env и настройки в `config/default.yaml`
 
+**"Tree-sitter compilation error on Node.js 24"**: Node.js 24 требует C++20, но tree-sitter использует C++17. Решение:
+1. Проверить наличие prebuilds в `external-libs/tree-sitter-{platform}-{arch}/`
+2. Если отсутствуют — собрать: `npm run build:tree-sitter`
+3. Loader автоматически выберет prebuild при следующем запуске
+
+**"Cannot find module 'tree-sitter'"**: TypeScript ошибка при сборке. Типы tree-sitter объявлены в `src/types/tree-sitter.d.ts`. Убедитесь что tree-sitter в `external` списке tsup.config.ts.
+
+**"Peer dependency warnings при npm install"**: tree-sitter грамматики имеют устаревшие peerDependencies. Безопасно игнорировать или использовать `--legacy-peer-deps`
+
 ## Bun Runtime Support
 
 Проект поддерживает **Bun runtime** с автоматическим использованием оптимизированных API:
@@ -410,8 +463,12 @@ src/index.ts                          - MCP server entry point, tool definitions
 src/agents/conductor-orchestrator.ts  - Multi-agent coordinator
 src/storage/graph-storage.ts          - Graph database interface
 src/semantic/embedding-generator.ts   - Embedding pipeline
+src/parsers/tree-sitter-parser.ts     - Tree-sitter парсер для 10 языков
+src/parsers/tree-sitter-loader.ts     - Loader для prebuilds
+src/types/tree-sitter.d.ts            - TypeScript типы для tree-sitter
 config/default.yaml                   - Default configuration
 package.json                          - Scripts and dependencies
+tsup.config.ts                        - Build configuration (externals)
 ```
 
 ## Documentation References

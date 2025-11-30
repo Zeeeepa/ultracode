@@ -1,8 +1,9 @@
 ﻿# UltraScript Tools MCP Server
 
-[![npm version](https://badge.fury.io/js/@er77%2Fultrascript-tools-mcp.svg)](https://www.npmjs.com/package/@er77/ultrascript-tools-mcp)
+[![npm version](https://badge.fury.io/js/ultrascript-tools-mcp.svg)](https://www.npmjs.com/package/ultrascript-tools-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
+[![Bun](https://img.shields.io/badge/bun-%3E%3D1.0.0-f472b6)](https://bun.sh)
 
 
 > **📖 Developer Setup Guide**: Полная инструкция по установке и настройке см. в **[DEV_SETUP_GUIDE.md](./DEV_SETUP_GUIDE.md)**
@@ -173,28 +174,51 @@ TypeScript, JavaScript, Python, C#, C/C++, Rust, Go, Java, VBA
 
 ```bash
 # Установить глобально
-npm install -g @er77/ultrascript-tools-mcp
+npm install -g ultrascript-tools-mcp
 
 # Или запустить без установки
-npx @er77/ultrascript-tools-mcp /путь/к/вашему/проекту
+npx ultrascript-tools-mcp /путь/к/вашему/проекту
+```
+
+> **Примечание:** При установке могут появиться warnings о peer dependencies — это безопасно. Node.js 24+ поддерживается через прекомпилированные tree-sitter prebuilds.
+
+### 🚀 С Bun (в 1.5-4x быстрее)
+
+```bash
+# Установка Bun (Windows)
+powershell -c "irm bun.sh/install.ps1 | iex"
+
+# Установка Bun (macOS/Linux)
+curl -fsSL https://bun.sh/install | bash
+
+# Запуск с Bun
+bunx ultrascript-tools-mcp /путь/к/проекту
 ```
 
 ### Интеграция с Claude Desktop (1 минута)
 
-```bash
-# Автоматическая настройка
-npx @modelcontextprotocol/inspector add code-graph-rag \
-  --command "npx" \
-  --args "@er77/ultrascript-tools-mcp /путь/к/проекту"
-```
+Добавьте в конфиг Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json` на Windows):
 
-**Или вручную** в конфиге Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "code-graph-rag": {
+    "ultrascript-tools": {
       "command": "npx",
-      "args": ["@er77/ultrascript-tools-mcp", "/путь/к/проекту"]
+      "args": ["ultrascript-tools-mcp", "/путь/к/проекту"]
+    }
+  }
+}
+```
+
+### Интеграция с Claude Code (CLI)
+
+Создайте `.mcp.json` в корне проекта:
+```json
+{
+  "mcpServers": {
+    "ultrascript-tools": {
+      "command": "bunx",
+      "args": ["ultrascript-tools-mcp", "."]
     }
   }
 }
@@ -362,8 +386,10 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 
 ### Системные требования
 
-**Минимум**: Node.js 18+, 2GB RAM, Dual-core CPU
-**Рекомендуется**: Node.js 18+, 8GB RAM, Quad-core CPU, SSD
+**Минимум**: Node.js 24+, 2GB RAM, Dual-core CPU
+**Рекомендуется**: Node.js 24+ или Bun 1.0+, 8GB RAM, Quad-core CPU, SSD
+
+> **Node.js 24 и tree-sitter**: npm-пакет включает прекомпилированные prebuilds для Windows/Linux/macOS — дополнительная компиляция не требуется.
 
 ### Конфигурация
 

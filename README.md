@@ -46,6 +46,8 @@ npm install -g ultrascript-tools-mcp
 npx ultrascript-tools-mcp
 ```
 
+> **Примечание:** При установке могут появиться warnings о peer dependencies (`ERESOLVE overriding peer dependency`). Это безопасно — языковые грамматики tree-sitter имеют устаревшие peerDependencies, но API совместим. Для подавления warnings используйте: `npm install -g ultrascript-tools-mcp --legacy-peer-deps`
+
 ### 🚀 Рекомендуется: Используйте Bun для ускорения в 1.5-4x
 Нет причин не использовать [Bun](https://bun.sh), быстрый JavaScript-runtime, который значительно улучшает производительность UltraScript:
 
@@ -112,20 +114,22 @@ npx ultrascript-tools-mcp setup --provider memory   # Без ML (по умолч
 - Автоматически установит TEI (Docker) или Ollama
 - Сохранит конфигурацию в системную директорию
 
-### 2. Настройка Claude Desktop
+### 2. Настройка Claude
+
+#### Claude Desktop
 
 Добавьте в конфиг Claude Desktop:
 
-**Windows**: `%userprofile%\claude.json`
-**macOS**: `~/Library/Application Support/Claude/mcp.json`
-**Linux**: `~/.claude/mcp.json`
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "ultrascript-tools": {
       "command": "npx",
-      "args": ["ultrascript-tools-mcp", "."]
+      "args": ["ultrascript-tools-mcp", "/path/to/your/project"]
     }
   }
 }
@@ -138,7 +142,35 @@ npx ultrascript-tools-mcp setup --provider memory   # Без ML (по умолч
   "mcpServers": {
     "ultrascript-tools": {
       "command": "ultrascript-tools-mcp",
-      "args": ["."]
+      "args": ["/path/to/your/project"]
+    }
+  }
+}
+```
+
+#### Claude Code (CLI)
+
+Для Claude Code создайте файл `.mcp.json` в корне проекта:
+
+```json
+{
+  "mcpServers": {
+    "ultrascript-tools": {
+      "command": "npx",
+      "args": ["ultrascript-tools-mcp", "."]
+    }
+  }
+}
+```
+
+Или с Bun для лучшей производительности:
+
+```json
+{
+  "mcpServers": {
+    "ultrascript-tools": {
+      "command": "bunx",
+      "args": ["ultrascript-tools-mcp", "."]
     }
   }
 }
@@ -341,10 +373,21 @@ npx ultrascript-tools-mcp setup --provider memory   # На основе хеше
 
 ## Требования
 
-- **Node.js**: 24.0.0 или выше
+- **Node.js**: 24.0.0 или выше (рекомендуется LTS)
 - **Память**: рекомендуется 4GB+ RAM
+- **Опционально**: [Bun](https://bun.sh) 1.0+ (для ускорения в 1.5-4x)
 - **Опционально**: Docker (для TEI эмбеддингов)
 - **Опционально**: NVIDIA GPU (для CUDA ускорения)
+
+### Node.js 24 и tree-sitter
+
+Node.js 24 требует C++20, но tree-sitter компилируется с C++17. npm-пакет включает **прекомпилированные prebuilds** для всех платформ:
+- Windows x64
+- Linux x64
+- macOS ARM64 (Apple Silicon)
+- macOS x64 (Intel)
+
+Prebuilds автоматически используются при установке — дополнительная компиляция не требуется.
 
 ## Документация
 
@@ -358,8 +401,9 @@ npx ultrascript-tools-mcp setup --provider memory   # На основе хеше
 ### MCP-сервер не отвечает
 
 1. Проверьте версию Node.js: `node --version` (должна быть 24.0.0+)
-2. Проверьте путь в конфиге `claude_desktop_config.json`
-3. Проверьте логи Claude Desktop (Справка → Инструменты разработчика)
+2. Проверьте путь в конфиге MCP (`.mcp.json` или `claude_desktop_config.json`)
+3. Для Claude Desktop: проверьте логи (Справка → Инструменты разработчика)
+4. Для Claude Code: запустите `claude mcp list` для проверки статуса серверов
 
 ### Проблемы с установкой
 
@@ -367,6 +411,39 @@ npx ultrascript-tools-mcp setup --provider memory   # На основе хеше
 # Очистите кеш и переустановите
 npm cache clean --force
 npm install -g ultrascript-tools-mcp
+```
+
+### Peer dependency warnings
+
+При установке могут появиться warnings:
+```
+npm warn ERESOLVE overriding peer dependency
+```
+
+Это **безопасно** — tree-sitter грамматики имеют устаревшие peerDependencies, но API совместим. Для подавления:
+```bash
+npm install -g ultrascript-tools-mcp --legacy-peer-deps
+```
+
+### Tree-sitter ошибки на Node.js 24
+
+Если видите ошибки компиляции tree-sitter:
+```
+error C2039: 'IsNullOrUndefined': is not a member of 'Nan'
+```
+
+Это значит что prebuilds не были найдены. npm-пакет включает прекомпилированные модули для:
+- Windows x64
+- Linux x64
+- macOS ARM64 / x64
+
+Если ваша платформа не поддерживается, можете собрать prebuilds вручную:
+```bash
+# Windows
+npm run build:tree-sitter
+
+# Linux/macOS
+bash scripts/build-tree-sitter-prebuilds.sh
 ```
 
 ### Настройка эмбеддингов

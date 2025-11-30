@@ -92,6 +92,33 @@ npm run build
 - `dist/index.js` - основной файл
 - `dist/external-tools/wasm/` - WASM модули
 - `dist/native/cuda/` - CUDA модуль (опционально)
+- `external-libs/tree-sitter-*/*.node` - tree-sitter prebuilds (для Node.js 24+)
+
+### 4. Tree-sitter Prebuilds (Node.js 24+)
+
+Node.js 24 требует C++20, но tree-sitter компилируется с C++17. Это вызывает ошибки при `npm install`.
+
+**Решение:** Прекомпилированные `.node` файлы включаются в npm-пакет.
+
+```powershell
+# Сборка prebuilds (автоматически выполняется pack-npm.ps1)
+npm run build:tree-sitter
+
+# Проверить наличие prebuilds
+dir external-libs\tree-sitter-win32-x64\*.node
+# Должно быть 17 файлов (~26 MB)
+```
+
+Структура prebuilds:
+```
+external-libs/
+├── tree-sitter-win32-x64/      # Windows x64
+├── tree-sitter-linux-x64/      # Linux x64
+├── tree-sitter-darwin-arm64/   # macOS Apple Silicon
+└── tree-sitter-darwin-x64/     # macOS Intel
+```
+
+> **Примечание:** Скрипт `pack-npm.ps1 -Apply` автоматически собирает tree-sitter prebuilds если они отсутствуют.
 
 ---
 
@@ -111,7 +138,7 @@ npm pack --dry-run
 
 Скрипт покажет:
 - ✅ Список файлов для публикации
-- ✅ Размер пакета (должен быть ~7-8 MB)
+- ✅ Размер пакета (~30-35 MB с tree-sitter prebuilds)
 - ✅ Проверку обязательных файлов
 
 ### Реальная упаковка
@@ -614,8 +641,9 @@ curl https://api.npmjs.org/downloads/point/last-week/ultrascript-tools-mcp
 - [ ] `README.md` обновлен
 - [ ] `CHANGELOG.md` содержит описание изменений (если есть)
 - [ ] Версия обновлена корректно (`npm version`)
+- [ ] Tree-sitter prebuilds собраны (`npm run build:tree-sitter`)
 - [ ] Пакет упакован и проверен (`.\scripts\pack-npm.ps1`)
-- [ ] Размер пакета приемлемый (~7-8 MB)
+- [ ] Размер пакета приемлемый (~30-35 MB с prebuilds)
 - [ ] Проверена локальная установка из .tgz
 - [ ] Git изменения закоммичены
 - [ ] Git tag создан (`v1.0.0`)
@@ -675,6 +703,25 @@ npm view . dist.tarball
 Решение: Документируйте ручной запуск в README:
 ```bash
 node node_modules/ultrascript-tools-mcp/scripts/postinstall.js
+```
+
+### Ошибка tree-sitter при установке на Node.js 24
+
+```
+error C7555: use of designated initializers requires at least '/std:c++20'
+```
+
+Решение: Пакет включает прекомпилированные prebuilds. Если ошибка возникает:
+
+1. Проверьте, что prebuilds включены в npm-пакет:
+```bash
+tar -tzf ultrascript-tools-mcp-*.tgz | grep tree-sitter
+```
+
+2. Если prebuilds отсутствуют, повторите сборку:
+```powershell
+npm run build:tree-sitter
+.\scripts\pack-npm.ps1 -Apply
 ```
 
 ---

@@ -10,11 +10,64 @@
  */
 
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
+import { arch, platform } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { LRUCache } from "lru-cache";
-import Parser from "tree-sitter";
+import type TreeSitterType from "tree-sitter";
 import { ConfigLoader } from "../config/yaml-config.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Platform detection for prebuilds
+const PLATFORM = platform() === "win32" ? "win32" : platform() === "darwin" ? "darwin" : "linux";
+const ARCH = arch() === "arm64" ? "arm64" : "x64";
+const PREBUILD_DIR = `tree-sitter-${PLATFORM}-${ARCH}`;
+
+// Possible prebuild locations
+const PREBUILD_PATHS = [
+  join(__dirname, "..", "..", "external-libs", PREBUILD_DIR),
+  join(__dirname, "..", "..", "..", "external-libs", PREBUILD_DIR),
+];
+
+// Find valid prebuild directory
+function findPrebuildDir(): string | null {
+  for (const path of PREBUILD_PATHS) {
+    if (existsSync(path)) {
+      return path;
+    }
+  }
+  return null;
+}
+
+const PREBUILD_PATH = findPrebuildDir();
+
+// Load tree-sitter Parser with prebuild support
+let Parser: typeof TreeSitterType;
+try {
+  if (PREBUILD_PATH) {
+    // Try prebuild first - load the runtime binding
+    const treeSitterPath = join(PREBUILD_PATH, "tree_sitter_runtime_binding.node");
+    if (existsSync(treeSitterPath)) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      Parser = require(treeSitterPath);
+      console.debug(`[Tree-sitter] Loaded prebuild from ${PREBUILD_PATH}`);
+    } else {
+      throw new Error("Prebuild not found");
+    }
+  } else {
+    throw new Error("No prebuild directory");
+  }
+} catch {
+  // Fallback to npm module
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  Parser = require("tree-sitter");
+}
+
 import { BashAnalyzer } from "./bash-analyzer.js";
 import { BatchAnalyzer } from "./batch-analyzer.js";
 import { CAnalyzer } from "./c-analyzer.js";
@@ -31,78 +84,118 @@ import { SwiftAnalyzer } from "./swift-analyzer.js";
 import { VbaAnalyzer } from "./vba-analyzer.js";
 import { XMLAnalyzer } from "./xml-analyzer.js";
 
-type TreeSitterNode = Parser.SyntaxNode;
-type TreeSitterTree = Parser.Tree;
-type TreeSitterEdit = Parser.Edit;
+type TreeSitterNode = TreeSitterType.SyntaxNode;
+type TreeSitterTree = TreeSitterType.Tree;
+type TreeSitterEdit = TreeSitterType.Edit;
 
 const CACHE_MAX_SIZE = 100 * 1024 * 1024; // 100MB
 const CACHE_TTL = 1000 * 60 * 60; // 1h
 
 const requireModule = createRequire(import.meta.url);
 
+// Map npm package name to prebuild .node file name
+const PREBUILD_FILE_MAP: Record<string, string> = {
+  "tree-sitter-javascript": "tree-sitter-javascript.node",
+  "tree-sitter-typescript": "tree-sitter-typescript.node",
+  "tree-sitter-python": "tree-sitter-python.node",
+  "tree-sitter-go": "tree-sitter-go.node",
+  "tree-sitter-rust": "tree-sitter-rust.node",
+  "tree-sitter-c": "tree-sitter-c.node",
+  "tree-sitter-cpp": "tree-sitter-cpp.node",
+  "tree-sitter-java": "tree-sitter-java.node",
+  "tree-sitter-kotlin": "tree_sitter_kotlin_binding.node",
+  "tree-sitter-swift": "tree-sitter-swift.node",
+  "tree-sitter-bash": "tree-sitter-bash.node",
+  "tree-sitter-css": "tree-sitter-css.node",
+  "tree-sitter-html": "tree-sitter-html.node",
+  "tree-sitter-powershell": "tree_sitter_powershell_binding.node",
+  "tree-sitter-c-sharp": "tree-sitter-c-sharp.node",
+};
+
+// Load language module with prebuild support
+function loadLanguageModule(packageName: string): any {
+  // Try prebuild first
+  if (PREBUILD_PATH) {
+    const prebuildFile = PREBUILD_FILE_MAP[packageName];
+    if (prebuildFile) {
+      const prebuildPath = join(PREBUILD_PATH, prebuildFile);
+      if (existsSync(prebuildPath)) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          return require(prebuildPath);
+        } catch {
+          // Fallback to npm
+        }
+      }
+    }
+  }
+  // Fallback to npm module
+  return requireModule(packageName);
+}
+
 const LANGUAGE_LOADERS: Partial<Record<SupportedLanguage, () => Promise<any>>> = {
   javascript: async () => {
-    const m: any = requireModule("tree-sitter-javascript");
+    const m: any = loadLanguageModule("tree-sitter-javascript");
     return m.default ?? m;
   },
   jsx: async () => {
-    const m: any = requireModule("tree-sitter-javascript");
+    const m: any = loadLanguageModule("tree-sitter-javascript");
     return m.default ?? m;
   },
   typescript: async () => {
-    const m: any = requireModule("tree-sitter-typescript");
+    const m: any = loadLanguageModule("tree-sitter-typescript");
     return m.typescript ?? m.default?.typescript;
   },
   tsx: async () => {
-    const m: any = requireModule("tree-sitter-typescript");
+    const m: any = loadLanguageModule("tree-sitter-typescript");
     return m.tsx ?? m.default?.tsx;
   },
   python: async () => {
-    const m: any = requireModule("tree-sitter-python");
+    const m: any = loadLanguageModule("tree-sitter-python");
     return m.default ?? m;
   },
   c: async () => {
-    const m: any = requireModule("tree-sitter-c");
+    const m: any = loadLanguageModule("tree-sitter-c");
     return m.default ?? m;
   },
   cpp: async () => {
-    const m: any = requireModule("tree-sitter-cpp");
+    const m: any = loadLanguageModule("tree-sitter-cpp");
     return m.default ?? m;
   },
   rust: async () => {
-    const m: any = requireModule("tree-sitter-rust");
+    const m: any = loadLanguageModule("tree-sitter-rust");
     return m.default ?? m;
   },
   go: async () => {
-    const m: any = requireModule("tree-sitter-go");
+    const m: any = loadLanguageModule("tree-sitter-go");
     return m.default ?? m;
   },
   java: async () => {
-    const m: any = requireModule("tree-sitter-java");
+    const m: any = loadLanguageModule("tree-sitter-java");
     return m.default ?? m;
   },
   kotlin: async () => {
-    const m: any = requireModule("tree-sitter-kotlin");
+    const m: any = loadLanguageModule("tree-sitter-kotlin");
     return m.default ?? m;
   },
   swift: async () => {
-    const m: any = requireModule("tree-sitter-swift");
+    const m: any = loadLanguageModule("tree-sitter-swift");
     return m.default ?? m;
   },
   css: async () => {
-    const m: any = requireModule("tree-sitter-css");
+    const m: any = loadLanguageModule("tree-sitter-css");
     return m.default ?? m;
   },
   html: async () => {
-    const m: any = requireModule("tree-sitter-html");
+    const m: any = loadLanguageModule("tree-sitter-html");
     return m.default ?? m;
   },
   bash: async () => {
-    const m: any = requireModule("tree-sitter-bash");
+    const m: any = loadLanguageModule("tree-sitter-bash");
     return m.default ?? m;
   },
   powershell: async () => {
-    const m: any = requireModule("tree-sitter-powershell");
+    const m: any = loadLanguageModule("tree-sitter-powershell");
     return m.default ?? m;
   },
 };
@@ -213,7 +306,7 @@ function convertPosition(node: TreeSitterNode) {
 }
 
 export class TreeSitterParser {
-  private parser: Parser | null = null;
+  private parser: TreeSitterType | null = null;
   private languages: Map<SupportedLanguage, any> = new Map();
   private cache: LRUCache<string, ParseCacheEntry>;
   private initialized = false;
@@ -677,7 +770,9 @@ export class TreeSitterParser {
   }
 
   private extractFunction(node: TreeSitterNode, source: string): ParsedEntity {
-    const nameNode = node.namedChildren.find((c) => c.type === "identifier" || c.type === "property_identifier");
+    const nameNode = node.namedChildren.find(
+      (c: TreeSitterNode) => c.type === "identifier" || c.type === "property_identifier",
+    );
     const name = nameNode?.text || "<anonymous>";
     const modifiers: string[] = [];
     if (source.substring(node.startIndex, node.startIndex + 5) === "async") modifiers.push("async");
@@ -695,9 +790,9 @@ export class TreeSitterParser {
   }
 
   private extractClass(node: TreeSitterNode, source: string, _depth: number): ParsedEntity {
-    const nameNode = node.namedChildren.find((c) => c.type === "identifier");
+    const nameNode = node.namedChildren.find((c: TreeSitterNode) => c.type === "identifier");
     const name = nameNode?.text || "<anonymous>";
-    const bodyNode = node.namedChildren.find((c) => c.type === "class_body");
+    const bodyNode = node.namedChildren.find((c: TreeSitterNode) => c.type === "class_body");
     const children: ParsedEntity[] = [];
     if (bodyNode) {
       for (const child of bodyNode.namedChildren) {
@@ -710,13 +805,13 @@ export class TreeSitterParser {
   }
 
   private extractInterface(node: TreeSitterNode, _source: string): ParsedEntity {
-    const nameNode = node.namedChildren.find((c) => c.type === "type_identifier");
+    const nameNode = node.namedChildren.find((c: TreeSitterNode) => c.type === "type_identifier");
     const name = nameNode?.text || "<anonymous>";
     return { name, type: "interface", location: convertPosition(node) };
   }
 
   private extractTypeAlias(node: TreeSitterNode, _source: string): ParsedEntity {
-    const nameNode = node.namedChildren.find((c) => c.type === "type_identifier");
+    const nameNode = node.namedChildren.find((c: TreeSitterNode) => c.type === "type_identifier");
     const name = nameNode?.text || "<anonymous>";
     return { name, type: "type", location: convertPosition(node) };
   }
@@ -742,7 +837,7 @@ export class TreeSitterParser {
   }
 
   private extractExport(node: TreeSitterNode, source: string): ParsedEntity | null {
-    const isDefault = node.children.some((c) => c.type === "default");
+    const isDefault = node.children.some((c: TreeSitterNode) => c.type === "default");
     if (isDefault) {
       const position = convertPosition(node);
       const signature = source.substring(
@@ -819,7 +914,7 @@ export class TreeSitterParser {
   // Python
 
   private extractPythonFunction(node: TreeSitterNode, source: string): ParsedEntity {
-    const nameNode = node.namedChildren.find((c) => c.type === "identifier");
+    const nameNode = node.namedChildren.find((c: TreeSitterNode) => c.type === "identifier");
     const name = nameNode?.text || "<anonymous>";
     const modifiers: string[] = [];
     if (node.type === "async_function_definition") modifiers.push("async");
@@ -901,7 +996,7 @@ export class TreeSitterParser {
     const nameNode = this.findNodeByType(node, "type_identifier") || this.findNodeByType(node, "identifier");
     const name = nameNode?.text || "<anonymous>";
     const children: ParsedEntity[] = [];
-    const fieldLists = node.namedChildren.filter((c) => c.type === "field_declaration_list");
+    const fieldLists = node.namedChildren.filter((c: TreeSitterNode) => c.type === "field_declaration_list");
     for (const fl of fieldLists) {
       for (const f of fl.namedChildren) {
         if (f.type === "field_declaration") {
@@ -970,7 +1065,8 @@ export class TreeSitterParser {
 
   private extractCppTemplate(node: TreeSitterNode, source: string, depth: number): ParsedEntity {
     const body = node.namedChildren.find(
-      (c) => c.type === "class_specifier" || c.type === "function_definition" || c.type === "struct_specifier",
+      (c: TreeSitterNode) =>
+        c.type === "class_specifier" || c.type === "function_definition" || c.type === "struct_specifier",
     );
     if (body) {
       let e: ParsedEntity;
@@ -1007,8 +1103,8 @@ export class TreeSitterParser {
         const nameNode = this.findNodeByType(p, "identifier");
         const name = nameNode?.text;
         let type: string | undefined;
-        const typeNodes = p.namedChildren.filter((c) => c !== nameNode);
-        if (typeNodes.length) type = typeNodes.map((n) => n.text).join(" ");
+        const typeNodes = p.namedChildren.filter((c: TreeSitterNode) => c !== nameNode);
+        if (typeNodes.length) type = typeNodes.map((n: TreeSitterNode) => n.text).join(" ");
         if (name) params.push({ name, type });
       }
     }
@@ -1019,9 +1115,9 @@ export class TreeSitterParser {
     const decl = this.findNodeByType(node, "function_declarator");
     if (!decl) return undefined;
     const typeNodes = node.namedChildren.filter(
-      (c) => c !== decl && (c.type.includes("type") || c.type === "primitive_type"),
+      (c: TreeSitterNode) => c !== decl && (c.type.includes("type") || c.type === "primitive_type"),
     );
-    return typeNodes.length ? typeNodes.map((n) => n.text).join(" ") : undefined;
+    return typeNodes.length ? typeNodes.map((n: TreeSitterNode) => n.text).join(" ") : undefined;
   }
 
   private findNodeByType(node: TreeSitterNode, type: string): TreeSitterNode | null {
@@ -1086,8 +1182,10 @@ export class TreeSitterParser {
 
   private extractRustUse(node: TreeSitterNode, _source: string): ParsedEntity {
     const firstPath =
-      node.namedChildren.find((c) => c.type.includes("scoped_identifier") || c.type.includes("identifier")) || null;
-    const aliasNode = node.namedChildren.find((c) => c.type === "as" || c.type === "rename");
+      node.namedChildren.find(
+        (c: TreeSitterNode) => c.type.includes("scoped_identifier") || c.type.includes("identifier"),
+      ) || null;
+    const aliasNode = node.namedChildren.find((c: TreeSitterNode) => c.type === "as" || c.type === "rename");
     const sourcePath = firstPath?.text || "";
     const alias = aliasNode?.text;
     return {

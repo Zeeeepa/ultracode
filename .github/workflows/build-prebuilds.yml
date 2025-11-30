@@ -1,0 +1,138 @@
+name: Build Tree-sitter Prebuilds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'package.json'
+      - 'scripts/build-tree-sitter-prebuilds.*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build prebuilds
+        run: pwsh scripts/build-tree-sitter-prebuilds.ps1
+
+      - name: Upload prebuilds
+        uses: actions/upload-artifact@v4
+        with:
+          name: tree-sitter-win32-x64
+          path: external-libs/tree-sitter-win32-x64/*.node
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build prebuilds
+        run: bash scripts/build-tree-sitter-prebuilds.sh
+
+      - name: Upload prebuilds
+        uses: actions/upload-artifact@v4
+        with:
+          name: tree-sitter-linux-x64
+          path: external-libs/tree-sitter-linux-x64/*.node
+
+  build-macos-arm64:
+    runs-on: macos-14  # M1 runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build prebuilds
+        run: bash scripts/build-tree-sitter-prebuilds.sh
+
+      - name: Upload prebuilds
+        uses: actions/upload-artifact@v4
+        with:
+          name: tree-sitter-darwin-arm64
+          path: external-libs/tree-sitter-darwin-arm64/*.node
+
+  build-macos-x64:
+    runs-on: macos-13  # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build prebuilds
+        run: bash scripts/build-tree-sitter-prebuilds.sh
+
+      - name: Upload prebuilds
+        uses: actions/upload-artifact@v4
+        with:
+          name: tree-sitter-darwin-x64
+          path: external-libs/tree-sitter-darwin-x64/*.node
+
+  package:
+    needs: [build-windows, build-linux, build-macos-arm64, build-macos-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Download all prebuilds
+        uses: actions/download-artifact@v4
+        with:
+          path: external-libs
+
+      - name: Organize prebuilds
+        run: |
+          # Move artifacts to correct locations
+          mkdir -p external-libs/tree-sitter-win32-x64
+          mkdir -p external-libs/tree-sitter-linux-x64
+          mkdir -p external-libs/tree-sitter-darwin-arm64
+          mkdir -p external-libs/tree-sitter-darwin-x64
+
+          # Copy downloaded artifacts
+          cp -r external-libs/tree-sitter-win32-x64/* external-libs/tree-sitter-win32-x64/ 2>/dev/null || true
+          cp -r external-libs/tree-sitter-linux-x64/* external-libs/tree-sitter-linux-x64/ 2>/dev/null || true
+          cp -r external-libs/tree-sitter-darwin-arm64/* external-libs/tree-sitter-darwin-arm64/ 2>/dev/null || true
+          cp -r external-libs/tree-sitter-darwin-x64/* external-libs/tree-sitter-darwin-x64/ 2>/dev/null || true
+
+          # List all prebuilds
+          echo "=== Prebuilds ==="
+          find external-libs -name "*.node" -type f -exec ls -lh {} \;
+
+      - name: Upload combined prebuilds
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-prebuilds
+          path: external-libs/tree-sitter-*/*.node

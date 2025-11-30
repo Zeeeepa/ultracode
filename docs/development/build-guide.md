@@ -1,6 +1,74 @@
 # Native Module Build Guide
 
-Скрипты `build-bun.sh` и `build-bun.cmd` **автоматически устанавливают** необходимые тулчейны для сборки нативных модулей.
+Руководство по сборке нативных модулей для UltraScript Tools MCP.
+
+> **Важно**: Node.js 24+ требует C++20, но tree-sitter использует C++17. npm-пакет включает прекомпилированные prebuilds для всех платформ.
+
+Скрипты `build.sh` и `build.cmd` **автоматически устанавливают** необходимые тулчейны для сборки нативных модулей.
+
+## Quick Start
+
+```bash
+# Windows - сборка в dist/
+.\scripts\build.cmd
+
+# Linux/macOS - сборка в dist/
+bash scripts/build.sh
+
+# Упаковка npm пакета с prebuilds
+.\scripts\pack-npm.cmd          # или pack-npm.ps1 -Apply -Publish
+```
+
+## Tree-sitter Prebuilds (Node.js 24+)
+
+**Проблема**: Node.js 24 требует C++20, но tree-sitter компилируется с C++17. Это вызывает ошибки при `npm install`.
+
+**Решение**: Прекомпилированные native модули (`prebuilds`) для всех платформ.
+
+### Структура prebuilds
+
+```
+external-libs/
+├── tree-sitter-win32-x64/      # Windows x64 (~26 MB)
+│   ├── tree-sitter.node
+│   ├── tree-sitter-javascript.node
+│   ├── tree-sitter-typescript.node
+│   └── ... (17 файлов)
+├── tree-sitter-linux-x64/      # Linux x64
+├── tree-sitter-darwin-arm64/   # macOS Apple Silicon
+└── tree-sitter-darwin-x64/     # macOS Intel
+```
+
+### Сборка prebuilds
+
+```bash
+# Windows
+npm run build:tree-sitter
+# или
+powershell scripts/build-tree-sitter-prebuilds.ps1
+
+# Linux/macOS
+bash scripts/build-tree-sitter-prebuilds.sh
+```
+
+Скрипт автоматически:
+1. Патчит `binding.gyp` файлы (C++17 → C++20)
+2. Пересобирает все tree-sitter модули
+3. Копирует `.node` файлы в `external-libs/`
+
+### Автоматический выбор prebuild
+
+Loader в `src/parsers/tree-sitter-parser.ts`:
+1. Ищет prebuilds в `external-libs/tree-sitter-{platform}-{arch}/`
+2. Если не найдены → fallback на npm версию
+
+### CI/CD сборка
+
+GitHub Actions workflow (`.github/workflows/build-prebuilds.yml`):
+- Собирает prebuilds на Windows, Linux, macOS (x64 + ARM64)
+- Артефакты доступны для скачивания
+
+---
 
 ## Что устанавливается автоматически
 
@@ -177,6 +245,18 @@ ultrascript-tools-mcp/
 - Результат: 10-50x быстрее
 
 ## Troubleshooting
+
+### Peer dependency warnings при npm install
+
+При установке tree-sitter грамматик появляются warnings:
+```
+npm warn ERESOLVE overriding peer dependency
+```
+
+Это **безопасно** — грамматики имеют устаревшие peerDependencies на tree-sitter 0.21.x, но API совместим с 0.25.x. Варианты решения:
+- Игнорировать warnings (API совместим)
+- Использовать `npm install --legacy-peer-deps`
+- Локально: создать `.npmrc` с `legacy-peer-deps=true`
 
 ### Rust установка не удалась
 **Windows:**
