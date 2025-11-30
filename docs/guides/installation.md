@@ -17,9 +17,12 @@
 
 | Компонент | Минимум | Рекомендуется | Где взять |
 |-----------|---------|---------------|-----------|
-| Node.js | 18.x | 20.x+ | https://nodejs.org/ |
-| npm | 8.x | 10.x+ | Идёт с Node.js |
+| Node.js | 24.x | 24.x LTS | https://nodejs.org/ |
+| npm | 10.x | 10.x+ | Идёт с Node.js |
 | Git | 2.x | latest | https://git-scm.com/ |
+| Bun (опционально) | 1.0+ | latest | https://bun.sh |
+
+> **Важно**: Node.js 24 требует C++20, но tree-sitter использует C++17. npm-пакет включает прекомпилированные prebuilds для всех платформ.
 
 ### Для CUDA backend (опционально):
 
@@ -76,7 +79,7 @@ chmod +x scripts/dev-setup.sh
 **Оптимистический сценарий:**
 ```
 📦 Step 1: Checking Node.js...
-✅ Node.js v24.11.1
+✅ Node.js v24.x.x
 ```
 
 **Пессимистический сценарий:**
@@ -803,25 +806,25 @@ Get-ChildItem build\Release\cuda_vector_ops.node -ErrorAction SilentlyContinue  
 ### Ожидаемый результат (полный success):
 
 ```
-✅ Node.js: v24.11.1
-✅ npm: 10.9.0
-✅ Rust: 1.91.1
-✅ wasm-pack: 0.13.1
-✅ CMake: 4.1.2
-✅ Visual Studio: 2022 BuildTools (17.14)
-✅ CUDA Toolkit: 13.0.88
-✅ CUDA Headers: True (1511 files)
-✅ VS CUDA integration: True (5 files)
-✅ TypeScript build: dist/index.js (946 KB)
+✅ Node.js: v24.x.x
+✅ npm: 10.x.x
+✅ Rust: 1.x.x
+✅ wasm-pack: 0.13.x
+✅ CMake: 3.x+
+✅ Visual Studio: 2022 BuildTools
+✅ CUDA Toolkit: 12.x+ (опционально)
+✅ CUDA Headers: True (опционально)
+✅ VS CUDA integration: True (опционально)
+✅ TypeScript build: dist/index.js
 ✅ WASM build: wasm/vector-ops/pkg/index.js
-✅ CUDA build: build/Release/cuda_vector_ops.node (586 KB)
+✅ CUDA build: build/Release/cuda_vector_ops.node (опционально)
 ```
 
 ---
 
 ## Итоговый чеклист
 
-- [ ] Node.js 18+ установлен и в PATH
+- [ ] Node.js 24+ установлен и в PATH
 - [ ] npm dependencies установлены (`node_modules/` существует)
 - [ ] Rust toolchain установлен
 - [ ] wasm-pack установлен

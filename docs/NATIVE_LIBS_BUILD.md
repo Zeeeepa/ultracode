@@ -13,6 +13,7 @@ UltraScript Tools поддерживает GPU-ускорение через н�
 | macOS ARM64 | `ultrascript_metal.node` | Apple Metal | 🔧 Сборка при установке |
 | macOS Intel | — | — | WASM fallback |
 | Все платформы | WASM SIMD | WebAssembly | ✅ Встроен в npm |
+| Все платформы | tree-sitter prebuilds | Node.js N-API | ✅ Встроен в npm |
 
 ## Что происходит при npm install
 
@@ -168,6 +169,83 @@ external-libs/metal-darwin-arm64/
 На Intel Mac используется **WASM SIMD** (уже встроен в npm-пакет).
 Metal и CUDA не поддерживаются на этой платформе.
 
+## Tree-sitter Prebuilds (Node.js 24+)
+
+### Проблема
+
+Node.js 24 требует C++20, но tree-sitter и языковые грамматики компилируются с C++17. Это вызывает ошибки при `npm install`:
+
+```
+error C7555: use of designated initializers requires at least '/std:c++20'
+```
+
+### Решение
+
+Прекомпилированные native модули (`prebuilds`) для всех платформ:
+
+```
+external-libs/
+├── tree-sitter-win32-x64/      # Windows x64 (~26 MB)
+│   ├── tree-sitter.node
+│   ├── tree-sitter-javascript.node
+│   ├── tree-sitter-typescript.node
+│   └── ... (17 модулей)
+├── tree-sitter-linux-x64/      # Linux x64
+├── tree-sitter-darwin-arm64/   # macOS Apple Silicon
+└── tree-sitter-darwin-x64/     # macOS Intel
+```
+
+### Сборка prebuilds
+
+```bash
+# Windows (PowerShell)
+npm run build:tree-sitter
+# или
+powershell scripts/build-tree-sitter-prebuilds.ps1
+
+# Linux/macOS
+bash scripts/build-tree-sitter-prebuilds.sh
+```
+
+Скрипт автоматически:
+1. Патчит `binding.gyp` файлы (C++17 → C++20)
+2. Пересобирает все tree-sitter модули через `npm rebuild`
+3. Копирует `.node` файлы в `external-libs/tree-sitter-{platform}-{arch}/`
+
+### Список модулей
+
+| Модуль | Файл prebuild |
+|--------|---------------|
+| tree-sitter | tree-sitter.node |
+| tree-sitter-javascript | tree-sitter-javascript.node |
+| tree-sitter-typescript | tree-sitter-typescript.node |
+| tree-sitter-python | tree-sitter-python.node |
+| tree-sitter-c | tree-sitter-c.node |
+| tree-sitter-cpp | tree-sitter-cpp.node |
+| tree-sitter-c-sharp | tree-sitter-c-sharp.node |
+| tree-sitter-go | tree-sitter-go.node |
+| tree-sitter-rust | tree-sitter-rust.node |
+| tree-sitter-java | tree-sitter-java.node |
+| tree-sitter-kotlin | tree-sitter-kotlin.node |
+| tree-sitter-swift | tree-sitter-swift.node |
+| tree-sitter-ruby | tree-sitter-ruby.node |
+| tree-sitter-php | tree-sitter-php.node |
+| tree-sitter-bash | tree-sitter-bash.node |
+| tree-sitter-json | tree-sitter-json.node |
+| tree-sitter-yaml | tree-sitter-yaml.node |
+
+### Автоматический выбор prebuild (runtime)
+
+Loader в `src/parsers/tree-sitter-parser.ts`:
+1. Ищет prebuilds в `external-libs/tree-sitter-{platform}-{arch}/`
+2. Если не найдены → fallback на npm версию (работает на Node.js < 24)
+
+### CI/CD сборка
+
+GitHub Actions workflow (`.github/workflows/build-prebuilds.yml`):
+- Собирает prebuilds на Windows, Linux, macOS (x64 + ARM64)
+- Артефакты доступны для скачивания
+
 ## Структура выходных файлов
 
 ```
@@ -176,21 +254,28 @@ external-libs/
 │   └── ultrascript_cuda.node      # Windows CUDA
 ├── cuda-linux-x64/
 │   └── ultrascript_cuda.node      # Linux CUDA
-└── metal-darwin-arm64/
-    ├── ultrascript_metal.node     # macOS Metal addon
-    └── vector_ops.metallib        # Metal shaders
+├── metal-darwin-arm64/
+│   ├── ultrascript_metal.node     # macOS Metal addon
+│   └── vector_ops.metallib        # Metal shaders
+├── tree-sitter-win32-x64/         # Windows tree-sitter prebuilds
+│   ├── tree-sitter.node
+│   ├── tree-sitter-javascript.node
+│   └── ... (17 файлов)
+├── tree-sitter-linux-x64/         # Linux tree-sitter prebuilds
+├── tree-sitter-darwin-arm64/      # macOS ARM64 tree-sitter prebuilds
+└── tree-sitter-darwin-x64/        # macOS Intel tree-sitter prebuilds
 ```
 
 ## Публикация в npm (для мейнтейнеров)
 
 ### Что включается в npm-пакет
 
-CUDA и WASM библиотеки **встроены в npm-пакет** через `package.json` → `files`:
+CUDA, WASM и tree-sitter библиотеки **встроены в npm-пакет** через `package.json` → `files`:
 
 ```json
 {
   "files": [
-    "external-libs/**/*.node",      // CUDA для Windows/Linux
+    "external-libs/**/*.node",      // CUDA, Metal, tree-sitter prebuilds
     "external-libs/**/*.metallib",  // Metal shaders (если есть)
     "dist/**/*.wasm",               // WASM SIMD
     "scripts/postinstall.js",       // postinstall скрипт
@@ -198,6 +283,8 @@ CUDA и WASM библиотеки **встроены в npm-пакет** чер�
   ]
 }
 ```
+
+**Tree-sitter prebuilds** (~26 MB на платформу) решают проблему установки на Node.js 24+, где tree-sitter не компилируется из-за требования C++20.
 
 ### Перед публикацией
 
@@ -217,10 +304,24 @@ npm run build:wasm
 # Результат: dist/wasm/simd-ops.wasm
 ```
 
-3. **Публикация:**
+3. **Собрать tree-sitter prebuilds:**
+```powershell
+# Windows
+npm run build:tree-sitter
+
+# Проверить что файлы на месте:
+dir external-libs\tree-sitter-win32-x64\*.node
+# Должно быть 17 файлов
+```
+
+> **Примечание:** Скрипт `pack-npm.ps1` автоматически собирает tree-sitter prebuilds если они отсутствуют.
+
+4. **Публикация:**
 ```bash
 npm run build
 npm publish
+# или через скрипт с проверками:
+.\scripts\pack-npm.ps1 -Apply -Publish
 ```
 
 ### Проверка установки
@@ -432,6 +533,10 @@ set CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0
 | CUDA addon | Windows x64 | ✅ Да |
 | CUDA addon | Linux x64 | ✅ Да |
 | WASM SIMD | Все | ✅ Да |
+| tree-sitter prebuilds | Windows x64 | ✅ Да |
+| tree-sitter prebuilds | Linux x64 | ✅ Да |
+| tree-sitter prebuilds | macOS ARM64 | ✅ Да |
+| tree-sitter prebuilds | macOS Intel | ✅ Да |
 | Metal addon | macOS ARM64 | ❌ Нет (собирается при установке) |
 
 ### Q: Что если у пользователя нет NVIDIA GPU?
@@ -462,3 +567,21 @@ Apple не поддерживает CUDA с 2019 года. Metal — натив�
 # или
 [BackendSelector] ✅ Selected: WASM SIMD (priority: 50)
 ```
+
+### Q: Почему tree-sitter prebuilds в npm-пакете?
+
+Node.js 24 использует V8 с C++20, но tree-sitter и языковые грамматики компилируются с C++17. Это вызывает ошибки компиляции при `npm install`.
+
+**Решение:** Прекомпилированные `.node` файлы для всех платформ (~26 MB каждая). Loader автоматически использует prebuilds, если они доступны.
+
+### Q: Как собрать tree-sitter prebuilds вручную?
+
+```powershell
+# Windows
+npm run build:tree-sitter
+
+# Linux/macOS
+bash scripts/build-tree-sitter-prebuilds.sh
+```
+
+Скрипт патчит `binding.gyp` (C++17 → C++20), пересобирает модули и копирует `.node` файлы в `external-libs/`.
