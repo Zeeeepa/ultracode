@@ -140,16 +140,6 @@ try {
             }
         }
 
-        # Копирование CUDA если есть
-        if (Test-Path "external-tools/native/cuda/build/ultrascript_cuda.node") {
-            $CudaDst = "dist/native/cuda"
-            if (-not (Test-Path $CudaDst)) {
-                New-Item -ItemType Directory -Path $CudaDst -Force | Out-Null
-            }
-            Copy-Item "external-tools/native/cuda/build/ultrascript_cuda.node" $CudaDst -Force
-            Write-Host "  + $CudaDst/ultrascript_cuda.node" -ForegroundColor Gray
-        }
-
         # Копирование Comm binary если есть
         if (Test-Path "src/comm/ultrascript-tools.com") {
             try {
