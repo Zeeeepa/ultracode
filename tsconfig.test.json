@@ -1,6 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "module": "ES2022",
     "strict": false,
     "strictNullChecks": false,
     "noUnusedLocals": false,

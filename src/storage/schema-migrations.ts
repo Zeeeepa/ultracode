@@ -12,9 +12,9 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { createHash } from "node:crypto";
 import type { SQLiteDatabase } from "./sqlite-adapter.js";
 import type { SQLiteManager } from "./sqlite-manager.js";
+import { hashText } from "../utils/fast-hash.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -354,7 +354,7 @@ export class SchemaMigration {
    */
   private calculateChecksum(migration: Migration): string {
     const content = `${migration.version}:${migration.description}:${migration.up}`;
-    return createHash("sha256").update(content).digest("hex");
+    return hashText(content);
   }
 
   /**

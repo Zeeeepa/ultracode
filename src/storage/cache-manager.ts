@@ -12,12 +12,12 @@
  * - Graph Storage: src/storage/graph-storage.ts
  */
 
-import { createHash } from "node:crypto";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { LRUCache } from "lru-cache";
 import type { CacheEntry, CacheManager } from "../types/storage.js";
+import { hashText } from "../utils/fast-hash.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -164,7 +164,7 @@ export class QueryCacheManager implements CacheManager {
       );
 
     const json = JSON.stringify(sorted);
-    return createHash("sha256").update(json).digest("hex").substring(0, 16);
+    return hashText(json).substring(0, 16);
   }
 
   /**

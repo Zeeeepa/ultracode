@@ -314,37 +314,74 @@ export class FileOperations {
   }
 
   private async copyDirectory(source: string, target: string, updateGraph: boolean): Promise<FileOperationResult> {
-    const filesAffected: string[] = [];
-    let totalEntities = 0;
-    let totalEmbeddings = 0;
+    const COPY_CONCURRENCY = 8; // Ограничение параллелизма для копирования файлов
+    const operations = this;
 
-    async function walk(srcDir: string, destDir: string, operations: FileOperations) {
+    // Результаты копирования
+    interface CopyResult {
+      filesAffected: string[];
+      entitiesAffected: number;
+      embeddingsUpdated: number;
+    }
+
+    async function walk(srcDir: string, destDir: string): Promise<CopyResult> {
       const entries = await readdir(srcDir, { withFileTypes: true });
 
+      const files: Array<{ src: string; dest: string }> = [];
+      const subdirPromises: Promise<CopyResult>[] = [];
+
+      // Сначала создаём директории и собираем файлы
       for (const entry of entries) {
         const srcPath = join(srcDir, entry.name);
         const destPath = join(destDir, entry.name);
 
         if (entry.isDirectory()) {
           await mkdir(destPath, { recursive: true });
-          await walk(srcPath, destPath, operations);
+          // Рекурсивно обрабатываем поддиректории параллельно
+          subdirPromises.push(walk(srcPath, destPath));
         } else {
-          const result = await operations.copyFile(srcPath, destPath, updateGraph);
-          filesAffected.push(...result.filesAffected);
-          totalEntities += result.entitiesAffected || 0;
-          totalEmbeddings += result.embeddingsUpdated || 0;
+          files.push({ src: srcPath, dest: destPath });
         }
       }
+
+      // Копируем файлы параллельно с ограничением concurrency
+      const filesAffected: string[] = [];
+      let entitiesAffected = 0;
+      let embeddingsUpdated = 0;
+
+      for (let i = 0; i < files.length; i += COPY_CONCURRENCY) {
+        const chunk = files.slice(i, i + COPY_CONCURRENCY);
+        const copyResults = await Promise.all(
+          chunk.map(async ({ src, dest }) => operations.copyFile(src, dest, updateGraph)),
+        );
+        for (const result of copyResults) {
+          filesAffected.push(...result.filesAffected);
+          entitiesAffected += result.entitiesAffected || 0;
+          embeddingsUpdated += result.embeddingsUpdated || 0;
+        }
+      }
+
+      // Ждём результаты всех поддиректорий
+      if (subdirPromises.length > 0) {
+        const subdirResults = await Promise.all(subdirPromises);
+        for (const subResult of subdirResults) {
+          filesAffected.push(...subResult.filesAffected);
+          entitiesAffected += subResult.entitiesAffected;
+          embeddingsUpdated += subResult.embeddingsUpdated;
+        }
+      }
+
+      return { filesAffected, entitiesAffected, embeddingsUpdated };
     }
 
-    await walk(source, target, this);
+    const result = await walk(source, target);
 
     return {
       success: true,
-      filesAffected,
+      filesAffected: result.filesAffected,
       operation: "copy",
-      entitiesAffected: totalEntities,
-      embeddingsUpdated: totalEmbeddings,
+      entitiesAffected: result.entitiesAffected,
+      embeddingsUpdated: result.embeddingsUpdated,
     };
   }
 

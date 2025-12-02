@@ -611,6 +611,97 @@ export async function* readLinesGenerator(path: string): AsyncGenerator<string, 
 }
 
 // =============================================================================
+// LINE RANGE READING
+// =============================================================================
+
+/**
+ * Read specific line range from file without loading entire file into memory.
+ * Optimized for extracting code snippets from large files.
+ *
+ * @param path - File path
+ * @param startLine - Start line (1-based, inclusive)
+ * @param endLine - End line (1-based, inclusive)
+ * @param maxChars - Maximum characters to return (default 10000)
+ * @returns Lines joined with newline, or null if file doesn't exist
+ */
+export async function readLineRange(
+  path: string,
+  startLine: number,
+  endLine: number,
+  maxChars: number = 10000,
+): Promise<string | null> {
+  try {
+    const lines: string[] = [];
+    let currentLine = 0;
+    let totalChars = 0;
+
+    for await (const line of readLinesGenerator(path)) {
+      currentLine++;
+
+      if (currentLine > endLine) break;
+
+      if (currentLine >= startLine) {
+        if (totalChars + line.length > maxChars) {
+          // Truncate to fit maxChars
+          const remaining = maxChars - totalChars;
+          if (remaining > 0) {
+            lines.push(line.slice(0, remaining));
+          }
+          break;
+        }
+        lines.push(line);
+        totalChars += line.length + 1; // +1 for newline
+      }
+    }
+
+    return lines.length > 0 ? lines.join("\n") : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read specific byte range from file (for index-based extraction).
+ * More efficient than reading entire file when indices are known.
+ *
+ * @param path - File path
+ * @param startIndex - Start byte index (inclusive)
+ * @param endIndex - End byte index (exclusive)
+ * @param maxBytes - Maximum bytes to read (default 10000)
+ * @returns Content string, or null if file doesn't exist
+ */
+export async function readByteRange(
+  path: string,
+  startIndex: number,
+  endIndex: number,
+  maxBytes: number = 10000,
+): Promise<string | null> {
+  try {
+    const length = Math.min(endIndex - startIndex, maxBytes);
+    if (length <= 0) return null;
+
+    if (runtime.isBun && features.bunFile && typeof Bun !== "undefined") {
+      const file = Bun.file(path);
+      const slice = file.slice(startIndex, startIndex + length);
+      return await slice.text();
+    } else {
+      // Node.js: use file handle for partial read
+      const { open } = await import("node:fs/promises");
+      const handle = await open(path, "r");
+      try {
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buffer, 0, length, startIndex);
+        return buffer.toString("utf-8", 0, bytesRead);
+      } finally {
+        await handle.close();
+      }
+    }
+  } catch {
+    return null;
+  }
+}
+
+// =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
 

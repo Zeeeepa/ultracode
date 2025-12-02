@@ -12,9 +12,9 @@
  * - Trailing comments (after code lines)
  */
 
-import { createHash } from "node:crypto";
 import type { ParsedEntity } from "../types/parser.js";
 import type { Entity, Relationship } from "../types/storage.js";
+import { hashText } from "./fast-hash.js";
 
 // =============================================================================
 // TYPES
@@ -202,7 +202,7 @@ export class CommentExtractor {
           isTrailing: comment.isTrailing,
           content,
         },
-        hash: createHash("sha256").update(content).digest("hex").slice(0, 16),
+        hash: hashText(content).slice(0, 16),
         createdAt: now,
         updatedAt: now,
       };
@@ -463,12 +463,12 @@ export class CommentExtractor {
 
   private static generateCommentId(comment: CommentBlock, filePath: string): string {
     const content = `${filePath}:comment:${comment.location.start.line}:${comment.location.start.column}`;
-    return createHash("sha256").update(content).digest("hex").slice(0, 16);
+    return hashText(content).slice(0, 16);
   }
 
   private static generateEntityId(entity: ParsedEntity): string {
     const content = `${entity.filePath}:${entity.type}:${entity.name}:${entity.location.start.line}`;
-    return createHash("sha256").update(content).digest("hex").slice(0, 16);
+    return hashText(content).slice(0, 16);
   }
 
   /**

@@ -104,23 +104,28 @@ logging:
   maxFileSize: "10MB"   # Maximum size per log file
   maxFiles: 5           # Maximum number of log files to keep
 
-# Parser Configuration
+# Parser Configuration (Native Parsers)
+# Uses language-native tooling: TypeScript Compiler API, Python ast, go/parser, etc.
 parser:
-  treeSitter:
-    enabled: true
-    languageConfigs:
-      - "typescript"
-      - "javascript"
-      - "python"
-      - "c"
-      - "cpp"
-      - "java"
-      - "kotlin"
-      - "rust"
-      - "go"
-    maxFileSize: 1048576  # 1MB maximum file size for parsing
-    timeout: 60000        # 60 seconds for large batches (Python ~266ms/file × 100 = 26s + overhead)
-    bufferSize: 1048576   # 1MB buffer size for tree-sitter parser
+  # Supported languages (requires corresponding runtime installed)
+  # - typescript/javascript: Built-in (TypeScript Compiler API)
+  # - python: Requires Python 3.8+ (uses ast module)
+  # - java/kotlin: Requires JRE 11+ (uses compiler API)
+  # - go: Requires Go 1.18+ (uses go/parser)
+  # - rust: Requires Rust toolchain (uses rust-analyzer)
+  # - c/cpp: Requires Clang 12+ (uses libclang)
+  languages:
+    - "typescript"
+    - "javascript"
+    - "python"
+    - "c"
+    - "cpp"
+    - "java"
+    - "kotlin"
+    - "rust"
+    - "go"
+  maxFileSize: 1048576  # 1MB maximum file size for parsing
+  timeout: 60000        # 60 seconds for large batches
     
   incremental:
     enabled: true

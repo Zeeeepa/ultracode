@@ -62,6 +62,9 @@ export class QueryCache {
     cleanup?: SQLiteStatement;
   } = {};
 
+  // Cleanup timer reference
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor() {
     // Initialize L1 cache (hot) - lru-cache v11 with ttlAutopurge
     this.l1Cache = new LRUCache<string, CacheEntry>({
@@ -407,8 +410,9 @@ export class QueryCache {
   }
 
   private startCleanupInterval(): void {
+    if (this.cleanupTimer) return;
     // Cleanup expired L3 entries every 5 minutes
-    setInterval(() => {
+    this.cleanupTimer = setInterval(() => {
       if (this.l3Db && this.l3Statements.cleanup) {
         const now = Date.now();
         const result = this.l3Statements.cleanup.run(now);
@@ -417,5 +421,19 @@ export class QueryCache {
         }
       }
     }, 300000); // 5 minutes
+  }
+
+  /**
+   * Close the cache and release resources
+   */
+  close(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    this.l1Cache.clear();
+    this.l2Cache.clear();
+    this.sqliteManager.close();
+    this.l3Db = null;
   }
 }

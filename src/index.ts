@@ -2436,15 +2436,15 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
 
-        const fs = await import("node:fs/promises");
         const storage = await getGraphStorage(globalSQLiteManager);
 
         const MAX_SNIPPET = 10000;
+        const { readText } = await import("./utils/file-ops.js");
 
         const readFileSafe = async (p: string) => {
           const normalizedPath = normalizeInputPath(p);
           try {
-            return await fs.readFile(normalizedPath, "utf8");
+            return await readText(normalizedPath);
           } catch {
             return "";
           }
@@ -2723,24 +2723,25 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           };
         }
 
-        // Read code snippet for this entity using stored location
-        const fs = await import("node:fs/promises");
+        // Read code snippet for this entity using optimized range reading
+        const { readByteRange, readLineRange, readText } = await import("./utils/file-ops.js");
         const entityFilePath = normalizeInputPath(entity.filePath) ?? entity.filePath;
         let snippet = "";
         try {
-          const full = await fs.readFile(entityFilePath, "utf8");
-          const startIdx =
-            typeof (entity as any).location?.start?.index === "number" ? (entity as any).location.start.index : 0;
-          const endIdx =
-            typeof (entity as any).location?.end?.index === "number" ? (entity as any).location.end.index : full.length;
-          if (endIdx > startIdx && endIdx - startIdx < 10000) {
-            snippet = full.slice(startIdx, endIdx);
-          } else {
-            // Fallback to line range if indices are missing
-            const sLine = (entity as any).location?.start?.line ? (entity as any).location.start.line - 1 : 0;
-            const eLine = (entity as any).location?.end?.line ? (entity as any).location.end.line : sLine + 10;
-            const lines = full.split(/\r?\n/);
-            snippet = lines.slice(Math.max(0, sLine), Math.min(lines.length, eLine)).join("\n");
+          const loc = (entity as any).location;
+          // Try byte-range first (most efficient)
+          if (typeof loc?.start?.index === "number" && typeof loc?.end?.index === "number") {
+            const result = await readByteRange(entityFilePath, loc.start.index, loc.end.index, 10000);
+            if (result) snippet = result;
+          }
+          // Fallback to line range
+          if (!snippet && typeof loc?.start?.line === "number" && typeof loc?.end?.line === "number") {
+            const result = await readLineRange(entityFilePath, loc.start.line, loc.end.line, 10000);
+            if (result) snippet = result;
+          }
+          // Last resort: read full file
+          if (!snippet) {
+            snippet = await readText(entityFilePath);
             if (snippet.length > 10000) snippet = snippet.slice(0, 10000);
           }
         } catch {

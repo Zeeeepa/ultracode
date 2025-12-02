@@ -28,10 +28,25 @@ export class KnowledgeBus extends EventEmitter {
   private messageQueue: AgentMessage[] = [];
   private maxQueueSize = 1000;
   private maxKnowledgePerTopic = 100;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     super();
     this.startCleanupInterval();
+  }
+
+  /**
+   * Dispose of the knowledge bus and clear resources
+   */
+  dispose(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    this.knowledge.clear();
+    this.subscriptions.clear();
+    this.messageQueue.length = 0;
+    this.removeAllListeners();
   }
 
   /**
@@ -220,7 +235,8 @@ export class KnowledgeBus extends EventEmitter {
   }
 
   private startCleanupInterval(): void {
-    setInterval(() => {
+    if (this.cleanupTimer) return;
+    this.cleanupTimer = setInterval(() => {
       this.cleanupExpiredKnowledge();
     }, 60000); // Run every minute
   }

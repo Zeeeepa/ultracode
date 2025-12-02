@@ -26,8 +26,8 @@
  *  - 2025-09-17: Enhanced by Dev-Agent - TASK-004B: Added circuit breaker and reliability patterns
  */
 
-import { createHash } from "node:crypto";
 import { getConfig } from "../config/yaml-config.js";
+import { hashText } from "../utils/fast-hash.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { CodeAnalyzer } from "../semantic/code-analyzer.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
@@ -608,7 +608,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       };
     }>;
   }> {
-    const fs = await import("node:fs/promises");
+    const { readByteRange, readLineRange, readText } = await import("../utils/file-ops.js");
     const storage = await getGraphStorage();
     const items: Array<{
       entityId?: string;
@@ -636,44 +636,46 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
                 typeof stored.location.start?.index === "number" &&
                 typeof stored.location.end?.index === "number"
               ) {
-                const full = await fs.readFile(filePath, "utf8");
+                // Use optimized byte-range reading instead of loading entire file
                 const startIdx = Math.max(0, stored.location.start.index);
-                const endIdx = Math.min(full.length, stored.location.end.index);
-                if (endIdx > startIdx && endIdx - startIdx < 10000) {
-                  // cap snippet size ~10k chars
-                  code = full.slice(startIdx, endIdx);
+                const endIdx = stored.location.end.index;
+                const snippet = await readByteRange(filePath, startIdx, endIdx, 10000);
+                if (snippet) {
+                  code = snippet;
                   snippetInfo = {
                     startLine: stored.location.start.line,
                     endLine: stored.location.end.line,
-                    length: endIdx - startIdx,
+                    length: snippet.length,
                   };
                 } else {
-                  code = full;
+                  code = await readText(filePath);
                 }
               } else if (
                 stored?.location &&
                 typeof stored.location.start?.line === "number" &&
                 typeof stored.location.end?.line === "number"
               ) {
-                const full = await fs.readFile(filePath, "utf8");
-                const lines = full.split(/\r?\n/);
-                const s = Math.max(0, (stored.location.start.line || 1) - 1);
-                const e = Math.min(lines.length, stored.location.end.line || s + 1);
-                const slice = lines.slice(s, e).join("\n");
-                // Cap snippet length
-                code = slice.length > 10000 ? slice.slice(0, 10000) : slice;
-                snippetInfo = { startLine: s + 1, endLine: e, length: code.length };
+                // Use optimized line-range reading instead of loading entire file
+                const startLine = stored.location.start.line || 1;
+                const endLine = stored.location.end.line || startLine;
+                const snippet = await readLineRange(filePath, startLine, endLine, 10000);
+                if (snippet) {
+                  code = snippet;
+                  snippetInfo = { startLine, endLine, length: snippet.length };
+                } else {
+                  code = await readText(filePath);
+                }
               } else {
                 // Fallback to full file if no location indices
-                code = await fs.readFile(filePath, "utf8");
+                code = await readText(filePath);
               }
             } catch {
               // On any storage read error, fallback to full file
-              code = await fs.readFile(filePath, "utf8");
+              code = await readText(filePath);
             }
           } else {
-            // No entity id; fallback to reading file (could be enhanced with simple name-based heuristics)
-            code = await fs.readFile(filePath, "utf8");
+            // No entity id; fallback to reading file
+            code = await readText(filePath);
           }
         }
       } catch {
@@ -815,7 +817,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     console.error(`[${this.id}] Generating embeddings for ${filteredEntities.length} new entities`);
 
-    const fs = await import("node:fs/promises");
+    const { readText, readByteRange, readLineRange } = await import("../utils/file-ops.js");
     const { CommentExtractor } = await import("../utils/comment-extractor.js");
 
     // Group entities by file for efficient comment extraction
@@ -830,13 +832,13 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       }
     }
 
-    // Extract comments for each file
+    // Extract comments for each file (needs full file content)
     const commentsByFile = new Map<string, ReturnType<typeof CommentExtractor.extractComments>>();
     const associationsByFile = new Map<string, Map<string, any[]>>();
 
     for (const [filePath, fileEntities] of entitiesByFile.entries()) {
       try {
-        const full = await fs.readFile(filePath, "utf8");
+        const full = await readText(filePath);
         const commentsResult = CommentExtractor.extractComments(full, filePath);
         commentsByFile.set(filePath, commentsResult);
 
@@ -857,17 +859,15 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         let code = "";
         try {
           if (e.filePath) {
-            const full = await fs.readFile(e.filePath, "utf8");
+            // Use optimized range reading instead of loading entire file
             if (typeof e.location?.start?.index === "number" && typeof e.location?.end?.index === "number") {
               const s = Math.max(0, e.location.start.index);
-              const t = Math.min(full.length, e.location.end.index);
-              if (t > s && t - s < 10000) code = full.slice(s, t);
+              const t = e.location.end.index;
+              const snippet = await readByteRange(e.filePath, s, t, 10000);
+              if (snippet) code = snippet;
             } else if (typeof e.location?.start?.line === "number" && typeof e.location?.end?.line === "number") {
-              const lines = full.split(/\r?\n/);
-              const sLine = Math.max(0, e.location.start.line - 1);
-              const eLine = Math.min(lines.length, e.location.end.line);
-              const slice = lines.slice(sLine, eLine).join("\n");
-              code = slice.length > 10000 ? slice.slice(0, 10000) : slice;
+              const snippet = await readLineRange(e.filePath, e.location.start.line, e.location.end.line, 10000);
+              if (snippet) code = snippet;
             }
           }
         } catch {}
@@ -906,12 +906,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
       const stableId = x.id
         ? `ent:${x.id}`
-        : `doc:${createHash("sha256")
-            .update(
-              `${x.filePath ?? ""}|${x.type}|${x.name}|${x.location?.start?.index ?? -1}-${x.location?.end?.index ?? -1}|${modelName}`,
-            )
-            .digest("base64url")
-            .slice(0, 24)}`;
+        : `doc:${hashText(
+            `${x.filePath ?? ""}|${x.type}|${x.name}|${x.location?.start?.index ?? -1}-${x.location?.end?.index ?? -1}|${modelName}`,
+          ).slice(0, 24)}`;
 
       const storedEntity = entityDataMap.get(x.id);
       const filePath = x.filePath ?? x.path ?? storedEntity?.filePath ?? "";

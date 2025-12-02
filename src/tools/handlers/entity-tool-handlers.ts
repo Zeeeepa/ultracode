@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import { paginate, SAFE_LIMITS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from "../response-limits.js";
 
 // =============================================================================
 // LIST FILE ENTITIES
@@ -17,6 +18,8 @@ import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 const ListFileEntitiesSchema = z.object({
   filePath: z.string(),
   entityTypes: z.array(z.string()).optional(),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.entities),
 });
 
 export class ListFileEntitiesToolHandler extends BaseToolHandler<z.infer<typeof ListFileEntitiesSchema>> {
@@ -33,7 +36,12 @@ export class ListFileEntitiesToolHandler extends BaseToolHandler<z.infer<typeof 
       filters.entityType = args.entityTypes;
     }
 
-    const entities = await storage.findEntities({ filters, limit: 1000 });
+    // Fetch all entities for this file (storage handles its own limit)
+    const allEntities = await storage.findEntities({ filters, limit: 5000 });
+
+    // Apply pagination
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
+    const paginatedResult = paginate(allEntities, args.offset, safeLimit);
 
     return {
       content: [
@@ -42,8 +50,9 @@ export class ListFileEntitiesToolHandler extends BaseToolHandler<z.infer<typeof 
           text: JSON.stringify(
             {
               file: normalizedPath,
-              count: entities.length,
-              entities: entities.map((e: any) => ({
+              count: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              entities: paginatedResult.data.map((e: any) => ({
                 id: e.id,
                 name: e.name,
                 type: e.type,
@@ -69,6 +78,8 @@ const ListEntityRelationshipsSchema = z.object({
   entityName: z.string().optional(),
   relationshipTypes: z.array(z.string()).optional(),
   direction: z.enum(["incoming", "outgoing", "both"]).optional().default("both"),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.relationships),
 });
 
 export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<typeof ListEntityRelationshipsSchema>> {
@@ -113,6 +124,10 @@ export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<
       filtered = filtered.filter((r: any) => args.relationshipTypes!.includes(r.type));
     }
 
+    // Apply pagination
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
+    const paginatedResult = paginate(filtered, args.offset, safeLimit);
+
     return {
       content: [
         {
@@ -120,8 +135,9 @@ export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<
           text: JSON.stringify(
             {
               entityId,
-              count: filtered.length,
-              relationships: filtered,
+              count: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              relationships: paginatedResult.data,
             },
             null,
             2,
@@ -139,7 +155,8 @@ export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<
 const QuerySchema = z.object({
   query: z.string(),
   type: z.enum(["entities", "relationships", "both"]).optional().default("both"),
-  limit: z.number().optional().default(100),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(DEFAULT_PAGE_SIZE),
 });
 
 export class QueryToolHandler extends BaseToolHandler<z.infer<typeof QuerySchema>> {
@@ -149,21 +166,30 @@ export class QueryToolHandler extends BaseToolHandler<z.infer<typeof QuerySchema
 
   protected async execute(args: z.infer<typeof QuerySchema>): Promise<ToolResult> {
     const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     const results: any = {};
+    const pagination: any = {};
 
     if (args.type === "entities" || args.type === "both") {
-      results.entities = await storage.searchEntities({
+      // Fetch more than needed for pagination info
+      const allEntities = await storage.searchEntities({
         namePattern: args.query,
-        limit: args.limit,
+        limit: 1000,
       });
+      const paginatedEntities = paginate(allEntities, args.offset, safeLimit);
+      results.entities = paginatedEntities.data;
+      pagination.entities = paginatedEntities.pagination;
     }
 
     if (args.type === "relationships" || args.type === "both") {
-      results.relationships = await storage.findRelationships({
+      const allRelationships = await storage.findRelationships({
         filters: {},
-        limit: args.limit,
+        limit: 1000,
       });
+      const paginatedRelationships = paginate(allRelationships, args.offset, safeLimit);
+      results.relationships = paginatedRelationships.data;
+      pagination.relationships = paginatedRelationships.pagination;
     }
 
     return {
@@ -175,6 +201,7 @@ export class QueryToolHandler extends BaseToolHandler<z.infer<typeof QuerySchema
               query: args.query,
               entitiesFound: results.entities?.length || 0,
               relationshipsFound: results.relationships?.length || 0,
+              pagination,
               results,
             },
             null,

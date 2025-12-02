@@ -1,11 +1,9 @@
-import { createHash } from "node:crypto";
-
+import { hashText } from "../../../utils/fast-hash.js";
 import type { IMapFrame, IOptions, IToken, ITokensMap } from "../core";
 
 const TOKEN_HASH_LENGTH = 20;
 
-const defaultHash = (value: string): string =>
-  createHash("md5").update(value).digest("hex").substring(0, TOKEN_HASH_LENGTH);
+const defaultHash = (value: string): string => hashText(value).substring(0, TOKEN_HASH_LENGTH);
 
 export class TokensMap implements ITokensMap, Iterator<IMapFrame | boolean>, Iterable<IMapFrame | boolean> {
   private position = 0;

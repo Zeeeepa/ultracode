@@ -1,7 +1,7 @@
 /**
  * TASK-003B: Enhanced Parser Agent Type Definitions
  *
- * Type definitions for the tree-sitter based parser agent.
+ * Type definitions for native language parsers.
  * Provides interfaces for parsing, entity extraction, and incremental processing.
  * Enhanced for TASK-003B with advanced Python language support across 4 layers.
  *
@@ -9,7 +9,8 @@
  * - Agent Types: src/types/agent.ts
  * - Base Agent: src/agents/base.ts
  * - Python Analyzer: src/parsers/python-analyzer.ts
- * - ADR-003B: Advanced Python Features Implementation
+ * - TypeScript Parser: src/parsers/typescript-parser.ts
+ * - Unified Parser: src/parsers/unified-parser.ts
  */
 
 // =============================================================================
@@ -417,40 +418,53 @@ export interface ParserStats {
 }
 
 /**
- * Tree-sitter specific types
+ * AST Node interface (generic, works with any parser)
+ * Used for interoperability between different parser implementations.
  */
-export interface TreeSitterNode {
+export interface ASTNode {
   type: string;
   startPosition: { row: number; column: number };
   endPosition: { row: number; column: number };
   startIndex: number;
   endIndex: number;
   text: string;
-  children: TreeSitterNode[];
-  namedChildren: TreeSitterNode[];
+  children: ASTNode[];
+  namedChildren: ASTNode[];
   childCount: number;
   namedChildCount: number;
-  parent: TreeSitterNode | null;
-  nextSibling: TreeSitterNode | null;
-  previousSibling: TreeSitterNode | null;
+  parent: ASTNode | null;
+  nextSibling: ASTNode | null;
+  previousSibling: ASTNode | null;
 
-  child(index: number): TreeSitterNode | null;
-  namedChild(index: number): TreeSitterNode | null;
-  childForFieldName(fieldName: string): TreeSitterNode | null;
-  firstChild: TreeSitterNode | null;
-  lastChild: TreeSitterNode | null;
-  firstNamedChild: TreeSitterNode | null;
-  lastNamedChild: TreeSitterNode | null;
-  descendantForPosition(position: { row: number; column: number }): TreeSitterNode;
-  descendantsOfType(type: string): TreeSitterNode[];
+  // Methods for tree-sitter compatibility (required for analyzers)
+  child(index: number): ASTNode | null;
+  namedChild(index: number): ASTNode | null;
+  childForFieldName(fieldName: string): ASTNode | null;
+  firstChild: ASTNode | null;
+  lastChild: ASTNode | null;
+  firstNamedChild: ASTNode | null;
+  lastNamedChild: ASTNode | null;
+  descendantForPosition(position: { row: number; column: number }): ASTNode;
+  descendantsOfType(type: string): ASTNode[];
 }
 
+/**
+ * @deprecated Use ASTNode instead. Kept for backward compatibility with analyzers.
+ */
+export type TreeSitterNode = ASTNode;
+
+/**
+ * @deprecated Use standard tree traversal. Kept for backward compatibility.
+ */
 export interface TreeSitterTree {
-  rootNode: TreeSitterNode;
-  edit(edit: TreeSitterEdit): void;
-  walk(): TreeSitterCursor;
+  rootNode: ASTNode;
+  edit?(edit: TreeSitterEdit): void;
+  walk?(): TreeSitterCursor;
 }
 
+/**
+ * @deprecated Kept for backward compatibility with incremental parsing.
+ */
 export interface TreeSitterEdit {
   startIndex: number;
   oldEndIndex: number;
@@ -460,6 +474,9 @@ export interface TreeSitterEdit {
   newEndPosition: { row: number; column: number };
 }
 
+/**
+ * @deprecated Kept for backward compatibility.
+ */
 export interface TreeSitterCursor {
   nodeType: string;
   nodeText: string;
@@ -467,7 +484,7 @@ export interface TreeSitterCursor {
   endPosition: { row: number; column: number };
   startIndex: number;
   endIndex: number;
-  currentNode(): TreeSitterNode;
+  currentNode(): ASTNode;
   gotoFirstChild(): boolean;
   gotoNextSibling(): boolean;
   gotoParent(): boolean;

@@ -6,13 +6,13 @@
  *
  * Architecture References:
  * - Parser Types: src/types/parser.ts
- * - Tree-sitter Parser: src/parsers/tree-sitter-parser.ts
+ * - Unified Parser: src/parsers/unified-parser.ts
+ * - TypeScript Parser: src/parsers/typescript-parser.ts
  */
 
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { promises as fs } from "node:fs";
 import { extname } from "node:path";
 import { LRUCache } from "lru-cache";
 import xxhash from "xxhash-wasm";
@@ -24,8 +24,8 @@ import type {
   ParserStats,
   SupportedLanguage,
 } from "../types/parser.js";
-import { readFilesParallel } from "../utils/file-ops.js";
-import { TreeSitterParser } from "./tree-sitter-parser.js";
+import { readFilesParallel, readText } from "../utils/file-ops.js";
+import { UnifiedParser } from "./unified-parser.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -75,7 +75,7 @@ function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * Incremental parser with advanced caching and batch processing
  */
 export class IncrementalParser {
-  private parser: TreeSitterParser;
+  private parser: UnifiedParser;
   private cache: LRUCache<string, CacheEntry>;
   private hashFunction: HashFunction | null = null;
   private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
@@ -84,7 +84,7 @@ export class IncrementalParser {
 
   constructor(cacheSize: number = DEFAULT_CACHE_SIZE) {
     // TASK-001: Initialize parser and cache
-    this.parser = new TreeSitterParser();
+    this.parser = new UnifiedParser();
 
     // lru-cache v11: add max parameter and ttlAutopurge
     this.cache = new LRUCache<string, CacheEntry>({
@@ -116,7 +116,7 @@ export class IncrementalParser {
   async initialize(): Promise<void> {
     console.error("[IncrementalParser] Initializing...");
 
-    // Initialize tree-sitter parser
+    // Initialize unified parser (TypeScript Compiler API + fallbacks)
     await this.parser.initialize();
 
     // Initialize xxHash for ultra-fast hashing (10-15x faster than SHA-256)
@@ -156,7 +156,7 @@ export class IncrementalParser {
     try {
       // Read content if not provided
       if (content === undefined) {
-        content = await fs.readFile(filePath, "utf-8");
+        content = await readText(filePath);
       }
 
       // Compute hash
@@ -263,7 +263,7 @@ export class IncrementalParser {
         contents = [];
         for (const file of batch) {
           try {
-            contents.push(await fs.readFile(file, "utf-8"));
+            contents.push(await readText(file));
           } catch {
             contents.push(""); // Empty content will cause parse error
           }

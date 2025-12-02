@@ -158,6 +158,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
   // Heartbeat and health tracking
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private healthMonitorTimer: ReturnType<typeof setInterval> | null = null;
+  private performanceTimer: ReturnType<typeof setInterval> | null = null;
   private readonly HEARTBEAT_INTERVAL_MS = 5000;
   private readonly AGENT_STALE_MS = 30000; // 30s without activity => suspect
   private agentLastSeen: Map<string, number> = new Map();
@@ -209,6 +211,20 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   protected async onShutdown(): Promise<void> {
     console.error(`[CONDUCTOR] Shutting down orchestrator and all managed agents...`);
 
+    // Clear all intervals to prevent memory leaks
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.healthMonitorTimer) {
+      clearInterval(this.healthMonitorTimer);
+      this.healthMonitorTimer = null;
+    }
+    if (this.performanceTimer) {
+      clearInterval(this.performanceTimer);
+      this.performanceTimer = null;
+    }
+
     // Log delegation statistics
     console.error(`[CONDUCTOR] Delegation Statistics:`);
     console.error(`  - Direct implementation attempts blocked: ${this.directImplementationAttempts}`);
@@ -219,6 +235,15 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     );
     await Promise.all(shutdownPromises);
     this.agents.clear();
+
+    // Clear all caches
+    this.delegationLog.clear();
+    this.methodProposals.clear();
+    this.approvalRequired.clear();
+    this.agentLastSeen.clear();
+    this.taskComplexityCache.clear();
+    this.agentLoadCache.clear();
+    this.pendingTasks.clear();
   }
 
   protected canProcessTask(_task: AgentTask): boolean {
@@ -705,7 +730,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private startHealthMonitoring(): void {
-    setInterval(() => {
+    if (this.healthMonitorTimer) return;
+    this.healthMonitorTimer = setInterval(() => {
       this.checkAgentHealth();
     }, 5000);
   }
@@ -819,10 +845,12 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     this.initializeMethodProposalTemplates();
 
     // Start performance monitoring
-    setInterval(() => {
-      this.updatePerformanceMetrics();
-      this.cleanupCaches();
-    }, 10000); // Every 10 seconds
+    if (!this.performanceTimer) {
+      this.performanceTimer = setInterval(() => {
+        this.updatePerformanceMetrics();
+        this.cleanupCaches();
+      }, 10000); // Every 10 seconds
+    }
 
     console.error(`[CONDUCTOR] TASK-004B: Performance optimizations active`);
   }
@@ -867,7 +895,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private updatePerformanceMetrics(): void {
-    const cacheHits = Array.from(this.agentLoadCache.values()).length;
+    const cacheHits = this.agentLoadCache.size;
     const totalRequests = this.performanceMetrics.totalTasks;
 
     if (totalRequests > 0) {

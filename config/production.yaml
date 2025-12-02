@@ -49,25 +49,22 @@ logging:
   maxFileSize: "100MB"      # Larger log files for production
   maxFiles: 10              # Keep more log files for debugging
 
-# Parser Configuration (Production Optimized)
+# Parser Configuration (Production - Native Parsers)
+# Uses language-native tooling for accurate AST parsing
 parser:
-  treeSitter:
-    enabled: true
-    languageConfigs:
-      - "typescript"
-      - "javascript"
-      - "python"
-      - "c"
-      - "cpp"
-      - "java"
-      - "rust"
-      - "go"
-      - "php"
-      - "ruby"
-      - "swift"
-      - "kotlin"
-    maxFileSize: 5242880      # 5MB maximum file size for production
-    timeout: 90000            # 90 seconds for large batches (Python ~266ms/file × 50 = 13s + overhead)
+  languages:
+    - "typescript"
+    - "javascript"
+    - "python"
+    - "c"
+    - "cpp"
+    - "java"
+    - "rust"
+    - "go"
+    - "kotlin"
+    - "bash"
+  maxFileSize: 5242880      # 5MB maximum file size for production
+  timeout: 90000            # 90 seconds for large batches
     
   incremental:
     enabled: true

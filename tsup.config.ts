@@ -9,18 +9,6 @@ const isPackageMode = BUILD_MODE === "package";
 // Common external dependencies (for reference, actual externals are in noExternal: false)
 const _EXTERNAL_DEPS = [
   "@modelcontextprotocol/sdk",
-  "web-tree-sitter",
-  "tree-sitter-javascript",
-  "tree-sitter-typescript",
-  "tree-sitter-python",
-  "tree-sitter-c",
-  "tree-sitter-cpp",
-  "tree-sitter-c-sharp",
-  "tree-sitter-rust",
-  "tree-sitter-go",
-  "tree-sitter-java",
-  "tree-sitter-bash",
-  "tree-sitter-powershell",
   "sharp",
   "onnxruntime-node",
   "better-sqlite3",
@@ -78,21 +66,6 @@ export default defineConfig([
       // Keep heavy dependencies external to reduce memory footprint
       "@modelcontextprotocol/sdk",
 
-      // Tree-sitter dependencies must remain external (native modules)
-      "tree-sitter",
-      "web-tree-sitter",
-      "tree-sitter-javascript",
-      "tree-sitter-typescript",
-      "tree-sitter-python",
-      "tree-sitter-c",
-      "tree-sitter-cpp",
-      "tree-sitter-c-sharp",
-      "tree-sitter-rust",
-      "tree-sitter-go",
-      "tree-sitter-java",
-      "tree-sitter-bash",
-      "tree-sitter-powershell",
-
       // Native modules with dynamic requires
       "sharp", // Image processing (optional - used by @xenova/transformers)
       "onnxruntime-node", // ONNX runtime native bindings (optional)
@@ -145,6 +118,7 @@ export default defineConfig([
     splitting: false,
     minify: isPackageMode,
     treeshake: true,
+    silent: true, // Suppress tsup output including warnings
 
     // Suppress warnings and configure loaders
     esbuildOptions(options) {
@@ -158,24 +132,17 @@ export default defineConfig([
         ...options.loader,
         ".wasm": "file",
       };
+      // Suppress tree-shaking warnings about unused external imports (from TypeScript compiler)
+      options.logLevel = "error";
+      options.drop = ["console"]; // Remove console.* in worker for cleaner output
     },
 
-    // External dependencies - same as main
+    // Mark fs as external to avoid "unused import" warnings from tree-shaking
+    // Some dependencies import from "fs", others from "node:fs" - need both
     external: [
+      "fs",
+      "node:fs",
       "@modelcontextprotocol/sdk",
-      "tree-sitter",
-      "web-tree-sitter",
-      "tree-sitter-javascript",
-      "tree-sitter-typescript",
-      "tree-sitter-python",
-      "tree-sitter-c",
-      "tree-sitter-cpp",
-      "tree-sitter-c-sharp",
-      "tree-sitter-rust",
-      "tree-sitter-go",
-      "tree-sitter-java",
-      "tree-sitter-bash",
-      "tree-sitter-powershell",
       "sharp",
       "onnxruntime-node",
       "better-sqlite3",

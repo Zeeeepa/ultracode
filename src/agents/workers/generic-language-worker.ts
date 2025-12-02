@@ -97,9 +97,9 @@ async function getAnalyzer(language: string): Promise<any> {
 
       case "typescript":
       case "javascript": {
-        // Use IncrementalParser for TS/JS
-        const { IncrementalParser } = await import("../../parsers/incremental-parser.js");
-        analyzer = new IncrementalParser(100 * 1024 * 1024); // 100MB cache
+        // Use UnifiedParser for TS/JS (TypeScript Compiler API)
+        const { UnifiedParser } = await import("../../parsers/unified-parser.js");
+        analyzer = new UnifiedParser();
         await analyzer.initialize();
         break;
       }
@@ -211,8 +211,9 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
       let result: ParseResult;
 
       if (task.language === "typescript" || task.language === "javascript") {
-        // IncrementalParser has parseFile method
-        result = await analyzer.parseFile(file, undefined, task.options);
+        // UnifiedParser uses parse(path, content, hash) method
+        const hash = Date.now().toString(16); // Simple hash for worker
+        result = await analyzer.parse(file, content, hash);
       } else {
         // Language-specific analyzers have parseFile(path, content)
         result = await analyzer.parseFile(file, content);

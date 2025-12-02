@@ -12,7 +12,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Сборка проекта
 npm run build                 # Компиляция TypeScript через tsup
 npm run build:watch          # Watch-режим для разработки
-npm run build:tree-sitter    # Сборка tree-sitter prebuilds для Node.js 24+
 make package                 # Сборка NPM-пакета с проверками метаданных
 
 # Проверка кода
@@ -43,7 +42,7 @@ node dist/index.js /path/to/project '{"jsonrpc":"2.0","id":"index-1","method":"t
 Проект использует **многоагентную архитектуру LiteRAG** с координацией через `ConductorOrchestrator`:
 
 ### Ключевые агенты
-- **ParserAgent** (`src/agents/parser-agent.ts`) - AST-парсинг через tree-sitter для 10 языков
+- **ParserAgent** (`src/agents/parser-agent.ts`) - AST-парсинг через нативные парсеры языков
 - **IndexerAgent** (`src/agents/indexer-agent.ts`) - Индексация графов в SQLite, батчинг операций
 - **SemanticAgent** (`src/agents/semantic-agent.ts`) - Векторные эмбеддинги, семантический поиск
 - **QueryAgent** (`src/agents/query-agent.ts`) - Выполнение запросов к графу, оптимизация
@@ -119,61 +118,34 @@ parser:
 
 ## Language Parsers
 
-Поддержка 10 языков через tree-sitter анализаторы (`src/parsers/`):
+Поддержка языков через **нативные парсеры** (`src/parsers/`):
 
-- **TypeScript/JavaScript** (`tree-sitter-parser.ts`) - полная поддержка ES6+, JSX, TSX
-- **Python** (`python-analyzer.ts`) - async/await, декораторы, магические методы (40+)
-- **C/C++** (`c-analyzer.ts`, `cpp-analyzer.ts`) - функции, структуры, классы, шаблоны
-- **C#** (`csharp-analyzer.ts`) - классы, интерфейсы, LINQ, async/await
-- **Rust** (`rust-analyzer.ts`) - функции, структуры, traits, impl-блоки
-- **Go** (`go-analyzer.ts`) - пакеты, горутины, интерфейсы
-- **Java** (`java-analyzer.ts`) - классы, рекорды (Java 14+), дженерики
-- **VBA** (`vba-analyzer.ts`) - модули, функции (regex-based)
+### Приоритет 0: TypeScript/JavaScript (in-process)
+- **TypeScript Compiler API** - полная типизация, резолвинг, семантика
+- `ts.createSourceFile()` для быстрого синтаксического парсинга
+- `ts.createProgram()` + `TypeChecker` для полного анализа с типами
+- `@angular/compiler` для Angular templates и компонентов
+
+### Приоритет 1: Python (subprocess)
+- **Python `ast` модуль** - `python -c "import ast; ..."` для базового AST
+- **Pyright** (опционально) - полный type inference через `npx pyright`
+- Требования: Python 3.8+
+
+### Приоритет 2: Java/Kotlin (JAR)
+- **JavaParser** - `java -jar javaparser-cli.jar` для Java AST
+- **kotlin-compiler-embeddable** для Kotlin
+- Требования: JRE 11+
+
+### Приоритет 3: Другие языки
+- **Go**: `go/parser` стандартная библиотека
+- **Rust**: `syn` + `rust-analyzer`
+- **C/C++**: `clang -Xclang -ast-dump=json`
+- **Swift**: SwiftSyntax / SourceKit
 
 Конфигурация языков: `src/parsers/language-configs.ts`
 
-### Tree-sitter Prebuilds (Node.js 24+)
-
-Node.js 24 требует C++20, но tree-sitter компилируется с C++17. Это вызывает ошибки при компиляции:
-```
-error C2039: 'IsNullOrUndefined': is not a member of 'Nan'
-```
-
-**Решение**: Прекомпилированные `.node` файлы для всех платформ:
-
-```
-external-libs/
-├── tree-sitter-win32-x64/      # Windows x64 (~26 MB)
-│   ├── tree-sitter.node
-│   ├── tree-sitter-javascript.node
-│   ├── tree-sitter-typescript.node
-│   └── ... (17 модулей)
-├── tree-sitter-linux-x64/      # Linux x64
-├── tree-sitter-darwin-arm64/   # macOS Apple Silicon
-└── tree-sitter-darwin-x64/     # macOS Intel
-```
-
-**Архитектура загрузки**:
-- `src/parsers/tree-sitter-loader.ts` — универсальный loader для prebuilds
-- `src/parsers/tree-sitter-parser.ts` — использует loader для инициализации парсеров
-
-**Логика загрузки** (приоритет):
-1. Prebuild из `external-libs/tree-sitter-{platform}-{arch}/`
-2. Fallback на npm версию (`node_modules/tree-sitter-xxx/`)
-
-**Сборка prebuilds**:
-```bash
-# Windows
-npm run build:tree-sitter
-# или: powershell scripts/build-tree-sitter-prebuilds.ps1
-
-# Linux/macOS
-bash scripts/build-tree-sitter-prebuilds.sh
-```
-
-**Upstream статус**: tree-sitter PR #240 с фиксом C++20 не мерджится с марта 2025. Есть форк @keqingmoe/tree-sitter с prebuilds, но он не покрывает все грамматики.
-
-Подробности: `docs/TREE_SITTER_PR240.md`
+**Философия**: Разработчик, работающий с кодом на языке X, **всегда имеет** runtime/компилятор X.
+Это устраняет проблемы с NODE_MODULE_VERSION, C++ компиляцией и 28MB prebuilds.
 
 ## Storage Layer
 
@@ -334,10 +306,11 @@ npm rebuild better-sqlite3
 ## Common Development Tasks
 
 **Добавление нового языка:**
-1. Установить tree-sitter грамматику: `npm install tree-sitter-<lang>`
+1. Определить нативный парсер языка (compiler API, CLI tool, LSP)
 2. Создать анализатор в `src/parsers/<lang>-analyzer.ts`
 3. Добавить конфиг в `src/parsers/language-configs.ts`
 4. Добавить тесты в `tests/parsers/`
+5. Обновить README с требованиями к runtime
 
 **Добавление нового MCP-метода:**
 1. Определить схему в `src/index.ts` (zod schema)
@@ -372,14 +345,11 @@ npm rebuild better-sqlite3
 
 **"Семантический поиск не работает"**: проверить `MCP_EMBEDDING_PROVIDER` env и настройки в `config/default.yaml`
 
-**"Tree-sitter compilation error on Node.js 24"**: Node.js 24 требует C++20, но tree-sitter использует C++17. Решение:
-1. Проверить наличие prebuilds в `external-libs/tree-sitter-{platform}-{arch}/`
-2. Если отсутствуют — собрать: `npm run build:tree-sitter`
-3. Loader автоматически выберет prebuild при следующем запуске
-
-**"Cannot find module 'tree-sitter'"**: TypeScript ошибка при сборке. Типы tree-sitter объявлены в `src/types/tree-sitter.d.ts`. Убедитесь что tree-sitter в `external` списке tsup.config.ts.
-
-**"Peer dependency warnings при npm install"**: tree-sitter грамматики имеют устаревшие peerDependencies. Безопасно игнорировать или использовать `--legacy-peer-deps`
+**"Language runtime not found"**: Нативные парсеры требуют установленный runtime языка:
+- TypeScript/JS: Node.js (уже есть)
+- Python: `python --version` (3.8+)
+- Java/Kotlin: `java --version` (JRE 11+)
+- Go: `go version` (1.18+)
 
 ## Bun Runtime Support
 
@@ -463,9 +433,9 @@ src/index.ts                          - MCP server entry point, tool definitions
 src/agents/conductor-orchestrator.ts  - Multi-agent coordinator
 src/storage/graph-storage.ts          - Graph database interface
 src/semantic/embedding-generator.ts   - Embedding pipeline
-src/parsers/tree-sitter-parser.ts     - Tree-sitter парсер для 10 языков
-src/parsers/tree-sitter-loader.ts     - Loader для prebuilds
-src/types/tree-sitter.d.ts            - TypeScript типы для tree-sitter
+src/parsers/typescript-parser.ts      - TypeScript Compiler API парсер
+src/parsers/python-parser.ts          - Python ast парсер (subprocess)
+src/parsers/java-parser.ts            - JavaParser интеграция
 config/default.yaml                   - Default configuration
 package.json                          - Scripts and dependencies
 tsup.config.ts                        - Build configuration (externals)

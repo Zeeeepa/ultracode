@@ -50,23 +50,20 @@ curl -fsSL https://bun.sh/install | bash
 **Установка Ultrascript-tools**
 
 ```bash
-
-# 1. Глобальная установка
+# Bun (рекомендуется)
 bun install -g ultrascript-tools-mcp
 
-# 2. Разрешение на использование прекомпилированных tree-sitter libs (после установки)
-bun pm trust ultrascript-tools-mcp
-
-# 3. Добавить пакеты после разрешения на их установку
-bun install -g ultrascript-tools-mcp
-
-
-# Установка через npm (не рекомендуется)
-npm install -g ultrascript-tools-mcp --legacy-peer-deps
+# npm
+npm install -g ultrascript-tools-mcp
 ```
 
-> При обычной установке появятся warnings о peer dependencies (`ERESOLVE overriding peer dependency`) или ошибки ошибки компиляции node-gyp - всё это можно игнорировать. Просто используемый компонент tree-sitter не успевает вовремя обновляться. Все необходимые для работы пакеты скомпилированы и уже находятся в пакете. Буду искать альтернативу tree-sitter.
-> Отдельный пакет GPU-ускорения для Apple Silicon (M1/M2/M3/M4) пока отсутствует в пакете, скрипт предложит вам собрать его самому.
+> **Примечание**: Для полноценного анализа кода на разных языках требуются соответствующие runtime:
+> - TypeScript/JavaScript — встроено (TypeScript Compiler API)
+> - Python — требуется Python 3.8+ (`python --version`)
+> - Java/Kotlin — требуется JRE 11+ (`java --version`)
+> - Go — требуется Go 1.18+ (`go version`)
+> - Rust — требуется Rust toolchain (`rustc --version`)
+> - C/C++ — требуется Clang 12+ (`clang --version`)
 
 
 
@@ -304,27 +301,6 @@ bun install -g ultrascript-tools-mcp --legacy-peer-deps
 # Node
 npm cache clean --force
 npm install -g ultrascript-tools-mcp --legacy-peer-deps
-```
-
-### Tree-sitter ошибки на Node.js 24
-
-Если видите ошибки компиляции tree-sitter:
-```
-error C2039: 'IsNullOrUndefined': is not a member of 'Nan'
-```
-
-Это значит что prebuilds не были найдены. npm-пакет включает прекомпилированные модули для:
-- Windows x64/arm64
-- Linux x64/arm64
-- macOS x64/arm64
-
-Если ваша платформа не поддерживается, можете собрать prebuilds вручную:
-```bash
-# Windows
-npm run build:tree-sitter
-
-# Linux/macOS
-bash scripts/build-tree-sitter-prebuilds.sh
 ```
 
 ### Настройка эмбеддингов

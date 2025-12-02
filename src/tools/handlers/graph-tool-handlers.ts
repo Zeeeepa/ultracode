@@ -11,6 +11,7 @@
 
 import { z } from "zod";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import { paginate, SAFE_LIMITS, MAX_PAGE_SIZE } from "../response-limits.js";
 
 // =============================================================================
 // RESET GRAPH
@@ -84,7 +85,8 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
 
 const GetGraphSchema = z.object({
   entityTypes: z.array(z.string()).optional(),
-  limit: z.number().optional().default(1000),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.graphNodes),
   includeRelationships: z.boolean().optional().default(true),
 });
 
@@ -95,19 +97,25 @@ export class GetGraphToolHandler extends BaseToolHandler<z.infer<typeof GetGraph
 
   protected async execute(args: z.infer<typeof GetGraphSchema>): Promise<ToolResult> {
     const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    const entities = await storage.findEntities({
+    // Fetch all entities (up to 5000 for pagination accuracy)
+    const allEntities = await storage.findEntities({
       filters: args.entityTypes ? { entityType: args.entityTypes } : {},
-      limit: args.limit,
+      limit: 5000,
     });
 
-    let relationships: any[] = [];
-    if (args.includeRelationships && entities.length > 0) {
-      const entityIds = entities.map((e: any) => e.id);
-      relationships = await storage.findRelationships({
+    const paginatedEntities = paginate(allEntities, args.offset, safeLimit);
+
+    let paginatedRelationships: any = { data: [], pagination: { offset: 0, limit: 0, total: 0, hasMore: false } };
+
+    if (args.includeRelationships && paginatedEntities.data.length > 0) {
+      const entityIds = paginatedEntities.data.map((e: any) => e.id);
+      const allRelationships = await storage.findRelationships({
         filters: { fromId: entityIds },
-        limit: args.limit,
+        limit: 5000,
       });
+      paginatedRelationships = paginate(allRelationships, 0, safeLimit);
     }
 
     return {
@@ -116,9 +124,16 @@ export class GetGraphToolHandler extends BaseToolHandler<z.infer<typeof GetGraph
           type: "text",
           text: JSON.stringify(
             {
-              entities: entities.length,
-              relationships: relationships.length,
-              data: { entities, relationships },
+              entities: paginatedEntities.data.length,
+              relationships: paginatedRelationships.data.length,
+              pagination: {
+                entities: paginatedEntities.pagination,
+                relationships: paginatedRelationships.pagination,
+              },
+              data: {
+                entities: paginatedEntities.data,
+                relationships: paginatedRelationships.data,
+              },
             },
             null,
             2,

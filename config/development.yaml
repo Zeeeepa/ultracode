@@ -98,24 +98,22 @@ logging:
   maxFileSize: "10MB"      # Small log files
   maxFiles: 3              # Keep fewer log files
 
-# Parser Configuration (Development)
+# Parser Configuration (Development - Native Parsers)
+# Uses language-native tooling for accurate AST parsing
 parser:
-  treeSitter:
-    enabled: true
-    languageConfigs:
-      - "typescript"
-      - "javascript"
-      - "python"           # Core languages for development
-      - "c"                # C language support
-      - "cpp"              # C++ language support
-      - "csharp"           # C# language support
-      - "rust"             # Rust language support
-      - "go"               # Go language support
-      - "java"             # Java language support
-      - "kotlin"           # Kotlin language support
-      - "vba"              # VBA language support (regex-based)
-    maxFileSize: 524288     # 512KB for quick parsing
-    timeout: 60000         # 1 minute for large batches (Kotlin projects)
+  languages:
+    - "typescript"
+    - "javascript"
+    - "python"           # Core languages for development
+    - "c"                # C language support
+    - "cpp"              # C++ language support
+    - "rust"             # Rust language support
+    - "go"               # Go language support
+    - "java"             # Java language support
+    - "kotlin"           # Kotlin language support
+    - "bash"             # Shell script support
+  maxFileSize: 524288     # 512KB for quick parsing
+  timeout: 60000         # 1 minute for large batches (Kotlin projects)
     
   incremental:
     enabled: true

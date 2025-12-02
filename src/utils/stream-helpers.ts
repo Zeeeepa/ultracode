@@ -10,7 +10,7 @@
  */
 
 import { createReadStream, createWriteStream } from "node:fs";
-import { pipeline, Readable, Transform, Writable } from "node:stream";
+import { pipeline, Transform } from "node:stream";
 import { promisify } from "node:util";
 
 // =============================================================================
@@ -30,19 +30,11 @@ export interface LineTransformOptions {
   maxLineLength?: number;
 }
 
-export interface ChunkProcessorOptions<T, R> {
-  chunkSize: number;
-  processor: (chunk: T[]) => Promise<R[]>;
-  onProgress?: (processed: number, total: number) => void;
-}
-
 // =============================================================================
 // CONSTANTS
 // =============================================================================
 
-// const DEFAULT_CHUNK_SIZE = 64 * 1024; // 64KB (reserved for future use)
 const DEFAULT_HIGH_WATER_MARK = 16 * 1024; // 16KB
-const DEFAULT_MAX_LINE_LENGTH = 1024 * 1024; // 1MB per line
 
 // Promisified pipeline
 const pipelineAsync = promisify(pipeline);
@@ -83,107 +75,6 @@ export async function streamCopyFile(
   return bytesWritten;
 }
 
-/**
- * Read file line by line using streams (memory-efficient)
- */
-export async function streamReadLines(
-  filePath: string,
-  lineHandler: (line: string, lineNumber: number) => Promise<void> | void,
-  options: LineTransformOptions = {},
-): Promise<number> {
-  const { encoding = "utf-8", skipEmpty = false, maxLineLength = DEFAULT_MAX_LINE_LENGTH } = options;
-
-  let lineNumber = 0;
-  let buffer = "";
-
-  const readStream = createReadStream(filePath, { encoding, highWaterMark: DEFAULT_HIGH_WATER_MARK });
-
-  const lineProcessor = new Transform({
-    encoding: encoding as BufferEncoding,
-    async transform(chunk: Buffer, _encoding, callback) {
-      buffer += chunk.toString();
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || ""; // Keep incomplete line in buffer
-
-      for (const line of lines) {
-        if (skipEmpty && line.trim().length === 0) continue;
-
-        if (line.length > maxLineLength) {
-          callback(new Error(`Line ${lineNumber + 1} exceeds max length (${maxLineLength})`));
-          return;
-        }
-
-        lineNumber++;
-        try {
-          await lineHandler(line, lineNumber);
-        } catch (error) {
-          callback(error as Error);
-          return;
-        }
-      }
-
-      callback();
-    },
-
-    async flush(callback) {
-      // Process remaining buffer
-      if (buffer.length > 0 && (!skipEmpty || buffer.trim().length > 0)) {
-        lineNumber++;
-        try {
-          await lineHandler(buffer, lineNumber);
-        } catch (error) {
-          callback(error as Error);
-          return;
-        }
-      }
-      callback();
-    },
-  });
-
-  await pipelineAsync(
-    readStream,
-    lineProcessor,
-    new Writable({
-      write(_chunk, _encoding, callback) {
-        callback();
-      },
-    }),
-  );
-
-  return lineNumber;
-}
-
-/**
- * Write lines to file using streams
- */
-export async function streamWriteLines(
-  filePath: string,
-  lines: AsyncIterable<string> | Iterable<string>,
-  options: { encoding?: BufferEncoding; appendNewline?: boolean } = {},
-): Promise<number> {
-  const { encoding = "utf-8", appendNewline = true } = options;
-
-  let linesWritten = 0;
-  const writeStream = createWriteStream(filePath, { encoding });
-
-  const lineReader = Readable.from(lines, { encoding: encoding as BufferEncoding });
-
-  const lineFormatter = new Transform({
-    encoding: encoding as BufferEncoding,
-    transform(chunk: Buffer, _encoding, callback) {
-      linesWritten++;
-      const line = chunk.toString();
-      const output = appendNewline ? `${line}\n` : line;
-      callback(null, output);
-    },
-  });
-
-  await pipelineAsync(lineReader, lineFormatter, writeStream);
-
-  return linesWritten;
-}
-
 // =============================================================================
 // STREAMING TRANSFORMATIONS
 // =============================================================================
@@ -191,7 +82,7 @@ export async function streamWriteLines(
 /**
  * Transform stream that processes lines
  */
-export class LineTransformStream extends Transform {
+class LineTransformStream extends Transform {
   private buffer = "";
   private lineNumber = 0;
 
@@ -315,195 +206,4 @@ export async function streamReplaceRange(
     },
     { encoding: encoding as BufferEncoding },
   );
-}
-
-// =============================================================================
-// BATCH PROCESSING WITH STREAMING
-// =============================================================================
-
-/**
- * Process items in batches using streams
- */
-export async function streamBatchProcess<T, R>(
-  items: AsyncIterable<T> | Iterable<T>,
-  options: ChunkProcessorOptions<T, R>,
-): Promise<R[]> {
-  const { chunkSize, processor, onProgress } = options;
-
-  const results: R[] = [];
-  let batch: T[] = [];
-  let processedCount = 0;
-
-  const itemReader = Readable.from(items);
-
-  const batchProcessor = new Transform({
-    objectMode: true,
-    async transform(item: T, _encoding, callback) {
-      batch.push(item);
-
-      if (batch.length >= chunkSize) {
-        try {
-          const batchResults = await processor(batch);
-          results.push(...batchResults);
-          processedCount += batch.length;
-
-          if (onProgress) {
-            onProgress(processedCount, -1); // Total unknown in streaming
-          }
-
-          batch = [];
-          callback();
-        } catch (error) {
-          callback(error as Error);
-        }
-      } else {
-        callback();
-      }
-    },
-
-    async flush(callback) {
-      // Process remaining batch
-      if (batch.length > 0) {
-        try {
-          const batchResults = await processor(batch);
-          results.push(...batchResults);
-          processedCount += batch.length;
-
-          if (onProgress) {
-            onProgress(processedCount, processedCount);
-          }
-
-          callback();
-        } catch (error) {
-          callback(error as Error);
-        }
-      } else {
-        callback();
-      }
-    },
-  });
-
-  await pipelineAsync(
-    itemReader,
-    batchProcessor,
-    new Writable({
-      objectMode: true,
-      write(_chunk, _encoding, callback) {
-        callback();
-      },
-    }),
-  );
-
-  return results;
-}
-
-// =============================================================================
-// STREAMING UTILITIES
-// =============================================================================
-
-/**
- * Create a readable stream from async generator
- */
-export function createReadableFromAsync<T>(asyncGenerator: AsyncIterable<T>): Readable {
-  return Readable.from(asyncGenerator, { objectMode: true });
-}
-
-/**
- * Create a transform stream from async function
- */
-export function createTransformFromAsync<T, R>(transformer: (chunk: T) => Promise<R>): Transform {
-  return new Transform({
-    objectMode: true,
-    async transform(chunk: T, _encoding, callback) {
-      try {
-        const result = await transformer(chunk);
-        callback(null, result);
-      } catch (error) {
-        callback(error as Error);
-      }
-    },
-  });
-}
-
-/**
- * Collect all chunks from stream into array
- */
-export async function streamToArray<T>(stream: Readable): Promise<T[]> {
-  const chunks: T[] = [];
-
-  await pipelineAsync(
-    stream,
-    new Writable({
-      objectMode: true,
-      write(chunk: T, _encoding, callback) {
-        chunks.push(chunk);
-        callback();
-      },
-    }),
-  );
-
-  return chunks;
-}
-
-/**
- * Pipe stream with error handling
- */
-export async function safePipeline(...streams: (Readable | Writable | Transform)[]): Promise<void> {
-  try {
-    // @ts-expect-error - pipelineAsync accepts variable number of stream arguments
-    await pipelineAsync(...streams);
-  } catch (error) {
-    // Cleanup: destroy all streams on error
-    for (const stream of streams) {
-      if ("destroy" in stream && typeof stream.destroy === "function") {
-        stream.destroy();
-      }
-    }
-    throw error;
-  }
-}
-
-// =============================================================================
-// MEMORY MONITORING
-// =============================================================================
-
-/**
- * Monitor memory usage during streaming operation
- */
-export async function streamWithMemoryMonitoring<T>(
-  operation: () => Promise<T>,
-  options: { logInterval?: number; maxMemoryMB?: number } = {},
-): Promise<{ result: T; peakMemoryMB: number; avgMemoryMB: number }> {
-  const { logInterval = 1000, maxMemoryMB = 500 } = options;
-
-  let peakMemory = 0;
-  let totalMemory = 0;
-  let samples = 0;
-
-  const monitorInterval = setInterval(() => {
-    const memoryUsage = process.memoryUsage();
-    const heapUsedMB = Math.round(memoryUsage.heapUsed / 1024 / 1024);
-
-    peakMemory = Math.max(peakMemory, heapUsedMB);
-    totalMemory += heapUsedMB;
-    samples++;
-
-    if (maxMemoryMB && heapUsedMB > maxMemoryMB) {
-      console.warn(`[StreamHelpers] Memory usage (${heapUsedMB}MB) exceeds limit (${maxMemoryMB}MB)`);
-    }
-  }, logInterval);
-
-  try {
-    const result = await operation();
-    clearInterval(monitorInterval);
-
-    return {
-      result,
-      peakMemoryMB: peakMemory,
-      avgMemoryMB: samples > 0 ? Math.round(totalMemory / samples) : 0,
-    };
-  } catch (error) {
-    clearInterval(monitorInterval);
-    throw error;
-  }
 }

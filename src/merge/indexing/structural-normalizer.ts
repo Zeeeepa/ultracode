@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hashText } from "../../utils/fast-hash.js";
 
 /**
  * Нормализует AST для structural hash (Fast Path Level 2).
@@ -52,7 +52,7 @@ export class StructuralNormalizer {
    * @returns Hex-encoded SHA256 hash
    */
   computeStructuralHash(normalizedCode: string): string {
-    return createHash("sha256").update(normalizedCode, "utf8").digest("hex");
+    return hashText(normalizedCode);
   }
 
   /**
