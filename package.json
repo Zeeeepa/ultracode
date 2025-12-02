@@ -1,6 +1,6 @@
 {
   "name": "ultrascript-tools-mcp",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/Go/Rust/Java/C++/Kotlin",
   "license": "MIT",
   "author": "faxenoff",
@@ -37,7 +37,6 @@
     "bin/**/*.js",
     "dist/**/*.js",
     "dist/**/*.wasm",
-    "dist/**/*.node",
     "dist/**/*.d.ts",
     "dist/ultrascript-tools.com",
     "external-libs/cuda-win32-x64/*.node",
