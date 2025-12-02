@@ -47,11 +47,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 // Schema and Node.js built-ins
 import { z } from "zod";
-import { zodToJsonSchema as _zodToJsonSchema } from "zod-to-json-schema";
 
-// Helper to convert Zod schemas to JSON Schema with proper typing for Zod v4
+// Helper to convert Zod schemas to JSON Schema using native Zod v4 method
 function zodToJsonSchema(schema: z.ZodSchema): Record<string, unknown> {
-  const result = _zodToJsonSchema(schema as any) as Record<string, unknown>;
+  const result = z.toJSONSchema(schema) as Record<string, unknown>;
   // Ensure type: "object" is present for MCP compatibility
   if (!result.type) {
     result.type = "object";
