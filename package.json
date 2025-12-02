@@ -129,7 +129,7 @@
     "node-addon-api": "^8.5.0",
     "node-gyp": "^12.1.0",
     "simple-git-hooks": "^2.13.1",
-    "ts-jest": "^29.4.5",
+    "ts-jest": "^29.4.6",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },
@@ -139,13 +139,13 @@
     "@types/eslint": "^9.6.1",
     "better-sqlite3": "^12.5.0",
     "eslint": "^9.39.1",
-    "lru-cache": "^11.2.2",
+    "lru-cache": "^11.2.4",
     "nanoid": "^5.1.6",
     "sqlite-vec": "^0.1.6",
     "vectorlite": "^0.2.0",
     "xxhash-wasm": "^1.1.0",
     "yaml": "^2.8.2",
-    "zod": "^4.1.13",
+    "zod": "^3.25.76",
     "zod-to-json-schema": "^3.25.0"
   },
   "optionalDependencies": {
