@@ -150,21 +150,6 @@ try {
             Write-Host "  + $CudaDst/ultrascript_cuda.node" -ForegroundColor Gray
         }
 
-        # Сборка tree-sitter prebuilds для текущей платформы
-        Write-Step "Сборка tree-sitter prebuilds..."
-        $TreeSitterPrebuildDir = "external-libs/tree-sitter-win32-x64"
-        if (-not (Test-Path "$TreeSitterPrebuildDir/*.node")) {
-            Write-Host "  Собираем prebuilds для Node.js 24..." -ForegroundColor Gray
-            & "$PSScriptRoot/build-tree-sitter-prebuilds.ps1"
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "  + tree-sitter prebuilds" -ForegroundColor Gray
-            } else {
-                Write-Warning "  tree-sitter prebuilds не собраны"
-            }
-        } else {
-            Write-Host "  + tree-sitter prebuilds уже существуют" -ForegroundColor Gray
-        }
-
         # Копирование Comm binary если есть
         if (Test-Path "src/comm/ultrascript-tools.com") {
             try {
