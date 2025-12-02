@@ -11,6 +11,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { platform } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,11 +49,24 @@ process.env.ULTRASCRIPT_DIST_DIR = distDir;
 const args = process.argv.slice(2);
 
 // Spawn Comm with inherited stdio (for MCP JSON-RPC over stdio)
-const child = spawn(commBinary, args, {
-  stdio: "inherit",
-  env: process.env,
-  windowsHide: true, // Don't show console window on Windows
-});
+// On macOS, APE (Actually Portable Executable) requires sh wrapper on older zsh (<5.9)
+// macOS Ventura (13) ships with zsh 5.8 which doesn't support APE directly
+let child;
+if (platform() === "darwin") {
+  // Use sh -c to execute .com file - works on all macOS versions
+  const quotedArgs = args.map((a) => `"${a.replace(/"/g, '\\"')}"`).join(" ");
+  const cmd = quotedArgs ? `"${commBinary}" ${quotedArgs}` : `"${commBinary}"`;
+  child = spawn("sh", ["-c", cmd], {
+    stdio: "inherit",
+    env: process.env,
+  });
+} else {
+  child = spawn(commBinary, args, {
+    stdio: "inherit",
+    env: process.env,
+    windowsHide: true, // Don't show console window on Windows
+  });
+}
 
 child.on("error", (err) => {
   console.error(`Failed to start Comm: ${err.message}`);
