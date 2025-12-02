@@ -4,10 +4,10 @@
  * that are delegated by the Conductor orchestrator
  */
 
-import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
+import { hashText } from "../utils/fast-hash.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { getSQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
@@ -384,6 +384,13 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
           const results = (await this.parserAgent.process(parseTask)) as any[]; // ParseResult[]
 
+          // DEBUG: Log parse results count
+          logger.info("DEV_AGENT", "Parser batch completed", {
+            batchSent: batch.length,
+            resultsReceived: results?.length || 0,
+            batchIndex: i,
+          });
+
           const byFile = new Map<string, { entities: any[]; relationships: any[] }>();
 
           for (const res of results || []) {
@@ -411,29 +418,52 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             byFile.set(fp, slot);
           }
 
-          for (const [file, group] of byFile.entries()) {
-            const indexTask: AgentTask = {
-              id: `index-entities-${Date.now()}-${i}-${file}`,
-              type: "index:entities",
-              priority: 7,
-              payload: {
-                entities: group.entities,
-                relationships: group.relationships,
-                filePath: file,
-              },
-              createdAt: Date.now(),
-            };
+          // DEBUG: Log how many unique files have results
+          logger.info("DEV_AGENT", "Files ready for indexing", {
+            uniqueFiles: byFile.size,
+            batchIndex: i,
+          });
 
-            try {
-              const indexResult = await this.indexerAgent?.process(indexTask);
-              const indexed = indexResult as any;
-              if (indexed) {
-                totalEntities += indexed.entitiesIndexed || 0;
-                totalRelationships += indexed.relationshipsCreated || 0;
+          // Параллельная индексация с ограничением concurrency
+          // IMPORTANT: Use indexer's maxConcurrency (default 2), not DevAgent's!
+          // Otherwise tasks get rejected with AgentBusyError when queue is full
+          const INDEXING_CONCURRENCY = 1; // Sequential to avoid AgentBusyError
+          const fileEntries = Array.from(byFile.entries());
+
+          // Обрабатываем группами для ограничения параллелизма
+          for (let j = 0; j < fileEntries.length; j += INDEXING_CONCURRENCY) {
+            const chunk = fileEntries.slice(j, j + INDEXING_CONCURRENCY);
+
+            const chunkResults = await Promise.all(
+              chunk.map(async ([file, group]) => {
+                const indexTask: AgentTask = {
+                  id: `index-entities-${Date.now()}-${i}-${file}`,
+                  type: "index:entities",
+                  priority: 7,
+                  payload: {
+                    entities: group.entities,
+                    relationships: group.relationships,
+                    filePath: file,
+                  },
+                  createdAt: Date.now(),
+                };
+
+                try {
+                  const indexResult = await this.indexerAgent?.process(indexTask);
+                  return { result: indexResult as any, error: null };
+                } catch (err) {
+                  console.error(`[DevAgent ${this.id}] Indexing failed for file ${file}:`, err);
+                  return { result: null, error: err };
+                }
+              }),
+            );
+
+            for (const { result } of chunkResults) {
+              if (result) {
+                totalEntities += result.entitiesIndexed || 0;
+                totalRelationships += result.relationshipsCreated || 0;
                 filesProcessed += 1;
               }
-            } catch (err) {
-              console.error(`[DevAgent ${this.id}] Indexing failed for file ${file}:`, err);
             }
           }
 
@@ -464,7 +494,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             if (isData) {
               try {
                 fileContent = readFileSync(file, "utf-8");
-                contentHash = createHash("sha256").update(fileContent).digest("hex");
+                contentHash = hashText(fileContent);
               } catch {
                 // Не удалось прочитать файл - пропускаем hash
               }
@@ -621,6 +651,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
   private async collectFiles(directory: string, excludePatterns: string[]): Promise<string[]> {
     const files: string[] = [];
+    // Note: test/tests/__tests__ NOT excluded - they can contain real code
+    // Use excludePatterns parameter to explicitly exclude test directories if needed
     const defaultExcludedDirNames = new Set([
       "node_modules",
       "tmp",
@@ -630,9 +662,6 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       ".pytest_cache",
       "venv",
       ".venv",
-      "test",
-      "tests",
-      "__tests__",
       ".memory_bank",
       "build",
       "dist",

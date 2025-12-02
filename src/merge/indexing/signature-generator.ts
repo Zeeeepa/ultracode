@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import type { CodeUnit } from "../models/code-unit.js";
+import { hashText } from "../../utils/fast-hash.js";
 
 /**
  * Генерирует signatures для CodeUnit.
@@ -185,7 +185,7 @@ export class SignatureGenerator {
    * @returns SHA256 hash of signature
    */
   computeSignatureHash(signature: string): string {
-    return createHash("sha256").update(signature, "utf8").digest("hex");
+    return hashText(signature);
   }
 
   /**

@@ -13,6 +13,7 @@
 
 import { z } from "zod";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import { paginate, SAFE_LIMITS, MAX_PAGE_SIZE } from "../response-limits.js";
 
 // =============================================================================
 // SUGGEST REFACTORING
@@ -22,6 +23,8 @@ const SuggestRefactoringSchema = z.object({
   entityId: z.string().optional(),
   filePath: z.string().optional(),
   type: z.enum(["extract_method", "rename", "move", "simplify", "all"]).optional().default("all"),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.searchResults),
 });
 
 export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeof SuggestRefactoringSchema>> {
@@ -31,12 +34,15 @@ export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeo
 
   protected async execute(args: z.infer<typeof SuggestRefactoringSchema>): Promise<ToolResult> {
     const semanticAgent = await this.context.getSemanticAgent();
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    const suggestions = await semanticAgent.suggestRefactoring({
+    const allSuggestions = await semanticAgent.suggestRefactoring({
       entityId: args.entityId,
       filePath: args.filePath ? this.context.normalizeInputPath(args.filePath) : undefined,
       type: args.type,
     });
+
+    const paginatedResult = paginate(allSuggestions, args.offset, safeLimit);
 
     return {
       content: [
@@ -44,8 +50,9 @@ export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeo
           type: "text",
           text: JSON.stringify(
             {
-              suggestionsFound: suggestions.length,
-              suggestions: suggestions.map((s: any) => ({
+              suggestionsFound: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              suggestions: paginatedResult.data.map((s: any) => ({
                 type: s.type,
                 priority: s.priority,
                 description: s.description,
@@ -69,7 +76,8 @@ export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeo
 
 const AnalyzeHotspotsSchema = z.object({
   type: z.enum(["complexity", "changes", "coupling", "all"]).optional().default("all"),
-  limit: z.number().optional().default(20),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.hotspots),
 });
 
 export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof AnalyzeHotspotsSchema>> {
@@ -79,9 +87,10 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
 
   protected async execute(args: z.infer<typeof AnalyzeHotspotsSchema>): Promise<ToolResult> {
     const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    // Get all entities
-    const entities = await storage.findEntities({ filters: {}, limit: 10000 });
+    // Get all entities (limited to prevent memory issues)
+    const entities = await storage.findEntities({ filters: {}, limit: 5000 });
 
     // Analyze hotspots based on type
     const hotspots: any[] = [];
@@ -100,9 +109,11 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
       }
     }
 
-    // Sort by score and limit
+    // Sort by score
     hotspots.sort((a, b) => b.score - a.score);
-    const topHotspots = hotspots.slice(0, args.limit);
+
+    // Apply pagination to sorted results
+    const paginatedResult = paginate(hotspots, args.offset, safeLimit);
 
     return {
       content: [
@@ -111,8 +122,9 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
           text: JSON.stringify(
             {
               type: args.type,
-              hotspotsFound: topHotspots.length,
-              hotspots: topHotspots,
+              hotspotsFound: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              hotspots: paginatedResult.data,
             },
             null,
             2,
@@ -150,7 +162,8 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
 
 const FindRelatedConceptsSchema = z.object({
   concept: z.string(),
-  limit: z.number().optional().default(20),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.searchResults),
 });
 
 export class FindRelatedConceptsToolHandler extends BaseToolHandler<z.infer<typeof FindRelatedConceptsSchema>> {
@@ -160,10 +173,14 @@ export class FindRelatedConceptsToolHandler extends BaseToolHandler<z.infer<type
 
   protected async execute(args: z.infer<typeof FindRelatedConceptsSchema>): Promise<ToolResult> {
     const semanticAgent = await this.context.getSemanticAgent();
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    const related = await semanticAgent.findRelatedConcepts(args.concept, {
-      limit: args.limit,
+    // Fetch more for pagination
+    const allRelated = await semanticAgent.findRelatedConcepts(args.concept, {
+      limit: 500,
     });
+
+    const paginatedResult = paginate(allRelated, args.offset, safeLimit);
 
     return {
       content: [
@@ -172,8 +189,9 @@ export class FindRelatedConceptsToolHandler extends BaseToolHandler<z.infer<type
           text: JSON.stringify(
             {
               concept: args.concept,
-              relatedCount: related.length,
-              related,
+              relatedCount: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              related: paginatedResult.data,
             },
             null,
             2,
@@ -200,10 +218,10 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
   protected async execute(args: z.infer<typeof AnalyzeStateChaosSchema>): Promise<ToolResult> {
     const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
 
-    // Find state-related entities
+    // Find state-related entities (limited to prevent memory issues)
     const entities = await storage.findEntities({
       filters: {},
-      limit: 10000,
+      limit: 5000,
     });
 
     // Analyze state management patterns

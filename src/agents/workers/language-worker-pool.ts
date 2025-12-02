@@ -488,7 +488,8 @@ export class LanguageWorkerPool {
    * Get pool statistics
    */
   getStats(): LanguagePoolStats {
-    const activeWorkers = Array.from(this.workers.values()).filter((w) => w.busy).length;
+    let activeWorkers = 0;
+    for (const w of this.workers.values()) if (w.busy) activeWorkers++;
     const idleWorkers = this.workers.size - activeWorkers;
 
     return {

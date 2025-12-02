@@ -19,7 +19,7 @@
  * - Technology Detector: src/analysis/technology-detector.ts
  */
 
-import { readFile } from "node:fs/promises";
+import { readLineRange } from "../utils/file-ops.js";
 import type { TechnologyDetector } from "../analysis/technology-detector.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import type { VectorStore } from "../semantic/vector-store.js";
@@ -293,9 +293,14 @@ export class PatternSearch {
 
   private async getEntityContent(entity: Entity): Promise<string> {
     try {
-      const fileContent = await readFile(entity.filePath, "utf-8");
-      const lines = fileContent.split("\n");
-      return lines.slice(entity.location.start.line - 1, entity.location.end.line).join("\n");
+      // Use optimized line-range reading instead of loading full file
+      const content = await readLineRange(
+        entity.filePath,
+        entity.location.start.line,
+        entity.location.end.line,
+        10000,
+      );
+      return content || "";
     } catch (error) {
       console.warn(`[PatternSearch] Failed to read entity content: ${entity.filePath}`, error);
       return "";

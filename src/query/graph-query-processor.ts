@@ -19,11 +19,11 @@
  *  - 2025-01-14: Created by Dev-Agent - TASK-002: Initial GraphQueryProcessor implementation
  */
 
-import { createHash } from "node:crypto";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type { SQLiteDatabase, SQLiteStatement } from "../storage/sqlite-adapter.js";
+import { hashText } from "../utils/fast-hash.js";
 import type {
   Change,
   Cycle,
@@ -671,6 +671,6 @@ export class GraphQueryProcessor {
       operation: query.operation,
       params: query.params,
     });
-    return createHash("sha256").update(data).digest("hex").substring(0, 16);
+    return hashText(data).substring(0, 16);
   }
 }

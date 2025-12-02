@@ -97,6 +97,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   private config: CoordinatorConfig;
   private roundRobinIndex: Map<AgentType, number> = new Map();
   private pendingTasks: Map<string, AgentTask> = new Map();
+  private healthMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: CoordinatorConfigOverrides = {}) {
     const defaults = getCoordinatorAgentDefaults();
@@ -133,11 +134,19 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
 
   protected async onShutdown(): Promise<void> {
     console.error(`[Coordinator] Shutting down all agents...`);
+
+    // Clear interval to prevent memory leak
+    if (this.healthMonitorTimer) {
+      clearInterval(this.healthMonitorTimer);
+      this.healthMonitorTimer = null;
+    }
+
     const shutdownPromises = Array.from(this.agents.values()).map((agent) =>
       agent.shutdown().catch((err) => console.error(`Failed to shutdown agent ${agent.id}:`, err)),
     );
     await Promise.all(shutdownPromises);
     this.agents.clear();
+    this.pendingTasks.clear();
   }
 
   protected canProcessTask(_task: AgentTask): boolean {
@@ -282,9 +291,12 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   }
 
   private checkResourceAvailability(): boolean {
-    const totalMemory = Array.from(this.agents.values()).reduce((sum, agent) => sum + agent.getMemoryUsage(), 0);
-
-    const totalCpu = Array.from(this.agents.values()).reduce((sum, agent) => sum + agent.getCpuUsage(), 0);
+    let totalMemory = 0;
+    let totalCpu = 0;
+    for (const agent of this.agents.values()) {
+      totalMemory += agent.getMemoryUsage();
+      totalCpu += agent.getCpuUsage();
+    }
 
     return (
       totalMemory < this.config.resourceConstraints.maxMemoryMB &&
@@ -312,7 +324,8 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   }
 
   private startHealthMonitoring(): void {
-    setInterval(() => {
+    if (this.healthMonitorTimer) return;
+    this.healthMonitorTimer = setInterval(() => {
       this.checkAgentHealth();
     }, 5000); // Check every 5 seconds
   }

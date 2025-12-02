@@ -7,6 +7,7 @@ import {
   type SemanticConflict,
 } from "../models/semantic-conflict.js";
 import type { AIConflictResolver } from "./ai-conflict-resolver.js";
+import { hashText } from "../../utils/fast-hash.js";
 
 /**
  * Conflict Resolver - Разрешение конфликтов при слиянии
@@ -408,10 +409,9 @@ export class ConflictResolver {
   }
 
   /**
-   * Вычислить hash (простая реализация)
+   * Вычислить hash
    */
   private computeHash(content: string): string {
-    // В production используйте crypto.createHash('sha256')
-    return `hash-${content.length}-${Date.now()}`;
+    return hashText(content);
   }
 }

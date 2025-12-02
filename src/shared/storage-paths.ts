@@ -7,10 +7,11 @@
  * - Linux: ~/.local/share/UltraScriptTools/
  */
 
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { hashText } from "../utils/fast-hash.js";
 
 // =============================================================================
 // Base Directory
@@ -112,7 +113,7 @@ export function getCoreLockPath(): string {
 export function hashProjectPath(projectPath: string): string {
   // Normalize path for consistent hashing
   const normalized = projectPath.toLowerCase().replace(/\\/g, "/").replace(/\/$/, "");
-  return createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+  return hashText(normalized).slice(0, 16);
 }
 
 /**

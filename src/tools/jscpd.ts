@@ -1,7 +1,13 @@
 import { extname } from "node:path";
 
+import { hashText } from "../utils/fast-hash.js";
 import { getDefaultOptions, type IClone, type IOptions } from "../vendor/jscpd";
 import { type EntryWithContent, getFilesToDetect } from "../vendor/jscpd/files";
+
+// Memory safety limits
+const MAX_FILES_TO_PROCESS = 500;
+const MAX_FILE_SIZE_BYTES = 500_000; // 500KB per file
+const MAX_TOTAL_TOKENS = 500_000;
 
 type NumericOption = number | undefined | null;
 
@@ -264,7 +270,8 @@ function slidingWindowOccurrences(tokens: TokenLine[], windowSize: number): Arra
 
   for (let index = 0; index <= tokens.length - windowSize; index++) {
     const slice = tokens.slice(index, index + windowSize);
-    const key = slice.map((token) => token.text).join("\n");
+    // Use hash instead of full text to reduce memory usage
+    const key = hashText(slice.map((token) => token.text).join("\n"));
     const start = slice[0]!;
     const end = slice[slice.length - 1]!;
 
@@ -368,7 +375,7 @@ export interface JscpdCloneResult {
 
 export async function runJscpdCloneDetection(options: JscpdRunOptions): Promise<JscpdCloneResult> {
   const jscpdOptions = buildJscpdOptions(options);
-  const entries = getFilesToDetect(jscpdOptions);
+  let entries = getFilesToDetect(jscpdOptions);
 
   if (entries.length === 0) {
     return {
@@ -387,11 +394,26 @@ export async function runJscpdCloneDetection(options: JscpdRunOptions): Promise<
     };
   }
 
-  const files = entries.map((entry) => {
+  // Memory safety: filter out large files and limit total files
+  entries = entries
+    .filter((entry) => entry.content.length <= MAX_FILE_SIZE_BYTES)
+    .slice(0, MAX_FILES_TO_PROCESS);
+
+  const files: Array<{ entry: EntryWithContent; tokens: TokenLine[]; format: string }> = [];
+  let totalTokens = 0;
+
+  for (const entry of entries) {
     const tokens = tokenizeContent(entry, jscpdOptions);
     const format = determineFormat(entry.path);
-    return { entry, tokens, format };
-  });
+
+    // Stop if we exceed token limit
+    if (totalTokens + tokens.length > MAX_TOTAL_TOKENS) {
+      break;
+    }
+
+    totalTokens += tokens.length;
+    files.push({ entry, tokens, format });
+  }
 
   const windowSize = computeWindowSize(jscpdOptions);
   const grouped = groupOccurrences(files, windowSize);

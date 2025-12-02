@@ -12,6 +12,7 @@
 
 import { z } from "zod";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import { paginate, SAFE_LIMITS, MAX_PAGE_SIZE } from "../response-limits.js";
 
 // =============================================================================
 // SEMANTIC SEARCH
@@ -19,7 +20,8 @@ import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
 const SemanticSearchSchema = z.object({
   query: z.string(),
-  limit: z.number().optional().default(10),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   entityTypes: z.array(z.string()).optional(),
   minSimilarity: z.number().optional().default(0.7),
 });
@@ -31,12 +33,16 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
 
   protected async execute(args: z.infer<typeof SemanticSearchSchema>): Promise<ToolResult> {
     const semanticAgent = await this.context.getSemanticAgent();
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    const results = await semanticAgent.searchSimilar(args.query, {
-      limit: args.limit,
+    // Fetch more results for pagination
+    const allResults = await semanticAgent.searchSimilar(args.query, {
+      limit: 500, // Fetch more for accurate pagination
       entityTypes: args.entityTypes,
       minSimilarity: args.minSimilarity,
     });
+
+    const paginatedResult = paginate(allResults, args.offset, safeLimit);
 
     return {
       content: [
@@ -45,8 +51,9 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
           text: JSON.stringify(
             {
               query: args.query,
-              count: results.length,
-              results: results.map((r: any) => ({
+              count: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              results: paginatedResult.data.map((r: any) => ({
                 id: r.id,
                 name: r.name || r.metadata?.name,
                 type: r.type || r.metadata?.entityType,
@@ -69,7 +76,8 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
 
 const FindSimilarCodeSchema = z.object({
   code: z.string(),
-  limit: z.number().optional().default(10),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   minSimilarity: z.number().optional().default(0.7),
 });
 
@@ -80,11 +88,15 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
 
   protected async execute(args: z.infer<typeof FindSimilarCodeSchema>): Promise<ToolResult> {
     const semanticAgent = await this.context.getSemanticAgent();
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    const results = await semanticAgent.findSimilarCode(args.code, {
-      limit: args.limit,
+    // Fetch more for pagination
+    const allResults = await semanticAgent.findSimilarCode(args.code, {
+      limit: 500,
       minSimilarity: args.minSimilarity,
     });
+
+    const paginatedResult = paginate(allResults, args.offset, safeLimit);
 
     return {
       content: [
@@ -92,8 +104,9 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
           type: "text",
           text: JSON.stringify(
             {
-              count: results.length,
-              results: results.map((r: any) => ({
+              count: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              results: paginatedResult.data.map((r: any) => ({
                 id: r.id,
                 name: r.name,
                 type: r.type,
@@ -119,7 +132,8 @@ const DetectCodeClonesSchema = z.object({
   minSimilarity: z.number().optional().default(0.85),
   minLines: z.number().optional().default(5),
   entityTypes: z.array(z.string()).optional(),
-  maxGroups: z.number().optional().default(20),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.clones),
 });
 
 export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof DetectCodeClonesSchema>> {
@@ -129,13 +143,17 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
 
   protected async execute(args: z.infer<typeof DetectCodeClonesSchema>): Promise<ToolResult> {
     const semanticAgent = await this.context.getSemanticAgent();
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    const clones = await semanticAgent.detectClones({
+    // Fetch more groups for pagination
+    const allClones = await semanticAgent.detectClones({
       minSimilarity: args.minSimilarity,
       minLines: args.minLines,
       entityTypes: args.entityTypes,
-      maxGroups: args.maxGroups,
+      maxGroups: 200,
     });
+
+    const paginatedResult = paginate(allClones, args.offset, safeLimit);
 
     return {
       content: [
@@ -143,8 +161,9 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
           type: "text",
           text: JSON.stringify(
             {
-              groupsFound: clones.length,
-              clones: clones.map((group: any) => ({
+              groupsFound: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              clones: paginatedResult.data.map((group: any) => ({
                 similarity: group.similarity,
                 members: group.members.map((m: any) => ({
                   id: m.id,
@@ -173,6 +192,8 @@ const JscpdDetectClonesSchema = z.object({
   minTokens: z.number().optional().default(50),
   threshold: z.number().optional().default(0),
   format: z.array(z.string()).optional(),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.clones),
 });
 
 export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof JscpdDetectClonesSchema>> {
@@ -204,6 +225,8 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
       const inFilesDetector = new InFilesDetector(tokenizer, store, options, [statistic]);
 
       const clones = await inFilesDetector.detectFromOptions(options);
+      const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
+      const paginatedResult = paginate(clones, args.offset, safeLimit);
 
       return {
         content: [
@@ -211,9 +234,10 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
             type: "text",
             text: JSON.stringify(
               {
-                duplicatesFound: clones.length,
+                duplicatesFound: paginatedResult.data.length,
+                pagination: paginatedResult.pagination,
                 statistics: statistic.getStatistic(),
-                duplicates: clones.slice(0, 50).map((c: any) => ({
+                duplicates: paginatedResult.data.map((c: any) => ({
                   format: c.format,
                   foundDate: c.foundDate,
                   duplicationA: {
@@ -254,7 +278,8 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
 const CrossLanguageSearchSchema = z.object({
   query: z.string(),
   languages: z.array(z.string()).optional(),
-  limit: z.number().optional().default(20),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.searchResults),
 });
 
 export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<typeof CrossLanguageSearchSchema>> {
@@ -264,11 +289,15 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
 
   protected async execute(args: z.infer<typeof CrossLanguageSearchSchema>): Promise<ToolResult> {
     const semanticAgent = await this.context.getSemanticAgent();
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    const results = await semanticAgent.crossLanguageSearch(args.query, {
+    // Fetch more for pagination
+    const allResults = await semanticAgent.crossLanguageSearch(args.query, {
       languages: args.languages,
-      limit: args.limit,
+      limit: 500,
     });
+
+    const paginatedResult = paginate(allResults, args.offset, safeLimit);
 
     return {
       content: [
@@ -277,8 +306,9 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
           text: JSON.stringify(
             {
               query: args.query,
-              count: results.length,
-              results,
+              count: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              results: paginatedResult.data,
             },
             null,
             2,
@@ -297,7 +327,8 @@ const PatternSearchSchema = z.object({
   pattern: z.string(),
   mode: z.enum(["entity", "content", "semantic", "hybrid"]).optional().default("hybrid"),
   entityTypes: z.array(z.string()).optional(),
-  limit: z.number().optional().default(20),
+  offset: z.number().optional().default(0),
+  limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   minSimilarity: z.number().optional().default(0.7),
 });
 
@@ -309,6 +340,7 @@ export class PatternSearchToolHandler extends BaseToolHandler<z.infer<typeof Pat
   protected async execute(args: z.infer<typeof PatternSearchSchema>): Promise<ToolResult> {
     const { PatternSearch } = await import("../../search/pattern-search.js");
     const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     let vectorStore = null;
     try {
@@ -321,12 +353,15 @@ export class PatternSearchToolHandler extends BaseToolHandler<z.infer<typeof Pat
     const patternSearch = new PatternSearch(storage, vectorStore, null);
     await patternSearch.initialize();
 
-    const results = await patternSearch.search({
+    // Fetch more for pagination
+    const allResults = await patternSearch.search({
       pattern: args.pattern,
       mode: args.mode,
       scope: { entityTypes: args.entityTypes as any },
-      limit: args.limit,
+      limit: 500,
     });
+
+    const paginatedResult = paginate(allResults, args.offset, safeLimit);
 
     return {
       content: [
@@ -336,8 +371,9 @@ export class PatternSearchToolHandler extends BaseToolHandler<z.infer<typeof Pat
             {
               pattern: args.pattern,
               mode: args.mode,
-              count: results.length,
-              results: results.map((r) => ({
+              count: paginatedResult.data.length,
+              pagination: paginatedResult.pagination,
+              results: paginatedResult.data.map((r) => ({
                 id: r.entity.id,
                 name: r.entity.name,
                 type: r.entity.type,

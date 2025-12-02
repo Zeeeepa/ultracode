@@ -1,15 +1,13 @@
 /**
- * Runtime detection and Core process spawning utilities
+ * Runtime detection utilities
  *
- * Detects whether running under Bun or Node.js and spawns Core accordingly
+ * Detects whether running under Bun or Node.js
  */
 
-import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { createConnection, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getCoreLockPath, getCorePidPath, getIPCSocketPath, initializeStorageDirs } from "./storage-paths.js";
+import { getCoreLockPath, getCorePidPath } from "./storage-paths.js";
 
 // =============================================================================
 // Runtime Detection
@@ -121,134 +119,9 @@ export function isCoreRunning(): boolean {
   }
 }
 
-/**
- * Try to connect to an existing Core process
- */
-export async function tryConnectToCore(timeout = 5000): Promise<Socket | null> {
-  const socketPath = getIPCSocketPath();
-
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      socket.destroy();
-      resolve(null);
-    }, timeout);
-
-    const socket = createConnection(socketPath, () => {
-      clearTimeout(timer);
-      resolve(socket);
-    });
-
-    socket.on("error", () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
-  });
-}
-
-/**
- * Spawn the Core process
- */
-export function spawnCoreProcess(): ChildProcess {
-  initializeStorageDirs();
-
-  const runtime = detectRuntime();
-  const executable = getRuntimeExecutable();
-  const coreEntry = getCoreEntryPath();
-
-  console.error(`[Runtime] Current runtime: ${runtime}`);
-  console.error(`[Runtime] Executable: ${executable}`);
-  console.error(`[Runtime] Core entry: ${coreEntry}`);
-  console.error(`[Runtime] Spawning Core process...`);
-
-  // Clean up old socket if it exists (Unix only)
-  const socketPath = getIPCSocketPath();
-  if (process.platform !== "win32" && existsSync(socketPath)) {
-    try {
-      unlinkSync(socketPath);
-    } catch {
-      // Ignore
-    }
-  }
-
-  const spawnOptions: SpawnOptions = {
-    detached: true,
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      ULTRASCRIPT_CORE: "1",
-    },
-  };
-
-  const child = spawn(executable, [coreEntry], spawnOptions);
-
-  // Allow parent to exit independently
-  child.unref();
-
-  // Save PID
-  if (child.pid) {
-    writeFileSync(getCorePidPath(), String(child.pid), "utf-8");
-  }
-
-  return child;
-}
-
-/**
- * Wait for Core to become available
- */
-export async function waitForCore(maxAttempts = 50, intervalMs = 100): Promise<Socket> {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const socket = await tryConnectToCore(1000);
-    if (socket) {
-      return socket;
-    }
-    await sleep(intervalMs);
-  }
-
-  throw new Error("Core process failed to start");
-}
-
-/**
- * Connect to Core, spawning it if necessary
- */
-export async function connectToCore(): Promise<Socket> {
-  // Try to connect to existing Core
-  let socket = await tryConnectToCore();
-
-  if (socket) {
-    console.error("[Runtime] Connected to existing Core process");
-    return socket;
-  }
-
-  // Check if PID file exists but process is dead
-  if (existsSync(getCorePidPath())) {
-    if (!isCoreRunning()) {
-      console.error("[Runtime] Stale PID file found, cleaning up");
-      try {
-        unlinkSync(getCorePidPath());
-      } catch {
-        // Ignore
-      }
-    }
-  }
-
-  // Spawn new Core process
-  console.error("[Runtime] No Core process found, spawning new one");
-  spawnCoreProcess();
-
-  // Wait for Core to be ready
-  socket = await waitForCore();
-  console.error("[Runtime] Connected to newly spawned Core process");
-
-  return socket;
-}
-
 // =============================================================================
-// Utilities
+// Lock File Management
 // =============================================================================
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * Acquire a lock file (for Core process singleton)

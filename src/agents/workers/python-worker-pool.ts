@@ -367,9 +367,7 @@ export class PythonWorkerPool {
    * Get pool statistics
    */
   getStats(): PythonPoolStats {
-    const activeWorkers = Array.from(this.workers.values()).filter((w) => w.busy).length;
-    const idleWorkers = this.workers.size - activeWorkers;
-
+    let activeWorkers = 0;
     let totalLayer1 = 0;
     let totalLayer2 = 0;
     let totalLayer3 = 0;
@@ -377,6 +375,7 @@ export class PythonWorkerPool {
     let workersWithTimings = 0;
 
     for (const state of this.workers.values()) {
+      if (state.busy) activeWorkers++;
       if (state.tasksProcessed > 0) {
         totalLayer1 += state.layerTimings.layer1;
         totalLayer2 += state.layerTimings.layer2;
@@ -385,6 +384,7 @@ export class PythonWorkerPool {
         workersWithTimings++;
       }
     }
+    const idleWorkers = this.workers.size - activeWorkers;
 
     return {
       totalWorkers: this.workers.size,

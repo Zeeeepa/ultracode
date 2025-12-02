@@ -249,30 +249,42 @@ export class CodeValidator {
   }
 
   /**
-   * Find files matching extensions
+   * Find files matching extensions (parallel directory traversal)
    */
   private async findFiles(dirPath: string, extensions: string[]): Promise<string[]> {
-    const files: string[] = [];
+    const EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "build", "coverage"]);
 
-    async function walk(dir: string) {
+    async function walk(dir: string): Promise<string[]> {
       const entries = await readdir(dir, { withFileTypes: true });
+      const files: string[] = [];
+      const subdirPromises: Promise<string[]>[] = [];
 
       for (const entry of entries) {
         const fullPath = join(dir, entry.name);
 
         if (entry.isDirectory()) {
           // Skip excluded directories
-          if (["node_modules", ".git", "dist", "build", "coverage"].includes(entry.name)) {
+          if (EXCLUDED_DIRS.has(entry.name)) {
             continue;
           }
-          await walk(fullPath);
+          // Queue subdirectory for parallel processing
+          subdirPromises.push(walk(fullPath));
         } else if (extensions.some((ext) => entry.name.endsWith(ext))) {
           files.push(fullPath);
         }
       }
+
+      // Process all subdirectories in parallel
+      if (subdirPromises.length > 0) {
+        const subdirResults = await Promise.all(subdirPromises);
+        for (const subdirFiles of subdirResults) {
+          files.push(...subdirFiles);
+        }
+      }
+
+      return files;
     }
 
-    await walk(dirPath);
-    return files;
+    return walk(dirPath);
   }
 }

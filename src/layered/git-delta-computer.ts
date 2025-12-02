@@ -14,6 +14,7 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BranchManager } from "../core/branch-manager.js";
+import { hashText } from "../utils/fast-hash.js";
 import type { GitDiffResult, GitFileChange } from "../types/layered.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
 import { BranchDelta } from "./branch-delta.js";
@@ -363,26 +364,24 @@ export class GitDeltaComputer {
   }
 
   /**
-   * Generate stable entity ID (SHA256-based)
+   * Generate stable entity ID (xxHash-based)
    */
   private generateEntityId(parsed: any, filePath: string): string {
-    const { createHash } = require("node:crypto");
     const content = `${filePath}:${parsed.type}:${parsed.name}:${parsed.location.start.line}`;
-    return createHash("sha256").update(content).digest("hex").slice(0, 16);
+    return hashText(content).slice(0, 16);
   }
 
   /**
    * Generate entity hash for change detection
    */
   private generateEntityHash(parsed: any): string {
-    const { createHash } = require("node:crypto");
     const content = JSON.stringify({
       name: parsed.name,
       type: parsed.type,
       location: parsed.location,
       metadata: parsed.metadata,
     });
-    return createHash("sha256").update(content).digest("hex").slice(0, 16);
+    return hashText(content).slice(0, 16);
   }
 
   /**

@@ -15,6 +15,7 @@
 import { LRUCache } from "lru-cache";
 import type { BranchManager } from "../core/branch-manager.js";
 import type { ILayeredIndex } from "../core/layered-index.js";
+import { hashText } from "../utils/fast-hash.js";
 import type { BranchDelta as IBranchDelta, LayeredIndexConfig, WorkingDelta } from "../types/layered.js";
 import { LayeredIndexConfigPresets } from "../types/layered.js";
 import type { Entity, GraphStorage, Relationship } from "../types/storage.js";
@@ -624,11 +625,9 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
     for (const parsed of parsedEntities) {
       try {
-        const { createHash } = require("node:crypto");
-
         // Generate stable ID
         const idContent = `${filePath}:${parsed.type}:${parsed.name}:${parsed.location.start.line}`;
-        const id = createHash("sha256").update(idContent).digest("hex").slice(0, 16);
+        const id = hashText(idContent).slice(0, 16);
 
         // Generate entity hash
         const hashContent = JSON.stringify({
@@ -637,7 +636,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
           location: parsed.location,
           metadata: parsed.metadata,
         });
-        const hash = createHash("sha256").update(hashContent).digest("hex").slice(0, 16);
+        const hash = hashText(hashContent).slice(0, 16);
 
         const entity: Entity = {
           id,

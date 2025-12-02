@@ -2,9 +2,9 @@
  * Utilities for ingesting Lerna project graph output into the SQLite-backed graph storage.
  */
 
-import { createHash } from "node:crypto";
 import type { GraphStorageImpl } from "../storage/graph-storage.js";
 import { type Entity, EntityType, type Relationship, RelationType } from "../types/storage.js";
+import { hashText } from "../utils/fast-hash.js";
 import type { LernaGraphJSON } from "./lerna-project-graph.js";
 
 export const LERNA_PACKAGE_FILE_PREFIX = "lerna://package/";
@@ -13,9 +13,7 @@ type EntityMap = Map<string, Entity>;
 
 function createPackageEntity(name: string, dependencies: string[], timestamp: number): Entity {
   const filePath = `${LERNA_PACKAGE_FILE_PREFIX}${name}`;
-  const hash = createHash("sha256")
-    .update(`${name}:${dependencies.sort().join(",")}`)
-    .digest("hex");
+  const hash = hashText(`${name}:${dependencies.sort().join(",")}`);
 
   return {
     id: "",

@@ -1,7 +1,7 @@
 {
   "name": "ultrascript-tools-mcp",
-  "version": "1.6.4",
-  "description": "Multi-agent LiteRAG MCP server for advanced code graph analysis",
+  "version": "2.0.0",
+  "description": "MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/Go/Rust/Java/C++/Kotlin",
   "license": "MIT",
   "author": "faxenoff",
   "homepage": "https://github.com/faxenoff/ultrascript-tools-mcp",
@@ -25,8 +25,7 @@
     "sqlite",
     "vector-search",
     "semantic-search",
-    "claude",
-    "tree-sitter"
+    "claude"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -46,8 +45,6 @@
     "src/comm/build.ps1",
     "src/comm/setup.ps1",
     "src/comm/README.md",
-    "external-libs/**/*.node",
-    "external-libs/**/*.metallib",
     "scripts/postinstall.js",
     "scripts/build-native-libs-macos.sh",
     "scripts/setup-embeddings.cmd",
@@ -76,7 +73,6 @@
     "build:cuda": "pwsh scripts/build-cuda.ps1 || (cd external-tools/native/cuda && cmake-js compile && cd ../../.. && mkdir -p dist/native/cuda && cp external-tools/native/cuda/build/Release/ultrascript_cuda.node dist/native/cuda/)",
     "build:cuda:debug": "pwsh scripts/build-cuda.ps1 -Debug",
     "build:cuda:clean": "pwsh scripts/build-cuda.ps1 -Clean",
-    "build:tree-sitter": "pwsh scripts/build-tree-sitter-prebuilds.ps1",
     "build:comm": "pwsh src/comm/build.ps1",
     "build:comm:setup": "pwsh src/comm/setup.ps1",
     "build:standalone": "bun build --compile dist/index.js --outfile dist/ultrascript-mcp",
@@ -153,23 +149,7 @@
   "optionalDependencies": {
     "@webgpu/node": "npm:null@^2.0.0",
     "@webgpu/types": "^0.1.66",
-    "webgpu": "^0.3.8",
-    "tree-sitter": "^0.25.0",
-    "tree-sitter-bash": "^0.25.0",
-    "tree-sitter-c": "^0.24.1",
-    "tree-sitter-c-sharp": "^0.23.1",
-    "tree-sitter-cpp": "^0.23.4",
-    "tree-sitter-css": "^0.25.0",
-    "tree-sitter-go": "^0.25.0",
-    "tree-sitter-html": "^0.23.2",
-    "tree-sitter-java": "^0.23.5",
-    "tree-sitter-javascript": "^0.25.0",
-    "tree-sitter-powershell": "^0.25.9",
-    "tree-sitter-python": "^0.25.0",
-    "tree-sitter-rust": "^0.24.0",
-    "tree-sitter-typescript": "^0.23.2",
-    "tree-sitter-kotlin": "^0.3.8",
-    "tree-sitter-swift": "^0.7.1"
+    "webgpu": "^0.3.8"
   },
   "overrides": {
     "boolean": "3.2.0"

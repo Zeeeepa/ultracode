@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import * as fs from "node:fs/promises";
+import { readBytes } from "../../utils/file-ops.js";
+import { hashText } from "../../utils/fast-hash.js";
 
 /**
  * Нормализует файлы перед сравнением: encoding, BOM, line endings.
@@ -18,8 +18,8 @@ export class ContentNormalizer {
    * @returns Normalized content with metadata
    */
   async normalize(filePath: string): Promise<NormalizedContent> {
-    // 1. Прочитать raw bytes
-    const rawBytes = await fs.readFile(filePath);
+    // 1. Прочитать raw bytes using optimized file-ops
+    const rawBytes = Buffer.from(await readBytes(filePath));
 
     // 2. Определить encoding и BOM
     const { encoding, hasBom } = this.detectEncoding(rawBytes);
@@ -57,7 +57,7 @@ export class ContentNormalizer {
    * @returns Hex-encoded SHA256 hash
    */
   computeContentHash(content: string): string {
-    return createHash("sha256").update(content, "utf8").digest("hex");
+    return hashText(content);
   }
 
   /**
