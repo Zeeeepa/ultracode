@@ -41,6 +41,7 @@ export const SUPPORTED_LANGUAGES = [
   "bash",
   "powershell",
   "batch",
+  "json",
 ] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 

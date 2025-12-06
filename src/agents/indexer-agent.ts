@@ -651,6 +651,99 @@ export class IndexerAgent extends BaseAgent {
           }
         }
       }
+
+      // Inheritance relationships (extends/implements)
+      if (parsed.inheritance) {
+        // Base classes -> EXTENDS relationship
+        if (parsed.inheritance.baseClasses) {
+          for (const baseClass of parsed.inheritance.baseClasses) {
+            // Try to find base class in current file first
+            const baseKey = Array.from(entityMap.keys()).find((key) => key.startsWith(`${baseClass}:`));
+            const targetId = baseKey ? entityMap.get(baseKey)! : `external:${baseClass}`;
+
+            relationships.push({
+              id: nanoid(12),
+              fromId: entity.id,
+              toId: targetId,
+              type: RelationType.EXTENDS,
+              metadata: {
+                line: parsed.location.start.line,
+                column: parsed.location.start.column,
+                context: `${parsed.name} extends ${baseClass}`,
+              },
+            });
+          }
+        }
+
+        // Interfaces -> IMPLEMENTS relationship
+        if (parsed.inheritance.interfaces) {
+          for (const iface of parsed.inheritance.interfaces) {
+            // Try to find interface in current file first
+            const ifaceKey = Array.from(entityMap.keys()).find((key) => key.startsWith(`${iface}:`));
+            const targetId = ifaceKey ? entityMap.get(ifaceKey)! : `external:${iface}`;
+
+            relationships.push({
+              id: nanoid(12),
+              fromId: entity.id,
+              toId: targetId,
+              type: RelationType.IMPLEMENTS,
+              metadata: {
+                line: parsed.location.start.line,
+                column: parsed.location.start.column,
+                context: `${parsed.name} implements ${iface}`,
+              },
+            });
+          }
+        }
+      }
+
+      // Parser-provided relationships (calls, decorates, overrides, etc.)
+      if (parsed.relationships) {
+        for (const rel of parsed.relationships) {
+          // Try to find target entity in current file
+          const targetKey = Array.from(entityMap.keys()).find((key) => key.startsWith(`${rel.target}:`));
+          const targetId = targetKey ? entityMap.get(targetKey)! : `external:${rel.target}`;
+
+          // Map parser relationship types to storage RelationType
+          let relType: RelationType;
+          switch (rel.type) {
+            case "calls":
+              relType = RelationType.CALLS;
+              break;
+            case "inherits":
+              relType = RelationType.EXTENDS;
+              break;
+            case "implements":
+              relType = RelationType.IMPLEMENTS;
+              break;
+            case "imports":
+              relType = RelationType.IMPORTS;
+              break;
+            case "contains":
+              relType = RelationType.CONTAINS;
+              break;
+            case "overrides":
+            case "decorates":
+            default:
+              relType = RelationType.REFERENCES;
+              break;
+          }
+
+          relationships.push({
+            id: nanoid(12),
+            fromId: entity.id,
+            toId: targetId,
+            type: relType,
+            metadata: {
+              line: parsed.location.start.line,
+              column: parsed.location.start.column,
+              context: `${parsed.name} ${rel.type} ${rel.target}`,
+              originalType: rel.type,
+              ...rel.metadata,
+            },
+          });
+        }
+      }
     }
 
     return relationships;

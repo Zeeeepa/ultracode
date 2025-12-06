@@ -12,9 +12,9 @@
  */
 
 import { extname, join } from "node:path";
+import type { ParseResult, SupportedLanguage } from "../types/parser.js";
 import { existsSync } from "../utils/file-ops.js";
 import type { BaseParser, ParserStats } from "./base-parser.js";
-import type { ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
 // LAZY IMPORTS - Only import when needed
@@ -29,6 +29,7 @@ type RustParserType = typeof import("./rust-native-parser.js").RustNativeParser;
 type CppParserType = typeof import("./cpp-native-parser.js").CppNativeParser;
 type BashParserType = typeof import("./bash-native-parser.js").BashNativeParser;
 type PowerShellParserType = typeof import("./powershell-native-parser.js").PowerShellNativeParser;
+type JsonParserType = typeof import("./json-parser.js").JsonParser;
 
 // =============================================================================
 // LANGUAGE DETECTION
@@ -80,18 +81,10 @@ const EXTENSION_TO_LANGUAGE: Record<string, SupportedLanguage> = {
   ".ps1": "powershell",
   ".bat": "batch",
   ".cmd": "batch",
+  ".json": "json",
 };
 
-const TYPESCRIPT_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-]);
+const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
 
 const PYTHON_EXTENSIONS = new Set([".py", ".pyi", ".pyw"]);
 const JAVA_EXTENSIONS = new Set([".java"]);
@@ -101,21 +94,22 @@ const RUST_EXTENSIONS = new Set([".rs"]);
 const CPP_EXTENSIONS = new Set([".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx", ".c++", ".h++"]);
 const BASH_EXTENSIONS = new Set([".sh", ".bash", ".zsh"]);
 const POWERSHELL_EXTENSIONS = new Set([".ps1", ".psm1", ".psd1"]);
+const JSON_EXTENSIONS = new Set([".json"]);
 
 // =============================================================================
 // PROJECT TYPE DETECTION
 // =============================================================================
 
 export type ProjectType =
-  | "typescript"  // package.json, tsconfig.json
-  | "python"      // pyproject.toml, requirements.txt, setup.py
-  | "java"        // pom.xml, build.gradle
-  | "kotlin"      // build.gradle.kts, *.kt files
-  | "go"          // go.mod
-  | "rust"        // Cargo.toml
-  | "cpp"         // CMakeLists.txt, Makefile
-  | "dotnet"      // *.csproj, *.sln
-  | "mixed"       // Multiple languages detected
+  | "typescript" // package.json, tsconfig.json
+  | "python" // pyproject.toml, requirements.txt, setup.py
+  | "java" // pom.xml, build.gradle
+  | "kotlin" // build.gradle.kts, *.kt files
+  | "go" // go.mod
+  | "rust" // Cargo.toml
+  | "cpp" // CMakeLists.txt, Makefile
+  | "dotnet" // *.csproj, *.sln
+  | "mixed" // Multiple languages detected
   | "unknown";
 
 export interface ProjectInfo {
@@ -163,10 +157,7 @@ export function detectProjectType(workspaceRoot: string): ProjectInfo {
   }
 
   // Check for scripts
-  const scriptIndicators = [
-    join(workspaceRoot, "scripts"),
-    join(workspaceRoot, ".github"),
-  ];
+  const scriptIndicators = [join(workspaceRoot, "scripts"), join(workspaceRoot, ".github")];
   for (const dir of scriptIndicators) {
     if (existsSync(dir)) {
       result.hasScripts = true;
@@ -201,6 +192,7 @@ export class UnifiedParser implements BaseParser {
   private cppParser: InstanceType<CppParserType> | null = null;
   private bashParser: InstanceType<BashParserType> | null = null;
   private powershellParser: InstanceType<PowerShellParserType> | null = null;
+  private jsonParser: InstanceType<JsonParserType> | null = null;
 
   // Track which parsers are initialized
   private initializedParsers = new Set<string>();
@@ -282,11 +274,7 @@ export class UnifiedParser implements BaseParser {
   async initialize(): Promise<void> {
     console.error("[UnifiedParser] Initializing all parsers (no workspace detected)...");
 
-    await Promise.all([
-      this.ensureTypescriptParser(),
-      this.ensureBashParser(),
-      this.ensurePowershellParser(),
-    ]);
+    await Promise.all([this.ensureTypescriptParser(), this.ensureBashParser(), this.ensurePowershellParser()]);
 
     console.error("[UnifiedParser] Initialized (TypeScript + scripts only, others on-demand)");
   }
@@ -367,6 +355,14 @@ export class UnifiedParser implements BaseParser {
     this.initializedParsers.add("powershell");
   }
 
+  private async ensureJsonParser(): Promise<void> {
+    if (this.jsonParser) return;
+    const { JsonParser } = await import("./json-parser.js");
+    this.jsonParser = new JsonParser();
+    await this.jsonParser.initialize();
+    this.initializedParsers.add("json");
+  }
+
   // =============================================================================
   // PARSING
   // =============================================================================
@@ -390,11 +386,7 @@ export class UnifiedParser implements BaseParser {
   /**
    * Parse a file using the appropriate parser
    */
-  async parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult> {
+  async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
     const ext = extname(filePath).toLowerCase();
 
@@ -404,67 +396,34 @@ export class UnifiedParser implements BaseParser {
       // Route to appropriate parser based on extension
       if (TYPESCRIPT_EXTENSIONS.has(ext)) {
         await this.ensureTypescriptParser();
-        result = await this.typescriptParser!.parse(
-          filePath,
-          content,
-          contentHash,
-        );
+        result = await this.typescriptParser!.parse(filePath, content, contentHash);
       } else if (PYTHON_EXTENSIONS.has(ext)) {
         await this.ensurePythonParser();
-        result = await this.pythonParser!.parse(
-          filePath,
-          content,
-          contentHash,
-        );
+        result = await this.pythonParser!.parse(filePath, content, contentHash);
       } else if (JAVA_EXTENSIONS.has(ext)) {
         await this.ensureJavaParser();
-        result = await this.javaParser!.parse(
-          filePath,
-          content,
-          contentHash,
-        );
+        result = await this.javaParser!.parse(filePath, content, contentHash);
       } else if (KOTLIN_EXTENSIONS.has(ext)) {
         await this.ensureKotlinParser();
-        result = await this.kotlinParser!.parse(
-          filePath,
-          content,
-          contentHash,
-        );
+        result = await this.kotlinParser!.parse(filePath, content, contentHash);
       } else if (GO_EXTENSIONS.has(ext)) {
         await this.ensureGoParser();
-        result = await this.goParser!.parse(
-          filePath,
-          content,
-          contentHash,
-        );
+        result = await this.goParser!.parse(filePath, content, contentHash);
       } else if (RUST_EXTENSIONS.has(ext)) {
         await this.ensureRustParser();
-        result = await this.rustParser!.parse(
-          filePath,
-          content,
-          contentHash,
-        );
+        result = await this.rustParser!.parse(filePath, content, contentHash);
       } else if (CPP_EXTENSIONS.has(ext)) {
         await this.ensureCppParser();
-        result = await this.cppParser!.parse(
-          filePath,
-          content,
-          contentHash,
-        );
+        result = await this.cppParser!.parse(filePath, content, contentHash);
       } else if (BASH_EXTENSIONS.has(ext)) {
         await this.ensureBashParser();
-        result = await this.bashParser!.parse(
-          filePath,
-          content,
-          contentHash,
-        );
+        result = await this.bashParser!.parse(filePath, content, contentHash);
       } else if (POWERSHELL_EXTENSIONS.has(ext)) {
         await this.ensurePowershellParser();
-        result = await this.powershellParser!.parse(
-          filePath,
-          content,
-          contentHash,
-        );
+        result = await this.powershellParser!.parse(filePath, content, contentHash);
+      } else if (JSON_EXTENSIONS.has(ext)) {
+        await this.ensureJsonParser();
+        result = await this.jsonParser!.parse(filePath, content, contentHash);
       } else {
         // For other languages, use regex-based fallback
         result = this.fallbackParse(filePath, content, contentHash, startTime);
@@ -473,8 +432,7 @@ export class UnifiedParser implements BaseParser {
       // Update stats
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += result.parseTimeMs;
-      this.stats.avgParseTimeMs =
-        this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
 
       return result;
     } catch (error) {
@@ -500,102 +458,52 @@ export class UnifiedParser implements BaseParser {
   /**
    * Parse with incremental support
    */
-  async parseIncremental(
-    filePath: string,
-    content: string,
-    contentHash: string,
-    edits: any[],
-  ): Promise<ParseResult> {
+  async parseIncremental(filePath: string, content: string, contentHash: string, edits: any[]): Promise<ParseResult> {
     const ext = extname(filePath).toLowerCase();
 
     if (TYPESCRIPT_EXTENSIONS.has(ext)) {
       await this.ensureTypescriptParser();
-      return this.typescriptParser!.parseIncremental(
-        filePath,
-        content,
-        contentHash,
-        edits,
-      );
+      return this.typescriptParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     if (PYTHON_EXTENSIONS.has(ext)) {
       await this.ensurePythonParser();
-      return this.pythonParser!.parseIncremental(
-        filePath,
-        content,
-        contentHash,
-        edits,
-      );
+      return this.pythonParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     if (JAVA_EXTENSIONS.has(ext)) {
       await this.ensureJavaParser();
-      return this.javaParser!.parseIncremental(
-        filePath,
-        content,
-        contentHash,
-        edits,
-      );
+      return this.javaParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     if (KOTLIN_EXTENSIONS.has(ext)) {
       await this.ensureKotlinParser();
-      return this.kotlinParser!.parseIncremental(
-        filePath,
-        content,
-        contentHash,
-        edits,
-      );
+      return this.kotlinParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     if (GO_EXTENSIONS.has(ext)) {
       await this.ensureGoParser();
-      return this.goParser!.parseIncremental(
-        filePath,
-        content,
-        contentHash,
-        edits,
-      );
+      return this.goParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     if (RUST_EXTENSIONS.has(ext)) {
       await this.ensureRustParser();
-      return this.rustParser!.parseIncremental(
-        filePath,
-        content,
-        contentHash,
-        edits,
-      );
+      return this.rustParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     if (CPP_EXTENSIONS.has(ext)) {
       await this.ensureCppParser();
-      return this.cppParser!.parseIncremental(
-        filePath,
-        content,
-        contentHash,
-        edits,
-      );
+      return this.cppParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     if (BASH_EXTENSIONS.has(ext)) {
       await this.ensureBashParser();
-      return this.bashParser!.parseIncremental(
-        filePath,
-        content,
-        contentHash,
-        edits,
-      );
+      return this.bashParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     if (POWERSHELL_EXTENSIONS.has(ext)) {
       await this.ensurePowershellParser();
-      return this.powershellParser!.parseIncremental(
-        filePath,
-        content,
-        contentHash,
-        edits,
-      );
+      return this.powershellParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     // For other languages, just do full parse
@@ -605,12 +513,7 @@ export class UnifiedParser implements BaseParser {
   /**
    * Fallback regex-based parser for unsupported languages
    */
-  private fallbackParse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-    startTime: number,
-  ): ParseResult {
+  private fallbackParse(filePath: string, content: string, contentHash: string, startTime: number): ParseResult {
     const language = this.getLanguage(filePath);
     const entities: any[] = [];
 
@@ -618,7 +521,7 @@ export class UnifiedParser implements BaseParser {
     // Python
     if (language === "python") {
       // Classes
-      const classRe = /^class\s+([A-Za-z_]\w*)\s*[:\(]/gm;
+      const classRe = /^class\s+([A-Za-z_]\w*)\s*[:(]/gm;
       let match: RegExpExecArray | null;
       while ((match = classRe.exec(content))) {
         entities.push({
@@ -644,8 +547,7 @@ export class UnifiedParser implements BaseParser {
     // Java
     if (language === "java") {
       // Classes
-      const classRe =
-        /(?:public|private|protected)?\s*(?:abstract|final)?\s*class\s+([A-Za-z_]\w*)/gm;
+      const classRe = /(?:public|private|protected)?\s*(?:abstract|final)?\s*class\s+([A-Za-z_]\w*)/gm;
       let match: RegExpExecArray | null;
       while ((match = classRe.exec(content))) {
         entities.push({
@@ -657,8 +559,7 @@ export class UnifiedParser implements BaseParser {
       }
 
       // Interfaces
-      const ifaceRe =
-        /(?:public|private|protected)?\s*interface\s+([A-Za-z_]\w*)/gm;
+      const ifaceRe = /(?:public|private|protected)?\s*interface\s+([A-Za-z_]\w*)/gm;
       while ((match = ifaceRe.exec(content))) {
         entities.push({
           name: match[1],

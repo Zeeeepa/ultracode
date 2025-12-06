@@ -7,11 +7,11 @@
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
-import { hashText } from "../utils/fast-hash.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { getSQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParserOptions } from "../types/parser.js";
+import { hashText } from "../utils/fast-hash.js";
 import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 import { IndexerAgent } from "./indexer-agent.js";
@@ -40,6 +40,7 @@ const SUPPORTED_CODE_EXTENSIONS = [
   ".less", // CSS
   ".html",
   ".htm", // HTML
+  ".json", // JSON with AST parsing (swagger, package.json, tsconfig.json)
 ] as const;
 
 /**
@@ -48,7 +49,6 @@ const SUPPORTED_CODE_EXTENSIONS = [
  * без AST-парсинга, для поддержки merge конфигов, документации и ресурсов.
  */
 const SUPPORTED_DATA_EXTENSIONS = [
-  ".json", // Configuration, package.json, tsconfig.json
   ".yaml",
   ".yml", // Config files
   ".toml", // Cargo.toml, pyproject.toml

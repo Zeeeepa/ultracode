@@ -102,6 +102,9 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   // PowerShell
   ps1: "powershell",
   psm1: "powershell",
+
+  // JSON
+  json: "json",
   psd1: "powershell",
 
   // Batch/CMD
@@ -285,6 +288,14 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: ["call"],
     exports: ["set", "setx"],
     types: [],
+  },
+
+  json: {
+    functions: [],
+    classes: [],
+    imports: [],
+    exports: [],
+    types: ["$ref", "allOf", "anyOf", "oneOf", "definitions", "components"],
   },
 };
 
@@ -1392,6 +1403,32 @@ const BATCH_CONFIG: LanguageConfig = {
 };
 
 /**
+ * JSON configuration (OpenAPI, package.json, tsconfig.json)
+ */
+const JSON_CONFIG: LanguageConfig = {
+  language: "json",
+  extensions: ["json"],
+  keywords: LANGUAGE_KEYWORDS.json,
+  nodeTypes: {
+    functions: [],
+    classes: [],
+    methods: ["paths"],
+    imports: ["dependencies", "devDependencies"],
+    exports: ["exports"],
+    variables: [],
+    types: ["definitions", "components", "schemas"],
+    interfaces: [],
+  },
+  extractors: {
+    extractName: () => ["key", "string"],
+    extractModifiers: () => [],
+    extractParameters: false,
+    extractReturnType: false,
+    extractReferences: true,
+  },
+};
+
+/**
  * Language configuration registry
  */
 export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
@@ -1414,6 +1451,7 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   bash: BASH_CONFIG,
   powershell: POWERSHELL_CONFIG,
   batch: BATCH_CONFIG,
+  json: JSON_CONFIG,
 };
 
 /**
