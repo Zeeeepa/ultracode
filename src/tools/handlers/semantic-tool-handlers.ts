@@ -12,18 +12,25 @@
 
 import { z } from "zod";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
-import { paginate, SAFE_LIMITS, MAX_PAGE_SIZE } from "../response-limits.js";
+import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 
 // =============================================================================
 // SEMANTIC SEARCH
 // =============================================================================
 
 const SemanticSearchSchema = z.object({
-  query: z.string(),
+  query: z.string().describe("Natural language search query"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
-  entityTypes: z.array(z.string()).optional(),
-  minSimilarity: z.number().optional().default(0.7),
+  entityTypes: z.array(z.string()).optional().describe("Filter by entity types (function, class, interface, etc.)"),
+  minSimilarity: z.number().optional().default(0.7).describe("Minimum similarity threshold (0.0-1.0)"),
+  includeContent: z.boolean().optional().default(true).describe("Include full code content with comments in results"),
+  expandRelated: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Expand results with graph neighbors (callers, dependencies, inheritors)"),
+  expansionDepth: z.number().optional().default(1).describe("Graph traversal depth for expansion (1 or 2 hops)"),
 });
 
 export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof SemanticSearchSchema>> {
@@ -42,7 +49,17 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
       minSimilarity: args.minSimilarity,
     });
 
-    const paginatedResult = paginate(allResults, args.offset, safeLimit);
+    // Expand results with graph neighbors if requested
+    let expandedResults = allResults;
+    let expansionStats = { expanded: false, neighborsAdded: 0 };
+
+    if (args.expandRelated && allResults.length > 0) {
+      const expansion = await this.expandWithGraphNeighbors(allResults, args.expansionDepth, args.minSimilarity);
+      expandedResults = expansion.results;
+      expansionStats = { expanded: true, neighborsAdded: expansion.neighborsAdded };
+    }
+
+    const paginatedResult = paginate(expandedResults, args.offset, safeLimit);
 
     return {
       content: [
@@ -53,12 +70,15 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
               query: args.query,
               count: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
+              ...(expansionStats.expanded ? { expansion: expansionStats } : {}),
               results: paginatedResult.data.map((r: any) => ({
                 id: r.id,
                 name: r.name || r.metadata?.name,
                 type: r.type || r.metadata?.entityType,
                 similarity: r.similarity,
                 filePath: r.filePath || r.metadata?.filePath,
+                ...(r.isExpanded ? { isExpanded: true, relationshipType: r.relationshipType } : {}),
+                ...(args.includeContent && r.content ? { content: r.content } : {}),
               })),
             },
             null,
@@ -68,6 +88,132 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
       ],
     };
   }
+
+  /**
+   * Expand search results with graph neighbors (callers, dependencies, inheritors)
+   */
+  private async expandWithGraphNeighbors(
+    results: any[],
+    depth: number,
+    minSimilarity: number,
+  ): Promise<{ results: any[]; neighborsAdded: number }> {
+    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    const seen = new Set<string>(results.map((r) => r.id));
+    const neighbors: any[] = [];
+
+    // Process each result to find neighbors
+    for (const result of results.slice(0, 20)) {
+      // Limit expansion to top 20 results
+      // Try to find entity ID - vector store uses different IDs than graph storage
+      let entityId = result.metadata?.entityId;
+
+      // If no entityId, try to find entity by name and path in graph storage
+      if (!entityId && result.metadata?.name && result.metadata?.path) {
+        try {
+          const found = await storage.findEntities({
+            filters: {
+              name: result.metadata.name,
+              filePath: result.metadata.path,
+            },
+            limit: 1,
+          });
+          if (found.length > 0) {
+            entityId = found[0].id;
+          }
+        } catch {
+          // Ignore lookup failures
+        }
+      }
+
+      if (!entityId) continue;
+
+      try {
+        // Get relationships for this entity
+        const relationships = await storage.getRelationshipsForEntity(entityId);
+
+        for (const rel of relationships) {
+          // Get the related entity ID (could be fromId or toId)
+          const relatedId = rel.fromId === entityId ? rel.toId : rel.fromId;
+
+          if (seen.has(relatedId) || seen.has(`ent:${relatedId}`)) continue;
+          seen.add(relatedId);
+
+          // Fetch the related entity
+          const relatedEntity = await storage.getEntity(relatedId);
+          if (!relatedEntity) continue;
+
+          // Calculate reduced similarity score for neighbors
+          const neighborSimilarity = result.similarity * 0.7; // 30% reduction for 1-hop
+          if (neighborSimilarity < minSimilarity) continue;
+
+          neighbors.push({
+            id: `ent:${relatedId}`,
+            name: relatedEntity.name,
+            type: relatedEntity.type,
+            similarity: neighborSimilarity,
+            filePath: relatedEntity.filePath,
+            content: relatedEntity.metadata?.content,
+            isExpanded: true,
+            relationshipType: rel.type,
+            metadata: { entityId: relatedId },
+          });
+        }
+
+        // 2-hop expansion if requested
+        if (depth >= 2 && neighbors.length < 50) {
+          for (const neighbor of neighbors.slice(-10)) {
+            // Last 10 neighbors for 2-hop
+            const neighborEntityId = neighbor.id?.replace(/^ent:/, "");
+            if (!neighborEntityId) continue;
+
+            try {
+              const hop2Rels = await storage.getRelationshipsForEntity(neighborEntityId);
+
+              for (const rel of hop2Rels.slice(0, 5)) {
+                // Limit 2-hop to 5 per neighbor
+                const hop2Id = rel.fromId === neighborEntityId ? rel.toId : rel.fromId;
+
+                if (seen.has(hop2Id) || seen.has(`ent:${hop2Id}`)) continue;
+                seen.add(hop2Id);
+
+                const hop2Entity = await storage.getEntity(hop2Id);
+                if (!hop2Entity) continue;
+
+                // Further reduced similarity for 2-hop
+                const hop2Similarity = neighbor.similarity * 0.7;
+                if (hop2Similarity < minSimilarity) continue;
+
+                neighbors.push({
+                  id: `ent:${hop2Id}`,
+                  name: hop2Entity.name,
+                  type: hop2Entity.type,
+                  similarity: hop2Similarity,
+                  filePath: hop2Entity.filePath,
+                  content: hop2Entity.metadata?.content,
+                  isExpanded: true,
+                  relationshipType: `${rel.type} (2-hop)`,
+                  metadata: { entityId: hop2Id },
+                });
+              }
+            } catch {
+              // Skip failed 2-hop lookups
+            }
+          }
+        }
+      } catch {
+        // Skip failed relationship lookups
+      }
+    }
+
+    // Combine and sort by similarity
+    const combined = [...results, ...neighbors];
+    combined.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+
+    return {
+      results: combined,
+      neighborsAdded: neighbors.length,
+    };
+  }
 }
 
 // =============================================================================
@@ -75,10 +221,11 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
 // =============================================================================
 
 const FindSimilarCodeSchema = z.object({
-  code: z.string(),
+  code: z.string().describe("Code snippet to find similar code for"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
-  minSimilarity: z.number().optional().default(0.7),
+  minSimilarity: z.number().optional().default(0.7).describe("Minimum similarity threshold (0.0-1.0)"),
+  includeContent: z.boolean().optional().default(true).describe("Include full code content with comments in results"),
 });
 
 export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof FindSimilarCodeSchema>> {
@@ -113,6 +260,7 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
                 similarity: r.similarity,
                 filePath: r.filePath,
                 snippet: r.snippet,
+                ...(args.includeContent && r.content ? { content: r.content } : {}),
               })),
             },
             null,
@@ -276,10 +424,11 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
 // =============================================================================
 
 const CrossLanguageSearchSchema = z.object({
-  query: z.string(),
-  languages: z.array(z.string()).optional(),
+  query: z.string().describe("Search query"),
+  languages: z.array(z.string()).optional().describe("Languages to search in"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
+  includeContent: z.boolean().optional().default(true).describe("Include full code content with comments in results"),
 });
 
 export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<typeof CrossLanguageSearchSchema>> {
@@ -308,7 +457,10 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
               query: args.query,
               count: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
-              results: paginatedResult.data,
+              results: paginatedResult.data.map((r: any) => ({
+                ...r,
+                ...(args.includeContent && r.content ? { content: r.content } : {}),
+              })),
             },
             null,
             2,

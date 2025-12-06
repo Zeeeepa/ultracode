@@ -105,6 +105,7 @@ function detectLanguage(filePath: string): string {
     ".jsx": "javascript",
     ".mjs": "javascript",
     ".cjs": "javascript",
+    ".json": "json",
   };
 
   return languageMap[ext] || "unknown";
