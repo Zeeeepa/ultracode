@@ -408,3 +408,216 @@ if ($selectedProvider -eq "tei") {
 Write-Host "Configuration file location:" -ForegroundColor White
 Write-Host "  $OutputConfigFile" -ForegroundColor Gray
 Write-Host ""
+
+# ==============================================================================
+# Step 4 (Optional): LLM for Documentation Generation
+# ==============================================================================
+
+Write-Host ""
+Write-Host "=================================================================" -ForegroundColor Cyan
+Write-Host "Optional: LLM for AutoDoc (Documentation Generation)" -ForegroundColor Cyan
+Write-Host "=================================================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "AutoDoc can use a local LLM to generate meaningful documentation" -ForegroundColor White
+Write-Host "descriptions instead of just templates." -ForegroundColor White
+Write-Host ""
+
+$setupLlm = Read-Host "Would you like to set up an LLM model? [y/N]"
+
+if ($setupLlm -eq "y" -or $setupLlm -eq "Y") {
+    Write-Host ""
+    Write-Host "[4/4] LLM Model Selection" -ForegroundColor Yellow
+    Write-Host ""
+
+    # LLM models list (code-focused models for documentation)
+    # Updated Dec 2025 with latest models optimized for code/documentation
+    $llmModels = @(
+        @{
+            id = "qwen3-coder:30b"
+            name = "Qwen3 Coder 30B (MoE, 3.3B active)"
+            size = "~17 GB"
+            vram = "~5-6 GB"
+            context = "262K tokens"
+            description = "MoE: 30B quality, 3B inference cost. Best balance!"
+            badge = "[RECOMMENDED]"
+        },
+        @{
+            id = "qwen3-coder:8b"
+            name = "Qwen3 Coder 8B"
+            size = "4.9 GB"
+            vram = "~5.5 GB"
+            context = "262K tokens"
+            description = "Dense model with 262K context, very capable"
+            badge = ""
+        },
+        @{
+            id = "qwen2.5-coder:7b"
+            name = "Qwen 2.5 Coder 7B"
+            size = "4.4 GB"
+            vram = "~5.0 GB"
+            context = "128K tokens"
+            description = "Strong multilingual code model, 128K context"
+            badge = ""
+        },
+        @{
+            id = "deepseek-r1:7b"
+            name = "DeepSeek R1 7B (Distilled)"
+            size = "4.0 GB"
+            vram = "~4.5 GB"
+            context = "64K tokens"
+            description = "Distilled reasoning model, excellent for complex tasks"
+            badge = ""
+        },
+        @{
+            id = "codestral:7b"
+            name = "Mamba Codestral 7B (Mistral)"
+            size = "4.0 GB"
+            vram = "~4.5 GB"
+            context = "256K tokens"
+            description = "Mamba architecture - 1.5-2x faster, linear memory"
+            badge = "[FAST]"
+        },
+        @{
+            id = "deepseek-coder:6.7b"
+            name = "DeepSeek Coder 6.7B"
+            size = "3.8 GB"
+            vram = "~4.5 GB"
+            context = "16K tokens"
+            description = "Proven model, limited context (16K)"
+            badge = ""
+        },
+        @{
+            id = "yi-coder:9b"
+            name = "Yi Coder 9B"
+            size = "5.5 GB"
+            vram = "~6.0 GB"
+            context = "128K tokens"
+            description = "Strong 9B model with 128K context"
+            badge = ""
+        },
+        @{
+            id = "phi3:mini"
+            name = "Phi-3 Mini 3.8B"
+            size = "2.2 GB"
+            vram = "~2.8 GB"
+            context = "4K tokens"
+            description = "Compact, good for limited VRAM"
+            badge = "[SMALL]"
+        }
+    )
+
+    # Display LLM models
+    $index = 1
+    foreach ($model in $llmModels) {
+        $badge = if ($model.badge) { " $($model.badge)" } else { "" }
+        Write-Host "$index) $($model.name)$badge" -ForegroundColor White
+        Write-Host "   Context: $($model.context) | Disk: $($model.size) | VRAM: $($model.vram)" -ForegroundColor Cyan
+        Write-Host "   $($model.description)" -ForegroundColor Gray
+        Write-Host ""
+        $index++
+    }
+
+    do {
+        $llmChoice = Read-Host "Choose LLM model [1-$($llmModels.Count)] or 'skip'"
+        if ($llmChoice -eq "skip") { break }
+        $llmIdx = [int]$llmChoice - 1
+    } while ($llmIdx -lt 0 -or $llmIdx -ge $llmModels.Count)
+
+    if ($llmChoice -ne "skip") {
+        $selectedLlm = $llmModels[$llmIdx]
+
+        Write-Host ""
+        Write-Info "Selected LLM: $($selectedLlm.name)"
+        Write-Host ""
+
+        # Check if Ollama is already installed (we may have just installed it for embeddings)
+        $ollamaInstalled = $false
+        try {
+            $ollamaVersion = & ollama --version 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $ollamaInstalled = $true
+                Write-Success "Ollama is already installed"
+            }
+        } catch {
+            # Not installed
+        }
+
+        if (!$ollamaInstalled) {
+            Write-Host "Installing Ollama..." -ForegroundColor Yellow
+            Write-Host ""
+
+            if ($IsWindows -or $env:OS -match "Windows") {
+                # Windows: use winget
+                Write-Host "Running: winget install Ollama.Ollama" -ForegroundColor Gray
+                try {
+                    winget install Ollama.Ollama --silent --accept-package-agreements --accept-source-agreements
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Success "Ollama installed successfully"
+                        $ollamaInstalled = $true
+                        # Refresh PATH
+                        $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
+                    }
+                } catch {
+                    Write-Warn "Failed to install Ollama via winget"
+                    Write-Host "Please install manually from: https://ollama.ai" -ForegroundColor Gray
+                }
+            } else {
+                # Linux/macOS: use curl
+                Write-Host "Running: curl -fsSL https://ollama.ai/install.sh | sh" -ForegroundColor Gray
+                try {
+                    & bash -c "curl -fsSL https://ollama.ai/install.sh | sh"
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Success "Ollama installed successfully"
+                        $ollamaInstalled = $true
+                    }
+                } catch {
+                    Write-Warn "Failed to install Ollama"
+                    Write-Host "Please install manually from: https://ollama.ai" -ForegroundColor Gray
+                }
+            }
+        }
+
+        if ($ollamaInstalled) {
+            Write-Host ""
+            Write-Host "Pulling LLM model: $($selectedLlm.id)..." -ForegroundColor Yellow
+            Write-Host "This may take a few minutes depending on your connection." -ForegroundColor Gray
+            Write-Host ""
+
+            try {
+                & ollama pull $selectedLlm.id
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host ""
+                    Write-Success "LLM model downloaded successfully!"
+                    Write-Host ""
+
+                    # Update config with LLM settings
+                    $config.llm = @{
+                        provider = "ollama"
+                        model = $selectedLlm.id
+                        endpoint = "http://127.0.0.1:11434"
+                    }
+                    $config | ConvertTo-Json -Depth 10 | Set-Content $OutputConfigFile -Encoding UTF8
+                    Write-Success "Configuration updated with LLM settings"
+                } else {
+                    Write-Warn "Failed to pull model. You can try manually: ollama pull $($selectedLlm.id)"
+                }
+            } catch {
+                Write-Warn "Error pulling model: $_"
+                Write-Host "You can try manually: ollama pull $($selectedLlm.id)" -ForegroundColor Gray
+            }
+        }
+
+        Write-Host ""
+        Write-Host "=================================================================" -ForegroundColor Green
+        Write-Host "LLM Setup Complete!" -ForegroundColor Green
+        Write-Host "=================================================================" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "To generate documentation with LLM, use:" -ForegroundColor White
+        Write-Host "  autodoc_generate(preview: false, useLlm: true)" -ForegroundColor Cyan
+        Write-Host ""
+    }
+}
+
+Write-Host ""
+Write-Host "Setup complete! Restart your MCP client to apply changes." -ForegroundColor Green
+Write-Host ""
