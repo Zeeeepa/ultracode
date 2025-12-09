@@ -27,10 +27,15 @@
  */
 
 import { getConfig } from "../config/yaml-config.js";
-import { hashText } from "../utils/fast-hash.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { CodeAnalyzer } from "../semantic/code-analyzer.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
+import {
+  expandLargeEntities,
+  getExpansionStats,
+  getOversizedEntitiesWarning,
+  type OversizedEntitiesWarning,
+} from "../semantic/entity-expander.js";
 import { HybridSearchEngine } from "../semantic/hybrid-search.js";
 import { SemanticCache } from "../semantic/semantic-cache.js";
 import { VectorStore } from "../semantic/vector-store.js";
@@ -52,6 +57,7 @@ import {
   type VectorEmbedding,
 } from "../types/semantic.js";
 import { type Entity, EntityType } from "../types/storage.js";
+import { hashText } from "../utils/fast-hash.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -133,6 +139,16 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   private successCount = 0;
   private failureWindow: number[] = [];
   private debugMode = process.env.SEMANTIC_AGENT_DEBUG === "true";
+
+  // Last indexing warning about oversized entities
+  private lastOversizedWarning: OversizedEntitiesWarning | null = null;
+
+  /**
+   * Get last oversized entities warning (for index tool response)
+   */
+  getLastOversizedWarning(): OversizedEntitiesWarning | null {
+    return this.lastOversizedWarning;
+  }
 
   /**
    * Get embedding dimensions by generating a test embedding
@@ -295,6 +311,54 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     await this.warmupSemanticCache();
 
     console.error(`[${this.id}] Semantic agent initialized with ${this.semanticMetrics.vectorsStored} vectors`);
+  }
+
+  /**
+   * Reinitialize VectorStore for a new project directory.
+   * Called when switching between projects to ensure embeddings are stored/read from correct location.
+   */
+  async reinitializeForProject(projectPath: string): Promise<void> {
+    const currentPath = this.vectorStore?.getDbPath?.() || "";
+    const projectPaths = getProjectPaths(projectPath);
+    const newDbPath = projectPaths.vectorsDbPath;
+
+    // Skip if already using this path
+    if (currentPath === newDbPath) {
+      console.error(`[${this.id}] VectorStore already using correct path: ${newDbPath}`);
+      return;
+    }
+
+    console.error(`[${this.id}] Reinitializing VectorStore for project: ${projectPath}`);
+    console.error(`[${this.id}] Old path: ${currentPath}`);
+    console.error(`[${this.id}] New path: ${newDbPath}`);
+
+    // Get dimensions from current embedding generator
+    const dimensions = await this.getEmbeddingDimensions();
+
+    // Get config for vector backend settings
+    const config = getConfig();
+    const vectorBackend = config.vectorBackend || {};
+
+    // Create new VectorStore for the project
+    this.vectorStore = new VectorStore({
+      dbPath: newDbPath,
+      dimensions: dimensions,
+      backend: vectorBackend.backend || "auto",
+      autoSwitchThreshold: vectorBackend.autoSwitchThreshold || 10000,
+      vectorlite: vectorBackend.vectorlite,
+      workingDirectory: projectPath,
+    });
+
+    await this.vectorStore.initialize();
+
+    // Update HybridSearch and CodeAnalyzer with new VectorStore
+    this.hybridSearch = new HybridSearchEngine(this.vectorStore, this.embeddingGen);
+    this.codeAnalyzer = new CodeAnalyzer(this.vectorStore, this.embeddingGen, this.cache);
+
+    // Update metrics
+    this.semanticMetrics.vectorsStored = await this.vectorStore.count();
+
+    console.error(`[${this.id}] VectorStore reinitialized with ${this.semanticMetrics.vectorsStored} vectors`);
   }
 
   // TASK-004B: Circuit breaker implementation methods
@@ -724,14 +788,23 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     knowledgeBus.subscribe(this.id, /^entity:.*/, this.handleEntityUpdate.bind(this));
 
     // Subscribe to semantic ingestion of new parsed entities
+    console.error(`[${this.id}] Subscribing to semantic:new_entities...`);
     knowledgeBus.subscribe(this.id, "semantic:new_entities", async (entry) => {
       try {
         const ents = entry.data as ParsedEntity[];
+        console.error(`[${this.id}] Received semantic:new_entities event with ${ents?.length || 0} entities`);
         if (Array.isArray(ents) && ents.length > 0) {
+          // Log entity types for debugging
+          const typeCounts = new Map<string, number>();
+          for (const e of ents) {
+            const t = (e as any).type || "unknown";
+            typeCounts.set(t, (typeCounts.get(t) || 0) + 1);
+          }
+          console.error(`[${this.id}] Entity types: ${JSON.stringify(Object.fromEntries(typeCounts))}`);
           await this.handleNewEntities(ents);
         }
       } catch (e) {
-        if (this.debugMode) console.warn(`[${this.id}] semantic:new_entities failed:`, (e as Error).message);
+        console.error(`[${this.id}] semantic:new_entities failed:`, (e as Error).message);
       }
     });
 
@@ -783,11 +856,34 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       return;
     }
 
+    // ENTITY EXPANSION: Expand large classes/interfaces into their methods
+    // This ensures methods are indexed separately for better search quality
+    const maxTokens = this.embeddingGen.maxTokens;
+    const expandedEntities = expandLargeEntities(entities, { maxTokens });
+
+    if (this.debugMode) {
+      const stats = getExpansionStats(entities, { maxTokens });
+      if (stats.needsExpansion > 0) {
+        console.error(
+          `[${this.id}] Entity expansion: ${stats.needsExpansion} large entities expanded ` +
+            `(${entities.length} → ${expandedEntities.length} entities, maxTokens: ${maxTokens})`,
+        );
+      }
+    }
+
+    // Check for oversized entities and store warning for index tool response
+    this.lastOversizedWarning = getOversizedEntitiesWarning(expandedEntities, maxTokens);
+    if (this.lastOversizedWarning.hasWarning) {
+      console.error(
+        `[${this.id}] ⚠️ ${this.lastOversizedWarning.oversizedCount} entities exceed maxTokens (${maxTokens})`,
+      );
+    }
+
     // Filter out entities that already have embeddings (optimization for incremental indexing)
     const filteredEntities: ParsedEntity[] = [];
     let skippedCount = 0;
 
-    for (const entity of entities) {
+    for (const entity of expandedEntities) {
       const e: any = entity;
       const stableId = e.id
         ? `ent:${e.id}`
@@ -874,16 +970,70 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
         const header = `${e.name ?? ""} ${e.type ?? ""} ${e.signature ?? ""}`.trim();
 
+        // Build enhanced text with parser-extracted metadata
+        const enhancedParts: string[] = [header];
+
+        // Add documentation if available (improves semantic search by description)
+        if (e.documentation?.description) {
+          enhancedParts.push(`description: ${e.documentation.description}`);
+        }
+
+        // Add call information (enables "find functions that call X" queries)
+        if (e.calls && e.calls.length > 0) {
+          const callNames = e.calls.slice(0, 20).map((c: any) => (c.target ? `${c.target}.${c.name}` : c.name));
+          enhancedParts.push(`calls: ${callNames.join(", ")}`);
+        }
+
+        // Add complexity info (enables "find complex functions" queries)
+        if (e.complexity) {
+          const cx = e.complexity;
+          if (cx.cyclomatic > 5 || cx.cognitive > 10) {
+            enhancedParts.push(`complexity: cyclomatic=${cx.cyclomatic} cognitive=${cx.cognitive}`);
+          }
+        }
+
+        // Add control flow summary (enables "find functions with try-catch" queries)
+        if (e.controlFlow) {
+          const cf = e.controlFlow;
+          const flowParts: string[] = [];
+          if (cf.branches?.length > 0) flowParts.push(`branches=${cf.branches.length}`);
+          if (cf.loops?.length > 0) flowParts.push(`loops=${cf.loops.length}`);
+          if (cf.exceptions?.length > 0) flowParts.push(`exceptions=${cf.exceptions.length}`);
+          if (cf.awaits?.length > 0) flowParts.push(`awaits=${cf.awaits.length}`);
+          if (flowParts.length > 0) {
+            enhancedParts.push(`flow: ${flowParts.join(", ")}`);
+          }
+        }
+
+        // Add return type for better type-based search
+        if (e.returnType) {
+          enhancedParts.push(`returns: ${e.returnType}`);
+        }
+
+        // Add parameter types for signature-based search
+        if (e.parameters && e.parameters.length > 0) {
+          const paramTypes = e.parameters
+            .filter((p: any) => p.type)
+            .map((p: any) => `${p.name}:${p.type}`)
+            .slice(0, 10);
+          if (paramTypes.length > 0) {
+            enhancedParts.push(`params: ${paramTypes.join(", ")}`);
+          }
+        }
+
+        // Add the code
+        enhancedParts.push(code);
+
         // Enhance with comments if available
         const entityId = e.id || CommentExtractor["generateEntityId"](ent);
         const associations = associationsByFile.get(e.filePath);
         const entityComments = associations?.get(entityId) || [];
 
         if (entityComments.length > 0) {
-          return CommentExtractor.enhanceEntityContentWithComments(code, header, entityComments);
+          return CommentExtractor.enhanceEntityContentWithComments(enhancedParts.join("\n"), header, entityComments);
         }
 
-        return `${header}\n${code}`.trim();
+        return enhancedParts.join("\n").trim();
       }),
     );
 
@@ -915,20 +1065,67 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
       const language = x.language ?? storedEntity?.language ?? undefined;
 
+      // Build enhanced metadata for filtering and display
+      const metadata: Record<string, unknown> = {
+        path: filePath,
+        type: x.type,
+        name: x.name,
+        language,
+        entityId: x.id ?? undefined,
+        start: x.location?.start?.index ?? undefined,
+        end: x.location?.end?.index ?? undefined,
+        model: modelName,
+      };
+
+      // Add complexity metrics (enables filtering by complexity)
+      if (x.complexity) {
+        metadata.cyclomatic = x.complexity.cyclomatic;
+        metadata.cognitive = x.complexity.cognitive;
+        metadata.linesOfCode = x.complexity.linesOfCode;
+        metadata.nestingDepth = x.complexity.nestingDepth;
+      }
+
+      // Add call count (enables "find functions with many calls" queries)
+      if (x.calls?.length) {
+        metadata.callCount = x.calls.length;
+        metadata.hasAsyncCalls = x.calls.some((c: any) => c.isAwait);
+      }
+
+      // Add control flow flags (enables filtering)
+      if (x.controlFlow) {
+        const cf = x.controlFlow;
+        metadata.hasBranches = (cf.branches?.length || 0) > 0;
+        metadata.hasLoops = (cf.loops?.length || 0) > 0;
+        metadata.hasExceptions = (cf.exceptions?.length || 0) > 0;
+        metadata.hasAwaits = (cf.awaits?.length || 0) > 0;
+        metadata.branchCount = cf.branches?.length || 0;
+        metadata.loopCount = cf.loops?.length || 0;
+        metadata.returnCount = cf.returns?.length || 0;
+      }
+
+      // Add documentation flag (enables "find documented functions" queries)
+      if (x.documentation) {
+        metadata.hasDocumentation = true;
+        metadata.hasParams = (x.documentation.params?.length || 0) > 0;
+        metadata.hasExamples = (x.documentation.examples?.length || 0) > 0;
+        metadata.isDeprecated = !!x.documentation.deprecated;
+      }
+
+      // Add return type for type-based filtering
+      if (x.returnType) {
+        metadata.returnType = x.returnType;
+      }
+
+      // Add parameter count
+      if (x.parameters?.length) {
+        metadata.paramCount = x.parameters.length;
+      }
+
       return {
         id: stableId,
         content: texts[i] ?? "",
         vector: embeddings[i] ?? new Float32Array(this.embeddingDim),
-        metadata: {
-          path: filePath,
-          type: x.type,
-          name: x.name,
-          language,
-          entityId: x.id ?? undefined,
-          start: x.location?.start?.index ?? undefined,
-          end: x.location?.end?.index ?? undefined,
-          model: modelName,
-        },
+        metadata,
         createdAt: Date.now(),
       };
     });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it } from "bun:test";
 import { DevAgent } from "../../src/agents/dev-agent.js";
 import { QueryAgent } from "../../src/agents/query-agent.js";
 import { SemanticAgent } from "../../src/agents/semantic-agent.js";

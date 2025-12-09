@@ -595,7 +595,7 @@ export class AutoDocManager {
    */
   private extractLineStart(targetId: string): number | undefined {
     const match = targetId.match(/:?L(\d+)/);
-    return match && match[1] ? parseInt(match[1], 10) : undefined;
+    return match?.[1] ? parseInt(match[1], 10) : undefined;
   }
 
   /**
@@ -603,7 +603,7 @@ export class AutoDocManager {
    */
   private extractLineEnd(targetId: string): number | undefined {
     const match = targetId.match(/-L?(\d+)$/);
-    return match && match[1] ? parseInt(match[1], 10) : this.extractLineStart(targetId);
+    return match?.[1] ? parseInt(match[1], 10) : this.extractLineStart(targetId);
   }
 
   /**

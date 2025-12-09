@@ -1,0 +1,710 @@
+{
+  "$schema": "./llm-models.schema.json",
+  "version": "1.1.0",
+  "description": "LLM models for code documentation generation (AutoDoc feature). Updated Dec 2025.",
+  "scenarios": {
+    "production": {
+      "name": "Production (best quality)",
+      "description": "Best quality docstring generation. Qwen2.5-Coder-7B specialized for code.",
+      "tgi": "tgi-qwen2.5-coder-7b",
+      "openvino": "qwen2.5-coder-7b-int4",
+      "ollama": "qwen2.5-coder:7b"
+    },
+    "fast": {
+      "name": "Fast (balanced)",
+      "description": "Good balance of speed and quality. Phi-4-mini is fast and code-aware.",
+      "tgi": "tgi-phi-4-mini",
+      "openvino": "phi-4-mini-int4",
+      "ollama": "phi4-mini"
+    },
+    "minimal": {
+      "name": "Minimal (low resources)",
+      "description": "For systems with <4GB RAM. Qwen2.5-0.5B via GGUF is tiny but capable.",
+      "tgi": null,
+      "openvino": "qwen2.5-0.5b-gguf",
+      "ollama": "qwen2.5:0.5b"
+    },
+    "npu": {
+      "name": "NPU (Intel Core Ultra)",
+      "description": "Optimized for Intel Core Ultra NPU. Arrow Lake: ~2.9 tok/s (limited compat), Lunar Lake: 20-25 tok/s.",
+      "status": "WORKING",
+      "driver_required": "32.0.100.4181+",
+      "driver_tested": "32.0.100.4404",
+      "arrow_lake_note": "⚠️ Arrow Lake NPU (275HX) has different vpux-compiler. Only OpenVINO/Qwen3-4B works (~2.9 tok/s). CPU is faster (25+ tok/s)!",
+      "lunar_lake_note": "✅ Lunar Lake NPU (258V) supports more models: Qwen3-4B (20-25 tok/s), Phi-4-mini (25-30 tok/s).",
+      "tgi": null,
+      "openvino": "qwen3-4b-npu-int4",
+      "ollama": null
+    }
+  },
+  "providers": {
+    "tgi": {
+      "name": "TGI (Text Generation Inference)",
+      "description": "HuggingFace официальный LLM сервер\n⚡ Native batch + continuous batching\n🚀 GPU: RTX 30xx/40xx (Ampere/Ada)\n❌ RTX 50xx (Blackwell) - НЕ поддерживается, ждать HuggingFace\n🐳 Требуется Docker Desktop\n📊 Prometheus metrics встроены",
+      "requires": ["docker", "nvidia-gpu-pre-blackwell"],
+      "optional": [],
+      "default_port": 8080,
+      "container_name": "tgi-server",
+      "supports_batch": true,
+      "image_gpu": "ghcr.io/huggingface/text-generation-inference:3.3.4",
+      "image_cpu": "ghcr.io/huggingface/text-generation-inference:3.3.4-intel-cpu",
+      "blackwell_status": "NOT_SUPPORTED",
+      "blackwell_notes": "RTX 50xx (Blackwell) не поддерживается. Альтернативы: Ollama (работает), OpenVINO CPU, или ждать патч от HuggingFace"
+    },
+    "openvino": {
+      "name": "OpenVINO GenAI 2025.4",
+      "description": "Intel OpenVINO LLM inference\n- CPU/GPU/NPU support\n- INT4/INT8 quantization\n- GGUF direct loading\n- MoE models (Qwen3-30B-A3B)\n- Structured output (XGrammar)\n- Tool calling + parsers\n- Prefix caching\n- NPU context up to 10K",
+      "requires": ["openvino-genai"],
+      "optional": ["intel-npu"],
+      "default_device": "CPU",
+      "version": "2025.4"
+    },
+    "ollama": {
+      "name": "Ollama",
+      "description": "Local LLM inference\n- Easy installation\n- All GPU vendors (включая RTX 50xx)\n- Streaming\n- Нет Docker",
+      "requires": ["ollama"],
+      "optional": ["nvidia-gpu"],
+      "default_port": 11434
+    }
+  },
+  "models": [
+    {
+      "id": "qwen2.5-coder-7b-int4",
+      "provider": "openvino",
+      "name": "Qwen2.5 Coder 7B INT4",
+      "badge": "BEST for code",
+      "model_id": "OpenVINO/Qwen2.5-Coder-7B-Instruct-int4-ov",
+      "huggingface_id": "AIFunOver/Qwen2.5-Coder-7B-Instruct-openvino-4bit",
+      "devices": ["CPU", "GPU"],
+      "context_tokens": 32768,
+      "size_gb": 4.0,
+      "ram_gb": 6,
+      "tokens_per_sec_cpu": 10,
+      "quality": {
+        "python": 5,
+        "javascript": 5,
+        "typescript": 5,
+        "rust": 4
+      },
+      "use_case": "production",
+      "description": "Best for code documentation. 32K context. Specialized for code generation.",
+      "license": "Apache 2.0"
+    },
+    {
+      "id": "phi-4-mini-int4",
+      "provider": "openvino",
+      "name": "Phi-4 Mini INT4",
+      "badge": "Fast + quality",
+      "model_id": "OpenVINO/Phi-4-mini-instruct-int4-ov",
+      "devices": ["CPU", "GPU"],
+      "context_tokens": 16384,
+      "size_gb": 2.5,
+      "ram_gb": 3,
+      "tokens_per_sec_cpu": 11.5,
+      "tokens_per_sec_gpu": 15,
+      "benchmark_note": "Tested on Core Ultra 9 275HX, 11.5 tok/s CPU",
+      "quality": {
+        "python": 5,
+        "javascript": 4,
+        "typescript": 4,
+        "rust": 3
+      },
+      "use_case": "fast",
+      "description": "Fast generation with good quality. Official OpenVINO optimization.",
+      "license": "MIT"
+    },
+    {
+      "id": "phi-3-mini-128k-int4",
+      "provider": "openvino",
+      "name": "Phi-3 Mini 128K INT4",
+      "badge": "Ultra long context",
+      "model_id": "OpenVINO/Phi-3-mini-128k-instruct-int4-ov",
+      "devices": ["CPU", "GPU"],
+      "context_tokens": 131072,
+      "size_gb": 2.0,
+      "ram_gb": 3,
+      "tokens_per_sec_cpu": 18,
+      "quality": {
+        "python": 5,
+        "javascript": 4,
+        "typescript": 4,
+        "rust": 3
+      },
+      "use_case": "production",
+      "description": "128K context for analyzing entire files. Excellent code understanding.",
+      "license": "MIT"
+    },
+    {
+      "id": "qwen3-4b-npu-int4",
+      "provider": "openvino",
+      "name": "Qwen3 4B NPU INT4",
+      "badge": "NPU optimized",
+      "model_id": "OpenVINO/Qwen3-4B-int4-ov",
+      "devices": ["NPU", "CPU"],
+      "context_tokens": 8192,
+      "size_gb": 2.5,
+      "ram_gb": 4,
+      "tokens_per_sec_npu": 5.5,
+      "tokens_per_sec_cpu": 12,
+      "power_watts_npu": 15,
+      "npu_status": "WORKING",
+      "npu_driver_required": "32.0.100.4181+",
+      "benchmark_note": "Tested on Core Ultra 9 275HX, driver 4404. 5.5 tok/s NPU, 53s first load",
+      "quality": {
+        "python": 4,
+        "javascript": 3,
+        "typescript": 3,
+        "rust": 3
+      },
+      "use_case": "npu",
+      "npu_requirements": {
+        "driver_version": "32.0.100.4181+",
+        "quantization": "int4_sym",
+        "max_context": 8192
+      },
+      "description": "Officially optimized for Intel Core Ultra NPU. Low power (~15W).",
+      "license": "Apache 2.0"
+    },
+    {
+      "id": "qwen3-8b-int4",
+      "provider": "openvino",
+      "name": "Qwen3 8B INT4",
+      "badge": "High quality",
+      "model_id": "OpenVINO/Qwen3-8B-int4-ov",
+      "devices": ["CPU", "GPU"],
+      "context_tokens": 32768,
+      "size_gb": 5.0,
+      "ram_gb": 7,
+      "tokens_per_sec_cpu": 8,
+      "quality": {
+        "python": 5,
+        "javascript": 4,
+        "typescript": 4,
+        "rust": 4
+      },
+      "use_case": "production",
+      "description": "High quality general + code. 32K context.",
+      "license": "Apache 2.0"
+    },
+    {
+      "id": "qwen3-30b-moe-int4",
+      "provider": "openvino",
+      "name": "Qwen3 30B-A3B MoE INT4",
+      "badge": "🆕 MoE 2025.4",
+      "model_id": "OpenVINO/Qwen3-30B-A3B-int4-ov",
+      "devices": ["CPU", "GPU"],
+      "context_tokens": 32768,
+      "size_gb": 18.0,
+      "ram_gb": 20,
+      "tokens_per_sec_cpu": 12,
+      "tokens_per_sec_gpu": 28,
+      "quality": {
+        "python": 5,
+        "javascript": 5,
+        "typescript": 5,
+        "rust": 5
+      },
+      "use_case": "production",
+      "moe": true,
+      "active_params": "3B",
+      "total_params": "30B",
+      "description": "🆕 MoE preview. 30B quality at 3B speed. Tool calling support.",
+      "license": "Apache 2.0"
+    },
+    {
+      "id": "mistral-small-24b-int4",
+      "provider": "openvino",
+      "name": "Mistral Small 24B INT4",
+      "badge": "🆕 Jan 2025",
+      "model_id": "OpenVINO/Mistral-Small-24B-Instruct-2501-int4-ov",
+      "devices": ["CPU", "GPU"],
+      "context_tokens": 32768,
+      "size_gb": 14.0,
+      "ram_gb": 16,
+      "tokens_per_sec_cpu": 5,
+      "tokens_per_sec_gpu": 20,
+      "quality": {
+        "python": 5,
+        "javascript": 5,
+        "typescript": 5,
+        "rust": 4
+      },
+      "use_case": "production",
+      "description": "🆕 Jan 2025 release. Strong code understanding. 32K context.",
+      "license": "Apache 2.0"
+    },
+    {
+      "id": "gemma-3-4b-npu-int4",
+      "provider": "openvino",
+      "name": "Gemma 3 4B NPU INT4",
+      "badge": "🆕 NPU 2025.4",
+      "model_id": "OpenVINO/Gemma-3-4B-it-int4-ov",
+      "devices": ["NPU", "CPU"],
+      "context_tokens": 8192,
+      "size_gb": 2.5,
+      "ram_gb": 4,
+      "tokens_per_sec_npu": 20,
+      "tokens_per_sec_cpu": 10,
+      "power_watts_npu": 12,
+      "quality": {
+        "python": 4,
+        "javascript": 4,
+        "typescript": 4,
+        "rust": 3
+      },
+      "use_case": "npu",
+      "npu_requirements": {
+        "driver_version": "32.0.100.4181+",
+        "quantization": "int4_sym",
+        "max_context": 8192
+      },
+      "description": "🆕 OpenVINO 2025.4 NPU support. Google Gemma 3. Low power ~12W.",
+      "license": "Gemma Terms of Use"
+    },
+    {
+      "id": "starcoder2-7b-int4",
+      "provider": "openvino",
+      "name": "StarCoder2 7B INT4",
+      "badge": "Code specialist",
+      "model_id": "OpenVINO/starcoder2-7b-int4-ov",
+      "devices": ["CPU", "GPU"],
+      "context_tokens": 16384,
+      "size_gb": 4.0,
+      "ram_gb": 6,
+      "tokens_per_sec_cpu": 9,
+      "quality": {
+        "python": 4,
+        "javascript": 4,
+        "typescript": 4,
+        "rust": 4
+      },
+      "use_case": "production",
+      "description": "BigCode model. Good for docstrings across all languages.",
+      "license": "BigCode OpenRAIL-M"
+    },
+    {
+      "id": "qwen2.5-0.5b-gguf",
+      "provider": "openvino",
+      "name": "Qwen2.5 0.5B GGUF",
+      "badge": "Ultra compact",
+      "model_id": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+      "gguf_file": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "devices": ["CPU"],
+      "context_tokens": 32768,
+      "size_gb": 0.35,
+      "ram_gb": 1,
+      "tokens_per_sec_cpu": 90,
+      "quality": {
+        "python": 3,
+        "javascript": 3,
+        "typescript": 3,
+        "rust": 2
+      },
+      "use_case": "minimal",
+      "description": "350MB only! 80-100 tok/s. Good for simple docstrings.",
+      "license": "Apache 2.0"
+    },
+    {
+      "id": "deepseek-r1-distill-1.5b",
+      "provider": "openvino",
+      "name": "DeepSeek R1 Distill 1.5B",
+      "badge": "Reasoning + code",
+      "model_id": "OpenVINO/DeepSeek-R1-Distill-Qwen-1.5B-int4-ov",
+      "devices": ["CPU", "GPU", "NPU"],
+      "context_tokens": 32768,
+      "size_gb": 1.0,
+      "ram_gb": 2,
+      "tokens_per_sec_cpu": 35,
+      "quality": {
+        "python": 4,
+        "javascript": 3,
+        "typescript": 3,
+        "rust": 3
+      },
+      "use_case": "fast",
+      "description": "Reasoning capabilities + code. Compact and fast.",
+      "license": "MIT"
+    },
+    {
+      "id": "gemma-2-9b-int4",
+      "provider": "openvino",
+      "name": "Gemma 2 9B INT4",
+      "badge": "Google quality",
+      "model_id": "OpenVINO/gemma-2-9b-it-int4-ov",
+      "devices": ["CPU", "GPU"],
+      "context_tokens": 8192,
+      "size_gb": 5.0,
+      "ram_gb": 7,
+      "tokens_per_sec_cpu": 7,
+      "quality": {
+        "python": 4,
+        "javascript": 4,
+        "typescript": 4,
+        "rust": 3
+      },
+      "use_case": "production",
+      "description": "Google Gemma 2. Good code understanding.",
+      "license": "Gemma Terms of Use"
+    },
+    {
+      "id": "qwen2.5-coder-1.5b-int4",
+      "provider": "openvino",
+      "name": "Qwen2.5 Coder 1.5B INT4",
+      "badge": "🏆 BEST for docs",
+      "model_id": "OpenVINO/Qwen2.5-Coder-1.5B-Instruct-int4-ov",
+      "devices": ["CPU"],
+      "context_tokens": 32768,
+      "size_gb": 1.0,
+      "ram_gb": 2,
+      "tokens_per_sec_cpu": 23.4,
+      "benchmark_note": "Tested on Core Ultra 9 275HX, 23.4 tok/s. BEST quality for code docs - proper Markdown output!",
+      "quality": {
+        "python": 5,
+        "javascript": 5,
+        "typescript": 5,
+        "rust": 4
+      },
+      "use_case": "fast",
+      "description": "🏆 BEST for code documentation! 23 tok/s, proper Markdown output, code-specialized.",
+      "license": "Apache 2.0"
+    },
+    {
+      "id": "qwen3-1.7b-int4",
+      "provider": "openvino",
+      "name": "Qwen3 1.7B INT4",
+      "badge": "Ultra fast CPU",
+      "model_id": "OpenVINO/Qwen3-1.7B-int4-ov",
+      "devices": ["CPU"],
+      "context_tokens": 8192,
+      "size_gb": 1.0,
+      "ram_gb": 2,
+      "tokens_per_sec_cpu": 25.4,
+      "benchmark_note": "Tested on Core Ultra 9 275HX, 25.4 tok/s CPU. Shows thinking process in output.",
+      "quality": {
+        "python": 3,
+        "javascript": 3,
+        "typescript": 3,
+        "rust": 2
+      },
+      "use_case": "fast",
+      "description": "Ultra fast 1.7B on CPU. 25 tok/s! Shows <think> process in output.",
+      "license": "Apache 2.0"
+    },
+    {
+      "id": "deepseek-r1-1.5b-int4",
+      "provider": "openvino",
+      "name": "DeepSeek R1 Distill 1.5B INT4",
+      "badge": "🆕 Reasoning + fast",
+      "model_id": "OpenVINO/DeepSeek-R1-Distill-Qwen-1.5B-int4-ov",
+      "devices": ["CPU"],
+      "context_tokens": 32768,
+      "size_gb": 1.0,
+      "ram_gb": 2,
+      "tokens_per_sec_cpu": 23.5,
+      "benchmark_note": "Tested on Core Ultra 9 275HX, 23.5 tok/s CPU. NPU not compatible.",
+      "quality": {
+        "python": 4,
+        "javascript": 3,
+        "typescript": 3,
+        "rust": 3
+      },
+      "use_case": "fast",
+      "description": "🆕 DeepSeek R1 reasoning + 23.5 tok/s CPU. Great for code docs.",
+      "license": "MIT"
+    },
+    {
+      "id": "deepseek-r1-1.5b-nf4",
+      "provider": "openvino",
+      "name": "DeepSeek R1 1.5B NF4",
+      "badge": "NF4 для 200 серии",
+      "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+      "convert_command": "optimum-cli export openvino --model deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --weight-format nf4 --ratio 1.0 ./deepseek-r1-1.5b-nf4-ov",
+      "devices": ["CPU"],
+      "context_tokens": 32768,
+      "size_gb": 1.0,
+      "ram_gb": 2,
+      "tokens_per_sec_cpu": 22.3,
+      "quality": {
+        "python": 4,
+        "javascript": 3,
+        "typescript": 3,
+        "rust": 3
+      },
+      "use_case": "fast",
+      "description": "DeepSeek R1 с NF4 квантизацией. 22.3 tok/s CPU. Требует конвертации через optimum-cli.",
+      "benchmark_note": "✅ Протестировано: 22.3 tok/s CPU. NPU не совместим.",
+      "license": "MIT"
+    },
+    {
+      "id": "qwen3-1.7b-npu-int4",
+      "provider": "openvino",
+      "name": "Qwen3 1.7B FluidInference",
+      "badge": "⚠️ CPU only",
+      "model_id": "FluidInference/qwen3-1.7b-int4-ov-npu",
+      "devices": ["CPU"],
+      "context_tokens": 8192,
+      "size_gb": 1.0,
+      "ram_gb": 2,
+      "tokens_per_sec_cpu": 25.4,
+      "quality": {
+        "python": 3,
+        "javascript": 3,
+        "typescript": 3,
+        "rust": 2
+      },
+      "use_case": "fast",
+      "description": "FluidInference модель. Несмотря на название -npu, зависает на NPU. Используйте на CPU.",
+      "benchmark_note": "❌ NPU зависает при загрузке. ✅ CPU: 25.4 tok/s, загрузка 1.6s.",
+      "license": "Apache 2.0"
+    },
+    {
+      "id": "gemma-3-1b-int4",
+      "provider": "openvino",
+      "name": "Gemma 3 1B INT4",
+      "badge": "⚠️ Требует конвертации",
+      "model_id": "google/gemma-3-1b-it",
+      "convert_command": "optimum-cli export openvino --model google/gemma-3-1b-it --weight-format int4 --sym --trust-remote-code ./gemma-3-1b-it-int4-ov",
+      "devices": ["CPU"],
+      "context_tokens": 8192,
+      "size_gb": 0.7,
+      "ram_gb": 1.5,
+      "quality": {
+        "python": 3,
+        "javascript": 3,
+        "typescript": 3,
+        "rust": 2
+      },
+      "use_case": "minimal",
+      "requires_auth": true,
+      "auth_note": "1) huggingface-cli login 2) Запросить доступ на https://huggingface.co/google/gemma-3-1b-it",
+      "description": "⚠️ Проблемы с конвертацией. Рекомендуем gemma-3-4b-int4 от Echo9Zulu.",
+      "benchmark_note": "❌ Конвертация зависает. Используйте готовую модель Echo9Zulu/gemma-3-4b-it-int4_asym-ov",
+      "license": "Gemma Terms of Use"
+    },
+    {
+      "id": "gemma-3-4b-int4",
+      "provider": "openvino",
+      "name": "Gemma 3 4B INT4",
+      "badge": "⚠️ Мультимодальная",
+      "model_id": "Echo9Zulu/gemma-3-4b-it-int4_asym-ov",
+      "devices": ["CPU"],
+      "context_tokens": 8192,
+      "size_gb": 3.3,
+      "ram_gb": 6,
+      "quality": {
+        "python": 4,
+        "javascript": 4,
+        "typescript": 4,
+        "rust": 3
+      },
+      "use_case": "balanced",
+      "description": "⚠️ Мультимодальная модель (vision+language). НЕ работает с LLMPipeline. Требует VLMPipeline.",
+      "benchmark_note": "❌ Не совместима с LLMPipeline. Используйте Qwen2.5-Coder-1.5B или DeepSeek R1 вместо.",
+      "license": "Gemma Terms of Use"
+    }
+  ],
+  "ollama_models": [
+    {
+      "id": "qwen2.5-coder:7b",
+      "name": "Qwen2.5 Coder 7B",
+      "badge": "🏆 BEST quality",
+      "context_tokens": 32768,
+      "size_gb": 4.7,
+      "vram_gb": 5,
+      "tokens_per_sec_gpu": 19.1,
+      "quality_overall": 5,
+      "use_case": "production",
+      "benchmark_note": "19.1 tok/s в горячем кеше GPU, TTFT 271ms. Лучшее качество кода."
+    },
+    {
+      "id": "granite4:1b",
+      "name": "IBM Granite 4.0 1B",
+      "badge": "⚡ Самый быстрый",
+      "context_tokens": 8192,
+      "size_gb": 3.3,
+      "vram_gb": 4,
+      "tokens_per_sec_gpu": 56.4,
+      "quality_overall": 4,
+      "use_case": "fast",
+      "languages": ["en", "de", "es", "fr", "ja", "pt", "ar", "cs", "it", "ko", "nl", "zh"],
+      "benchmark_note": "56.4 tok/s в горячем кеше GPU. Официальная версия без квантизации. Русский через инструкцию."
+    },
+    {
+      "id": "deepseek-coder:6.7b",
+      "name": "DeepSeek Coder 6.7B",
+      "context_tokens": 16384,
+      "size_gb": 3.8,
+      "vram_gb": 4,
+      "tokens_per_sec_gpu": 5.3,
+      "quality_overall": 4,
+      "use_case": "production",
+      "benchmark_note": "Tested on RTX 5060. 5.3 tok/s. Good quality, slower than Qwen"
+    },
+    {
+      "id": "codellama:7b",
+      "name": "Code Llama 7B",
+      "context_tokens": 16384,
+      "size_gb": 4.0,
+      "vram_gb": 4,
+      "quality_overall": 4,
+      "use_case": "production"
+    },
+    {
+      "id": "qwen2.5:0.5b",
+      "name": "Qwen2.5 0.5B",
+      "context_tokens": 32768,
+      "size_gb": 0.4,
+      "vram_gb": 1,
+      "quality_overall": 3,
+      "use_case": "minimal"
+    },
+    {
+      "id": "starcoder2:7b",
+      "name": "StarCoder2 7B",
+      "context_tokens": 16384,
+      "size_gb": 4.0,
+      "vram_gb": 4,
+      "quality_overall": 4,
+      "use_case": "production"
+    }
+  ],
+  "tgi_models": [
+    {
+      "id": "tgi-qwen2.5-coder-7b",
+      "provider": "tgi",
+      "name": "Qwen2.5 Coder 7B",
+      "badge": "💻 BEST for code",
+      "model_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "gpu_architectures": ["ampere-80", "ampere-86", "ada", "hopper"],
+      "gpu_support": true,
+      "image_gpu": "ghcr.io/huggingface/text-generation-inference:3.3.4",
+      "image_cpu": "ghcr.io/huggingface/text-generation-inference:3.3.4-intel-cpu",
+      "context_tokens": 32768,
+      "size_gb": 15,
+      "vram_gb": 8,
+      "use_case": "production",
+      "description": "🏆 Best for code. Native batch. 32K context. Requires 8GB+ VRAM.",
+      "docker_args": "--max-input-tokens 4096 --max-total-tokens 8192"
+    },
+    {
+      "id": "tgi-phi-4-mini",
+      "provider": "tgi",
+      "name": "Phi-4 Mini",
+      "badge": "⚡ Fast + quality",
+      "model_id": "microsoft/Phi-4-mini-instruct",
+      "gpu_architectures": ["ampere-80", "ampere-86", "ada", "hopper"],
+      "gpu_support": true,
+      "image_gpu": "ghcr.io/huggingface/text-generation-inference:3.3.4",
+      "image_cpu": "ghcr.io/huggingface/text-generation-inference:3.3.4-intel-cpu",
+      "context_tokens": 16384,
+      "size_gb": 8,
+      "vram_gb": 4,
+      "use_case": "fast",
+      "description": "Fast generation. Good code understanding. 4GB VRAM.",
+      "docker_args": "--max-input-tokens 2048 --max-total-tokens 4096"
+    },
+    {
+      "id": "tgi-codellama-7b",
+      "provider": "tgi",
+      "name": "Code Llama 7B",
+      "badge": "💻 Meta code",
+      "model_id": "codellama/CodeLlama-7b-Instruct-hf",
+      "gpu_architectures": ["ampere-80", "ampere-86", "ada", "hopper"],
+      "gpu_support": true,
+      "image_gpu": "ghcr.io/huggingface/text-generation-inference:3.3.4",
+      "image_cpu": "ghcr.io/huggingface/text-generation-inference:3.3.4-intel-cpu",
+      "context_tokens": 16384,
+      "size_gb": 14,
+      "vram_gb": 6,
+      "use_case": "production",
+      "description": "Meta Code Llama. Good docstrings. 6GB VRAM.",
+      "docker_args": "--max-input-tokens 2048 --max-total-tokens 4096"
+    },
+    {
+      "id": "tgi-starcoder2-7b",
+      "provider": "tgi",
+      "name": "StarCoder2 7B",
+      "badge": "💻 BigCode",
+      "model_id": "bigcode/starcoder2-7b",
+      "gpu_architectures": ["ampere-80", "ampere-86", "ada", "hopper"],
+      "gpu_support": true,
+      "image_gpu": "ghcr.io/huggingface/text-generation-inference:3.3.4",
+      "image_cpu": "ghcr.io/huggingface/text-generation-inference:3.3.4-intel-cpu",
+      "context_tokens": 16384,
+      "size_gb": 14,
+      "vram_gb": 6,
+      "use_case": "production",
+      "description": "BigCode model. All languages. 6GB VRAM.",
+      "docker_args": "--max-input-tokens 2048 --max-total-tokens 4096"
+    },
+    {
+      "id": "tgi-deepseek-coder-6.7b",
+      "provider": "tgi",
+      "name": "DeepSeek Coder 6.7B",
+      "badge": "💻 DeepSeek",
+      "model_id": "deepseek-ai/deepseek-coder-6.7b-instruct",
+      "gpu_architectures": ["ampere-80", "ampere-86", "ada", "hopper"],
+      "gpu_support": true,
+      "image_gpu": "ghcr.io/huggingface/text-generation-inference:3.3.4",
+      "image_cpu": "ghcr.io/huggingface/text-generation-inference:3.3.4-intel-cpu",
+      "context_tokens": 16384,
+      "size_gb": 13,
+      "vram_gb": 6,
+      "use_case": "production",
+      "description": "DeepSeek Coder. Strong Python/TS. 6GB VRAM.",
+      "docker_args": "--max-input-tokens 2048 --max-total-tokens 4096"
+    }
+  ],
+  "default_models": {
+    "tgi": "tgi-qwen2.5-coder-7b",
+    "openvino": "qwen2.5-coder-1.5b-int4",
+    "ollama": "qwen2.5-coder:7b"
+  },
+  "known_issues": {
+    "qwen3-8b-awq-gpu": "Accuracy issues on GPU with AWQ. Use regular INT4.",
+    "phi-3-speculative": "OOM on GPU with long sequences in speculative decoding.",
+    "deepseek-r1-chat": "Reduced accuracy in chat mode on some models.",
+    "npu-beam-search": "NPU does not support beam search, only greedy decoding.",
+    "npu-phi4-incompatible": "Phi-4-mini INT4 not compatible with NPU (tensor shape mismatch). Use Qwen3-4B instead.",
+    "npu-qwen3-1.7b-incompatible": "Qwen3-1.7B not compatible with NPU (vpux-compiler error). Use CPU (25 tok/s).",
+    "npu-deepseek-r1-incompatible": "DeepSeek R1 1.5B not compatible with NPU (vpux-compiler error). Use CPU (23.5 tok/s).",
+    "gemma-3-gated": "Gemma 3 models require HuggingFace authentication: huggingface-cli login",
+    "tgi-blackwell": "TGI does not support RTX 50xx (Blackwell). Use Ollama instead."
+  },
+  "benchmark_summary": {
+    "date": "2025-12-08",
+    "hardware": {
+      "cpu": "Intel Core Ultra 9 275HX (24 cores)",
+      "gpu": "NVIDIA GeForce RTX 5060 Laptop GPU (8GB VRAM)",
+      "npu": "Intel AI Boost (driver 32.0.100.4404)",
+      "ram": "64GB DDR5"
+    },
+    "results": {
+      "openvino_qwen3-1.7b_cpu": "25.4 tok/s CPU (fastest)",
+      "openvino_qwen2.5-coder-1.5b_cpu": "23.4 tok/s CPU (🏆 BEST for docs!)",
+      "openvino_deepseek-r1-1.5b_cpu": "23.5 tok/s CPU (reasoning)",
+      "openvino_deepseek-r1-1.5b-nf4_cpu": "22.3 tok/s CPU (NF4, 200 series)",
+      "openvino_fluidinference-1.7b_cpu": "25.4 tok/s CPU (load 1.6s)",
+      "ollama_qwen2.5-coder_7b": "18.9 tok/s GPU (BEST GPU quality)",
+      "openvino_phi-4-mini_cpu": "11.5 tok/s CPU",
+      "ollama_phi4-mini": "8.0 tok/s GPU",
+      "openvino_qwen3-4b_npu_arrowlake": "2.9 tok/s NPU Arrow Lake (275HX)",
+      "openvino_qwen3-4b_npu_lunarlake": "20-25 tok/s NPU Lunar Lake (258V)",
+      "ollama_deepseek-coder": "5.3 tok/s GPU"
+    },
+    "npu_compatible": ["Qwen3-4B-int4"],
+    "npu_incompatible": ["Phi-4-mini", "Qwen3-1.7B", "DeepSeek-R1-1.5B", "FluidInference-1.7B"],
+    "gemma_issues": {
+      "gemma-3-1b": "Конвертация зависает. Gated model требует HF login.",
+      "gemma-3-4b": "Мультимодальная модель (vision). Не работает с LLMPipeline."
+    },
+    "notes": {
+      "npuw_prefill_chunk": "NPUW_LLM_PREFILL_CHUNK_SIZE=256 for short prompts",
+      "npu_first_load": "NPU first load ~50s (compilation), subsequent ~12s",
+      "cpu_fastest": "Qwen3-1.7B and DeepSeek-R1-1.5B are 2x faster than Phi-4-mini on CPU",
+      "nf4_format": "NF4 quantization for Intel 200 series CPUs - better accuracy",
+      "arrow_lake_npu": "Arrow Lake NPU (275HX) is 7-10x slower than Lunar Lake and has less model compatibility. Use CPU instead!",
+      "arrow_vs_lunar": "Arrow Lake uses vpux 40.xx compiler, Lunar Lake uses vpux 37.xx. Models compiled for one may not work on other."
+    }
+  }
+}

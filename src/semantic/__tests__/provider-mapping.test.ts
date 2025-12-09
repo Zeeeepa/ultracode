@@ -5,7 +5,7 @@
  * from YAML config to factory options and that all required fields are present.
  */
 
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it } from "bun:test";
 import { getConfig } from "../../config/yaml-config.js";
 import { EmbeddingGenerator } from "../embedding-generator.js";
 import type { ProviderFactoryOptions } from "../providers/factory.js";

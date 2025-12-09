@@ -16,7 +16,7 @@ AutoDoc — система автоматической документации
 
 ```
 .autodoc/
-├── ARCHITECTURE.md     # Компоненты системы
+├── ARCHITECTURE.md    # Компоненты системы
 ├── FLOW.md            # Бизнес-сценарии (user stories)
 ├── PROCESSES.md       # Технические процессы
 ├── DEPENDENCIES.md    # Пакеты, API, микросервисы
@@ -94,12 +94,30 @@ autodoc_changelog({ since?: timestamp, limit?: number, branch?: string })
 Просмотр истории изменений документации.
 Показывает что изменилось после изменения кода.
 
-### Git Integration
+### Автообновление (Watcher)
+
+AutoDoc Watcher автоматически обновляет AUTODOC.md файлы при изменении кода:
+- Добавляет/удаляет экспорты в списке
+- Обновляет номера строк в ссылках
+- Debounce 30-60 секунд (адаптивный)
+
+**Включение в ultrascript.yaml:**
+```yaml
+mcp:
+  autodoc:
+    watcherEnabled: true
+    debounceMs: 45000      # базовая задержка
+    minDebounceMs: 30000   # минимум
+    maxDebounceMs: 60000   # максимум
+    useLlm: false          # LLM для описаний
+```
+
+### Git Hooks (legacy)
 
 ```
 autodoc_install_hooks({ action: 'install' | 'uninstall' | 'status' })
 ```
-Установка pre-commit hook для валидации ссылок перед коммитом.
+Pre-commit hook для валидации ссылок. **Устарело** — используй Watcher.
 
 ## Workflows
 
@@ -156,17 +174,23 @@ User: "Добавил rate limiting в AuthService"
    → Показывает последние изменения
 ```
 
-### 4. Настройка Git Hooks
+### 4. Автообновление документации
 
+AutoDoc Watcher работает автоматически при включении в конфиге:
+```yaml
+# ultrascript.yaml
+mcp:
+  autodoc:
+    watcherEnabled: true
 ```
-1. autodoc_install_hooks({ action: 'status' })
-   → Проверяет установлены ли хуки
 
-2. autodoc_install_hooks({ action: 'install' })
-   → Устанавливает pre-commit hook
-
-3. При коммите автоматически проверяются ссылки в .md файлах
-```
+При изменении .ts/.js файлов:
+1. Watcher отслеживает изменения через KnowledgeBus
+2. Debounce 30-60 сек (группирует множественные изменения)
+3. Обновляет AUTODOC.md в соответствующем модуле:
+   - Добавляет новые экспорты
+   - Удаляет удалённые экспорты
+   - Обновляет номера строк в ссылках
 
 ## Формат Entity-level документации
 

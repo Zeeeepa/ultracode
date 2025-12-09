@@ -32,6 +32,7 @@ export class HuggingFaceProvider implements EmbeddingProvider {
       name: "huggingface",
       model: opts.model,
       supportsBatch: false,
+      maxTokens: 512, // Default for most HuggingFace embedding models
     };
   }
 

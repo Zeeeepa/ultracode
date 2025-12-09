@@ -184,6 +184,7 @@ export class VersionManager {
         execSync(`git stash drop ${metadata.gitStashRef}`, {
           cwd: this.config.workingDirectory,
           stdio: "ignore",
+          windowsHide: true,
         });
       } catch (error) {
         console.warn(`[VersionManager] Failed to drop stash: ${error}`);
@@ -240,6 +241,7 @@ export class VersionManager {
       const status = execSync("git status --porcelain", {
         cwd: this.config.workingDirectory,
         encoding: "utf-8",
+        windowsHide: true,
       }).trim();
 
       if (status.length === 0 && !files) {
@@ -251,12 +253,14 @@ export class VersionManager {
       execSync(`git stash push -m "${stashMessage}"`, {
         cwd: this.config.workingDirectory,
         encoding: "utf-8",
+        windowsHide: true,
       });
 
       // Get stash reference
       const stashRef = execSync("git rev-parse stash@{0}", {
         cwd: this.config.workingDirectory,
         encoding: "utf-8",
+        windowsHide: true,
       }).trim();
 
       // Compute hash
@@ -293,6 +297,7 @@ export class VersionManager {
       execSync(`git stash apply ${metadata.gitStashRef}`, {
         cwd: this.config.workingDirectory,
         encoding: "utf-8",
+        windowsHide: true,
       });
     } catch (error) {
       throw new Error(`Failed to apply git stash: ${metadata.gitStashRef}`, { cause: error });
@@ -304,6 +309,7 @@ export class VersionManager {
       const output = execSync("git status --porcelain", {
         cwd: this.config.workingDirectory,
         encoding: "utf-8",
+        windowsHide: true,
       });
 
       const files: string[] = [];

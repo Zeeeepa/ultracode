@@ -6,6 +6,7 @@ import { HuggingFaceProvider } from "./huggingface-provider.js";
 import { MemoryProvider } from "./memory-provider.js";
 import { OllamaProvider } from "./ollama-provider.js";
 import { OpenAIProvider } from "./openai-provider.js";
+import { OpenVINOProvider } from "./openvino-provider.js";
 import { TEIProvider } from "./tei-provider.js";
 
 /**
@@ -107,6 +108,13 @@ export interface ProviderFactoryOptions {
     concurrency?: number;
     checkServer?: boolean;
   };
+  openvino?: {
+    model?: string;
+    device?: "CPU" | "GPU" | "GPU.0" | "GPU.1" | "AUTO";
+    modelPath?: string;
+    autoDownload?: boolean;
+    timeoutMs?: number;
+  };
 }
 
 export async function createProvider(opts: ProviderFactoryOptions): Promise<EmbeddingProvider> {
@@ -181,6 +189,17 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         checkServer: opts.tei?.checkServer,
         logger: makeProviderLogger(appLogger, "PROVIDER_TEI"),
       });
+
+    case "openvino":
+      return new OpenVINOProvider({
+        model: opts.openvino?.model ?? actualModel,
+        device: opts.openvino?.device,
+        modelPath: opts.openvino?.modelPath,
+        autoDownload: opts.openvino?.autoDownload,
+        timeoutMs: opts.openvino?.timeoutMs,
+        logger: makeProviderLogger(appLogger, "PROVIDER_OPENVINO"),
+      });
+
     default:
       return new MemoryProvider({ dimension: opts.memory?.dimension });
   }

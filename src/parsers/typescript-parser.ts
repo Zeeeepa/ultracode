@@ -13,7 +13,7 @@
  */
 
 import ts from "typescript";
-import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { enhanceWithAngularInfo, isAngularFile } from "./angular-parser.js";
 
 // =============================================================================
@@ -67,18 +67,12 @@ function getLanguage(filePath: string): SupportedLanguage {
   }
 }
 
-function getPosition(
-  sourceFile: ts.SourceFile,
-  pos: number,
-): { line: number; column: number; index: number } {
+function getPosition(sourceFile: ts.SourceFile, pos: number): { line: number; column: number; index: number } {
   const { line, character } = sourceFile.getLineAndCharacterOfPosition(pos);
   return { line: line + 1, column: character, index: pos };
 }
 
-function getLocation(
-  sourceFile: ts.SourceFile,
-  node: ts.Node,
-): ParsedEntity["location"] {
+function getLocation(sourceFile: ts.SourceFile, node: ts.Node): ParsedEntity["location"] {
   return {
     start: getPosition(sourceFile, node.getStart(sourceFile)),
     end: getPosition(sourceFile, node.getEnd()),
@@ -137,36 +131,25 @@ function getModifiers(node: ts.Node): string[] {
   return modifiers;
 }
 
-function getParameters(
-  node: ts.FunctionLikeDeclaration,
-  sourceFile: ts.SourceFile,
-): ParsedEntity["parameters"] {
+function getParameters(node: ts.FunctionLikeDeclaration, sourceFile: ts.SourceFile): ParsedEntity["parameters"] {
   return node.parameters.map((param) => {
     const name = param.name.getText(sourceFile);
     const type = param.type ? param.type.getText(sourceFile) : undefined;
     const optional = !!param.questionToken;
-    const defaultValue = param.initializer
-      ? param.initializer.getText(sourceFile)
-      : undefined;
+    const defaultValue = param.initializer ? param.initializer.getText(sourceFile) : undefined;
 
     return { name, type, optional, defaultValue };
   });
 }
 
-function getReturnType(
-  node: ts.FunctionLikeDeclaration,
-  sourceFile: ts.SourceFile,
-): string | undefined {
+function getReturnType(node: ts.FunctionLikeDeclaration, sourceFile: ts.SourceFile): string | undefined {
   if (node.type) {
     return node.type.getText(sourceFile);
   }
   return undefined;
 }
 
-function getDecorators(
-  node: ts.Node,
-  sourceFile: ts.SourceFile,
-): ParsedEntity["decorators"] {
+function getDecorators(node: ts.Node, sourceFile: ts.SourceFile): ParsedEntity["decorators"] {
   const decorators: ParsedEntity["decorators"] = [];
 
   if (ts.canHaveDecorators(node)) {
@@ -192,6 +175,1223 @@ function getDecorators(
 }
 
 // =============================================================================
+// CALL GRAPH EXTRACTION (Phase 1)
+// =============================================================================
+
+type CallInfo = NonNullable<ParsedEntity["calls"]>[number];
+
+/**
+ * Extract all function/method calls within a node
+ */
+function extractCalls(node: ts.Node, sourceFile: ts.SourceFile): CallInfo[] {
+  const calls: CallInfo[] = [];
+
+  function visit(n: ts.Node, isAwaited = false): void {
+    // Handle await expressions - mark the inner call as awaited
+    if (ts.isAwaitExpression(n)) {
+      visit(n.expression, true);
+      return;
+    }
+
+    // Call expressions: foo(), obj.method(), this.bar()
+    if (ts.isCallExpression(n)) {
+      const callInfo = extractCallInfo(n, sourceFile, isAwaited, false);
+      if (callInfo) {
+        calls.push(callInfo);
+      }
+      // Visit arguments (may contain nested calls)
+      n.arguments.forEach((arg) => visit(arg, false));
+      return;
+    }
+
+    // New expressions: new Foo(), new Bar<T>()
+    if (ts.isNewExpression(n)) {
+      const callInfo = extractCallInfo(n, sourceFile, false, true);
+      if (callInfo) {
+        calls.push(callInfo);
+      }
+      // Visit arguments
+      n.arguments?.forEach((arg) => visit(arg, false));
+      return;
+    }
+
+    // Recurse into children
+    ts.forEachChild(n, (child) => visit(child, false));
+  }
+
+  // Don't extract calls from the function signature, only from body
+  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
+    if (node.body) {
+      visit(node.body, false);
+    }
+  } else if (ts.isMethodDeclaration(node)) {
+    if (node.body) {
+      visit(node.body, false);
+    }
+  } else if (ts.isConstructorDeclaration(node)) {
+    if (node.body) {
+      visit(node.body, false);
+    }
+  } else if (ts.isGetAccessor(node) || ts.isSetAccessor(node)) {
+    if (node.body) {
+      visit(node.body, false);
+    }
+  } else {
+    visit(node, false);
+  }
+
+  return calls;
+}
+
+/**
+ * Extract information from a single call expression
+ */
+function extractCallInfo(
+  node: ts.CallExpression | ts.NewExpression,
+  sourceFile: ts.SourceFile,
+  isAwaited: boolean,
+  isNew: boolean,
+): CallInfo | null {
+  let name: string;
+  let target: string | undefined;
+  let isOptional = false;
+
+  const expr = ts.isCallExpression(node) ? node.expression : node.expression;
+  if (!expr) return null;
+
+  // Simple call: foo()
+  if (ts.isIdentifier(expr)) {
+    name = expr.text;
+  }
+  // Method call: obj.method() or this.method()
+  else if (ts.isPropertyAccessExpression(expr)) {
+    name = expr.name.text;
+    // Get the target (object being called on)
+    if (ts.isIdentifier(expr.expression)) {
+      target = expr.expression.text;
+    } else if (expr.expression.kind === ts.SyntaxKind.ThisKeyword) {
+      target = "this";
+    } else if (ts.isPropertyAccessExpression(expr.expression)) {
+      // Chained: a.b.c() -> target is "a.b", name is "c"
+      target = expr.expression.getText(sourceFile);
+    } else if (ts.isCallExpression(expr.expression)) {
+      // Method on result: foo().bar() -> target is "foo()"
+      target = expr.expression.getText(sourceFile);
+    } else {
+      target = expr.expression.getText(sourceFile);
+    }
+  }
+  // Optional chaining: obj?.method()
+  else if (ts.isCallExpression(node) && node.questionDotToken) {
+    isOptional = true;
+    // The expression should be property access
+    if (ts.isPropertyAccessExpression(expr)) {
+      name = expr.name.text;
+      target = ts.isIdentifier(expr.expression) ? expr.expression.text : expr.expression.getText(sourceFile);
+    } else {
+      name = expr.getText(sourceFile);
+    }
+  }
+  // Element access: obj["method"]() or arr[0]()
+  else if (ts.isElementAccessExpression(expr)) {
+    const arg = expr.argumentExpression;
+    if (ts.isStringLiteral(arg)) {
+      name = arg.text;
+    } else {
+      name = `[${arg.getText(sourceFile)}]`;
+    }
+    target = ts.isIdentifier(expr.expression) ? expr.expression.text : expr.expression.getText(sourceFile);
+  }
+  // Complex expression
+  else {
+    name = expr.getText(sourceFile);
+  }
+
+  // Extract type arguments
+  let typeArguments: string[] | undefined;
+  if (node.typeArguments && node.typeArguments.length > 0) {
+    typeArguments = node.typeArguments.map((t) => t.getText(sourceFile));
+  }
+
+  return {
+    name,
+    target,
+    location: getLocation(sourceFile, node),
+    isAwait: isAwaited || undefined,
+    isOptional: isOptional || undefined,
+    isNew: isNew || undefined,
+    argumentCount: node.arguments?.length ?? 0,
+    typeArguments,
+  };
+}
+
+// =============================================================================
+// CONTROL FLOW EXTRACTION (Phase 2)
+// =============================================================================
+
+type ControlFlow = NonNullable<ParsedEntity["controlFlow"]>;
+type BranchInfo = ControlFlow["branches"][number];
+type LoopInfo = ControlFlow["loops"][number];
+type ExceptionInfo = ControlFlow["exceptions"][number];
+type ReturnInfo = ControlFlow["returns"][number];
+type AwaitInfo = ControlFlow["awaits"][number];
+
+/**
+ * Extract control flow structure from a function/method body
+ */
+function extractControlFlow(node: ts.Node, sourceFile: ts.SourceFile): ControlFlow | undefined {
+  const branches: BranchInfo[] = [];
+  const loops: LoopInfo[] = [];
+  const exceptions: ExceptionInfo[] = [];
+  const returns: ReturnInfo[] = [];
+  const awaits: AwaitInfo[] = [];
+
+  function visit(n: ts.Node): void {
+    // Branches
+    if (ts.isIfStatement(n)) {
+      branches.push({
+        type: "if",
+        condition: n.expression.getText(sourceFile),
+        location: getLocation(sourceFile, n),
+      });
+      // Check for else-if chain
+      if (n.elseStatement) {
+        if (ts.isIfStatement(n.elseStatement)) {
+          branches.push({
+            type: "else-if",
+            condition: n.elseStatement.expression.getText(sourceFile),
+            location: getLocation(sourceFile, n.elseStatement),
+          });
+        } else {
+          branches.push({
+            type: "else",
+            location: getLocation(sourceFile, n.elseStatement),
+          });
+        }
+      }
+    }
+
+    // Switch statements
+    if (ts.isSwitchStatement(n)) {
+      branches.push({
+        type: "switch",
+        condition: n.expression.getText(sourceFile),
+        location: getLocation(sourceFile, n),
+      });
+      for (const clause of n.caseBlock.clauses) {
+        if (ts.isCaseClause(clause)) {
+          branches.push({
+            type: "case",
+            condition: clause.expression.getText(sourceFile),
+            location: getLocation(sourceFile, clause),
+          });
+        } else {
+          branches.push({
+            type: "default",
+            location: getLocation(sourceFile, clause),
+          });
+        }
+      }
+    }
+
+    // Ternary operator
+    if (ts.isConditionalExpression(n)) {
+      branches.push({
+        type: "ternary",
+        condition: n.condition.getText(sourceFile),
+        location: getLocation(sourceFile, n),
+      });
+    }
+
+    // Loops
+    if (ts.isForStatement(n)) {
+      loops.push({
+        type: "for",
+        location: getLocation(sourceFile, n),
+      });
+    }
+    if (ts.isForOfStatement(n)) {
+      loops.push({
+        type: "for-of",
+        location: getLocation(sourceFile, n),
+      });
+    }
+    if (ts.isForInStatement(n)) {
+      loops.push({
+        type: "for-in",
+        location: getLocation(sourceFile, n),
+      });
+    }
+    if (ts.isWhileStatement(n)) {
+      loops.push({
+        type: "while",
+        location: getLocation(sourceFile, n),
+      });
+    }
+    if (ts.isDoStatement(n)) {
+      loops.push({
+        type: "do-while",
+        location: getLocation(sourceFile, n),
+      });
+    }
+
+    // Exception handling
+    if (ts.isTryStatement(n)) {
+      exceptions.push({
+        type: "try",
+        location: getLocation(sourceFile, n),
+      });
+      if (n.catchClause) {
+        const catchType = n.catchClause.variableDeclaration?.type
+          ? n.catchClause.variableDeclaration.type.getText(sourceFile)
+          : undefined;
+        exceptions.push({
+          type: "catch",
+          catchType,
+          location: getLocation(sourceFile, n.catchClause),
+        });
+      }
+      if (n.finallyBlock) {
+        exceptions.push({
+          type: "finally",
+          location: getLocation(sourceFile, n.finallyBlock),
+        });
+      }
+    }
+    if (ts.isThrowStatement(n)) {
+      exceptions.push({
+        type: "throw",
+        location: getLocation(sourceFile, n),
+      });
+    }
+
+    // Return statements
+    if (ts.isReturnStatement(n)) {
+      returns.push({
+        location: getLocation(sourceFile, n),
+        hasValue: n.expression !== undefined,
+      });
+    }
+
+    // Await expressions
+    if (ts.isAwaitExpression(n)) {
+      awaits.push({
+        location: getLocation(sourceFile, n),
+        expression: n.expression.getText(sourceFile),
+      });
+    }
+
+    // Recurse into children
+    ts.forEachChild(n, visit);
+  }
+
+  // Extract from function body
+  let body: ts.Node | undefined;
+  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
+    body = node.body;
+  } else if (ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node)) {
+    body = node.body;
+  } else if (ts.isGetAccessor(node) || ts.isSetAccessor(node)) {
+    body = node.body;
+  }
+
+  if (body) {
+    visit(body);
+  }
+
+  // Only return if there's meaningful control flow
+  if (
+    branches.length === 0 &&
+    loops.length === 0 &&
+    exceptions.length === 0 &&
+    returns.length === 0 &&
+    awaits.length === 0
+  ) {
+    return undefined;
+  }
+
+  return { branches, loops, exceptions, returns, awaits };
+}
+
+// =============================================================================
+// JSDOC EXTRACTION (Phase 3)
+// =============================================================================
+
+type Documentation = NonNullable<ParsedEntity["documentation"]>;
+
+/**
+ * Extract JSDoc documentation from a node
+ */
+function extractDocumentation(node: ts.Node, sourceFile: ts.SourceFile): Documentation | undefined {
+  // Get JSDoc comments attached to the node
+  const jsDocs = ts.getJSDocCommentsAndTags(node);
+  if (jsDocs.length === 0) return undefined;
+
+  let description: string | undefined;
+  const params: NonNullable<Documentation["params"]> = [];
+  let returns: Documentation["returns"];
+  const throws: NonNullable<Documentation["throws"]> = [];
+  const examples: string[] = [];
+  let deprecated: string | boolean | undefined;
+  const see: string[] = [];
+  let since: string | undefined;
+  let author: string | undefined;
+
+  for (const jsDoc of jsDocs) {
+    if (ts.isJSDoc(jsDoc)) {
+      // Main description
+      if (jsDoc.comment) {
+        const commentText =
+          typeof jsDoc.comment === "string" ? jsDoc.comment : jsDoc.comment.map((c) => c.text).join("");
+        if (commentText && !description) {
+          description = commentText.trim();
+        }
+      }
+
+      // Process tags
+      if (jsDoc.tags) {
+        for (const tag of jsDoc.tags) {
+          const tagName = tag.tagName.text.toLowerCase();
+          const tagComment = tag.comment
+            ? typeof tag.comment === "string"
+              ? tag.comment
+              : tag.comment.map((c) => c.text).join("")
+            : undefined;
+
+          switch (tagName) {
+            case "param":
+            case "arg":
+            case "argument":
+              if (ts.isJSDocParameterTag(tag)) {
+                const paramName = tag.name.getText(sourceFile);
+                const paramType = tag.typeExpression?.type.getText(sourceFile);
+                const paramDesc = tagComment?.trim();
+                const isOptional = tag.isBracketed || paramName.startsWith("[");
+                params.push({
+                  name: paramName.replace(/^\[|\]$/g, "").split("=")[0] ?? paramName,
+                  type: paramType,
+                  description: paramDesc,
+                  optional: isOptional || undefined,
+                });
+              }
+              break;
+
+            case "returns":
+            case "return":
+              if (ts.isJSDocReturnTag(tag)) {
+                returns = {
+                  type: tag.typeExpression?.type.getText(sourceFile),
+                  description: tagComment?.trim(),
+                };
+              }
+              break;
+
+            case "throws":
+            case "exception":
+              throws.push({
+                type: ts.isJSDocThrowsTag(tag) ? tag.typeExpression?.type.getText(sourceFile) : undefined,
+                description: tagComment?.trim(),
+              });
+              break;
+
+            case "example":
+              if (tagComment) {
+                examples.push(tagComment.trim());
+              }
+              break;
+
+            case "deprecated":
+              deprecated = tagComment?.trim() || true;
+              break;
+
+            case "see":
+              if (tagComment) {
+                see.push(tagComment.trim());
+              }
+              break;
+
+            case "since":
+            case "version":
+              since = tagComment?.trim();
+              break;
+
+            case "author":
+              author = tagComment?.trim();
+              break;
+
+            case "description":
+            case "desc":
+              if (tagComment && !description) {
+                description = tagComment.trim();
+              }
+              break;
+          }
+        }
+      }
+    }
+  }
+
+  // Only return if there's meaningful documentation
+  if (
+    !description &&
+    params.length === 0 &&
+    !returns &&
+    throws.length === 0 &&
+    examples.length === 0 &&
+    deprecated === undefined &&
+    see.length === 0 &&
+    !since &&
+    !author
+  ) {
+    return undefined;
+  }
+
+  return {
+    description,
+    params: params.length > 0 ? params : undefined,
+    returns,
+    throws: throws.length > 0 ? throws : undefined,
+    examples: examples.length > 0 ? examples : undefined,
+    deprecated,
+    see: see.length > 0 ? see : undefined,
+    since,
+    author,
+  };
+}
+
+// =============================================================================
+// TYPE REFERENCES EXTRACTION (Phase 4)
+// =============================================================================
+
+type TypeReference = NonNullable<ParsedEntity["typeReferences"]>[number];
+
+/**
+ * Extract type references from a node (function, method, class, etc.)
+ */
+function extractTypeReferences(node: ts.Node, sourceFile: ts.SourceFile): TypeReference[] | undefined {
+  const refs: TypeReference[] = [];
+  const seenTypes = new Set<string>();
+
+  function addRef(name: string, kind: TypeReference["kind"], loc: ts.Node): void {
+    // Skip primitive types
+    if (
+      [
+        "string",
+        "number",
+        "boolean",
+        "void",
+        "undefined",
+        "null",
+        "any",
+        "unknown",
+        "never",
+        "object",
+        "symbol",
+        "bigint",
+      ].includes(name)
+    ) {
+      return;
+    }
+    const key = `${name}:${kind}`;
+    if (!seenTypes.has(key)) {
+      seenTypes.add(key);
+      refs.push({
+        name,
+        kind,
+        location: getLocation(sourceFile, loc),
+      });
+    }
+  }
+
+  function extractFromTypeNode(typeNode: ts.TypeNode, kind: TypeReference["kind"]): void {
+    if (ts.isTypeReferenceNode(typeNode)) {
+      const typeName = typeNode.typeName.getText(sourceFile);
+      addRef(typeName, kind, typeNode);
+      // Process type arguments
+      if (typeNode.typeArguments) {
+        for (const arg of typeNode.typeArguments) {
+          extractFromTypeNode(arg, "generic");
+        }
+      }
+    } else if (ts.isArrayTypeNode(typeNode)) {
+      extractFromTypeNode(typeNode.elementType, kind);
+    } else if (ts.isUnionTypeNode(typeNode) || ts.isIntersectionTypeNode(typeNode)) {
+      for (const t of typeNode.types) {
+        extractFromTypeNode(t, kind);
+      }
+    } else if (ts.isTupleTypeNode(typeNode)) {
+      for (const elem of typeNode.elements) {
+        if (ts.isTypeNode(elem)) {
+          extractFromTypeNode(elem, kind);
+        }
+      }
+    } else if (ts.isParenthesizedTypeNode(typeNode)) {
+      extractFromTypeNode(typeNode.type, kind);
+    } else if (ts.isConditionalTypeNode(typeNode)) {
+      extractFromTypeNode(typeNode.checkType, kind);
+      extractFromTypeNode(typeNode.extendsType, kind);
+      extractFromTypeNode(typeNode.trueType, kind);
+      extractFromTypeNode(typeNode.falseType, kind);
+    } else if (ts.isMappedTypeNode(typeNode)) {
+      if (typeNode.type) {
+        extractFromTypeNode(typeNode.type, kind);
+      }
+    } else if (ts.isIndexedAccessTypeNode(typeNode)) {
+      extractFromTypeNode(typeNode.objectType, kind);
+    }
+  }
+
+  // For functions/methods: extract from parameters and return type
+  if (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessor(node) ||
+    ts.isSetAccessor(node) ||
+    ts.isMethodSignature(node)
+  ) {
+    // Parameters
+    if ("parameters" in node) {
+      for (const param of node.parameters) {
+        if (param.type) {
+          extractFromTypeNode(param.type, "parameter");
+        }
+      }
+    }
+    // Return type
+    if ("type" in node && node.type) {
+      extractFromTypeNode(node.type as ts.TypeNode, "return");
+    }
+    // Type parameters
+    if ("typeParameters" in node && node.typeParameters) {
+      for (const tp of node.typeParameters) {
+        if (tp.constraint) {
+          extractFromTypeNode(tp.constraint, "generic");
+        }
+        if (tp.default) {
+          extractFromTypeNode(tp.default, "generic");
+        }
+      }
+    }
+  }
+
+  // For classes: extract from heritage clauses
+  if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+    if (node.heritageClauses) {
+      for (const clause of node.heritageClauses) {
+        const kind: TypeReference["kind"] = clause.token === ts.SyntaxKind.ExtendsKeyword ? "extends" : "implements";
+        for (const type of clause.types) {
+          const typeName = type.expression.getText(sourceFile);
+          addRef(typeName, kind, type);
+          if (type.typeArguments) {
+            for (const arg of type.typeArguments) {
+              extractFromTypeNode(arg, "generic");
+            }
+          }
+        }
+      }
+    }
+    // Type parameters
+    if (node.typeParameters) {
+      for (const tp of node.typeParameters) {
+        if (tp.constraint) {
+          extractFromTypeNode(tp.constraint, "generic");
+        }
+        if (tp.default) {
+          extractFromTypeNode(tp.default, "generic");
+        }
+      }
+    }
+  }
+
+  // For interfaces: extract from heritage clauses
+  if (ts.isInterfaceDeclaration(node)) {
+    if (node.heritageClauses) {
+      for (const clause of node.heritageClauses) {
+        for (const type of clause.types) {
+          const typeName = type.expression.getText(sourceFile);
+          addRef(typeName, "extends", type);
+          if (type.typeArguments) {
+            for (const arg of type.typeArguments) {
+              extractFromTypeNode(arg, "generic");
+            }
+          }
+        }
+      }
+    }
+    if (node.typeParameters) {
+      for (const tp of node.typeParameters) {
+        if (tp.constraint) {
+          extractFromTypeNode(tp.constraint, "generic");
+        }
+      }
+    }
+  }
+
+  // For type aliases: extract from the type itself
+  if (ts.isTypeAliasDeclaration(node)) {
+    extractFromTypeNode(node.type, "variable");
+    if (node.typeParameters) {
+      for (const tp of node.typeParameters) {
+        if (tp.constraint) {
+          extractFromTypeNode(tp.constraint, "generic");
+        }
+      }
+    }
+  }
+
+  // For properties: extract from type annotation
+  if (ts.isPropertyDeclaration(node) || ts.isPropertySignature(node)) {
+    if (node.type) {
+      extractFromTypeNode(node.type, "property");
+    }
+  }
+
+  // For variables
+  if (ts.isVariableDeclaration(node) && node.type) {
+    extractFromTypeNode(node.type, "variable");
+  }
+
+  return refs.length > 0 ? refs : undefined;
+}
+
+// =============================================================================
+// COMPLEXITY METRICS (Phase 5)
+// =============================================================================
+
+type Complexity = NonNullable<ParsedEntity["complexity"]>;
+
+/**
+ * Calculate complexity metrics for a function/method
+ *
+ * Cyclomatic complexity = E - N + 2P (simplified: count decision points + 1)
+ * Cognitive complexity = weighted sum of nesting and complexity increments
+ */
+function extractComplexity(node: ts.Node, sourceFile: ts.SourceFile): Complexity | undefined {
+  let cyclomatic = 1; // Base complexity
+  let cognitive = 0;
+  let maxNestingDepth = 0;
+  let returnCount = 0;
+  let parameterCount = 0;
+
+  // Get parameter count
+  if (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessor(node) ||
+    ts.isSetAccessor(node)
+  ) {
+    parameterCount = node.parameters.length;
+  }
+
+  function visit(n: ts.Node, nestingLevel: number): void {
+    maxNestingDepth = Math.max(maxNestingDepth, nestingLevel);
+
+    // Cyclomatic: increment for each decision point
+    // Cognitive: increment with nesting weight
+
+    // If statements
+    if (ts.isIfStatement(n)) {
+      cyclomatic++;
+      cognitive += 1 + nestingLevel; // Nesting increases cognitive load
+      visit(n.thenStatement, nestingLevel + 1);
+      if (n.elseStatement) {
+        // else-if doesn't increase nesting
+        if (ts.isIfStatement(n.elseStatement)) {
+          cyclomatic++; // Additional branch
+          cognitive += 1; // No nesting penalty for else-if
+          visit(n.elseStatement, nestingLevel);
+        } else {
+          visit(n.elseStatement, nestingLevel + 1);
+        }
+      }
+      return;
+    }
+
+    // Switch statements
+    if (ts.isSwitchStatement(n)) {
+      // Each case is a decision point
+      const caseCount = n.caseBlock.clauses.filter((c) => ts.isCaseClause(c)).length;
+      cyclomatic += caseCount;
+      cognitive += 1 + nestingLevel;
+      for (const clause of n.caseBlock.clauses) {
+        for (const stmt of clause.statements) {
+          visit(stmt, nestingLevel + 1);
+        }
+      }
+      return;
+    }
+
+    // Loops
+    if (
+      ts.isForStatement(n) ||
+      ts.isForOfStatement(n) ||
+      ts.isForInStatement(n) ||
+      ts.isWhileStatement(n) ||
+      ts.isDoStatement(n)
+    ) {
+      cyclomatic++;
+      cognitive += 1 + nestingLevel;
+      ts.forEachChild(n, (child) => visit(child, nestingLevel + 1));
+      return;
+    }
+
+    // Ternary operator
+    if (ts.isConditionalExpression(n)) {
+      cyclomatic++;
+      cognitive += 1 + nestingLevel;
+    }
+
+    // Logical operators (&&, ||, ??)
+    if (ts.isBinaryExpression(n)) {
+      if (
+        n.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        n.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        n.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+      ) {
+        cyclomatic++;
+        cognitive++; // No nesting penalty for logical operators
+      }
+    }
+
+    // Try-catch
+    if (ts.isTryStatement(n)) {
+      if (n.catchClause) {
+        cyclomatic++;
+        cognitive += 1 + nestingLevel;
+        visit(n.catchClause.block, nestingLevel + 1);
+      }
+      visit(n.tryBlock, nestingLevel);
+      if (n.finallyBlock) {
+        visit(n.finallyBlock, nestingLevel);
+      }
+      return;
+    }
+
+    // Return statements
+    if (ts.isReturnStatement(n)) {
+      returnCount++;
+    }
+
+    // Break/continue with labels add cognitive complexity
+    if ((ts.isBreakStatement(n) || ts.isContinueStatement(n)) && n.label) {
+      cognitive++; // Jump to label is harder to understand
+    }
+
+    // Recurse into children
+    ts.forEachChild(n, (child) => visit(child, nestingLevel));
+  }
+
+  // Get function body
+  let body: ts.Node | undefined;
+  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
+    body = node.body;
+  } else if (ts.isArrowFunction(node)) {
+    body = node.body;
+    // Concise arrow function with expression body
+    if (!ts.isBlock(body)) {
+      // Just an expression, minimal complexity
+      return {
+        cyclomatic: 1,
+        cognitive: 0,
+        linesOfCode: 1,
+        linesOfLogic: 1,
+        nestingDepth: 0,
+        parameterCount,
+        returnCount: 1, // Implicit return
+      };
+    }
+  } else if (
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessor(node) ||
+    ts.isSetAccessor(node)
+  ) {
+    body = node.body;
+  }
+
+  if (!body) return undefined;
+
+  // Visit body
+  visit(body, 0);
+
+  // Calculate lines
+  const startLine = sourceFile.getLineAndCharacterOfPosition(body.getStart(sourceFile)).line;
+  const endLine = sourceFile.getLineAndCharacterOfPosition(body.getEnd()).line;
+  const linesOfCode = endLine - startLine + 1;
+
+  // Estimate lines of logic (rough: total - ~20% for blanks/comments)
+  const linesOfLogic = Math.max(1, Math.floor(linesOfCode * 0.8));
+
+  return {
+    cyclomatic,
+    cognitive,
+    linesOfCode,
+    linesOfLogic,
+    nestingDepth: maxNestingDepth,
+    parameterCount,
+    returnCount,
+  };
+}
+
+// =============================================================================
+// NGRX EFFECT EXTRACTION
+// =============================================================================
+
+interface NgRxEffectInfo {
+  /** Actions listened via ofType() */
+  listensTo: Array<{
+    actionName: string;
+    location: { line: number; column: number };
+  }>;
+  /** Services/methods called inside the effect */
+  servicesCalled: Array<{
+    serviceName: string;
+    methodName: string;
+    location: { line: number; column: number };
+  }>;
+  /** Actions dispatched inside the effect */
+  dispatches: Array<{
+    actionName: string;
+    location: { line: number; column: number };
+  }>;
+  /** Whether the effect is dispatch: false */
+  dispatchFalse: boolean;
+}
+
+/**
+ * Extract NgRx effect information from a createEffect() call expression
+ * Detects: ofType(action), service calls, store.dispatch(action)
+ */
+function extractNgRxEffectInfo(node: ts.Node, sourceFile: ts.SourceFile): NgRxEffectInfo | undefined {
+  // Check if this is a createEffect() call
+  if (!ts.isCallExpression(node)) return undefined;
+
+  const callee = node.expression;
+  if (!ts.isIdentifier(callee) || callee.text !== "createEffect") return undefined;
+
+  const result: NgRxEffectInfo = {
+    listensTo: [],
+    servicesCalled: [],
+    dispatches: [],
+    dispatchFalse: false,
+  };
+
+  // Check for { dispatch: false } in second argument
+  if (node.arguments.length >= 2) {
+    const configArg = node.arguments[1];
+    if (configArg && ts.isObjectLiteralExpression(configArg)) {
+      for (const prop of configArg.properties) {
+        if (
+          ts.isPropertyAssignment(prop) &&
+          ts.isIdentifier(prop.name) &&
+          prop.name.text === "dispatch" &&
+          prop.initializer.kind === ts.SyntaxKind.FalseKeyword
+        ) {
+          result.dispatchFalse = true;
+        }
+      }
+    }
+  }
+
+  // Helper to check if node is 'this' keyword
+  const isThisKeyword = (n: ts.Node): boolean => n.kind === ts.SyntaxKind.ThisKeyword;
+
+  // Recursively search for patterns inside the effect
+  function visitNode(n: ts.Node): void {
+    // Look for ofType(action1, action2, ...)
+    if (ts.isCallExpression(n)) {
+      const calleeExpr = n.expression;
+
+      // ofType(action) pattern
+      if (ts.isIdentifier(calleeExpr) && calleeExpr.text === "ofType") {
+        for (const arg of n.arguments) {
+          const actionName = arg.getText(sourceFile);
+          const { line, character } = sourceFile.getLineAndCharacterOfPosition(arg.getStart(sourceFile));
+          result.listensTo.push({
+            actionName,
+            location: { line: line + 1, column: character },
+          });
+        }
+      }
+
+      // map(() => actionName(...)) pattern - dispatched actions from effects
+      if (ts.isIdentifier(calleeExpr) && calleeExpr.text === "map") {
+        // Look for arrow function that returns action call
+        for (const arg of n.arguments) {
+          if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) {
+            // Find action calls in the function body
+            const findActionCalls = (bodyNode: ts.Node): void => {
+              if (ts.isCallExpression(bodyNode)) {
+                const actionCallee = bodyNode.expression;
+                // Check if it's a direct action call like actionName(...)
+                if (ts.isIdentifier(actionCallee)) {
+                  const name = actionCallee.text;
+                  // Actions typically end with "Action" or contain "action"
+                  if (name.endsWith("Action") || name.includes("action") || name.includes("Actions")) {
+                    const { line, character } = sourceFile.getLineAndCharacterOfPosition(bodyNode.getStart(sourceFile));
+                    result.dispatches.push({
+                      actionName: name,
+                      location: { line: line + 1, column: character },
+                    });
+                  }
+                }
+              }
+              ts.forEachChild(bodyNode, findActionCalls);
+            };
+            findActionCalls(arg.body);
+          }
+        }
+      }
+
+      // this.service.method() pattern - service calls
+      if (ts.isPropertyAccessExpression(calleeExpr)) {
+        const objectExpr = calleeExpr.expression;
+        const methodName = calleeExpr.name.text;
+
+        // Check for this.serviceName.method()
+        if (ts.isPropertyAccessExpression(objectExpr) && isThisKeyword(objectExpr.expression)) {
+          const serviceName = objectExpr.name.text;
+          // Filter out common non-service calls
+          if (!["actions$", "store", "pipe", "subscribe"].includes(serviceName)) {
+            const { line, character } = sourceFile.getLineAndCharacterOfPosition(n.getStart(sourceFile));
+            result.servicesCalled.push({
+              serviceName,
+              methodName,
+              location: { line: line + 1, column: character },
+            });
+          }
+        }
+
+        // Check for this.store.dispatch(action) or store.dispatch(action)
+        if (methodName === "dispatch") {
+          if (
+            (ts.isPropertyAccessExpression(objectExpr) &&
+              isThisKeyword(objectExpr.expression) &&
+              objectExpr.name.text === "store") ||
+            (ts.isIdentifier(objectExpr) && objectExpr.text === "store")
+          ) {
+            for (const arg of n.arguments) {
+              // Get action name from dispatch(actionName(...))
+              if (ts.isCallExpression(arg)) {
+                const actionName = arg.expression.getText(sourceFile);
+                const { line, character } = sourceFile.getLineAndCharacterOfPosition(arg.getStart(sourceFile));
+                result.dispatches.push({
+                  actionName,
+                  location: { line: line + 1, column: character },
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    ts.forEachChild(n, visitNode);
+  }
+
+  visitNode(node);
+
+  // Only return if we found something meaningful
+  if (result.listensTo.length > 0 || result.servicesCalled.length > 0 || result.dispatches.length > 0) {
+    return result;
+  }
+
+  return undefined;
+}
+
+// =============================================================================
+// NGRX REDUCER EXTRACTION
+// =============================================================================
+
+interface NgRxReducerInfo {
+  /** Actions handled via on() */
+  handlesActions: Array<{
+    actionName: string;
+    location: { line: number; column: number };
+  }>;
+}
+
+/**
+ * Extract NgRx reducer information from a createReducer() call expression
+ * Detects: on(actionName, (state, payload) => ...)
+ */
+function extractNgRxReducerInfo(node: ts.Node, sourceFile: ts.SourceFile): NgRxReducerInfo | undefined {
+  if (!ts.isCallExpression(node)) return undefined;
+
+  const callee = node.expression;
+  if (!ts.isIdentifier(callee) || callee.text !== "createReducer") return undefined;
+
+  const result: NgRxReducerInfo = { handlesActions: [] };
+
+  // Iterate over arguments to find on() calls
+  for (const arg of node.arguments) {
+    if (ts.isCallExpression(arg)) {
+      const argCallee = arg.expression;
+      if (ts.isIdentifier(argCallee) && argCallee.text === "on") {
+        // on(action1, action2, ..., reducerFn)
+        // All arguments except the last one are actions
+        for (let i = 0; i < arg.arguments.length - 1; i++) {
+          const actionArg = arg.arguments[i];
+          if (actionArg) {
+            const actionName = actionArg.getText(sourceFile);
+            const { line, character } = sourceFile.getLineAndCharacterOfPosition(actionArg.getStart(sourceFile));
+            result.handlesActions.push({
+              actionName,
+              location: { line: line + 1, column: character },
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return result.handlesActions.length > 0 ? result : undefined;
+}
+
+// =============================================================================
+// NGRX SELECTOR EXTRACTION
+// =============================================================================
+
+interface NgRxSelectorInfo {
+  /** Selectors this selector depends on */
+  dependsOn: Array<{
+    selectorName: string;
+    location: { line: number; column: number };
+  }>;
+  /** Feature selector name if this is createFeatureSelector */
+  featureName?: string;
+}
+
+/**
+ * Extract NgRx selector information from createSelector() or createFeatureSelector() call
+ */
+function extractNgRxSelectorInfo(node: ts.Node, sourceFile: ts.SourceFile): NgRxSelectorInfo | undefined {
+  if (!ts.isCallExpression(node)) return undefined;
+
+  const callee = node.expression;
+  if (!ts.isIdentifier(callee)) return undefined;
+
+  const result: NgRxSelectorInfo = { dependsOn: [] };
+
+  if (callee.text === "createFeatureSelector") {
+    // createFeatureSelector<State>('featureName')
+    if (node.arguments.length > 0) {
+      const featureArg = node.arguments[0];
+      if (featureArg) {
+        if (ts.isStringLiteral(featureArg)) {
+          result.featureName = featureArg.text;
+        } else {
+          result.featureName = featureArg.getText(sourceFile);
+        }
+      }
+    }
+    return result;
+  }
+
+  if (callee.text === "createSelector") {
+    // createSelector(selector1, selector2, ..., projectorFn)
+    // All arguments except the last one are selectors
+    for (let i = 0; i < node.arguments.length - 1; i++) {
+      const selectorArg = node.arguments[i];
+      if (selectorArg) {
+        const selectorName = selectorArg.getText(sourceFile);
+        const { line, character } = sourceFile.getLineAndCharacterOfPosition(selectorArg.getStart(sourceFile));
+        result.dependsOn.push({
+          selectorName,
+          location: { line: line + 1, column: character },
+        });
+      }
+    }
+    return result.dependsOn.length > 0 || result.featureName ? result : undefined;
+  }
+
+  return undefined;
+}
+
+// =============================================================================
+// NGRX DISPATCH/SELECT EXTRACTION (for components)
+// =============================================================================
+
+interface NgRxStoreUsageInfo {
+  /** Actions dispatched via store.dispatch() */
+  dispatches: Array<{
+    actionName: string;
+    location: { line: number; column: number };
+  }>;
+  /** Selectors used via store.select() */
+  selects: Array<{
+    selectorName: string;
+    location: { line: number; column: number };
+  }>;
+}
+
+/**
+ * Extract store.dispatch() and store.select() calls from a method/function body
+ */
+function extractNgRxStoreUsage(node: ts.Node, sourceFile: ts.SourceFile): NgRxStoreUsageInfo {
+  const result: NgRxStoreUsageInfo = { dispatches: [], selects: [] };
+
+  const isThisKeyword = (n: ts.Node): boolean => n.kind === ts.SyntaxKind.ThisKeyword;
+
+  function visitNode(n: ts.Node): void {
+    if (ts.isCallExpression(n)) {
+      const calleeExpr = n.expression;
+
+      if (ts.isPropertyAccessExpression(calleeExpr)) {
+        const methodName = calleeExpr.name.text;
+        const objectExpr = calleeExpr.expression;
+
+        // Check for this.store.dispatch/select or store.dispatch/select
+        const isStoreCall =
+          (ts.isPropertyAccessExpression(objectExpr) &&
+            isThisKeyword(objectExpr.expression) &&
+            objectExpr.name.text === "store") ||
+          (ts.isIdentifier(objectExpr) && objectExpr.text === "store");
+
+        if (isStoreCall) {
+          if (methodName === "dispatch") {
+            for (const arg of n.arguments) {
+              // dispatch(actionName(...)) or dispatch(actionName)
+              let actionName: string;
+              if (ts.isCallExpression(arg)) {
+                actionName = arg.expression.getText(sourceFile);
+              } else {
+                actionName = arg.getText(sourceFile);
+              }
+              const { line, character } = sourceFile.getLineAndCharacterOfPosition(arg.getStart(sourceFile));
+              result.dispatches.push({
+                actionName,
+                location: { line: line + 1, column: character },
+              });
+            }
+          } else if (methodName === "select") {
+            for (const arg of n.arguments) {
+              const selectorName = arg.getText(sourceFile);
+              const { line, character } = sourceFile.getLineAndCharacterOfPosition(arg.getStart(sourceFile));
+              result.selects.push({
+                selectorName,
+                location: { line: line + 1, column: character },
+              });
+            }
+          }
+        }
+      }
+    }
+
+    ts.forEachChild(n, visitNode);
+  }
+
+  visitNode(node);
+  return result;
+}
+
+// =============================================================================
 // ENTITY EXTRACTION
 // =============================================================================
 
@@ -199,18 +1399,65 @@ interface ExtractorContext {
   sourceFile: ts.SourceFile;
   filePath: string;
   entities: ParsedEntity[];
+  relationships: EntityRelationship[];
+  /** Current parent entity name for contains relationships */
+  parentEntity?: string;
 }
 
 function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
-  const { sourceFile, filePath, entities } = ctx;
+  const { sourceFile, filePath, entities, relationships } = ctx;
+
+  // Helper to create calls relationships for standalone functions
+  const addFunctionCallRelationships = (functionName: string, calls: CallInfo[]): void => {
+    for (const call of calls) {
+      const calledTarget = call.target ? `${call.target}.${call.name}` : call.name;
+      relationships.push({
+        from: functionName,
+        to: calledTarget,
+        type: "calls",
+        sourceFile: filePath,
+        metadata: {
+          line: call.location.start.line,
+          isAwait: call.isAwait,
+          isNew: call.isNew,
+          argumentCount: call.argumentCount,
+        },
+      });
+    }
+  };
+
+  // Helper to create references relationships from type references
+  const addTypeReferenceRelationships = (entityName: string, typeRefs: TypeReference[] | undefined): void => {
+    if (!typeRefs) return;
+    for (const ref of typeRefs) {
+      // Skip if this is an extends/implements (already handled by inherits/implements)
+      if (ref.kind === "extends" || ref.kind === "implements") continue;
+      relationships.push({
+        from: entityName,
+        to: ref.name,
+        type: "references",
+        sourceFile: filePath,
+        metadata: {
+          line: ref.location.start.line,
+          referenceKind: ref.kind, // parameter, return, generic, property, variable
+        },
+      });
+    }
+  };
 
   // Function declarations
   if (ts.isFunctionDeclaration(node) && node.name) {
+    const functionName = node.name.text;
     const modifiers = getModifiers(node);
     const isAsync = modifiers.includes("async");
+    const calls = extractCalls(node, sourceFile);
+    const controlFlow = extractControlFlow(node, sourceFile);
+    const documentation = extractDocumentation(node, sourceFile);
+    const typeRefs = extractTypeReferences(node, sourceFile);
+    const complexity = extractComplexity(node, sourceFile);
 
     entities.push({
-      name: node.name.text,
+      name: functionName,
       type: isAsync ? "async_function" : "function",
       filePath,
       location: getLocation(sourceFile, node),
@@ -218,25 +1465,37 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
       parameters: getParameters(node, sourceFile),
       returnType: getReturnType(node, sourceFile),
       decorators: getDecorators(node, sourceFile),
+      calls: calls.length > 0 ? calls : undefined,
+      controlFlow,
+      documentation,
+      typeReferences: typeRefs,
+      complexity,
     });
+
+    // Add calls relationships for this function
+    if (calls.length > 0) {
+      addFunctionCallRelationships(functionName, calls);
+    }
+
+    // Add type references relationships
+    addTypeReferenceRelationships(functionName, typeRefs);
   }
 
   // Arrow functions and function expressions assigned to variables
   if (ts.isVariableStatement(node)) {
     for (const decl of node.declarationList.declarations) {
-      if (
-        decl.initializer &&
-        (ts.isArrowFunction(decl.initializer) ||
-          ts.isFunctionExpression(decl.initializer))
-      ) {
+      if (decl.initializer && (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))) {
         const name = decl.name.getText(sourceFile);
         const modifiers = getModifiers(node);
         const isAsync =
           modifiers.includes("async") ||
           (ts.canHaveModifiers(decl.initializer) &&
-            ts.getModifiers(decl.initializer)?.some(
-              (m) => m.kind === ts.SyntaxKind.AsyncKeyword,
-            ));
+            ts.getModifiers(decl.initializer)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword));
+        const calls = extractCalls(decl.initializer, sourceFile);
+        const controlFlow = extractControlFlow(decl.initializer, sourceFile);
+        const documentation = extractDocumentation(node, sourceFile);
+        const typeRefs = extractTypeReferences(decl.initializer, sourceFile);
+        const complexity = extractComplexity(decl.initializer, sourceFile);
 
         entities.push({
           name,
@@ -246,20 +1505,108 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
           modifiers: [...modifiers, ...(isAsync ? ["async"] : [])],
           parameters: getParameters(decl.initializer, sourceFile),
           returnType: getReturnType(decl.initializer, sourceFile),
+          calls: calls.length > 0 ? calls : undefined,
+          controlFlow,
+          documentation,
+          typeReferences: typeRefs,
+          complexity,
         });
-      } else if (decl.name && ts.isIdentifier(decl.name)) {
-        // Regular variable/constant
-        const modifiers = getModifiers(node);
-        const isConst =
-          (node.declarationList.flags & ts.NodeFlags.Const) !== 0;
 
-        entities.push({
-          name: decl.name.text,
-          type: isConst ? "constant" : "variable",
-          filePath,
-          location: getLocation(sourceFile, decl),
-          modifiers: [...modifiers, ...(isConst ? ["const"] : [])],
-        });
+        // Add calls relationships for arrow/function expressions
+        if (calls.length > 0) {
+          addFunctionCallRelationships(name, calls);
+        }
+
+        // Add type references relationships
+        addTypeReferenceRelationships(name, typeRefs);
+      } else if (decl.name && ts.isIdentifier(decl.name)) {
+        // Check for NgRx patterns in initializer
+        const varName = decl.name.text;
+        const modifiers = getModifiers(node);
+        const isConst = (node.declarationList.flags & ts.NodeFlags.Const) !== 0;
+        const varLocation = getLocation(sourceFile, decl);
+
+        // Check for NgRx reducer: createReducer(...)
+        let reducerInfo: NgRxReducerInfo | undefined;
+        if (decl.initializer) {
+          reducerInfo = extractNgRxReducerInfo(decl.initializer, sourceFile);
+        }
+
+        // Check for NgRx selector: createSelector(...) or createFeatureSelector(...)
+        let selectorInfo: NgRxSelectorInfo | undefined;
+        if (decl.initializer) {
+          selectorInfo = extractNgRxSelectorInfo(decl.initializer, sourceFile);
+        }
+
+        if (reducerInfo) {
+          // NgRx Reducer
+          const reducerEntity: ParsedEntity = {
+            name: varName,
+            type: "ngrx_reducer",
+            filePath,
+            location: varLocation,
+            modifiers: [...modifiers, ...(isConst ? ["const"] : [])],
+            metadata: {
+              ngrxReducer: {
+                handlesActions: reducerInfo.handlesActions.map((a) => a.actionName),
+              },
+            },
+          };
+          entities.push(reducerEntity);
+
+          // Create "reduces" relationships for each action
+          for (const action of reducerInfo.handlesActions) {
+            relationships.push({
+              from: varName,
+              to: action.actionName,
+              type: "reduces",
+              sourceFile: filePath,
+              metadata: {
+                line: action.location.line,
+                relationKind: "ngrx_reducer_handler",
+              },
+            });
+          }
+        } else if (selectorInfo) {
+          // NgRx Selector
+          const selectorEntity: ParsedEntity = {
+            name: varName,
+            type: "ngrx_selector",
+            filePath,
+            location: varLocation,
+            modifiers: [...modifiers, ...(isConst ? ["const"] : [])],
+            metadata: {
+              ngrxSelector: {
+                dependsOn: selectorInfo.dependsOn.map((s) => s.selectorName),
+                featureName: selectorInfo.featureName,
+              },
+            },
+          };
+          entities.push(selectorEntity);
+
+          // Create "selects" relationships for each dependency
+          for (const dep of selectorInfo.dependsOn) {
+            relationships.push({
+              from: varName,
+              to: dep.selectorName,
+              type: "selects",
+              sourceFile: filePath,
+              metadata: {
+                line: dep.location.line,
+                relationKind: "ngrx_selector_dependency",
+              },
+            });
+          }
+        } else {
+          // Regular variable/constant
+          entities.push({
+            name: varName,
+            type: isConst ? "constant" : "variable",
+            filePath,
+            location: varLocation,
+            modifiers: [...modifiers, ...(isConst ? ["const"] : [])],
+          });
+        }
       }
     }
   }
@@ -285,11 +1632,14 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
       }
     }
 
+    const classDocumentation = extractDocumentation(node, sourceFile);
+    const classTypeRefs = extractTypeReferences(node, sourceFile);
+    const classLocation = getLocation(sourceFile, node);
     const classEntity: ParsedEntity = {
       name: className,
       type: "class",
       filePath,
-      location: getLocation(sourceFile, node),
+      location: classLocation,
       modifiers,
       decorators: getDecorators(node, sourceFile),
       inheritance:
@@ -300,60 +1650,386 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
               isAbstract: modifiers.includes("abstract"),
             }
           : undefined,
+      documentation: classDocumentation,
+      typeReferences: classTypeRefs,
       children: [],
+    };
+
+    // Create inheritance relationships
+    for (const baseClass of baseClasses) {
+      relationships.push({
+        from: className,
+        to: baseClass,
+        type: "inherits",
+        sourceFile: filePath,
+        metadata: {
+          line: classLocation.start.line,
+          isDirectRelation: true,
+        },
+      });
+    }
+
+    // Create implements relationships
+    for (const iface of interfaces) {
+      relationships.push({
+        from: className,
+        to: iface,
+        type: "implements",
+        sourceFile: filePath,
+        metadata: {
+          line: classLocation.start.line,
+          isDirectRelation: true,
+        },
+      });
+    }
+
+    // Create decorates relationships for class decorators
+    const classDecorators = getDecorators(node, sourceFile);
+    if (classDecorators) {
+      for (const dec of classDecorators) {
+        relationships.push({
+          from: dec.name,
+          to: className,
+          type: "decorates",
+          sourceFile: filePath,
+          metadata: {
+            line: classLocation.start.line,
+            decoratorArguments: dec.arguments,
+          },
+        });
+      }
+    }
+
+    // Add type references relationships for class (excluding extends/implements)
+    addTypeReferenceRelationships(className, classTypeRefs);
+
+    // Helper to add contains + calls relationships for a member
+    const addMemberRelationships = (
+      memberName: string,
+      memberLocation: ParsedEntity["location"],
+      calls: CallInfo[] | undefined,
+    ): void => {
+      // Contains relationship: class -> member
+      relationships.push({
+        from: className,
+        to: memberName,
+        type: "contains",
+        sourceFile: filePath,
+        metadata: {
+          line: memberLocation.start.line,
+          isDirectRelation: true,
+        },
+      });
+
+      // Calls relationships from this member
+      if (calls) {
+        for (const call of calls) {
+          const calledTarget = call.target ? `${call.target}.${call.name}` : call.name;
+          relationships.push({
+            from: `${className}.${memberName}`,
+            to: calledTarget,
+            type: "calls",
+            sourceFile: filePath,
+            metadata: {
+              line: call.location.start.line,
+              isAwait: call.isAwait,
+              isNew: call.isNew,
+              argumentCount: call.argumentCount,
+            },
+          });
+        }
+      }
     };
 
     // Extract class members
     for (const member of node.members) {
       if (ts.isMethodDeclaration(member) && member.name) {
+        const methodName = member.name.getText(sourceFile);
         const methodModifiers = getModifiers(member);
         const isAsync = methodModifiers.includes("async");
+        const methodCalls = extractCalls(member, sourceFile);
+        const methodControlFlow = extractControlFlow(member, sourceFile);
+        const methodDoc = extractDocumentation(member, sourceFile);
+        const methodTypeRefs = extractTypeReferences(member, sourceFile);
+        const methodComplexity = extractComplexity(member, sourceFile);
+        const methodLocation = getLocation(sourceFile, member);
+
+        const methodDecorators = getDecorators(member, sourceFile);
+
+        // Extract NgRx store.dispatch() and store.select() calls
+        const ngrxStoreUsage = extractNgRxStoreUsage(member, sourceFile);
 
         classEntity.children!.push({
-          name: member.name.getText(sourceFile),
+          name: methodName,
           type: isAsync ? "async_function" : "method",
           filePath,
-          location: getLocation(sourceFile, member),
+          location: methodLocation,
           modifiers: methodModifiers,
           parameters: getParameters(member, sourceFile),
           returnType: getReturnType(member, sourceFile),
-          decorators: getDecorators(member, sourceFile),
+          decorators: methodDecorators,
+          calls: methodCalls.length > 0 ? methodCalls : undefined,
+          controlFlow: methodControlFlow,
+          documentation: methodDoc,
+          typeReferences: methodTypeRefs,
+          complexity: methodComplexity,
+          metadata:
+            ngrxStoreUsage.dispatches.length > 0 || ngrxStoreUsage.selects.length > 0
+              ? {
+                  ngrxStoreUsage: {
+                    dispatches: ngrxStoreUsage.dispatches.map((d) => d.actionName),
+                    selects: ngrxStoreUsage.selects.map((s) => s.selectorName),
+                  },
+                }
+              : undefined,
         });
+
+        addMemberRelationships(methodName, methodLocation, methodCalls);
+
+        // Add NgRx dispatches relationships
+        for (const dispatch of ngrxStoreUsage.dispatches) {
+          relationships.push({
+            from: `${className}.${methodName}`,
+            to: dispatch.actionName,
+            type: "dispatches",
+            sourceFile: filePath,
+            metadata: {
+              line: dispatch.location.line,
+              relationKind: "ngrx_dispatch",
+            },
+          });
+        }
+
+        // Add NgRx selects relationships
+        for (const sel of ngrxStoreUsage.selects) {
+          relationships.push({
+            from: `${className}.${methodName}`,
+            to: sel.selectorName,
+            type: "selects",
+            sourceFile: filePath,
+            metadata: {
+              line: sel.location.line,
+              relationKind: "ngrx_select",
+            },
+          });
+        }
+
+        // Create overrides relationship if method has 'override' modifier
+        if (methodModifiers.includes("override") && baseClasses.length > 0) {
+          // We don't know exact base class at syntax level, use first base class
+          relationships.push({
+            from: `${className}.${methodName}`,
+            to: `${baseClasses[0]}.${methodName}`,
+            type: "overrides",
+            sourceFile: filePath,
+            metadata: {
+              line: methodLocation.start.line,
+            },
+          });
+        }
+
+        // Create decorates relationships for method decorators
+        if (methodDecorators) {
+          for (const dec of methodDecorators) {
+            relationships.push({
+              from: dec.name,
+              to: `${className}.${methodName}`,
+              type: "decorates",
+              sourceFile: filePath,
+              metadata: {
+                line: methodLocation.start.line,
+                decoratorArguments: dec.arguments,
+              },
+            });
+          }
+        }
+
+        // Add type references relationships for method
+        addTypeReferenceRelationships(`${className}.${methodName}`, methodTypeRefs);
       } else if (ts.isPropertyDeclaration(member) && member.name) {
-        classEntity.children!.push({
-          name: member.name.getText(sourceFile),
-          type: "property",
+        const propName = member.name.getText(sourceFile);
+        const propDoc = extractDocumentation(member, sourceFile);
+        const propTypeRefs = extractTypeReferences(member, sourceFile);
+        const propLocation = getLocation(sourceFile, member);
+
+        // Check if this is an NgRx effect (property initialized with createEffect())
+        let ngrxEffectInfo: NgRxEffectInfo | undefined;
+        let entityType: ParsedEntity["type"] = "property";
+
+        if (member.initializer) {
+          ngrxEffectInfo = extractNgRxEffectInfo(member.initializer, sourceFile);
+          // DEBUG: Log NgRx effect detection
+          if (ngrxEffectInfo) {
+            console.error(
+              `[NgRx] Found effect: ${className}.${propName}, listensTo: ${ngrxEffectInfo.listensTo.map((a) => a.actionName).join(", ")}`,
+            );
+            entityType = "ngrx_effect";
+          }
+        }
+
+        const propEntity: ParsedEntity = {
+          name: propName,
+          type: entityType,
           filePath,
-          location: getLocation(sourceFile, member),
+          location: propLocation,
           modifiers: getModifiers(member),
+          documentation: propDoc,
+          typeReferences: propTypeRefs,
+        };
+
+        // Add NgRx-specific metadata
+        if (ngrxEffectInfo) {
+          propEntity.metadata = {
+            ...propEntity.metadata,
+            ngrxEffect: {
+              listensTo: ngrxEffectInfo.listensTo.map((a) => a.actionName),
+              dispatches: ngrxEffectInfo.dispatches.map((a) => a.actionName),
+              dispatchFalse: ngrxEffectInfo.dispatchFalse,
+              servicesCalled: ngrxEffectInfo.servicesCalled.map((s) => `${s.serviceName}.${s.methodName}`),
+            },
+          };
+
+          // Create "listens_to" relationships for actions
+          for (const action of ngrxEffectInfo.listensTo) {
+            relationships.push({
+              from: `${className}.${propName}`,
+              to: action.actionName,
+              type: "listens_to",
+              sourceFile: filePath,
+              metadata: {
+                line: action.location.line,
+                relationKind: "ngrx_action_listener",
+              },
+            });
+          }
+
+          // Create "dispatches" relationships for dispatched actions
+          for (const action of ngrxEffectInfo.dispatches) {
+            relationships.push({
+              from: `${className}.${propName}`,
+              to: action.actionName,
+              type: "dispatches",
+              sourceFile: filePath,
+              metadata: {
+                line: action.location.line,
+                relationKind: "ngrx_action_dispatch",
+              },
+            });
+          }
+
+          // Create "calls" relationships for service methods
+          for (const service of ngrxEffectInfo.servicesCalled) {
+            relationships.push({
+              from: `${className}.${propName}`,
+              to: `${service.serviceName}.${service.methodName}`,
+              type: "calls",
+              sourceFile: filePath,
+              metadata: {
+                line: service.location.line,
+                isNgrxEffect: true,
+                relationKind: "ngrx_service_call",
+              },
+            });
+          }
+        }
+
+        classEntity.children!.push(propEntity);
+
+        // Contains relationship for properties
+        relationships.push({
+          from: className,
+          to: propName,
+          type: "contains",
+          sourceFile: filePath,
+          metadata: {
+            line: propLocation.start.line,
+            isDirectRelation: true,
+            memberType: ngrxEffectInfo ? "ngrx_effect" : "property",
+          },
         });
+
+        // Add type references relationships for property
+        addTypeReferenceRelationships(`${className}.${propName}`, propTypeRefs);
       } else if (ts.isConstructorDeclaration(member)) {
+        const constructorCalls = extractCalls(member, sourceFile);
+        const constructorControlFlow = extractControlFlow(member, sourceFile);
+        const constructorDoc = extractDocumentation(member, sourceFile);
+        const constructorTypeRefs = extractTypeReferences(member, sourceFile);
+        const constructorComplexity = extractComplexity(member, sourceFile);
+        const constructorLocation = getLocation(sourceFile, member);
+
         classEntity.children!.push({
           name: "constructor",
           type: "method",
           filePath,
-          location: getLocation(sourceFile, member),
+          location: constructorLocation,
           modifiers: getModifiers(member),
           parameters: getParameters(member, sourceFile),
+          calls: constructorCalls.length > 0 ? constructorCalls : undefined,
+          controlFlow: constructorControlFlow,
+          documentation: constructorDoc,
+          typeReferences: constructorTypeRefs,
+          complexity: constructorComplexity,
         });
+
+        addMemberRelationships("constructor", constructorLocation, constructorCalls);
+
+        // Add type references relationships for constructor
+        addTypeReferenceRelationships(`${className}.constructor`, constructorTypeRefs);
       } else if (ts.isGetAccessor(member) && member.name) {
+        const getterName = member.name.getText(sourceFile);
+        const getterCalls = extractCalls(member, sourceFile);
+        const getterControlFlow = extractControlFlow(member, sourceFile);
+        const getterDoc = extractDocumentation(member, sourceFile);
+        const getterTypeRefs = extractTypeReferences(member, sourceFile);
+        const getterComplexity = extractComplexity(member, sourceFile);
+        const getterLocation = getLocation(sourceFile, member);
+
         classEntity.children!.push({
-          name: member.name.getText(sourceFile),
+          name: getterName,
           type: "property",
           filePath,
-          location: getLocation(sourceFile, member),
+          location: getterLocation,
           modifiers: [...getModifiers(member), "getter"],
           returnType: getReturnType(member, sourceFile),
+          calls: getterCalls.length > 0 ? getterCalls : undefined,
+          controlFlow: getterControlFlow,
+          documentation: getterDoc,
+          typeReferences: getterTypeRefs,
+          complexity: getterComplexity,
         });
+
+        addMemberRelationships(getterName, getterLocation, getterCalls);
+
+        // Add type references relationships for getter
+        addTypeReferenceRelationships(`${className}.${getterName}`, getterTypeRefs);
       } else if (ts.isSetAccessor(member) && member.name) {
+        const setterName = member.name.getText(sourceFile);
+        const setterCalls = extractCalls(member, sourceFile);
+        const setterControlFlow = extractControlFlow(member, sourceFile);
+        const setterDoc = extractDocumentation(member, sourceFile);
+        const setterTypeRefs = extractTypeReferences(member, sourceFile);
+        const setterComplexity = extractComplexity(member, sourceFile);
+        const setterLocation = getLocation(sourceFile, member);
+
         classEntity.children!.push({
-          name: member.name.getText(sourceFile),
+          name: setterName,
           type: "property",
           filePath,
-          location: getLocation(sourceFile, member),
+          location: setterLocation,
           modifiers: [...getModifiers(member), "setter"],
           parameters: getParameters(member, sourceFile),
+          calls: setterCalls.length > 0 ? setterCalls : undefined,
+          controlFlow: setterControlFlow,
+          documentation: setterDoc,
+          typeReferences: setterTypeRefs,
+          complexity: setterComplexity,
         });
+
+        addMemberRelationships(setterName, setterLocation, setterCalls);
+
+        // Add type references relationships for setter
+        addTypeReferenceRelationships(`${className}.${setterName}`, setterTypeRefs);
       }
     }
 
@@ -363,27 +2039,41 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
 
   // Interface declarations
   if (ts.isInterfaceDeclaration(node)) {
+    const interfaceName = node.name.text;
     const modifiers = getModifiers(node);
+    const interfaceDoc = extractDocumentation(node, sourceFile);
+    const interfaceTypeRefs = extractTypeReferences(node, sourceFile);
     const interfaceEntity: ParsedEntity = {
-      name: node.name.text,
+      name: interfaceName,
       type: "interface",
       filePath,
       location: getLocation(sourceFile, node),
       modifiers,
+      documentation: interfaceDoc,
+      typeReferences: interfaceTypeRefs,
       children: [],
     };
+
+    // Add type references relationships for interface
+    addTypeReferenceRelationships(interfaceName, interfaceTypeRefs);
 
     // Extract interface members
     for (const member of node.members) {
       if (ts.isPropertySignature(member) && member.name) {
+        const propDoc = extractDocumentation(member, sourceFile);
+        const propTypeRefs = extractTypeReferences(member, sourceFile);
         interfaceEntity.children!.push({
           name: member.name.getText(sourceFile),
           type: "property",
           filePath,
           location: getLocation(sourceFile, member),
           modifiers: member.questionToken ? ["optional"] : [],
+          documentation: propDoc,
+          typeReferences: propTypeRefs,
         });
       } else if (ts.isMethodSignature(member) && member.name) {
+        const methodDoc = extractDocumentation(member, sourceFile);
+        const methodTypeRefs = extractTypeReferences(member, sourceFile);
         interfaceEntity.children!.push({
           name: member.name.getText(sourceFile),
           type: "method",
@@ -392,6 +2082,8 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
           modifiers: member.questionToken ? ["optional"] : [],
           parameters: getParameters(member as any, sourceFile),
           returnType: member.type ? member.type.getText(sourceFile) : undefined,
+          documentation: methodDoc,
+          typeReferences: methodTypeRefs,
         });
       }
     }
@@ -402,23 +2094,33 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
 
   // Type alias declarations
   if (ts.isTypeAliasDeclaration(node)) {
+    const typeName = node.name.text;
+    const typeDoc = extractDocumentation(node, sourceFile);
+    const typeRefs = extractTypeReferences(node, sourceFile);
     entities.push({
-      name: node.name.text,
+      name: typeName,
       type: "type",
       filePath,
       location: getLocation(sourceFile, node),
       modifiers: getModifiers(node),
+      documentation: typeDoc,
+      typeReferences: typeRefs,
     });
+
+    // Add type references relationships for type alias
+    addTypeReferenceRelationships(typeName, typeRefs);
   }
 
   // Enum declarations
   if (ts.isEnumDeclaration(node)) {
+    const enumDoc = extractDocumentation(node, sourceFile);
     const enumEntity: ParsedEntity = {
       name: node.name.text,
       type: "enum",
       filePath,
       location: getLocation(sourceFile, node),
       modifiers: getModifiers(node),
+      documentation: enumDoc,
       children: [],
     };
 
@@ -456,10 +2158,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
       }
 
       // Named imports
-      if (
-        node.importClause.namedBindings &&
-        ts.isNamedImports(node.importClause.namedBindings)
-      ) {
+      if (node.importClause.namedBindings && ts.isNamedImports(node.importClause.namedBindings)) {
         for (const element of node.importClause.namedBindings.elements) {
           specifiers.push({
             local: element.name.text,
@@ -470,10 +2169,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
       }
 
       // Namespace import
-      if (
-        node.importClause.namedBindings &&
-        ts.isNamespaceImport(node.importClause.namedBindings)
-      ) {
+      if (node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) {
         isNamespace = true;
         specifiers.push({
           local: node.importClause.namedBindings.name.text,
@@ -481,8 +2177,9 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
       }
     }
 
+    const importEntityName = source;
     entities.push({
-      name: source,
+      name: importEntityName,
       type: "import",
       filePath,
       location: getLocation(sourceFile, node),
@@ -493,6 +2190,40 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
         isNamespace,
       },
     });
+
+    // Create import relationships for each specifier
+    const location = getLocation(sourceFile, node);
+    for (const spec of specifiers) {
+      const importedSymbol = spec.imported || spec.local;
+      relationships.push({
+        from: importEntityName,
+        to: importedSymbol,
+        type: "imports",
+        sourceFile: filePath,
+        targetFile: source,
+        metadata: {
+          line: location.start.line,
+          isDefault,
+          isNamespace,
+          alias: spec.alias,
+        },
+      });
+    }
+
+    // If no specifiers (side-effect import like "import 'polyfill'"), create single relationship
+    if (specifiers.length === 0) {
+      relationships.push({
+        from: filePath,
+        to: source,
+        type: "imports",
+        sourceFile: filePath,
+        targetFile: source,
+        metadata: {
+          line: location.start.line,
+          isSideEffect: true,
+        },
+      });
+    }
   }
 
   // Export declarations
@@ -774,7 +2505,7 @@ export class IncrementalTypeScriptBuilder {
   getTypeAtPosition(filePath: string, position: number): string | undefined {
     const quickInfo = this.service.getQuickInfoAtPosition(filePath, position);
     if (quickInfo?.displayParts) {
-      return quickInfo.displayParts.map(p => p.text).join("");
+      return quickInfo.displayParts.map((p) => p.text).join("");
     }
     return undefined;
   }
@@ -825,7 +2556,7 @@ export class IncrementalTypeScriptBuilder {
 
     if (!sourceFile || !typeChecker) {
       // Fallback to syntax-only parsing
-      return this.extractEntitiesSyntaxOnly(filePath, content);
+      return this.extractEntitiesSyntaxOnly(filePath, content).entities;
     }
 
     const entities: ParsedEntity[] = [];
@@ -878,9 +2609,14 @@ export class IncrementalTypeScriptBuilder {
           location: getLocation(sourceFile, node),
           modifiers,
           decorators: getDecorators(node, sourceFile),
-          inheritance: baseClasses.length > 0 || interfaces.length > 0
-            ? { baseClasses, interfaces: interfaces.length > 0 ? interfaces : undefined, isAbstract: modifiers.includes("abstract") }
-            : undefined,
+          inheritance:
+            baseClasses.length > 0 || interfaces.length > 0
+              ? {
+                  baseClasses,
+                  interfaces: interfaces.length > 0 ? interfaces : undefined,
+                  isAbstract: modifiers.includes("abstract"),
+                }
+              : undefined,
           children: [],
         };
 
@@ -1010,9 +2746,13 @@ export class IncrementalTypeScriptBuilder {
             const isConst = (node.declarationList.flags & ts.NodeFlags.Const) !== 0;
 
             // Check if it's a function expression
-            if (decl.initializer && (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))) {
-              const isAsync = ts.canHaveModifiers(decl.initializer) &&
-                ts.getModifiers(decl.initializer)?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword);
+            if (
+              decl.initializer &&
+              (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))
+            ) {
+              const isAsync =
+                ts.canHaveModifiers(decl.initializer) &&
+                ts.getModifiers(decl.initializer)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
 
               entities.push({
                 name: decl.name.text,
@@ -1086,7 +2826,10 @@ export class IncrementalTypeScriptBuilder {
   /**
    * Fallback syntax-only extraction (when type checker unavailable)
    */
-  private extractEntitiesSyntaxOnly(filePath: string, content: string): ParsedEntity[] {
+  private extractEntitiesSyntaxOnly(
+    filePath: string,
+    content: string,
+  ): { entities: ParsedEntity[]; relationships: EntityRelationship[] } {
     const ext = getExtension(filePath);
     const sourceFile = ts.createSourceFile(
       filePath,
@@ -1097,9 +2840,10 @@ export class IncrementalTypeScriptBuilder {
     );
 
     const entities: ParsedEntity[] = [];
-    const ctx: ExtractorContext = { sourceFile, filePath, entities };
+    const relationships: EntityRelationship[] = [];
+    const ctx: ExtractorContext = { sourceFile, filePath, entities, relationships };
     ts.forEachChild(sourceFile, (node) => extractEntities(ctx, node));
-    return entities;
+    return { entities, relationships };
   }
 
   /**
@@ -1141,11 +2885,7 @@ export class TypeScriptParser {
   /**
    * Parse a file and extract entities
    */
-  async parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult> {
+  async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
 
     try {
@@ -1162,12 +2902,14 @@ export class TypeScriptParser {
         scriptKind,
       );
 
-      // Extract entities
+      // Extract entities and relationships
       const entities: ParsedEntity[] = [];
+      const relationships: EntityRelationship[] = [];
       const ctx: ExtractorContext = {
         sourceFile,
         filePath,
         entities,
+        relationships,
       };
 
       ts.forEachChild(sourceFile, (node) => extractEntities(ctx, node));
@@ -1202,13 +2944,13 @@ export class TypeScriptParser {
       // Update stats
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += parseTimeMs;
-      this.stats.avgParseTimeMs =
-        this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
 
       return {
         filePath,
         language: getLanguage(filePath),
         entities,
+        relationships: relationships.length > 0 ? relationships : undefined,
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
@@ -1222,6 +2964,7 @@ export class TypeScriptParser {
         filePath,
         language: getLanguage(filePath),
         entities: [],
+        relationships: undefined,
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
@@ -1237,12 +2980,7 @@ export class TypeScriptParser {
   /**
    * Parse with incremental support (uses same logic - TS API handles this internally)
    */
-  async parseIncremental(
-    filePath: string,
-    content: string,
-    contentHash: string,
-    _edits: any[],
-  ): Promise<ParseResult> {
+  async parseIncremental(filePath: string, content: string, contentHash: string, _edits: any[]): Promise<ParseResult> {
     // TypeScript's createSourceFile is already very fast
     // For true incremental, we'd need ts.createLanguageService
     return this.parse(filePath, content, contentHash);

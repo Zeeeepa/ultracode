@@ -100,6 +100,14 @@ export class EmbeddingGenerator {
     return `${name}:${model}:${dim}`;
   }
 
+  /**
+   * Get maximum tokens supported by the current provider
+   * Used for adaptive entity expansion
+   */
+  get maxTokens(): number {
+    return this.provider?.info?.maxTokens ?? this.fallback?.info?.maxTokens ?? 512;
+  }
+
   async initialize(): Promise<void> {
     if (this.initPromise) return this.initPromise;
     this.isInitializing = true;

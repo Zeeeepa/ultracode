@@ -14,9 +14,9 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BranchManager } from "../core/branch-manager.js";
-import { hashText } from "../utils/fast-hash.js";
 import type { GitDiffResult, GitFileChange } from "../types/layered.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
+import { hashText } from "../utils/fast-hash.js";
 import { BranchDelta } from "./branch-delta.js";
 
 // =============================================================================
@@ -95,6 +95,7 @@ export class GitDeltaComputer {
         cwd: this.workingDirectory,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"], // Suppress stderr
+        windowsHide: true,
       });
 
       const files = this.parseDiffOutput(output);
@@ -128,6 +129,7 @@ export class GitDeltaComputer {
         cwd: this.workingDirectory,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
 
       return sha;
@@ -146,6 +148,7 @@ export class GitDeltaComputer {
         cwd: this.workingDirectory,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
 
       return sha;
@@ -450,6 +453,7 @@ export class GitDeltaComputer {
         cwd: this.workingDirectory,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       const branches = output
@@ -483,6 +487,7 @@ export class GitDeltaComputer {
         cwd: this.workingDirectory,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       const lines = output.trim().split("\n").filter(Boolean);

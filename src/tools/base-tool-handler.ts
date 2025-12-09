@@ -9,6 +9,8 @@
  * - Automatic response size limiting
  */
 
+import { getProjectContext, type ProjectContextManager } from "../shared/project-context.js";
+import { getProjectSQLiteManager } from "../storage/sqlite-manager.js";
 import { MAX_RESPONSE_SIZE_BYTES, truncateResponse } from "./response-limits.js";
 
 export interface ToolResult {
@@ -38,6 +40,46 @@ export abstract class BaseToolHandler<TArgs = any> {
   protected maxResponseSize: number = MAX_RESPONSE_SIZE_BYTES;
 
   constructor(protected context: ToolContext) {}
+
+  // ==========================================================================
+  // PROJECT CONTEXT HELPERS
+  // ==========================================================================
+
+  /**
+   * Get the ProjectContextManager singleton
+   */
+  protected getProjectContext(): ProjectContextManager {
+    return getProjectContext();
+  }
+
+  /**
+   * Resolve project path from args, falling back to current project
+   */
+  protected resolveProjectPath(args: { projectPath?: string }): string {
+    return getProjectContext().resolveProjectPath(args.projectPath);
+  }
+
+  /**
+   * Get SQLiteManager for a specific project (or current if not specified)
+   */
+  protected getProjectSQLiteManager(projectPath?: string): ReturnType<typeof getProjectSQLiteManager> {
+    const resolved = getProjectContext().resolveProjectPath(projectPath);
+    return getProjectSQLiteManager(resolved);
+  }
+
+  /**
+   * Get storage paths for a project
+   */
+  protected getProjectStoragePaths(projectPath?: string) {
+    return getProjectContext().getStoragePaths(projectPath);
+  }
+
+  /**
+   * Check if project is indexed, optionally trigger indexing if not
+   */
+  protected isProjectIndexed(projectPath?: string): boolean {
+    return getProjectContext().isProjectIndexed(projectPath);
+  }
 
   /**
    * Validate and parse tool arguments

@@ -18,13 +18,27 @@ Index codebase for analysis. **Run once before using other tools.**
 | `fullScan` | boolean | false | Full scan without cache |
 
 ### `semantic_search`
-**Semantic search by meaning.** Understands natural language.
+**Semantic search by meaning.** Understands natural language. Returns rich metadata including complexity metrics, control flow, calls, and documentation.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `query` | string | **required** | Natural language search query |
 | `limit` | number | 10 | Max results |
 | `branch` | string | main | Branch to search |
+| `minCyclomatic` | number | - | Filter: minimum cyclomatic complexity |
+| `maxCyclomatic` | number | - | Filter: maximum cyclomatic complexity |
+| `hasExceptions` | boolean | - | Filter: must have try-catch blocks |
+| `hasLoops` | boolean | - | Filter: must have loops |
+| `hasAwaits` | boolean | - | Filter: must have await expressions (async) |
+| `hasDocumentation` | boolean | - | Filter: must have docs/docstrings |
+| `isDeprecated` | boolean | - | Filter: deprecated entities only |
+| `minCallCount` | number | - | Filter: minimum function calls |
+
+**Enhanced output includes:**
+- `complexity`: cyclomatic, cognitive, linesOfCode, nestingDepth
+- `controlFlow`: hasBranches, hasLoops, hasExceptions, hasAwaits, counts
+- `calls`: count, hasAsync
+- `documentation`: hasDocumentation, hasParams, hasExamples, isDeprecated
 
 ### `query`
 Natural language query about code.

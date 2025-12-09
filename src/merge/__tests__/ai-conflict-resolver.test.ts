@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { describe, expect, it, spyOn } from "bun:test";
 import { AIConflictResolver } from "../engine/ai-conflict-resolver.js";
 import { type CodeUnit, CodeUnitType } from "../models/code-unit.js";
 import {
@@ -235,7 +235,7 @@ describe("AIConflictResolver", () => {
   describe("cache management", () => {
     it("should cache embeddings", async () => {
       const mockGen = new MockEmbeddingGenerator() as any;
-      const generateSpy = jest.spyOn(mockGen, "generateEmbedding");
+      const generateSpy = spyOn(mockGen, "generateEmbedding");
 
       const resolver = new AIConflictResolver({
         embeddingGenerator: mockGen,

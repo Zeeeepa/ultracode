@@ -15,10 +15,10 @@
 import { LRUCache } from "lru-cache";
 import type { BranchManager } from "../core/branch-manager.js";
 import type { ILayeredIndex } from "../core/layered-index.js";
-import { hashText } from "../utils/fast-hash.js";
 import type { BranchDelta as IBranchDelta, LayeredIndexConfig, WorkingDelta } from "../types/layered.js";
 import { LayeredIndexConfigPresets } from "../types/layered.js";
 import type { Entity, GraphStorage, Relationship } from "../types/storage.js";
+import { hashText } from "../utils/fast-hash.js";
 import { BranchDelta } from "./branch-delta.js";
 import { GitDeltaComputer } from "./git-delta-computer.js";
 import { LayeredCacheManager } from "./layered-cache-manager.js";

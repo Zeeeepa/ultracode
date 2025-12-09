@@ -30,6 +30,39 @@ import {
 import { features, runtime } from "./runtime.js";
 
 // =============================================================================
+// FILE CHANGE NOTIFICATION HOOK
+// =============================================================================
+
+/**
+ * Optional hook for notifying about file changes.
+ * Can be set by AutoDocWatcher or other components that need to track file modifications.
+ * Using a global hook avoids circular dependencies with knowledge-bus.
+ */
+type FileChangeHook = (filePath: string, operation: "write" | "delete" | "rename") => void;
+
+let fileChangeHook: FileChangeHook | null = null;
+
+/**
+ * Register a hook to be called when files are modified
+ */
+export function setFileChangeHook(hook: FileChangeHook | null): void {
+  fileChangeHook = hook;
+}
+
+/**
+ * Notify about file change (called internally after write operations)
+ */
+function notifyFileChange(filePath: string, operation: "write" | "delete" | "rename"): void {
+  if (fileChangeHook) {
+    try {
+      fileChangeHook(filePath, operation);
+    } catch {
+      // Ignore errors in hook - don't break file operations
+    }
+  }
+}
+
+// =============================================================================
 // ASYNC FILE OPERATIONS
 // =============================================================================
 
@@ -143,11 +176,13 @@ export async function writeFile(
       writer.write(data);
       await writer.flush();
       await writer.end();
+      notifyFileChange(path, "write");
       return;
     }
 
     // Use Bun.write for small files
     await globalThis.Bun.write(path, data);
+    notifyFileChange(path, "write");
     return;
   }
 
@@ -155,6 +190,7 @@ export async function writeFile(
   const { writeFile: fsWriteFile } = await import("node:fs/promises");
   const writeData = data instanceof ArrayBuffer ? Buffer.from(data) : data;
   await fsWriteFile(path, writeData, typeof data === "string" ? encoding || "utf-8" : undefined);
+  notifyFileChange(path, "write");
 }
 
 /**
@@ -349,6 +385,7 @@ export async function readdir(
 export async function rm(path: string, recursive: boolean = false): Promise<void> {
   const { rm: fsRm } = await import("node:fs/promises");
   await fsRm(path, { recursive, force: true });
+  notifyFileChange(path, "delete");
 }
 
 /**

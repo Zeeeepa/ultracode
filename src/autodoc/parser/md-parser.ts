@@ -75,7 +75,7 @@ export function parseMarkdown(content: string, filePath: string): ParsedDocument
 
     const headingMatch = line.match(HEADING_REGEX);
 
-    if (headingMatch && headingMatch[1] && headingMatch[2]) {
+    if (headingMatch?.[1] && headingMatch[2]) {
       // Flush previous section content
       flushContent();
 
@@ -192,7 +192,7 @@ export function updateSectionContent(originalContent: string, sectionTitle: stri
     const line = lines[i]!;
     const headingMatch = line.match(HEADING_REGEX);
 
-    if (headingMatch && headingMatch[1] && headingMatch[2]) {
+    if (headingMatch?.[1] && headingMatch[2]) {
       const level = headingMatch[1].length;
       const headingTitle = headingMatch[2].trim();
 
@@ -251,7 +251,7 @@ export function insertSectionAfter(
 
     result.push(line);
 
-    if (headingMatch && headingMatch[1] && headingMatch[2]) {
+    if (headingMatch?.[1] && headingMatch[2]) {
       const headingLevel = headingMatch[1].length;
       const headingTitle = headingMatch[2].trim();
 
@@ -346,7 +346,7 @@ export function extractTitle(content: string): string | null {
 
   for (const line of lines) {
     const match = line.match(HEADING_REGEX);
-    if (match && match[1] && match[2] && match[1].length === 1) {
+    if (match?.[1] && match[2] && match[1].length === 1) {
       return match[2].trim();
     }
   }

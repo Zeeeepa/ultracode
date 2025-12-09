@@ -10,10 +10,17 @@
  * - create_file
  * - rename_symbol
  * - add_member
+ *
+ * Features:
+ * - Automatic validation (ESLint/Pylint) before and after changes
+ * - Impact analysis: what code will be affected by changes
+ * - Semantic search for similar code detection
  */
 
 import { z } from "zod";
+import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import { formatImpactForResponse, ImpactAnalyzer } from "../impact-analyzer.js";
 
 // =============================================================================
 // MODIFY ENTITY CODE
@@ -23,6 +30,7 @@ const ModifyEntityCodeSchema = z.object({
   entityId: z.string().optional(),
   filePath: z.string().optional(),
   entityName: z.string().optional(),
+  projectPath: projectPathParam,
   newCode: z.string(),
   preview: z.boolean().optional().default(false),
 });
@@ -36,15 +44,29 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
     const { CodeModifier } = await import("../../modification/code-modifier.js");
 
     const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
-    let vectorStore = null;
+    let vectorStore: any = null;
+    let semanticSearch: ImpactAnalyzer["semanticSearch"] | undefined;
     try {
       const semanticAgent = await this.context.getSemanticAgent();
       vectorStore = semanticAgent.getVectorStore?.();
+      // Get semantic search capability for impact analysis
+      if (vectorStore) {
+        const vs = vectorStore;
+        semanticSearch = {
+          search: async (query: string, options: { limit: number; minSimilarity: number }) => {
+            const results = await vs.search(query, options.limit);
+            return results
+              .filter((r: any) => r.similarity >= options.minSimilarity)
+              .map((r: any) => ({ entityId: r.entityId, similarity: r.similarity }));
+          },
+        };
+      }
     } catch {
       // Vector store not available
     }
 
     const modifier = new CodeModifier(storage, vectorStore, this.context.config.directory);
+    const impactAnalyzer = new ImpactAnalyzer(storage, semanticSearch);
 
     // Find entity
     let entityId = args.entityId;
@@ -70,27 +92,52 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
     }
 
     try {
-      const result = await modifier.modifyEntity({
-        entityId,
-        newCode: args.newCode,
+      // Run modification and impact analysis IN PARALLEL
+      // Impact analysis doesn't depend on the new code - it analyzes current graph state
+      // (who calls this entity, what states are affected, etc.)
+      const [result, impactResult] = await Promise.all([
+        // Main operation: modify the entity
+        modifier.modifyEntity({
+          entityId,
+          newCode: args.newCode,
+          preview: args.preview,
+        }),
+        // Parallel: analyze impact (only for actual modifications)
+        args.preview ? Promise.resolve(null) : impactAnalyzer.analyzeModificationImpact(entityId).catch(() => null),
+      ]);
+
+      // Build response with validation and impact analysis
+      const response: Record<string, any> = {
+        success: result.success,
         preview: args.preview,
-      });
+        entityId,
+        filesModified: result.filesModified,
+        snapshotId: result.snapshotId,
+      };
+
+      // Include validation report if available
+      if (result.validationReport) {
+        const { before, after } = result.validationReport;
+        response.validation = {
+          before: before,
+          after: after,
+          improved: (after?.summary?.errors ?? 0) < (before?.summary?.errors ?? 0),
+        };
+      }
+
+      // Include impact analysis if available
+      if (impactResult) {
+        const formattedImpact = formatImpactForResponse(impactResult);
+        if (formattedImpact) {
+          response.impactAnalysis = formattedImpact;
+        }
+      }
 
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                success: result.success,
-                preview: args.preview,
-                entityId,
-                filesModified: result.filesModified,
-                snapshotId: result.snapshotId,
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify(response, null, 2),
           },
         ],
       };
@@ -109,6 +156,7 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
 const CopyFileSchema = z.object({
   sourcePath: z.string(),
   destinationPath: z.string(),
+  projectPath: projectPathParam,
   updateImports: z.boolean().optional().default(true),
 });
 
@@ -174,6 +222,7 @@ export class CopyFileToolHandler extends BaseToolHandler<z.infer<typeof CopyFile
 const RenameFileSchema = z.object({
   sourcePath: z.string(),
   destinationPath: z.string(),
+  projectPath: projectPathParam,
   updateImports: z.boolean().optional().default(true),
 });
 
@@ -253,6 +302,7 @@ export class RenameFileToolHandler extends BaseToolHandler<z.infer<typeof Rename
 const SplitFileSchema = z.object({
   filePath: z.string(),
   outputDirectory: z.string().optional(),
+  projectPath: projectPathParam,
   splitBy: z.enum(["class", "function", "module"]).optional().default("class"),
   preview: z.boolean().optional().default(true),
 });
@@ -367,6 +417,7 @@ export class SplitFileToolHandler extends BaseToolHandler<z.infer<typeof SplitFi
 const SynthesizeFilesSchema = z.object({
   filePaths: z.array(z.string()),
   outputPath: z.string(),
+  projectPath: projectPathParam,
   preview: z.boolean().optional().default(true),
 });
 
@@ -465,6 +516,7 @@ export class SynthesizeFilesToolHandler extends BaseToolHandler<z.infer<typeof S
 const CreateFileSchema = z.object({
   filePath: z.string(),
   content: z.string(),
+  projectPath: projectPathParam,
   overwrite: z.boolean().optional().default(false),
 });
 
@@ -479,6 +531,25 @@ export class CreateFileToolHandler extends BaseToolHandler<z.infer<typeof Create
     const { mkdir } = await import("node:fs/promises");
 
     const filePath = this.context.normalizeInputPath(args.filePath) || args.filePath;
+
+    // Setup semantic search for similar code detection
+    let semanticSearch: ImpactAnalyzer["semanticSearch"] | undefined;
+    try {
+      const semanticAgent = await this.context.getSemanticAgent();
+      const vectorStore = semanticAgent.getVectorStore?.();
+      if (vectorStore) {
+        semanticSearch = {
+          search: async (query: string, options: { limit: number; minSimilarity: number }) => {
+            const results = await vectorStore.search(query, options.limit);
+            return results
+              .filter((r: any) => r.similarity >= options.minSimilarity)
+              .map((r: any) => ({ entityId: r.entityId, similarity: r.similarity }));
+          },
+        };
+      }
+    } catch {
+      // Vector store not available
+    }
 
     try {
       // Check if file exists
@@ -513,20 +584,44 @@ export class CreateFileToolHandler extends BaseToolHandler<z.infer<typeof Create
         createdAt: Date.now(),
       });
 
+      // Build response
+      const response: Record<string, any> = {
+        success: true,
+        path: filePath,
+        size: args.content.length,
+        indexed: true,
+      };
+
+      // Check for similar code (after indexing so we can extract entity names)
+      if (semanticSearch) {
+        const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+        const impactAnalyzer = new ImpactAnalyzer(storage, semanticSearch);
+
+        try {
+          // Get entity names from the newly indexed file
+          const newEntities = await storage.findEntities({
+            filters: { filePath },
+            limit: 10,
+          });
+          const entityNames = newEntities.map((e: any) => e.name);
+
+          if (entityNames.length > 0) {
+            const impact = await impactAnalyzer.analyzeNewFileImpact(filePath, entityNames);
+            const formattedImpact = formatImpactForResponse(impact);
+            if (formattedImpact) {
+              response.impactAnalysis = formattedImpact;
+            }
+          }
+        } catch {
+          // Similar code detection failed silently
+        }
+      }
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                path: filePath,
-                size: args.content.length,
-                indexed: true,
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify(response, null, 2),
           },
         ],
       };
@@ -545,6 +640,7 @@ export class CreateFileToolHandler extends BaseToolHandler<z.infer<typeof Create
 const RenameSymbolSchema = z.object({
   entityId: z.string().optional(),
   entityName: z.string().optional(),
+  projectPath: projectPathParam,
   newName: z.string(),
   preview: z.boolean().optional().default(true),
 });
@@ -556,6 +652,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
 
   protected async execute(args: z.infer<typeof RenameSymbolSchema>): Promise<ToolResult> {
     const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    const impactAnalyzer = new ImpactAnalyzer(storage);
 
     // Find entity
     let entity: any = null;
@@ -575,8 +672,12 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
       };
     }
 
-    // Find all references
-    const relationships = await storage.getRelationshipsForEntity(entity.id);
+    // Run reference finding and impact analysis IN PARALLEL
+    const [relationships, impactResult] = await Promise.all([
+      storage.getRelationshipsForEntity(entity.id),
+      impactAnalyzer.analyzeRenameImpact(entity.id, entity.name, args.newName).catch(() => null),
+    ]);
+
     const references = relationships.filter(
       (r: any) => r.type === "references" || r.type === "uses" || r.type === "calls",
     );
@@ -592,27 +693,32 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
       }
     }
 
+    // Format impact analysis result
+    const impactInfo = impactResult ? formatImpactForResponse(impactResult) : null;
+
     if (args.preview) {
+      const response: Record<string, any> = {
+        preview: true,
+        entity: {
+          id: entity.id,
+          name: entity.name,
+          type: entity.type,
+          filePath: entity.filePath,
+        },
+        newName: args.newName,
+        referencesFound: references.length,
+        filesToUpdate: Array.from(filesToUpdate),
+      };
+
+      if (impactInfo) {
+        response.impactAnalysis = impactInfo;
+      }
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                preview: true,
-                entity: {
-                  id: entity.id,
-                  name: entity.name,
-                  type: entity.type,
-                  filePath: entity.filePath,
-                },
-                newName: args.newName,
-                referencesFound: references.length,
-                filesToUpdate: Array.from(filesToUpdate),
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify(response, null, 2),
           },
         ],
       };
@@ -643,21 +749,23 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
         createdAt: Date.now(),
       });
 
+      const response: Record<string, any> = {
+        success: true,
+        oldName: entity.name,
+        newName: args.newName,
+        filesUpdated: filesToUpdate.size,
+        referencesUpdated: references.length,
+      };
+
+      if (impactInfo) {
+        response.impactAnalysis = impactInfo;
+      }
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                oldName: entity.name,
-                newName: args.newName,
-                filesUpdated: filesToUpdate.size,
-                referencesUpdated: references.length,
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify(response, null, 2),
           },
         ],
       };
@@ -676,6 +784,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
 const AddMemberSchema = z.object({
   targetEntityId: z.string().optional(),
   targetEntityName: z.string().optional(),
+  projectPath: projectPathParam,
   memberCode: z.string(),
   position: z.enum(["start", "end", "after"]).optional().default("end"),
   afterMember: z.string().optional(),
@@ -689,6 +798,7 @@ export class AddMemberToolHandler extends BaseToolHandler<z.infer<typeof AddMemb
 
   protected async execute(args: z.infer<typeof AddMemberSchema>): Promise<ToolResult> {
     const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    const impactAnalyzer = new ImpactAnalyzer(storage);
 
     // Find target entity (class, interface, etc.)
     let entity: any = null;
@@ -790,21 +900,31 @@ export class AddMemberToolHandler extends BaseToolHandler<z.infer<typeof AddMemb
         createdAt: Date.now(),
       });
 
+      // Build response
+      const response: Record<string, any> = {
+        success: true,
+        target: entity.name,
+        memberAdded: true,
+        filePath: entity.filePath,
+        indexed: true,
+      };
+
+      // Run impact analysis on the parent entity (adding member changes the class)
+      try {
+        const impact = await impactAnalyzer.analyzeModificationImpact(entity.id);
+        const formattedImpact = formatImpactForResponse(impact);
+        if (formattedImpact) {
+          response.impactAnalysis = formattedImpact;
+        }
+      } catch {
+        // Impact analysis failed silently
+      }
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                target: entity.name,
-                memberAdded: true,
-                filePath: entity.filePath,
-                indexed: true,
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify(response, null, 2),
           },
         ],
       };

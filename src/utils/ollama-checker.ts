@@ -67,6 +67,7 @@ export async function startOllamaService(): Promise<boolean> {
       detached: true,
       stdio: "ignore",
       shell: true,
+      windowsHide: true, // Hide console window on Windows
     });
 
     // Unref so parent can exit independently

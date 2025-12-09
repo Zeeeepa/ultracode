@@ -24,6 +24,7 @@ export class MemoryProvider implements EmbeddingProvider {
       model: "deterministic-hash",
       dimension,
       supportsBatch: true,
+      maxTokens: undefined, // No token limit for hash-based provider
     };
   }
 

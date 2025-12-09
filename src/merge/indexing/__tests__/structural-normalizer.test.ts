@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "@jest/globals";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { StructuralNormalizer } from "../structural-normalizer.js";
 
 describe("StructuralNormalizer", () => {
@@ -131,7 +131,7 @@ describe("StructuralNormalizer", () => {
 
       // Hash should be identical for structurally identical code
       expect(hash1).toBe(hash2);
-      expect(hash1).toHaveLength(64); // SHA256 hex
+      expect(hash1.length).toBeGreaterThanOrEqual(6); // base36 encoded
     });
 
     it("should compute different hash for different structure", () => {

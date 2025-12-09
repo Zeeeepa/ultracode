@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "@jest/globals";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { CodeUnit } from "../../models/code-unit.js";
 import { CodeUnitType } from "../../models/code-unit.js";
 import type { VersionedIndex } from "../../models/versioned-index.js";

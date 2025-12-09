@@ -121,6 +121,7 @@ export class BranchManager {
           cwd: path,
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "ignore"],
+          windowsHide: true,
         }).trim();
 
         this.currentBranch = branch;
@@ -133,6 +134,7 @@ export class BranchManager {
             cwd: path,
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "ignore"],
+            windowsHide: true,
           }).trim();
           this.currentBranch = `detached-${describe}`;
           this.currentRepoPath = path;
@@ -143,6 +145,7 @@ export class BranchManager {
             cwd: path,
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "ignore"],
+            windowsHide: true,
           }).trim();
           this.currentBranch = `detached-${hash}`;
           this.currentRepoPath = path;
@@ -166,6 +169,7 @@ export class BranchManager {
         cwd: path,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
       return hash;
     } catch (error) {
@@ -188,6 +192,7 @@ export class BranchManager {
         cwd: repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
 
       const hash = this.xxhashInstance.h64ToString(remote);

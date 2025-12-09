@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "@jest/globals";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { CodeUnit } from "../../models/code-unit.js";
 import { CodeUnitType } from "../../models/code-unit.js";
 import { SignatureGenerator } from "../signature-generator.js";
@@ -326,12 +326,13 @@ describe("SignatureGenerator", () => {
   });
 
   describe("Hash computation", () => {
-    it("should compute SHA256 hash of signature", () => {
+    it("should compute hash of signature", () => {
       const signature = "UserService.getUserById(number,boolean)";
       const hash = generator.computeSignatureHash(signature);
 
-      expect(hash).toHaveLength(64); // SHA256 hex
-      expect(hash).toMatch(/^[a-f0-9]{64}$/); // Hex format
+      expect(hash.length).toBeGreaterThanOrEqual(6); // base36 encoded
+      expect(hash.length).toBeLessThanOrEqual(8);
+      expect(hash).toMatch(/^[a-z0-9]+$/); // base36 format
     });
 
     it("should compute same hash for identical signatures", () => {
@@ -361,13 +362,6 @@ describe("SignatureGenerator", () => {
       const normalized = generator.normalizeSignature(signature, "typescript");
 
       expect(normalized).toBe("UserService.getUserById(number,boolean)");
-    });
-
-    it("should lowercase for case-insensitive languages (VBA)", () => {
-      const signature = "Module.GetUserById(Integer,Boolean)";
-      const normalized = generator.normalizeSignature(signature, "vba");
-
-      expect(normalized).toBe("module.getuserbyid(integer,boolean)");
     });
 
     it("should preserve case for case-sensitive languages", () => {

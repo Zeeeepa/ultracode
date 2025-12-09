@@ -9,14 +9,14 @@
  * - Parser Types: src/types/parser.ts
  */
 
+// =============================================================================
+// 1. IMPORTS AND DEPENDENCIES
+// =============================================================================
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "@jest/globals";
 import { ParserAgent } from "../../src/agents/parser-agent.js";
 import { AgentStatus } from "../../src/types/agent.js";
 import type { FileChange, ParseResult, ParserTask } from "../../src/types/parser.js";

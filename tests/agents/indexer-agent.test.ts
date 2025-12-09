@@ -10,11 +10,11 @@
  * - Parser Types: src/types/parser.ts
  */
 
-import { existsSync, rmSync } from "node:fs";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { afterEach, beforeEach, describe, expect, jest, test } from "@jest/globals";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { existsSync, rmSync } from "node:fs";
 import { IndexerAgent } from "../../src/agents/indexer-agent.js";
 import { knowledgeBus } from "../../src/core/knowledge-bus.js";
 import { resetCacheManager } from "../../src/storage/cache-manager.js";
@@ -116,7 +116,7 @@ describe("IndexerAgent", () => {
     });
 
     test("should subscribe to parse events on initialization", async () => {
-      const subscribeSpy = jest.spyOn(knowledgeBus, "subscribe");
+      const subscribeSpy = spyOn(knowledgeBus, "subscribe");
 
       await agent.initialize();
 
@@ -203,7 +203,7 @@ describe("IndexerAgent", () => {
     });
 
     test("should publish index complete event", async () => {
-      const publishSpy = jest.spyOn(knowledgeBus, "publish");
+      const publishSpy = spyOn(knowledgeBus, "publish");
 
       const entities = [createMockParsedEntity("eventFunc", "function")];
       await agent.indexEntities(entities, "/test/event-file.ts");
@@ -599,7 +599,7 @@ describe("IndexerAgent", () => {
     test("should shutdown gracefully", async () => {
       await agent.initialize();
 
-      const unsubscribeSpy = jest.spyOn(knowledgeBus, "unsubscribe");
+      const unsubscribeSpy = spyOn(knowledgeBus, "unsubscribe");
 
       await agent.shutdown();
 
@@ -616,7 +616,7 @@ describe("IndexerAgent", () => {
       const entities = [createMockParsedEntity("shutdownFunc", "function")];
       await agent.indexEntities(entities, "/test/shutdown.ts");
 
-      const consoleSpy = jest.spyOn(console, "log");
+      const consoleSpy = spyOn(console, "log");
 
       await agent.shutdown();
 

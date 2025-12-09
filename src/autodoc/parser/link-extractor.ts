@@ -132,7 +132,7 @@ function parseReference(
 
   // Check for entity reference
   const entityMatch = text.match(PATTERNS.ENTITY_REF);
-  if (entityMatch && entityMatch[1]) {
+  if (entityMatch?.[1]) {
     return {
       text,
       target,
@@ -145,7 +145,7 @@ function parseReference(
 
   // Check for commit reference
   const commitMatch = target.match(PATTERNS.COMMIT_REF);
-  if (commitMatch && commitMatch[1]) {
+  if (commitMatch?.[1]) {
     return {
       text,
       target,
@@ -158,7 +158,7 @@ function parseReference(
 
   // Check for line range reference
   const lineRangeMatch = target.match(PATTERNS.LINE_RANGE);
-  if (lineRangeMatch && lineRangeMatch[1]) {
+  if (lineRangeMatch?.[1]) {
     const filePath = target.replace(PATTERNS.LINE_RANGE, "");
     const lineStart = parseInt(lineRangeMatch[1], 10);
     const lineEnd = lineRangeMatch[2] ? parseInt(lineRangeMatch[2], 10) : lineStart;

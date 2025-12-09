@@ -22,7 +22,7 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import Database from "better-sqlite3";
 
 const vi = jest;

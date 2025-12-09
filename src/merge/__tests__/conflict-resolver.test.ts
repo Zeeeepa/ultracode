@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it } from "bun:test";
 import { ConflictResolver } from "../engine/conflict-resolver.js";
 import type { ChangeIntent } from "../models/change-intent.js";
 import { ChangeIntentType } from "../models/change-intent.js";

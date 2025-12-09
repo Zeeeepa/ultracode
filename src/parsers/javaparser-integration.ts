@@ -431,8 +431,9 @@ async function ensureWrapperCompiled(jarPath: string): Promise<boolean> {
   // Write wrapper source
   writeFileSync(wrapperJava, JAVA_PARSER_WRAPPER);
 
-  // Compile wrapper
-  if (!existsSync(wrapperClass) || true) { // Always recompile for now
+  // Compile wrapper (always recompile to ensure consistency)
+  // biome-ignore lint/correctness/noConstantCondition: intentional - always recompile during development
+  if (!existsSync(wrapperClass) || true) {
     console.error("[JavaParserIntegration] Compiling wrapper...");
 
     const java = await findJava();
@@ -442,11 +443,7 @@ async function ensureWrapperCompiled(jarPath: string): Promise<boolean> {
     const javac = java.replace(/java$/, "javac").replace(/java\.exe$/, "javac.exe");
 
     try {
-      const result = spawnSync(javac, [
-        "-cp", jarPath,
-        "-d", libDir,
-        wrapperJava
-      ], {
+      const result = spawnSync(javac, ["-cp", jarPath, "-d", libDir, wrapperJava], {
         timeout: 30000,
         encoding: "utf-8",
         cwd: libDir,
@@ -516,10 +513,7 @@ export function isJavaParserAvailable(): boolean {
 /**
  * Parse Java file using JavaParser
  */
-export async function parseWithJavaParser(
-  filePath: string,
-  content: string,
-): Promise<JavaParseResult> {
+export async function parseWithJavaParser(filePath: string, content: string): Promise<JavaParseResult> {
   if (!javaParserAvailable || !javaPath) {
     return { entities: [], errors: [{ message: "JavaParser not available" }] };
   }
@@ -529,16 +523,10 @@ export async function parseWithJavaParser(
 
   const libDir = getLibDir();
   const jarPath = join(libDir, JAVAPARSER_JAR);
-  const classpath = process.platform === "win32"
-    ? `${jarPath};${libDir}`
-    : `${jarPath}:${libDir}`;
+  const classpath = process.platform === "win32" ? `${jarPath};${libDir}` : `${jarPath}:${libDir}`;
 
   return new Promise((resolve) => {
-    const proc = spawn(javaCommand, [
-      "-cp", classpath,
-      "JavaParserWrapper",
-      filePath,
-    ], {
+    const proc = spawn(javaCommand, ["-cp", classpath, "JavaParserWrapper", filePath], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -593,6 +581,4 @@ export async function parseWithJavaParser(
 // EXPORTS
 // =============================================================================
 
-export {
-  findJava,
-};
+export { findJava };

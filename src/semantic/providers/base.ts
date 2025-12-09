@@ -1,4 +1,4 @@
-export type ProviderKind = "memory" | "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "auto";
+export type ProviderKind = "memory" | "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "openvino" | "auto";
 
 export interface ProviderInfo {
   name: ProviderKind | string;
@@ -6,6 +6,8 @@ export interface ProviderInfo {
   dimension?: number;
   supportsBatch: boolean;
   maxBatchSize?: number;
+  /** Maximum context tokens (512, 8192, etc.) */
+  maxTokens?: number;
 }
 
 export interface EmbedOptions {

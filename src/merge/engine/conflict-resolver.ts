@@ -1,3 +1,4 @@
+import { hashText } from "../../utils/fast-hash.js";
 import type { CodeUnit } from "../models/code-unit.js";
 import {
   ConflictSeverity,
@@ -7,7 +8,6 @@ import {
   type SemanticConflict,
 } from "../models/semantic-conflict.js";
 import type { AIConflictResolver } from "./ai-conflict-resolver.js";
-import { hashText } from "../../utils/fast-hash.js";
 
 /**
  * Conflict Resolver - Разрешение конфликтов при слиянии

@@ -4,12 +4,12 @@
  * Tests for TypeScript, Python, Java, Kotlin, and Rust native parsers.
  */
 
-import { beforeEach, describe, expect, test } from "@jest/globals";
-import { TypeScriptParser } from "../../src/parsers/typescript-parser.js";
-import { PythonNativeParser } from "../../src/parsers/python-native-parser.js";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { JavaNativeParser } from "../../src/parsers/java-native-parser.js";
 import { KotlinNativeParser } from "../../src/parsers/kotlin-native-parser.js";
+import { PythonNativeParser } from "../../src/parsers/python-native-parser.js";
 import { RustNativeParser } from "../../src/parsers/rust-native-parser.js";
+import { TypeScriptParser } from "../../src/parsers/typescript-parser.js";
 
 // =============================================================================
 // TYPESCRIPT PARSER TESTS
@@ -60,7 +60,7 @@ describe("TypeScriptParser", () => {
     expect(result.language).toBe("typescript");
     expect(result.entities.length).toBeGreaterThan(0);
 
-    const classEntity = result.entities.find(e => e.name === "MyClass" && e.type === "class");
+    const classEntity = result.entities.find((e) => e.name === "MyClass" && e.type === "class");
     expect(classEntity).toBeDefined();
     expect(classEntity?.modifiers).toContain("export");
   });
@@ -75,7 +75,7 @@ describe("TypeScriptParser", () => {
     `;
     const result = await parser.parse("test.ts", content, "hash123");
 
-    const interfaceEntity = result.entities.find(e => e.name === "User" && e.type === "interface");
+    const interfaceEntity = result.entities.find((e) => e.name === "User" && e.type === "interface");
     expect(interfaceEntity).toBeDefined();
   });
 
@@ -91,12 +91,12 @@ describe("TypeScriptParser", () => {
     `;
     const result = await parser.parse("test.ts", content, "hash123");
 
-    const addFunc = result.entities.find(e => e.name === "add" && e.type === "function");
+    const addFunc = result.entities.find((e) => e.name === "add" && e.type === "function");
     expect(addFunc).toBeDefined();
     expect(addFunc?.returnType).toBe("number");
     expect(addFunc?.parameters?.length).toBe(2);
 
-    const asyncFunc = result.entities.find(e => e.name === "fetchData");
+    const asyncFunc = result.entities.find((e) => e.name === "fetchData");
     expect(asyncFunc).toBeDefined();
     expect(asyncFunc?.type).toBe("async_function");
   });
@@ -109,7 +109,7 @@ describe("TypeScriptParser", () => {
     `;
     const result = await parser.parse("test.ts", content, "hash123");
 
-    const imports = result.entities.filter(e => e.type === "import");
+    const imports = result.entities.filter((e) => e.type === "import");
     expect(imports.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -120,7 +120,7 @@ describe("TypeScriptParser", () => {
     `;
     const result = await parser.parse("test.ts", content, "hash123");
 
-    const typeEntity = result.entities.find(e => e.name === "UserId" && e.type === "type");
+    const typeEntity = result.entities.find((e) => e.name === "UserId" && e.type === "type");
     expect(typeEntity).toBeDefined();
   });
 
@@ -134,7 +134,7 @@ describe("TypeScriptParser", () => {
     `;
     const result = await parser.parse("test.ts", content, "hash123");
 
-    const enumEntity = result.entities.find(e => e.name === "Color" && e.type === "enum");
+    const enumEntity = result.entities.find((e) => e.name === "Color" && e.type === "enum");
     expect(enumEntity).toBeDefined();
   });
 
@@ -187,7 +187,7 @@ class MyClass:
     expect(result.language).toBe("python");
     expect(result.entities.length).toBeGreaterThan(0);
 
-    const classEntity = result.entities.find(e => e.name === "MyClass" && e.type === "class");
+    const classEntity = result.entities.find((e) => e.name === "MyClass" && e.type === "class");
     expect(classEntity).toBeDefined();
   });
 
@@ -201,10 +201,10 @@ async def fetch_data(url: str) -> None:
     `;
     const result = await parser.parse("test.py", content, "hash123");
 
-    const addFunc = result.entities.find(e => e.name === "add" && e.type === "function");
+    const addFunc = result.entities.find((e) => e.name === "add" && e.type === "function");
     expect(addFunc).toBeDefined();
 
-    const asyncFunc = result.entities.find(e => e.name === "fetch_data");
+    const asyncFunc = result.entities.find((e) => e.name === "fetch_data");
     expect(asyncFunc).toBeDefined();
     expect(asyncFunc?.type).toBe("async_function");
   });
@@ -218,7 +218,7 @@ import json as js
     `;
     const result = await parser.parse("test.py", content, "hash123");
 
-    const imports = result.entities.filter(e => e.type === "import");
+    const imports = result.entities.filter((e) => e.type === "import");
     expect(imports.length).toBeGreaterThan(0);
   });
 
@@ -237,7 +237,7 @@ class SimpleClass:
     const result = await parser.parse("test.py", content, "hash123");
 
     // Should find at least the SimpleClass which has no decorator
-    const simpleClass = result.entities.find(e => e.name === "SimpleClass" && e.type === "class");
+    const simpleClass = result.entities.find((e) => e.name === "SimpleClass" && e.type === "class");
     expect(simpleClass).toBeDefined();
   });
 
@@ -292,7 +292,7 @@ public class MyClass {
     expect(result.language).toBe("java");
     expect(result.entities.length).toBeGreaterThan(0);
 
-    const classEntity = result.entities.find(e => e.name === "MyClass" && e.type === "class");
+    const classEntity = result.entities.find((e) => e.name === "MyClass" && e.type === "class");
     expect(classEntity).toBeDefined();
     expect(classEntity?.modifiers).toContain("public");
   });
@@ -308,7 +308,7 @@ public interface Service {
     `;
     const result = await parser.parse("Service.java", content, "hash123");
 
-    const interfaceEntity = result.entities.find(e => e.name === "Service" && e.type === "interface");
+    const interfaceEntity = result.entities.find((e) => e.name === "Service" && e.type === "interface");
     expect(interfaceEntity).toBeDefined();
   });
 
@@ -324,7 +324,7 @@ public enum Status {
     `;
     const result = await parser.parse("Status.java", content, "hash123");
 
-    const enumEntity = result.entities.find(e => e.name === "Status" && e.type === "enum");
+    const enumEntity = result.entities.find((e) => e.name === "Status" && e.type === "enum");
     expect(enumEntity).toBeDefined();
   });
 
@@ -340,7 +340,7 @@ public class Test {}
     `;
     const result = await parser.parse("Test.java", content, "hash123");
 
-    const imports = result.entities.filter(e => e.type === "import");
+    const imports = result.entities.filter((e) => e.type === "import");
     expect(imports.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -352,7 +352,7 @@ public class App {}
     `;
     const result = await parser.parse("App.java", content, "hash123");
 
-    const packageEntity = result.entities.find(e => e.type === "module");
+    const packageEntity = result.entities.find((e) => e.type === "module");
     expect(packageEntity).toBeDefined();
     expect(packageEntity?.name).toBe("com.example.myapp");
   });
@@ -407,7 +407,7 @@ class MyClass(private val name: String) {
     expect(result.language).toBe("kotlin");
     expect(result.entities.length).toBeGreaterThan(0);
 
-    const classEntity = result.entities.find(e => e.name === "MyClass" && e.type === "class");
+    const classEntity = result.entities.find((e) => e.name === "MyClass" && e.type === "class");
     expect(classEntity).toBeDefined();
   });
 
@@ -423,7 +423,7 @@ data class User(
     `;
     const result = await parser.parse("User.kt", content, "hash123");
 
-    const classEntity = result.entities.find(e => e.name === "User" && e.type === "class");
+    const classEntity = result.entities.find((e) => e.name === "User" && e.type === "class");
     expect(classEntity).toBeDefined();
     expect(classEntity?.modifiers).toContain("data");
   });
@@ -439,7 +439,7 @@ interface Service {
     `;
     const result = await parser.parse("Service.kt", content, "hash123");
 
-    const interfaceEntity = result.entities.find(e => e.name === "Service" && e.type === "interface");
+    const interfaceEntity = result.entities.find((e) => e.name === "Service" && e.type === "interface");
     expect(interfaceEntity).toBeDefined();
   });
 
@@ -453,11 +453,11 @@ suspend fun fetchData(url: String): String {
     `;
     const result = await parser.parse("test.kt", content, "hash123");
 
-    const addFunc = result.entities.find(e => e.name === "add" && e.type === "function");
+    const addFunc = result.entities.find((e) => e.name === "add" && e.type === "function");
     expect(addFunc).toBeDefined();
     expect(addFunc?.returnType).toBe("Int");
 
-    const suspendFunc = result.entities.find(e => e.name === "fetchData");
+    const suspendFunc = result.entities.find((e) => e.name === "fetchData");
     expect(suspendFunc).toBeDefined();
     expect(suspendFunc?.type).toBe("async_function");
     expect(suspendFunc?.modifiers).toContain("suspend");
@@ -473,7 +473,7 @@ import java.util.Date as JDate
     `;
     const result = await parser.parse("test.kt", content, "hash123");
 
-    const imports = result.entities.filter(e => e.type === "import");
+    const imports = result.entities.filter((e) => e.type === "import");
     expect(imports.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -486,7 +486,7 @@ object Singleton {
     `;
     const result = await parser.parse("test.kt", content, "hash123");
 
-    const objectEntity = result.entities.find(e => e.name === "Singleton" && e.type === "class");
+    const objectEntity = result.entities.find((e) => e.name === "Singleton" && e.type === "class");
     expect(objectEntity).toBeDefined();
   });
 
@@ -496,7 +496,7 @@ fun String.isEmail(): Boolean = this.contains("@")
     `;
     const result = await parser.parse("test.kt", content, "hash123");
 
-    const extFunc = result.entities.find(e => e.name === "String.isEmail");
+    const extFunc = result.entities.find((e) => e.name === "String.isEmail");
     expect(extFunc).toBeDefined();
   });
 
@@ -542,7 +542,7 @@ pub struct User {
     expect(result.language).toBe("rust");
     expect(result.entities.length).toBeGreaterThan(0);
 
-    const structEntity = result.entities.find(e => e.name === "User" && e.type === "class");
+    const structEntity = result.entities.find((e) => e.name === "User" && e.type === "class");
     expect(structEntity).toBeDefined();
     expect(structEntity?.modifiers).toContain("pub");
   });
@@ -557,7 +557,7 @@ pub enum Status {
     `;
     const result = await parser.parse("test.rs", content, "hash123");
 
-    const enumEntity = result.entities.find(e => e.name === "Status" && e.type === "enum");
+    const enumEntity = result.entities.find((e) => e.name === "Status" && e.type === "enum");
     expect(enumEntity).toBeDefined();
   });
 
@@ -570,7 +570,7 @@ pub trait Service {
     `;
     const result = await parser.parse("test.rs", content, "hash123");
 
-    const traitEntity = result.entities.find(e => e.name === "Service" && e.type === "interface");
+    const traitEntity = result.entities.find((e) => e.name === "Service" && e.type === "interface");
     expect(traitEntity).toBeDefined();
   });
 
@@ -586,11 +586,11 @@ pub async fn fetch_data(url: &str) -> Result<String, Error> {
     `;
     const result = await parser.parse("test.rs", content, "hash123");
 
-    const addFunc = result.entities.find(e => e.name === "add" && e.type === "function");
+    const addFunc = result.entities.find((e) => e.name === "add" && e.type === "function");
     expect(addFunc).toBeDefined();
     expect(addFunc?.returnType).toBe("i32");
 
-    const asyncFunc = result.entities.find(e => e.name === "fetch_data");
+    const asyncFunc = result.entities.find((e) => e.name === "fetch_data");
     expect(asyncFunc).toBeDefined();
     expect(asyncFunc?.type).toBe("async_function");
   });
@@ -603,7 +603,7 @@ use crate::utils::helper;
     `;
     const result = await parser.parse("test.rs", content, "hash123");
 
-    const imports = result.entities.filter(e => e.type === "import");
+    const imports = result.entities.filter((e) => e.type === "import");
     expect(imports.length).toBeGreaterThan(0);
   });
 
@@ -614,7 +614,7 @@ mod internal;
     `;
     const result = await parser.parse("lib.rs", content, "hash123");
 
-    const modules = result.entities.filter(e => e.type === "module");
+    const modules = result.entities.filter((e) => e.type === "module");
     expect(modules.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -634,7 +634,7 @@ impl Display for User {
     `;
     const result = await parser.parse("test.rs", content, "hash123");
 
-    const implBlocks = result.entities.filter(e => e.modifiers?.includes("impl"));
+    const implBlocks = result.entities.filter((e) => e.modifiers?.includes("impl"));
     expect(implBlocks.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -645,10 +645,10 @@ pub static mut COUNTER: u32 = 0;
     `;
     const result = await parser.parse("test.rs", content, "hash123");
 
-    const constEntity = result.entities.find(e => e.name === "MAX_SIZE" && e.type === "constant");
+    const constEntity = result.entities.find((e) => e.name === "MAX_SIZE" && e.type === "constant");
     expect(constEntity).toBeDefined();
 
-    const staticEntity = result.entities.find(e => e.name === "COUNTER" && e.type === "constant");
+    const staticEntity = result.entities.find((e) => e.name === "COUNTER" && e.type === "constant");
     expect(staticEntity).toBeDefined();
     expect(staticEntity?.modifiers).toContain("static");
     expect(staticEntity?.modifiers).toContain("mut");
@@ -664,7 +664,7 @@ macro_rules! my_macro {
     `;
     const result = await parser.parse("test.rs", content, "hash123");
 
-    const macroEntity = result.entities.find(e => e.name === "my_macro");
+    const macroEntity = result.entities.find((e) => e.name === "my_macro");
     expect(macroEntity).toBeDefined();
     expect(macroEntity?.modifiers).toContain("macro");
   });

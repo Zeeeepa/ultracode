@@ -81,6 +81,15 @@ export {
   ListSnapshotsToolHandler,
   RollbackSnapshotToolHandler,
 } from "./snapshot-tool-handlers.js";
+// Tracing tools
+export {
+  AnalyzeStateImpactToolHandler,
+  FindDecisionPointsToolHandler,
+  TRACING_TOOL_DEFINITIONS,
+  TraceBackwardsToolHandler,
+  TraceDataFlowToolHandler,
+  TraceFlowToolHandler,
+} from "./tracing-tool-handlers.js";
 // Validation tools
 export {
   ValidateDirectoryToolHandler,

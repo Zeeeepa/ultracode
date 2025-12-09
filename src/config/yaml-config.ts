@@ -89,6 +89,24 @@ export interface MCPConfig {
     cacheWarmupLimit?: number;
     popularEntitiesTopic?: string;
   };
+  autodoc?: {
+    /** Enable AutoDoc watcher for automatic documentation updates */
+    watcherEnabled?: boolean;
+    /** Debounce delay in milliseconds (default: 45000) */
+    debounceMs?: number;
+    /** Minimum debounce delay in milliseconds (default: 30000) */
+    minDebounceMs?: number;
+    /** Maximum debounce delay in milliseconds (default: 60000) */
+    maxDebounceMs?: number;
+    /** Use LLM for description generation */
+    useLlm?: boolean;
+    /** LLM configuration for AutoDoc */
+    llmConfig?: {
+      provider: "ollama" | "openai" | "tgi";
+      model?: string;
+      endpoint?: string;
+    };
+  };
 }
 
 // Resolved embedding configuration returned to callers

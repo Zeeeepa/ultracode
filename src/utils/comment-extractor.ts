@@ -449,7 +449,6 @@ export class CommentExtractor {
       c: "c",
       h: "c",
       hpp: "cpp",
-      cs: "csharp",
       java: "java",
       go: "go",
       rs: "rust",

@@ -14,6 +14,9 @@
 | Show dependencies | `list_entity_relationships` | Dependency graph |
 | Modify code safely | `modify_code` | With preview & rollback |
 | Rename across project | `rename_symbol` | Updates all references |
+| Find complex code | `semantic_search minCyclomatic=10` | Complexity filter |
+| Find undocumented code | `semantic_search hasDocumentation=false` | Docs filter |
+| Find async without error handling | `semantic_search hasAwaits=true hasExceptions=false` | Control flow filters |
 
 ## Supported Languages
 
@@ -42,6 +45,30 @@
 5. modify_code — make changes
 ```
 
+## Tracing Tools (NEW)
+
+| Question | Tool |
+|----------|------|
+| "How does code get from A to B?" | `trace_flow` |
+| "Why isn't this method called?" | `trace_backwards` |
+| "How does data affect state?" | `trace_data_flow` |
+| "What changes with different values?" | `analyze_state_impact` |
+| "What are all decision points?" | `find_decision_points` |
+
+## Cross-Project Support (NEW)
+
+Work with multiple projects, each with isolated databases:
+
+```
+# Switch context via index
+index directory="D:\\other\\project"
+
+# Or search in another project directly
+semantic_search query="auth" projectPath="D:\\other\\project"
+```
+
+Storage: `%LOCALAPPDATA%\UltraScriptTools\projects\{hash}/`
+
 ## Advantages Over Built-in Tools
 
 | Operation | Built-in (Grep/Glob) | UltraScript |
@@ -51,3 +78,28 @@
 | Change impact analysis | ❌ Impossible | ✅ Dependency graph |
 | Type navigation | ❌ Regex only | ✅ AST parsing |
 | Speed on large projects | 🐌 Slow | 🚀 SIMD/GPU acceleration |
+| Find complex code | ❌ Impossible | ✅ Cyclomatic/cognitive metrics |
+| Find undocumented APIs | ❌ Impossible | ✅ Documentation detection |
+| Find async code patterns | ❌ Impossible | ✅ Control flow analysis |
+
+## Enhanced Search Filters (NEW)
+
+`semantic_search` now supports rich filtering:
+
+- **Complexity**: `minCyclomatic`, `maxCyclomatic`
+- **Control Flow**: `hasExceptions`, `hasLoops`, `hasAwaits`
+- **Documentation**: `hasDocumentation`, `isDeprecated`
+- **Call Analysis**: `minCallCount`
+
+**Examples:**
+```
+semantic_search query="data processing" minCyclomatic=10  # Complex code
+semantic_search query="API" hasAwaits=true hasExceptions=false  # Async without error handling
+semantic_search query="export" hasDocumentation=false  # Undocumented exports
+```
+
+**Returns enhanced data:**
+- `complexity`: cyclomatic, cognitive, linesOfCode, nestingDepth
+- `controlFlow`: branches, loops, exceptions, awaits (counts and flags)
+- `calls`: function call count, async call detection
+- `documentation`: docs presence, params, examples, deprecated status

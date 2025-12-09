@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { CodeUnit } from "../../models/code-unit.js";
 import { CodeUnitType } from "../../models/code-unit.js";
 import type { VersionedIndex } from "../../models/versioned-index.js";
@@ -7,11 +7,11 @@ import { LazyEmbeddingCache } from "../lazy-embedding-cache.js";
 
 describe("LazyEmbeddingCache", () => {
   let cache: LazyEmbeddingCache;
-  let mockGenerator: jest.Mock<EmbeddingGeneratorFn>;
+  let mockGenerator: ReturnType<typeof mock<EmbeddingGeneratorFn>>;
 
   beforeEach(() => {
     // Create mock embedding generator
-    mockGenerator = jest.fn<EmbeddingGeneratorFn>(async (code: string) => {
+    mockGenerator = mock(async (code: string) => {
       // Generate deterministic embedding based on code
       const embedding = new Float32Array(384);
       for (let i = 0; i < 384; i++) {
@@ -249,7 +249,7 @@ describe("LazyEmbeddingCache", () => {
     });
 
     it("should handle generator errors gracefully", async () => {
-      const errorGenerator = jest.fn<EmbeddingGeneratorFn>(async () => {
+      const errorGenerator = mock(async () => {
         throw new Error("Generator failed");
       });
 

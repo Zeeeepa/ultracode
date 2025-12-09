@@ -22,11 +22,15 @@ export class OpenAIProvider implements EmbeddingProvider {
     this.opts = { baseUrl: "https://api.openai.com", ...opts };
     this.log = opts.logger;
 
+    // OpenAI text-embedding-3-* models support 8191 tokens
+    const maxTokens = opts.model.includes("text-embedding-3") ? 8191 : 8191;
+
     this.info = {
       name: "openai",
       model: opts.model,
       supportsBatch: true,
       maxBatchSize: opts.maxBatchSize,
+      maxTokens,
     };
 
     this.engine = new HttpEngine({

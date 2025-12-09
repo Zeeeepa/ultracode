@@ -328,14 +328,36 @@ export class GraphStorageImpl implements GraphStorage {
 
       if (query.filters.filePath) {
         const paths = Array.isArray(query.filters.filePath) ? query.filters.filePath : [query.filters.filePath];
-        sql += ` AND file_path IN (${paths.map(() => "?").join(",")})`;
-        params.push(...paths);
+        // Normalize paths: try both forward and backslash variants for cross-platform compatibility
+        const normalizedPaths: string[] = [];
+        for (const p of paths) {
+          normalizedPaths.push(p);
+          // Add backslash variant if path contains forward slashes
+          if (p.includes("/")) {
+            normalizedPaths.push(p.replace(/\//g, "\\"));
+          }
+          // Add forward slash variant if path contains backslashes
+          if (p.includes("\\")) {
+            normalizedPaths.push(p.replace(/\\/g, "/"));
+          }
+        }
+        const uniquePaths = [...new Set(normalizedPaths)];
+        sql += ` AND file_path IN (${uniquePaths.map(() => "?").join(",")})`;
+        params.push(...uniquePaths);
       }
 
       if (query.filters.name) {
         if (query.filters.name instanceof RegExp) {
-          // Use LIKE for regex-like matching
-          const pattern = query.filters.name.source.replace(/\*/g, "%");
+          // Convert regex to SQL LIKE pattern
+          let pattern = query.filters.name.source;
+          // Replace regex wildcards with SQL wildcards
+          pattern = pattern.replace(/\.\*/g, "%"); // .* -> %
+          pattern = pattern.replace(/\*/g, "%"); // * -> %
+          pattern = pattern.replace(/\./g, "_"); // . -> _ (single char)
+          // If pattern doesn't contain wildcards, wrap with % for substring search
+          if (!pattern.includes("%") && !pattern.includes("_")) {
+            pattern = `%${pattern}%`;
+          }
           sql += " AND name LIKE ?";
           params.push(pattern);
         } else {
@@ -514,6 +536,31 @@ export class GraphStorageImpl implements GraphStorage {
    */
   async getRelationships(sourceId: string, type?: RelationType): Promise<Relationship[]> {
     return this.getRelationshipsForEntity(sourceId, type);
+  }
+
+  /**
+   * Find incoming relationships by entity name (for NgRx flow tracing)
+   * Searches relationships where toId points to an entity with matching name
+   */
+  async findIncomingRelationshipsByName(entityName: string, types?: RelationType[]): Promise<Relationship[]> {
+    this.ensureReady();
+
+    // First, find all entities that reference this name in their toId
+    // This handles cases where toId is a phantom entity with name like "file:actionName"
+    let sql = `
+      SELECT r.* FROM relationships r
+      JOIN entities e ON r.to_id = e.id
+      WHERE e.name LIKE ?
+    `;
+    const params: any[] = [`%${entityName}`];
+
+    if (types && types.length > 0) {
+      sql += ` AND r.type IN (${types.map(() => "?").join(",")})`;
+      params.push(...types);
+    }
+
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map((row) => this.rowToRelationship(row));
   }
 
   // =============================================================================
@@ -896,8 +943,6 @@ export class GraphStorageImpl implements GraphStorage {
       case "hxx":
       case "hh":
         return "cpp";
-      case "cs":
-        return "csharp";
       case "rs":
         return "rust";
       case "go":
@@ -917,11 +962,6 @@ export class GraphStorageImpl implements GraphStorage {
         return "html";
       case "xml":
         return "xml";
-      case "vba":
-      case "bas":
-      case "cls":
-      case "frm":
-        return "vba";
       case "php":
         return "php";
       case "rb":

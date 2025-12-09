@@ -1,13 +1,12 @@
 /**
  * Fast Hashing Utilities with WASM SIMD Acceleration
  *
- * Uses xxHash (WASM) for 2-4x faster hashing compared to pure JS
- * Automatic fallback to builtin hash if xxHash unavailable
+ * Uses xxHash (WASM) - NO FALLBACK to ensure deterministic hashes.
+ * MUST call initHasher() before using hashText().
  *
  * Performance:
  * - xxHash (WASM SIMD): ~15µs for typical text
- * - Builtin (Pure JS): ~50µs for typical text
- * - Speedup: 2-4x
+ * - 2-4x faster than pure JS hash
  */
 
 import type { XXHashAPI } from "xxhash-wasm";
@@ -18,159 +17,104 @@ import xxhash from "xxhash-wasm";
 // =============================================================================
 
 let hasher: XXHashAPI | null = null;
-let initPromise: Promise<XXHashAPI> | null = null;
-let fallbackMode = false;
-
-const USE_XXHASH = process.env.USE_XXHASH !== "false"; // Default: enabled
+let initPromise: Promise<void> | null = null;
+let initialized = false;
 
 // =============================================================================
 // INITIALIZATION
 // =============================================================================
 
 /**
- * Initialize xxHash WASM module
- * Lazy initialization - only loads when first needed
+ * Initialize xxHash WASM module.
+ * MUST be called at application startup before any hashText() calls.
+ * Will throw if initialization fails.
  */
-async function initXXHash(): Promise<XXHashAPI> {
-  if (initPromise) return initPromise;
+export async function initHasher(): Promise<void> {
+  if (initialized) return;
+
+  if (initPromise) {
+    await initPromise;
+    return;
+  }
 
   initPromise = (async () => {
     try {
-      const instance = await xxhash();
-      hasher = instance;
-      return instance;
+      hasher = await xxhash();
+      initialized = true;
+      console.error("[FastHash] xxHash WASM initialized");
     } catch (error) {
-      console.warn("[FastHash] xxHash WASM initialization failed, using builtin fallback:", error);
-      fallbackMode = true;
-      throw error;
+      console.error("[FastHash] CRITICAL: xxHash initialization failed:", error);
+      throw new Error("xxHash initialization failed - cannot continue without deterministic hashing");
     }
   })();
 
-  return initPromise;
+  await initPromise;
 }
 
-// =============================================================================
-// BUILTIN HASH (FALLBACK)
-// =============================================================================
-
-/**
- * Pure JS hash implementation (fallback)
- * djb2 algorithm - fast and good distribution
- */
-function hashTextBuiltin(text: string): string {
-  let hash = 5381;
-  for (let i = 0; i < text.length; i++) {
-    const char = text.charCodeAt(i);
-    hash = (hash << 5) + hash + char; // hash * 33 + char
-    hash = hash >>> 0; // Convert to unsigned 32-bit
-  }
-  return hash.toString(36);
-}
-
-/**
- * Simple hash for numbers (used for numeric keys)
- */
-function hashNumberBuiltin(num: number): string {
-  const hash = ((num * 2654435761) >>> 0) >>> 0;
-  return hash.toString(36);
-}
+// Start initialization immediately (will be awaited in index.ts)
+initPromise = initHasher().catch((e) => {
+  console.error("[FastHash] Background init failed:", e);
+});
 
 // =============================================================================
 // PUBLIC API
 // =============================================================================
 
 /**
- * Fast hash function with automatic xxHash/builtin selection
- *
- * Features:
- * - WASM SIMD acceleration (xxHash) if available
- * - Automatic fallback to pure JS if xxHash unavailable
- * - 2-4x faster than pure JS hash
- * - Thread-safe, async-safe
+ * Fast hash function using xxHash WASM
+ * IMPORTANT: initHasher() must be called and awaited before using this function
  *
  * @param text - Text to hash
- * @returns Hash string (base36)
+ * @returns Hash string (hex format from xxHash)
+ * @throws Error if xxHash not initialized
  */
 export function hashText(text: string): string {
-  // Fast path: xxHash already initialized
-  if (hasher && USE_XXHASH && !fallbackMode) {
-    try {
-      return hasher.h32ToString(text);
-    } catch (error) {
-      console.warn("[FastHash] xxHash failed, using fallback:", error);
-      fallbackMode = true;
-      return hashTextBuiltin(text);
-    }
+  if (!hasher) {
+    throw new Error("hashText called before xxHash initialized. Call await initHasher() first.");
   }
-
-  // Fallback mode or xxHash disabled
-  if (fallbackMode || !USE_XXHASH) {
-    return hashTextBuiltin(text);
-  }
-
-  // xxHash not yet initialized - use builtin for now
-  // Background initialization for next calls
-  if (!initPromise) {
-    initXXHash().catch(() => {
-      // Initialization failed, already logged
-    });
-  }
-
-  return hashTextBuiltin(text);
+  return hasher.h32ToString(text);
 }
 
 /**
- * Async hash function - waits for xxHash initialization
- * Use this in non-critical paths where you can wait
+ * Async hash function - waits for initialization if needed
  *
  * @param text - Text to hash
  * @returns Promise<hash string>
  */
 export async function hashTextAsync(text: string): Promise<string> {
-  if (!USE_XXHASH || fallbackMode) {
-    return hashTextBuiltin(text);
+  if (!initialized) {
+    await initHasher();
   }
-
-  try {
-    const instance = hasher || (await initXXHash());
-    return instance.h32ToString(text);
-  } catch {
-    return hashTextBuiltin(text);
-  }
+  return hasher!.h32ToString(text);
 }
 
 /**
  * Hash number (for numeric keys)
  *
  * @param num - Number to hash
- * @returns Hash string (base36)
+ * @returns Hash string
+ * @throws Error if xxHash not initialized
  */
 export function hashNumber(num: number): string {
-  if (hasher && USE_XXHASH && !fallbackMode) {
-    try {
-      // Convert number to string and hash
-      return hasher.h32ToString(num.toString());
-    } catch {
-      return hashNumberBuiltin(num);
-    }
+  if (!hasher) {
+    throw new Error("hashNumber called before xxHash initialized. Call await initHasher() first.");
   }
-
-  return hashNumberBuiltin(num);
+  return hasher.h32ToString(num.toString());
 }
 
 /**
- * Preload xxHash WASM module
- * Call this at application startup for faster first hash
+ * Preload xxHash WASM module - alias for initHasher()
+ * @deprecated Use initHasher() instead
  */
 export async function preloadHasher(): Promise<void> {
-  if (!USE_XXHASH || fallbackMode) return;
+  return initHasher();
+}
 
-  try {
-    await initXXHash();
-    console.error("[FastHash] xxHash WASM preloaded and ready");
-  } catch (error) {
-    console.warn("[FastHash] Preload failed, will use fallback:", error);
-  }
+/**
+ * Check if hasher is ready (useful for conditional sync/async paths)
+ */
+export function isHasherReady(): boolean {
+  return initialized && hasher !== null;
 }
 
 /**
@@ -182,9 +126,9 @@ export function getHasherStatus(): {
   enabled: boolean;
 } {
   return {
-    initialized: hasher !== null,
-    fallback: fallbackMode,
-    enabled: USE_XXHASH,
+    initialized,
+    fallback: false,
+    enabled: true,
   };
 }
 

@@ -338,9 +338,9 @@ export class OpenAIProvider implements LLMProvider {
  */
 async function loadLLMConfig(): Promise<{ provider?: string; model?: string; endpoint?: string } | null> {
   try {
-    const { readFile } = await import("fs/promises");
-    const { join } = await import("path");
-    const { homedir } = await import("os");
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
 
     // Check standard config locations
     const configPaths = [

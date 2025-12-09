@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "@jest/globals";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { BaseAgent } from "../../src/agents/base.js";
 import { ConductorOrchestrator } from "../../src/agents/conductor-orchestrator.js";
 import { knowledgeBus } from "../../src/core/knowledge-bus.js";

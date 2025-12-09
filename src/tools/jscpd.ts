@@ -395,9 +395,7 @@ export async function runJscpdCloneDetection(options: JscpdRunOptions): Promise<
   }
 
   // Memory safety: filter out large files and limit total files
-  entries = entries
-    .filter((entry) => entry.content.length <= MAX_FILE_SIZE_BYTES)
-    .slice(0, MAX_FILES_TO_PROCESS);
+  entries = entries.filter((entry) => entry.content.length <= MAX_FILE_SIZE_BYTES).slice(0, MAX_FILES_TO_PROCESS);
 
   const files: Array<{ entry: EntryWithContent; tokens: TokenLine[]; format: string }> = [];
   let totalTokens = 0;

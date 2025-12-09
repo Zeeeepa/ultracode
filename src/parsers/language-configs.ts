@@ -87,12 +87,6 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   // XML
   xml: "xml",
 
-  // VBA
-  vba: "vba",
-  bas: "vba",
-  cls: "vba",
-  frm: "vba",
-
   // Bash/Shell scripts
   sh: "bash",
   bash: "bash",
@@ -256,14 +250,6 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: [],
     exports: [],
     types: [],
-  },
-
-  vba: {
-    functions: ["Sub", "Function", "Property"],
-    classes: ["Class", "Type", "Enum"],
-    imports: [],
-    exports: ["Public", "Global"],
-    types: ["Integer", "Long", "Double", "Single", "String", "Boolean", "Variant", "Object", "Date"],
   },
 
   bash: {
@@ -1068,78 +1054,6 @@ const JAVA_CONFIG: LanguageConfig = {
   },
 };
 
-/**
- * VBA language configuration
- */
-const VBA_CONFIG: LanguageConfig = {
-  language: "vba",
-  extensions: ["vba", "bas", "cls", "frm"],
-  keywords: LANGUAGE_KEYWORDS.vba,
-  nodeTypes: {
-    functions: [
-      "sub_statement",
-      "function_statement",
-      "property_get_statement",
-      "property_let_statement",
-      "property_set_statement",
-    ],
-    classes: ["class_module", "type_statement", "enum_statement"],
-    methods: [
-      "sub_statement",
-      "function_statement",
-      "property_get_statement",
-      "property_let_statement",
-      "property_set_statement",
-    ],
-    imports: [], // VBA doesn't have traditional imports
-    exports: ["public", "global"],
-    variables: ["dim_statement", "const_statement", "static_statement", "variable_declaration"],
-    types: ["type_statement", "enum_statement"],
-    interfaces: [], // VBA has limited interface support
-  },
-  extractors: {
-    extractName: (nodeType: string) => {
-      switch (nodeType) {
-        case "sub_statement":
-        case "function_statement":
-        case "property_get_statement":
-        case "property_let_statement":
-        case "property_set_statement":
-          return ["identifier"];
-        case "class_module":
-        case "type_statement":
-        case "enum_statement":
-          return ["identifier"];
-        case "dim_statement":
-        case "const_statement":
-        case "static_statement":
-          return ["identifier", "variable_declaration"];
-        default:
-          return ["identifier"];
-      }
-    },
-    extractModifiers: (nodeType: string) => {
-      switch (nodeType) {
-        case "sub_statement":
-        case "function_statement":
-        case "property_get_statement":
-        case "property_let_statement":
-        case "property_set_statement":
-          return ["public", "private", "friend", "static"];
-        case "dim_statement":
-        case "const_statement":
-        case "static_statement":
-          return ["public", "private", "friend", "static", "const"];
-        default:
-          return ["public", "private", "friend", "static"];
-      }
-    },
-    extractParameters: true,
-    extractReturnType: true,
-    extractReferences: true,
-  },
-};
-
 const KOTLIN_CONFIG: LanguageConfig = {
   language: "kotlin",
   extensions: ["kt", "kts"],
@@ -1447,7 +1361,6 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   css: CSS_CONFIG,
   html: HTML_CONFIG,
   xml: XML_CONFIG,
-  vba: VBA_CONFIG,
   bash: BASH_CONFIG,
   powershell: POWERSHELL_CONFIG,
   batch: BATCH_CONFIG,

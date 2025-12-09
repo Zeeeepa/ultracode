@@ -46,11 +46,7 @@ export interface PaginatedResult<T> {
 /**
  * Apply pagination to an array
  */
-export function paginate<T>(
-  items: T[],
-  offset: number = 0,
-  limit: number = DEFAULT_PAGE_SIZE
-): PaginatedResult<T> {
+export function paginate<T>(items: T[], offset: number = 0, limit: number = DEFAULT_PAGE_SIZE): PaginatedResult<T> {
   const safeLimit = Math.min(limit, MAX_PAGE_SIZE);
   const safeOffset = Math.max(0, offset);
 
@@ -84,12 +80,9 @@ export interface TruncationResult {
  * Truncate response if it exceeds max size
  * Adds truncation notice with hint on how to get more data
  */
-export function truncateResponse(
-  data: unknown,
-  maxSize: number = MAX_RESPONSE_SIZE_BYTES
-): TruncationResult {
+export function truncateResponse(data: unknown, maxSize: number = MAX_RESPONSE_SIZE_BYTES): TruncationResult {
   const jsonText = JSON.stringify(data, null, 2);
-  const originalSize = Buffer.byteLength(jsonText, 'utf8');
+  const originalSize = Buffer.byteLength(jsonText, "utf8");
 
   if (originalSize <= maxSize) {
     return {
@@ -108,7 +101,7 @@ export function truncateResponse(
     text: truncatedJson,
     wasTruncated: true,
     originalSize,
-    truncatedSize: Buffer.byteLength(truncatedJson, 'utf8'),
+    truncatedSize: Buffer.byteLength(truncatedJson, "utf8"),
   };
 }
 
@@ -117,7 +110,7 @@ export function truncateResponse(
  */
 function truncateData(data: unknown, maxSize: number): unknown {
   if (data === null || data === undefined) return data;
-  if (typeof data !== 'object') return data;
+  if (typeof data !== "object") return data;
 
   if (Array.isArray(data)) {
     return truncateArray(data, maxSize);
@@ -159,14 +152,11 @@ function truncateArray(arr: unknown[], maxSize: number): unknown {
 /**
  * Truncate object - prioritize certain fields
  */
-function truncateObject(
-  obj: Record<string, unknown>,
-  maxSize: number
-): Record<string, unknown> {
+function truncateObject(obj: Record<string, unknown>, maxSize: number): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   // Priority fields to keep
-  const priorityFields = ['id', 'name', 'type', 'count', 'total', 'pagination', 'error', 'success'];
+  const priorityFields = ["id", "name", "type", "count", "total", "pagination", "error", "success"];
   const arrayFields: string[] = [];
 
   // First pass: add priority fields and identify arrays
@@ -203,7 +193,7 @@ export function createSafeResponse(
   data: Record<string, unknown>,
   options: {
     maxSize?: number;
-  } = {}
+  } = {},
 ): string {
   const { maxSize = MAX_RESPONSE_SIZE_BYTES } = options;
 
@@ -230,12 +220,12 @@ export function createSafeResponse(
  */
 export const paginationSchemaFields = {
   offset: {
-    type: 'number',
+    type: "number",
     default: 0,
-    description: 'Number of items to skip (for pagination)',
+    description: "Number of items to skip (for pagination)",
   },
   limit: {
-    type: 'number',
+    type: "number",
     default: DEFAULT_PAGE_SIZE,
     description: `Maximum items to return (max ${MAX_PAGE_SIZE})`,
   },
@@ -246,7 +236,7 @@ export const paginationSchemaFields = {
  */
 export function withPagination<T extends Record<string, unknown>>(
   response: T,
-  pagination: PaginationMeta
+  pagination: PaginationMeta,
 ): T & { pagination: PaginationMeta } {
   return {
     ...response,

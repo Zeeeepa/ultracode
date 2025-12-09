@@ -8,7 +8,7 @@
  * @created 2025-10-05
  */
 
-import { beforeAll, describe, expect, it } from "@jest/globals";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { RustAnalyzer } from "../../src/parsers/rust-analyzer";
 import type { TreeSitterNode } from "../../src/types/parser";
 

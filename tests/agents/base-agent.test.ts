@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it } from "bun:test";
 import { BaseAgent } from "../../src/agents/base.js";
 import { AgentType } from "../../src/types/agent.js";
 import { AgentBusyError } from "../../src/types/errors.js";

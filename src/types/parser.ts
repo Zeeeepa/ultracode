@@ -37,7 +37,6 @@ export const SUPPORTED_LANGUAGES = [
   "css",
   "html",
   "xml",
-  "vba",
   "bash",
   "powershell",
   "batch",
@@ -143,7 +142,11 @@ export interface ParsedEntity {
     | "field"
     | "impl_block"
     | "union"
-    | "crate";
+    | "crate"
+    | "ngrx_effect"
+    | "ngrx_action"
+    | "ngrx_reducer"
+    | "ngrx_selector";
 
   /** File path containing this entity */
   filePath?: string; // Optional for backward compatibility
@@ -252,6 +255,191 @@ export interface ParsedEntity {
     targetFile?: string;
     metadata?: Record<string, any>;
   }>;
+
+  // ==========================================================================
+  // ENHANCED PARSING DATA (Phase 1-7)
+  // ==========================================================================
+
+  /**
+   * Call Graph - all function/method calls within this entity
+   * Phase 1: Call Graph extraction
+   */
+  calls?: Array<{
+    /** Name of the called function/method */
+    name: string;
+    /** Target object for method calls (this, obj, ClassName) */
+    target?: string;
+    /** Location of the call */
+    location: {
+      start: { line: number; column: number; index: number };
+      end: { line: number; column: number; index: number };
+    };
+    /** Whether this is an await call */
+    isAwait?: boolean;
+    /** Whether this is optional chaining (obj?.method()) */
+    isOptional?: boolean;
+    /** Whether this is a constructor call (new Foo()) */
+    isNew?: boolean;
+    /** Number of arguments */
+    argumentCount: number;
+    /** Type arguments for generic calls */
+    typeArguments?: string[];
+  }>;
+
+  /**
+   * Control Flow structure within this entity
+   * Phase 2: Control Flow extraction
+   */
+  controlFlow?: {
+    /** Conditional branches */
+    branches: Array<{
+      type: "if" | "else" | "else-if" | "switch" | "case" | "default" | "ternary";
+      condition?: string;
+      location: {
+        start: { line: number; column: number; index: number };
+        end: { line: number; column: number; index: number };
+      };
+    }>;
+    /** Loop constructs */
+    loops: Array<{
+      type: "for" | "for-of" | "for-in" | "while" | "do-while";
+      location: {
+        start: { line: number; column: number; index: number };
+        end: { line: number; column: number; index: number };
+      };
+    }>;
+    /** Exception handling */
+    exceptions: Array<{
+      type: "try" | "catch" | "finally" | "throw";
+      catchType?: string;
+      location: {
+        start: { line: number; column: number; index: number };
+        end: { line: number; column: number; index: number };
+      };
+    }>;
+    /** Return statements */
+    returns: Array<{
+      location: {
+        start: { line: number; column: number; index: number };
+        end: { line: number; column: number; index: number };
+      };
+      hasValue: boolean;
+    }>;
+    /** Await expressions */
+    awaits: Array<{
+      location: {
+        start: { line: number; column: number; index: number };
+        end: { line: number; column: number; index: number };
+      };
+      expression: string;
+    }>;
+  };
+
+  /**
+   * Structured documentation (JSDoc/docstring)
+   * Phase 3: Documentation extraction
+   */
+  documentation?: {
+    /** Main description */
+    description?: string;
+    /** Parameter documentation */
+    params?: Array<{
+      name: string;
+      type?: string;
+      description?: string;
+      optional?: boolean;
+    }>;
+    /** Return value documentation */
+    returns?: {
+      type?: string;
+      description?: string;
+    };
+    /** Thrown exceptions */
+    throws?: Array<{
+      type?: string;
+      description?: string;
+    }>;
+    /** Usage examples */
+    examples?: string[];
+    /** Deprecation notice */
+    deprecated?: string | boolean;
+    /** Related items */
+    see?: string[];
+    /** Version info */
+    since?: string;
+    /** Author info */
+    author?: string;
+  };
+
+  /**
+   * Type references used by this entity
+   * Phase 4: Type References
+   */
+  typeReferences?: Array<{
+    /** Referenced type name */
+    name: string;
+    /** How it's used */
+    kind: "parameter" | "return" | "variable" | "property" | "generic" | "extends" | "implements";
+    /** Location of the reference */
+    location: {
+      start: { line: number; column: number; index: number };
+      end: { line: number; column: number; index: number };
+    };
+  }>;
+
+  /**
+   * Code complexity metrics
+   * Phase 5: Complexity Metrics
+   */
+  complexity?: {
+    /** Cyclomatic complexity (number of paths) */
+    cyclomatic: number;
+    /** Cognitive complexity (understanding difficulty) */
+    cognitive: number;
+    /** Lines of code */
+    linesOfCode: number;
+    /** Lines of logic (excluding blanks/comments) */
+    linesOfLogic: number;
+    /** Maximum nesting depth */
+    nestingDepth: number;
+    /** Number of parameters */
+    parameterCount: number;
+    /** Number of return statements */
+    returnCount: number;
+  };
+
+  /**
+   * Generic type parameters
+   * Phase 6: Generics
+   */
+  typeParameters?: Array<{
+    /** Type parameter name (T, K, V) */
+    name: string;
+    /** Constraint (extends SomeType) */
+    constraint?: string;
+    /** Default type */
+    default?: string;
+  }>;
+
+  /**
+   * Side effects detection
+   * Phase 7: Side Effects
+   */
+  sideEffects?: {
+    /** Whether this entity has side effects */
+    hasSideEffects: boolean;
+    /** Types of side effects detected */
+    types: Array<"io" | "network" | "storage" | "dom" | "global" | "state">;
+    /** Detailed side effect locations */
+    details: Array<{
+      type: "io" | "network" | "storage" | "dom" | "global" | "state";
+      expression: string;
+      location: {
+        start: { line: number; column: number; index: number };
+        end: { line: number; column: number; index: number };
+      };
+    }>;
+  };
 
   /** Generic metadata for language-specific properties */
   metadata?: Record<string, any>;
@@ -516,7 +704,12 @@ export interface EntityRelationship {
     | "contains"
     | "references"
     | "embeds"
-    | "member_of";
+    | "member_of"
+    // NgRx-specific relationships
+    | "listens_to" // Effect listens to action via ofType()
+    | "dispatches" // Effect/Component dispatches action
+    | "reduces" // Reducer handles action
+    | "selects"; // Component/Effect uses selector
 
   /** Source file path */
   sourceFile?: string;

@@ -113,6 +113,9 @@ export class VectorStore {
       const workingDir = config.workingDirectory || process.cwd();
       const paths = getProjectPaths(workingDir);
       dbPath = paths.vectorsDbPath;
+      console.error(`[VectorStore] Auto-resolved dbPath: workingDir=${workingDir}, dbPath=${dbPath}`);
+    } else {
+      console.error(`[VectorStore] Using explicit dbPath: ${dbPath}`);
     }
 
     this.config = {
@@ -126,6 +129,13 @@ export class VectorStore {
       workingDirectory: config.workingDirectory,
       estimatedFileCount: config.estimatedFileCount,
     };
+  }
+
+  /**
+   * Get the database path used by this VectorStore
+   */
+  getDbPath(): string {
+    return this.config.dbPath;
   }
 
   /**

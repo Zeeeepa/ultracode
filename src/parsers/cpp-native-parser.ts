@@ -11,10 +11,10 @@
  * No native modules required.
  */
 
-import { spawn, execSync } from "node:child_process";
-import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { execSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
@@ -62,9 +62,7 @@ export class CppNativeParser {
       console.error("[CppNativeParser] Initialized (clang available)");
     } catch {
       this.clangAvailable = false;
-      console.error(
-        "[CppNativeParser] clang not found, using regex parser",
-      );
+      console.error("[CppNativeParser] clang not found, using regex parser");
     }
   }
 
@@ -90,11 +88,7 @@ export class CppNativeParser {
   /**
    * Parse a C/C++ file
    */
-  async parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult> {
+  async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
     const isCpp = this.isCppFile(filePath);
 
@@ -112,8 +106,7 @@ export class CppNativeParser {
       // Update stats
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += parseTimeMs;
-      this.stats.avgParseTimeMs =
-        this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
 
       return {
         filePath,
@@ -164,11 +157,7 @@ export class CppNativeParser {
   /**
    * Parse using clang
    */
-  private async parseWithClang(
-    filePath: string,
-    content: string,
-    isCpp: boolean,
-  ): Promise<CppParseResult> {
+  private async parseWithClang(filePath: string, content: string, isCpp: boolean): Promise<CppParseResult> {
     // Write content to temp file
     const tempDir = join(tmpdir(), "ultrascript-parsers");
     if (!existsSync(tempDir)) {
@@ -194,32 +183,23 @@ export class CppNativeParser {
   /**
    * Run clang and parse output
    */
-  private runClang(
-    tempFile: string,
-    originalPath: string,
-    isCpp: boolean,
-  ): Promise<CppParseResult> {
+  private runClang(tempFile: string, originalPath: string, isCpp: boolean): Promise<CppParseResult> {
     return new Promise((resolve) => {
-      const args = [
-        "-Xclang", "-ast-dump=json",
-        "-fsyntax-only",
-        isCpp ? "-std=c++17" : "-std=c11",
-        tempFile,
-      ];
+      const args = ["-Xclang", "-ast-dump=json", "-fsyntax-only", isCpp ? "-std=c++17" : "-std=c11", tempFile];
 
       const proc = spawn("clang", args, {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
       let stdout = "";
-      let stderr = "";
+      let _stderr = "";
 
       proc.stdout.on("data", (data) => {
         stdout += data.toString();
       });
 
       proc.stderr.on("data", (data) => {
-        stderr += data.toString();
+        _stderr += data.toString();
       });
 
       proc.on("close", (_code) => {
@@ -234,7 +214,7 @@ export class CppNativeParser {
           const ast = JSON.parse(stdout);
           const entities = this.extractEntitiesFromClangAST(ast, originalPath);
           resolve({ entities, errors: [] });
-        } catch (e) {
+        } catch (_e) {
           // Fall back to regex on JSON parse error
           resolve(this.parseWithRegex(originalPath, "", isCpp));
         }
@@ -250,10 +230,7 @@ export class CppNativeParser {
   /**
    * Extract entities from clang AST JSON
    */
-  private extractEntitiesFromClangAST(
-    ast: any,
-    filePath: string,
-  ): ParsedEntity[] {
+  private extractEntitiesFromClangAST(ast: any, filePath: string): ParsedEntity[] {
     const entities: ParsedEntity[] = [];
 
     const processNode = (node: any) => {
@@ -323,11 +300,7 @@ export class CppNativeParser {
   /**
    * Regex-based parser for C/C++
    */
-  private parseWithRegex(
-    filePath: string,
-    content: string,
-    isCpp: boolean,
-  ): CppParseResult {
+  private parseWithRegex(filePath: string, content: string, isCpp: boolean): CppParseResult {
     const entities: ParsedEntity[] = [];
     let match: RegExpExecArray | null;
 
@@ -364,7 +337,8 @@ export class CppNativeParser {
     }
 
     // Classes/Structs
-    const classRe = /^\s*(?:class|struct)\s+(?:__declspec\([^)]*\)\s+)?(\w+)(?:\s*:\s*(?:public|private|protected)\s+\w+)?/gm;
+    const classRe =
+      /^\s*(?:class|struct)\s+(?:__declspec\([^)]*\)\s+)?(\w+)(?:\s*:\s*(?:public|private|protected)\s+\w+)?/gm;
     while ((match = classRe.exec(content))) {
       const name = match[1];
       if (!name) continue;
@@ -390,7 +364,8 @@ export class CppNativeParser {
     }
 
     // Functions (simplified - won't catch all cases)
-    const funcRe = /^\s*(?:static\s+)?(?:inline\s+)?(?:virtual\s+)?(?:const\s+)?(?:\w+(?:\s*[*&]+)?)\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?(?:noexcept\s*)?(?:=\s*0\s*)?[{;]/gm;
+    const funcRe =
+      /^\s*(?:static\s+)?(?:inline\s+)?(?:virtual\s+)?(?:const\s+)?(?:\w+(?:\s*[*&]+)?)\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?(?:noexcept\s*)?(?:=\s*0\s*)?[{;]/gm;
     while ((match = funcRe.exec(content))) {
       const name = match[1];
       if (!name || ["if", "while", "for", "switch", "catch"].includes(name)) continue;
@@ -450,10 +425,7 @@ export class CppNativeParser {
   /**
    * Get location from character index
    */
-  private getLocationFromIndex(
-    content: string,
-    index: number,
-  ): ParsedEntity["location"] {
+  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
     let line = 1;
     let column = 0;
     for (let i = 0; i < index; i++) {

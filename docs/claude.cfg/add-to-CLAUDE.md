@@ -20,9 +20,32 @@ Run `index` tool once to index the project.
 - **Search**: `semantic_search`, `pattern_search`, `find_similar_code`
 - **Navigate**: `list_file_entities`, `list_entity_relationships`, `get_members`
 - **Analyze**: `analyze_code_impact`, `detect_code_clones`, `analyze_hotspots`
+- **Trace**: `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`
 - **Modify**: `modify_code`, `rename_symbol`, `create_file`
 
 > For C# use UltrasharpTools MCP (Roslyn-based).
+
+---
+
+## Tracing — Статический анализ потока выполнения
+
+**Когда использовать трассировку:**
+
+| Вопрос | Инструмент |
+|--------|------------|
+| "Как код попадает от A к B?" | `trace_flow` |
+| "Почему метод не вызывается?" | `trace_backwards` |
+| "Как данные влияют на состояние?" | `trace_data_flow` |
+| "Что изменится при другом значении?" | `analyze_state_impact` |
+| "Какие условия влияют на сценарий?" | `find_decision_points` |
+
+**Пример:**
+```
+trace_backwards(target: "saveOrder", question: "why_not_called")
+→ Найдёт блокирующие условия, зависимости состояний, диагноз
+```
+
+> 📖 **Details?** Request MCP prompt `tracing-guide`
 
 ---
 

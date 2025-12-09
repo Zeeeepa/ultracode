@@ -56,11 +56,26 @@ export class TEIProvider implements EmbeddingProvider {
       await this.ensureContainerRunning();
     }
 
+    // Get model info including max_input_length
+    try {
+      const infoRes = await fetch(`${this.baseUrl}/info`, {
+        method: "GET",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (infoRes.ok) {
+        const modelInfo = (await infoRes.json()) as { max_input_length?: number; model_id?: string };
+        this.info.maxTokens = modelInfo.max_input_length || 512;
+        this.log?.debug("TEI model info", { maxTokens: this.info.maxTokens, model: modelInfo.model_id });
+      }
+    } catch {
+      this.info.maxTokens = 512; // Default fallback
+    }
+
     // Warmup call to determine dimension
     try {
       const vec = await this.embed("warmup text");
       this.info.dimension = vec.length;
-      this.log?.info("initialized", { dimension: this.info.dimension });
+      this.log?.info("initialized", { dimension: this.info.dimension, maxTokens: this.info.maxTokens });
     } catch (e: any) {
       this.log?.error("warmup failed", { error: e.message }, undefined, e);
       throw new Error(
@@ -100,6 +115,7 @@ export class TEIProvider implements EmbeddingProvider {
       // Check if container exists
       const { stdout: containerList } = await execPromise(
         'docker ps -a --filter "name=tei-server" --format "{{.Names}}"',
+        { windowsHide: true },
       ).catch(() => ({ stdout: "" }));
 
       if (!containerList.includes("tei-server")) {
@@ -107,7 +123,7 @@ export class TEIProvider implements EmbeddingProvider {
       }
 
       // Start the container
-      await execPromise("docker start tei-server");
+      await execPromise("docker start tei-server", { windowsHide: true });
       this.log?.info("Started TEI Docker container");
 
       // Wait for container to be ready (max 30 seconds)

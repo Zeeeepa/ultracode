@@ -144,6 +144,7 @@ export class GitWatcher {
         cwd: this.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       const changes: FileChange[] = [];
@@ -198,6 +199,7 @@ export class GitWatcher {
         cwd: this.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       const changes: FileChange[] = [];
@@ -251,6 +253,7 @@ export class GitWatcher {
         cwd: this.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
 
       return branch;
@@ -261,6 +264,7 @@ export class GitWatcher {
           cwd: this.repoPath,
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "ignore"],
+          windowsHide: true,
         }).trim();
         return `detached-${hash}`;
       } catch {
@@ -277,6 +281,7 @@ export class GitWatcher {
         cwd: this.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
 
       return commit;

@@ -1,36 +1,36 @@
 {
   "$schema": "./embedding-models.schema.json",
-  "version": "1.4.0",
+  "version": "1.6.0",
   "scenarios": {
     "production": {
       "name": "Production (максимальное качество)",
-      "description": "Для production использования. 8K контекст захватывает полный код методов и классов без потерь.",
+      "description": "Для production использования. jina-code-v2 — лучшая для code search (30 языков программирования).",
       "tei": "jina-code-v2",
-      "ollama": "ollama-nomic-embed"
+      "ollama": "ollama-snowflake-arctic"
     },
     "development": {
       "name": "Разработка (быстрая индексация)",
-      "description": "Для локальной разработки. Быстрая индексация, достаточно для коротких методов (<50 строк).",
-      "tei": "all-minilm-l6-v2",
+      "description": "Для локальной разработки. BGE-small — 62.17 MTEB при скорости MiniLM (upgrade path).",
+      "tei": "bge-small-en",
       "ollama": "ollama-all-minilm"
     },
     "large_projects": {
       "name": "Большие проекты (баланс)",
-      "description": "Для крупных кодовых баз. 8K контекст + оптимизированная скорость.",
-      "tei": "gte-modernbert",
+      "description": "Для крупных кодовых баз. GTE-large 65.39 MTEB + 8K контекст.",
+      "tei": "gte-large-en-v1.5",
       "ollama": "ollama-snowflake-arctic"
     },
     "legacy_code": {
       "name": "Legacy код (длинные методы)",
-      "description": "Для legacy проектов с длинными методами (100+ строк). Обязательно 8K контекст.",
-      "tei": "jina-code-v2",
-      "ollama": "ollama-nomic-embed"
+      "description": "Для legacy проектов с длинными методами (100+ строк). 8K контекст обязателен.",
+      "tei": "nomic-embed-v1.5",
+      "ollama": "ollama-snowflake-arctic"
     },
     "multilingual": {
       "name": "Мультиязычный код",
-      "description": "Для проектов с комментариями/документацией на разных языках.",
-      "tei": "paraphrase-multilingual-minilm",
-      "ollama": "ollama-granite-multilingual"
+      "description": "Для проектов с RU/CN/JP комментариями. BGE-M3 — 100+ языков + hybrid search.",
+      "tei": "bge-m3",
+      "ollama": "ollama-snowflake-arctic"
     }
   },
   "providers": {
@@ -58,6 +58,15 @@
       "requires": [],
       "optional": [],
       "supports_batch": true
+    },
+    "openvino": {
+      "name": "OpenVINO (локальный CPU/GPU)",
+      "description": "Intel OpenVINO inference\n⚡ CPU INT8: ~1.3ms/запрос - быстрее всех!\n🖥️ Intel GPU поддержка\n⚠️ Intel NPU пока не поддерживает BERT\n✅ Автозагрузка моделей",
+      "requires": [],
+      "optional": ["intel-gpu"],
+      "supports_batch": true,
+      "default_device": "CPU",
+      "performance_notes": "CPU INT8 в 3-10x быстрее Ollama/TEI"
     }
   },
   "models": [
@@ -93,13 +102,51 @@
       "dimensions": 768,
       "size_mb": 580,
       "use_case": "large_projects",
-      "description": "Для больших проектов. Flash Attention 2. ⚠️ Только GPU (нет ONNX)."
+      "description": "Первый encoder с code training (56.4 CodeSearchNet). Flash Attention 2, 4x быстрее DeBERTa."
+    },
+    {
+      "id": "gte-large-en-v1.5",
+      "provider": "tei",
+      "name": "GTE Large EN v1.5 (8K)",
+      "badge": "🏆 HIGHEST MTEB",
+      "model_id": "Alibaba-NLP/gte-large-en-v1.5",
+      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell-patch"],
+      "gpu_support": true,
+      "image_gpu": "ghcr.io/huggingface/text-embeddings-inference:1.8.3",
+      "image_cpu": "ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3",
+      "language": "en",
+      "context_tokens": 8192,
+      "dimensions": 1024,
+      "size_mb": 870,
+      "vram_mb": 2000,
+      "benchmark_toks": 30000,
+      "use_case": "production",
+      "mteb_retrieval": 65.39,
+      "description": "🏆 Highest MTEB (65.39). 8K context. Apache 2.0. Best for documentation search."
+    },
+    {
+      "id": "coderank-embed",
+      "provider": "tei",
+      "name": "CodeRankEmbed (8K)",
+      "badge": "💻 Best small code",
+      "model_id": "Salesforce/CodeRankEmbed",
+      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell-patch", "cpu"],
+      "gpu_support": true,
+      "image_gpu": "ghcr.io/huggingface/text-embeddings-inference:1.8.3",
+      "image_cpu": "ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3",
+      "language": "code",
+      "context_tokens": 8192,
+      "dimensions": 768,
+      "size_mb": 550,
+      "benchmark_toks": 35000,
+      "use_case": "production",
+      "description": "Best efficiency/performance for code. 137M params outperforms 1.3B models. MIT license."
     },
     {
       "id": "nomic-embed-v1.5",
       "provider": "tei",
       "name": "Nomic Embed v1.5 (8K)",
-      "badge": "⭐ Универсальная",
+      "badge": "🏆 ЛУЧШАЯ",
       "model_id": "nomic-ai/nomic-embed-text-v1.5",
       "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell-patch"],
       "gpu_support": true,
@@ -109,31 +156,16 @@
       "context_tokens": 8192,
       "dimensions": 768,
       "size_mb": 274,
+      "vram_mb": 1000,
+      "benchmark_toks": 44966,
       "use_case": "production",
-      "description": "Универсальная для production. Превосходит OpenAI ada-002. ⚠️ Только GPU (нет ONNX)."
-    },
-    {
-      "id": "all-minilm-l6-v2",
-      "provider": "tei",
-      "name": "All MiniLM L6 v2",
-      "badge": "🏃 Быстрая",
-      "model_id": "sentence-transformers/all-MiniLM-L6-v2",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell-patch", "cpu"],
-      "gpu_support": true,
-      "image_gpu": "ghcr.io/huggingface/text-embeddings-inference:1.8.3",
-      "image_cpu": "ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3",
-      "language": "en",
-      "context_tokens": 256,
-      "dimensions": 384,
-      "size_mb": 90,
-      "use_case": "development",
-      "description": "Для разработки. Самая быстрая индексация. Достаточно для методов <50 строк."
+      "description": "🏆 ЛУЧШАЯ (45K tok/s). 8K контекст. Native batch. 1GB VRAM."
     },
     {
       "id": "bge-small-en",
       "provider": "tei",
       "name": "BGE Small EN v1.5",
-      "badge": "🏃 Быстрая",
+      "badge": "⭐ Upgrade MiniLM",
       "model_id": "BAAI/bge-small-en-v1.5",
       "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell-patch", "cpu"],
       "gpu_support": true,
@@ -144,7 +176,8 @@
       "dimensions": 384,
       "size_mb": 133,
       "use_case": "development",
-      "description": "Для разработки. Хорошее качество, методы до ~100 строк."
+      "mteb_retrieval": 62.17,
+      "description": "⭐ Best upgrade from MiniLM: 62.17 MTEB (+48% quality) at ~same speed. 33M params."
     },
     {
       "id": "e5-small",
@@ -164,27 +197,10 @@
       "description": "Для разработки. Эффективная альтернатива BGE."
     },
     {
-      "id": "paraphrase-multilingual-minilm",
-      "provider": "tei",
-      "name": "Paraphrase Multilingual MiniLM",
-      "badge": "🌍 Мультиязычная",
-      "model_id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell-patch", "cpu"],
-      "gpu_support": true,
-      "image_gpu": "ghcr.io/huggingface/text-embeddings-inference:1.8.3",
-      "image_cpu": "ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3",
-      "language": "multi",
-      "context_tokens": 128,
-      "dimensions": 384,
-      "size_mb": 470,
-      "use_case": "multilingual",
-      "description": "Для мультиязычных проектов. 50+ языков. Короткие фрагменты кода."
-    },
-    {
       "id": "bge-m3",
       "provider": "tei",
       "name": "BGE M3 (8K)",
-      "badge": "📄 Длинный контекст",
+      "badge": "🌍 100+ langs",
       "model_id": "BAAI/bge-m3",
       "gpu_architectures": ["ampere-80", "ampere-86", "ada", "hopper", "blackwell-patch"],
       "gpu_support": true,
@@ -193,10 +209,11 @@
       "language": "multi",
       "context_tokens": 8192,
       "dimensions": 1024,
-      "size_mb": 2200,
-      "use_case": "legacy_code",
-      "description": "Для legacy кода с длинными методами. 8K токенов. ⚠️ Только GPU (нет ONNX).",
-      "experimental": true
+      "size_mb": 1100,
+      "vram_mb": 3000,
+      "use_case": "multilingual",
+      "mteb_retrieval": 55.0,
+      "description": "🌍 Best multilingual (100+ langs). Hybrid dense+sparse+ColBERT. Captures function names + semantics."
     },
     {
       "id": "granite-embedding-125m",
@@ -233,34 +250,22 @@
       "description": "Самая быстрая индексация, ниже качество."
     },
     {
-      "id": "ollama-nomic-embed",
-      "provider": "ollama",
-      "name": "Nomic Embed Text (8K)",
-      "badge": "⭐ Рекомендуется",
-      "model_id": "nomic-embed-text",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "en",
-      "context_tokens": 8192,
-      "dimensions": 768,
-      "size_mb": 274,
-      "use_case": "production",
-      "description": "Лучший выбор для Ollama. 8K контекст для любого кода. Превосходит OpenAI ada-002."
-    },
-    {
       "id": "ollama-snowflake-arctic",
       "provider": "ollama",
-      "name": "Snowflake Arctic Embed 2",
-      "badge": "💻 Для кода",
+      "name": "Snowflake Arctic Embed 2 (8K)",
+      "badge": "🏆 Best 8K",
       "model_id": "snowflake-arctic-embed2",
       "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
       "gpu_support": true,
       "language": "multi",
       "context_tokens": 8192,
       "dimensions": 1024,
-      "size_mb": 568,
+      "size_mb": 600,
+      "vram_mb": 1500,
+      "benchmark_toks": 9968,
       "use_case": "large_projects",
-      "description": "Для больших проектов. Специализация на технической документации и коде."
+      "mteb_retrieval": 57.1,
+      "description": "🏆 Best 8K Ollama (10K tok/s, 15 chunks/s). 57.1 MTEB. Full class embedding."
     },
     {
       "id": "ollama-mxbai-large",
@@ -281,7 +286,7 @@
       "id": "ollama-all-minilm",
       "provider": "ollama",
       "name": "All MiniLM L6 v2",
-      "badge": "🏃 Быстрая",
+      "badge": "🏆 Быстрая",
       "model_id": "all-minilm",
       "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
       "gpu_support": true,
@@ -289,8 +294,10 @@
       "context_tokens": 512,
       "dimensions": 384,
       "size_mb": 45,
+      "vram_mb": 500,
+      "benchmark_toks": 52976,
       "use_case": "development",
-      "description": "Для разработки. Самая быстрая, всего 45MB. Методы до ~100 строк."
+      "description": "🏆 Самая быстрая Ollama (53K tok/s). Всего 500MB VRAM."
     },
     {
       "id": "ollama-snowflake-arctic-s",
@@ -311,7 +318,7 @@
       "id": "ollama-granite-en",
       "provider": "ollama",
       "name": "IBM Granite EN",
-      "badge": "🏃 Быстрая",
+      "badge": "🏆 Fast Ollama",
       "model_id": "granite-embedding:30m",
       "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
       "gpu_support": true,
@@ -319,8 +326,10 @@
       "context_tokens": 512,
       "dimensions": 384,
       "size_mb": 60,
+      "vram_mb": 300,
+      "benchmark_toks": 34685,
       "use_case": "development",
-      "description": "Для разработки. ModernBERT архитектура, оптимизирована для кода."
+      "description": "🏆 Fastest Ollama (35K tok/s, 123 chunks/s). IBM ModernBERT."
     },
     {
       "id": "ollama-granite-multilingual",
@@ -336,11 +345,131 @@
       "size_mb": 560,
       "use_case": "multilingual",
       "description": "Для мультиязычных проектов. Хорошее качество на разных языках."
+    },
+    {
+      "id": "openvino-minilm-int8",
+      "provider": "openvino",
+      "name": "All MiniLM L6 v2 INT8",
+      "badge": "🏆 FASTEST",
+      "model_id": "all-MiniLM-L6-v2",
+      "gpu_architectures": ["cpu", "intel-gpu"],
+      "gpu_support": true,
+      "language": "en",
+      "context_tokens": 512,
+      "dimensions": 384,
+      "size_mb": 23,
+      "ram_mb": 200,
+      "benchmark_toks": 80507,
+      "use_case": "development",
+      "description": "🏆 FASTEST (80K tok/s, 474 chunks/s). 2.1ms/chunk. Best for fast indexing.",
+      "device": "CPU",
+      "avg_ms": 2.1,
+      "openvino_format": "onnx-int8"
+    },
+    {
+      "id": "openvino-paraphrase-multi",
+      "provider": "openvino",
+      "name": "Paraphrase Multilingual",
+      "badge": "🌍 50+ langs",
+      "model_id": "paraphrase-multilingual-MiniLM-L12-v2",
+      "gpu_architectures": ["cpu", "intel-gpu"],
+      "gpu_support": true,
+      "language": "multi",
+      "context_tokens": 512,
+      "dimensions": 384,
+      "size_mb": 118,
+      "ram_mb": 300,
+      "benchmark_toks": 16089,
+      "use_case": "multilingual",
+      "description": "🌍 50+ языков (16K tok/s, 161 chunks/s). 6.2ms/chunk. RU/CN/JP комментарии.",
+      "device": "CPU",
+      "avg_ms": 6.2,
+      "openvino_format": "onnx-int8"
+    },
+    {
+      "id": "openvino-qwen3-embedding",
+      "provider": "openvino",
+      "name": "Qwen3 Embedding 0.6B",
+      "badge": "🆕 2025.4",
+      "model_id": "Qwen3-Embedding-0.6B",
+      "gpu_architectures": ["cpu", "intel-gpu"],
+      "gpu_support": true,
+      "language": "multi",
+      "context_tokens": 8192,
+      "dimensions": 1024,
+      "size_mb": 1200,
+      "ram_mb": 2000,
+      "use_case": "production",
+      "description": "🆕 OpenVINO 2025.4. Optimized for XMX. Best for RAG pipelines.",
+      "device": "CPU",
+      "avg_ms": 5,
+      "openvino_format": "openvino-int4"
+    },
+    {
+      "id": "openvino-bge-int8",
+      "provider": "openvino",
+      "name": "BGE Small EN v1.5 INT8",
+      "badge": "🎯 Качество",
+      "model_id": "bge-small-en-v1.5",
+      "gpu_architectures": ["cpu", "intel-gpu"],
+      "gpu_support": true,
+      "language": "en",
+      "context_tokens": 512,
+      "dimensions": 384,
+      "size_mb": 32,
+      "ram_mb": 300,
+      "benchmark_toks": 22126,
+      "use_case": "production",
+      "description": "Лучший баланс качества/скорости (22K tok/s). 300MB RAM.",
+      "device": "CPU",
+      "avg_ms": 10,
+      "openvino_format": "onnx-int8"
+    },
+    {
+      "id": "openvino-gte-int8",
+      "provider": "openvino",
+      "name": "GTE Small INT8",
+      "badge": "🎯 Качество",
+      "model_id": "gte-small",
+      "gpu_architectures": ["cpu", "intel-gpu"],
+      "gpu_support": true,
+      "language": "en",
+      "context_tokens": 512,
+      "dimensions": 384,
+      "size_mb": 32,
+      "ram_mb": 300,
+      "benchmark_toks": 24400,
+      "use_case": "production",
+      "description": "Alibaba GTE (24K tok/s). Хорошее качество для code search. 87 chunks/s.",
+      "device": "CPU",
+      "avg_ms": 11.5,
+      "openvino_format": "onnx-int8"
+    },
+    {
+      "id": "openvino-multilingual-e5-int8",
+      "provider": "openvino",
+      "name": "Multilingual E5 Small INT8",
+      "badge": "🌍 94 языка",
+      "model_id": "multilingual-e5-small",
+      "gpu_architectures": ["cpu", "intel-gpu"],
+      "gpu_support": true,
+      "language": "multi",
+      "context_tokens": 512,
+      "dimensions": 384,
+      "size_mb": 118,
+      "ram_mb": 400,
+      "benchmark_toks": 19290,
+      "use_case": "multilingual",
+      "description": "94 языка (19K tok/s). RU/CN/JP комментарии. 69 chunks/s.",
+      "device": "CPU",
+      "avg_ms": 14.6,
+      "openvino_format": "onnx-int8"
     }
   ],
   "default_models": {
     "tei": "nomic-embed-v1.5",
-    "ollama": "ollama-nomic-embed",
+    "ollama": "ollama-granite-en",
+    "openvino": "openvino-minilm-int8",
     "memory": null
   }
 }

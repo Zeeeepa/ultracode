@@ -10,14 +10,17 @@
  */
 
 import { z } from "zod";
+import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
-import { paginate, SAFE_LIMITS, MAX_PAGE_SIZE } from "../response-limits.js";
+import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 
 // =============================================================================
 // RESET GRAPH
 // =============================================================================
 
-const ResetGraphSchema = z.object({});
+const ResetGraphSchema = z.object({
+  projectPath: projectPathParam,
+});
 
 export class ResetGraphToolHandler extends BaseToolHandler<z.infer<typeof ResetGraphSchema>> {
   protected parseArgs(args: unknown) {
@@ -40,6 +43,7 @@ export class ResetGraphToolHandler extends BaseToolHandler<z.infer<typeof ResetG
 
 const CleanIndexSchema = z.object({
   directory: z.string().optional(),
+  projectPath: projectPathParam,
 });
 
 export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanIndexSchema>> {
@@ -84,6 +88,7 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
 // =============================================================================
 
 const GetGraphSchema = z.object({
+  projectPath: projectPathParam,
   entityTypes: z.array(z.string()).optional(),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.graphNodes),
@@ -148,7 +153,9 @@ export class GetGraphToolHandler extends BaseToolHandler<z.infer<typeof GetGraph
 // GET GRAPH STATS
 // =============================================================================
 
-const GetGraphStatsSchema = z.object({});
+const GetGraphStatsSchema = z.object({
+  projectPath: projectPathParam,
+});
 
 export class GetGraphStatsToolHandler extends BaseToolHandler<z.infer<typeof GetGraphStatsSchema>> {
   protected parseArgs(args: unknown) {
@@ -169,7 +176,9 @@ export class GetGraphStatsToolHandler extends BaseToolHandler<z.infer<typeof Get
 // GET GRAPH HEALTH
 // =============================================================================
 
-const GetGraphHealthSchema = z.object({});
+const GetGraphHealthSchema = z.object({
+  projectPath: projectPathParam,
+});
 
 export class GetGraphHealthToolHandler extends BaseToolHandler<z.infer<typeof GetGraphHealthSchema>> {
   protected parseArgs(args: unknown) {

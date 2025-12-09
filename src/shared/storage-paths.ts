@@ -109,11 +109,12 @@ export function getCoreLockPath(): string {
 
 /**
  * Generate a stable hash for a project path
+ * Uses xxHash (initialized at module load, no fallback race condition)
  */
 export function hashProjectPath(projectPath: string): string {
   // Normalize path for consistent hashing
   const normalized = projectPath.toLowerCase().replace(/\\/g, "/").replace(/\/$/, "");
-  return hashText(normalized).slice(0, 16);
+  return hashText(normalized);
 }
 
 /**

@@ -226,27 +226,20 @@ export async function runPyrightAnalysis(
 /**
  * Get diagnostics for a specific file
  */
-export async function getFileDiagnostics(
-  filePath: string,
-): Promise<PyrightDiagnostic[]> {
+export async function getFileDiagnostics(filePath: string): Promise<PyrightDiagnostic[]> {
   const result = await runPyrightAnalysis(filePath);
 
   if (!result) {
     return [];
   }
 
-  return result.generalDiagnostics.filter(
-    (d) => d.file === filePath || d.file.endsWith(filePath.replace(/\\/g, "/")),
-  );
+  return result.generalDiagnostics.filter((d) => d.file === filePath || d.file.endsWith(filePath.replace(/\\/g, "/")));
 }
 
 /**
  * Enhance parsed entities with Pyright type information
  */
-export async function enhanceWithPyrightTypes(
-  entities: ParsedEntity[],
-  filePath: string,
-): Promise<void> {
+export async function enhanceWithPyrightTypes(entities: ParsedEntity[], filePath: string): Promise<void> {
   const diagnostics = await getFileDiagnostics(filePath);
 
   if (diagnostics.length === 0) {
@@ -334,6 +327,4 @@ if __name__ == "__main__":
 // EXPORTS
 // =============================================================================
 
-export {
-  findPyright,
-};
+export { findPyright };

@@ -140,6 +140,7 @@ async function execNode(
       timeout: options.timeout,
       encoding: "utf-8",
       maxBuffer: 50 * 1024 * 1024, // 50MB buffer
+      windowsHide: true,
     });
 
     return {
@@ -185,6 +186,7 @@ export function execSync(command: string, options: ShellOptions = {}): ShellResu
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       maxBuffer: 50 * 1024 * 1024,
+      windowsHide: true,
     });
 
     return {
@@ -460,8 +462,6 @@ const SOURCE_EXTENSIONS = new Set([
   ".html",
   ".htm",
   ".xml",
-  ".vba",
-  ".cs",
 ]);
 
 /** Directories to skip when counting source files */

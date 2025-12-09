@@ -35,8 +35,13 @@ import { isBunRuntime, loadSQLiteModule } from "./sqlite-adapter.js";
  * Uses centralized storage in AppData if project path is available.
  */
 function getDefaultDbPath(): string {
-  const projectPath = getCurrentIndexingDirectory() || process.cwd();
+  const indexingDir = getCurrentIndexingDirectory();
+  const cwd = process.cwd();
+  const projectPath = indexingDir || cwd;
   const paths = getProjectPaths(projectPath);
+  console.error(
+    `[SQLiteManager] getDefaultDbPath: indexingDir=${indexingDir}, cwd=${cwd}, resolved=${projectPath}, dbPath=${paths.graphDbPath}`,
+  );
   return paths.graphDbPath;
 }
 const WAL_AUTOCHECKPOINT = DATABASE_CONSTANTS.WAL_AUTOCHECKPOINT;
@@ -415,17 +420,64 @@ export class SQLiteManager {
 // =============================================================================
 // 5. SINGLETON INSTANCE
 // =============================================================================
-
 let instance: SQLiteManager | null = null;
+const projectManagers: Map<string, SQLiteManager> = new Map();
 
 /**
- * Get singleton SQLiteManager instance
+ * Get singleton SQLiteManager instance (uses default path from indexing context)
  */
 export function getSQLiteManager(config?: SQLiteConfig): SQLiteManager {
   if (!instance) {
     instance = new SQLiteManager(config);
   }
   return instance;
+}
+
+/**
+ * Get or create SQLiteManager for a specific project path.
+ * Uses centralized storage in AppData with path-based hash.
+ *
+ * @param projectPath - Absolute path to the project directory
+ * @returns SQLiteManager instance for that project
+ */
+export function getProjectSQLiteManager(projectPath: string): SQLiteManager {
+  const paths = getProjectPaths(projectPath);
+  const dbPath = paths.graphDbPath;
+
+  // Check if we already have a manager for this path
+  if (projectManagers.has(dbPath)) {
+    const existing = projectManagers.get(dbPath)!;
+    if (existing.isOpen()) {
+      return existing;
+    }
+    // Manager exists but closed, remove and recreate
+    projectManagers.delete(dbPath);
+  }
+
+  // Create new manager for this project
+  console.error(`[SQLiteManager] Creating project-specific manager for: ${projectPath}`);
+  console.error(`[SQLiteManager] Database path: ${dbPath}`);
+
+  const manager = new SQLiteManager({ path: dbPath });
+  manager.initialize();
+  projectManagers.set(dbPath, manager);
+
+  return manager;
+}
+
+/**
+ * Close all project managers
+ */
+export function closeAllProjectManagers(): void {
+  for (const [path, manager] of projectManagers.entries()) {
+    try {
+      manager.close();
+      console.error(`[SQLiteManager] Closed project manager: ${path}`);
+    } catch (error) {
+      console.error(`[SQLiteManager] Error closing manager ${path}:`, error);
+    }
+  }
+  projectManagers.clear();
 }
 
 /**
@@ -436,4 +488,5 @@ export function resetSQLiteManager(): void {
     instance.close();
     instance = null;
   }
+  closeAllProjectManagers();
 }

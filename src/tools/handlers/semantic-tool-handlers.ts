@@ -11,6 +11,7 @@
  */
 
 import { z } from "zod";
+import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 
@@ -20,6 +21,7 @@ import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 
 const SemanticSearchSchema = z.object({
   query: z.string().describe("Natural language search query"),
+  projectPath: projectPathParam,
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   entityTypes: z.array(z.string()).optional().describe("Filter by entity types (function, class, interface, etc.)"),
@@ -31,6 +33,15 @@ const SemanticSearchSchema = z.object({
     .default(false)
     .describe("Expand results with graph neighbors (callers, dependencies, inheritors)"),
   expansionDepth: z.number().optional().default(1).describe("Graph traversal depth for expansion (1 or 2 hops)"),
+  // New filters based on parser-extracted data
+  minCyclomatic: z.number().optional().describe("Filter: minimum cyclomatic complexity"),
+  maxCyclomatic: z.number().optional().describe("Filter: maximum cyclomatic complexity"),
+  hasExceptions: z.boolean().optional().describe("Filter: must have try-catch blocks"),
+  hasLoops: z.boolean().optional().describe("Filter: must have loops"),
+  hasAwaits: z.boolean().optional().describe("Filter: must have await expressions (async code)"),
+  hasDocumentation: z.boolean().optional().describe("Filter: must have documentation/docstrings"),
+  isDeprecated: z.boolean().optional().describe("Filter: deprecated entities only"),
+  minCallCount: z.number().optional().describe("Filter: minimum number of function calls"),
 });
 
 export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof SemanticSearchSchema>> {
@@ -39,22 +50,91 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
   }
 
   protected async execute(args: z.infer<typeof SemanticSearchSchema>): Promise<ToolResult> {
+    // Project context validation
+    const resolvedPath = this.resolveProjectPath(args);
+    const currentProject = this.getProjectContext().getCurrentProject();
+
+    if (args.projectPath && resolvedPath !== currentProject) {
+      // Check if requested project is indexed
+      if (!this.isProjectIndexed(resolvedPath)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: false,
+                  error: `Project not indexed: ${resolvedPath}`,
+                  hint: "Run 'index' tool on the target directory first",
+                  currentProject,
+                  requestedProject: resolvedPath,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      // Warn that cross-project search requires project switch
+      console.warn(
+        `[SemanticSearch] Cross-project search requested. Current: ${currentProject}, Requested: ${resolvedPath}`,
+      );
+    }
+
     const semanticAgent = await this.context.getSemanticAgent();
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    // Fetch more results for pagination
+    // Fetch more results for pagination and filtering
     const allResults = await semanticAgent.searchSimilar(args.query, {
-      limit: 500, // Fetch more for accurate pagination
+      limit: 1000, // Fetch more for accurate filtering and pagination
       entityTypes: args.entityTypes,
       minSimilarity: args.minSimilarity,
     });
 
+    // Apply metadata-based filters
+    let filteredResults = allResults;
+    const hasFilters =
+      args.minCyclomatic !== undefined ||
+      args.maxCyclomatic !== undefined ||
+      args.hasExceptions !== undefined ||
+      args.hasLoops !== undefined ||
+      args.hasAwaits !== undefined ||
+      args.hasDocumentation !== undefined ||
+      args.isDeprecated !== undefined ||
+      args.minCallCount !== undefined;
+
+    if (hasFilters) {
+      filteredResults = allResults.filter((r: any) => {
+        const meta = r.metadata || {};
+
+        // Complexity filters
+        if (args.minCyclomatic !== undefined && (meta.cyclomatic || 0) < args.minCyclomatic) return false;
+        if (args.maxCyclomatic !== undefined && (meta.cyclomatic || Infinity) > args.maxCyclomatic) return false;
+
+        // Control flow filters
+        if (args.hasExceptions !== undefined && meta.hasExceptions !== args.hasExceptions) return false;
+        if (args.hasLoops !== undefined && meta.hasLoops !== args.hasLoops) return false;
+        if (args.hasAwaits !== undefined && meta.hasAwaits !== args.hasAwaits) return false;
+
+        // Documentation filters
+        if (args.hasDocumentation !== undefined && meta.hasDocumentation !== args.hasDocumentation) return false;
+        if (args.isDeprecated !== undefined && meta.isDeprecated !== args.isDeprecated) return false;
+
+        // Call count filter
+        if (args.minCallCount !== undefined && (meta.callCount || 0) < args.minCallCount) return false;
+
+        return true;
+      });
+    }
+
     // Expand results with graph neighbors if requested
-    let expandedResults = allResults;
+    let expandedResults = filteredResults;
     let expansionStats = { expanded: false, neighborsAdded: 0 };
 
-    if (args.expandRelated && allResults.length > 0) {
-      const expansion = await this.expandWithGraphNeighbors(allResults, args.expansionDepth, args.minSimilarity);
+    if (args.expandRelated && filteredResults.length > 0) {
+      const expansion = await this.expandWithGraphNeighbors(filteredResults, args.expansionDepth, args.minSimilarity);
       expandedResults = expansion.results;
       expansionStats = { expanded: true, neighborsAdded: expansion.neighborsAdded };
     }
@@ -71,15 +151,69 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
               count: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
               ...(expansionStats.expanded ? { expansion: expansionStats } : {}),
-              results: paginatedResult.data.map((r: any) => ({
-                id: r.id,
-                name: r.name || r.metadata?.name,
-                type: r.type || r.metadata?.entityType,
-                similarity: r.similarity,
-                filePath: r.filePath || r.metadata?.filePath,
-                ...(r.isExpanded ? { isExpanded: true, relationshipType: r.relationshipType } : {}),
-                ...(args.includeContent && r.content ? { content: r.content } : {}),
-              })),
+              results: paginatedResult.data.map((r: any) => {
+                const meta = r.metadata || {};
+                return {
+                  id: r.id,
+                  name: r.name || meta.name,
+                  type: r.type || meta.entityType || meta.type,
+                  similarity: r.similarity,
+                  filePath: r.filePath || meta.filePath || meta.path,
+                  language: meta.language,
+                  // Complexity metrics (if available)
+                  ...(meta.cyclomatic
+                    ? {
+                        complexity: {
+                          cyclomatic: meta.cyclomatic,
+                          cognitive: meta.cognitive,
+                          linesOfCode: meta.linesOfCode,
+                          nestingDepth: meta.nestingDepth,
+                        },
+                      }
+                    : {}),
+                  // Control flow info (if available)
+                  ...(meta.hasBranches !== undefined
+                    ? {
+                        controlFlow: {
+                          hasBranches: meta.hasBranches,
+                          hasLoops: meta.hasLoops,
+                          hasExceptions: meta.hasExceptions,
+                          hasAwaits: meta.hasAwaits,
+                          branchCount: meta.branchCount,
+                          loopCount: meta.loopCount,
+                          returnCount: meta.returnCount,
+                        },
+                      }
+                    : {}),
+                  // Call info (if available)
+                  ...(meta.callCount
+                    ? {
+                        calls: {
+                          count: meta.callCount,
+                          hasAsync: meta.hasAsyncCalls,
+                        },
+                      }
+                    : {}),
+                  // Documentation info (if available)
+                  ...(meta.hasDocumentation
+                    ? {
+                        documentation: {
+                          hasDocumentation: true,
+                          hasParams: meta.hasParams,
+                          hasExamples: meta.hasExamples,
+                          isDeprecated: meta.isDeprecated,
+                        },
+                      }
+                    : {}),
+                  // Type info
+                  ...(meta.returnType ? { returnType: meta.returnType } : {}),
+                  ...(meta.paramCount ? { paramCount: meta.paramCount } : {}),
+                  // Expansion info
+                  ...(r.isExpanded ? { isExpanded: true, relationshipType: r.relationshipType } : {}),
+                  // Content (if requested)
+                  ...(args.includeContent && r.content ? { content: r.content } : {}),
+                };
+              }),
             },
             null,
             2,
@@ -222,6 +356,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
 
 const FindSimilarCodeSchema = z.object({
   code: z.string().describe("Code snippet to find similar code for"),
+  projectPath: projectPathParam,
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   minSimilarity: z.number().optional().default(0.7).describe("Minimum similarity threshold (0.0-1.0)"),
@@ -277,6 +412,7 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
 // =============================================================================
 
 const DetectCodeClonesSchema = z.object({
+  projectPath: projectPathParam,
   minSimilarity: z.number().optional().default(0.85),
   minLines: z.number().optional().default(5),
   entityTypes: z.array(z.string()).optional(),
@@ -425,6 +561,7 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
 
 const CrossLanguageSearchSchema = z.object({
   query: z.string().describe("Search query"),
+  projectPath: projectPathParam,
   languages: z.array(z.string()).optional().describe("Languages to search in"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
@@ -477,6 +614,7 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
 
 const PatternSearchSchema = z.object({
   pattern: z.string(),
+  projectPath: projectPathParam,
   mode: z.enum(["entity", "content", "semantic", "hybrid"]).optional().default("hybrid"),
   entityTypes: z.array(z.string()).optional(),
   offset: z.number().optional().default(0),

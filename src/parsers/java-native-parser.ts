@@ -1,20 +1,14 @@
 /**
  * Java Native Parser
  *
- * Uses regex-based parsing for Java files with optional JavaParser JAR integration.
- * When JavaParser is available, provides full AST parsing.
+ * Uses ANTLR-based parsing for Java files with regex fallback.
+ * Provides accurate AST parsing without external dependencies.
  *
- * Philosophy: Java developers always have JDK installed.
- *
- * No native modules required - uses subprocess.
+ * No native modules or JDK required - uses bundled ANTLR parser.
  */
 
-import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
-import {
-  initializeJavaParser,
-  isJavaParserAvailable,
-  parseWithJavaParser,
-} from "./javaparser-integration.js";
+import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { JavaAntlrParser } from "./java-antlr-parser.js";
 
 // =============================================================================
 // PARSER STATS
@@ -36,7 +30,7 @@ export interface ParserStats {
 // =============================================================================
 
 export class JavaNativeParser {
-  private javaParserEnabled = true; // Try to use JavaParser by default
+  private useAntlr = true; // Use ANTLR parser by default
   private stats: ParserStats = {
     filesParsed: 0,
     cacheHits: 0,
@@ -52,25 +46,14 @@ export class JavaNativeParser {
    * Initialize the parser
    */
   async initialize(): Promise<void> {
-    console.error("[JavaNativeParser] Initializing...");
-
-    // Try to initialize JavaParser
-    if (this.javaParserEnabled) {
-      const initialized = await initializeJavaParser();
-      if (initialized) {
-        console.error("[JavaNativeParser] Initialized with JavaParser");
-        return;
-      }
-    }
-
-    console.error("[JavaNativeParser] Initialized (regex-based fallback)");
+    console.error("[JavaNativeParser] Initializing with ANTLR parser...");
   }
 
   /**
-   * Enable or disable JavaParser integration
+   * Enable or disable ANTLR parser (falls back to regex if disabled)
    */
-  setJavaParserEnabled(enabled: boolean): void {
-    this.javaParserEnabled = enabled;
+  setAntlrEnabled(enabled: boolean): void {
+    this.useAntlr = enabled;
   }
 
   /**
@@ -83,22 +66,30 @@ export class JavaNativeParser {
   /**
    * Parse a Java file
    */
-  async parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult> {
+  async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
+    console.error(`[JavaNativeParser] Parsing file: ${filePath} (${content.length} bytes)`);
 
     try {
       let entities: ParsedEntity[];
-      let errors: Array<{ message: string; location?: { line: number; column: number } }> = [];
+      let relationships: EntityRelationship[] | undefined;
+      const errors: Array<{ message: string; location?: { line: number; column: number } }> = [];
 
-      // Try JavaParser first if available
-      if (this.javaParserEnabled && isJavaParserAvailable()) {
-        const result = await parseWithJavaParser(filePath, content);
-        entities = result.entities;
-        errors = result.errors;
+      // Try ANTLR parser first
+      if (this.useAntlr) {
+        try {
+          console.error(`[JavaNativeParser] Trying ANTLR parser...`);
+          const antlrResult = JavaAntlrParser.parse(filePath, content);
+          entities = antlrResult.entities;
+          relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;
+          console.error(
+            `[JavaNativeParser] ANTLR success: ${entities.length} entities, ${relationships?.length || 0} relationships`,
+          );
+        } catch (antlrError) {
+          console.error(`[JavaNativeParser] ANTLR parser failed, using regex fallback: ${antlrError}`);
+          entities = this.parseJava(filePath, content);
+          console.error(`[JavaNativeParser] Regex fallback: ${entities.length} entities`);
+        }
       } else {
         // Fallback to regex-based parsing
         entities = this.parseJava(filePath, content);
@@ -109,13 +100,13 @@ export class JavaNativeParser {
       // Update stats
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += parseTimeMs;
-      this.stats.avgParseTimeMs =
-        this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
 
       return {
         filePath,
         language: "java" as SupportedLanguage,
         entities,
+        relationships,
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
@@ -149,7 +140,7 @@ export class JavaNativeParser {
 
     // Package declaration
     const packageMatch = /^\s*package\s+([\w.]+)\s*;/m.exec(content);
-    if (packageMatch && packageMatch[1]) {
+    if (packageMatch?.[1]) {
       entities.push({
         name: packageMatch[1],
         type: "module",
@@ -200,19 +191,13 @@ export class JavaNativeParser {
       if (extendsClause) {
         if (kind === "interface") {
           // For interfaces, extends means interface inheritance
-          interfaces.push(
-            ...extendsClause.split(",").map((s) => s.trim().replace(/<[^>]+>/, "")),
-          );
+          interfaces.push(...extendsClause.split(",").map((s) => s.trim().replace(/<[^>]+>/, "")));
         } else {
-          baseClasses.push(
-            ...extendsClause.split(",").map((s) => s.trim().replace(/<[^>]+>/, "")),
-          );
+          baseClasses.push(...extendsClause.split(",").map((s) => s.trim().replace(/<[^>]+>/, "")));
         }
       }
       if (implementsClause) {
-        interfaces.push(
-          ...implementsClause.split(",").map((s) => s.trim().replace(/<[^>]+>/, "")),
-        );
+        interfaces.push(...implementsClause.split(",").map((s) => s.trim().replace(/<[^>]+>/, "")));
       }
 
       const entity: ParsedEntity = {
@@ -277,14 +262,8 @@ export class JavaNativeParser {
       if (!name) continue;
 
       // Only include if this looks like a constructor (preceded by class/record definition)
-      const precedingContent = content.substring(
-        Math.max(0, match.index - 200),
-        match.index,
-      );
-      if (
-        precedingContent.includes(`class ${name}`) ||
-        precedingContent.includes(`record ${name}`)
-      ) {
+      const precedingContent = content.substring(Math.max(0, match.index - 200), match.index);
+      if (precedingContent.includes(`class ${name}`) || precedingContent.includes(`record ${name}`)) {
         entities.push({
           name: "constructor",
           type: "method",
@@ -307,11 +286,7 @@ export class JavaNativeParser {
       if (!type || !name) continue;
 
       // Skip method-local variables
-      if (
-        !modifiers.includes("public") &&
-        !modifiers.includes("private") &&
-        !modifiers.includes("protected")
-      ) {
+      if (!modifiers.includes("public") && !modifiers.includes("private") && !modifiers.includes("protected")) {
         continue;
       }
 
@@ -349,10 +324,8 @@ export class JavaNativeParser {
       if (!trimmed) continue;
 
       // Pattern: [final] Type name
-      const paramMatch = /(?:final\s+)?(\w+(?:\s*<[^>]+>)?(?:\[\])*)\s+(\w+)/.exec(
-        trimmed,
-      );
-      if (paramMatch && paramMatch[1] && paramMatch[2]) {
+      const paramMatch = /(?:final\s+)?(\w+(?:\s*<[^>]+>)?(?:\[\])*)\s+(\w+)/.exec(trimmed);
+      if (paramMatch?.[1] && paramMatch[2]) {
         params.push({
           name: paramMatch[2],
           type: paramMatch[1],
@@ -366,10 +339,7 @@ export class JavaNativeParser {
   /**
    * Get location from character index
    */
-  private getLocationFromIndex(
-    content: string,
-    index: number,
-  ): ParsedEntity["location"] {
+  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
     let line = 1;
     let column = 0;
     for (let i = 0; i < index; i++) {
@@ -390,12 +360,7 @@ export class JavaNativeParser {
   /**
    * Parse with incremental support (just calls regular parse)
    */
-  async parseIncremental(
-    filePath: string,
-    content: string,
-    contentHash: string,
-    _edits: any[],
-  ): Promise<ParseResult> {
+  async parseIncremental(filePath: string, content: string, contentHash: string, _edits: any[]): Promise<ParseResult> {
     return this.parse(filePath, content, contentHash);
   }
 

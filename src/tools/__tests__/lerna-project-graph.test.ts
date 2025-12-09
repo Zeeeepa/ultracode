@@ -1,3 +1,4 @@
+import { describe, expect, it } from "bun:test";
 import { getLernaProjectGraph } from "../lerna-project-graph.js";
 
 describe("getLernaProjectGraph", () => {

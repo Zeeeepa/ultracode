@@ -39,10 +39,15 @@ export class OllamaProvider implements EmbeddingProvider {
       checkServer: opts.checkServer !== false,
     };
 
+    // Determine maxTokens based on model
+    // snowflake-arctic-embed2 supports 8192, most others 512
+    const maxTokens = opts.model.includes("arctic") ? 8192 : 512;
+
     this.info = {
       name: "ollama",
       model: opts.model,
       supportsBatch: false,
+      maxTokens,
     };
   }
 

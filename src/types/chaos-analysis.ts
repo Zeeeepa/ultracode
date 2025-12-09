@@ -275,6 +275,9 @@ export interface ChaosAnalysisSummary {
     totalOperations: number;
     chaosScore: number; // 0-100
     divergenceRisk: DivergenceRisk;
+    raceRisk: RaceRisk; // Race condition risk level
+    writers: number; // Number of mutation points
+    conflicts: number; // Number of detected race conflicts
   };
   hotspots: Array<{
     // Top 5 most problematic locations
@@ -282,6 +285,13 @@ export interface ChaosAnalysisSummary {
     entity: string;
     issues: string[];
     priority: "high" | "medium" | "low";
+  }>;
+  raceConflicts: Array<{
+    // Detected race conditions
+    pattern: RacePatternType;
+    severity: RaceRisk;
+    locations: string[]; // "file:line" format
+    suggestion: string;
   }>;
   quickFixes: string[]; // Simple improvements
   refactoringStrategy: RefactoringStrategy;
@@ -295,6 +305,7 @@ export interface ChaosAnalysisResult {
   statePattern: StatePattern;
   flowMap: StateFlowMap;
   metrics: ChaosMetrics;
+  raceAnalysis: RaceAnalysis; // Race condition detection results
   refactoringPlan: RefactoringPlan;
   summary: ChaosAnalysisSummary;
   timestamp: string;
@@ -317,4 +328,80 @@ export interface ChaosAnalysisOptions {
   maxDepth?: number; // Maximum trace depth (default: 10)
   excludePatterns?: string[]; // Files to exclude
   technology?: TechnologyContext; // Override auto-detection
+}
+
+// ============================================================================
+// Race Condition Detection
+// ============================================================================
+
+/**
+ * Type of race condition pattern
+ */
+export type RacePatternType =
+  | "check-then-act" // if (state) { ...modify state }
+  | "read-modify-write" // x = state; x++; state = x
+  | "competing-mutations" // Multiple writers without sync
+  | "competing-resets" // Multiple places reset same state
+  | "async-boundary" // Async operations on shared state
+  | "event-handler-race"; // Event handlers competing for state
+
+/**
+ * Risk level for race condition
+ */
+export type RaceRisk = "none" | "low" | "medium" | "high" | "critical";
+
+/**
+ * Single mutation point in code
+ */
+export interface MutationPoint {
+  file: string;
+  line: number;
+  entityId?: string;
+  entityName: string; // Function/method containing the mutation
+  mutationType: "write" | "reset" | "increment" | "toggle" | "conditional-write";
+  condition?: string; // Guard condition if present (e.g., "if (isProcessing)")
+  isAsync: boolean; // Inside async function or callback
+  hasLock: boolean; // Protected by mutex/semaphore/lock pattern
+  code: string; // Code snippet
+}
+
+/**
+ * Detected race condition conflict
+ */
+export interface RaceConflict {
+  pattern: RacePatternType;
+  severity: RaceRisk;
+  stateIdentifier: string;
+  description: string;
+  locations: MutationPoint[];
+  sharedCondition?: string; // Same condition used in multiple places
+  explanation: string; // Why this is a race
+  suggestion: string; // How to fix
+}
+
+/**
+ * Race detection analysis for a state variable
+ */
+export interface RaceAnalysis {
+  stateIdentifier: string;
+  readers: number; // Total read locations
+  writers: number; // Total write locations
+  asyncWriters: number; // Writers in async context
+  unprotectedWriters: number; // Writers without synchronization
+  raceRisk: RaceRisk;
+  raceReason?: string; // Human-readable explanation
+  conflicts: RaceConflict[];
+  mutations: MutationPoint[];
+}
+
+/**
+ * Formula inputs for race risk calculation
+ */
+export interface RaceRiskFactors {
+  writerCount: number;
+  asyncBoundaries: number;
+  sharedConditions: number; // Same condition in multiple mutations
+  oppositeConditions: number; // Opposite conditions (if x vs if !x)
+  hasLocks: boolean;
+  resetPoints: number; // Places that reset/clear the state
 }

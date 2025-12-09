@@ -119,6 +119,7 @@ export class SemanticMergeToolHandler extends BaseToolHandler<z.infer<typeof Sem
       return execSync("git symbolic-ref --short HEAD", {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
     } catch {
       return "HEAD";
