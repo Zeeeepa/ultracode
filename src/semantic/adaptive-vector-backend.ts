@@ -154,7 +154,6 @@ export class AdaptiveVectorBackend {
       ".py",
       ".c",
       ".cpp",
-      ".cs",
       ".java",
       ".go",
       ".rs",
@@ -168,7 +167,6 @@ export class AdaptiveVectorBackend {
       ".html",
       ".htm",
       ".xml",
-      ".vba",
     ];
     const excludeDirs = ["node_modules", ".git", "dist", "build", "bin", "obj", ".vs", "packages"];
 

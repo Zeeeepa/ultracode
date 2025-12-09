@@ -32,7 +32,7 @@ import { UnifiedParser } from "./unified-parser.js";
 // =============================================================================
 const DEFAULT_CACHE_SIZE = 100 * 1024 * 1024; // 100MB
 const DEFAULT_BATCH_SIZE = 10;
-const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds for complex files
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
@@ -299,6 +299,17 @@ export class IncrementalParser {
 
     const totalTimeMs = Date.now() - startTime;
 
+    // DEBUG: Log final stats
+    console.error(
+      `[IncrementalParser.parseBatch] DONE: results=${results.length}, errors=${errors.length}, total=${files.length}`,
+    );
+    if (errors.length > 0) {
+      console.error(`[IncrementalParser.parseBatch] First 5 errors:`);
+      for (const e of errors.slice(0, 5)) {
+        console.error(`  - ${e.file}: ${e.error.message}`);
+      }
+    }
+
     return {
       results,
       errors,
@@ -485,7 +496,6 @@ export class IncrementalParser {
     if (ext === ".css" || ext === ".scss" || ext === ".sass" || ext === ".less") return "css";
     if (ext === ".html" || ext === ".htm") return "html";
     if (ext === ".xml") return "xml";
-    if (ext === ".vba" || ext === ".bas" || ext === ".cls" || ext === ".frm") return "vba";
     // Default to javascript for unknown extensions to satisfy ParseResult typing
     return "javascript";
   }

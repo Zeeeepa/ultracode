@@ -14,10 +14,15 @@ export class TransformersProvider implements EmbeddingProvider {
 
   constructor(private opts: TransformersOptions) {
     this.log = opts.logger;
+    // Most transformer models have 512 token limit
+    // e5-* models may have different limits
+    const maxTokens = opts.model.includes("e5-large") ? 512 : 512;
+
     this.info = {
       name: "transformers",
       model: opts.model,
       supportsBatch: true,
+      maxTokens,
     };
   }
 

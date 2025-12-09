@@ -11,7 +11,7 @@
  * No native modules required.
  */
 
-import { spawn, execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
@@ -59,9 +59,7 @@ export class BashNativeParser {
       console.error("[BashNativeParser] Initialized (shfmt available)");
     } catch {
       this.shfmtAvailable = false;
-      console.error(
-        "[BashNativeParser] shfmt not found, using regex parser",
-      );
+      console.error("[BashNativeParser] shfmt not found, using regex parser");
     }
   }
 
@@ -83,11 +81,7 @@ export class BashNativeParser {
   /**
    * Parse a Bash file
    */
-  async parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult> {
+  async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
 
     try {
@@ -104,8 +98,7 @@ export class BashNativeParser {
       // Update stats
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += parseTimeMs;
-      this.stats.avgParseTimeMs =
-        this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
 
       return {
         filePath,
@@ -139,24 +132,21 @@ export class BashNativeParser {
   /**
    * Parse using shfmt
    */
-  private parseWithShfmt(
-    filePath: string,
-    content: string,
-  ): Promise<BashParseResult> {
+  private parseWithShfmt(filePath: string, content: string): Promise<BashParseResult> {
     return new Promise((resolve) => {
       const proc = spawn("shfmt", ["-tojson"], {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
       let stdout = "";
-      let stderr = "";
+      let _stderr = "";
 
       proc.stdout.on("data", (data) => {
         stdout += data.toString();
       });
 
       proc.stderr.on("data", (data) => {
-        stderr += data.toString();
+        _stderr += data.toString();
       });
 
       proc.stdin.write(content);
@@ -188,10 +178,7 @@ export class BashNativeParser {
   /**
    * Extract entities from shfmt AST
    */
-  private extractEntitiesFromShfmtAST(
-    ast: any,
-    filePath: string,
-  ): ParsedEntity[] {
+  private extractEntitiesFromShfmtAST(ast: any, filePath: string): ParsedEntity[] {
     const entities: ParsedEntity[] = [];
 
     const processNode = (node: any) => {
@@ -230,16 +217,13 @@ export class BashNativeParser {
   /**
    * Regex-based parser for Bash
    */
-  private parseWithRegex(
-    filePath: string,
-    content: string,
-  ): BashParseResult {
+  private parseWithRegex(filePath: string, content: string): BashParseResult {
     const entities: ParsedEntity[] = [];
     let match: RegExpExecArray | null;
 
     // Shebang
     const shebangMatch = /^#!\s*(.+)$/m.exec(content);
-    if (shebangMatch && shebangMatch[1]) {
+    if (shebangMatch?.[1]) {
       entities.push({
         name: shebangMatch[1],
         type: "module",
@@ -286,7 +270,7 @@ export class BashNativeParser {
       const name = match[1];
       if (!name || name === "function") continue;
       // Avoid duplicates
-      if (!entities.some(e => e.name === name && e.type === "function")) {
+      if (!entities.some((e) => e.name === name && e.type === "function")) {
         entities.push({
           name,
           type: "function",
@@ -336,10 +320,7 @@ export class BashNativeParser {
   /**
    * Get location from character index
    */
-  private getLocationFromIndex(
-    content: string,
-    index: number,
-  ): ParsedEntity["location"] {
+  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
     let line = 1;
     let column = 0;
     for (let i = 0; i < index; i++) {

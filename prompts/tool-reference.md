@@ -14,13 +14,60 @@ Index codebase for analysis. **Run once before using other tools.**
 | `fullScan` | boolean | false | Full scan without cache |
 
 ### `semantic_search`
-**Semantic search by meaning.** Understands natural language.
+**Semantic search by meaning.** Understands natural language. Returns rich metadata including complexity metrics, control flow info, call graphs, and documentation status.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `query` | string | **required** | Natural language search query |
 | `limit` | number | 10 | Max results |
 | `branch` | string | main | Branch to search |
+| `projectPath` | string | current | **Cross-project search:** path to another project |
+| `minCyclomatic` | number | - | Filter: minimum cyclomatic complexity |
+| `maxCyclomatic` | number | - | Filter: maximum cyclomatic complexity |
+| `hasExceptions` | boolean | - | Filter: must have try-catch blocks |
+| `hasLoops` | boolean | - | Filter: must have loops |
+| `hasAwaits` | boolean | - | Filter: must have await expressions (async code) |
+| `hasDocumentation` | boolean | - | Filter: must have documentation/docstrings |
+| `isDeprecated` | boolean | - | Filter: deprecated entities only |
+| `minCallCount` | number | - | Filter: minimum number of function calls |
+
+**Returns (enhanced):**
+```json
+{
+  "results": [{
+    "id": "...",
+    "name": "processData",
+    "type": "function",
+    "similarity": 0.89,
+    "filePath": "src/utils.ts",
+    "complexity": {
+      "cyclomatic": 8,
+      "cognitive": 12,
+      "linesOfCode": 45,
+      "nestingDepth": 3
+    },
+    "controlFlow": {
+      "hasBranches": true,
+      "hasLoops": true,
+      "hasExceptions": true,
+      "hasAwaits": false,
+      "branchCount": 5,
+      "loopCount": 2,
+      "returnCount": 3
+    },
+    "calls": {
+      "count": 12,
+      "hasAsync": false
+    },
+    "documentation": {
+      "hasDocumentation": true,
+      "hasParams": true,
+      "hasExamples": false,
+      "isDeprecated": false
+    }
+  }]
+}
+```
 
 ### `query`
 Natural language query about code.
@@ -306,3 +353,107 @@ Agent metrics (execution time, memory).
 
 ### `get_bus_stats`
 Message bus statistics.
+
+---
+
+## Tracing (Static Flow Analysis) — NEW
+
+### `trace_flow`
+**Trace execution from point A to B.** Finds all possible paths and analyzes state changes, conditions, and async boundaries.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `from` | string | **required** | Starting point (function name or semantic query) |
+| `to` | string | **required** | Ending point (function name or semantic query) |
+| `format` | enum | "sequence" | Output: `sequence` / `tree` / `graph` / `mermaid` |
+| `maxDepth` | number | 15 | Maximum traversal depth |
+| `trackStates` | boolean | true | Track state changes along paths |
+| `trackConditions` | boolean | true | Track conditions/branches |
+
+```
+trace_flow from="handleLogin" to="sendEmail" format="mermaid"
+```
+
+### `trace_backwards`
+**Backward trace** — why a method might not be called.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `target` | string | **required** | Target method to analyze |
+| `question` | enum | **required** | `why_not_called` / `what_affects` / `dependencies` |
+| `depth` | number | 15 | Backward traversal depth |
+| `includeStates` | boolean | true | Include state dependencies |
+| `includeEffects` | boolean | true | Include side effects |
+
+```
+trace_backwards target="sendNotification" question="why_not_called"
+```
+
+### `trace_data_flow`
+**Data flow trace** — how data flows from sources to affect target state.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `entryPoint` | string | **required** | Entry point function |
+| `targetState` | string | **required** | Target state to trace |
+| `dataSources` | string[] | auto | Data sources to analyze |
+| `trackTransformations` | boolean | true | Track data transformations |
+
+```
+trace_data_flow entryPoint="processOrder" targetState="orderTotal"
+```
+
+### `analyze_state_impact`
+**State impact analysis** — how state affects different scenarios.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `state` | string | **required** | State variable to analyze |
+| `scenarios` | object[] | **required** | Scenarios: `[{value: ..., label: "..."}]` |
+| `scope` | string | - | Scope of analysis (semantic query) |
+
+```
+analyze_state_impact state="isAuthenticated" scenarios=[{value: true, label: "Logged in"}, {value: false, label: "Guest"}]
+```
+
+### `find_decision_points`
+**Find all decision points** in a scenario's execution flow.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scenario` | string | **required** | Scenario to analyze |
+| `groupBy` | enum | "impact" | `impact` / `location` / `type` |
+| `includeGuards` | boolean | true | Include guard conditions |
+| `includeEffects` | boolean | true | Include side effects |
+
+**Decision point types:** validation, api_response, state_mutation, guard, loop, error_handling, feature_flag
+
+```
+find_decision_points scenario="user registration" groupBy="type"
+```
+
+---
+
+## Cross-Project Support — NEW
+
+### Using `projectPath` parameter
+
+Some tools support `projectPath` parameter for **cross-project operations**:
+
+```
+# Search in another project without switching context
+semantic_search query="authentication" projectPath="D:\\other\\project"
+
+# Index switches context automatically
+index directory="D:\\other\\project"
+```
+
+### Storage Location
+
+Each project has isolated databases:
+```
+%LOCALAPPDATA%\UltraScriptTools\projects\{hash}\
+├── graph.db      # Entity graph
+├── vectors.db    # Embeddings
+└── meta.json     # Metadata
+```

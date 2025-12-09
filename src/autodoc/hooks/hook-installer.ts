@@ -68,7 +68,7 @@ export async function getGitHooksDir(projectPath: string): Promise<string | null
 
     // Check for custom hooks path
     try {
-      const { stdout } = await execAsync("git config core.hooksPath", { cwd: projectPath });
+      const { stdout } = await execAsync("git config core.hooksPath", { cwd: projectPath, windowsHide: true });
       const customPath = stdout.trim();
       if (customPath) {
         return path.isAbsolute(customPath) ? customPath : path.join(projectPath, customPath);

@@ -308,6 +308,7 @@ function tryRebuild(): void {
     const rebuild = spawnSync(npmCommand, ["rebuild", "better-sqlite3"], {
       cwd: packageRoot,
       stdio: "inherit",
+      windowsHide: true,
     });
 
     if (rebuild.status !== 0) {

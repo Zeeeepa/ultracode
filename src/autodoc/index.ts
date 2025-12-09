@@ -149,3 +149,26 @@ export {
   OpenAIProvider,
   TGIProvider,
 } from "./llm/index.js";
+
+// =============================================================================
+// 9. WATCHER EXPORTS
+// =============================================================================
+
+export {
+  AutoDocWatcher,
+  type AutoDocWatcherConfig,
+  // Updater utils
+  diffExports,
+  // Module resolver utils
+  extractEntitiesFromContent,
+  extractExportsFromContent,
+  extractExportsFromFile,
+  findEntityLine,
+  generateExportDescription,
+  getAutoDocWatcher,
+  getModuleFiles,
+  getModuleForFile,
+  resetAutoDocWatcher,
+  type UpdateOptions,
+  updateAutodocContent,
+} from "./watcher/index.js";

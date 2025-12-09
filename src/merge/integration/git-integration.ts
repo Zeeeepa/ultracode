@@ -82,6 +82,7 @@ export class GitIntegration {
         cwd: this.config.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
 
       const commitHash = this.getCommitHash("HEAD");
@@ -114,6 +115,7 @@ export class GitIntegration {
         cwd: this.config.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
 
       return hash;
@@ -130,6 +132,7 @@ export class GitIntegration {
       execSync(`git rev-parse --verify ${branch}`, {
         cwd: this.config.repoPath,
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
       return true;
     } catch {
@@ -162,6 +165,7 @@ export class GitIntegration {
       execSync(`git checkout ${branch}`, {
         cwd: this.config.repoPath,
         stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
       });
 
       console.error(`[GitIntegration] Checked out branch: ${branch}`);
@@ -186,6 +190,7 @@ export class GitIntegration {
       execSync(`git checkout ${this.originalBranch}`, {
         cwd: this.config.repoPath,
         stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
       });
 
       console.error(`[GitIntegration] Restored original branch: ${this.originalBranch}`);
@@ -205,6 +210,7 @@ export class GitIntegration {
         cwd: this.config.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       return output.trim().length > 0;
@@ -223,6 +229,7 @@ export class GitIntegration {
         cwd: this.config.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       const changes: GitFileChange[] = [];
@@ -282,6 +289,7 @@ export class GitIntegration {
         cwd: this.config.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       // Parse shortstat: "3 files changed, 45 insertions(+), 12 deletions(-)"
@@ -319,6 +327,7 @@ export class GitIntegration {
         cwd: this.config.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
 
       return base;
@@ -341,6 +350,7 @@ export class GitIntegration {
         cwd: this.config.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       return content;
@@ -366,6 +376,7 @@ export class GitIntegration {
         cwd: this.config.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       return output
@@ -387,6 +398,7 @@ export class GitIntegration {
         cwd: this.config.repoPath,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
 
       return output

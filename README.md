@@ -112,14 +112,14 @@ bunx ultrascript-tools-mcp setup
 
 ## Доступные инструменты
 
-MCP-сервер предоставляет **50 инструментов** для анализа и модификации кода:
+MCP-сервер предоставляет **55+ инструментов** для анализа и модификации кода:
 
 #### Индексация и поиск
 | Инструмент | Описание |
 |------------|----------|
 | `index` | Индексация кодовой базы для анализа |
 | `query` | Запросы на естественном языке о коде |
-| `semantic_search` | Семантический поиск по смыслу кода |
+| `semantic_search` | Семантический поиск с фильтрами (complexity, flow, docs) |
 | `pattern_search` | Продвинутый поиск (regex/semantic/hybrid) |
 | `find_similar_code` | Поиск похожих фрагментов кода |
 | `cross_language_search` | Поиск по нескольким языкам |
@@ -187,6 +187,15 @@ MCP-сервер предоставляет **50 инструментов** дл
 | `clean_index` | Очистка индекса |
 | `lerna_project_graph` | Граф Lerna-монорепозитория |
 
+#### Статический анализ потока (NEW)
+| Инструмент | Описание |
+|------------|----------|
+| `trace_flow` | Трассировка от точки A к B с состояниями и Mermaid |
+| `trace_backwards` | Обратная трассировка — почему метод не вызывается |
+| `trace_data_flow` | Анализ потока данных к состоянию |
+| `analyze_state_impact` | Влияние состояния на сценарии |
+| `find_decision_points` | Точки решений в коде |
+
 #### Метрики и отладка
 | Инструмент | Описание |
 |------------|----------|
@@ -217,21 +226,60 @@ mcp:
 ```bash
 # Интерактивная настройка
 bunx ultrascript-tools-mcp setup
-
 ```
 
-**Сравнение провайдеров:**
+### Сравнение провайдеров эмбеддингов
 
-| Провайдер | Настройка | Производительность | Поддержка GPU | Требования |
-|-----------|-----------|-------------------|---------------|------------|
-| **TEI** | Docker | ⭐⭐⭐ Лучшая | RTX 20xx-50xx | Docker Desktop |
-| **Ollama** | Нативная | ⭐⭐ Хорошая | Все GPU вкл. RTX 50xx | Нет |
-| **Memory** | Нет | ⭐ Базовая | N/A | Нет |
+| Провайдер | Время/запрос | Batch | GPU | Установка | Рекомендация |
+|-----------|-------------|-------|-----|-----------|--------------|
+| **OpenVINO** | **1.3ms** | ✅ Native | Intel | `bun add openvino-node` | ⭐ Самый быстрый |
+| **TEI** | 5-15ms | ✅ Native | NVIDIA | Docker Desktop | Production с GPU |
+| **Ollama** | 10-50ms | ❌ | Все | ollama.ai | Простая установка |
+| **Memory** | <1ms | ✅ | N/A | Встроен | Без ML (hash) |
 
-**Расположение конфигурации:**
-- Windows: `%LOCALAPPDATA%\UltraScriptTools\semantic-config.json`
-- macOS: `~/Library/Application Support/UltraScriptTools/semantic-config.json`
-- Linux: `~/.config/ultrascript-tools/semantic-config.json`
+### Детальное сравнение производительности
+
+**CPU режим (без GPU):**
+| Провайдер | 1 запрос | 100 запросов | Batch эффект |
+|-----------|----------|--------------|--------------|
+| OpenVINO INT8 | 1.3ms | 50ms (batch) | 2.6x ускорение |
+| TEI CPU | 15ms | 200ms | Хороший batch |
+| Ollama | 30ms | 3000ms | Нет batch |
+
+**С NVIDIA GPU:**
+| Провайдер | 1 запрос | 100 запросов | Примечание |
+|-----------|----------|--------------|------------|
+| TEI GPU | 2ms | 15ms | Лучший для GPU |
+| Ollama GPU | 10ms | 1000ms | RTX 50xx поддержка |
+
+### Быстрый старт по провайдерам
+
+**OpenVINO (рекомендуется для CPU):**
+```bash
+# Установка (openvino-node в trustedDependencies)
+bun add openvino-node @xenova/transformers
+
+# Настройка
+bunx ultrascript-tools-mcp setup --provider openvino
+```
+
+**TEI (рекомендуется для NVIDIA GPU):**
+```bash
+# Требуется Docker Desktop
+bunx ultrascript-tools-mcp setup --provider tei
+```
+
+**Ollama (универсальный):**
+```bash
+# Установите Ollama: https://ollama.ai
+bunx ultrascript-tools-mcp setup --provider ollama
+```
+
+### Расположение конфигурации
+
+- Windows: `%LOCALAPPDATA%\UltraScriptTools\config\semantic-config.json`
+- macOS: `~/Library/Application Support/UltraScriptTools/config/semantic-config.json`
+- Linux: `~/.local/share/UltraScriptTools/config/semantic-config.json`
 
 ## Производительность
 
@@ -286,6 +334,43 @@ bunx ultrascript-tools-mcp setup
   - validators/email.ts: validateEmail()
   - utils/auth.ts: checkEmailFormat()
   - services/user.ts: verifyUserEmail()
+```
+
+### Расширенный семантический поиск (NEW)
+
+```
+Вы: "Найди сложный код с цикломатической сложностью больше 10"
+
+semantic_search query="data processing" minCyclomatic=10
+
+Ответ:
+✓ Найдено 3 совпадения:
+  - parsers/complex-handler.ts: processData()
+    complexity: cyclomatic=15, cognitive=22
+    controlFlow: 8 branches, 3 loops, 2 exceptions
+    calls: 12 функций
+```
+
+```
+Вы: "Найди async код без обработки ошибок"
+
+semantic_search query="API calls" hasAwaits=true hasExceptions=false
+
+Ответ:
+✓ Найдено 5 потенциальных проблем:
+  - api/users.ts: fetchUsers() - await без try-catch
+  - api/orders.ts: getOrders() - await без try-catch
+```
+
+```
+Вы: "Найди недокументированный публичный API"
+
+semantic_search query="export function" hasDocumentation=false
+
+Ответ:
+✓ Найдено 12 функций без документации:
+  - utils/format.ts: formatDate()
+  - helpers/validation.ts: validateInput()
 ```
 
 

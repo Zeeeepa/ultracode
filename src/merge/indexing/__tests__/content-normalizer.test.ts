@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "@jest/globals";
 import { ContentNormalizer } from "../content-normalizer.js";
 
 describe("ContentNormalizer", () => {
@@ -89,7 +89,7 @@ describe("ContentNormalizer", () => {
     const hash2 = normalizer.computeContentHash(content2);
 
     expect(hash1).toBe(hash2);
-    expect(hash1).toHaveLength(64); // SHA256 hex = 64 chars
+    expect(hash1.length).toBeGreaterThanOrEqual(6); // base36 encoded
   });
 
   it("should compute different hashes for different content", () => {

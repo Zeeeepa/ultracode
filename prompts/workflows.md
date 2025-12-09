@@ -78,13 +78,55 @@
 6. rename_symbol entityName="OldName" newName="NewName" preview=false
 ```
 
+## 9. Find Complex Code Needing Refactoring
+
+```
+1. semantic_search query="data processing" minCyclomatic=10
+2. semantic_search query="validation" hasExceptions=true hasLoops=true
+3. analyze_code_impact entityId="complexFunction"
+4. suggest_refactoring
+```
+
+## 10. Find Undocumented Code
+
+```
+1. semantic_search query="public API" hasDocumentation=false
+2. semantic_search query="exported functions" hasDocumentation=false limit=50
+3. Review results and add documentation
+```
+
+## 11. Find Async Code Patterns
+
+```
+1. semantic_search query="database operations" hasAwaits=true
+2. semantic_search query="API calls" hasAwaits=true hasExceptions=false
+3. Review for missing error handling in async code
+```
+
+## 12. Analyze Code Quality by Complexity
+
+```
+1. semantic_search query="" minCyclomatic=15  # Very complex code
+2. semantic_search query="" maxCyclomatic=3   # Simple code
+3. analyze_hotspots metric="complexity" limit=20
+```
+
 ## Quick Reference
 
 ### Search
-- `semantic_search` — semantic search by meaning
+- `semantic_search` — semantic search by meaning (with complexity/flow/docs filters)
 - `query` — natural language query
 - `pattern_search` — regex/semantic/hybrid search
 - `find_similar_code` — find similar code
+
+### Search Filters (semantic_search)
+- `minCyclomatic` / `maxCyclomatic` — filter by cyclomatic complexity
+- `hasExceptions` — filter by try-catch presence
+- `hasLoops` — filter by loop presence
+- `hasAwaits` — filter by async/await usage
+- `hasDocumentation` — filter by documentation presence
+- `isDeprecated` — filter deprecated entities
+- `minCallCount` — filter by number of function calls
 
 ### Analysis
 - `list_file_entities` — entities in file

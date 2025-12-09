@@ -40,6 +40,7 @@ import type {
   PythonParserMetrics,
   TreeSitterNode,
 } from "../types/parser.js";
+import { findNodesByType } from "./base-parser-utils.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -378,6 +379,15 @@ export class PythonAnalyzer {
     const parameters = this.extractComplexParameters(node, context);
     const returnType = this.extractComplexReturnType(node, context);
 
+    // Extract calls (Phase 1: Call Graph)
+    const calls = this.extractCalls(node, context.source);
+
+    // Extract control flow (Phase 2: Control Flow)
+    const controlFlow = this.extractControlFlow(node, context.source);
+
+    // Extract documentation (Phase 3: Docstrings)
+    const documentation = this.extractDocumentation(node, context.source);
+
     // Determine entity type based on classification
     let entityType: ParsedEntity["type"] = "function";
     if (isAsync) entityType = "async_function";
@@ -404,6 +414,9 @@ export class PythonAnalyzer {
       parameters,
       returnType,
       modifiers: this.extractEnhancedModifiers(node, decorators),
+      calls,
+      controlFlow,
+      documentation,
     };
 
     context.entities.push(entity);
@@ -439,6 +452,9 @@ export class PythonAnalyzer {
     // Determine class type
     const classType = this.determineClassType(decorators, node, context);
 
+    // Extract documentation (Phase 3: Docstrings)
+    const documentation = this.extractDocumentation(node, context.source);
+
     const entity: ParsedEntity = {
       name,
       type: classType === "dataclass" ? "dataclass" : "class",
@@ -453,6 +469,7 @@ export class PythonAnalyzer {
         isAbstract: this.isAbstractClass(node),
       },
       children: [],
+      documentation,
     };
 
     const classInfo: PythonClassInfo = {
@@ -850,6 +867,567 @@ export class PythonAnalyzer {
     return false;
   }
 
+  // =============================================================================
+  // CALL GRAPH EXTRACTION (Python Phase 1)
+  // =============================================================================
+
+  /**
+   * Extract all function/method calls within a node
+   */
+  private extractCalls(node: TreeSitterNode, source: string): ParsedEntity["calls"] {
+    const calls: NonNullable<ParsedEntity["calls"]> = [];
+
+    const visit = (n: TreeSitterNode, isAwaited = false): void => {
+      // Handle await expressions
+      if (n.type === "await") {
+        const awaited = n.namedChildren[0];
+        if (awaited) {
+          visit(awaited, true);
+        }
+        return;
+      }
+
+      // Function calls: foo(), module.func(), self.method()
+      if (n.type === "call") {
+        const funcNode = n.namedChildren.find((c) => c.type !== "argument_list" && c.type !== "generator_expression");
+        if (funcNode) {
+          const callInfo = this.extractCallInfo(funcNode, n, source, isAwaited);
+          if (callInfo) {
+            calls.push(callInfo);
+          }
+        }
+        // Visit arguments for nested calls
+        const argList = n.namedChildren.find((c) => c.type === "argument_list");
+        if (argList) {
+          for (const arg of argList.namedChildren) {
+            visit(arg, false);
+          }
+        }
+        return;
+      }
+
+      // Recurse into children
+      for (const child of n.namedChildren) {
+        visit(child, false);
+      }
+    };
+
+    // Find function body
+    const bodyNode = node.namedChildren.find((c) => c.type === "block");
+    if (bodyNode) {
+      visit(bodyNode);
+    }
+
+    return calls.length > 0 ? calls : undefined;
+  }
+
+  /**
+   * Extract information from a single call expression
+   */
+  private extractCallInfo(
+    funcNode: TreeSitterNode,
+    callNode: TreeSitterNode,
+    source: string,
+    isAwaited: boolean,
+  ): NonNullable<ParsedEntity["calls"]>[number] | null {
+    let name: string;
+    let target: string | undefined;
+
+    // Simple call: foo()
+    if (funcNode.type === "identifier") {
+      name = funcNode.text;
+    }
+    // Method call: obj.method() or self.method() or module.func()
+    else if (funcNode.type === "attribute") {
+      const parts = funcNode.text.split(".");
+      name = parts[parts.length - 1] ?? funcNode.text;
+      target = parts.slice(0, -1).join(".");
+    }
+    // Subscript call: obj[key]()
+    else if (funcNode.type === "subscript") {
+      name = getNodeText(funcNode, source);
+    }
+    // Complex expression
+    else {
+      name = getNodeText(funcNode, source);
+    }
+
+    // Count arguments
+    const argList = callNode.namedChildren.find((c) => c.type === "argument_list");
+    const argumentCount = argList
+      ? argList.namedChildren.filter(
+          (c) =>
+            c.type !== "generator_expression" &&
+            c.type !== "list_comprehension" &&
+            c.type !== "dictionary_comprehension" &&
+            c.type !== "set_comprehension",
+        ).length
+      : 0;
+
+    return {
+      name,
+      target,
+      location: convertPosition(callNode),
+      isAwait: isAwaited || undefined,
+      argumentCount,
+    };
+  }
+
+  // =============================================================================
+  // CONTROL FLOW EXTRACTION (Python Phase 2)
+  // =============================================================================
+
+  /**
+   * Extract control flow structures from a function/method
+   */
+  private extractControlFlow(node: TreeSitterNode, source: string): ParsedEntity["controlFlow"] {
+    type BranchInfo = NonNullable<ParsedEntity["controlFlow"]>["branches"][number];
+    type LoopInfo = NonNullable<ParsedEntity["controlFlow"]>["loops"][number];
+    type ExceptionInfo = NonNullable<ParsedEntity["controlFlow"]>["exceptions"][number];
+    type ReturnInfo = NonNullable<ParsedEntity["controlFlow"]>["returns"][number];
+    type AwaitInfo = NonNullable<ParsedEntity["controlFlow"]>["awaits"][number];
+
+    const branches: BranchInfo[] = [];
+    const loops: LoopInfo[] = [];
+    const exceptions: ExceptionInfo[] = [];
+    const returns: ReturnInfo[] = [];
+    const awaits: AwaitInfo[] = [];
+
+    const visit = (n: TreeSitterNode): void => {
+      // If statements
+      if (n.type === "if_statement") {
+        const condition = n.namedChildren.find(
+          (c) => c.type !== "block" && c.type !== "elif_clause" && c.type !== "else_clause",
+        );
+        branches.push({
+          type: "if",
+          condition: condition ? getNodeText(condition, source) : undefined,
+          location: convertPosition(n),
+        });
+
+        // Check for elif/else clauses
+        for (const child of n.namedChildren) {
+          if (child.type === "elif_clause") {
+            const elifCond = child.namedChildren.find((c) => c.type !== "block");
+            branches.push({
+              type: "else-if",
+              condition: elifCond ? getNodeText(elifCond, source) : undefined,
+              location: convertPosition(child),
+            });
+          } else if (child.type === "else_clause") {
+            branches.push({
+              type: "else",
+              location: convertPosition(child),
+            });
+          }
+        }
+      }
+
+      // Match statement (Python 3.10+)
+      if (n.type === "match_statement") {
+        const matchSubject = n.namedChildren[0];
+        branches.push({
+          type: "switch",
+          condition: matchSubject ? getNodeText(matchSubject, source) : undefined,
+          location: convertPosition(n),
+        });
+        // Case clauses
+        for (const child of n.namedChildren) {
+          if (child.type === "case_clause") {
+            const pattern = child.namedChildren.find((c) => c.type !== "block");
+            branches.push({
+              type: "case",
+              condition: pattern ? getNodeText(pattern, source) : undefined,
+              location: convertPosition(child),
+            });
+          }
+        }
+      }
+
+      // Ternary/conditional expression
+      if (n.type === "conditional_expression") {
+        const ternaryCondition = n.namedChildren[1]; // condition is the middle element
+        branches.push({
+          type: "ternary",
+          condition: ternaryCondition ? getNodeText(ternaryCondition, source) : undefined,
+          location: convertPosition(n),
+        });
+      }
+
+      // For loops
+      if (n.type === "for_statement") {
+        loops.push({
+          type: "for",
+          location: convertPosition(n),
+        });
+      }
+
+      // While loops
+      if (n.type === "while_statement") {
+        loops.push({
+          type: "while",
+          location: convertPosition(n),
+        });
+      }
+
+      // Try/except/finally
+      if (n.type === "try_statement") {
+        exceptions.push({
+          type: "try",
+          location: convertPosition(n),
+        });
+
+        for (const child of n.namedChildren) {
+          if (child.type === "except_clause") {
+            // Extract exception type if present
+            const exceptionType = child.namedChildren.find(
+              (c) => c.type === "identifier" || c.type === "attribute" || c.type === "tuple",
+            );
+            exceptions.push({
+              type: "catch",
+              catchType: exceptionType ? getNodeText(exceptionType, source) : undefined,
+              location: convertPosition(child),
+            });
+          } else if (child.type === "finally_clause") {
+            exceptions.push({
+              type: "finally",
+              location: convertPosition(child),
+            });
+          }
+        }
+      }
+
+      // Raise statements
+      if (n.type === "raise_statement") {
+        const raisedType = n.namedChildren[0];
+        exceptions.push({
+          type: "throw",
+          catchType: raisedType ? getNodeText(raisedType, source) : undefined,
+          location: convertPosition(n),
+        });
+      }
+
+      // Return statements
+      if (n.type === "return_statement") {
+        returns.push({
+          location: convertPosition(n),
+          hasValue: n.namedChildren.length > 0,
+        });
+      }
+
+      // Await expressions
+      if (n.type === "await") {
+        const awaited = n.namedChildren[0];
+        awaits.push({
+          location: convertPosition(n),
+          expression: awaited ? getNodeText(awaited, source) : "",
+        });
+      }
+
+      // Recurse into children
+      for (const child of n.namedChildren) {
+        visit(child);
+      }
+    };
+
+    // Find function body
+    const bodyNode = node.namedChildren.find((c) => c.type === "block");
+    if (bodyNode) {
+      visit(bodyNode);
+    }
+
+    // Only return if we have any control flow structures
+    if (
+      branches.length === 0 &&
+      loops.length === 0 &&
+      exceptions.length === 0 &&
+      returns.length === 0 &&
+      awaits.length === 0
+    ) {
+      return undefined;
+    }
+
+    return { branches, loops, exceptions, returns, awaits };
+  }
+
+  // =============================================================================
+  // DOCSTRING EXTRACTION (Python Phase 3)
+  // =============================================================================
+
+  /**
+   * Extract documentation from Python docstrings
+   * Supports Google, NumPy, and reStructuredText docstring formats
+   */
+  private extractDocumentation(node: TreeSitterNode, source: string): ParsedEntity["documentation"] {
+    // Find docstring - first string literal in function/class body
+    const bodyNode = node.namedChildren.find((c) => c.type === "block");
+    if (!bodyNode) return undefined;
+
+    // First statement in body
+    const firstStmt = bodyNode.namedChildren[0];
+    if (!firstStmt) return undefined;
+
+    // Check for expression_statement containing string
+    let docstringNode: TreeSitterNode | null = null;
+    if (firstStmt.type === "expression_statement") {
+      const expr = firstStmt.namedChildren[0];
+      if (expr && (expr.type === "string" || expr.type === "concatenated_string")) {
+        docstringNode = expr;
+      }
+    }
+
+    if (!docstringNode) return undefined;
+
+    // Extract and clean docstring text
+    let docstring = getNodeText(docstringNode, source);
+    // Remove triple quotes
+    docstring = docstring.replace(/^["']{3}|["']{3}$/g, "").trim();
+
+    return this.parseDocstring(docstring);
+  }
+
+  /**
+   * Parse docstring content into structured documentation
+   * Supports Google, NumPy, and reStructuredText formats
+   */
+  private parseDocstring(docstring: string): ParsedEntity["documentation"] {
+    type ParamInfo = NonNullable<ParsedEntity["documentation"]>["params"];
+    type ThrowsInfo = NonNullable<ParsedEntity["documentation"]>["throws"];
+
+    const lines = docstring.split("\n");
+    const params: NonNullable<ParamInfo> = [];
+    const throws: NonNullable<ThrowsInfo> = [];
+    const examples: string[] = [];
+    // biome-ignore lint/style/useConst: reassigned later in the function
+    let description: string | undefined;
+    let returns: { type?: string; description?: string } | undefined;
+    let deprecated: string | boolean | undefined;
+    let since: string | undefined;
+    let author: string | undefined;
+    const see: string[] = [];
+
+    let currentSection: string | null = null;
+    let currentExample = "";
+    const descriptionLines: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      const trimmedLine = line.trim();
+
+      // Detect section headers (Google/NumPy style)
+      if (this.isDocstringSection(trimmedLine)) {
+        // Save any accumulated example
+        if (currentSection === "examples" && currentExample.trim()) {
+          examples.push(currentExample.trim());
+          currentExample = "";
+        }
+
+        currentSection = this.normalizeSection(trimmedLine);
+        continue;
+      }
+
+      // Parse based on current section
+      if (currentSection === null) {
+        // Before any section = description
+        if (trimmedLine) {
+          descriptionLines.push(trimmedLine);
+        }
+      } else if (currentSection === "args" || currentSection === "parameters") {
+        // Google style: name (type): description
+        // NumPy style: name : type\n    description
+        const paramMatch = trimmedLine.match(/^(\w+)\s*(?:\(([^)]+)\)|:\s*(\w+(?:\[[\w,\s[\]]+\])?))?\s*[:-]?\s*(.*)$/);
+        if (paramMatch) {
+          const [, name, type1, type2, desc] = paramMatch;
+          if (name) {
+            params.push({
+              name,
+              type: type1 || type2,
+              description: desc || undefined,
+              optional: (type1 || type2 || "").includes("optional"),
+            });
+          }
+        }
+      } else if (currentSection === "returns" || currentSection === "return") {
+        // Parse return type and description
+        const returnMatch = trimmedLine.match(/^(?:(\w+(?:\[[\w,\s[\]]+\])?)\s*[:-]?\s*)?(.*)$/);
+        if (returnMatch) {
+          if (!returns) {
+            returns = { type: returnMatch[1], description: returnMatch[2] };
+          } else if (returnMatch[2]) {
+            returns.description = (returns.description || "") + " " + returnMatch[2];
+          }
+        }
+      } else if (currentSection === "raises" || currentSection === "exceptions") {
+        // Google style: ExceptionType: description
+        const raiseMatch = trimmedLine.match(/^(\w+(?:\.\w+)*)\s*[:-]?\s*(.*)$/);
+        if (raiseMatch) {
+          throws.push({
+            type: raiseMatch[1],
+            description: raiseMatch[2] || undefined,
+          });
+        }
+      } else if (currentSection === "examples" || currentSection === "example") {
+        currentExample += line + "\n";
+      } else if (currentSection === "deprecated") {
+        deprecated = trimmedLine || true;
+      } else if (currentSection === "see also" || currentSection === "seealso") {
+        if (trimmedLine) {
+          see.push(trimmedLine);
+        }
+      } else if (currentSection === "version" || currentSection === "since") {
+        since = trimmedLine;
+      } else if (currentSection === "author") {
+        author = trimmedLine;
+      }
+
+      // Check for reStructuredText style tags in description
+      if (currentSection === null) {
+        // :param name: description
+        const rstParamMatch = trimmedLine.match(/^:param\s+(\w+):\s*(.*)$/);
+        if (rstParamMatch) {
+          params.push({
+            name: rstParamMatch[1]!,
+            description: rstParamMatch[2] || undefined,
+          });
+          continue;
+        }
+
+        // :type name: type
+        const rstTypeMatch = trimmedLine.match(/^:type\s+(\w+):\s*(.*)$/);
+        if (rstTypeMatch) {
+          const existing = params.find((p) => p.name === rstTypeMatch[1]);
+          if (existing) {
+            existing.type = rstTypeMatch[2];
+          }
+          continue;
+        }
+
+        // :returns: or :return: description
+        const rstReturnMatch = trimmedLine.match(/^:returns?:\s*(.*)$/);
+        if (rstReturnMatch) {
+          returns = { description: rstReturnMatch[1] };
+          continue;
+        }
+
+        // :rtype: type
+        const rstRtypeMatch = trimmedLine.match(/^:rtype:\s*(.*)$/);
+        if (rstRtypeMatch) {
+          if (!returns) returns = {};
+          returns.type = rstRtypeMatch[1];
+          continue;
+        }
+
+        // :raises ExceptionType: description
+        const rstRaisesMatch = trimmedLine.match(/^:raises?\s+(\w+(?:\.\w+)*):\s*(.*)$/);
+        if (rstRaisesMatch) {
+          throws.push({
+            type: rstRaisesMatch[1],
+            description: rstRaisesMatch[2] || undefined,
+          });
+        }
+      }
+    }
+
+    // Save final example
+    if (currentSection === "examples" && currentExample.trim()) {
+      examples.push(currentExample.trim());
+    }
+
+    // Build description from accumulated lines
+    description = descriptionLines.join(" ").trim() || undefined;
+
+    // Only return if we have any content
+    if (!description && params.length === 0 && !returns && throws.length === 0 && examples.length === 0) {
+      return undefined;
+    }
+
+    return {
+      description,
+      params: params.length > 0 ? params : undefined,
+      returns,
+      throws: throws.length > 0 ? throws : undefined,
+      examples: examples.length > 0 ? examples : undefined,
+      deprecated,
+      see: see.length > 0 ? see : undefined,
+      since,
+      author,
+    };
+  }
+
+  /**
+   * Check if a line is a docstring section header
+   */
+  private isDocstringSection(line: string): boolean {
+    // Google style: "Args:", "Returns:", etc.
+    // NumPy style: "Parameters", "Returns", etc. followed by dashes
+    const sections = [
+      "args:",
+      "arguments:",
+      "parameters:",
+      "params:",
+      "returns:",
+      "return:",
+      "yields:",
+      "yield:",
+      "raises:",
+      "raise:",
+      "exceptions:",
+      "except:",
+      "examples:",
+      "example:",
+      "attributes:",
+      "attrs:",
+      "notes:",
+      "note:",
+      "warnings:",
+      "warning:",
+      "see also:",
+      "seealso:",
+      "references:",
+      "reference:",
+      "deprecated:",
+      "deprecation:",
+      "version:",
+      "since:",
+      "author:",
+      "authors:",
+      "todo:",
+      "todos:",
+    ];
+
+    const lower = line.toLowerCase();
+    return sections.some((s) => lower === s || lower === s.slice(0, -1));
+  }
+
+  /**
+   * Normalize section name
+   */
+  private normalizeSection(line: string): string {
+    const normalized = line.toLowerCase().replace(":", "").trim();
+
+    // Map aliases to canonical names
+    const aliases: Record<string, string> = {
+      arguments: "args",
+      params: "parameters",
+      return: "returns",
+      yield: "yields",
+      raise: "raises",
+      except: "raises",
+      exceptions: "raises",
+      example: "examples",
+      attrs: "attributes",
+      note: "notes",
+      warning: "warnings",
+      reference: "references",
+      deprecation: "deprecated",
+      authors: "author",
+      todos: "todo",
+      seealso: "see also",
+    };
+
+    return aliases[normalized] || normalized;
+  }
+
   /**
    * Extract enhanced modifiers from function/class
    */
@@ -1149,13 +1727,13 @@ export class PythonAnalyzer {
 
   private analyzeAsyncPatterns(node: TreeSitterNode, context: AnalysisContext): void {
     // Traverse all async function definitions
-    const asyncNodes = this.findNodesByType(node, ["async_function_definition"]);
+    const asyncNodes = findNodesByType(node, ["async_function_definition"]);
 
     for (const asyncNode of asyncNodes) {
       context.metrics.advancedFeatures.asyncPatternsDetected++;
 
       // Analyze await patterns within async functions
-      const awaitNodes = this.findNodesByType(asyncNode, ["await"]);
+      const awaitNodes = findNodesByType(asyncNode, ["await"]);
 
       // Find corresponding entity and enhance
       const nameNode = asyncNode.namedChildren.find((c) => c.type === "identifier");
@@ -1175,7 +1753,7 @@ export class PythonAnalyzer {
 
   private analyzeGeneratorPatterns(node: TreeSitterNode, context: AnalysisContext): void {
     // Find yield expressions to identify generators
-    const yieldNodes = this.findNodesByType(node, ["yield", "yield_from_expression"]);
+    const yieldNodes = findNodesByType(node, ["yield", "yield_from_expression"]);
 
     for (const yieldNode of yieldNodes) {
       // Find the containing function
@@ -1291,7 +1869,7 @@ export class PythonAnalyzer {
   }
 
   private analyzeImportDependencies(rootNode: TreeSitterNode, context: AnalysisContext): void {
-    const importNodes = this.findNodesByType(rootNode, ["import_statement", "import_from_statement"]);
+    const importNodes = findNodesByType(rootNode, ["import_statement", "import_from_statement"]);
 
     for (const importNode of importNodes) {
       if (importNode.type === "import_statement") {
@@ -1400,7 +1978,7 @@ export class PythonAnalyzer {
   // =============================================================================
 
   private analyzeContextManagers(rootNode: TreeSitterNode): any[] {
-    const withNodes = this.findNodesByType(rootNode, ["with_statement"]);
+    const withNodes = findNodesByType(rootNode, ["with_statement"]);
     const contextManagers = [];
 
     for (const withNode of withNodes) {
@@ -1417,13 +1995,13 @@ export class PythonAnalyzer {
   }
 
   private analyzeExceptionHandling(rootNode: TreeSitterNode): any[] {
-    const tryNodes = this.findNodesByType(rootNode, ["try_statement"]);
+    const tryNodes = findNodesByType(rootNode, ["try_statement"]);
     const exceptionHandling = [];
 
     for (const tryNode of tryNodes) {
-      const exceptNodes = this.findNodesByType(tryNode, ["except_clause"]);
-      const finallyNodes = this.findNodesByType(tryNode, ["finally_clause"]);
-      const elseNodes = this.findNodesByType(tryNode, ["else_clause"]);
+      const exceptNodes = findNodesByType(tryNode, ["except_clause"]);
+      const finallyNodes = findNodesByType(tryNode, ["finally_clause"]);
+      const elseNodes = findNodesByType(tryNode, ["else_clause"]);
 
       const pattern = {
         type: "exception_handling",
@@ -1469,7 +2047,7 @@ export class PythonAnalyzer {
     const idioms = [];
 
     // Check for list comprehensions
-    const listCompNodes = this.findNodesByType(rootNode, ["list_comprehension"]);
+    const listCompNodes = findNodesByType(rootNode, ["list_comprehension"]);
     for (const node of listCompNodes) {
       idioms.push({
         type: "list_comprehension",
@@ -1478,7 +2056,7 @@ export class PythonAnalyzer {
     }
 
     // Check for dict comprehensions
-    const dictCompNodes = this.findNodesByType(rootNode, ["dictionary_comprehension"]);
+    const dictCompNodes = findNodesByType(rootNode, ["dictionary_comprehension"]);
     for (const node of dictCompNodes) {
       idioms.push({
         type: "dict_comprehension",
@@ -1793,19 +2371,7 @@ export class PythonAnalyzer {
   // UTILITY HELPER METHODS
   // =============================================================================
 
-  private findNodesByType(node: TreeSitterNode, types: string[]): TreeSitterNode[] {
-    const results: TreeSitterNode[] = [];
-
-    if (types.includes(node.type)) {
-      results.push(node);
-    }
-
-    for (const child of node.namedChildren) {
-      results.push(...this.findNodesByType(child, types));
-    }
-
-    return results;
-  }
+  // findNodesByType moved to base-parser-utils.js (optimized with Set + iterative traverse)
 
   private convertNodeToLocation(node: TreeSitterNode) {
     return {
@@ -1824,7 +2390,7 @@ export class PythonAnalyzer {
 
   private detectAsyncPatterns(node: TreeSitterNode): string[] {
     const patterns = [];
-    const awaitNodes = this.findNodesByType(node, ["await"]);
+    const awaitNodes = findNodesByType(node, ["await"]);
 
     if (awaitNodes.length > 0) {
       patterns.push("uses_await");

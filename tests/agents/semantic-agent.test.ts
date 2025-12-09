@@ -9,10 +9,10 @@
  *  - 2025-09-14: Created by Dev-Agent - TASK-002: SemanticAgent test suite
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 
 // Declare warmupMock before the mock so it's accessible in the test scope
-const warmupMock = jest.fn();
+const warmupMock = mock(() => {});
 
 beforeAll(() => {
   (globalThis as unknown as Record<string, unknown>).__semanticCacheWarmupMock = warmupMock;
@@ -22,7 +22,7 @@ afterAll(() => {
   delete (globalThis as unknown as Record<string, unknown>).__semanticCacheWarmupMock;
 });
 
-jest.mock(
+mock.module(
   "../../semantic/vector-store",
   () => {
     class VectorStore {
@@ -39,7 +39,7 @@ jest.mock(
   { virtual: true },
 );
 
-jest.mock(
+mock.module(
   "../../semantic/embedding-generator",
   () => {
     class EmbeddingGenerator {
@@ -61,7 +61,7 @@ jest.mock(
   { virtual: true },
 );
 
-jest.mock(
+mock.module(
   "../../semantic/hybrid-search",
   () => {
     class HybridSearchEngine {
@@ -81,7 +81,7 @@ jest.mock(
   { virtual: true },
 );
 
-jest.mock(
+mock.module(
   "../../semantic/semantic-cache",
   () => {
     class SemanticCache {
@@ -115,16 +115,16 @@ jest.mock(
   { virtual: true },
 );
 
-const getGraphStorageMock = jest.fn(async () => ({
-  executeQuery: jest.fn(async () => ({
+const getGraphStorageMock = mock(async () => ({
+  executeQuery: mock(async () => ({
     entities: [],
     relationships: [],
     stats: { totalEntities: 0, totalRelationships: 0 },
   })),
-  getEntity: jest.fn(async (_id: string) => null),
+  getEntity: mock(async (_id: string) => null),
 }));
 
-jest.mock(
+mock.module(
   "../../storage/graph-storage-factory",
   () => ({
     getGraphStorage: getGraphStorageMock,
@@ -132,7 +132,7 @@ jest.mock(
   { virtual: true },
 );
 
-jest.mock(
+mock.module(
   "../../semantic/code-analyzer",
   () => {
     class CodeAnalyzer {
@@ -189,12 +189,12 @@ describe("SemanticAgent", () => {
     ];
 
     getGraphStorageMock.mockResolvedValue({
-      executeQuery: jest.fn(async () => ({
+      executeQuery: mock(async () => ({
         entities,
         relationships: [],
         stats: { totalEntities: entities.length, totalRelationships: 0, queryTimeMs: 0 },
       })),
-      getEntity: jest.fn(async (id: string) => entities.find((e) => e.id === id) ?? null),
+      getEntity: mock(async (id: string) => entities.find((e) => e.id === id) ?? null),
     });
 
     agent = new SemanticAgent();
@@ -218,7 +218,7 @@ describe("SemanticAgent", () => {
     });
 
     it("should subscribe to knowledge bus events", async () => {
-      const subscribeSpy = jest.spyOn(knowledgeBus, "subscribe");
+      const subscribeSpy = spyOn(knowledgeBus, "subscribe");
       const newAgent = new SemanticAgent();
 
       await newAgent.initialize();
@@ -260,7 +260,7 @@ describe("SemanticAgent", () => {
 
       // Mock the embedding result
       const mockEmbedding = new Float32Array(384);
-      jest.spyOn(agent as any, "generateCodeEmbedding").mockResolvedValue(mockEmbedding);
+      spyOn(agent as any, "generateCodeEmbedding").mockResolvedValue(mockEmbedding);
 
       const result = await agent.process(task);
       expect(result).toBeInstanceOf(Float32Array);
@@ -289,7 +289,7 @@ describe("SemanticAgent", () => {
         results: [],
         processingTime: 150,
       };
-      jest.spyOn(agent as any, "semanticSearch").mockResolvedValue(mockResult);
+      spyOn(agent as any, "semanticSearch").mockResolvedValue(mockResult);
 
       const result = await agent.process(task);
       expect(result).toHaveProperty("query");
@@ -320,7 +320,7 @@ describe("SemanticAgent", () => {
         semanticType: "class" as const,
         summary: "Class containing 2 entities",
       };
-      jest.spyOn(agent as any, "analyzeCodeSemantics").mockResolvedValue(mockAnalysis);
+      spyOn(agent as any, "analyzeCodeSemantics").mockResolvedValue(mockAnalysis);
 
       const result = await agent.process(task);
       expect(result).toHaveProperty("entities");
@@ -345,7 +345,7 @@ describe("SemanticAgent", () => {
 
       // Mock the clone detection result
       const mockClones: any[] = [];
-      jest.spyOn(agent as any, "detectClones").mockResolvedValue(mockClones);
+      spyOn(agent as any, "detectClones").mockResolvedValue(mockClones);
 
       const result = await agent.process(task);
       expect(Array.isArray(result)).toBe(true);
@@ -375,7 +375,7 @@ describe("SemanticAgent", () => {
           confidence: 0.8,
         },
       ];
-      jest.spyOn(agent as any, "suggestRefactoring").mockResolvedValue(mockSuggestions);
+      spyOn(agent as any, "suggestRefactoring").mockResolvedValue(mockSuggestions);
 
       const result = await agent.process(task);
       expect(Array.isArray(result)).toBe(true);
@@ -396,7 +396,7 @@ describe("SemanticAgent", () => {
       };
 
       // Mock the embedding
-      jest.spyOn(agent as any, "generateCodeEmbedding").mockResolvedValue(new Float32Array(384));
+      spyOn(agent as any, "generateCodeEmbedding").mockResolvedValue(new Float32Array(384));
 
       await agent.process(task);
 
@@ -417,7 +417,7 @@ describe("SemanticAgent", () => {
       };
 
       // Mock the search
-      jest.spyOn(agent as any, "semanticSearch").mockResolvedValue({
+      spyOn(agent as any, "semanticSearch").mockResolvedValue({
         query: "test query",
         results: [],
         processingTime: 100,
@@ -437,7 +437,7 @@ describe("SemanticAgent", () => {
 
   describe("Cache Effectiveness", () => {
     it("should cache search results", async () => {
-      const searchSpy = jest.spyOn(agent as any, "semanticSearch");
+      const searchSpy = spyOn(agent as any, "semanticSearch");
 
       const task: AgentTask = {
         id: "test-cache-1",
@@ -476,7 +476,7 @@ describe("SemanticAgent", () => {
       ];
 
       // Spy on the embedding generation
-      const embedSpy = jest.spyOn(agent as any, "handleNewEntities");
+      const embedSpy = spyOn(agent as any, "handleNewEntities");
 
       // Publish index complete event
       knowledgeBus.publish("index:complete", entities, "test-indexer");
@@ -515,7 +515,7 @@ describe("SemanticAgent", () => {
         createdAt: Date.now(),
       };
 
-      jest.spyOn(agent as any, "generateCodeEmbedding").mockRejectedValue(new Error("Invalid code"));
+      spyOn(agent as any, "generateCodeEmbedding").mockRejectedValue(new Error("Invalid code"));
 
       await expect(agent.process(task)).rejects.toThrow();
     });
@@ -538,7 +538,7 @@ describe("SemanticAgent", () => {
       };
 
       // Mock with realistic timing
-      jest.spyOn(agent as any, "semanticSearch").mockImplementation(async () => {
+      spyOn(agent as any, "semanticSearch").mockImplementation(async () => {
         await new Promise((resolve) => setTimeout(resolve, 150)); // Simulate processing
         return {
           query: "performance test query",
@@ -558,7 +558,7 @@ describe("SemanticAgent", () => {
       const startTime = Date.now();
 
       // Mock batch processing
-      jest.spyOn(agent as any, "embeddingGen.generateBatch").mockImplementation(async () => {
+      spyOn(agent as any, "embeddingGen.generateBatch").mockImplementation(async () => {
         await new Promise((resolve) => setTimeout(resolve, 400)); // Simulate batch processing
         return texts.map(() => new Float32Array(384));
       });

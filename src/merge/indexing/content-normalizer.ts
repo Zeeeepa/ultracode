@@ -1,5 +1,5 @@
-import { readBytes } from "../../utils/file-ops.js";
 import { hashText } from "../../utils/fast-hash.js";
+import { readBytes } from "../../utils/file-ops.js";
 
 /**
  * Нормализует файлы перед сравнением: encoding, BOM, line endings.

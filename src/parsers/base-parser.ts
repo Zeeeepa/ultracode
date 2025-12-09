@@ -38,21 +38,12 @@ export interface BaseParser {
   /**
    * Parse a file and extract entities
    */
-  parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult>;
+  parse(filePath: string, content: string, contentHash: string): Promise<ParseResult>;
 
   /**
    * Parse with incremental support
    */
-  parseIncremental(
-    filePath: string,
-    content: string,
-    contentHash: string,
-    edits: any[],
-  ): Promise<ParseResult>;
+  parseIncremental(filePath: string, content: string, contentHash: string, edits: any[]): Promise<ParseResult>;
 
   /**
    * Get parser statistics

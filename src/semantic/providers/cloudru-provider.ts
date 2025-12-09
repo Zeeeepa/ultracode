@@ -26,6 +26,7 @@ export class CloudRUProvider implements EmbeddingProvider {
       model: opts.model,
       supportsBatch: true,
       maxBatchSize: opts.maxBatchSize,
+      maxTokens: 512, // Default for CloudRU models
     };
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };

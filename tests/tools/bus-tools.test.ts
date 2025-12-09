@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it } from "bun:test";
 import { knowledgeBus } from "../../src/core/knowledge-bus.js";
 
 describe("KnowledgeBus tooling", () => {

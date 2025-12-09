@@ -302,6 +302,9 @@ export interface GraphStorage {
   // NEW: Alias for convenience (used by Chaos Analysis)
   getRelationships(sourceId: string, type?: RelationType): Promise<Relationship[]>;
 
+  /** Find incoming relationships by entity name (for NgRx flow tracing) */
+  findIncomingRelationshipsByName(entityName: string, types?: RelationType[]): Promise<Relationship[]>;
+
   // File operations
   updateFileInfo(info: FileInfo): Promise<void>;
   getFileInfo(path: string): Promise<FileInfo | null>;
@@ -408,6 +411,47 @@ export function parsedEntityToEntity(
     },
     hash,
   };
+}
+
+/**
+ * Flatten ParsedEntity tree - extracts all children recursively into flat array
+ * This is critical for storing class members (properties, methods) as separate entities
+ */
+export function flattenParsedEntities(entities: ParsedEntity[]): ParsedEntity[] {
+  const result: ParsedEntity[] = [];
+  let childrenCount = 0;
+
+  function flatten(entity: ParsedEntity, parentName?: string, parentFilePath?: string): void {
+    // Add the entity itself
+    result.push(entity);
+
+    // Recursively flatten children
+    if (entity.children && entity.children.length > 0) {
+      for (const child of entity.children) {
+        childrenCount++;
+        // Qualify child name with parent for uniqueness (e.g., "ClassName.methodName")
+        // Inherit filePath from parent if child doesn't have one
+        const qualifiedChild: ParsedEntity = {
+          ...child,
+          name: parentName ? `${parentName}.${child.name}` : `${entity.name}.${child.name}`,
+          filePath: child.filePath || parentFilePath || entity.filePath,
+        };
+        flatten(qualifiedChild, qualifiedChild.name, qualifiedChild.filePath);
+      }
+    }
+  }
+
+  for (const entity of entities) {
+    flatten(entity, undefined, entity.filePath);
+  }
+
+  if (childrenCount > 0) {
+    console.error(
+      `[flattenParsedEntities] Flattened ${childrenCount} children from ${entities.length} top-level entities`,
+    );
+  }
+
+  return result;
 }
 
 /**

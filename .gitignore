@@ -124,3 +124,13 @@ src/merge/**/temp/
 external-tools/native/cuda/build/
 external-tools/native/cuda/node_modules/
 external-tools/wasm/**/target/
+
+# ============================================================================
+# ML MODELS (should be in user's data directory)
+# ============================================================================
+
+# Downloaded embedding/LLM models (legacy location, should be in getDataDir())
+models/
+
+# Benchmark results (regenerated on each run)
+benchmarks/results/

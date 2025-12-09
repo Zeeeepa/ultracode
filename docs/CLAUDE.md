@@ -147,6 +147,115 @@ parser:
 **Философия**: Разработчик, работающий с кодом на языке X, **всегда имеет** runtime/компилятор X.
 Это устраняет проблемы с NODE_MODULE_VERSION, C++ компиляцией и 28MB prebuilds.
 
+### Enhanced Parser Data (NEW)
+
+Парсеры TypeScript, Python и Kotlin извлекают расширенные данные для семантического поиска:
+
+**Извлекаемые данные:**
+- **calls** - граф вызовов функций/методов с target, argumentCount, isAwait
+- **controlFlow** - ветвления (if/switch), циклы (for/while), исключения (try/catch), await-точки
+- **complexity** - cyclomatic, cognitive, linesOfCode, nestingDepth
+- **documentation** - JSDoc/docstrings с description, params, returns, examples, deprecated
+- **typeReferences** - используемые типы (для анализа зависимостей)
+
+**Использование в semantic_search:**
+```typescript
+// Найти сложный код с высокой цикломатической сложностью
+semantic_search({ query: "data processing", minCyclomatic: 10 })
+
+// Найти async код без обработки ошибок
+semantic_search({ query: "API calls", hasAwaits: true, hasExceptions: false })
+
+// Найти недокументированный публичный API
+semantic_search({ query: "export function", hasDocumentation: false })
+
+// Найти код с большим количеством вызовов (потенциальные hotspots)
+semantic_search({ query: "", minCallCount: 20 })
+```
+
+**Векторизация:**
+Все эти данные включаются в embedding text для улучшенного семантического матчинга:
+- Описания из документации
+- Имена вызываемых функций
+- Информация о сложности (для complex code)
+- Информация о control flow (branches, loops, exceptions, awaits)
+
+## Cross-Project Support (NEW)
+
+MCP сервер поддерживает работу с **несколькими проектами** одновременно, каждый со своими изолированными базами данных.
+
+### Архитектура
+
+```
+%LOCALAPPDATA%\UltraScriptTools\
+├── config/
+│   └── semantic-config.json       # Глобальная конфигурация
+└── projects/
+    ├── {hash1}/                   # Проект 1 (hash от пути)
+    │   ├── graph.db               # Entity graph
+    │   ├── vectors.db             # Embeddings
+    │   └── meta.json              # Метаданные проекта
+    └── {hash2}/                   # Проект 2
+        ├── graph.db
+        ├── vectors.db
+        └── meta.json
+```
+
+### Использование
+
+**Переключение через `index`:**
+```typescript
+// Индексация другого проекта автоматически переключает контекст
+index({ directory: "D:\\другой\\проект" })
+```
+
+**Поиск в другом проекте через `projectPath`:**
+```typescript
+// semantic_search поддерживает projectPath для кросс-проектного поиска
+semantic_search({
+  query: "authentication",
+  projectPath: "D:\\другой\\проект"
+})
+```
+
+### Ключевые компоненты
+
+- **ProjectContextManager** (`src/shared/project-context.ts`) - Singleton для управления контекстом проекта
+- **getProjectSQLiteManager** (`src/storage/sqlite-manager.ts`) - Получение SQLiteManager для конкретного проекта
+- **switchGlobalProjectContext** (`src/index.ts`) - Переключение глобального контекста между проектами
+- **resetGraphStorage** (`src/storage/graph-storage-factory.ts`) - Сброс кэша GraphStorage при переключении
+
+### Поведение
+
+1. При указании `directory` в `index` или `projectPath` в `semantic_search`:
+   - Автоматически создаётся/открывается БД для указанного проекта
+   - Глобальный контекст переключается на новый проект
+   - Все последующие операции работают с данными этого проекта
+
+2. Данные каждого проекта **полностью изолированы** - изменения в одном проекте не влияют на другой
+
+3. При переключении назад на предыдущий проект его данные сохранены и доступны
+
+### Пример workflow
+
+```typescript
+// 1. Индексируем основной проект
+index({ directory: "D:\\work\\main-project" })
+// → Контекст: main-project, 8000 entities
+
+// 2. Переключаемся на другой проект для анализа
+index({ directory: "D:\\work\\other-project" })
+// → Контекст: other-project, 50000 entities
+
+// 3. Ищем в other-project
+semantic_search({ query: "newsletter" })
+// → Результаты из other-project
+
+// 4. Возвращаемся к основному проекту
+index({ directory: "D:\\work\\main-project", incremental: true })
+// → Контекст: main-project, данные сохранены
+```
+
 ## Storage Layer
 
 **SQLite-based graph storage** (`src/storage/`):
@@ -163,13 +272,104 @@ parser:
 
 Модульная система провайдеров эмбеддингов (`src/semantic/providers/`):
 
-- **memory** - in-memory fallback (без ML)
-- **transformers** - локальные модели через @xenova/transformers
-- **ollama** - локальные LLM (llama2, mistral, etc.)
-- **openai** - OpenAI API (text-embedding-ada-002)
-- **cloudru** - CloudRu API
+### Провайдеры и производительность
 
-Провайдер выбирается через `config/default.yaml` или `MCP_EMBEDDING_PROVIDER` env.
+| Провайдер | Файл | Время/запрос | Batch | Рекомендация |
+|-----------|------|-------------|-------|--------------|
+| **openvino** | `openvino-provider.ts` | **1.3ms** | ✅ Native | CPU, самый быстрый |
+| **tei** | `tei-provider.ts` | 5-15ms | ✅ Native | NVIDIA GPU |
+| **ollama** | `ollama-provider.ts` | 10-50ms | ❌ | Простая установка |
+| **memory** | `memory-provider.ts` | <1ms | ✅ | Без ML (hash) |
+| **openai** | `openai-provider.ts` | 50-200ms | ✅ | Cloud API |
+| **cloudru** | `cloudru-provider.ts` | 50-200ms | ✅ | Cloud API |
+| **huggingface** | `huggingface-provider.ts` | 100-500ms | ❌ | Cloud API |
+
+### OpenVINO Provider (NEW)
+
+Локальный CPU провайдер с native batch inference:
+
+```typescript
+// Файл: src/semantic/providers/openvino-provider.ts
+// Модели: all-MiniLM-L6-v2, bge-small-en-v1.5, multilingual-e5-small
+// Устройства: CPU, GPU, AUTO (NPU не поддерживается)
+```
+
+**Установка:**
+```bash
+bun add openvino-node @xenova/transformers
+```
+
+### Benchmark English моделей — Large Entities (RTX 5090 + i9)
+
+**Benchmark на 100 сущностях (крупнейшая: SemanticAgent 1253 lines) со Smart Chunker:**
+
+#### Embedding Models (Реальные бенчмарки 2025-12-07)
+
+| Rank | Провайдер | Модель | Chunks/s | ms/chunk | tok/s | Context | Рекомендация |
+|------|-----------|--------|----------|----------|-------|---------|--------------|
+| 1 | **OpenVINO CPU** | all-MiniLM-L6-v2 | **474** | **2.1ms** | **80,507** | 256 | 🏆 Fastest overall |
+| 2 | OpenVINO CPU | paraphrase-multilingual | 161 | 6.2ms | 16,089 | 128 | 🌍 50+ языков |
+| 3 | **Ollama GPU** | granite-embedding:30m | **123** | **8.1ms** | **34,685** | 512 | 🏆 Fast Ollama |
+| 4 | OpenVINO CPU | gte-small | 87 | 11.5ms | 24,400 | 512 | Качество |
+| 5 | OpenVINO CPU | multilingual-e5-small | 69 | 14.6ms | 19,290 | 512 | 🌍 94 языка |
+| 6 | **Ollama GPU** | snowflake-arctic-embed2 | **15** | **65.4ms** | **9,968** | 8192 | 🏆 Best 8K |
+| 7 | Ollama GPU | nomic-embed-text | 2 | 580.8ms | 1,123 | 8192 | ❌ Очень медленно |
+
+**Ключевые выводы:**
+- **OpenVINO MiniLM** — абсолютный лидер (474 chunks/s, 80K tok/s, CPU only!)
+- **Ollama Granite:30m** — лучший Ollama для разработки (123 chunks/s)
+- **Snowflake Arctic** — лучший для 8K контекста (15 chunks/s, full class embedding)
+- **Nomic Embed** — НЕ РЕКОМЕНДУЕТСЯ (2 chunks/s, очень медленно)
+
+**Рекомендации:**
+- **Разработка (быстрая индексация)**: OpenVINO + all-MiniLM-L6-v2 (474 chunks/s)
+- **Production (большие классы)**: Ollama + snowflake-arctic-embed2 (8K context)
+- **Мультиязычный код (RU/CN)**: OpenVINO + multilingual-e5-small (69 chunks/s)
+- **Простой setup**: Ollama + granite-embedding:30m (123 chunks/s)
+
+**Ограничения OpenVINO:**
+- Intel NPU не поддерживается для BERT моделей (masked_fill/Select)
+
+### LLM модели для AutoDoc (генерация документации)
+
+Конфигурация: `config/llm-models.json`
+
+#### LLM Benchmark (2025-12-07, SemanticAgent 1253 lines)
+
+| Модель | Provider | Size | tok/s | TTFT | Total | Output | Качество |
+|--------|----------|------|-------|------|-------|--------|----------|
+| **qwen3-coder:30b** | Ollama | 18GB | 12 | 32.87s | 75.6s | 3638 chars | 🏆 Excellent |
+| deepseek-coder:6.7b | Ollama | 3.8GB | 10 | 12.71s | 51.3s | 1966 chars | Good |
+
+#### OpenVINO LLM Models (config/llm-models.json)
+
+| Модель | Размер | Контекст | Скорость CPU | Рекомендация |
+|--------|--------|----------|--------------|--------------|
+| **Qwen2.5-Coder-7B INT4** | 4GB | 32K | ~10 tok/s | 🏆 Лучшая для кода |
+| **Phi-4-mini INT4** | 2.5GB | 16K | ~20 tok/s | ⚡ Быстрая + качество |
+| **Phi-3-mini-128K INT4** | 2GB | 128K | ~18 tok/s | 📄 Ultra long context |
+| **Qwen2.5-0.5B GGUF** | 350MB | 32K | ~90 tok/s | 🪶 Ultra compact |
+| **Qwen3-4B NPU INT4** | 2.5GB | 8K | ~22 tok/s NPU | 💚 NPU optimized |
+
+**Рекомендации по выбору:**
+- **Best Quality**: `qwen3-coder:30b` — comprehensive docs (12 tok/s, 18GB VRAM)
+- **Faster**: `deepseek-coder:6.7b` — 2x faster TTFT (10 tok/s, 4GB VRAM)
+- **Ограниченная память (<4GB)**: `Qwen2.5-0.5B` через GGUF — 350MB, 90 tok/s
+- **NPU (Intel Core Ultra)**: `Qwen3-4B` — официальная оптимизация, ~15W
+
+**OpenVINO 2025.4 features:**
+- **Qwen3-Embedding-0.6B** — новая embedding модель для RAG
+- **Qwen3-30B-A3B MoE** — 30B качество при скорости 3B
+- **Gemma-3-4B NPU** — новая поддержка NPU
+- **Mistral-Small-24B** — Jan 2025 release
+- Прямая поддержка GGUF файлов (без конвертации)
+- NPU контекст до 10K токенов (было 8K)
+- Structured output с XGrammar
+- Tool calling + parsers для agentic AI
+- Prefix caching для chat history
+- См. `docs/NPU_WAITING.md`
+
+Провайдер выбирается через `config/default.yaml`, CLI setup или `MCP_EMBEDDING_PROVIDER` env.
 
 ## Configuration System
 
@@ -223,7 +423,9 @@ parser:
 - `validate_directory` - пакетная валидация директории
 
 **Semantic analysis:**
-- `semantic_search` - семантический поиск по коду
+- `semantic_search` - семантический поиск по коду с rich metadata
+  - **Filters**: minCyclomatic, maxCyclomatic, hasExceptions, hasLoops, hasAwaits, hasDocumentation, isDeprecated, minCallCount
+  - **Returns**: complexity metrics, control flow info, call counts, documentation status
 - `detect_code_clones` - поиск дубликатов (семантический)
 - `jscpd_detect_clones` - JSCPD-based поиск дубликатов (без эмбеддингов)
 - `find_similar_code` - поиск похожего кода
@@ -251,6 +453,13 @@ parser:
 - `get_branch_status` - статус текущей ветки
 - `cleanup_branches` - очистка старых веток (LRU)
 - `get_changed_files` - измененные файлы между ветками
+
+**Tracing (статический анализ потока):**
+- `trace_flow` - трассировка выполнения от A к B с анализом состояний
+- `trace_backwards` - обратная трассировка (почему метод не вызывается?)
+- `trace_data_flow` - трассировка потока данных к целевому состоянию
+- `analyze_state_impact` - анализ влияния состояния на разные сценарии
+- `find_decision_points` - поиск всех точек принятия решений
 
 **Monitoring:**
 - `get_version` - версия сервера
@@ -350,6 +559,20 @@ npm rebuild better-sqlite3
 - Python: `python --version` (3.8+)
 - Java/Kotlin: `java --version` (JRE 11+)
 - Go: `go version` (1.18+)
+
+**"OpenVINO dependencies not installed"**: Установить зависимости:
+```bash
+bun add openvino-node @xenova/transformers
+# Проверить: node -e "require('openvino-node')"
+```
+
+**"OpenVINO NPU не работает"**: NPU не поддерживает BERT модели (masked_fill/Select limitation). Используйте CPU:
+```bash
+bunx ultrascript-tools-mcp setup --provider openvino
+# Выберите CPU device
+```
+
+**"OpenVINO batch reshape failed"**: Некоторые модели не поддерживают dynamic batch. Провайдер автоматически fallback на sequential inference.
 
 ## Bun Runtime Support
 

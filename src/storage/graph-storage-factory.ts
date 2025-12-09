@@ -17,6 +17,9 @@ let boundManager: SQLiteManager | null = null;
 
 export async function getGraphStorage(sqliteManager?: SQLiteManager): Promise<GraphStorageImpl> {
   const manager = sqliteManager ?? getSQLiteManager();
+  console.error(
+    `[GraphStorageFactory] getGraphStorage called, sqliteManager provided: ${!!sqliteManager}, manager.path: ${(manager as any).config?.path || "unknown"}`,
+  );
 
   const needNewInstance = !graphStorage || boundManager !== manager;
   if (needNewInstance) {

@@ -86,7 +86,7 @@ export class StructuralNormalizer {
    * Проверить поддерживает ли язык C-style комментарии.
    */
   private hasCStyleComments(language: string): boolean {
-    return ["typescript", "javascript", "c", "cpp", "csharp", "go", "rust", "java"].includes(language);
+    return ["typescript", "javascript", "c", "cpp", "go", "rust", "java"].includes(language);
   }
 
   /**

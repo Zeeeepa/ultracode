@@ -207,10 +207,7 @@ function getDecoratorName(decorator: ts.Decorator): string | null {
 /**
  * Extract Angular decorator metadata from a class
  */
-export function extractAngularMetadata(
-  node: ts.ClassDeclaration,
-  sourceFile: ts.SourceFile,
-): AngularEntityInfo | null {
+export function extractAngularMetadata(node: ts.ClassDeclaration, sourceFile: ts.SourceFile): AngularEntityInfo | null {
   const angularType = getAngularType(node);
   if (!angularType) return null;
 
@@ -273,9 +270,7 @@ function extractObjectLiteralMetadata(
 
       case "styles":
         if (ts.isArrayLiteralExpression(value)) {
-          info.styles = value.elements
-            .filter((e): e is ts.StringLiteral => ts.isStringLiteral(e))
-            .map((e) => e.text);
+          info.styles = value.elements.filter((e): e is ts.StringLiteral => ts.isStringLiteral(e)).map((e) => e.text);
         }
         break;
 
@@ -290,7 +285,7 @@ function extractObjectLiteralMetadata(
         }
         break;
 
-      case "changeDetection":
+      case "changeDetection": {
         const cdText = value.getText(sourceFile);
         if (cdText.includes("OnPush")) {
           info.changeDetection = "OnPush";
@@ -298,8 +293,9 @@ function extractObjectLiteralMetadata(
           info.changeDetection = "Default";
         }
         break;
+      }
 
-      case "encapsulation":
+      case "encapsulation": {
         const encText = value.getText(sourceFile);
         if (encText.includes("None")) {
           info.encapsulation = "None";
@@ -309,6 +305,7 @@ function extractObjectLiteralMetadata(
           info.encapsulation = "Emulated";
         }
         break;
+      }
 
       case "standalone":
         if (value.kind === ts.SyntaxKind.TrueKeyword) {
@@ -354,9 +351,7 @@ function extractHostMetadata(
     if (!ts.isPropertyAssignment(prop)) continue;
 
     const key = prop.name.getText(sourceFile);
-    const value = ts.isStringLiteral(prop.initializer)
-      ? prop.initializer.text
-      : prop.initializer.getText(sourceFile);
+    const value = ts.isStringLiteral(prop.initializer) ? prop.initializer.text : prop.initializer.getText(sourceFile);
 
     if (key.startsWith("(") && key.endsWith(")")) {
       // Host listener: "(click)": "onClick($event)"
@@ -398,7 +393,7 @@ export function parseTemplate(template: string): AngularTemplateInfo {
   const lines = template.split("\n");
 
   for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-    const line = lines[lineNum]!;  // Safe: iterating within bounds
+    const line = lines[lineNum]!; // Safe: iterating within bounds
     const lineNo = lineNum + 1;
 
     // Property bindings: [property]="expression"
@@ -468,7 +463,7 @@ export function parseTemplate(template: string): AngularTemplateInfo {
       if (pipeMatches) {
         for (const pipeMatch of pipeMatches) {
           const pipeResult = pipeMatch.match(/\|\s*(\w+)(?::(.+))?/);
-          if (pipeResult && pipeResult[1]) {
+          if (pipeResult?.[1]) {
             const pipeName = pipeResult[1];
             const pipeArgs = pipeResult[2];
             info.pipeUsages.push({
@@ -513,7 +508,7 @@ export async function loadAngularCompiler(): Promise<boolean> {
   compilerLoadAttempted = true;
 
   try {
-    // @ts-ignore - optional dependency, may not be installed
+    // @ts-expect-error - optional dependency, may not be installed
     angularCompilerModule = await import("@angular/compiler");
     console.error("[AngularParser] @angular/compiler loaded successfully");
     return true;
@@ -527,10 +522,7 @@ export async function loadAngularCompiler(): Promise<boolean> {
  * Parse template using @angular/compiler (if available)
  * Provides full AST with accurate binding detection
  */
-export async function parseTemplateWithCompiler(
-  template: string,
-  filePath: string,
-): Promise<AngularTemplateInfo> {
+export async function parseTemplateWithCompiler(template: string, filePath: string): Promise<AngularTemplateInfo> {
   const hasCompiler = await loadAngularCompiler();
 
   if (!hasCompiler || !angularCompilerModule) {
@@ -632,19 +624,14 @@ export async function parseTemplateWithCompiler(
  * Extract Angular-specific information from TypeScript AST
  * Call this after TypeScript parsing to enhance entities
  */
-export function enhanceWithAngularInfo(
-  entities: ParsedEntity[],
-  sourceFile: ts.SourceFile,
-): void {
+export function enhanceWithAngularInfo(entities: ParsedEntity[], sourceFile: ts.SourceFile): void {
   function visit(node: ts.Node): void {
     if (ts.isClassDeclaration(node) && node.name) {
       const angularMeta = extractAngularMetadata(node, sourceFile);
 
       if (angularMeta) {
         // Find corresponding entity
-        const entity = entities.find(
-          (e) => e.name === node.name!.text && e.type === "class",
-        );
+        const entity = entities.find((e) => e.name === node.name!.text && e.type === "class");
 
         if (entity) {
           // Add Angular-specific metadata
@@ -674,11 +661,7 @@ export function isAngularFile(sourceFile: ts.SourceFile): boolean {
       const moduleSpecifier = statement.moduleSpecifier;
       if (ts.isStringLiteral(moduleSpecifier)) {
         const moduleName = moduleSpecifier.text;
-        if (
-          moduleName.startsWith("@angular/") ||
-          moduleName === "angular" ||
-          moduleName.includes("/angular/")
-        ) {
+        if (moduleName.startsWith("@angular/") || moduleName === "angular" || moduleName.includes("/angular/")) {
           return true;
         }
       }

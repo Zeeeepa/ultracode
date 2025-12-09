@@ -244,7 +244,7 @@ export async function batchGenerateDocs(
         try {
           const doc = await generateModuleDoc(llm, mod, undefined, { language });
           return { path: mod.path, doc };
-        } catch (error) {
+        } catch (_error) {
           // Fallback to basic template on error
           const fallbackTitle = language === "ru" ? "Модуль" : "Module";
           const fallbackDesc =

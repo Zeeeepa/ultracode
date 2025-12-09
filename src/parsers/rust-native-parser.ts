@@ -1,26 +1,28 @@
 /**
  * Rust Native Parser
  *
- * Uses rust-analyzer LSP or falls back to regex-based parsing.
- * Philosophy: Rust developers always have Rust toolchain installed.
+ * Uses ANTLR-based parsing with optional rust-analyzer enhancement.
+ * Provides accurate AST parsing without external dependencies.
  *
  * Architecture:
- * - Tries to use rust-analyzer for full AST (if available)
- * - Falls back to regex-based extraction
+ * - Uses ANTLR grammar for full AST parsing
+ * - Falls back to regex-based extraction if ANTLR fails
+ * - Optionally enhances with rust-analyzer info
  *
- * No native modules required - uses subprocess.
+ * No native modules or Rust toolchain required - uses bundled ANTLR parser.
  */
 
-import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import {
+  enhanceWithRustAnalyzer,
+  findCargoToml,
   findRustAnalyzer,
+  getRustAnalyzerVersion,
   isRustAnalyzerAvailable,
   startRustAnalyzer,
   stopRustAnalyzer,
-  enhanceWithRustAnalyzer,
-  getRustAnalyzerVersion,
-  findCargoToml,
 } from "./rust-analyzer-integration.js";
+import { RustAntlrParser } from "./rust-antlr-parser.js";
 
 // =============================================================================
 // RUST PARSER CLASS
@@ -54,6 +56,7 @@ export class RustNativeParser {
     errorCount: 0,
   };
 
+  private useAntlr = true; // Use ANTLR parser by default
   private rustAnalyzerEnabled = true; // Try to use rust-analyzer by default
   private useRustAnalyzerEnhancement = true; // Enhance with rust-analyzer info
   private currentWorkspace: string | null = null;
@@ -73,9 +76,7 @@ export class RustNativeParser {
       const raPath = await findRustAnalyzer();
       if (raPath) {
         const version = await getRustAnalyzerVersion();
-        console.error(
-          `[RustNativeParser] Initialized with rust-analyzer${version ? ` (v${version})` : ""}`,
-        );
+        console.error(`[RustNativeParser] Initialized with rust-analyzer${version ? ` (v${version})` : ""}`);
         return;
       }
     }
@@ -132,32 +133,59 @@ export class RustNativeParser {
   }
 
   /**
+   * Enable or disable ANTLR parser (falls back to regex if disabled)
+   */
+  setAntlrEnabled(enabled: boolean): void {
+    this.useAntlr = enabled;
+  }
+
+  /**
    * Parse a Rust file
    */
-  async parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult> {
+  async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
+    console.error(`[RustNativeParser] Parsing file: ${filePath} (${content.length} bytes)`);
 
     try {
-      // Use regex-based parsing
-      const result = this.parseWithRegex(filePath, content);
+      let entities: ParsedEntity[];
+      let relationships: EntityRelationship[] | undefined;
+      let errors: Array<{ message: string; location?: { line: number; column: number } }> = [];
+
+      // Try ANTLR parser first
+      if (this.useAntlr) {
+        try {
+          console.error(`[RustNativeParser] Trying ANTLR parser...`);
+          const antlrResult = RustAntlrParser.parse(filePath, content);
+          entities = antlrResult.entities;
+          relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;
+          console.error(
+            `[RustNativeParser] ANTLR success: ${entities.length} entities, ${relationships?.length || 0} relationships`,
+          );
+        } catch (antlrError) {
+          console.error(`[RustNativeParser] ANTLR parser failed, using regex fallback: ${antlrError}`);
+          const result = this.parseWithRegex(filePath, content);
+          entities = result.entities;
+          errors = result.errors;
+          console.error(`[RustNativeParser] Regex fallback: ${entities.length} entities`);
+        }
+      } else {
+        // Fallback to regex-based parsing
+        const result = this.parseWithRegex(filePath, content);
+        entities = result.entities;
+        errors = result.errors;
+      }
 
       // Enhance with rust-analyzer if available and running
       if (
         this.useRustAnalyzerEnhancement &&
         isRustAnalyzerAvailable() &&
         this.currentWorkspace &&
-        result.entities.length > 0
+        entities.length > 0
       ) {
         try {
-          await enhanceWithRustAnalyzer(result.entities, filePath, content);
+          await enhanceWithRustAnalyzer(entities, filePath, content);
         } catch (raError) {
-          console.error(
-            `[RustNativeParser] rust-analyzer enhancement failed: ${raError}`,
-          );
+          console.error(`[RustNativeParser] rust-analyzer enhancement failed: ${raError}`);
         }
       }
 
@@ -166,17 +194,17 @@ export class RustNativeParser {
       // Update stats
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += parseTimeMs;
-      this.stats.avgParseTimeMs =
-        this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
 
       return {
         filePath,
         language: "rust" as SupportedLanguage,
-        entities: result.entities,
+        entities,
+        relationships,
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
-        errors: result.errors.length > 0 ? result.errors : undefined,
+        errors: errors.length > 0 ? errors : undefined,
       };
     } catch (error) {
       this.stats.errorCount++;
@@ -201,10 +229,7 @@ export class RustNativeParser {
   /**
    * Regex-based parser for Rust
    */
-  private parseWithRegex(
-    filePath: string,
-    content: string,
-  ): RustParseResult {
+  private parseWithRegex(filePath: string, content: string): RustParseResult {
     const entities: ParsedEntity[] = [];
     let match: RegExpExecArray | null;
 
@@ -233,7 +258,7 @@ export class RustNativeParser {
 
       if (items) {
         // use path::{item1, item2}
-        const itemList = items.split(",").map(s => s.trim());
+        const itemList = items.split(",").map((s) => s.trim());
         for (const item of itemList) {
           if (!item) continue;
           entities.push({
@@ -326,7 +351,8 @@ export class RustNativeParser {
     }
 
     // Functions
-    const fnRe = /^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?fn\s+(\w+)(?:<[^>]+>)?\s*\(([^)]*)\)(?:\s*->\s*([^\{]+))?/gm;
+    const fnRe =
+      /^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?fn\s+(\w+)(?:<[^>]+>)?\s*\(([^)]*)\)(?:\s*->\s*([^{]+))?/gm;
     while ((match = fnRe.exec(content))) {
       const name = match[1];
       if (!name) continue;
@@ -416,7 +442,10 @@ export class RustNativeParser {
     const params: ParsedEntity["parameters"] = [];
     // Handle &self, &mut self, self
     if (paramsStr.includes("self")) {
-      params.push({ name: "self", type: paramsStr.includes("&mut") ? "&mut Self" : paramsStr.includes("&") ? "&Self" : "Self" });
+      params.push({
+        name: "self",
+        type: paramsStr.includes("&mut") ? "&mut Self" : paramsStr.includes("&") ? "&Self" : "Self",
+      });
     }
 
     // Simple param extraction (name: type)
@@ -436,10 +465,7 @@ export class RustNativeParser {
   /**
    * Get location from character index
    */
-  private getLocationFromIndex(
-    content: string,
-    index: number,
-  ): ParsedEntity["location"] {
+  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
     let line = 1;
     let column = 0;
     for (let i = 0; i < index; i++) {

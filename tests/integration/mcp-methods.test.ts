@@ -3,7 +3,7 @@
  * Validates that all MCP methods are properly defined and callable
  */
 
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it } from "bun:test";
 
 describe("MCP CodeGraph Methods - Validation Tests", () => {
   const ALL_MCP_METHODS = [

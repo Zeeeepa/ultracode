@@ -75,8 +75,10 @@ export class KnowledgeBus extends EventEmitter {
       entries.shift(); // Remove oldest
     }
 
-    // Notify subscribers
-    this.notifySubscribers(entry);
+    // Notify subscribers (fire-and-forget but log errors)
+    this.notifySubscribers(entry).catch((error) => {
+      console.error(`[KnowledgeBus] Error notifying subscribers for topic ${topic}:`, error);
+    });
 
     this.emit("knowledge:published", entry);
   }
@@ -209,18 +211,29 @@ export class KnowledgeBus extends EventEmitter {
     return pattern.test(storedTopic);
   }
 
-  private notifySubscribers(entry: KnowledgeEntry): void {
+  private async notifySubscribers(entry: KnowledgeEntry): Promise<void> {
     // Notify exact topic subscribers
     const exactSubs = this.subscriptions.get(entry.topic) || [];
+
+    // Debug logging for semantic events
+    if (entry.topic === "semantic:new_entities") {
+      console.error(`[KnowledgeBus] Topic "${entry.topic}" has ${exactSubs.length} exact subscribers`);
+      console.error(`[KnowledgeBus] All subscription keys: ${Array.from(this.subscriptions.keys()).join(", ")}`);
+      for (const sub of exactSubs) {
+        console.error(`[KnowledgeBus] - Subscriber: ${sub.agentId}, id: ${sub.id}`);
+      }
+    }
+
+    // Execute handlers sequentially to ensure proper error handling
     for (const sub of exactSubs) {
-      this.callHandler(sub, entry);
+      await this.callHandler(sub, entry);
     }
 
     // Notify wildcard/regex subscribers
     const wildcardSubs = this.subscriptions.get("*") || [];
     for (const sub of wildcardSubs) {
       if (this.matchesTopic(entry.topic, sub.topic)) {
-        this.callHandler(sub, entry);
+        await this.callHandler(sub, entry);
       }
     }
   }

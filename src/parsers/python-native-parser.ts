@@ -5,8 +5,8 @@
  * Philosophy: Python developers always have Python installed.
  *
  * Architecture:
- * - Spawns `python -c "import ast; ..."` for parsing
- * - Returns JSON-serialized AST
+ * - Uses external python-ast-cli.py script for parsing
+ * - Returns JSON with entities, relationships, and errors
  * - Falls back to regex-based extraction if Python is not available
  * - Optional Pyright integration for type diagnostics
  *
@@ -14,11 +14,19 @@
  */
 
 import { spawn } from "node:child_process";
-import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { enhanceWithPyrightTypes, findPyright } from "./pyright-integration.js";
 
+// Get the directory of this module to find the CLI script
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const PYTHON_CLI_SCRIPT_PATH = join(__dirname, "python-ast-cli.py");
+
 // =============================================================================
-// PYTHON AST EXTRACTION SCRIPT
+// FALLBACK PYTHON AST EXTRACTION SCRIPT (used if CLI file not found)
 // =============================================================================
 
 const PYTHON_PARSER_SCRIPT = `
@@ -357,6 +365,7 @@ if __name__ == "__main__":
 
 interface PythonParseResult {
   entities: ParsedEntity[];
+  relationships: EntityRelationship[];
   errors: Array<{ message: string; location?: { line: number; column: number } }>;
 }
 
@@ -376,6 +385,8 @@ export class PythonNativeParser {
   private pythonAvailable: boolean | null = null;
   private pyrightAvailable: boolean | null = null;
   private usePyright: boolean = true; // Enable by default, can be disabled
+  private useCliScript: boolean = true; // Use external CLI script for better parsing
+  private cliScriptAvailable: boolean = false;
   private stats: ParserStats = {
     filesParsed: 0,
     cacheHits: 0,
@@ -393,6 +404,12 @@ export class PythonNativeParser {
   async initialize(): Promise<void> {
     console.error("[PythonNativeParser] Checking Python availability...");
 
+    // Check for external CLI script
+    this.cliScriptAvailable = existsSync(PYTHON_CLI_SCRIPT_PATH);
+    if (this.cliScriptAvailable) {
+      console.error(`[PythonNativeParser] CLI script found: ${PYTHON_CLI_SCRIPT_PATH}`);
+    }
+
     // Try different Python commands
     const pythonCommands = ["python3", "python", "py"];
 
@@ -402,9 +419,8 @@ export class PythonNativeParser {
         if (available) {
           this.pythonPath = cmd;
           this.pythonAvailable = true;
-          console.error(
-            `[PythonNativeParser] Initialized (using ${cmd})`,
-          );
+          const mode = this.cliScriptAvailable && this.useCliScript ? "CLI script" : "inline script";
+          console.error(`[PythonNativeParser] Initialized (using ${cmd}, ${mode})`);
           break;
         }
       } catch {
@@ -414,9 +430,7 @@ export class PythonNativeParser {
 
     if (!this.pythonAvailable) {
       this.pythonAvailable = false;
-      console.error(
-        "[PythonNativeParser] Python not found, falling back to regex parser",
-      );
+      console.error("[PythonNativeParser] Python not found, falling back to regex parser");
     }
 
     // Check for Pyright availability (optional enhancement)
@@ -461,18 +475,19 @@ export class PythonNativeParser {
   /**
    * Parse a Python file
    */
-  async parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult> {
+  async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
 
     try {
       let result: PythonParseResult;
 
       if (this.pythonAvailable) {
-        result = await this.parseWithPython(filePath, content);
+        // Use CLI script if available, otherwise use inline script
+        if (this.cliScriptAvailable && this.useCliScript) {
+          result = await this.parseWithCliScript(filePath, content);
+        } else {
+          result = await this.parseWithPython(filePath, content);
+        }
       } else {
         result = this.parseWithRegex(filePath, content);
       }
@@ -492,13 +507,13 @@ export class PythonNativeParser {
       // Update stats
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += parseTimeMs;
-      this.stats.avgParseTimeMs =
-        this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
 
       return {
         filePath,
         language: "python" as SupportedLanguage,
         entities: result.entities,
+        relationships: result.relationships.length > 0 ? result.relationships : undefined,
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
@@ -525,12 +540,57 @@ export class PythonNativeParser {
   }
 
   /**
-   * Parse using Python subprocess
+   * Parse using external CLI script (preferred - supports relationships)
    */
-  private parseWithPython(
-    filePath: string,
-    content: string,
-  ): Promise<PythonParseResult> {
+  private parseWithCliScript(filePath: string, content: string): Promise<PythonParseResult> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn(this.pythonPath, [PYTHON_CLI_SCRIPT_PATH, "--stdin", filePath], {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      proc.stdin.write(content);
+      proc.stdin.end();
+
+      proc.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(`Python CLI parser failed: ${stderr}`));
+          return;
+        }
+
+        try {
+          const result = JSON.parse(stdout);
+          // Ensure relationships array exists
+          if (!result.relationships) {
+            result.relationships = [];
+          }
+          resolve(result);
+        } catch (e) {
+          reject(new Error(`Failed to parse Python CLI output: ${e}`));
+        }
+      });
+
+      proc.on("error", (err) => {
+        reject(err);
+      });
+    });
+  }
+
+  /**
+   * Parse using inline Python script (fallback - no relationships)
+   */
+  private parseWithPython(filePath: string, content: string): Promise<PythonParseResult> {
     return new Promise((resolve, reject) => {
       const proc = spawn(this.pythonPath, ["-c", PYTHON_PARSER_SCRIPT, filePath], {
         stdio: ["pipe", "pipe", "pipe"],
@@ -559,6 +619,8 @@ export class PythonNativeParser {
 
         try {
           const result = JSON.parse(stdout);
+          // Add empty relationships for inline script
+          result.relationships = [];
           resolve(result);
         } catch (e) {
           reject(new Error(`Failed to parse Python output: ${e}`));
@@ -574,10 +636,7 @@ export class PythonNativeParser {
   /**
    * Fallback regex-based parser
    */
-  private parseWithRegex(
-    filePath: string,
-    content: string,
-  ): PythonParseResult {
+  private parseWithRegex(filePath: string, content: string): PythonParseResult {
     const entities: ParsedEntity[] = [];
 
     // Classes
@@ -604,11 +663,7 @@ export class PythonNativeParser {
 
       entities.push({
         name: funcName,
-        type: isMagic
-          ? "magic_method"
-          : isAsync
-            ? "async_function"
-            : "function",
+        type: isMagic ? "magic_method" : isAsync ? "async_function" : "function",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         modifiers: isAsync ? ["async"] : undefined,
@@ -661,16 +716,13 @@ export class PythonNativeParser {
       }
     }
 
-    return { entities, errors: [] };
+    return { entities, relationships: [], errors: [] };
   }
 
   /**
    * Get location from character index
    */
-  private getLocationFromIndex(
-    content: string,
-    index: number,
-  ): ParsedEntity["location"] {
+  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
     let line = 1;
     let column = 0;
     for (let i = 0; i < index; i++) {
@@ -691,12 +743,7 @@ export class PythonNativeParser {
   /**
    * Parse with incremental support (just calls regular parse)
    */
-  async parseIncremental(
-    filePath: string,
-    content: string,
-    contentHash: string,
-    _edits: any[],
-  ): Promise<ParseResult> {
+  async parseIncremental(filePath: string, content: string, contentHash: string, _edits: any[]): Promise<ParseResult> {
     return this.parse(filePath, content, contentHash);
   }
 

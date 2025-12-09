@@ -19,7 +19,8 @@
       "!!**/node_modules",
       "!!**/dist",
       "!!**/build",
-      "!!**/.git"
+      "!!**/.git",
+      "!!**/generated"
     ]
   },
   "formatter": {

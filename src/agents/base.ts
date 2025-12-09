@@ -16,6 +16,13 @@ import {
 } from "../types/agent.js";
 import { type AgentBusyDetails, AgentBusyError } from "../types/errors.js";
 
+// Task with resolver for queue-based processing
+interface QueuedTask {
+  task: AgentTask;
+  resolve: (result: unknown) => void;
+  reject: (error: Error) => void;
+}
+
 export abstract class BaseAgent extends EventEmitter implements Agent {
   public readonly id: string;
   public readonly type: AgentType;
@@ -28,6 +35,10 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   protected memoryUsage = 0;
   protected cpuUsage = 0;
   private lastRejection: AgentBusyDetails | undefined;
+
+  // Queue for async task processing
+  private pendingQueue: QueuedTask[] = [];
+  private isProcessingQueue = false;
 
   constructor(type: AgentType, capabilities: AgentCapabilities) {
     super();
@@ -115,22 +126,8 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
       };
       return false;
     }
-    if (this.memoryUsage > this.capabilities.memoryLimit * 0.9) {
-      if (this.type === "indexer") {
-        console.error(
-          `[${this.id}] Rejected: memory limit (${this.memoryUsage}MB > ${this.capabilities.memoryLimit * 0.9}MB)`,
-        );
-      }
-      this.lastRejection = {
-        agentId: this.id,
-        status: this.status,
-        reason: "memory_limit",
-        memoryUsageMB: this.memoryUsage,
-        memoryLimitMB: this.capabilities.memoryLimit,
-        retryAfterMs: 500,
-      };
-      return false;
-    }
+    // Memory limit check disabled - let OS handle memory management
+    // if (this.memoryUsage > this.capabilities.memoryLimit * 0.9) { ... }
 
     const canProcess = this.canProcessTask(task);
     if (this.type === "indexer" && !canProcess) {
@@ -203,6 +200,114 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
       this.metrics.lastActivity = Date.now();
       this.lastRejection = undefined;
     }
+  }
+
+  /**
+   * Enqueue a task for processing. Returns a Promise that resolves when the task completes.
+   * Unlike process(), this method accepts tasks even when the agent is busy,
+   * queuing them for later execution. This enables efficient parallel task submission.
+   *
+   * @param task - The task to enqueue
+   * @param maxQueueSize - Maximum queue size before rejecting (default: 1000)
+   * @returns Promise that resolves with the task result
+   */
+  async enqueue(task: AgentTask, maxQueueSize = 1000): Promise<unknown> {
+    // Check if task type is supported
+    if (!this.canProcessTask(task)) {
+      throw new AgentBusyError({
+        agentId: this.id,
+        status: this.status,
+        reason: "unsupported_task",
+        queueLength: this.pendingQueue.length,
+        maxQueue: maxQueueSize,
+        taskId: task.id,
+      });
+    }
+
+    // Reject if queue is too large (backpressure)
+    if (this.pendingQueue.length >= maxQueueSize) {
+      throw new AgentBusyError({
+        agentId: this.id,
+        status: this.status,
+        reason: "queue_full",
+        queueLength: this.pendingQueue.length,
+        maxQueue: maxQueueSize,
+        retryAfterMs: 500,
+        taskId: task.id,
+      });
+    }
+
+    // Create a promise that will be resolved when the task completes
+    return new Promise((resolve, reject) => {
+      this.pendingQueue.push({ task, resolve, reject });
+      // Start processing if not already running
+      this.processQueue();
+    });
+  }
+
+  /**
+   * Process tasks from the pending queue one by one
+   */
+  private async processQueue(): Promise<void> {
+    // Prevent concurrent queue processing
+    if (this.isProcessingQueue) {
+      return;
+    }
+
+    this.isProcessingQueue = true;
+
+    try {
+      while (this.pendingQueue.length > 0) {
+        const queued = this.pendingQueue.shift();
+        if (!queued) break;
+
+        const { task, resolve, reject } = queued;
+
+        try {
+          // Process task directly (bypass canHandle since we already checked canProcessTask)
+          this.taskQueue.push(task);
+          this.status = AgentStatus.BUSY;
+          this.currentTask = task;
+          task.startedAt = Date.now();
+
+          const result = await this.processTask(task);
+          task.completedAt = Date.now();
+          task.result = result;
+
+          this.metrics.tasksProcessed++;
+          this.metrics.tasksSucceeded++;
+          this.updateAverageProcessingTime(task.completedAt - task.startedAt);
+
+          this.emit("task:completed", { agentId: this.id, task });
+          resolve(result);
+        } catch (error) {
+          task.error = error as Error;
+          task.completedAt = Date.now();
+
+          this.metrics.tasksProcessed++;
+          this.metrics.tasksFailed++;
+
+          this.emit("task:failed", { agentId: this.id, task, error });
+          reject(error as Error);
+        } finally {
+          this.taskQueue = this.taskQueue.filter((t) => t.id !== task.id);
+          this.currentTask = null;
+          this.metrics.lastActivity = Date.now();
+        }
+      }
+    } finally {
+      this.isProcessingQueue = false;
+      if (this.taskQueue.length === 0) {
+        this.status = AgentStatus.IDLE;
+      }
+    }
+  }
+
+  /**
+   * Get the current pending queue length
+   */
+  getPendingQueueLength(): number {
+    return this.pendingQueue.length;
   }
 
   async send(message: AgentMessage): Promise<void> {

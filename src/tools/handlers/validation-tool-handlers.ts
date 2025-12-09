@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
 // =============================================================================
@@ -15,6 +16,7 @@ import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
 const ValidateFileSchema = z.object({
   filePath: z.string(),
+  projectPath: projectPathParam,
   validators: z.array(z.string()).optional(),
   fixable: z.boolean().optional().default(false),
 });
@@ -79,7 +81,6 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
       ".py": ["pylint", "mypy"],
       ".rs": ["cargo-check"],
       ".go": ["go-vet"],
-      ".cs": ["dotnet-build"],
       ".java": ["javac"],
     };
     return map[ext] || [];
@@ -186,6 +187,7 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
 
 const ValidateDirectorySchema = z.object({
   directory: z.string().optional(),
+  projectPath: projectPathParam,
   validators: z.array(z.string()).optional(),
   extensions: z.array(z.string()).optional(),
   maxFiles: z.number().optional().default(100),

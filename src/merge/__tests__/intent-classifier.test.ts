@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it } from "bun:test";
 import { IntentClassifier } from "../analysis/intent-classifier.js";
 import { ChangeIntentType } from "../models/change-intent.js";
 import { type CodeUnit, CodeUnitType } from "../models/code-unit.js";

@@ -1,29 +1,23 @@
-import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import * as childProcess from "node:child_process";
+import * as fs from "node:fs";
 import { GitIntegration, type GitIntegrationConfig } from "../git-integration.js";
-
-// Mock child_process and fs
-jest.mock("node:child_process");
-jest.mock("node:fs");
-
-const mockExecSync = execSync as jest.MockedFunction<typeof execSync>;
-const mockExistsSync = existsSync as jest.MockedFunction<typeof existsSync>;
 
 describe("GitIntegration", () => {
   let config: GitIntegrationConfig;
+  let mockExecSync: ReturnType<typeof spyOn>;
+  let mockExistsSync: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-
     config = {
       repoPath: "/test/repo",
       allowDetachedHead: false,
       restoreOnError: true,
     };
 
-    // Default mocks
-    mockExistsSync.mockReturnValue(true); // .git exists
+    // Setup spies
+    mockExistsSync = spyOn(fs, "existsSync").mockReturnValue(true);
+    mockExecSync = spyOn(childProcess, "execSync");
   });
 
   describe("constructor", () => {
@@ -33,17 +27,14 @@ describe("GitIntegration", () => {
     });
 
     it("should throw error if not a git repository", () => {
-      mockExistsSync.mockReturnValue(false); // No .git
-
+      mockExistsSync.mockReturnValue(false);
       expect(() => new GitIntegration(config)).toThrow(/Not a git repository/);
     });
   });
 
   describe("getCurrentBranch", () => {
     it("should return current branch for regular branch", () => {
-      mockExecSync
-        .mockReturnValueOnce("main\n") // symbolic-ref
-        .mockReturnValueOnce("abc123def456\n"); // rev-parse
+      mockExecSync.mockReturnValueOnce("main\n").mockReturnValueOnce("abc123def456\n");
 
       const git = new GitIntegration(config);
       const branch = git.getCurrentBranch();
@@ -54,12 +45,11 @@ describe("GitIntegration", () => {
     });
 
     it("should handle detached HEAD state", () => {
-      // symbolic-ref fails for detached HEAD
       mockExecSync
         .mockImplementationOnce(() => {
           throw new Error("Not a symbolic ref");
         })
-        .mockReturnValueOnce("abc123def456\n"); // rev-parse
+        .mockReturnValueOnce("abc123def456\n");
 
       const git = new GitIntegration(config);
       const branch = git.getCurrentBranch();
@@ -94,7 +84,7 @@ describe("GitIntegration", () => {
 
   describe("branchExists", () => {
     it("should return true if branch exists", () => {
-      mockExecSync.mockReturnValueOnce(""); // rev-parse succeeds
+      mockExecSync.mockReturnValueOnce("");
 
       const git = new GitIntegration(config);
       const exists = git.branchExists("feature-branch");
@@ -117,11 +107,11 @@ describe("GitIntegration", () => {
   describe("checkoutBranch", () => {
     it("should successfully checkout existing branch", async () => {
       mockExecSync
-        .mockReturnValueOnce("main\n") // getCurrentBranch (symbolic-ref)
-        .mockReturnValueOnce("abc123\n") // getCurrentBranch (rev-parse)
-        .mockReturnValueOnce("") // branchExists (rev-parse --verify)
-        .mockReturnValueOnce("") // hasUncommittedChanges (git status)
-        .mockReturnValueOnce(""); // git checkout
+        .mockReturnValueOnce("main\n")
+        .mockReturnValueOnce("abc123\n")
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("");
 
       const git = new GitIntegration(config);
       await git.checkoutBranch("feature");
@@ -131,11 +121,11 @@ describe("GitIntegration", () => {
 
     it("should throw error if branch does not exist", async () => {
       mockExecSync
-        .mockReturnValueOnce("main\n") // getCurrentBranch (symbolic-ref)
-        .mockReturnValueOnce("abc123\n") // getCurrentBranch (rev-parse)
+        .mockReturnValueOnce("main\n")
+        .mockReturnValueOnce("abc123\n")
         .mockImplementationOnce(() => {
           throw new Error("Branch not found");
-        }); // branchExists (rev-parse --verify) throws
+        });
 
       const git = new GitIntegration(config);
 
@@ -144,10 +134,10 @@ describe("GitIntegration", () => {
 
     it("should throw error if uncommitted changes exist", async () => {
       mockExecSync
-        .mockReturnValueOnce("main\n") // getCurrentBranch (symbolic-ref)
-        .mockReturnValueOnce("abc123\n") // getCurrentBranch (rev-parse)
-        .mockReturnValueOnce("") // branchExists
-        .mockReturnValueOnce("M file.ts\n"); // hasUncommittedChanges
+        .mockReturnValueOnce("main\n")
+        .mockReturnValueOnce("abc123\n")
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("M file.ts\n");
 
       const git = new GitIntegration(config);
 
@@ -156,20 +146,19 @@ describe("GitIntegration", () => {
 
     it("should restore original branch on error if restoreOnError=true", async () => {
       mockExecSync
-        .mockReturnValueOnce("main\n") // getCurrentBranch
+        .mockReturnValueOnce("main\n")
         .mockReturnValueOnce("abc123\n")
-        .mockReturnValueOnce("") // branchExists
-        .mockReturnValueOnce("") // hasUncommittedChanges
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("")
         .mockImplementationOnce(() => {
           throw new Error("Checkout failed");
-        }) // git checkout fails
-        .mockReturnValueOnce(""); // restore (git checkout main)
+        })
+        .mockReturnValueOnce("");
 
       const git = new GitIntegration(config);
 
       await expect(git.checkoutBranch("feature")).rejects.toThrow(/Failed to checkout/);
 
-      // Should have called checkout twice (failed + restore)
       expect(mockExecSync).toHaveBeenCalledWith("git checkout main", expect.objectContaining({ cwd: "/test/repo" }));
     });
   });
@@ -255,8 +244,8 @@ describe("GitIntegration", () => {
   describe("getDiffStats", () => {
     it("should parse diff statistics", async () => {
       mockExecSync
-        .mockReturnValueOnce("A\tsrc/new.ts\n") // getChangedFilesBetween
-        .mockReturnValueOnce(" 3 files changed, 45 insertions(+), 12 deletions(-)\n"); // shortstat
+        .mockReturnValueOnce("A\tsrc/new.ts\n")
+        .mockReturnValueOnce(" 3 files changed, 45 insertions(+), 12 deletions(-)\n");
 
       const git = new GitIntegration(config);
       const stats = await git.getDiffStats("main", "feature");
@@ -341,29 +330,30 @@ describe("GitIntegration", () => {
   describe("cleanup", () => {
     it("should restore original branch if set", async () => {
       mockExecSync
-        .mockReturnValueOnce("main\n") // getCurrentBranch
+        .mockReturnValueOnce("main\n")
         .mockReturnValueOnce("abc123\n")
-        .mockReturnValueOnce("") // branchExists
-        .mockReturnValueOnce("") // hasUncommittedChanges
-        .mockReturnValueOnce("") // checkout feature
-        .mockReturnValueOnce(""); // cleanup (restore main)
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("");
 
       const git = new GitIntegration(config);
       await git.checkoutBranch("feature");
       await git.cleanup();
 
-      expect(mockExecSync).toHaveBeenLastCalledWith(
-        "git checkout main",
-        expect.objectContaining({ cwd: "/test/repo" }),
-      );
+      // Check that the last call was to restore main
+      const calls = mockExecSync.mock.calls;
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall?.[0]).toBe("git checkout main");
     });
 
     it("should do nothing if no original branch", async () => {
       const git = new GitIntegration(config);
+      const callCount = mockExecSync.mock.calls.length;
       await git.cleanup();
 
-      // Should not call checkout
-      expect(mockExecSync).not.toHaveBeenCalled();
+      // Should not have made any new calls
+      expect(mockExecSync.mock.calls.length).toBe(callCount);
     });
   });
 });

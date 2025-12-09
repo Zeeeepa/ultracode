@@ -8,28 +8,23 @@
 
 | Файл | Описание |
 |------|----------|
-| `conflict-detector.ts` | Обнаруживает конфликты и противоречия в текстовых данных, анализируя семантические и логические несоответствия между фразами и утверждениями. |
+| `conflict-detector.ts` | Обнаруживает конфликтующие утверждения и противоречия в тексте. |
 | `index.ts` | Экспортирует основные классы модуля для использования в других частях приложения. |
-| `intent-classifier.ts` | Классифицирует намерения пользователей на основе текстовых входных данных, определяя тип запроса или действия. |
+| `intent-classifier.ts` | Классифицирует намерения пользователей на основе текстовых входных данных. |
 
 ## Экспорты
 
-- **`ConflictDetector`** — класс для обнаружения конфликтов и противоречий в тексте
-- **`IntentClassifier`** — класс для классификации намерений пользователей по их сообщениям
+- **`ConflictDetector`** — класс для поиска и анализа конфликтов в тексте.
+- **`IntentClassifier`** — класс для определения намерений пользователя по его сообщению.
 
 ## Использование
 
 ```typescript
 import { ConflictDetector, IntentClassifier } from './analysis';
 
-const conflictDetector = new ConflictDetector();
-const intentClassifier = new IntentClassifier();
+const detector = new ConflictDetector();
+const classifier = new IntentClassifier();
 
-// Пример использования классификатора намерений
-const intent = intentClassifier.classify('Я хочу забронировать номер на завтра');
-console.log(intent); // Выводит тип намерения
-
-// Пример использования детектора конфликтов
-const conflicts = conflictDetector.detect('Я не хочу ехать, но мне сказали, что нужно');
-console.log(conflicts); // Выводит найденные конфликты
+const conflicts = detector.detect(text);
+const intent = classifier.classify(text);
 ```

@@ -12,8 +12,9 @@
  */
 
 import { z } from "zod";
+import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
-import { paginate, SAFE_LIMITS, MAX_PAGE_SIZE } from "../response-limits.js";
+import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 
 // =============================================================================
 // SUGGEST REFACTORING
@@ -22,6 +23,7 @@ import { paginate, SAFE_LIMITS, MAX_PAGE_SIZE } from "../response-limits.js";
 const SuggestRefactoringSchema = z.object({
   entityId: z.string().optional(),
   filePath: z.string().optional(),
+  projectPath: projectPathParam,
   type: z.enum(["extract_method", "rename", "move", "simplify", "all"]).optional().default("all"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
@@ -75,6 +77,7 @@ export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeo
 // =============================================================================
 
 const AnalyzeHotspotsSchema = z.object({
+  projectPath: projectPathParam,
   type: z.enum(["complexity", "changes", "coupling", "all"]).optional().default("all"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.hotspots),
@@ -162,6 +165,7 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
 
 const FindRelatedConceptsSchema = z.object({
   concept: z.string(),
+  projectPath: projectPathParam,
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
 });
@@ -207,6 +211,7 @@ export class FindRelatedConceptsToolHandler extends BaseToolHandler<z.infer<type
 // =============================================================================
 
 const AnalyzeStateChaosSchema = z.object({
+  projectPath: projectPathParam,
   format: z.enum(["summary", "detailed", "json"]).optional().default("summary"),
 });
 
@@ -309,6 +314,7 @@ ${analysis.recommendations.map((r: string, i: number) => `${i + 1}. ${r}`).join(
 const AnalyzeCodeImpactSchema = z.object({
   entityId: z.string().optional(),
   filePath: z.string().optional(),
+  projectPath: projectPathParam,
   depth: z.number().optional().default(3),
 });
 
@@ -390,6 +396,7 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
 
 const DetectTechnologyStackSchema = z.object({
   directory: z.string().optional(),
+  projectPath: projectPathParam,
 });
 
 export class DetectTechnologyStackToolHandler extends BaseToolHandler<z.infer<typeof DetectTechnologyStackSchema>> {
@@ -439,6 +446,7 @@ export class DetectTechnologyStackToolHandler extends BaseToolHandler<z.infer<ty
 
 const LernaProjectGraphSchema = z.object({
   directory: z.string().optional(),
+  projectPath: projectPathParam,
 });
 
 export class LernaProjectGraphToolHandler extends BaseToolHandler<z.infer<typeof LernaProjectGraphSchema>> {

@@ -20,6 +20,7 @@ import { IncrementalParser } from "../parsers/incremental-parser.js";
 import { isFileSupported } from "../parsers/language-configs.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { FileChange, ParseResult, ParserOptions, ParserStats, ParserTask } from "../types/parser.js";
+import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 import { LanguageWorkerPool } from "./workers/language-worker-pool.js";
 
@@ -32,9 +33,9 @@ function getParserConfig() {
     maxConcurrency: config.parser.agent?.maxConcurrency ?? 4,
     memoryLimit: config.parser.agent?.memoryLimit ?? 512,
     priority: config.parser.agent?.priority ?? 8,
-    batchSize: config.parser.agent?.batchSize ?? 10,
+    batchSize: config.parser.agent?.batchSize ?? 20,
     cacheSize: config.parser.agent?.cacheSize ?? 100 * 1024 * 1024,
-    workerPoolSize: config.parser.agent?.workerPoolSize ?? 2,
+    workerPoolSize: config.parser.agent?.workerPoolSize ?? 8,
   };
 }
 
@@ -78,7 +79,6 @@ function detectLanguage(filePath: string): string {
     ".cc": "cpp",
     ".hpp": "cpp",
     ".hxx": "cpp",
-    ".cs": "csharp",
     ".java": "java",
     ".go": "go",
     ".c": "c",
@@ -93,10 +93,6 @@ function detectLanguage(filePath: string): string {
     ".html": "html",
     ".htm": "html",
     ".xml": "xml",
-    ".vba": "vba",
-    ".bas": "vba",
-    ".cls": "vba",
-    ".frm": "vba",
     ".ts": "typescript",
     ".tsx": "typescript",
     ".mts": "typescript",
@@ -272,16 +268,7 @@ export class ParserAgent extends BaseAgent {
       return false;
     }
 
-    // Check memory constraints and auto-cleanup if needed
-    const config = getParserConfig();
-    const currentMemory = this.getMemoryUsage();
-    const memoryThreshold = config.memoryLimit * 0.8;
-
-    if (currentMemory > memoryThreshold) {
-      console.warn(`[${this.id}] Memory limit approaching (${currentMemory}MB > ${memoryThreshold}MB), clearing cache`);
-      return false;
-    }
-
+    // Memory limit check disabled - let OS handle memory
     return true;
   }
 
@@ -453,37 +440,80 @@ export class ParserAgent extends BaseAgent {
    * Parse files in batch with parallel processing
    */
   async parseBatch(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
+    // DEBUG: Log input files count
+    console.error(`[ParserAgent.parseBatch] Received ${files.length} files`);
+
     // Filter to supported files only
     const supportedFiles = filterSupportedFiles(files);
 
+    // DEBUG: Log filtered files count
+    console.error(`[ParserAgent.parseBatch] After filter: ${supportedFiles.length} supported files`);
+
+    // DEBUG: Log filtering stats via logger (for file logging)
+    const extStats: Record<string, { total: number; supported: number }> = {};
+    for (const file of files) {
+      const ext = file.split(".").pop()?.toLowerCase() || "(no ext)";
+      if (!extStats[ext]) extStats[ext] = { total: 0, supported: 0 };
+      extStats[ext].total++;
+    }
+    for (const file of supportedFiles) {
+      const ext = file.split(".").pop()?.toLowerCase() || "(no ext)";
+      if (extStats[ext]) extStats[ext].supported++;
+    }
+    logger.info("PARSER_AGENT", "parseBatch filtering", {
+      agentId: this.id,
+      inputFiles: files.length,
+      supportedFiles: supportedFiles.length,
+      byExtension: extStats,
+    });
+
     if (supportedFiles.length === 0) {
-      console.warn(`[${this.id}] No supported files to parse`);
+      logger.warn("PARSER_AGENT", "No supported files to parse", { agentId: this.id });
       return [];
     }
 
-    console.error(`[${this.id}] Parsing ${supportedFiles.length} files in parallel...`);
+    logger.info("PARSER_AGENT", "Starting batch parse", {
+      agentId: this.id,
+      fileCount: supportedFiles.length,
+    });
 
     // Use language-specific worker pools for parallel processing
-    // Threshold: 50 files minimum to justify worker pool overhead (optimization)
-    const WORKER_THRESHOLD = 50;
-    if (this.useWorkers && supportedFiles.length >= WORKER_THRESHOLD) {
+    // Threshold: 20 files minimum to justify worker pool overhead (optimization)
+    // TEMPORARILY DISABLED: Worker pools have path issues, using single-threaded parsing
+    const WORKER_THRESHOLD = 20;
+    const USE_WORKERS_TEMP_DISABLED = false; // TODO: Re-enable after fixing worker path issue
+    if (USE_WORKERS_TEMP_DISABLED && this.useWorkers && supportedFiles.length >= WORKER_THRESHOLD) {
       const startTime = Date.now();
       const results = await this.parseWithWorkers(supportedFiles, options);
       const elapsed = Date.now() - startTime;
 
-      console.error(
-        `[${this.id}] Language pool parsing completed: ${supportedFiles.length} files in ${elapsed}ms (${Math.round(supportedFiles.length / (elapsed / 1000))} files/sec)`,
-      );
+      logger.info("PARSER_AGENT", "Worker pool parsing completed", {
+        agentId: this.id,
+        filesProcessed: supportedFiles.length,
+        resultsCount: results.length,
+        elapsedMs: elapsed,
+        filesPerSec: Math.round(supportedFiles.length / (elapsed / 1000)),
+      });
 
       return results;
     } else {
       // Fall back to single-threaded batch processing for small batches
-      if (supportedFiles.length < WORKER_THRESHOLD && this.useWorkers) {
-        console.error(
-          `[${this.id}] Using single-threaded parser (${supportedFiles.length} files < ${WORKER_THRESHOLD} threshold)`,
-        );
-      }
+      logger.info("PARSER_AGENT", "Using single-threaded parser", {
+        agentId: this.id,
+        fileCount: supportedFiles.length,
+        threshold: WORKER_THRESHOLD,
+        useWorkers: this.useWorkers,
+      });
+
       const result = await this.parser.parseBatch(supportedFiles, options);
+
+      logger.info("PARSER_AGENT", "Single-threaded parsing completed", {
+        agentId: this.id,
+        inputFiles: supportedFiles.length,
+        resultsCount: result.results.length,
+        resultsWithEntities: result.results.filter((r) => r.entities && r.entities.length > 0).length,
+      });
+
       return result.results;
     }
   }
@@ -572,7 +602,7 @@ export class ParserAgent extends BaseAgent {
 
     try {
       // Optimization 2: Threshold - skip workers for small batches
-      const WORKER_THRESHOLD = 50; // Configurable threshold
+      const WORKER_THRESHOLD = 20; // Configurable threshold
       if (files.length < WORKER_THRESHOLD) {
         console.error(
           `[${this.id}] File count (${files.length}) below worker threshold (${WORKER_THRESHOLD}), using single-threaded parser`,

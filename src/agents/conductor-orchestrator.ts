@@ -673,9 +673,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
   getAvailableAgent(type: AgentType): Agent | undefined {
     const agents = this.getAgentsByType(type);
-    const availableAgents = agents.filter(
-      (agent) => agent.status === AgentStatus.IDLE && agent.getMemoryUsage() < agent.capabilities.memoryLimit * 0.8,
-    );
+    // Memory limit check disabled - only check status
+    const availableAgents = agents.filter((agent) => agent.status === AgentStatus.IDLE);
 
     if (availableAgents.length === 0) return undefined;
 
@@ -744,19 +743,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         this.emit("agent:unhealthy", agentId);
       }
 
-      // Check memory usage only if capabilities are defined
-      if (agent.capabilities?.memoryLimit && agent.getMemoryUsage) {
-        const memoryUsage = agent.getMemoryUsage();
-        if (memoryUsage > agent.capabilities.memoryLimit) {
-          console.warn(`[CONDUCTOR] Agent ${agentId} exceeds memory limit`);
-          logger.incident("Agent memory limit exceeded", {
-            agentId,
-            limitMB: agent.capabilities.memoryLimit,
-            usageMB: memoryUsage,
-          });
-          this.emit("agent:memory-exceeded", agentId);
-        }
-      }
+      // Memory limit check disabled - let OS handle memory management
 
       // Staleness detection based on metrics
       try {

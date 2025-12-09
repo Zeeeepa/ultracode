@@ -178,7 +178,15 @@ export interface VectorStoreConfig {
 /**
  * Embedding generator configuration
  */
-export type EmbeddingProviderKind = "memory" | "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "auto";
+export type EmbeddingProviderKind =
+  | "memory"
+  | "ollama"
+  | "openai"
+  | "cloudru"
+  | "huggingface"
+  | "tei"
+  | "openvino"
+  | "auto";
 
 export interface EmbeddingConfig {
   modelName: string;
@@ -226,6 +234,13 @@ export interface EmbeddingConfig {
   };
   memory?: {
     dimension?: number;
+  };
+  openvino?: {
+    model?: string;
+    device?: "CPU" | "GPU" | "GPU.0" | "GPU.1" | "AUTO";
+    modelPath?: string;
+    autoDownload?: boolean;
+    timeoutMs?: number;
   };
 }
 

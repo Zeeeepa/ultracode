@@ -18,6 +18,7 @@ import {
   AnalyzeHotspotsToolHandler,
   AnalyzeMergeConflictsToolHandler,
   AnalyzeStateChaosToolHandler,
+  AnalyzeStateImpactToolHandler,
   CleanIndexToolHandler,
   CleanupBranchesToolHandler,
   CleanupSnapshotsToolHandler,
@@ -29,6 +30,7 @@ import {
   CrossLanguageSearchToolHandler,
   DetectCodeClonesToolHandler,
   DetectTechnologyStackToolHandler,
+  FindDecisionPointsToolHandler,
   FindRelatedConceptsToolHandler,
   FindSimilarCodeToolHandler,
   GetAgentMetricsToolHandler,
@@ -71,6 +73,10 @@ import {
   SuggestRefactoringToolHandler,
   SwitchBranchToolHandler,
   SynthesizeFilesToolHandler,
+  TraceBackwardsToolHandler,
+  TraceDataFlowToolHandler,
+  // Tracing tools
+  TraceFlowToolHandler,
   ValidateDirectoryToolHandler,
   // Validation tools
   ValidateFileToolHandler,
@@ -220,6 +226,15 @@ export class ToolRegistry {
     this.register("analyze_merge_conflicts", AnalyzeMergeConflictsToolHandler);
     this.register("get_merge_suggestions", GetMergeSuggestionsToolHandler);
     this.register("get_semantic_merge_info", GetSemanticMergeInfoToolHandler);
+
+    // ==========================================================================
+    // Tracing tools
+    // ==========================================================================
+    this.register("trace_flow", TraceFlowToolHandler);
+    this.register("trace_backwards", TraceBackwardsToolHandler);
+    this.register("trace_data_flow", TraceDataFlowToolHandler);
+    this.register("analyze_state_impact", AnalyzeStateImpactToolHandler);
+    this.register("find_decision_points", FindDecisionPointsToolHandler);
   }
 }
 

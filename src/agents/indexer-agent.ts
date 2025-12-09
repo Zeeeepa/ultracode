@@ -36,7 +36,7 @@ import type {
   GraphQueryResult,
   Relationship,
 } from "../types/storage.js";
-import { EntityType, parsedEntityToEntity, RelationType } from "../types/storage.js";
+import { EntityType, flattenParsedEntities, parsedEntityToEntity, RelationType } from "../types/storage.js";
 import { BaseAgent } from "./base.js";
 
 // =============================================================================
@@ -45,7 +45,7 @@ import { BaseAgent } from "./base.js";
 function getIndexerConfig() {
   const config = getConfig();
   return {
-    maxConcurrency: config.indexer?.maxConcurrency ?? 2,
+    maxConcurrency: config.indexer?.maxConcurrency ?? 8,
     memoryLimit: config.indexer?.memoryLimit ?? 512,
     priority: config.indexer?.priority ?? 7,
     batchSize: config.indexer?.batchSize ?? 1000,
@@ -95,6 +95,7 @@ interface ProvidedRelationship {
   from: string;
   to: string;
   type: RelationType | string;
+  sourceFile?: string;
   targetFile?: string;
   metadata?: { line?: number; [k: string]: unknown };
 }
@@ -330,7 +331,21 @@ export class IndexerAgent extends BaseAgent {
     providedRelationships?: ProvidedRelationship[],
   ): Promise<BatchResult & { entitiesIndexed: number; relationshipsCreated: number }> {
     const startTime = Date.now();
-    console.error(`[${this.id}] Indexing ${entities.length} entities from ${filePath}`);
+
+    // Flatten entity tree to include all children (class members, properties, methods)
+    // This is critical for NgRx effects and other class members to be stored as separate entities
+    const flatEntities = flattenParsedEntities(entities);
+    const childrenExtracted = flatEntities.length - entities.length;
+    console.error(
+      `[${this.id}] Indexing ${entities.length} entities (${flatEntities.length} after flatten, ${childrenExtracted} children) from ${filePath}`,
+    );
+    if (childrenExtracted > 0) {
+      // Log some sample children for debugging
+      const sampleChildren = flatEntities.slice(entities.length, entities.length + 3);
+      console.error(
+        `[${this.id}] Sample children: ${sampleChildren.map((c) => `${c.name} (${c.type}, filePath=${c.filePath ? "yes" : "NO"}, location=${c.location ? "yes" : "NO"})`).join(", ")}`,
+      );
+    }
 
     // Validate parsed entities and convert to storage entities
     const storageEntities: Entity[] = [];
@@ -338,7 +353,7 @@ export class IndexerAgent extends BaseAgent {
     const preErrors: Array<{ item: unknown; error: string }> = [];
     const fileHash = nanoid(8); // In production, use actual file hash
 
-    for (const parsed of entities) {
+    for (const parsed of flatEntities) {
       try {
         if (
           !parsed ||
@@ -347,6 +362,18 @@ export class IndexerAgent extends BaseAgent {
           !(parsed as any).type ||
           !(parsed as any).location
         ) {
+          // Debug: log why entity was rejected
+          const reasons: string[] = [];
+          if (!parsed) reasons.push("null/undefined");
+          else if (typeof parsed !== "object") reasons.push("not object");
+          else {
+            if (typeof (parsed as any).name !== "string") reasons.push("no name");
+            if (!(parsed as any).type) reasons.push("no type");
+            if (!(parsed as any).location) reasons.push("no location");
+          }
+          console.error(
+            `[${this.id}] Rejected entity: ${(parsed as any)?.name || "unknown"} - reasons: ${reasons.join(", ")}`,
+          );
           throw new Error("Invalid entity");
         }
 
@@ -356,7 +383,9 @@ export class IndexerAgent extends BaseAgent {
         const normalizedParsed =
           !hasName && isImport ? { ...(parsed as any), name: `import:${parsed.importData?.source}` } : parsed;
 
-        const base = parsedEntityToEntity(normalizedParsed, filePath, fileHash);
+        // Use entity's filePath if available (for flattened children), otherwise use provided filePath
+        const entityFilePath = normalizedParsed.filePath || filePath;
+        const base = parsedEntityToEntity(normalizedParsed, entityFilePath, fileHash);
         const entity: Entity = {
           ...base,
           id: stableEntityId(base),
@@ -427,7 +456,7 @@ export class IndexerAgent extends BaseAgent {
       }
       console.error(`[${this.id}] DEBUG: Processing ${providedRelationships.length} provided relationships`);
       for (const rel of providedRelationships) {
-        const fromId = resolveByNameAndLine(rel.from, rel.metadata?.line);
+        let fromId = resolveByNameAndLine(rel.from, rel.metadata?.line);
         let toId = resolveByNameAndLine(rel.to, rel.metadata?.line);
 
         // DEBUG: Log resolution results for first relationship
@@ -435,6 +464,12 @@ export class IndexerAgent extends BaseAgent {
           console.error(
             `[${this.id}] DEBUG: First rel resolution: from="${rel.from}" -> fromId="${fromId}", to="${rel.to}" -> toId="${toId}"`,
           );
+        }
+
+        // Create external placeholder for unresolved fromId (e.g., decorators)
+        if (!fromId) {
+          const src = rel.sourceFile || filePath || "unknown";
+          fromId = `external:${src}:${rel.from}`;
         }
 
         if (!toId) {
@@ -461,41 +496,51 @@ export class IndexerAgent extends BaseAgent {
       console.error(`[${this.id}] Built ${relationships.length} relationships automatically`);
     }
 
-    // Ensure placeholder entities exist for any external relationship targets
+    // Ensure placeholder entities exist for any external relationship sources/targets
     const externalPlaceholders: Entity[] = [];
     const seenExternal = new Map<string, string>(); // extKey -> placeholderId
 
+    const createExternalPlaceholder = (extId: string): string => {
+      const parts = extId.split(":");
+      const source = parts[1] ?? "unknown";
+      const symbol = parts.slice(2).join(":") || "unknown";
+
+      const placeholderBase: Omit<Entity, "id" | "createdAt" | "updatedAt"> = {
+        name: symbol,
+        type: EntityType.IMPORT,
+        filePath: `external://${source}`,
+        location: {
+          start: { line: 0, column: 0, index: 0 },
+          end: { line: 0, column: 0, index: 0 },
+        },
+        metadata: { isExternal: true, source, symbol } as any,
+        hash: `external:${source}:${symbol}`,
+      };
+
+      const placeholderId = stableEntityId(placeholderBase);
+
+      if (!seenExternal.has(extId)) {
+        seenExternal.set(extId, placeholderId);
+        externalPlaceholders.push({
+          ...placeholderBase,
+          id: placeholderId,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+
+      return placeholderId;
+    };
+
     for (const rel of relationships) {
+      // Handle external fromId (e.g., decorators from imported modules)
+      if (typeof rel.fromId === "string" && rel.fromId.startsWith("external:")) {
+        rel.fromId = createExternalPlaceholder(rel.fromId);
+      }
+
+      // Handle external toId
       if (typeof rel.toId === "string" && rel.toId.startsWith("external:")) {
-        const parts = rel.toId.split(":");
-        const source = parts[1] ?? "unknown";
-        const symbol = parts.slice(2).join(":") || "unknown";
-
-        const placeholderBase: Omit<Entity, "id" | "createdAt" | "updatedAt"> = {
-          name: symbol,
-          type: EntityType.IMPORT,
-          filePath: `external://${source}`,
-          location: {
-            start: { line: 0, column: 0, index: 0 },
-            end: { line: 0, column: 0, index: 0 },
-          },
-          metadata: { isExternal: true, source, symbol } as any,
-          hash: `external:${source}:${symbol}`,
-        };
-
-        const placeholderId = stableEntityId(placeholderBase);
-
-        if (!seenExternal.has(rel.toId)) {
-          seenExternal.set(rel.toId, placeholderId);
-          externalPlaceholders.push({
-            ...placeholderBase,
-            id: placeholderId,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          });
-        }
-
-        rel.toId = placeholderId;
+        rel.toId = createExternalPlaceholder(rel.toId);
       }
 
       rel.id = stableRelationshipId(rel.fromId, rel.toId, rel.type);
@@ -554,7 +599,15 @@ export class IndexerAgent extends BaseAgent {
         ...entity,
         filePath: filePath,
       }));
+      // Debug: Check if there are any subscribers before publishing
+      const busStats = knowledgeBus.getStats();
+      console.error(`[IndexerAgent] KnowledgeBus stats: ${JSON.stringify(busStats)}`);
+      console.error(
+        `[IndexerAgent] Publishing semantic:new_entities with ${entitiesWithPath.length} entities for ${filePath}`,
+      );
       knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
+    } else {
+      console.error(`[IndexerAgent] No validParsed entities to publish for ${filePath}`);
     }
 
     console.error(
@@ -722,8 +775,6 @@ export class IndexerAgent extends BaseAgent {
             case "contains":
               relType = RelationType.CONTAINS;
               break;
-            case "overrides":
-            case "decorates":
             default:
               relType = RelationType.REFERENCES;
               break;

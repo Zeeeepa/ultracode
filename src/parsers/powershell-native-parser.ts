@@ -11,7 +11,7 @@
  * No native modules required - uses subprocess.
  */
 
-import { spawn, execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
@@ -220,9 +220,7 @@ export class PowerShellNativeParser {
     }
 
     this.psAvailable = false;
-    console.error(
-      "[PowerShellNativeParser] PowerShell not found, using regex parser",
-    );
+    console.error("[PowerShellNativeParser] PowerShell not found, using regex parser");
   }
 
   /**
@@ -230,21 +228,13 @@ export class PowerShellNativeParser {
    */
   supportsFile(filePath: string): boolean {
     const ext = filePath.toLowerCase();
-    return (
-      ext.endsWith(".ps1") ||
-      ext.endsWith(".psm1") ||
-      ext.endsWith(".psd1")
-    );
+    return ext.endsWith(".ps1") || ext.endsWith(".psm1") || ext.endsWith(".psd1");
   }
 
   /**
    * Parse a PowerShell file
    */
-  async parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult> {
+  async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
 
     try {
@@ -261,8 +251,7 @@ export class PowerShellNativeParser {
       // Update stats
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += parseTimeMs;
-      this.stats.avgParseTimeMs =
-        this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
 
       return {
         filePath,
@@ -296,33 +285,23 @@ export class PowerShellNativeParser {
   /**
    * Parse using PowerShell subprocess
    */
-  private parseWithPowerShell(
-    filePath: string,
-    content: string,
-  ): Promise<PowerShellParseResult> {
+  private parseWithPowerShell(filePath: string, content: string): Promise<PowerShellParseResult> {
     return new Promise((resolve) => {
-      const args = [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        POWERSHELL_PARSER_SCRIPT,
-        "-FilePath",
-        filePath,
-      ];
+      const args = ["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_PARSER_SCRIPT, "-FilePath", filePath];
 
       const proc = spawn(this.psPath, args, {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
       let stdout = "";
-      let stderr = "";
+      let _stderr = "";
 
       proc.stdout.on("data", (data) => {
         stdout += data.toString();
       });
 
       proc.stderr.on("data", (data) => {
-        stderr += data.toString();
+        _stderr += data.toString();
       });
 
       proc.stdin.write(content);
@@ -396,10 +375,7 @@ export class PowerShellNativeParser {
   /**
    * Regex-based parser for PowerShell
    */
-  private parseWithRegex(
-    filePath: string,
-    content: string,
-  ): PowerShellParseResult {
+  private parseWithRegex(filePath: string, content: string): PowerShellParseResult {
     const entities: ParsedEntity[] = [];
     let match: RegExpExecArray | null;
 
@@ -504,10 +480,7 @@ export class PowerShellNativeParser {
   /**
    * Get location from character index
    */
-  private getLocationFromIndex(
-    content: string,
-    index: number,
-  ): ParsedEntity["location"] {
+  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
     let line = 1;
     let column = 0;
     for (let i = 0; i < index; i++) {

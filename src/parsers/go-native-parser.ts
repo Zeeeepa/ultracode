@@ -5,18 +5,26 @@
  * Philosophy: Go developers always have Go installed.
  *
  * Architecture:
- * - Spawns `go run` with embedded Go script for parsing
- * - Returns JSON-serialized AST
+ * - Uses pre-compiled go-ast-cli binary if available
+ * - Falls back to `go run` with embedded Go script for parsing
+ * - Returns JSON with entities, relationships, and errors
  * - Falls back to regex-based extraction if Go is not available
  *
  * No native modules required - uses subprocess.
  */
 
 import { spawn } from "node:child_process";
-import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+
+// Get the directory of this module to find the CLI script/binary
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const GO_CLI_SCRIPT_PATH = join(__dirname, "go-ast-cli.go");
+const GO_CLI_BINARY_PATH = join(__dirname, "go-ast-cli");
 
 // =============================================================================
 // GO AST EXTRACTION SCRIPT
@@ -310,6 +318,7 @@ func main() {
 
 interface GoParseResult {
   entities: ParsedEntity[];
+  relationships: EntityRelationship[];
   errors: Array<{ message: string; location?: { line: number; column: number } }>;
 }
 
@@ -328,6 +337,9 @@ export class GoNativeParser {
   private goPath: string = "go";
   private goAvailable: boolean | null = null;
   private scriptPath: string | null = null;
+  private cliScriptAvailable: boolean = false;
+  private cliBinaryAvailable: boolean = false;
+  private useCliScript: boolean = true;
   private stats: ParserStats = {
     filesParsed: 0,
     cacheHits: 0,
@@ -345,12 +357,33 @@ export class GoNativeParser {
   async initialize(): Promise<void> {
     console.error("[GoNativeParser] Checking Go availability...");
 
+    // Check for external CLI script or binary
+    this.cliScriptAvailable = existsSync(GO_CLI_SCRIPT_PATH);
+    // Check for binary (Windows: .exe, Unix: no extension)
+    const binaryPath = process.platform === "win32" ? GO_CLI_BINARY_PATH + ".exe" : GO_CLI_BINARY_PATH;
+    this.cliBinaryAvailable = existsSync(binaryPath);
+
+    if (this.cliScriptAvailable) {
+      console.error(`[GoNativeParser] CLI script found: ${GO_CLI_SCRIPT_PATH}`);
+    }
+    if (this.cliBinaryAvailable) {
+      console.error(`[GoNativeParser] CLI binary found: ${binaryPath}`);
+    }
+
     try {
       const available = await this.checkGo();
       if (available) {
         this.goAvailable = true;
-        await this.ensureScriptExists();
-        console.error("[GoNativeParser] Initialized (using go run)");
+        // If CLI script is not available, use inline script
+        if (!this.cliScriptAvailable && !this.cliBinaryAvailable) {
+          await this.ensureScriptExists();
+        }
+        const mode = this.cliBinaryAvailable
+          ? "CLI binary"
+          : this.cliScriptAvailable && this.useCliScript
+            ? "CLI script (go run)"
+            : "inline script (go run)";
+        console.error(`[GoNativeParser] Initialized (using ${mode})`);
         return;
       }
     } catch {
@@ -358,9 +391,7 @@ export class GoNativeParser {
     }
 
     this.goAvailable = false;
-    console.error(
-      "[GoNativeParser] Go not found, falling back to regex parser",
-    );
+    console.error("[GoNativeParser] Go not found, falling back to regex parser");
   }
 
   /**
@@ -399,18 +430,23 @@ export class GoNativeParser {
   /**
    * Parse a Go file
    */
-  async parse(
-    filePath: string,
-    content: string,
-    contentHash: string,
-  ): Promise<ParseResult> {
+  async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
 
     try {
       let result: GoParseResult;
 
-      if (this.goAvailable && this.scriptPath) {
-        result = await this.parseWithGo(filePath, content);
+      if (this.goAvailable) {
+        // Try different parsing modes in order of preference
+        if (this.cliBinaryAvailable) {
+          result = await this.parseWithCliBinary(filePath, content);
+        } else if (this.cliScriptAvailable && this.useCliScript) {
+          result = await this.parseWithCliScript(filePath, content);
+        } else if (this.scriptPath) {
+          result = await this.parseWithGo(filePath, content);
+        } else {
+          result = this.parseWithRegex(filePath, content);
+        }
       } else {
         result = this.parseWithRegex(filePath, content);
       }
@@ -420,13 +456,13 @@ export class GoNativeParser {
       // Update stats
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += parseTimeMs;
-      this.stats.avgParseTimeMs =
-        this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
 
       return {
         filePath,
         language: "go" as SupportedLanguage,
         entities: result.entities,
+        relationships: result.relationships.length > 0 ? result.relationships : undefined,
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
@@ -453,12 +489,104 @@ export class GoNativeParser {
   }
 
   /**
-   * Parse using Go subprocess
+   * Parse using pre-compiled CLI binary (fastest - supports relationships)
    */
-  private parseWithGo(
-    filePath: string,
-    content: string,
-  ): Promise<GoParseResult> {
+  private parseWithCliBinary(filePath: string, content: string): Promise<GoParseResult> {
+    return new Promise((resolve, reject) => {
+      const binaryPath = process.platform === "win32" ? GO_CLI_BINARY_PATH + ".exe" : GO_CLI_BINARY_PATH;
+      const proc = spawn(binaryPath, ["--stdin", filePath], {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      proc.stdin.write(content);
+      proc.stdin.end();
+
+      proc.on("close", (code) => {
+        if (code !== 0 && !stdout) {
+          reject(new Error(`Go CLI binary failed: ${stderr}`));
+          return;
+        }
+
+        try {
+          const result = JSON.parse(stdout);
+          if (!result.relationships) {
+            result.relationships = [];
+          }
+          resolve(result);
+        } catch (e) {
+          reject(new Error(`Failed to parse Go CLI binary output: ${e}`));
+        }
+      });
+
+      proc.on("error", (err) => {
+        reject(err);
+      });
+    });
+  }
+
+  /**
+   * Parse using external CLI script with go run (supports relationships)
+   */
+  private parseWithCliScript(filePath: string, content: string): Promise<GoParseResult> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn(this.goPath, ["run", GO_CLI_SCRIPT_PATH, "--stdin", filePath], {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      proc.stdin.write(content);
+      proc.stdin.end();
+
+      proc.on("close", (code) => {
+        if (code !== 0 && !stdout) {
+          reject(new Error(`Go CLI script failed: ${stderr}`));
+          return;
+        }
+
+        try {
+          const result = JSON.parse(stdout);
+          if (!result.relationships) {
+            result.relationships = [];
+          }
+          resolve(result);
+        } catch (e) {
+          reject(new Error(`Failed to parse Go CLI script output: ${e}`));
+        }
+      });
+
+      proc.on("error", (err) => {
+        reject(err);
+      });
+    });
+  }
+
+  /**
+   * Parse using inline Go script (fallback - no relationships)
+   */
+  private parseWithGo(filePath: string, content: string): Promise<GoParseResult> {
     return new Promise((resolve, reject) => {
       const proc = spawn(this.goPath, ["run", this.scriptPath!, filePath], {
         stdio: ["pipe", "pipe", "pipe"],
@@ -487,6 +615,8 @@ export class GoNativeParser {
 
         try {
           const result = JSON.parse(stdout);
+          // Add empty relationships for inline script
+          result.relationships = [];
           resolve(result);
         } catch (e) {
           reject(new Error(`Failed to parse Go output: ${e}`));
@@ -502,15 +632,12 @@ export class GoNativeParser {
   /**
    * Fallback regex-based parser
    */
-  private parseWithRegex(
-    filePath: string,
-    content: string,
-  ): GoParseResult {
+  private parseWithRegex(filePath: string, content: string): GoParseResult {
     const entities: ParsedEntity[] = [];
 
     // Package
     const packageMatch = /^\s*package\s+(\w+)/m.exec(content);
-    if (packageMatch && packageMatch[1]) {
+    if (packageMatch?.[1]) {
       entities.push({
         name: packageMatch[1],
         type: "module",
@@ -620,16 +747,13 @@ export class GoNativeParser {
       });
     }
 
-    return { entities, errors: [] };
+    return { entities, relationships: [], errors: [] };
   }
 
   /**
    * Get location from character index
    */
-  private getLocationFromIndex(
-    content: string,
-    index: number,
-  ): ParsedEntity["location"] {
+  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
     let line = 1;
     let column = 0;
     for (let i = 0; i < index; i++) {

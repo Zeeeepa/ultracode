@@ -4,7 +4,7 @@
  * Tests for the Python code analyzer methods.
  */
 
-import { beforeEach, describe, expect, test } from "@jest/globals";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { PythonAnalyzer } from "../../src/parsers/python-analyzer.js";
 
 describe("PythonAnalyzer", () => {

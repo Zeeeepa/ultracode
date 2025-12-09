@@ -336,13 +336,6 @@ export async function findCppFiles(cwd: string, options?: GlobOptions): Promise<
 }
 
 /**
- * Find all C# files
- */
-export async function findCSharpFiles(cwd: string, options?: GlobOptions): Promise<string[]> {
-  return glob("**/*.cs", { cwd, ...options });
-}
-
-/**
  * Find all Go files
  */
 export async function findGoFiles(cwd: string, options?: GlobOptions): Promise<string[]> {

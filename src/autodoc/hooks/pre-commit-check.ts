@@ -33,7 +33,7 @@ export interface PreCommitCheckResult {
  */
 export async function getStagedMdFiles(cwd: string): Promise<string[]> {
   try {
-    const { stdout } = await execAsync("git diff --cached --name-only --diff-filter=ACM", { cwd });
+    const { stdout } = await execAsync("git diff --cached --name-only --diff-filter=ACM", { cwd, windowsHide: true });
     return stdout
       .split("\n")
       .filter((f) => f.trim() && f.endsWith(".md"))
@@ -48,8 +48,8 @@ export async function getStagedMdFiles(cwd: string): Promise<string[]> {
  */
 export async function getStagedCodeFiles(cwd: string): Promise<string[]> {
   try {
-    const { stdout } = await execAsync("git diff --cached --name-only --diff-filter=ACM", { cwd });
-    const codeExtensions = [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".java", ".rs", ".cs"];
+    const { stdout } = await execAsync("git diff --cached --name-only --diff-filter=ACM", { cwd, windowsHide: true });
+    const codeExtensions = [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".java", ".rs"];
     return stdout
       .split("\n")
       .filter((f) => f.trim() && codeExtensions.some((ext) => f.endsWith(ext)))

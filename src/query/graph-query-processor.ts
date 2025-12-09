@@ -23,7 +23,6 @@
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type { SQLiteDatabase, SQLiteStatement } from "../storage/sqlite-adapter.js";
-import { hashText } from "../utils/fast-hash.js";
 import type {
   Change,
   Cycle,
@@ -40,6 +39,7 @@ import type {
   RippleEffect,
 } from "../types/query.js";
 import type { RelationType } from "../types/storage.js";
+import { hashText } from "../utils/fast-hash.js";
 import type { ConnectionPool } from "./connection-pool.js";
 import type { QueryCache } from "./query-cache.js";
 import { QueryOptimizer } from "./query-optimizer.js";

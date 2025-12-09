@@ -130,7 +130,8 @@ export class LanguageWorkerPool {
     const currentDir = dirname(fileURLToPath(import.meta.url));
 
     // Use custom worker script if provided, otherwise use generic worker
-    this.workerScript = options.workerScript || join(currentDir, "agents", "workers", "generic-language-worker.js");
+    // currentDir is already in agents/workers/, so just use the filename directly
+    this.workerScript = options.workerScript || join(currentDir, "generic-language-worker.js");
   }
 
   /**

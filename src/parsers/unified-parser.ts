@@ -68,14 +68,9 @@ const EXTENSION_TO_LANGUAGE: Record<string, SupportedLanguage> = {
   ".cc": "cpp",
   ".hpp": "cpp",
   ".swift": "swift",
-  ".cs": "typescript", // Placeholder - handled by UltrasharpTools
   ".css": "css",
   ".html": "html",
   ".xml": "xml",
-  ".vba": "vba",
-  ".bas": "vba",
-  ".cls": "vba",
-  ".frm": "vba",
   ".sh": "bash",
   ".bash": "bash",
   ".ps1": "powershell",
@@ -401,11 +396,15 @@ export class UnifiedParser implements BaseParser {
         await this.ensurePythonParser();
         result = await this.pythonParser!.parse(filePath, content, contentHash);
       } else if (JAVA_EXTENSIONS.has(ext)) {
+        console.error(`[UnifiedParser] Routing ${filePath} to JavaParser`);
         await this.ensureJavaParser();
         result = await this.javaParser!.parse(filePath, content, contentHash);
+        console.error(`[UnifiedParser] JavaParser returned ${result.entities?.length || 0} entities`);
       } else if (KOTLIN_EXTENSIONS.has(ext)) {
+        console.error(`[UnifiedParser] Routing ${filePath} to KotlinParser`);
         await this.ensureKotlinParser();
         result = await this.kotlinParser!.parse(filePath, content, contentHash);
+        console.error(`[UnifiedParser] KotlinParser returned ${result.entities?.length || 0} entities`);
       } else if (GO_EXTENSIONS.has(ext)) {
         await this.ensureGoParser();
         result = await this.goParser!.parse(filePath, content, contentHash);

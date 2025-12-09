@@ -9,12 +9,12 @@
  * - SQLite Manager: src/storage/sqlite-manager.ts
  */
 
+import { hashText } from "../utils/fast-hash.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type { SQLiteDatabase } from "./sqlite-adapter.js";
 import type { SQLiteManager } from "./sqlite-manager.js";
-import { hashText } from "../utils/fast-hash.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION

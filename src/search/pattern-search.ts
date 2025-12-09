@@ -19,11 +19,11 @@
  * - Technology Detector: src/analysis/technology-detector.ts
  */
 
-import { readLineRange } from "../utils/file-ops.js";
 import type { TechnologyDetector } from "../analysis/technology-detector.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { Entity, EntityType, GraphStorage } from "../types/storage.js";
+import { readLineRange } from "../utils/file-ops.js";
 import { cosineSimilarity } from "../utils/simd-vector-ops.js";
 
 // =============================================================================
@@ -157,23 +157,22 @@ export class PatternSearch {
 
     const results: PatternSearchResult[] = [];
 
+    // Pre-compile regex ONCE outside the loop (critical optimization)
+    const contentRegex = query.contentFilter?.regex ? new RegExp(query.contentFilter.regex, "i") : null;
+    const containsFilter = query.contentFilter?.contains;
+    const semanticFilter = query.contentFilter?.semantic;
+
     // For each candidate, check content
     for (const { entity } of candidates) {
       const content = await this.getEntityContent(entity);
 
-      // Apply content filters
-      if (query.contentFilter?.contains) {
-        if (!content.includes(query.contentFilter.contains)) continue;
-      }
+      // Apply content filters (using pre-compiled regex)
+      if (containsFilter && !content.includes(containsFilter)) continue;
+      if (contentRegex && !contentRegex.test(content)) continue;
 
-      if (query.contentFilter?.regex) {
-        const regex = new RegExp(query.contentFilter.regex, "i");
-        if (!regex.test(content)) continue;
-      }
-
-      if (query.contentFilter?.semantic) {
+      if (semanticFilter) {
         // Semantic similarity check
-        const similarity = await this.computeSemanticSimilarity(content, query.contentFilter.semantic);
+        const similarity = await this.computeSemanticSimilarity(content, semanticFilter);
         if (similarity < 0.7) continue;
       }
 
@@ -294,12 +293,7 @@ export class PatternSearch {
   private async getEntityContent(entity: Entity): Promise<string> {
     try {
       // Use optimized line-range reading instead of loading full file
-      const content = await readLineRange(
-        entity.filePath,
-        entity.location.start.line,
-        entity.location.end.line,
-        10000,
-      );
+      const content = await readLineRange(entity.filePath, entity.location.start.line, entity.location.end.line, 10000);
       return content || "";
     } catch (error) {
       console.warn(`[PatternSearch] Failed to read entity content: ${entity.filePath}`, error);

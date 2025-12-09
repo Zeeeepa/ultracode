@@ -1,21 +1,53 @@
-# Interfaces
+# Модуль interfaces
 
-Module for interfaces functionality.
+## Описание модуля
 
-## Files
+Модуль `interfaces` содержит набор TypeScript-интерфейсов, описывающих структуры данных и контракты для различных компонентов проекта. Интерфейсы используются для обеспечения типобезопасности и улучшения читаемости кода. Этот модуль служит центральным хранилищем типов, используемых в других частях приложения.
 
-- `blamed-lines.interface.ts`
-- `clone-validator.interface.ts`
-- `clone.interface.ts`
-- `index.ts`
-- `map-frame.interface.ts`
-- `options.interface.ts`
-- `source-validator.interface.ts`
-- `statistic.interface.ts`
-- `store.interface.ts`
-- `subscriber.interface.ts`
-- `token-location.interface.ts`
-- `token.interface.ts`
-- `tokenizer.interface.ts`
-- `tokens-map.interface.ts`
-- `validation-result.interface.ts`
+## Файлы модуля
+
+| Файл | Описание |
+|------|----------|
+| `blamed-lines.interface.ts` | Описывает структуру данных для строк с меткой обвинения (blamed lines) в системе версионирования |
+| `clone-validator.interface.ts` | Интерфейс валидатора клонов, определяющий методы проверки корректности клонов |
+| `clone.interface.ts` | Описывает структуру клонированного фрагмента кода с информацией о его источнике и местоположении |
+| `index.ts` | Экспортирует все интерфейсы модуля для удобного импорта в других частях проекта |
+| `map-frame.interface.ts` | Описывает структуру фрейма карты, содержащую информацию о границах и координатах |
+| `options.interface.ts` | Интерфейс параметров конфигурации, используемый для настройки поведения компонентов |
+| `source-validator.interface.ts` | Интерфейс валидатора исходного кода, определяющий методы проверки корректности источников |
+| `statistic.interface.ts` | Описывает структуру статистики, содержащую метрики и показатели анализа |
+| `store.interface.ts` | Интерфейс хранилища данных, определяющий методы для управления состоянием приложения |
+| `subscriber.interface.ts` | Описывает контракт подписчика, определяющий методы для получения уведомлений |
+| `token-location.interface.ts` | Интерфейс расположения токена, содержащий информацию о позиции в исходном коде |
+| `token.interface.ts` | Описывает структуру токена, представляющего собой элемент лексического анализа |
+| `tokenizer.interface.ts` | Интерфейс токенизатора, определяющий методы для разбора исходного кода на токены |
+| `tokens-map.interface.ts` | Описывает структуру отображения токенов, связывающую токены с их позициями и метаданными |
+| `validation-result.interface.ts` | Интерфейс результата валидации, содержащий информацию о прохождении проверки и возникших ошибках |
+
+## Экспорты
+
+Внутренний модуль без публичных экспортов. Все интерфейсы импортируются напрямую из файла `index.ts`.
+
+## Использование
+
+```typescript
+import { Clone, Token, ValidationResult } from './interfaces';
+
+// Использование интерфейсов для типизации переменных
+const clone: Clone = {
+  id: 'clone-1',
+  source: 'some code',
+  location: { start: 1, end: 10 }
+};
+
+const token: Token = {
+  type: 'identifier',
+  value: 'variable',
+  location: { start: 5, end: 15 }
+};
+
+const result: ValidationResult = {
+  isValid: true,
+  errors: []
+};
+```

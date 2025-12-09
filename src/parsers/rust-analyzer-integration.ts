@@ -12,9 +12,9 @@
  * - Symbol resolution
  */
 
-import { spawn, ChildProcess } from "node:child_process";
-import { join, dirname } from "node:path";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ParsedEntity } from "../types/parser.js";
 
 // =============================================================================
@@ -65,10 +65,7 @@ let rustAnalyzerPath: string | null = null;
 let rustAnalyzerChecked = false;
 let rustAnalyzerProcess: ChildProcess | null = null;
 let messageId = 0;
-const pendingRequests = new Map<
-  number,
-  { resolve: (value: unknown) => void; reject: (error: Error) => void }
->();
+const pendingRequests = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 let initialized = false;
 let messageBuffer = "";
 
@@ -87,12 +84,7 @@ export async function findRustAnalyzer(): Promise<string | null> {
     "rust-analyzer.exe",
     // Common installation paths
     join(process.env.HOME || "", ".cargo", "bin", "rust-analyzer"),
-    join(
-      process.env.USERPROFILE || "",
-      ".cargo",
-      "bin",
-      "rust-analyzer.exe",
-    ),
+    join(process.env.USERPROFILE || "", ".cargo", "bin", "rust-analyzer.exe"),
   ];
 
   for (const cmd of commands) {
@@ -149,9 +141,7 @@ export function isRustAnalyzerAvailable(): boolean {
 /**
  * Start rust-analyzer LSP server
  */
-export async function startRustAnalyzer(
-  workspaceRoot: string,
-): Promise<boolean> {
+export async function startRustAnalyzer(workspaceRoot: string): Promise<boolean> {
   if (!rustAnalyzerPath) {
     await findRustAnalyzer();
   }
@@ -383,9 +373,7 @@ export function closeDocument(filePath: string): void {
 /**
  * Get document symbols
  */
-export async function getDocumentSymbols(
-  filePath: string,
-): Promise<RustSymbolInfo[]> {
+export async function getDocumentSymbols(filePath: string): Promise<RustSymbolInfo[]> {
   if (!initialized) return [];
 
   const uri = `file://${filePath.replace(/\\/g, "/")}`;

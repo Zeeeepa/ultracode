@@ -1201,29 +1201,53 @@ winget install Ollama.Ollama
 
 ### Сравнение провайдеров
 
-| Провайдер | Контекст | Локально | API ключ | Docker | Качество | Скорость | Рекомендация |
-|-----------|----------|----------|----------|--------|----------|----------|--------------|
-| **TEI** | **8192** | ✅ | ❌ | ✅ Требуется | ⭐⭐⭐⭐⭐ | ⚡⚡⚡⚡⚡ | 🏆 **Лучший выбор** |
-| Ollama | 512 | ✅ | ❌ | ❌ | ⭐⭐⭐⭐ | ⚡⚡⚡⚡ | 🥈 Если нет Docker |
-| HuggingFace API | 8192 | ❌ Cloud | ✅ Нужен | ❌ | ⭐⭐⭐⭐⭐ | ⚡⚡⚡ | 🌐 Без Docker/Ollama |
-| OpenAI API | 8192 | ❌ Cloud | ✅ Платный | ❌ | ⭐⭐⭐⭐⭐ | ⚡⚡⚡⚡ | 💰 Production |
-| Memory | N/A | ✅ | ❌ | ❌ | ⭐ | ⚡⚡⚡⚡⚡ | 🔙 Fallback |
+| Провайдер | Контекст | Локально | API ключ | Docker | GPU | Скорость | Рекомендация |
+|-----------|----------|----------|----------|--------|-----|----------|--------------|
+| **TEI** | **8192** | ✅ | ❌ | ✅ Требуется | ✅ NVIDIA | ⚡⚡⚡⚡⚡ | 🏆 **Лучший выбор** |
+| OpenVINO | 256-512 | ✅ | ❌ | ❌ | ❌ CPU | ⚡⚡⚡⚡⚡ | ⚡ Без GPU |
+| Ollama | 512-8192 | ✅ | ❌ | ❌ | ✅ NVIDIA | ⚡⚡⚡⚡ | 🥈 Простая установка |
+| HuggingFace API | 8192 | ❌ Cloud | ✅ Нужен | ❌ | ❌ | ⚡⚡⚡ | 🌐 Без локальных ресурсов |
+| OpenAI API | 8192 | ❌ Cloud | ✅ Платный | ❌ | ❌ | ⚡⚡⚡⚡ | 💰 Production |
+| Memory | N/A | ✅ | ❌ | ❌ | ❌ | ⚡⚡⚡⚡⚡ | 🔙 Fallback |
+
+### Benchmark English моделей (RTX 5090 + i9)
+
+Тест на 33 сущностях >512 токенов (87K токенов) со Smart Chunker:
+
+#### 512 Token Models (с Smart Chunker, 204 чанка)
+
+| Провайдер | Модель | Время | tok/s | Рекомендация |
+|-----------|--------|-------|-------|--------------|
+| **Ollama GPU** | all-minilm | **1286ms** | **52,976** | 🏆 Быстрее всех |
+| **OpenVINO CPU** | all-MiniLM-L6-v2 | 1299ms | 54,857 | ⚡ CPU без GPU |
+| OpenVINO CPU | bge-small-en-v1.5 | 3079ms | 22,126 | Качество выше |
+| Ollama GPU | granite-embedding:30m | 3711ms | 18,358 | IBM модель |
+
+#### 8K Token Models (без чанкинга, 33 чанка)
+
+| Провайдер | Модель | Время | tok/s | Рекомендация |
+|-----------|--------|-------|-------|--------------|
+| **TEI GPU** | nomic-embed-text-v1.5 | **1336ms** | **44,966** | 🏆 **ЛУЧШИЙ** |
+| Ollama GPU | snowflake-arctic-embed2 | 5300ms | 11,335 | 4x медленнее |
+| Ollama GPU | nomic-embed-text | 54830ms | 1,096 | ❌ Очень медленно |
 
 ### Сравнение моделей
 
-| Модель | Провайдер | Контекст | Размер | Параметры | Качество | Для кода | Рекомендация |
-|--------|-----------|----------|--------|-----------|----------|----------|--------------|
-| **granite-embedding-english-r2** | **TEI/HF API** | **8192** | **600 MB** | **149M** | ⭐⭐⭐⭐⭐ | ✅ Специально | 🏆 **По умолчанию (TEI)** |
-| granite-embedding-small-english-r2 | TEI/HF API | 8192 | 190 MB | 47M | ⭐⭐⭐⭐ | ✅ Да | ⚡ Быстрая (TEI) |
-| granite-embedding:latest | Ollama | 512 | 149 MB | 278M | ⭐⭐⭐⭐ | ✅ Да | 🥈 Если нет Docker |
-| granite-embedding:30m | Ollama | 512 | 47 MB | 30M | ⭐⭐⭐⭐ | ✅ Да | 🥉 Легковесная |
-| text-embedding-3-small | OpenAI API | 8192 | Cloud | API | ⭐⭐⭐⭐⭐ | ✅ Да | 💰 Платный |
+| Модель | Провайдер | Контекст | Размер | Качество | Для кода | Рекомендация |
+|--------|-----------|----------|--------|----------|----------|--------------|
+| **nomic-embed-text-v1.5** | **TEI** | **8192** | **274 MB** | ⭐⭐⭐⭐⭐ | ✅ | 🏆 **Лучший (GPU)** |
+| all-MiniLM-L6-v2 | OpenVINO | 256 | 91 MB | ⭐⭐⭐⭐ | ✅ | ⚡ **Лучший (CPU)** |
+| all-minilm | Ollama | 512 | 46 MB | ⭐⭐⭐⭐ | ✅ | 🥈 Простая установка |
+| bge-small-en-v1.5 | OpenVINO | 512 | 134 MB | ⭐⭐⭐⭐⭐ | ✅ | 🎯 Качество + CPU |
+| snowflake-arctic-embed2 | Ollama | 8192 | 600 MB | ⭐⭐⭐⭐⭐ | ✅ | 🥉 8K без Docker |
+| granite-embedding:30m | Ollama | 512 | 47 MB | ⭐⭐⭐⭐ | ✅ | 💾 Легковесная |
 
 **Рекомендации:**
-- 🏆 **По умолчанию:** TEI + `granite-embedding-english-r2` - 8192 токена, локально, лучшая производительность
-- 🥈 **Без Docker:** Ollama + `granite-embedding:latest` (278M) - 512 токенов, но multilingual
-- 🌐 **Без локальных ресурсов:** HuggingFace API + `granite-embedding-english-r2` - 8192 токена, бесплатно
-- 💰 **Production с бюджетом:** OpenAI API - максимальное качество, платно
+- 🏆 **Production с GPU:** TEI + `nomic-embed-text-v1.5` — 45K tok/s, 8192 токена, native batch
+- ⚡ **Production без GPU:** OpenVINO + `all-MiniLM-L6-v2` — 55K tok/s на CPU!
+- 🥈 **Простая установка:** Ollama + `all-minilm` — 53K tok/s, без Docker
+- 🌐 **Без локальных ресурсов:** HuggingFace API — бесплатно, облако
+- 💰 **Enterprise:** OpenAI API — максимальное качество, платно
 
 ---
 
@@ -1238,6 +1262,7 @@ winget install Ollama.Ollama
 
 ## Changelog
 
+- **2025-12-07:** Benchmark English моделей (TEI/Ollama/OpenVINO) — обновлены таблицы сравнения
 - **2025-01-13:** Добавлен auto-detect режим
 - **2025-01-13:** Скрипты установки для Windows/Unix
 - **2025-01-13:** Документация по Granite embeddings

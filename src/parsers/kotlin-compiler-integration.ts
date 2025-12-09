@@ -78,10 +78,7 @@ export function isKotlincAvailable(): boolean {
  * Validate Kotlin source using kotlinc
  * Returns diagnostics without actually compiling
  */
-export function validateKotlinSyntax(
-  _filePath: string,
-  content: string,
-): KotlinCompileResult {
+export function validateKotlinSyntax(_filePath: string, content: string): KotlinCompileResult {
   if (!kotlincPath) {
     return { success: true, diagnostics: [] };
   }
@@ -89,19 +86,25 @@ export function validateKotlinSyntax(
   try {
     // Use kotlinc -script to check syntax without full compilation
     // This is faster than full compilation
-    const result = spawnSync(kotlincPath, [
-      "-nowarn",
-      "-Werror",
-      "-d", "/dev/null", // Don't output class files
-      "-language-version", "1.9",
-      "-script",
-      "-",
-    ], {
-      input: content,
-      timeout: 30000,
-      encoding: "utf-8",
-      windowsHide: true,
-    });
+    const result = spawnSync(
+      kotlincPath,
+      [
+        "-nowarn",
+        "-Werror",
+        "-d",
+        "/dev/null", // Don't output class files
+        "-language-version",
+        "1.9",
+        "-script",
+        "-",
+      ],
+      {
+        input: content,
+        timeout: 30000,
+        encoding: "utf-8",
+        windowsHide: true,
+      },
+    );
 
     const diagnostics: KotlinDiagnostic[] = [];
 
@@ -127,16 +130,18 @@ export function validateKotlinSyntax(
     }
 
     return {
-      success: result.status === 0 && diagnostics.filter(d => d.severity === "error").length === 0,
+      success: result.status === 0 && diagnostics.filter((d) => d.severity === "error").length === 0,
       diagnostics,
     };
   } catch (error) {
     return {
       success: false,
-      diagnostics: [{
-        severity: "error",
-        message: `Kotlin compiler error: ${error}`,
-      }],
+      diagnostics: [
+        {
+          severity: "error",
+          message: `Kotlin compiler error: ${error}`,
+        },
+      ],
     };
   }
 }
@@ -144,11 +149,7 @@ export function validateKotlinSyntax(
 /**
  * Enhance parsed entities with Kotlin compiler diagnostics
  */
-export function enhanceWithKotlinDiagnostics(
-  entities: ParsedEntity[],
-  filePath: string,
-  content: string,
-): void {
+export function enhanceWithKotlinDiagnostics(entities: ParsedEntity[], filePath: string, content: string): void {
   if (!kotlincPath) return;
 
   const result = validateKotlinSyntax(filePath, content);

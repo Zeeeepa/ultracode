@@ -22,16 +22,34 @@ index directory="/path/to/project" incremental=true
 ```
 
 ### `semantic_search`
-**Семантический поиск по смыслу кода.** Понимает естественный язык.
+**Семантический поиск по смыслу кода.** Понимает естественный язык. Возвращает расширенные метаданные: сложность, control flow, вызовы, документация.
 
 | Параметр | Тип | По умолчанию | Описание |
 |----------|-----|--------------|----------|
 | `query` | string | **обязательный** | Поисковый запрос на естественном языке |
 | `limit` | number | 10 | Максимум результатов |
 | `branch` | string | main | Ветка для поиска |
+| `projectPath` | string | текущий | **Кросс-проектный поиск:** путь к другому проекту |
+| `minCyclomatic` | number | - | Фильтр: минимальная цикломатическая сложность |
+| `maxCyclomatic` | number | - | Фильтр: максимальная цикломатическая сложность |
+| `hasExceptions` | boolean | - | Фильтр: должен иметь try-catch блоки |
+| `hasLoops` | boolean | - | Фильтр: должен иметь циклы |
+| `hasAwaits` | boolean | - | Фильтр: должен иметь await (async код) |
+| `hasDocumentation` | boolean | - | Фильтр: должен иметь документацию |
+| `isDeprecated` | boolean | - | Фильтр: только deprecated сущности |
+| `minCallCount` | number | - | Фильтр: минимум вызовов функций |
+
+**Расширенный вывод включает:**
+- `complexity`: cyclomatic, cognitive, linesOfCode, nestingDepth
+- `controlFlow`: hasBranches, hasLoops, hasExceptions, hasAwaits, counts
+- `calls`: count, hasAsync
+- `documentation`: hasDocumentation, hasParams, hasExamples, isDeprecated
 
 ```
 semantic_search query="функции валидации email" limit=5
+semantic_search query="data processing" minCyclomatic=10
+semantic_search query="API calls" hasAwaits=true hasExceptions=false
+semantic_search query="public API" hasDocumentation=false
 ```
 
 ### `query`
@@ -520,4 +538,157 @@ get_changed_files fromBranch="main" toBranch="feature/auth"
 2. switch_branch branch="feature/new-api"
 3. get_changed_files fromBranch="main" toBranch="feature/new-api"
 4. index incremental=true
+```
+
+### Поиск сложного кода для рефакторинга (NEW)
+```
+1. semantic_search query="data processing" minCyclomatic=10
+2. semantic_search query="validation" hasExceptions=true hasLoops=true
+3. analyze_code_impact entityId="complexFunction"
+4. suggest_refactoring
+```
+
+### Поиск недокументированного кода (NEW)
+```
+1. semantic_search query="public API" hasDocumentation=false
+2. semantic_search query="exported functions" hasDocumentation=false limit=50
+3. Добавить документацию к найденным сущностям
+```
+
+### Поиск async кода без обработки ошибок (NEW)
+```
+1. semantic_search query="database operations" hasAwaits=true
+2. semantic_search query="API calls" hasAwaits=true hasExceptions=false
+3. Проверить отсутствие error handling в async коде
+```
+
+### Анализ качества по сложности (NEW)
+```
+1. semantic_search query="" minCyclomatic=15  # Очень сложный код
+2. semantic_search query="" maxCyclomatic=3   # Простой код
+3. analyze_hotspots metric="complexity" limit=20
+```
+
+---
+
+## Трассировка (статический анализ потока) — NEW
+
+### `trace_flow`
+**Трассировка выполнения от точки A к B.** Находит все возможные пути, анализирует изменения состояния, условия и async-границы.
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `from` | string | **обязательный** | Начальная точка (имя функции или семантический запрос) |
+| `to` | string | **обязательный** | Конечная точка |
+| `format` | enum | "sequence" | Формат: `sequence` / `tree` / `graph` / `mermaid` |
+| `maxDepth` | number | 15 | Максимальная глубина обхода |
+| `trackStates` | boolean | true | Отслеживать изменения состояния |
+| `trackConditions` | boolean | true | Отслеживать условия/ветвления |
+
+```
+trace_flow from="handleLogin" to="sendEmail" format="mermaid"
+```
+
+### `trace_backwards`
+**Обратная трассировка** — почему метод может не вызываться.
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `target` | string | **обязательный** | Целевой метод для анализа |
+| `question` | enum | **обязательный** | `why_not_called` / `what_affects` / `dependencies` |
+| `depth` | number | 15 | Глубина обратного обхода |
+| `includeStates` | boolean | true | Включить зависимости состояния |
+| `includeEffects` | boolean | true | Включить побочные эффекты |
+
+```
+trace_backwards target="sendNotification" question="why_not_called"
+```
+
+### `trace_data_flow`
+**Трассировка потока данных** — как данные влияют на целевое состояние.
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `entryPoint` | string | **обязательный** | Точка входа |
+| `targetState` | string | **обязательный** | Целевое состояние |
+| `dataSources` | string[] | авто | Источники данных |
+| `trackTransformations` | boolean | true | Отслеживать трансформации данных |
+
+```
+trace_data_flow entryPoint="processOrder" targetState="orderTotal"
+```
+
+### `analyze_state_impact`
+**Анализ влияния состояния** — как состояние влияет на разные сценарии.
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `state` | string | **обязательный** | Переменная состояния |
+| `scenarios` | object[] | **обязательный** | Сценарии: `[{value: ..., label: "..."}]` |
+| `scope` | string | - | Область анализа |
+
+```
+analyze_state_impact state="isAuthenticated" scenarios=[{value: true, label: "Авторизован"}, {value: false, label: "Гость"}]
+```
+
+### `find_decision_points`
+**Поиск точек принятия решений** в потоке выполнения сценария.
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `scenario` | string | **обязательный** | Сценарий для анализа |
+| `groupBy` | enum | "impact" | `impact` / `location` / `type` |
+| `includeGuards` | boolean | true | Включить guard-условия |
+| `includeEffects` | boolean | true | Включить побочные эффекты |
+
+**Типы точек:** validation, api_response, state_mutation, guard, loop, error_handling, feature_flag
+
+```
+find_decision_points scenario="регистрация пользователя" groupBy="type"
+```
+
+---
+
+## Кросс-проектная поддержка — NEW
+
+### Работа с несколькими проектами
+
+MCP сервер поддерживает работу с **несколькими проектами**, каждый со своими изолированными базами данных:
+
+```
+# Переключение контекста через index
+index directory="D:\\другой\\проект"
+
+# Или поиск в другом проекте напрямую через projectPath
+semantic_search query="аутентификация" projectPath="D:\\другой\\проект"
+```
+
+### Расположение хранилища
+
+Каждый проект имеет изолированные базы данных:
+```
+%LOCALAPPDATA%\UltraScriptTools\projects\{hash}\
+├── graph.db      # Граф сущностей
+├── vectors.db    # Эмбеддинги
+└── meta.json     # Метаданные
+```
+
+### Пример workflow
+
+```
+# 1. Индексируем основной проект
+index directory="D:\\work\\main-project"
+# → Контекст: main-project, 8000 entities
+
+# 2. Переключаемся на другой проект для анализа
+index directory="D:\\work\\other-project"
+# → Контекст: other-project, 50000 entities
+
+# 3. Ищем в other-project
+semantic_search query="newsletter"
+# → Результаты из other-project
+
+# 4. Возвращаемся к основному проекту
+index directory="D:\\work\\main-project" incremental=true
+# → Контекст: main-project, данные сохранены
 ```

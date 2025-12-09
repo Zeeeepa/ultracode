@@ -1,4 +1,6 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { GraphStorageImpl } from "../../storage/graph-storage.js";
+import { runMigrations } from "../../storage/schema-migrations.js";
 import { SQLiteManager } from "../../storage/sqlite-manager.js";
 import { EntityType, RelationType } from "../../types/storage.js";
 import { ingestLernaGraph, LERNA_PACKAGE_FILE_PREFIX } from "../lerna-graph-ingest.js";
@@ -10,6 +12,7 @@ describe("ingestLernaGraph", () => {
   beforeEach(async () => {
     manager = new SQLiteManager({ memory: true });
     manager.initialize();
+    runMigrations(manager); // Create schema tables
     storage = new GraphStorageImpl(manager);
     await storage.initialize();
   });

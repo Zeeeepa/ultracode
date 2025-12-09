@@ -66,8 +66,11 @@ import { TechnologyDetector } from "./analysis/technology-detector.js";
 // AutoDoc: Semantic documentation layer
 import {
   type AutoDocManager,
+  // AutoDoc Watcher for automatic updates
+  type AutoDocWatcherConfig,
   type FileSyncResult,
   getAutoDocManager as getAutoDocManagerFactory,
+  getAutoDocWatcher,
   syncBidirectional,
   syncDbToDisk,
   syncDiskToDb,
@@ -88,9 +91,10 @@ import { PreviewManager } from "./modification/preview-manager.js";
 import { PatternSearch } from "./search/pattern-search.js";
 // Storage initialization
 import { initializeStorageDirs } from "./shared/storage-paths.js";
-import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
-import { getSQLiteManager } from "./storage/sqlite-manager.js";
+import { getGraphStorage, initializeGraphStorage, resetGraphStorage } from "./storage/graph-storage-factory.js";
+import { getProjectSQLiteManager, getSQLiteManager } from "./storage/sqlite-manager.js";
 import { collectAgentMetrics } from "./tools/agent-metrics.js";
+import type { ToolContext } from "./tools/base-tool-handler.js";
 import { branchToolDefinitions } from "./tools/branch-schemas.js";
 // Import branch management tools
 import * as branchTools from "./tools/branch-tools.js";
@@ -99,17 +103,22 @@ import { getGraphStats, queryGraphEntities } from "./tools/graph-query.js";
 import { runJscpdCloneDetection } from "./tools/jscpd.js";
 import { ingestLernaGraph } from "./tools/lerna-graph-ingest.js";
 import { getLernaProjectGraph } from "./tools/lerna-project-graph.js";
+import { toolRegistry } from "./tools/tool-registry.js";
 import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
 import type { CloneGroup } from "./types/semantic.js";
 import type { Entity, Relationship } from "./types/storage.js";
 import { EntityType, RelationType } from "./types/storage.js";
+import { initHasher } from "./utils/fast-hash.js";
 import { createRequestId, logger } from "./utils/logger.js";
 import { ensureOllamaRunning, getStatusMessage } from "./utils/ollama-checker.js";
 import { CodeValidator } from "./validation/code-validator.js";
 // PHASE 8: Import new code modification and analysis components
 import { VersionManager } from "./versioning/version-manager.js";
+
+// Initialize xxHash WASM BEFORE any hashing operations (required for deterministic project paths)
+await initHasher();
 
 // Initialize centralized storage directories BEFORE any storage operations
 initializeStorageDirs();
@@ -122,6 +131,43 @@ let versionRequested = false;
 let setupRequested = false;
 let noAutoIndex = false;
 let pipeServerMode = false; // Default: use stdio transport (for Claude Code)
+
+// Global indexing state tracking
+let isIndexingInProgress = false;
+let indexingStartTime: number | null = null;
+let indexingDirectory: string | null = null;
+
+/**
+ * Check if indexing is currently in progress
+ */
+export function isIndexing(): boolean {
+  return isIndexingInProgress;
+}
+
+/**
+ * Get indexing status for user-friendly messages
+ */
+export function getIndexingStatus(): { inProgress: boolean; directory: string | null; elapsedSeconds: number | null } {
+  return {
+    inProgress: isIndexingInProgress,
+    directory: indexingDirectory,
+    elapsedSeconds: indexingStartTime ? Math.round((Date.now() - indexingStartTime) / 1000) : null,
+  };
+}
+
+/**
+ * Set indexing state (called by performAutoIndex and index tool)
+ */
+function setIndexingState(inProgress: boolean, directory?: string): void {
+  isIndexingInProgress = inProgress;
+  if (inProgress) {
+    indexingStartTime = Date.now();
+    indexingDirectory = directory || null;
+  } else {
+    indexingStartTime = null;
+    indexingDirectory = null;
+  }
+}
 const positionalArgs: string[] = [];
 
 // Check for "setup" command first
@@ -245,12 +291,13 @@ if (setupRequested) {
       // Try pwsh first, fallback to powershell
       const pwshResult = spawnSync("pwsh", ["-ExecutionPolicy", "Bypass", "-File", ps1Script], {
         stdio: "inherit",
-        windowsHide: false,
+        windowsHide: true,
       });
       if (pwshResult.error) {
         // Fallback to Windows PowerShell
         const psResult = spawnSync("powershell", ["-ExecutionPolicy", "Bypass", "-File", ps1Script], {
           stdio: "inherit",
+          windowsHide: true,
         });
         process.exit(psResult.status ?? 1);
       } else {
@@ -493,9 +540,79 @@ if (!validation.valid) {
 }
 
 // Initialize global SQLiteManager with database configuration
-console.error("[Main] Initializing global SQLiteManager with config:", config.database.path);
-const globalSQLiteManager = getSQLiteManager(config.database);
+console.error("[Main] Initializing global SQLiteManager with config.database.path:", config.database.path);
+console.error("[Main] CLI directory argument:", directory);
+console.error("[Main] process.cwd():", process.cwd());
+
+// IMPORTANT: Set the indexing directory BEFORE creating SQLiteManager
+// This ensures getDefaultDbPath() uses the correct project path
+setCurrentIndexingDirectory(directory);
+console.error("[Main] Set current indexing directory to:", directory);
+
+let globalSQLiteManager = getSQLiteManager(config.database);
 globalSQLiteManager.initialize();
+
+// Track current project for context switching
+let currentProjectPath = directory;
+
+/**
+ * Switch global context to a different project
+ * This reinitializes globalSQLiteManager for the new project
+ */
+async function switchGlobalProjectContext(projectPath: string): Promise<void> {
+  if (projectPath === currentProjectPath) {
+    return; // Already on this project
+  }
+
+  console.error(`[Main] Switching global context: ${currentProjectPath} -> ${projectPath}`);
+
+  // Get project-specific SQLiteManager
+  const newManager = getProjectSQLiteManager(projectPath);
+
+  // Update global reference
+  globalSQLiteManager = newManager;
+  currentProjectPath = projectPath;
+
+  // Reset GraphStorage cache to force recreation with new manager
+  resetGraphStorage();
+
+  // Reinitialize GraphStorage with new manager
+  await initializeGraphStorage(globalSQLiteManager);
+
+  // Reinitialize SemanticAgent's VectorStore for new project (if agent exists)
+  // This ensures embeddings are stored/read from the correct project-specific location
+  try {
+    const cond = getConductor();
+    if (cond) {
+      const existingAgents = cond.getAgentsByType(AgentType.SEMANTIC);
+      if (existingAgents.length > 0) {
+        const semanticAgent = existingAgents[0] as any;
+        if (semanticAgent && typeof semanticAgent.reinitializeForProject === "function") {
+          await semanticAgent.reinitializeForProject(projectPath);
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`[Main] Failed to reinitialize SemanticAgent: ${(e as Error).message}`);
+  }
+
+  // Reset conductor to force agent recreation with new context
+  conductor = null;
+  globalVectorStore = null;
+  patternSearch = null; // Reset PatternSearch to use new GraphStorage
+  codeModifier = null; // Reset CodeModifier (uses GraphStorage)
+  fileOperations = null; // Reset FileOperations (uses GraphStorage)
+  autoDocManager = null; // Reset AutoDocManager (uses SQLiteManager)
+  layeredIndexManager = null; // Reset LayeredIndexManager (uses GraphStorage)
+
+  // Update SQLiteManager in DI container so newly created agents use the correct one
+  container.updateInstance("SQLiteManager", globalSQLiteManager);
+
+  // Clear cached agent instances in DI container so they get recreated with new SQLiteManager
+  container.clearAgentInstances();
+
+  console.error(`[Main] Global context switched to: ${projectPath}`);
+}
 
 // Initialize global GraphStorage
 console.error("[Main] Initializing global GraphStorage");
@@ -522,6 +639,8 @@ logger.systemEvent("Resource Manager Started", {
 
 // VARIANT-C: Initialize DI Container and register all agents
 const container = getGlobalContainer();
+// Register SQLiteManager in container so agents can resolve it dynamically
+container.registerInstance("SQLiteManager", globalSQLiteManager);
 await registerAllAgents(container);
 console.error("[Main] DI Container initialized with all agents");
 
@@ -549,6 +668,11 @@ async function initializeGlobalVectorStore(): Promise<void> {
     } catch (error) {
       console.warn("[Main] Failed to get VectorStore:", error);
       globalVectorStore = null;
+      patternSearch = null; // Reset PatternSearch to use new GraphStorage
+      codeModifier = null; // Reset CodeModifier (uses GraphStorage)
+      fileOperations = null; // Reset FileOperations (uses GraphStorage)
+      autoDocManager = null; // Reset AutoDocManager (uses SQLiteManager)
+      layeredIndexManager = null; // Reset LayeredIndexManager (uses GraphStorage)
     }
   }
 }
@@ -928,9 +1052,6 @@ const IndexToolSchema = z.object({
     ".gradle/**",
     ".idea/**",
     ".vscode/**",
-    "**/test/**",
-    "**/tests/**",
-    "**/__tests__/**",
     "**/.memory_bank/**",
     "tmp/**",
     "temp/**",
@@ -985,6 +1106,7 @@ const SemanticSearchSchema = z.object({
   query: z.string().describe("Natural language search query"),
   limit: z.number().optional().default(10).describe("Maximum results to return"),
   branch: z.string().optional().describe("Branch name (null = main branch)"),
+  projectPath: z.string().optional().describe("Project directory path for cross-project search"),
 });
 
 const FindSimilarCodeSchema = z.object({
@@ -1649,6 +1771,106 @@ function getToolsList() {
       inputSchema: zodToJsonSchema(AutoDocDetectLanguageSchema),
     },
     ...branchToolDefinitions,
+    // Tracing tools
+    {
+      name: "trace_flow",
+      description: `Trace execution flow from point A to point B in the codebase. Finds all possible paths and analyzes state changes, conditions, and async boundaries along each path. Returns paths with confidence scores and optional Mermaid diagrams.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "Starting point (function/method name or semantic query)" },
+          to: { type: "string", description: "Ending point (function/method name or semantic query)" },
+          trackStates: { type: "boolean", description: "Track state changes along paths", default: true },
+          trackConditions: { type: "boolean", description: "Track conditions/branches", default: true },
+          maxDepth: { type: "number", description: "Maximum traversal depth", default: 15 },
+          format: {
+            type: "string",
+            enum: ["sequence", "tree", "graph", "mermaid"],
+            description: "Output format",
+            default: "sequence",
+          },
+        },
+        required: ["from", "to"],
+      },
+    },
+    {
+      name: "trace_backwards",
+      description: `Trace backwards from a method to find why it might not be called. Analysis types: why_not_called (blocking conditions), what_affects (dependencies), dependencies (full graph). Returns callers, blocking conditions, state dependencies, and diagnosis.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          target: { type: "string", description: "Target method/function to analyze" },
+          question: {
+            type: "string",
+            enum: ["why_not_called", "what_affects", "dependencies"],
+            description: "Type of analysis",
+          },
+          depth: { type: "number", description: "Backward traversal depth", default: 15 },
+          includeStates: { type: "boolean", description: "Include state dependencies", default: true },
+          includeEffects: { type: "boolean", description: "Include side effects", default: true },
+        },
+        required: ["target", "question"],
+      },
+    },
+    {
+      name: "trace_data_flow",
+      description: `Trace how data flows from sources to affect a target state. Identifies data sources, transformations, branching, and builds behavior matrix for different inputs.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          entryPoint: { type: "string", description: "Entry point function" },
+          targetState: { type: "string", description: "Target state to trace" },
+          dataSources: {
+            type: "array",
+            items: { type: "string" },
+            description: "Data sources to analyze (auto-detected if not specified)",
+          },
+          trackTransformations: { type: "boolean", description: "Track data transformations", default: true },
+        },
+        required: ["entryPoint", "targetState"],
+      },
+    },
+    {
+      name: "analyze_state_impact",
+      description: `Analyze the impact of a state variable across different scenarios. Shows usages, reachable/blocked paths per scenario, conflicts, and ripple effects.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          state: { type: "string", description: "State variable to analyze" },
+          scenarios: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { value: {}, label: { type: "string" } },
+              required: ["value", "label"],
+            },
+            description: "Scenarios to analyze",
+            minItems: 1,
+          },
+          scope: { type: "string", description: "Scope of analysis (semantic query)" },
+        },
+        required: ["state", "scenarios"],
+      },
+    },
+    {
+      name: "find_decision_points",
+      description: `Find all decision points in a scenario's execution flow. Types: validation, api_response, state_mutation, guard, loop, error_handling, feature_flag. Returns grouped by impact with Mermaid flowchart.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          scenario: { type: "string", description: "Scenario to analyze" },
+          includeGuards: { type: "boolean", description: "Include guard conditions", default: true },
+          includeEffects: { type: "boolean", description: "Include side effects", default: true },
+          groupBy: {
+            type: "string",
+            enum: ["impact", "location", "type"],
+            description: "How to group results",
+            default: "impact",
+          },
+        },
+        required: ["scenario"],
+      },
+    },
   ];
 }
 
@@ -1758,15 +1980,70 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, re
 }
 
 async function executeToolCall(name: string, args: unknown, requestId: string, startTime: number) {
+  // Check if indexing is in progress and return user-friendly message
+  // Allow index-related tools and status tools to work during indexing
+  const allowedDuringIndexing = new Set([
+    "index",
+    "clean_index",
+    "reset_graph",
+    "get_version",
+    "get_metrics",
+    "get_agent_metrics",
+    "get_bus_stats",
+    "get_graph_stats",
+    "get_graph_health",
+  ]);
+
+  if (isIndexingInProgress && !allowedDuringIndexing.has(name)) {
+    const status = getIndexingStatus();
+    const message =
+      `⏳ Indexing is currently in progress. Please wait and retry.\n\n` +
+      `📂 Directory: ${status.directory || "unknown"}\n` +
+      `⏱️ Elapsed: ${status.elapsedSeconds || 0} seconds\n\n` +
+      `Tip: Use 'get_graph_stats' or 'get_metrics' to check indexing status.`;
+
+    logger.info("INDEXING_BUSY", `Tool ${name} blocked - indexing in progress`, { status }, requestId);
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              success: false,
+              errorType: "indexing_in_progress",
+              error: "Indexing is currently in progress. Please retry after indexing completes.",
+              message,
+              status: {
+                directory: status.directory,
+                elapsedSeconds: status.elapsedSeconds,
+              },
+              retryAfterSeconds: 10,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+
   try {
     switch (name) {
       case "index": {
         const { directory: indexDir, incremental, excludePatterns, reset, fullScan } = IndexToolSchema.parse(args);
         const targetDir = indexDir || directory;
 
+        // Switch global context if indexing a different directory
+        if (targetDir !== currentProjectPath) {
+          await switchGlobalProjectContext(targetDir);
+        }
+
+        // Use current globalSQLiteManager (already switched above if needed)
+        const sqliteManager = globalSQLiteManager;
         // Optional reset
         if (reset) {
-          const storage = await getGraphStorage(globalSQLiteManager);
+          const storage = await getGraphStorage(sqliteManager);
           await storage.clear();
           logger.systemEvent("Graph storage cleared before indexing", { directory: targetDir });
         }
@@ -1806,28 +2083,8 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
               { fileCount: numFiles },
               requestId,
             );
-            enhancedExcludePatterns.push(
-              "**/test/**",
-              "**/tests/**",
-              "**/*_test.*",
-              "**/*_spec.*",
-              "**/*.test.*",
-              "**/*.spec.*",
-              "**/docs/**",
-              "**/doc/**",
-              "**/documentation/**",
-              "**/examples/**",
-              "**/example/**",
-              "**/demo/**",
-              "**/demos/**",
-              "**/migrations/**",
-              "**/scripts/**",
-              "**/tools/**",
-              "**/*.min.js",
-              "**/*.min.css",
-              "**/bundle.*",
-              "**/vendor.*",
-            );
+            // Removed automatic pattern injection - was too aggressive
+            // User should explicitly specify excludePatterns if needed
           }
 
           // For extremely large codebases (>5000 files), enable incremental by default
@@ -1881,12 +2138,34 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         // Process through conductor with mandatory delegation
         const cond = getConductor();
         await cond.initialize();
-        const configuredTimeout = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        const timeoutMs = isDebugMode ? Math.max(configuredTimeout, 120000) : configuredTimeout;
+        // Indexing can take significant time for large codebases (e.g., 90+ seconds for 350 files)
+        // Use a longer default timeout (5 minutes) to allow completion without early termination
+        const INDEX_DEFAULT_TIMEOUT = 300000; // 5 minutes
+        const configuredTimeout =
+          config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || INDEX_DEFAULT_TIMEOUT;
+        const timeoutMs = isDebugMode
+          ? Math.max(configuredTimeout, 300000)
+          : Math.max(configuredTimeout, INDEX_DEFAULT_TIMEOUT);
         const result = await withTimeout(cond.process(task), timeoutMs, "index", requestId);
 
+        // Get oversized entity warning from semantic agent
+        let oversizedWarning: { aiMessage: string | null; oversizedCount: number; maxTokens: number } | null = null;
         if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
           await ensureSemanticsReady(1, 5000);
+
+          try {
+            const semanticAgent = await getSemanticAgent();
+            const warning = semanticAgent.getLastOversizedWarning?.();
+            if (warning?.hasWarning) {
+              oversizedWarning = {
+                aiMessage: warning.aiMessage,
+                oversizedCount: warning.oversizedCount,
+                maxTokens: warning.maxTokens,
+              };
+            }
+          } catch {
+            // Ignore if semantic agent not available
+          }
         }
 
         // Log indexing activity
@@ -1908,19 +2187,26 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const duration = Date.now() - startTime;
         logger.mcpResponse(name, result, duration, requestId);
 
+        // Build response with optional AI warning
+        const indexResponse: any = {
+          success: true,
+          message: "Indexing completed",
+          result,
+        };
+
+        if (oversizedWarning?.aiMessage) {
+          indexResponse.warning = oversizedWarning.aiMessage;
+          indexResponse.oversizedEntities = {
+            count: oversizedWarning.oversizedCount,
+            maxTokens: oversizedWarning.maxTokens,
+          };
+        }
+
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(
-                {
-                  success: true,
-                  message: "Indexing completed",
-                  result,
-                },
-                null,
-                2,
-              ),
+              text: JSON.stringify(indexResponse, null, 2),
             },
           ],
         };
@@ -1944,7 +2230,15 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const { directory: indexDir, excludePatterns, fullScan } = CleanIndexSchema.parse(args);
         const targetDir = indexDir || directory;
 
-        // Reset graph first
+        // Switch global context if indexing a different directory
+        if (targetDir !== currentProjectPath) {
+          await switchGlobalProjectContext(targetDir);
+        }
+
+        // Set current indexing directory for adaptive vector backend selection
+        setCurrentIndexingDirectory(targetDir);
+
+        // Reset graph first (use current globalSQLiteManager after context switch)
         const storage = await getGraphStorage(globalSQLiteManager);
         await storage.clear();
         logger.systemEvent("Graph storage cleared before clean index", { directory: targetDir });
@@ -1970,30 +2264,8 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             requestId,
           );
           resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
-          if (numFiles > 2000) {
-            enhancedExcludePatterns.push(
-              "**/test/**",
-              "**/tests/**",
-              "**/*_test.*",
-              "**/*_spec.*",
-              "**/*.test.*",
-              "**/*.spec.*",
-              "**/docs/**",
-              "**/doc/**",
-              "**/documentation/**",
-              "**/examples/**",
-              "**/example/**",
-              "**/demo/**",
-              "**/demos/**",
-              "**/migrations/**",
-              "**/scripts/**",
-              "**/tools/**",
-              "**/*.min.js",
-              "**/*.min.css",
-              "**/bundle.*",
-              "**/vendor.*",
-            );
-          }
+          // Large codebase detection - log only, no automatic pattern injection
+          // User should explicitly specify excludePatterns if needed
 
           if (!fullScan) {
             if (numFiles > 2000) {
@@ -2039,30 +2311,59 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         const cond = getConductor();
         await cond.initialize();
-        const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
+        // clean_index includes full reindexing, needs longer timeout
+        const CLEAN_INDEX_DEFAULT_TIMEOUT = 300000; // 5 minutes
+        const timeoutMs = Math.max(
+          config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || CLEAN_INDEX_DEFAULT_TIMEOUT,
+          CLEAN_INDEX_DEFAULT_TIMEOUT,
+        );
         const result = await withTimeout(cond.process(task), timeoutMs, "clean_index", requestId);
 
+        // Get oversized entity warning from semantic agent
+        let cleanOversizedWarning: { aiMessage: string | null; oversizedCount: number; maxTokens: number } | null =
+          null;
         if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
           await ensureSemanticsReady(1, 5000);
+
+          try {
+            const semanticAgent = await getSemanticAgent();
+            const warning = semanticAgent.getLastOversizedWarning?.();
+            if (warning?.hasWarning) {
+              cleanOversizedWarning = {
+                aiMessage: warning.aiMessage,
+                oversizedCount: warning.oversizedCount,
+                maxTokens: warning.maxTokens,
+              };
+            }
+          } catch {
+            // Ignore if semantic agent not available
+          }
         }
 
         knowledgeBus.publish("index:completed", result, "mcp-server");
         const duration = Date.now() - startTime;
         logger.mcpResponse(name, result, duration, requestId);
 
+        // Build response with optional AI warning
+        const cleanIndexResponse: any = {
+          success: true,
+          message: "Clean indexing completed",
+          result,
+        };
+
+        if (cleanOversizedWarning?.aiMessage) {
+          cleanIndexResponse.warning = cleanOversizedWarning.aiMessage;
+          cleanIndexResponse.oversizedEntities = {
+            count: cleanOversizedWarning.oversizedCount,
+            maxTokens: cleanOversizedWarning.maxTokens,
+          };
+        }
+
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(
-                {
-                  success: true,
-                  message: "Clean indexing completed",
-                  result,
-                },
-                null,
-                2,
-              ),
+              text: JSON.stringify(cleanIndexResponse, null, 2),
             },
           ],
         };
@@ -2151,7 +2452,24 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           };
         }
 
-        const relationships = await storage.getRelationshipsForEntity(entity.id);
+        // Get relationships by entity ID
+        const relationshipsByID = await storage.getRelationshipsForEntity(entity.id);
+
+        // Also find incoming relationships by entity name (for NgRx phantom entities)
+        const incomingByName = await storage.findIncomingRelationshipsByName(entity.name, relationshipTypes as any);
+
+        // Merge and deduplicate relationships
+        const relMap = new Map<string, Relationship>();
+        for (const rel of relationshipsByID) {
+          relMap.set(rel.id, rel);
+        }
+        for (const rel of incomingByName) {
+          if (!relMap.has(rel.id)) {
+            relMap.set(rel.id, rel);
+          }
+        }
+        const relationships = Array.from(relMap.values());
+
         const filtered =
           Array.isArray(relationshipTypes) && relationshipTypes.length > 0
             ? relationships.filter((rel) => relationshipTypes.includes(rel.type))
@@ -2401,11 +2719,20 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
       // New semantic tool handlers - TASK-002
       case "semantic_search": {
-        const { query, limit, branch } = SemanticSearchSchema.parse(args);
+        const { query, limit, branch, projectPath } = SemanticSearchSchema.parse(args);
+
+        // Switch project context if different project requested
+        if (projectPath) {
+          const resolvedPath = resolve(projectPath);
+          if (resolvedPath !== currentProjectPath) {
+            await switchGlobalProjectContext(resolvedPath);
+          }
+        }
+
         await ensureSemanticsReady(1, 20000);
 
-        // Check cache first (include branch in cache key)
-        const cacheKey = `semantic:search:${query}:${limit}:${branch || "main"}`;
+        // Check cache first (include branch and project in cache key)
+        const cacheKey = `semantic:search:${query}:${limit}:${branch || "main"}:${currentProjectPath}`;
         const cached = knowledgeBus.query(cacheKey, 1);
         if (cached.length > 0) {
           const firstCache = cached[0];
@@ -2552,16 +2879,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           paths: [directory],
           minTokens: 20,
           minLines: 3,
-          ignore: [
-            "node_modules/**",
-            "dist/**",
-            "coverage/**",
-            "tmp/**",
-            "**/tmp/**",
-            "**/__tests__/**",
-            "**/tests/**",
-            "**/*.d.ts",
-          ],
+          ignore: ["node_modules/**", "dist/**", "coverage/**", "tmp/**", "**/tmp/**", "**/*.d.ts"],
         });
 
         const semanticNormalized = normalizeSemanticCloneGroups(semanticResult, directory);
@@ -4969,8 +5287,34 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         };
       }
 
-      default:
+      default: {
+        // Try ToolRegistry fallback for handlers not in switch (tracing tools, etc.)
+        if (toolRegistry.has(name)) {
+          const toolContext: ToolContext = {
+            requestId,
+            config,
+            logger,
+            getConductor,
+            getGraphStorage,
+            getSQLiteManager: () => globalSQLiteManager,
+            getSemanticAgent,
+            getBranchManager: () => {
+              const cond = getConductor();
+              const indexerAgent = cond.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+              return indexerAgent?.getBranchManager?.() || null;
+            },
+            getSnapshotManager: () => versionManager,
+            getKnowledgeBus: () => knowledgeBus,
+            normalizeInputPath,
+            withTimeout,
+          };
+
+          const handler = toolRegistry.getHandler(name, toolContext);
+          return await handler.handle(args);
+        }
+
         throw new Error(`Unknown tool: ${name}`);
+      }
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -5185,13 +5529,11 @@ async function buildAutoIndexExcludePatterns(targetDir: string): Promise<string[
     "**/.idea/**",
     "**/.vscode/**",
     "**/packages/**",
-    // Common non-source directories (often contain tests, scripts, docs)
+    // Common non-source directories
+    // NOTE: Removed **/scripts/**, **/docs/**, **/examples/**, **/samples/**
+    // as they often contain real application code
     "**/benchmarks/**",
     "**/benchmark/**",
-    "**/scripts/**",
-    "**/docs/**",
-    "**/examples/**",
-    "**/samples/**",
     "**/fixtures/**",
     "**/testdata/**",
     "**/external-tools/**",
@@ -5301,6 +5643,9 @@ async function performAutoIndex(targetDir: string, extensions: string[]): Promis
   const requestId = createRequestId();
   const startTime = Date.now();
 
+  // Set indexing state for user-friendly error messages
+  setIndexingState(true, targetDir);
+
   logger.systemEvent("Auto-indexing started", { directory: targetDir });
   console.error(`\n📂 Auto-indexing project: ${targetDir}`);
 
@@ -5315,10 +5660,12 @@ async function performAutoIndex(targetDir: string, extensions: string[]): Promis
     // Set current indexing directory
     setCurrentIndexingDirectory(targetDir);
 
-    // NOTE: Do NOT initialize SemanticAgent during auto-index!
-    // SemanticAgent subscribes to index events and generates embeddings synchronously,
-    // which blocks the UI for 30+ seconds. Embeddings will be generated lazily
-    // on first semantic search instead.
+    // Initialize SemanticAgent BEFORE indexing so it receives semantic:new_entities events
+    // This ensures embeddings are generated for all languages including Kotlin
+    if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+      console.error("🔄 Initializing SemanticAgent for embedding generation...");
+      await getSemanticAgent();
+    }
 
     // Create indexing task with smart excludes
     const task: AgentTask = {
@@ -5362,6 +5709,9 @@ async function performAutoIndex(targetDir: string, extensions: string[]): Promis
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     console.error(`❌ Auto-indexing failed after ${duration}s: ${(error as Error).message}`);
     logger.error("AUTO_INDEX", "Auto-indexing failed", { error: (error as Error).message }, requestId);
+  } finally {
+    // Always clear indexing state
+    setIndexingState(false);
   }
 }
 
@@ -5397,6 +5747,34 @@ async function main() {
       console.error("⚠️  Ollama check failed, using memory provider fallback");
     }
     console.error(""); // Empty line for readability
+  }
+
+  // Initialize AutoDoc Watcher for automatic documentation updates
+  const autodocWatcherEnabled = config.mcp?.autodoc?.watcherEnabled ?? false;
+  if (autodocWatcherEnabled) {
+    try {
+      const watcherConfig: AutoDocWatcherConfig = {
+        rootDir: directory,
+        enabled: true,
+        debounceMs: config.mcp?.autodoc?.debounceMs ?? 45000,
+        minDebounceMs: config.mcp?.autodoc?.minDebounceMs ?? 30000,
+        maxDebounceMs: config.mcp?.autodoc?.maxDebounceMs ?? 60000,
+        useLlm: config.mcp?.autodoc?.useLlm ?? false,
+        llmConfig: config.mcp?.autodoc?.llmConfig,
+      };
+      const watcher = getAutoDocWatcher(watcherConfig);
+      watcher.start();
+      console.error("📝 AutoDoc watcher started (auto-updates AUTODOC.md on file changes)");
+      logger.systemEvent("AutoDoc watcher started", {
+        rootDir: directory,
+        debounceMs: watcherConfig.debounceMs,
+      });
+    } catch (error) {
+      logger.warn("STARTUP", "AutoDoc watcher failed to start", {
+        error: (error as Error).message,
+      });
+      console.error("⚠️  AutoDoc watcher failed to start");
+    }
   }
 
   // Connect transport FIRST for fast readiness

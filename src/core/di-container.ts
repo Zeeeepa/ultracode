@@ -149,6 +149,28 @@ export class DIContainer {
   }
 
   /**
+   * Update an existing singleton instance (useful for project context switches)
+   */
+  updateInstance<T>(name: string, instance: T): void {
+    this.ensureNotDisposed();
+
+    const descriptor = this.services.get(name);
+    if (!descriptor) {
+      // If not registered, register it
+      this.registerInstance(name, instance);
+      return;
+    }
+
+    if (descriptor.lifetime !== ServiceLifetime.SINGLETON) {
+      throw new Error(`Cannot update non-singleton service '${name}'`);
+    }
+
+    descriptor.instance = instance;
+    descriptor.factory = () => instance;
+    console.error(`[DIContainer] Updated instance: ${name}`);
+  }
+
+  /**
    * Register an agent factory
    */
   registerAgent(
@@ -263,6 +285,21 @@ export class DIContainer {
       }
     }
     console.error(`[DIContainer] Cleared transient instances`);
+  }
+
+  /**
+   * Clear cached agent instances (to force recreation with new context)
+   * Used when project context switches and agents need new SQLiteManager
+   */
+  clearAgentInstances(): void {
+    let cleared = 0;
+    for (const [name, descriptor] of this.services) {
+      if (name.startsWith("Agent:") && descriptor.instance !== undefined) {
+        delete descriptor.instance;
+        cleared++;
+      }
+    }
+    console.error(`[DIContainer] Cleared ${cleared} cached agent instances`);
   }
 
   /**

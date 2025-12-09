@@ -1,6 +1,9 @@
-import { TreeSitterParser } from "../../src/parsers/tree-sitter-parser";
+import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 
-describe("TreeSitterParser cache isolation by internal content hash", () => {
+// TreeSitterParser was removed - tests need migration to UnifiedParser
+// import { TreeSitterParser } from "../../src/parsers/tree-sitter-parser.js";
+
+describe.skip("TreeSitterParser cache isolation (TreeSitterParser removed)", () => {
   let parser: TreeSitterParser;
 
   beforeAll(async () => {

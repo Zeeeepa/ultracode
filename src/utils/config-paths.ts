@@ -102,7 +102,7 @@ export function ensureDataDir(): string {
 export interface SemanticConfig {
   enabled: boolean;
   embedding: {
-    platform: "tei" | "ollama" | "memory";
+    platform: "tei" | "ollama" | "memory" | "openvino";
     architecture: string;
     tei?: {
       endpoint: string;
@@ -122,6 +122,17 @@ export interface SemanticConfig {
         vector_size: number;
       }>;
     };
+    openvino?: {
+      selected_model: string;
+      device: "CPU" | "GPU" | "GPU.0" | "GPU.1" | "AUTO";
+      avg_ms?: number;
+      models?: Array<{
+        id: string;
+        languages: string[];
+        vector_size: number;
+        context_tokens?: number;
+      }>;
+    };
     memory?: {
       model_path: string;
       vector_size: number;
@@ -131,6 +142,26 @@ export interface SemanticConfig {
     gpu_architecture: boolean;
     codebase_size: boolean;
     language: boolean;
+  };
+  llm?: {
+    enabled: boolean;
+    platform: "openvino" | "ollama" | "tgi";
+    openvino?: {
+      model_id: string;
+      device: "CPU" | "GPU" | "NPU" | "AUTO";
+      context_tokens: number;
+    };
+    ollama?: {
+      endpoint: string;
+      model_id: string;
+      context_tokens: number;
+    };
+    tgi?: {
+      endpoint: string;
+      model_id: string;
+      context_tokens: number;
+      container_name: string;
+    };
   };
 }
 

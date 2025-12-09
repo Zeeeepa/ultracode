@@ -8,8 +8,9 @@
  */
 
 import { z } from "zod";
+import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
-import { paginate, SAFE_LIMITS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from "../response-limits.js";
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 
 // =============================================================================
 // LIST FILE ENTITIES
@@ -17,6 +18,7 @@ import { paginate, SAFE_LIMITS, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from "../resp
 
 const ListFileEntitiesSchema = z.object({
   filePath: z.string(),
+  projectPath: projectPathParam,
   entityTypes: z.array(z.string()).optional(),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.entities),
@@ -76,6 +78,7 @@ export class ListFileEntitiesToolHandler extends BaseToolHandler<z.infer<typeof 
 const ListEntityRelationshipsSchema = z.object({
   entityId: z.string().optional(),
   entityName: z.string().optional(),
+  projectPath: projectPathParam,
   relationshipTypes: z.array(z.string()).optional(),
   direction: z.enum(["incoming", "outgoing", "both"]).optional().default("both"),
   offset: z.number().optional().default(0),
@@ -154,6 +157,7 @@ export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<
 
 const QuerySchema = z.object({
   query: z.string(),
+  projectPath: projectPathParam,
   type: z.enum(["entities", "relationships", "both"]).optional().default("both"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(DEFAULT_PAGE_SIZE),

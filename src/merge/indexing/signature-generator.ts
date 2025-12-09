@@ -1,5 +1,5 @@
-import type { CodeUnit } from "../models/code-unit.js";
 import { hashText } from "../../utils/fast-hash.js";
+import type { CodeUnit } from "../models/code-unit.js";
 
 /**
  * Генерирует signatures для CodeUnit.
@@ -164,7 +164,7 @@ export class SignatureGenerator {
         .filter((t) => t.length > 0);
     }
 
-    if (language === "java" || language === "csharp") {
+    if (language === "java") {
       // Match class Foo<T, U> or interface Bar<T>
       const match = content.match(/(?:class|interface)\s+\w+<([^>]+)>/);
       if (!match || !match[1]) return [];
@@ -193,14 +193,9 @@ export class SignatureGenerator {
    *
    * Removes whitespace, normalizes casing (for case-insensitive languages).
    */
-  normalizeSignature(signature: string, language: string): string {
+  normalizeSignature(signature: string, _language: string): string {
     // Remove all whitespace
-    let normalized = signature.replace(/\s+/g, "");
-
-    // For case-insensitive languages, lowercase
-    if (language === "vba") {
-      normalized = normalized.toLowerCase();
-    }
+    const normalized = signature.replace(/\s+/g, "");
 
     return normalized;
   }

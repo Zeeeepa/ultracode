@@ -89,12 +89,6 @@ async function getAnalyzer(language: string): Promise<any> {
         break;
       }
 
-      case "vba": {
-        const { VbaAnalyzer } = await import("../../parsers/vba-analyzer.js");
-        analyzer = new VbaAnalyzer();
-        break;
-      }
-
       case "typescript":
       case "javascript": {
         // Use UnifiedParser for TS/JS (TypeScript Compiler API)
@@ -131,7 +125,6 @@ function detectLanguage(filePath: string): string {
     ".cc": "cpp",
     ".hpp": "cpp",
     ".hxx": "cpp",
-    ".cs": "csharp",
     ".java": "java",
     ".go": "go",
     ".c": "c",
@@ -146,10 +139,6 @@ function detectLanguage(filePath: string): string {
     ".html": "html",
     ".htm": "html",
     ".xml": "xml",
-    ".vba": "vba",
-    ".bas": "vba",
-    ".cls": "vba",
-    ".frm": "vba",
     ".ts": "typescript",
     ".tsx": "typescript",
     ".mts": "typescript",
@@ -262,18 +251,7 @@ if (parentPort) {
           parentPort.postMessage({
             type: "initialized",
             workerId: workerData?.workerId || "generic-worker",
-            supportedLanguages: [
-              "python",
-              "rust",
-              "cpp",
-              "csharp",
-              "java",
-              "go",
-              "c",
-              "vba",
-              "typescript",
-              "javascript",
-            ],
+            supportedLanguages: ["python", "rust", "cpp", "java", "go", "c", "typescript", "javascript"],
           });
         }
         return;
