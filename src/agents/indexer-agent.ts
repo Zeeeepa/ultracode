@@ -184,12 +184,20 @@ export class IndexerAgent extends BaseAgent {
         this.gitWatcher = new GitWatcher({
           enabled: true,
           pollIntervalMs: appConfig.git.pollIntervalMs || 5000,
-          autoReindex: appConfig.git.autoReindex || true,
+          autoReindex: appConfig.git.autoReindex ?? true,
+          watchUncommitted: appConfig.git.watchUncommitted ?? true,
+          uncommittedPollIntervalMs: appConfig.git.uncommittedPollIntervalMs || 10000,
+          includeUntracked: appConfig.git.includeUntracked ?? true,
         });
 
         // Setup branch change handler
         this.gitWatcher.onBranchChange(async (newBranch, oldBranch) => {
           await this.handleBranchChange(newBranch, oldBranch);
+        });
+
+        // Setup uncommitted file change handler for incremental reindexing
+        this.gitWatcher.onUncommittedChange(async (files) => {
+          await this.handleUncommittedChanges(files);
         });
       }
     }
@@ -963,6 +971,50 @@ export class IndexerAgent extends BaseAgent {
       default:
         console.warn(`[${this.id}] Unknown message type: ${message.type}`);
     }
+  }
+
+  /**
+   * Handle uncommitted file changes detected by GitWatcher
+   * Triggers incremental reindexing for changed files
+   */
+  private async handleUncommittedChanges(files: string[]): Promise<void> {
+    if (!this.currentRepositoryPath || files.length === 0) {
+      return;
+    }
+
+    console.error(`[${this.id}] Uncommitted changes detected: ${files.length} files`);
+
+    // Resolve relative paths to absolute
+    const { join, isAbsolute } = await import("node:path");
+    const absolutePaths = files.map((f) => (isAbsolute(f) ? f : join(this.currentRepositoryPath!, f)));
+
+    // Publish file:changed events for each file
+    // These will be picked up by components subscribed to the knowledge bus
+    for (const filePath of absolutePaths) {
+      knowledgeBus.publish(
+        "file:changed",
+        {
+          filePath,
+          changeType: "modified",
+          source: "git-watcher",
+        },
+        this.id,
+      );
+    }
+
+    // Also publish a batch event for efficiency
+    knowledgeBus.publish(
+      "indexer:files:changed",
+      {
+        files: absolutePaths,
+        count: absolutePaths.length,
+        repositoryPath: this.currentRepositoryPath,
+        source: "git-watcher-uncommitted",
+      },
+      this.id,
+    );
+
+    console.error(`[${this.id}] Published change events for ${absolutePaths.length} files`);
   }
 
   /**

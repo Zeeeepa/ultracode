@@ -164,6 +164,17 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
     knowledgeBus.subscribe(this.id, "resources:adjusted", (entry) => this.handleResourceAdjustment(entry));
 
+    // Subscribe to file change events for incremental reindexing
+    knowledgeBus.subscribe(this.id, "indexer:files:changed", async (entry: KnowledgeEntry) => {
+      const data = entry.data as { files: string[]; repositoryPath?: string; source?: string };
+      if (data.files && data.files.length > 0) {
+        console.error(
+          `[DevAgent ${this.id}] Received file change event: ${data.files.length} files from ${data.source}`,
+        );
+        await this.handleIncrementalReindex(data.files, data.repositoryPath);
+      }
+    });
+
     console.error(`[DevAgent ${this.id}] Initialized and ready for implementation tasks`);
   }
 
@@ -877,6 +888,76 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       );
       this.indexBatchSize = newBatchSize;
     }
+  }
+
+  /**
+   * Handle incremental reindexing for changed files
+   * Called when GitWatcher detects uncommitted file changes
+   */
+  private async handleIncrementalReindex(files: string[], _repositoryPath?: string): Promise<void> {
+    if (!this.parserAgent || !this.indexerAgent) {
+      console.warn(`[DevAgent ${this.id}] ParserAgent or IndexerAgent not available, skipping incremental reindex`);
+      return;
+    }
+
+    const startTime = Date.now();
+    console.error(`[DevAgent ${this.id}] Starting incremental reindex for ${files.length} files`);
+
+    // Filter to supported file extensions
+    const supportedExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".kt"];
+    const supportedFiles = files.filter((f) => {
+      const ext = f.slice(f.lastIndexOf(".")).toLowerCase();
+      return supportedExtensions.includes(ext);
+    });
+
+    if (supportedFiles.length === 0) {
+      console.error(`[DevAgent ${this.id}] No supported files to reindex`);
+      return;
+    }
+
+    console.error(`[DevAgent ${this.id}] Reindexing ${supportedFiles.length} supported files`);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    // Process files in small batches to avoid overwhelming the system
+    const batchSize = 5;
+    for (let i = 0; i < supportedFiles.length; i += batchSize) {
+      const batch = supportedFiles.slice(i, i + batchSize);
+
+      for (const filePath of batch) {
+        try {
+          // Parse file
+          const parseResult = await this.parserAgent.parseFile(filePath, {});
+
+          if (parseResult.entities && parseResult.entities.length > 0) {
+            // Index entities
+            await this.indexerAgent.indexEntities(parseResult.entities, filePath, parseResult.relationships);
+            successCount++;
+          }
+        } catch (error) {
+          console.error(`[DevAgent ${this.id}] Failed to reindex ${filePath}:`, error);
+          errorCount++;
+        }
+      }
+    }
+
+    const elapsed = Date.now() - startTime;
+    console.error(
+      `[DevAgent ${this.id}] Incremental reindex completed: ${successCount} files updated, ${errorCount} errors in ${elapsed}ms`,
+    );
+
+    // Publish completion event
+    knowledgeBus.publish(
+      "indexer:incremental:complete",
+      {
+        filesProcessed: successCount,
+        errors: errorCount,
+        elapsedMs: elapsed,
+        source: "git-watcher",
+      },
+      this.id,
+    );
   }
 
   protected async onShutdown(): Promise<void> {
