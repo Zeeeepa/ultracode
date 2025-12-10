@@ -373,12 +373,12 @@ const DEFAULT_CONFIG: AppConfig = {
       cacheTTL: 300000, // 5 minutes
     },
     agent: {
-      maxConcurrency: 4,
-      memoryLimit: 512,
+      maxConcurrency: 8, // Increased for multi-pass
+      memoryLimit: 1024, // 1GB for SWC + TS API
       priority: 8,
-      batchSize: 10,
-      cacheSize: 104857600, // 100MB
-      workerPoolSize: 2,
+      batchSize: 50, // Increased - SWC handles large batches efficiently
+      cacheSize: 209715200, // 200MB - more cache for multi-pass results
+      workerPoolSize: 8, // Match CPU cores for parallel TS parsing
     },
   },
   indexer: {

@@ -25,14 +25,17 @@ import type {
   SupportedLanguage,
 } from "../types/parser.js";
 import { readFilesParallel, readText } from "../utils/file-ops.js";
+import { MultiPassOrchestrator } from "./multipass/multipass-orchestrator.js";
 import { UnifiedParser } from "./unified-parser.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
 const DEFAULT_CACHE_SIZE = 100 * 1024 * 1024; // 100MB
-const DEFAULT_BATCH_SIZE = 10;
+const DEFAULT_BATCH_SIZE = 50; // Increased from 10 - SWC can handle more
 const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds for complex files
+const MULTIPASS_THRESHOLD = 20; // Use multi-pass for batches >= 20 files
+const TS_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
@@ -76,11 +79,13 @@ function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  */
 export class IncrementalParser {
   private parser: UnifiedParser;
+  private multiPass: MultiPassOrchestrator | null = null;
   private cache: LRUCache<string, CacheEntry>;
   private hashFunction: HashFunction | null = null;
   private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
   private stats: ParserStats;
   private fileHashes: Map<string, string> = new Map();
+  private useMultiPass = true; // Enable multi-pass by default
 
   constructor(cacheSize: number = DEFAULT_CACHE_SIZE) {
     // TASK-001: Initialize parser and cache
@@ -118,6 +123,22 @@ export class IncrementalParser {
 
     // Initialize unified parser (TypeScript Compiler API + fallbacks)
     await this.parser.initialize();
+
+    // Initialize multi-pass orchestrator (SWC + TS API)
+    if (this.useMultiPass) {
+      try {
+        this.multiPass = new MultiPassOrchestrator({
+          swcConcurrency: 16,
+          tsConcurrency: 4,
+          workerPoolSize: 8,
+        });
+        await this.multiPass.initialize();
+        console.error("[IncrementalParser] Multi-pass orchestrator initialized (SWC + TS API)");
+      } catch (e) {
+        console.warn("[IncrementalParser] Multi-pass init failed, using standard parser:", e);
+        this.multiPass = null;
+      }
+    }
 
     // Initialize xxHash for ultra-fast hashing (10-15x faster than SHA-256)
     this.xxhashInstance = await xxhash();
@@ -237,74 +258,84 @@ export class IncrementalParser {
   /**
    * Process files in batches for optimal performance
    *
-   * OPTIMIZATION: Uses readFilesParallel() with concurrency=12 for 9x faster
-   * file reading under Bun, combined with batch parsing.
+   * OPTIMIZATIONS:
+   * 1. Multi-pass parsing for TS/JS: SWC fast pass → TS API detailed pass
+   * 2. readFilesParallel() with concurrency=24 for fast IO
+   * 3. Parallel processing with controlled concurrency
    */
   async parseBatch(files: string[], options: ParserOptions = {}): Promise<BatchResult> {
     const batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
-    const results: ParseResult[] = [];
-    const errors: Array<{ file: string; error: Error }> = [];
     const startTime = Date.now();
     let fromCache = 0;
 
-    console.error(`[IncrementalParser] Processing ${files.length} files in batches of ${batchSize}`);
+    console.error(`[IncrementalParser] Processing ${files.length} files (batchSize=${batchSize})`);
 
-    // Process in batches
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batch = files.slice(i, i + batchSize);
+    // Separate TS/JS files for multi-pass and other files for standard parsing
+    const tsFiles: string[] = [];
+    const otherFiles: string[] = [];
 
-      // OPTIMIZATION: Pre-read all files in batch using parallel IO (9x faster under Bun)
-      let contents: (string | Uint8Array)[];
-      try {
-        contents = await readFilesParallel(batch, { concurrency: 12, encoding: "text" });
-      } catch (readError) {
-        // Fallback to sequential reads if parallel fails
-        console.warn(`[IncrementalParser] Parallel read failed, using sequential:`, readError);
-        contents = [];
-        for (const file of batch) {
-          try {
-            contents.push(await readText(file));
-          } catch {
-            contents.push(""); // Empty content will cause parse error
-          }
-        }
-      }
-
-      // TASK-001: Process batch in parallel for maximum throughput (with pre-loaded content)
-      const batchPromises = batch.map((file, idx) =>
-        this.parseFile(file, contents[idx] as string, options)
-          .then((result) => {
-            if (result.fromCache) fromCache++;
-            results.push(result);
-          })
-          .catch((error) => {
-            errors.push({ file, error });
-          }),
-      );
-
-      await Promise.all(batchPromises);
-
-      // Update throughput stats
-      const elapsed = Date.now() - startTime;
-      this.stats.throughput = (results.length / elapsed) * 1000;
-
-      // Log progress
-      if ((i + batchSize) % 100 === 0 || i + batchSize >= files.length) {
-        console.error(
-          `[IncrementalParser] Progress: ${Math.min(i + batchSize, files.length)}/${files.length} ` +
-            `(${Math.round(this.stats.throughput)} files/sec)`,
-        );
+    for (const file of files) {
+      const ext = extname(file).toLowerCase();
+      if (TS_EXTENSIONS.has(ext)) {
+        tsFiles.push(file);
+      } else {
+        otherFiles.push(file);
       }
     }
 
+    console.error(`[IncrementalParser] File distribution: ${tsFiles.length} TS/JS, ${otherFiles.length} other`);
+
+    // Process TS/JS files with multi-pass if available and batch is large enough
+    const useMultiPassForBatch = this.multiPass && tsFiles.length >= MULTIPASS_THRESHOLD;
+    let tsResults: ParseResult[] = [];
+    let tsErrors: Array<{ file: string; error: Error }> = [];
+
+    if (tsFiles.length > 0) {
+      if (useMultiPassForBatch) {
+        console.error(`[IncrementalParser] Using multi-pass for ${tsFiles.length} TS/JS files`);
+        try {
+          tsResults = await this.multiPass!.parseBatch(tsFiles, options);
+        } catch (e) {
+          console.warn("[IncrementalParser] Multi-pass failed, falling back to standard:", e);
+          const fallback = await this.parseBatchStandard(tsFiles, options);
+          tsResults = fallback.results;
+          tsErrors = fallback.errors;
+        }
+      } else {
+        const fallback = await this.parseBatchStandard(tsFiles, options);
+        tsResults = fallback.results;
+        tsErrors = fallback.errors;
+        fromCache += fallback.stats.fromCache;
+      }
+    }
+
+    // Process other files with standard batch parsing
+    let otherResults: ParseResult[] = [];
+    let otherErrors: Array<{ file: string; error: Error }> = [];
+
+    if (otherFiles.length > 0) {
+      const fallback = await this.parseBatchStandard(otherFiles, options);
+      otherResults = fallback.results;
+      otherErrors = fallback.errors;
+      fromCache += fallback.stats.fromCache;
+    }
+
+    // Merge results
+    const results = [...tsResults, ...otherResults];
+    const errors = [...tsErrors, ...otherErrors];
     const totalTimeMs = Date.now() - startTime;
 
-    // DEBUG: Log final stats
+    // Update stats
+    this.stats.throughput = (results.length / totalTimeMs) * 1000;
+
     console.error(
-      `[IncrementalParser.parseBatch] DONE: results=${results.length}, errors=${errors.length}, total=${files.length}`,
+      `[IncrementalParser.parseBatch] DONE: ${results.length} files in ${totalTimeMs}ms ` +
+        `(${Math.round(this.stats.throughput)} files/sec)` +
+        (useMultiPassForBatch ? " [multi-pass]" : ""),
     );
+
     if (errors.length > 0) {
-      console.error(`[IncrementalParser.parseBatch] First 5 errors:`);
+      console.error(`[IncrementalParser.parseBatch] ${errors.length} errors:`);
       for (const e of errors.slice(0, 5)) {
         console.error(`  - ${e.file}: ${e.error.message}`);
       }
@@ -319,6 +350,73 @@ export class IncrementalParser {
         failed: errors.length,
         fromCache,
         totalTimeMs,
+      },
+    };
+  }
+
+  /**
+   * Standard batch processing (fallback / non-TS files)
+   */
+  private async parseBatchStandard(files: string[], options: ParserOptions): Promise<BatchResult> {
+    const batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
+    const results: ParseResult[] = [];
+    const errors: Array<{ file: string; error: Error }> = [];
+    const startTime = Date.now();
+    let fromCache = 0;
+
+    // Process in batches with parallel IO
+    for (let i = 0; i < files.length; i += batchSize) {
+      const batch = files.slice(i, i + batchSize);
+
+      // OPTIMIZATION: Pre-read all files with high concurrency (24 for SSD)
+      let contents: (string | Uint8Array)[];
+      try {
+        contents = await readFilesParallel(batch, { concurrency: 24, encoding: "text" });
+      } catch (readError) {
+        console.warn(`[IncrementalParser] Parallel read failed:`, readError);
+        contents = [];
+        for (const file of batch) {
+          try {
+            contents.push(await readText(file));
+          } catch {
+            contents.push("");
+          }
+        }
+      }
+
+      // Process batch in parallel
+      const batchPromises = batch.map((file, idx) =>
+        this.parseFile(file, contents[idx] as string, options)
+          .then((result) => {
+            if (result.fromCache) fromCache++;
+            results.push(result);
+          })
+          .catch((error) => {
+            errors.push({ file, error });
+          }),
+      );
+
+      await Promise.all(batchPromises);
+
+      // Log progress for large batches
+      if (files.length > 100 && (i + batchSize) % 200 === 0) {
+        const elapsed = Date.now() - startTime;
+        const throughput = Math.round((results.length / elapsed) * 1000);
+        console.error(
+          `[IncrementalParser] Progress: ${Math.min(i + batchSize, files.length)}/${files.length} (${throughput} files/sec)`,
+        );
+      }
+    }
+
+    return {
+      results,
+      errors,
+      stats: {
+        total: files.length,
+        succeeded: results.length,
+        failed: errors.length,
+        fromCache,
+        totalTimeMs: Date.now() - startTime,
       },
     };
   }

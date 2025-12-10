@@ -114,7 +114,7 @@ export class WorkerPoolManager {
         });
 
         // Handle worker errors
-        worker.on("error", (error) => {
+        worker.on("error", (error: Error) => {
           console.error(`[WorkerPoolManager] Worker ${workerId} error:`, error);
           this.handleWorkerError(workerId, error);
         });

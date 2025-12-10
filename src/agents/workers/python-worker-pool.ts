@@ -132,7 +132,7 @@ export class PythonWorkerPool {
         });
 
         // Handle worker errors
-        worker.on("error", (error) => {
+        worker.on("error", (error: Error) => {
           console.error(`[PythonWorkerPool] Worker ${workerId} error:`, error);
           this.handleWorkerError(workerId, error);
         });
