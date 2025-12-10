@@ -273,6 +273,12 @@ export interface IndexingConfig {
 export interface GitConfig {
   enabled?: boolean;
   watchBranchChanges?: boolean;
+  /** Watch uncommitted file changes via git status polling (default: true) */
+  watchUncommitted?: boolean;
+  /** Interval for uncommitted changes polling in ms (default: 10000) */
+  uncommittedPollIntervalMs?: number;
+  /** Include untracked (new) files in uncommitted watch (default: true) */
+  includeUntracked?: boolean;
   autoReindex?: boolean;
   diffMode?: "incremental" | "full";
   pollIntervalMs?: number;
@@ -423,6 +429,9 @@ const DEFAULT_CONFIG: AppConfig = {
   git: {
     enabled: false, // Disabled by default
     watchBranchChanges: true,
+    watchUncommitted: true, // Watch uncommitted file changes
+    uncommittedPollIntervalMs: 10000, // Check for uncommitted changes every 10 seconds
+    includeUntracked: true, // Include new (untracked) files
     autoReindex: true,
     diffMode: "incremental",
     pollIntervalMs: 5000, // Check for commits every 5 seconds
@@ -943,6 +952,18 @@ export class ConfigLoader {
           yamlConfig.git?.watchBranchChanges ??
           (process.env.GIT_WATCH_BRANCH_CHANGES === "true" ? true : undefined) ??
           DEFAULT_CONFIG.git.watchBranchChanges,
+        watchUncommitted:
+          yamlConfig.git?.watchUncommitted ??
+          (process.env.GIT_WATCH_UNCOMMITTED === "true" ? true : undefined) ??
+          DEFAULT_CONFIG.git.watchUncommitted,
+        uncommittedPollIntervalMs:
+          yamlConfig.git?.uncommittedPollIntervalMs ||
+          Number(process.env.GIT_UNCOMMITTED_POLL_INTERVAL_MS) ||
+          DEFAULT_CONFIG.git.uncommittedPollIntervalMs,
+        includeUntracked:
+          yamlConfig.git?.includeUntracked ??
+          (process.env.GIT_INCLUDE_UNTRACKED === "true" ? true : undefined) ??
+          DEFAULT_CONFIG.git.includeUntracked,
         autoReindex:
           yamlConfig.git?.autoReindex ??
           (process.env.GIT_AUTO_REINDEX === "true" ? true : undefined) ??

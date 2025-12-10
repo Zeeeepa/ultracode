@@ -26,6 +26,12 @@ export interface GitWatcherConfig {
   enabled: boolean;
   pollIntervalMs: number;
   autoReindex: boolean;
+  /** Watch uncommitted file changes via git status polling */
+  watchUncommitted?: boolean;
+  /** Interval for uncommitted changes polling in ms (default: 10000) */
+  uncommittedPollIntervalMs?: number;
+  /** Include untracked (new) files in uncommitted watch (default: true) */
+  includeUntracked?: boolean;
 }
 
 export interface FileChange {
@@ -42,16 +48,26 @@ export class GitWatcher {
   private repoPath: string | null = null;
   private watcher: FSWatcher | null = null;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
+  private uncommittedPollInterval: ReturnType<typeof setInterval> | null = null;
 
   private currentBranch: string | null = null;
   private currentCommit: string | null = null;
+  /** Tracks last known uncommitted files to detect changes */
+  private lastUncommittedFiles: Set<string> = new Set();
 
   private branchChangeCallbacks: BranchChangeCallback[] = [];
   private commitCallbacks: CommitCallback[] = [];
   private fileChangeCallbacks: FileChangeCallback[] = [];
+  /** Callbacks specifically for uncommitted file changes */
+  private uncommittedChangeCallbacks: FileChangeCallback[] = [];
 
   constructor(config: GitWatcherConfig) {
-    this.config = config;
+    this.config = {
+      ...config,
+      watchUncommitted: config.watchUncommitted ?? true,
+      uncommittedPollIntervalMs: config.uncommittedPollIntervalMs ?? 10000,
+      includeUntracked: config.includeUntracked ?? true,
+    };
   }
 
   /**
@@ -90,6 +106,23 @@ export class GitWatcher {
     this.pollInterval = setInterval(() => {
       this.checkCommitChange();
     }, this.config.pollIntervalMs);
+
+    // Poll for uncommitted file changes (working directory)
+    if (this.config.watchUncommitted) {
+      console.error(
+        `[GitWatcher] Uncommitted file watching enabled (interval: ${this.config.uncommittedPollIntervalMs}ms)`,
+      );
+
+      // Initial check to populate lastUncommittedFiles
+      this.getUncommittedFiles().then((files) => {
+        this.lastUncommittedFiles = new Set(files.map((f) => f.path));
+        console.error(`[GitWatcher] Initial uncommitted files: ${this.lastUncommittedFiles.size}`);
+      });
+
+      this.uncommittedPollInterval = setInterval(() => {
+        this.checkUncommittedChanges();
+      }, this.config.uncommittedPollIntervalMs);
+    }
   }
 
   /**
@@ -106,6 +139,12 @@ export class GitWatcher {
       this.pollInterval = null;
     }
 
+    if (this.uncommittedPollInterval) {
+      clearInterval(this.uncommittedPollInterval);
+      this.uncommittedPollInterval = null;
+    }
+
+    this.lastUncommittedFiles.clear();
     console.error("[GitWatcher] Stopped watching repository");
   }
 
@@ -124,10 +163,18 @@ export class GitWatcher {
   }
 
   /**
-   * Register callback for file changes
+   * Register callback for file changes (after commits)
    */
   onFileChange(callback: FileChangeCallback): void {
     this.fileChangeCallbacks.push(callback);
+  }
+
+  /**
+   * Register callback for uncommitted file changes (working directory)
+   * These are files that have been modified but not yet committed
+   */
+  onUncommittedChange(callback: FileChangeCallback): void {
+    this.uncommittedChangeCallbacks.push(callback);
   }
 
   /**
@@ -342,6 +389,125 @@ export class GitWatcher {
             }
           }
         });
+      }
+
+      // Clear uncommitted tracking after commit (files are now committed)
+      this.lastUncommittedFiles.clear();
+    }
+  }
+
+  /**
+   * Get uncommitted files (modified + staged + optionally untracked)
+   * Uses `git status --porcelain` for efficient parsing
+   */
+  async getUncommittedFiles(): Promise<FileChange[]> {
+    if (!this.repoPath) {
+      return [];
+    }
+
+    try {
+      // --porcelain gives machine-readable output
+      // -uall shows all untracked files (not just directories)
+      const untrackedFlag = this.config.includeUntracked ? "-uall" : "-uno";
+      const output = execSync(`git status --porcelain ${untrackedFlag}`, {
+        cwd: this.repoPath,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
+      });
+
+      const changes: FileChange[] = [];
+      const lines = output.trim().split("\n");
+
+      for (const line of lines) {
+        if (!line || line.length < 3) continue;
+
+        // Format: XY PATH or XY ORIG -> PATH (for renames)
+        const indexStatus = line[0]; // Status in index (staged)
+        const workTreeStatus = line[1]; // Status in work tree
+        const filePath = line.slice(3).split(" -> ").pop() || line.slice(3);
+
+        // Determine change type based on status codes
+        let changeStatus: FileChange["status"];
+
+        // Prioritize work tree status, then index status
+        const status = workTreeStatus !== " " ? workTreeStatus : indexStatus;
+
+        switch (status) {
+          case "A":
+          case "?": // Untracked = new file
+            changeStatus = "added";
+            break;
+          case "M":
+            changeStatus = "modified";
+            break;
+          case "D":
+            changeStatus = "deleted";
+            break;
+          case "R":
+            changeStatus = "renamed";
+            break;
+          default:
+            changeStatus = "modified";
+        }
+
+        changes.push({ path: filePath, status: changeStatus });
+      }
+
+      return changes;
+    } catch (error) {
+      console.error("[GitWatcher] Failed to get uncommitted files:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Check for uncommitted file changes and trigger callbacks
+   */
+  private async checkUncommittedChanges(): Promise<void> {
+    const currentFiles = await this.getUncommittedFiles();
+    const currentSet = new Set(currentFiles.map((f) => f.path));
+
+    // Find changed files (new, modified, or removed from uncommitted list)
+    const changedFiles: string[] = [];
+
+    // Files that are now uncommitted but weren't before
+    for (const file of currentFiles) {
+      if (!this.lastUncommittedFiles.has(file.path)) {
+        changedFiles.push(file.path);
+      }
+    }
+
+    // Files that were uncommitted but now aren't (could be reverted or staged differently)
+    // We also track these as they might need reindexing
+    for (const filePath of this.lastUncommittedFiles) {
+      if (!currentSet.has(filePath)) {
+        changedFiles.push(filePath);
+      }
+    }
+
+    // Update tracking
+    this.lastUncommittedFiles = currentSet;
+
+    // Trigger callbacks if there are changes
+    if (changedFiles.length > 0) {
+      console.error(`[GitWatcher] Uncommitted changes detected: ${changedFiles.length} files`);
+
+      for (const callback of this.uncommittedChangeCallbacks) {
+        try {
+          callback(changedFiles);
+        } catch (error) {
+          console.error("[GitWatcher] Uncommitted change callback error:", error);
+        }
+      }
+
+      // Also trigger general file change callbacks
+      for (const callback of this.fileChangeCallbacks) {
+        try {
+          callback(changedFiles);
+        } catch (error) {
+          console.error("[GitWatcher] File change callback error:", error);
+        }
       }
     }
   }
