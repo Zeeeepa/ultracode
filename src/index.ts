@@ -5536,6 +5536,12 @@ async function buildAutoIndexExcludePatterns(targetDir: string): Promise<string[
     "**/benchmark/**",
     "**/fixtures/**",
     "**/testdata/**",
+    // Mock files (often large JSON/generated data)
+    "**/*.mock.json",
+    "**/*.mock.ts",
+    "**/*.mock.js",
+    "**/mocks/**",
+    "**/__mocks__/**",
     "**/external-tools/**",
     "**/third_party/**",
     "**/third-party/**",
