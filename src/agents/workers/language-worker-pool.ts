@@ -207,7 +207,7 @@ export class LanguageWorkerPool {
         nodeWorker.on("message", (message) => {
           this.handleWorkerMessage(workerId, message);
         });
-        nodeWorker.on("error", (error) => {
+        nodeWorker.on("error", (error: Error) => {
           console.error(`[LanguageWorkerPool:${this.language}] Worker ${workerId} error:`, error);
           this.handleWorkerError(workerId, error);
         });

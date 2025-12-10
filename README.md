@@ -50,12 +50,21 @@ curl -fsSL https://bun.sh/install | bash
 **Установка Ultrascript-tools**
 
 ```bash
-# Bun (рекомендуется)
+# Bun (рекомендуется) — два шага:
+
+# 1. Установка пакета
 bun install -g ultrascript-tools-mcp
 
-# npm
+# 2. Разрешить и выполнить postinstall скрипты (компиляция нативных модулей)
+bun pm -g trust ultrascript-tools-mcp openvino-node webgpu
+```
+
+```bash
+# npm (альтернатива) — один шаг:
 npm install -g ultrascript-tools-mcp
 ```
+
+> **Почему два шага для Bun?** Bun блокирует postinstall скрипты для безопасности. Команда `bun pm trust` разрешает выполнение скриптов и сразу их запускает — повторная установка не нужна.
 
 > **Примечание**: Для полноценного анализа кода на разных языках требуются соответствующие runtime:
 > - TypeScript/JavaScript — встроено (TypeScript Compiler API)
@@ -376,16 +385,32 @@ semantic_search query="export function" hasDocumentation=false
 
 ### Проблемы с установкой
 
-```bash
-# Очистите кеш и переустановите
+**Bun: заблокированы postinstall скрипты**
 
+Если при установке видите `Blocked N postinstalls`:
+```bash
+# Посмотреть заблокированные скрипты
+bun pm -g untrusted
+
+# Разрешить нужные пакеты
+bun pm -g trust ultrascript-tools-mcp openvino-node webgpu
+
+# Или разрешить все сразу
+bun pm -g trust --all
+
+# Переустановить
+bun install -g ultrascript-tools-mcp
+```
+
+**Очистка кеша и переустановка**
+```bash
 # Bun
 bun pm cache rm
-bun install -g ultrascript-tools-mcp --legacy-peer-deps
+bun install -g ultrascript-tools-mcp
 
-# Node
+# npm
 npm cache clean --force
-npm install -g ultrascript-tools-mcp --legacy-peer-deps
+npm install -g ultrascript-tools-mcp
 ```
 
 ### Настройка эмбеддингов

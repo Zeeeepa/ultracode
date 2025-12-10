@@ -223,7 +223,7 @@ export class IPCClient {
     this.requestTimeout = options.requestTimeout ?? 30000;
 
     socket.on("data", (chunk) => {
-      const messages = this.decoder.decode(chunk);
+      const messages = this.decoder.decode(chunk as Buffer);
       for (const message of messages) {
         this.handleMessage(message);
       }
