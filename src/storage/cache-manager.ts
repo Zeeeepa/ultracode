@@ -22,9 +22,10 @@ import { hashText } from "../utils/fast-hash.js";
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-const DEFAULT_MAX_SIZE = 50 * 1024 * 1024; // 50MB
+// OPTIMIZATION: Increased from 50MB to 100MB for better cache hit rate
+const DEFAULT_MAX_SIZE = 100 * 1024 * 1024; // 100MB
 const DEFAULT_TTL = 5 * 60 * 1000; // 5 minutes
-const DEFAULT_MAX_ENTRIES = 1000;
+const DEFAULT_MAX_ENTRIES = 2000; // Increased from 1000
 
 // =============================================================================
 // 3. CACHE MANAGER IMPLEMENTATION

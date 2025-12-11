@@ -7,9 +7,32 @@
  * - Compute Capability (NVIDIA only)
  *
  * Cache results for performance.
+ *
+ * Environment Variables:
+ * - WEBGPU_FORCE_ENABLE=1  - Force enable WebGPU even on unsupported architectures (Blackwell)
+ * - WEBGPU_FORCE_DISABLE=1 - Force disable WebGPU detection entirely
+ *
+ * Known Issues:
+ * - NVIDIA Blackwell (CC 12.x, RTX 50xx) causes Dawn/WebGPU crashes
+ * - WebGPU is auto-disabled for CC >= 12.0 until Dawn adds support
  */
 
 import { execSync } from "node:child_process";
+
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+
+/**
+ * Minimum compute capability that causes WebGPU/Dawn crashes
+ * Blackwell architecture (RTX 50xx series) = CC 12.0+
+ */
+const WEBGPU_UNSAFE_MIN_CC = 12.0;
+
+/**
+ * Known unstable GPU architectures for WebGPU
+ */
+const WEBGPU_UNSTABLE_ARCHITECTURES = ["blackwell", "rtx 50", "rtx50"];
 
 export interface GPUInfo {
   vendor: "nvidia" | "amd" | "intel" | "unknown";
@@ -18,6 +41,8 @@ export interface GPUInfo {
   memoryMB: number;
   cudaAvailable: boolean;
   webgpuAvailable: boolean;
+  webgpuSkipped?: boolean; // True if WebGPU was skipped due to unstable architecture
+  webgpuSkipReason?: string; // Reason why WebGPU was skipped
 }
 
 export class GPUDetector {
@@ -37,7 +62,11 @@ export class GPUDetector {
       webgpuAvailable: false,
     };
 
-    // 1. Try CUDA detection (NVIDIA only)
+    // Check environment overrides
+    const forceEnableWebGPU = process.env.WEBGPU_FORCE_ENABLE === "1";
+    const forceDisableWebGPU = process.env.WEBGPU_FORCE_DISABLE === "1";
+
+    // 1. Try CUDA detection (NVIDIA only) - always safe, uses nvidia-smi
     try {
       const cudaInfo = await GPUDetector.detectCUDA();
       if (cudaInfo) {
@@ -57,30 +86,79 @@ export class GPUDetector {
       console.debug("[GPUDetector] CUDA not available");
     }
 
-    // 2. Try WebGPU detection (all vendors)
-    try {
-      const webgpuInfo = await GPUDetector.detectWebGPU();
-      if (webgpuInfo) {
-        info.webgpuAvailable = true;
+    // 2. Check if WebGPU should be skipped for this GPU
+    // Dawn/WebGPU crashes on Blackwell (CC >= 12.0) in all runtimes (Bun, Node)
+    const webgpuSafetyCheck = GPUDetector.isWebGPUSafe(info);
 
-        // Update vendor/model if CUDA didn't detect
-        if (!info.cudaAvailable) {
-          info.vendor = GPUDetector.parseVendor(webgpuInfo.vendor);
-          info.model = webgpuInfo.adapter;
-          info.memoryMB = webgpuInfo.memoryMB;
-        }
-
-        console.error("[GPUDetector] WebGPU available:", {
-          vendor: webgpuInfo.vendor,
-          adapter: webgpuInfo.adapter,
-        });
+    if (forceDisableWebGPU) {
+      info.webgpuSkipped = true;
+      info.webgpuSkipReason = "Disabled via WEBGPU_FORCE_DISABLE=1";
+      console.error("[GPUDetector] WebGPU disabled via environment variable");
+    } else if (!webgpuSafetyCheck.safe && !forceEnableWebGPU) {
+      info.webgpuSkipped = true;
+      info.webgpuSkipReason = webgpuSafetyCheck.reason;
+      console.error(`[GPUDetector] WebGPU skipped: ${webgpuSafetyCheck.reason}`);
+      console.error("[GPUDetector] To force enable, set WEBGPU_FORCE_ENABLE=1");
+    } else {
+      // 3. Try WebGPU detection (all vendors)
+      if (forceEnableWebGPU && !webgpuSafetyCheck.safe) {
+        console.warn("[GPUDetector] WebGPU force-enabled despite potential instability!");
+        console.warn(`[GPUDetector] Known issue: ${webgpuSafetyCheck.reason}`);
       }
-    } catch (_e) {
-      console.debug("[GPUDetector] WebGPU not available");
+
+      try {
+        const webgpuInfo = await GPUDetector.detectWebGPU();
+        if (webgpuInfo) {
+          info.webgpuAvailable = true;
+
+          // Update vendor/model if CUDA didn't detect
+          if (!info.cudaAvailable) {
+            info.vendor = GPUDetector.parseVendor(webgpuInfo.vendor);
+            info.model = webgpuInfo.adapter;
+            info.memoryMB = webgpuInfo.memoryMB;
+          }
+
+          console.error("[GPUDetector] WebGPU available:", {
+            vendor: webgpuInfo.vendor,
+            adapter: webgpuInfo.adapter,
+          });
+        }
+      } catch (_e) {
+        console.debug("[GPUDetector] WebGPU not available");
+      }
     }
 
     GPUDetector.cachedInfo = info;
     return info;
+  }
+
+  /**
+   * Check if WebGPU is safe to use on this GPU
+   * Returns { safe: true } or { safe: false, reason: string }
+   */
+  static isWebGPUSafe(info: Partial<GPUInfo>): { safe: boolean; reason?: string } {
+    // Check compute capability (NVIDIA Blackwell = CC 12.x)
+    if (info.computeCapability && info.computeCapability >= WEBGPU_UNSAFE_MIN_CC) {
+      return {
+        safe: false,
+        reason: `NVIDIA Blackwell architecture (CC ${info.computeCapability}) - Dawn/WebGPU crashes. Wait for webgpu package update.`,
+      };
+    }
+
+    // Check model name for known unstable architectures
+    if (info.model) {
+      const modelLower = info.model.toLowerCase();
+      for (const pattern of WEBGPU_UNSTABLE_ARCHITECTURES) {
+        if (modelLower.includes(pattern)) {
+          return {
+            safe: false,
+            reason: `GPU model "${info.model}" matches unstable architecture pattern "${pattern}"`,
+          };
+        }
+      }
+    }
+
+    return { safe: true };
   }
 
   /**
@@ -224,4 +302,65 @@ export class GPUDetector {
         return false;
     }
   }
+
+  /**
+   * Clear cached GPU info (useful for testing)
+   */
+  static clearCache(): void {
+    GPUDetector.cachedInfo = null;
+  }
+
+  /**
+   * Get current cached info without re-detection
+   */
+  static getCachedInfo(): GPUInfo | null {
+    return GPUDetector.cachedInfo;
+  }
+
+  /**
+   * Test WebGPU compatibility without actually loading Dawn
+   * Safe to call on any architecture
+   */
+  static async testWebGPUCompatibility(): Promise<{
+    cudaDetected: boolean;
+    computeCapability: number | null;
+    model: string | null;
+    webgpuSafe: boolean;
+    skipReason: string | null;
+    envOverride: "force_enable" | "force_disable" | null;
+  }> {
+    // Detect CUDA first (always safe)
+    let cudaInfo: { name: string; computeCapability: number; totalMemory: number } | null = null;
+    try {
+      cudaInfo = await GPUDetector.detectCUDA();
+    } catch {
+      // CUDA not available
+    }
+
+    const partialInfo: Partial<GPUInfo> = {
+      model: cudaInfo?.name,
+      computeCapability: cudaInfo?.computeCapability,
+    };
+
+    const safetyCheck = GPUDetector.isWebGPUSafe(partialInfo);
+
+    let envOverride: "force_enable" | "force_disable" | null = null;
+    if (process.env.WEBGPU_FORCE_ENABLE === "1") envOverride = "force_enable";
+    if (process.env.WEBGPU_FORCE_DISABLE === "1") envOverride = "force_disable";
+
+    return {
+      cudaDetected: cudaInfo !== null,
+      computeCapability: cudaInfo?.computeCapability ?? null,
+      model: cudaInfo?.name ?? null,
+      webgpuSafe: safetyCheck.safe,
+      skipReason: safetyCheck.reason ?? null,
+      envOverride,
+    };
+  }
 }
+
+// =============================================================================
+// EXPORTS
+// =============================================================================
+
+export { WEBGPU_UNSAFE_MIN_CC, WEBGPU_UNSTABLE_ARCHITECTURES };

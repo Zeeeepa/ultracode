@@ -47,13 +47,17 @@ export class VectorliteAdapter {
 
   constructor(db: SQLiteDatabase, config: VectorliteConfig) {
     this.db = db;
+    // OPTIMIZATION: Tuned HNSW parameters for better performance
+    // M=24 improves recall quality (default was 16)
+    // efConstruction=400 improves index quality (default was 200)
+    // efSearch=100 improves search accuracy (default was 50)
     this.config = {
       dimensions: config.dimensions,
       maxElements: config.maxElements ?? 100000,
-      M: config.M ?? 16,
-      efConstruction: config.efConstruction ?? 200,
-      efSearch: config.efSearch ?? 50,
-      distanceMetric: config.distanceMetric ?? "l2",
+      M: config.M ?? 24, // Increased from 16 for better recall
+      efConstruction: config.efConstruction ?? 400, // Increased from 200 for better index quality
+      efSearch: config.efSearch ?? 100, // Increased from 50 for better search accuracy
+      distanceMetric: config.distanceMetric ?? "cosine", // Changed from l2 to cosine for embeddings
     };
   }
 

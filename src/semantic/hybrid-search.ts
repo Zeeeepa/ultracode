@@ -170,6 +170,7 @@ export class HybridSearchEngine {
 
   /**
    * Apply Reciprocal Rank Fusion to combine results
+   * OPTIMIZED: Pre-computed RRF scores using Float32Array for better cache utilization
    */
   private fuseResults(
     structural: StructuralResult[],
@@ -177,13 +178,33 @@ export class HybridSearchEngine {
     options: FusionOptions,
   ): HybridResult[] {
     const scores = new Map<string, RankedResult>();
+    const k = options.k;
 
-    // Process structural results with RRF scoring
-    structural.forEach((item, rank) => {
-      const rrfScore = options.structuralWeight / (options.k + rank + 1);
+    // OPTIMIZATION: Pre-compute RRF scores in Float32Array for better cache utilization
+    const structuralLen = structural.length;
+    const semanticLen = semantic.length;
 
-      if (scores.has(item.id)) {
-        const existing = scores.get(item.id)!;
+    // Pre-compute structural RRF scores
+    const structuralScores = new Float32Array(structuralLen);
+    const structuralWeight = options.structuralWeight;
+    for (let i = 0; i < structuralLen; i++) {
+      structuralScores[i] = structuralWeight / (k + i + 1);
+    }
+
+    // Pre-compute semantic RRF scores
+    const semanticScores = new Float32Array(semanticLen);
+    const semanticWeight = options.semanticWeight;
+    for (let i = 0; i < semanticLen; i++) {
+      semanticScores[i] = semanticWeight / (k + i + 1);
+    }
+
+    // Process structural results with pre-computed RRF scoring
+    for (let rank = 0; rank < structuralLen; rank++) {
+      const item = structural[rank]!;
+      const rrfScore = structuralScores[rank]!;
+
+      const existing = scores.get(item.id);
+      if (existing) {
         existing.score += rrfScore;
         existing.structuralRank = rank;
       } else {
@@ -195,14 +216,15 @@ export class HybridSearchEngine {
           metadata: { path: item.path, type: item.type, name: item.name },
         });
       }
-    });
+    }
 
-    // Process semantic results with RRF scoring
-    semantic.forEach((item, rank) => {
-      const rrfScore = options.semanticWeight / (options.k + rank + 1);
+    // Process semantic results with pre-computed RRF scoring
+    for (let rank = 0; rank < semanticLen; rank++) {
+      const item = semantic[rank]!;
+      const rrfScore = semanticScores[rank]!;
 
-      if (scores.has(item.id)) {
-        const existing = scores.get(item.id)!;
+      const existing = scores.get(item.id);
+      if (existing) {
         existing.score += rrfScore;
         existing.semanticRank = rank;
         // Merge metadata
@@ -218,7 +240,7 @@ export class HybridSearchEngine {
           metadata: item.metadata,
         });
       }
-    });
+    }
 
     // Sort by combined score and limit
     const rankedResults = Array.from(scores.values())

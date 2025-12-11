@@ -230,8 +230,9 @@ export class Float32ArrayPool {
 /**
  * Global vector pool for 384-dimensional embeddings (default)
  * Used by semantic search and embedding operations
+ * OPTIMIZATION: Increased pool size from 1000/100 to 2000/200 for better reuse
  */
-export const vectorPool = new Float32ArrayPool(384, 1000, 100);
+export const vectorPool = new Float32ArrayPool(384, 2000, 200);
 
 /**
  * Create custom pool for different dimensions
