@@ -1,0 +1,12 @@
+{
+  "name": "bun-issue-webgpu-npm",
+  "version": "1.0.0",
+  "description": "Bun crashes with Segmentation fault when loading webgpu npm package",
+  "scripts": {
+    "test:node": "node test.js",
+    "test:bun": "bun test.js"
+  },
+  "dependencies": {
+    "webgpu": "^0.3.8"
+  }
+}
