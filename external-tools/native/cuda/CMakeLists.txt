@@ -103,7 +103,7 @@ project(ultrascript_cuda_addon LANGUAGES CXX CUDA)
 # CUDA configuration
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 90)  # GTX 1650 Ti (7.5) to RTX 5060 (9.0)
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 90 100 120)  # Added Blackwell  # GTX 1650 Ti (7.5) to RTX 5060 (9.0)
 
 # Find packages
 find_package(CUDAToolkit REQUIRED)
