@@ -1158,6 +1158,11 @@ export class VectorStore {
   async get(id: string): Promise<VectorEmbedding | null> {
     if (!this.db) throw new Error("Vector store not initialized");
 
+    // ADAPTIVE: Route to vectorlite adapter
+    if (this.currentBackend === "vectorlite" && this.vectorliteAdapter) {
+      return this.vectorliteAdapter.get(id);
+    }
+
     const row = this.sqliteVecEnabled
       ? (this.db
           .prepare(`
@@ -1171,6 +1176,12 @@ export class VectorStore {
     if (!row) return null;
 
     const buf = row.vector as Buffer;
+
+    // FIX: Check if vector buffer exists before converting
+    if (!buf) {
+      console.error(`[VectorStore] Warning: No vector found for id=${id}`);
+      return null;
+    }
 
     // OPTIMIZATION: Use LRU cache for metadata parsing
     let metadata = this.metadataCache.get(row.id);

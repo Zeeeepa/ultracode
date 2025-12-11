@@ -243,6 +243,48 @@ export class VectorliteAdapter {
   }
 
   /**
+   * Get embedding by entity ID
+   */
+  get(entityId: string): VectorEmbedding | null {
+    const rowid = this.rowIdMap.get(entityId);
+
+    // Try to find by entity_id in metadata table if not in cache
+    const meta =
+      rowid !== undefined
+        ? (this.db
+            .prepare(`SELECT entity_id, content, metadata, created_at FROM ${this.tableName}_metadata WHERE rowid = ?`)
+            .get(rowid) as
+            | { entity_id: string; content: string; metadata: string | null; created_at: number }
+            | undefined)
+        : (this.db
+            .prepare(
+              `SELECT rowid, entity_id, content, metadata, created_at FROM ${this.tableName}_metadata WHERE entity_id = ?`,
+            )
+            .get(entityId) as
+            | { rowid: number; entity_id: string; content: string; metadata: string | null; created_at: number }
+            | undefined);
+
+    if (!meta) return null;
+
+    const actualRowid = rowid ?? (meta as any).rowid;
+
+    // Get vector from vectorlite table
+    const vec = this.db.prepare(`SELECT vec FROM ${this.tableName} WHERE rowid = ?`).get(actualRowid) as
+      | { vec: Buffer }
+      | undefined;
+
+    if (!vec || !vec.vec) return null;
+
+    return {
+      id: meta.entity_id,
+      content: meta.content,
+      vector: new Float32Array(vec.vec.buffer, vec.vec.byteOffset, vec.vec.byteLength / 4),
+      metadata: meta.metadata ? JSON.parse(meta.metadata) : undefined,
+      createdAt: meta.created_at,
+    };
+  }
+
+  /**
    * Delete vector by entity ID
    */
   delete(entityId: string): void {
