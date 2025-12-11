@@ -8,10 +8,17 @@
  * - GTX 1650 Ti: ~0.1-0.2ms per 10K vectors
  * - RTX 5060: ~0.05-0.1ms per 10K vectors
  *
+ * Environment Variables:
+ * - CUDA_FORCE_DISABLE=1 - Force disable CUDA backend (useful if addon crashes)
+ *
  * Requires:
  * - NVIDIA GPU (GTX 16xx+)
  * - CUDA Toolkit installed
  * - Native addon compiled: `npm run build:cuda`
+ *
+ * Known Issues:
+ * - Native addon may not be compatible with newest GPU architectures
+ * - If crashing, set CUDA_FORCE_DISABLE=1 to use WASM fallback
  */
 
 import type { BackendCapabilities, VectorBackend } from "./base.js";
@@ -42,6 +49,33 @@ export class CUDABackend implements VectorBackend {
   private initialized = false;
 
   async isAvailable(): Promise<boolean> {
+    // Check environment override
+    if (process.env.CUDA_FORCE_DISABLE === "1") {
+      console.error("[CUDA Backend] Disabled via CUDA_FORCE_DISABLE=1");
+      return false;
+    }
+
+    // Check for Blackwell architecture - native addon crashes on CC >= 12.0
+    // Both Bun and Node crash when loading ultrascript_cuda.node on Blackwell GPUs
+    try {
+      const { execSync } = await import("node:child_process");
+      const output = execSync("nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits", {
+        encoding: "utf8",
+        timeout: 2000,
+        stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
+      }).trim();
+
+      const cc = Number.parseFloat(output);
+      if (cc >= 12.0) {
+        console.error(`[CUDA Backend] Skipped: Blackwell architecture (CC ${cc}) - native addon incompatible`);
+        console.error("[CUDA Backend] Using WASM SIMD or Pure JS fallback");
+        return false;
+      }
+    } catch {
+      // nvidia-smi not available, continue to try addon
+    }
+
     try {
       // Try to load native CUDA addon from multiple possible locations
       // Priority: bundled in npm package -> local builds

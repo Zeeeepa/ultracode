@@ -616,7 +616,7 @@ describe("IndexerAgent", () => {
       const entities = [createMockParsedEntity("shutdownFunc", "function")];
       await agent.indexEntities(entities, "/test/shutdown.ts");
 
-      const consoleSpy = spyOn(console, "log");
+      const consoleSpy = spyOn(console, "error");
 
       await agent.shutdown();
 
