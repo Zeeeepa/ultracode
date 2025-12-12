@@ -54,6 +54,11 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
     const resolvedPath = this.resolveProjectPath(args);
     const currentProject = this.getProjectContext().getCurrentProject();
 
+    // DEBUG: Log project paths
+    console.error(
+      `[SemanticSearch] args.projectPath=${args.projectPath}, resolvedPath=${resolvedPath}, currentProject=${currentProject}`,
+    );
+
     if (args.projectPath && resolvedPath !== currentProject) {
       // Check if requested project is indexed
       if (!this.isProjectIndexed(resolvedPath)) {
@@ -83,15 +88,16 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
       );
     }
 
-    const semanticAgent = await this.context.getSemanticAgent();
+    // Ensure SemanticAgent uses the correct project's VectorStore
+    const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
+    // v3: Also ensure GraphStorage context for expandWithGraphNeighbors
+    await this.ensureGraphStorageForProject(resolvedPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     // Fetch more results for pagination and filtering
-    const allResults = await semanticAgent.searchSimilar(args.query, {
-      limit: 1000, // Fetch more for accurate filtering and pagination
-      entityTypes: args.entityTypes,
-      minSimilarity: args.minSimilarity,
-    });
+    // Use semanticSearch method (returns SemanticResult with results array)
+    const searchResult = await semanticAgent.semanticSearch(args.query, 1000);
+    const allResults = searchResult.results || [];
 
     // Apply metadata-based filters
     let filteredResults = allResults;
@@ -231,7 +237,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
     depth: number,
     minSimilarity: number,
   ): Promise<{ results: any[]; neighborsAdded: number }> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    const storage = await this.context.getGraphStorage();
     const seen = new Set<string>(results.map((r) => r.id));
     const neighbors: any[] = [];
 
@@ -369,7 +375,9 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
   }
 
   protected async execute(args: z.infer<typeof FindSimilarCodeSchema>): Promise<ToolResult> {
-    const semanticAgent = await this.context.getSemanticAgent();
+    // Ensure SemanticAgent uses the correct project's VectorStore
+    const resolvedPath = this.resolveProjectPath(args);
+    const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     // Fetch more for pagination
@@ -426,7 +434,9 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
   }
 
   protected async execute(args: z.infer<typeof DetectCodeClonesSchema>): Promise<ToolResult> {
-    const semanticAgent = await this.context.getSemanticAgent();
+    // Ensure SemanticAgent uses the correct project's VectorStore
+    const resolvedPath = this.resolveProjectPath(args);
+    const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     // Fetch more groups for pagination
@@ -574,7 +584,9 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
   }
 
   protected async execute(args: z.infer<typeof CrossLanguageSearchSchema>): Promise<ToolResult> {
-    const semanticAgent = await this.context.getSemanticAgent();
+    // Ensure SemanticAgent uses the correct project's VectorStore
+    const resolvedPath = this.resolveProjectPath(args);
+    const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     // Fetch more for pagination
@@ -629,12 +641,15 @@ export class PatternSearchToolHandler extends BaseToolHandler<z.infer<typeof Pat
 
   protected async execute(args: z.infer<typeof PatternSearchSchema>): Promise<ToolResult> {
     const { PatternSearch } = await import("../../search/pattern-search.js");
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    const resolvedPath = this.resolveProjectPath(args);
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(resolvedPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     let vectorStore = null;
     try {
-      const semanticAgent = await this.context.getSemanticAgent();
+      // Ensure SemanticAgent uses the correct project's VectorStore
+      const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
       vectorStore = semanticAgent.getVectorStore?.();
     } catch {
       // Vector store not available

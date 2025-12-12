@@ -51,7 +51,7 @@ export class GetMetricsToolHandler extends BaseToolHandler<z.infer<typeof GetMet
 
     if (args.includeGraph) {
       try {
-        const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+        const storage = await this.context.getGraphStorage();
         const stats = await storage.getStatistics();
         metrics.graph = stats;
       } catch {

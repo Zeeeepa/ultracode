@@ -119,6 +119,7 @@ export function hashProjectPath(projectPath: string): string {
 
 /**
  * Get the directory for a specific project
+ * @deprecated Use getGlobalDbPaths() for unified database access
  */
 export function getProjectDir(projectPath: string): string {
   const hash = hashProjectPath(projectPath);
@@ -127,6 +128,7 @@ export function getProjectDir(projectPath: string): string {
 
 /**
  * Get paths for project databases
+ * @deprecated Use getGlobalDbPaths() for unified database access
  */
 export function getProjectPaths(projectPath: string) {
   const projectDir = getProjectDir(projectPath);
@@ -143,11 +145,92 @@ export function getProjectPaths(projectPath: string) {
   };
 }
 
+// =============================================================================
+// UNIFIED DATABASE ARCHITECTURE
+// =============================================================================
+
+/**
+ * UNIFIED DATABASE DESIGN
+ *
+ * All projects and branches share a single database with composite keys:
+ *
+ * Tables structure:
+ * - entities: PRIMARY KEY (project_hash, branch_name, id)
+ * - relationships: PRIMARY KEY (project_hash, branch_name, id)
+ * - doc_embeddings: PRIMARY KEY (project_hash, branch_name, id)
+ * - files: PRIMARY KEY (project_hash, branch_name, path)
+ *
+ * Indexing strategy:
+ * - Composite indexes (project_hash, branch_name, ...) for efficient filtering
+ * - SQLite B-tree provides O(log n) seeks, no full table scans
+ * - With 10 projects × 1M rows, query for 1000-row project reads only ~1000 rows
+ *
+ * Branch handling:
+ * - Default branch: "main" or "master" (auto-detected)
+ * - Branch switch = just change query parameter, no DB reconnection
+ * - Cross-branch queries possible: "compare feature/x with main"
+ *
+ * Benefits over per-project DBs:
+ * - No context switching complexity (reinitializeForProject, switchProject)
+ * - Cross-project queries: "find similar code in project A and B"
+ * - Single connection pool, simpler resource management
+ * - Atomic cross-project operations possible
+ */
+
+/**
+ * Get paths for the global unified database
+ * All projects share the same database files with project_hash partitioning
+ */
+export function getGlobalDbPaths() {
+  const dataDir = getDataDir();
+
+  return {
+    dir: dataDir,
+    graphDbPath: join(dataDir, "global-graph.db"),
+    vectorsDbPath: join(dataDir, "global-vectors.db"),
+    metaPath: join(dataDir, "global-meta.json"),
+    cacheDir: getCacheDir(),
+  };
+}
+
+/**
+ * Get project hash for use in queries
+ * Returns the xxHash32 of the normalized project path
+ */
+export function getProjectHash(projectPath: string): string {
+  return hashProjectPath(projectPath);
+}
+
+/**
+ * Get branch name for use in queries
+ * Sanitizes branch name for safe storage (replaces special chars)
+ */
+export function normalizeBranchName(branchName: string): string {
+  // Normalize branch name: lowercase, replace problematic chars
+  return branchName.toLowerCase().replace(/[<>:"/\\|?*]/g, "_");
+}
+
+/**
+ * Default branch name when Git info is unavailable
+ */
+export const DEFAULT_BRANCH = "main";
+
 /**
  * Ensure project directory exists
  */
 export function ensureProjectDir(projectPath: string): string {
   const paths = getProjectPaths(projectPath);
+  if (!existsSync(paths.dir)) {
+    mkdirSync(paths.dir, { recursive: true });
+  }
+  return paths.dir;
+}
+
+/**
+ * Ensure global database directory exists
+ */
+export function ensureGlobalDbDir(): string {
+  const paths = getGlobalDbPaths();
   if (!existsSync(paths.dir)) {
     mkdirSync(paths.dir, { recursive: true });
   }

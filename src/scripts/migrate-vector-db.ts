@@ -188,18 +188,9 @@ class VectorDatabaseMigrator {
         console.error("✅ Embeddings table recreated without foreign key constraint");
       }
 
-      // Ensure vec_embeddings virtual table exists if sqlite-vec is available
-      try {
-        this.db.exec(`
-          CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
-            id TEXT PRIMARY KEY,
-            embedding float[384]
-          );
-        `);
-        console.error("✅ vec_embeddings virtual table ensured");
-      } catch (_error) {
-        console.error("⚠️ sqlite-vec extension not available, using fallback structure");
-      }
+      // Note: Vector storage has migrated to libsql DiskANN
+      // This script is for backward compatibility with legacy databases
+      console.error("ℹ️ Vector storage now uses libsql DiskANN backend");
     } finally {
       // Re-enable foreign key checks
       this.db.pragma("foreign_keys = ON");

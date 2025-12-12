@@ -146,9 +146,10 @@ export interface CacheEntry<T> {
 }
 
 /**
- * Vector backend types for adaptive switching
+ * Vector backend type
+ * libsql DiskANN is the only supported backend
  */
-export type VectorBackend = "auto" | "vectorlite" | "sqlite-vec" | "fallback";
+export type VectorBackend = "libsql";
 
 /**
  * Vector store configuration
@@ -158,20 +159,14 @@ export interface VectorStoreConfig {
   dimensions: number;
   cacheSize?: number;
   walMode?: boolean;
+  workingDirectory?: string;
 
-  // Vector backend configuration
-  backend?: VectorBackend; // Default: "auto"
-  autoSwitchThreshold?: number; // Default: 10000 vectors
-  estimatedFileCount?: number; // Estimated number of source files for pre-selection
-  workingDirectory?: string; // Working directory for file count estimation
-
-  // Vectorlite HNSW configuration (for large codebases)
-  vectorlite?: {
-    maxElements?: number; // Default: 100000
-    M?: number; // Connections per layer (default: 16)
-    efConstruction?: number; // Construction quality (default: 200)
-    efSearch?: number; // Search quality (default: 50)
-    distanceMetric?: "l2" | "cosine" | "ip"; // Default: l2
+  // LibSQL DiskANN configuration
+  libsql?: {
+    metric?: "cosine" | "l2"; // Default: cosine
+    compression?: "float8" | "float16" | "float32"; // Default: float32
+    searchL?: number; // Neighbors visited during search (default: 200)
+    insertL?: number; // Neighbors visited during insert (default: 70)
   };
 }
 

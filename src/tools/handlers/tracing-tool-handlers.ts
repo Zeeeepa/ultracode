@@ -100,8 +100,8 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
   }
 
   protected async execute(args: z.infer<typeof TraceFlowSchema>): Promise<ToolResult> {
-    // Initialize trace engine
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     let semanticAgent: Awaited<ReturnType<typeof this.context.getSemanticAgent>> | undefined;
     try {
       semanticAgent = await this.context.getSemanticAgent();
@@ -165,7 +165,8 @@ export class TraceBackwardsToolHandler extends BaseToolHandler<z.infer<typeof Tr
   }
 
   protected async execute(args: z.infer<typeof TraceBackwardsSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     let semanticAgent: Awaited<ReturnType<typeof this.context.getSemanticAgent>> | undefined;
     try {
       semanticAgent = await this.context.getSemanticAgent();
@@ -214,7 +215,8 @@ export class TraceDataFlowToolHandler extends BaseToolHandler<z.infer<typeof Tra
   }
 
   protected async execute(args: z.infer<typeof TraceDataFlowSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     let semanticAgent: Awaited<ReturnType<typeof this.context.getSemanticAgent>> | undefined;
     try {
       semanticAgent = await this.context.getSemanticAgent();
@@ -262,7 +264,8 @@ export class AnalyzeStateImpactToolHandler extends BaseToolHandler<z.infer<typeo
   }
 
   protected async execute(args: z.infer<typeof AnalyzeStateImpactSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     this.stateTracker = new StateTracker(storage);
 
     const params: AnalyzeStateImpactParams = {
@@ -302,7 +305,8 @@ export class FindDecisionPointsToolHandler extends BaseToolHandler<z.infer<typeo
   }
 
   protected async execute(args: z.infer<typeof FindDecisionPointsSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     this.conditionAnalyzer = new ConditionAnalyzer(storage);
 
     const params: FindDecisionPointsParams = {

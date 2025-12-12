@@ -427,11 +427,10 @@ export class LayeredIndexManager {
       // Medium project
       return LayeredIndexConfigPresets.production(this.config.workingDirectory);
     } else {
-      // Large project (>50K files) - use vectorlite
+      // Large project (>50K files) - use libsql DiskANN
       const config = LayeredIndexConfigPresets.server(this.config.workingDirectory);
 
-      // Override vector backend to vectorlite
-      // Note: This will be handled by VectorStore's adaptive backend
+      // Note: VectorStore's adaptive backend will auto-select libsql
 
       return config;
     }
@@ -446,6 +445,6 @@ export class LayeredIndexManager {
     if (fileCount === 0) return "default";
     if (fileCount < 10000) return "development";
     if (fileCount < 50000) return "production";
-    return "server (vectorlite)";
+    return "server (libsql)";
   }
 }

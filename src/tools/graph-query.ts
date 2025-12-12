@@ -2,7 +2,7 @@
  * Tool for querying the graph database directly via GraphStorage API
  */
 
-import type { GraphStorageImpl } from "../storage/graph-storage.js";
+import type { GraphStorage } from "../storage/graph-storage.js";
 import type { Entity, Relationship } from "../types/storage.js";
 
 function likePattern(input: string): string {
@@ -12,7 +12,7 @@ function likePattern(input: string): string {
 }
 
 export async function queryGraphEntities(
-  storage: GraphStorageImpl,
+  storage: GraphStorage,
   query?: string,
   limit: number = 100,
 ): Promise<{
@@ -45,7 +45,7 @@ export async function queryGraphEntities(
   };
 }
 
-export async function getGraphStats(storage: GraphStorageImpl): Promise<{
+export async function getGraphStats(storage: GraphStorage): Promise<{
   entities: { total: number; byType: Record<string, number> };
   relationships: { total: number; byType: Record<string, number> };
   files: { total: number };

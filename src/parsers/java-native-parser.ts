@@ -8,7 +8,18 @@
  */
 
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
-import { JavaAntlrParser } from "./java-antlr-parser.js";
+
+// Lazy-loaded ANTLR parser (loaded on first use to reduce initial bundle size)
+type JavaAntlrParserType = typeof import("./java-antlr-parser.js").JavaAntlrParser;
+let JavaAntlrParserClass: JavaAntlrParserType | null = null;
+
+async function getJavaAntlrParser(): Promise<JavaAntlrParserType> {
+  if (!JavaAntlrParserClass) {
+    const module = await import("./java-antlr-parser.js");
+    JavaAntlrParserClass = module.JavaAntlrParser;
+  }
+  return JavaAntlrParserClass;
+}
 
 // =============================================================================
 // PARSER STATS
@@ -75,10 +86,11 @@ export class JavaNativeParser {
       let relationships: EntityRelationship[] | undefined;
       const errors: Array<{ message: string; location?: { line: number; column: number } }> = [];
 
-      // Try ANTLR parser first
+      // Try ANTLR parser first (lazy-loaded)
       if (this.useAntlr) {
         try {
           console.error(`[JavaNativeParser] Trying ANTLR parser...`);
+          const JavaAntlrParser = await getJavaAntlrParser();
           const antlrResult = JavaAntlrParser.parse(filePath, content);
           entities = antlrResult.entities;
           relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;

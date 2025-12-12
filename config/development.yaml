@@ -12,7 +12,7 @@ mcp:
     # Development embedding configuration
     #
     # 🏆 DEFAULT: Best quality with 8192 tokens (TEI Docker - Local Inference)
-    model: "ibm-granite/granite-embedding-english-r2"  # 8192 tokens, English
+    model: "Xenova/all-MiniLM-L6-v2"  # OpenVINO model (384 dims, fast)
     #
     # ALTERNATIVE OPTIONS:
     # TEI (Local Docker, 8192 tokens max):
@@ -25,10 +25,13 @@ mcp:
     # HUGGING FACE CLOUD API (8192 tokens, requires API key):
     # model: "ibm-granite/granite-embedding-english-r2"  # 8192 tokens, English
 
-    provider: "tei"          # Use TEI for local inference with 8192 tokens
-    enabled: true            # Enabled for development (auto-starts Docker container)
-    fallbackToMemory: true   # Gracefully fallback to memory if Docker not available
+    provider: "tei"          # TEI for testing (switch back to openvino after debug)
+    enabled: true            # Embeddings enabled
+    fallbackToMemory: true   # Gracefully fallback to memory if needed
     apiKey: ""               # Only for cloud providers (huggingface, openai, cloudru)
+
+    tei:
+      baseUrl: "http://127.0.0.1:8081"  # TEI running on port 8081
 
     # Optional: Two-stage retrieval with reranker (Ollama only, not for HuggingFace)
     # Reranker refines top results after initial embedding search
@@ -49,7 +52,7 @@ mcp:
       baseUrl: "http://127.0.0.1:8080"  # TEI server URL (Docker container)
       timeoutMs: 30000                  # 30 seconds timeout
       concurrency: 4                    # Parallel requests
-      checkServer: true                 # Auto-start Docker container if stopped
+      checkServer: false                # Don't auto-start Docker (use memory provider instead)
 
     # HuggingFace Cloud API Configuration (alternative to TEI for cloud usage)
     # Get API key from https://huggingface.co/settings/tokens
@@ -121,76 +124,92 @@ parser:
     cacheTTL: 120000       # 2 minutes cache TTL
     
   agent:
-    maxConcurrency: 2     # Lower concurrency for development
-    memoryLimit: 256      # MB - smaller limit for development
+    maxConcurrency: 4     # Increased for better performance
+    memoryLimit: 1024     # MB - increased for OpenVINO stability
     priority: 8           # High priority for parsing
     batchSize: 20         # Moderate batch size for worker pool testing (was 5)
-    cacheSize: 52428800   # 50MB cache (in bytes)
+    cacheSize: 104857600  # 100MB cache (in bytes)
     workerPoolSize: 4     # Multi-worker for testing parallelization
+
+# Indexing Configuration (Development)
+indexing:
+  autoIndex: false  # Disable auto-indexing - use `index` tool manually
+
+# Git Integration Configuration (Development)
+# Watches for Git branch changes and triggers automatic reindexing
+git:
+  enabled: true                     # Enable Git integration
+  watchBranchChanges: true          # Watch .git/HEAD for branch switches
+  autoReindex: true                 # Automatically reindex when branch changes detected
+  diffMode: "incremental"           # Options: incremental, full
+  pollIntervalMs: 3000              # 3 seconds (faster for development)
+  watchUncommitted: true            # Watch for uncommitted file changes
+  uncommittedPollIntervalMs: 5000   # 5 seconds (faster for development)
+  includeUntracked: true            # Include untracked files
 
 # Indexer Configuration (Development)
 indexer:
-  maxConcurrency: 1       # Single database operation for development
-  memoryLimit: 256        # MB - smaller limit for development
+  maxConcurrency: 2       # Increased for better throughput
+  memoryLimit: 1024       # MB - increased for stability
   priority: 7
-  batchSize: 500
-  cacheSize: 25165824     # 25MB cache (in bytes)
-  cacheTTL: 180000        # 3 minutes (in ms)
+  batchSize: 1000
+  cacheSize: 104857600    # 100MB cache (in bytes)
+  cacheTTL: 300000        # 5 minutes (in ms)
 
 # Dev Agent Configuration (Development)
 devAgent:
-  maxConcurrency: 3
-  memoryLimit: 256
+  maxConcurrency: 4
+  memoryLimit: 1024       # MB - increased for OpenVINO
   priority: 7
 
 # Dora Agent Configuration (Development)
 doraAgent:
-  maxConcurrency: 2
-  memoryLimit: 128
+  maxConcurrency: 4
+  memoryLimit: 512
   priority: 6
 
 # Query Agent Configuration (Development)
 queryAgent:
-  maxConcurrency: 10
-  memoryLimit: 112
+  maxConcurrency: 20
+  memoryLimit: 512
   priority: 9
-  simpleQueryTimeout: 100
-  complexQueryTimeout: 1000
-  cacheWarmupSize: 100
+  simpleQueryTimeout: 200
+  complexQueryTimeout: 2000
+  cacheWarmupSize: 200
 
 # Semantic Agent Configuration (Development)
 semanticAgent:
-  maxConcurrency: 4
-  memoryLimit: 240
+  maxConcurrency: 4       # Reduced to prevent memory pressure
+  memoryLimit: 2048       # MB - increased for OpenVINO embedding generation
   priority: 8
-  batchSize: 8
+  batchSize: 4            # Smaller batches for OpenVINO stability
   modelPath: "./models"
 
 # Coordinator Agent Configuration (Development)
 coordinator:
-  maxConcurrency: 80
-  memoryLimit: 128
+  maxConcurrency: 100
+  memoryLimit: 512
   priority: 10
-  taskQueueLimit: 80
+  taskQueueLimit: 100
   loadBalancingStrategy: "least-loaded"
   resourceConstraints:
-    maxMemoryMB: 1024
-    maxCpuPercent: 80
-    maxConcurrentAgents: 10
-    maxTaskQueueSize: 80
+    maxMemoryMB: 4096     # 4GB - increased significantly
+    maxCpuPercent: 95     # Allow higher CPU usage
+    maxConcurrentAgents: 20
+    maxTaskQueueSize: 100
 
 # Conductor Orchestrator Configuration (Development)
 conductor:
-  maxConcurrency: 80
-  memoryLimit: 128
+  maxConcurrency: 100
+  memoryLimit: 512
   priority: 10
-  taskQueueLimit: 80
+  taskQueueLimit: 100
   loadBalancingStrategy: "least-loaded"
   resourceConstraints:
-    maxMemoryMB: 1024
-    maxCpuPercent: 80
-    maxConcurrentAgents: 10
-    maxTaskQueueSize: 80
+    maxMemoryMB: 4096     # 4GB - increased significantly
+    maxCpuPercent: 95     # Allow higher CPU usage
+    maxConcurrentAgents: 20
+    maxTaskQueueSize: 100
   complexityThreshold: 8
   mandatoryDelegation: true
 

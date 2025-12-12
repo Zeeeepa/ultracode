@@ -318,6 +318,11 @@ export interface GraphStorage {
   vacuum(): Promise<void>;
   analyze(): Promise<void>;
   getMetrics(): Promise<StorageMetrics>;
+
+  // Project context (v4: unified libsql storage)
+  setProject(projectPath: string, branchName?: string): void;
+  clear(): Promise<void>;
+  getStatistics(): Promise<{ totalEntities: number; totalRelationships: number; totalFiles: number }>;
 }
 
 /**

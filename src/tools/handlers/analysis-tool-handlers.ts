@@ -89,7 +89,8 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
   }
 
   protected async execute(args: z.infer<typeof AnalyzeHotspotsSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     // Get all entities (limited to prevent memory issues)
@@ -221,7 +222,8 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
   }
 
   protected async execute(args: z.infer<typeof AnalyzeStateChaosSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
     // Find state-related entities (limited to prevent memory issues)
     const entities = await storage.findEntities({
@@ -324,7 +326,8 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
   }
 
   protected async execute(args: z.infer<typeof AnalyzeCodeImpactSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
     let entityId = args.entityId;
 

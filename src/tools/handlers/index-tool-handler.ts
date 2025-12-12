@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { getIndexingStatus, isIndexing, setIndexingState } from "../../index.js";
 import type { AgentTask } from "../../types/agent.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
@@ -25,17 +26,59 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
   }
 
   protected async execute(args: IndexToolArgs): Promise<ToolResult> {
-    const { directory: indexDir, incremental, excludePatterns, reset, fullScan } = args;
-    const targetDir = indexDir || this.context.config.directory;
+    const targetDir = args.directory || this.context.config.directory;
+
+    // Step 0: Check if indexing is already in progress (prevent concurrent indexing)
+    if (isIndexing()) {
+      const status = getIndexingStatus();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: false,
+                error: "Indexing already in progress",
+                currentDirectory: status.directory,
+                elapsedSeconds: status.elapsedSeconds,
+                message: "Please wait for the current indexing operation to complete",
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+
+    // Set indexing state to prevent concurrent operations
+    setIndexingState(true, targetDir);
+
+    try {
+      return await this.executeIndexing(args, targetDir);
+    } finally {
+      // Always reset indexing state when done (success or error)
+      setIndexingState(false);
+    }
+  }
+
+  private async executeIndexing(args: IndexToolArgs, targetDir: string): Promise<ToolResult> {
+    const { incremental, excludePatterns, reset, fullScan } = args;
 
     // Step 1: Optional reset
     if (reset) {
       await this.resetGraphStorage(targetDir);
     }
 
-    // Step 2: Initialize semantic agent if enabled
+    // Step 1.5: v4 - Always set project context for GraphStorage before indexing
+    const storage = await this.context.getGraphStorage();
+    storage.setProject(targetDir);
+    this.context.logger.debug("INDEXING", "GraphStorage context set", { targetDir }, this.context.requestId);
+
+    // Step 2: Initialize semantic agent if enabled and ensure correct project context
     if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
-      await this.context.getSemanticAgent();
+      // Use ensureSemanticAgentForProject to reinitialize VectorStore for the target directory
+      await this.ensureSemanticAgentForProject(targetDir);
     }
 
     // Step 3: Detect codebase size and adjust patterns
@@ -44,14 +87,23 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     // Step 4: Create and process indexing task
     const result = await this.processIndexingTask(targetDir, incremental, enhancedExcludePatterns);
 
-    // Step 5: Ensure semantics ready and get oversized entity warning
+    // Step 5: Generate embeddings for indexed entities (batch mode)
     let oversizedWarning: { aiMessage: string | null; oversizedCount: number; maxTokens: number } | null = null;
+    let embeddingStats: { generated: number; skipped: number } | null = null;
+
     if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
       await this.ensureSemanticsReady();
 
-      // Get warning about oversized entities from semantic agent
+      // Generate embeddings for all entities in storage (batch mode, with deduplication)
       try {
         const semanticAgent = await this.context.getSemanticAgent();
+        console.error(`[IndexToolHandler] Generating embeddings from storage...`);
+        embeddingStats = await semanticAgent.generateEmbeddingsFromStorage();
+        console.error(
+          `[IndexToolHandler] Embeddings: generated=${embeddingStats?.generated ?? 0}, skipped=${embeddingStats?.skipped ?? 0}`,
+        );
+
+        // Get warning about oversized entities
         const warning = semanticAgent.getLastOversizedWarning?.();
         if (warning?.hasWarning) {
           oversizedWarning = {
@@ -60,8 +112,8 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
             maxTokens: warning.maxTokens,
           };
         }
-      } catch {
-        // Ignore if semantic agent not available
+      } catch (error) {
+        console.error(`[IndexToolHandler] Failed to generate embeddings:`, error);
       }
     }
 
@@ -75,6 +127,11 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       message: "Indexing completed",
       result,
     };
+
+    // Add embedding statistics
+    if (embeddingStats) {
+      response.embeddings = embeddingStats;
+    }
 
     // Add AI-friendly warning about oversized entities
     if (oversizedWarning?.aiMessage) {
@@ -96,14 +153,19 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
   }
 
   private async resetGraphStorage(targetDir: string): Promise<void> {
-    // Clear graph storage
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v4: Set project context before clearing
+    const storage = await this.context.getGraphStorage();
+    storage.setProject(targetDir);
+    this.context.logger.systemEvent("GraphStorage context set for project", { directory: targetDir });
+
+    // Clear graph storage for this project context
     await storage.clear();
     this.context.logger.systemEvent("Graph storage cleared before indexing", { directory: targetDir });
 
     // Clear vector store (embeddings) to ensure fresh semantic search
     try {
-      const semanticAgent = await this.context.getSemanticAgent();
+      // Ensure SemanticAgent uses the correct project's VectorStore before clearing
+      const semanticAgent = await this.ensureSemanticAgentForProject(targetDir);
       const vectorStore = semanticAgent.getVectorStore?.();
       if (vectorStore) {
         await vectorStore.clear();

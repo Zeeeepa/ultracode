@@ -1,53 +1,144 @@
 /**
- * Graph Storage Factory - Singleton GraphStorage instance
+ * Graph Storage Factory - Unified LibSQL Storage
  *
- * Ensures all components use the same GraphStorageImpl instance
- * to prevent database state mismatch issues.
+ * Creates and manages the singleton GraphStorage instance using LibSQL.
+ * v4: Unified storage - both graph and vectors in single libsql database.
  *
- * TASK-034: Fix circular bug by ensuring single GraphStorage instance
+ * MIGRATION FROM v3:
+ * - Replaced better-sqlite3 with @libsql/client
+ * - GraphStorageImpl replaced with GraphStorageLibSQL
+ * - Single database for entities, relationships, AND vectors
  */
 
-import { GraphStorageImpl } from "./graph-storage.js";
-import { runMigrations } from "./schema-migrations.js";
-import type { SQLiteManager } from "./sqlite-manager.js";
-import { getSQLiteManager } from "./sqlite-manager.js";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { getGlobalDbPaths } from "../shared/storage-paths.js";
+import { GraphStorageLibSQL } from "./graph-storage-libsql.js";
+import { LibSQLGraphAdapter, type LibSQLGraphConfig } from "./libsql-graph-adapter.js";
 
-let graphStorage: GraphStorageImpl | null = null;
-let boundManager: SQLiteManager | null = null;
+// Re-export types for compatibility
+export type { ProjectContext } from "./libsql-graph-adapter.js";
 
-export async function getGraphStorage(sqliteManager?: SQLiteManager): Promise<GraphStorageImpl> {
-  const manager = sqliteManager ?? getSQLiteManager();
-  console.error(
-    `[GraphStorageFactory] getGraphStorage called, sqliteManager provided: ${!!sqliteManager}, manager.path: ${(manager as any).config?.path || "unknown"}`,
-  );
+// Singleton instances
+let graphStorage: GraphStorageLibSQL | null = null;
+let libsqlAdapter: LibSQLGraphAdapter | null = null;
+let initializationPromise: Promise<GraphStorageLibSQL> | null = null;
 
-  const needNewInstance = !graphStorage || boundManager !== manager;
-  if (needNewInstance) {
-    console.error("[GraphStorageFactory] Creating NEW GraphStorage singleton instance");
-    if (!manager.isOpen()) {
-      manager.initialize();
-    }
-    runMigrations(manager);
-    const storage = new GraphStorageImpl(manager);
-    graphStorage = storage;
-    boundManager = manager;
+// Configuration from yaml-config
+let globalConfig: LibSQLGraphConfig = {
+  dimensions: 384,
+  metric: "cosine",
+  compression: "float32",
+  searchL: 200,
+  insertL: 70,
+};
 
-    await storage.initialize();
-    return storage;
+/**
+ * Configure the graph storage factory with libsql settings
+ */
+export function configureGraphStorage(config: LibSQLGraphConfig): void {
+  globalConfig = { ...globalConfig, ...config };
+  console.error(`[GraphStorageFactory] Configured with: ${JSON.stringify(globalConfig)}`);
+}
+
+/**
+ * Get the unified GraphStorage instance using LibSQL
+ * Uses mutex pattern to prevent race conditions during initialization
+ */
+export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
+  // Fast path: return existing singleton
+  if (graphStorage && libsqlAdapter?.isReady()) {
+    return graphStorage;
   }
 
-  console.error("[GraphStorageFactory] Returning EXISTING GraphStorage singleton instance");
+  // Mutex: if initialization is in progress, wait for it
+  if (initializationPromise) {
+    return initializationPromise;
+  }
 
-  const storage = graphStorage as GraphStorageImpl;
-  await storage.initialize();
-  return storage;
+  // Start initialization (only one will run)
+  initializationPromise = (async () => {
+    try {
+      console.error("[GraphStorageFactory] Creating LibSQL GraphStorage singleton");
+
+      // Get global database path
+      const paths = getGlobalDbPaths();
+      const unifiedDbPath = join(dirname(paths.graphDbPath), "unified-storage.db");
+
+      // Ensure directory exists
+      const dbDir = dirname(unifiedDbPath);
+      if (!existsSync(dbDir)) {
+        console.error(`[GraphStorageFactory] Creating directory: ${dbDir}`);
+        mkdirSync(dbDir, { recursive: true });
+      }
+
+      // Create adapter
+      libsqlAdapter = new LibSQLGraphAdapter(globalConfig);
+
+      const initialized = await libsqlAdapter.initialize(unifiedDbPath);
+      if (!initialized) {
+        throw new Error("Failed to initialize LibSQL adapter");
+      }
+
+      // Create storage wrapper
+      graphStorage = new GraphStorageLibSQL(libsqlAdapter);
+      await graphStorage.initialize();
+
+      console.error(`[GraphStorageFactory] Initialized unified storage at ${unifiedDbPath}`);
+      return graphStorage;
+    } catch (error) {
+      // Reset on failure so next call can retry
+      initializationPromise = null;
+      throw error;
+    }
+  })();
+
+  return initializationPromise;
 }
 
-export async function initializeGraphStorage(sqliteManager: SQLiteManager): Promise<GraphStorageImpl> {
-  return getGraphStorage(sqliteManager);
+/**
+ * Initialize graph storage (alias for getGraphStorage for compatibility)
+ */
+export async function initializeGraphStorage(): Promise<GraphStorageLibSQL> {
+  return getGraphStorage();
 }
 
-export function resetGraphStorage(): void {
+/**
+ * Get the underlying LibSQL adapter for direct vector operations
+ */
+export function getLibSQLAdapter(): LibSQLGraphAdapter | null {
+  return libsqlAdapter;
+}
+
+/**
+ * Reset the singleton (for testing or reconfiguration)
+ */
+export async function resetGraphStorage(): Promise<void> {
+  if (libsqlAdapter) {
+    await libsqlAdapter.close();
+    libsqlAdapter = null;
+  }
   graphStorage = null;
-  boundManager = null;
+  initializationPromise = null;
+  console.error("[GraphStorageFactory] Storage reset");
+}
+
+/**
+ * Set project context on the global GraphStorage singleton.
+ * Must be called before operations to ensure correct project_hash.
+ */
+export function setGlobalProjectContext(projectPath: string, branchName?: string): void {
+  if (graphStorage) {
+    graphStorage.setProject(projectPath, branchName);
+    console.error(`[GraphStorageFactory] Global context set: ${projectPath}, branch: ${branchName || "main"}`);
+  } else {
+    console.error(`[GraphStorageFactory] WARNING: Cannot set context - graphStorage not initialized yet`);
+  }
+}
+
+/**
+ * Check if storage is initialized and ready
+ */
+export function isStorageReady(): boolean {
+  return graphStorage !== null && libsqlAdapter?.isReady() === true;
 }

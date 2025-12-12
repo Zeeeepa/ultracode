@@ -27,8 +27,9 @@ export class ResetGraphToolHandler extends BaseToolHandler<z.infer<typeof ResetG
     return ResetGraphSchema.parse(args);
   }
 
-  protected async execute(_args: z.infer<typeof ResetGraphSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+  protected async execute(args: z.infer<typeof ResetGraphSchema>): Promise<ToolResult> {
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     await storage.clear();
 
     return {
@@ -54,9 +55,24 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
   protected async execute(args: z.infer<typeof CleanIndexSchema>): Promise<ToolResult> {
     const targetDir = args.directory || this.context.config.directory;
 
-    // Clear graph
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(targetDir);
     await storage.clear();
+
+    // Ensure SemanticAgent uses the correct project's VectorStore before indexing
+    if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+      try {
+        const semanticAgent = await this.ensureSemanticAgentForProject(targetDir);
+        // Also clear vector store for clean index
+        const vectorStore = semanticAgent?.getVectorStore?.();
+        if (vectorStore) {
+          await vectorStore.clear();
+        }
+      } catch (error) {
+        // Semantic agent may not be available, that's ok for clean_index
+        console.error("[CleanIndex] Could not reinitialize SemanticAgent:", (error as Error).message);
+      }
+    }
 
     // Re-index
     const conductor = this.context.getConductor();
@@ -101,7 +117,8 @@ export class GetGraphToolHandler extends BaseToolHandler<z.infer<typeof GetGraph
   }
 
   protected async execute(args: z.infer<typeof GetGraphSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     // Fetch all entities (up to 5000 for pagination accuracy)
@@ -162,8 +179,9 @@ export class GetGraphStatsToolHandler extends BaseToolHandler<z.infer<typeof Get
     return GetGraphStatsSchema.parse(args);
   }
 
-  protected async execute(_args: z.infer<typeof GetGraphStatsSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+  protected async execute(args: z.infer<typeof GetGraphStatsSchema>): Promise<ToolResult> {
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const stats = await storage.getStatistics();
 
     return {
@@ -185,8 +203,9 @@ export class GetGraphHealthToolHandler extends BaseToolHandler<z.infer<typeof Ge
     return GetGraphHealthSchema.parse(args);
   }
 
-  protected async execute(_args: z.infer<typeof GetGraphHealthSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+  protected async execute(args: z.infer<typeof GetGraphHealthSchema>): Promise<ToolResult> {
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const stats = await storage.getStatistics();
     const sqliteManager = this.context.getSQLiteManager();
 

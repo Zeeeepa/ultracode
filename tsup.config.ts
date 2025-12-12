@@ -42,8 +42,8 @@ export default defineConfig([
     target: "node24",
     shims: false,
 
-    // Optimizations
-    splitting: false,
+    // Optimizations - enable splitting for dynamic imports
+    splitting: true,
     minify: isPackageMode, // Minify only for npm package
     treeshake: true,
 

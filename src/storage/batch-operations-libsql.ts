@@ -1,0 +1,321 @@
+/**
+ * LibSQL Batch Operations for High-Performance Data Processing
+ *
+ * Async batch processing using libsql adapter.
+ * Replaces synchronous better-sqlite3 BatchOperations.
+ */
+
+import xxhash from "xxhash-wasm";
+import { DEFAULT_BRANCH, getProjectHash } from "../shared/storage-paths.js";
+import type { BatchResult, Entity, Relationship, RelationType } from "../types/storage.js";
+import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.js";
+
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+const DEFAULT_BATCH_SIZE = 500;
+const MAX_BATCH_SIZE = 2000;
+const ID_LENGTH = 12;
+
+// =============================================================================
+// LIBSQL BATCH OPERATIONS CLASS
+// =============================================================================
+
+export class BatchOperationsLibSQL {
+  private batchSize: number;
+  private adapter: LibSQLGraphAdapter;
+  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
+
+  private currentContext: ProjectContext = {
+    projectHash: "legacy",
+    branchName: DEFAULT_BRANCH,
+  };
+
+  constructor(adapter: LibSQLGraphAdapter, batchSize = DEFAULT_BATCH_SIZE) {
+    this.adapter = adapter;
+    this.batchSize = Math.min(batchSize, MAX_BATCH_SIZE);
+  }
+
+  setProjectContext(context: ProjectContext): void {
+    console.error(`[BatchOperationsLibSQL] Context set: ${context.projectHash}/${context.branchName}`);
+    this.currentContext = context;
+    this.adapter.setProjectContext(context);
+  }
+
+  setProject(projectPath: string, branchName?: string): void {
+    this.setProjectContext({
+      projectHash: getProjectHash(projectPath),
+      branchName: branchName || DEFAULT_BRANCH,
+    });
+  }
+
+  async initialize(): Promise<void> {
+    this.xxhashInstance = await xxhash();
+  }
+
+  destroy(): void {
+    // Nothing to clean up for libsql
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helpers: stable keys/ids
+  // ---------------------------------------------------------------------------
+
+  private entityKey(e: Entity): string {
+    const isGlobal = e.type === "package" || e.type === "import";
+    return isGlobal
+      ? `${e.type}|${e.name}`
+      : `${e.filePath}|${e.type}|${e.name}|${e.location?.start?.index ?? -1}-${e.location?.end?.index ?? -1}`;
+  }
+
+  private stableEntityId(e: Entity): string {
+    if (!this.xxhashInstance) {
+      throw new Error("BatchOperationsLibSQL not initialized - call initialize() first");
+    }
+    const key = this.entityKey(e);
+    return this.xxhashInstance.h64ToString(key).slice(0, ID_LENGTH);
+  }
+
+  private relationshipKey(r: { fromId: string; toId: string; type: RelationType }): string {
+    return `${r.fromId}|${r.toId}|${r.type}`;
+  }
+
+  private stableRelationshipId(r: { fromId: string; toId: string; type: RelationType }): string {
+    if (!this.xxhashInstance) {
+      throw new Error("BatchOperationsLibSQL not initialized - call initialize() first");
+    }
+    const key = this.relationshipKey(r);
+    return this.xxhashInstance.h64ToString(key).slice(0, ID_LENGTH);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Entity Operations
+  // ---------------------------------------------------------------------------
+
+  async insertEntities(
+    entities: Entity[],
+    onProgress?: (processed: number, total: number) => void,
+  ): Promise<BatchResult> {
+    const start = Date.now();
+    const errors: Array<{ item: unknown; error: string }> = [];
+    let totalProcessed = 0;
+
+    const { projectHash, branchName } = this.currentContext;
+    console.error(
+      `[BatchOperationsLibSQL] insertEntities: context=${projectHash}/${branchName}, count=${entities.length}`,
+    );
+
+    // Deduplicate
+    const seen = new Set<string>();
+    const uniq: Entity[] = [];
+    for (const e of entities) {
+      const key = this.entityKey(e);
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniq.push(e);
+      }
+    }
+
+    // Process in batches
+    for (let i = 0; i < uniq.length; i += this.batchSize) {
+      const batch = uniq.slice(i, Math.min(i + this.batchSize, uniq.length));
+
+      try {
+        // Prepare entities with stable IDs
+        const entitiesWithIds = batch.map((entity) => {
+          const now = Date.now();
+          return {
+            ...entity,
+            id: this.stableEntityId(entity),
+            createdAt: entity.createdAt || now,
+            updatedAt: entity.updatedAt || now,
+          };
+        });
+
+        // Use adapter's batch insert
+        const result = await this.adapter.insertEntities(entitiesWithIds);
+        totalProcessed += result.processed;
+
+        if (result.errors.length > 0) {
+          errors.push(...result.errors);
+        }
+
+        if (onProgress) {
+          onProgress(totalProcessed, uniq.length);
+        }
+      } catch (error) {
+        console.error(`[BatchOperationsLibSQL] Batch error:`, error);
+        for (const entity of batch) {
+          errors.push({
+            item: entity,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    return {
+      processed: totalProcessed,
+      failed: errors.length,
+      errors,
+      timeMs: Date.now() - start,
+    };
+  }
+
+  async updateEntities(
+    updates: Entity[] | Array<{ id: string; changes: Partial<Entity> }>,
+    onProgress?: (processed: number, total: number) => void,
+  ): Promise<BatchResult> {
+    // Convert { id, changes } format to Entity format if needed
+    const entities: Entity[] = updates.map((item) => {
+      if ("changes" in item && item.id) {
+        // Old format: { id, changes }
+        return {
+          id: item.id,
+          ...item.changes,
+          updatedAt: Date.now(),
+        } as Entity;
+      }
+      // New format: Entity directly
+      return item as Entity;
+    });
+
+    // For updates, we just re-insert (UPSERT in adapter)
+    return this.insertEntities(entities, onProgress);
+  }
+
+  async deleteEntities(
+    entitiesOrIds: Entity[] | string[],
+    onProgress?: (processed: number, total: number) => void,
+  ): Promise<BatchResult> {
+    const start = Date.now();
+    const errors: Array<{ item: unknown; error: string }> = [];
+    let totalProcessed = 0;
+
+    // Normalize to array of IDs
+    const ids: string[] = entitiesOrIds.map((item) => {
+      if (typeof item === "string") return item;
+      return item.id || this.stableEntityId(item);
+    });
+
+    for (let i = 0; i < ids.length; i += this.batchSize) {
+      const batch = ids.slice(i, Math.min(i + this.batchSize, ids.length));
+
+      try {
+        for (const id of batch) {
+          await this.adapter.deleteEntity(id);
+          totalProcessed++;
+        }
+
+        if (onProgress) {
+          onProgress(totalProcessed, ids.length);
+        }
+      } catch (error) {
+        for (const id of batch) {
+          errors.push({
+            item: id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    return {
+      processed: totalProcessed,
+      failed: errors.length,
+      errors,
+      timeMs: Date.now() - start,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Relationship Operations
+  // ---------------------------------------------------------------------------
+
+  async insertRelationships(
+    relationships: Relationship[],
+    onProgress?: (processed: number, total: number) => void,
+  ): Promise<BatchResult> {
+    const start = Date.now();
+    const errors: Array<{ item: unknown; error: string }> = [];
+    let totalProcessed = 0;
+
+    const { projectHash, branchName } = this.currentContext;
+    console.error(
+      `[BatchOperationsLibSQL] insertRelationships: context=${projectHash}/${branchName}, count=${relationships.length}`,
+    );
+
+    // Deduplicate
+    const seen = new Set<string>();
+    const uniq: Relationship[] = [];
+    for (const r of relationships) {
+      const key = this.relationshipKey(r);
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniq.push(r);
+      }
+    }
+
+    // Process in batches
+    for (let i = 0; i < uniq.length; i += this.batchSize) {
+      const batch = uniq.slice(i, Math.min(i + this.batchSize, uniq.length));
+
+      try {
+        // Prepare relationships with stable IDs
+        const relsWithIds = batch.map((rel) => {
+          const now = Date.now();
+          return {
+            ...rel,
+            id: this.stableRelationshipId(rel),
+            createdAt: rel.createdAt || now,
+          };
+        });
+
+        // Use adapter's batch insert
+        const result = await this.adapter.insertRelationships(relsWithIds);
+        totalProcessed += result.processed;
+
+        if (result.errors.length > 0) {
+          errors.push(...result.errors);
+        }
+
+        if (onProgress) {
+          onProgress(totalProcessed, uniq.length);
+        }
+      } catch (error) {
+        console.error(`[BatchOperationsLibSQL] Relationship batch error:`, error);
+        for (const rel of batch) {
+          errors.push({
+            item: rel,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    return {
+      processed: totalProcessed,
+      failed: errors.length,
+      errors,
+      timeMs: Date.now() - start,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Utility Methods
+  // ---------------------------------------------------------------------------
+
+  optimizeBatchSize(avgProcessingTime: number): void {
+    // Adaptive batch sizing based on processing time
+    if (avgProcessingTime < 50) {
+      this.batchSize = Math.min(this.batchSize * 1.2, MAX_BATCH_SIZE);
+    } else if (avgProcessingTime > 200) {
+      this.batchSize = Math.max(this.batchSize * 0.8, 100);
+    }
+    this.batchSize = Math.floor(this.batchSize);
+  }
+
+  getBatchSize(): number {
+    return this.batchSize;
+  }
+}
