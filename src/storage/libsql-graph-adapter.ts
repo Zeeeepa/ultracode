@@ -42,14 +42,17 @@ export interface LibSQLGraphConfig {
   searchL?: number;
   // DiskANN insert list size (higher = better quality, slower build)
   insertL?: number;
+  // DiskANN max neighbors (lower = smaller index, less memory)
+  maxNeighbors?: number;
 }
 
 const DEFAULT_CONFIG: Required<LibSQLGraphConfig> = {
   dimensions: 384,
   metric: "cosine",
-  compression: "float32",
+  compression: "float8", // 40-50% less memory than float32
   searchL: 200,
   insertL: 70,
+  maxNeighbors: 32, // Reduced graph size for memory savings
 };
 
 // =============================================================================
@@ -321,6 +324,7 @@ export class LibSQLGraphAdapter {
         const indexParams = [
           `'metric=${this.config.metric}'`,
           `'compress_neighbors=${this.config.compression}'`,
+          `'max_neighbors=${this.config.maxNeighbors}'`,
           `'search_l=${this.config.searchL}'`,
           `'insert_l=${this.config.insertL}'`,
         ].join(", ");
@@ -376,6 +380,7 @@ export class LibSQLGraphAdapter {
       const params = [
         `'metric=${this.config.metric}'`,
         `'compress_neighbors=${this.config.compression}'`,
+        `'max_neighbors=${this.config.maxNeighbors}'`,
         `'search_l=${this.config.searchL}'`,
         `'insert_l=${this.config.insertL}'`,
       ].join(", ");
@@ -936,6 +941,15 @@ export class LibSQLGraphAdapter {
 
     // Invalidate search cache
     this.invalidateSearchCache(projectHash, branchName);
+
+    // PRAGMA optimize after large batch inserts for better query planning
+    if (totalInserted >= 100) {
+      try {
+        await this.client.execute("PRAGMA optimize");
+      } catch {
+        // Ignore PRAGMA errors
+      }
+    }
 
     logger.info("EMBEDDING_INSERT", `Batch insert complete`, {
       totalInserted,
