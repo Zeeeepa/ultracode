@@ -5914,6 +5914,40 @@ async function main() {
     })();
   }
 
+  // Check for orphaned embeddings (entities without embeddings) in background
+  // This handles the case when server was restarted before embeddings completed
+  if (embeddingEnabled) {
+    (async () => {
+      try {
+        // Wait for server to stabilize
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        const semanticAgent = await getSemanticAgent();
+        if (!semanticAgent) return;
+
+        // Check if there are entities without embeddings
+        const { getGraphStorage } = await import("./storage/graph-storage-factory.js");
+        const storage = await getGraphStorage();
+        const allEntities = await storage.findEntities({ type: "entity", limit: 1 });
+        const entityCount =
+          allEntities.length > 0 ? (await storage.findEntities({ type: "entity", limit: 100000 })).length : 0;
+
+        if (entityCount === 0) return; // No entities indexed yet
+
+        const embeddingCount = (await semanticAgent.getVectorStore()?.count()) ?? 0;
+        const missing = entityCount - embeddingCount;
+
+        if (missing > 100) {
+          console.error(`🔄 Found ${missing} entities without embeddings, generating in background...`);
+          logger.info("STARTUP", "Resuming embedding generation", { missing, entityCount, embeddingCount });
+          const stats = await semanticAgent.generateEmbeddingsFromStorage();
+          console.error(`✅ Background embedding complete: ${stats.generated} generated, ${stats.skipped} skipped`);
+        }
+      } catch (error) {
+        logger.warn("STARTUP", "Background embedding check failed", { error: (error as Error).message });
+      }
+    })();
+  }
   // Initialize AutoDoc Watcher for automatic documentation updates
   const autodocWatcherEnabled = config.mcp?.autodoc?.watcherEnabled ?? false;
   if (autodocWatcherEnabled) {
