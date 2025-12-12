@@ -14,20 +14,20 @@
  */
 
 import { nanoid } from "nanoid";
-import pMap from "p-map";
+// p-map removed - was used for handleParseBatchComplete which is now disabled
 import xxhash from "xxhash-wasm";
 import { getConfig } from "../config/yaml-config.js";
 import { BranchManager } from "../core/branch-manager.js";
 import { GitWatcher } from "../core/git-watcher.js";
-import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { knowledgeBus } from "../core/knowledge-bus.js";
 import { getDataDir } from "../shared/storage-paths.js";
-import { BatchOperations } from "../storage/batch-operations.js";
+import { BatchOperationsLibSQL } from "../storage/batch-operations-libsql.js";
 import { getCacheManager, QueryCacheManager } from "../storage/cache-manager.js";
-import type { GraphStorageImpl } from "../storage/graph-storage.js";
-import { getGraphStorage } from "../storage/graph-storage-factory.js";
+import type { GraphStorage } from "../storage/graph-storage.js";
+import { getGraphStorage, getLibSQLAdapter } from "../storage/graph-storage-factory.js";
 import type { SQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
-import type { EntityRelationship, ParsedEntity, ParseResult } from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 import type {
   BatchResult,
   Entity,
@@ -121,8 +121,8 @@ export interface IndexerTask extends AgentTask {
 
 export class IndexerAgent extends BaseAgent {
   private sqliteManager!: SQLiteManager;
-  private graphStorage!: GraphStorageImpl;
-  private batchOps!: BatchOperations;
+  private graphStorage!: GraphStorage;
+  private batchOps!: BatchOperationsLibSQL;
   private cacheManager!: QueryCacheManager;
   private branchManager: BranchManager | null = null;
   private gitWatcher: GitWatcher | null = null;
@@ -204,16 +204,24 @@ export class IndexerAgent extends BaseAgent {
       }
     }
 
-    // CRITICAL FIX: Use singleton GraphStorage instance
+    // CRITICAL FIX: Use singleton GraphStorage instance (libsql unified)
     // This ensures IndexerAgent and MCP tools use the same storage instance
-    this.graphStorage = await getGraphStorage(this.sqliteManager);
+    this.graphStorage = await getGraphStorage();
     // Ensure graph storage is fully initialized (re-prepare statements after SQLite reset)
     if (typeof (this.graphStorage as any).initialize === "function") {
       await (this.graphStorage as any).initialize();
     }
 
     const config = getIndexerConfig();
-    this.batchOps = new BatchOperations(this.sqliteManager.getConnection(), config.batchSize);
+
+    // v4: Use LibSQL BatchOperations instead of better-sqlite3
+    const adapter = getLibSQLAdapter();
+    if (!adapter) {
+      throw new Error(
+        `[${this.id}] LibSQLAdapter is required but not available - ensure getGraphStorage() was called first`,
+      );
+    }
+    this.batchOps = new BatchOperationsLibSQL(adapter, config.batchSize);
     await this.batchOps.initialize();
     this.cacheManager = getCacheManager({
       maxSize: config.cacheSize,
@@ -228,81 +236,60 @@ export class IndexerAgent extends BaseAgent {
   }
 
   /**
+   * Set the project context for GraphStorage and BatchOperations.
+   * v3: Must be called before indexing to ensure correct project_hash.
+   */
+  setProjectContext(projectPath: string, branchName?: string): void {
+    console.error(`[${this.id}] setProjectContext called with: ${projectPath}`);
+
+    // Set context on GraphStorage
+    if (this.graphStorage && typeof this.graphStorage.setProject === "function") {
+      this.graphStorage.setProject(projectPath, branchName);
+      console.error(
+        `[${this.id}] GraphStorage context set for project: ${projectPath}, branch: ${branchName || "main"}`,
+      );
+    } else {
+      console.error(`[${this.id}] WARNING: Cannot set GraphStorage context - not ready`);
+    }
+
+    // v3: Set context on BatchOperations too!
+    if (this.batchOps && typeof this.batchOps.setProject === "function") {
+      this.batchOps.setProject(projectPath, branchName);
+      console.error(
+        `[${this.id}] BatchOperations context set for project: ${projectPath}, branch: ${branchName || "main"}`,
+      );
+    } else {
+      console.error(`[${this.id}] WARNING: Cannot set BatchOperations context - not ready`);
+    }
+  }
+
+  /**
    * Subscribe to parser events via knowledge bus
+   *
+   * NOTE: This is DISABLED because DevAgent directly calls indexerAgent.process()/enqueue()
+   * after parsing. Subscribing to events would cause DOUBLE processing of each file.
+   * Only enable this if IndexerAgent is used standalone without DevAgent.
    */
   private subscribeToParseEvents(): void {
-    // Subscribe to parse complete events
-    const parseCompleteId = knowledgeBus.subscribe(this.id, "parse:complete", async (entry: KnowledgeEntry) => {
-      await this.handleParseComplete(entry);
-    });
-    this.subscriptionIds.push(parseCompleteId);
+    // DISABLED: DevAgent already calls indexerAgent directly after parsing.
+    // Subscribing to events causes each file to be indexed 2-3 times!
+    //
+    // const parseCompleteId = knowledgeBus.subscribe(this.id, "parse:complete", async (entry: KnowledgeEntry) => {
+    //   await this.handleParseComplete(entry);
+    // });
+    // this.subscriptionIds.push(parseCompleteId);
+    //
+    // const parseBatchId = knowledgeBus.subscribe(this.id, "parse:batch:complete", async (entry: KnowledgeEntry) => {
+    //   await this.handleParseBatchComplete(entry);
+    // });
+    // this.subscriptionIds.push(parseBatchId);
 
-    // Subscribe to parse batch complete events
-    const parseBatchId = knowledgeBus.subscribe(this.id, "parse:batch:complete", async (entry: KnowledgeEntry) => {
-      await this.handleParseBatchComplete(entry);
-    });
-    this.subscriptionIds.push(parseBatchId);
-
-    console.error(`[${this.id}] Subscribed to parse events`);
+    console.error(`[${this.id}] Parse event subscriptions DISABLED (DevAgent calls directly)`);
   }
 
-  /**
-   * Handle parse complete event
-   */
-  private async handleParseComplete(entry: KnowledgeEntry): Promise<void> {
-    const parseResult = entry.data as ParseResult;
-    console.error(`[${this.id}] Received parse result for ${parseResult.filePath}`);
-
-    // Create indexing task
-    const config = getIndexerConfig();
-    const task: IndexerTask = {
-      id: nanoid(12),
-      type: "index:entities",
-      priority: config.priority,
-      payload: {
-        entities: parseResult.entities,
-        filePath: parseResult.filePath,
-        relationships: parseResult.relationships,
-      },
-      createdAt: Date.now(),
-    };
-
-    // Process the task
-    await this.process(task);
-  }
-
-  /**
-   * Handle parse batch complete event
-   * OPTIMIZED: Uses p-map for controlled parallel processing (2-3x faster)
-   */
-  private async handleParseBatchComplete(entry: KnowledgeEntry): Promise<void> {
-    const results = entry.data as ParseResult[];
-    console.error(`[${this.id}] Received batch parse results for ${results.length} files`);
-
-    const config = getIndexerConfig();
-
-    // OPTIMIZATION: Use p-map for parallel processing with limited concurrency
-    // Concurrency limited to 4 to avoid SQLite lock contention
-    await pMap(
-      results,
-      async (result) => {
-        const task: IndexerTask = {
-          id: nanoid(12),
-          type: "index:entities",
-          priority: config.priority,
-          payload: {
-            entities: result.entities,
-            filePath: result.filePath,
-            relationships: result.relationships,
-          },
-          createdAt: Date.now(),
-        };
-
-        await this.process(task);
-      },
-      { concurrency: 4, stopOnError: false },
-    );
-  }
+  // NOTE: handleParseComplete and handleParseBatchComplete are removed because
+  // DevAgent calls indexerAgent.process()/enqueue() directly after parsing.
+  // Keeping these methods would cause unused code warnings.
 
   /**
    * Check if agent can process the task
@@ -519,9 +506,37 @@ export class IndexerAgent extends BaseAgent {
     const seenExternal = new Map<string, string>(); // extKey -> placeholderId
 
     const createExternalPlaceholder = (extId: string): string => {
-      const parts = extId.split(":");
-      const source = parts[1] ?? "unknown";
-      const symbol = parts.slice(2).join(":") || "unknown";
+      // Parse extId format: "external:SOURCE:SYMBOL"
+      // Handle Windows paths like "external:D:\path\file.ts:Symbol"
+      // where the path contains ":" after drive letter
+      let source = "unknown";
+      let symbol = "unknown";
+
+      if (extId.startsWith("external:")) {
+        const rest = extId.slice("external:".length); // Remove "external:" prefix
+
+        // Check for Windows drive letter pattern (e.g., "D:\...")
+        if (/^[A-Za-z]:[\\/]/.test(rest)) {
+          // Windows path: find the last ":" which separates path from symbol
+          const lastColonIdx = rest.lastIndexOf(":");
+          if (lastColonIdx > 2) {
+            // Must be after "D:\"
+            source = rest.slice(0, lastColonIdx);
+            symbol = rest.slice(lastColonIdx + 1) || "unknown";
+          } else {
+            source = rest;
+          }
+        } else {
+          // Unix path or simple format: "SOURCE:SYMBOL"
+          const colonIdx = rest.indexOf(":");
+          if (colonIdx !== -1) {
+            source = rest.slice(0, colonIdx);
+            symbol = rest.slice(colonIdx + 1) || "unknown";
+          } else {
+            source = rest;
+          }
+        }
+      }
 
       const placeholderBase: Omit<Entity, "id" | "createdAt" | "updatedAt"> = {
         name: symbol,

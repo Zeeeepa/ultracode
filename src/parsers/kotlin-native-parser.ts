@@ -12,7 +12,6 @@
  */
 
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
-import { KotlinAntlrParser } from "./kotlin-antlr-parser.js";
 import {
   enhanceWithKotlinDiagnostics,
   findKotlinc,
@@ -20,6 +19,18 @@ import {
   isKotlincAvailable,
   isKotlinScript,
 } from "./kotlin-compiler-integration.js";
+
+// Lazy-loaded ANTLR parser (loaded on first use to reduce initial bundle size)
+type KotlinAntlrParserType = typeof import("./kotlin-antlr-parser.js").KotlinAntlrParser;
+let KotlinAntlrParserClass: KotlinAntlrParserType | null = null;
+
+async function getKotlinAntlrParser(): Promise<KotlinAntlrParserType> {
+  if (!KotlinAntlrParserClass) {
+    const module = await import("./kotlin-antlr-parser.js");
+    KotlinAntlrParserClass = module.KotlinAntlrParser;
+  }
+  return KotlinAntlrParserClass;
+}
 
 // =============================================================================
 // PARSER STATS
@@ -114,9 +125,10 @@ export class KotlinNativeParser {
       let entities: ParsedEntity[];
       let relationships: EntityRelationship[] | undefined;
 
-      // Try ANTLR parser first (accurate AST-based parsing)
+      // Try ANTLR parser first (accurate AST-based parsing, lazy-loaded)
       try {
         console.error(`[KotlinNativeParser] Trying ANTLR parser...`);
+        const KotlinAntlrParser = await getKotlinAntlrParser();
         const antlrResult = KotlinAntlrParser.parse(filePath, content);
         entities = antlrResult.entities;
         relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;

@@ -9,7 +9,7 @@
  *
  * External Dependencies:
  * - @xenova/transformers: https://github.com/xenova/transformers.js - Hugging Face Transformers
- * - sqlite-vec: https://github.com/asg017/sqlite-vec - Vector similarity extension
+ * - @libsql/client: https://github.com/tursodatabase/libsql-client-ts - LibSQL DiskANN
  * - onnxruntime-node: https://onnxruntime.ai/ - ONNX Runtime optimization
  *
  * Architecture References:
@@ -24,6 +24,7 @@
  * @history
  *  - 2025-09-14: Created by Dev-Agent - TASK-002: Main SemanticAgent implementation
  *  - 2025-09-17: Enhanced by Dev-Agent - TASK-004B: Added circuit breaker and reliability patterns
+ *  - 2025-12-11: Refactored - Migrated from sqlite-vec to libsql DiskANN
  */
 
 import { getConfig } from "../config/yaml-config.js";
@@ -40,7 +41,7 @@ import { HybridSearchEngine } from "../semantic/hybrid-search.js";
 import { SemanticCache } from "../semantic/semantic-cache.js";
 import { VectorStore } from "../semantic/vector-store.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
-import { getProjectPaths } from "../shared/storage-paths.js";
+import { DEFAULT_BRANCH, getGlobalDbPaths, getProjectHash } from "../shared/storage-paths.js";
 import { getGraphStorage } from "../storage/graph-storage-factory.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParsedEntity } from "../types/parser.js";
@@ -57,7 +58,9 @@ import {
   type VectorEmbedding,
 } from "../types/semantic.js";
 import { type Entity, EntityType } from "../types/storage.js";
+import { loadSemanticConfig, type SemanticConfig } from "../utils/config-paths.js";
 import { hashText } from "../utils/fast-hash.js";
+import { logger } from "../utils/logger.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -126,6 +129,10 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   private hybridSearch!: HybridSearchEngine;
   private cache: SemanticCache;
   private codeAnalyzer!: CodeAnalyzer;
+
+  // Track if embedding generator is ready (Ollama connected)
+  private embeddingReady = false;
+  private embeddingReadyPromise: Promise<void> | null = null;
   private embeddingDim = 384;
   private embeddingBatchSize = AGENT_CONFIG.batchSize;
   private readonly defaultMaxConcurrency: number;
@@ -142,6 +149,11 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
   // Last indexing warning about oversized entities
   private lastOversizedWarning: OversizedEntitiesWarning | null = null;
+
+  // Parallel embedding generation queue
+  private pendingEntitiesQueue: ParsedEntity[] = [];
+  private isProcessingEmbeddingQueue = false;
+  private queueProcessorInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Get last oversized entities warning (for index tool response)
@@ -195,13 +207,64 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     this.embeddingBatchSize = this.defaultBatchSize;
   }
 
+  /**
+   * Map semantic-config.json platform to provider kind
+   * Falls back to "memory" if no config or disabled
+   */
+  private mapSemanticConfigToProvider(semanticConfig: SemanticConfig | null): "memory" | "ollama" | "tei" | "openvino" {
+    if (!semanticConfig || !semanticConfig.enabled) {
+      return "memory";
+    }
+
+    const platform = semanticConfig.embedding?.platform;
+    switch (platform) {
+      case "openvino":
+        return "openvino";
+      case "ollama":
+        return "ollama";
+      case "tei":
+        return "tei";
+      case "memory":
+      default:
+        return "memory";
+    }
+  }
+
+  /**
+   * Get model name from semantic-config.json based on platform
+   */
+  private getModelNameFromSemanticConfig(semanticConfig: SemanticConfig | null): string {
+    if (!semanticConfig || !semanticConfig.enabled) {
+      return "deterministic-hash";
+    }
+
+    const platform = semanticConfig.embedding?.platform;
+    switch (platform) {
+      case "openvino":
+        return semanticConfig.embedding?.openvino?.selected_model || "paraphrase-multilingual-MiniLM-L12-v2";
+      case "ollama":
+        return semanticConfig.embedding?.ollama?.selected_model || "ibm/granite-embedding:278m";
+      case "tei":
+        return semanticConfig.embedding?.tei?.selected_model || "ibm-granite/granite-embedding-english-r2";
+      case "memory":
+      default:
+        return "deterministic-hash";
+    }
+  }
+
   private async setupComponents(): Promise<void> {
     const config = getConfig();
-    console.error(
-      `[${this.id}] Initializing embedding generator with provider: ${config.mcp?.embedding?.provider || "memory"}`,
-    );
-    console.error(`[${this.id}] Embedding model: ${config.mcp?.embedding?.model || "Xenova/all-MiniLM-L6-v2"}`);
+    // Load semantic config from semantic-config.json (set by setup-embedding command)
+    const semanticConfig = loadSemanticConfig();
+
+    // Map semantic-config.json platform to provider
+    const provider = this.mapSemanticConfigToProvider(semanticConfig);
+    const modelName = this.getModelNameFromSemanticConfig(semanticConfig);
+
+    console.error(`[${this.id}] Initializing embedding generator with provider: ${provider}`);
+    console.error(`[${this.id}] Embedding model: ${modelName}`);
     console.error(`[${this.id}] Database path from config: ${config.database?.path || "undefined"}`);
+    console.error(`[${this.id}] Semantic config loaded: ${semanticConfig ? "yes" : "no (using defaults)"}`);
 
     const warmupSettings = config.mcp?.semantic;
     if (warmupSettings?.cacheWarmupLimit && warmupSettings.cacheWarmupLimit > 0) {
@@ -212,41 +275,33 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     }
 
     this.embeddingGen = new EmbeddingGenerator({
-      provider: config.mcp?.embedding?.provider || "memory",
-      modelName: config.mcp?.embedding?.model || "Xenova/all-MiniLM-L6-v2",
+      provider,
+      modelName,
       quantized: true,
       localPath: AGENT_CONFIG.modelPath,
       batchSize: this.embeddingBatchSize,
-      ollama: config.mcp?.embedding?.ollama
-        ? {
-            baseUrl: config.mcp.embedding.ollama.baseUrl,
-            timeoutMs: config.mcp.embedding.ollama.timeoutMs || config.mcp.embedding.ollama.timeout,
-            concurrency: config.mcp.embedding.ollama.concurrency,
-            headers: config.mcp.embedding.ollama.headers,
-            autoPull: config.mcp.embedding.ollama.autoPull,
-            warmupText: config.mcp.embedding.ollama.warmupText,
-            checkServer: config.mcp.embedding.ollama.checkServer,
-            pullTimeoutMs: config.mcp.embedding.ollama.pullTimeoutMs,
-          }
-        : undefined,
-      openai: config.mcp?.embedding?.openai
-        ? {
-            baseUrl: config.mcp.embedding.openai.baseUrl,
-            apiKey: config.mcp.embedding.openai.apiKey,
-            timeoutMs: config.mcp.embedding.openai.timeoutMs || config.mcp.embedding.openai.timeout,
-            concurrency: config.mcp.embedding.openai.concurrency,
-            maxBatchSize: config.mcp.embedding.openai.maxBatchSize,
-          }
-        : undefined,
-      cloudru: config.mcp?.embedding?.cloudru
-        ? {
-            baseUrl: config.mcp.embedding.cloudru.baseUrl || "https://foundation-models.api.cloud.ru",
-            apiKey: config.mcp.embedding.cloudru.apiKey || process.env.MCP_EMBEDDING_API_KEY || "",
-            timeoutMs: config.mcp.embedding.cloudru.timeoutMs || config.mcp.embedding.cloudru.timeout || 15000,
-            concurrency: config.mcp.embedding.cloudru.concurrency || 4,
-            maxBatchSize: config.mcp.embedding.cloudru.maxBatchSize,
-          }
-        : undefined,
+      // Only configure ollama if explicitly set in semantic-config.json
+      ollama:
+        semanticConfig?.embedding?.platform === "ollama" && semanticConfig?.embedding?.ollama
+          ? {
+              baseUrl: semanticConfig.embedding.ollama.endpoint,
+            }
+          : undefined,
+      // Only configure TEI if explicitly set in semantic-config.json
+      tei:
+        semanticConfig?.embedding?.platform === "tei" && semanticConfig?.embedding?.tei
+          ? {
+              baseUrl: semanticConfig.embedding.tei.endpoint,
+            }
+          : undefined,
+      // Only configure OpenVINO if explicitly set in semantic-config.json
+      openvino:
+        semanticConfig?.embedding?.platform === "openvino" && semanticConfig?.embedding?.openvino
+          ? {
+              model: semanticConfig.embedding.openvino.selected_model,
+              device: semanticConfig.embedding.openvino.device,
+            }
+          : undefined,
       memory: config.mcp?.embedding?.memory,
     });
 
@@ -254,31 +309,36 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const dimensions = await this.getEmbeddingDimensions();
     console.error(`[${this.id}] Using ${dimensions} dimensions for vector store`);
 
-    // Initialize components - use centralized storage path
+    // v3: Use global database with project context
     const workingDir = getCurrentIndexingDirectory() || process.cwd();
-    const projectPaths = getProjectPaths(workingDir);
-    // Use centralized path unless explicit path is configured
-    const isExplicitPath = config.database?.path && config.database.path.length > 0;
-    const dbPath = isExplicitPath ? config.database.path : projectPaths.vectorsDbPath;
-    console.error(`[${this.id}] VectorStore path: ${dbPath}`);
-
-    // Get vector backend configuration
-    const vectorBackend = config.vectorBackend || {};
     console.error(
-      `[${this.id}] Vector backend mode: ${vectorBackend.backend || "auto"}, threshold: ${vectorBackend.autoSwitchThreshold || 10000}`,
+      `[${this.id}] getCurrentIndexingDirectory()=${getCurrentIndexingDirectory()}, process.cwd()=${process.cwd()}, workingDir=${workingDir}`,
     );
+    const globalPaths = getGlobalDbPaths();
+    // Use global path unless explicit path is configured
+    const isExplicitPath = config.database?.path && config.database.path.length > 0;
+    const dbPath = isExplicitPath ? config.database.path : globalPaths.vectorsDbPath;
+    console.error(`[${this.id}] v3: VectorStore using global database: ${dbPath}`);
+
+    // Get vector backend configuration (libsql only)
+    const vectorBackend = config.vectorBackend || {};
+    console.error(`[${this.id}] Vector backend: libsql DiskANN`);
 
     this.vectorStore = new VectorStore({
       dbPath: dbPath,
       dimensions: dimensions,
-      backend: vectorBackend.backend || "auto",
-      autoSwitchThreshold: vectorBackend.autoSwitchThreshold || 10000,
-      vectorlite: vectorBackend.vectorlite,
-      workingDirectory: workingDir, // For quick file count estimation
+      workingDirectory: workingDir,
+      libsql: vectorBackend.libsql,
     });
 
     // Wait for vector store to be fully initialized
     await this.vectorStore.initialize();
+
+    // v3: Set project context for the current working directory
+    this.vectorStore.setProject(workingDir, DEFAULT_BRANCH);
+    console.error(
+      `[${this.id}] v3: VectorStore context set to project=${getProjectHash(workingDir)}, branch=${DEFAULT_BRANCH}`,
+    );
     console.error(`[${this.id}] Vector store initialized successfully`);
 
     this.hybridSearch = new HybridSearchEngine(this.vectorStore, this.embeddingGen);
@@ -298,67 +358,143 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
   /**
    * Initialize the semantic agent
+   * Ollama check and warmup run in background to avoid blocking startup
    */
   protected async onInitialize(): Promise<void> {
     console.error(`[${this.id}] Initializing semantic components...`);
 
-    await this.embeddingGen.initialize();
-    this.embeddingGen.setBatchSize(this.embeddingBatchSize);
+    // Initialize embedding generator (non-blocking Ollama check)
+    this.initializeEmbeddingGenAsync();
 
     // Update initial metrics
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
 
-    await this.warmupSemanticCache();
-
     console.error(`[${this.id}] Semantic agent initialized with ${this.semanticMetrics.vectorsStored} vectors`);
+    console.error(`[${this.id}] Ollama check and warmup running in background...`);
   }
 
   /**
-   * Reinitialize VectorStore for a new project directory.
-   * Called when switching between projects to ensure embeddings are stored/read from correct location.
+   * Async initialization of embedding generator and warmup (non-blocking)
    */
-  async reinitializeForProject(projectPath: string): Promise<void> {
-    const currentPath = this.vectorStore?.getDbPath?.() || "";
-    const projectPaths = getProjectPaths(projectPath);
-    const newDbPath = projectPaths.vectorsDbPath;
+  private initializeEmbeddingGenAsync(): void {
+    // Create promise that resolves when embedding generator is ready
+    this.embeddingReadyPromise = (async () => {
+      try {
+        const startTime = Date.now();
+        await this.embeddingGen.initialize();
+        this.embeddingGen.setBatchSize(this.embeddingBatchSize);
+        this.embeddingReady = true;
+        const initTime = Date.now() - startTime;
+        console.error(`[${this.id}] Embedding generator ready (${initTime}ms)`);
 
-    // Skip if already using this path
-    if (currentPath === newDbPath) {
-      console.error(`[${this.id}] VectorStore already using correct path: ${newDbPath}`);
+        // Warmup cache in background (don't block embeddingReady)
+        this.warmupSemanticCache()
+          .then(() => {
+            console.error(`[${this.id}] Semantic warmup complete`);
+          })
+          .catch((err) => {
+            console.error(`[${this.id}] Semantic warmup failed:`, err);
+          });
+      } catch (error) {
+        console.error(`[${this.id}] Embedding initialization failed:`, error);
+        throw error;
+      }
+    })();
+  }
+
+  /**
+   * Wait for embedding generator to be ready (for operations that need it)
+   */
+  async waitForEmbeddingReady(timeoutMs = 60000): Promise<boolean> {
+    if (this.embeddingReady) return true;
+    if (!this.embeddingReadyPromise) return false;
+
+    try {
+      await Promise.race([
+        this.embeddingReadyPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), timeoutMs)),
+      ]);
+      return this.embeddingReady;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check if embedding generator is ready (non-blocking)
+   */
+  isEmbeddingReady(): boolean {
+    return this.embeddingReady;
+  }
+
+  /**
+   * Switch VectorStore to a new project context.
+   * v3: With unified database, we just change the project context instead of recreating VectorStore.
+   *
+   * @param projectPath - The project directory path
+   * @param branchName - Optional branch name (defaults to 'main')
+   */
+  async reinitializeForProject(projectPath: string, branchName?: string): Promise<void> {
+    const currentContext = this.vectorStore?.getProjectContext?.();
+    const newProjectHash = getProjectHash(projectPath);
+    const newBranchName = branchName || DEFAULT_BRANCH;
+
+    // Skip if already using this context
+    if (currentContext?.projectHash === newProjectHash && currentContext?.branchName === newBranchName) {
+      console.error(
+        `[${this.id}] v3: VectorStore already using correct context: project=${newProjectHash}, branch=${newBranchName}`,
+      );
       return;
     }
 
-    console.error(`[${this.id}] Reinitializing VectorStore for project: ${projectPath}`);
-    console.error(`[${this.id}] Old path: ${currentPath}`);
-    console.error(`[${this.id}] New path: ${newDbPath}`);
+    console.error(`[${this.id}] v3: Switching VectorStore context to project: ${projectPath}`);
+    console.error(
+      `[${this.id}] v3: Old context: project=${currentContext?.projectHash}, branch=${currentContext?.branchName}`,
+    );
+    console.error(`[${this.id}] v3: New context: project=${newProjectHash}, branch=${newBranchName}`);
 
-    // Get dimensions from current embedding generator
-    const dimensions = await this.getEmbeddingDimensions();
+    // v3: Just change the project context - no VectorStore recreation needed!
+    this.vectorStore.setProject(projectPath, newBranchName);
 
-    // Get config for vector backend settings
-    const config = getConfig();
-    const vectorBackend = config.vectorBackend || {};
-
-    // Create new VectorStore for the project
-    this.vectorStore = new VectorStore({
-      dbPath: newDbPath,
-      dimensions: dimensions,
-      backend: vectorBackend.backend || "auto",
-      autoSwitchThreshold: vectorBackend.autoSwitchThreshold || 10000,
-      vectorlite: vectorBackend.vectorlite,
-      workingDirectory: projectPath,
-    });
-
-    await this.vectorStore.initialize();
-
-    // Update HybridSearch and CodeAnalyzer with new VectorStore
-    this.hybridSearch = new HybridSearchEngine(this.vectorStore, this.embeddingGen);
-    this.codeAnalyzer = new CodeAnalyzer(this.vectorStore, this.embeddingGen, this.cache);
-
-    // Update metrics
+    // Update metrics for new context
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
 
-    console.error(`[${this.id}] VectorStore reinitialized with ${this.semanticMetrics.vectorsStored} vectors`);
+    console.error(
+      `[${this.id}] v3: VectorStore context switched. Vectors in new context: ${this.semanticMetrics.vectorsStored}`,
+    );
+  }
+
+  /**
+   * Switch to a different branch within the current project
+   * v3: New method for branch switching without project change
+   */
+  async switchBranch(branchName: string): Promise<void> {
+    const currentContext = this.vectorStore?.getProjectContext?.();
+    if (!currentContext) {
+      console.error(`[${this.id}] v3: Cannot switch branch - no current context`);
+      return;
+    }
+
+    const newBranchName = branchName || DEFAULT_BRANCH;
+
+    // Skip if already on this branch
+    if (currentContext.branchName === newBranchName) {
+      console.error(`[${this.id}] v3: Already on branch: ${newBranchName}`);
+      return;
+    }
+
+    console.error(`[${this.id}] v3: Switching branch from ${currentContext.branchName} to ${newBranchName}`);
+
+    // Update context with new branch
+    this.vectorStore.setProjectContext({
+      projectHash: currentContext.projectHash,
+      branchName: newBranchName,
+    });
+
+    // Update metrics for new branch
+    this.semanticMetrics.vectorsStored = await this.vectorStore.count();
+
+    console.error(`[${this.id}] v3: Branch switched. Vectors in new branch: ${this.semanticMetrics.vectorsStored}`);
   }
 
   // TASK-004B: Circuit breaker implementation methods
@@ -781,74 +917,230 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   // Knowledge Bus integration
 
   private subscribeToKnowledgeBus(): void {
-    knowledgeBus.subscribe(this.id, "index:complete", this.handleIndexComplete.bind(this));
-    knowledgeBus.subscribe(this.id, "index:completed", this.handleIndexComplete.bind(this));
+    // DISABLED: These subscriptions caused multiple processing of same entities
+    // index:complete and index:completed were duplicating semantic:new_entities work
+    // knowledgeBus.subscribe(this.id, "index:complete", this.handleIndexComplete.bind(this));
+    // knowledgeBus.subscribe(this.id, "index:completed", this.handleIndexComplete.bind(this));
 
-    // Subscribe to entity updates
-    knowledgeBus.subscribe(this.id, /^entity:.*/, this.handleEntityUpdate.bind(this));
+    // DISABLED: entity:* regex subscription caused excessive updates
+    // knowledgeBus.subscribe(this.id, /^entity:.*/, this.handleEntityUpdate.bind(this));
 
-    // Subscribe to semantic ingestion of new parsed entities
-    console.error(`[${this.id}] Subscribing to semantic:new_entities...`);
+    // ENABLED: semantic:new_entities subscription with queue-based processing
+    // Entities are queued and processed in batches when embedding generator is ready
     knowledgeBus.subscribe(this.id, "semantic:new_entities", async (entry) => {
       try {
         const ents = entry.data as ParsedEntity[];
-        console.error(`[${this.id}] Received semantic:new_entities event with ${ents?.length || 0} entities`);
         if (Array.isArray(ents) && ents.length > 0) {
-          // Log entity types for debugging
-          const typeCounts = new Map<string, number>();
-          for (const e of ents) {
-            const t = (e as any).type || "unknown";
-            typeCounts.set(t, (typeCounts.get(t) || 0) + 1);
-          }
-          console.error(`[${this.id}] Entity types: ${JSON.stringify(Object.fromEntries(typeCounts))}`);
-          await this.handleNewEntities(ents);
+          this.queueEntitiesForEmbedding(ents);
         }
       } catch (e) {
-        console.error(`[${this.id}] semantic:new_entities failed:`, (e as Error).message);
+        console.error(`[${this.id}] semantic:new_entities queue failed:`, (e as Error).message);
       }
     });
+    console.error(`[${this.id}] semantic:new_entities subscription ENABLED with queue`);
 
     knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this));
 
     console.error(`[${this.id}] Subscribed to knowledge bus events`);
   }
 
-  private async handleIndexComplete(entry: KnowledgeEntry): Promise<void> {
-    const payload = entry.data as { entities?: ParsedEntity[] } | ParsedEntity[] | undefined;
-    const entities = Array.isArray(payload)
-      ? payload
-      : Array.isArray((payload as any)?.entities)
-        ? (payload as any).entities
-        : null;
+  // handleIndexComplete and handleEntityUpdate removed - subscriptions disabled to prevent duplicate processing
 
-    if (entities && entities.length > 0) {
-      await this.handleNewEntities(entities);
-    } else if (this.debugMode) {
-      console.error(`[${this.id}] index:complete received without entity payload`, payload);
+  /**
+   * Queue entities for embedding generation during indexing.
+   * Entities are processed in batches as soon as embedding generator is ready.
+   */
+  private queueEntitiesForEmbedding(entities: ParsedEntity[]): void {
+    this.pendingEntitiesQueue.push(...entities);
+    logger.debug("EMBEDDING_QUEUE", `Queued ${entities.length} entities`, {
+      queueSize: this.pendingEntitiesQueue.length,
+      embeddingReady: this.embeddingReady,
+    });
+
+    // Start queue processor if not running and embedding is ready
+    if (this.embeddingReady && !this.isProcessingEmbeddingQueue) {
+      this.processEmbeddingQueue();
+    } else if (!this.embeddingReady && !this.queueProcessorInterval) {
+      // Start checking for embedding readiness every 500ms
+      this.queueProcessorInterval = setInterval(() => {
+        if (this.embeddingReady && this.pendingEntitiesQueue.length > 0 && !this.isProcessingEmbeddingQueue) {
+          this.processEmbeddingQueue();
+        }
+      }, 500);
     }
   }
 
-  private async handleEntityUpdate(entry: KnowledgeEntry): Promise<void> {
-    const entity = entry.data as ParsedEntity;
-    const e: any = entity as any;
+  /**
+   * Process queued entities in batches.
+   * Runs in parallel with indexing.
+   */
+  private async processEmbeddingQueue(): Promise<void> {
+    if (this.isProcessingEmbeddingQueue || !this.embeddingReady) return;
 
-    // Generate embedding for the updated entity
-    const text = `${e.name} ${e.type} ${e.signature ?? ""}`;
-    const embedding = await this.embeddingGen.generateEmbedding(text);
+    this.isProcessingEmbeddingQueue = true;
+    const startTime = Date.now();
+    let totalProcessed = 0;
 
-    // Update vector store with correct path
-    const storage = await getGraphStorage();
-    const filePath = e.filePath ?? e.path ?? (await storage.getEntity(e.id))?.filePath ?? "";
-    await this.vectorStore.update(e.id, embedding, {
-      path: filePath,
-      type: e.type,
-      name: e.name,
-    });
+    try {
+      let batchCount = 0;
+      while (this.pendingEntitiesQueue.length > 0) {
+        // Take a smaller batch (10 entities) to reduce memory pressure on native code
+        const batch = this.pendingEntitiesQueue.splice(0, 10);
+        if (batch.length === 0) break;
 
-    console.error(`[${this.id}] Updated embedding for entity: ${e.id}`);
+        logger.debug("EMBEDDING_QUEUE", `Processing batch`, {
+          batchSize: batch.length,
+          remaining: this.pendingEntitiesQueue.length,
+        });
+
+        try {
+          await this.handleNewEntities(batch);
+          totalProcessed += batch.length;
+        } catch (e) {
+          console.error(`[${this.id}] Queue batch processing failed:`, (e as Error).message);
+          // Don't re-queue failed entities to avoid infinite loops
+        }
+
+        batchCount++;
+        // Longer delay between batches to allow GC and reduce pressure on native libs (libsql + openvino)
+        if (this.pendingEntitiesQueue.length > 0) {
+          // Every 5 batches, take a longer pause for memory cleanup
+          const delay = batchCount % 5 === 0 ? 200 : 50;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    } finally {
+      this.isProcessingEmbeddingQueue = false;
+      const elapsed = Date.now() - startTime;
+
+      if (totalProcessed > 0) {
+        logger.info("EMBEDDING_QUEUE", `Queue processed`, {
+          totalProcessed,
+          elapsedMs: elapsed,
+          avgPerEntity: Math.round(elapsed / totalProcessed),
+        });
+      }
+
+      // Stop interval if queue is empty
+      if (this.pendingEntitiesQueue.length === 0 && this.queueProcessorInterval) {
+        clearInterval(this.queueProcessorInterval);
+        this.queueProcessorInterval = null;
+      }
+    }
   }
 
-  private async handleNewEntities(entities: ParsedEntity[]): Promise<void> {
+  /**
+   * Get queue status for monitoring.
+   */
+  getEmbeddingQueueStatus(): { pending: number; processing: boolean; ready: boolean } {
+    return {
+      pending: this.pendingEntitiesQueue.length,
+      processing: this.isProcessingEmbeddingQueue,
+      ready: this.embeddingReady,
+    };
+  }
+
+  /**
+   * Generate embeddings for all entities in storage that don't have embeddings yet.
+   * Called after indexing completes to ensure semantic search works.
+   *
+   * With parallel queue processing:
+   * 1. First waits for any queued entities to finish processing
+   * 2. Then checks for any remaining entities without embeddings
+   * 3. Generates embeddings only for entities not yet processed
+   */
+  async generateEmbeddingsFromStorage(): Promise<{ generated: number; skipped: number }> {
+    const waitStart = Date.now();
+    logger.info("EMBEDDING_GEN", `START`, {
+      agentId: this.id,
+      embeddingReady: this.embeddingReady,
+      queueSize: this.pendingEntitiesQueue.length,
+      queueProcessing: this.isProcessingEmbeddingQueue,
+    });
+
+    // Wait for embedding generator to be ready
+    const ready = await this.waitForEmbeddingReady(300000);
+    const waitTime = Date.now() - waitStart;
+
+    if (!ready) {
+      logger.warn("EMBEDDING_GEN", `Generator not ready after 5 min, skipping`, {
+        agentId: this.id,
+        waitTimeMs: waitTime,
+      });
+      return { generated: 0, skipped: 0 };
+    }
+
+    logger.info("EMBEDDING_GEN", `Generator ready`, { agentId: this.id, waitTimeMs: waitTime });
+
+    // Wait for queue to finish processing (parallel embeddings during indexing)
+    if (this.isProcessingEmbeddingQueue || this.pendingEntitiesQueue.length > 0) {
+      logger.info("EMBEDDING_GEN", `Waiting for queue to finish`, {
+        queueSize: this.pendingEntitiesQueue.length,
+        processing: this.isProcessingEmbeddingQueue,
+      });
+
+      // Trigger queue processing if not running
+      if (!this.isProcessingEmbeddingQueue && this.pendingEntitiesQueue.length > 0) {
+        this.processEmbeddingQueue();
+      }
+
+      // Wait for queue to empty (max 60 seconds)
+      const queueWaitStart = Date.now();
+      while (
+        (this.isProcessingEmbeddingQueue || this.pendingEntitiesQueue.length > 0) &&
+        Date.now() - queueWaitStart < 60000
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      const queueWaitTime = Date.now() - queueWaitStart;
+      logger.info("EMBEDDING_GEN", `Queue finished`, { queueWaitMs: queueWaitTime });
+    }
+
+    const beforeCount = await this.vectorStore.count();
+
+    // Check how many entities still need embeddings
+    const { getGraphStorage } = await import("../storage/graph-storage-factory.js");
+    const storage = await getGraphStorage();
+    const allEntities = await storage.findEntities({ type: "entity", limit: 100000 });
+
+    if (allEntities.length === 0) {
+      logger.info("EMBEDDING_GEN", `No entities found`);
+      return { generated: 0, skipped: 0 };
+    }
+
+    // Convert to ParsedEntity format
+    const parsedEntities: ParsedEntity[] = allEntities.map((e: any) => ({
+      id: e.id,
+      name: e.name,
+      type: e.type,
+      filePath: e.filePath,
+      location: e.location,
+      language: e.language,
+      metadata: e.metadata,
+    }));
+
+    // handleNewEntities already skips entities with existing embeddings
+    logger.info("EMBEDDING_GEN", `Processing remaining entities`, {
+      totalEntities: parsedEntities.length,
+      existingEmbeddings: beforeCount,
+    });
+
+    await this.handleNewEntities(parsedEntities);
+
+    const afterCount = await this.vectorStore.count();
+    const generated = afterCount - beforeCount;
+    const skipped = parsedEntities.length - generated;
+
+    logger.info("EMBEDDING_GEN", `DONE`, { generated, skipped, afterCount });
+    return { generated, skipped };
+  }
+
+  /**
+   * Process new entities and generate embeddings.
+   * Public method to allow direct calls from index tool handler.
+   */
+  async handleNewEntities(entities: ParsedEntity[]): Promise<void> {
     console.error(`[${this.id}] Processing ${entities?.length || 0} new entities for embedding`);
 
     if (!Array.isArray(entities)) {
@@ -883,11 +1175,17 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const filteredEntities: ParsedEntity[] = [];
     let skippedCount = 0;
 
+    // Use same stableId generation logic as when storing embeddings (lines 1038-1042)
+    const modelName = (this as any).embeddingGen?.modelName || "default";
+
     for (const entity of expandedEntities) {
       const e: any = entity;
+      // Same logic as in vectorEmbeddings creation below
       const stableId = e.id
         ? `ent:${e.id}`
-        : `ent:${e.type}:${e.name}:${(e.filePath || e.path || "").replace(/\\/g, "/")}`;
+        : `doc:${hashText(
+            `${e.filePath ?? ""}|${e.type}|${e.name}|${e.location?.start?.index ?? -1}-${e.location?.end?.index ?? -1}|${modelName}`,
+          ).slice(0, 24)}`;
 
       try {
         const existing = await this.vectorStore.get(stableId);
@@ -1040,7 +1338,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const embeddings = await this.embeddingGen.generateBatch(texts);
 
     const storage = await getGraphStorage();
-    const modelName = (this as any).embeddingGen?.modelName || "default";
+    // modelName already declared above at line 868
 
     const entityDataMap = new Map();
     for (const entity of filteredEntities) {
@@ -1175,8 +1473,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       // Insert comment entities into storage
       if (commentEntities.length > 0) {
         try {
+          // Use insertEntity (INSERT OR REPLACE) instead of upsertEntity (doesn't exist in GraphStorageLibSQL)
           for (const commentEntity of commentEntities) {
-            await storage.upsertEntity(commentEntity);
+            await storage.insertEntity(commentEntity);
           }
           totalCommentEntities += commentEntities.length;
 
@@ -1209,8 +1508,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       // Insert relationships into storage
       if (relationships.length > 0) {
         try {
+          // Use insertRelationship (INSERT OR REPLACE) instead of upsertRelationship (doesn't exist in GraphStorageLibSQL)
           for (const relationship of relationships) {
-            await storage.upsertRelationship(relationship);
+            await storage.insertRelationship(relationship);
           }
           totalRelationships += relationships.length;
         } catch (error) {

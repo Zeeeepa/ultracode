@@ -18,6 +18,7 @@
 // =============================================================================
 import { nanoid } from "nanoid";
 import xxhash from "xxhash-wasm";
+import { DEFAULT_BRANCH, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
 import type {
   BatchResult,
   Entity,
@@ -30,8 +31,35 @@ import type {
   RelationType,
   StorageMetrics,
 } from "../types/storage.js";
+
+// Re-export GraphStorage interface for external use
+export type { GraphStorage } from "../types/storage.js";
+
 import type { SQLiteDatabase, SQLiteStatement } from "./sqlite-adapter.js";
 import type { SQLiteManager } from "./sqlite-manager.js";
+
+// =============================================================================
+// PROJECT CONTEXT TYPE
+// =============================================================================
+
+/**
+ * Project context for all storage operations
+ * Contains project_hash and branch_name for filtering queries
+ */
+export interface ProjectContext {
+  projectHash: string;
+  branchName: string;
+}
+
+/**
+ * Create project context from project path and optional branch
+ */
+export function createProjectContext(projectPath: string, branchName?: string): ProjectContext {
+  return {
+    projectHash: getProjectHash(projectPath),
+    branchName: normalizeBranchName(branchName || DEFAULT_BRANCH),
+  };
+}
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -49,6 +77,13 @@ export class GraphStorageImpl implements GraphStorage {
   private db: SQLiteDatabase;
   private sqliteManager: SQLiteManager;
   private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
+  private _debugLoggedInsert = false; // DEBUG flag for logging
+
+  // Current project context for all operations
+  private currentContext: ProjectContext = {
+    projectHash: "legacy",
+    branchName: DEFAULT_BRANCH,
+  };
 
   // Prepared statements for performance
   private statements: {
@@ -61,12 +96,39 @@ export class GraphStorageImpl implements GraphStorage {
     updateFile?: SQLiteStatement;
     getFile?: SQLiteStatement;
     insertPerformanceMetric?: SQLiteStatement;
+    upsertProjectMeta?: SQLiteStatement;
   } = {};
 
   constructor(sqliteManager: SQLiteManager) {
     this.sqliteManager = sqliteManager;
     this.db = sqliteManager.getConnection();
     this.prepareStatements();
+  }
+
+  /**
+   * Set the current project context for all subsequent operations
+   * This replaces the old "switch project" pattern - no reconnection needed
+   */
+  setProjectContext(context: ProjectContext): void {
+    const oldContext = this.currentContext;
+    this.currentContext = context;
+    console.error(
+      `[GraphStorage] Context CHANGED: ${oldContext.projectHash}/${oldContext.branchName} -> ${context.projectHash}/${context.branchName}`,
+    );
+  }
+
+  /**
+   * Set project context from path and branch
+   */
+  setProject(projectPath: string, branchName?: string): void {
+    this.setProjectContext(createProjectContext(projectPath, branchName));
+  }
+
+  /**
+   * Get current project context
+   */
+  getProjectContext(): ProjectContext {
+    return { ...this.currentContext };
   }
 
   async initialize(): Promise<void> {
@@ -99,14 +161,15 @@ export class GraphStorageImpl implements GraphStorage {
 
   /**
    * Prepare frequently used statements
+   * v3: All statements now include project_hash and branch_name
    */
   private prepareStatements(): void {
-    // Enhanced entity operations with v2 fields
+    // Enhanced entity operations with v3 project context
     this.statements.insertEntity = this.db.prepare(`
       INSERT INTO entities
       (id, name, type, file_path, location, metadata, hash, created_at, updated_at,
-       complexity_score, language, size_bytes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       complexity_score, language, size_bytes, project_hash, branch_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         type = excluded.type,
@@ -117,52 +180,69 @@ export class GraphStorageImpl implements GraphStorage {
         updated_at = excluded.updated_at,
         complexity_score = excluded.complexity_score,
         language = excluded.language,
-        size_bytes = excluded.size_bytes
+        size_bytes = excluded.size_bytes,
+        project_hash = excluded.project_hash,
+        branch_name = excluded.branch_name
     `);
 
     this.statements.updateEntity = this.db.prepare(`
       UPDATE entities
       SET name = ?, type = ?, location = ?, metadata = ?, hash = ?, updated_at = ?,
           complexity_score = ?, language = ?, size_bytes = ?
-      WHERE id = ?
+      WHERE id = ? AND project_hash = ? AND branch_name = ?
     `);
 
     this.statements.deleteEntity = this.db.prepare(`
-      DELETE FROM entities WHERE id = ?
+      DELETE FROM entities WHERE id = ? AND project_hash = ? AND branch_name = ?
     `);
 
     this.statements.getEntity = this.db.prepare(`
-      SELECT * FROM entities WHERE id = ?
+      SELECT * FROM entities WHERE id = ? AND project_hash = ? AND branch_name = ?
     `);
 
-    // Enhanced relationship operations with v2 fields
+    // Enhanced relationship operations with v3 project context
     this.statements.insertRelationship = this.db.prepare(`
       INSERT INTO relationships
-      (id, from_id, to_id, type, metadata, weight, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (id, from_id, to_id, type, metadata, weight, created_at, project_hash, branch_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         metadata = COALESCE(excluded.metadata, relationships.metadata),
-        weight = excluded.weight
+        weight = excluded.weight,
+        project_hash = excluded.project_hash,
+        branch_name = excluded.branch_name
     `);
 
     this.statements.deleteRelationship = this.db.prepare(`
-      DELETE FROM relationships WHERE id = ?
+      DELETE FROM relationships WHERE id = ? AND project_hash = ? AND branch_name = ?
     `);
 
     this.statements.updateFile = this.db.prepare(`
       INSERT OR REPLACE INTO files
-      (path, hash, last_indexed, entity_count)
-      VALUES (?, ?, ?, ?)
+      (path, hash, last_indexed, entity_count, project_hash, branch_name)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
 
     this.statements.getFile = this.db.prepare(`
-      SELECT * FROM files WHERE path = ?
+      SELECT * FROM files WHERE path = ? AND project_hash = ? AND branch_name = ?
     `);
 
     // Performance monitoring statement
     this.statements.insertPerformanceMetric = this.db.prepare(`
       INSERT INTO performance_metrics (id, operation, duration_ms, entity_count, memory_usage, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    // Project metadata upsert
+    this.statements.upsertProjectMeta = this.db.prepare(`
+      INSERT INTO project_metadata
+      (project_hash, branch_name, project_path, last_indexed_at, entity_count, file_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_hash, branch_name) DO UPDATE SET
+        project_path = excluded.project_path,
+        last_indexed_at = excluded.last_indexed_at,
+        entity_count = excluded.entity_count,
+        file_count = excluded.file_count,
+        updated_at = excluded.updated_at
     `);
   }
 
@@ -175,6 +255,15 @@ export class GraphStorageImpl implements GraphStorage {
       "insert_entity",
       () => {
         const now = Date.now();
+        const { projectHash, branchName } = this.currentContext;
+
+        // DEBUG: Log first entity insert per batch to verify context
+        if (!this._debugLoggedInsert) {
+          console.error(
+            `[GraphStorage] INSERT ENTITY with context: ${projectHash}/${branchName}, entity: ${entity.name}`,
+          );
+          this._debugLoggedInsert = true;
+        }
 
         const id = this.stableEntityId(entity);
 
@@ -196,6 +285,8 @@ export class GraphStorageImpl implements GraphStorage {
           complexityScore,
           language,
           sizeBytes,
+          projectHash,
+          branchName,
         );
       },
       1,
@@ -210,6 +301,7 @@ export class GraphStorageImpl implements GraphStorage {
         const start = Date.now();
         const errors: Array<{ item: unknown; error: string }> = [];
         let processed = 0;
+        const { projectHash, branchName } = this.currentContext;
 
         const seen = new Set<string>();
         const uniq: Entity[] = [];
@@ -245,6 +337,8 @@ export class GraphStorageImpl implements GraphStorage {
                 complexityScore,
                 language,
                 sizeBytes,
+                projectHash,
+                branchName,
               );
 
               processed++;
@@ -282,6 +376,7 @@ export class GraphStorageImpl implements GraphStorage {
     }
 
     const updated = { ...existing, ...updates, updatedAt: Date.now() };
+    const { projectHash, branchName } = this.currentContext;
 
     // Recalculate enhanced fields if necessary
     const complexityScore = updated.complexityScore ?? this.calculateComplexity(updated);
@@ -299,24 +394,48 @@ export class GraphStorageImpl implements GraphStorage {
       language,
       sizeBytes,
       id,
+      projectHash,
+      branchName,
     );
   }
 
   async deleteEntity(id: string): Promise<void> {
     this.ensureReady();
-    this.statements.deleteEntity?.run(id);
+    const { projectHash, branchName } = this.currentContext;
+    this.statements.deleteEntity?.run(id, projectHash, branchName);
   }
 
   async getEntity(id: string): Promise<Entity | null> {
     this.ensureReady();
-    const row = this.statements.getEntity?.get(id) as any;
+    const { projectHash, branchName } = this.currentContext;
+    const row = this.statements.getEntity?.get(id, projectHash, branchName) as any;
+    return row ? this.rowToEntity(row) : null;
+  }
+
+  /**
+   * Get entity from specific branch (for cross-branch comparisons)
+   * This enables "find X in branch-1 and compare with branch-2" scenarios
+   */
+  async getEntityFromBranch(id: string, targetBranch: string): Promise<Entity | null> {
+    this.ensureReady();
+    const { projectHash } = this.currentContext;
+    const normalizedBranch = normalizeBranchName(targetBranch);
+    const row = this.statements.getEntity?.get(id, projectHash, normalizedBranch) as any;
     return row ? this.rowToEntity(row) : null;
   }
 
   async findEntities(query: GraphQuery): Promise<Entity[]> {
     this.ensureReady();
-    let sql = "SELECT * FROM entities WHERE 1=1";
-    const params: any[] = [];
+    const { projectHash, branchName } = this.currentContext;
+
+    // DEBUG: Log context on every query
+    console.error(
+      `[GraphStorage.findEntities] Query with context: projectHash=${projectHash}, branchName=${branchName}, filters=${JSON.stringify(query.filters)}`,
+    );
+
+    // Always filter by current project context
+    let sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+    const params: any[] = [projectHash, branchName];
 
     // Apply filters
     if (query.filters) {
@@ -377,22 +496,109 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   /**
-   * Get all entities (NEW - for Chaos Analysis)
+   * Find entities in a specific branch (for cross-branch comparisons)
+   * Example: findEntitiesInBranch(query, "feature/new-api") to compare with current branch
    */
-  async getAllEntities(): Promise<Entity[]> {
+  async findEntitiesInBranch(query: GraphQuery, targetBranch: string): Promise<Entity[]> {
     this.ensureReady();
-    const sql = "SELECT * FROM entities";
-    const rows = this.db.prepare(sql).all() as any[];
+    const { projectHash } = this.currentContext;
+    const normalizedBranch = normalizeBranchName(targetBranch);
+
+    let sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+    const params: any[] = [projectHash, normalizedBranch];
+
+    // Apply same filters as findEntities
+    if (query.filters) {
+      if (query.filters.entityType) {
+        const types = Array.isArray(query.filters.entityType) ? query.filters.entityType : [query.filters.entityType];
+        sql += ` AND type IN (${types.map(() => "?").join(",")})`;
+        params.push(...types);
+      }
+      if (query.filters.filePath) {
+        const paths = Array.isArray(query.filters.filePath) ? query.filters.filePath : [query.filters.filePath];
+        sql += ` AND file_path IN (${paths.map(() => "?").join(",")})`;
+        params.push(...paths);
+      }
+      if (query.filters.name) {
+        if (query.filters.name instanceof RegExp) {
+          let pattern = query.filters.name.source.replace(/\.\*/g, "%").replace(/\*/g, "%").replace(/\./g, "_");
+          if (!pattern.includes("%") && !pattern.includes("_")) pattern = `%${pattern}%`;
+          sql += " AND name LIKE ?";
+          params.push(pattern);
+        } else {
+          sql += " AND name = ?";
+          params.push(query.filters.name);
+        }
+      }
+    }
+
+    const limit = Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT);
+    sql += " LIMIT ? OFFSET ?";
+    params.push(limit, query.offset || 0);
+
+    const rows = this.db.prepare(sql).all(...params) as any[];
     return rows.map((row) => this.rowToEntity(row));
   }
 
   /**
-   * Search entities by pattern (NEW - for Chaos Analysis)
+   * Compare entities between two branches
+   * Returns entities that exist in both branches for comparison
+   */
+  async compareEntitiesBetweenBranches(
+    namePattern: string,
+    branch1: string,
+    branch2: string,
+  ): Promise<{ branch1Entities: Entity[]; branch2Entities: Entity[]; matched: Array<[Entity, Entity]> }> {
+    this.ensureReady();
+    const norm1 = normalizeBranchName(branch1);
+    const norm2 = normalizeBranchName(branch2);
+
+    const query: GraphQuery = {
+      type: "entity",
+      filters: { name: new RegExp(namePattern) },
+      limit: MAX_QUERY_LIMIT,
+    };
+
+    // Get entities from both branches in parallel
+    const [entities1, entities2] = await Promise.all([
+      this.findEntitiesInBranch(query, norm1),
+      this.findEntitiesInBranch(query, norm2),
+    ]);
+
+    // Match by stable ID (same file+name+location = same entity)
+    const map1 = new Map(entities1.map((e) => [this.entityKey(e), e]));
+    const matched: Array<[Entity, Entity]> = [];
+
+    for (const e2 of entities2) {
+      const key = this.entityKey(e2);
+      const e1 = map1.get(key);
+      if (e1) {
+        matched.push([e1, e2]);
+      }
+    }
+
+    return { branch1Entities: entities1, branch2Entities: entities2, matched };
+  }
+
+  /**
+   * Get all entities for current project/branch (for Chaos Analysis)
+   */
+  async getAllEntities(): Promise<Entity[]> {
+    this.ensureReady();
+    const { projectHash, branchName } = this.currentContext;
+    const sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+    const rows = this.db.prepare(sql).all(projectHash, branchName) as any[];
+    return rows.map((row) => this.rowToEntity(row));
+  }
+
+  /**
+   * Search entities by pattern (for Chaos Analysis)
    */
   async searchEntities(options: { namePattern?: string; types?: EntityType[]; filePath?: string }): Promise<Entity[]> {
     this.ensureReady();
-    let sql = "SELECT * FROM entities WHERE 1=1";
-    const params: any[] = [];
+    const { projectHash, branchName } = this.currentContext;
+    let sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+    const params: any[] = [projectHash, branchName];
 
     if (options.namePattern) {
       sql += " AND name LIKE ?";
@@ -419,6 +625,7 @@ export class GraphStorageImpl implements GraphStorage {
 
   async insertRelationship(relationship: Relationship): Promise<void> {
     this.ensureReady();
+    const { projectHash, branchName } = this.currentContext;
     const id = this.stableRelationshipId(relationship);
     const now = Date.now();
 
@@ -430,6 +637,8 @@ export class GraphStorageImpl implements GraphStorage {
       relationship.metadata ? JSON.stringify(relationship.metadata) : null,
       relationship.weight ?? 1.0,
       relationship.createdAt ?? now,
+      projectHash,
+      branchName,
     );
   }
 
@@ -438,6 +647,7 @@ export class GraphStorageImpl implements GraphStorage {
     const start = Date.now();
     const errors: Array<{ item: unknown; error: string }> = [];
     let processed = 0;
+    const { projectHash, branchName } = this.currentContext;
 
     const seen = new Set<string>();
     const uniq: Relationship[] = [];
@@ -462,6 +672,8 @@ export class GraphStorageImpl implements GraphStorage {
             r.metadata ? JSON.stringify(r.metadata) : null,
             r.weight ?? 1.0,
             r.createdAt ?? now,
+            projectHash,
+            branchName,
           );
           processed++;
         } catch (error) {
@@ -486,16 +698,18 @@ export class GraphStorageImpl implements GraphStorage {
 
   async deleteRelationship(id: string): Promise<void> {
     this.ensureReady();
-    this.statements.deleteRelationship?.run(id);
+    const { projectHash, branchName } = this.currentContext;
+    this.statements.deleteRelationship?.run(id, projectHash, branchName);
   }
 
   async getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]> {
     this.ensureReady();
+    const { projectHash, branchName } = this.currentContext;
     let sql = `
-      SELECT * FROM relationships 
-      WHERE (from_id = ? OR to_id = ?)
+      SELECT * FROM relationships
+      WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
     `;
-    const params: any[] = [entityId, entityId];
+    const params: any[] = [projectHash, branchName, entityId, entityId];
 
     if (type) {
       sql += " AND type = ?";
@@ -508,8 +722,9 @@ export class GraphStorageImpl implements GraphStorage {
 
   async findRelationships(query: GraphQuery): Promise<Relationship[]> {
     this.ensureReady();
-    let sql = "SELECT * FROM relationships WHERE 1=1";
-    const params: any[] = [];
+    const { projectHash, branchName } = this.currentContext;
+    let sql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
+    const params: any[] = [projectHash, branchName];
 
     // Apply filters
     if (query.filters) {
@@ -532,10 +747,36 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   /**
-   * Get relationships (alias for getRelationshipsForEntity - NEW for Chaos Analysis)
+   * Get relationships (alias for getRelationshipsForEntity - for Chaos Analysis)
    */
   async getRelationships(sourceId: string, type?: RelationType): Promise<Relationship[]> {
     return this.getRelationshipsForEntity(sourceId, type);
+  }
+
+  /**
+   * Get relationships from a specific branch (for cross-branch comparisons)
+   */
+  async getRelationshipsFromBranch(
+    entityId: string,
+    targetBranch: string,
+    type?: RelationType,
+  ): Promise<Relationship[]> {
+    this.ensureReady();
+    const { projectHash } = this.currentContext;
+    const normalizedBranch = normalizeBranchName(targetBranch);
+    let sql = `
+      SELECT * FROM relationships
+      WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
+    `;
+    const params: any[] = [projectHash, normalizedBranch, entityId, entityId];
+
+    if (type) {
+      sql += " AND type = ?";
+      params.push(type);
+    }
+
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map((row) => this.rowToRelationship(row));
   }
 
   /**
@@ -544,15 +785,16 @@ export class GraphStorageImpl implements GraphStorage {
    */
   async findIncomingRelationshipsByName(entityName: string, types?: RelationType[]): Promise<Relationship[]> {
     this.ensureReady();
+    const { projectHash, branchName } = this.currentContext;
 
     // First, find all entities that reference this name in their toId
     // This handles cases where toId is a phantom entity with name like "file:actionName"
     let sql = `
       SELECT r.* FROM relationships r
       JOIN entities e ON r.to_id = e.id
-      WHERE e.name LIKE ?
+      WHERE r.project_hash = ? AND r.branch_name = ? AND e.name LIKE ?
     `;
-    const params: any[] = [`%${entityName}`];
+    const params: any[] = [projectHash, branchName, `%${entityName}`];
 
     if (types && types.length > 0) {
       sql += ` AND r.type IN (${types.map(() => "?").join(",")})`;
@@ -569,12 +811,14 @@ export class GraphStorageImpl implements GraphStorage {
 
   async updateFileInfo(info: FileInfo): Promise<void> {
     this.ensureReady();
-    this.statements.updateFile?.run(info.path, info.hash, info.lastIndexed, info.entityCount);
+    const { projectHash, branchName } = this.currentContext;
+    this.statements.updateFile?.run(info.path, info.hash, info.lastIndexed, info.entityCount, projectHash, branchName);
   }
 
   async getFileInfo(path: string): Promise<FileInfo | null> {
     this.ensureReady();
-    const row = this.statements.getFile?.get(path) as any;
+    const { projectHash, branchName } = this.currentContext;
+    const row = this.statements.getFile?.get(path, projectHash, branchName) as any;
 
     return row
       ? {
@@ -588,13 +832,14 @@ export class GraphStorageImpl implements GraphStorage {
 
   async getOutdatedFiles(since: number): Promise<FileInfo[]> {
     this.ensureReady();
+    const { projectHash, branchName } = this.currentContext;
     const rows = this.db
       .prepare(`
-      SELECT * FROM files 
-      WHERE last_indexed < ?
+      SELECT * FROM files
+      WHERE project_hash = ? AND branch_name = ? AND last_indexed < ?
       ORDER BY last_indexed ASC
     `)
-      .all(since) as any[];
+      .all(projectHash, branchName, since) as any[];
 
     return rows.map((row) => ({
       path: row.path,
@@ -709,8 +954,9 @@ export class GraphStorageImpl implements GraphStorage {
   async getMetrics(): Promise<StorageMetrics> {
     return this.measureOperation("get_metrics", async () => {
       const baseMetrics = await this.sqliteManager.getMetrics();
+      const { projectHash, branchName } = this.currentContext;
 
-      // Get cache metrics with enhanced v2 fields
+      // Get cache metrics with enhanced v2 fields (project-scoped)
       const cacheStats = this.db
         .prepare(`
         SELECT
@@ -718,9 +964,9 @@ export class GraphStorageImpl implements GraphStorage {
           SUM(hit_count) as hits,
           SUM(miss_count) as misses
         FROM query_cache
-        WHERE expires_at > ?
+        WHERE expires_at > ? AND project_hash = ? AND branch_name = ?
       `)
-        .get(Date.now()) as { entries: number; hits: number; misses: number };
+        .get(Date.now(), projectHash, branchName) as { entries: number; hits: number; misses: number };
 
       // Get embeddings count
       const embeddingsCount = this.db
@@ -748,13 +994,20 @@ export class GraphStorageImpl implements GraphStorage {
       // Get last vacuum time (stored as user_version for simplicity)
       const lastVacuum = this.db.pragma("user_version", { simple: true }) as number;
 
-      // Check if vector search is enabled (sqlite-vec extension)
+      // Check if vector search is enabled (libsql or fallback)
       let vectorSearchEnabled = false;
       try {
-        this.db.prepare("SELECT vec_version()").get();
-        vectorSearchEnabled = true;
+        // Check for libsql embeddings table
+        const result = this.db.prepare("SELECT COUNT(*) as cnt FROM libsql_embeddings").get() as { cnt: number };
+        vectorSearchEnabled = result.cnt >= 0;
       } catch {
-        // sqlite-vec not available
+        try {
+          // Check for fallback embeddings table
+          const result = this.db.prepare("SELECT COUNT(*) as cnt FROM doc_embeddings").get() as { cnt: number };
+          vectorSearchEnabled = result.cnt >= 0;
+        } catch {
+          // No vector tables available
+        }
       }
 
       // Get current memory usage
@@ -775,6 +1028,95 @@ export class GraphStorageImpl implements GraphStorage {
         averageQueryTimeMs: avgQueryTime.avg_time || 0,
       } as StorageMetrics;
     });
+  }
+
+  /**
+   * Get storage statistics (v4 interface compliance)
+   */
+  async getStatistics(): Promise<{ totalEntities: number; totalRelationships: number; totalFiles: number }> {
+    const metrics = await this.getMetrics();
+    return {
+      totalEntities: metrics.totalEntities,
+      totalRelationships: metrics.totalRelationships,
+      totalFiles: metrics.totalFiles,
+    };
+  }
+
+  /**
+   * Update project metadata after indexing
+   */
+  async updateProjectMetadata(projectPath: string): Promise<void> {
+    this.ensureReady();
+    const { projectHash, branchName } = this.currentContext;
+    const now = Date.now();
+
+    // Count entities and files for this project/branch
+    const entityCount = this.db
+      .prepare("SELECT COUNT(*) as count FROM entities WHERE project_hash = ? AND branch_name = ?")
+      .get(projectHash, branchName) as { count: number };
+    const fileCount = this.db
+      .prepare("SELECT COUNT(*) as count FROM files WHERE project_hash = ? AND branch_name = ?")
+      .get(projectHash, branchName) as { count: number };
+
+    this.statements.upsertProjectMeta?.run(
+      projectHash,
+      branchName,
+      projectPath,
+      now,
+      entityCount.count,
+      fileCount.count,
+      now,
+      now,
+    );
+  }
+
+  /**
+   * List all indexed projects
+   */
+  async listProjects(): Promise<
+    Array<{
+      projectHash: string;
+      branchName: string;
+      projectPath: string;
+      lastIndexedAt: number;
+      entityCount: number;
+      fileCount: number;
+    }>
+  > {
+    this.ensureReady();
+    const rows = this.db
+      .prepare(`
+      SELECT project_hash, branch_name, project_path, last_indexed_at, entity_count, file_count
+      FROM project_metadata
+      ORDER BY updated_at DESC
+    `)
+      .all() as any[];
+
+    return rows.map((r) => ({
+      projectHash: r.project_hash,
+      branchName: r.branch_name,
+      projectPath: r.project_path,
+      lastIndexedAt: r.last_indexed_at,
+      entityCount: r.entity_count,
+      fileCount: r.file_count,
+    }));
+  }
+
+  /**
+   * List branches for current project
+   */
+  async listBranches(): Promise<string[]> {
+    this.ensureReady();
+    const { projectHash } = this.currentContext;
+    const rows = this.db
+      .prepare(`
+      SELECT DISTINCT branch_name FROM project_metadata
+      WHERE project_hash = ?
+      ORDER BY branch_name
+    `)
+      .all(projectHash) as Array<{ branch_name: string }>;
+
+    return rows.map((r) => r.branch_name);
   }
 
   // =============================================================================
@@ -1007,9 +1349,34 @@ export class GraphStorageImpl implements GraphStorage {
   }
 
   /**
-   * Clear all data (for testing)
+   * Clear all data for current project/branch
    */
   async clear(): Promise<void> {
+    this.ensureReady();
+    const { projectHash, branchName } = this.currentContext;
+    const transaction = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM embeddings WHERE project_hash = ? AND branch_name = ?").run(projectHash, branchName);
+      this.db
+        .prepare("DELETE FROM relationships WHERE project_hash = ? AND branch_name = ?")
+        .run(projectHash, branchName);
+      this.db.prepare("DELETE FROM entities WHERE project_hash = ? AND branch_name = ?").run(projectHash, branchName);
+      this.db.prepare("DELETE FROM files WHERE project_hash = ? AND branch_name = ?").run(projectHash, branchName);
+      this.db
+        .prepare("DELETE FROM query_cache WHERE project_hash = ? AND branch_name = ?")
+        .run(projectHash, branchName);
+      this.db
+        .prepare("DELETE FROM project_metadata WHERE project_hash = ? AND branch_name = ?")
+        .run(projectHash, branchName);
+    });
+
+    transaction();
+    console.error(`[GraphStorage] Cleared data for project=${projectHash}, branch=${branchName}`);
+  }
+
+  /**
+   * Clear ALL data (for testing only - clears all projects!)
+   */
+  async clearAll(): Promise<void> {
     this.ensureReady();
     const transaction = this.db.transaction(() => {
       this.db.exec("DELETE FROM embeddings");
@@ -1017,8 +1384,29 @@ export class GraphStorageImpl implements GraphStorage {
       this.db.exec("DELETE FROM entities");
       this.db.exec("DELETE FROM files");
       this.db.exec("DELETE FROM query_cache");
+      this.db.exec("DELETE FROM project_metadata");
     });
 
     transaction();
+    console.error(`[GraphStorage] Cleared ALL data from database`);
+  }
+
+  /**
+   * Delete a specific project and all its branches
+   */
+  async deleteProject(projectPath: string): Promise<void> {
+    this.ensureReady();
+    const targetHash = getProjectHash(projectPath);
+    const transaction = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM embeddings WHERE project_hash = ?").run(targetHash);
+      this.db.prepare("DELETE FROM relationships WHERE project_hash = ?").run(targetHash);
+      this.db.prepare("DELETE FROM entities WHERE project_hash = ?").run(targetHash);
+      this.db.prepare("DELETE FROM files WHERE project_hash = ?").run(targetHash);
+      this.db.prepare("DELETE FROM query_cache WHERE project_hash = ?").run(targetHash);
+      this.db.prepare("DELETE FROM project_metadata WHERE project_hash = ?").run(targetHash);
+    });
+
+    transaction();
+    console.error(`[GraphStorage] Deleted project: ${projectPath} (hash=${targetHash})`);
   }
 }

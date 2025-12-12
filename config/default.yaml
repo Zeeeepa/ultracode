@@ -26,9 +26,12 @@ mcp:
     # model: "ibm-granite/granite-embedding-english-r2"  # 8192 tokens, English
     #
     # OPENVINO (Local inference, optimized for Intel/AMD CPUs):
-    model: "Xenova/all-MiniLM-L6-v2"  # 384 dimensions, fast
+    # model: "Xenova/all-MiniLM-L6-v2"  # 384 dimensions, fast
+    # provider: "openvino"     # Options: tei, huggingface, ollama, openvino, memory, auto
 
-    provider: "openvino"     # Options: tei, huggingface, ollama, openvino, memory, auto
+    # MEMORY (Hash-based, no ML - for testing without model downloads):
+    model: "memory"
+    provider: "memory"       # Fast hash-based similarity (no ML model needed)
     enabled: true            # Set to true after running setup-tei.sh/.cmd (or use auto for auto-detection)
     fallbackToMemory: true   # Gracefully fallback to memory-based similarity when model unavailable
     apiKey: ""               # Only for cloud providers (huggingface, openai, cloudru)
@@ -79,24 +82,15 @@ database:
   synchronous: "NORMAL" # Options: OFF, NORMAL, FULL
   tempStore: "MEMORY"   # Options: DEFAULT, FILE, MEMORY
 
-# Vector Backend Configuration (Adaptive Switching)
-# Automatically selects optimal backend based on codebase size:
-# - Small/Medium (<10k vectors): sqlite-vec (exact search, fast insert)
-# - Large (>10k vectors): vectorlite (HNSW, 3-100x faster search)
+# Vector Backend Configuration (libsql DiskANN)
+# Uses libsql with native DiskANN vector search
 vectorBackend:
-  # Backend selection: "auto" (recommended), "vectorlite", "sqlite-vec", "fallback"
-  backend: "auto"
-
-  # Threshold for automatic switching (in number of vectors)
-  autoSwitchThreshold: 10000
-
-  # Vectorlite HNSW configuration (used for large codebases)
-  vectorlite:
-    maxElements: 100000       # Maximum number of vectors
-    M: 16                     # Connections per layer (higher = better recall, more memory)
-    efConstruction: 200       # Index build quality (higher = better quality, slower build)
-    efSearch: 50              # Search quality (higher = better accuracy, slower search)
-    distanceMetric: "l2"      # Options: l2, cosine, ip
+  # libsql DiskANN configuration
+  libsql:
+    metric: "cosine"          # Options: cosine, l2
+    compression: "float32"    # Options: float8, float16, float32
+    searchL: 200              # Search list size (higher = better recall, slower)
+    insertL: 70               # Insert list size (higher = better quality, slower build)
 
 # Logging Configuration
 logging:
@@ -167,11 +161,14 @@ indexing:
 # Git Integration Configuration
 # Watches for Git branch changes and triggers automatic reindexing
 git:
-  enabled: false                    # Enable Git integration (requires Git to be installed)
+  enabled: true                     # Enable Git integration (requires Git to be installed)
   watchBranchChanges: true          # Watch .git/HEAD for branch switches
   autoReindex: true                 # Automatically reindex when branch changes detected
   diffMode: "incremental"           # Options: incremental, full - how to sync on branch switch
   pollIntervalMs: 5000              # 5 seconds - how often to check for new commits
+  watchUncommitted: true            # Watch for uncommitted file changes
+  uncommittedPollIntervalMs: 10000  # 10 seconds - poll interval for uncommitted changes
+  includeUntracked: true            # Include untracked files in uncommitted watch
 
 # Dev Agent Configuration
 devAgent:
@@ -238,7 +235,7 @@ performance:
     metricsInterval: 60000  # 1 minute metrics collection interval
     
   optimization:
-    enableVectorSearch: false  # Enable when sqlite-vec is available
+    enableVectorSearch: true   # Enable libsql DiskANN vector search
     enableParallelParsing: true
     maxWorkerThreads: 4
     

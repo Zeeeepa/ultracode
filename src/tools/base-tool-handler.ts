@@ -25,8 +25,8 @@ export interface ToolContext {
   config: any;
   logger: any;
   getConductor: () => any;
-  getGraphStorage: (sqliteManager: any) => Promise<any>;
-  getSQLiteManager: () => any;
+  getGraphStorage: () => Promise<any>; // v4: libsql unified, no params needed
+  getSQLiteManager: () => any; // legacy: kept for AutoDoc and BatchOperations
   getSemanticAgent: () => Promise<any>;
   getBranchManager: () => any;
   getSnapshotManager: () => any;
@@ -79,6 +79,50 @@ export abstract class BaseToolHandler<TArgs = any> {
    */
   protected isProjectIndexed(projectPath?: string): boolean {
     return getProjectContext().isProjectIndexed(projectPath);
+  }
+
+  /**
+   * Get GraphStorage with project context automatically set.
+   * v4: Uses libsql unified storage, no SQLiteManager needed.
+   */
+  protected async ensureGraphStorageForProject(projectPath?: string): Promise<any> {
+    const resolved = getProjectContext().resolveProjectPath(projectPath);
+    console.error(`[BaseToolHandler.ensureGraphStorageForProject] resolved=${resolved}`);
+    const storage = await this.context.getGraphStorage();
+    storage.setProject(resolved);
+    console.error(`[BaseToolHandler.ensureGraphStorageForProject] called storage.setProject(${resolved})`);
+    return storage;
+  }
+
+  /**
+   * Ensure SemanticAgent is initialized for the correct project.
+   * This must be called before using semantic search operations.
+   *
+   * v3: Now uses project context instead of database path switching.
+   * The VectorStore is not recreated - only the project context changes.
+   */
+  protected async ensureSemanticAgentForProject(projectPath?: string): Promise<any> {
+    const resolved = getProjectContext().resolveProjectPath(projectPath);
+    const semanticAgent = await this.context.getSemanticAgent();
+
+    // v3: Log current project context instead of DB path
+    const vectorStore = semanticAgent?.getVectorStore?.();
+    const currentContext = vectorStore?.getProjectContext?.();
+    console.error(
+      `[BaseToolHandler] ensureSemanticAgentForProject: resolved=${resolved}, currentContext=${JSON.stringify(currentContext)}`,
+    );
+
+    // v3: reinitializeForProject now just changes context, no VectorStore recreation
+    if (semanticAgent && typeof semanticAgent.reinitializeForProject === "function") {
+      console.error(`[BaseToolHandler] Calling reinitializeForProject(${resolved})`);
+      await semanticAgent.reinitializeForProject(resolved);
+
+      // Verify context switch happened
+      const newContext = semanticAgent.getVectorStore?.()?.getProjectContext?.();
+      console.error(`[BaseToolHandler] After reinitialize: newContext=${JSON.stringify(newContext)}`);
+    }
+
+    return semanticAgent;
   }
 
   /**

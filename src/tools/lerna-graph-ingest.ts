@@ -2,7 +2,7 @@
  * Utilities for ingesting Lerna project graph output into the SQLite-backed graph storage.
  */
 
-import type { GraphStorageImpl } from "../storage/graph-storage.js";
+import type { GraphStorage } from "../storage/graph-storage.js";
 import { type Entity, EntityType, type Relationship, RelationType } from "../types/storage.js";
 import { hashText } from "../utils/fast-hash.js";
 import type { LernaGraphJSON } from "./lerna-project-graph.js";
@@ -49,16 +49,16 @@ function mapEntitiesByName(entities: Entity[]): EntityMap {
   return map;
 }
 
-async function fetchExistingPackageEntities(storage: GraphStorageImpl, limit = 1000): Promise<Entity[]> {
+async function fetchExistingPackageEntities(storage: GraphStorage, limit = 1000): Promise<Entity[]> {
   const existing = await storage.executeQuery({
     type: "entity",
     filters: { entityType: EntityType.PACKAGE },
     limit,
   });
-  return existing.entities.filter((entity) => entity.filePath.startsWith(LERNA_PACKAGE_FILE_PREFIX));
+  return existing.entities.filter((entity: Entity) => entity.filePath.startsWith(LERNA_PACKAGE_FILE_PREFIX));
 }
 
-async function removeStalePackageEntity(storage: GraphStorageImpl, entity: Entity): Promise<void> {
+async function removeStalePackageEntity(storage: GraphStorage, entity: Entity): Promise<void> {
   const relationships = await storage.getRelationshipsForEntity(entity.id);
   for (const rel of relationships) {
     await storage.deleteRelationship(rel.id);
@@ -105,7 +105,7 @@ export interface LernaIngestSummary {
  * Ingest a Lerna project graph into the existing graph storage.
  * The function does not remove existing entries; it upserts package entities and dependency relationships.
  */
-export async function ingestLernaGraph(storage: GraphStorageImpl, graph: LernaGraphJSON): Promise<LernaIngestSummary> {
+export async function ingestLernaGraph(storage: GraphStorage, graph: LernaGraphJSON): Promise<LernaIngestSummary> {
   const packageNames = Object.keys(graph);
   if (!packageNames.length) {
     return { packageCount: 0, relationshipCount: 0, skippedPackages: 0, removedPackages: 0 };

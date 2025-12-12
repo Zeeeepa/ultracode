@@ -16,6 +16,7 @@
 
 import type { QueryAgent } from "../agents/query-agent.js";
 import type { FusionOptions, HybridResult, SemanticResult, SimilarityResult } from "../types/semantic.js";
+import { logger } from "../utils/logger.js";
 import type { EmbeddingGenerator } from "./embedding-generator.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -284,10 +285,21 @@ export class HybridSearchEngine {
     const startTime = Date.now();
 
     try {
+      const embeddingStart = Date.now();
       const queryEmbedding = await this.embeddingGen.generateEmbedding(query);
+      const embeddingTime = Date.now() - embeddingStart;
+
+      const searchStart = Date.now();
       const results = await this.vectorStore.search(queryEmbedding, limit);
+      const searchTime = Date.now() - searchStart;
 
       const processingTime = Date.now() - startTime;
+      logger.info("HYBRID_SEARCH", `semanticSearch complete`, {
+        embeddingMs: embeddingTime,
+        searchMs: searchTime,
+        totalMs: processingTime,
+        resultsCount: results.length,
+      });
 
       return {
         query,
@@ -295,7 +307,7 @@ export class HybridSearchEngine {
         processingTime,
       };
     } catch (error) {
-      console.error("[HybridSearch] Semantic search failed:", error);
+      logger.error("HYBRID_SEARCH", "Semantic search failed", { query, error: (error as Error).message });
       throw error;
     }
   }

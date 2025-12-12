@@ -17,8 +17,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DATABASE_CONSTANTS } from "../config/constants.js";
-import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
-import { getProjectPaths } from "../shared/storage-paths.js";
+import { getGlobalDbPaths } from "../shared/storage-paths.js";
 import type { StorageMetrics } from "../types/storage.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -31,17 +30,12 @@ import { isBunRuntime, loadSQLiteModule } from "./sqlite-adapter.js";
 // =============================================================================
 
 /**
- * Get default database path based on current project context.
- * Uses centralized storage in AppData if project path is available.
+ * Get default database path - now uses global unified database.
+ * v3: All projects share one database with project_hash partitioning.
  */
 function getDefaultDbPath(): string {
-  const indexingDir = getCurrentIndexingDirectory();
-  const cwd = process.cwd();
-  const projectPath = indexingDir || cwd;
-  const paths = getProjectPaths(projectPath);
-  console.error(
-    `[SQLiteManager] getDefaultDbPath: indexingDir=${indexingDir}, cwd=${cwd}, resolved=${projectPath}, dbPath=${paths.graphDbPath}`,
-  );
+  const paths = getGlobalDbPaths();
+  console.error(`[SQLiteManager] getDefaultDbPath: using global DB at ${paths.graphDbPath}`);
   return paths.graphDbPath;
 }
 const WAL_AUTOCHECKPOINT = DATABASE_CONSTANTS.WAL_AUTOCHECKPOINT;
@@ -435,34 +429,15 @@ export function getSQLiteManager(config?: SQLiteConfig): SQLiteManager {
 
 /**
  * Get or create SQLiteManager for a specific project path.
- * Uses centralized storage in AppData with path-based hash.
+ * v3: Now returns global SQLiteManager - all projects share one database.
  *
- * @param projectPath - Absolute path to the project directory
- * @returns SQLiteManager instance for that project
+ * @param projectPath - Absolute path to the project directory (used for logging only)
+ * @returns SQLiteManager instance (global singleton)
+ * @deprecated Use getSQLiteManager() directly - all projects now share global DB
  */
 export function getProjectSQLiteManager(projectPath: string): SQLiteManager {
-  const paths = getProjectPaths(projectPath);
-  const dbPath = paths.graphDbPath;
-
-  // Check if we already have a manager for this path
-  if (projectManagers.has(dbPath)) {
-    const existing = projectManagers.get(dbPath)!;
-    if (existing.isOpen()) {
-      return existing;
-    }
-    // Manager exists but closed, remove and recreate
-    projectManagers.delete(dbPath);
-  }
-
-  // Create new manager for this project
-  console.error(`[SQLiteManager] Creating project-specific manager for: ${projectPath}`);
-  console.error(`[SQLiteManager] Database path: ${dbPath}`);
-
-  const manager = new SQLiteManager({ path: dbPath });
-  manager.initialize();
-  projectManagers.set(dbPath, manager);
-
-  return manager;
+  console.error(`[SQLiteManager] getProjectSQLiteManager(${projectPath}) -> returning global manager`);
+  return getSQLiteManager();
 }
 
 /**

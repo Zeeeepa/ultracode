@@ -43,7 +43,8 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
   protected async execute(args: z.infer<typeof ModifyEntityCodeSchema>): Promise<ToolResult> {
     const { CodeModifier } = await import("../../modification/code-modifier.js");
 
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     let vectorStore: any = null;
     let semanticSearch: ImpactAnalyzer["semanticSearch"] | undefined;
     try {
@@ -245,8 +246,8 @@ export class RenameFileToolHandler extends BaseToolHandler<z.infer<typeof Rename
       // Rename the file
       await rename(sourcePath, destinationPath);
 
-      // Update graph: remove old entities, index new file
-      const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+      // v3: Ensure correct project context for GraphStorage queries
+      const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
       // Remove old entities
       const oldEntities = await storage.findEntities({
@@ -322,8 +323,8 @@ export class SplitFileToolHandler extends BaseToolHandler<z.infer<typeof SplitFi
       : dirname(filePath);
 
     try {
-      // Get entities in file
-      const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+      // v3: Ensure correct project context for GraphStorage queries
+      const storage = await this.ensureGraphStorageForProject(args.projectPath);
       const entities = await storage.findEntities({
         filters: { filePath },
         limit: 1000,
@@ -594,7 +595,8 @@ export class CreateFileToolHandler extends BaseToolHandler<z.infer<typeof Create
 
       // Check for similar code (after indexing so we can extract entity names)
       if (semanticSearch) {
-        const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+        // v3: Ensure correct project context for GraphStorage queries
+        const storage = await this.ensureGraphStorageForProject(args.projectPath);
         const impactAnalyzer = new ImpactAnalyzer(storage, semanticSearch);
 
         try {
@@ -651,7 +653,8 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
   }
 
   protected async execute(args: z.infer<typeof RenameSymbolSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const impactAnalyzer = new ImpactAnalyzer(storage);
 
     // Find entity
@@ -797,7 +800,8 @@ export class AddMemberToolHandler extends BaseToolHandler<z.infer<typeof AddMemb
   }
 
   protected async execute(args: z.infer<typeof AddMemberSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const impactAnalyzer = new ImpactAnalyzer(storage);
 
     // Find target entity (class, interface, etc.)

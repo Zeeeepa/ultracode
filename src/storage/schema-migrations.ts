@@ -20,7 +20,7 @@ import type { SQLiteManager } from "./sqlite-manager.js";
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
 const MIGRATIONS_TABLE = "migrations";
-const CURRENT_VERSION = 2;
+const CURRENT_VERSION = 3;
 
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
@@ -290,6 +290,122 @@ export const migrations: Migration[] = [
       DROP INDEX IF EXISTS idx_perf_created;
       DROP INDEX IF EXISTS idx_cache_accessed;
       DROP INDEX IF EXISTS idx_cache_hits;
+    `,
+  },
+  {
+    version: 3,
+    description: "Unified multi-project database with project_hash and branch_name partitioning",
+    up: `
+      -- =========================================================================
+      -- MIGRATION v3: UNIFIED MULTI-PROJECT DATABASE
+      -- =========================================================================
+      -- This migration adds project_hash and branch_name columns to all tables
+      -- enabling single database for multiple projects with efficient filtering.
+      --
+      -- Benefits:
+      -- - No context switching (reinitializeForProject complexity removed)
+      -- - Cross-project queries possible
+      -- - Branch-aware indexing for instant branch switching
+      -- - SQLite B-tree indexes = O(log n) access, no full scans
+      -- =========================================================================
+
+      -- Add project_hash and branch_name to entities
+      ALTER TABLE entities ADD COLUMN project_hash TEXT DEFAULT 'legacy';
+      ALTER TABLE entities ADD COLUMN branch_name TEXT DEFAULT 'main';
+
+      -- Add project_hash and branch_name to relationships
+      ALTER TABLE relationships ADD COLUMN project_hash TEXT DEFAULT 'legacy';
+      ALTER TABLE relationships ADD COLUMN branch_name TEXT DEFAULT 'main';
+
+      -- Add project_hash and branch_name to files
+      ALTER TABLE files ADD COLUMN project_hash TEXT DEFAULT 'legacy';
+      ALTER TABLE files ADD COLUMN branch_name TEXT DEFAULT 'main';
+
+      -- =========================================================================
+      -- COMPOSITE INDEXES for efficient project+branch filtering
+      -- These ensure queries like "WHERE project_hash = ? AND branch_name = ?"
+      -- use index seek (O(log n)) instead of full table scan (O(n))
+      -- =========================================================================
+
+      -- Entities: composite indexes for common query patterns
+      CREATE INDEX IF NOT EXISTS idx_entities_project_branch
+        ON entities(project_hash, branch_name);
+      CREATE INDEX IF NOT EXISTS idx_entities_project_branch_type
+        ON entities(project_hash, branch_name, type);
+      CREATE INDEX IF NOT EXISTS idx_entities_project_branch_file
+        ON entities(project_hash, branch_name, file_path);
+      CREATE INDEX IF NOT EXISTS idx_entities_project_branch_name
+        ON entities(project_hash, branch_name, name);
+
+      -- Relationships: composite indexes
+      CREATE INDEX IF NOT EXISTS idx_rel_project_branch
+        ON relationships(project_hash, branch_name);
+      CREATE INDEX IF NOT EXISTS idx_rel_project_branch_from
+        ON relationships(project_hash, branch_name, from_id);
+      CREATE INDEX IF NOT EXISTS idx_rel_project_branch_to
+        ON relationships(project_hash, branch_name, to_id);
+
+      -- Files: composite index (project_hash, branch_name, path is effectively PK)
+      CREATE INDEX IF NOT EXISTS idx_files_project_branch
+        ON files(project_hash, branch_name);
+
+      -- =========================================================================
+      -- PROJECT METADATA TABLE
+      -- Tracks all indexed projects and their branches
+      -- =========================================================================
+      CREATE TABLE IF NOT EXISTS project_metadata (
+        project_hash TEXT NOT NULL,
+        branch_name TEXT NOT NULL,
+        project_path TEXT NOT NULL,
+        last_indexed_at INTEGER,
+        entity_count INTEGER DEFAULT 0,
+        file_count INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (project_hash, branch_name)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_project_meta_path
+        ON project_metadata(project_path);
+      CREATE INDEX IF NOT EXISTS idx_project_meta_updated
+        ON project_metadata(updated_at);
+
+      -- =========================================================================
+      -- QUERY CACHE: Add project+branch partitioning
+      -- =========================================================================
+      ALTER TABLE query_cache ADD COLUMN project_hash TEXT DEFAULT 'legacy';
+      ALTER TABLE query_cache ADD COLUMN branch_name TEXT DEFAULT 'main';
+
+      CREATE INDEX IF NOT EXISTS idx_cache_project_branch
+        ON query_cache(project_hash, branch_name);
+
+      -- =========================================================================
+      -- EMBEDDINGS: Add project+branch partitioning
+      -- =========================================================================
+      ALTER TABLE embeddings ADD COLUMN project_hash TEXT DEFAULT 'legacy';
+      ALTER TABLE embeddings ADD COLUMN branch_name TEXT DEFAULT 'main';
+
+      CREATE INDEX IF NOT EXISTS idx_embeddings_project_branch
+        ON embeddings(project_hash, branch_name);
+    `,
+    down: `
+      -- Remove project metadata table
+      DROP TABLE IF EXISTS project_metadata;
+
+      -- Remove composite indexes
+      DROP INDEX IF EXISTS idx_entities_project_branch;
+      DROP INDEX IF EXISTS idx_entities_project_branch_type;
+      DROP INDEX IF EXISTS idx_entities_project_branch_file;
+      DROP INDEX IF EXISTS idx_entities_project_branch_name;
+      DROP INDEX IF EXISTS idx_rel_project_branch;
+      DROP INDEX IF EXISTS idx_rel_project_branch_from;
+      DROP INDEX IF EXISTS idx_rel_project_branch_to;
+      DROP INDEX IF EXISTS idx_files_project_branch;
+      DROP INDEX IF EXISTS idx_cache_project_branch;
+      DROP INDEX IF EXISTS idx_embeddings_project_branch;
+
+      -- Note: SQLite doesn't support DROP COLUMN in older versions
+      -- These columns will remain but be unused after rollback
     `,
   },
 ];

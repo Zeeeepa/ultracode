@@ -31,7 +31,8 @@ export class ListFileEntitiesToolHandler extends BaseToolHandler<z.infer<typeof 
 
   protected async execute(args: z.infer<typeof ListFileEntitiesSchema>): Promise<ToolResult> {
     const normalizedPath = this.context.normalizeInputPath(args.filePath);
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
     const filters: any = { filePath: normalizedPath };
     if (args.entityTypes) {
@@ -91,7 +92,8 @@ export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<
   }
 
   protected async execute(args: z.infer<typeof ListEntityRelationshipsSchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
     let entityId = args.entityId;
 
@@ -169,7 +171,8 @@ export class QueryToolHandler extends BaseToolHandler<z.infer<typeof QuerySchema
   }
 
   protected async execute(args: z.infer<typeof QuerySchema>): Promise<ToolResult> {
-    const storage = await this.context.getGraphStorage(this.context.getSQLiteManager());
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     const results: any = {};

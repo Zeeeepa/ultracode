@@ -9,6 +9,7 @@ import { extname, join } from "node:path";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
+import { setGlobalProjectContext } from "../storage/graph-storage-factory.js";
 import { getProjectSQLiteManager } from "../storage/sqlite-manager.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParserOptions } from "../types/parser.js";
@@ -139,6 +140,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       const sqliteManager = getProjectSQLiteManager(currentDir);
       this.indexerAgent = new IndexerAgent(sqliteManager);
       await this.indexerAgent.initialize();
+      // v3: Set project context on GLOBAL GraphStorage singleton
+      setGlobalProjectContext(currentDir);
+      console.error(`[DevAgent ${this.id}] Called setGlobalProjectContext(${currentDir}) during init`);
       console.error(
         `[DevAgent ${this.id}] IndexerAgent initialized with db: ${(sqliteManager as any).config?.path || "unknown"}`,
       );
@@ -164,10 +168,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
     knowledgeBus.subscribe(this.id, "resources:adjusted", (entry) => this.handleResourceAdjustment(entry));
 
-    // Subscribe to file change events for incremental reindexing
+    // Subscribe to file change events for incremental reindexing (from GitWatcher)
+    // Protected against circular loop: only process events from git-watcher source
     knowledgeBus.subscribe(this.id, "indexer:files:changed", async (entry: KnowledgeEntry) => {
       const data = entry.data as { files: string[]; repositoryPath?: string; source?: string };
-      if (data.files && data.files.length > 0) {
+      // Only process events from git-watcher to avoid circular loop
+      if (data.files && data.files.length > 0 && data.source?.startsWith("git-watcher")) {
         console.error(
           `[DevAgent ${this.id}] Received file change event: ${data.files.length} files from ${data.source}`,
         );
@@ -228,6 +234,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     if (!this.indexerAgent) {
       throw new Error("Indexer agent not initialized");
     }
+
+    // v3: Set project context on GLOBAL GraphStorage singleton before indexing
+    setGlobalProjectContext(payload.directory);
+    // v3: Also set context on IndexerAgent (for BatchOperations)
+    this.indexerAgent.setProjectContext(payload.directory);
+    console.error(`[DevAgent ${this.id}] Set project context: ${payload.directory}`);
 
     const result = {
       status: "started",
@@ -479,7 +491,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
           // PARALLEL indexing using enqueue() - all tasks are queued and processed in order
           // enqueue() accepts tasks even when agent is busy, queuing them internally
-          const INDEXING_CONCURRENCY = 16; // How many tasks to submit in parallel
+          // Use CPU cores * 2 for better I/O parallelism (file reads + parsing)
+          const { cpus } = await import("os");
+          const INDEXING_CONCURRENCY = Math.max(32, cpus().length * 2); // Minimum 32, or CPU cores * 2
           const fileEntries = Array.from(byFile.entries());
 
           // Process in chunks to avoid overwhelming the queue
@@ -947,14 +961,14 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       `[DevAgent ${this.id}] Incremental reindex completed: ${successCount} files updated, ${errorCount} errors in ${elapsed}ms`,
     );
 
-    // Publish completion event
+    // Publish completion event (without source to avoid circular loop)
     knowledgeBus.publish(
       "indexer:incremental:complete",
       {
         filesProcessed: successCount,
         errors: errorCount,
         elapsedMs: elapsed,
-        source: "git-watcher",
+        source: "dev-agent", // Different source to distinguish from git-watcher
       },
       this.id,
     );

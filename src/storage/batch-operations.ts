@@ -11,12 +11,19 @@
  */
 
 import xxhash from "xxhash-wasm";
+import { DEFAULT_BRANCH, getProjectHash } from "../shared/storage-paths.js";
 import type { BatchResult, Entity, ParsedEntity, Relationship } from "../types/storage.js";
 import { RelationType } from "../types/storage.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type { SQLiteDatabase, SQLiteStatement } from "./sqlite-adapter.js";
+
+// v3: Project context for multi-project database
+interface ProjectContext {
+  projectHash: string;
+  branchName: string;
+}
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -38,9 +45,35 @@ export class BatchOperations {
   private jsonCache: Map<unknown, string> = new Map();
   private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
 
+  // v3: Project context for multi-project database
+  private currentContext: ProjectContext = {
+    projectHash: "legacy",
+    branchName: DEFAULT_BRANCH,
+  };
+
   constructor(db: SQLiteDatabase, batchSize = DEFAULT_BATCH_SIZE) {
     this.db = db;
     this.batchSize = Math.min(batchSize, MAX_BATCH_SIZE);
+  }
+
+  /**
+   * v3: Set project context for batch operations
+   */
+  setProjectContext(context: ProjectContext): void {
+    console.error(`[BatchOperations] Context set: ${context.projectHash}/${context.branchName}`);
+    this.currentContext = context;
+    // Clear prepared statements cache since context changed
+    this.preparedStatements.clear();
+  }
+
+  /**
+   * v3: Set project by path
+   */
+  setProject(projectPath: string, branchName?: string): void {
+    this.setProjectContext({
+      projectHash: getProjectHash(projectPath),
+      branchName: branchName || DEFAULT_BRANCH,
+    });
   }
 
   /**
@@ -154,16 +187,19 @@ export class BatchOperations {
     const errors: Array<{ item: unknown; error: string }> = [];
     let totalProcessed = 0;
 
-    // Log database path for debugging
-    console.error("[BatchOperations] Database path:", this.db.name || "unknown");
+    // Log database path and project context for debugging
+    const { projectHash, branchName } = this.currentContext;
+    console.error(
+      `[BatchOperations] insertEntities: db=${this.db.name || "unknown"}, context=${projectHash}/${branchName}, count=${entities.length}`,
+    );
 
-    // Use cached prepared statement for better performance
+    // v3: Use cached prepared statement with project_hash and branch_name
     const insertStmt = this.getStatement(
-      "insert-entity",
+      "insert-entity-v3",
       `
       INSERT INTO entities
-      (id, name, type, file_path, location, metadata, hash, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, name, type, file_path, location, metadata, hash, created_at, updated_at, project_hash, branch_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         type = excluded.type,
@@ -171,7 +207,9 @@ export class BatchOperations {
         location = excluded.location,
         metadata = excluded.metadata,
         hash = COALESCE(excluded.hash, entities.hash),
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        project_hash = excluded.project_hash,
+        branch_name = excluded.branch_name
     `,
     );
 
@@ -200,6 +238,7 @@ export class BatchOperations {
               const now = Date.now();
               const id = this.stableEntityId(entity);
 
+              // v3: Include project_hash and branch_name in INSERT
               const result = insertStmt.run(
                 id,
                 entity.name,
@@ -210,11 +249,16 @@ export class BatchOperations {
                 entity.hash,
                 entity.createdAt || now,
                 entity.updatedAt || now,
+                projectHash,
+                branchName,
               );
 
               // DEBUG: Log insert result for first entity
               if (batch.indexOf(entity) === 0) {
-                console.error(`[BatchOperations] DEBUG: INSERT result for ${entity.name} (${id}):`, result);
+                console.error(
+                  `[BatchOperations] DEBUG: INSERT ${entity.name} (${id}) with context ${projectHash}/${branchName}:`,
+                  result,
+                );
               }
             }
           });
@@ -280,15 +324,23 @@ export class BatchOperations {
     const errors: Array<{ item: unknown; error: string }> = [];
     let totalProcessed = 0;
 
-    // Use cached prepared statement for better performance
+    // v3: Get current project context
+    const { projectHash, branchName } = this.currentContext;
+    console.error(
+      `[BatchOperations] insertRelationships: context=${projectHash}/${branchName}, count=${relationships.length}`,
+    );
+
+    // v3: Use cached prepared statement with project_hash and branch_name
     const insertStmt = this.getStatement(
-      "insert-relationship",
+      "insert-relationship-v3",
       `
       INSERT INTO relationships
-      (id, from_id, to_id, type, metadata)
-      VALUES (?, ?, ?, ?, ?)
+      (id, from_id, to_id, type, metadata, project_hash, branch_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
-        metadata = COALESCE(excluded.metadata, relationships.metadata)
+        metadata = COALESCE(excluded.metadata, relationships.metadata),
+        project_hash = excluded.project_hash,
+        branch_name = excluded.branch_name
     `,
     );
 
@@ -331,12 +383,15 @@ export class BatchOperations {
           const transaction = this.db.transaction((batch: Relationship[]) => {
             for (const rel of batch) {
               const id = this.stableRelationshipId({ fromId: rel.fromId, toId: rel.toId, type: rel.type });
+              // v3: Include project_hash and branch_name
               insertStmt.run(
                 id,
                 rel.fromId,
                 rel.toId,
                 rel.type,
                 rel.metadata ? this.cachedStringify(rel.metadata) : null,
+                projectHash,
+                branchName,
               );
             }
           });

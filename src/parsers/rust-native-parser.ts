@@ -22,7 +22,18 @@ import {
   startRustAnalyzer,
   stopRustAnalyzer,
 } from "./rust-analyzer-integration.js";
-import { RustAntlrParser } from "./rust-antlr-parser.js";
+
+// Lazy-loaded ANTLR parser (loaded on first use to reduce initial bundle size)
+type RustAntlrParserType = typeof import("./rust-antlr-parser.js").RustAntlrParser;
+let RustAntlrParserClass: RustAntlrParserType | null = null;
+
+async function getRustAntlrParser(): Promise<RustAntlrParserType> {
+  if (!RustAntlrParserClass) {
+    const module = await import("./rust-antlr-parser.js");
+    RustAntlrParserClass = module.RustAntlrParser;
+  }
+  return RustAntlrParserClass;
+}
 
 // =============================================================================
 // RUST PARSER CLASS
@@ -151,10 +162,11 @@ export class RustNativeParser {
       let relationships: EntityRelationship[] | undefined;
       let errors: Array<{ message: string; location?: { line: number; column: number } }> = [];
 
-      // Try ANTLR parser first
+      // Try ANTLR parser first (lazy-loaded)
       if (this.useAntlr) {
         try {
           console.error(`[RustNativeParser] Trying ANTLR parser...`);
+          const RustAntlrParser = await getRustAntlrParser();
           const antlrResult = RustAntlrParser.parse(filePath, content);
           entities = antlrResult.entities;
           relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;

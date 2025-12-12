@@ -127,7 +127,7 @@ export class TEIProvider implements EmbeddingProvider {
       this.log?.info("Started TEI Docker container");
 
       // Wait for container to be ready (max 30 seconds)
-      const maxWaitTime = 30000;
+      const maxWaitTime = 5000;
       const startTime = Date.now();
       while (Date.now() - startTime < maxWaitTime) {
         const check = await fetch(`${this.baseUrl}/health`, {

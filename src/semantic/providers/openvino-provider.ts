@@ -28,6 +28,26 @@ import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } fr
 let ov: any = null;
 let AutoTokenizer: any = null;
 
+/**
+ * Error thrown when model is being downloaded.
+ * Allows tools to return a user-friendly "try again later" message.
+ */
+export class ModelDownloadingError extends Error {
+  public readonly model: string;
+  public readonly modelPath: string;
+
+  constructor(model: string, modelPath: string) {
+    super(`Model "${model}" is being downloaded. Please try again in a few minutes.`);
+    this.name = "ModelDownloadingError";
+    this.model = model;
+    this.modelPath = modelPath;
+  }
+}
+
+// Track download state globally to prevent concurrent downloads
+let downloadInProgress = false;
+let downloadStartTime: number | null = null;
+
 export type OpenVINODevice = "CPU" | "GPU" | "GPU.0" | "GPU.1" | "AUTO";
 
 export interface OpenVINOModelConfig {
@@ -47,6 +67,8 @@ export interface OpenVINOOptions {
   autoDownload?: boolean;
   timeoutMs?: number;
   logger?: ProviderLogger;
+  /** Enable native batch inference (default: false for stability) */
+  enableBatchInference?: boolean;
 }
 
 // Supported models configuration
@@ -123,13 +145,18 @@ export class OpenVINOProvider implements EmbeddingProvider {
   private tokenizer: any = null;
   private modelConfig: OpenVINOModelConfig;
   private seqLen = 64; // Fixed sequence length for efficiency
-  private maxBatchSize = 32; // Maximum batch size for native batching
+  private maxBatchSize = 16; // Max batch size for native batching
+  private enableBatchInference: boolean; // Toggle for batch vs sequential
+
+  // Only 2 fixed batch sizes to minimize memory: 1 (single) and 16 (batch)
+  private static readonly FIXED_BATCH_SIZES = [1, 16] as const;
 
   constructor(opts: OpenVINOOptions = {}) {
     this.log = opts.logger;
     this.device = opts.device ?? "CPU";
     this.autoDownload = opts.autoDownload !== false;
     this.timeoutMs = opts.timeoutMs ?? 30_000;
+    this.enableBatchInference = opts.enableBatchInference ?? false; // Disabled by default for stability
 
     // Resolve model configuration
     const modelKey = opts.model ?? "all-MiniLM-L6-v2";
@@ -147,8 +174,8 @@ export class OpenVINOProvider implements EmbeddingProvider {
       name: "openvino",
       model: modelKey,
       dimension: this.modelConfig.dimension,
-      supportsBatch: true,
-      maxBatchSize: 32,
+      supportsBatch: this.enableBatchInference,
+      maxBatchSize: this.enableBatchInference ? 16 : 1,
       maxTokens: this.modelConfig.maxTokens,
     };
   }
@@ -219,14 +246,42 @@ export class OpenVINOProvider implements EmbeddingProvider {
       return;
     }
 
+    // Check if download is already in progress (another request)
+    if (downloadInProgress) {
+      const elapsed = downloadStartTime ? Math.floor((Date.now() - downloadStartTime) / 1000) : 0;
+      this.log?.info("Model download already in progress", { model: this.info.model, elapsedSeconds: elapsed });
+      throw new ModelDownloadingError(this.info.model!, this.modelPath);
+    }
+
     if (!this.autoDownload) {
       throw new Error(
-        `Model not found at ${this.modelPath}\n` + `Run: bun scripts/download-openvino-model.ts ${this.info.model}`,
+        `Model not found at ${this.modelPath}\n` +
+          `Run: npx ultrascript-tools setup-embedding\n` +
+          `Or manually: bun scripts/download-openvino-model.ts ${this.info.model}`,
       );
     }
 
-    this.log?.info("Downloading model", { model: this.info.model });
-    await this.downloadModel();
+    // Start download in background, throw error to let caller know to retry
+    downloadInProgress = true;
+    downloadStartTime = Date.now();
+
+    this.log?.info("Starting model download in background", { model: this.info.model });
+
+    // Start download but don't await - let it run in background
+    this.downloadModel()
+      .then(() => {
+        this.log?.info("Model download completed", { model: this.info.model });
+      })
+      .catch((err) => {
+        this.log?.error("Model download failed", { error: err.message });
+      })
+      .finally(() => {
+        downloadInProgress = false;
+        downloadStartTime = null;
+      });
+
+    // Throw error immediately so tools can return "try again later"
+    throw new ModelDownloadingError(this.info.model!, this.modelPath);
   }
 
   private async downloadModel(): Promise<void> {
@@ -294,50 +349,67 @@ export class OpenVINOProvider implements EmbeddingProvider {
     this.compiledModel = await this.core.compileModel(model, this.device);
     const compileTime = Date.now() - t0;
 
+    this.log?.info("Model compiled", { device: this.device, compileTimeMs: compileTime });
+
     // Cache batch_size=1 model
     this.batchCompiledModels.set(1, this.compiledModel);
-
-    this.log?.info("Model compiled", { device: this.device, compileTimeMs: compileTime });
   }
 
   /**
    * Get or create compiled model for specific batch size
-   * OpenVINO requires recompilation for different batch sizes
+   * Only compiles for FIXED_BATCH_SIZES to prevent memory accumulation
    */
   private async getCompiledModelForBatch(batchSize: number): Promise<any> {
+    // Find closest fixed batch size
+    let fixedSize: number | null = null;
+    for (const size of OpenVINOProvider.FIXED_BATCH_SIZES) {
+      if (size >= batchSize) {
+        fixedSize = size;
+        break;
+      }
+    }
+
+    if (fixedSize === null) {
+      throw new Error(`Batch size ${batchSize} exceeds maximum fixed size ${this.maxBatchSize}`);
+    }
+
     // Return cached model if exists
-    if (this.batchCompiledModels.has(batchSize)) {
-      return this.batchCompiledModels.get(batchSize);
+    if (this.batchCompiledModels.has(fixedSize)) {
+      return this.batchCompiledModels.get(fixedSize);
     }
 
     // Load fresh model and reshape for batch
     const modelFile = this.modelConfig.files[0]!;
     const modelFilePath = join(this.modelPath, modelFile);
 
-    this.log?.debug("Compiling model for batch", { batchSize, device: this.device });
+    this.log?.debug("Compiling model for fixed batch size", {
+      requestedSize: batchSize,
+      fixedSize,
+      device: this.device,
+    });
 
     const model = await this.core.readModel(modelFilePath);
 
     // Reshape model inputs for batch processing
-    // Input shapes: [batch_size, seq_len]
     const inputShapes: Record<string, number[]> = {};
-    const inputs = model.inputs;
-
-    for (const input of inputs) {
-      const name = input.anyName;
-      inputShapes[name] = [batchSize, this.seqLen];
+    for (const input of model.inputs) {
+      inputShapes[input.anyName] = [fixedSize, this.seqLen];
     }
-
     model.reshape(inputShapes);
 
     const t0 = Date.now();
     const compiledModel = await this.core.compileModel(model, this.device);
     const compileTime = Date.now() - t0;
 
-    // Cache for reuse
-    this.batchCompiledModels.set(batchSize, compiledModel);
+    // Cache for reuse (max 2 models: batch_size=1 and batch_size=16)
+    this.batchCompiledModels.set(fixedSize, compiledModel);
 
-    this.log?.info("Batch model compiled", { batchSize, device: this.device, compileTimeMs: compileTime });
+    this.log?.info("Batch model compiled", {
+      fixedSize,
+      device: this.device,
+      compileTimeMs: compileTime,
+      cachedModels: this.batchCompiledModels.size,
+    });
 
     return compiledModel;
   }
@@ -428,15 +500,15 @@ export class OpenVINOProvider implements EmbeddingProvider {
     }
 
     const count = texts.length;
-    this.log?.debug("embedBatch()", { count }, opts?.requestId);
+    this.log?.debug("embedBatch()", { count, batchMode: this.enableBatchInference }, opts?.requestId);
 
-    // For single text, use regular embed
+    // For single text, always use regular embed
     if (count === 1) {
       return [await this.embed(texts[0]!, opts)];
     }
 
-    // For small batches or if batch inference fails, fall back to sequential
-    if (count <= 2) {
+    // If batch inference disabled, use sequential processing (stable but slower)
+    if (!this.enableBatchInference) {
       const results: Float32Array[] = [];
       for (const text of texts) {
         results.push(await this.embed(text, opts));
@@ -444,36 +516,43 @@ export class OpenVINOProvider implements EmbeddingProvider {
       return results;
     }
 
-    // Process in chunks of maxBatchSize
+    // Native batch inference enabled - process in chunks of maxBatchSize
     const results: Float32Array[] = [];
-
     for (let i = 0; i < count; i += this.maxBatchSize) {
       const chunk = texts.slice(i, Math.min(i + this.maxBatchSize, count));
       const chunkResults = await this.embedBatchNative(chunk, opts);
       results.push(...chunkResults);
     }
-
     return results;
   }
 
   /**
    * Native batch inference using OpenVINO reshape
+   * ALWAYS uses fixed batch_size=16 model, with padding for smaller batches
+   * This ensures only 2 compiled models exist: batch_size=1 and batch_size=16
    */
   private async embedBatchNative(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
-    const batchSize = texts.length;
+    const actualCount = texts.length;
+    const fixedBatchSize = this.maxBatchSize; // Always use 16
     const t0 = Date.now();
 
-    // Tokenize all texts
-    const encoded = await this.tokenizer(texts, {
+    // Pad texts array to fixed batch size if needed
+    const paddedTexts = [...texts];
+    while (paddedTexts.length < fixedBatchSize) {
+      paddedTexts.push(""); // Empty string for padding
+    }
+
+    // Tokenize all texts (including padding)
+    const encoded = await this.tokenizer(paddedTexts, {
       padding: true,
       truncation: true,
       max_length: this.seqLen,
     });
 
-    // Get or create compiled model for this batch size
+    // Get or create compiled model for fixed batch size (always 4)
     let compiledModel: any;
     try {
-      compiledModel = await this.getCompiledModelForBatch(batchSize);
+      compiledModel = await this.getCompiledModelForBatch(fixedBatchSize);
     } catch (e: any) {
       // Fallback to sequential if reshape fails
       this.log?.warn("Batch reshape failed, falling back to sequential", { error: e.message });
@@ -484,14 +563,14 @@ export class OpenVINOProvider implements EmbeddingProvider {
       return results;
     }
 
-    // Prepare batched inputs as BigInt64Array
-    const totalElements = batchSize * this.seqLen;
+    // Prepare batched inputs as BigInt64Array (always fixed size)
+    const totalElements = fixedBatchSize * this.seqLen;
     const inputIds = new BigInt64Array(totalElements);
     const attMask = new BigInt64Array(totalElements);
     const tokType = new BigInt64Array(totalElements).fill(0n);
 
-    // Fill tensors for each text in batch
-    for (let b = 0; b < batchSize; b++) {
+    // Fill tensors for each text in batch (including padding)
+    for (let b = 0; b < fixedBatchSize; b++) {
       const offset = b * this.seqLen;
       const ids = encoded.input_ids.data.slice(b * this.seqLen, (b + 1) * this.seqLen);
       const mask = encoded.attention_mask.data.slice(b * this.seqLen, (b + 1) * this.seqLen);
@@ -505,13 +584,13 @@ export class OpenVINOProvider implements EmbeddingProvider {
     // Create inference request
     const infer = compiledModel.createInferRequest();
 
-    // Set batched input tensors [batchSize, seqLen]
-    infer.setInputTensor(0, new ov.Tensor("i64", [batchSize, this.seqLen], inputIds));
-    infer.setInputTensor(1, new ov.Tensor("i64", [batchSize, this.seqLen], attMask));
+    // Set batched input tensors [fixedBatchSize, seqLen]
+    infer.setInputTensor(0, new ov.Tensor("i64", [fixedBatchSize, this.seqLen], inputIds));
+    infer.setInputTensor(1, new ov.Tensor("i64", [fixedBatchSize, this.seqLen], attMask));
 
     // Some models need token_type_ids
     try {
-      infer.setInputTensor(2, new ov.Tensor("i64", [batchSize, this.seqLen], tokType));
+      infer.setInputTensor(2, new ov.Tensor("i64", [fixedBatchSize, this.seqLen], tokType));
     } catch {
       // Model doesn't have token_type_ids input
     }
@@ -519,15 +598,15 @@ export class OpenVINOProvider implements EmbeddingProvider {
     // Run batch inference
     infer.infer();
 
-    // Get output [batchSize, seqLen, dim]
+    // Get output [fixedBatchSize, seqLen, dim]
     const output = infer.getOutputTensor(0);
     const outputData = new Float32Array(output.data);
 
-    // Extract embeddings for each text in batch
+    // Extract embeddings only for actual texts (not padding)
     const dim = this.modelConfig.dimension;
     const results: Float32Array[] = [];
 
-    for (let b = 0; b < batchSize; b++) {
+    for (let b = 0; b < actualCount; b++) {
       // Extract attention mask for this sample
       const sampleMask = new BigInt64Array(this.seqLen);
       for (let i = 0; i < this.seqLen; i++) {
@@ -541,8 +620,8 @@ export class OpenVINOProvider implements EmbeddingProvider {
     }
 
     const elapsed = Date.now() - t0;
-    const perText = (elapsed / batchSize).toFixed(2);
-    this.log?.debug("Batch inference complete", { batchSize, totalMs: elapsed, perTextMs: perText });
+    const perText = (elapsed / actualCount).toFixed(2);
+    this.log?.debug("Batch inference complete", { actualCount, fixedBatchSize, totalMs: elapsed, perTextMs: perText });
 
     return results;
   }

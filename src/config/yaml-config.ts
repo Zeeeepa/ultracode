@@ -20,7 +20,7 @@ import { existsSync, readTextSync } from "../utils/file-ops.js";
 export interface MCPConfig {
   embedding?: {
     model?: string;
-    provider?: "memory" | "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "auto";
+    provider?: "memory" | "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "openvino" | "auto";
     apiKey?: string;
     enabled?: boolean;
     fallbackToMemory?: boolean;
@@ -285,14 +285,11 @@ export interface GitConfig {
 }
 
 export interface VectorBackendConfig {
-  backend?: "auto" | "vectorlite" | "sqlite-vec" | "fallback";
-  autoSwitchThreshold?: number;
-  vectorlite?: {
-    maxElements?: number;
-    M?: number;
-    efConstruction?: number;
-    efSearch?: number;
-    distanceMetric?: "l2" | "cosine" | "ip";
+  libsql?: {
+    metric?: "cosine" | "l2";
+    compression?: "float8" | "float16" | "float32";
+    searchL?: number;
+    insertL?: number;
   };
 }
 
@@ -695,6 +692,7 @@ export class ConfigLoader {
             | "cloudru"
             | "huggingface"
             | "tei"
+            | "openvino"
             | "auto",
           apiKey:
             yamlConfig.mcp?.embedding?.apiKey ||
@@ -1140,15 +1138,11 @@ export class ConfigLoader {
               (process.env.CONDUCTOR_MANDATORY_DELEGATION === "true" || DEFAULT_CONFIG.conductor.mandatoryDelegation),
       },
       vectorBackend: {
-        backend: (yamlConfig.vectorBackend?.backend as any) || (process.env.VECTOR_BACKEND as any) || "auto",
-        autoSwitchThreshold:
-          yamlConfig.vectorBackend?.autoSwitchThreshold || Number(process.env.VECTOR_AUTO_SWITCH_THRESHOLD) || 10000,
-        vectorlite: yamlConfig.vectorBackend?.vectorlite || {
-          maxElements: Number(process.env.VECTORLITE_MAX_ELEMENTS) || undefined,
-          M: Number(process.env.VECTORLITE_M) || undefined,
-          efConstruction: Number(process.env.VECTORLITE_EF_CONSTRUCTION) || undefined,
-          efSearch: Number(process.env.VECTORLITE_EF_SEARCH) || undefined,
-          distanceMetric: (process.env.VECTORLITE_DISTANCE_METRIC as any) || undefined,
+        libsql: yamlConfig.vectorBackend?.libsql || {
+          metric: (process.env.LIBSQL_METRIC as "cosine" | "l2") || undefined,
+          compression: (process.env.LIBSQL_COMPRESSION as "float8" | "float16" | "float32") || undefined,
+          searchL: Number(process.env.LIBSQL_SEARCH_L) || undefined,
+          insertL: Number(process.env.LIBSQL_INSERT_L) || undefined,
         },
       },
       environment: yamlConfig.environment || process.env.NODE_ENV || DEFAULT_CONFIG.environment,

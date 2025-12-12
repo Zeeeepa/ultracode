@@ -1,221 +1,146 @@
 /**
- * TASK-004B: Vector Store Manager - Initialization Fixes Applied
- * TASK-002: Vector Store Manager with SQLite-vec
- * ADR-004: MCP CodeGraph Systematic Fixing Plan
+ * Vector Store Manager - Unified LibSQL Backend
  *
- * Manages vector storage and similarity search using sqlite-vec extension
- * Optimized for 384-dimensional vectors from all-MiniLM-L6-v2
- * FIXED: Initialization patterns and SQLite-vec loading issues
+ * Manages vector storage and similarity search using the unified LibSQL storage.
+ * Now uses the same database as GraphStorage for consistency.
+ *
+ * v4: Uses LibSQLGraphAdapter from graph-storage-factory for unified storage
  *
  * External Dependencies:
- * - better-sqlite3: https://github.com/WiseLibs/better-sqlite3 - SQLite database interface
- * - sqlite-vec: https://github.com/asg017/sqlite-vec - Vector similarity extension
+ * - @libsql/client: https://github.com/tursodatabase/libsql-client-ts - LibSQL with DiskANN
  *
- * Architecture References:
- * - Project Overview: doc/PROJECT_OVERVIEW.md
- * - Coding Standards: doc/CODING_STANDARD.md
- * - Architectural Decisions: doc/ARCHITECTURAL_DECISIONS.md
- * - Performance Guide: PERFORMANCE_GUIDE.md
- *
- * @task_id TASK-004B
- * @adr_ref ADR-004
- * @coding_standard Adheres to: doc/CODING_STANDARD.md
  * @history
- *  - 2025-09-14: Created by Dev-Agent - TASK-002: Vector store implementation with sqlite-vec
- *  - 2025-09-17: Fixed by Dev-Agent - TASK-004B: Optimized initialization and error handling
+ *  - 2025-09-14: Created - Initial vector store implementation
+ *  - 2025-12-11: Refactored - LibSQL DiskANN as only backend (no fallback)
+ *  - 2025-12-11: v4 - Unified storage with GraphStorage
  */
 
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { decode as cborDecode, encode as cborEncode } from "cbor-x";
 import { LRUCache } from "lru-cache";
 import type { VectorBackend as GPUVectorBackend } from "../gpu/backends/base.js";
-import { getProjectPaths } from "../shared/storage-paths.js";
-import type { SQLiteDatabase, SQLiteStatement } from "../storage/sqlite-adapter.js";
-import { loadSQLiteModule } from "../storage/sqlite-adapter.js";
-import type { SimilarityResult, VectorBackend, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
-import { cosineSimilarity as cosineSimilaritySIMD } from "../utils/simd-vector-ops.js";
-import { AdaptiveVectorBackend } from "./adaptive-vector-backend.js";
-import { VectorliteAdapter } from "./vectorlite-adapter.js";
+import { DEFAULT_BRANCH, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
+import { getGraphStorage, getLibSQLAdapter } from "../storage/graph-storage-factory.js";
+import type { LibSQLGraphAdapter, ProjectContext } from "../storage/libsql-graph-adapter.js";
+import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
 const DEFAULT_CONFIG: Partial<VectorStoreConfig> = {
   dimensions: 384,
-  cacheSize: 128000, // 512MB cache (increased for better performance)
-  walMode: true,
 };
 
-// CBOR marker: first byte of CBOR map is 0xA0-0xBF or 0x80-0x9F for arrays
-const JSON_OPEN_BRACE = 0x7b; // '{'
-const JSON_OPEN_BRACKET = 0x5b; // '['
-
 // =============================================================================
-// 3. DATA MODELS AND TYPE DEFINITIONS
+// 3. UTILITY FUNCTIONS
 // =============================================================================
-interface VectorRow {
-  id: string;
-  content: string;
-  vector: Buffer;
-  metadata: string | null;
-  created_at: number;
-  distance?: number;
-}
-
-// =============================================================================
-// 4. UTILITY FUNCTIONS AND HELPERS
-// =============================================================================
-function float32ArrayToBuffer(array: Float32Array): Buffer {
-  return Buffer.from(array.buffer, array.byteOffset, array.byteLength);
-}
-
-function bufferToFloat32Array(buffer: Buffer): Float32Array {
-  return new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
-}
-
 function dedupeById(items: VectorEmbedding[]): VectorEmbedding[] {
   const map = new Map<string, VectorEmbedding>();
   for (const e of items) map.set(e.id, e);
   return Array.from(map.values());
 }
 
-/**
- * Encode metadata to CBOR buffer
- * CBOR is ~30% smaller and 5x faster than JSON
- */
-function encodeMetadata(metadata: Record<string, unknown> | undefined): Buffer | null {
-  if (!metadata) return null;
-  return Buffer.from(cborEncode(metadata));
-}
-
-/**
- * Decode metadata with backwards compatibility
- * Detects JSON by first byte (0x7B = '{') and decodes accordingly
- */
-function decodeMetadata(data: Buffer | string | null): Record<string, unknown> | undefined {
-  if (!data) return undefined;
-
-  // String input (legacy JSON)
-  if (typeof data === "string") {
-    try {
-      return JSON.parse(data);
-    } catch {
-      return undefined;
-    }
-  }
-
-  // Buffer input - check first byte for format detection
-  const firstByte = data[0];
-  if (firstByte === JSON_OPEN_BRACE || firstByte === JSON_OPEN_BRACKET) {
-    // Legacy JSON format
-    try {
-      return JSON.parse(data.toString("utf8"));
-    } catch {
-      return undefined;
-    }
-  }
-
-  // CBOR format
-  try {
-    return cborDecode(data) as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
-}
 // =============================================================================
-// 5. CORE BUSINESS LOGIC
+// 4. CORE BUSINESS LOGIC
 // =============================================================================
 export class VectorStore {
-  private db: SQLiteDatabase | null = null;
   private readonly config: VectorStoreConfig;
-  private insertStmt: SQLiteStatement | null = null;
-  private updateStmt: SQLiteStatement | null = null;
-  private deleteStmt: SQLiteStatement | null = null;
-  private insertVecStmt: SQLiteStatement | null = null;
-  private deleteVecByIdStmt: SQLiteStatement | null = null;
+  // v4: Uses unified LibSQLGraphAdapter from graph-storage-factory
+  private adapter: LibSQLGraphAdapter | null = null;
 
-  // TASK-004B: Initialization state management
+  // Initialization state management
   private isInitialized = false;
   private isInitializing = false;
   private initializationPromise: Promise<void> | null = null;
-  private extensionLoadAttempts = 0;
-  private readonly MAX_EXTENSION_LOAD_ATTEMPTS = 3;
   private debugMode = process.env.VECTOR_STORE_DEBUG === "true";
-  private sqliteVecEnabled = false;
 
-  // Adaptive backend support
-  private currentBackend: VectorBackend = "fallback";
-  private vectorliteAdapter: VectorliteAdapter | null = null;
-  private adaptiveBackend: AdaptiveVectorBackend | null = null;
+  // Project context for multi-project support
+  private currentContext: ProjectContext = {
+    projectHash: "legacy",
+    branchName: DEFAULT_BRANCH,
+  };
 
   // GPU backend support (CUDA/WebGPU acceleration)
   private gpuBackend: GPUVectorBackend | null = null;
   private useGPU = false;
 
-  // LRU cache for parsed metadata (Phase 1.3 optimization)
+  // LRU cache for parsed metadata
   private metadataCache = new LRUCache<string, Record<string, unknown>>({
     max: 10000,
     ttl: 1000 * 60 * 5, // 5 minutes TTL
   });
 
   constructor(config: Partial<VectorStoreConfig> = {}) {
-    // Determine database path: explicit config > centralized storage
-    let dbPath = config.dbPath;
-    if (!dbPath) {
-      const workingDir = config.workingDirectory || process.cwd();
-      const paths = getProjectPaths(workingDir);
-      dbPath = paths.vectorsDbPath;
-      console.error(`[VectorStore] Auto-resolved dbPath: workingDir=${workingDir}, dbPath=${dbPath}`);
-    } else {
-      console.error(`[VectorStore] Using explicit dbPath: ${dbPath}`);
-    }
+    // v4: dbPath is now managed by graph-storage-factory
+    console.error(`[VectorStore] Using unified storage from graph-storage-factory`);
 
     this.config = {
-      dbPath,
+      dbPath: config.dbPath || "",
       dimensions: config.dimensions || DEFAULT_CONFIG.dimensions!,
-      cacheSize: config.cacheSize || DEFAULT_CONFIG.cacheSize,
-      walMode: config.walMode ?? DEFAULT_CONFIG.walMode,
-      backend: config.backend || "auto",
-      autoSwitchThreshold: config.autoSwitchThreshold || 10000,
-      vectorlite: config.vectorlite,
       workingDirectory: config.workingDirectory,
-      estimatedFileCount: config.estimatedFileCount,
+      libsql: config.libsql,
     };
+  }
+
+  /**
+   * Set the current project context for all subsequent operations
+   */
+  setProjectContext(context: ProjectContext): void {
+    this.currentContext = context;
+    // v4: Also set context on the adapter if available
+    if (this.adapter) {
+      this.adapter.setProjectContext(context);
+    }
+    console.error(`[VectorStore] Context set: project=${context.projectHash}, branch=${context.branchName}`);
+  }
+
+  /**
+   * Set project context from path and branch
+   */
+  setProject(projectPath: string, branchName?: string): void {
+    this.setProjectContext({
+      projectHash: getProjectHash(projectPath),
+      branchName: normalizeBranchName(branchName || DEFAULT_BRANCH),
+    });
+  }
+
+  /**
+   * Get current project context
+   */
+  getProjectContext(): ProjectContext {
+    return { ...this.currentContext };
   }
 
   /**
    * Get the database path used by this VectorStore
    */
   getDbPath(): string {
-    return this.config.dbPath;
+    return this.adapter?.getDbPath() || this.config.dbPath;
   }
 
   /**
    * Initialize the vector store database
-   * TASK-004B: Added singleton pattern and initialization guards
+   * v4: Now uses unified storage from graph-storage-factory
    */
   async initialize(): Promise<void> {
-    // TASK-004B: Return early if already initialized
+    // Return early if already initialized
     if (this.isInitialized) {
       if (this.debugMode) {
-        console.error(`[VectorStore] TASK-004B: Already initialized, returning early`);
+        console.error(`[VectorStore] Already initialized, returning early`);
       }
       return;
     }
 
-    // TASK-004B: Return existing promise if already initializing
+    // Return existing promise if already initializing
     if (this.isInitializing && this.initializationPromise) {
       if (this.debugMode) {
-        console.error(`[VectorStore] TASK-004B: Initialization in progress, waiting...`);
+        console.error(`[VectorStore] Initialization in progress, waiting...`);
       }
       return this.initializationPromise;
     }
 
-    // TASK-004B: Set initialization state and create promise
+    // Set initialization state and create promise
     this.isInitializing = true;
     this.initializationPromise = this.initializeInternal();
 
@@ -223,7 +148,7 @@ export class VectorStore {
       await this.initializationPromise;
       this.isInitialized = true;
       if (this.debugMode) {
-        console.error(`[VectorStore] TASK-004B: Initialization completed successfully`);
+        console.error(`[VectorStore] Initialization completed successfully`);
       }
     } catch (error) {
       // Reset state on failure
@@ -237,205 +162,32 @@ export class VectorStore {
 
   /**
    * Internal initialization method
-   * TASK-004B: Separated for better error handling
-   * ADAPTIVE: Added adaptive backend selection
+   * v4: Uses LibSQLGraphAdapter from graph-storage-factory
    */
   private async initializeInternal(): Promise<void> {
     try {
-      // Ensure directory exists before creating database
-      const dbDir = dirname(this.config.dbPath);
-      if (!existsSync(dbDir)) {
-        console.error(`[VectorStore] Creating directory: ${dbDir}`);
-        mkdirSync(dbDir, { recursive: true });
+      // v4: Get the unified adapter from graph-storage-factory
+      // This ensures GraphStorage is initialized first and we share the same DB
+      await getGraphStorage();
+      this.adapter = getLibSQLAdapter();
+
+      if (!this.adapter || !this.adapter.isReady()) {
+        throw new Error("LibSQL adapter not available from graph-storage-factory");
       }
 
-      // Create database connection using runtime-appropriate SQLite module
-      const DatabaseModule = loadSQLiteModule();
-      this.db = new DatabaseModule(this.config.dbPath);
+      // Set context on adapter
+      this.adapter.setProjectContext(this.currentContext);
 
-      // TASK-004B: Load sqlite-vec extension with improved error handling
-      await this.loadSqliteVecExtension();
-
-      // Configure for optimal performance on commodity hardware
-      if (this.config.walMode) {
-        this.db.pragma("journal_mode = WAL");
-      }
-      this.db.pragma(`cache_size = ${this.config.cacheSize}`);
-      this.db.pragma("temp_store = MEMORY");
-      this.db.pragma("synchronous = NORMAL");
-
-      // ADAPTIVE: Create adaptive backend selector
-      this.adaptiveBackend = new AdaptiveVectorBackend(this.db, this.config);
-
-      // Detect available backends
-      const capabilities = await this.adaptiveBackend.detectCapabilities();
-      console.error("[VectorStore] Detected capabilities:", capabilities);
-
-      // Select optimal backend (pass estimated file count for better pre-selection)
-      const estimatedFileCount = this.config.estimatedFileCount;
-      const selection = this.adaptiveBackend.selectBackend(undefined, estimatedFileCount);
-      this.currentBackend = selection.backend;
-
-      console.error(`[VectorStore] Selected backend: ${selection.backend}`);
-      console.error(`[VectorStore] Reason: ${selection.reason}`);
-      if (!selection.recommended) {
-        console.warn(`[VectorStore] Warning: Current backend is not optimal for this codebase size`);
-      }
-
-      // ADAPTIVE: Initialize backend-specific tables and adapters
-      if (this.currentBackend === "vectorlite") {
-        // Initialize vectorlite adapter with HNSW index
-        this.vectorliteAdapter = new VectorliteAdapter(this.db, {
-          dimensions: this.config.dimensions,
-          maxElements: this.config.vectorlite?.maxElements,
-          M: this.config.vectorlite?.M,
-          efConstruction: this.config.vectorlite?.efConstruction,
-          efSearch: this.config.vectorlite?.efSearch,
-          distanceMetric: this.config.vectorlite?.distanceMetric,
-        });
-
-        await this.vectorliteAdapter.loadExtension();
-        this.vectorliteAdapter.initialize();
-
-        // Also create metadata table for compatibility
-        this.db.exec(`
-          CREATE TABLE IF NOT EXISTS doc_embeddings (
-            id TEXT PRIMARY KEY,
-            content TEXT NOT NULL,
-            metadata TEXT,
-            created_at INTEGER NOT NULL
-          );
-
-          CREATE INDEX IF NOT EXISTS idx_doc_embeddings_created
-          ON doc_embeddings(created_at);
-
-          CREATE INDEX IF NOT EXISTS idx_doc_embeddings_content
-          ON doc_embeddings(content);
-        `);
-
-        this.sqliteVecEnabled = false; // Vectorlite is different from sqlite-vec
-        console.error(`[VectorStore] Initialized vectorlite backend with HNSW index`);
-      } else if (this.currentBackend === "sqlite-vec") {
-        // Use sqlite-vec backend
-        const hasVecExtension = this.checkVecExtension();
-        this.sqliteVecEnabled = hasVecExtension;
-
-        if (hasVecExtension) {
-          // Create optimized table using sqlite-vec virtual table
-          this.db.exec(`
-            CREATE VIRTUAL TABLE IF NOT EXISTS vec_doc_embeddings USING vec0(
-              id TEXT PRIMARY KEY,
-              embedding float[${this.config.dimensions}]
-            );
-
-            CREATE TABLE IF NOT EXISTS doc_embeddings (
-              id TEXT PRIMARY KEY,
-              content TEXT NOT NULL,
-              metadata TEXT,
-              created_at INTEGER NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_doc_embeddings_created
-            ON doc_embeddings(created_at);
-
-            CREATE INDEX IF NOT EXISTS idx_doc_embeddings_content
-            ON doc_embeddings(content);
-          `);
-          console.error(`[VectorStore] Initialized sqlite-vec backend`);
-        }
-      } else {
-        // Fallback backend (no vector extensions)
-        this.db.exec(`
-          CREATE TABLE IF NOT EXISTS doc_embeddings (
-            id TEXT PRIMARY KEY,
-            content TEXT NOT NULL,
-            vector BLOB NOT NULL,
-            metadata TEXT,
-            created_at INTEGER NOT NULL
-          );
-
-          CREATE INDEX IF NOT EXISTS idx_doc_embeddings_created
-          ON doc_embeddings(created_at);
-
-          CREATE INDEX IF NOT EXISTS idx_doc_embeddings_content
-          ON doc_embeddings(content);
-        `);
-        console.error(`[VectorStore] Initialized fallback backend (no vector extensions)`);
-      }
-
-      // Prepare statements for better performance
-      this.prepareStatements();
+      console.error(`[VectorStore] Using unified storage from graph-storage-factory`);
 
       // GPU backend initialization (optional, for accelerated similarity search)
       await this.initializeGPUBackend();
 
-      console.error(`[VectorStore] Initialized with ${this.config.dimensions} dimensions`);
+      console.error(`[VectorStore] Initialized with ${this.config.dimensions} dimensions (unified storage)`);
     } catch (error) {
       console.error("[VectorStore] Initialization failed:", error);
       throw new Error(`Failed to initialize vector store`, { cause: error });
     }
-  }
-
-  /**
-   * Prepare SQL statements for reuse
-   * ADAPTIVE: Adjusted for multiple backends
-   */
-  private prepareStatements(): void {
-    if (!this.db) throw new Error("Database not initialized");
-
-    // ADAPTIVE: Use currentBackend instead of checkVecExtension()
-    if (this.currentBackend === "vectorlite") {
-      // Vectorlite: metadata only in doc_embeddings, vectors in vectorlite table
-      this.insertStmt = this.db.prepare(`
-        INSERT OR REPLACE INTO doc_embeddings (id, content, metadata, created_at)
-        VALUES (?, ?, ?, ?)
-      `);
-
-      this.updateStmt = this.db.prepare(`
-        UPDATE doc_embeddings
-        SET metadata = ?, created_at = ?
-        WHERE id = ?
-      `);
-
-      this.insertVecStmt = null; // Vectorlite handles vectors internally
-      this.deleteVecByIdStmt = null;
-    } else if (this.currentBackend === "sqlite-vec") {
-      // sqlite-vec: metadata in doc_embeddings, vectors in vec_doc_embeddings
-      this.insertStmt = this.db.prepare(`
-        INSERT OR REPLACE INTO doc_embeddings (id, content, metadata, created_at)
-        VALUES (?, ?, ?, ?)
-      `);
-
-      this.updateStmt = this.db.prepare(`
-        UPDATE doc_embeddings
-        SET metadata = ?, created_at = ?
-        WHERE id = ?
-      `);
-
-      this.insertVecStmt = this.db.prepare(`
-        INSERT INTO vec_doc_embeddings (id, embedding)
-        VALUES (?, vec_f32(?))
-      `);
-      this.deleteVecByIdStmt = this.db.prepare(`
-        DELETE FROM vec_doc_embeddings WHERE id = ?
-      `);
-    } else {
-      // Fallback: everything in doc_embeddings including vector BLOB
-      this.insertStmt = this.db.prepare(`
-        INSERT OR REPLACE INTO doc_embeddings (id, content, vector, metadata, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `);
-
-      this.updateStmt = this.db.prepare(`
-        UPDATE doc_embeddings
-        SET vector = ?, metadata = ?, created_at = ?
-        WHERE id = ?
-      `);
-      this.insertVecStmt = null;
-      this.deleteVecByIdStmt = null;
-    }
-
-    this.deleteStmt = this.db.prepare(`DELETE FROM doc_embeddings WHERE id = ?`);
   }
 
   /**
@@ -468,423 +220,42 @@ export class VectorStore {
   }
 
   /**
-   * TASK-004B: Load sqlite-vec extension with improved error handling
-   */
-  private async loadSqliteVecExtension(): Promise<void> {
-    if (!this.db) {
-      throw new Error("Database not initialized");
-    }
-
-    // Skip if already attempted max times
-    if (this.extensionLoadAttempts >= this.MAX_EXTENSION_LOAD_ATTEMPTS) {
-      if (this.debugMode) {
-        console.error(
-          `[VectorStore] TASK-004B: Max extension load attempts reached (${this.extensionLoadAttempts}), skipping`,
-        );
-      }
-      return;
-    }
-
-    this.extensionLoadAttempts++;
-
-    try {
-      if (this.debugMode) {
-        console.error(
-          `[VectorStore] TASK-004B: Loading sqlite-vec extension (attempt ${this.extensionLoadAttempts})...`,
-        );
-      }
-
-      // Determine platform-specific extension file
-      const platform = process.platform;
-      let extensionFile = "vec0";
-      if (platform === "win32") {
-        extensionFile = "vec0.dll";
-      } else if (platform === "darwin") {
-        extensionFile = "vec0.dylib";
-      } else {
-        extensionFile = "vec0.so";
-      }
-
-      // Platform-specific package names for optionalDependencies
-      const platformPackages = {
-        "linux-x64": "sqlite-vec-linux-x64",
-        "linux-arm64": "sqlite-vec-linux-arm64",
-        "darwin-x64": "sqlite-vec-darwin-x64",
-        "darwin-arm64": "sqlite-vec-darwin-arm64",
-        "win32-x64": "sqlite-vec-windows-x64",
-      };
-
-      const arch = process.arch === "x64" ? "x64" : process.arch;
-      const platformKey = `${platform}-${arch}` as keyof typeof platformPackages;
-      const platformPackage = platformPackages[platformKey];
-
-      const possiblePaths = [
-        "sqlite-vec",
-        platformPackage ? `./node_modules/${platformPackage}/${extensionFile}` : null,
-        `./node_modules/sqlite-vec/dist/${extensionFile}`,
-        `/usr/local/lib/${extensionFile}`,
-        `./${extensionFile}`,
-        "vec0",
-      ].filter(Boolean) as string[];
-
-      for (const path of possiblePaths) {
-        try {
-          this.db.loadExtension(path);
-          console.error(`[VectorStore] TASK-004B: Loaded sqlite-vec extension from: ${path}`);
-          return;
-        } catch (error) {
-          if (this.debugMode) {
-            console.error(`[VectorStore] TASK-004B: Failed to load extension from ${path}:`, error);
-          }
-          // Continue to next path
-        }
-      }
-
-      console.warn("[VectorStore] TASK-004B: sqlite-vec extension not loaded, using fallback implementation");
-      console.warn("[VectorStore] For better performance, install sqlite-vec extension");
-    } catch (error) {
-      console.error(`[VectorStore] TASK-004B: Extension loading error (attempt ${this.extensionLoadAttempts}):`, error);
-      if (this.extensionLoadAttempts >= this.MAX_EXTENSION_LOAD_ATTEMPTS) {
-        console.warn("[VectorStore] TASK-004B: Max extension load attempts reached, proceeding with fallback");
-      }
-    }
-  }
-
-  /**
    * Insert a single embedding
-   * ADAPTIVE: Routes to appropriate backend
-   * OPTIMIZED: Uses direct Buffer for vectors (3-5x faster) and CBOR for metadata
    */
   async insert(embedding: VectorEmbedding): Promise<void> {
-    if (!this.db || !this.insertStmt) throw new Error("Vector store not initialized");
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
-    try {
-      // OPTIMIZATION: Use CBOR instead of JSON for metadata (30% smaller, 5x faster)
-      const metadataBuffer = encodeMetadata(embedding.metadata);
-      const timestamp = embedding.createdAt || Date.now();
-
-      // ADAPTIVE: Route to vectorlite adapter
-      if (this.currentBackend === "vectorlite" && this.vectorliteAdapter) {
-        this.vectorliteAdapter.insert(embedding);
-        // Also insert metadata into doc_embeddings for compatibility
-        this.insertStmt.run(embedding.id, embedding.content, metadataBuffer, timestamp);
-        return;
-      }
-
-      // sqlite-vec or fallback backend
-      const hasVec = this.sqliteVecEnabled;
-      if (hasVec && this.insertVecStmt && this.deleteVecByIdStmt) {
-        const tx = this.db.transaction((e: VectorEmbedding) => {
-          this.deleteVecByIdStmt?.run(e.id);
-          // OPTIMIZATION: Direct Buffer instead of JSON.stringify(Array.from()) - 3-5x faster
-          const vectorBuffer = float32ArrayToBuffer(e.vector);
-          this.insertVecStmt?.run(e.id, vectorBuffer);
-          this.insertStmt?.run(e.id, e.content, metadataBuffer, timestamp);
-        });
-        tx(embedding);
-      } else {
-        const vectorBuffer = float32ArrayToBuffer(embedding.vector);
-        this.insertStmt.run(embedding.id, embedding.content, vectorBuffer, metadataBuffer, timestamp);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[VectorStore] Insert failed:", message);
-      throw error;
-    }
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
+    await this.adapter.insertEmbedding(embedding);
   }
 
   /**
    * Batch insert multiple embeddings
-   * ADAPTIVE: Routes to appropriate backend
-   * OPTIMIZED: Uses direct Buffer for vectors and CBOR for metadata
    */
   async insertBatch(embeddings: VectorEmbedding[]): Promise<void> {
-    if (!this.db || !this.insertStmt) throw new Error("Vector store not initialized");
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
     const unique = dedupeById(embeddings);
+    const { projectHash } = this.currentContext;
 
-    try {
-      // ADAPTIVE: Route to vectorlite adapter
-      if (this.currentBackend === "vectorlite" && this.vectorliteAdapter) {
-        this.vectorliteAdapter.insertBatch(unique);
-        // Also insert metadata into doc_embeddings for compatibility
-        const insertMetadata = this.db.transaction((items: VectorEmbedding[]) => {
-          for (const e of items) {
-            // OPTIMIZATION: Use CBOR instead of JSON for metadata
-            const metadataBuffer = encodeMetadata(e.metadata);
-            const timestamp = e.createdAt || Date.now();
-            this.insertStmt?.run(e.id, e.content, metadataBuffer, timestamp);
-          }
-        });
-        insertMetadata(unique);
-        console.error(`[VectorStore] Inserted batch of ${unique.length} embeddings (vectorlite)`);
-        return;
-      }
-
-      // sqlite-vec or fallback backend
-      const hasVec = this.sqliteVecEnabled;
-      const insertMany = this.db.transaction((items: VectorEmbedding[]) => {
-        for (const e of items) {
-          // OPTIMIZATION: Use CBOR instead of JSON for metadata
-          const metadataBuffer = encodeMetadata(e.metadata);
-          const timestamp = e.createdAt || Date.now();
-
-          if (hasVec && this.insertVecStmt && this.deleteVecByIdStmt) {
-            this.deleteVecByIdStmt.run(e.id);
-            // OPTIMIZATION: Direct Buffer instead of JSON.stringify(Array.from()) - 3-5x faster
-            const vectorBuffer = float32ArrayToBuffer(e.vector);
-            this.insertVecStmt.run(e.id, vectorBuffer);
-            this.insertStmt?.run(e.id, e.content, metadataBuffer, timestamp);
-          } else {
-            const vectorBuffer = float32ArrayToBuffer(e.vector);
-            this.insertStmt?.run(e.id, e.content, vectorBuffer, metadataBuffer, timestamp);
-          }
-        }
-      });
-
-      insertMany(unique);
-      console.error(`[VectorStore] Inserted batch of ${unique.length} embeddings`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[VectorStore] Batch insert failed:", message);
-      throw error;
-    }
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
+    await this.adapter.insertEmbeddingBatch(unique);
+    console.error(
+      `[VectorStore] Inserted batch of ${unique.length} embeddings (unified storage, project=${projectHash})`,
+    );
   }
 
   /**
    * Search for similar vectors using cosine similarity
-   * ADAPTIVE: Routes to appropriate backend
    */
   async search(queryVector: Float32Array, limit = 10): Promise<SimilarityResult[]> {
-    if (!this.db) throw new Error("Vector store not initialized");
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
-    try {
-      // ADAPTIVE: Route to vectorlite adapter
-      if (this.currentBackend === "vectorlite" && this.vectorliteAdapter) {
-        return this.vectorliteAdapter.search(queryVector, limit);
-      }
-
-      // sqlite-vec backend
-      const hasVecExtension = this.checkVecExtension();
-      if (hasVecExtension) {
-        const stmt = this.db.prepare(`
-        SELECT e.id, e.content, e.metadata, distance
-        FROM vec_doc_embeddings v
-        JOIN doc_embeddings e ON v.id = e.id
-        WHERE v.embedding MATCH vec_f32(?) AND k = ?
-        ORDER BY distance
-      `);
-
-        // OPTIMIZATION: Direct Buffer instead of JSON.stringify(Array.from())
-        const vectorBuffer = float32ArrayToBuffer(queryVector);
-        const rows = stmt.all(vectorBuffer, limit) as Array<{
-          id: string;
-          content: string;
-          metadata: Buffer | string | null;
-          distance: number;
-        }>;
-
-        return rows.map((row) => {
-          const sim = 1 / (1 + row.distance);
-
-          // OPTIMIZATION: Use LRU cache for metadata parsing
-          let metadata = this.metadataCache.get(row.id);
-          if (!metadata && row.metadata) {
-            metadata = decodeMetadata(row.metadata);
-            if (metadata) {
-              this.metadataCache.set(row.id, metadata);
-            }
-          }
-
-          return {
-            id: row.id,
-            content: row.content,
-            similarity: sim,
-            metadata,
-          };
-        });
-      } else {
-        return this.fallbackSearch(queryVector, limit);
-      }
-    } catch (error) {
-      console.error("[VectorStore] Search failed:", error);
-
-      if (this.sqliteVecEnabled || this.currentBackend === "vectorlite") return [];
-      return this.fallbackSearch(queryVector, limit);
-    }
-  }
-
-  /**
-   * Fallback search implementation without sqlite-vec
-   * Uses hybrid approach: text filtering + vector similarity
-   */
-  private async fallbackSearch(queryVector: Float32Array, limit: number): Promise<SimilarityResult[]> {
-    if (!this.db) throw new Error("Database not initialized");
-
-    // OPTIMIZATION: Use hybrid search for large datasets
-    const totalCount = this.db.prepare("SELECT COUNT(*) as count FROM doc_embeddings").get() as { count: number };
-
-    // If dataset is small (<1000 vectors), use full scan
-    if (totalCount.count < 1000) {
-      return this.fullScanSearch(queryVector, limit);
-    }
-
-    // For large datasets, use 2-stage hybrid search
-    return this.hybridSearchTwoStage(queryVector, limit);
-  }
-
-  /**
-   * Full scan search for small datasets
-   * Uses GPU batch processing when available for 100-200x speedup
-   */
-  private async fullScanSearch(queryVector: Float32Array, limit: number): Promise<SimilarityResult[]> {
-    if (!this.db) throw new Error("Database not initialized");
-
-    let rows: VectorRow[] = [];
-    if (this.sqliteVecEnabled) {
-      const stmt = this.db.prepare(`
-        SELECT e.id, e.content, e.metadata, v.embedding as vector
-        FROM doc_embeddings e JOIN vec_doc_embeddings v ON v.id = e.id
-      `);
-      rows = stmt.all() as any;
-    } else {
-      const stmt = this.db.prepare(`SELECT id, content, vector, metadata FROM doc_embeddings`);
-      rows = stmt.all() as any;
-    }
-
-    // GPU batch processing for large result sets (>100 vectors)
-    if (rows.length > 100 && this.useGPU && this.gpuBackend) {
-      const database = rows.map((row) => bufferToFloat32Array(row.vector as unknown as Buffer));
-      const similarities = await this.batchCosineSimilarityGPU(queryVector, database);
-
-      const results: Array<SimilarityResult & { score: number }> = rows.map((row, i) => {
-        // OPTIMIZATION: Use LRU cache for metadata parsing
-        let metadata = this.metadataCache.get(row.id);
-        if (!metadata && row.metadata) {
-          metadata = decodeMetadata(row.metadata as Buffer | string);
-          if (metadata) {
-            this.metadataCache.set(row.id, metadata);
-          }
-        }
-
-        return {
-          id: row.id,
-          content: row.content,
-          similarity: (similarities[i]! + 1) / 2, // Normalize to [0..1]
-          score: (similarities[i]! + 1) / 2,
-          metadata,
-        };
-      });
-
-      results.sort((a, b) => b.score - a.score);
-      return results.slice(0, limit);
-    }
-
-    // CPU fallback for small datasets
-    const results: Array<SimilarityResult & { score: number }> = [];
-    for (const row of rows) {
-      const vec = bufferToFloat32Array(row.vector as unknown as Buffer);
-      const cos = this.cosineSimilarity(queryVector, vec);
-      const similarity = (cos + 1) / 2; // Normalize to [0..1]
-
-      // OPTIMIZATION: Use LRU cache for metadata parsing
-      let metadata = this.metadataCache.get(row.id);
-      if (!metadata && row.metadata) {
-        metadata = decodeMetadata(row.metadata as Buffer | string);
-        if (metadata) {
-          this.metadataCache.set(row.id, metadata);
-        }
-      }
-
-      results.push({
-        id: row.id,
-        content: row.content,
-        similarity,
-        score: similarity,
-        metadata,
-      });
-    }
-
-    results.sort((a, b) => b.score - a.score);
-    return results.slice(0, limit);
-  }
-
-  /**
-   * Two-stage hybrid search:
-   * Stage 1: Text-based filtering to reduce candidates (fast)
-   * Stage 2: Vector similarity on filtered candidates (GPU-accelerated when available)
-   */
-  private async hybridSearchTwoStage(queryVector: Float32Array, limit: number): Promise<SimilarityResult[]> {
-    if (!this.db) throw new Error("Database not initialized");
-
-    // Stage 1: Extract top keywords from query context (simple heuristic)
-    // For better results, this could use TF-IDF or BM25
-    const candidateLimit = Math.min(limit * 50, 1000); // Get 50x candidates for filtering
-
-    // Use random sampling for diverse candidates (better than no filtering)
-    const stmt = this.db.prepare(`
-      SELECT id, content, vector, metadata
-      FROM doc_embeddings
-      ORDER BY RANDOM()
-      LIMIT ?
-    `);
-    const candidates = stmt.all(candidateLimit) as VectorRow[];
-
-    // Stage 2: GPU batch processing for candidates (>100 vectors)
-    if (candidates.length > 100 && this.useGPU && this.gpuBackend) {
-      const database = candidates.map((row) => bufferToFloat32Array(row.vector as unknown as Buffer));
-      const similarities = await this.batchCosineSimilarityGPU(queryVector, database);
-
-      const results: Array<SimilarityResult & { score: number }> = candidates.map((row, i) => {
-        // OPTIMIZATION: Use LRU cache for metadata parsing
-        let metadata = this.metadataCache.get(row.id);
-        if (!metadata && row.metadata) {
-          metadata = decodeMetadata(row.metadata as Buffer | string);
-          if (metadata) {
-            this.metadataCache.set(row.id, metadata);
-          }
-        }
-
-        return {
-          id: row.id,
-          content: row.content,
-          similarity: (similarities[i]! + 1) / 2,
-          score: (similarities[i]! + 1) / 2,
-          metadata,
-        };
-      });
-
-      results.sort((a, b) => b.score - a.score);
-      return results.slice(0, limit);
-    }
-
-    // CPU fallback: Compute cosine similarity only for candidates
-    const results: Array<SimilarityResult & { score: number }> = [];
-    for (const row of candidates) {
-      const vec = bufferToFloat32Array(row.vector as unknown as Buffer);
-      const cos = this.cosineSimilarity(queryVector, vec);
-      const similarity = (cos + 1) / 2;
-
-      // OPTIMIZATION: Use LRU cache for metadata parsing
-      let metadata = this.metadataCache.get(row.id);
-      if (!metadata && row.metadata) {
-        metadata = decodeMetadata(row.metadata as Buffer | string);
-        if (metadata) {
-          this.metadataCache.set(row.id, metadata);
-        }
-      }
-
-      results.push({
-        id: row.id,
-        content: row.content,
-        similarity,
-        score: similarity,
-        metadata,
-      });
-    }
-
-    results.sort((a, b) => b.score - a.score);
-    return results.slice(0, limit);
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
+    return await this.adapter.searchVectors(queryVector, limit);
   }
 
   /**
@@ -899,408 +270,147 @@ export class VectorStore {
       dateRange?: { start?: number; end?: number };
     } = {},
   ): Promise<SimilarityResult[]> {
-    if (!this.db) throw new Error("Vector store not initialized");
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
     const { limit = 10, threshold = 0.0, metadataFilter, dateRange } = options;
 
-    try {
-      const hasVecExtension = this.checkVecExtension();
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
 
-      if (hasVecExtension) {
-        const conditions: string[] = [];
-        const condVals: any[] = [];
+    // Get more results for filtering
+    const expandedLimit = metadataFilter || dateRange ? limit * 10 : limit;
+    const results = await this.adapter.searchVectors(queryVector, expandedLimit);
 
-        if (dateRange?.start != null) {
-          conditions.push("e.created_at >= ?");
-          condVals.push(dateRange.start);
-        }
-        if (dateRange?.end != null) {
-          conditions.push("e.created_at <= ?");
-          condVals.push(dateRange.end);
-        }
-        if (metadataFilter) {
-          for (const [key, value] of Object.entries(metadataFilter)) {
-            conditions.push(`json_extract(e.metadata, '$.${key}') = ?`);
-            condVals.push(value);
-          }
-        }
+    // Apply post-filtering
+    let filtered = results;
 
-        const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "";
-        const stmt = this.db.prepare(`
-        SELECT e.id, e.content, e.metadata, distance
-        FROM vec_doc_embeddings v
-        JOIN doc_embeddings e ON v.id = e.id
-        WHERE v.embedding MATCH vec_f32(?) AND k = ?
-          ${whereClause}
-        ORDER BY distance
-      `);
-
-        // OPTIMIZATION: Direct Buffer instead of JSON.stringify(Array.from())
-        const vectorBuffer = float32ArrayToBuffer(queryVector);
-        const rows = stmt.all(vectorBuffer, limit, ...condVals) as Array<{
-          id: string;
-          content: string;
-          metadata: Buffer | string | null;
-          distance: number;
-        }>;
-
-        return rows
-          .map((row) => {
-            // OPTIMIZATION: Use LRU cache for metadata parsing
-            let metadata = this.metadataCache.get(row.id);
-            if (!metadata && row.metadata) {
-              metadata = decodeMetadata(row.metadata);
-              if (metadata) {
-                this.metadataCache.set(row.id, metadata);
-              }
-            }
-
-            return {
-              id: row.id,
-              content: row.content,
-              similarity: Math.max(0, 1 - row.distance),
-              metadata,
-            };
-          })
-          .filter((r) => r.similarity >= threshold);
-      } else {
-        return this.fallbackSearchWithFilters(queryVector, options);
-      }
-    } catch (error) {
-      console.error("[VectorStore] Advanced search failed:", error);
-      if (this.sqliteVecEnabled) return [];
-      return this.fallbackSearchWithFilters(queryVector, options);
-    }
-  }
-
-  /**
-   * Fallback filtered search implementation with hybrid optimization
-   */
-  private async fallbackSearchWithFilters(
-    queryVector: Float32Array,
-    options: {
-      limit?: number;
-      threshold?: number;
-      metadataFilter?: Record<string, unknown>;
-      dateRange?: { start?: number; end?: number };
-    },
-  ): Promise<SimilarityResult[]> {
-    if (!this.db) throw new Error("Database not initialized");
-
-    const { limit = 10, threshold = 0.0, metadataFilter, dateRange } = options;
-
-    // OPTIMIZATION: Check dataset size for hybrid search
-    const totalCount = this.db.prepare("SELECT COUNT(*) as count FROM doc_embeddings").get() as { count: number };
-    const useHybrid = totalCount.count > 1000;
-
-    const conditions: string[] = [];
-    const params: any[] = [];
-    if (dateRange?.start != null) {
-      conditions.push("e.created_at >= ?");
-      params.push(dateRange.start);
-    }
-    if (dateRange?.end != null) {
-      conditions.push("e.created_at <= ?");
-      params.push(dateRange.end);
-    }
-    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-
-    let rows: VectorRow[] = [];
-
-    // HYBRID OPTIMIZATION: For large datasets, sample candidates first
-    if (useHybrid) {
-      const candidateLimit = Math.min(limit * 50, 1000);
-      const orderClause = conditions.length ? "" : "ORDER BY RANDOM()"; // Random sampling if no filters
-
-      if (this.sqliteVecEnabled) {
-        const stmt = this.db.prepare(`
-          SELECT e.id, e.content, e.metadata, e.created_at, v.embedding as vector
-          FROM doc_embeddings e JOIN vec_doc_embeddings v ON v.id = e.id
-          ${whereClause}
-          ${orderClause}
-          LIMIT ?
-        `);
-        rows = stmt.all(...params, candidateLimit) as any;
-      } else {
-        const stmt = this.db.prepare(`
-          SELECT id, content, vector, metadata, created_at
-          FROM doc_embeddings
-          ${whereClause}
-          ${orderClause}
-          LIMIT ?
-        `);
-        rows = stmt.all(...params, candidateLimit) as any;
-      }
-    } else {
-      // Full scan for small datasets
-      if (this.sqliteVecEnabled) {
-        const stmt = this.db.prepare(`
-          SELECT e.id, e.content, e.metadata, e.created_at, v.embedding as vector
-          FROM doc_embeddings e JOIN vec_doc_embeddings v ON v.id = e.id
-          ${whereClause}
-        `);
-        rows = stmt.all(...params) as any;
-      } else {
-        const stmt = this.db.prepare(`
-          SELECT id, content, vector, metadata, created_at
-          FROM doc_embeddings
-          ${whereClause}
-        `);
-        rows = stmt.all(...params) as any;
-      }
+    // Filter by threshold
+    if (threshold > 0) {
+      filtered = filtered.filter((r) => r.similarity >= threshold);
     }
 
-    const results: Array<SimilarityResult & { score: number }> = [];
-    for (const row of rows) {
-      // OPTIMIZATION: Use LRU cache for metadata parsing
-      let metadata = this.metadataCache.get(row.id);
-      if (!metadata && row.metadata) {
-        metadata = decodeMetadata(row.metadata as Buffer | string);
-        if (metadata) {
-          this.metadataCache.set(row.id, metadata);
-        }
-      }
-
-      if (metadataFilter && metadata) {
-        let ok = true;
+    // Filter by metadata
+    if (metadataFilter) {
+      filtered = filtered.filter((r) => {
+        if (!r.metadata) return false;
         for (const [k, v] of Object.entries(metadataFilter)) {
-          if (metadata[k] !== v) {
-            ok = false;
-            break;
-          }
+          if (r.metadata[k] !== v) return false;
         }
-        if (!ok) continue;
-      }
-
-      const vec = bufferToFloat32Array(row.vector as unknown as Buffer);
-      const similarity = this.cosineSimilarity(queryVector, vec);
-      if (similarity >= threshold) {
-        results.push({
-          id: row.id,
-          content: row.content,
-          similarity,
-          score: similarity,
-          metadata,
-        });
-      }
+        return true;
+      });
     }
 
-    results.sort((a, b) => b.score - a.score);
-    return results.slice(0, limit);
-  }
-
-  /**
-   * Compute cosine similarity between two vectors
-   * Uses GPU when available, falls back to SIMD-optimized CPU
-   */
-  private cosineSimilarity(a: Float32Array, b: Float32Array): number {
-    // GPU path is async, use sync CPU for single comparisons
-    // (GPU is more efficient for batch operations)
-    return cosineSimilaritySIMD(a, b);
-  }
-
-  /**
-   * Batch cosine similarity using GPU acceleration when available
-   * Falls back to parallel CPU computation
-   */
-  private async batchCosineSimilarityGPU(query: Float32Array, database: Float32Array[]): Promise<Float32Array> {
-    if (this.useGPU && this.gpuBackend) {
-      try {
-        return await this.gpuBackend.batchCosineSimilarity(query, database);
-      } catch (error) {
-        // GPU failed, fall back to CPU
-        if (this.debugMode) {
-          console.error("[VectorStore] GPU batch failed, falling back to CPU:", (error as Error).message);
-        }
-      }
+    // Filter by date range (if metadata contains createdAt)
+    if (dateRange) {
+      filtered = filtered.filter((r) => {
+        const createdAt = r.metadata?.createdAt as number | undefined;
+        if (!createdAt) return true; // Include if no createdAt
+        if (dateRange.start != null && createdAt < dateRange.start) return false;
+        if (dateRange.end != null && createdAt > dateRange.end) return false;
+        return true;
+      });
     }
 
-    // CPU fallback with parallel processing for large batches
-    const results = new Float32Array(database.length);
-    for (let i = 0; i < database.length; i++) {
-      const vec = database[i];
-      if (vec) {
-        results[i] = cosineSimilaritySIMD(query, vec);
-      }
-    }
-    return results;
-  }
-
-  /**
-   * Check if sqlite-vec extension is available
-   */
-  private checkVecExtension(): boolean {
-    if (!this.db) return false;
-
-    try {
-      const result = this.db
-        .prepare(`
-        SELECT EXISTS (
-          SELECT 1 FROM pragma_function_list 
-          WHERE name = 'vec_distance_cosine'
-        ) as has_vec
-      `)
-        .get() as { has_vec: number };
-
-      const enabled = result.has_vec === 1;
-      if (enabled) {
-        this.sqliteVecEnabled = true;
-      }
-      return enabled;
-    } catch {
-      return this.sqliteVecEnabled;
-    }
+    return filtered.slice(0, limit);
   }
 
   /**
    * Get embedding by ID
    */
   async get(id: string): Promise<VectorEmbedding | null> {
-    if (!this.db) throw new Error("Vector store not initialized");
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
-    // ADAPTIVE: Route to vectorlite adapter
-    if (this.currentBackend === "vectorlite" && this.vectorliteAdapter) {
-      return this.vectorliteAdapter.get(id);
-    }
-
-    const row = this.sqliteVecEnabled
-      ? (this.db
-          .prepare(`
-        SELECT e.id, e.content, e.metadata, e.created_at, v.embedding as vector
-        FROM doc_embeddings e JOIN vec_doc_embeddings v ON v.id = e.id
-        WHERE e.id = ?
-      `)
-          .get(id) as any)
-      : (this.db.prepare(`SELECT * FROM doc_embeddings WHERE id = ?`).get(id) as any);
-
-    if (!row) return null;
-
-    const buf = row.vector as Buffer;
-
-    // FIX: Check if vector buffer exists before converting
-    if (!buf) {
-      console.error(`[VectorStore] Warning: No vector found for id=${id}`);
-      return null;
-    }
-
-    // OPTIMIZATION: Use LRU cache for metadata parsing
-    let metadata = this.metadataCache.get(row.id);
-    if (!metadata && row.metadata) {
-      metadata = decodeMetadata(row.metadata);
-      if (metadata) {
-        this.metadataCache.set(row.id, metadata);
-      }
-    }
-
-    return {
-      id: row.id,
-      content: row.content,
-      vector: bufferToFloat32Array(buf),
-      metadata,
-      createdAt: row.created_at,
-    };
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
+    return await this.adapter.getEmbedding(id);
   }
 
   /**
    * Update an existing embedding
-   * OPTIMIZED: Uses direct Buffer for vectors and CBOR for metadata
    */
   async update(id: string, vector: Float32Array, metadata?: Record<string, unknown>): Promise<void> {
-    if (!this.db || !this.updateStmt) throw new Error("Vector store not initialized");
-    // OPTIMIZATION: Use CBOR instead of JSON for metadata
-    const metadataBuffer = encodeMetadata(metadata);
+    if (!this.adapter) throw new Error("Vector store not initialized");
+
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
 
     // Invalidate cache for this id
     this.metadataCache.delete(id);
 
-    if (this.sqliteVecEnabled && this.insertVecStmt && this.deleteVecByIdStmt) {
-      const tx = this.db.transaction(() => {
-        this.deleteVecByIdStmt?.run(id);
-        // OPTIMIZATION: Direct Buffer instead of JSON.stringify(Array.from())
-        const vectorBuffer = float32ArrayToBuffer(vector);
-        this.insertVecStmt?.run(id, vectorBuffer);
-        this.updateStmt?.run(metadataBuffer, Date.now(), id);
-      });
-      tx();
-    } else {
-      const vectorBuffer = float32ArrayToBuffer(vector);
-      this.updateStmt.run(vectorBuffer, metadataBuffer, Date.now(), id);
+    // Get existing embedding to preserve content
+    const existing = await this.adapter.getEmbedding(id);
+    if (!existing) {
+      throw new Error(`Embedding with id=${id} not found`);
     }
+
+    // Delete and re-insert with new vector
+    await this.adapter.deleteEmbedding(id);
+    await this.adapter.insertEmbedding({
+      id,
+      content: existing.content,
+      vector,
+      metadata: metadata ?? existing.metadata,
+      createdAt: Date.now(),
+    });
   }
 
   /**
    * Delete an embedding
-   * ADAPTIVE: Routes to appropriate backend
    */
   async delete(id: string): Promise<void> {
-    if (!this.db || !this.deleteStmt) throw new Error("Vector store not initialized");
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
-    // ADAPTIVE: Route to vectorlite adapter
-    if (this.currentBackend === "vectorlite" && this.vectorliteAdapter) {
-      this.vectorliteAdapter.delete(id);
-      this.deleteStmt.run(id);
-      return;
-    }
-
-    // sqlite-vec or fallback backend
-    const tx = this.db.transaction((theId: string) => {
-      if (this.sqliteVecEnabled && this.deleteVecByIdStmt) {
-        this.deleteVecByIdStmt.run(theId);
-      }
-      this.deleteStmt?.run(theId);
-    });
-
-    tx(id);
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
+    await this.adapter.deleteEmbedding(id);
   }
 
   /**
-   * Get total number of doc_embeddings
+   * Get total number of embeddings
    */
   async count(): Promise<number> {
-    if (!this.db) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
-    const result = this.db.prepare("SELECT COUNT(*) as count FROM doc_embeddings").get() as { count: number };
-    return result.count;
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
+    return await this.adapter.getEmbeddingCount();
   }
 
   /**
-   * Clear all doc_embeddings
-   * ADAPTIVE: Routes to appropriate backend
+   * Clear all embeddings for current project context
+   * v4: Uses unified clear which clears all data for project, not just embeddings
    */
   async clear(): Promise<void> {
-    if (!this.db) throw new Error("Vector store not initialized");
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
-    // ADAPTIVE: Route to vectorlite adapter
-    if (this.currentBackend === "vectorlite" && this.vectorliteAdapter) {
-      this.vectorliteAdapter.clear();
-      this.db.exec("DELETE FROM doc_embeddings");
-      console.error("[VectorStore] Cleared all embeddings (vectorlite)");
-      return;
-    }
+    const { projectHash, branchName } = this.currentContext;
+    // Note: This clears entities, relationships AND embeddings in v4
+    this.adapter.setProjectContext(this.currentContext);
+    await this.adapter.clear();
+    console.error(`[VectorStore] Cleared data for project=${projectHash}, branch=${branchName}`);
+  }
 
-    // sqlite-vec or fallback backend
-    const tx = this.db.transaction(() => {
-      if (this.sqliteVecEnabled) {
-        this.db?.exec("DELETE FROM vec_doc_embeddings");
-      }
-      this.db?.exec("DELETE FROM doc_embeddings");
-    });
+  /**
+   * Clear ALL embeddings from ALL projects
+   * WARNING: This is a destructive operation for testing/admin only
+   */
+  async clearAll(): Promise<void> {
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
-    tx();
-    console.error("[VectorStore] Cleared all embeddings");
+    await this.adapter.clearAll();
+    console.error("[VectorStore] Cleared ALL data from ALL projects");
   }
 
   /**
    * Close the database connection
+   * v4: Does NOT close adapter - it's managed by graph-storage-factory
    */
   async close(): Promise<void> {
-    if (this.db) {
-      this.db.close();
-      this.db = null;
-      console.error("[VectorStore] Database connection closed");
-    }
+    // v4: Don't close the adapter - it's shared with GraphStorage
+    // The graph-storage-factory manages the adapter lifecycle
+    this.adapter = null;
+    this.isInitialized = false;
+    console.error("[VectorStore] Disconnected from unified storage (adapter remains open)");
   }
 
   /**
@@ -1312,28 +422,17 @@ export class VectorStore {
     oldestEntry: number | null;
     newestEntry: number | null;
   }> {
-    if (!this.db) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
-    const count = await this.count();
-
-    const stats = this.db
-      .prepare(`
-      SELECT 
-        MIN(created_at) as oldest,
-        MAX(created_at) as newest,
-        page_count * page_size / 1024.0 / 1024.0 as size_mb
-      FROM doc_embeddings,
-      (SELECT page_count * page_size as total FROM pragma_page_count(), pragma_page_size())
-    `)
-      .get() as { oldest: number | null; newest: number | null; size_mb: number };
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
+    const count = await this.adapter.getEmbeddingCount();
 
     return {
       totalEmbeddings: count,
-      dbSizeMB: stats.size_mb || 0,
-      oldestEntry: stats.oldest,
-      newestEntry: stats.newest,
+      dbSizeMB: 0, // Not easily available from libsql
+      oldestEntry: null,
+      newestEntry: null,
     };
   }
 
@@ -1341,9 +440,7 @@ export class VectorStore {
    * Batch search for multiple query vectors
    */
   async batchSearch(queryVectors: Float32Array[], limit = 10): Promise<SimilarityResult[][]> {
-    if (!this.db) {
-      throw new Error("Vector store not initialized");
-    }
+    if (!this.adapter) throw new Error("Vector store not initialized");
 
     const results: SimilarityResult[][] = [];
 
@@ -1364,14 +461,13 @@ export class VectorStore {
   }
 
   /**
-   * Get performance statistics for sqlite-vec extension
-   * ADAPTIVE: Extended to include vectorlite and GPU info
+   * Get performance statistics for vector backend
    */
   getVectorStats(): {
     hasExtension: boolean;
     extensionVersion?: string;
     optimizedOperations: boolean;
-    backend: VectorBackend;
+    backend: "libsql";
     backendInfo?: any;
     gpuAcceleration?: {
       enabled: boolean;
@@ -1385,109 +481,207 @@ export class VectorStore {
       capabilities: this.gpuBackend?.getCapabilities(),
     };
 
-    if (!this.db) {
-      return {
-        hasExtension: false,
-        optimizedOperations: false,
-        backend: "fallback",
-        gpuAcceleration: gpuInfo,
-      };
-    }
-
-    // ADAPTIVE: Return vectorlite stats
-    if (this.currentBackend === "vectorlite" && this.vectorliteAdapter) {
-      return {
-        hasExtension: true,
-        optimizedOperations: true,
-        backend: "vectorlite",
-        backendInfo: this.vectorliteAdapter.getStats(),
-        gpuAcceleration: gpuInfo,
-      };
-    }
-
-    // sqlite-vec stats
-    const hasExtension = this.checkVecExtension();
-
-    if (hasExtension) {
-      try {
-        // Try to get extension version if possible
-        const versionResult = this.db
-          .prepare(`
-          SELECT vec_version() as version
-        `)
-          .get() as { version: string } | undefined;
-
-        return {
-          hasExtension: true,
-          extensionVersion: versionResult?.version,
-          optimizedOperations: true,
-          backend: "sqlite-vec",
-          gpuAcceleration: gpuInfo,
-        };
-      } catch {
-        return {
-          hasExtension: true,
-          optimizedOperations: true,
-          backend: "sqlite-vec",
-          gpuAcceleration: gpuInfo,
-        };
-      }
-    }
-
     return {
-      hasExtension: false,
-      optimizedOperations: false,
-      backend: "fallback",
+      hasExtension: true,
+      optimizedOperations: true,
+      backend: "libsql",
+      backendInfo: {
+        type: "DiskANN (unified)",
+        persistent: true,
+        note: "Unified LibSQL storage - graph and vectors in single database",
+      },
       gpuAcceleration: gpuInfo,
     };
   }
 
   /**
-   * Get adaptive backend information and performance estimates
-   * ADAPTIVE: New method for backend insights
+   * Get backend information
    */
   getBackendInfo(): {
-    currentBackend: VectorBackend;
+    currentBackend: "libsql";
     vectorCount: number;
     recommended: boolean;
-    performance: ReturnType<AdaptiveVectorBackend["getPerformanceEstimate"]>;
-    migrationRecommendation?: {
-      shouldMigrate: boolean;
-      targetBackend: VectorBackend;
-      reason: string;
+    performance: {
+      insertSpeed: string;
+      searchSpeed: string;
+      accuracy: string;
+      memoryUsage: string;
+      persistent: boolean;
     };
   } {
-    if (!this.adaptiveBackend || !this.db) {
-      return {
-        currentBackend: this.currentBackend,
-        vectorCount: 0,
-        recommended: false,
-        performance: {
-          insertSpeed: "medium",
-          searchSpeed: "medium",
-          accuracy: "exact",
-          memoryUsage: "medium",
-        },
-      };
+    return {
+      currentBackend: "libsql",
+      vectorCount: 0, // Would need async call to get actual count
+      recommended: true,
+      performance: {
+        insertSpeed: "fast",
+        searchSpeed: "fast",
+        accuracy: "approximate",
+        memoryUsage: "low",
+        persistent: true,
+      },
+    };
+  }
+
+  // =============================================================================
+  // CROSS-BRANCH OPERATIONS
+  // =============================================================================
+
+  /**
+   * Search for similar vectors in a specific branch
+   * Allows cross-branch queries without changing context
+   */
+  async searchInBranch(queryVector: Float32Array, targetBranch: string, limit = 10): Promise<SimilarityResult[]> {
+    if (!this.adapter) throw new Error("Vector store not initialized");
+
+    const { projectHash } = this.currentContext;
+    const normalizedBranch = normalizeBranchName(targetBranch);
+
+    // Temporarily switch context for search
+    const currentContext = this.adapter.getProjectContext();
+    this.adapter.setProjectContext({ projectHash, branchName: normalizedBranch });
+
+    try {
+      return await this.adapter.searchVectors(queryVector, limit);
+    } finally {
+      this.adapter.setProjectContext(currentContext);
+    }
+  }
+
+  /**
+   * Compare embeddings between two branches
+   * Useful for merge operations and branch comparison
+   */
+  async compareEmbeddingsBetweenBranches(
+    queryVector: Float32Array,
+    branch1: string,
+    branch2: string,
+    limit = 10,
+  ): Promise<{
+    branch1Results: SimilarityResult[];
+    branch2Results: SimilarityResult[];
+    onlyInBranch1: SimilarityResult[];
+    onlyInBranch2: SimilarityResult[];
+    inBoth: Array<{ id: string; branch1Similarity: number; branch2Similarity: number }>;
+  }> {
+    const results1 = await this.searchInBranch(queryVector, branch1, limit * 2);
+    const results2 = await this.searchInBranch(queryVector, branch2, limit * 2);
+
+    const ids1 = new Set(results1.map((r) => r.id));
+    const ids2 = new Set(results2.map((r) => r.id));
+
+    const onlyInBranch1 = results1.filter((r) => !ids2.has(r.id)).slice(0, limit);
+    const onlyInBranch2 = results2.filter((r) => !ids1.has(r.id)).slice(0, limit);
+
+    const inBoth: Array<{ id: string; branch1Similarity: number; branch2Similarity: number }> = [];
+    for (const r1 of results1) {
+      if (ids2.has(r1.id)) {
+        const r2 = results2.find((r) => r.id === r1.id);
+        if (r2) {
+          inBoth.push({
+            id: r1.id,
+            branch1Similarity: r1.similarity,
+            branch2Similarity: r2.similarity,
+          });
+        }
+      }
     }
 
-    const vectorCount = this.adaptiveBackend.getVectorCount();
-    const selection = this.adaptiveBackend.selectBackend(vectorCount);
-    const performance = this.adaptiveBackend.getPerformanceEstimate(this.currentBackend, vectorCount);
-    const migration = this.adaptiveBackend.shouldMigrate(this.currentBackend);
-
     return {
-      currentBackend: this.currentBackend,
-      vectorCount,
-      recommended: selection.backend === this.currentBackend,
-      performance,
-      migrationRecommendation: migration.migrate
-        ? {
-            shouldMigrate: true,
-            targetBackend: migration.to,
-            reason: migration.reason,
-          }
-        : undefined,
+      branch1Results: results1.slice(0, limit),
+      branch2Results: results2.slice(0, limit),
+      onlyInBranch1,
+      onlyInBranch2,
+      inBoth: inBoth.slice(0, limit),
     };
+  }
+
+  /**
+   * List all branches that have embeddings for current project
+   */
+  async listBranches(): Promise<string[]> {
+    if (!this.adapter) throw new Error("Vector store not initialized");
+
+    // Ensure context is set on adapter
+    this.adapter.setProjectContext(this.currentContext);
+    return await this.adapter.listBranches();
+  }
+
+  /**
+   * Get embedding count per branch for current project
+   * v4: Simplified - uses unified adapter
+   */
+  async getCountPerBranch(): Promise<Array<{ branchName: string; count: number }>> {
+    if (!this.adapter) throw new Error("Vector store not initialized");
+
+    const { projectHash } = this.currentContext;
+    const currentContext = this.adapter.getProjectContext();
+
+    try {
+      const branches = await this.adapter.listBranches();
+      const result: Array<{ branchName: string; count: number }> = [];
+
+      for (const branch of branches) {
+        this.adapter.setProjectContext({ projectHash, branchName: branch });
+        const count = await this.adapter.getEmbeddingCount();
+        result.push({ branchName: branch, count });
+      }
+
+      return result.sort((a, b) => b.count - a.count);
+    } finally {
+      this.adapter.setProjectContext(currentContext);
+    }
+  }
+
+  /**
+   * Delete all embeddings for a specific branch
+   * v4: Warning - this clears ALL data for the branch, not just embeddings
+   */
+  async deleteBranch(branchName: string): Promise<number> {
+    if (!this.adapter) throw new Error("Vector store not initialized");
+
+    const { projectHash } = this.currentContext;
+    const normalizedBranch = normalizeBranchName(branchName);
+    const currentContext = this.adapter.getProjectContext();
+
+    try {
+      this.adapter.setProjectContext({ projectHash, branchName: normalizedBranch });
+      const count = await this.adapter.getEmbeddingCount();
+      await this.adapter.clear();
+
+      console.error(`[VectorStore] Deleted data for branch=${normalizedBranch} (was ${count} embeddings)`);
+      return count;
+    } finally {
+      this.adapter.setProjectContext(currentContext);
+    }
+  }
+
+  /**
+   * Copy embeddings from one branch to another
+   * Note: Not fully implemented for unified storage mode
+   */
+  async copyBranch(sourceBranch: string, _targetBranch: string): Promise<number> {
+    if (!this.adapter) throw new Error("Vector store not initialized");
+
+    const { projectHash } = this.currentContext;
+    const sourceNorm = normalizeBranchName(sourceBranch);
+    const currentContext = this.adapter.getProjectContext();
+
+    try {
+      this.adapter.setProjectContext({ projectHash, branchName: sourceNorm });
+      const sourceCount = await this.adapter.getEmbeddingCount();
+
+      if (sourceCount === 0) {
+        console.error(`[VectorStore] No embeddings to copy from branch=${sourceNorm}`);
+        return 0;
+      }
+
+      // For now, we can't efficiently copy all embeddings
+      console.error(`[VectorStore] copyBranch not fully implemented for unified storage mode`);
+      console.error(`[VectorStore] Source branch ${sourceNorm} has ${sourceCount} embeddings`);
+      return 0;
+    } finally {
+      this.adapter.setProjectContext(currentContext);
+    }
   }
 }

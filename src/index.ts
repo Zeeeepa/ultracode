@@ -89,10 +89,11 @@ import { CodeModifier } from "./modification/code-modifier.js";
 import { FileOperations } from "./modification/file-operations.js";
 import { PreviewManager } from "./modification/preview-manager.js";
 import { PatternSearch } from "./search/pattern-search.js";
+import { ModelDownloadingError } from "./semantic/providers/openvino-provider.js";
 // Storage initialization
-import { initializeStorageDirs } from "./shared/storage-paths.js";
-import { getGraphStorage, initializeGraphStorage, resetGraphStorage } from "./storage/graph-storage-factory.js";
-import { getProjectSQLiteManager, getSQLiteManager } from "./storage/sqlite-manager.js";
+import { DEFAULT_BRANCH, getProjectHash, initializeStorageDirs } from "./shared/storage-paths.js";
+import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
+import { getSQLiteManager } from "./storage/sqlite-manager.js";
 import { collectAgentMetrics } from "./tools/agent-metrics.js";
 import type { ToolContext } from "./tools/base-tool-handler.js";
 import { branchToolDefinitions } from "./tools/branch-schemas.js";
@@ -117,11 +118,26 @@ import { CodeValidator } from "./validation/code-validator.js";
 // PHASE 8: Import new code modification and analysis components
 import { VersionManager } from "./versioning/version-manager.js";
 
+// === STARTUP TIMING ===
+const _startupTimers: Record<string, number> = {};
+function _startTimer(name: string) {
+  _startupTimers[name] = Date.now();
+}
+function _endTimer(name: string) {
+  const elapsed = Date.now() - (_startupTimers[name] || Date.now());
+  console.error(`[STARTUP] ${name}: ${elapsed}ms`);
+  return elapsed;
+}
+
 // Initialize xxHash WASM BEFORE any hashing operations (required for deterministic project paths)
+_startTimer("initHasher");
 await initHasher();
+_endTimer("initHasher");
 
 // Initialize centralized storage directories BEFORE any storage operations
+_startTimer("initializeStorageDirs");
 initializeStorageDirs();
+_endTimer("initializeStorageDirs");
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -158,7 +174,7 @@ export function getIndexingStatus(): { inProgress: boolean; directory: string | 
 /**
  * Set indexing state (called by performAutoIndex and index tool)
  */
-function setIndexingState(inProgress: boolean, directory?: string): void {
+export function setIndexingState(inProgress: boolean, directory?: string): void {
   isIndexingInProgress = inProgress;
   if (inProgress) {
     indexingStartTime = Date.now();
@@ -527,7 +543,9 @@ function normalizeInputPath(rawPath?: string | null): string | undefined {
 }
 
 // TASK-001: Initialize YAML configuration system
+_startTimer("initializeConfig");
 const config = initializeConfig();
+_endTimer("initializeConfig");
 
 // Validate configuration at startup
 const validation = validateConfig(config);
@@ -549,38 +567,42 @@ console.error("[Main] process.cwd():", process.cwd());
 setCurrentIndexingDirectory(directory);
 console.error("[Main] Set current indexing directory to:", directory);
 
-let globalSQLiteManager = getSQLiteManager(config.database);
+_startTimer("SQLiteManager");
+const globalSQLiteManager = getSQLiteManager(config.database);
 globalSQLiteManager.initialize();
+_endTimer("SQLiteManager");
 
 // Track current project for context switching
 let currentProjectPath = directory;
 
 /**
  * Switch global context to a different project
- * This reinitializes globalSQLiteManager for the new project
+ * v3: With unified database, we just change project context on GraphStorage and VectorStore
+ * No SQLiteManager recreation needed!
+ *
+ * @param projectPath - Path to the new project
+ * @param branchName - Optional branch name (defaults to DEFAULT_BRANCH)
  */
-async function switchGlobalProjectContext(projectPath: string): Promise<void> {
+async function switchGlobalProjectContext(projectPath: string, branchName?: string): Promise<void> {
+  const newBranch = branchName || DEFAULT_BRANCH;
+
   if (projectPath === currentProjectPath) {
+    console.error(`[Main] v3: Already on project: ${projectPath}`);
     return; // Already on this project
   }
 
-  console.error(`[Main] Switching global context: ${currentProjectPath} -> ${projectPath}`);
+  console.error(`[Main] v3: Switching project context: ${currentProjectPath} -> ${projectPath}`);
+  console.error(`[Main] v3: Project hash: ${getProjectHash(projectPath)}, branch: ${newBranch}`);
 
-  // Get project-specific SQLiteManager
-  const newManager = getProjectSQLiteManager(projectPath);
-
-  // Update global reference
-  globalSQLiteManager = newManager;
+  // v3: Update project path tracking
   currentProjectPath = projectPath;
 
-  // Reset GraphStorage cache to force recreation with new manager
-  resetGraphStorage();
+  // v3: Update GraphStorage context (no recreation needed!)
+  const storage = await getGraphStorage();
+  storage.setProject(projectPath, newBranch);
+  console.error(`[Main] v3: GraphStorage context updated`);
 
-  // Reinitialize GraphStorage with new manager
-  await initializeGraphStorage(globalSQLiteManager);
-
-  // Reinitialize SemanticAgent's VectorStore for new project (if agent exists)
-  // This ensures embeddings are stored/read from the correct project-specific location
+  // v3: Update SemanticAgent's VectorStore context (no recreation needed!)
   try {
     const cond = getConductor();
     if (cond) {
@@ -588,35 +610,41 @@ async function switchGlobalProjectContext(projectPath: string): Promise<void> {
       if (existingAgents.length > 0) {
         const semanticAgent = existingAgents[0] as any;
         if (semanticAgent && typeof semanticAgent.reinitializeForProject === "function") {
-          await semanticAgent.reinitializeForProject(projectPath);
+          // v3: reinitializeForProject now just changes context
+          await semanticAgent.reinitializeForProject(projectPath, newBranch);
         }
       }
     }
   } catch (e) {
-    console.error(`[Main] Failed to reinitialize SemanticAgent: ${(e as Error).message}`);
+    console.error(`[Main] v3: Failed to update SemanticAgent context: ${(e as Error).message}`);
   }
 
-  // Reset conductor to force agent recreation with new context
-  conductor = null;
-  globalVectorStore = null;
-  patternSearch = null; // Reset PatternSearch to use new GraphStorage
-  codeModifier = null; // Reset CodeModifier (uses GraphStorage)
-  fileOperations = null; // Reset FileOperations (uses GraphStorage)
-  autoDocManager = null; // Reset AutoDocManager (uses SQLiteManager)
-  layeredIndexManager = null; // Reset LayeredIndexManager (uses GraphStorage)
+  // Update indexing directory for compatibility
+  console.error(`[Main] v3: Setting indexing directory to ${projectPath}`);
+  setCurrentIndexingDirectory(projectPath);
+  console.error(`[Main] v3: getCurrentIndexingDirectory() now = ${getCurrentIndexingDirectory()}`);
 
-  // Update SQLiteManager in DI container so newly created agents use the correct one
-  container.updateInstance("SQLiteManager", globalSQLiteManager);
+  // v3: No need to reset conductor or recreate agents - context change is sufficient!
+  // Just reset cached search/modifier instances that may have cached project-specific data
+  patternSearch = null;
+  codeModifier = null;
+  fileOperations = null;
 
-  // Clear cached agent instances in DI container so they get recreated with new SQLiteManager
-  container.clearAgentInstances();
-
-  console.error(`[Main] Global context switched to: ${projectPath}`);
+  console.error(`[Main] v3: Project context switched to: ${projectPath} (branch: ${newBranch})`);
 }
 
-// Initialize global GraphStorage
-console.error("[Main] Initializing global GraphStorage");
-await initializeGraphStorage(globalSQLiteManager);
+// Initialize global GraphStorage (libsql unified storage)
+console.error("[Main] Initializing global GraphStorage (libsql unified)");
+_startTimer("initializeGraphStorage");
+await initializeGraphStorage();
+_endTimer("initializeGraphStorage");
+
+// v3: Set initial project context for GraphStorage
+const initialStorage = await getGraphStorage();
+initialStorage.setProject(directory, DEFAULT_BRANCH);
+console.error(
+  `[Main] v3: Initial GraphStorage context: project=${getProjectHash(directory)}, branch=${DEFAULT_BRANCH}`,
+);
 
 // Initialize logging system with config
 logger.systemEvent("MCP Server Starting", {
@@ -638,10 +666,12 @@ logger.systemEvent("Resource Manager Started", {
 });
 
 // VARIANT-C: Initialize DI Container and register all agents
+_startTimer("registerAllAgents");
 const container = getGlobalContainer();
 // Register SQLiteManager in container so agents can resolve it dynamically
 container.registerInstance("SQLiteManager", globalSQLiteManager);
 await registerAllAgents(container);
+_endTimer("registerAllAgents");
 console.error("[Main] DI Container initialized with all agents");
 
 // Initialize conductor orchestrator lazily
@@ -698,7 +728,7 @@ async function getVersionManager(): Promise<VersionManager> {
 
 async function getCodeModifier(): Promise<CodeModifier> {
   if (!codeModifier) {
-    const storage = await getGraphStorage(globalSQLiteManager);
+    const storage = await getGraphStorage();
     const vectorStore = globalVectorStore || null;
     codeModifier = new CodeModifier(storage, vectorStore, directory);
     await codeModifier.initialize();
@@ -708,7 +738,7 @@ async function getCodeModifier(): Promise<CodeModifier> {
 
 async function getFileOperations(): Promise<FileOperations> {
   if (!fileOperations) {
-    const storage = await getGraphStorage(globalSQLiteManager);
+    const storage = await getGraphStorage();
     const vectorStore = globalVectorStore || null;
     const previewManager = new PreviewManager(storage, vectorStore);
     await previewManager.initialize();
@@ -726,7 +756,7 @@ async function getCodeValidator(): Promise<CodeValidator> {
 
 async function getTechnologyDetector(): Promise<TechnologyDetector> {
   if (!technologyDetector) {
-    const storage = await getGraphStorage(globalSQLiteManager);
+    const storage = await getGraphStorage();
     technologyDetector = new TechnologyDetector(storage, directory);
   }
   return technologyDetector;
@@ -734,7 +764,7 @@ async function getTechnologyDetector(): Promise<TechnologyDetector> {
 
 async function getPatternSearch(): Promise<PatternSearch> {
   if (!patternSearch) {
-    const storage = await getGraphStorage(globalSQLiteManager);
+    const storage = await getGraphStorage();
     const vectorStore = globalVectorStore || null;
     const techDetector = await getTechnologyDetector();
     patternSearch = new PatternSearch(storage, vectorStore, techDetector);
@@ -746,7 +776,7 @@ async function getPatternSearch(): Promise<PatternSearch> {
 async function getAutoDocManager(): Promise<AutoDocManager> {
   if (!autoDocManager) {
     autoDocManager = getAutoDocManagerFactory(globalSQLiteManager);
-    const graphStorage = await getGraphStorage(globalSQLiteManager);
+    const graphStorage = await getGraphStorage();
     await autoDocManager.initialize(graphStorage);
   }
   return autoDocManager;
@@ -758,7 +788,7 @@ let layeredIndexManager: LayeredIndexManager | null = null;
 async function getLayeredIndexManager(): Promise<LayeredIndexManager> {
   if (!layeredIndexManager) {
     // Get required components
-    const baseIndex = await getGraphStorage(globalSQLiteManager);
+    const baseIndex = await getGraphStorage();
     const semanticAgent = await getSemanticAgent();
     const baseVectorStore = semanticAgent.getVectorStore();
 
@@ -795,9 +825,30 @@ async function getLayeredIndexManager(): Promise<LayeredIndexManager> {
 
 // VARIANT-C: Unified agent getter using DI Container
 async function getSemanticAgent(): Promise<any> {
+  const currentDir = getCurrentIndexingDirectory();
+  console.error(
+    `[Main] getSemanticAgent: getCurrentIndexingDirectory()=${currentDir}, currentProjectPath=${currentProjectPath}`,
+  );
+
   const cond = getConductor();
   await cond.initialize();
-  return await getOrCreateAgent(container, cond, AgentType.SEMANTIC);
+  const agent = await getOrCreateAgent(container, cond, AgentType.SEMANTIC);
+
+  // v3: Ensure agent's VectorStore has correct project context
+  if (agent && typeof agent.reinitializeForProject === "function" && currentDir) {
+    const vectorStore = agent.getVectorStore?.();
+    const currentContext = vectorStore?.getProjectContext?.();
+    const expectedProjectHash = getProjectHash(currentDir);
+
+    if (currentContext?.projectHash !== expectedProjectHash) {
+      console.error(
+        `[Main] v3: getSemanticAgent: VectorStore project mismatch! current=${currentContext?.projectHash}, expected=${expectedProjectHash}`,
+      );
+      await agent.reinitializeForProject(currentDir);
+    }
+  }
+
+  return agent;
 }
 
 async function getDevAgent(): Promise<any> {
@@ -816,16 +867,56 @@ async function ensureSemanticsReady(minVectors = 1, timeoutMs = 15000): Promise<
   if (process.env.MCP_DEBUG_DISABLE_SEMANTIC === "1") {
     return true;
   }
+  const startEnsure = Date.now();
   const agent = await getSemanticAgent();
+  const agentTime = Date.now() - startEnsure;
+
   await initializeGlobalVectorStore(); // Initialize global vector store for code modification
+  const initTime = Date.now() - startEnsure - agentTime;
+
+  // First check cached metrics
+  const metrics = typeof agent.getSemanticMetrics === "function" ? agent.getSemanticMetrics() : undefined;
+  if (metrics && metrics.vectorsStored >= minVectors) {
+    logger.info("SEMANTIC_READY", `Ready immediately (cached)`, {
+      vectors: metrics.vectorsStored,
+      agentMs: agentTime,
+      initMs: initTime,
+    });
+    return true;
+  }
+
+  // If cached metrics show 0, check vector store directly (metrics may not be updated)
+  const vectorStore = agent.getVectorStore();
+  if (vectorStore) {
+    const actualCount = await vectorStore.count();
+    if (actualCount >= minVectors) {
+      logger.info("SEMANTIC_READY", `Ready (actual count)`, {
+        actualVectors: actualCount,
+        cachedVectors: metrics?.vectorsStored ?? 0,
+        agentMs: agentTime,
+        initMs: initTime,
+      });
+      return true;
+    }
+  }
+
+  // Only poll if really no vectors
+  logger.info("SEMANTIC_READY", `No vectors found, polling...`, { timeoutMs });
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const metrics = typeof agent.getSemanticMetrics === "function" ? agent.getSemanticMetrics() : undefined;
-      if (metrics && metrics.vectorsStored >= minVectors) return true;
+      const currentMetrics = typeof agent.getSemanticMetrics === "function" ? agent.getSemanticMetrics() : undefined;
+      if (currentMetrics && currentMetrics.vectorsStored >= minVectors) {
+        logger.info("SEMANTIC_READY", `Ready after polling`, {
+          pollingMs: Date.now() - start,
+          vectors: currentMetrics.vectorsStored,
+        });
+        return true;
+      }
     } catch {}
     await new Promise((r) => setTimeout(r, 250));
   }
+  logger.warn("SEMANTIC_READY", `Timeout, proceeding anyway`, { timeoutMs });
   return false;
 }
 
@@ -2039,11 +2130,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           await switchGlobalProjectContext(targetDir);
         }
 
-        // Use current globalSQLiteManager (already switched above if needed)
-        const sqliteManager = globalSQLiteManager;
         // Optional reset
         if (reset) {
-          const storage = await getGraphStorage(sqliteManager);
+          const storage = await getGraphStorage();
           await storage.clear();
           logger.systemEvent("Graph storage cleared before indexing", { directory: targetDir });
         }
@@ -2148,13 +2237,24 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           : Math.max(configuredTimeout, INDEX_DEFAULT_TIMEOUT);
         const result = await withTimeout(cond.process(task), timeoutMs, "index", requestId);
 
-        // Get oversized entity warning from semantic agent
+        // Generate embeddings for indexed entities (batch mode)
+        let embeddingStats: { generated: number; skipped: number } | null = null;
         let oversizedWarning: { aiMessage: string | null; oversizedCount: number; maxTokens: number } | null = null;
+
         if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
           await ensureSemanticsReady(1, 5000);
 
           try {
             const semanticAgent = await getSemanticAgent();
+
+            // Generate embeddings for all entities in storage
+            console.error(`[index tool] Generating embeddings from storage...`);
+            embeddingStats = await semanticAgent.generateEmbeddingsFromStorage();
+            console.error(
+              `[index tool] Embeddings: generated=${embeddingStats?.generated ?? 0}, skipped=${embeddingStats?.skipped ?? 0}`,
+            );
+
+            // Get oversized entity warning
             const warning = semanticAgent.getLastOversizedWarning?.();
             if (warning?.hasWarning) {
               oversizedWarning = {
@@ -2163,8 +2263,8 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
                 maxTokens: warning.maxTokens,
               };
             }
-          } catch {
-            // Ignore if semantic agent not available
+          } catch (error) {
+            console.error(`[index tool] Failed to generate embeddings:`, error);
           }
         }
 
@@ -2187,12 +2287,17 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const duration = Date.now() - startTime;
         logger.mcpResponse(name, result, duration, requestId);
 
-        // Build response with optional AI warning
+        // Build response with embedding stats and optional AI warning
         const indexResponse: any = {
           success: true,
           message: "Indexing completed",
           result,
         };
+
+        // Add embedding statistics
+        if (embeddingStats) {
+          indexResponse.embeddings = embeddingStats;
+        }
 
         if (oversizedWarning?.aiMessage) {
           indexResponse.warning = oversizedWarning.aiMessage;
@@ -2213,7 +2318,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       case "reset_graph": {
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         await storage.clear();
         logger.systemEvent("Graph storage cleared via tool");
         return {
@@ -2239,7 +2344,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         setCurrentIndexingDirectory(targetDir);
 
         // Reset graph first (use current globalSQLiteManager after context switch)
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         await storage.clear();
         logger.systemEvent("Graph storage cleared before clean index", { directory: targetDir });
 
@@ -2390,7 +2495,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           }
         }
 
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         const normalizedEntityTypes = normalizeEntityTypes(entityTypes);
         const query = await storage.executeQuery({
           type: "entity",
@@ -2431,7 +2536,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           relationshipTypes,
           filePath: hintFilePath,
         } = ListRelationshipsToolSchema.parse(args);
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         const resolvedHintPath = hintFilePath ? normalizeInputPath(hintFilePath) : undefined;
 
         let entity: Entity | null = null;
@@ -2616,7 +2721,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           semanticResult = [];
         }
 
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         const structural = await queryGraphEntities(storage, query, limit ?? 10);
 
         return {
@@ -2942,7 +3047,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
 
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
 
         const MAX_SNIPPET = 10000;
         const { readText } = await import("./utils/file-ops.js");
@@ -3156,7 +3261,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
       case "analyze_hotspots": {
         const { metric, limit } = AnalyzeHotspotsSchema.parse(args);
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         const relationshipSample = await storage.executeQuery({ type: "relationship", limit: 10000 });
 
         const counts = new Map<string, { incoming: number; outgoing: number }>();
@@ -3216,7 +3321,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       case "find_related_concepts": {
         const { entityId, limit } = FindRelatedConceptsSchema.parse(args);
         await ensureSemanticsReady(1, 20000);
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         const entity = await resolveEntity(storage, entityId);
         if (!entity) {
           return {
@@ -3294,7 +3399,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const { scope, stateIdentifiers, autoDetect, format, maxDepth, excludePatterns } =
           AnalyzeStateChaosSchema.parse(args);
 
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
 
         // Create ChaosAnalyzer
         const analyzer = new ChaosAnalyzer(storage);
@@ -3337,7 +3442,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const { query, limit } = GetGraphSchema.parse(args);
 
         // Use direct database query instead of going through agents
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         const result = await queryGraphEntities(storage, query, limit);
 
         logger.info(
@@ -3374,7 +3479,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
       case "analyze_code_impact": {
         const { entityId, filePath: hintFilePath, branch } = AnalyzeCodeImpactSchema.parse(args);
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         const resolvedHintPath = hintFilePath ? normalizeInputPath(hintFilePath) : undefined;
 
         // Branch-aware impact analysis via LayeredIndexManager
@@ -3582,7 +3687,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       case "get_graph_stats": {
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         const stats = await getGraphStats(storage);
 
         logger.info("GRAPH_STATS", "Retrieved graph statistics", stats, requestId);
@@ -3613,7 +3718,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             | undefined;
 
           if (ingest) {
-            const storage = await getGraphStorage(globalSQLiteManager);
+            const storage = await getGraphStorage();
             ingestSummary = await ingestLernaGraph(storage, result.graph);
           }
 
@@ -3692,7 +3797,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
       case "get_graph_health": {
         const { minEntities, minRelationships, sample } = GetGraphHealthSchema.parse(args ?? {});
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
         const metrics = await storage.getMetrics();
 
         // Try a tiny sample query to ensure read path is functional
@@ -4184,7 +4289,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       case "rename_symbol": {
         const { entityId, entityName, filePath, newName, updateReferences, preview } = RenameSymbolSchema.parse(args);
 
-        const storage = await getGraphStorage(globalSQLiteManager);
+        const storage = await getGraphStorage();
 
         // Find entity
         let entity = null;
@@ -4322,7 +4427,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         if (entityId) {
           // Find entity by ID and determine insert position
-          const storage = await getGraphStorage(globalSQLiteManager);
+          const storage = await getGraphStorage();
           const entity = await storage.getEntity(entityId);
 
           if (!entity) {
@@ -5227,7 +5332,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         // Analyze code comments
         if (scope === "comments" || scope === "all") {
-          const graphStorage = await getGraphStorage(globalSQLiteManager);
+          const graphStorage = await getGraphStorage();
           const allEntities = await graphStorage.getAllEntities();
           const entities = allEntities.slice(0, sampleSize * 2);
 
@@ -5337,6 +5442,41 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
                 errorType: "agent_busy",
                 error: errorMessage,
                 details: error.details,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+
+    // Handle model downloading error - return user-friendly "try again" message
+    if (error instanceof ModelDownloadingError) {
+      logger.info(
+        "MODEL_DOWNLOADING",
+        `Model ${error.model} is being downloaded`,
+        { model: error.model, modelPath: error.modelPath },
+        requestId,
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: false,
+                errorType: "model_downloading",
+                error: errorMessage,
+                message:
+                  `⏳ Embedding model "${error.model}" is being downloaded.\n\n` +
+                  `📁 Path: ${error.modelPath}\n\n` +
+                  `Please wait 1-2 minutes and try again.\n\n` +
+                  `Tip: Run 'npx ultrascript-tools setup-embedding' to download models manually.`,
+                model: error.model,
+                modelPath: error.modelPath,
+                retryAfterSeconds: 60,
               },
               null,
               2,
@@ -5666,11 +5806,14 @@ async function performAutoIndex(targetDir: string, extensions: string[]): Promis
     // Set current indexing directory
     setCurrentIndexingDirectory(targetDir);
 
-    // Initialize SemanticAgent BEFORE indexing so it receives semantic:new_entities events
-    // This ensures embeddings are generated for all languages including Kotlin
+    // Initialize SemanticAgent in background - don't block indexing
+    // Embeddings will be generated after indexing completes via generateEmbeddingsFromStorage()
     if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
-      console.error("🔄 Initializing SemanticAgent for embedding generation...");
-      await getSemanticAgent();
+      console.error("🔄 Initializing SemanticAgent in background...");
+      // Non-blocking: start initialization but don't wait
+      getSemanticAgent().catch((err) => {
+        console.error("⚠️ SemanticAgent initialization failed:", err.message);
+      });
     }
 
     // Create indexing task with smart excludes
@@ -5707,6 +5850,20 @@ async function performAutoIndex(targetDir: string, extensions: string[]): Promis
         entityCount,
         durationMs: Date.now() - startTime,
       });
+
+      // Generate embeddings for indexed entities (batch mode)
+      if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+        try {
+          console.error(`🔄 Generating embeddings from storage...`);
+          const semanticAgent = await getSemanticAgent();
+          const embeddingStats = await semanticAgent.generateEmbeddingsFromStorage();
+          console.error(
+            `✅ Embeddings: generated=${embeddingStats?.generated ?? 0}, skipped=${embeddingStats?.skipped ?? 0}`,
+          );
+        } catch (error) {
+          console.error(`⚠️  Failed to generate embeddings:`, (error as Error).message);
+        }
+      }
     } else {
       console.error(`⚠️  Auto-indexing completed with warnings in ${duration}s`);
       logger.warn("AUTO_INDEX", "Auto-indexing completed with issues", { result }, requestId);
@@ -5727,32 +5884,34 @@ async function main() {
   console.error("Multi-agent LiteRAG architecture initialized");
   console.error(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
 
-  // Check and auto-start Ollama if embeddings are enabled
+  // Check and auto-start Ollama if embeddings are enabled (non-blocking)
   const config = ConfigLoader.getInstance().getConfig();
   const embeddingEnabled = config.mcp?.embedding?.enabled ?? false;
   const embeddingProvider: string = config.mcp?.embedding?.provider ?? "memory";
 
   if (embeddingEnabled && (embeddingProvider === "auto" || embeddingProvider === "ollama")) {
-    console.error("\n🔍 Checking Ollama service status...");
-    try {
-      const ollamaStatus = await ensureOllamaRunning(true); // auto-start enabled
-      const statusMessage = getStatusMessage(ollamaStatus);
-      console.error(statusMessage);
+    // Run Ollama check in background - don't block MCP startup
+    console.error("🔍 Ollama check running in background...");
+    (async () => {
+      try {
+        const ollamaStatus = await ensureOllamaRunning(true); // auto-start enabled
+        const statusMessage = getStatusMessage(ollamaStatus);
+        console.error(statusMessage);
 
-      if (!ollamaStatus.isRunning) {
-        console.error(
-          "💡 Tip: Install Ollama from https://ollama.com or run setup-embeddings.cmd/sh for automatic setup",
-        );
-      } else if (!ollamaStatus.hasGranite && ollamaStatus.hasModels) {
-        console.error("💡 Tip: Install granite-embedding with: ollama pull granite-embedding");
+        if (!ollamaStatus.isRunning) {
+          console.error(
+            "💡 Tip: Install Ollama from https://ollama.com or run setup-embeddings.cmd/sh for automatic setup",
+          );
+        } else if (!ollamaStatus.hasGranite && ollamaStatus.hasModels) {
+          console.error("💡 Tip: Install granite-embedding with: ollama pull granite-embedding");
+        }
+      } catch (error) {
+        logger.warn("STARTUP", "Ollama check failed, continuing with fallback", {
+          error: (error as Error).message,
+        });
+        console.error("⚠️  Ollama check failed, using memory provider fallback");
       }
-    } catch (error) {
-      logger.warn("STARTUP", "Ollama check failed, continuing with fallback", {
-        error: (error as Error).message,
-      });
-      console.error("⚠️  Ollama check failed, using memory provider fallback");
-    }
-    console.error(""); // Empty line for readability
+    })();
   }
 
   // Initialize AutoDoc Watcher for automatic documentation updates
@@ -6019,16 +6178,26 @@ async function main() {
     setImmediate(async () => {
       try {
         // Check if we already have entities for THIS directory (not global count)
-        const db = globalSQLiteManager.getConnection();
-        const normalizedDir = directory.replace(/\\/g, "/"); // Normalize path for LIKE query
-        const result = db
-          .prepare("SELECT COUNT(*) as count FROM entities WHERE file_path LIKE ? || '%'")
-          .get(normalizedDir) as { count: number };
-        const entityCount = result?.count ?? 0;
+        // v4: Use libsql unified storage instead of better-sqlite3
+        const graphStorage = await getGraphStorage();
+        const projectHash = getProjectHash(directory);
+        console.error(
+          `[AUTO-INDEX] Checking for existing index: dir=${directory}, hash=${projectHash}, branch=${DEFAULT_BRANCH}`,
+        );
+        graphStorage.setProject(directory, DEFAULT_BRANCH);
+        const stats = await graphStorage.getStatistics();
+        const entityCount = stats.totalEntities ?? 0;
+        console.error(
+          `[AUTO-INDEX] Statistics result: entities=${entityCount}, rels=${stats.totalRelationships}, files=${stats.totalFiles}`,
+        );
 
         if (entityCount > 0) {
-          logger.systemEvent("Existing index found for directory, skipping auto-index", { directory, entityCount });
-          console.error(`📊 Existing index found (${entityCount} entities), ready for queries`);
+          logger.systemEvent("Existing index found for directory, skipping auto-index", {
+            directory,
+            entityCount,
+            projectHash,
+          });
+          console.error(`📊 Existing index found (${entityCount} entities for ${projectHash}), ready for queries`);
           return;
         }
 

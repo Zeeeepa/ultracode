@@ -53,19 +53,19 @@ export class ResourceManager extends EventEmitter {
   constructor(constraints?: ResourceConstraints) {
     super();
 
-    // Default constraints for commodity hardware (4-core, 8GB RAM)
-    // Auto-scale based on system memory for large codebases
+    // Default constraints - scale generously based on system memory
+    // OpenVINO and embedding generation need significant memory
     const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
     const defaultMemoryMB = Math.min(
-      Math.max(1024, Math.floor(totalMemoryGB * 256)), // Scale with system memory
-      2048, // Cap at 2GB
+      Math.max(4096, Math.floor(totalMemoryGB * 512)), // 50% of system memory
+      16384, // Cap at 16GB
     );
 
     this.constraints = constraints || {
       maxMemoryMB: defaultMemoryMB,
-      maxCpuPercent: 80,
-      maxConcurrentAgents: Math.min(10, os.cpus().length * 2), // Scale with CPU cores
-      maxTaskQueueSize: 100,
+      maxCpuPercent: 95, // Allow higher CPU usage
+      maxConcurrentAgents: Math.min(20, os.cpus().length * 3), // Scale with CPU cores
+      maxTaskQueueSize: 200,
     };
 
     console.error(
@@ -365,14 +365,14 @@ export class ResourceManager extends EventEmitter {
 
     // Large codebase (>2000 files) adjustments
     if (fileCount > 2000) {
-      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 1.5, 3072); // Increase by 50%, cap at 3GB
+      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 1.5, 8192); // Increase by 50%, cap at 8GB
       console.error(`Large codebase detected (${fileCount} files), increasing memory limit to ${adjustedMemoryMB}MB`);
     }
 
     // Very large codebase (>5000 files) adjustments
     if (fileCount > 5000) {
-      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 2, 4096); // Double memory, cap at 4GB
-      adjustedConcurrentAgents = Math.max(2, Math.floor(adjustedConcurrentAgents / 2)); // Reduce concurrent agents
+      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 2, 12288); // Double memory, cap at 12GB
+      adjustedConcurrentAgents = Math.max(4, Math.floor(adjustedConcurrentAgents / 2)); // Keep some concurrency
       console.error(
         `Very large codebase detected (${fileCount} files), memory: ${adjustedMemoryMB}MB, agents: ${adjustedConcurrentAgents}`,
       );
@@ -380,10 +380,10 @@ export class ResourceManager extends EventEmitter {
 
     // Extremely large codebase (>10000 files) adjustments
     if (fileCount > 10000) {
-      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 3, 6144); // Triple memory, cap at 6GB
-      adjustedConcurrentAgents = 1; // Single agent for stability
+      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 3, 16384); // Triple memory, cap at 16GB
+      adjustedConcurrentAgents = 2; // Minimum 2 agents for stability
       console.error(
-        `Extremely large codebase detected (${fileCount} files), switching to single-agent mode with ${adjustedMemoryMB}MB`,
+        `Extremely large codebase detected (${fileCount} files), memory: ${adjustedMemoryMB}MB, agents: ${adjustedConcurrentAgents}`,
       );
     }
 
