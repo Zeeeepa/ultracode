@@ -258,14 +258,22 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Load semantic config from semantic-config.json (set by setup-embedding command)
     const semanticConfig = loadSemanticConfig();
 
-    // Map semantic-config.json platform to provider
-    const provider = this.mapSemanticConfigToProvider(semanticConfig);
-    const modelName = this.getModelNameFromSemanticConfig(semanticConfig);
+    // Determine provider: semantic-config.json takes priority, then YAML config, then memory fallback
+    const yamlProvider = config.mcp?.embedding?.provider;
+    const jsonProvider = this.mapSemanticConfigToProvider(semanticConfig);
+    const provider = jsonProvider !== "memory" ? jsonProvider : (yamlProvider as any) || "memory";
 
+    // Determine model name
+    const yamlModel = config.mcp?.embedding?.model;
+    const jsonModel = this.getModelNameFromSemanticConfig(semanticConfig);
+    const modelName = jsonModel !== "deterministic-hash" ? jsonModel : yamlModel || "deterministic-hash";
+
+    const providerSource =
+      jsonProvider !== "memory" ? "semantic-config.json" : yamlProvider ? "YAML config" : "fallback";
     console.error(`[${this.id}] Initializing embedding generator with provider: ${provider}`);
     console.error(`[${this.id}] Embedding model: ${modelName}`);
+    console.error(`[${this.id}] Provider source: ${providerSource}`);
     console.error(`[${this.id}] Database path from config: ${config.database?.path || "undefined"}`);
-    console.error(`[${this.id}] Semantic config loaded: ${semanticConfig ? "yes" : "no (using defaults)"}`);
 
     const warmupSettings = config.mcp?.semantic;
     if (warmupSettings?.cacheWarmupLimit && warmupSettings.cacheWarmupLimit > 0) {
@@ -275,27 +283,34 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       );
     }
 
+    // Get TEI config from YAML if provider is TEI
+    const yamlTei = config.mcp?.embedding?.tei;
+    const jsonTei = semanticConfig?.embedding?.tei;
+
     this.embeddingGen = new EmbeddingGenerator({
       provider,
       modelName,
       quantized: true,
       localPath: AGENT_CONFIG.modelPath,
       batchSize: this.embeddingBatchSize,
-      // Only configure ollama if explicitly set in semantic-config.json
+      // Configure ollama from semantic-config.json
       ollama:
         semanticConfig?.embedding?.platform === "ollama" && semanticConfig?.embedding?.ollama
           ? {
               baseUrl: semanticConfig.embedding.ollama.endpoint,
             }
           : undefined,
-      // Only configure TEI if explicitly set in semantic-config.json
+      // Configure TEI from semantic-config.json OR YAML config
       tei:
-        semanticConfig?.embedding?.platform === "tei" && semanticConfig?.embedding?.tei
+        provider === "tei"
           ? {
-              baseUrl: semanticConfig.embedding.tei.endpoint,
+              baseUrl: jsonTei?.endpoint || yamlTei?.baseUrl || "http://127.0.0.1:8080",
+              timeoutMs: yamlTei?.timeoutMs,
+              concurrency: yamlTei?.concurrency,
+              checkServer: yamlTei?.checkServer,
             }
           : undefined,
-      // Only configure OpenVINO if explicitly set in semantic-config.json
+      // Configure OpenVINO from semantic-config.json
       openvino:
         semanticConfig?.embedding?.platform === "openvino" && semanticConfig?.embedding?.openvino
           ? {
