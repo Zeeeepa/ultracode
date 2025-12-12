@@ -93,6 +93,7 @@ function getSemanticAgentConfig() {
     memoryLimit: config.semanticAgent?.memoryLimit ?? 240,
     priority: config.semanticAgent?.priority ?? 8,
     batchSize: config.semanticAgent?.batchSize ?? 8,
+    queueBatchSize: config.semanticAgent?.queueBatchSize ?? 100,
     modelPath: config.semanticAgent?.modelPath ?? "./models",
   };
 }
@@ -985,7 +986,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       let batchCount = 0;
       while (this.pendingEntitiesQueue.length > 0) {
         // Take a smaller batch (10 entities) to reduce memory pressure on native code
-        const batch = this.pendingEntitiesQueue.splice(0, 10);
+        const batch = this.pendingEntitiesQueue.splice(0, AGENT_CONFIG.queueBatchSize);
         if (batch.length === 0) break;
 
         logger.debug("EMBEDDING_QUEUE", `Processing batch`, {
@@ -1005,7 +1006,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         // Longer delay between batches to allow GC and reduce pressure on native libs (libsql + openvino)
         if (this.pendingEntitiesQueue.length > 0) {
           // Every 5 batches, take a longer pause for memory cleanup
-          const delay = batchCount % 5 === 0 ? 200 : 50;
+          const delay = batchCount % 10 === 0 ? 50 : 10; // Minimal delays for TEI
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
