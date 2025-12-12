@@ -233,6 +233,7 @@ export interface QueryAgentConfig extends AgentRuntimeConfig {
 }
 
 export interface SemanticAgentConfig extends AgentRuntimeConfig {
+  queueBatchSize?: number;
   batchSize?: number;
   modelPath?: string;
 }

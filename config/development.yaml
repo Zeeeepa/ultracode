@@ -1,245 +1,182 @@
-﻿# Development Configuration for UltraScript Tools MCP
-# This file contains development-specific settings
-# Inherits from default.yaml and overrides for local development
+# Development Configuration for UltraScript Tools MCP
+# AGGRESSIVE settings for TEI Docker - high throughput
 
-# Environment settings
 environment: development
 debug: true
 
-# MCP Server Configuration (Development)
 mcp:
   embedding:
-    # Development embedding configuration
-    #
-    # 🏆 DEFAULT: Best quality with 8192 tokens (TEI Docker - Local Inference)
-    model: "Xenova/all-MiniLM-L6-v2"  # OpenVINO model (384 dims, fast)
-    #
-    # ALTERNATIVE OPTIONS:
-    # TEI (Local Docker, 8192 tokens max):
-    # model: "ibm-granite/granite-embedding-small-english-r2"  # 8192 tokens, fast
-    #
-    # OLLAMA (Local inference, 512 tokens max):
-    # model: "ibm/granite-embedding:278m"  # Multilingual (English + Russian)
-    # model: "ibm/granite-embedding:30m"   # Fast English-only version
-    #
-    # HUGGING FACE CLOUD API (8192 tokens, requires API key):
-    # model: "ibm-granite/granite-embedding-english-r2"  # 8192 tokens, English
+    model: "Xenova/all-MiniLM-L6-v2"
+    provider: "tei"
+    enabled: true
+    fallbackToMemory: true
+    apiKey: ""
 
-    provider: "tei"          # TEI for testing (switch back to openvino after debug)
-    enabled: true            # Embeddings enabled
-    fallbackToMemory: true   # Gracefully fallback to memory if needed
-    apiKey: ""               # Only for cloud providers (huggingface, openai, cloudru)
-
+    # TEI - AGGRESSIVE settings
     tei:
-      baseUrl: "http://127.0.0.1:8081"  # TEI running on port 8081
+      baseUrl: "http://127.0.0.1:8081"
+      timeoutMs: 120000        # 2 min for massive batches
+      concurrency: 16          # High parallelism
+      checkServer: false
 
-    # Optional: Two-stage retrieval with reranker (Ollama only, not for HuggingFace)
-    # Reranker refines top results after initial embedding search
-    # Set to true for production systems requiring highest precision
     useReranker: false
     rerankerModel: "ibm/granite-embedding-reranker:149m"
-    rerankerTopK: 100  # First stage: retrieve 100 candidates
-    rerankerFinalK: 10 # Second stage: rerank to top 10
+    rerankerTopK: 100
+    rerankerFinalK: 10
+    queryLanguage: "english"
 
-    # Language hint for model optimization (doesn't restrict actual queries)
-    # Options: "english" | "multilingual"
-    # This helps the system optimize chunking and preprocessing
-    queryLanguage: "english"  # Set to "multilingual" if using ibm/granite-embedding:278m
-
-    # TEI (Text Embeddings Inference) Configuration
-    # Local Docker inference with 8192-token models
-    tei:
-      baseUrl: "http://127.0.0.1:8080"  # TEI server URL (Docker container)
-      timeoutMs: 30000                  # 30 seconds timeout
-      concurrency: 4                    # Parallel requests
-      checkServer: false                # Don't auto-start Docker (use memory provider instead)
-
-    # HuggingFace Cloud API Configuration (alternative to TEI for cloud usage)
-    # Get API key from https://huggingface.co/settings/tokens
-    # huggingface:
-    #   apiKey: ""  # Or use MCP_EMBEDDING_API_KEY env var
-    #   baseUrl: "https://api-inference.huggingface.co"
-    #   timeoutMs: 30000
-    #   concurrency: 4
-    #   warmupText: "warmup text"
-
-    # Alternative providers:
-    # - "auto": Auto-detect (checks for Ollama + granite models, falls back to memory)
-    # - "ollama": Force local Ollama (requires ollama serve running)
-    # - "openai": OpenAI API (requires OPENAI_API_KEY)
-    # - "cloudru": CloudRU API (requires CLOUDRU_API_KEY)
-    # - "memory": No ML, deterministic hashing (always available)
-    #
-    # To disable embeddings: set enabled: false OR use env var MCP_EMBEDDING_ENABLED=false
-    
   server:
-    host: "localhost"       # Local development only
-    port: 3000             # Standard development port
-    timeout: 180000        # 3 minutes for large indexing operations
+    host: "localhost"
+    port: 3000
+    timeout: 300000           # 5 min
 
   agents:
-    maxConcurrent: 10      # Allow sufficient agents for parallel operations
-    defaultTimeout: 180000 # 3 minutes for large batches (Kotlin projects)
-    useParser: true        # Enable ParserAgent for AST parsing (MCP_USE_PARSER)
-    devIndexBatch: 20      # Batch size for file processing - matches parser.agent.batchSize
+    maxConcurrent: 20
+    defaultTimeout: 300000
+    useParser: true
+    devIndexBatch: 50
 
-# Database Configuration (Development)
 database:
-  path: ""                                  # Empty = centralized storage (%LOCALAPPDATA%/UltraScriptTools/)
-  mode: "WAL"              # WAL mode for development
-  cacheSize: 5000          # Smaller cache for development
-  mmapSize: 134217728      # 128MB memory mapping
-  synchronous: "NORMAL"    # Normal synchronization
-  tempStore: "MEMORY"      # Memory temp store
+  path: ""
+  mode: "WAL"
+  cacheSize: 10000
+  mmapSize: 268435456        # 256MB
+  synchronous: "NORMAL"
+  tempStore: "MEMORY"
 
-# Logging Configuration (Development)
 logging:
-  level: "debug"           # Verbose logging for development
-  format: "text"           # Human-readable text format
-  enableConsole: true      # Always show console output
-  outputFile: ""           # No file logging in development
-  maxFileSize: "10MB"      # Small log files
-  maxFiles: 3              # Keep fewer log files
+  level: "debug"
+  format: "text"
+  enableConsole: true
+  outputFile: ""
+  maxFileSize: "10MB"
+  maxFiles: 3
 
-# Parser Configuration (Development - Native Parsers)
-# Uses language-native tooling for accurate AST parsing
 parser:
   languages:
     - "typescript"
     - "javascript"
-    - "python"           # Core languages for development
-    - "c"                # C language support
-    - "cpp"              # C++ language support
-    - "rust"             # Rust language support
-    - "go"               # Go language support
-    - "java"             # Java language support
-    - "kotlin"           # Kotlin language support
-    - "bash"             # Shell script support
-  maxFileSize: 524288     # 512KB for quick parsing
-  timeout: 60000         # 1 minute for large batches (Kotlin projects)
-    
+    - "python"
+    - "c"
+    - "cpp"
+    - "rust"
+    - "go"
+    - "java"
+    - "kotlin"
+    - "bash"
+  maxFileSize: 1048576       # 1MB
+  timeout: 120000            # 2 min
+
   incremental:
     enabled: true
-    cacheSize: 500         # Small cache for development
-    cacheTTL: 120000       # 2 minutes cache TTL
-    
+    cacheSize: 1000
+    cacheTTL: 300000
+
   agent:
-    maxConcurrency: 4     # Increased for better performance
-    memoryLimit: 1024     # MB - increased for OpenVINO stability
-    priority: 8           # High priority for parsing
-    batchSize: 20         # Moderate batch size for worker pool testing (was 5)
-    cacheSize: 104857600  # 100MB cache (in bytes)
-    workerPoolSize: 4     # Multi-worker for testing parallelization
+    maxConcurrency: 8
+    memoryLimit: 2048
+    priority: 8
+    batchSize: 50
+    cacheSize: 209715200     # 200MB
+    workerPoolSize: 8
 
-# Indexing Configuration (Development)
 indexing:
-  autoIndex: false  # Disable auto-indexing - use `index` tool manually
+  autoIndex: false
 
-# Git Integration Configuration (Development)
-# Watches for Git branch changes and triggers automatic reindexing
 git:
-  enabled: true                     # Enable Git integration
-  watchBranchChanges: true          # Watch .git/HEAD for branch switches
-  autoReindex: true                 # Automatically reindex when branch changes detected
-  diffMode: "incremental"           # Options: incremental, full
-  pollIntervalMs: 3000              # 3 seconds (faster for development)
-  watchUncommitted: true            # Watch for uncommitted file changes
-  uncommittedPollIntervalMs: 5000   # 5 seconds (faster for development)
-  includeUntracked: true            # Include untracked files
+  enabled: true
+  watchBranchChanges: true
+  autoReindex: true
+  diffMode: "incremental"
+  pollIntervalMs: 3000
+  watchUncommitted: true
+  uncommittedPollIntervalMs: 5000
+  includeUntracked: true
 
-# Indexer Configuration (Development)
 indexer:
-  maxConcurrency: 2       # Increased for better throughput
-  memoryLimit: 1024       # MB - increased for stability
+  maxConcurrency: 8
+  memoryLimit: 2048
   priority: 7
-  batchSize: 1000
-  cacheSize: 104857600    # 100MB cache (in bytes)
-  cacheTTL: 300000        # 5 minutes (in ms)
+  batchSize: 2000
+  cacheSize: 209715200
+  cacheTTL: 600000
 
-# Dev Agent Configuration (Development)
 devAgent:
-  maxConcurrency: 4
-  memoryLimit: 1024       # MB - increased for OpenVINO
+  maxConcurrency: 8
+  memoryLimit: 2048
   priority: 7
 
-# Dora Agent Configuration (Development)
 doraAgent:
-  maxConcurrency: 4
-  memoryLimit: 512
+  maxConcurrency: 8
+  memoryLimit: 1024
   priority: 6
 
-# Query Agent Configuration (Development)
 queryAgent:
-  maxConcurrency: 20
-  memoryLimit: 512
+  maxConcurrency: 50
+  memoryLimit: 1024
   priority: 9
-  simpleQueryTimeout: 200
-  complexQueryTimeout: 2000
-  cacheWarmupSize: 200
+  simpleQueryTimeout: 500
+  complexQueryTimeout: 5000
+  cacheWarmupSize: 500
 
-# Semantic Agent Configuration (Development)
+# Semantic Agent - AGGRESSIVE for TEI
 semanticAgent:
-  maxConcurrency: 4       # Reduced to prevent memory pressure
-  memoryLimit: 2048       # MB - increased for OpenVINO embedding generation
+  maxConcurrency: 8
+  memoryLimit: 4096          # 4GB
   priority: 8
-  batchSize: 4            # Smaller batches for OpenVINO stability
+  batchSize: 500             # LARGE - TEI handles server-side
   modelPath: "./models"
+  queueBatchSize: 100
 
-# Coordinator Agent Configuration (Development)
 coordinator:
-  maxConcurrency: 100
-  memoryLimit: 512
+  maxConcurrency: 200
+  memoryLimit: 1024
   priority: 10
-  taskQueueLimit: 100
+  taskQueueLimit: 500
   loadBalancingStrategy: "least-loaded"
   resourceConstraints:
-    maxMemoryMB: 4096     # 4GB - increased significantly
-    maxCpuPercent: 95     # Allow higher CPU usage
-    maxConcurrentAgents: 20
-    maxTaskQueueSize: 100
+    maxMemoryMB: 8192
+    maxCpuPercent: 95
+    maxConcurrentAgents: 50
+    maxTaskQueueSize: 500
 
-# Conductor Orchestrator Configuration (Development)
 conductor:
-  maxConcurrency: 100
-  memoryLimit: 512
+  maxConcurrency: 200
+  memoryLimit: 1024
   priority: 10
-  taskQueueLimit: 100
+  taskQueueLimit: 500
   loadBalancingStrategy: "least-loaded"
   resourceConstraints:
-    maxMemoryMB: 4096     # 4GB - increased significantly
-    maxCpuPercent: 95     # Allow higher CPU usage
-    maxConcurrentAgents: 20
-    maxTaskQueueSize: 100
+    maxMemoryMB: 8192
+    maxCpuPercent: 95
+    maxConcurrentAgents: 50
+    maxTaskQueueSize: 500
   complexityThreshold: 8
   mandatoryDelegation: true
 
-# Performance Configuration (Development)
 performance:
   monitoring:
     enabled: true
     collectMetrics: true
-    metricsInterval: 10000  # 10 seconds for quick feedback
-    
+    metricsInterval: 10000
+
   optimization:
-    enableVectorSearch: true   # Enable vector search with Ollama + Granite
-    enableParallelParsing: false  # Disable for easier debugging
-    maxWorkerThreads: 2     # Minimal threads for development
-    
-# Development Features
+    enableVectorSearch: true
+    enableParallelParsing: true
+    maxWorkerThreads: 8
+
 development:
-  enableHotReload: true     # Enable hot reload for development
-  verboseLogging: true      # Extra verbose logging
-  enableDebugEndpoints: true # Enable debug API endpoints
-  mockExternalServices: true # Mock external services
-  
-# Development Testing
+  enableHotReload: true
+  verboseLogging: true
+  enableDebugEndpoints: true
+  mockExternalServices: false
+
 testing:
-  enableTestMode: false     # Enable test mode features
-  useInMemoryDatabase: false # Use in-memory database for tests
-  skipSlowOperations: false  # Skip slow operations in tests
-  
-# Development Debugging
+  enableTestMode: false
+  useInMemoryDatabase: false
+  skipSlowOperations: false
+
 debugging:
-  enableSourceMaps: true    # Enable source maps for debugging
-  enableInspector: false    # Enable Node.js inspector
-  preserveStackTraces: true # Preserve stack traces for debugging
+  enableSourceMaps: true
+  enableInspector: false
+  preserveStackTraces: true
