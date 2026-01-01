@@ -23,7 +23,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getNodeLocation } from "./base-parser-utils.js";
 
 // Circuit breaker constants
@@ -60,7 +60,7 @@ export class CppAnalyzer {
    * Main entry point for analyzing C++ code
    */
   async analyze(
-    rootNode: TreeSitterNode,
+    rootNode: ASTNode,
     filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
     this.resetState();
@@ -141,7 +141,7 @@ export class CppAnalyzer {
    * Extract entities from the CST
    */
   private extractEntities(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -210,7 +210,7 @@ export class CppAnalyzer {
    * Extract namespace entities
    */
   private extractNamespace(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -243,7 +243,7 @@ export class CppAnalyzer {
    * Extract class/struct entities
    */
   private extractClass(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -293,7 +293,7 @@ export class CppAnalyzer {
    * Extract class members (methods, fields, etc.)
    */
   private extractClassMembers(
-    bodyNode: TreeSitterNode,
+    bodyNode: ASTNode,
     className: string,
     filePath: string,
     entities: ParsedEntity[],
@@ -360,7 +360,7 @@ export class CppAnalyzer {
    * Extract method/function entities
    */
   private extractMethod(
-    node: TreeSitterNode,
+    node: ASTNode,
     className: string,
     _filePath: string,
     entities: ParsedEntity[],
@@ -424,7 +424,7 @@ export class CppAnalyzer {
    * Extract field/member variable entities
    */
   private extractField(
-    node: TreeSitterNode,
+    node: ASTNode,
     className: string,
     _filePath: string,
     entities: ParsedEntity[],
@@ -472,7 +472,7 @@ export class CppAnalyzer {
    * Extract function entities (non-member functions)
    */
   private extractFunction(
-    node: TreeSitterNode,
+    node: ASTNode,
     _filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -518,7 +518,7 @@ export class CppAnalyzer {
    * Extract template entities (Phase 4 - Limited support)
    */
   private extractTemplate(
-    node: TreeSitterNode,
+    node: ASTNode,
     _filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -614,7 +614,7 @@ export class CppAnalyzer {
    * Extract using declarations and directives
    */
   private extractUsing(
-    node: TreeSitterNode,
+    node: ASTNode,
     _filePath: string,
     _entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -643,7 +643,7 @@ export class CppAnalyzer {
    * Extract enum entities
    */
   private extractEnum(
-    node: TreeSitterNode,
+    node: ASTNode,
     _filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -700,7 +700,7 @@ export class CppAnalyzer {
    * Extract inheritance relationships
    */
   private extractInheritance(
-    baseListNode: TreeSitterNode,
+    baseListNode: ASTNode,
     derivedClass: string,
     relationships: EntityRelationship[],
     _filePath: string,
@@ -748,7 +748,7 @@ export class CppAnalyzer {
    * Extract friend relationships
    */
   private extractFriend(
-    node: TreeSitterNode,
+    node: ASTNode,
     className: string,
     relationships: EntityRelationship[],
     _filePath: string,
@@ -799,7 +799,7 @@ export class CppAnalyzer {
   /**
    * Helper: Extract function name from declarator
    */
-  private extractFunctionName(declaratorNode: TreeSitterNode | null): string | null {
+  private extractFunctionName(declaratorNode: ASTNode | null): string | null {
     if (!declaratorNode) return null;
 
     // Handle different declarator types
@@ -881,7 +881,7 @@ export class CppAnalyzer {
    *    e.g. "operator[" or plain "operator" -> use context to detect [] or ()
    * - normalize symbols: "operator  +" => "operator+"
    */
-  private canonicalizeOperatorName(name: string, contextNode: TreeSitterNode): string {
+  private canonicalizeOperatorName(name: string, contextNode: ASTNode): string {
     if (!name.startsWith("operator")) return name;
     // First pass: strip all spaces
     const n = name.replace(/\s+/g, "");
@@ -903,7 +903,7 @@ export class CppAnalyzer {
   /**
    * Helper: Extract field name from declarator
    */
-  private extractFieldName(declaratorNode: TreeSitterNode | null): string | null {
+  private extractFieldName(declaratorNode: ASTNode | null): string | null {
     if (!declaratorNode) return null;
 
     if (declaratorNode.type === "identifier") {
@@ -924,7 +924,7 @@ export class CppAnalyzer {
   /**
    * Helper: Extract method qualifiers
    */
-  private extractMethodQualifiers(node: TreeSitterNode): {
+  private extractMethodQualifiers(node: ASTNode): {
     isStatic: boolean;
     isConst: boolean;
     isVirtual: boolean;
@@ -947,7 +947,7 @@ export class CppAnalyzer {
   /**
    * Helper: Check if class is abstract
    */
-  private isAbstractClass(node: TreeSitterNode): boolean {
+  private isAbstractClass(node: ASTNode): boolean {
     // A class is abstract if it has pure virtual methods (= 0)
     return node.text.includes("= 0");
   }
@@ -955,7 +955,7 @@ export class CppAnalyzer {
   /**
    * Helper: Check if class is final
    */
-  private isFinalClass(node: TreeSitterNode): boolean {
+  private isFinalClass(node: ASTNode): boolean {
     // Check for final keyword after class name
     const nameNode = node.childForFieldName("name");
     if (nameNode) {
@@ -968,7 +968,7 @@ export class CppAnalyzer {
   /**
    * Helper: Extract template parameters (simple support)
    */
-  private extractTemplateParameters(parametersNode: TreeSitterNode | null): string {
+  private extractTemplateParameters(parametersNode: ASTNode | null): string {
     if (!parametersNode) return "";
 
     // - type_parameter_declaration
@@ -976,7 +976,7 @@ export class CppAnalyzer {
     // - type_parameter_pack
 
     const names = new Set<string>();
-    const stack: TreeSitterNode[] = [...parametersNode.children];
+    const stack: ASTNode[] = [...parametersNode.children];
     while (stack.length) {
       const n = stack.pop()!;
       if (n.type === "type_identifier" || n.type === "identifier") {

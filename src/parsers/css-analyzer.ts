@@ -8,12 +8,12 @@
  * - Variables (CSS custom properties, SCSS variables)
  */
 
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getNodeLocation } from "./base-parser-utils.js";
 
 export class CSSAnalyzer {
   async analyze(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -37,7 +37,7 @@ export class CSSAnalyzer {
   }
 
   private async traverseNode(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -63,7 +63,7 @@ export class CSSAnalyzer {
   }
 
   private async handleRuleSet(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -96,7 +96,7 @@ export class CSSAnalyzer {
   }
 
   private async handleMediaQuery(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],

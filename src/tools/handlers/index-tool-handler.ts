@@ -10,6 +10,17 @@ import { getIndexingStatus, isIndexing, setIndexingState } from "../../index.js"
 import type { AgentTask } from "../../types/agent.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 const IndexToolSchema = z.object({
   directory: z.string().optional(),
   incremental: z.boolean().optional().default(false),
@@ -76,7 +87,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     this.context.logger.debug("INDEXING", "GraphStorage context set", { targetDir }, this.context.requestId);
 
     // Step 2: Initialize semantic agent if enabled and ensure correct project context
-    if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+    if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
       // Use ensureSemanticAgentForProject to reinitialize VectorStore for the target directory
       await this.ensureSemanticAgentForProject(targetDir);
     }
@@ -91,7 +102,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     let oversizedWarning: { aiMessage: string | null; oversizedCount: number; maxTokens: number } | null = null;
     let embeddingStats: { generated: number; skipped: number } | null = null;
 
-    if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+    if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
       await this.ensureSemanticsReady();
 
       // Generate embeddings for all entities in storage (batch mode, with deduplication)
@@ -117,7 +128,19 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       }
     }
 
-    // Step 6: Log and publish result
+    // Step 6: Start GitWatcher for incremental updates (if branchAware enabled)
+    try {
+      const conductor = this.context.getConductor();
+      const indexerAgent = conductor.getAgent("indexer") as any;
+      if (indexerAgent?.setRepositoryPath) {
+        indexerAgent.setRepositoryPath(targetDir);
+        console.error(`[IndexToolHandler] GitWatcher started for ${targetDir}`);
+      }
+    } catch (error) {
+      console.error(`[IndexToolHandler] Failed to start GitWatcher:`, error);
+    }
+
+    // Step 7: Log and publish result
     this.logIndexingActivity(targetDir, incremental, excludePatterns, result);
     this.publishToKnowledgeBus(result);
 
@@ -232,16 +255,67 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
   }
 
   private async detectCodebaseSize(targetDir: string): Promise<{ numFiles: number; projectSizeMB: number }> {
-    const { execSync } = await import("node:child_process");
+    // Cross-platform implementation using Node.js fs instead of Unix commands (find/du/wc)
+    const { glob } = await import("../../utils/glob.js");
+    const { stat } = await import("node:fs/promises");
 
-    const fileCount = execSync(
-      `find "${targetDir}" -type f \\( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.java" -o -name "*.cpp" -o -name "*.c" -o -name "*.go" -o -name "*.rs" -o -name "*.kt" -o -name "*.kts" -o -name "*.swift" -o -name "*.css" -o -name "*.scss" -o -name "*.sass" -o -name "*.less" -o -name "*.html" -o -name "*.htm" -o -name "*.xml" \\) | wc -l`,
-      { encoding: "utf8" },
-    ).trim();
-    const numFiles = parseInt(fileCount, 10);
+    // Source file extensions to count
+    const extensions = [
+      "*.js",
+      "*.ts",
+      "*.tsx",
+      "*.jsx",
+      "*.py",
+      "*.java",
+      "*.cpp",
+      "*.c",
+      "*.h",
+      "*.hpp",
+      "*.go",
+      "*.rs",
+      "*.kt",
+      "*.kts",
+      "*.swift",
+      "*.css",
+      "*.scss",
+      "*.sass",
+      "*.less",
+      "*.html",
+      "*.htm",
+      "*.xml",
+      "*.json",
+      "*.yaml",
+      "*.yml",
+    ];
 
-    const projectSizeBytes = execSync(`du -sb "${targetDir}" | cut -f1`, { encoding: "utf8" }).trim();
-    const projectSizeMB = Math.floor(parseInt(projectSizeBytes, 10) / (1024 * 1024));
+    // Count source files using cross-platform glob
+    const pattern = `**/{${extensions.join(",")}}`;
+    const files = await glob(pattern, {
+      cwd: targetDir,
+      ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**"],
+    });
+    const numFiles = files.length;
+
+    // Estimate project size by sampling (full recursive would be slow)
+    const { join } = await import("node:path");
+    let projectSizeMB = 0;
+    try {
+      // For quick estimate, sample first 100 files
+      const sampleFiles = files.slice(0, 100);
+      let sampleSize = 0;
+      for (const file of sampleFiles) {
+        try {
+          const fileStat = await stat(join(targetDir, file));
+          sampleSize += fileStat.size;
+        } catch {
+          // Ignore inaccessible files
+        }
+      }
+      // Extrapolate to full size
+      projectSizeMB = Math.floor(((sampleSize / Math.max(1, sampleFiles.length)) * numFiles) / (1024 * 1024));
+    } catch {
+      projectSizeMB = 0;
+    }
 
     this.context.logger.info(
       "INDEXING",
@@ -269,7 +343,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     const conductor = this.context.getConductor();
     await conductor.initialize();
 
-    const isDebugMode = process.env.MCP_DEBUG === "1";
+    const isDebugMode = process.env["MCP_DEBUG"] === "1";
     // Indexing can take significant time for large codebases (e.g., 90+ seconds for 350 files)
     // Use a longer default timeout (5 minutes) to allow completion without early termination
     const INDEX_DEFAULT_TIMEOUT = 300000; // 5 minutes
@@ -295,7 +369,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
         break;
       } catch (error) {
         if (i === maxRetries - 1) throw error;
-        await new Promise((resolve) => setTimeout(resolve, retryDelay));
+        await sleep(retryDelay);
       }
     }
   }

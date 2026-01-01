@@ -25,7 +25,6 @@ export class DoraAgent extends BaseAgent {
       // Use DORA type for research/exploration agent
       maxConcurrency: agentConfig.maxConcurrency,
       memoryLimit: agentConfig.memoryLimit,
-      cpuAffinity: undefined,
       priority: agentConfig.priority,
     });
   }

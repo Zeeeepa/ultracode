@@ -799,5 +799,26 @@ Overlord может роутить по имени сервера или по к
 
 **Документ подготовлен:** 2025-11-17
 **Автор:** Claude (Anthropic) + Ultrathink Analysis
-**Версия:** 1.0
-**Статус:** 🟢 Ready for Review
+**Версия:** 1.1
+**Статус:** 🟢 Implemented
+
+---
+
+## 9. История изменений
+
+### v1.1 (2026-01-04)
+
+**UltrascriptTools v3.0.0 - Полная унификация имён:**
+
+✅ Переименованы инструменты (старые имена удалены полностью):
+- `list_file_entities` → `get_members`
+- `detect_code_clones` → `find_duplicates`
+- `modify_entity_code` → `modify_code`
+- `rollback_snapshot` → `undo`
+
+✅ Обновлена документация:
+- README.md - удалены дубликаты из таблиц
+- docs/claude.cfg/add-to-CLAUDE.md - новые имена
+- docs/npm-readme.md - новые имена
+
+**Примечание:** В отличие от изначального плана (сохранить alias'ы), было решено полностью удалить старые имена для чистоты API и полной совместимости с UltrasharpTools.

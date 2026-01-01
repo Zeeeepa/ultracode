@@ -40,6 +40,10 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   private pendingQueue: QueuedTask[] = [];
   private isProcessingQueue = false;
 
+  // Prevent multiple initializations
+  private initialized = false;
+  private initializePromise: Promise<void> | null = null;
+
   constructor(type: AgentType, capabilities: AgentCapabilities) {
     super();
     this.id = `${type}-${randomUUID().slice(0, 8)}`;
@@ -62,10 +66,27 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   }
 
   async initialize(): Promise<void> {
-    console.error(`[${this.id}] Initializing agent...`);
-    this.status = AgentStatus.IDLE;
-    await this.onInitialize();
-    this.emit("initialized", this.id);
+    // Prevent multiple initializations - return existing promise if in progress
+    if (this.initializePromise) {
+      return this.initializePromise;
+    }
+    if (this.initialized) {
+      return;
+    }
+
+    this.initializePromise = (async () => {
+      try {
+        console.error(`[${this.id}] Initializing agent...`);
+        this.status = AgentStatus.IDLE;
+        await this.onInitialize();
+        this.initialized = true;
+        this.emit("initialized", this.id);
+      } finally {
+        this.initializePromise = null;
+      }
+    })();
+
+    return this.initializePromise;
   }
 
   async shutdown(): Promise<void> {
@@ -153,8 +174,8 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
         agentId: this.id,
         status: this.status,
         reason: this.lastRejection?.reason ?? "unknown",
-        queueLength: this.lastRejection?.queueLength,
-        maxQueue: this.lastRejection?.maxQueue,
+        ...(this.lastRejection?.queueLength !== undefined && { queueLength: this.lastRejection.queueLength }),
+        ...(this.lastRejection?.maxQueue !== undefined && { maxQueue: this.lastRejection.maxQueue }),
         retryAfterMs: this.lastRejection?.retryAfterMs ?? 300,
         taskId: task.id,
         memoryUsageMB: this.lastRejection?.memoryUsageMB ?? this.memoryUsage,
@@ -343,25 +364,29 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   protected abstract handleMessage(message: AgentMessage): Promise<void>;
 
   // Resource monitoring
-  private _resourceMonitorInterval?: ReturnType<typeof setInterval>;
+  protected _resourceMonitorInterval?: ReturnType<typeof setInterval> | undefined;
 
-  private startResourceMonitoring(): void {
-    this._resourceMonitorInterval = setInterval(() => {
-      this.updateResourceUsage();
-    }, 1000); // Update every second
+  protected startResourceMonitoring(): void {
+    // DISABLED: process.memoryUsage() crashes Bun when called during OpenVINO native operations
+    // Resource monitoring is not critical for functionality
+    return;
   }
 
-  private updateResourceUsage(): void {
-    // Simplified resource tracking - in production would use actual process metrics
-    const memUsed = process.memoryUsage();
-    this.memoryUsage = Math.round(memUsed.heapUsed / 1024 / 1024);
-    this.metrics.currentMemoryMB = this.memoryUsage;
-
-    // CPU usage would require more sophisticated tracking
-    // For now, estimate based on task processing
-    this.cpuUsage = this.status === AgentStatus.BUSY ? 50 : 5;
-    this.metrics.currentCpuPercent = this.cpuUsage;
+  protected stopResourceMonitoring(): void {
+    if (this._resourceMonitorInterval) {
+      clearInterval(this._resourceMonitorInterval);
+      this._resourceMonitorInterval = undefined;
+    }
   }
+
+  // DISABLED: process.memoryUsage() crashes Bun with OpenVINO native module
+  // private updateResourceUsage(): void {
+  //   const memUsed = process.memoryUsage();
+  //   this.memoryUsage = Math.round(memUsed.heapUsed / 1024 / 1024);
+  //   this.metrics.currentMemoryMB = this.memoryUsage;
+  //   this.cpuUsage = this.status === AgentStatus.BUSY ? 50 : 5;
+  //   this.metrics.currentCpuPercent = this.cpuUsage;
+  // }
 
   private updateAverageProcessingTime(duration: number): void {
     const prev = this.metrics.averageProcessingTime;

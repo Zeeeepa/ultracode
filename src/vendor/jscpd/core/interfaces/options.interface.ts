@@ -1,14 +1,14 @@
 export interface IOptions {
   executionId?: string;
-  minLines?: number;
-  maxLines?: number;
+  minLines?: number | undefined;
+  maxLines?: number | undefined;
   maxSize?: string;
   minTokens?: number;
-  threshold?: number;
+  threshold?: number | undefined;
   formatsExts?: Record<string, string[]>;
   output?: string;
   path?: string[];
-  pattern?: string;
+  pattern?: string | undefined;
   ignorePattern?: string[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mode?: any;
@@ -28,7 +28,7 @@ export interface IOptions {
   noSymlinks?: boolean;
   skipLocal?: boolean;
   ignoreCase?: boolean;
-  gitignore?: boolean;
+  gitignore?: boolean | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   reportersOptions?: Record<string, any>;
   tokensToSkip?: string[];

@@ -4,7 +4,11 @@
  * Manages persistent storage of branch deltas using SQLite.
  * Ensures branch deltas survive server restarts.
  *
- * Database location: %LOCALAPPDATA%/UltraScriptTools/projects/<hash>/layered/deltas.db
+ * Architecture:
+ * - Bun: uses bun:sqlite for persistent storage (fast sync reads)
+ * - Node.js: in-memory only (sync SQLite not available, deltas don't persist)
+ *
+ * Database location (Bun only): %LOCALAPPDATA%/UltraScriptTools/projects/<hash>/layered/deltas.db
  *
  * Based on: ultrasharp-tools-mcp LayeredCacheManager.cs
  * @see Dev.Docs/LAYERED_INDEXING_IMPLEMENTATION_PLAN.md
@@ -13,7 +17,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { SQLiteDatabase, SQLiteStatement } from "../storage/sqlite-adapter.js";
-import { loadSQLiteModule } from "../storage/sqlite-adapter.js";
+import { isSyncSQLiteAvailable, loadSQLiteModule } from "../storage/sqlite-adapter.js";
 import { BranchDelta } from "./branch-delta.js";
 
 // =============================================================================
@@ -21,17 +25,28 @@ import { BranchDelta } from "./branch-delta.js";
 // =============================================================================
 
 export class LayeredCacheManager {
-  private db: SQLiteDatabase;
-  private dbPath: string;
+  private db: SQLiteDatabase | null = null;
+  private dbPath: string = "";
+  private useInMemoryOnly: boolean = false;
 
-  // Prepared statements
+  // In-memory fallback for Node.js
+  private memoryCache: Map<string, BranchDelta> = new Map();
+
+  // Prepared statements (only used with SQLite)
   private insertStmt: SQLiteStatement | null = null;
   private selectStmt: SQLiteStatement | null = null;
   private deleteStmt: SQLiteStatement | null = null;
   private listStmt: SQLiteStatement | null = null;
 
   constructor(workingDirectory: string) {
-    // Use centralized storage
+    // Check if sync SQLite is available (Bun only)
+    if (!isSyncSQLiteAvailable()) {
+      this.useInMemoryOnly = true;
+      console.error(`[LayeredCacheManager] Sync SQLite not available (Node.js), using in-memory only`);
+      return;
+    }
+
+    // Bun path: use bun:sqlite for persistent storage
     const { getProjectPaths, ensureProjectDir } = require("../shared/storage-paths.js");
     ensureProjectDir(workingDirectory);
     const paths = getProjectPaths(workingDirectory);
@@ -53,10 +68,12 @@ export class LayeredCacheManager {
   }
 
   // =========================================================================
-  // SCHEMA INITIALIZATION
+  // SCHEMA INITIALIZATION (SQLite mode only)
   // =========================================================================
 
   private initializeSchema(): void {
+    if (!this.db) return;
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS branch_deltas (
         branch_name TEXT PRIMARY KEY,
@@ -90,6 +107,8 @@ export class LayeredCacheManager {
   }
 
   private prepareStatements(): void {
+    if (!this.db) return;
+
     // Insert or replace
     this.insertStmt = this.db.prepare(`
       INSERT OR REPLACE INTO branch_deltas (
@@ -116,13 +135,23 @@ export class LayeredCacheManager {
   }
 
   // =========================================================================
-  // SAVE / LOAD OPERATIONS
+  // SAVE / LOAD OPERATIONS (dual-mode: SQLite or in-memory)
   // =========================================================================
 
   /**
-   * Save branch delta to SQLite
+   * Save branch delta
    */
   async saveBranchDelta(delta: BranchDelta): Promise<void> {
+    // In-memory mode (Node.js)
+    if (this.useInMemoryOnly) {
+      this.memoryCache.set(delta.branchName, delta);
+      console.error(
+        `[LayeredCacheManager] Saved delta in-memory for branch: ${delta.branchName} (${delta.totalChanges} changes)`,
+      );
+      return;
+    }
+
+    // SQLite mode (Bun)
     if (!this.insertStmt) {
       throw new Error("LayeredCacheManager not initialized");
     }
@@ -154,9 +183,15 @@ export class LayeredCacheManager {
   }
 
   /**
-   * Load branch delta from SQLite
+   * Load branch delta
    */
   async loadBranchDelta(branchName: string): Promise<BranchDelta | null> {
+    // In-memory mode (Node.js)
+    if (this.useInMemoryOnly) {
+      return this.memoryCache.get(branchName) || null;
+    }
+
+    // SQLite mode (Bun)
     if (!this.selectStmt) {
       throw new Error("LayeredCacheManager not initialized");
     }
@@ -184,6 +219,14 @@ export class LayeredCacheManager {
    * Delete branch delta
    */
   async deleteBranchDelta(branchName: string): Promise<void> {
+    // In-memory mode (Node.js)
+    if (this.useInMemoryOnly) {
+      this.memoryCache.delete(branchName);
+      console.error(`[LayeredCacheManager] Deleted delta in-memory for branch: ${branchName}`);
+      return;
+    }
+
+    // SQLite mode (Bun)
     if (!this.deleteStmt) {
       throw new Error("LayeredCacheManager not initialized");
     }
@@ -201,6 +244,12 @@ export class LayeredCacheManager {
    * Get all cached branch names
    */
   async getCachedBranches(): Promise<string[]> {
+    // In-memory mode (Node.js)
+    if (this.useInMemoryOnly) {
+      return Array.from(this.memoryCache.keys());
+    }
+
+    // SQLite mode (Bun)
     if (!this.listStmt) {
       throw new Error("LayeredCacheManager not initialized");
     }
@@ -287,6 +336,14 @@ export class LayeredCacheManager {
     totalChanges: number;
     databaseSize: number;
   } {
+    if (!this.db) {
+      return {
+        totalBranches: this.memoryCache.size,
+        totalChanges: Array.from(this.memoryCache.values()).reduce((sum, d) => sum + d.totalChanges, 0),
+        databaseSize: 0,
+      };
+    }
+
     const stmt = this.db.prepare(`
       SELECT
         COUNT(*) as total_branches,
@@ -317,6 +374,8 @@ export class LayeredCacheManager {
    * Compact database (VACUUM)
    */
   compact(): void {
+    if (!this.db) return;
+
     console.error("[LayeredCacheManager] Compacting database...");
 
     try {
@@ -331,6 +390,8 @@ export class LayeredCacheManager {
    * Delete old deltas (older than N days)
    */
   async deleteOldDeltas(olderThanDays: number = 30): Promise<number> {
+    if (!this.db) return 0;
+
     const cutoffTime = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
 
     try {

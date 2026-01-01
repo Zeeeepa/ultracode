@@ -5,7 +5,6 @@
  * Uses configuration to determine capabilities and dependencies.
  */
 
-import type { SQLiteManager } from "../storage/sqlite-manager.js";
 import { AgentType } from "../types/agent.js";
 import type { DIContainer } from "./di-container.js";
 
@@ -46,11 +45,10 @@ export async function registerAllAgents(
     return new ParserAgent();
   });
 
-  // IndexerAgent - requires SQLiteManager (resolved from container for project-aware context)
-  container.registerAgent(AgentType.INDEXER, async (c) => {
+  // IndexerAgent - uses libsql via GraphStorage (no SQLiteManager needed)
+  container.registerAgent(AgentType.INDEXER, async (_c) => {
     const { IndexerAgent } = await import("../agents/indexer-agent.js");
-    const sqliteManager = await c.resolve<SQLiteManager>("SQLiteManager");
-    return new IndexerAgent(sqliteManager);
+    return new IndexerAgent();
   });
 
   // QueryAgent

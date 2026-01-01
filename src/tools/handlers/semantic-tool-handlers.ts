@@ -4,7 +4,7 @@
  * Handlers for semantic search operations:
  * - semantic_search
  * - find_similar_code
- * - detect_code_clones (find_duplicates alias)
+ * - find_duplicates
  * - jscpd_detect_clones
  * - cross_language_search
  * - pattern_search
@@ -33,6 +33,15 @@ const SemanticSearchSchema = z.object({
     .default(false)
     .describe("Expand results with graph neighbors (callers, dependencies, inheritors)"),
   expansionDepth: z.number().optional().default(1).describe("Graph traversal depth for expansion (1 or 2 hops)"),
+  // Two-stage retrieval with reranking
+  rerank: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "Enable two-stage retrieval: rerank top results with cross-encoder for better precision (requires vLLM or TEI provider)",
+    ),
+  rerankTopK: z.number().optional().default(50).describe("Number of top embedding results to rerank (default: 50)"),
   // New filters based on parser-extracted data
   minCyclomatic: z.number().optional().describe("Filter: minimum cyclomatic complexity"),
   maxCyclomatic: z.number().optional().describe("Filter: maximum cyclomatic complexity"),
@@ -97,7 +106,53 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
     // Fetch more results for pagination and filtering
     // Use semanticSearch method (returns SemanticResult with results array)
     const searchResult = await semanticAgent.semanticSearch(args.query, 1000);
-    const allResults = searchResult.results || [];
+    let allResults = searchResult.results || [];
+
+    // Two-stage retrieval: rerank top results with cross-encoder for better precision
+    let rerankStats = { reranked: false, provider: "" as string };
+    if (args.rerank && allResults.length > 0) {
+      const provider = semanticAgent.getEmbeddingProvider?.();
+      const capabilities = provider?.getCapabilities?.();
+
+      if (capabilities?.rerank && provider?.rerank) {
+        try {
+          // Take top K results for reranking (cross-encoder is slower but more accurate)
+          const topK = Math.min(args.rerankTopK, allResults.length);
+          const toRerank = allResults.slice(0, topK);
+
+          // Prepare documents for reranking
+          const documents = toRerank.map((r: any, idx: number) => ({
+            text: r.content || r.metadata?.content || r.name || "",
+            id: r.id || String(idx),
+          }));
+
+          // Rerank with cross-encoder
+          const reranked = await provider.rerank(args.query, documents, {
+            topK,
+            threshold: args.minSimilarity,
+          });
+
+          // Update results with reranked scores
+          const rerankedMap = new Map(reranked.map((r: { id?: string | undefined; score: number }) => [r.id, r.score]));
+          for (const result of toRerank) {
+            const newScore = rerankedMap.get(result.id);
+            if (newScore !== undefined) {
+              result.similarity = newScore;
+              result.reranked = true;
+            }
+          }
+
+          // Re-sort by new scores
+          allResults = [...toRerank, ...allResults.slice(topK)];
+          allResults.sort((a: any, b: any) => (b.similarity || 0) - (a.similarity || 0));
+
+          rerankStats = { reranked: true, provider: provider.info?.name || "unknown" };
+        } catch (e: any) {
+          console.warn(`[SemanticSearch] Reranking failed: ${e.message}`);
+          // Continue with embedding-only results
+        }
+      }
+    }
 
     // Apply metadata-based filters
     let filteredResults = allResults;
@@ -156,6 +211,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
               query: args.query,
               count: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
+              ...(rerankStats.reranked ? { rerank: rerankStats } : {}),
               ...(expansionStats.expanded ? { expansion: expansionStats } : {}),
               results: paginatedResult.data.map((r: any) => {
                 const meta = r.metadata || {};
@@ -164,7 +220,11 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
                   name: r.name || meta.name,
                   type: r.type || meta.entityType || meta.type,
                   similarity: r.similarity,
+                  ...(r.reranked ? { reranked: true } : {}),
                   filePath: r.filePath || meta.filePath || meta.path,
+                  // Location info for navigation (file:startLine-endLine)
+                  startLine: meta.startLine,
+                  endLine: meta.endLine,
                   language: meta.language,
                   // Complexity metrics (if available)
                   ...(meta.cyclomatic
@@ -380,11 +440,8 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
     const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    // Fetch more for pagination
-    const allResults = await semanticAgent.findSimilarCode(args.code, {
-      limit: 500,
-      minSimilarity: args.minSimilarity,
-    });
+    // Fetch more for pagination (pass threshold as number, not options object)
+    const allResults = await semanticAgent.findSimilarCode(args.code, args.minSimilarity);
 
     const paginatedResult = paginate(allResults, args.offset, safeLimit);
 
@@ -401,8 +458,9 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
                 name: r.name,
                 type: r.type,
                 similarity: r.similarity,
-                filePath: r.filePath,
-                snippet: r.snippet,
+                filePath: r.path,
+                startLine: r.startLine,
+                endLine: r.endLine,
                 ...(args.includeContent && r.content ? { content: r.content } : {}),
               })),
             },
@@ -439,13 +497,8 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
     const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    // Fetch more groups for pagination
-    const allClones = await semanticAgent.detectClones({
-      minSimilarity: args.minSimilarity,
-      minLines: args.minLines,
-      entityTypes: args.entityTypes,
-      maxGroups: 200,
-    });
+    // Fetch more groups for pagination (pass threshold as number)
+    const allClones = await semanticAgent.detectClones(args.minSimilarity);
 
     const paginatedResult = paginate(allClones, args.offset, safeLimit);
 
@@ -458,12 +511,14 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
               groupsFound: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
               clones: paginatedResult.data.map((group: any) => ({
-                similarity: group.similarity,
+                similarity: group.avgSimilarity,
+                cloneType: group.cloneType,
                 members: group.members.map((m: any) => ({
                   id: m.id,
                   name: m.name,
-                  filePath: m.filePath,
-                  lines: m.lines,
+                  filePath: m.path,
+                  startLine: m.startLine,
+                  endLine: m.endLine,
                 })),
               })),
             },
@@ -589,11 +644,22 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
     const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    // Fetch more for pagination
-    const allResults = await semanticAgent.crossLanguageSearch(args.query, {
-      languages: args.languages,
-      limit: 500,
-    });
+    // Get all languages from vector store if not specified
+    const languages = args.languages || [
+      "typescript",
+      "javascript",
+      "python",
+      "go",
+      "rust",
+      "java",
+      "cpp",
+      "swift",
+      "kotlin",
+      "csharp",
+    ];
+
+    // Fetch more for pagination (pass languages array directly, not options object)
+    const allResults = await semanticAgent.crossLanguageSearch(args.query, languages);
 
     const paginatedResult = paginate(allResults, args.offset, safeLimit);
 
@@ -604,10 +670,17 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
           text: JSON.stringify(
             {
               query: args.query,
+              languages,
               count: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
               results: paginatedResult.data.map((r: any) => ({
-                ...r,
+                id: r.id,
+                name: r.name,
+                language: r.language,
+                filePath: r.path,
+                startLine: r.startLine,
+                endLine: r.endLine,
+                similarity: r.similarity,
                 ...(args.includeContent && r.content ? { content: r.content } : {}),
               })),
             },
@@ -685,6 +758,8 @@ export class PatternSearchToolHandler extends BaseToolHandler<z.infer<typeof Pat
                 matchType: r.matchType,
                 score: r.score,
                 filePath: r.entity.filePath,
+                startLine: r.entity.location?.start?.line,
+                endLine: r.entity.location?.end?.line,
                 snippet: r.snippet,
               })),
             },

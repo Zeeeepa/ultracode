@@ -17,6 +17,17 @@
 import { EventEmitter } from "node:events";
 import type { ILayeredIndex } from "../core/layered-index.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -31,13 +42,13 @@ export interface FileChangeEvent {
   changeType: FileChangeType;
 
   /** Old path (for renamed files) */
-  oldPath?: string;
+  oldPath?: string | undefined;
 
   /** Timestamp of change */
   timestamp: number;
 
   /** Branch name (if known) */
-  branch?: string;
+  branch?: string | undefined;
 
   /** Client ID for Layer 2 [FUTURE] */
   clientId?: string;
@@ -88,7 +99,7 @@ export class IncrementalUpdateQueue extends EventEmitter {
 
   // Queue state
   private pendingChanges: Map<string, FileChangeEvent> = new Map();
-  private debounceTimer: NodeJS.Timeout | null = null;
+  private debounceAbortController: AbortController | null = null;
   private isProcessing = false;
   private processingPromise: Promise<void> | null = null;
 
@@ -180,18 +191,24 @@ export class IncrementalUpdateQueue extends EventEmitter {
    * Reset debounce timer
    */
   private resetDebounceTimer(): void {
-    // Clear existing timer
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
+    // Abort existing timer
+    if (this.debounceAbortController) {
+      this.debounceAbortController.abort();
     }
 
-    // Set new timer
-    this.debounceTimer = setTimeout(() => {
-      this.processBatch().catch((error) => {
-        console.error(`[IncrementalUpdateQueue] Batch processing failed:`, error);
-        this.emit("error", error);
-      });
-    }, this.config.debounceWindowMs);
+    // Create new abort controller and set timer using async sleep (Bun compatible)
+    const abortController = new AbortController();
+    this.debounceAbortController = abortController;
+
+    (async () => {
+      await sleep(this.config.debounceWindowMs);
+      if (!abortController.signal.aborted) {
+        this.processBatch().catch((error) => {
+          console.error(`[IncrementalUpdateQueue] Batch processing failed:`, error);
+          this.emit("error", error);
+        });
+      }
+    })();
   }
 
   // =========================================================================
@@ -325,9 +342,9 @@ export class IncrementalUpdateQueue extends EventEmitter {
    * Flush pending changes immediately (bypass debounce)
    */
   async flush(): Promise<void> {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    if (this.debounceAbortController) {
+      this.debounceAbortController.abort();
+      this.debounceAbortController = null;
     }
 
     if (this.isProcessing && this.processingPromise) {
@@ -342,9 +359,9 @@ export class IncrementalUpdateQueue extends EventEmitter {
    * Clear all pending changes without processing
    */
   clear(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    if (this.debounceAbortController) {
+      this.debounceAbortController.abort();
+      this.debounceAbortController = null;
     }
 
     const count = this.pendingChanges.size;
@@ -410,10 +427,10 @@ export class IncrementalUpdateQueue extends EventEmitter {
     // Flush pending changes
     await this.flush();
 
-    // Clear timer
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    // Abort timer
+    if (this.debounceAbortController) {
+      this.debounceAbortController.abort();
+      this.debounceAbortController = null;
     }
 
     // Remove all listeners

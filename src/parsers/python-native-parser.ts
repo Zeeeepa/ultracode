@@ -513,11 +513,11 @@ export class PythonNativeParser {
         filePath,
         language: "python" as SupportedLanguage,
         entities: result.entities,
-        relationships: result.relationships.length > 0 ? result.relationships : undefined,
+        ...(result.relationships.length > 0 && { relationships: result.relationships }),
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
-        errors: result.errors.length > 0 ? result.errors : undefined,
+        ...(result.errors.length > 0 && { errors: result.errors }),
       };
     } catch (error) {
       this.stats.errorCount++;

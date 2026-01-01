@@ -23,9 +23,8 @@ import { knowledgeBus } from "../core/knowledge-bus.js";
 import { getDataDir } from "../shared/storage-paths.js";
 import { BatchOperationsLibSQL } from "../storage/batch-operations-libsql.js";
 import { getCacheManager, QueryCacheManager } from "../storage/cache-manager.js";
-import type { GraphStorage } from "../storage/graph-storage.js";
 import { getGraphStorage, getLibSQLAdapter } from "../storage/graph-storage-factory.js";
-import type { SQLiteManager } from "../storage/sqlite-manager.js";
+// SQLiteManager removed - using libsql via GraphStorage
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 import type {
@@ -35,9 +34,11 @@ import type {
   FileInfo,
   GraphQuery,
   GraphQueryResult,
+  GraphStorage,
   Relationship,
 } from "../types/storage.js";
 import { EntityType, flattenParsedEntities, parsedEntityToEntity, RelationType } from "../types/storage.js";
+import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 
 // =============================================================================
@@ -99,19 +100,19 @@ interface ProvidedRelationship {
   type: RelationType | string;
   sourceFile?: string;
   targetFile?: string;
-  metadata?: { line?: number; [k: string]: unknown };
+  metadata?: { line?: number | undefined; [k: string]: unknown };
 }
 
 export interface IndexerTask extends AgentTask {
   type: "index:entities" | "index:incremental" | "query:graph" | "query:subgraph";
   payload: {
     entities?: ParsedEntity[];
-    filePath?: string;
+    filePath?: string | undefined;
     changes?: EntityChange[];
     query?: GraphQuery;
-    entityId?: string;
+    entityId?: string | undefined;
     depth?: number;
-    relationships?: EntityRelationship[];
+    relationships?: EntityRelationship[] | undefined;
   };
 }
 
@@ -120,12 +121,16 @@ export interface IndexerTask extends AgentTask {
 // =============================================================================
 
 export class IndexerAgent extends BaseAgent {
-  private sqliteManager!: SQLiteManager;
   private graphStorage!: GraphStorage;
   private batchOps!: BatchOperationsLibSQL;
   private cacheManager!: QueryCacheManager;
   private branchManager: BranchManager | null = null;
   private gitWatcher: GitWatcher | null = null;
+
+  // Debounced embedding generation
+  private pendingEmbeddingGeneration = false;
+  private embeddingDebounceAbort: AbortController | null = null;
+  private readonly EMBEDDING_DEBOUNCE_MS = 60_000; // 1 minute
   private currentRepositoryPath: string | null = null;
   private subscriptionIds: string[] = [];
   private ready = false;
@@ -137,29 +142,23 @@ export class IndexerAgent extends BaseAgent {
     lastIndexTime: 0,
   };
 
-  constructor(sqliteManager: SQLiteManager) {
+  constructor() {
     super(AgentType.INDEXER, getIndexerConfig());
-    this.sqliteManager = sqliteManager;
-    console.error(`[IndexerAgent] Created with ID: ${this.id} and provided SQLiteManager`);
+    console.error(`[IndexerAgent] Created with ID: ${this.id}`);
   }
 
   /**
    * Initialize the indexer agent
    */
   protected async onInitialize(): Promise<void> {
+    const startTime = Date.now();
+    logger.trace("AGENT", `[IndexerAgent] ▶ onInitialize() START`);
     console.error(`[${this.id}] Initializing Indexer Agent...`);
 
     // Initialize xxHash for stable ID generation
+    logger.trace("AGENT", `[IndexerAgent] ▶ initXXHash`);
     await initXXHash();
-
-    // Ensure SQLite manager is initialized
-    if (!this.sqliteManager) {
-      throw new Error(`[${this.id}] SQLiteManager is required but not provided`);
-    }
-
-    if (!this.sqliteManager.isOpen()) {
-      this.sqliteManager.initialize();
-    }
+    logger.trace("AGENT", `[IndexerAgent] ◀ initXXHash (${Date.now() - startTime}ms)`);
 
     // Initialize branch-aware indexing if enabled
     const appConfig = getConfig();
@@ -190,6 +189,9 @@ export class IndexerAgent extends BaseAgent {
           watchUncommitted: appConfig.git.watchUncommitted ?? true,
           uncommittedPollIntervalMs: appConfig.git.uncommittedPollIntervalMs || 10000,
           includeUntracked: appConfig.git.includeUntracked ?? true,
+          // Debounce for embedding generation
+          debounceMs: appConfig.git.debounceMs ?? 60_000,
+          bulkModeThreshold: appConfig.git.bulkModeThreshold ?? 1000,
         });
 
         // Setup branch change handler
@@ -201,20 +203,33 @@ export class IndexerAgent extends BaseAgent {
         this.gitWatcher.onUncommittedChange(async (files) => {
           await this.handleUncommittedChanges(files);
         });
+
+        // Setup debounced callback for embedding generation
+        // This waits for user to stop editing (60s debounce) then generates embeddings
+        this.gitWatcher.onDebouncedChange(async (files, bulkMode) => {
+          await this.handleDebouncedEmbeddingGeneration(files, bulkMode);
+        });
       }
     }
 
     // CRITICAL FIX: Use singleton GraphStorage instance (libsql unified)
     // This ensures IndexerAgent and MCP tools use the same storage instance
+    logger.trace("AGENT", `[IndexerAgent] ▶ getGraphStorage`);
+    const gsStart = Date.now();
     this.graphStorage = await getGraphStorage();
+    logger.trace("AGENT", `[IndexerAgent] ◀ getGraphStorage (${Date.now() - gsStart}ms)`);
     // Ensure graph storage is fully initialized (re-prepare statements after SQLite reset)
     if (typeof (this.graphStorage as any).initialize === "function") {
+      logger.trace("AGENT", `[IndexerAgent] ▶ graphStorage.initialize`);
       await (this.graphStorage as any).initialize();
+      logger.trace("AGENT", `[IndexerAgent] ◀ graphStorage.initialize (${Date.now() - gsStart}ms)`);
     }
 
     const config = getIndexerConfig();
 
     // v4: Use LibSQL BatchOperations instead of better-sqlite3
+    logger.trace("AGENT", `[IndexerAgent] ▶ BatchOperationsLibSQL.initialize`);
+    const batchStart = Date.now();
     const adapter = getLibSQLAdapter();
     if (!adapter) {
       throw new Error(
@@ -223,6 +238,7 @@ export class IndexerAgent extends BaseAgent {
     }
     this.batchOps = new BatchOperationsLibSQL(adapter, config.batchSize);
     await this.batchOps.initialize();
+    logger.trace("AGENT", `[IndexerAgent] ◀ BatchOperationsLibSQL.initialize (${Date.now() - batchStart}ms)`);
     this.cacheManager = getCacheManager({
       maxSize: config.cacheSize,
       defaultTTL: config.cacheTTL,
@@ -420,6 +436,20 @@ export class IndexerAgent extends BaseAgent {
       );
     }
 
+    // OPTIMIZATION: Publish entities for embedding IMMEDIATELY after entity insertion
+    // Don't wait for relationship insertion - embedding can start in parallel
+    if (validParsed.length) {
+      const entitiesWithPath = validParsed.map((entity) => ({
+        ...entity,
+        filePath: filePath,
+      }));
+      knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
+      logger.debug("IndexerAgent", `Published semantic:new_entities EARLY`, {
+        count: entitiesWithPath.length,
+        file: filePath,
+      });
+    }
+
     // Build and insert relationships
     let relationships: Relationship[] = [];
 
@@ -459,6 +489,7 @@ export class IndexerAgent extends BaseAgent {
         }
         return best?.id;
       }
+      const relLoopStart = Date.now();
       console.error(`[${this.id}] DEBUG: Processing ${providedRelationships.length} provided relationships`);
       for (const rel of providedRelationships) {
         let fromId = resolveByNameAndLine(rel.from, rel.metadata?.line);
@@ -495,7 +526,13 @@ export class IndexerAgent extends BaseAgent {
           console.error(`[${this.id}] SKIPPED relationship: ${rel.from} -> ${rel.to} (fromId=${fromId}, toId=${toId})`);
         }
       }
-      console.error(`[${this.id}] Using ${relationships.length} provided relationships`);
+      const relLoopMs = Date.now() - relLoopStart;
+      logger.info("PROFILE_INDEXER", "RelationshipLoop", {
+        count: providedRelationships.length,
+        builtCount: relationships.length,
+        ms: relLoopMs,
+      });
+      console.error(`[${this.id}] Using ${relationships.length} provided relationships (${relLoopMs}ms)`);
     } else {
       relationships = await this.buildRelationships(validParsed, storageEntities);
       console.error(`[${this.id}] Built ${relationships.length} relationships automatically`);
@@ -589,8 +626,15 @@ export class IndexerAgent extends BaseAgent {
       relationships.slice(0, 3).map((r) => `${r.fromId} -> ${r.toId} (${r.type})`),
     );
 
+    const insertRelStart = Date.now();
     const relResult = await this.batchOps.insertRelationships(relationships, (processed, total) => {
       console.error(`[${this.id}] Progress: ${processed}/${total} relationships`);
+    });
+    const insertRelMs = Date.now() - insertRelStart;
+    logger.info("PROFILE_INDEXER", "InsertRelationships", {
+      count: relationships.length,
+      processed: relResult.processed,
+      ms: insertRelMs,
     });
 
     // Update file info
@@ -627,21 +671,8 @@ export class IndexerAgent extends BaseAgent {
     );
     console.error(`[IndexerAgent] Published index:complete event`);
 
-    if (validParsed.length) {
-      const entitiesWithPath = validParsed.map((entity) => ({
-        ...entity,
-        filePath: filePath,
-      }));
-      // Debug: Check if there are any subscribers before publishing
-      const busStats = knowledgeBus.getStats();
-      console.error(`[IndexerAgent] KnowledgeBus stats: ${JSON.stringify(busStats)}`);
-      console.error(
-        `[IndexerAgent] Publishing semantic:new_entities with ${entitiesWithPath.length} entities for ${filePath}`,
-      );
-      knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
-    } else {
-      console.error(`[IndexerAgent] No validParsed entities to publish for ${filePath}`);
-    }
+    // NOTE: semantic:new_entities is now published EARLY (after entity insertion, before relationships)
+    // This allows embedding generation to run in parallel with relationship insertion
 
     console.error(
       `[${this.id}] Indexed ${entityResult.processed} entities and ${relResult.processed} relationships in ${indexTime}ms`,
@@ -897,12 +928,86 @@ export class IndexerAgent extends BaseAgent {
     // Clear cache after updates
     this.cacheManager.clear();
 
+    // Trigger debounced embedding generation
+    this.scheduleEmbeddingGeneration();
+
     return {
       processed,
       failed,
       errors,
       timeMs: 0,
     };
+  }
+
+  /**
+   * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+   */
+  private async sleep(ms: number): Promise<void> {
+    if (typeof (globalThis as any).Bun?.sleep === "function") {
+      await (globalThis as any).Bun.sleep(ms);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    }
+  }
+
+  /**
+   * Schedule debounced embedding generation
+   * Waits 1 minute after last change before triggering generation
+   */
+  private scheduleEmbeddingGeneration(): void {
+    // Cancel existing timer
+    if (this.embeddingDebounceAbort) {
+      this.embeddingDebounceAbort.abort();
+    }
+
+    // Create new abort controller
+    this.embeddingDebounceAbort = new AbortController();
+    const signal = this.embeddingDebounceAbort.signal;
+
+    logger.debug("IndexerAgent", `Embedding generation scheduled in ${this.EMBEDDING_DEBOUNCE_MS}ms`);
+
+    // Start async timer
+    (async () => {
+      try {
+        const startTime = Date.now();
+        while (!signal.aborted && Date.now() - startTime < this.EMBEDDING_DEBOUNCE_MS) {
+          await this.sleep(1000); // Check every second
+        }
+        if (!signal.aborted) {
+          this.triggerEmbeddingGeneration();
+        }
+      } catch (error) {
+        // Aborted or error - do nothing
+      }
+    })();
+  }
+
+  /**
+   * Trigger embedding generation via knowledge bus
+   * SemanticAgent subscribes to this event
+   */
+  private async triggerEmbeddingGeneration(): Promise<void> {
+    if (this.pendingEmbeddingGeneration) {
+      logger.debug("IndexerAgent", "Embedding generation already pending, skipping");
+      return;
+    }
+
+    this.pendingEmbeddingGeneration = true;
+    logger.info("IndexerAgent", "Triggering batch embedding generation after incremental update");
+
+    // Publish event for SemanticAgent
+    knowledgeBus.publish(
+      "indexer:incremental:complete",
+      {
+        timestamp: Date.now(),
+        reason: "debounced_after_incremental_update",
+      },
+      this.id,
+    );
+
+    // Reset flag after a delay using runtime-aware sleep
+    await this.sleep(5000);
+    this.pendingEmbeddingGeneration = false;
   }
 
   /**
@@ -1043,6 +1148,36 @@ export class IndexerAgent extends BaseAgent {
   }
 
   /**
+   * Handle debounced file changes for embedding generation.
+   * Called after user stops editing (debounce period elapsed).
+   * @param files - List of changed files (accumulated during debounce)
+   * @param bulkMode - If true, many files changed -> drop/rebuild index. If false, incremental insert.
+   */
+  private async handleDebouncedEmbeddingGeneration(files: string[], bulkMode: boolean): Promise<void> {
+    if (!this.currentRepositoryPath || files.length === 0) {
+      return;
+    }
+
+    console.error(`[${this.id}] Debounced embedding generation: ${files.length} files (bulkMode: ${bulkMode})`);
+
+    // Publish event for SemanticAgent to pick up
+    // SemanticAgent will handle the actual embedding generation with bulk mode flag
+    knowledgeBus.publish(
+      "indexer:embeddings:generate",
+      {
+        files,
+        count: files.length,
+        bulkMode,
+        repositoryPath: this.currentRepositoryPath,
+        source: "git-watcher-debounced",
+      },
+      this.id,
+    );
+
+    console.error(`[${this.id}] Published embedding generation event: ${files.length} files, bulkMode=${bulkMode}`);
+  }
+
+  /**
    * Handle branch change event
    */
   private async handleBranchChange(newBranch: string, oldBranch: string): Promise<void> {
@@ -1118,22 +1253,14 @@ export class IndexerAgent extends BaseAgent {
       }
     } catch {}
 
-    // Run final maintenance only if agent was initialized and DB is open
+    // Run final maintenance only if agent was initialized
     if (this.ready) {
       try {
-        this.sqliteManager.getConnection();
         await this.graphStorage.analyze();
       } catch (e) {
         console.warn(`[${this.id}] Analyze on shutdown skipped: ${(e as Error).message}`);
       }
     }
-
-    // Close database connection
-    try {
-      if (this.ready) {
-        this.sqliteManager.close();
-      }
-    } catch {}
 
     // Clear cache
     try {

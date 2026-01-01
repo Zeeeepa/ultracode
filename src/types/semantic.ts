@@ -57,7 +57,7 @@ export interface HybridResult {
   id: string;
   score: number;
   source: "structural" | "semantic" | "hybrid";
-  content?: string;
+  content?: string | undefined;
   metadata?: Record<string, unknown>;
 }
 
@@ -81,6 +81,12 @@ export interface SimilarCode {
   content: string;
   similarity: number;
   type: "exact" | "near" | "semantic";
+  /** Starting line number of the code fragment */
+  startLine?: number;
+  /** Ending line number of the code fragment */
+  endLine?: number;
+  /** Entity name if available */
+  name?: string;
 }
 
 /**
@@ -102,6 +108,12 @@ export interface CrossLangResult {
   path: string;
   content: string;
   similarity: number;
+  /** Starting line number of the code fragment */
+  startLine?: number;
+  /** Ending line number of the code fragment */
+  endLine?: number;
+  /** Entity name if available */
+  name?: string;
 }
 
 /**
@@ -142,7 +154,7 @@ export interface CacheEntry<T> {
   value: T;
   timestamp: number;
   hits: number;
-  ttl?: number;
+  ttl?: number | undefined;
 }
 
 /**
@@ -157,31 +169,60 @@ export type VectorBackend = "libsql";
 export interface VectorStoreConfig {
   dbPath: string;
   dimensions: number;
-  cacheSize?: number;
+  cacheSize?: number | undefined;
   walMode?: boolean;
-  workingDirectory?: string;
+  workingDirectory?: string | undefined;
 
   // LibSQL DiskANN configuration
   libsql?: {
     metric?: "cosine" | "l2"; // Default: cosine
     compression?: "float8" | "float16" | "float32"; // Default: float32
-    searchL?: number; // Neighbors visited during search (default: 200)
-    insertL?: number; // Neighbors visited during insert (default: 70)
+    searchL?: number | undefined; // Neighbors visited during search (default: 200)
+    insertL?: number | undefined; // Neighbors visited during insert (default: 70)
   };
 }
 
 /**
  * Embedding generator configuration
  */
-export type EmbeddingProviderKind =
-  | "memory"
-  | "ollama"
-  | "openai"
-  | "cloudru"
-  | "huggingface"
-  | "tei"
-  | "openvino"
-  | "auto";
+export type EmbeddingProviderKind = "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "ovms" | "vllm" | "auto";
+
+/**
+ * Serializable embedding configuration for subprocess workers.
+ * Subset of EmbeddingConfig that can be passed via IPC.
+ * Workers use this to initialize their own EmbeddingGenerator.
+ */
+export interface WorkerEmbeddingConfig {
+  /** Whether embedding generation is enabled in workers */
+  enabled: boolean;
+  /** Provider kind: ollama, tei, ovms, openai, etc. */
+  provider: EmbeddingProviderKind;
+  /** Model name for the embedding provider */
+  modelName: string;
+  /** Maximum tokens for text truncation (legacy, use contextTokens) */
+  maxTokens: number;
+  /** Model's context window size in tokens (e.g., 512 for e5-small) */
+  contextTokens: number;
+  /** Batch size for embedding generation */
+  batchSize: number;
+  /** Vector dimensions (e.g., 384 for e5-small) */
+  dimensions?: number;
+  /** Directory for vector dump files (workers write directly to disk) */
+  vectorDumpDir?: string;
+  /** Provider-specific options (serializable) */
+  providerOptions?: {
+    baseUrl?: string | undefined;
+    apiKey?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
+    // OVMS/TEI specific
+    maxBatchSize?: number | undefined;
+    useEmbeddingsApi?: boolean;
+    encodingFormat?: "float" | "base64";
+    protocol?: "rest" | "grpc";
+    grpcPort?: number;
+  };
+}
 
 export interface EmbeddingConfig {
   modelName: string;
@@ -191,9 +232,9 @@ export interface EmbeddingConfig {
 
   provider?: EmbeddingProviderKind; // default: 'memory'
   ollama?: {
-    baseUrl?: string;
-    timeoutMs?: number;
-    concurrency?: number;
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
     headers?: Record<string, string>;
     autoPull?: boolean;
     warmupText?: string;
@@ -201,41 +242,51 @@ export interface EmbeddingConfig {
     pullTimeoutMs?: number;
   };
   openai?: {
-    baseUrl?: string;
-    apiKey?: string;
-    timeoutMs?: number;
-    concurrency?: number;
-    maxBatchSize?: number;
+    baseUrl?: string | undefined;
+    apiKey?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
+    maxBatchSize?: number | undefined;
   };
   cloudru?: {
-    baseUrl?: string;
-    apiKey?: string;
-    timeoutMs?: number;
-    concurrency?: number;
-    maxBatchSize?: number;
+    baseUrl?: string | undefined;
+    apiKey?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
+    maxBatchSize?: number | undefined;
   };
   huggingface?: {
-    apiKey?: string;
-    baseUrl?: string;
-    timeoutMs?: number;
-    concurrency?: number;
+    apiKey?: string | undefined;
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
     warmupText?: string;
   };
   tei?: {
-    baseUrl?: string;
-    timeoutMs?: number;
-    concurrency?: number;
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
     checkServer?: boolean;
   };
-  memory?: {
-    dimension?: number;
+  ovms?: {
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
+    checkServer?: boolean;
+    miniBatchSize?: number; // Internal batch size for OVMS server (default: 8)
+    // OVMS v3 embeddings API options
+    useEmbeddingsApi?: boolean; // Use /v3/embeddings OpenAI-compatible API (default: true)
+    encodingFormat?: "float" | "base64"; // Response format for embeddings API (default: base64)
+    // Protocol options
+    protocol?: "rest" | "grpc"; // "rest" (HTTP/JSON) or "grpc" (binary protobuf, ~30% faster)
+    grpcPort?: number; // gRPC port (OVMS default: 9000)
+    // Multi-device round-robin load balancing
+    endpoints?: string[]; // ["embeddings-cpu", "embeddings-gpu"]
   };
-  openvino?: {
-    model?: string;
-    device?: "CPU" | "GPU" | "GPU.0" | "GPU.1" | "AUTO";
-    modelPath?: string;
-    autoDownload?: boolean;
-    timeoutMs?: number;
+  vllm?: {
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
   };
 }
 

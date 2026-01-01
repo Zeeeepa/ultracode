@@ -42,7 +42,7 @@ interface StructuralResult {
   type: string;
   name: string;
   score?: number;
-  content?: string;
+  content?: string | undefined;
 }
 
 interface RankedResult {
@@ -50,7 +50,7 @@ interface RankedResult {
   score: number;
   structuralRank?: number;
   semanticRank?: number;
-  content?: string;
+  content?: string | undefined;
   metadata?: Record<string, unknown>;
 }
 
@@ -117,13 +117,16 @@ export class HybridSearchEngine {
       const queryEmbedding = await this.embeddingGen.generateEmbedding(query);
 
       // Parallel execution of structural and semantic search
-      const [structuralResults, semanticResults] = await Promise.all([
+      const [structuralResults, semanticSearchResult] = await Promise.all([
         this.performStructuralSearch(query, fusionOptions.limit * 2),
-        this.vectorStore.search(queryEmbedding, fusionOptions.limit * 2),
+        this.vectorStore.adaptiveSearch(queryEmbedding, fusionOptions.limit * 2),
       ]);
+      const semanticResults = semanticSearchResult.results;
 
-      console.error(
-        `[HybridSearch] Found ${structuralResults.length} structural and ${semanticResults.length} semantic results`,
+      logger.debug(
+        "HYBRID_SEARCH",
+        `Found ${structuralResults.length} structural and ${semanticResults.length} semantic results`,
+        { usedFaiss: semanticSearchResult.usedFaiss },
       );
 
       // Apply Reciprocal Rank Fusion
@@ -133,11 +136,14 @@ export class HybridSearchEngine {
       const searchTime = Date.now() - startTime;
       this.updateMetrics(searchTime, fusedResults.length);
 
-      console.error(`[HybridSearch] Returned ${fusedResults.length} results in ${searchTime}ms`);
+      logger.info("HYBRID_SEARCH", `Hybrid search complete`, {
+        resultsCount: fusedResults.length,
+        searchTimeMs: searchTime,
+      });
 
       return fusedResults;
     } catch (error) {
-      console.error("[HybridSearch] Search failed:", error);
+      logger.error("HYBRID_SEARCH", "Hybrid search failed", { error: (error as Error).message });
       throw error;
     }
   }
@@ -147,7 +153,7 @@ export class HybridSearchEngine {
    */
   private async performStructuralSearch(query: string, limit: number): Promise<StructuralResult[]> {
     if (!this.queryAgent) {
-      console.warn("[HybridSearch] QueryAgent not available, skipping structural search");
+      logger.debug("HYBRID_SEARCH", "QueryAgent not available, skipping structural search");
       return [];
     }
 
@@ -164,7 +170,7 @@ export class HybridSearchEngine {
       const results = (await this.queryAgent.process(task)) as StructuralResult[];
       return results || [];
     } catch (error) {
-      console.error("[HybridSearch] Structural search failed:", error);
+      logger.error("HYBRID_SEARCH", "Structural search failed", { error: (error as Error).message });
       return [];
     }
   }
@@ -285,25 +291,13 @@ export class HybridSearchEngine {
     const startTime = Date.now();
 
     try {
-      const embeddingStart = Date.now();
       const queryEmbedding = await this.embeddingGen.generateEmbedding(query);
-      const embeddingTime = Date.now() - embeddingStart;
-
-      const searchStart = Date.now();
-      const results = await this.vectorStore.search(queryEmbedding, limit);
-      const searchTime = Date.now() - searchStart;
-
+      const searchResult = await this.vectorStore.adaptiveSearch(queryEmbedding, limit);
       const processingTime = Date.now() - startTime;
-      logger.info("HYBRID_SEARCH", `semanticSearch complete`, {
-        embeddingMs: embeddingTime,
-        searchMs: searchTime,
-        totalMs: processingTime,
-        resultsCount: results.length,
-      });
 
       return {
         query,
-        results,
+        results: searchResult.results,
         processingTime,
       };
     } catch (error) {
@@ -373,6 +367,6 @@ export class HybridSearchEngine {
    */
   clearCaches(): void {
     this.embeddingGen.clearCache();
-    console.error("[HybridSearch] Caches cleared");
+    logger.info("HYBRID_SEARCH", "Caches cleared");
   }
 }

@@ -14,6 +14,24 @@ import { execSync } from "node:child_process";
 import { existsSync, type FSWatcher, watch } from "node:fs";
 import { join } from "node:path";
 
+// Event-driven architecture: git polling uses setInterval for Node.js, disabled for Bun
+
+/** Check if running in Bun */
+function isBunRuntime(): boolean {
+  return typeof (globalThis as any).Bun !== "undefined";
+}
+
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 // =============================================================================
 // 1. TYPES AND INTERFACES
 // =============================================================================
@@ -21,6 +39,8 @@ import { join } from "node:path";
 export type BranchChangeCallback = (newBranch: string, oldBranch: string) => void;
 export type CommitCallback = (commitHash: string) => void;
 export type FileChangeCallback = (files: string[]) => void;
+/** Debounced callback with bulk mode flag */
+export type DebouncedFileChangeCallback = (files: string[], bulkMode: boolean) => void;
 
 export interface GitWatcherConfig {
   enabled: boolean;
@@ -32,6 +52,10 @@ export interface GitWatcherConfig {
   uncommittedPollIntervalMs?: number;
   /** Include untracked (new) files in uncommitted watch (default: true) */
   includeUntracked?: boolean;
+  /** Debounce delay for file changes in ms (default: 60000 = 1 min) */
+  debounceMs?: number;
+  /** Threshold for bulk mode (drop/rebuild index). Files > threshold = bulk mode */
+  bulkModeThreshold?: number;
 }
 
 export interface FileChange {
@@ -47,19 +71,31 @@ export class GitWatcher {
   private config: GitWatcherConfig;
   private repoPath: string | null = null;
   private watcher: FSWatcher | null = null;
-  private pollInterval: ReturnType<typeof setInterval> | null = null;
-  private uncommittedPollInterval: ReturnType<typeof setInterval> | null = null;
+  private commitPollRunning = false;
+  private uncommittedPollRunning = false;
+  private stopped = false; // Flag to stop async loops
 
   private currentBranch: string | null = null;
   private currentCommit: string | null = null;
   /** Tracks last known uncommitted files to detect changes */
   private lastUncommittedFiles: Set<string> = new Set();
 
+  /** Debounce: accumulated pending changes */
+  private pendingChanges: Set<string> = new Set();
+  /** Debounce: abort controller for canceling pending debounce */
+  private debounceAbortController: AbortController | null = null;
+  /** Debounce delay in ms */
+  private debounceMs: number;
+  /** Bulk mode threshold */
+  private bulkModeThreshold: number;
+
   private branchChangeCallbacks: BranchChangeCallback[] = [];
   private commitCallbacks: CommitCallback[] = [];
   private fileChangeCallbacks: FileChangeCallback[] = [];
   /** Callbacks specifically for uncommitted file changes */
   private uncommittedChangeCallbacks: FileChangeCallback[] = [];
+  /** Debounced callbacks with bulk mode flag */
+  private debouncedChangeCallbacks: DebouncedFileChangeCallback[] = [];
 
   constructor(config: GitWatcherConfig) {
     this.config = {
@@ -68,6 +104,10 @@ export class GitWatcher {
       uncommittedPollIntervalMs: config.uncommittedPollIntervalMs ?? 10000,
       includeUntracked: config.includeUntracked ?? true,
     };
+    // Debounce: wait 60 seconds after last change before processing
+    this.debounceMs = config.debounceMs ?? 60_000;
+    // Bulk mode: if more than 1000 files changed, use drop/rebuild index
+    this.bulkModeThreshold = config.bulkModeThreshold ?? 1000;
   }
 
   /**
@@ -95,6 +135,9 @@ export class GitWatcher {
     console.error(`[GitWatcher] Current branch: ${this.currentBranch}`);
     console.error(`[GitWatcher] Current commit: ${this.currentCommit}`);
 
+    // Reset stop flag for new watching session
+    this.stopped = false;
+
     // Watch .git/HEAD for branch changes
     this.watcher = watch(gitHeadPath, (eventType) => {
       if (eventType === "change") {
@@ -102,10 +145,8 @@ export class GitWatcher {
       }
     });
 
-    // Poll for commit changes (more reliable than watching refs)
-    this.pollInterval = setInterval(() => {
-      this.checkCommitChange();
-    }, this.config.pollIntervalMs);
+    // Start async loop for commit changes (safe for Bun + OpenVINO)
+    this.startCommitPollLoop();
 
     // Poll for uncommitted file changes (working directory)
     if (this.config.watchUncommitted) {
@@ -119,32 +160,89 @@ export class GitWatcher {
         console.error(`[GitWatcher] Initial uncommitted files: ${this.lastUncommittedFiles.size}`);
       });
 
-      this.uncommittedPollInterval = setInterval(() => {
-        this.checkUncommittedChanges();
-      }, this.config.uncommittedPollIntervalMs);
+      // Start async loop for uncommitted changes (safe for Bun + OpenVINO)
+      this.startUncommittedPollLoop();
     }
+  }
+
+  /** Timer handles for Node.js setInterval */
+  private commitPollTimer?: ReturnType<typeof setInterval> | undefined;
+  private uncommittedPollTimer?: ReturnType<typeof setInterval> | undefined;
+
+  /**
+   * Start commit polling
+   * Event-driven: uses setInterval for Node.js, disabled for Bun
+   */
+  private startCommitPollLoop(): void {
+    if (this.commitPollRunning) return;
+    this.commitPollRunning = true;
+
+    // For Bun: skip polling to avoid CPU spinning
+    if (isBunRuntime()) return;
+
+    // For Node.js: use setInterval
+    this.commitPollTimer = setInterval(() => {
+      if (!this.stopped) {
+        try {
+          this.checkCommitChange();
+        } catch (error) {
+          console.error("[GitWatcher] Commit poll error:", error);
+        }
+      }
+    }, this.config.pollIntervalMs);
+  }
+
+  /**
+   * Start uncommitted file polling
+   * Event-driven: uses setInterval for Node.js, disabled for Bun
+   */
+  private startUncommittedPollLoop(): void {
+    if (this.uncommittedPollRunning) return;
+    this.uncommittedPollRunning = true;
+
+    // For Bun: skip polling to avoid CPU spinning
+    if (isBunRuntime()) return;
+
+    // For Node.js: use setInterval
+    this.uncommittedPollTimer = setInterval(() => {
+      if (!this.stopped) {
+        this.checkUncommittedChanges().catch((error) => {
+          console.error("[GitWatcher] Uncommitted poll error:", error);
+        });
+      }
+    }, this.config.uncommittedPollIntervalMs!);
   }
 
   /**
    * Stop watching the repository
    */
   stopWatching(): void {
+    // Stop all async loops
+    this.stopped = true;
+
+    // Clear timers
+    if (this.commitPollTimer) {
+      clearInterval(this.commitPollTimer);
+      this.commitPollTimer = undefined;
+    }
+    if (this.uncommittedPollTimer) {
+      clearInterval(this.uncommittedPollTimer);
+      this.uncommittedPollTimer = undefined;
+    }
+
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
     }
 
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-      this.pollInterval = null;
-    }
-
-    if (this.uncommittedPollInterval) {
-      clearInterval(this.uncommittedPollInterval);
-      this.uncommittedPollInterval = null;
+    // Abort pending debounce
+    if (this.debounceAbortController) {
+      this.debounceAbortController.abort();
+      this.debounceAbortController = null;
     }
 
     this.lastUncommittedFiles.clear();
+    this.pendingChanges.clear();
     console.error("[GitWatcher] Stopped watching repository");
   }
 
@@ -175,6 +273,87 @@ export class GitWatcher {
    */
   onUncommittedChange(callback: FileChangeCallback): void {
     this.uncommittedChangeCallbacks.push(callback);
+  }
+
+  /**
+   * Register debounced callback for file changes.
+   * Callback receives accumulated files after debounce period and bulk mode flag.
+   * - bulkMode=true: many files changed, caller should drop/rebuild index
+   * - bulkMode=false: few files changed, caller should use incremental insert
+   */
+  onDebouncedChange(callback: DebouncedFileChangeCallback): void {
+    this.debouncedChangeCallbacks.push(callback);
+  }
+
+  /**
+   * Get count of pending changes waiting for debounce
+   */
+  getPendingChangesCount(): number {
+    return this.pendingChanges.size;
+  }
+
+  /**
+   * Force flush pending changes immediately (bypasses debounce)
+   */
+  forceFlush(): void {
+    if (this.debounceAbortController) {
+      this.debounceAbortController.abort();
+      this.debounceAbortController = null;
+    }
+    this.flushPendingChanges();
+  }
+
+  /**
+   * Flush accumulated pending changes and trigger debounced callbacks
+   */
+  private flushPendingChanges(): void {
+    if (this.pendingChanges.size === 0) return;
+
+    const files = Array.from(this.pendingChanges);
+    const bulkMode = files.length >= this.bulkModeThreshold;
+
+    console.error(
+      `[GitWatcher] Flushing ${files.length} pending changes (bulkMode: ${bulkMode}, threshold: ${this.bulkModeThreshold})`,
+    );
+
+    // Clear pending changes
+    this.pendingChanges.clear();
+
+    // Trigger debounced callbacks
+    for (const callback of this.debouncedChangeCallbacks) {
+      try {
+        callback(files, bulkMode);
+      } catch (error) {
+        console.error("[GitWatcher] Debounced callback error:", error);
+      }
+    }
+  }
+
+  /**
+   * Schedule debounced flush - resets timer on each call
+   */
+  private scheduleDebouncedFlush(): void {
+    // Abort existing debounce
+    if (this.debounceAbortController) {
+      this.debounceAbortController.abort();
+    }
+
+    // Create new abort controller for this debounce cycle
+    const abortController = new AbortController();
+    this.debounceAbortController = abortController;
+
+    // Schedule new flush using async sleep pattern (Bun compatible)
+    (async () => {
+      await sleep(this.debounceMs);
+      if (!abortController.signal.aborted) {
+        this.debounceAbortController = null;
+        this.flushPendingChanges();
+      }
+    })();
+
+    console.error(
+      `[GitWatcher] Debounce scheduled: ${this.pendingChanges.size} files pending, flush in ${this.debounceMs / 1000}s`,
+    );
   }
 
   /**
@@ -493,6 +672,7 @@ export class GitWatcher {
     if (changedFiles.length > 0) {
       console.error(`[GitWatcher] Uncommitted changes detected: ${changedFiles.length} files`);
 
+      // Immediate callbacks (legacy, for non-debounced consumers)
       for (const callback of this.uncommittedChangeCallbacks) {
         try {
           callback(changedFiles);
@@ -501,13 +681,22 @@ export class GitWatcher {
         }
       }
 
-      // Also trigger general file change callbacks
+      // Also trigger general file change callbacks (immediate)
       for (const callback of this.fileChangeCallbacks) {
         try {
           callback(changedFiles);
         } catch (error) {
           console.error("[GitWatcher] File change callback error:", error);
         }
+      }
+
+      // Accumulate for debounced callbacks (for embedding generation)
+      if (this.debouncedChangeCallbacks.length > 0) {
+        for (const file of changedFiles) {
+          this.pendingChanges.add(file);
+        }
+        // Reset debounce timer - waits for user to stop editing
+        this.scheduleDebouncedFlush();
       }
     }
   }

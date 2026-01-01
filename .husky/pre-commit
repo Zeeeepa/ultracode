@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Run biome check on staged files only
+npx biome check --staged --write --no-errors-on-unmatched --files-ignore-unknown=true

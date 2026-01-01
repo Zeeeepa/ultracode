@@ -1,11 +1,22 @@
 import pLimit from "p-limit";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 export class HttpError extends Error {
   constructor(
     public status: number,
     public statusText: string,
     public body?: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions | undefined,
   ) {
     super(`HTTP ${status} ${statusText}${body ? `: ${body.slice(0, 300)}` : ""}`, options);
     this.name = "HttpError";
@@ -14,8 +25,8 @@ export class HttpError extends Error {
 
 export interface HttpEngineOptions {
   baseUrl: string;
-  timeoutMs?: number;
-  concurrency?: number;
+  timeoutMs?: number | undefined;
+  concurrency?: number | undefined;
   maxRetries?: number;
   backoffMs?: number;
   defaultHeaders?: Record<string, string>;
@@ -50,20 +61,18 @@ export class HttpEngine {
     const url = `${this.baseUrl}${path}`;
 
     while (true) {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), this.timeoutMs);
-
       try {
+        // Use AbortSignal.timeout() for Bun compatibility (no setTimeout)
         const res = await fetch(url, {
           ...init,
-          signal: init.signal ?? controller.signal,
+          signal: init.signal ?? AbortSignal.timeout(this.timeoutMs),
         });
 
         if (res.ok) return res;
 
         if ((res.status === 429 || (res.status >= 500 && res.status < 600)) && attempt < this.maxRetries) {
           attempt++;
-          await new Promise((r) => setTimeout(r, this.backoffMs * attempt));
+          await sleep(this.backoffMs * attempt);
           continue;
         }
 
@@ -72,12 +81,10 @@ export class HttpEngine {
       } catch (err) {
         if (attempt < this.maxRetries) {
           attempt++;
-          await new Promise((r) => setTimeout(r, this.backoffMs * attempt));
+          await sleep(this.backoffMs * attempt);
           continue;
         }
         throw err;
-      } finally {
-        clearTimeout(id);
       }
     }
   }

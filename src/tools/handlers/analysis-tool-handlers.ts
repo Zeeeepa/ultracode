@@ -8,7 +8,6 @@
  * - analyze_state_chaos
  * - analyze_code_impact
  * - detect_technology_stack
- * - lerna_project_graph
  */
 
 import { z } from "zod";
@@ -438,97 +437,6 @@ export class DetectTechnologyStackToolHandler extends BaseToolHandler<z.infer<ty
     } catch (error) {
       return {
         content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
-      };
-    }
-  }
-}
-
-// =============================================================================
-// LERNA PROJECT GRAPH
-// =============================================================================
-
-const LernaProjectGraphSchema = z.object({
-  directory: z.string().optional(),
-  projectPath: projectPathParam,
-});
-
-export class LernaProjectGraphToolHandler extends BaseToolHandler<z.infer<typeof LernaProjectGraphSchema>> {
-  protected parseArgs(args: unknown) {
-    return LernaProjectGraphSchema.parse(args);
-  }
-
-  protected async execute(args: z.infer<typeof LernaProjectGraphSchema>): Promise<ToolResult> {
-    const targetDir = args.directory || this.context.config.directory;
-
-    try {
-      const { readFile } = await import("node:fs/promises");
-      const { join } = await import("node:path");
-
-      // Check for lerna.json
-      const lernaPath = join(targetDir, "lerna.json");
-      const lernaConfig = JSON.parse(await readFile(lernaPath, "utf-8"));
-
-      // Find packages
-      const { glob } = await import("../../utils/glob.js");
-      const packagePatterns = lernaConfig.packages || ["packages/*"];
-
-      const packages: any[] = [];
-      for (const pattern of packagePatterns) {
-        const pkgDirs = await glob(pattern, { cwd: targetDir, onlyDirectories: true });
-        for (const pkgDir of pkgDirs) {
-          try {
-            const pkgJsonPath = join(targetDir, pkgDir, "package.json");
-            const pkgJson = JSON.parse(await readFile(pkgJsonPath, "utf-8"));
-            packages.push({
-              name: pkgJson.name,
-              version: pkgJson.version,
-              path: pkgDir,
-              dependencies: Object.keys(pkgJson.dependencies || {}),
-              devDependencies: Object.keys(pkgJson.devDependencies || {}),
-            });
-          } catch {
-            // Skip invalid packages
-          }
-        }
-      }
-
-      // Build dependency graph
-      const graph: Record<string, string[]> = {};
-      const packageNames = new Set(packages.map((p) => p.name));
-
-      for (const pkg of packages) {
-        const internalDeps = [...pkg.dependencies, ...pkg.devDependencies].filter((d: string) => packageNames.has(d));
-        graph[pkg.name] = internalDeps;
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                lernaVersion: lernaConfig.version,
-                packagesCount: packages.length,
-                packages,
-                dependencyGraph: graph,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              error: (error as Error).message,
-              hint: "Make sure lerna.json exists in the target directory",
-            }),
-          },
-        ],
       };
     }
   }

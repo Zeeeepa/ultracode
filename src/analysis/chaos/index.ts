@@ -25,4 +25,5 @@ export type {
 export * from "./angular-patterns.js";
 export { ChaosAnalyzer } from "./chaos-analyzer.js";
 export { RaceDetector } from "./race-detector.js";
-export { StateDetector, StatePatternWithRaces } from "./state-detector.js";
+export type { StatePatternWithRaces } from "./state-detector.js";
+export { StateDetector } from "./state-detector.js";

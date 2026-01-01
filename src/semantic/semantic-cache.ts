@@ -22,6 +22,7 @@
 // =============================================================================
 import { LRUCache } from "lru-cache";
 import type { SemanticAnalysis, SimilarityResult, VectorEmbedding } from "../types/semantic.js";
+import { logger } from "../utils/logger.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -35,7 +36,7 @@ const DEFAULT_MAX_AGE = 86400000; // 24 hours in milliseconds
 // =============================================================================
 interface CacheOptions {
   maxSize?: number;
-  ttl?: number;
+  ttl?: number | undefined;
   maxAge?: number;
   updateAgeOnGet?: boolean;
   updateAgeOnHas?: boolean;
@@ -129,7 +130,7 @@ export class SemanticCache {
       dispose: () => this.stats.evictions++,
     });
 
-    console.error(`[SemanticCache] Initialized with max size: ${config.maxSize}, TTL: ${config.ttl}ms`);
+    logger.debug("SemanticCache", "Initialized", { maxSize: config.maxSize, ttl: config.ttl });
   }
 
   /**
@@ -232,7 +233,7 @@ export class SemanticCache {
     this.resultCache.clear();
     this.generalCache.clear();
     this.stats = { hits: 0, misses: 0, evictions: 0 };
-    console.error("[SemanticCache] All caches cleared");
+    logger.debug("SemanticCache", "All caches cleared");
   }
 
   /**
@@ -246,7 +247,7 @@ export class SemanticCache {
     this.generalCache.purgeStale();
 
     const pruned = before - this.size();
-    console.error(`[SemanticCache] Pruned ${pruned} expired entries`);
+    logger.debug("SemanticCache", "Pruned expired entries", { count: pruned });
 
     return pruned;
   }
@@ -322,7 +323,7 @@ export class SemanticCache {
       loaded++;
     }
 
-    console.error(`[SemanticCache] Warmed up with ${loaded} embeddings`);
+    logger.debug("SemanticCache", "Warmed up", { embeddings: loaded });
   }
 
   /**
@@ -366,6 +367,6 @@ export class SemanticCache {
       }
     }
 
-    console.error(`[SemanticCache] Imported ${this.size()} entries`);
+    logger.debug("SemanticCache", "Imported entries", { count: this.size() });
   }
 }

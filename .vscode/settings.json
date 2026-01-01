@@ -1,0 +1,15 @@
+{
+  "biome.lspBin": "",
+  "biome.enabled": false,
+  "editor.formatOnSave": false,
+  "editor.codeActionsOnSave": {},
+  "[typescript]": {
+    "editor.formatOnSave": false
+  },
+  "[javascript]": {
+    "editor.formatOnSave": false
+  },
+  "[json]": {
+    "editor.formatOnSave": false
+  }
+}

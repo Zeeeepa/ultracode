@@ -17,7 +17,7 @@ import type { BranchManager } from "../../src/core/branch-manager.js";
 import type { GitWatcher } from "../../src/core/git-watcher.js";
 import { LayeredIndexManager } from "../../src/layered/index.js";
 import type { VectorStore } from "../../src/semantic/vector-store.js";
-import type { GraphStorage } from "../../src/storage/graph-storage.js";
+import type { GraphStorage } from "../../src/types/storage.js";
 
 // =============================================================================
 // EXAMPLE 1: Basic Setup

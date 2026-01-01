@@ -7,12 +7,12 @@
  * - Angular template syntax
  */
 
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getNodeLocation } from "./base-parser-utils.js";
 
 export class HTMLAnalyzer {
   async analyze(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -36,7 +36,7 @@ export class HTMLAnalyzer {
   }
 
   private async traverseNode(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -58,7 +58,7 @@ export class HTMLAnalyzer {
   }
 
   private async handleElement(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],

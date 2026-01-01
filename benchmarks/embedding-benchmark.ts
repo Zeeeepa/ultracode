@@ -20,7 +20,9 @@ import { chunkCode, getChunkSettings, estimateTokens, needsChunking } from "../s
 // ============================================================================
 
 const OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
-const TEI_ENDPOINT = "http://127.0.0.1:8080";
+const TEI_ENDPOINT = "http://127.0.0.1:8081";
+const OVMS_NATIVE_ENDPOINT = "http://127.0.0.1:8083"; // OVMS Native
+const OVMS_DOCKER_ENDPOINT = "http://127.0.0.1:8082"; // OVMS Docker (fallback)
 const PROJECT_ROOT = join(import.meta.dir, "..");
 
 interface BenchmarkResult {
@@ -30,6 +32,7 @@ interface BenchmarkResult {
   device: string;
   contextTokens: number;
   dimensions: number;
+  multilingual: boolean;
   // Metrics
   totalChunks: number;
   totalTimeMs: number;
@@ -235,7 +238,8 @@ async function benchmarkOpenVINO(
   modelId: string,
   modelName: string,
   chunks: PreparedChunk[],
-  maxTokens: number
+  maxTokens: number,
+  multilingual: boolean = false
 ): Promise<BenchmarkResult> {
   const result: BenchmarkResult = {
     id: modelId,
@@ -244,6 +248,7 @@ async function benchmarkOpenVINO(
     device: "CPU",
     contextTokens: maxTokens,
     dimensions: 0,
+    multilingual,
     totalChunks: chunks.length,
     totalTimeMs: 0,
     initTimeMs: 0,
@@ -298,7 +303,9 @@ async function benchmarkOllama(
   modelName: string,
   chunks: PreparedChunk[],
   maxTokens: number,
-  installedModels: Set<string>
+  installedModels: Set<string>,
+  multilingual: boolean = false,
+  maxChars?: number
 ): Promise<BenchmarkResult> {
   const result: BenchmarkResult = {
     id: modelId,
@@ -307,6 +314,7 @@ async function benchmarkOllama(
     device: "GPU",
     contextTokens: maxTokens,
     dimensions: 0,
+    multilingual,
     totalChunks: chunks.length,
     totalTimeMs: 0,
     initTimeMs: 0,
@@ -324,32 +332,50 @@ async function benchmarkOllama(
   }
 
   try {
-    // Warmup
+    // Warmup and verify model works
     const warmupRes = await fetch(`${OLLAMA_ENDPOINT}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: modelName, input: "warmup" }),
     });
     const warmupData = await warmupRes.json();
+
+    if (warmupData.error) {
+      result.status = "error";
+      result.error = warmupData.error;
+      return result;
+    }
+
     result.dimensions = warmupData.embeddings?.[0]?.length || 0;
 
     // Benchmark with concurrency
     const CONCURRENCY = 8;
-    const texts = chunks.map(c => c.content);
+    // Apply character limit if specified (accounts for tokenizer differences)
+    const texts = maxChars
+      ? chunks.map(c => truncateToCharLimit(c.content, maxChars))
+      : chunks.map(c => c.content);
 
     const batchStart = Date.now();
 
     for (let i = 0; i < texts.length; i += CONCURRENCY) {
       const batch = texts.slice(i, i + CONCURRENCY);
-      await Promise.all(
+      const responses = await Promise.all(
         batch.map(text =>
           fetch(`${OLLAMA_ENDPOINT}/api/embed`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model: modelName, input: text }),
-          })
+          }).then(r => r.json())
         )
       );
+
+      // Check for errors in batch
+      const firstError = responses.find(r => r.error);
+      if (firstError) {
+        result.status = "error";
+        result.error = firstError.error;
+        return result;
+      }
     }
 
     result.totalTimeMs = Date.now() - batchStart;
@@ -371,7 +397,8 @@ async function benchmarkOllama(
 async function benchmarkTEI(
   modelId: string,
   chunks: PreparedChunk[],
-  maxTokens: number
+  maxTokens: number,
+  multilingual: boolean = true
 ): Promise<BenchmarkResult> {
   const result: BenchmarkResult = {
     id: modelId,
@@ -380,6 +407,7 @@ async function benchmarkTEI(
     device: "GPU",
     contextTokens: maxTokens,
     dimensions: 0,
+    multilingual,
     totalChunks: chunks.length,
     totalTimeMs: 0,
     initTimeMs: 0,
@@ -446,6 +474,114 @@ async function benchmarkTEI(
   }
 }
 
+function truncateToCharLimit(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  // Truncate at last newline before limit to avoid cutting mid-line
+  const truncated = text.slice(0, maxChars);
+  const lastNewline = truncated.lastIndexOf("\n");
+  return lastNewline > maxChars * 0.8 ? truncated.slice(0, lastNewline) : truncated;
+}
+
+async function benchmarkOVMS(
+  modelId: string,
+  displayName: string,
+  chunks: PreparedChunk[],
+  maxTokens: number,
+  ovmsEndpoint: string,
+  endpoints: string[], // Model endpoints for round-robin (e.g., ["embeddings-cpu", "embeddings-gpu"])
+  maxCharsPerChunk?: number, // For hard character limit
+  multilingual: boolean = true
+): Promise<BenchmarkResult> {
+  const result: BenchmarkResult = {
+    id: modelId,
+    provider: "ovms-native",
+    model: displayName,
+    device: endpoints.length > 1 ? "CPU+GPU" : "CPU",
+    contextTokens: maxTokens,
+    dimensions: 0,
+    multilingual,
+    totalChunks: chunks.length,
+    totalTimeMs: 0,
+    initTimeMs: 0,
+    perChunkMs: 0,
+    tokensPerSec: 0,
+    throughputChunksPerSec: 0,
+    status: "success",
+  };
+
+  try {
+    // Warmup and get dimensions
+    const warmupRes = await fetch(`${ovmsEndpoint}/v3/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: endpoints[0], input: ["warmup"] }),
+    });
+
+    if (!warmupRes.ok) {
+      result.status = "skip";
+      result.error = `OVMS model ${endpoints[0]} not available: HTTP ${warmupRes.status}`;
+      return result;
+    }
+
+    const warmupData = await warmupRes.json();
+    result.dimensions = warmupData.data?.[0]?.embedding?.length || 0;
+
+    // Apply character limit if specified (accounts for tokenizer differences)
+    const texts = maxCharsPerChunk
+      ? chunks.map(c => truncateToCharLimit(c.content, maxCharsPerChunk))
+      : chunks.map(c => c.content);
+
+    // Split into mini-batches with round-robin endpoint selection
+    // Match production config for accurate benchmark
+    const MINI_BATCH_SIZE = 8;
+    const MAX_PARALLEL_BATCHES = 16; // Process up to 16 batches concurrently
+    const numBatches = Math.ceil(texts.length / MINI_BATCH_SIZE);
+    const batchConfigs: Array<{ batchIndex: number; texts: string[]; endpoint: string }> = [];
+
+    for (let b = 0; b < numBatches; b++) {
+      const start = b * MINI_BATCH_SIZE;
+      const end = Math.min(start + MINI_BATCH_SIZE, texts.length);
+      const batchTexts = texts.slice(start, end);
+      // Round-robin endpoint selection
+      const endpoint = endpoints[b % endpoints.length]!;
+      batchConfigs.push({ batchIndex: b, texts: batchTexts, endpoint });
+    }
+
+    const batchStart = Date.now();
+
+    // Process all batches in parallel (like original ovms-provider)
+    const batchPromises = batchConfigs.map(async (config) => {
+      const res = await fetch(`${ovmsEndpoint}/v3/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: config.endpoint, input: config.texts }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`HTTP ${res.status}: ${errText.slice(0, 500)}`);
+      }
+      const data = await res.json();
+      return { batchIndex: config.batchIndex, count: data.data?.length || 0 };
+    });
+
+    await Promise.all(batchPromises);
+    result.totalTimeMs = Date.now() - batchStart;
+
+    // Calculate metrics
+    const totalTokens = chunks.reduce((s, c) => s + c.tokenCount, 0);
+    result.perChunkMs = result.totalTimeMs / chunks.length;
+    result.tokensPerSec = Math.round(totalTokens / (result.totalTimeMs / 1000));
+    result.throughputChunksPerSec = Math.round(chunks.length / (result.totalTimeMs / 1000));
+
+    return result;
+  } catch (e: any) {
+    result.status = "error";
+    result.error = e.message.slice(0, 300);
+    return result;
+  }
+}
+
 // ============================================================================
 // Check Available Providers
 // ============================================================================
@@ -462,11 +598,61 @@ async function checkOllamaModels(): Promise<Set<string>> {
 
 async function checkTEI(): Promise<boolean> {
   try {
-    const res = await fetch(`${TEI_ENDPOINT}/health`);
+    // /health sometimes doesn't respond, so test /embed directly
+    const res = await fetch(`${TEI_ENDPOINT}/embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inputs: ["test"] }),
+    });
     return res.ok;
   } catch {
     return false;
   }
+}
+
+interface OVMSStatus {
+  endpoint: string;
+  models: string[];
+}
+
+async function checkOVMS(): Promise<OVMSStatus> {
+  // OVMS v3 API doesn't have a list endpoint, so we probe known models directly
+  // Try OVMS Native (8083) first, then Docker (8082)
+  const knownModels = [
+    // Default e5-base endpoints
+    "embeddings-cpu", "embeddings-gpu", "embeddings",
+    // Granite Multilingual 278M endpoints
+    "granite-embedding-278m-multilingual-gpu", "granite-embedding-278m-multilingual-cpu",
+    // Granite English 30M endpoints
+    "granite-embedding-30m-english-gpu", "granite-embedding-30m-english-cpu",
+    // Legacy
+    "jina-code-v2",
+  ];
+
+  for (const endpoint of [OVMS_NATIVE_ENDPOINT, OVMS_DOCKER_ENDPOINT]) {
+    const availableModels: string[] = [];
+
+    for (const model of knownModels) {
+      try {
+        const res = await fetch(`${endpoint}/v3/embeddings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model, input: ["test"] }),
+        });
+        if (res.ok) {
+          availableModels.push(model);
+        }
+      } catch {
+        // Model not available
+      }
+    }
+
+    if (availableModels.length > 0) {
+      return { endpoint, models: availableModels };
+    }
+  }
+
+  return { endpoint: "", models: [] };
 }
 
 // ============================================================================
@@ -508,13 +694,14 @@ function generateReport(results: BenchmarkResult[], entities: CodeEntity[], date
 
 ### Ranking by Speed (chunks/sec)
 
-| Rank | Model | Provider | Device | Chunks/s | ms/chunk | Tokens/s | Context | Dim |
-|------|-------|----------|--------|----------|----------|----------|---------|-----|
+| Rank | Model | Provider | Device | Multi | Chunks/s | ms/chunk | Tokens/s | Context | Dim |
+|------|-------|----------|--------|-------|----------|----------|----------|---------|-----|
 `;
 
   let rank = 1;
   for (const r of successful) {
-    md += `| ${rank++} | ${r.model} | ${r.provider} | ${r.device} | ${r.throughputChunksPerSec} | ${r.perChunkMs.toFixed(1)} | ${r.tokensPerSec} | ${r.contextTokens} | ${r.dimensions} |\n`;
+    const multi = r.multilingual ? "✓" : "-";
+    md += `| ${rank++} | ${r.model} | ${r.provider} | ${r.device} | ${multi} | ${r.throughputChunksPerSec} | ${r.perChunkMs.toFixed(1)} | ${r.tokensPerSec} | ${r.contextTokens} | ${r.dimensions} |\n`;
   }
 
   md += `
@@ -565,6 +752,8 @@ function generateReport(results: BenchmarkResult[], entities: CodeEntity[], date
   const bestLargeContext = successful.find(r => r.contextTokens >= 8192);
   const bestOpenVINO = successful.find(r => r.provider === "openvino");
   const bestOllama = successful.find(r => r.provider === "ollama");
+  const bestOVMS = successful.find(r => r.provider === "ovms" || r.provider === "ovms-native");
+  const bestTEI = successful.find(r => r.provider === "tei");
 
   md += `## Recommendations
 
@@ -585,6 +774,12 @@ function generateReport(results: BenchmarkResult[], entities: CodeEntity[], date
   }
   if (bestOllama) {
     md += `| **Best Ollama** | ${bestOllama.model} | ${bestOllama.provider} | ${bestOllama.throughputChunksPerSec} chunks/s |\n`;
+  }
+  if (bestOVMS) {
+    md += `| **Best OVMS Native (CPU+GPU)** | ${bestOVMS.model} | ${bestOVMS.provider} | ${bestOVMS.throughputChunksPerSec} chunks/s |\n`;
+  }
+  if (bestTEI) {
+    md += `| **Best TEI (GPU Docker)** | ${bestTEI.model} | ${bestTEI.provider} | ${bestTEI.throughputChunksPerSec} chunks/s |\n`;
   }
 
   md += `
@@ -613,6 +808,7 @@ async function main() {
   const args = process.argv.slice(2);
   const providerFilter = args.find(a => a.startsWith("--provider="))?.split("=")[1];
   const modelFilter = args.find(a => a.startsWith("--model="))?.split("=")[1];
+  const skipOpenVINO = args.includes("--skip-openvino");
 
   // Load entities
   console.log("📂 Loading project entities...");
@@ -626,13 +822,19 @@ async function main() {
   console.log("🔍 Checking available providers...");
   const ollamaModels = await checkOllamaModels();
   const teiRunning = await checkTEI();
+  const ovmsModels = await checkOVMS();
 
   console.log(`   OpenVINO: ✓ Available (CPU)`);
   console.log(`   Ollama: ${ollamaModels.size > 0 ? `✓ ${ollamaModels.size} models` : "✗ Not running"}`);
   if (ollamaModels.size > 0) {
     console.log(`     Models: ${[...ollamaModels].slice(0, 5).join(", ")}${ollamaModels.size > 5 ? "..." : ""}`);
   }
-  console.log(`   TEI: ${teiRunning ? "✓ Running" : "✗ Not running"}\n`);
+  console.log(`   TEI: ${teiRunning ? "✓ Running" : "✗ Not running"}`);
+  console.log(`   OVMS: ${ovmsModels.models.length > 0 ? `✓ ${ovmsModels.models.length} models at ${ovmsModels.endpoint}` : "✗ Not running"}`);
+  if (ovmsModels.models.length > 0) {
+    console.log(`     Models: ${ovmsModels.models.join(", ")}`);
+  }
+  console.log("");
 
   const results: BenchmarkResult[] = [];
 
@@ -640,7 +842,7 @@ async function main() {
   // OpenVINO Models
   // ═══════════════════════════════════════════════════════════════════════════
 
-  if (!providerFilter || providerFilter === "openvino") {
+  if ((!providerFilter || providerFilter === "openvino") && !skipOpenVINO) {
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     console.log("  OpenVINO Models (CPU INT8)");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -681,14 +883,16 @@ async function main() {
     console.log("  Ollama Models (GPU)");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
+    // maxChars is a hard limit to handle estimateTokens() inaccuracy
+    // Code has ~2-3 chars/token ratio, use conservative estimates
     const ollamaModelsList = [
-      { id: "ollama-all-minilm", name: "all-minilm", maxTokens: 512 },
-      { id: "ollama-snowflake-arctic", name: "snowflake-arctic-embed2", maxTokens: 8192 },
-      { id: "ollama-snowflake-arctic-s", name: "snowflake-arctic-embed:s", maxTokens: 512 },
-      { id: "ollama-mxbai-large", name: "mxbai-embed-large", maxTokens: 512 },
-      { id: "ollama-nomic-embed", name: "nomic-embed-text", maxTokens: 8192 },
-      { id: "ollama-granite-en", name: "granite-embedding:30m", maxTokens: 512 },
-      { id: "ollama-granite-multilingual", name: "granite-embedding:278m", maxTokens: 512 },
+      { id: "ollama-all-minilm", name: "all-minilm", maxTokens: 200, maxChars: 500, multilingual: false },
+      { id: "ollama-snowflake-arctic", name: "snowflake-arctic-embed2", maxTokens: 8192, maxChars: 20000, multilingual: true },
+      { id: "ollama-snowflake-arctic-s", name: "snowflake-arctic-embed:s", maxTokens: 512, maxChars: 1200, multilingual: false },
+      { id: "ollama-mxbai-large", name: "mxbai-embed-large", maxTokens: 512, maxChars: 1200, multilingual: false },
+      { id: "ollama-nomic-embed", name: "nomic-embed-text", maxTokens: 1800, maxChars: 4500, multilingual: false },
+      { id: "ollama-granite-en", name: "granite-embedding:30m", maxTokens: 512, maxChars: 1200, multilingual: false },
+      { id: "ollama-granite-multilingual", name: "granite-embedding:latest", maxTokens: 512, maxChars: 1200, multilingual: true },
     ].filter(m => !modelFilter || m.id.includes(modelFilter) || m.name.includes(modelFilter));
 
     for (const model of ollamaModelsList) {
@@ -718,9 +922,9 @@ async function main() {
       }
 
       const chunks = prepareChunksForProvider(entities, model.maxTokens);
-      console.log(`    Prepared ${chunks.length} chunks (max ${model.maxTokens} tokens)`);
+      console.log(`    Prepared ${chunks.length} chunks (max ${model.maxTokens} tokens, ${model.maxChars} chars)`);
 
-      const result = await benchmarkOllama(model.id, model.name, chunks, model.maxTokens, ollamaModels);
+      const result = await benchmarkOllama(model.id, model.name, chunks, model.maxTokens, ollamaModels, model.multilingual, model.maxChars);
       results.push(result);
 
       if (result.status === "success") {
@@ -755,6 +959,118 @@ async function main() {
       console.log(`    ✗ ${result.error}`);
     }
     console.log("");
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OVMS Native Models (parallel CPU+GPU distribution)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  if ((!providerFilter || providerFilter === "ovms")) {
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("  OVMS Native Models (Parallel CPU+GPU)");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+    console.log(`  Server: ${ovmsModels.endpoint || "Not running"}`);
+    console.log(`  Available: ${ovmsModels.models.join(", ") || "None"}\n`);
+
+    // Define all OVMS models to test
+    // maxChars is a hard limit to handle estimateTokens() inaccuracy
+    // Using ~3 chars/token as a conservative estimate for code
+    interface OVMSModelConfig {
+      id: string;
+      displayName: string;
+      maxTokens: number;
+      maxChars: number;
+      multilingual: boolean;
+      endpointPrefix: string; // e.g., "embeddings" -> embeddings-gpu, embeddings-cpu
+    }
+
+    const ovmsModelsList: OVMSModelConfig[] = [
+      {
+        id: "ovms-native-e5",
+        displayName: "multilingual-e5-base (OVMS Native)",
+        maxTokens: 512,
+        maxChars: 1200,
+        multilingual: true,
+        endpointPrefix: "embeddings",
+      },
+      {
+        id: "ovms-granite-multilingual",
+        displayName: "Granite Embedding 278M Multilingual",
+        maxTokens: 512,
+        maxChars: 1200,
+        multilingual: true,
+        endpointPrefix: "granite-embedding-278m-multilingual",
+      },
+      {
+        id: "ovms-granite-en",
+        displayName: "Granite Embedding 30M English",
+        maxTokens: 512,
+        maxChars: 1200,
+        multilingual: false,
+        endpointPrefix: "granite-embedding-30m-english",
+      },
+    ].filter(m => !modelFilter || m.id.includes(modelFilter) || m.displayName.toLowerCase().includes(modelFilter.toLowerCase()));
+
+    for (const ovmsConfig of ovmsModelsList) {
+      console.log(`  Testing ${ovmsConfig.displayName}...`);
+
+      // Get available round-robin endpoints for this model
+      const gpuEndpoint = `${ovmsConfig.endpointPrefix}-gpu`;
+      const cpuEndpoint = `${ovmsConfig.endpointPrefix}-cpu`;
+      const roundRobinEndpoints = ovmsModels.models.filter(
+        m => m === gpuEndpoint || m === cpuEndpoint
+      );
+
+      // Check if model is available
+      if (roundRobinEndpoints.length === 0) {
+        console.log(`    ⏭️  Not installed (endpoints: ${gpuEndpoint}, ${cpuEndpoint})`);
+        results.push({
+          id: ovmsConfig.id,
+          provider: "ovms-native",
+          model: ovmsConfig.displayName,
+          device: "CPU+GPU",
+          contextTokens: ovmsConfig.maxTokens,
+          dimensions: 0,
+          multilingual: ovmsConfig.multilingual,
+          totalChunks: 0,
+          totalTimeMs: 0,
+          initTimeMs: 0,
+          perChunkMs: 0,
+          tokensPerSec: 0,
+          throughputChunksPerSec: 0,
+          status: "skip",
+          error: `Not installed. Run: bunx ultrascript-tools setup-embedding`,
+        });
+        console.log("");
+        continue;
+      }
+
+      console.log(`    Endpoints: ${roundRobinEndpoints.join(", ")}`);
+      const chunks = prepareChunksForProvider(entities, ovmsConfig.maxTokens);
+      console.log(`    Prepared ${chunks.length} chunks (max ${ovmsConfig.maxTokens} tokens, ${ovmsConfig.maxChars} chars)`);
+
+      const result = await benchmarkOVMS(
+        ovmsConfig.id,
+        ovmsConfig.displayName,
+        chunks,
+        ovmsConfig.maxTokens,
+        ovmsModels.endpoint,
+        roundRobinEndpoints,
+        ovmsConfig.maxChars,
+        ovmsConfig.multilingual
+      );
+      results.push(result);
+
+      if (result.status === "success") {
+        console.log(`    ✓ ${result.throughputChunksPerSec} chunks/s, ${result.perChunkMs.toFixed(1)}ms/chunk, ${result.tokensPerSec} tok/s`);
+        console.log(`    Dimensions: ${result.dimensions}`);
+        console.log(`    Device: ${result.device}`);
+      } else {
+        console.log(`    ✗ ${result.error}`);
+      }
+      console.log("");
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

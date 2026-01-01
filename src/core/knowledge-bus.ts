@@ -6,13 +6,15 @@
 import { EventEmitter } from "node:events";
 import type { AgentMessage } from "../types/agent.js";
 
+// Event-driven architecture: lazy cleanup on access, no polling loops
+
 export interface KnowledgeEntry {
   id: string;
   topic: string;
   data: unknown;
   source: string;
   timestamp: number;
-  ttl?: number; // Time to live in milliseconds
+  ttl?: number | undefined; // Time to live in milliseconds
 }
 
 export interface Subscription {
@@ -28,21 +30,16 @@ export class KnowledgeBus extends EventEmitter {
   private messageQueue: AgentMessage[] = [];
   private maxQueueSize = 1000;
   private maxKnowledgePerTopic = 100;
-  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     super();
-    this.startCleanupInterval();
+    // Event-driven: cleanup happens lazily on query(), not via polling
   }
 
   /**
    * Dispose of the knowledge bus and clear resources
    */
   dispose(): void {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
     this.knowledge.clear();
     this.subscriptions.clear();
     this.messageQueue.length = 0;
@@ -123,13 +120,32 @@ export class KnowledgeBus extends EventEmitter {
 
   /**
    * Query existing knowledge
+   * Event-driven: lazy cleanup of expired entries on access
    */
   query(topic: string | RegExp, limit = 10): KnowledgeEntry[] {
     const results: KnowledgeEntry[] = [];
+    const now = Date.now();
 
     for (const [storedTopic, entries] of this.knowledge) {
       if (this.matchesTopic(storedTopic, topic)) {
-        results.push(...entries);
+        // Lazy cleanup: filter out expired entries
+        const validEntries = entries.filter((entry) => {
+          if (entry.ttl && now - entry.timestamp > entry.ttl) {
+            return false; // Expired
+          }
+          return true;
+        });
+
+        // Update stored entries if any were expired
+        if (validEntries.length !== entries.length) {
+          if (validEntries.length === 0) {
+            this.knowledge.delete(storedTopic);
+          } else {
+            this.knowledge.set(storedTopic, validEntries);
+          }
+        }
+
+        results.push(...validEntries);
       }
     }
 
@@ -247,37 +263,8 @@ export class KnowledgeBus extends EventEmitter {
     }
   }
 
-  private startCleanupInterval(): void {
-    if (this.cleanupTimer) return;
-    this.cleanupTimer = setInterval(() => {
-      this.cleanupExpiredKnowledge();
-    }, 60000); // Run every minute
-  }
-
-  private cleanupExpiredKnowledge(): void {
-    const now = Date.now();
-    let cleanedCount = 0;
-
-    for (const [topic, entries] of this.knowledge) {
-      const validEntries = entries.filter((entry) => {
-        if (entry.ttl && now - entry.timestamp > entry.ttl) {
-          cleanedCount++;
-          return false;
-        }
-        return true;
-      });
-
-      if (validEntries.length === 0) {
-        this.knowledge.delete(topic);
-      } else {
-        this.knowledge.set(topic, validEntries);
-      }
-    }
-
-    if (cleanedCount > 0) {
-      this.emit("cleanup:completed", { entriesRemoved: cleanedCount });
-    }
-  }
+  // Event-driven: cleanup happens lazily in query() method
+  // No polling loop needed - expired entries filtered on access
 }
 
 // Singleton instance

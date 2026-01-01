@@ -10,7 +10,7 @@ export interface TransformersOptions {
 export class TransformersProvider implements EmbeddingProvider {
   public info: ProviderInfo;
   private pipeline: any | null = null;
-  private log?: ProviderLogger;
+  private log?: ProviderLogger | undefined;
 
   constructor(private opts: TransformersOptions) {
     this.log = opts.logger;

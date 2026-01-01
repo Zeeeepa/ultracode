@@ -2,11 +2,16 @@
  * Backend Selector - Auto-selection of Optimal Vector Backend
  *
  * Priority order (highest to lowest):
- * 1. CUDA (100-200x speedup, NVIDIA only)
- * 2. Metal (50-100x speedup, Apple Silicon only)
- * 3. WebGPU (50-100x speedup, all GPUs)
- * 4. WASM SIMD (4-8x speedup, CPU SIMD)
- * 5. Pure JS (1.45x speedup, baseline)
+ * 1. CUDA Native (100-200x speedup, NVIDIA only, Node.js only)
+ * 2. CUDA Worker (98x speedup, NVIDIA, works under Bun via subprocess)
+ * 3. Metal (95x speedup, Apple Silicon only)
+ * 4. WebGPU (80x speedup, all GPUs)
+ * 5. WASM SIMD (50x speedup, CPU SIMD)
+ * 6. Pure JS (1x baseline, always available)
+ *
+ * Runtime-aware selection:
+ * - Node.js: prefers direct CUDA native module
+ * - Bun: prefers CUDA Worker (subprocess to Node.js for NAPI compatibility)
  *
  * Graceful degradation: tries each backend in order, uses first available.
  */
@@ -15,6 +20,11 @@ import { arch, platform } from "node:os";
 import type { VectorBackend } from "./backends/base.js";
 import { JSBackend } from "./backends/js-backend.js";
 import { GPUDetector } from "./detection/gpu-detector.js";
+
+// Runtime detection
+function isBunRuntime(): boolean {
+  return typeof globalThis.Bun !== "undefined";
+}
 
 export class BackendSelector {
   private static instance: BackendSelector | null = null;
@@ -57,10 +67,11 @@ export class BackendSelector {
       factory: () => Promise<VectorBackend>;
     }> = [];
 
-    // 1. CUDA (highest priority if NVIDIA + addon compiled)
-    if (gpuInfo.cudaAvailable && gpuInfo.vendor === "nvidia") {
+    // 1. CUDA Native (highest priority if NVIDIA + Node.js runtime)
+    // Under Bun, native CUDA addon doesn't work (NAPI incompatibility)
+    if (gpuInfo.cudaAvailable && gpuInfo.vendor === "nvidia" && !isBunRuntime()) {
       candidates.push({
-        name: "CUDA",
+        name: "CUDA Native",
         priority: 100,
         factory: async () => {
           const { CUDABackend } = await import("./backends/cuda-backend.js");
@@ -69,7 +80,20 @@ export class BackendSelector {
       });
     }
 
-    // 2. Metal (Apple Silicon only)
+    // 2. CUDA Worker (works under Bun via Node.js subprocess)
+    // Enables CUDA on Bun by routing operations through Node.js worker
+    if (gpuInfo.vendor === "nvidia") {
+      candidates.push({
+        name: "CUDA Worker",
+        priority: isBunRuntime() ? 100 : 98, // Higher priority under Bun since native won't work
+        factory: async () => {
+          const { GpuWorkerBackend } = await import("./backends/gpu-worker-backend.js");
+          return new GpuWorkerBackend();
+        },
+      });
+    }
+
+    // 3. Metal (Apple Silicon only)
     if (platform() === "darwin" && arch() === "arm64") {
       candidates.push({
         name: "Metal",
@@ -81,7 +105,7 @@ export class BackendSelector {
       });
     }
 
-    // 3. WebGPU (universal GPU)
+    // 4. WebGPU (universal GPU)
     if (gpuInfo.webgpuAvailable) {
       candidates.push({
         name: "WebGPU",
@@ -93,7 +117,7 @@ export class BackendSelector {
       });
     }
 
-    // 4. WASM SIMD (CPU fallback)
+    // 5. WASM SIMD (CPU fallback)
     candidates.push({
       name: "WASM SIMD",
       priority: 50,
@@ -103,7 +127,7 @@ export class BackendSelector {
       },
     });
 
-    // 5. Pure JS (ultimate fallback, always available)
+    // 6. Pure JS (ultimate fallback, always available)
     candidates.push({
       name: "Pure JS",
       priority: 1,
@@ -160,8 +184,10 @@ export class BackendSelector {
 
   /**
    * Force switch to specific backend (for testing/benchmarking)
+   * Note: "cuda" matches both CUDA Native and CUDA Worker backends
    */
   async switchBackend(type: "cuda" | "metal" | "webgpu" | "wasm" | "js"): Promise<VectorBackend> {
+    // "cuda" type matches both native and worker backends
     const backend = this.availableBackends.find((b) => b.type === type);
     if (!backend) {
       throw new Error(

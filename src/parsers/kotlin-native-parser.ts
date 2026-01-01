@@ -222,7 +222,7 @@ export class KotlinNativeParser {
           specifiers: [
             {
               local: alias || source.split(".").pop() || source,
-              alias: alias || undefined,
+              ...(alias && { alias: alias }),
             },
           ],
         },
@@ -272,12 +272,12 @@ export class KotlinNativeParser {
         type: entityType,
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
         inheritance:
           baseClasses.length > 0 || interfaces.length > 0
             ? {
                 baseClasses,
-                interfaces: interfaces.length > 0 ? interfaces : undefined,
+                ...(interfaces.length > 0 && { interfaces: interfaces }),
                 isAbstract: modifiers.includes("abstract"),
               }
             : undefined,
@@ -306,8 +306,8 @@ export class KotlinNativeParser {
         type: isSuspend ? "async_function" : "function",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
-        returnType: returnType || undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
+        ...(returnType && { returnType: returnType }),
         parameters: this.parseParameters(paramsStr),
       });
     }
@@ -407,11 +407,16 @@ export class KotlinNativeParser {
       (line) => line.replace(/^\s*\*\s?/, "").trim(), // Remove leading * from each line
     );
 
-    const params: Array<{ name: string; type?: string; description?: string; optional?: boolean }> = [];
-    const throws: Array<{ type?: string; description?: string }> = [];
+    const params: Array<{
+      name: string;
+      type?: string | undefined;
+      description?: string | undefined;
+      optional?: boolean;
+    }> = [];
+    const throws: Array<{ type?: string | undefined; description?: string }> = [];
     // biome-ignore lint/style/useConst: reassigned later in the function
     let description: string | undefined;
-    let returns: { type?: string; description?: string } | undefined;
+    let returns: { type?: string | undefined; description?: string } | undefined;
     let since: string | undefined;
     let author: string | undefined;
     let deprecated: string | boolean | undefined;
@@ -511,11 +516,11 @@ export class KotlinNativeParser {
 
     return {
       description,
-      params: params.length > 0 ? params : undefined,
+      ...(params.length > 0 && { params: params }),
       returns,
-      throws: throws.length > 0 ? throws : undefined,
+      ...(throws.length > 0 && { throws: throws }),
       deprecated,
-      see: see.length > 0 ? see : undefined,
+      ...(see.length > 0 && { see: see }),
       since,
       author,
     };
@@ -655,8 +660,8 @@ export class KotlinNativeParser {
         type: isSuspend ? "async_function" : "method",
         filePath,
         location: this.getLocationFromIndex(bodyContent, match.index, baseOffset),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
-        returnType: returnType || undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
+        ...(returnType && { returnType: returnType }),
         parameters: this.parseParameters(paramsStr),
         calls,
       };

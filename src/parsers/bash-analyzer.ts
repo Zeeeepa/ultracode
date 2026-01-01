@@ -18,7 +18,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation, getNodeText } from "./base-parser-utils.js";
 
 const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
@@ -49,7 +49,7 @@ export class BashAnalyzer {
    * Main entry point for analyzing Bash scripts
    */
   async analyze(
-    rootNode: TreeSitterNode,
+    rootNode: ASTNode,
     filePath: string,
     sourceCode: string,
   ): Promise<{
@@ -88,7 +88,7 @@ export class BashAnalyzer {
   }
 
   private extractEntities(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -159,7 +159,7 @@ export class BashAnalyzer {
   }
 
   private extractFunction(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -208,7 +208,7 @@ export class BashAnalyzer {
     }
   }
 
-  private extractVariable(node: TreeSitterNode, _filePath: string, entities: ParsedEntity[]): void {
+  private extractVariable(node: ASTNode, _filePath: string, entities: ParsedEntity[]): void {
     const filePath = _filePath;
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return;
@@ -232,7 +232,7 @@ export class BashAnalyzer {
     });
   }
 
-  private extractDeclaration(node: TreeSitterNode, _filePath: string, entities: ParsedEntity[]): void {
+  private extractDeclaration(node: ASTNode, _filePath: string, entities: ParsedEntity[]): void {
     const filePath = _filePath;
     // Handle declare, local, export, readonly commands
     const commandName = getNodeText(node.child(0) || node, this.sourceCode);
@@ -269,7 +269,7 @@ export class BashAnalyzer {
   }
 
   private extractCommand(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -307,7 +307,7 @@ export class BashAnalyzer {
   }
 
   private extractControlFlow(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -321,13 +321,13 @@ export class BashAnalyzer {
     }
   }
 
-  private validateScript(node: TreeSitterNode, _filePath: string): void {
+  private validateScript(node: ASTNode, _filePath: string): void {
     this.checkUndefinedVariables(node);
     this.checkDangerousPatterns(node);
     this.checkBestPractices(node);
   }
 
-  private checkUndefinedVariables(node: TreeSitterNode): void {
+  private checkUndefinedVariables(node: ASTNode): void {
     if (node.type === "simple_expansion" || node.type === "expansion") {
       const varName = (getNodeText(node, this.sourceCode) || "").replace(/[${}]/g, "");
 
@@ -354,7 +354,7 @@ export class BashAnalyzer {
     }
   }
 
-  private checkDangerousPatterns(node: TreeSitterNode): void {
+  private checkDangerousPatterns(node: ASTNode): void {
     const text = getNodeText(node, this.sourceCode) || "";
 
     // Check for dangerous rm commands
@@ -390,7 +390,7 @@ export class BashAnalyzer {
     }
   }
 
-  private checkBestPractices(node: TreeSitterNode): void {
+  private checkBestPractices(node: ASTNode): void {
     // Check for missing quotes in variable expansions
     if (node.type === "command") {
       const text = getNodeText(node, this.sourceCode) || "";

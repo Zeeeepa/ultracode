@@ -154,7 +154,7 @@ export class ThreeWayMerger {
     const allMatches = [...matchedUnits, ...semanticMatches];
 
     // === Phase 4: Intent Classification ===
-    let intents: Map<string, { branchAIntent?: ChangeIntent; branchBIntent?: ChangeIntent }> = new Map();
+    let intents: Map<string, { branchAIntent?: ChangeIntent | undefined; branchBIntent?: ChangeIntent }> = new Map();
 
     if (this.config.classifyIntents) {
       console.error("[ThreeWayMerger] Phase 4: Classifying intents...");
@@ -325,8 +325,8 @@ export class ThreeWayMerger {
    */
   private classifyIntents(
     matches: Array<{ baseUnit: CodeUnit | null; branchAUnit: CodeUnit; branchBUnit: CodeUnit }>,
-  ): Map<string, { branchAIntent?: ChangeIntent; branchBIntent?: ChangeIntent }> {
-    const intents = new Map<string, { branchAIntent?: ChangeIntent; branchBIntent?: ChangeIntent }>();
+  ): Map<string, { branchAIntent?: ChangeIntent | undefined; branchBIntent?: ChangeIntent }> {
+    const intents = new Map<string, { branchAIntent?: ChangeIntent | undefined; branchBIntent?: ChangeIntent }>();
 
     for (const match of matches) {
       const branchAIntent = this.intentClassifier.classifyIntent(match.baseUnit, match.branchAUnit);
@@ -343,7 +343,7 @@ export class ThreeWayMerger {
    */
   private detectConflicts(
     matches: Array<{ baseUnit: CodeUnit | null; branchAUnit: CodeUnit; branchBUnit: CodeUnit }>,
-    intents: Map<string, { branchAIntent?: ChangeIntent; branchBIntent?: ChangeIntent }>,
+    intents: Map<string, { branchAIntent?: ChangeIntent | undefined; branchBIntent?: ChangeIntent }>,
   ): SemanticConflict[] {
     const conflictsToDetect = matches.map((match) => {
       const intentPair = intents.get(match.branchAUnit.id);

@@ -11,6 +11,7 @@
  */
 
 import type { Entity, GraphStorage } from "../types/storage.js";
+import { GraphologyPathBuilder, type LinearTrace } from "./graphology-path-builder.js";
 import { PathBuilder } from "./path-builder.js";
 import type {
   BlockingCondition,
@@ -47,11 +48,39 @@ export class TraceEngine {
   private storage: GraphStorage;
   private semanticSearch?: SemanticSearchService;
   private pathBuilder: PathBuilder;
+  private graphologyBuilder: GraphologyPathBuilder;
+  private useOptimized: boolean;
 
-  constructor(storage: GraphStorage, semanticSearch?: SemanticSearchService) {
+  constructor(storage: GraphStorage, semanticSearch?: SemanticSearchService, useOptimized = true) {
     this.storage = storage;
     this.semanticSearch = semanticSearch;
     this.pathBuilder = new PathBuilder(storage);
+    this.graphologyBuilder = new GraphologyPathBuilder(storage);
+    this.useOptimized = useOptimized;
+  }
+
+  /**
+   * Enable or disable optimized graphology-based tracing
+   */
+  setOptimizedMode(enabled: boolean): void {
+    this.useOptimized = enabled;
+  }
+
+  /**
+   * Check if optimized mode is enabled
+   */
+  isOptimizedMode(): boolean {
+    return this.useOptimized;
+  }
+
+  /**
+   * Get graph statistics (only available in optimized mode)
+   */
+  async getGraphStats(): Promise<{ nodes: number; edges: number; loadTimeMs: number } | null> {
+    if (!this.graphologyBuilder.isLoaded()) {
+      await this.graphologyBuilder.loadGraph();
+    }
+    return this.graphologyBuilder.getStats();
   }
 
   // ===========================================================================
@@ -60,11 +89,149 @@ export class TraceEngine {
 
   /**
    * Trace execution flow from point A to point B.
-   * Finds all possible paths and analyzes state changes along each.
+   * Uses optimized graphology-based traversal by default.
    */
   async traceFlow(params: TraceFlowParams): Promise<TraceFlowResult> {
     const maxDepth = params.maxDepth ?? DEFAULT_MAX_DEPTH;
 
+    // Use optimized graphology-based tracing if enabled
+    if (this.useOptimized) {
+      return this.traceFlowOptimized(params, maxDepth);
+    }
+
+    // Fallback to legacy implementation
+    return this.traceFlowLegacy(params, maxDepth);
+  }
+
+  /**
+   * Optimized trace flow using graphology (O(V+E) instead of O(2^n))
+   */
+  private async traceFlowOptimized(params: TraceFlowParams, maxDepth: number): Promise<TraceFlowResult> {
+    const startTime = performance.now();
+
+    // 1. Load graph into memory (cached after first call)
+    const stats = await this.graphologyBuilder.loadGraph();
+    console.error(
+      `[TraceEngine] Graph loaded: ${stats.nodes} nodes, ${stats.edges} edges in ${stats.loadTimeMs.toFixed(0)}ms`,
+    );
+
+    // 2. Resolve entities
+    const sourceEntity = await this.resolveEntity(params.from);
+    const targetEntity = await this.resolveEntity(params.to);
+
+    if (!sourceEntity) {
+      throw new Error(`Could not find source entity: ${params.from}`);
+    }
+    if (!targetEntity) {
+      throw new Error(`Could not find target entity: ${params.to}`);
+    }
+
+    console.error(
+      `[TraceEngine] Resolved: "${params.from}" -> ${sourceEntity.id} (${sourceEntity.name}), "${params.to}" -> ${targetEntity.id} (${targetEntity.name})`,
+    );
+
+    // 3. Use linear trace for fast single-path result
+    const linearTrace = await this.graphologyBuilder.traceLinearFlow(sourceEntity.id, targetEntity.id, maxDepth);
+
+    // 4. Convert linear trace to TracePath format
+    const paths: TracePath[] = [];
+    if (linearTrace.found) {
+      paths.push(this.linearTraceToTracePath(linearTrace));
+    }
+
+    // 5. If multiple paths requested, find additional paths (limited)
+    if (params.trackConditions && linearTrace.found) {
+      const additionalPaths = await this.graphologyBuilder.findPaths(
+        sourceEntity.id,
+        targetEntity.id,
+        DEFAULT_MAX_PATHS - 1,
+        maxDepth,
+      );
+      const enrichedPaths = this.graphologyBuilder.enrichPaths(additionalPaths);
+      // Add unique paths (not duplicate of linear trace)
+      for (const p of enrichedPaths) {
+        if (p.steps.length !== paths[0]?.steps.length) {
+          paths.push(p);
+        }
+      }
+    }
+
+    // 6. Analyze states and conditions
+    let statesSummary: StatesSummary = { modified: [], read: [], critical: [] };
+    if (params.trackStates && paths.length > 0) {
+      statesSummary = await this.analyzeStatesInPaths(paths);
+    }
+
+    let conditionsSummary: ConditionsSummary = { guards: 0, branches: 0, criticalConditions: [] };
+    if (params.trackConditions && paths.length > 0) {
+      conditionsSummary = this.analyzeConditionsInPaths(paths);
+    }
+
+    // 7. Generate Mermaid diagram
+    let mermaid: string | undefined;
+    if (params.format === "mermaid" && paths.length > 0) {
+      mermaid = this.generateMermaidDiagram(paths, sourceEntity.name, targetEntity.name);
+    }
+
+    const totalTime = performance.now() - startTime;
+    console.error(
+      `[TraceEngine] Optimized trace completed in ${totalTime.toFixed(0)}ms (visited ${linearTrace.nodesVisited} nodes)`,
+    );
+
+    return {
+      from: params.from,
+      to: params.to,
+      paths,
+      statesSummary,
+      conditionsSummary,
+      mermaid,
+      // Debug info for troubleshooting
+      _debug: {
+        sourceEntityId: sourceEntity.id,
+        sourceEntityName: sourceEntity.name,
+        targetEntityId: targetEntity.id,
+        targetEntityName: targetEntity.name,
+        graphStats: stats,
+        linearTraceSummary: linearTrace.summary,
+        nodesVisited: linearTrace.nodesVisited,
+        found: linearTrace.found,
+        timeMs: totalTime,
+      },
+    };
+  }
+
+  /**
+   * Convert LinearTrace to TracePath format
+   */
+  private linearTraceToTracePath(linear: LinearTrace): TracePath {
+    return {
+      id: "path-1",
+      confidence: linear.found ? 0.9 : 0.1,
+      steps: linear.steps.map((s) => ({
+        order: s.order,
+        entity: s.entity,
+        entityId: s.entityId,
+        file: s.file,
+        line: s.line,
+        action: s.action,
+        condition: s.branches?.[0]?.condition,
+        branches: s.branches?.reduce(
+          (acc, b) => {
+            acc[b.condition] = b.target;
+            return acc;
+          },
+          {} as Record<string, string>,
+        ),
+      })),
+      summary: linear.summary,
+      warnings: [],
+    };
+  }
+
+  /**
+   * Legacy trace flow implementation (for fallback/comparison)
+   */
+  private async traceFlowLegacy(params: TraceFlowParams, maxDepth: number): Promise<TraceFlowResult> {
     // 1. Resolve source and target entities
     const sourceEntity = await this.resolveEntity(params.from);
     const targetEntity = await this.resolveEntity(params.to);
@@ -132,7 +299,7 @@ export class TraceEngine {
 
   /**
    * Trace backwards from a target to find why it might not be called.
-   * Identifies all callers, blocking conditions, and state dependencies.
+   * Uses optimized graphology-based traversal by default.
    */
   async traceBackwards(params: TraceBackwardsParams): Promise<TraceBackwardsResult> {
     const maxDepth = params.depth ?? DEFAULT_MAX_DEPTH;
@@ -144,6 +311,65 @@ export class TraceEngine {
       throw new Error(`Could not find target entity: ${params.target}`);
     }
 
+    // 2. Use optimized backwards trace if enabled
+    if (this.useOptimized) {
+      const startTime = performance.now();
+      await this.graphologyBuilder.loadGraph();
+
+      const backwardsResult = await this.graphologyBuilder.traceBackwards(targetEntity.id, maxDepth);
+
+      // Convert to CallerInfo format
+      const callers: CallerInfo[] = backwardsResult.callers.map((c) => ({
+        name: c.name,
+        entityId: c.id,
+        file: "", // Will be filled from entity lookup if needed
+        line: 0,
+        probability: c.probability,
+      }));
+
+      // Find blocking conditions from callers with conditional probability
+      const blockingConditions: BlockingCondition[] = callers
+        .filter((c) => c.probability === "conditional" || c.probability === "rare")
+        .map((c) => ({
+          condition: `Conditional call from ${c.name}`,
+          location: c.file ? `${c.file}:${c.line}` : c.name,
+          currentValue: "unknown",
+          recommendation: `Check conditions in ${c.name}`,
+        }));
+
+      // Build call chains from entry points
+      const callChains: CallChain[] = backwardsResult.entryPoints.map((ep) => ({
+        chain: [ep.name, "...", targetEntity.name],
+        guards: [],
+        likelihood: "medium" as const,
+        entryPoint: ep.name,
+      }));
+
+      const totalTime = performance.now() - startTime;
+      console.error(`[TraceEngine] Optimized backwards trace completed in ${totalTime.toFixed(0)}ms`);
+
+      return {
+        target: {
+          name: targetEntity.name,
+          entityId: targetEntity.id,
+          file: targetEntity.filePath,
+          signature: this.getEntitySignature(targetEntity),
+        },
+        callers,
+        blockingConditions,
+        statesDependencies: params.includeStates ? await this.findStateDependencies(targetEntity) : [],
+        callChains,
+        diagnosis: this.generateDiagnosis(
+          params.question,
+          callers,
+          blockingConditions,
+          params.includeStates ? await this.findStateDependencies(targetEntity) : [],
+          callChains,
+        ),
+      };
+    }
+
+    // Legacy implementation
     // 2. Get direct callers
     const callersWithProbability = await this.pathBuilder.getCallers(targetEntity.id);
 
@@ -160,8 +386,8 @@ export class TraceEngine {
 
         // Get condition from metadata
         const meta = entity.metadata as Record<string, any>;
-        if (meta.controlFlow?.branches) {
-          const branches = meta.controlFlow.branches;
+        if (meta["controlFlow"]?.branches) {
+          const branches = meta["controlFlow"].branches;
           if (branches.length > 0) {
             callerInfo.condition = branches[0]?.condition;
           }
@@ -307,22 +533,22 @@ export class TraceEngine {
         const meta = entity.metadata as Record<string, any>;
 
         // Check for state modifications
-        if (Array.isArray(meta.stateModifications)) {
-          for (const state of meta.stateModifications) {
+        if (Array.isArray(meta["stateModifications"])) {
+          for (const state of meta["stateModifications"]) {
             modified.add(state);
           }
         }
 
         // Check for state reads
-        if (Array.isArray(meta.stateReads)) {
-          for (const state of meta.stateReads) {
+        if (Array.isArray(meta["stateReads"])) {
+          for (const state of meta["stateReads"]) {
             read.add(state);
           }
         }
 
         // States used in conditions are critical
-        if (step.condition && Array.isArray(meta.stateReads)) {
-          for (const state of meta.stateReads) {
+        if (step.condition && Array.isArray(meta["stateReads"])) {
+          for (const state of meta["stateReads"]) {
             critical.add(state);
           }
         }
@@ -344,7 +570,7 @@ export class TraceEngine {
     const meta = target.metadata as Record<string, any>;
 
     // Check what states this entity reads
-    const stateReads: string[] = Array.isArray(meta.stateReads) ? meta.stateReads : [];
+    const stateReads: string[] = Array.isArray(meta["stateReads"]) ? meta["stateReads"] : [];
 
     for (const state of stateReads) {
       // Find who modifies this state
@@ -372,7 +598,7 @@ export class TraceEngine {
     // Filter to those that actually modify state
     return entities.filter((e) => {
       const meta = e.metadata as Record<string, any>;
-      const mods: string[] = Array.isArray(meta.stateModifications) ? meta.stateModifications : [];
+      const mods: string[] = Array.isArray(meta["stateModifications"]) ? meta["stateModifications"] : [];
       return mods.includes(stateName) || e.name.toLowerCase().includes("set");
     });
   }
@@ -457,8 +683,8 @@ export class TraceEngine {
 
     // Check target's own preconditions
     const targetMeta = target.metadata as Record<string, any>;
-    if (Array.isArray(targetMeta.preconditions)) {
-      for (const pre of targetMeta.preconditions) {
+    if (Array.isArray(targetMeta["preconditions"])) {
+      for (const pre of targetMeta["preconditions"]) {
         blocking.push({
           condition: pre,
           location: `${target.filePath}:${target.location.start.line}`,
@@ -647,6 +873,7 @@ export class TraceEngine {
    */
   clearCache(): void {
     this.pathBuilder.clearCache();
+    this.graphologyBuilder.clear();
   }
 }
 

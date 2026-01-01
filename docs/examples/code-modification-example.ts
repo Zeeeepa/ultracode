@@ -44,7 +44,7 @@ async function example2_listSnapshots() {
  */
 async function example3_rollback() {
   // Something went wrong, rollback!
-  const result = await mcpClient.callTool("rollback_snapshot", {
+  const result = await mcpClient.callTool("undo", {
     snapshotId: "snap_20250117_143022",
   });
 
@@ -71,14 +71,14 @@ async function example4_cleanup() {
  */
 async function example5_previewModification() {
   // First, find the entity to modify
-  const entities = await mcpClient.callTool("list_file_entities", {
+  const entities = await mcpClient.callTool("get_members", {
     filePath: "src/utils/helpers.ts",
   });
 
   const calculateTotalEntity = entities.find((e) => e.name === "calculateTotal" && e.type === "function");
 
   // Preview the change (default: preview=true)
-  const result = await mcpClient.callTool("modify_entity_code", {
+  const result = await mcpClient.callTool("modify_code", {
     entityId: calculateTotalEntity.id,
     newCode: `
 export function calculateTotal(items: Item[]): number {
@@ -98,7 +98,7 @@ export function calculateTotal(items: Item[]): number {
  */
 async function example6_applyModification() {
   // Apply the change (creates automatic snapshot)
-  const result = await mcpClient.callTool("modify_entity_code", {
+  const result = await mcpClient.callTool("modify_code", {
     entityId: "entity_abc123",
     newCode: `
 export function calculateTotal(items: Item[]): number {
@@ -166,7 +166,7 @@ async function example8_renameFile() {
  */
 async function example9_splitFile() {
   // Find entities to extract
-  const entities = await mcpClient.callTool("list_file_entities", {
+  const entities = await mcpClient.callTool("get_members", {
     filePath: "src/utils/helpers.ts",
   });
 
@@ -218,7 +218,7 @@ async function example11_safeRefactoring() {
 
   try {
     // Step 2: Preview changes
-    const _preview = await mcpClient.callTool("modify_entity_code", {
+    const _preview = await mcpClient.callTool("modify_code", {
       entityId: "payment_process_entity",
       newCode: "// new implementation",
       preview: true,
@@ -227,7 +227,7 @@ async function example11_safeRefactoring() {
     console.log("Preview looks good, applying...");
 
     // Step 3: Apply changes
-    const result = await mcpClient.callTool("modify_entity_code", {
+    const result = await mcpClient.callTool("modify_code", {
       entityId: "payment_process_entity",
       newCode: "// new implementation",
       preview: false,
@@ -236,7 +236,7 @@ async function example11_safeRefactoring() {
     // Step 4: Check validation
     if (result.validationReport.improvement.netChange > 0) {
       console.log("⚠️ Validation issues increased, rolling back...");
-      await mcpClient.callTool("rollback_snapshot", {
+      await mcpClient.callTool("undo", {
         snapshotId: snapshot.snapshotId,
       });
     } else {
@@ -244,7 +244,7 @@ async function example11_safeRefactoring() {
     }
   } catch (_error) {
     console.error("Error during refactoring, rolling back...");
-    await mcpClient.callTool("rollback_snapshot", {
+    await mcpClient.callTool("undo", {
       snapshotId: snapshot.snapshotId,
     });
   }

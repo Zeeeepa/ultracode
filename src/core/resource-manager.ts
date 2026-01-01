@@ -8,6 +8,13 @@ import os from "node:os";
 import type { ResourceConstraints } from "../types/agent.js";
 import { knowledgeBus } from "./knowledge-bus.js";
 
+// Event-driven architecture: resource monitoring uses setInterval for Node.js, disabled for Bun
+
+/** Check if running in Bun */
+function isBunRuntime(): boolean {
+  return typeof (globalThis as any).Bun !== "undefined";
+}
+
 export interface ResourceSnapshot {
   timestamp: number;
   memory: {
@@ -39,7 +46,7 @@ export class ResourceManager extends EventEmitter {
   private allocations: Map<string, ResourceAllocation> = new Map();
   private snapshots: ResourceSnapshot[] = [];
   private maxSnapshots = 60; // Keep 1 minute of history at 1 second intervals
-  private monitoringInterval: ReturnType<typeof setInterval> | null = null;
+  private monitoringRunning = false;
 
   // Adaptive monitoring state
   private adaptiveMonitoringInterval = 1000; // Start with 1 second
@@ -73,54 +80,59 @@ export class ResourceManager extends EventEmitter {
     );
   }
 
+  /** Timer handle for Node.js setInterval */
+  private monitoringTimer?: ReturnType<typeof setInterval> | undefined;
+
   /**
    * Start adaptive resource monitoring
-   * Adjusts monitoring frequency based on system load:
-   * - High load (>80%): check every 1 second
-   * - Low load (<30%): check every 10 seconds (saves 70% CPU)
+   * Event-driven: uses setInterval for Node.js, disabled for Bun
    */
   startMonitoring(): void {
-    if (this.monitoringInterval) return;
+    if (this.monitoringRunning) return;
+    this.monitoringRunning = true;
+    this.emit("monitoring:started");
 
-    const monitorLoop = () => {
+    // For Bun: skip monitoring loop to avoid CPU spinning
+    if (isBunRuntime()) return;
+
+    // For Node.js: use setInterval with adaptive interval
+    const runMonitoringCycle = () => {
+      if (!this.monitoringRunning) return;
+
       this.captureSnapshot();
       const pressure = this.checkResourcePressure();
 
       // Adapt monitoring frequency based on resource pressure
       if (pressure > 0.8) {
-        // High pressure - monitor frequently
         this.adaptiveMonitoringInterval = this.MIN_MONITORING_INTERVAL;
       } else if (pressure < 0.3) {
-        // Low pressure - reduce monitoring frequency exponentially
-        this.adaptiveMonitoringInterval = Math.min(
-          this.MAX_MONITORING_INTERVAL,
-          this.adaptiveMonitoringInterval * 1.5, // Gradually increase interval
-        );
+        this.adaptiveMonitoringInterval = Math.min(this.MAX_MONITORING_INTERVAL, this.adaptiveMonitoringInterval * 1.5);
       } else {
-        // Medium pressure - use moderate interval
         this.adaptiveMonitoringInterval = 2000;
       }
-
-      // Schedule next check with adaptive interval
-      this.monitoringInterval = setTimeout(monitorLoop, this.adaptiveMonitoringInterval);
     };
 
-    // Start the monitoring loop
-    monitorLoop();
+    // Run initial capture
+    runMonitoringCycle();
 
-    console.error("Adaptive resource monitoring started");
-    this.emit("monitoring:started");
+    // Use setInterval with base interval (adaptive logic inside callback)
+    this.monitoringTimer = setInterval(runMonitoringCycle, 2000); // Check every 2 seconds
   }
 
   /**
    * Stop resource monitoring
    */
   stopMonitoring(): void {
-    if (this.monitoringInterval) {
-      clearTimeout(this.monitoringInterval);
-      this.monitoringInterval = null;
-      this.adaptiveMonitoringInterval = 1000; // Reset to default
-      console.error("Resource monitoring stopped");
+    if (this.monitoringRunning) {
+      this.monitoringRunning = false;
+      this.adaptiveMonitoringInterval = 1000;
+
+      // Clear timer
+      if (this.monitoringTimer) {
+        clearInterval(this.monitoringTimer);
+        this.monitoringTimer = undefined;
+      }
+
       this.emit("monitoring:stopped");
     }
   }

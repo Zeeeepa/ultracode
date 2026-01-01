@@ -329,7 +329,7 @@ function processFunction(func: Function_Context, ctx: ParserContext, isPublic: b
   }
 
   // Extract parameters
-  const params: Array<{ name: string; type?: string; optional?: boolean }> = [];
+  const params: Array<{ name: string; type?: string | undefined; optional?: boolean }> = [];
   const funcParams = func.functionParameters();
   if (funcParams) {
     // Self parameter
@@ -386,9 +386,9 @@ function processFunction(func: Function_Context, ctx: ParserContext, isPublic: b
     type: modifiers.includes("async") ? "async_function" : entityType,
     filePath: ctx.filePath,
     location,
-    modifiers: modifiers.length > 0 ? modifiers : undefined,
-    parameters: params.length > 0 ? params : undefined,
-    returnType: returnType || undefined,
+    ...(modifiers.length > 0 && { modifiers: modifiers }),
+    ...(params.length > 0 && { parameters: params }),
+    ...(returnType && { returnType: returnType }),
   };
 
   ctx.entities.push(entity);
@@ -579,7 +579,7 @@ function processTrait(trait: Trait_Context, ctx: ParserContext, isPublic: boolea
     type: "interface", // Rust traits map to interface entity type
     filePath: ctx.filePath,
     location,
-    modifiers: modifiers.length > 0 ? modifiers : undefined,
+    ...(modifiers.length > 0 && { modifiers: modifiers }),
   });
 
   // Process trait bounds (supertraits)

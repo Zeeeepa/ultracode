@@ -115,7 +115,7 @@ export class CppNativeParser {
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
-        errors: result.errors.length > 0 ? result.errors : undefined,
+        ...(result.errors.length > 0 && { errors: result.errors }),
       };
     } catch (error) {
       this.stats.errorCount++;
@@ -365,7 +365,7 @@ export class CppNativeParser {
 
     // Functions (simplified - won't catch all cases)
     const funcRe =
-      /^\s*(?:static\s+)?(?:inline\s+)?(?:virtual\s+)?(?:const\s+)?(?:\w+(?:\s*[*&]+)?)\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?(?:noexcept\s*)?(?:=\s*0\s*)?[{;]/gm;
+      /^\s*(?:static\s+)?(?:inline\s+)?(?:virtual\s+)?(?:const\s+)?(?:\w+(?:\s*[*&]+)?)\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?(?:noexcept\s*)?(?:=\s*0\s*)?.[{;]/gm;
     while ((match = funcRe.exec(content))) {
       const name = match[1];
       if (!name || ["if", "while", "for", "switch", "catch"].includes(name)) continue;

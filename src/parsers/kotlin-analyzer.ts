@@ -22,7 +22,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
 const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
@@ -64,7 +64,7 @@ export class KotlinAnalyzer {
    * Parse Kotlin source code
    */
   async analyze(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -78,7 +78,7 @@ export class KotlinAnalyzer {
   }
 
   private async traverseNode(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -128,7 +128,7 @@ export class KotlinAnalyzer {
     }
   }
 
-  private async handlePackage(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): Promise<void> {
+  private async handlePackage(node: ASTNode, filePath: string, entities: ParsedEntity[]): Promise<void> {
     // package com.example.app
     const identifierNode = node.children?.find((c) => c.type === "identifier" || c.type === "package_name");
     if (identifierNode) {
@@ -138,7 +138,7 @@ export class KotlinAnalyzer {
   }
 
   private async handleClass(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -160,16 +160,16 @@ export class KotlinAnalyzer {
     }
 
     // Check for data class, sealed class, enum class, interface
-    if (modifiers.includes("data")) metadata.isDataClass = true;
-    if (modifiers.includes("sealed")) metadata.isSealedClass = true;
-    if (modifiers.includes("inner")) metadata.isInnerClass = true;
-    if (modifiers.includes("enum")) metadata.isEnumClass = true;
+    if (modifiers.includes("data")) metadata["isDataClass"] = true;
+    if (modifiers.includes("sealed")) metadata["isSealedClass"] = true;
+    if (modifiers.includes("inner")) metadata["isInnerClass"] = true;
+    if (modifiers.includes("enum")) metadata["isEnumClass"] = true;
 
     // Check if this is an interface (via parent modifiers or keywords)
     const isInterface =
       node.parent?.children?.some((c) => c.text === "interface") || node.children?.some((c) => c.text === "interface");
     if (isInterface) {
-      metadata.isInterface = true;
+      metadata["isInterface"] = true;
     }
 
     const fullName = this.currentClass ? `${this.currentClass}.${className}` : className;
@@ -246,7 +246,7 @@ export class KotlinAnalyzer {
   }
 
   private async handleObject(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -262,7 +262,7 @@ export class KotlinAnalyzer {
     const isCompanion = node.children?.some((c) => c.text === "companion");
     if (isCompanion) {
       modifiers.push("companion");
-      metadata.isCompanionObject = true;
+      metadata["isCompanionObject"] = true;
     }
 
     const fullName = this.currentClass ? `${this.currentClass}.${objectName}` : objectName;
@@ -306,7 +306,7 @@ export class KotlinAnalyzer {
   }
 
   private async handleFunction(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -324,8 +324,8 @@ export class KotlinAnalyzer {
         for (const mod of child.children || []) {
           if (mod.text) {
             modifiers.push(mod.text);
-            if (mod.text === "suspend") metadata.isSuspend = true;
-            if (mod.text === "inline") metadata.isInline = true;
+            if (mod.text === "suspend") metadata["isSuspend"] = true;
+            if (mod.text === "inline") metadata["isInline"] = true;
           }
         }
       }
@@ -334,8 +334,8 @@ export class KotlinAnalyzer {
     // Check for extension function
     const receiverType = node.children?.find((c) => c.type === "receiver_type");
     if (receiverType) {
-      metadata.isExtension = true;
-      metadata.receiverType = receiverType.text;
+      metadata["isExtension"] = true;
+      metadata["receiverType"] = receiverType.text;
     }
 
     const fullName = this.currentClass ? `${this.currentClass}.${funcName}` : funcName;
@@ -371,7 +371,7 @@ export class KotlinAnalyzer {
   }
 
   private async handleProperty(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -391,8 +391,8 @@ export class KotlinAnalyzer {
         for (const mod of child.children || []) {
           if (mod.text) {
             modifiers.push(mod.text);
-            if (mod.text === "const") metadata.isConst = true;
-            if (mod.text === "lateinit") metadata.isLateinit = true;
+            if (mod.text === "const") metadata["isConst"] = true;
+            if (mod.text === "lateinit") metadata["isLateinit"] = true;
           }
         }
       }
@@ -401,7 +401,7 @@ export class KotlinAnalyzer {
     // Check for val/var
     const valOrVar = node.children?.find((c) => c.text === "val" || c.text === "var");
     if (valOrVar) {
-      metadata.mutable = valOrVar.text === "var";
+      metadata["mutable"] = valOrVar.text === "var";
     }
 
     const fullName = this.currentClass ? `${this.currentClass}.${propName}` : propName;
@@ -437,7 +437,7 @@ export class KotlinAnalyzer {
   }
 
   private async handlePrimaryConstructor(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -457,8 +457,8 @@ export class KotlinAnalyzer {
       const isProperty = param.children?.some((c) => c.text === "val" || c.text === "var");
       if (isProperty) {
         const valOrVar = param.children?.find((c) => c.text === "val" || c.text === "var");
-        metadata.mutable = valOrVar?.text === "var";
-        metadata.isProperty = true;
+        metadata["mutable"] = valOrVar?.text === "var";
+        metadata["isProperty"] = true;
 
         const location = getNodeLocation(param);
 
@@ -486,7 +486,7 @@ export class KotlinAnalyzer {
   }
 
   private async handleImport(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -498,7 +498,7 @@ export class KotlinAnalyzer {
     this.ensurePackageEntity(filePath, entities);
 
     // Helper to collect identifiers from a single import statement
-    const collectIdentifiers = (n: TreeSitterNode): string[] => {
+    const collectIdentifiers = (n: ASTNode): string[] => {
       const ids: string[] = [];
       if (n.type === "identifier" || n.type === "type_identifier") {
         ids.push(n.text || "");

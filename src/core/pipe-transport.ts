@@ -10,29 +10,12 @@ import { createServer, type Server, type Socket } from "node:net";
 
 /**
  * Get the pipe/socket path based on platform
- * Note: Bun doesn't support Windows Named Pipes, so we use TCP port on Windows
  */
 export function getPipePath(): string {
   if (process.platform === "win32") {
-    // Bun doesn't support Named Pipes on Windows, use TCP port instead
-    return "127.0.0.1:51734";
+    return "\\\\.\\pipe\\UltraScript_Core";
   }
   return "/tmp/ultrascript-core.sock";
-}
-
-/**
- * Check if path is a TCP address (host:port format)
- */
-export function isTcpAddress(path: string): boolean {
-  return path.includes(":") && !path.startsWith("\\\\");
-}
-
-/**
- * Parse TCP address into host and port
- */
-export function parseTcpAddress(address: string): { host: string; port: number } {
-  const [host = "127.0.0.1", portStr = "51734"] = address.split(":");
-  return { host, port: parseInt(portStr, 10) };
 }
 
 /**
@@ -169,33 +152,19 @@ export class PipeServer {
 
     return new Promise((resolve, reject) => {
       this.server = createServer((socket) => {
-        console.error(`[PipeServer] Client connected`);
         const transport = new PipeClientTransport(socket);
         resolve(transport);
       });
 
       this.server.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
-          console.error(`[PipeServer] Address already in use: ${this.pipePath}`);
-          console.error(`[PipeServer] Another instance may be running. Exiting.`);
           process.exit(1);
         }
         reject(err);
       });
 
-      console.error(`[PipeServer] Waiting for connection on ${this.pipePath}...`);
-
-      // Use TCP on Windows (Bun doesn't support Named Pipes), Unix socket elsewhere
-      if (isTcpAddress(this.pipePath)) {
-        const { host, port } = parseTcpAddress(this.pipePath);
-        this.server.listen(port, host, () => {
-          console.error(`[PipeServer] Listening on ${this.pipePath}`);
-        });
-      } else {
-        this.server.listen(this.pipePath, () => {
-          console.error(`[PipeServer] Listening on ${this.pipePath}`);
-        });
-      }
+      // Named Pipe on Windows, Unix socket elsewhere
+      this.server.listen(this.pipePath);
     });
   }
 
@@ -214,33 +183,21 @@ export class PipeServer {
 
     return new Promise((resolve, reject) => {
       this.server = createServer((socket) => {
-        console.error(`[PipeServer] Client connected`);
         const transport = new PipeClientTransport(socket);
         onConnection(transport);
       });
 
       this.server.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
-          console.error(`[PipeServer] Address already in use: ${this.pipePath}`);
-          console.error(`[PipeServer] Another instance may be running. Exiting.`);
           process.exit(1);
         }
         reject(err);
       });
 
-      // Use TCP on Windows (Bun doesn't support Named Pipes), Unix socket elsewhere
-      if (isTcpAddress(this.pipePath)) {
-        const { host, port } = parseTcpAddress(this.pipePath);
-        this.server.listen(port, host, () => {
-          console.error(`[PipeServer] Listening on ${this.pipePath}`);
-          resolve();
-        });
-      } else {
-        this.server.listen(this.pipePath, () => {
-          console.error(`[PipeServer] Listening on ${this.pipePath}`);
-          resolve();
-        });
-      }
+      // Named Pipe on Windows, Unix socket elsewhere
+      this.server.listen(this.pipePath, () => {
+        resolve();
+      });
     });
   }
 

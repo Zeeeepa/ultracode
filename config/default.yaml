@@ -25,15 +25,14 @@ mcp:
     # HUGGING FACE CLOUD API (8192 tokens, requires API key):
     # model: "ibm-granite/granite-embedding-english-r2"  # 8192 tokens, English
     #
-    # OPENVINO (Local inference, optimized for Intel/AMD CPUs):
-    # model: "Xenova/all-MiniLM-L6-v2"  # 384 dimensions, fast
-    # provider: "openvino"     # Options: tei, huggingface, ollama, openvino, memory, auto
+    # OVMS (Docker-based OpenVINO inference, stable with Bun):
+    # model: "all-MiniLM-L6-v2"  # 384 dimensions, fast
+    # provider: "ovms"       # Options: ovms, tei, ollama, openai, cloudru, huggingface, auto
 
-    # MEMORY (Hash-based, no ML - for testing without model downloads):
-    model: "memory"
-    provider: "memory"       # Fast hash-based similarity (no ML model needed)
-    enabled: true            # Set to true after running setup-tei.sh/.cmd (or use auto for auto-detection)
-    fallbackToMemory: true   # Gracefully fallback to memory-based similarity when model unavailable
+    # DEFAULT: Auto-detect available provider
+    model: "all-MiniLM-L6-v2"
+    provider: "auto"         # Auto-detect: OVMS > TEI > Ollama
+    enabled: true            # Set to true after running setup-embedding
     apiKey: ""               # Only for cloud providers (huggingface, openai, cloudru)
 
     # Optional: Two-stage retrieval with reranker (Ollama only, not for HuggingFace)
@@ -46,13 +45,37 @@ mcp:
     # Options: "english" | "multilingual"
     queryLanguage: "english"  # Set to "multilingual" if using ibm/granite-embedding:278m or granite-embedding
 
+    # Two-phase mode: Generate embeddings → dump to disk → close OpenVINO → insert to LibSQL
+    # Workaround for Bun crash when OpenVINO + LibSQL native modules run concurrently
+    # Set to true if you experience crashes during indexing with OpenVINO on Bun
+    twoPhaseMode: true
+
     # TEI (Text Embeddings Inference) Configuration
     # Local Docker inference with 8192-token models
     tei:
       baseUrl: "http://127.0.0.1:8080"  # TEI server URL (Docker container)
       timeoutMs: 30000                  # 30 seconds timeout
-      concurrency: 4                    # Parallel requests
+      concurrency: 16                   # High parallelism for GPU saturation
       checkServer: true                 # Auto-start Docker container if stopped
+
+    # Ollama Configuration
+    # Local inference server (requires Ollama installed)
+    ollama:
+      baseUrl: "http://127.0.0.1:11434"
+      timeoutMs: 30000
+      concurrency: 8                    # Parallel embedding requests (Ollama handles sequentially)
+      autoPull: true                    # Auto-download model if missing
+      checkServer: true
+
+    # OVMS (OpenVINO Model Server) Configuration
+    # Docker-based Intel OpenVINO inference
+    ovms:
+      baseUrl: "http://127.0.0.1:8082"
+      timeoutMs: 120000                 # 2 minutes (OVMS can be slow on CPU)
+      concurrency: 16                   # Parallel mini-batch requests
+      miniBatchSize: 64                 # Texts per OVMS request (GPU: 64, CPU: 32)
+      protocol: "rest"                  # Options: rest, grpc
+      checkServer: true
 
     # HuggingFace Cloud API Configuration (alternative to TEI for cloud usage)
     # Requires API key from https://huggingface.co/settings/tokens
@@ -149,7 +172,7 @@ indexer:
 # Branch-Aware Indexing Configuration
 # Enables per-branch databases for accurate indexing when switching Git branches
 indexing:
-  branchAware: false                # Enable per-branch databases (RECOMMENDED for Git repositories)
+  branchAware: true                 # Enable per-branch databases (RECOMMENDED for Git repositories)
   autoSwitchOnBranchChange: true    # Automatically switch DB when Git branch changes
   maxBranchesPerRepo: 10            # Maximum branches to keep indexed per repository
   maxTotalBranches: 50              # Maximum total branches across all repositories
@@ -169,6 +192,9 @@ git:
   watchUncommitted: true            # Watch for uncommitted file changes
   uncommittedPollIntervalMs: 10000  # 10 seconds - poll interval for uncommitted changes
   includeUntracked: true            # Include untracked files in uncommitted watch
+  # Debounce for embedding generation - waits for user to stop editing before generating
+  debounceMs: 60000                 # 60 seconds - debounce delay after last file change
+  bulkModeThreshold: 1000           # Files > threshold triggers bulk mode (drop/rebuild index)
 
 # Dev Agent Configuration
 devAgent:
@@ -196,7 +222,7 @@ semanticAgent:
   maxConcurrency: 5
   memoryLimit: 240
   priority: 8
-  batchSize: 8
+  batchSize: 256             # Large batches for TEI GPU efficiency (was 8)
   modelPath: "./models"
 
 # Coordinator Agent Configuration

@@ -132,15 +132,15 @@ export class DataFlowAnalyzer {
     const meta = entryEntity.metadata as Record<string, any>;
 
     // Parameters are data sources
-    if (Array.isArray(meta.parameters)) {
-      for (const param of meta.parameters) {
+    if (Array.isArray(meta["parameters"])) {
+      for (const param of meta["parameters"]) {
         sources.push(param.name);
       }
     }
 
     // Check calls for data fetching
-    if (Array.isArray(meta.calls)) {
-      for (const call of meta.calls) {
+    if (Array.isArray(meta["calls"])) {
+      for (const call of meta["calls"]) {
         const sourceType = this.classifyDataSource(call.name);
         if (sourceType) {
           sources.push(`${sourceType}:${call.name}`);
@@ -149,8 +149,8 @@ export class DataFlowAnalyzer {
     }
 
     // Check state reads
-    if (Array.isArray(meta.stateReads)) {
-      for (const state of meta.stateReads) {
+    if (Array.isArray(meta["stateReads"])) {
+      for (const state of meta["stateReads"]) {
         sources.push(`state:${state}`);
       }
     }
@@ -199,8 +199,8 @@ export class DataFlowAnalyzer {
       const meta = currentEntity.metadata as Record<string, any>;
 
       // Check for data transformations
-      if (trackTransformations && Array.isArray(meta.calls)) {
-        for (const call of meta.calls) {
+      if (trackTransformations && Array.isArray(meta["calls"])) {
+        for (const call of meta["calls"]) {
           const transformType = this.classifyTransformation(call.name);
           if (transformType) {
             flow.push({
@@ -217,8 +217,8 @@ export class DataFlowAnalyzer {
       }
 
       // Check for branching based on data
-      if (meta.controlFlow?.branches && Array.isArray(meta.controlFlow.branches)) {
-        for (const branch of meta.controlFlow.branches) {
+      if (meta["controlFlow"]?.branches && Array.isArray(meta["controlFlow"].branches)) {
+        for (const branch of meta["controlFlow"].branches) {
           if (this.conditionInvolvesData(branch.condition, source)) {
             flow.push({
               step: stepOrder++,
@@ -236,7 +236,7 @@ export class DataFlowAnalyzer {
       }
 
       // Check if we reached target state
-      if (Array.isArray(meta.stateModifications) && meta.stateModifications.includes(targetState)) {
+      if (Array.isArray(meta["stateModifications"]) && meta["stateModifications"].includes(targetState)) {
         flow.push({
           step: stepOrder++,
           location: `${currentEntity.filePath}:${currentEntity.location.start.line}`,
@@ -313,7 +313,7 @@ export class DataFlowAnalyzer {
           // Check if this call involves our data
           const callMeta = rel.metadata as Record<string, any> | undefined;
           if (
-            (Array.isArray(callMeta?.arguments) && callMeta.arguments.includes(data)) ||
+            (Array.isArray(callMeta?.["arguments"]) && callMeta["arguments"].includes(data)) ||
             this.entityHandlesData(callee, data)
           ) {
             return callee;
@@ -334,16 +334,16 @@ export class DataFlowAnalyzer {
 
     // Check parameters
     if (
-      Array.isArray(meta.parameters) &&
-      meta.parameters.some((p: any) => p.name.toLowerCase().includes(dataVar.toLowerCase()))
+      Array.isArray(meta["parameters"]) &&
+      meta["parameters"].some((p: any) => p.name.toLowerCase().includes(dataVar.toLowerCase()))
     ) {
       return true;
     }
 
     // Check state reads/writes
     if (
-      Array.isArray(meta.stateReads) &&
-      meta.stateReads.some((s: string) => s.toLowerCase().includes(dataVar.toLowerCase()))
+      Array.isArray(meta["stateReads"]) &&
+      meta["stateReads"].some((s: string) => s.toLowerCase().includes(dataVar.toLowerCase()))
     ) {
       return true;
     }

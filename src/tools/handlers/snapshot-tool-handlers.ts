@@ -3,7 +3,7 @@
  *
  * Handlers for snapshot management operations:
  * - create_snapshot
- * - rollback_snapshot (undo alias)
+ * - undo
  * - list_snapshots
  * - cleanup_snapshots
  */

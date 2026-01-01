@@ -27,7 +27,7 @@ export interface MergeAction {
   mergedUnit?: CodeUnit;
 
   /** Конфликт (для manual-review) */
-  conflict?: SemanticConflict;
+  conflict?: SemanticConflict | undefined;
 
   /** Source branch для add actions */
   sourceBranch?: "branchA" | "branchB";

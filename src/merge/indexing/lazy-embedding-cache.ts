@@ -118,7 +118,7 @@ export type EmbeddingGeneratorFn = (code: string) => Promise<Float32Array>;
  * Опции для LazyEmbeddingCache.
  */
 export interface LazyEmbeddingCacheOptions {
-  batchSize?: number; // Batch size for parallel generation (default 32)
+  batchSize?: number | undefined; // Batch size for parallel generation (default 32)
 }
 
 /**

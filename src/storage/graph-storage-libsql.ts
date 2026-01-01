@@ -11,18 +11,19 @@
 import { nanoid } from "nanoid";
 import xxhash from "xxhash-wasm";
 import { DEFAULT_BRANCH, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
-import type {
-  BatchResult,
-  Entity,
-  EntityType,
-  FileInfo,
-  GraphQuery,
-  GraphQueryResult,
-  GraphStorage,
-  Relationship,
+import {
+  type BatchResult,
+  type Entity,
+  type EntityType,
+  type FileInfo,
+  type GraphQuery,
+  type GraphQueryResult,
+  type GraphStorage,
+  type Relationship,
   RelationType,
-  StorageMetrics,
+  type StorageMetrics,
 } from "../types/storage.js";
+import { logger } from "../utils/logger.js";
 import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.js";
 
 // =============================================================================
@@ -62,8 +63,11 @@ export class GraphStorageLibSQL implements GraphStorage {
   // ===========================================================================
 
   async initialize(): Promise<void> {
+    const startTime = Date.now();
+    logger.trace("STORAGE", `[GraphStorageLibSQL] ▶ initialize() START`);
     // Initialize xxHash for fast entity ID generation
     this.xxhashInstance = await xxhash();
+    logger.trace("STORAGE", `[GraphStorageLibSQL] ◀ initialize() END (${Date.now() - startTime}ms)`);
     console.error("[GraphStorageLibSQL] Initialized with xxHash");
   }
 
@@ -105,6 +109,8 @@ export class GraphStorageLibSQL implements GraphStorage {
   }
 
   async insertEntities(entities: Entity[]): Promise<BatchResult> {
+    const startTime = Date.now();
+    logger.trace("STORAGE", `[GraphStorageLibSQL] ▶ insertEntities (${entities.length} entities)`);
     const now = Date.now();
 
     // Deduplicate
@@ -129,7 +135,12 @@ export class GraphStorageLibSQL implements GraphStorage {
       updatedAt: entity.updatedAt || now,
     }));
 
-    return await this.adapter.insertEntities(entitiesWithIds);
+    const result = await this.adapter.insertEntities(entitiesWithIds);
+    logger.trace(
+      "STORAGE",
+      `[GraphStorageLibSQL] ◀ insertEntities (${unique.length} unique, ${Date.now() - startTime}ms)`,
+    );
+    return result;
   }
 
   async updateEntity(id: string, updates: Partial<Entity>): Promise<void> {
@@ -237,12 +248,19 @@ export class GraphStorageLibSQL implements GraphStorage {
   }
 
   async searchEntities(options: {
-    namePattern?: string;
-    types?: EntityType[];
-    filePath?: string;
+    namePattern?: string | undefined;
+    types?: EntityType[] | undefined;
+    filePath?: string | undefined;
     limit?: number;
   }): Promise<Entity[]> {
     return await this.adapter.searchEntities(options);
+  }
+
+  /**
+   * Search entities by directory path (LIKE pattern)
+   */
+  async searchEntitiesInDirectory(directoryPath: string): Promise<Entity[]> {
+    return await this.adapter.searchEntitiesInDirectory(directoryPath);
   }
 
   // ===========================================================================
@@ -260,15 +278,38 @@ export class GraphStorageLibSQL implements GraphStorage {
     };
 
     await this.adapter.insertRelationship(relWithId);
+
+    // Generate and insert reverse relationship for bidirectional tracing
+    const reverseRels = this.generateReverseRelationships([relationship]);
+    for (const rev of reverseRels) {
+      const revWithId: Relationship = {
+        ...rev,
+        id: this.stableRelationshipId(rev),
+        createdAt: now,
+      };
+      await this.adapter.insertRelationship(revWithId);
+    }
   }
 
   async insertRelationships(relationships: Relationship[]): Promise<BatchResult> {
+    const startTime = Date.now();
+    logger.trace("STORAGE", `[GraphStorageLibSQL] ▶ insertRelationships (${relationships.length} relationships)`);
     const now = Date.now();
 
     // Deduplicate
     const seen = new Set<string>();
     const unique: Relationship[] = [];
     for (const r of relationships) {
+      const key = this.relationshipKey(r);
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(r);
+      }
+    }
+
+    // Generate reverse relationships for bidirectional tracing
+    const reverseRelationships = this.generateReverseRelationships(unique);
+    for (const r of reverseRelationships) {
       const key = this.relationshipKey(r);
       if (!seen.has(key)) {
         seen.add(key);
@@ -283,7 +324,62 @@ export class GraphStorageLibSQL implements GraphStorage {
       createdAt: r.createdAt ?? now,
     }));
 
-    return await this.adapter.insertRelationships(relsWithIds);
+    const result = await this.adapter.insertRelationships(relsWithIds);
+    logger.trace(
+      "STORAGE",
+      `[GraphStorageLibSQL] ◀ insertRelationships (${unique.length} unique, ${Date.now() - startTime}ms)`,
+    );
+    return result;
+  }
+
+  /**
+   * Generate reverse relationships for bidirectional graph traversal
+   * For each A → calls → B, creates B → called_by → A
+   */
+  private generateReverseRelationships(relationships: Relationship[]): Relationship[] {
+    const reverseMap: Record<RelationType, RelationType | null> = {
+      [RelationType.CALLS]: RelationType.CALLED_BY,
+      [RelationType.IMPORTS]: RelationType.IMPORTED_BY,
+      [RelationType.REFERENCES]: RelationType.REFERENCED_BY,
+      [RelationType.EXTENDS]: RelationType.EXTENDED_BY,
+      [RelationType.IMPLEMENTS]: RelationType.IMPLEMENTED_BY,
+      // No reverse for these (already bidirectional or self-referential)
+      [RelationType.CALLED_BY]: null,
+      [RelationType.IMPORTED_BY]: null,
+      [RelationType.REFERENCED_BY]: null,
+      [RelationType.EXTENDED_BY]: null,
+      [RelationType.IMPLEMENTED_BY]: null,
+      [RelationType.EXPORTS]: null,
+      [RelationType.CONTAINS]: null,
+      [RelationType.DEPENDS_ON]: null,
+      [RelationType.DOCUMENTS]: null,
+      [RelationType.DISPATCHES_ACTION]: null,
+      [RelationType.LISTENS_TO_ACTION]: null,
+      [RelationType.HANDLES_ACTION]: null,
+      [RelationType.SELECTS_STATE]: null,
+      [RelationType.MODIFIES_STATE]: null,
+    };
+
+    const reverse: Relationship[] = [];
+
+    for (const r of relationships) {
+      const reverseType = reverseMap[r.type];
+      if (reverseType) {
+        reverse.push({
+          id: "", // Will be assigned by stableRelationshipId
+          fromId: r.toId,
+          toId: r.fromId,
+          type: reverseType,
+          metadata: {
+            ...r.metadata,
+            isReverse: true,
+            originalType: r.type,
+          },
+        });
+      }
+    }
+
+    return reverse;
   }
 
   async deleteRelationship(id: string): Promise<void> {
@@ -309,7 +405,7 @@ export class GraphStorageLibSQL implements GraphStorage {
   async getRelationshipsFromBranch(
     entityId: string,
     targetBranch: string,
-    type?: RelationType,
+    type?: RelationType | undefined,
   ): Promise<Relationship[]> {
     const currentContext = this.adapter.getProjectContext();
     this.adapter.setProjectContext({
@@ -475,8 +571,33 @@ export class GraphStorageLibSQL implements GraphStorage {
   // PROJECT METADATA
   // ===========================================================================
 
-  async updateProjectMetadata(projectPath: string): Promise<void> {
-    await this.adapter.updateProjectMetadata(projectPath);
+  async updateProjectMetadata(projectPath: string, isFullIndex = false): Promise<void> {
+    await this.adapter.updateProjectMetadata(projectPath, isFullIndex);
+  }
+
+  /**
+   * Get incremental tracking info for deciding if full rebuild is needed
+   */
+  async getIncrementalTrackingInfo(): Promise<{
+    lastFullIndexAt: number;
+    incrementalChangesCount: number;
+    totalFiles: number;
+  }> {
+    return await this.adapter.getIncrementalTrackingInfo();
+  }
+
+  /**
+   * Record incremental file changes after an incremental update
+   */
+  async recordIncrementalChanges(changedFileCount: number): Promise<void> {
+    await this.adapter.recordIncrementalChanges(changedFileCount);
+  }
+
+  /**
+   * Reset incremental tracking after a full index
+   */
+  async resetIncrementalTracking(): Promise<void> {
+    await this.adapter.resetIncrementalTracking();
   }
 
   async listProjects(): Promise<

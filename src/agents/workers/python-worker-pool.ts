@@ -14,6 +14,17 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -36,10 +47,10 @@ interface WorkerState {
 interface PendingTask {
   id: string;
   files: string[];
-  options?: ParserOptions;
+  options?: ParserOptions | undefined;
   resolve: (results: ParseResult[]) => void;
   reject: (error: Error) => void;
-  timeout?: NodeJS.Timeout;
+  abortController?: AbortController | undefined;
 }
 
 interface PythonPoolStats {
@@ -145,9 +156,12 @@ export class PythonWorkerPool {
           this.workers.delete(workerId);
         });
 
-        // Wait for ready signal
+        // Wait for ready signal with timeout
+        const abortController = new AbortController();
+
         const readyHandler = (message: any) => {
           if (message.type === "ready") {
+            abortController.abort();
             this.workers.set(workerId, state);
             worker.off("message", readyHandler);
             resolve();
@@ -155,13 +169,15 @@ export class PythonWorkerPool {
         };
         worker.on("message", readyHandler);
 
-        // Timeout if worker doesn't become ready
-        setTimeout(() => {
-          if (!this.workers.has(workerId)) {
+        // Async timeout using sleep pattern (Bun compatible)
+        (async () => {
+          await sleep(10000); // Longer timeout for Python worker initialization
+          if (!abortController.signal.aborted && !this.workers.has(workerId)) {
+            worker.off("message", readyHandler);
             worker.terminate();
             reject(new Error(`Python worker ${workerId} initialization timeout`));
           }
-        }, 10000); // Longer timeout for Python worker initialization
+        })();
       } catch (error) {
         reject(error);
       }
@@ -187,18 +203,24 @@ export class PythonWorkerPool {
     const taskId = `python-task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     return new Promise((resolve, reject) => {
+      const abortController = new AbortController();
+
       const task: PendingTask = {
         id: taskId,
         files: pythonFiles,
         options,
         resolve,
         reject,
+        abortController,
       };
 
-      // Set task timeout
-      task.timeout = setTimeout(() => {
-        this.handleTaskTimeout(taskId);
-      }, this.taskTimeout);
+      // Set task timeout using async sleep pattern (Bun compatible)
+      (async () => {
+        await sleep(this.taskTimeout);
+        if (!abortController.signal.aborted) {
+          this.handleTaskTimeout(taskId);
+        }
+      })();
 
       this.pendingTasks.set(taskId, task);
 
@@ -282,9 +304,9 @@ export class PythonWorkerPool {
     const task = this.pendingTasks.get(result.taskId);
     if (!task) return;
 
-    // Clear timeout
-    if (task.timeout) {
-      clearTimeout(task.timeout);
+    // Abort timeout
+    if (task.abortController) {
+      task.abortController.abort();
     }
 
     // Update worker state
@@ -319,8 +341,8 @@ export class PythonWorkerPool {
     const task = this.pendingTasks.get(taskId);
     if (!task) return;
 
-    if (task.timeout) {
-      clearTimeout(task.timeout);
+    if (task.abortController) {
+      task.abortController.abort();
     }
 
     this.failedTasks++;
@@ -410,12 +432,22 @@ export class PythonWorkerPool {
     for (const [_workerId, state] of this.workers) {
       shutdownPromises.push(
         new Promise((resolve) => {
+          const abortController = new AbortController();
+
           state.worker.postMessage({ type: "shutdown" });
-          state.worker.once("exit", () => resolve());
-          setTimeout(() => {
-            state.worker.terminate();
+          state.worker.once("exit", () => {
+            abortController.abort();
             resolve();
-          }, 5000);
+          });
+
+          // Async timeout using sleep pattern (Bun compatible)
+          (async () => {
+            await sleep(5000);
+            if (!abortController.signal.aborted) {
+              state.worker.terminate();
+              resolve();
+            }
+          })();
         }),
       );
     }

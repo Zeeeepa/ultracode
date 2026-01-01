@@ -18,7 +18,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { SQLiteDatabase, SQLiteStatement } from "../storage/sqlite-adapter.js";
-import { loadSQLiteModule } from "../storage/sqlite-adapter.js";
+import { isSyncSQLiteAvailable, loadSQLiteModule } from "../storage/sqlite-adapter.js";
 import { VectorDelta } from "./vector-delta.js";
 
 // =============================================================================
@@ -104,17 +104,28 @@ function deserializeVectorMap(buffer: Buffer): Map<string, Float32Array> {
 // =============================================================================
 
 export class VectorCacheManager {
-  private db: SQLiteDatabase;
-  private dbPath: string;
+  private db: SQLiteDatabase | null = null;
+  private dbPath: string = "";
+  private useInMemoryOnly: boolean = false;
 
-  // Prepared statements
+  // In-memory fallback for Node.js
+  private memoryCache: Map<string, VectorDelta> = new Map();
+
+  // Prepared statements (only used with SQLite)
   private insertStmt: SQLiteStatement | null = null;
   private selectStmt: SQLiteStatement | null = null;
   private deleteStmt: SQLiteStatement | null = null;
   private listStmt: SQLiteStatement | null = null;
 
   constructor(workingDirectory: string) {
-    // Use centralized storage
+    // Check if sync SQLite is available (Bun only)
+    if (!isSyncSQLiteAvailable()) {
+      this.useInMemoryOnly = true;
+      console.error(`[VectorCacheManager] Sync SQLite not available (Node.js), using in-memory only`);
+      return;
+    }
+
+    // Bun path: use bun:sqlite for persistent storage
     const { getProjectPaths, ensureProjectDir } = require("../shared/storage-paths.js");
     ensureProjectDir(workingDirectory);
     const paths = getProjectPaths(workingDirectory);
@@ -136,10 +147,12 @@ export class VectorCacheManager {
   }
 
   // =========================================================================
-  // SCHEMA INITIALIZATION
+  // SCHEMA INITIALIZATION (SQLite mode only)
   // =========================================================================
 
   private initializeSchema(): void {
+    if (!this.db) return;
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS vector_deltas (
         branch_name TEXT PRIMARY KEY,
@@ -173,6 +186,8 @@ export class VectorCacheManager {
   }
 
   private prepareStatements(): void {
+    if (!this.db) return;
+
     // Insert or replace
     this.insertStmt = this.db.prepare(`
       INSERT OR REPLACE INTO vector_deltas (
@@ -198,13 +213,24 @@ export class VectorCacheManager {
   }
 
   // =========================================================================
-  // SAVE / LOAD OPERATIONS
+  // SAVE / LOAD OPERATIONS (dual-mode: SQLite or in-memory)
   // =========================================================================
 
   /**
-   * Save vector delta to SQLite
+   * Save vector delta
    */
   async saveVectorDelta(delta: VectorDelta): Promise<void> {
+    // In-memory mode (Node.js)
+    if (this.useInMemoryOnly) {
+      this.memoryCache.set(delta.branchName, delta);
+      console.error(
+        `[VectorCacheManager] Saved delta in-memory for branch: ${delta.branchName} ` +
+          `(${delta.totalChanges} changes)`,
+      );
+      return;
+    }
+
+    // SQLite mode (Bun)
     if (!this.insertStmt) {
       throw new Error("VectorCacheManager not initialized");
     }
@@ -238,9 +264,15 @@ export class VectorCacheManager {
   }
 
   /**
-   * Load vector delta from SQLite
+   * Load vector delta
    */
   async loadVectorDelta(branchName: string): Promise<VectorDelta | null> {
+    // In-memory mode (Node.js)
+    if (this.useInMemoryOnly) {
+      return this.memoryCache.get(branchName) || null;
+    }
+
+    // SQLite mode (Bun)
     if (!this.selectStmt) {
       throw new Error("VectorCacheManager not initialized");
     }
@@ -290,6 +322,14 @@ export class VectorCacheManager {
    * Delete vector delta
    */
   async deleteVectorDelta(branchName: string): Promise<void> {
+    // In-memory mode (Node.js)
+    if (this.useInMemoryOnly) {
+      this.memoryCache.delete(branchName);
+      console.error(`[VectorCacheManager] Deleted delta in-memory for branch: ${branchName}`);
+      return;
+    }
+
+    // SQLite mode (Bun)
     if (!this.deleteStmt) {
       throw new Error("VectorCacheManager not initialized");
     }
@@ -307,6 +347,12 @@ export class VectorCacheManager {
    * Get all cached branch names
    */
   async getCachedBranches(): Promise<string[]> {
+    // In-memory mode (Node.js)
+    if (this.useInMemoryOnly) {
+      return Array.from(this.memoryCache.keys());
+    }
+
+    // SQLite mode (Bun)
     if (!this.listStmt) {
       throw new Error("VectorCacheManager not initialized");
     }
@@ -333,6 +379,23 @@ export class VectorCacheManager {
     totalMemoryUsage: number;
     databaseSize: number;
   } {
+    // In-memory mode (Node.js)
+    if (this.useInMemoryOnly || !this.db) {
+      let totalChanges = 0;
+      let totalMemory = 0;
+      for (const delta of this.memoryCache.values()) {
+        totalChanges += delta.totalChanges;
+        totalMemory += delta.getMemoryUsage();
+      }
+      return {
+        totalBranches: this.memoryCache.size,
+        totalChanges,
+        totalMemoryUsage: totalMemory,
+        databaseSize: 0,
+      };
+    }
+
+    // SQLite mode (Bun)
     const stmt = this.db.prepare(`
       SELECT
         COUNT(*) as total_branches,
@@ -365,6 +428,8 @@ export class VectorCacheManager {
    * Compact database (VACUUM)
    */
   compact(): void {
+    if (!this.db) return;
+
     console.error("[VectorCacheManager] Compacting database...");
 
     try {
@@ -379,6 +444,8 @@ export class VectorCacheManager {
    * Delete old deltas (older than N days)
    */
   async deleteOldDeltas(olderThanDays: number = 30): Promise<number> {
+    if (!this.db) return 0;
+
     const cutoffTime = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
 
     try {
@@ -409,6 +476,18 @@ export class VectorCacheManager {
     memoryUsage: number;
     lastModified: number;
   } | null {
+    if (!this.db) {
+      const delta = this.memoryCache.get(branchName);
+      if (!delta) return null;
+      return {
+        branch: branchName,
+        totalChanges: delta.totalChanges,
+        dimension: delta.getDimension(),
+        memoryUsage: delta.getMemoryUsage(),
+        lastModified: delta.lastModified,
+      };
+    }
+
     try {
       const stmt = this.db.prepare(`
         SELECT branch_name, total_changes, dimension, memory_usage, last_modified

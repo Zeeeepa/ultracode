@@ -47,9 +47,9 @@ export type { Entity, Relationship } from "./storage.js";
 export interface EntityFilter {
   id?: string | string[];
   name?: string | RegExp;
-  type?: EntityType | EntityType[];
+  type?: EntityType | EntityType[] | undefined;
   filePath?: string | string[];
-  namePattern?: string;
+  namePattern?: string | undefined;
   hasRelationType?: RelationType;
 }
 
@@ -204,7 +204,7 @@ export interface OptimizedQuery {
   sql: string;
   params?: unknown[];
   estimatedCost: number;
-  useIndex?: string;
+  useIndex?: string | undefined;
 }
 
 /**

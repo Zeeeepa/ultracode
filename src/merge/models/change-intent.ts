@@ -33,7 +33,7 @@ export interface ChangeEvidence {
   type: EvidenceType;
   description: string;
   location?: string; // Где найдено (file:line)
-  snippet?: string; // Фрагмент кода
+  snippet?: string | undefined; // Фрагмент кода
 }
 
 export enum EvidenceType {

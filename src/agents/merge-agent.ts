@@ -23,11 +23,11 @@ import { BaseAgent } from "./base.js";
 
 export interface MergeAgentConfig {
   repoPath: string;
-  fastPathEnabled?: boolean;
+  fastPathEnabled?: boolean | undefined;
   semanticMatchingEnabled?: boolean;
   semanticThreshold?: number;
   autoResolveConflicts?: boolean;
-  maxConcurrency?: number;
+  maxConcurrency?: number | undefined;
   branchManager?: BranchManager;
   gitIntegration?: GitIntegration;
 }
@@ -35,8 +35,8 @@ export interface MergeAgentConfig {
 export interface SemanticMergeOptions {
   branchA: string;
   branchB: string;
-  dryRun?: boolean; // Preview only, don't apply changes
-  autoResolve?: boolean; // Auto-resolve compatible conflicts
+  dryRun?: boolean | undefined; // Preview only, don't apply changes
+  autoResolve?: boolean | undefined; // Auto-resolve compatible conflicts
   includeAISuggestions?: boolean; // Generate AI suggestions for conflicts
 }
 
@@ -114,18 +114,18 @@ export class MergeAgent extends BaseAgent {
       case "merge":
       case "merge:perform":
         return await this.performSemanticMerge({
-          branchA: payload.branchA as string,
-          branchB: payload.branchB as string,
-          dryRun: payload.dryRun as boolean | undefined,
-          autoResolve: payload.autoResolve as boolean | undefined,
-          includeAISuggestions: payload.includeAISuggestions as boolean | undefined,
+          branchA: payload["branchA"] as string,
+          branchB: payload["branchB"] as string,
+          dryRun: payload["dryRun"] as boolean | undefined,
+          autoResolve: payload["autoResolve"] as boolean | undefined,
+          includeAISuggestions: payload["includeAISuggestions"] as boolean | undefined,
         });
 
       case "merge:analyze":
-        return await this.analyzeConflicts(payload.branchA as string, payload.branchB as string);
+        return await this.analyzeConflicts(payload["branchA"] as string, payload["branchB"] as string);
 
       case "merge:suggestions":
-        return await this.getSuggestions(payload.conflict as SemanticConflict);
+        return await this.getSuggestions(payload["conflict"] as SemanticConflict);
 
       default:
         throw new Error(`Unknown task type: ${task.type}`);

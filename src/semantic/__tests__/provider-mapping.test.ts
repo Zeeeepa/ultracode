@@ -151,24 +151,19 @@ describe("Provider Configuration Mapping", () => {
       expect(ollamaConfig.pullTimeoutMs).toBe(180000);
     });
 
-    it("should correctly map Memory configuration", () => {
+    it("should correctly map Auto provider configuration", () => {
       const testConfig = {
         mcp: {
           embedding: {
-            provider: "memory",
-            model: "memory-model",
-            memory: {
-              dimension: 512,
-            },
+            provider: "auto",
+            model: "all-MiniLM-L6-v2",
           },
         },
       };
 
       const embeddingConfig = testConfig.mcp.embedding;
-      expect(embeddingConfig.memory).toBeDefined();
-
-      const memoryConfig = embeddingConfig.memory!;
-      expect(memoryConfig.dimension).toBe(512);
+      expect(embeddingConfig.provider).toBe("auto");
+      expect(embeddingConfig.model).toBe("all-MiniLM-L6-v2");
     });
   });
 
@@ -280,14 +275,13 @@ describe("Provider Configuration Mapping", () => {
       }).not.toThrow();
     });
 
-    it("should initialize EmbeddingGenerator with memory provider", () => {
+    it("should initialize EmbeddingGenerator with auto provider", () => {
       const generatorOptions = {
-        provider: "memory" as const,
-        modelName: "test-model",
+        provider: "auto" as const,
+        modelName: "all-MiniLM-L6-v2",
         quantized: false,
         localPath: "./models",
         batchSize: 8,
-        memory: { dimension: 384 },
       };
 
       expect(() => {
@@ -317,7 +311,7 @@ describe("Provider Configuration Mapping", () => {
           modelName: embeddingConfig.model || "BAAI/bge-m3",
           cloudru: {
             baseUrl: embeddingConfig.cloudru.baseUrl || "https://foundation-models.api.cloud.ru",
-            apiKey: embeddingConfig.cloudru.apiKey || process.env.MCP_EMBEDDING_API_KEY || "",
+            apiKey: embeddingConfig.cloudru.apiKey || process.env["MCP_EMBEDDING_API_KEY"] || "",
             timeoutMs: embeddingConfig.cloudru.timeout || 15000,
             concurrency: embeddingConfig.cloudru.concurrency || 4,
           },

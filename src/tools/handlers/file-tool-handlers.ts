@@ -2,7 +2,7 @@
  * File Tool Handlers
  *
  * Handlers for file modification operations:
- * - modify_entity_code (modify_code alias)
+ * - modify_code
  * - copy_file
  * - rename_file
  * - split_file
@@ -119,7 +119,7 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
       // Include validation report if available
       if (result.validationReport) {
         const { before, after } = result.validationReport;
-        response.validation = {
+        response["validation"] = {
           before: before,
           after: after,
           improved: (after?.summary?.errors ?? 0) < (before?.summary?.errors ?? 0),
@@ -130,7 +130,7 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
       if (impactResult) {
         const formattedImpact = formatImpactForResponse(impactResult);
         if (formattedImpact) {
-          response.impactAnalysis = formattedImpact;
+          response["impactAnalysis"] = formattedImpact;
         }
       }
 
@@ -611,7 +611,7 @@ export class CreateFileToolHandler extends BaseToolHandler<z.infer<typeof Create
             const impact = await impactAnalyzer.analyzeNewFileImpact(filePath, entityNames);
             const formattedImpact = formatImpactForResponse(impact);
             if (formattedImpact) {
-              response.impactAnalysis = formattedImpact;
+              response["impactAnalysis"] = formattedImpact;
             }
           }
         } catch {
@@ -714,7 +714,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
       };
 
       if (impactInfo) {
-        response.impactAnalysis = impactInfo;
+        response["impactAnalysis"] = impactInfo;
       }
 
       return {
@@ -761,7 +761,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
       };
 
       if (impactInfo) {
-        response.impactAnalysis = impactInfo;
+        response["impactAnalysis"] = impactInfo;
       }
 
       return {
@@ -918,7 +918,7 @@ export class AddMemberToolHandler extends BaseToolHandler<z.infer<typeof AddMemb
         const impact = await impactAnalyzer.analyzeModificationImpact(entity.id);
         const formattedImpact = formatImpactForResponse(impact);
         if (formattedImpact) {
-          response.impactAnalysis = formattedImpact;
+          response["impactAnalysis"] = formattedImpact;
         }
       } catch {
         // Impact analysis failed silently

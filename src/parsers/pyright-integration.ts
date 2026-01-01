@@ -15,6 +15,17 @@
 import { spawn } from "node:child_process";
 import type { ParsedEntity } from "../types/parser.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -30,7 +41,7 @@ export interface PyrightDiagnostic {
     start: { line: number; character: number };
     end: { line: number; character: number };
   };
-  rule?: string;
+  rule?: string | undefined;
 }
 
 /**
@@ -66,7 +77,7 @@ export interface PythonTypeInfo {
   diagnostics?: Array<{
     severity: "error" | "warning" | "information";
     message: string;
-    rule?: string;
+    rule?: string | undefined;
   }>;
 }
 
@@ -110,36 +121,39 @@ async function findPyright(): Promise<string | null> {
 /**
  * Check if a command is available
  */
-function checkCommand(cmd: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const parts = cmd.split(" ");
-    const command = parts[0];
-    if (!command) {
-      resolve(false);
-      return;
-    }
+async function checkCommand(cmd: string): Promise<boolean> {
+  const parts = cmd.split(" ");
+  const command = parts[0];
+  if (!command) return false;
 
-    const proc = spawn(command, [...parts.slice(1), "--version"], {
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+  const proc = spawn(command, [...parts.slice(1), "--version"], {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
 
-    let timeoutHandle: NodeJS.Timeout | undefined;
-    timeoutHandle = setTimeout(() => {
-      proc.kill();
-      resolve(false);
-    }, 5000);
+  const abortController = new AbortController();
 
+  const resultPromise = new Promise<boolean>((resolve) => {
     proc.on("error", () => {
-      clearTimeout(timeoutHandle);
+      abortController.abort();
       resolve(false);
     });
-
     proc.on("close", (code: number | null) => {
-      clearTimeout(timeoutHandle);
+      abortController.abort();
       resolve(code === 0);
     });
   });
+
+  const timeoutPromise = (async (): Promise<boolean> => {
+    await sleep(5000);
+    if (!abortController.signal.aborted) {
+      proc.kill();
+      return false;
+    }
+    return new Promise(() => {});
+  })();
+
+  return Promise.race([resultPromise, timeoutPromise]);
 }
 
 /**
@@ -151,7 +165,7 @@ export async function runPyrightAnalysis(
     /** Use basic mode (faster) */
     basic?: boolean;
     /** Timeout in milliseconds */
-    timeout?: number;
+    timeout?: number | undefined;
   } = {},
 ): Promise<PyrightOutput | null> {
   const pyright = await findPyright();
@@ -160,53 +174,34 @@ export async function runPyrightAnalysis(
   }
 
   const { basic = true, timeout = 30000 } = options;
+  const args: string[] = ["--outputjson"];
 
-  return new Promise((resolve) => {
-    const args: string[] = ["--outputjson"];
+  if (basic) {
+    args.push("--level", "basic");
+  }
 
-    if (basic) {
-      args.push("--level", "basic");
-    }
+  args.push(target);
 
-    args.push(target);
+  const parts = pyright.split(" ");
+  const command = parts[0];
+  if (!command) return null;
 
-    const parts = pyright.split(" ");
-    const command = parts[0];
-    if (!command) {
-      resolve(null);
-      return;
-    }
+  const proc = spawn(command, [...parts.slice(1), ...args], {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
 
-    const proc = spawn(command, [...parts.slice(1), ...args], {
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+  let stdout = "";
+  const abortController = new AbortController();
 
-    let stdout = "";
-    let timedOut = false;
+  proc.stdout.on("data", (data: Buffer) => {
+    stdout += data.toString();
+  });
 
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      proc.kill();
-      console.error("[PyrightIntegration] Analysis timed out");
-      resolve(null);
-    }, timeout);
-
-    proc.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    proc.stderr.on("data", (_data: Buffer) => {
-      // Ignore stderr
-    });
-
+  const resultPromise = new Promise<PyrightOutput | null>((resolve) => {
     proc.on("close", (_code: number | null) => {
-      clearTimeout(timeoutId);
-
-      if (timedOut) return;
-
+      abortController.abort();
       try {
-        // Pyright outputs JSON even on errors
         const output = JSON.parse(stdout);
         resolve(output as PyrightOutput);
       } catch (e) {
@@ -216,11 +211,23 @@ export async function runPyrightAnalysis(
     });
 
     proc.on("error", (err: Error) => {
-      clearTimeout(timeoutId);
+      abortController.abort();
       console.error("[PyrightIntegration] Spawn error:", err);
       resolve(null);
     });
   });
+
+  const timeoutPromise = (async (): Promise<PyrightOutput | null> => {
+    await sleep(timeout);
+    if (!abortController.signal.aborted) {
+      proc.kill();
+      console.error("[PyrightIntegration] Analysis timed out");
+      return null;
+    }
+    return new Promise(() => {});
+  })();
+
+  return Promise.race([resultPromise, timeoutPromise]);
 }
 
 /**

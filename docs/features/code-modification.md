@@ -2441,7 +2441,7 @@ async createGitSnapshot(description: string, files?: string[]): Promise<string> 
 
 **MCP Tools:**
 - `create_snapshot`
-- `rollback_snapshot`
+- `undo`
 - `list_snapshots`
 - `cleanup_snapshots`
 
@@ -2506,7 +2506,7 @@ async createGitSnapshot(description: string, files?: string[]): Promise<string> 
 - `src/modification/code-modifier.ts` (~700 lines)
 
 **MCP Tools:**
-- `modify_entity_code`
+- `modify_code`
 
 ---
 

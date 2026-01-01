@@ -225,8 +225,8 @@ export async function batchGenerateDocs(
   llm: LLMProvider,
   modules: ModuleInfo[],
   options?: {
-    concurrency?: number;
-    language?: string;
+    concurrency?: number | undefined;
+    language?: string | undefined;
     onProgress?: (completed: number, total: number) => void;
   },
 ): Promise<Map<string, string>> {

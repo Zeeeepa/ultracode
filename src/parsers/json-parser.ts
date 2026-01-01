@@ -250,7 +250,7 @@ export class JsonParser {
       const schema = schemas[name] as Record<string, JsonValue>;
       const location = this.findKeyLocation(lines, `"${name}"`, 0);
 
-      const properties = schema.properties as Record<string, JsonValue> | undefined;
+      const properties = schema["properties"] as Record<string, JsonValue> | undefined;
       const sortedProps = properties ? Object.keys(properties).sort() : [];
 
       const entity: ParsedEntity = {
@@ -259,19 +259,19 @@ export class JsonParser {
         filePath,
         location,
         metadata: {
-          schemaType: schema.type,
-          description: schema.description,
-          required: schema.required,
+          schemaType: schema["type"],
+          description: schema["description"],
+          required: schema["required"],
           properties: sortedProps.map((prop) => {
             const propDef = (properties as Record<string, Record<string, JsonValue>>)[prop];
             return {
               name: prop,
-              type: propDef?.type || propDef?.$ref,
-              description: propDef?.description,
-              required: Array.isArray(schema.required) && schema.required.includes(prop),
+              type: propDef?.["type"] || propDef?.["$ref"],
+              description: propDef?.["description"],
+              required: Array.isArray(schema["required"]) && schema["required"].includes(prop),
             };
           }),
-          enum: schema.enum,
+          enum: schema["enum"],
         },
       };
 
@@ -296,7 +296,7 @@ export class JsonParser {
         if (Array.isArray(composition)) {
           for (const item of composition) {
             if (typeof item === "object" && item !== null && "$ref" in item) {
-              const itemRef = (item as Record<string, string>).$ref;
+              const itemRef = (item as Record<string, string>)["$ref"];
               if (typeof itemRef !== "string") continue;
               const refName = this.extractRefName(itemRef);
               if (refName) {
@@ -320,12 +320,12 @@ export class JsonParser {
     return params
       .filter((p): p is Record<string, JsonValue> => typeof p === "object" && p !== null)
       .map((p) => {
-        const schema = p.schema as Record<string, JsonValue> | undefined;
+        const schema = p["schema"] as Record<string, JsonValue> | undefined;
         return {
-          name: String(p.name || ""),
-          in: String(p.in || ""),
-          type: String(p.type || schema?.type || ""),
-          required: Boolean(p.required),
+          name: String(p["name"] || ""),
+          in: String(p["in"] || ""),
+          type: String(p["type"] || schema?.["type"] || ""),
+          required: Boolean(p["required"]),
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -335,17 +335,17 @@ export class JsonParser {
     if (!body || typeof body !== "object") return undefined;
 
     const bodyObj = body as Record<string, JsonValue>;
-    const content = bodyObj.content as Record<string, JsonValue> | undefined;
+    const content = bodyObj["content"] as Record<string, JsonValue> | undefined;
 
     if (content) {
       const contentTypes = Object.keys(content);
       const firstType = contentTypes[0];
       if (firstType) {
         const mediaType = content[firstType] as Record<string, JsonValue>;
-        const schema = mediaType?.schema as Record<string, string> | undefined;
+        const schema = mediaType?.["schema"] as Record<string, string> | undefined;
         return {
           contentType: firstType,
-          schema: schema?.$ref ? this.extractRefName(schema.$ref) || "" : String(schema?.type || ""),
+          schema: schema?.["$ref"] ? this.extractRefName(schema["$ref"]) || "" : String(schema?.["type"] || ""),
         };
       }
     }
@@ -363,15 +363,15 @@ export class JsonParser {
 
     for (const code of Object.keys(responsesObj).sort()) {
       const resp = responsesObj[code] as Record<string, JsonValue>;
-      const respContent = resp.content as Record<string, Record<string, JsonValue>> | undefined;
+      const respContent = resp["content"] as Record<string, Record<string, JsonValue>> | undefined;
       const jsonContent = respContent?.["application/json"];
       const schema =
-        (jsonContent?.schema as Record<string, string>) || (resp.schema as Record<string, string> | undefined);
+        (jsonContent?.["schema"] as Record<string, string>) || (resp["schema"] as Record<string, string> | undefined);
 
       result.push({
         code,
-        description: String(resp.description || ""),
-        schema: schema?.$ref ? this.extractRefName(schema.$ref) : undefined,
+        description: String(resp["description"] || ""),
+        schema: schema?.["$ref"] ? this.extractRefName(schema["$ref"]) : undefined,
       });
     }
 
@@ -387,8 +387,8 @@ export class JsonParser {
       }
     } else {
       const record = obj as Record<string, JsonValue>;
-      if (record.$ref && typeof record.$ref === "string") {
-        const refName = this.extractRefName(record.$ref);
+      if (record["$ref"] && typeof record["$ref"] === "string") {
+        const refName = this.extractRefName(record["$ref"]);
         if (refName) refs.add(refName);
       }
 

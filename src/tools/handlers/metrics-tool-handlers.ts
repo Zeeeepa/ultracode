@@ -94,7 +94,7 @@ export class GetVersionToolHandler extends BaseToolHandler<z.infer<typeof GetVer
       let name = "ultrascript-tools-mcp";
 
       try {
-        const pkg = (await readJSON(packagePath)) as { name?: string; version?: string };
+        const pkg = (await readJSON(packagePath)) as { name?: string | undefined; version?: string };
         version = pkg.version || version;
         name = pkg.name || name;
       } catch {

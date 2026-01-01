@@ -24,7 +24,7 @@
 import { cpus } from "node:os";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 import { readFilesParallel, readText } from "../../utils/file-ops.js";
-import { fastParse, fastParseBatch } from "./swc-fast-parser.js";
+import { fastParse, fastParseBatch } from "./oxc-fast-parser.js";
 import type { BatchStrategy, MultiPassConfig, QuickParseResult } from "./types.js";
 
 // Lazy imports for TypeScript parser (heavy)
@@ -52,7 +52,7 @@ export class MultiPassOrchestrator {
     this.config = {
       enableFastPass: true,
       detailedThreshold: 50,
-      swcConcurrency: Math.min(cpus().length * 2, 16),
+      oxcConcurrency: Math.min(cpus().length * 2, 16),
       tsConcurrency: Math.min(cpus().length, 8), // Parallelism for TS API
       workerPoolSize: Math.min(cpus().length * 2, 16),
       cacheQuickResults: true,
@@ -66,9 +66,9 @@ export class MultiPassOrchestrator {
    * Initialize orchestrator (lazy load TS parser)
    */
   async initialize(): Promise<void> {
-    // Pre-warm SWC by parsing a dummy file
+    // Pre-warm OXC by parsing a dummy file
     await fastParse("warmup.ts", "const x = 1;");
-    console.error("[MultiPassOrchestrator] SWC warmed up");
+    console.error("[MultiPassOrchestrator] OXC warmed up");
   }
 
   /**
@@ -152,8 +152,8 @@ export class MultiPassOrchestrator {
       content: contents[i] || "",
     }));
 
-    // Fast parse with SWC (keep content for reuse in detailed pass)
-    const results = await fastParseBatch(filesToParse, this.config.swcConcurrency, { keepContent: true });
+    // Fast parse with OXC (keep content for reuse in detailed pass)
+    const results = await fastParseBatch(filesToParse, this.config.oxcConcurrency, { keepContent: true });
 
     // Cache results
     if (this.config.cacheQuickResults) {

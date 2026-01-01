@@ -23,7 +23,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
 // Circuit breaker constants
@@ -39,7 +39,7 @@ export class GoAnalyzer {
     return !!name && /^[A-Z]/.test(name);
   }
 
-  private collectIdentifiersFromNameField(nameField: TreeSitterNode | null): string[] {
+  private collectIdentifiersFromNameField(nameField: ASTNode | null): string[] {
     if (!nameField) return [];
     if (nameField.type === "identifier") return [nameField.text];
     if (nameField.type === "identifier_list") {
@@ -52,7 +52,7 @@ export class GoAnalyzer {
    * Main entry point for analyzing Go code
    */
   async analyze(
-    rootNode: TreeSitterNode,
+    rootNode: ASTNode,
     filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
     this.resetState();
@@ -88,7 +88,7 @@ export class GoAnalyzer {
    * Extract entities from Go AST
    */
   private extractEntities(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -175,7 +175,7 @@ export class GoAnalyzer {
   /**
    * Extract package name from package clause
    */
-  private getPackageName(node: TreeSitterNode): string | null {
+  private getPackageName(node: ASTNode): string | null {
     const identifierNode = node.childForFieldName("name");
     if (identifierNode && typeof identifierNode.text === "string" && identifierNode.text.length) {
       return identifierNode.text;
@@ -201,14 +201,14 @@ export class GoAnalyzer {
   /**
    * Find all descendants of a given type (safe across implementations)
    */
-  private findDescendantsByType(node: TreeSitterNode, type: string): TreeSitterNode[] {
+  private findDescendantsByType(node: ASTNode, type: string): ASTNode[] {
     if (typeof (node as any).descendantsOfType === "function") {
       try {
         return node.descendantsOfType(type) || [];
       } catch {}
     }
-    const results: TreeSitterNode[] = [];
-    const stack: TreeSitterNode[] = [node];
+    const results: ASTNode[] = [];
+    const stack: ASTNode[] = [node];
     while (stack.length) {
       const n = stack.pop()!;
       if (n.type === type) results.push(n);
@@ -223,7 +223,7 @@ export class GoAnalyzer {
   /**
    * Extract string literal content from node (strip quotes and backticks)
    */
-  private getStringLiteralFromNode(node: TreeSitterNode): string | null {
+  private getStringLiteralFromNode(node: ASTNode): string | null {
     const pathField = node.childForFieldName("path");
     const txt =
       pathField?.text ??
@@ -237,7 +237,7 @@ export class GoAnalyzer {
   /**
    * Extract imports and create relationships
    */
-  private extractImports(node: TreeSitterNode, filePath: string, relationships: EntityRelationship[]): void {
+  private extractImports(node: ASTNode, filePath: string, relationships: EntityRelationship[]): void {
     const packageId = `${filePath}:package:${this.currentPackage || ""}`;
 
     // Собираем import_spec на любом уровне (в т.ч. внутри import (...))
@@ -281,7 +281,7 @@ export class GoAnalyzer {
    * Extract function declaration
    */
   private extractFunction(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -307,14 +307,14 @@ export class GoAnalyzer {
       const parameters = node.childForFieldName("parameters");
       if (parameters) {
         const meta = entity.metadata ?? (entity.metadata = {});
-        meta.parameters = this.extractParameters(parameters);
+        meta["parameters"] = this.extractParameters(parameters);
       }
 
       // Extract return type
       const result = node.childForFieldName("result");
       if (result) {
         const meta = entity.metadata ?? (entity.metadata = {});
-        meta.returnType = result.text;
+        meta["returnType"] = result.text;
       }
 
       entities.push(entity);
@@ -331,7 +331,7 @@ export class GoAnalyzer {
    * Extract method declaration (receiver function)
    */
   private extractMethod(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -362,14 +362,14 @@ export class GoAnalyzer {
       const parameters = node.childForFieldName("parameters");
       if (parameters) {
         const meta = entity.metadata ?? (entity.metadata = {});
-        meta.parameters = this.extractParameters(parameters);
+        meta["parameters"] = this.extractParameters(parameters);
       }
 
       // Extract return type
       const result = node.childForFieldName("result");
       if (result) {
         const meta = entity.metadata ?? (entity.metadata = {});
-        meta.returnType = result.text;
+        meta["returnType"] = result.text;
       }
 
       entities.push(entity);
@@ -397,7 +397,7 @@ export class GoAnalyzer {
   /**
    * Extract receiver type from receiver parameter
    */
-  private extractReceiverType(receiver: TreeSitterNode): string {
+  private extractReceiverType(receiver: ASTNode): string {
     // Look for the type in the receiver parameter list
     const paramDecl = receiver.namedChild(0);
     if (paramDecl) {
@@ -418,7 +418,7 @@ export class GoAnalyzer {
    * Extract type declarations (structs, interfaces, type aliases)
    */
   private extractTypeDeclaration(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -485,7 +485,7 @@ export class GoAnalyzer {
    * Extract struct fields
    */
   private extractStructFields(
-    structNode: TreeSitterNode,
+    structNode: ASTNode,
     structId: string,
     filePath: string,
     entities: ParsedEntity[],
@@ -536,7 +536,7 @@ export class GoAnalyzer {
    * Extract interface methods
    */
   private extractInterfaceMethods(
-    interfaceNode: TreeSitterNode,
+    interfaceNode: ASTNode,
     interfaceId: string,
     filePath: string,
     entities: ParsedEntity[],
@@ -566,14 +566,14 @@ export class GoAnalyzer {
         const parameters = methodSpec.childForFieldName("parameters");
         if (parameters) {
           const meta = methodEntity.metadata ?? (methodEntity.metadata = {});
-          meta.parameters = this.extractParameters(parameters);
+          meta["parameters"] = this.extractParameters(parameters);
         }
 
         // Extract return type
         const result = methodSpec.childForFieldName("result");
         if (result) {
           const meta = methodEntity.metadata ?? (methodEntity.metadata = {});
-          meta.returnType = result.text;
+          meta["returnType"] = result.text;
         }
 
         entities.push(methodEntity);
@@ -595,7 +595,7 @@ export class GoAnalyzer {
    * Extract embedded types (struct embedding/composition)
    */
   private extractEmbeddedTypes(
-    structNode: TreeSitterNode,
+    structNode: ASTNode,
     structId: string,
     filePath: string,
     relationships: EntityRelationship[],
@@ -631,7 +631,7 @@ export class GoAnalyzer {
   /**
    * Extract constants
    */
-  private extractConstant(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
+  private extractConstant(node: ASTNode, filePath: string, entities: ParsedEntity[]): void {
     const constSpecs = node.namedChildren.filter((c) => c.type === "const_spec");
 
     for (const constSpec of constSpecs) {
@@ -660,7 +660,7 @@ export class GoAnalyzer {
   /**
    * Extract variables
    */
-  private extractVariable(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
+  private extractVariable(node: ASTNode, filePath: string, entities: ParsedEntity[]): void {
     const varSpecs = this.findDescendantsByType(node, "var_spec");
 
     for (const varSpec of varSpecs) {
@@ -715,7 +715,7 @@ export class GoAnalyzer {
   /**
    * Extract function parameters
    */
-  private extractParameters(parametersNode: TreeSitterNode): string[] {
+  private extractParameters(parametersNode: ASTNode): string[] {
     const params: string[] = [];
     const paramDecls = parametersNode.namedChildren.filter((c) => c.type === "parameter_declaration");
 
@@ -738,7 +738,7 @@ export class GoAnalyzer {
    * Extract function calls to create relationships
    */
   private extractFunctionCalls(
-    node: TreeSitterNode,
+    node: ASTNode,
     callerId: string,
     filePath: string,
     relationships: EntityRelationship[],

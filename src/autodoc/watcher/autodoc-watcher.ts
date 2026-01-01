@@ -20,6 +20,17 @@ import type { ModuleInfo } from "../generator/doc-generator.js";
 import { updateAutodocContent } from "./autodoc-updater.js";
 import { extractExportsFromFile, getModuleForFile } from "./module-resolver.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 export interface AutoDocWatcherConfig {
   /** Debounce delay in milliseconds (default: 45000 = 45 seconds) */
   debounceMs?: number;
@@ -30,13 +41,13 @@ export interface AutoDocWatcherConfig {
   /** Root directory to watch */
   rootDir: string;
   /** Enable/disable watcher */
-  enabled?: boolean;
+  enabled?: boolean | undefined;
   /** Use LLM for description generation */
-  useLlm?: boolean;
+  useLlm?: boolean | undefined;
   /** LLM provider config */
   llmConfig?: {
     provider: "ollama" | "openai" | "tgi";
-    model?: string;
+    model?: string | undefined;
     endpoint?: string;
   };
 }
@@ -53,11 +64,11 @@ const MODULE_DOC_FILENAME = "AUTODOC.md";
 export class AutoDocWatcher {
   private config: Required<AutoDocWatcherConfig>;
   private pendingUpdates: Map<string, PendingUpdate> = new Map();
-  private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  private debounceControllers: Map<string, AbortController> = new Map();
   private subscriptionId: string | null = null;
   private isProcessing = false;
   private moduleCache: Map<string, ModuleInfo> = new Map();
-  private moduleCacheTimers: Map<string, NodeJS.Timeout> = new Map();
+  private moduleCacheControllers: Map<string, AbortController> = new Map();
 
   constructor(config: AutoDocWatcherConfig) {
     this.config = {
@@ -121,18 +132,18 @@ export class AutoDocWatcher {
     // Remove file-ops hook
     setFileChangeHook(null);
 
-    // Clear all pending timers
-    for (const timer of this.debounceTimers.values()) {
-      clearTimeout(timer);
+    // Abort all pending debounce controllers
+    for (const controller of this.debounceControllers.values()) {
+      controller.abort();
     }
-    this.debounceTimers.clear();
+    this.debounceControllers.clear();
     this.pendingUpdates.clear();
 
-    // Clear module cache timers to prevent memory leaks
-    for (const timer of this.moduleCacheTimers.values()) {
-      clearTimeout(timer);
+    // Abort module cache controllers to prevent memory leaks
+    for (const controller of this.moduleCacheControllers.values()) {
+      controller.abort();
     }
-    this.moduleCacheTimers.clear();
+    this.moduleCacheControllers.clear();
     this.moduleCache.clear();
 
     logger.info("AUTODOC_WATCHER", "AutoDoc watcher stopped");
@@ -205,10 +216,10 @@ export class AutoDocWatcher {
    * Schedule a debounced update for a module
    */
   private scheduleUpdate(modulePath: string): void {
-    // Clear existing timer
-    const existingTimer = this.debounceTimers.get(modulePath);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
+    // Abort existing controller
+    const existingController = this.debounceControllers.get(modulePath);
+    if (existingController) {
+      existingController.abort();
     }
 
     const pending = this.pendingUpdates.get(modulePath);
@@ -234,12 +245,16 @@ export class AutoDocWatcher {
       return;
     }
 
-    // Schedule update
-    const timer = setTimeout(() => {
-      this.processUpdate(modulePath);
-    }, finalDelay);
+    // Schedule update using async sleep pattern (Bun compatible)
+    const abortController = new AbortController();
+    this.debounceControllers.set(modulePath, abortController);
 
-    this.debounceTimers.set(modulePath, timer);
+    (async () => {
+      await sleep(finalDelay);
+      if (!abortController.signal.aborted) {
+        this.processUpdate(modulePath);
+      }
+    })();
 
     logger.debug("AUTODOC_WATCHER", "Scheduled update", {
       modulePath,
@@ -257,7 +272,7 @@ export class AutoDocWatcher {
 
     // Remove from pending
     this.pendingUpdates.delete(modulePath);
-    this.debounceTimers.delete(modulePath);
+    this.debounceControllers.delete(modulePath);
 
     // Skip if already processing
     if (this.isProcessing) {
@@ -383,23 +398,26 @@ export class AutoDocWatcher {
       exports,
     };
 
-    // Cache for 5 minutes with tracked timer
+    // Cache for 5 minutes with tracked abort controller
     this.moduleCache.set(modulePath, moduleInfo);
 
-    // Clear existing timer if any
-    const existingTimer = this.moduleCacheTimers.get(modulePath);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
+    // Abort existing controller if any
+    const existingController = this.moduleCacheControllers.get(modulePath);
+    if (existingController) {
+      existingController.abort();
     }
 
-    const timer = setTimeout(
-      () => {
+    const abortController = new AbortController();
+    this.moduleCacheControllers.set(modulePath, abortController);
+
+    // Schedule cache eviction using async sleep pattern (Bun compatible)
+    (async () => {
+      await sleep(5 * 60 * 1000);
+      if (!abortController.signal.aborted) {
         this.moduleCache.delete(modulePath);
-        this.moduleCacheTimers.delete(modulePath);
-      },
-      5 * 60 * 1000,
-    );
-    this.moduleCacheTimers.set(modulePath, timer);
+        this.moduleCacheControllers.delete(modulePath);
+      }
+    })();
 
     return moduleInfo;
   }

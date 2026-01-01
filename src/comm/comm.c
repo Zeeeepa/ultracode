@@ -1,12 +1,12 @@
-// UltraScript.Comm - Lightweight proxy for UltraScript Core MCP server
+// UltraScript.Comm - Lightweight stdio proxy for UltraScript Tools MCP server
 // Single portable binary for Windows/Linux/macOS via Cosmopolitan Libc
 //
 // Build with cosmocc:
 //   cosmocc -Os -DNDEBUG -o ultrascript-tools.com comm.c
 //
-// The binary auto-detects OS at runtime and uses:
-//   Windows: Named Pipes (\\.\pipe\UltraScript_Core)
-//   Unix: Unix Domain Sockets (/tmp/UltraScript_Core.sock)
+// Supports two transport modes:
+//   --stdio (default) - Direct child process with stdio proxy (Bun compatible)
+//   --pipe            - Named Pipe IPC (Node.js compatible, faster)
 
 #define _COSMO_SOURCE  // Enable IsWindows(), IsLinux(), etc.
 #define NDEBUG 1       // Enable MS ABI thunks
@@ -21,13 +21,8 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <time.h>
+#include <sys/wait.h>
 #include <poll.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <spawn.h>
 
 // Cosmopolitan runtime detection
 #include <libc/dce.h>
@@ -46,18 +41,21 @@
 #include <libc/nt/enum/startf.h>
 #include <libc/nt/struct/startupinfo.h>
 #include <libc/nt/struct/processinformation.h>
+#include <libc/nt/struct/securityattributes.h>
 
+// GetExitCodeProcess - not in standard Cosmopolitan headers
+bool32 GetExitCodeProcess(int64_t hProcess, uint32_t *lpExitCode);
 
-#define VERSION "1.0.0"
+#define VERSION "2.1.0"
 #define APP_NAME "UltraScript.Comm"
 #define BUFFER_SIZE 8192
-#define CONNECT_TIMEOUT_MS 2000
-#define STARTUP_TIMEOUT_MS 30000
+#define PIPE_NAME "\\\\.\\pipe\\UltraScript_Core"
 
-// Named Pipe doesn't work with Bun on Windows, use TCP instead
-#define TCP_HOST_WIN "127.0.0.1"
-#define TCP_PORT_WIN 51734
-#define PIPE_PATH_UNIX "/tmp/ultrascript-core.sock"
+// Transport mode
+typedef enum {
+    MODE_STDIO,  // Direct child process (default, Bun compatible)
+    MODE_PIPE    // Named Pipe IPC (Node.js, faster)
+} TransportMode;
 
 static volatile int g_running = 1;
 
@@ -68,54 +66,18 @@ static void signal_handler(int sig) {
 
 static void print_help(void) {
     printf("%s v%s\n", APP_NAME, VERSION);
-    printf("Lightweight proxy for UltraScript Tools MCP server.\n");
-    printf("Connects to Core via Named Pipe (starts Core if not running).\n\n");
+    printf("Lightweight stdio proxy for UltraScript Tools MCP server.\n\n");
     printf("Usage: ultrascript-tools.com [OPTIONS] [PROJECT_PATH]\n\n");
-    printf("Options:\n");
+    printf("Transport modes:\n");
+    printf("  --stdio         Direct child process proxy (default, Bun compatible)\n");
+    printf("  --pipe          Named Pipe IPC (Node.js, faster)\n\n");
+    printf("Other options:\n");
     printf("  -h, --help      Show this help\n");
     printf("  -v, --version   Show version\n");
-    printf("  -d, --directory Directory to index (defaults to cwd)\n");
 }
 
 static void print_version(void) {
     printf("%s v%s\n", APP_NAME, VERSION);
-}
-
-static long get_time_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
-
-// ============================================================================
-// Windows implementation using Cosmopolitan NT API
-// ============================================================================
-
-// Convert ASCII to UTF-16 (simple, ASCII only)
-static void ascii_to_utf16(const char *src, char16_t *dst, size_t dst_size) {
-    size_t i;
-    for (i = 0; i < dst_size - 1 && src[i]; i++) {
-        dst[i] = (char16_t)(unsigned char)src[i];
-    }
-    dst[i] = 0;
-}
-
-// Use standard sockets on Windows (TCP) - Bun doesn't support Named Pipes
-static int win_try_connect_tcp(void) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) return -1;
-
-    struct sockaddr_in addr = {0};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(TCP_PORT_WIN);
-    addr.sin_addr.s_addr = inet_addr(TCP_HOST_WIN);
-
-    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(sock);
-        return -1;
-    }
-
-    return sock;
 }
 
 // Convert Unix-style path (/D/path) to Windows (D:\path)
@@ -125,7 +87,6 @@ static void convert_unix_to_win_path(char *path) {
     // Check for /X/ pattern (Unix-style drive letter)
     if (path[0] == '/' && path[1] && (path[2] == '/' || path[2] == '\0')) {
         char drive = path[1];
-        // Shift the rest of the string
         memmove(path + 2, path + 2, strlen(path + 2) + 1);
         path[0] = drive;
         path[1] = ':';
@@ -137,8 +98,27 @@ static void convert_unix_to_win_path(char *path) {
     }
 }
 
+// Parse command line for transport mode
+static TransportMode parse_mode(int argc, char **argv, int *mode_arg_idx) {
+    *mode_arg_idx = -1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--stdio") == 0) {
+            *mode_arg_idx = i;
+            return MODE_STDIO;
+        }
+        if (strcmp(argv[i], "--pipe") == 0) {
+            *mode_arg_idx = i;
+            return MODE_PIPE;
+        }
+    }
+    return MODE_STDIO;  // Default
+}
+
+// ============================================================================
+// Windows implementation - helper functions
+// ============================================================================
+
 static int win_get_exe_dir(char *buf, size_t buf_size) {
-    // Use Cosmopolitan's GetProgramExecutableName
     char *exe = GetProgramExecutableName();
     if (!exe || !*exe) {
         strcpy(buf, ".");
@@ -147,103 +127,231 @@ static int win_get_exe_dir(char *buf, size_t buf_size) {
 
     strncpy(buf, exe, buf_size - 1);
     buf[buf_size - 1] = '\0';
-
-    // Convert to Windows path format
     convert_unix_to_win_path(buf);
 
-    // Find last backslash
     char *last = strrchr(buf, '\\');
     if (last) *last = '\0';
 
     return 0;
 }
 
-static int win_start_core(int argc, char **argv) {
+// Convert ASCII to UTF-16 (simple, ASCII only)
+static void ascii_to_utf16(const char *src, char16_t *dst, size_t dst_size) {
+    size_t i;
+    for (i = 0; i < dst_size - 1 && src[i]; i++) {
+        dst[i] = (char16_t)(unsigned char)src[i];
+    }
+    dst[i] = 0;
+}
+
+// Find JavaScript runtime (Bun or Node.js)
+static const char* find_runtime(char *bun_path, size_t bun_path_size) {
+    char *up = getenv("USERPROFILE");
+    if (up) {
+        snprintf(bun_path, bun_path_size, "%s\\.bun\\bin\\bun.exe", up);
+        convert_unix_to_win_path(bun_path);
+        if (access(bun_path, F_OK) == 0) {
+            return bun_path;
+        }
+    }
+
+    // Fallback to Node.js
+    const char *node_paths[] = {
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Program Files (x86)\\nodejs\\node.exe",
+        NULL
+    };
+    for (int i = 0; node_paths[i]; i++) {
+        if (access(node_paths[i], F_OK) == 0) {
+            return node_paths[i];
+        }
+    }
+
+    return "bun";  // Fallback to PATH
+}
+
+// ============================================================================
+// Windows - STDIO mode (spawn child, proxy stdin/stdout)
+// ============================================================================
+
+static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
     char exe_path[1024];
     char core_path[1100];
     char cmd_line[4096];
     char16_t cmd_line_w[4096];
+    char bun_path[512];
 
-    // Priority 1: Check ULTRASCRIPT_CORE_PATH environment variable
-    // (set by bin/ultrascript.js wrapper when installed via npm)
-    char *env_core_path = getenv("ULTRASCRIPT_CORE_PATH");
-    if (env_core_path && access(env_core_path, F_OK) == 0) {
-        strncpy(core_path, env_core_path, sizeof(core_path) - 1);
-        core_path[sizeof(core_path) - 1] = '\0';
-        convert_unix_to_win_path(core_path);
-    } else {
-        // Priority 2: Look relative to exe (local dev or direct binary usage)
-        win_get_exe_dir(exe_path, sizeof(exe_path));
-        snprintf(core_path, sizeof(core_path), "%s\\index.js", exe_path);
+    win_get_exe_dir(exe_path, sizeof(exe_path));
+    snprintf(core_path, sizeof(core_path), "%s\\index.js", exe_path);
+
+    if (access(core_path, F_OK) != 0) {
+        return 1;  // No core found
     }
 
-    // Check if JS MCP server exists
-    if (access(core_path, F_OK) == 0) {
-        // Try Bun first (faster), then Node.js as fallback
-        char bun_path[512];
-        const char *runtime_exe = NULL;
+    const char *runtime_exe = find_runtime(bun_path, sizeof(bun_path));
 
-        // Get %USERPROFILE% for Bun path
-        char *up = getenv("USERPROFILE");
-        if (up) {
-            snprintf(bun_path, sizeof(bun_path), "%s\\.bun\\bin\\bun.exe", up);
-            convert_unix_to_win_path(bun_path);
-            if (access(bun_path, F_OK) == 0) {
-                runtime_exe = bun_path;
-            }
-        }
+    // Build command line (NO --pipe flag - stdio mode)
+    snprintf(cmd_line, sizeof(cmd_line), "\"%s\" \"%s\"", runtime_exe, core_path);
 
-        // Fallback to Node.js
-        if (!runtime_exe) {
-            const char *node_paths[] = {
-                "C:\\Program Files\\nodejs\\node.exe",
-                "C:\\Program Files (x86)\\nodejs\\node.exe",
-                NULL
-            };
-            for (int i = 0; node_paths[i]; i++) {
-                if (access(node_paths[i], F_OK) == 0) {
-                    runtime_exe = node_paths[i];
-                    break;
-                }
-            }
-        }
-
-        if (runtime_exe) {
-            snprintf(cmd_line, sizeof(cmd_line), "\"%s\" \"%s\" --pipe", runtime_exe, core_path);
-        } else {
-            // Last fallback to PATH
-            snprintf(cmd_line, sizeof(cmd_line), "bun \"%s\" --pipe", core_path);
-        }
-    } else {
-        // Fallback: try ultrascript-core binary
-        snprintf(core_path, sizeof(core_path), "%s\\ultrascript-core.exe", exe_path);
-        snprintf(cmd_line, sizeof(cmd_line), "\"%s\"", core_path);
-    }
-
-    // Append forwarded arguments
+    // Append forwarded arguments (skip --stdio)
     for (int i = 1; i < argc; i++) {
+        if (i == mode_arg_idx) continue;  // Skip --stdio
         strcat(cmd_line, " \"");
         strcat(cmd_line, argv[i]);
         strcat(cmd_line, "\"");
     }
 
-    // Convert to UTF-16
     ascii_to_utf16(cmd_line, cmd_line_w, sizeof(cmd_line_w) / sizeof(cmd_line_w[0]));
+
+    // Create pipes for stdin/stdout
+    struct NtSecurityAttributes sa = {0};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = true;
+
+    int64_t child_stdin_read, child_stdin_write;
+    int64_t child_stdout_read, child_stdout_write;
+
+    if (!CreatePipe(&child_stdin_read, &child_stdin_write, &sa, 0)) {
+        return 1;
+    }
+    if (!CreatePipe(&child_stdout_read, &child_stdout_write, &sa, 0)) {
+        CloseHandle(child_stdin_read);
+        CloseHandle(child_stdin_write);
+        return 1;
+    }
+
+    // Don't inherit our end of the pipes
+    SetHandleInformation(child_stdin_write, kNtHandleFlagInherit, 0);
+    SetHandleInformation(child_stdout_read, kNtHandleFlagInherit, 0);
 
     struct NtStartupInfo si = {0};
     struct NtProcessInformation pi = {0};
 
     si.cb = sizeof(si);
-    si.dwFlags = kNtStartfUseshowwindow;
-    si.wShowWindow = 0; // SW_HIDE
+    si.dwFlags = kNtStartfUsestdhandles | kNtStartfUseshowwindow;
+    si.wShowWindow = 0;  // SW_HIDE
+    si.hStdInput = child_stdin_read;
+    si.hStdOutput = child_stdout_write;
+    si.hStdError = GetStdHandle(kNtStdErrorHandle);  // Pass through stderr
 
     bool32 ok = CreateProcess(
         NULL,
         cmd_line_w,
         NULL,
         NULL,
-        false,
-        kNtCreateNoWindow | kNtDetachedProcess,
+        true,  // Inherit handles
+        kNtCreateNoWindow,
+        NULL,
+        NULL,
+        &si,
+        &pi
+    );
+
+    // Close child's end of pipes (we keep our end)
+    CloseHandle(child_stdin_read);
+    CloseHandle(child_stdout_write);
+
+    if (!ok) {
+        CloseHandle(child_stdin_write);
+        CloseHandle(child_stdout_read);
+        return 1;
+    }
+
+    // Proxy loop: stdin -> child, child -> stdout
+    char buf[BUFFER_SIZE];
+    int64_t our_stdin = GetStdHandle(kNtStdInputHandle);
+    int64_t our_stdout = GetStdHandle(kNtStdOutputHandle);
+    uint32_t bytes_read, bytes_written, bytes_avail;
+
+    while (g_running) {
+        // Check if child has output -> forward to stdout
+        if (PeekNamedPipe(child_stdout_read, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
+            if (ReadFile(child_stdout_read, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                WriteFile(our_stdout, buf, bytes_read, &bytes_written, NULL);
+            }
+        }
+
+        // Check if we have stdin -> forward to child
+        if (PeekNamedPipe(our_stdin, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
+            if (ReadFile(our_stdin, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                WriteFile(child_stdin_write, buf, bytes_read, &bytes_written, NULL);
+            }
+        }
+
+        // Check if child exited
+        uint32_t exit_code;
+        if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != 259) {  // STILL_ACTIVE = 259
+            break;
+        }
+
+        Sleep(10);  // 10ms sleep - balance between responsiveness and CPU/IO usage
+    }
+
+    // Cleanup
+    CloseHandle(child_stdin_write);
+    CloseHandle(child_stdout_read);
+
+    // Terminate child if still running
+    TerminateProcess(pi.hProcess, 0);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    return 0;
+}
+
+// ============================================================================
+// Windows - PIPE mode (Named Pipe IPC, faster but requires --pipe on server)
+// ============================================================================
+
+static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
+    char exe_path[1024];
+    char core_path[1100];
+    char cmd_line[4096];
+    char16_t cmd_line_w[4096];
+    char16_t pipe_name_w[256];
+    char bun_path[512];
+
+    win_get_exe_dir(exe_path, sizeof(exe_path));
+    snprintf(core_path, sizeof(core_path), "%s\\index.js", exe_path);
+
+    if (access(core_path, F_OK) != 0) {
+        return 1;
+    }
+
+    const char *runtime_exe = find_runtime(bun_path, sizeof(bun_path));
+
+    // Build command line WITH --pipe flag
+    snprintf(cmd_line, sizeof(cmd_line), "\"%s\" \"%s\" --pipe", runtime_exe, core_path);
+
+    // Append forwarded arguments (skip --pipe from our args)
+    for (int i = 1; i < argc; i++) {
+        if (i == mode_arg_idx) continue;  // Skip --pipe
+        strcat(cmd_line, " \"");
+        strcat(cmd_line, argv[i]);
+        strcat(cmd_line, "\"");
+    }
+
+    ascii_to_utf16(cmd_line, cmd_line_w, sizeof(cmd_line_w) / sizeof(cmd_line_w[0]));
+    ascii_to_utf16(PIPE_NAME, pipe_name_w, sizeof(pipe_name_w) / sizeof(pipe_name_w[0]));
+
+    // Start MCP server as background process
+    struct NtStartupInfo si = {0};
+    struct NtProcessInformation pi = {0};
+
+    si.cb = sizeof(si);
+    si.dwFlags = kNtStartfUsestdhandles | kNtStartfUseshowwindow;
+    si.wShowWindow = 0;  // SW_HIDE
+    si.hStdInput = GetStdHandle(kNtStdInputHandle);
+    si.hStdOutput = GetStdHandle(kNtStdErrorHandle);  // Server output to stderr
+    si.hStdError = GetStdHandle(kNtStdErrorHandle);
+
+    bool32 ok = CreateProcess(
+        NULL,
+        cmd_line_w,
+        NULL,
+        NULL,
+        true,
+        kNtCreateNoWindow,
         NULL,
         NULL,
         &si,
@@ -251,85 +359,75 @@ static int win_start_core(int argc, char **argv) {
     );
 
     if (!ok) {
-        fprintf(stderr, "[Comm] Failed to start runtime, error=%lu\n", GetLastError());
-        return -1;
+        return 1;
     }
 
     CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    return 0;
-}
 
-// Windows proxy using TCP socket and stdin/stdout handles
-static int win_run_proxy(int sock) {
-    char stdin_buf[BUFFER_SIZE];
-    char sock_buf[BUFFER_SIZE];
-    int64_t stdin_h = GetStdHandle(kNtStdInputHandle);
-    int64_t stdout_h = GetStdHandle(kNtStdOutputHandle);
+    // Wait for Named Pipe to be available
+    int64_t pipe_handle = -1;
+    for (int retry = 0; retry < 100 && g_running; retry++) {
+        pipe_handle = CreateFile(
+            pipe_name_w,
+            kNtGenericRead | kNtGenericWrite,
+            0,
+            NULL,
+            kNtOpenExisting,
+            0,
+            0
+        );
 
-    // Log to file for debugging
-    FILE *logf = fopen("C:\\Users\\faxen\\comm-debug.log", "a");
-    if (logf) {
-        fprintf(logf, "[Comm] Proxy started, sock=%d, stdin=%lld, stdout=%lld\n", sock, (long long)stdin_h, (long long)stdout_h);
-        fflush(logf);
+        if (pipe_handle != -1) break;
+        Sleep(100);
     }
-    fprintf(stderr, "[Comm] Proxy started, sock=%d, stdin=%lld, stdout=%lld\n", sock, (long long)stdin_h, (long long)stdout_h);
 
-    // Set socket to non-blocking
-    fcntl(sock, F_SETFL, O_NONBLOCK);
+    if (pipe_handle == -1) {
+        TerminateProcess(pi.hProcess, 0);
+        CloseHandle(pi.hProcess);
+        return 1;
+    }
 
+    // Proxy loop: stdin <-> Named Pipe <-> stdout
+    char buf[BUFFER_SIZE];
+    int64_t our_stdin = GetStdHandle(kNtStdInputHandle);
+    int64_t our_stdout = GetStdHandle(kNtStdOutputHandle);
     uint32_t bytes_read, bytes_written, bytes_avail;
-    int loop_count = 0;
-    int peek_fail_count = 0;
 
     while (g_running) {
-        loop_count++;
-
-        // Check for data from Core (socket) -> forward to stdout
-        ssize_t n = read(sock, sock_buf, BUFFER_SIZE);
-        if (n > 0) {
-            if (logf) { fprintf(logf, "[Comm] Core->stdout: %zd bytes\n", n); fflush(logf); }
-            if (!WriteFile(stdout_h, sock_buf, n, &bytes_written, NULL)) {
-                if (logf) { fprintf(logf, "[Comm] WriteFile failed, err=%lu\n", GetLastError()); fflush(logf); }
-                break;
+        // Check Named Pipe for output -> forward to stdout
+        if (PeekNamedPipe(pipe_handle, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
+            if (ReadFile(pipe_handle, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                WriteFile(our_stdout, buf, bytes_read, &bytes_written, NULL);
             }
-            FlushFileBuffers(stdout_h);
-        } else if (n == 0) {
-            if (logf) { fprintf(logf, "[Comm] Core disconnected (n=0)\n"); fflush(logf); }
+        }
+
+        // Check stdin -> forward to Named Pipe
+        if (PeekNamedPipe(our_stdin, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
+            if (ReadFile(our_stdin, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                WriteFile(pipe_handle, buf, bytes_read, &bytes_written, NULL);
+            }
+        }
+
+        // Check if server exited
+        uint32_t exit_code;
+        if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != 259) {
             break;
-        } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            if (logf) { fprintf(logf, "[Comm] Socket read error: errno=%d\n", errno); fflush(logf); }
-            break;
         }
 
-        // Check stdin for data -> forward to Core
-        bytes_avail = 0;
-        bool32 peek_ok = PeekNamedPipe(stdin_h, NULL, 0, NULL, &bytes_avail, NULL);
-        if (!peek_ok) {
-            if (peek_fail_count == 0 && logf) {
-                fprintf(logf, "[Comm] PeekNamedPipe failed, err=%lu\n", GetLastError());
-                fflush(logf);
-            }
-            peek_fail_count++;
-        }
-
-        if (peek_ok && bytes_avail > 0) {
-            if (logf) { fprintf(logf, "[Comm] stdin has %u bytes\n", bytes_avail); fflush(logf); }
-            if (ReadFile(stdin_h, stdin_buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
-                if (logf) { fprintf(logf, "[Comm] stdin->Core: %u bytes: %.100s\n", bytes_read, stdin_buf); fflush(logf); }
-                if (write(sock, stdin_buf, bytes_read) < 0) {
-                    if (logf) { fprintf(logf, "[Comm] Socket write failed\n"); fflush(logf); }
-                    break;
-                }
-            }
-        }
-
-        Sleep(1);
+        Sleep(10);  // 10ms sleep - balance between responsiveness and CPU/IO usage
     }
 
-    if (logf) { fprintf(logf, "[Comm] Proxy ended after %d loops, peek_fails=%d\n", loop_count, peek_fail_count); fclose(logf); }
+    // Cleanup
+    CloseHandle(pipe_handle);
+    TerminateProcess(pi.hProcess, 0);
+    CloseHandle(pi.hProcess);
+
     return 0;
 }
+
+// ============================================================================
+// Windows main dispatcher
+// ============================================================================
 
 static int win_main(int argc, char **argv) {
     if (argc > 1) {
@@ -343,55 +441,21 @@ static int win_main(int argc, char **argv) {
         }
     }
 
-    int sock = win_try_connect_tcp();
+    int mode_arg_idx;
+    TransportMode mode = parse_mode(argc, argv, &mode_arg_idx);
 
-    if (sock < 0) {
-        // Core not running, start it
-        if (win_start_core(argc, argv) != 0) {
-            fprintf(stderr, "[Comm] Failed to start Core\n");
-            return 1;
-        }
-
-        long start = get_time_ms();
-        while (get_time_ms() - start < STARTUP_TIMEOUT_MS) {
-            sock = win_try_connect_tcp();
-            if (sock >= 0) break;
-            Sleep(200);
-        }
-
-        if (sock < 0) {
-            fprintf(stderr, "[Comm] Timeout waiting for Core\n");
-            return 1;
-        }
+    if (mode == MODE_PIPE) {
+        return win_pipe_main(argc, argv, mode_arg_idx);
+    } else {
+        return win_stdio_main(argc, argv, mode_arg_idx);
     }
-
-    int result = win_run_proxy(sock);
-    close(sock);
-    return result;
 }
 
 // ============================================================================
-// Unix implementation
+// Unix implementation - helper functions
 // ============================================================================
-
-static int unix_try_connect_socket(void) {
-    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock < 0) return -1;
-
-    struct sockaddr_un addr = {0};
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, PIPE_PATH_UNIX, sizeof(addr.sun_path) - 1);
-
-    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(sock);
-        return -1;
-    }
-
-    return sock;
-}
 
 static int unix_get_exe_dir(char *buf, size_t buf_size) {
-    // Use Cosmopolitan's GetProgramExecutableName
     char *exe = GetProgramExecutableName();
     if (!exe || !*exe) {
         ssize_t len = readlink("/proc/self/exe", buf, buf_size - 1);
@@ -410,72 +474,194 @@ static int unix_get_exe_dir(char *buf, size_t buf_size) {
     return 0;
 }
 
-static int unix_start_core(int argc, char **argv) {
+// ============================================================================
+// Unix - STDIO mode (fork/exec with pipe proxy)
+// ============================================================================
+
+static int unix_stdio_main(int argc, char **argv, int mode_arg_idx) {
     char exe_path[2048];
     char core_path[2200];
 
-    // Priority 1: Check ULTRASCRIPT_CORE_PATH environment variable
-    // (set by bin/ultrascript.js wrapper when installed via npm)
-    char *env_core_path = getenv("ULTRASCRIPT_CORE_PATH");
-    if (env_core_path && access(env_core_path, F_OK) == 0) {
-        strncpy(core_path, env_core_path, sizeof(core_path) - 1);
-        core_path[sizeof(core_path) - 1] = '\0';
-    } else {
-        // Priority 2: Look relative to exe (local dev or direct binary usage)
-        unix_get_exe_dir(exe_path, sizeof(exe_path));
-        snprintf(core_path, sizeof(core_path), "%s/index.js", exe_path);
+    unix_get_exe_dir(exe_path, sizeof(exe_path));
+    snprintf(core_path, sizeof(core_path), "%s/index.js", exe_path);
+
+    if (access(core_path, R_OK) != 0) {
+        return 1;
+    }
+
+    // Create pipes
+    int stdin_pipe[2], stdout_pipe[2];
+    if (pipe(stdin_pipe) < 0 || pipe(stdout_pipe) < 0) {
+        return 1;
     }
 
     pid_t pid = fork();
-    if (pid < 0) return -1;
+    if (pid < 0) {
+        return 1;
+    }
 
     if (pid == 0) {
-        setsid();
-        close(STDIN_FILENO);
-        close(STDOUT_FILENO);
-        close(STDERR_FILENO);
+        // Child process
+        dup2(stdin_pipe[0], STDIN_FILENO);
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        // stderr passes through
 
-        // Check if Node.js MCP server exists
-        if (access(core_path, R_OK) == 0) {
-            // Use Node.js with --pipe for multi-client TCP mode
-            char **new_argv = malloc((argc + 3) * sizeof(char*));
-            new_argv[0] = "node";
-            new_argv[1] = core_path;
-            new_argv[2] = "--pipe";
-            for (int i = 1; i < argc; i++) {
-                new_argv[i + 2] = argv[i];
-            }
-            new_argv[argc + 2] = NULL;
-            execvp("node", new_argv);
-        } else {
-            // Fallback: try ultrascript-core binary
-            snprintf(core_path, sizeof(core_path), "%s/ultrascript-core", exe_path);
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
 
-            char **new_argv = malloc((argc + 1) * sizeof(char*));
-            new_argv[0] = core_path;
-            for (int i = 1; i < argc; i++) {
-                new_argv[i] = argv[i];
-            }
-            new_argv[argc] = NULL;
-            execv(core_path, new_argv);
+        // Count args (excluding --stdio)
+        int arg_count = 0;
+        for (int i = 1; i < argc; i++) {
+            if (i != mode_arg_idx) arg_count++;
         }
 
+        // Build argv for child (NO --pipe flag)
+        char **new_argv = malloc((arg_count + 3) * sizeof(char*));
+        new_argv[0] = "bun";
+        new_argv[1] = core_path;
+        int j = 2;
+        for (int i = 1; i < argc; i++) {
+            if (i != mode_arg_idx) {
+                new_argv[j++] = argv[i];
+            }
+        }
+        new_argv[j] = NULL;
+
+        execvp("bun", new_argv);
+        // Fallback to node
+        new_argv[0] = "node";
+        execvp("node", new_argv);
         _exit(1);
     }
+
+    // Parent process - close child's ends
+    close(stdin_pipe[0]);
+    close(stdout_pipe[1]);
+
+    int child_stdin = stdin_pipe[1];
+    int child_stdout = stdout_pipe[0];
+
+    fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
+    fcntl(child_stdout, F_SETFL, O_NONBLOCK);
+
+    char buf[BUFFER_SIZE];
+    struct pollfd fds[2] = {
+        { .fd = STDIN_FILENO, .events = POLLIN },
+        { .fd = child_stdout, .events = POLLIN }
+    };
+
+    while (g_running) {
+        int ready = poll(fds, 2, 100);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (ready == 0) continue;
+
+        // stdin -> child
+        if (fds[0].revents & POLLIN) {
+            ssize_t n = read(STDIN_FILENO, buf, BUFFER_SIZE);
+            if (n <= 0) break;
+            if (write(child_stdin, buf, n) < 0) break;
+        }
+
+        // child -> stdout
+        if (fds[1].revents & POLLIN) {
+            ssize_t n = read(child_stdout, buf, BUFFER_SIZE);
+            if (n <= 0) break;
+            if (write(STDOUT_FILENO, buf, n) < 0) break;
+        }
+
+        if ((fds[0].revents | fds[1].revents) & (POLLHUP | POLLERR)) {
+            break;
+        }
+    }
+
+    close(child_stdin);
+    close(child_stdout);
+    kill(pid, SIGTERM);
 
     return 0;
 }
 
-static int unix_run_proxy(int sock) {
-    char stdin_buf[BUFFER_SIZE];
-    char sock_buf[BUFFER_SIZE];
+// ============================================================================
+// Unix - PIPE mode (fork/exec with --pipe flag to server)
+// On Unix, --pipe just passes the flag to server; transport is still pipes
+// ============================================================================
+
+static int unix_pipe_main(int argc, char **argv, int mode_arg_idx) {
+    char exe_path[2048];
+    char core_path[2200];
+
+    unix_get_exe_dir(exe_path, sizeof(exe_path));
+    snprintf(core_path, sizeof(core_path), "%s/index.js", exe_path);
+
+    if (access(core_path, R_OK) != 0) {
+        return 1;
+    }
+
+    // Create pipes
+    int stdin_pipe[2], stdout_pipe[2];
+    if (pipe(stdin_pipe) < 0 || pipe(stdout_pipe) < 0) {
+        return 1;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        return 1;
+    }
+
+    if (pid == 0) {
+        // Child process
+        dup2(stdin_pipe[0], STDIN_FILENO);
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+
+        // Count args (excluding --pipe from comm.c args)
+        int arg_count = 0;
+        for (int i = 1; i < argc; i++) {
+            if (i != mode_arg_idx) arg_count++;
+        }
+
+        // Build argv WITH --pipe flag for server
+        char **new_argv = malloc((arg_count + 4) * sizeof(char*));
+        new_argv[0] = "bun";
+        new_argv[1] = core_path;
+        new_argv[2] = "--pipe";  // Pass --pipe to server
+        int j = 3;
+        for (int i = 1; i < argc; i++) {
+            if (i != mode_arg_idx) {
+                new_argv[j++] = argv[i];
+            }
+        }
+        new_argv[j] = NULL;
+
+        execvp("bun", new_argv);
+        new_argv[0] = "node";
+        execvp("node", new_argv);
+        _exit(1);
+    }
+
+    // Parent process
+    close(stdin_pipe[0]);
+    close(stdout_pipe[1]);
+
+    int child_stdin = stdin_pipe[1];
+    int child_stdout = stdout_pipe[0];
 
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
-    fcntl(sock, F_SETFL, O_NONBLOCK);
+    fcntl(child_stdout, F_SETFL, O_NONBLOCK);
 
+    char buf[BUFFER_SIZE];
     struct pollfd fds[2] = {
         { .fd = STDIN_FILENO, .events = POLLIN },
-        { .fd = sock, .events = POLLIN }
+        { .fd = child_stdout, .events = POLLIN }
     };
 
     while (g_running) {
@@ -487,15 +673,15 @@ static int unix_run_proxy(int sock) {
         if (ready == 0) continue;
 
         if (fds[0].revents & POLLIN) {
-            ssize_t n = read(STDIN_FILENO, stdin_buf, BUFFER_SIZE);
+            ssize_t n = read(STDIN_FILENO, buf, BUFFER_SIZE);
             if (n <= 0) break;
-            if (write(sock, stdin_buf, n) < 0) break;
+            if (write(child_stdin, buf, n) < 0) break;
         }
 
         if (fds[1].revents & POLLIN) {
-            ssize_t n = read(sock, sock_buf, BUFFER_SIZE);
+            ssize_t n = read(child_stdout, buf, BUFFER_SIZE);
             if (n <= 0) break;
-            if (write(STDOUT_FILENO, sock_buf, n) < 0) break;
+            if (write(STDOUT_FILENO, buf, n) < 0) break;
         }
 
         if ((fds[0].revents | fds[1].revents) & (POLLHUP | POLLERR)) {
@@ -503,13 +689,22 @@ static int unix_run_proxy(int sock) {
         }
     }
 
+    close(child_stdin);
+    close(child_stdout);
+    kill(pid, SIGTERM);
+
     return 0;
 }
+
+// ============================================================================
+// Unix main dispatcher
+// ============================================================================
 
 static int unix_main(int argc, char **argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
 
     if (argc > 1) {
         if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
@@ -522,30 +717,14 @@ static int unix_main(int argc, char **argv) {
         }
     }
 
-    int sock = unix_try_connect_socket();
+    int mode_arg_idx;
+    TransportMode mode = parse_mode(argc, argv, &mode_arg_idx);
 
-    if (sock < 0) {
-        if (unix_start_core(argc, argv) != 0) {
-            fprintf(stderr, "Failed to start Core\n");
-            return 1;
-        }
-
-        long start = get_time_ms();
-        while (get_time_ms() - start < STARTUP_TIMEOUT_MS) {
-            sock = unix_try_connect_socket();
-            if (sock >= 0) break;
-            usleep(200000);
-        }
-
-        if (sock < 0) {
-            fprintf(stderr, "Timeout waiting for Core\n");
-            return 1;
-        }
+    if (mode == MODE_PIPE) {
+        return unix_pipe_main(argc, argv, mode_arg_idx);
+    } else {
+        return unix_stdio_main(argc, argv, mode_arg_idx);
     }
-
-    int result = unix_run_proxy(sock);
-    close(sock);
-    return result;
 }
 
 // ============================================================================
@@ -553,9 +732,6 @@ static int unix_main(int argc, char **argv) {
 // ============================================================================
 
 int main(int argc, char **argv) {
-    // Disable stderr buffering for immediate output
-    setbuf(stderr, NULL);
-
     if (IsWindows()) {
         return win_main(argc, argv);
     } else {

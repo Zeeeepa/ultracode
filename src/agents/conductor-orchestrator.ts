@@ -31,6 +31,13 @@ import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 import { isEventfulAgent } from "./coordinator.js";
 
+// Event-driven architecture: monitoring uses setInterval for Node.js, disabled for Bun
+
+/** Check if running in Bun */
+function isBunRuntime(): boolean {
+  return typeof (globalThis as any).Bun !== "undefined";
+}
+
 interface ConductorConfig {
   resourceConstraints: ResourceConstraints;
   taskQueueLimit: number;
@@ -156,13 +163,19 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     cacheHitRate: 0,
   };
 
-  // Heartbeat and health tracking
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private healthMonitorTimer: ReturnType<typeof setInterval> | null = null;
-  private performanceTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly HEARTBEAT_INTERVAL_MS = 5000;
-  private readonly AGENT_STALE_MS = 30000; // 30s without activity => suspect
+  // Heartbeat and health tracking (async loop pattern - no setInterval for Bun+OpenVINO compatibility)
+  private heartbeatRunning = false;
+  private healthMonitorRunning = false;
+  private performanceLoopRunning = false;
+  private readonly HEARTBEAT_INTERVAL_MS = 10000; // 10s (was 5s)
+  private readonly HEALTH_CHECK_INTERVAL_MS = 30000; // 30s (was 10s)
+  // HEALTH_CHECK_IDLE_MS removed - unused after event-driven refactoring
+  private readonly PERFORMANCE_INTERVAL_MS = 60000; // 60s (was 30s)
+  private readonly AGENT_STALE_MS = 60000; // 60s without activity (was 30s)
   private agentLastSeen: Map<string, number> = new Map();
+  private stopped = false; // Flag to stop async loops on shutdown
+  private lastRequestTime = Date.now(); // Track last MCP request for idle detection
+  private readonly IDLE_THRESHOLD_MS = 60000; // Consider idle after 1 min of no requests
 
   constructor(config: ConductorConfigOverrides = {}) {
     const defaults = getConductorAgentDefaults();
@@ -198,31 +211,45 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   protected async onInitialize(): Promise<void> {
+    const startTime = Date.now();
+    logger.trace("AGENT", `[Conductor] ▶ onInitialize() START`);
     console.error(`[CONDUCTOR] Initializing with MANDATORY DELEGATION enabled`);
     console.error(`[CONDUCTOR] Complexity threshold: ${this.config.complexityThreshold}/10`);
     console.error(`[CONDUCTOR] All tasks MUST be delegated to dev-agent or Dora`);
 
+    logger.trace("AGENT", `[Conductor] ▶ startHealthMonitoring`);
     this.startHealthMonitoring();
+    logger.trace("AGENT", `[Conductor] ◀ startHealthMonitoring (${Date.now() - startTime}ms)`);
+
+    logger.trace("AGENT", `[Conductor] ▶ startHeartbeat`);
     this.startHeartbeat();
+
+    logger.trace("AGENT", `[Conductor] ▶ initializeDelegationEnforcement`);
     this.initializeDelegationEnforcement();
+
+    logger.trace("AGENT", `[Conductor] ▶ initializePerformanceOptimizations`);
     this.initializePerformanceOptimizations();
+    logger.trace("AGENT", `[Conductor] ◀ onInitialize() END (${Date.now() - startTime}ms)`);
   }
 
   protected async onShutdown(): Promise<void> {
     console.error(`[CONDUCTOR] Shutting down orchestrator and all managed agents...`);
 
-    // Clear all intervals to prevent memory leaks
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
+    // Stop all async loops
+    this.stopped = true;
+
+    // Clear timers
     if (this.healthMonitorTimer) {
       clearInterval(this.healthMonitorTimer);
-      this.healthMonitorTimer = null;
+      this.healthMonitorTimer = undefined;
+    }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
     }
     if (this.performanceTimer) {
       clearInterval(this.performanceTimer);
-      this.performanceTimer = null;
+      this.performanceTimer = undefined;
     }
 
     // Log delegation statistics
@@ -671,6 +698,14 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     return Array.from(this.agents.values()).filter((agent) => agent.type === type);
   }
 
+  /**
+   * Get the first registered agent of a specific type.
+   * Use this instead of getAgent(AgentType.X) since agent IDs include random suffixes.
+   */
+  getAgentByType(type: AgentType): Agent | undefined {
+    return this.getAgentsByType(type)[0];
+  }
+
   getAvailableAgent(type: AgentType): Agent | undefined {
     const agents = this.getAgentsByType(type);
     // Memory limit check disabled - only check status
@@ -728,14 +763,51 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     return agents.slice().sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0]!;
   }
 
+  /**
+   * Check if server is idle (no requests for IDLE_THRESHOLD_MS)
+   */
+  private isIdle(): boolean {
+    return Date.now() - this.lastRequestTime > this.IDLE_THRESHOLD_MS;
+  }
+
+  /**
+   * Mark that a request was received (resets idle timer)
+   */
+  public markActivity(): void {
+    this.lastRequestTime = Date.now();
+  }
+
+  /** Timer handles for Node.js setInterval */
+  private healthMonitorTimer?: ReturnType<typeof setInterval> | undefined;
+  private heartbeatTimer?: ReturnType<typeof setInterval> | undefined;
+  private performanceTimer?: ReturnType<typeof setInterval> | undefined;
+
+  /**
+   * Start health monitoring
+   * Event-driven: uses setInterval for Node.js, disabled for Bun (no polling)
+   */
   private startHealthMonitoring(): void {
-    if (this.healthMonitorTimer) return;
+    if (this.healthMonitorRunning) return;
+    this.healthMonitorRunning = true;
+
+    // For Bun: skip health monitoring loop to avoid CPU spinning
+    if (isBunRuntime()) return;
+
+    // For Node.js: use setInterval with dynamic interval based on idle state
     this.healthMonitorTimer = setInterval(() => {
-      this.checkAgentHealth();
-    }, 5000);
+      if (!this.stopped) {
+        try {
+          this.checkAgentHealth();
+        } catch (error) {
+          console.error("[CONDUCTOR] Health check error:", error);
+        }
+      }
+    }, this.HEALTH_CHECK_INTERVAL_MS);
   }
 
   private checkAgentHealth(): void {
+    const isIdle = this.isIdle();
+
     for (const [agentId, agent] of this.agents) {
       if (agent.status === AgentStatus.ERROR) {
         console.warn(`[CONDUCTOR] Agent ${agentId} is in error state`);
@@ -743,52 +815,47 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         this.emit("agent:unhealthy", agentId);
       }
 
-      // Memory limit check disabled - let OS handle memory management
-
       // Staleness detection based on metrics
-      try {
-        const metrics: any = (agent as any).getMetrics ? (agent as any).getMetrics() : undefined;
-        const last = metrics?.lastActivity ?? Date.now();
-        this.agentLastSeen.set(agentId, last);
-        if (Date.now() - last > this.AGENT_STALE_MS) {
-          logger.incident("Agent heartbeat stale", { agentId, lastActivity: last });
+      // Skip logging when idle - stale agents are expected
+      if (!isIdle) {
+        try {
+          const metrics: any = (agent as any).getMetrics ? (agent as any).getMetrics() : undefined;
+          const last = metrics?.lastActivity ?? Date.now();
+          this.agentLastSeen.set(agentId, last);
+          if (Date.now() - last > this.AGENT_STALE_MS) {
+            // Use debug instead of incident - staleness is often normal
+            logger.debug("CONDUCTOR", "Agent inactive", { agentId, lastActivityMs: Date.now() - last });
+          }
+        } catch {
+          // ignore metric errors
         }
-      } catch {
-        // ignore metric errors
       }
     }
   }
 
+  /**
+   * Start heartbeat
+   * Event-driven: uses setInterval for Node.js, disabled for Bun (no polling)
+   */
   private startHeartbeat(): void {
-    if (this.heartbeatTimer) return;
+    if (this.heartbeatRunning) return;
+    this.heartbeatRunning = true;
+
+    // For Bun: skip heartbeat loop to avoid CPU spinning
+    if (isBunRuntime()) return;
+
+    // For Node.js: use setInterval
     this.heartbeatTimer = setInterval(() => {
-      // Aggregate snapshot
-      const snapshot = {
-        agents: this.agents.size,
-        pendingTasks: this.pendingTasks.size,
-        taskQueueLimit: this.config.taskQueueLimit,
-        maxConcurrentAgents: this.config.resourceConstraints.maxConcurrentAgents,
-      };
-      logger.systemEvent("HEARTBEAT", snapshot);
-
-      // Per-agent heartbeat summary
-      for (const [agentId, agent] of this.agents) {
-        const m: any = (agent as any).getMetrics ? (agent as any).getMetrics() : undefined;
-        logger.agentActivity(agentId, "heartbeat", {
-          status: agent.status,
-          memMB: agent.getMemoryUsage(),
-          cpuPct: agent.getCpuUsage?.() ?? undefined,
-          lastActivity: m?.lastActivity,
-          queue: agent.getTaskQueue().length,
-        });
-      }
-
-      // Backpressure check
-      if (this.pendingTasks.size > this.config.taskQueueLimit * 0.8) {
-        logger.incident("Task queue high water mark", {
-          pending: this.pendingTasks.size,
-          limit: this.config.taskQueueLimit,
-        });
+      if (!this.stopped && !this.isIdle()) {
+        try {
+          this.emit("heartbeat", {
+            agentId: this.id,
+            timestamp: Date.now(),
+            agents: this.agents.size,
+          });
+        } catch (error) {
+          console.error("[CONDUCTOR] Heartbeat error:", error);
+        }
       }
     }, this.HEARTBEAT_INTERVAL_MS);
   }
@@ -831,15 +898,34 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     // Pre-populate method proposal templates
     this.initializeMethodProposalTemplates();
 
-    // Start performance monitoring
-    if (!this.performanceTimer) {
-      this.performanceTimer = setInterval(() => {
-        this.updatePerformanceMetrics();
-        this.cleanupCaches();
-      }, 10000); // Every 10 seconds
-    }
+    // Start async performance loop (safe for Bun + OpenVINO)
+    this.startPerformanceLoop();
 
     console.error(`[CONDUCTOR] TASK-004B: Performance optimizations active`);
+  }
+
+  /**
+   * Start performance metrics loop
+   * Event-driven: uses setInterval for Node.js, disabled for Bun (no polling)
+   */
+  private startPerformanceLoop(): void {
+    if (this.performanceLoopRunning) return;
+    this.performanceLoopRunning = true;
+
+    // For Bun: skip performance loop to avoid CPU spinning
+    if (isBunRuntime()) return;
+
+    // For Node.js: use setInterval
+    this.performanceTimer = setInterval(() => {
+      if (!this.stopped && !this.isIdle()) {
+        try {
+          this.updatePerformanceMetrics();
+          this.cleanupCaches();
+        } catch (error) {
+          console.error("[CONDUCTOR] Performance loop error:", error);
+        }
+      }
+    }, this.PERFORMANCE_INTERVAL_MS);
   }
 
   private initializeMethodProposalTemplates(): void {

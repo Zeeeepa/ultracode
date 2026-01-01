@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectRuntime, type Runtime } from "../../shared/runtime-detect.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
+import { logger } from "../../utils/logger.js";
 
 // Runtime-aware worker type
 type NodeWorker = import("node:worker_threads").Worker;
@@ -44,10 +45,10 @@ interface WorkerState {
 interface PendingTask {
   id: string;
   files: string[];
-  options?: ParserOptions;
+  options?: ParserOptions | undefined;
   resolve: (results: ParseResult[]) => void;
   reject: (error: Error) => void;
-  timeout?: NodeJS.Timeout;
+  timeoutAbort?: boolean | undefined;
 }
 
 export interface LanguagePoolStats {
@@ -62,10 +63,27 @@ export interface LanguagePoolStats {
   filesProcessed: number;
 }
 
+/**
+ * Binary embedding received from worker via transferList
+ */
+export interface BinaryEmbedding {
+  id: string;
+  vectorBuffer: ArrayBuffer;
+  content: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Callback for receiving embeddings from workers
+ * Called when worker sends "embeddings.ready" message
+ */
+export type EmbeddingsCallback = (embeddings: BinaryEmbedding[]) => void;
+
 export interface LanguagePoolOptions {
   poolSize?: number;
   taskTimeout?: number;
   workerScript?: string; // Optional custom worker script path
+  onEmbeddings?: EmbeddingsCallback; // Callback for binary embeddings
 }
 
 // =============================================================================
@@ -85,6 +103,7 @@ export class LanguageWorkerPool {
   private readonly workerScript: string;
   private readonly poolSize: number;
   private readonly taskTimeout: number;
+  private readonly onEmbeddings?: EmbeddingsCallback;
 
   // Runtime-aware worker creation
   private readonly runtime: Runtime;
@@ -125,13 +144,16 @@ export class LanguageWorkerPool {
     };
 
     this.taskTimeout = options.taskTimeout || defaultTimeouts[language] || 30000;
+    this.onEmbeddings = options.onEmbeddings;
 
     // Resolve worker script path
+    // After bundling, import.meta.url points to chunk file in dist/, not agents/workers/
+    // So we find dist root and use full subpath
     const currentDir = dirname(fileURLToPath(import.meta.url));
+    const distRoot = currentDir.includes("agents") ? dirname(dirname(currentDir)) : currentDir;
+    const workerPath = join(distRoot, "agents", "workers", "generic-language-worker.js");
 
-    // Use custom worker script if provided, otherwise use generic worker
-    // currentDir is already in agents/workers/, so just use the filename directly
-    this.workerScript = options.workerScript || join(currentDir, "generic-language-worker.js");
+    this.workerScript = options.workerScript || workerPath;
   }
 
   /**
@@ -145,9 +167,22 @@ export class LanguageWorkerPool {
     }
 
     await Promise.all(initPromises);
-    console.error(
-      `[LanguageWorkerPool:${this.language}] Initialized ${this.poolSize} workers (runtime: ${this.runtime}, smol: ${this.runtime === "bun"})`,
-    );
+    logger.info("WORKER_POOL", `Initialized ${this.poolSize} workers`, {
+      language: this.language,
+      runtime: this.runtime,
+      smol: this.runtime === "bun",
+    });
+  }
+
+  /**
+   * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+   */
+  private async sleep(ms: number): Promise<void> {
+    if (typeof (globalThis as any).Bun?.sleep === "function") {
+      await (globalThis as any).Bun.sleep(ms);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    }
   }
 
   /**
@@ -165,7 +200,7 @@ export class LanguageWorkerPool {
         type: "module",
         smol: true, // Bun-specific option for reduced memory footprint
       }) as BunWorker;
-      console.error(`[LanguageWorkerPool:${this.language}] Created Bun worker ${workerId} (smol mode)`);
+      logger.debug("WORKER_POOL", `Created Bun worker ${workerId}`, { language: this.language, smol: true });
     } else {
       // Node.js: Use worker_threads (native, stable)
       if (!this.nodeWorkerModule) {
@@ -177,7 +212,7 @@ export class LanguageWorkerPool {
           language: this.language,
         },
       });
-      console.error(`[LanguageWorkerPool:${this.language}] Created Node.js worker ${workerId}`);
+      logger.debug("WORKER_POOL", `Created Node.js worker ${workerId}`, { language: this.language });
     }
 
     const state: WorkerState = {
@@ -199,7 +234,7 @@ export class LanguageWorkerPool {
         });
         bunWorker.addEventListener("error", (event) => {
           const errorEvent = event as { message?: string };
-          console.error(`[LanguageWorkerPool:${this.language}] Worker ${workerId} error:`, errorEvent.message);
+          logger.error("WORKER_POOL", `Worker ${workerId} error: ${errorEvent.message}`, { language: this.language });
           this.handleWorkerError(workerId, new Error(errorEvent.message || "Unknown worker error"));
         });
       } else {
@@ -208,12 +243,12 @@ export class LanguageWorkerPool {
           this.handleWorkerMessage(workerId, message);
         });
         nodeWorker.on("error", (error: Error) => {
-          console.error(`[LanguageWorkerPool:${this.language}] Worker ${workerId} error:`, error);
+          logger.error("WORKER_POOL", `Worker ${workerId} error: ${error.message}`, { language: this.language });
           this.handleWorkerError(workerId, error);
         });
         nodeWorker.on("exit", (code) => {
           if (code !== 0) {
-            console.error(`[LanguageWorkerPool:${this.language}] Worker ${workerId} exited with code ${code}`);
+            logger.error("WORKER_POOL", `Worker ${workerId} exited with code ${code}`, { language: this.language });
           }
           this.workers.delete(workerId);
         });
@@ -222,25 +257,35 @@ export class LanguageWorkerPool {
 
     setupEventHandlers();
 
-    // Wait for ready signal (runtime-aware)
+    // Wait for ready signal (runtime-aware, no setTimeout for Bun compatibility)
     await new Promise<void>((resolveReady, rejectReady) => {
-      const timeoutId = setTimeout(() => {
-        if (!this.workers.has(workerId)) {
-          if (this.runtime === "bun") {
-            (worker as BunWorker).terminate();
-          } else {
-            (worker as NodeWorker).terminate();
-          }
-          rejectReady(new Error(`Worker ${workerId} initialization timeout`));
+      let resolved = false;
+
+      // Timeout check via polling with runtime-aware sleep
+      const startTime = Date.now();
+      const checkTimeout = async () => {
+        while (!resolved && Date.now() - startTime < 10000) {
+          await this.sleep(10); // Real sleep without busy-wait
         }
-      }, 10000);
+        if (!resolved) {
+          if (!this.workers.has(workerId)) {
+            if (this.runtime === "bun") {
+              (worker as BunWorker).terminate();
+            } else {
+              (worker as NodeWorker).terminate();
+            }
+            rejectReady(new Error(`Worker ${workerId} initialization timeout`));
+          }
+        }
+      };
+      checkTimeout();
 
       if (this.runtime === "bun") {
         const bunWorker = worker as BunWorker;
         const readyHandler = (event: MessageEvent | ErrorEvent) => {
           const message = (event as { data?: { type?: string } }).data;
           if (message?.type === "ready" || message?.type === "initialized") {
-            clearTimeout(timeoutId);
+            resolved = true;
             this.workers.set(workerId, state);
             bunWorker.removeEventListener("message", readyHandler);
             resolveReady();
@@ -251,7 +296,7 @@ export class LanguageWorkerPool {
         const nodeWorker = worker as NodeWorker;
         const readyHandler = (message: any) => {
           if (message.type === "ready" || message.type === "initialized") {
-            clearTimeout(timeoutId);
+            resolved = true;
             this.workers.set(workerId, state);
             nodeWorker.off("message", readyHandler);
             resolveReady();
@@ -293,7 +338,9 @@ export class LanguageWorkerPool {
       chunks.push(files.slice(i, i + chunkSize));
     }
 
-    console.error(`[LanguageWorkerPool:${this.language}] Chunking ${files.length} files into ${chunks.length} tasks`);
+    logger.info("WORKER_POOL", `Chunking ${files.length} files into ${chunks.length} tasks`, {
+      language: this.language,
+    });
 
     // Submit all chunks in parallel
     const chunkPromises = chunks.map((chunk) => this.submitSingleTask(chunk, options));
@@ -318,14 +365,23 @@ export class LanguageWorkerPool {
         options,
         resolve,
         reject,
+        timeoutAbort: false,
       };
 
-      // Set task timeout
-      task.timeout = setTimeout(() => {
-        this.handleTaskTimeout(taskId);
-      }, this.taskTimeout);
-
       this.pendingTasks.set(taskId, task);
+
+      // Task timeout via polling with runtime-aware sleep
+      const startTime = Date.now();
+      const checkTaskTimeout = async () => {
+        while (!task.timeoutAbort && Date.now() - startTime < this.taskTimeout) {
+          await this.sleep(50); // Real sleep without busy-wait
+          if (!this.pendingTasks.has(taskId)) return; // Task completed
+        }
+        if (this.pendingTasks.has(taskId) && !task.timeoutAbort) {
+          this.handleTaskTimeout(taskId);
+        }
+      };
+      checkTaskTimeout();
 
       // Try to assign to idle worker, otherwise queue
       const assigned = this.tryAssignTask(task);
@@ -366,6 +422,14 @@ export class LanguageWorkerPool {
     if (!state) return;
 
     state.busy = true;
+    // CRITICAL: Log files being processed BEFORE sending to worker
+    // This helps identify which file causes worker crashes/timeouts
+    logger.trace("WORKER_POOL", `[${this.language}] Worker ${workerId} processing files`, {
+      taskId: task.id,
+      fileCount: task.files.length,
+      files: task.files.map((f) => f.split(/[/]/).pop()).slice(0, 10),
+      workerLoad: state.tasksProcessed,
+    });
     state.lastTaskTime = Date.now();
 
     const message = {
@@ -397,7 +461,28 @@ export class LanguageWorkerPool {
       this.handleTaskComplete(workerId, message.payload);
     } else if (message.type === "error") {
       this.handleTaskError(message.taskId, new Error(message.error));
+    } else if (message.type === "embeddings.ready") {
+      // Binary embeddings received from worker via transferList
+      this.handleEmbeddingsReady(message.embeddings, message.count);
     }
+  }
+
+  /**
+   * Handle embeddings received from worker
+   * Calls onEmbeddings callback to route to FAISS accumulator
+   */
+  private handleEmbeddingsReady(embeddings: BinaryEmbedding[], count: number): void {
+    if (!this.onEmbeddings || !embeddings || embeddings.length === 0) {
+      return;
+    }
+
+    logger.debug("WORKER_POOL", `Received ${count} embeddings from worker`, {
+      language: this.language,
+      count,
+    });
+
+    // Route embeddings to callback (FAISS accumulator)
+    this.onEmbeddings(embeddings);
   }
 
   /**
@@ -410,10 +495,8 @@ export class LanguageWorkerPool {
     const task = this.pendingTasks.get(result.taskId);
     if (!task) return;
 
-    // Clear timeout
-    if (task.timeout) {
-      clearTimeout(task.timeout);
-    }
+    // Cancel timeout check
+    task.timeoutAbort = true;
 
     // Update worker state
     state.busy = false;
@@ -440,9 +523,8 @@ export class LanguageWorkerPool {
     const task = this.pendingTasks.get(taskId);
     if (!task) return;
 
-    if (task.timeout) {
-      clearTimeout(task.timeout);
-    }
+    // Cancel timeout check
+    task.timeoutAbort = true;
 
     this.failedTasks++;
     task.reject(error);
@@ -452,9 +534,17 @@ export class LanguageWorkerPool {
   /**
    * Handle worker error
    */
-  private handleWorkerError(workerId: number, _error: Error): void {
+  private handleWorkerError(workerId: number, error: Error): void {
     const state = this.workers.get(workerId);
     if (!state) return;
+    // CRITICAL: Log worker crash and flush logs
+    logger.error("WORKER_POOL", `Worker ${workerId} crashed`, {
+      workerId,
+      error: error.message,
+      stack: error.stack,
+      language: this.language,
+    });
+    logger.stopFlushLoop();
 
     // Mark worker as idle
     state.busy = false;
@@ -470,6 +560,14 @@ export class LanguageWorkerPool {
    * Handle task timeout
    */
   private handleTaskTimeout(taskId: string): void {
+    const task = this.pendingTasks.get(taskId);
+    logger.error("WORKER_POOL", `Task timeout`, {
+      taskId,
+      fileCount: task?.files.length,
+      files: task?.files.map((f) => f.split(/[/]/).pop()),
+      timeout: this.taskTimeout,
+    });
+    logger.stopFlushLoop();
     this.handleTaskError(taskId, new Error(`Task timeout (${this.taskTimeout}ms) for language: ${this.language}`));
   }
 
@@ -522,29 +620,44 @@ export class LanguageWorkerPool {
     for (const [_workerId, state] of this.workers) {
       shutdownPromises.push(
         new Promise((resolve) => {
-          const timeoutId = setTimeout(() => {
-            if (this.runtime === "bun") {
-              (state.worker as BunWorker).terminate();
-            } else {
-              (state.worker as NodeWorker).terminate();
+          let resolved = false;
+
+          // Timeout via polling with runtime-aware sleep
+          const startTime = Date.now();
+          const checkShutdownTimeout = async () => {
+            while (!resolved && Date.now() - startTime < 5000) {
+              await this.sleep(50); // Real sleep without busy-wait
             }
-            resolve();
-          }, 5000);
+            if (!resolved) {
+              if (this.runtime === "bun") {
+                (state.worker as BunWorker).terminate();
+              } else {
+                (state.worker as NodeWorker).terminate();
+              }
+              resolve();
+            }
+          };
+          checkShutdownTimeout();
 
           if (this.runtime === "bun") {
             const bunWorker = state.worker as BunWorker;
             bunWorker.postMessage({ type: "shutdown" });
             // Bun workers don't have "exit" event, just terminate after delay
-            setTimeout(() => {
-              clearTimeout(timeoutId);
+            const terminateStart = Date.now();
+            const delayedTerminate = async () => {
+              while (Date.now() - terminateStart < 1000) {
+                await this.sleep(50); // Real sleep without busy-wait
+              }
+              resolved = true;
               bunWorker.terminate();
               resolve();
-            }, 1000);
+            };
+            delayedTerminate();
           } else {
             const nodeWorker = state.worker as NodeWorker;
             nodeWorker.postMessage({ type: "shutdown" });
             nodeWorker.once("exit", () => {
-              clearTimeout(timeoutId);
+              resolved = true;
               resolve();
             });
           }
@@ -554,7 +667,7 @@ export class LanguageWorkerPool {
 
     await Promise.all(shutdownPromises);
     this.workers.clear();
-    console.error(`[LanguageWorkerPool:${this.language}] Shutdown complete (runtime: ${this.runtime})`);
+    logger.info("WORKER_POOL", `Shutdown complete`, { language: this.language, runtime: this.runtime });
   }
 
   /**

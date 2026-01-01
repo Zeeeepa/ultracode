@@ -16,6 +16,22 @@
 import { extname } from "node:path";
 import { LRUCache } from "lru-cache";
 import xxhash from "xxhash-wasm";
+import { detectRuntime } from "../shared/runtime-detect.js";
+
+/**
+ * Runtime-aware sleep for Bun compatibility
+ * Uses Bun.sleep for Bun runtime, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (detectRuntime() === "bun" && typeof (globalThis as any).Bun?.sleep === "function") {
+    // Bun: use Bun.sleep which works correctly
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    // Node.js: setTimeout
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 import type {
   CacheEntry,
   FileChange,
@@ -61,12 +77,25 @@ interface BatchResult {
 // Removed: stringToUint8Array - no longer needed with native crypto
 
 /**
- * Create a timeout promise
+ * Create a timeout promise (Bun-compatible)
  */
-function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+async function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  const abortController = new AbortController();
+
+  const timeoutPromise = (async (): Promise<never> => {
+    await sleep(ms);
+    if (!abortController.signal.aborted) {
+      throw new Error(`Timeout after ${ms}ms`);
+    }
+    return new Promise(() => {});
+  })();
+
   return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)),
+    promise.then((result) => {
+      abortController.abort();
+      return result;
+    }),
+    timeoutPromise,
   ]);
 }
 
@@ -124,16 +153,16 @@ export class IncrementalParser {
     // Initialize unified parser (TypeScript Compiler API + fallbacks)
     await this.parser.initialize();
 
-    // Initialize multi-pass orchestrator (SWC + TS API)
+    // Initialize multi-pass orchestrator (OXC + TS API)
     if (this.useMultiPass) {
       try {
         this.multiPass = new MultiPassOrchestrator({
-          swcConcurrency: 16,
+          oxcConcurrency: 16,
           tsConcurrency: 4,
           workerPoolSize: 8,
         });
         await this.multiPass.initialize();
-        console.error("[IncrementalParser] Multi-pass orchestrator initialized (SWC + TS API)");
+        console.error("[IncrementalParser] Multi-pass orchestrator initialized (OXC + TS API)");
       } catch (e) {
         console.warn("[IncrementalParser] Multi-pass init failed, using standard parser:", e);
         this.multiPass = null;
@@ -169,7 +198,7 @@ export class IncrementalParser {
   /**
    * Parse a single file with caching
    */
-  async parseFile(filePath: string, content?: string, options: ParserOptions = {}): Promise<ParseResult> {
+  async parseFile(filePath: string, content?: string | undefined, options: ParserOptions = {}): Promise<ParseResult> {
     const startTime = Date.now();
 
     const shouldUseCache = options.useCache !== false;

@@ -27,8 +27,8 @@ export interface LibSQLConfig {
   dimensions: number;
   metric?: "cosine" | "l2"; // Default: cosine
   compression?: "float8" | "float16" | "float32"; // Default: float32
-  searchL?: number; // Neighbors visited during search (default: 200)
-  insertL?: number; // Neighbors visited during insert (default: 70)
+  searchL?: number | undefined; // Neighbors visited during search (default: 200)
+  insertL?: number | undefined; // Neighbors visited during insert (default: 70)
 }
 
 /**
@@ -240,10 +240,10 @@ export class LibSQLAdapter {
       const estimatedSimilarity = Math.max(0.1, 1 - position * 0.05);
 
       let metadata: Record<string, unknown> | undefined;
-      if (row.metadata) {
+      if (row["metadata"]) {
         try {
           // libsql returns ArrayBuffer, convert to string
-          const rawMeta = row.metadata;
+          const rawMeta = row["metadata"];
           let metaStr: string;
           if (rawMeta instanceof ArrayBuffer) {
             metaStr = new TextDecoder().decode(rawMeta);
@@ -259,8 +259,8 @@ export class LibSQLAdapter {
       }
 
       results.push({
-        id: row.id as string,
-        content: row.content as string,
+        id: row["id"] as string,
+        content: row["content"] as string,
         similarity: estimatedSimilarity,
         metadata,
       });
@@ -292,10 +292,10 @@ export class LibSQLAdapter {
     if (!row) return null;
 
     let metadata: Record<string, unknown> | undefined;
-    if (row.metadata) {
+    if (row["metadata"]) {
       try {
         // libsql returns ArrayBuffer, convert to string
-        const rawMeta = row.metadata;
+        const rawMeta = row["metadata"];
         let metaStr: string;
         if (rawMeta instanceof ArrayBuffer) {
           metaStr = new TextDecoder().decode(rawMeta);
@@ -311,15 +311,15 @@ export class LibSQLAdapter {
     }
 
     // Parse vector from string representation
-    const vectorStr = row.vector as string;
+    const vectorStr = row["vector"] as string;
     const vector = this.stringToVector(vectorStr);
 
     return {
-      id: row.id as string,
-      content: row.content as string,
+      id: row["id"] as string,
+      content: row["content"] as string,
       vector,
       metadata,
-      createdAt: row.created_at as number,
+      createdAt: row["created_at"] as number,
     };
   }
 
@@ -346,7 +346,7 @@ export class LibSQLAdapter {
       args: [projectHash, branchName],
     });
 
-    return (result.rows[0]?.cnt as number) || 0;
+    return (result.rows[0]?.["cnt"] as number) || 0;
   }
 
   /**
@@ -356,7 +356,7 @@ export class LibSQLAdapter {
     if (!this.client) throw new Error("LibSQL client not initialized");
 
     const result = await this.client.execute(`SELECT COUNT(*) as cnt FROM ${this.tableName}`);
-    return (result.rows[0]?.cnt as number) || 0;
+    return (result.rows[0]?.["cnt"] as number) || 0;
   }
 
   /**
@@ -441,7 +441,7 @@ export class LibSQLAdapter {
       args: [projectHash],
     });
 
-    return result.rows.map((row) => row.branch_name as string);
+    return result.rows.map((row) => row["branch_name"] as string);
   }
 
   /**
@@ -458,8 +458,8 @@ export class LibSQLAdapter {
     `);
 
     return result.rows.map((row) => ({
-      projectHash: row.project_hash as string,
-      count: row.cnt as number,
+      projectHash: row["project_hash"] as string,
+      count: row["cnt"] as number,
     }));
   }
 }

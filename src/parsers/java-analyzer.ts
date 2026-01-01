@@ -25,7 +25,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
 // Circuit breaker constants
@@ -67,7 +67,7 @@ export class JavaAnalyzer {
    * Main entry point for analyzing Java code
    */
   async analyze(
-    rootNode: TreeSitterNode,
+    rootNode: ASTNode,
     filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
     this.resetState();
@@ -104,7 +104,7 @@ export class JavaAnalyzer {
    * Extract entities from Java AST
    */
   private extractEntities(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -198,7 +198,7 @@ export class JavaAnalyzer {
   /**
    * Extract package declaration
    */
-  private extractPackage(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
+  private extractPackage(node: ASTNode, filePath: string, entities: ParsedEntity[]): void {
     const packageNameNode = node.namedChildren.find((c) => c.type === "scoped_identifier" || c.type === "identifier");
     if (packageNameNode) {
       const packageName = packageNameNode.text.replace(/\s+/g, "");
@@ -221,7 +221,7 @@ export class JavaAnalyzer {
    * Extract imports and create relationships
    */
   private extractImports(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -251,7 +251,7 @@ export class JavaAnalyzer {
    * Extract class declaration
    */
   private extractClass(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -338,7 +338,7 @@ export class JavaAnalyzer {
    * Extract interface declaration
    */
   private extractInterface(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -404,7 +404,7 @@ export class JavaAnalyzer {
    * Extract enum declaration
    */
   private extractEnum(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -485,7 +485,7 @@ export class JavaAnalyzer {
    * Extract record declaration (Java 14+)
    */
   private extractRecord(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -572,7 +572,7 @@ export class JavaAnalyzer {
   /**
    * Extract annotation declaration
    */
-  private extractAnnotation(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
+  private extractAnnotation(node: ASTNode, filePath: string, entities: ParsedEntity[]): void {
     const nameNode = node.childForFieldName("name");
     const annotationName = nameNode?.text;
 
@@ -604,7 +604,7 @@ export class JavaAnalyzer {
    * Extract method declaration
    */
   private extractMethod(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -675,7 +675,7 @@ export class JavaAnalyzer {
    * Extract constructor declaration
    */
   private extractConstructor(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -728,7 +728,7 @@ export class JavaAnalyzer {
    * Extract field declaration
    */
   private extractField(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -788,7 +788,7 @@ export class JavaAnalyzer {
   /**
    * Extract modifiers from a node
    */
-  private extractModifiers(node: TreeSitterNode): string[] {
+  private extractModifiers(node: ASTNode): string[] {
     const modifiers: string[] = [];
     const modifiersNode = node.childForFieldName("modifiers");
 
@@ -807,7 +807,7 @@ export class JavaAnalyzer {
   /**
    * Extract annotations from a node
    */
-  private extractAnnotations(node: TreeSitterNode): string[] {
+  private extractAnnotations(node: ASTNode): string[] {
     const annotations: string[] = [];
     const modifiersNode = node.childForFieldName("modifiers");
 
@@ -826,7 +826,7 @@ export class JavaAnalyzer {
   /**
    * Extract method parameters
    */
-  private extractParameters(parametersNode: TreeSitterNode): Array<{ name: string; type?: string }> {
+  private extractParameters(parametersNode: ASTNode): Array<{ name: string; type?: string }> {
     const params: Array<{ name: string; type?: string }> = [];
     const formalParams = parametersNode.namedChildren.filter(
       (c) => c.type === "formal_parameter" || c.type === "spread_parameter",
@@ -851,7 +851,7 @@ export class JavaAnalyzer {
    * Extract method calls to create relationships
    */
   private extractMethodCalls(
-    node: TreeSitterNode,
+    node: ASTNode,
     callerId: string,
     filePath: string,
     relationships: EntityRelationship[],

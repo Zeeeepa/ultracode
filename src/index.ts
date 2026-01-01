@@ -12,16 +12,51 @@
  *  - 2025-09-14: Enhanced by Dev-Agent - TASK-002: Added 8 new semantic MCP tools
  */
 
+// CRITICAL: Check for --pipe flag BEFORE any imports (to prevent JSON-RPC corruption)
+// Set env variable early so imported modules can check it
+if (process.argv.includes("--pipe")) {
+  process.env["MCP_QUIET_MODE"] = "true";
+}
+
+// CRITICAL: Override console BEFORE any imports (to prevent JSON-RPC corruption in --pipe mode)
+// In Bun with native modules, even console function calls can cause crashes
+// Make console completely no-op in quiet mode (when running as MCP server)
+(() => {
+  const isBun = typeof (globalThis as any).Bun !== "undefined";
+  const quietMode = process.env["MCP_QUIET_MODE"] === "true";
+
+  // CRITICAL: In Bun+quiet mode, use absolute minimal no-op functions
+  // Even argument spreading (...args) can cause issues with native modules
+  if (isBun && quietMode) {
+    // Absolute minimum - empty functions with no parameter handling
+    const noop = () => {};
+    console.error = noop;
+    console.warn = noop;
+    console.log = noop;
+    console.info = noop;
+    console.debug = noop;
+  } else if (quietMode) {
+    // Node.js quiet mode: suppress output but safely
+    const noop = () => {};
+    console.error = noop;
+    console.warn = noop;
+    console.log = noop;
+    console.info = noop;
+    console.debug = noop;
+  }
+  // Non-quiet mode: leave console as-is
+})();
+
 // TASK-001: Environment variable fallback for embedding model - MUST BE FIRST
 function createSafeEnvironment() {
   // Provide safe defaults for environment variables that might be undefined
   const safeEnv = {
     ...process.env,
     // Ensure these are defined to prevent "env is not defined" errors
-    NODE_ENV: process.env.NODE_ENV || "development",
-    MCP_EMBEDDING_ENABLED: process.env.MCP_EMBEDDING_ENABLED || "true",
-    MCP_EMBEDDING_PROVIDER: process.env.MCP_EMBEDDING_PROVIDER || "transformers",
-    MCP_EMBEDDING_FALLBACK: process.env.MCP_EMBEDDING_FALLBACK || "true",
+    NODE_ENV: process.env["NODE_ENV"] || "development",
+    MCP_EMBEDDING_ENABLED: process.env["MCP_EMBEDDING_ENABLED"] || "true",
+    MCP_EMBEDDING_PROVIDER: process.env["MCP_EMBEDDING_PROVIDER"] || "transformers",
+    MCP_EMBEDDING_FALLBACK: process.env["MCP_EMBEDDING_FALLBACK"] || "true",
   };
 
   // Make env globally available for embedding models
@@ -32,7 +67,7 @@ function createSafeEnvironment() {
 // Initialize safe environment BEFORE any imports that might use embedding generator
 createSafeEnvironment();
 
-import { readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,8 +87,8 @@ import { z } from "zod";
 function zodToJsonSchema(schema: z.ZodSchema): Record<string, unknown> {
   const result = z.toJSONSchema(schema) as Record<string, unknown>;
   // Ensure type: "object" is present for MCP compatibility
-  if (!result.type) {
-    result.type = "object";
+  if (!result["type"]) {
+    result["type"] = "object";
   }
   return result;
 }
@@ -84,26 +119,28 @@ import { getGlobalContainer } from "./core/di-container.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
 import { PipeServer } from "./core/pipe-transport.js";
 import { resourceManager } from "./core/resource-manager.js";
+// LayeredIndexManager for branch-aware indexing
 import { LayeredIndexManager } from "./layered/index.js";
 import { CodeModifier } from "./modification/code-modifier.js";
 import { FileOperations } from "./modification/file-operations.js";
 import { PreviewManager } from "./modification/preview-manager.js";
 import { PatternSearch } from "./search/pattern-search.js";
-import { ModelDownloadingError } from "./semantic/providers/openvino-provider.js";
+import { shutdownFaissProvider } from "./semantic/faiss/faiss-provider.js";
+import { getGpuClient, shutdownGpuClient } from "./semantic/gpu/gpu-client.js";
+// OVMS Native lifecycle management
+import { initializeOVMSNative, type OVMSNativeConfig, shutdownOVMSNative } from "./semantic/ovms-native-manager.js";
+import { detectRuntime } from "./shared/runtime-detect.js";
 // Storage initialization
-import { DEFAULT_BRANCH, getProjectHash, initializeStorageDirs } from "./shared/storage-paths.js";
-import { getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
-import { getSQLiteManager } from "./storage/sqlite-manager.js";
+import { DEFAULT_BRANCH, getLogsDir, getProjectHash, initializeStorageDirs } from "./shared/storage-paths.js";
+import { configureGraphStorage, getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
+// SQLiteManager removed - using libsql via graph-storage-factory
 import { collectAgentMetrics } from "./tools/agent-metrics.js";
 import type { ToolContext } from "./tools/base-tool-handler.js";
 import { branchToolDefinitions } from "./tools/branch-schemas.js";
 // Import branch management tools
 import * as branchTools from "./tools/branch-tools.js";
-// Import graph query functions
-import { getGraphStats, queryGraphEntities } from "./tools/graph-query.js";
+// graph-query removed - functionality in graph-storage-libsql
 import { runJscpdCloneDetection } from "./tools/jscpd.js";
-import { ingestLernaGraph } from "./tools/lerna-graph-ingest.js";
-import { getLernaProjectGraph } from "./tools/lerna-project-graph.js";
 import { toolRegistry } from "./tools/tool-registry.js";
 import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
@@ -111,20 +148,104 @@ import { AgentBusyError } from "./types/errors.js";
 import type { CloneGroup } from "./types/semantic.js";
 import type { Entity, Relationship } from "./types/storage.js";
 import { EntityType, RelationType } from "./types/storage.js";
+import { getVectorDimensions, loadSemanticConfig } from "./utils/config-paths.js";
 import { initHasher } from "./utils/fast-hash.js";
 import { createRequestId, logger } from "./utils/logger.js";
 import { ensureOllamaRunning, getStatusMessage } from "./utils/ollama-checker.js";
+
+// =============================================================================
+// RUNTIME-AWARE SLEEP HELPER
+// Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+// =============================================================================
+const currentRuntime = detectRuntime();
+async function sleep(ms: number): Promise<void> {
+  if (currentRuntime === "bun" && typeof (globalThis as any).Bun?.sleep === "function") {
+    // Bun: use Bun.sleep which works correctly
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    // Node.js: setTimeout
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
+// =============================================================================
+// GLOBAL EXCEPTION HANDLERS - Catch crashes and log them to file
+// =============================================================================
+
+// Local timestamp with timezone (e.g., 2026-01-01T03:45:30.123+04:00)
+function getLocalTimestamp(): string {
+  const now = new Date();
+  const offsetMin = -now.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const hours = String(Math.floor(Math.abs(offsetMin) / 60)).padStart(2, "0");
+  const mins = String(Math.abs(offsetMin) % 60).padStart(2, "0");
+  const localTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return `${localTime.toISOString().slice(0, -1)}${sign}${hours}:${mins}`;
+}
+
+// Get local date string for log file names (YYYY-MM-DD in local time)
+function getLocalDateString(): string {
+  const now = new Date();
+  const localTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return localTime.toISOString().slice(0, 10);
+}
+
+function writeToLogFile(message: string): void {
+  try {
+    const logsDir = getLogsDir();
+    if (!existsSync(logsDir)) {
+      mkdirSync(logsDir, { recursive: true });
+    }
+    const dateStr = getLocalDateString();
+    const logFile = join(logsDir, `mcp-server-${dateStr}.log`);
+    appendFileSync(logFile, message + "\n");
+  } catch {
+    // Fallback to stderr if log file fails
+    process.stderr.write(message + "\n");
+  }
+}
+
+process.on("uncaughtException", (error, origin) => {
+  const timestamp = getLocalTimestamp();
+  const message = `[${timestamp}] [FATAL] [CRASH] Uncaught exception (${origin}): ${error.message}\n${error.stack}`;
+  writeToLogFile(message);
+  console.error(message);
+  // Exit after brief delay without setTimeout (Bun compatibility)
+  (async () => {
+    const start = Date.now();
+    while (Date.now() - start < 100) await sleep(10);
+    process.exit(1);
+  })();
+});
+
+process.on("unhandledRejection", (reason, _promise) => {
+  const timestamp = getLocalTimestamp();
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  const message = `[${timestamp}] [FATAL] [CRASH] Unhandled rejection: ${error.message}\n${error.stack}`;
+  writeToLogFile(message);
+  console.error(message);
+});
+
+// SIGTERM/SIGINT handlers are defined later in startMcpServer() after all imports
+// This allows proper async shutdown including OVMS Native
+
 import { CodeValidator } from "./validation/code-validator.js";
 // PHASE 8: Import new code modification and analysis components
 import { VersionManager } from "./versioning/version-manager.js";
 
-// === STARTUP TIMING ===
+// === STARTUP TIMING WITH TRACE LOGGING ===
 const _startupTimers: Record<string, number> = {};
+const PROCESS_START_TIME = Date.now();
+
 function _startTimer(name: string) {
   _startupTimers[name] = Date.now();
+  const uptimeMs = Date.now() - PROCESS_START_TIME;
+  logger.trace("STARTUP", `[+${uptimeMs}ms] ▶ START: ${name}`);
 }
 function _endTimer(name: string) {
   const elapsed = Date.now() - (_startupTimers[name] || Date.now());
+  const uptimeMs = Date.now() - PROCESS_START_TIME;
+  logger.trace("STARTUP", `[+${uptimeMs}ms] ◀ END: ${name} (${elapsed}ms)`);
   console.error(`[STARTUP] ${name}: ${elapsed}ms`);
   return elapsed;
 }
@@ -147,41 +268,96 @@ let versionRequested = false;
 let setupRequested = false;
 let noAutoIndex = false;
 let pipeServerMode = false; // Default: use stdio transport (for Claude Code)
+let quietMode = false; // Disable console.* output (auto-enabled in --pipe mode)
 
-// Global indexing state tracking
-let isIndexingInProgress = false;
-let indexingStartTime: number | null = null;
-let indexingDirectory: string | null = null;
+// Per-project indexing state tracking (no longer global blocking)
+interface IndexingState {
+  startTime: number;
+  directory: string;
+}
+const indexingProjects = new Map<string, IndexingState>();
+
+// Legacy global state for backward compatibility
+let legacyIndexingDirectory: string | null = null;
+
+// =============================================================================
+// TIMER SYSTEM (Simplified - no longer need suspension for HTTP providers)
+// =============================================================================
+
+// Legacy exports for compatibility (no-op now)
+export const registerAsyncLoopStarter = (_starter: () => void): void => {};
+export function areTimersSuspended(): boolean {
+  return false;
+}
+export function resumeTimers(): void {}
 
 /**
- * Check if indexing is currently in progress
+ * Check if indexing is currently in progress for ANY project
  */
 export function isIndexing(): boolean {
-  return isIndexingInProgress;
+  return indexingProjects.size > 0;
+}
+
+/**
+ * Check if a specific project is being indexed
+ */
+export function isProjectIndexing(directory: string): boolean {
+  const normalizedDir = directory.toLowerCase().replace(/\\/g, "/");
+  for (const [key] of indexingProjects) {
+    if (key.toLowerCase().replace(/\\/g, "/") === normalizedDir) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
  * Get indexing status for user-friendly messages
  */
-export function getIndexingStatus(): { inProgress: boolean; directory: string | null; elapsedSeconds: number | null } {
+export function getIndexingStatus(): {
+  inProgress: boolean;
+  directory: string | null;
+  elapsedSeconds: number | null;
+  allProjects: string[];
+} {
+  if (indexingProjects.size === 0) {
+    return { inProgress: false, directory: null, elapsedSeconds: null, allProjects: [] };
+  }
+
+  // Return first project for backward compatibility
+  const [firstDir, firstState] = indexingProjects.entries().next().value || [null, null];
   return {
-    inProgress: isIndexingInProgress,
-    directory: indexingDirectory,
-    elapsedSeconds: indexingStartTime ? Math.round((Date.now() - indexingStartTime) / 1000) : null,
+    inProgress: true,
+    directory: firstDir,
+    elapsedSeconds: firstState ? Math.round((Date.now() - firstState.startTime) / 1000) : null,
+    allProjects: Array.from(indexingProjects.keys()),
   };
 }
 
 /**
- * Set indexing state (called by performAutoIndex and index tool)
+ * Set indexing state for a specific project
+ * No longer blocks other projects!
  */
 export function setIndexingState(inProgress: boolean, directory?: string): void {
-  isIndexingInProgress = inProgress;
+  const dir = directory || legacyIndexingDirectory || "unknown";
+
   if (inProgress) {
-    indexingStartTime = Date.now();
-    indexingDirectory = directory || null;
+    indexingProjects.set(dir, {
+      startTime: Date.now(),
+      directory: dir,
+    });
+    legacyIndexingDirectory = dir;
   } else {
-    indexingStartTime = null;
-    indexingDirectory = null;
+    // Remove this project from indexing
+    indexingProjects.delete(dir);
+    if (legacyIndexingDirectory === dir) {
+      legacyIndexingDirectory = null;
+    }
+
+    // Resume timers when all indexing completes
+    if (indexingProjects.size === 0) {
+      resumeTimers();
+    }
   }
 }
 const positionalArgs: string[] = [];
@@ -225,6 +401,8 @@ for (let i = 0; i < args.length; i++) {
     pipeServerMode = false; // Use stdio transport (explicit, same as default)
   } else if (arg === "--pipe") {
     pipeServerMode = true; // Use pipe/TCP transport for multi-client mode
+    quietMode = true; // Auto-enable quiet mode (disable console output)
+    process.env["MCP_QUIET_MODE"] = "true"; // Set env for imported modules
   } else if (arg === "-d" || arg === "--directory") {
     // Support -d <path> for compatibility with other tools
     const next = args[++i];
@@ -347,7 +525,7 @@ type NormalizedSemanticGroup = {
     occurrences: Array<{
       id: string;
       similarity: number;
-      startLine?: number;
+      startLine?: number | undefined;
       snippet: string;
     }>;
   }>;
@@ -358,7 +536,7 @@ function parseSemanticMemberPath(
   memberPath: string | undefined,
 ): {
   filePath: string;
-  startLine?: number;
+  startLine?: number | undefined;
 } {
   let filePath = memberPath ?? "";
   let startLine: number | undefined;
@@ -396,7 +574,7 @@ function normalizeSemanticCloneGroups(
         occurrences: Array<{
           id: string;
           similarity: number;
-          startLine?: number;
+          startLine?: number | undefined;
           snippet: string;
         }>;
       }
@@ -526,11 +704,11 @@ for (const raw of debugRequestStrings) {
 }
 
 if (isDebugMode) {
-  process.env.MCP_DEBUG_MODE = process.env.MCP_DEBUG_MODE ?? "1";
-  if (!process.env.PARSER_DISABLE_CACHE) {
-    process.env.PARSER_DISABLE_CACHE = "1";
+  process.env["MCP_DEBUG_MODE"] = process.env["MCP_DEBUG_MODE"] ?? "1";
+  if (!process.env["PARSER_DISABLE_CACHE"]) {
+    process.env["PARSER_DISABLE_CACHE"] = "1";
   }
-  process.env.MCP_DEBUG_DISABLE_SEMANTIC = process.env.MCP_DEBUG_DISABLE_SEMANTIC ?? "1";
+  process.env["MCP_DEBUG_DISABLE_SEMANTIC"] = process.env["MCP_DEBUG_DISABLE_SEMANTIC"] ?? "1";
 }
 
 function normalizeInputPath(rawPath: string): string;
@@ -550,9 +728,12 @@ _endTimer("initializeConfig");
 // Validate configuration at startup
 const validation = validateConfig(config);
 if (!validation.valid) {
-  console.error("[Config] Configuration validation failed:");
-  for (const error of validation.errors) {
-    console.error(`  - ${error}`);
+  // Can't use console.error in quiet mode, but this is a critical error
+  if (!quietMode) {
+    console.error("[Config] Configuration validation failed:");
+    for (const error of validation.errors) {
+      console.error(`  - ${error}`);
+    }
   }
   process.exit(1);
 }
@@ -567,10 +748,8 @@ console.error("[Main] process.cwd():", process.cwd());
 setCurrentIndexingDirectory(directory);
 console.error("[Main] Set current indexing directory to:", directory);
 
-_startTimer("SQLiteManager");
-const globalSQLiteManager = getSQLiteManager(config.database);
-globalSQLiteManager.initialize();
-_endTimer("SQLiteManager");
+// SQLiteManager removed - using libsql-based storage via graph-storage-factory
+// Storage initialization happens lazily via getGraphStorage()
 
 // Track current project for context switching
 let currentProjectPath = directory;
@@ -635,9 +814,33 @@ async function switchGlobalProjectContext(projectPath: string, branchName?: stri
 
 // Initialize global GraphStorage (libsql unified storage)
 console.error("[Main] Initializing global GraphStorage (libsql unified)");
+
+// Configure vector dimensions from semantic-config.json BEFORE initializing storage
+const vectorDimensions = getVectorDimensions();
+configureGraphStorage({ dimensions: vectorDimensions });
+
 _startTimer("initializeGraphStorage");
 await initializeGraphStorage();
 _endTimer("initializeGraphStorage");
+
+// Early GPU worker startup (non-blocking) - starts Named Pipe connection in background
+// This takes ~5s, so start early to overlap with other initialization
+let gpuWorkerStartPromise: Promise<boolean> | null = null;
+const gpuStartTime = Date.now();
+try {
+  const gpuClient = getGpuClient();
+  gpuWorkerStartPromise = gpuClient.start();
+  gpuWorkerStartPromise
+    .then((success) => {
+      console.error(`[Main] GPU worker started in background (${Date.now() - gpuStartTime}ms, success=${success})`);
+    })
+    .catch((err) => {
+      console.error(`[Main] GPU worker background start failed: ${(err as Error).message}`);
+    });
+  console.error("[Main] GPU worker start initiated (non-blocking)");
+} catch (err) {
+  console.error(`[Main] Failed to initiate GPU worker: ${(err as Error).message}`);
+}
 
 // v3: Set initial project context for GraphStorage
 const initialStorage = await getGraphStorage();
@@ -658,18 +861,54 @@ logger.systemEvent("MCP Server Starting", {
 
 // Initialize resource manager with configuration constraints
 const conductorResources = config.conductor.resourceConstraints;
-resourceManager.startMonitoring();
+
+// Determine actual provider: semantic-config.json takes priority over YAML
+const semanticConfig = loadSemanticConfig();
+const semanticProvider = semanticConfig?.embedding?.platform;
+const yamlProvider = config.mcp.embedding?.provider;
+const actualProvider = semanticProvider || yamlProvider || "auto";
+
+// Start resource monitoring (disabled in pipe mode - Bun compatibility)
+if (!pipeServerMode) {
+  resourceManager.startMonitoring();
+}
+
 logger.systemEvent("Resource Manager Started", {
   maxMemoryMB: conductorResources.maxMemoryMB,
   maxCpuPercent: conductorResources.maxCpuPercent,
-  embeddingFallback: config.mcp.embedding?.fallbackToMemory,
+  embeddingProvider: actualProvider,
+  semanticConfigProvider: semanticProvider,
+  yamlProvider,
+  monitoringEnabled: true,
 });
+
+// Initialize OVMS Native if configured (auto-start embedding server)
+if (actualProvider === "ovms-native") {
+  const ovmsNativeConfig: OVMSNativeConfig = {
+    enabled: true,
+    autoStart: true,
+    restPort: 8083,
+    grpcPort: 9001,
+    healthCheckIntervalMs: 30000,
+    startupTimeoutMs: 120000, // 2 minutes for model loading
+  };
+
+  const ovmsStarted = await initializeOVMSNative(ovmsNativeConfig);
+  if (ovmsStarted) {
+    logger.systemEvent("OVMS Native Started", { provider: actualProvider, restPort: 8083, grpcPort: 9001 });
+    console.error("[Main] OVMS Native started on port 8083");
+  } else {
+    // No fallback - if ovms-native is configured, it must start
+    console.error("[Main] ERROR: OVMS Native failed to start. Check installation with: setup-embedding");
+    console.error("[Main] Embedding generation will not work until OVMS Native is running.");
+    logger.error("OVMS_NATIVE", "Failed to start OVMS Native - embedding disabled");
+  }
+}
 
 // VARIANT-C: Initialize DI Container and register all agents
 _startTimer("registerAllAgents");
 const container = getGlobalContainer();
-// Register SQLiteManager in container so agents can resolve it dynamically
-container.registerInstance("SQLiteManager", globalSQLiteManager);
+// Storage is accessed via getGraphStorage() - no need to register SQLiteManager
 await registerAllAgents(container);
 _endTimer("registerAllAgents");
 console.error("[Main] DI Container initialized with all agents");
@@ -701,8 +940,7 @@ async function initializeGlobalVectorStore(): Promise<void> {
       patternSearch = null; // Reset PatternSearch to use new GraphStorage
       codeModifier = null; // Reset CodeModifier (uses GraphStorage)
       fileOperations = null; // Reset FileOperations (uses GraphStorage)
-      autoDocManager = null; // Reset AutoDocManager (uses SQLiteManager)
-      layeredIndexManager = null; // Reset LayeredIndexManager (uses GraphStorage)
+      autoDocManager = null; // Reset AutoDocManager
     }
   }
 }
@@ -775,52 +1013,67 @@ async function getPatternSearch(): Promise<PatternSearch> {
 
 async function getAutoDocManager(): Promise<AutoDocManager> {
   if (!autoDocManager) {
-    autoDocManager = getAutoDocManagerFactory(globalSQLiteManager);
+    // Use autodoc.db in the same directory as unified storage
+    const { getGlobalDbPaths } = await import("./shared/storage-paths.js");
+    const { dirname, join } = await import("node:path");
+    const paths = getGlobalDbPaths();
+    const autodocDbPath = join(dirname(paths.graphDbPath), "autodoc.db");
+    autoDocManager = getAutoDocManagerFactory(autodocDbPath);
     const graphStorage = await getGraphStorage();
     await autoDocManager.initialize(graphStorage);
   }
   return autoDocManager;
 }
 
-// Layered Index Manager for branch-aware indexing
+// LayeredIndexManager - orchestrates branch-aware indexing with delta layers
 let layeredIndexManager: LayeredIndexManager | null = null;
 
-async function getLayeredIndexManager(): Promise<LayeredIndexManager> {
-  if (!layeredIndexManager) {
-    // Get required components
-    const baseIndex = await getGraphStorage();
-    const semanticAgent = await getSemanticAgent();
-    const baseVectorStore = semanticAgent.getVectorStore();
+async function getLayeredIndexManager(): Promise<LayeredIndexManager | null> {
+  if (layeredIndexManager) {
+    return layeredIndexManager;
+  }
 
-    // Get IndexerAgent for BranchManager and GitWatcher
+  try {
+    // Get required dependencies
+    const baseIndex = await getGraphStorage();
     const cond = getConductor();
     await cond.initialize();
-    const indexerAgent = (await getOrCreateAgent(container, cond, AgentType.INDEXER)) as IndexerAgent;
-    const branchManager = indexerAgent.getBranchManager();
-    const gitWatcher = indexerAgent.getGitWatcher();
 
-    // Check if BranchManager is available
-    if (!branchManager) {
-      console.warn("[Main] BranchManager not available, LayeredIndexManager will not be initialized");
-      return null as any;
+    // Get semantic agent for vector store
+    const agent = await getOrCreateAgent(container, cond, AgentType.SEMANTIC);
+    const baseVectorStore = agent?.getVectorStore?.();
+
+    if (!baseVectorStore) {
+      console.error("[Main] getLayeredIndexManager: No vector store available");
+      return null;
     }
 
-    // Estimate file count from current directory (default: 5000)
-    const estimatedFileCount = 5000;
+    // Get indexer agent for branch manager and git watcher
+    const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as any;
+    const branchManager = indexerAgent?.getBranchManager?.();
+    const gitWatcher = indexerAgent?.getGitWatcher?.();
+
+    if (!branchManager) {
+      console.error("[Main] getLayeredIndexManager: No branch manager available");
+      return null;
+    }
 
     // Create LayeredIndexManager
-    layeredIndexManager = new LayeredIndexManager(baseIndex, baseVectorStore, branchManager, gitWatcher, {
+    layeredIndexManager = new LayeredIndexManager(baseIndex, baseVectorStore, branchManager, gitWatcher || null, {
       workingDirectory: directory,
-      enableFileWatching: true,
+      enableFileWatching: !!gitWatcher,
       enableMaintenance: true,
-      estimatedFileCount,
       debug: false,
     });
 
     await layeredIndexManager.initialize();
-    console.error("[Main] LayeredIndexManager initialized");
+    console.error("[Main] LayeredIndexManager initialized successfully");
+
+    return layeredIndexManager;
+  } catch (error) {
+    console.error("[Main] Failed to initialize LayeredIndexManager:", error);
+    return null;
   }
-  return layeredIndexManager;
 }
 
 // VARIANT-C: Unified agent getter using DI Container
@@ -864,7 +1117,7 @@ async function getDoraAgent(): Promise<any> {
 }
 
 async function ensureSemanticsReady(minVectors = 1, timeoutMs = 15000): Promise<boolean> {
-  if (process.env.MCP_DEBUG_DISABLE_SEMANTIC === "1") {
+  if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] === "1") {
     return true;
   }
   const startEnsure = Date.now();
@@ -900,9 +1153,10 @@ async function ensureSemanticsReady(minVectors = 1, timeoutMs = 15000): Promise<
     }
   }
 
-  // Only poll if really no vectors
+  // Poll for vectors during indexing
   logger.info("SEMANTIC_READY", `No vectors found, polling...`, { timeoutMs });
   const start = Date.now();
+
   while (Date.now() - start < timeoutMs) {
     try {
       const currentMetrics = typeof agent.getSemanticMetrics === "function" ? agent.getSemanticMetrics() : undefined;
@@ -914,7 +1168,9 @@ async function ensureSemanticsReady(minVectors = 1, timeoutMs = 15000): Promise<
         return true;
       }
     } catch {}
-    await new Promise((r) => setTimeout(r, 250));
+
+    // Small delay to allow initialization to complete
+    await sleep(100);
   }
   logger.warn("SEMANTIC_READY", `Timeout, proceeding anyway`, { timeoutMs });
   return false;
@@ -1293,14 +1549,6 @@ const GetGraphSchema = z.object({
 });
 
 const GetGraphStatsSchema = z.object({});
-const GetLernaProjectGraphSchema = z.object({
-  directory: z
-    .string()
-    .optional()
-    .describe("Workspace directory to run the Lerna graph command from (defaults to server root)."),
-  ingest: z.boolean().optional().default(false).describe("Store package nodes and dependencies in graph storage."),
-  force: z.boolean().optional().default(false).describe("Bypass caches and force a fresh Lerna graph command."),
-});
 const GetGraphHealthSchema = z.object({
   minEntities: z.number().optional().default(1).describe("Minimum entity count for healthy status"),
   minRelationships: z.number().optional().default(0).describe("Minimum relationship count for healthy status"),
@@ -1419,6 +1667,37 @@ const PatternSearchSchema = z.object({
   limit: z.number().optional().default(10).describe("Maximum results to return"),
 });
 
+// =============================================================================
+// Merge Tool Schemas
+// =============================================================================
+const SemanticMergeSchema = z.object({
+  sourceBranch: z.string().describe("Source branch name (where changes come from), e.g. 'feature/caching'"),
+  targetBranch: z
+    .string()
+    .optional()
+    .describe("Target branch name (where to merge), e.g. 'main'. Defaults to current branch."),
+  dryRun: z.boolean().optional().default(true).describe("Preview only, don't apply changes (default: true)"),
+  autoResolve: z.boolean().optional().default(false).describe("Auto-resolve compatible conflicts (default: false)"),
+  includeAISuggestions: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe("Generate AI suggestions for conflicts (default: true)"),
+});
+
+const AnalyzeMergeConflictsSchema = z.object({
+  branchA: z.string().describe("First branch name"),
+  branchB: z.string().describe("Second branch name"),
+});
+
+const GetMergeSuggestionsSchema = z.object({
+  conflictId: z.string().describe("ID of the conflict to get suggestions for (from analyze_merge_conflicts)"),
+  branchA: z.string().describe("First branch name"),
+  branchB: z.string().describe("Second branch name"),
+});
+
+const GetSemanticMergeInfoSchema = z.object({});
+
 // Unified Tool Schemas (cross-compatibility with UltrasharpTools)
 const CreateFileSchema = z.object({
   filePath: z.string().describe("Absolute path for the new file to create"),
@@ -1515,6 +1794,13 @@ const AutoDocGenerateSchema = z.object({
     .optional()
     .default(false)
     .describe("Use LLM to generate meaningful documentation (requires Ollama/TGI/OpenAI)"),
+  incremental: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      "Incremental mode: only update changed parts, preserve existing content, mark deleted items. Set to false to regenerate from scratch.",
+    ),
   module: z
     .string()
     .optional()
@@ -1558,15 +1844,9 @@ function getToolsList() {
       inputSchema: zodToJsonSchema(IndexToolSchema),
     },
     {
-      name: "list_file_entities",
-      description:
-        "List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
-      inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
-    },
-    {
       name: "get_members",
       description:
-        "Alias for list_file_entities. List members/entities within a file. Unified naming with UltrasharpTools.",
+        "List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
       inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
     },
     {
@@ -1604,17 +1884,12 @@ function getToolsList() {
     {
       name: "analyze_code_impact",
       description:
-        "Discover entities and files that depend on a given symbol. Use together with list_file_entities to obtain the precise entity id for impact analysis.",
+        "Discover entities and files that depend on a given symbol. Use together with get_members to obtain the precise entity id for impact analysis.",
       inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema),
     },
     {
-      name: "detect_code_clones",
-      description: "Find duplicate or similar code blocks across the codebase",
-      inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
-    },
-    {
       name: "find_duplicates",
-      description: "Alias for detect_code_clones. Find potential duplicate code. Unified naming with UltrasharpTools.",
+      description: "Find duplicate or similar code blocks across the codebase using semantic similarity",
       inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
     },
     {
@@ -1659,11 +1934,6 @@ function getToolsList() {
       inputSchema: zodToJsonSchema(GetGraphStatsSchema),
     },
     {
-      name: "lerna_project_graph",
-      description: "Generate a Lerna workspace dependency graph (if configured)",
-      inputSchema: zodToJsonSchema(GetLernaProjectGraphSchema),
-    },
-    {
       name: "reset_graph",
       description: "Clear all graph data (entities, relationships, files)",
       inputSchema: zodToJsonSchema(z.object({})) as any,
@@ -1700,14 +1970,8 @@ function getToolsList() {
       inputSchema: zodToJsonSchema(CreateSnapshotSchema),
     },
     {
-      name: "rollback_snapshot",
-      description: "Rollback to a previous snapshot by ID. Restores all files to their snapshot state.",
-      inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
-    },
-    {
       name: "undo",
-      description:
-        "Alias for rollback_snapshot. Undo last changes by reverting to snapshot. Unified naming with UltrasharpTools.",
+      description: "Rollback to a previous snapshot by ID. Restores all files to their snapshot state.",
       inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
     },
     {
@@ -1721,15 +1985,9 @@ function getToolsList() {
       inputSchema: zodToJsonSchema(CleanupSnapshotsSchema),
     },
     {
-      name: "modify_entity_code",
-      description:
-        "Modify code of a specific entity by ID. Automatically creates snapshot, validates before/after, updates embeddings, and can rollback on error. Default preview mode shows changes without applying.",
-      inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
-    },
-    {
       name: "modify_code",
       description:
-        "Alias for modify_entity_code. Modify entity code with validation. Unified naming with UltrasharpTools.",
+        "Modify code of a specific entity by ID. Automatically creates snapshot, validates before/after, updates embeddings, and can rollback on error. Default preview mode shows changes without applying.",
       inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
     },
     {
@@ -1797,6 +2055,32 @@ function getToolsList() {
       description:
         "Advanced search with multiple modes: entity (name/type regex), content (inside entity bodies), semantic (vector similarity), hybrid (all combined). Framework-aware filtering. SIMD-accelerated similarity computation.",
       inputSchema: zodToJsonSchema(PatternSearchSchema),
+    },
+    // ==========================================================================
+    // Merge Tools
+    // ==========================================================================
+    {
+      name: "semantic_merge",
+      description:
+        "AI-powered semantic merge of git branches. Automatically finds merge-base, reads files from branches, performs semantic 3-way merge, and writes results as unstaged changes. Supports dry-run mode and auto-resolve.",
+      inputSchema: zodToJsonSchema(SemanticMergeSchema),
+    },
+    {
+      name: "analyze_merge_conflicts",
+      description:
+        "Analyze potential merge conflicts between two branches without performing the merge. Returns conflicts with severity classification and affected code units.",
+      inputSchema: zodToJsonSchema(AnalyzeMergeConflictsSchema),
+    },
+    {
+      name: "get_merge_suggestions",
+      description:
+        "Get AI-generated suggestions for resolving a specific merge conflict. Requires conflict ID from analyze_merge_conflicts.",
+      inputSchema: zodToJsonSchema(GetMergeSuggestionsSchema),
+    },
+    {
+      name: "get_semantic_merge_info",
+      description: "Get information about semantic merge capabilities, supported features, and usage examples.",
+      inputSchema: zodToJsonSchema(GetSemanticMergeInfoSchema),
     },
     // ==========================================================================
     // AutoDoc Tools
@@ -2053,26 +2337,34 @@ const server = createMcpServer();
 
 // Helper: enforce operation timeouts per SYSTEM_HANG_RECOVERY_PLAN
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, requestId: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const err = new Error(`${label} timed out after ${ms}ms`);
-      logger.incident("Operation timeout", { label, timeoutMs: ms }, requestId, err);
-      reject(err);
-    }, ms);
+  let aborted = false;
+
+  // Timeout via polling (no setTimeout for Bun compatibility)
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    const startTime = Date.now();
+    const checkTimeout = async () => {
+      while (!aborted && Date.now() - startTime < ms) {
+        await sleep(100); // Real sleep without busy-wait
+      }
+      if (!aborted) {
+        const err = new Error(`${label} timed out after ${ms}ms`);
+        logger.incident("Operation timeout", { label, timeoutMs: ms }, requestId, err);
+        reject(err);
+      }
+    };
+    checkTimeout();
   });
+
   try {
-    // Race the operation against the timeout
-    const result = await Promise.race([promise, timeout]);
-    return result as T;
+    return await Promise.race([promise, timeoutPromise]);
   } finally {
-    if (timer) clearTimeout(timer);
+    aborted = true;
   }
 }
 
 async function executeToolCall(name: string, args: unknown, requestId: string, startTime: number) {
-  // Check if indexing is in progress and return user-friendly message
-  // Allow index-related tools and status tools to work during indexing
+  // Check if indexing is in progress for the CURRENT project only
+  // Other projects are NOT blocked (fix for cross-project blocking bug)
   const allowedDuringIndexing = new Set([
     "index",
     "clean_index",
@@ -2085,15 +2377,20 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
     "get_graph_health",
   ]);
 
-  if (isIndexingInProgress && !allowedDuringIndexing.has(name)) {
+  // Get target directory from args (if specified) or use current directory
+  const argsObj = args as Record<string, unknown>;
+  const targetDir = (argsObj?.["directory"] as string) || directory;
+
+  // Only block if THIS SPECIFIC project is being indexed
+  if (isProjectIndexing(targetDir) && !allowedDuringIndexing.has(name)) {
     const status = getIndexingStatus();
     const message =
-      `⏳ Indexing is currently in progress. Please wait and retry.\n\n` +
-      `📂 Directory: ${status.directory || "unknown"}\n` +
+      `⏳ Indexing is currently in progress for this project. Please wait and retry.\n\n` +
+      `📂 Directory: ${targetDir}\n` +
       `⏱️ Elapsed: ${status.elapsedSeconds || 0} seconds\n\n` +
-      `Tip: Use 'get_graph_stats' or 'get_metrics' to check indexing status.`;
+      `Tip: You can work with other projects while this one is indexing.`;
 
-    logger.info("INDEXING_BUSY", `Tool ${name} blocked - indexing in progress`, { status }, requestId);
+    logger.info("INDEXING_BUSY", `Tool ${name} blocked - indexing in progress for ${targetDir}`, { status }, requestId);
 
     return {
       content: [
@@ -2103,11 +2400,12 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             {
               success: false,
               errorType: "indexing_in_progress",
-              error: "Indexing is currently in progress. Please retry after indexing completes.",
+              error: "Indexing is currently in progress for this project. Please retry after indexing completes.",
               message,
               status: {
-                directory: status.directory,
+                directory: targetDir,
                 elapsedSeconds: status.elapsedSeconds,
+                otherProjectsBlocked: false, // Important: other projects are NOT blocked
               },
               retryAfterSeconds: 10,
             },
@@ -2140,7 +2438,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         // Set current indexing directory for adaptive vector backend selection
         setCurrentIndexingDirectory(targetDir);
 
-        if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+        if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
           await getSemanticAgent();
         }
 
@@ -2241,7 +2539,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         let embeddingStats: { generated: number; skipped: number } | null = null;
         let oversizedWarning: { aiMessage: string | null; oversizedCount: number; maxTokens: number } | null = null;
 
-        if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+        if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
           await ensureSemanticsReady(1, 5000);
 
           try {
@@ -2343,12 +2641,12 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         // Set current indexing directory for adaptive vector backend selection
         setCurrentIndexingDirectory(targetDir);
 
-        // Reset graph first (use current globalSQLiteManager after context switch)
+        // Reset graph first
         const storage = await getGraphStorage();
         await storage.clear();
         logger.systemEvent("Graph storage cleared before clean index", { directory: targetDir });
 
-        if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+        if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
           await getSemanticAgent();
         }
 
@@ -2427,7 +2725,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         // Get oversized entity warning from semantic agent
         let cleanOversizedWarning: { aiMessage: string | null; oversizedCount: number; maxTokens: number } | null =
           null;
-        if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+        if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
           await ensureSemanticsReady(1, 5000);
 
           try {
@@ -2474,8 +2772,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         };
       }
 
-      case "get_members": // Alias for list_file_entities (unified with UltrasharpTools)
-      case "list_file_entities": {
+      case "get_members": {
         const { filePath, entityTypes } = ListEntitiesToolSchema.parse(args);
         const targetFilePath = normalizeInputPath(filePath);
 
@@ -2614,95 +2911,12 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       case "query": {
-        const { query, limit, branch } = QueryToolSchema.parse(args);
+        const { query, limit, branch: _branch } = QueryToolSchema.parse(args);
         await ensureSemanticsReady(1, 20000);
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
         let semanticResult: unknown = [];
 
-        // Branch-aware query via LayeredIndexManager
-        if (branch !== undefined) {
-          try {
-            const layeredManager = await getLayeredIndexManager();
-
-            // Structural query via layered index
-            const entities = await withTimeout(
-              layeredManager.queryEntities(query, branch),
-              timeoutMs,
-              "query:layered_entities",
-              requestId,
-            );
-
-            // Semantic query via layered vector store (if enabled)
-            try {
-              const semanticAgent = await getSemanticAgent();
-              const embedding = await semanticAgent["embeddingGenerator"].generateEmbedding(query);
-              semanticResult = await withTimeout(
-                layeredManager.searchSimilar(embedding, limit ?? 10, branch),
-                timeoutMs,
-                "query:layered_semantic",
-                requestId,
-              );
-            } catch (error) {
-              logger.warn(
-                "SEMANTIC_QUERY",
-                "Layered semantic search failed, continuing with structural only",
-                { query, branch, error: (error as Error).message },
-                requestId,
-              );
-              semanticResult = [];
-            }
-
-            // Get relationships for found entities
-            const relationships: Relationship[] = [];
-            for (const entity of entities.slice(0, 10)) {
-              try {
-                const rels = await layeredManager.queryRelationships(entity.id, undefined, branch);
-                relationships.push(...rels);
-              } catch (error) {
-                logger.warn(
-                  "QUERY",
-                  "Failed to get relationships for entity",
-                  { entityId: entity.id, error: (error as Error).message },
-                  requestId,
-                );
-              }
-            }
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      semantic: semanticResult,
-                      structural: {
-                        entities: entities.map((entity) => mapEntitySummary(entity)),
-                        relationships: relationships.length,
-                        stats: {
-                          totalEntities: entities.length,
-                          totalRelationships: relationships.length,
-                        },
-                      },
-                      branch: branch || "main",
-                    },
-                    null,
-                    2,
-                  ),
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error(
-              "QUERY",
-              "Layered query failed, falling back to base index",
-              { query, branch, error: (error as Error).message },
-              requestId,
-            );
-            // Fall through to base query
-          }
-        }
-
-        // Base query (no branch or fallback)
+        // Base query
         try {
           const semanticAgent = await getSemanticAgent();
           semanticResult = await withTimeout(
@@ -2722,7 +2936,11 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         }
 
         const storage = await getGraphStorage();
-        const structural = await queryGraphEntities(storage, query, limit ?? 10);
+        const structural = await storage.executeQuery({
+          type: "entity",
+          filters: { name: query },
+          limit: limit ?? 10,
+        });
 
         return {
           content: [
@@ -2856,44 +3074,14 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
-        let result: unknown;
 
-        // Branch-aware search via LayeredIndexManager
-        if (branch !== undefined) {
-          try {
-            const layeredManager = await getLayeredIndexManager();
-            const embedding = await semanticAgent["embeddingGenerator"].generateEmbedding(query);
-            result = await withTimeout(
-              layeredManager.searchSimilar(embedding, limit ?? 10, branch),
-              timeoutMs,
-              "semantic_search:layered",
-              requestId,
-            );
-
-            // Cache result
-            knowledgeBus.publish(cacheKey, result, "mcp-server", 30000);
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({ results: result, branch: branch || "main" }, null, 2),
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error(
-              "SEMANTIC_SEARCH",
-              "Layered semantic search failed, falling back to base",
-              { query, branch, error: (error as Error).message },
-              requestId,
-            );
-            // Fall through to base search
-          }
-        }
-
-        // Base search (no branch or fallback)
-        result = await withTimeout(semanticAgent.semanticSearch(query, limit), timeoutMs, "semantic_search", requestId);
+        // Base search
+        const result = await withTimeout(
+          semanticAgent.semanticSearch(query, limit),
+          timeoutMs,
+          "semantic_search",
+          requestId,
+        );
 
         // Cache result
         knowledgeBus.publish(cacheKey, result, "mcp-server", 30000);
@@ -2909,44 +3097,12 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       case "find_similar_code": {
-        const { code, threshold, limit, branch } = FindSimilarCodeSchema.parse(args);
+        const { code, threshold, limit, branch: _branch } = FindSimilarCodeSchema.parse(args);
         await ensureSemanticsReady(1, 20000);
         const semanticAgent = await getSemanticAgent();
         const timeoutMs = config.mcp.agents?.defaultTimeout || config.mcp.server?.timeout || 30000;
 
-        // Branch-aware search via LayeredIndexManager
-        if (branch !== undefined) {
-          try {
-            const layeredManager = await getLayeredIndexManager();
-            const embedding = await semanticAgent["embeddingGenerator"].generateEmbedding(code);
-            const sim = await withTimeout(
-              layeredManager.searchSimilar(embedding, limit ?? 10, branch),
-              timeoutMs,
-              "find_similar_code:layered",
-              requestId,
-            );
-            const result = Array.isArray(sim) && limit ? sim.slice(0, limit) : sim;
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({ results: result, branch: branch || "main" }, null, 2),
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error(
-              "FIND_SIMILAR_CODE",
-              "Layered search failed, falling back to base",
-              { branch, error: (error as Error).message },
-              requestId,
-            );
-            // Fall through to base search
-          }
-        }
-
-        // Base search (no branch or fallback)
+        // Base search
         const sim = await withTimeout(
           semanticAgent.findSimilarCode(code, threshold ?? 0.5),
           timeoutMs,
@@ -2967,8 +3123,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
       // analyze_code_impact handled below (single implementation with fallback)
 
-      case "find_duplicates": // Alias for detect_code_clones (unified with UltrasharpTools)
-      case "detect_code_clones": {
+      case "find_duplicates": {
         const { minSimilarity } = DetectCodeClonesSchema.parse(args);
         await ensureSemanticsReady(1, 20000);
         const semanticAgent = await getSemanticAgent();
@@ -2976,7 +3131,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const semanticResult = await withTimeout<CloneGroup[]>(
           semanticAgent.detectClones(minSimilarity),
           timeoutMs,
-          "detect_code_clones",
+          "find_duplicates",
           requestId,
         );
 
@@ -3072,7 +3227,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const sliceByEntity = (text: string, e: Entity) => {
           const loc: any = (e as any).location ?? {};
           let snippet = "";
-          let range: { startIndex?: number; endIndex?: number; startLine?: number; endLine?: number } | undefined;
+          let range:
+            | { startIndex?: number; endIndex?: number; startLine?: number | undefined; endLine?: number }
+            | undefined;
 
           if (typeof loc.start?.index === "number" && typeof loc.end?.index === "number") {
             const start = Math.max(0, Math.min(loc.start.index, text.length));
@@ -3101,7 +3258,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         const analyzed: Array<{
           entity?: ReturnType<typeof mapEntitySummary>;
-          range?: { startLine?: number; endLine?: number; startIndex?: number; endIndex?: number };
+          range?: { startLine?: number | undefined; endLine?: number; startIndex?: number; endIndex?: number };
           suggestions: unknown;
         }> = [];
 
@@ -3443,7 +3600,11 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         // Use direct database query instead of going through agents
         const storage = await getGraphStorage();
-        const result = await queryGraphEntities(storage, query, limit);
+        const result = await storage.executeQuery({
+          type: "entity",
+          filters: { name: query },
+          limit: limit ?? 100,
+        });
 
         logger.info(
           "GRAPH_QUERY",
@@ -3478,124 +3639,11 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       case "analyze_code_impact": {
-        const { entityId, filePath: hintFilePath, branch } = AnalyzeCodeImpactSchema.parse(args);
+        const { entityId, filePath: hintFilePath, branch: _branch } = AnalyzeCodeImpactSchema.parse(args);
         const storage = await getGraphStorage();
         const resolvedHintPath = hintFilePath ? normalizeInputPath(hintFilePath) : undefined;
 
-        // Branch-aware impact analysis via LayeredIndexManager
-        if (branch !== undefined) {
-          try {
-            const layeredManager = await getLayeredIndexManager();
-
-            // Find entity in layered index
-            const entities = await layeredManager.queryEntities(entityId, branch);
-            let entity = entities.length > 0 ? entities[0] : null;
-
-            // If not found by name, try by ID
-            if (!entity) {
-              entity = await storage.getEntity(entityId);
-            }
-
-            if (!entity) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify({ success: false, error: `Entity not found: ${entityId}`, branch }, null, 2),
-                  },
-                ],
-              };
-            }
-
-            // Get relationships via layered index
-            const relationships = await layeredManager.queryRelationships(entity.id, undefined, branch);
-            const directIds = new Set<string>();
-            const outboundIds = new Set<string>();
-
-            for (const rel of relationships) {
-              if (rel.toId === entity.id) {
-                directIds.add(rel.fromId);
-              }
-              if (rel.fromId === entity.id) {
-                outboundIds.add(rel.toId);
-              }
-            }
-
-            // Get direct entities from layered index
-            const directEntities: Entity[] = [];
-            for (const id of directIds) {
-              const ent = await storage.getEntity(id);
-              if (ent) directEntities.push(ent);
-            }
-
-            // Get indirect entities (2nd degree)
-            const indirectIds = new Set<string>();
-            for (const direct of directEntities) {
-              const rels = await layeredManager.queryRelationships(direct.id, undefined, branch);
-              for (const rel of rels) {
-                const candidate = rel.fromId === direct.id ? rel.toId : rel.fromId;
-                if (candidate !== entity.id && !directIds.has(candidate)) {
-                  indirectIds.add(candidate);
-                }
-              }
-            }
-
-            const indirectEntities: Entity[] = [];
-            for (const id of indirectIds) {
-              const ent = await storage.getEntity(id);
-              if (ent) indirectEntities.push(ent);
-            }
-
-            const affectedFiles = new Set<string>();
-            for (const sample of [...directEntities, ...indirectEntities]) {
-              affectedFiles.add(normalizeInputPath(sample.filePath) ?? sample.filePath);
-            }
-
-            const totalImpact = directEntities.length + indirectEntities.length;
-            const riskLevel =
-              totalImpact > 50 ? "critical" : totalImpact > 20 ? "high" : totalImpact > 5 ? "medium" : "low";
-
-            const outboundSummaries: ReturnType<typeof mapEntitySummary>[] = [];
-            for (const id of outboundIds) {
-              const dep = await storage.getEntity(id);
-              if (dep) outboundSummaries.push(mapEntitySummary(dep));
-            }
-
-            const impact = {
-              source: mapEntitySummary(entity),
-              directImpacts: directEntities.map((item) => mapEntitySummary(item)),
-              indirectImpacts: indirectEntities.map((item) => mapEntitySummary(item)),
-              outboundDependencies: outboundSummaries,
-              affectedFiles: Array.from(affectedFiles),
-              riskLevel,
-              totals: {
-                direct: directEntities.length,
-                indirect: indirectEntities.length,
-                outbound: outboundIds.size,
-              },
-              branch: branch || "main",
-            };
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(impact, null, 2),
-                },
-              ],
-            };
-          } catch (error) {
-            logger.error(
-              "ANALYZE_CODE_IMPACT",
-              "Layered impact analysis failed, falling back to base",
-              { entityId, branch, error: (error as Error).message },
-              requestId,
-            );
-            // Fall through to base analysis
-          }
-        }
-
-        // Base analysis (no branch or fallback)
+        // Base analysis
         let entity = await storage.getEntity(entityId);
         if (!entity) {
           entity = await resolveEntityWithHint(storage, entityId, resolvedHintPath);
@@ -3688,7 +3736,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
       case "get_graph_stats": {
         const storage = await getGraphStorage();
-        const stats = await getGraphStats(storage);
+        const stats = await storage.getStatistics();
 
         logger.info("GRAPH_STATS", "Retrieved graph statistics", stats, requestId);
 
@@ -3700,99 +3748,6 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             },
           ],
         };
-      }
-
-      case "lerna_project_graph": {
-        const { directory: inputDir, ingest, force } = GetLernaProjectGraphSchema.parse(args ?? {});
-        const targetDir = normalizeInputPath(inputDir) ?? directory;
-        const result = await getLernaProjectGraph(targetDir, { force });
-
-        if (result.ok) {
-          let ingestSummary:
-            | {
-                packageCount: number;
-                relationshipCount: number;
-                skippedPackages: number;
-                removedPackages: number;
-              }
-            | undefined;
-
-          if (ingest) {
-            const storage = await getGraphStorage();
-            ingestSummary = await ingestLernaGraph(storage, result.graph);
-          }
-
-          logger.info(
-            "LERNA_GRAPH",
-            "Generated Lerna project graph",
-            {
-              cwd: result.cwd,
-              lernaVersion: result.lernaVersion,
-              nodes: Object.keys(result.graph).length,
-              ingestSummary,
-              cached: result.cached ?? false,
-              force,
-            },
-            requestId,
-          );
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    success: true,
-                    cwd: result.cwd,
-                    lernaVersion: result.lernaVersion,
-                    nodeCount: Object.keys(result.graph).length,
-                    graph: result.graph,
-                    ingestSummary,
-                    cached: result.cached ?? false,
-                    force,
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
-        } else {
-          logger.warn(
-            "LERNA_GRAPH",
-            "Lerna project graph unavailable",
-            {
-              cwd: result.cwd,
-              reason: result.reason,
-              message: result.message,
-              cached: result.cached ?? false,
-              force,
-            },
-            requestId,
-          );
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    success: false,
-                    cwd: result.cwd,
-                    reason: result.reason,
-                    message: result.message,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    cached: result.cached ?? false,
-                    force,
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
-        }
       }
 
       case "get_graph_health": {
@@ -3917,7 +3872,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         if (!conductor) {
           throw new Error("Conductor not initialized");
         }
-        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const indexerAgent = conductor.getAgentByType(AgentType.INDEXER) as IndexerAgent | undefined;
         const branchManager = indexerAgent?.getBranchManager() || null;
         const { repositoryPath } = args as { repositoryPath?: string };
 
@@ -3937,11 +3892,18 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         if (!conductor) {
           throw new Error("Conductor not initialized");
         }
-        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const indexerAgent = conductor.getAgentByType(AgentType.INDEXER) as IndexerAgent | undefined;
         const branchManager = indexerAgent?.getBranchManager() || null;
         const { branch, repositoryPath } = args as { branch: string; repositoryPath?: string };
 
         const result = await branchTools.switchBranch(branchManager, branch, repositoryPath);
+
+        // Also switch branch in LayeredIndexManager for delta sync
+        const layeredMgr = await getLayeredIndexManager();
+        if (layeredMgr) {
+          await layeredMgr.switchBranch(branch);
+          console.error(`[Main] LayeredIndexManager switched to branch: ${branch}`);
+        }
 
         return {
           content: [
@@ -3957,7 +3919,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         if (!conductor) {
           throw new Error("Conductor not initialized");
         }
-        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const indexerAgent = conductor.getAgentByType(AgentType.INDEXER) as IndexerAgent | undefined;
         const branchManager = indexerAgent?.getBranchManager() || null;
         const { repositoryPath } = args as { repositoryPath?: string };
 
@@ -3977,7 +3939,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         if (!conductor) {
           throw new Error("Conductor not initialized");
         }
-        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const indexerAgent = conductor.getAgentByType(AgentType.INDEXER) as IndexerAgent | undefined;
         const branchManager = indexerAgent?.getBranchManager() || null;
         const { keep } = args as { keep?: number };
 
@@ -3997,7 +3959,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         if (!conductor) {
           throw new Error("Conductor not initialized");
         }
-        const indexerAgent = conductor.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+        const indexerAgent = conductor.getAgentByType(AgentType.INDEXER) as IndexerAgent | undefined;
         const gitWatcher = indexerAgent?.getGitWatcher() || null;
         const { fromBranch, toBranch } = args as { fromBranch: string; toBranch: string };
 
@@ -4043,8 +4005,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         };
       }
 
-      case "undo": // Alias for rollback_snapshot (unified with UltrasharpTools)
-      case "rollback_snapshot": {
+      case "undo": {
         const { snapshotId } = RollbackSnapshotSchema.parse(args);
         const vm = await getVersionManager();
         await vm.rollback(snapshotId);
@@ -4114,8 +4075,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       }
 
       // Code Modification Tool
-      case "modify_code": // Alias for modify_entity_code (unified with UltrasharpTools)
-      case "modify_entity_code": {
+      case "modify_code": {
         const params = ModifyEntityCodeSchema.parse(args);
         const modifier = await getCodeModifier();
         const result = await modifier.modifyEntity(params);
@@ -4693,7 +4653,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const adm = await getAutoDocManager();
 
         const normalizedPath = normalizeInputPath(filePath) || filePath;
-        const savedDocs = adm.saveDocument(normalizedPath, content, {
+        const savedDocs = await adm.saveDocument(normalizedPath, content, {
           type: type as any,
           autoGenerated,
         });
@@ -4768,7 +4728,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const adm = await getAutoDocManager();
 
         if (docId) {
-          const doc = adm.getDocument(docId);
+          const doc = await adm.getDocument(docId);
           return {
             content: [
               {
@@ -4788,7 +4748,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         if (filePath) {
           const normalizedPath = normalizeInputPath(filePath) || filePath;
-          const docs = adm.getDocumentsByFile(normalizedPath);
+          const docs = await adm.getDocumentsByFile(normalizedPath);
           return {
             content: [
               {
@@ -4835,7 +4795,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
         // Text search
         if (mode === "text" || mode === "hybrid") {
-          const textResults = adm.searchDocsByText(query, limit);
+          const textResults = await adm.searchDocsByText(query, limit);
           for (const d of textResults) {
             searchResults.push({
               id: d.id,
@@ -4860,7 +4820,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
               for (const result of semanticResults) {
                 if (result.id.startsWith("doc::")) {
-                  const doc = adm.getDocument(result.id);
+                  const doc = await adm.getDocument(result.id);
                   if (doc && !searchResults.some((r) => r.id === doc.id)) {
                     searchResults.push({
                       id: doc.id,
@@ -4936,7 +4896,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
 
       case "autodoc_status": {
         const adm = await getAutoDocManager();
-        const status = adm.getStatus();
+        const status = await adm.getStatus();
 
         return {
           content: [
@@ -4980,15 +4940,15 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             // Sync only from disk to database
             const diskToDb = await syncDiskToDb(
               normalizedDocsDir,
-              (fp) => adm.getDocumentsByFile(fp),
-              (fp, content) => adm.saveDocument(fp, content),
+              async (fp) => adm.getDocumentsByFile(fp),
+              async (fp, content) => adm.saveDocument(fp, content),
               8, // concurrency
             );
             syncResult.fileSync = { diskToDb, dbToDisk: { written: [], errors: [] } };
           } else if (direction === "db-to-disk") {
             // Sync only from database to disk
             const dbToDisk = await syncDbToDisk(
-              () => adm.getAllDocuments(),
+              async () => adm.getAllDocuments(),
               8, // concurrency
             );
             syncResult.fileSync = { diskToDb: { added: [], updated: [], errors: [] }, dbToDisk };
@@ -4996,9 +4956,9 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             // Bidirectional sync (both directions)
             syncResult.fileSync = await syncBidirectional(
               normalizedDocsDir,
-              (fp) => adm.getDocumentsByFile(fp),
-              () => adm.getAllDocuments(),
-              (fp, content) => adm.saveDocument(fp, content),
+              async (fp) => adm.getDocumentsByFile(fp),
+              async () => adm.getAllDocuments(),
+              async (fp, content) => adm.saveDocument(fp, content),
               8, // concurrency
             );
           }
@@ -5010,13 +4970,13 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         syncResult.brokenRefs = validation.broken.length;
 
         // Get and report outdated docs
-        const outdated = adm.getOutdatedDocs();
+        const outdated = await adm.getOutdatedDocs();
         syncResult.outdatedDocs = outdated.length;
 
         // If scope is "file", only process that file
         if (scope === "file" && filePath) {
           const normalizedPath = normalizeInputPath(filePath) || filePath;
-          const fileDocs = adm.getDocumentsByFile(normalizedPath);
+          const fileDocs = await adm.getDocumentsByFile(normalizedPath);
           for (const doc of fileDocs) {
             if (doc.confidence < 0.7) {
               syncResult.markedOutdated.push(doc.id);
@@ -5058,6 +5018,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           exclude,
           maxDepth,
           useLlm,
+          incremental,
           module: moduleFilter,
           language: langParam,
         } = AutoDocGenerateSchema.parse(args);
@@ -5095,13 +5056,16 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           }
         }
 
-        // Import generator
+        // Import generator and general docs handler
         const { generateDocs } = await import("./autodoc/generator/doc-generator.js");
+        const { ensureGeneralDocs } = await import("./autodoc/generator/general-docs.js");
 
-        // Generate docs (preview mode by default)
+        // Ensure .autodoc/ exists with template files (creates only if missing)
+        ensureGeneralDocs(targetAutodocDir);
+
+        // Generate module docs only (NOT .autodoc/ files - those are user-maintained)
         const result = await generateDocs({
           rootDir: targetDir,
-          autodocDir: targetAutodocDir,
           exclude,
           maxDepth,
         });
@@ -5112,13 +5076,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           result.modules = result.modules.filter(
             (m) => m.name.toLowerCase() === filterLower || m.name.toLowerCase().includes(filterLower),
           );
-          result.files = result.files.filter(
-            (f) => f.type === "general" || result.modules.some((m) => f.path.includes(m.path)),
-          );
-          // Remove architecture file if filtering single module
-          if (result.modules.length <= 1) {
-            result.files = result.files.filter((f) => f.type !== "general");
-          }
+          result.files = result.files.filter((f) => result.modules.some((m) => f.path.includes(m.path)));
         }
 
         // Detect and use LLM if requested
@@ -5165,20 +5123,73 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           }
         }
 
-        // If not preview, write files
+        // If not preview, write files (with incremental update support)
         let filesWritten = 0;
+        const incrementalChanges: Array<{ path: string; changes: string[] }> = [];
+
         if (!preview) {
           const adm = await getAutoDocManager();
-          for (const file of result.files) {
-            try {
-              // Save to DB and disk
-              adm.saveDocument(file.path, file.content, {
-                autoGenerated: true,
-              });
-              await writeDocumentToDisk(file.path, file.content);
-              filesWritten++;
-            } catch (error) {
-              logger.warn("AUTODOC", `Failed to write ${file.path}: ${(error as Error).message}`, {}, requestId);
+
+          if (incremental) {
+            // Use incremental updater to preserve existing content
+            const { updateModuleDoc } = await import("./autodoc/generator/incremental-updater.js");
+
+            for (const file of result.files) {
+              try {
+                // Get module path from doc path
+                const modulePath = file.path.replace(/[\\/]AUTODOC\.md$/, "");
+
+                const updateResult = await updateModuleDoc(modulePath, file.path, file.content, {
+                  useLlm,
+                });
+
+                if (updateResult.updated && updateResult.newContent) {
+                  // Save updated content
+                  await adm.saveDocument(file.path, updateResult.newContent, {
+                    autoGenerated: true,
+                  });
+                  await writeDocumentToDisk(file.path, updateResult.newContent);
+                  filesWritten++;
+
+                  incrementalChanges.push({
+                    path: file.path,
+                    changes: updateResult.changes.map((c) => c.description),
+                  });
+                }
+              } catch (error) {
+                logger.warn(
+                  "AUTODOC",
+                  `Incremental update failed for ${file.path}: ${(error as Error).message}`,
+                  {},
+                  requestId,
+                );
+                // Fall back to full overwrite
+                try {
+                  await adm.saveDocument(file.path, file.content, { autoGenerated: true });
+                  await writeDocumentToDisk(file.path, file.content);
+                  filesWritten++;
+                } catch (innerError) {
+                  logger.warn(
+                    "AUTODOC",
+                    `Failed to write ${file.path}: ${(innerError as Error).message}`,
+                    {},
+                    requestId,
+                  );
+                }
+              }
+            }
+          } else {
+            // Full overwrite mode (incremental=false)
+            for (const file of result.files) {
+              try {
+                await adm.saveDocument(file.path, file.content, {
+                  autoGenerated: true,
+                });
+                await writeDocumentToDisk(file.path, file.content);
+                filesWritten++;
+              } catch (error) {
+                logger.warn("AUTODOC", `Failed to write ${file.path}: ${(error as Error).message}`, {}, requestId);
+              }
             }
           }
         }
@@ -5193,10 +5204,12 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
                   preview,
                   useLlm,
                   llmStatus,
+                  incremental,
                   language: docLanguage,
                   modulesFound: result.modules.length,
                   filesToGenerate: result.files.length,
                   filesWritten,
+                  incrementalChanges: incremental ? incrementalChanges : undefined,
                   modules: result.modules.map((m) => ({
                     name: m.name,
                     path: m.path,
@@ -5222,7 +5235,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         const adm = await getAutoDocManager();
 
         // Get changelog entries
-        const changelog = adm.getChangelog({ since, limit, branch });
+        const changelog = await adm.getChangelog({ since, limit, branch });
 
         return {
           content: [
@@ -5339,10 +5352,10 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
           let analyzed = 0;
           for (const entity of entities) {
             if (analyzed >= sampleSize) break;
-            if (entity.metadata?.comments) {
-              const commentsText = Array.isArray(entity.metadata.comments)
-                ? entity.metadata.comments.join("\n")
-                : String(entity.metadata.comments);
+            if (entity.metadata?.["comments"]) {
+              const commentsText = Array.isArray(entity.metadata["comments"])
+                ? entity.metadata["comments"].join("\n")
+                : String(entity.metadata["comments"]);
               const result = detectLanguageFromText(commentsText);
               if (result.confidence > 0) {
                 results.push(result);
@@ -5355,7 +5368,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
         // Analyze existing docs
         if (scope === "docs" || scope === "all") {
           const adm = await getAutoDocManager();
-          const allDocs = adm.searchDocsByText("", sampleSize);
+          const allDocs = await adm.searchDocsByText("", sampleSize);
 
           for (const doc of allDocs) {
             const result = detectLanguageFromText(doc.content);
@@ -5401,11 +5414,11 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
             logger,
             getConductor,
             getGraphStorage,
-            getSQLiteManager: () => globalSQLiteManager,
+            getSQLiteManager: () => null, // Legacy - now using libsql via getGraphStorage()
             getSemanticAgent,
             getBranchManager: () => {
               const cond = getConductor();
-              const indexerAgent = cond.getAgent(AgentType.INDEXER) as IndexerAgent | undefined;
+              const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as IndexerAgent | undefined;
               return indexerAgent?.getBranchManager?.() || null;
             },
             getSnapshotManager: () => versionManager,
@@ -5451,41 +5464,6 @@ async function executeToolCall(name: string, args: unknown, requestId: string, s
       };
     }
 
-    // Handle model downloading error - return user-friendly "try again" message
-    if (error instanceof ModelDownloadingError) {
-      logger.info(
-        "MODEL_DOWNLOADING",
-        `Model ${error.model} is being downloaded`,
-        { model: error.model, modelPath: error.modelPath },
-        requestId,
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: false,
-                errorType: "model_downloading",
-                error: errorMessage,
-                message:
-                  `⏳ Embedding model "${error.model}" is being downloaded.\n\n` +
-                  `📁 Path: ${error.modelPath}\n\n` +
-                  `Please wait 1-2 minutes and try again.\n\n` +
-                  `Tip: Run 'npx ultrascript-tools setup-embedding' to download models manually.`,
-                model: error.model,
-                modelPath: error.modelPath,
-                retryAfterSeconds: 60,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
-    }
-
     logger.mcpError(name, error instanceof Error ? error : new Error(errorMessage), requestId);
 
     return {
@@ -5512,6 +5490,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const requestId = createRequestId();
   const startTime = Date.now();
 
+  // Mark activity to prevent idle mode during active requests
+  getConductor().markActivity();
+
   logger.mcpRequest(name, args, requestId);
 
   return executeToolCall(name, args, requestId, startTime);
@@ -5530,11 +5511,14 @@ async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
 
     const { name, arguments: args } = (callRequest as any).params;
     const parsedObj = parsed as Record<string, unknown>;
-    const responseIdValue = parsedObj?.id;
+    const responseIdValue = parsedObj?.["id"];
     const responseId =
       typeof responseIdValue === "string" || typeof responseIdValue === "number" ? responseIdValue : createRequestId();
     const requestId = typeof responseId === "string" ? responseId : String(responseId);
     const startTime = Date.now();
+
+    // Mark activity to prevent idle mode during active requests
+    getConductor().markActivity();
 
     logger.mcpRequest(name, args, requestId);
     const result = await executeToolCall(name, args, requestId, startTime);
@@ -5549,14 +5533,38 @@ async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
   }
 }
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  console.error("\nShutting down gracefully...");
-  logger.systemEvent("MCP Server Shutdown Initiated");
+// Graceful shutdown - shared logic for SIGINT and SIGTERM
+let isShuttingDownGlobal = false;
 
-  if (layeredIndexManager) {
-    await layeredIndexManager.shutdown();
-    logger.systemEvent("LayeredIndexManager Shutdown Complete");
+async function performGlobalShutdown(signal: string): Promise<void> {
+  if (isShuttingDownGlobal) return;
+  isShuttingDownGlobal = true;
+
+  console.error(`\n[${signal}] Shutting down gracefully...`);
+  logger.systemEvent("MCP Server Shutdown Initiated", { signal });
+
+  // Shutdown OVMS Native first (if running)
+  try {
+    await shutdownOVMSNative();
+    logger.systemEvent("OVMS Native Shutdown Complete");
+  } catch (error) {
+    console.error("[Shutdown] OVMS Native shutdown error:", error);
+  }
+
+  // Shutdown GPU worker (if running)
+  try {
+    await shutdownGpuClient();
+    logger.systemEvent("GPU Client Shutdown Complete");
+  } catch (error) {
+    logger.error("GPU_CLIENT", "Shutdown error", { error: String(error) });
+  }
+
+  // Shutdown FAISS provider (if running)
+  try {
+    await shutdownFaissProvider();
+    logger.systemEvent("FAISS Provider Shutdown Complete");
+  } catch (error) {
+    logger.error("FAISS", "Shutdown error", { error: String(error) });
   }
 
   if (conductor) {
@@ -5564,11 +5572,48 @@ process.on("SIGINT", async () => {
     logger.systemEvent("Conductor Shutdown Complete");
   }
 
+  if (layeredIndexManager) {
+    await layeredIndexManager.shutdown();
+    logger.systemEvent("LayeredIndexManager Shutdown Complete");
+  }
+
   resourceManager.stopMonitoring();
   logger.systemEvent("Resource Manager Stopped");
-  logger.systemEvent("MCP Server Shutdown Complete");
+  logger.systemEvent("MCP Server Shutdown Complete", { signal });
 
   process.exit(0);
+}
+
+process.on("SIGINT", () => {
+  performGlobalShutdown("SIGINT");
+});
+
+process.on("SIGTERM", () => {
+  performGlobalShutdown("SIGTERM");
+});
+
+// Fallback: beforeExit fires when event loop is empty but before exit
+// This catches cases where parent process closes stdin/stdout
+process.on("beforeExit", async (code) => {
+  if (code === 0 && !isShuttingDownGlobal) {
+    await performGlobalShutdown("beforeExit");
+  }
+});
+
+// Windows: detect parent process exit via stdin close
+// When comm.c closes, stdin pipe closes - we must exit
+process.stdin.on("close", () => {
+  if (!isShuttingDownGlobal) {
+    logger.info("SHUTDOWN", "stdin closed (parent exited), shutting down...");
+    performGlobalShutdown("stdin-close");
+  }
+});
+
+process.stdin.on("end", () => {
+  if (!isShuttingDownGlobal) {
+    logger.info("SHUTDOWN", "stdin ended (parent exited), shutting down...");
+    performGlobalShutdown("stdin-end");
+  }
 });
 
 // Debug signal: dump runtime state (aligns with SYSTEM_HANG_RECOVERY_PLAN)
@@ -5641,57 +5686,88 @@ async function detectSupportedProject(
 }
 
 /**
+ * Base exclude patterns for source file counting and indexing
+ * Used by both countSourceFiles and buildAutoIndexExcludePatterns for consistency
+ */
+const BASE_EXCLUDE_PATTERNS = [
+  // Build/dependency directories
+  "**/node_modules/**",
+  "**/.git/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/out/**",
+  "**/.next/**",
+  "**/.nuxt/**",
+  "**/coverage/**",
+  "**/__pycache__/**",
+  "**/.pytest_cache/**",
+  "**/venv/**",
+  "**/.venv/**",
+  "**/vendor/**",
+  "**/target/**", // Rust
+  "**/bin/**",
+  "**/obj/**", // .NET
+  "**/.vs/**",
+  "**/.idea/**",
+  "**/.vscode/**",
+  "**/packages/**",
+  // Test data directories (not actual source code)
+  "**/fixtures/**",
+  "**/testdata/**",
+  // Mock files
+  "**/mocks/**",
+  "**/__mocks__/**",
+  // External/third-party
+  "**/external-tools/**",
+  "**/third_party/**",
+  "**/third-party/**",
+  "**/thirdparty/**",
+  "**/archives/**",
+  "**/archive/**",
+  "**/backups/**",
+  "**/backup/**",
+  "**/tmp/**",
+  "**/temp/**",
+];
+
+/**
+ * Fast count of source files on disk for consistency check.
+ * Uses glob with stats disabled for maximum speed.
+ */
+async function countSourceFiles(targetDir: string, extensions: string[]): Promise<number> {
+  try {
+    const { glob } = await import("glob");
+    const extList = extensions.map((e) => e.replace(/^\./, "")).join(",");
+    const pattern = `**/*.{${extList}}`;
+
+    const files = await glob(pattern, {
+      cwd: targetDir,
+      nodir: true,
+      ignore: BASE_EXCLUDE_PATTERNS,
+      stat: false,
+      absolute: false,
+    });
+
+    return files.length;
+  } catch {
+    return -1; // Error - skip consistency check
+  }
+}
+
+/**
  * Build smart exclude patterns for auto-indexing
- * - Base patterns (node_modules, .git, build artifacts)
+ * - Base patterns from BASE_EXCLUDE_PATTERNS
  * - Patterns from .gitignore if exists
  * - Binary/archive extensions
  */
 async function buildAutoIndexExcludePatterns(targetDir: string): Promise<string[]> {
   const patterns: string[] = [
-    // Base directories to always exclude
-    "**/node_modules/**",
-    "**/.git/**",
-    "**/dist/**",
-    "**/build/**",
-    "**/out/**",
-    "**/.next/**",
-    "**/.nuxt/**",
-    "**/coverage/**",
-    "**/__pycache__/**",
-    "**/.pytest_cache/**",
-    "**/venv/**",
-    "**/.venv/**",
-    "**/vendor/**",
-    "**/target/**", // Rust
-    "**/bin/**",
-    "**/obj/**", // .NET
-    "**/.vs/**",
-    "**/.idea/**",
-    "**/.vscode/**",
-    "**/packages/**",
-    // Common non-source directories
-    // NOTE: Removed **/scripts/**, **/docs/**, **/examples/**, **/samples/**
-    // as they often contain real application code
-    "**/benchmarks/**",
-    "**/benchmark/**",
-    "**/fixtures/**",
-    "**/testdata/**",
+    // Include all base directory patterns
+    ...BASE_EXCLUDE_PATTERNS,
     // Mock files (often large JSON/generated data)
     "**/*.mock.json",
     "**/*.mock.ts",
     "**/*.mock.js",
-    "**/mocks/**",
-    "**/__mocks__/**",
-    "**/external-tools/**",
-    "**/third_party/**",
-    "**/third-party/**",
-    "**/thirdparty/**",
-    "**/archives/**",
-    "**/archive/**",
-    "**/backups/**",
-    "**/backup/**",
-    "**/tmp/**",
-    "**/temp/**",
     // Binary and archive files
     "**/*.zip",
     "**/*.tar",
@@ -5785,15 +5861,18 @@ async function buildAutoIndexExcludePatterns(targetDir: string): Promise<string[
 /**
  * Perform auto-indexing in background (non-blocking)
  */
-async function performAutoIndex(targetDir: string, extensions: string[]): Promise<void> {
+async function performAutoIndex(targetDir: string, extensions: string[], incremental = false): Promise<void> {
   const requestId = createRequestId();
   const startTime = Date.now();
+  logger.trace("INDEXING", `[+${startTime - PROCESS_START_TIME}ms] ▶ performAutoIndex() START`);
 
   // Set indexing state for user-friendly error messages
   setIndexingState(true, targetDir);
 
-  logger.systemEvent("Auto-indexing started", { directory: targetDir });
-  console.error(`\n📂 Auto-indexing project: ${targetDir}`);
+  const mode = incremental ? "incremental" : "full";
+  logger.systemEvent(`Auto-indexing started (${mode})`, { directory: targetDir, incremental });
+  logger.trace("INDEXING", `[+${Date.now() - PROCESS_START_TIME}ms] mode=${mode}, incremental=${incremental}`);
+  console.error(`\n📂 Auto-indexing project (${mode}): ${targetDir}`);
 
   try {
     // Build smart exclude patterns
@@ -5806,14 +5885,30 @@ async function performAutoIndex(targetDir: string, extensions: string[]): Promis
     // Set current indexing directory
     setCurrentIndexingDirectory(targetDir);
 
-    // Initialize SemanticAgent in background - don't block indexing
-    // Embeddings will be generated after indexing completes via generateEmbeddingsFromStorage()
-    if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+    // Initialize SemanticAgent and optionally drop vector index for bulk insert mode
+    // Only drop index for FULL rebuild, not for incremental updates
+    if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
+      logger.trace("INDEXING", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ getSemanticAgent for auto-index`);
       console.error("🔄 Initializing SemanticAgent in background...");
-      // Non-blocking: start initialization but don't wait
-      getSemanticAgent().catch((err) => {
-        console.error("⚠️ SemanticAgent initialization failed:", err.message);
-      });
+      try {
+        const semAgentStart = Date.now();
+        const semanticAgent = await getSemanticAgent();
+        logger.trace(
+          "INDEXING",
+          `[+${Date.now() - PROCESS_START_TIME}ms] ◀ getSemanticAgent (${Date.now() - semAgentStart}ms)`,
+        );
+        if (!incremental) {
+          // Drop vector index before bulk inserts for faster performance (full rebuild only)
+          logger.trace("INDEXING", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ dropVectorIndex`);
+          console.error("🔄 Dropping vector index for bulk insert mode...");
+          await semanticAgent.dropVectorIndex();
+          logger.trace("INDEXING", `[+${Date.now() - PROCESS_START_TIME}ms] ◀ dropVectorIndex`);
+        } else {
+          console.error("🔄 Incremental mode - keeping existing vector index");
+        }
+      } catch (err) {
+        console.error("⚠️ SemanticAgent initialization failed:", (err as Error).message);
+      }
     }
 
     // Create indexing task with smart excludes
@@ -5823,7 +5918,7 @@ async function performAutoIndex(targetDir: string, extensions: string[]): Promis
       priority: 8,
       payload: {
         directory: targetDir,
-        incremental: false,
+        incremental, // Use incremental mode when resuming incomplete index
         excludePatterns,
         // Pass extensions to limit file types
         includeExtensions: extensions,
@@ -5851,18 +5946,47 @@ async function performAutoIndex(targetDir: string, extensions: string[]): Promis
         durationMs: Date.now() - startTime,
       });
 
-      // Generate embeddings for indexed entities (batch mode)
-      if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+      // Finalize embeddings (workers generate, main just loads dump files as fallback)
+      if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
         try {
-          console.error(`🔄 Generating embeddings from storage...`);
           const semanticAgent = await getSemanticAgent();
-          const embeddingStats = await semanticAgent.generateEmbeddingsFromStorage();
-          console.error(
-            `✅ Embeddings: generated=${embeddingStats?.generated ?? 0}, skipped=${embeddingStats?.skipped ?? 0}`,
-          );
+          console.error(`🔄 Finalizing embeddings...`);
+          await semanticAgent.generateEmbeddingsFromStorage();
+          console.error(`✅ Embeddings finalized`);
         } catch (error) {
-          console.error(`⚠️  Failed to generate embeddings:`, (error as Error).message);
+          console.error(`⚠️  Failed to finalize embeddings:`, (error as Error).message);
         }
+      }
+
+      // Update incremental tracking
+      try {
+        const graphStorage = await getGraphStorage();
+        if (incremental) {
+          // Record incremental changes (count how many files were indexed)
+          const indexedCount = typeof entityCount === "number" ? entityCount : parseInt(String(entityCount), 10) || 0;
+          // Estimate files from entities (rough: ~3 entities per file on average)
+          const estimatedFiles = Math.max(1, Math.ceil(indexedCount / 3));
+          await graphStorage.recordIncrementalChanges(estimatedFiles);
+          logger.info("TRACKING", `Recorded incremental changes`, { files: estimatedFiles });
+        } else {
+          // Full rebuild - reset tracking
+          await graphStorage.resetIncrementalTracking();
+          logger.info("TRACKING", `Reset incremental tracking (full rebuild complete)`);
+        }
+      } catch (error) {
+        logger.warn("TRACKING", `Failed to update tracking`, { error: (error as Error).message });
+      }
+
+      // Start GitWatcher for incremental updates (if branchAware enabled)
+      try {
+        const cond = getConductor();
+        const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as any;
+        if (indexerAgent?.setRepositoryPath) {
+          indexerAgent.setRepositoryPath(targetDir);
+          console.error(`✅ GitWatcher started for incremental updates`);
+        }
+      } catch (error) {
+        console.error(`⚠️  Failed to start GitWatcher:`, (error as Error).message);
       }
     } else {
       console.error(`⚠️  Auto-indexing completed with warnings in ${duration}s`);
@@ -5880,6 +6004,9 @@ async function performAutoIndex(targetDir: string, extensions: string[]): Promis
 
 // Start the server
 async function main() {
+  const mainStartTime = Date.now();
+  logger.trace("STARTUP", `[+${mainStartTime - PROCESS_START_TIME}ms] ▶ main() started`);
+
   console.error(`Starting MCP Code Graph Server for directory: ${directory}`);
   console.error("Multi-agent LiteRAG architecture initialized");
   console.error(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
@@ -5887,14 +6014,21 @@ async function main() {
   // Check and auto-start Ollama if embeddings are enabled (non-blocking)
   const config = ConfigLoader.getInstance().getConfig();
   const embeddingEnabled = config.mcp?.embedding?.enabled ?? false;
-  const embeddingProvider: string = config.mcp?.embedding?.provider ?? "memory";
+  const embeddingProvider: string = config.mcp?.embedding?.provider ?? "auto";
 
   if (embeddingEnabled && (embeddingProvider === "auto" || embeddingProvider === "ollama")) {
     // Run Ollama check in background - don't block MCP startup
+    logger.trace("ASYNC", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ Launching async: Ollama check`);
     console.error("🔍 Ollama check running in background...");
     (async () => {
       try {
+        const ollamaStartTime = Date.now();
+        logger.trace("ASYNC", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: ensureOllamaRunning`);
         const ollamaStatus = await ensureOllamaRunning(true); // auto-start enabled
+        logger.trace(
+          "ASYNC",
+          `[+${Date.now() - PROCESS_START_TIME}ms] ◀ END: ensureOllamaRunning (${Date.now() - ollamaStartTime}ms)`,
+        );
         const statusMessage = getStatusMessage(ollamaStatus);
         console.error(statusMessage);
 
@@ -5906,23 +6040,27 @@ async function main() {
           console.error("💡 Tip: Install granite-embedding with: ollama pull granite-embedding");
         }
       } catch (error) {
-        logger.warn("STARTUP", "Ollama check failed, continuing with fallback", {
+        logger.warn("STARTUP", "Ollama check failed, will use auto-detection", {
           error: (error as Error).message,
         });
-        console.error("⚠️  Ollama check failed, using memory provider fallback");
+        console.error("⚠️  Ollama check failed, embedding provider will be auto-detected");
       }
     })();
   }
 
   // Check for orphaned embeddings (entities without embeddings) in background
   // This handles the case when server was restarted before embeddings completed
-  if (embeddingEnabled) {
+  // Runs asynchronously without setTimeout (Bun compatibility)
+  if (embeddingEnabled && !pipeServerMode) {
+    logger.trace("ASYNC", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: orphaned embeddings check`);
     (async () => {
       try {
-        // Wait for server to stabilize
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-
+        const checkStartTime = Date.now();
         const semanticAgent = await getSemanticAgent();
+        logger.trace(
+          "ASYNC",
+          `[+${Date.now() - PROCESS_START_TIME}ms] getSemanticAgent took ${Date.now() - checkStartTime}ms`,
+        );
         if (!semanticAgent) return;
 
         // Check if there are entities without embeddings
@@ -5937,11 +6075,45 @@ async function main() {
         const embeddingCount = (await semanticAgent.getVectorStore()?.count()) ?? 0;
         const missing = entityCount - embeddingCount;
 
-        if (missing > 100) {
-          console.error(`🔄 Found ${missing} entities without embeddings, generating in background...`);
+        if (missing > 10) {
+          // Check if generation is already in progress
+          if (semanticAgent.isEmbeddingGenerationInProgress()) {
+            logger.warn("AUTO_RESUME", `[SKIPPED] generation already in progress`, { missing });
+            return;
+          }
+          // Check if generation was recently completed (within 30s)
+          if (semanticAgent.wasGenerationRecentlyCompleted(30000)) {
+            logger.warn("AUTO_RESUME", `[SKIPPED] generation recently completed`, { missing });
+            return;
+          }
+          logger.info("STARTUP", `Found ${missing} entities without embeddings, generating in background`, { missing });
+          logger.trace(
+            "EMBEDDING",
+            `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: generateEmbeddingsFromStorage (${missing} missing)`,
+          );
           logger.info("STARTUP", "Resuming embedding generation", { missing, entityCount, embeddingCount });
-          const stats = await semanticAgent.generateEmbeddingsFromStorage();
-          console.error(`✅ Background embedding complete: ${stats.generated} generated, ${stats.skipped} skipped`);
+          const embGenStartTime = Date.now();
+          // CRITICAL FIX: Run in background (non-blocking) - don't await!
+          semanticAgent
+            .generateEmbeddingsFromStorage()
+            .then((stats: { generated: number; skipped: number }) => {
+              logger.trace(
+                "EMBEDDING",
+                `[+${Date.now() - PROCESS_START_TIME}ms] ◀ END: generateEmbeddingsFromStorage (${Date.now() - embGenStartTime}ms)`,
+              );
+              logger.info("STARTUP", `Background embedding complete`, {
+                generated: stats.generated,
+                skipped: stats.skipped,
+              });
+            })
+            .catch((error: Error) => {
+              logger.error("EMBEDDING", "Background embedding generation failed", { error: error.message });
+            });
+        } else {
+          logger.trace(
+            "EMBEDDING",
+            `[+${Date.now() - PROCESS_START_TIME}ms] ◀ END: orphaned embeddings check (no action needed, missing=${missing})`,
+          );
         }
       } catch (error) {
         logger.warn("STARTUP", "Background embedding check failed", { error: (error as Error).message });
@@ -5949,8 +6121,10 @@ async function main() {
     })();
   }
   // Initialize AutoDoc Watcher for automatic documentation updates
-  const autodocWatcherEnabled = config.mcp?.autodoc?.watcherEnabled ?? false;
+  logger.trace("STARTUP", `[+${Date.now() - PROCESS_START_TIME}ms] Checking AutoDoc watcher config`);
+  const autodocWatcherEnabled = config.mcp?.autodoc?.watcherEnabled ?? true;
   if (autodocWatcherEnabled) {
+    logger.trace("STARTUP", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: AutoDoc watcher initialization`);
     try {
       const watcherConfig: AutoDocWatcherConfig = {
         rootDir: directory,
@@ -5985,7 +6159,7 @@ async function main() {
     const pipeServer = new PipeServer();
     let clientCount = 0;
     let activeClients = 0;
-    let shutdownTimer: ReturnType<typeof setTimeout> | null = null;
+    let shutdownScheduled = false; // Flag instead of NodeJS.Timeout (Bun compatibility)
     let isShuttingDown = false;
 
     // Graceful shutdown delay (ms) - wait briefly before shutdown to allow reconnects
@@ -6027,24 +6201,52 @@ async function main() {
               // Log every 5 sec
               console.error(`[PipeServer] Still waiting for ${totalPending} pending tasks...`);
             }
-            await new Promise((r) => setTimeout(r, pollIntervalMs));
+            // Real sleep without busy-wait
+            await sleep(100);
             waitIterations++;
           }
           console.error("[PipeServer] All agents idle");
         }
 
-        // 3. Shutdown layered index manager (flush caches to disk)
-        if (layeredIndexManager) {
-          console.error("[PipeServer] Flushing LayeredIndexManager...");
-          await layeredIndexManager.shutdown();
-          console.error("[PipeServer] LayeredIndexManager shutdown complete");
+        // 2.5. Shutdown OVMS Native (if running)
+        try {
+          console.error("[PipeServer] Shutting down OVMS Native...");
+          await shutdownOVMSNative();
+          console.error("[PipeServer] OVMS Native shutdown complete");
+        } catch (error) {
+          console.error("[PipeServer] OVMS Native shutdown error:", error);
         }
 
-        // 4. Shutdown conductor and agents
+        // 2.6. Shutdown GPU worker (if running)
+        try {
+          logger.systemEvent("Shutting down GPU Client...");
+          await shutdownGpuClient();
+          logger.systemEvent("GPU Client shutdown complete");
+        } catch (error) {
+          logger.error("GPU_CLIENT", "Shutdown error", { error: String(error) });
+        }
+
+        // 2.7. Shutdown FAISS provider (if running)
+        try {
+          logger.systemEvent("Shutting down FAISS Provider...");
+          await shutdownFaissProvider();
+          logger.systemEvent("FAISS Provider shutdown complete");
+        } catch (error) {
+          logger.error("FAISS", "Shutdown error", { error: String(error) });
+        }
+
+        // 3. Shutdown conductor and agents
         if (conductor) {
           console.error("[PipeServer] Shutting down Conductor...");
           await conductor.shutdown();
           console.error("[PipeServer] Conductor shutdown complete");
+        }
+
+        // 4. Shutdown layered index manager
+        if (layeredIndexManager) {
+          console.error("[PipeServer] Shutting down LayeredIndexManager...");
+          await layeredIndexManager.shutdown();
+          console.error("[PipeServer] LayeredIndexManager shutdown complete");
         }
 
         // 5. Stop resource monitoring
@@ -6065,27 +6267,30 @@ async function main() {
      * Schedule shutdown after delay (allows for quick reconnects)
      */
     function scheduleShutdown() {
-      if (shutdownTimer) {
-        clearTimeout(shutdownTimer);
-      }
+      shutdownScheduled = false; // Cancel any previous shutdown
 
       console.error(`[PipeServer] No active clients. Shutdown scheduled in ${SHUTDOWN_DELAY_MS}ms...`);
       logger.systemEvent("Shutdown Scheduled", { delayMs: SHUTDOWN_DELAY_MS, activeClients: 0 });
 
-      shutdownTimer = setTimeout(() => {
-        if (activeClients === 0) {
+      // Shutdown delay via polling (no setTimeout for Bun compatibility)
+      shutdownScheduled = true;
+      (async () => {
+        const startTime = Date.now();
+        while (shutdownScheduled && Date.now() - startTime < SHUTDOWN_DELAY_MS) {
+          await sleep(50); // Real sleep without busy-wait
+        }
+        if (shutdownScheduled && activeClients === 0) {
           performGracefulShutdown();
         }
-      }, SHUTDOWN_DELAY_MS);
+      })();
     }
 
     /**
      * Cancel scheduled shutdown (client reconnected)
      */
     function cancelShutdown() {
-      if (shutdownTimer) {
-        clearTimeout(shutdownTimer);
-        shutdownTimer = null;
+      if (shutdownScheduled) {
+        shutdownScheduled = false;
         console.error("[PipeServer] Shutdown cancelled - client reconnected");
         logger.systemEvent("Shutdown Cancelled", { reason: "client_reconnected" });
       }
@@ -6141,12 +6346,18 @@ async function main() {
     });
   } else {
     // Default: stdio transport (single client)
+    logger.trace("STARTUP", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: stdio transport connect`);
     logger.systemEvent("MCP Server Transport Connecting", { transport: "stdio" });
     const transport = new StdioServerTransport();
     transportType = "stdio";
     console.error("MCP server running on stdio transport");
 
+    const connectStartTime = Date.now();
     await server.connect(transport as any);
+    logger.trace(
+      "STARTUP",
+      `[+${Date.now() - PROCESS_START_TIME}ms] ◀ END: stdio transport connect (${Date.now() - connectStartTime}ms)`,
+    );
     logger.systemEvent("MCP Server Ready", {
       directory,
       transport: transportType,
@@ -6159,7 +6370,7 @@ async function main() {
     try {
       await getDevAgent();
       await getDoraAgent();
-      if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+      if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
         await getSemanticAgent();
       }
       await processDebugRequests(debugRequests);
@@ -6189,8 +6400,13 @@ async function main() {
   // =============================================================================
   // AUTO-INDEXING: Check and index project on startup
   // =============================================================================
+  logger.trace("STARTUP", `[+${Date.now() - PROCESS_START_TIME}ms] Checking auto-indexing config`);
   const indexingConfig = config.indexing;
   const shouldAutoIndex = !noAutoIndex && (indexingConfig?.autoIndex ?? true);
+  logger.trace(
+    "INDEXING",
+    `[+${Date.now() - PROCESS_START_TIME}ms] shouldAutoIndex=${shouldAutoIndex}, noAutoIndex=${noAutoIndex}`,
+  );
 
   if (shouldAutoIndex) {
     const extensions = indexingConfig?.autoIndexExtensions ?? [
@@ -6225,14 +6441,80 @@ async function main() {
           `[AUTO-INDEX] Statistics result: entities=${entityCount}, rels=${stats.totalRelationships}, files=${stats.totalFiles}`,
         );
 
+        // Track whether we need incremental vs full indexing
+        let useIncrementalMode = false;
+        // Threshold for cumulative changes to trigger full rebuild (40% of total files)
+        const CUMULATIVE_REBUILD_THRESHOLD = 0.4;
+
         if (entityCount > 0) {
-          logger.systemEvent("Existing index found for directory, skipping auto-index", {
-            directory,
-            entityCount,
-            projectHash,
-          });
-          console.error(`📊 Existing index found (${entityCount} entities for ${projectHash}), ready for queries`);
-          return;
+          // Quick consistency check: compare file count on disk vs indexed files
+          const diskFileCount = await countSourceFiles(directory, extensions);
+          const indexedFileCount = stats.totalFiles ?? 0;
+
+          // Check cumulative incremental changes
+          const trackingInfo = await graphStorage.getIncrementalTrackingInfo();
+          const cumulativeChanges = trackingInfo.incrementalChangesCount;
+          const cumulativePercent = indexedFileCount > 0 ? cumulativeChanges / indexedFileCount : 0;
+
+          // If cumulative changes exceed threshold, force full rebuild
+          if (cumulativePercent > CUMULATIVE_REBUILD_THRESHOLD) {
+            logger.systemEvent("Cumulative changes threshold exceeded, performing full rebuild", {
+              directory,
+              cumulativeChanges,
+              totalFiles: indexedFileCount,
+              cumulativePercent: (cumulativePercent * 100).toFixed(1),
+              thresholdPercent: (CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0),
+            });
+            console.error(
+              `🔄 Cumulative changes (${cumulativeChanges}/${indexedFileCount} = ${(cumulativePercent * 100).toFixed(0)}%) exceed ${(CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0)}% threshold`,
+            );
+            console.error(`   → Performing full index rebuild for optimal search quality`);
+            // Full rebuild - don't use incremental mode
+            useIncrementalMode = false;
+          } else {
+            // If disk has significantly more files (>20% or >10 files), run incremental index
+            const missingFiles = diskFileCount - indexedFileCount;
+            const mismatchPercent = indexedFileCount > 0 ? (missingFiles / indexedFileCount) * 100 : 0;
+
+            if (diskFileCount > 0 && (missingFiles > 10 || mismatchPercent > 20)) {
+              logger.systemEvent("Index incomplete, resuming incremental indexing", {
+                directory,
+                diskFileCount,
+                indexedFileCount,
+                missingFiles,
+                mismatchPercent: mismatchPercent.toFixed(1),
+                cumulativeChanges,
+              });
+              console.error(
+                `⚠️  Index incomplete: ${indexedFileCount}/${diskFileCount} files indexed, resuming incrementally...`,
+              );
+              if (cumulativeChanges > 0) {
+                console.error(
+                  `   (cumulative changes: ${cumulativeChanges}, will rebuild at ${(CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0)}%)`,
+                );
+              }
+              // Use incremental mode - only index new/changed files
+              useIncrementalMode = true;
+            } else {
+              logger.systemEvent("Existing index found for directory, skipping auto-index", {
+                directory,
+                entityCount,
+                projectHash,
+                diskFileCount,
+                indexedFileCount,
+                cumulativeChanges,
+              });
+              console.error(
+                `📊 Existing index found (${entityCount} entities, ${indexedFileCount}/${diskFileCount} files), ready for queries`,
+              );
+              if (cumulativeChanges > 0) {
+                console.error(
+                  `   (cumulative changes: ${cumulativeChanges}/${indexedFileCount}, rebuild at ${(CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0)}%)`,
+                );
+              }
+              return;
+            }
+          }
         }
 
         // Detect if project has supported files
@@ -6252,7 +6534,8 @@ async function main() {
         console.error(`🔍 Detected ${detection.detectedExt} project (${detection.sampleFile})`);
 
         // Perform indexing with extension filter
-        await performAutoIndex(directory, extensions);
+        // Use incremental mode when resuming incomplete index
+        await performAutoIndex(directory, extensions, useIncrementalMode);
       } catch (error) {
         console.error("❌ Auto-index failed:", (error as Error).message);
         logger.error("AUTO_INDEX", "Auto-index check failed", { error: (error as Error).message });

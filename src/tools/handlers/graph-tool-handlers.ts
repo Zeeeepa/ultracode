@@ -60,7 +60,7 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
     await storage.clear();
 
     // Ensure SemanticAgent uses the correct project's VectorStore before indexing
-    if (process.env.MCP_DEBUG_DISABLE_SEMANTIC !== "1") {
+    if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
       try {
         const semanticAgent = await this.ensureSemanticAgentForProject(targetDir);
         // Also clear vector store for clean index

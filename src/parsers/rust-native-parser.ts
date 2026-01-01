@@ -216,7 +216,7 @@ export class RustNativeParser {
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
-        errors: errors.length > 0 ? errors : undefined,
+        ...(errors.length > 0 && { errors: errors }),
       };
     } catch (error) {
       this.stats.errorCount++;
@@ -343,7 +343,7 @@ export class RustNativeParser {
         type: "interface",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
       });
     }
 
@@ -382,9 +382,9 @@ export class RustNativeParser {
         type: modifiers.includes("async") ? "async_function" : "function",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
         parameters: this.parseParameters(paramsStr),
-        returnType: returnType || undefined,
+        ...(returnType && { returnType: returnType }),
       });
     }
 
@@ -408,7 +408,7 @@ export class RustNativeParser {
         type: "constant",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
         metadata: typeName ? { constType: typeName } : undefined,
       });
     }

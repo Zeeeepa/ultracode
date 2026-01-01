@@ -38,7 +38,7 @@ export interface GlobOptions {
   /** Include dot files/directories (default: false) */
   dot?: boolean;
   /** Maximum depth to traverse */
-  maxDepth?: number;
+  maxDepth?: number | undefined;
 }
 
 export interface ScanOptions extends GlobOptions {
@@ -55,7 +55,6 @@ const DEFAULT_IGNORE_PATTERNS = [
   "**/.git/**",
   "**/dist/**",
   "**/build/**",
-  "**/.ultrascript/**",
   "**/coverage/**",
   "**/__pycache__/**",
   "**/.pytest_cache/**",
@@ -149,7 +148,7 @@ async function globNode(
     ignore: string[];
     absolute: boolean;
     dot: boolean;
-    maxDepth?: number;
+    maxDepth?: number | undefined;
   },
 ): Promise<string[]> {
   const { readdir } = await import("node:fs/promises");

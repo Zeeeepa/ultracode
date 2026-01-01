@@ -260,7 +260,7 @@ export class PowerShellNativeParser {
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
-        errors: result.errors.length > 0 ? result.errors : undefined,
+        ...(result.errors.length > 0 && { errors: result.errors }),
       };
     } catch (error) {
       this.stats.errorCount++;

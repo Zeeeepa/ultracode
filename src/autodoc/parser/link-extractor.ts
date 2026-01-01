@@ -243,7 +243,7 @@ export function generateEntityRef(entityId: string, displayText?: string): strin
 /**
  * Generate markdown link for a doc reference
  */
-export function generateDocRef(docPath: string, section?: string, displayText?: string): string {
+export function generateDocRef(docPath: string, section?: string | undefined, displayText?: string): string {
   const text = displayText || docPath.split("/").pop()?.replace(".md", "") || docPath;
   const target = section ? `${docPath}#${section}` : docPath;
   return `[→ ${text}](${target})`;

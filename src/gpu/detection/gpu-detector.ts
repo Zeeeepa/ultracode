@@ -63,8 +63,8 @@ export class GPUDetector {
     };
 
     // Check environment overrides
-    const forceEnableWebGPU = process.env.WEBGPU_FORCE_ENABLE === "1";
-    const forceDisableWebGPU = process.env.WEBGPU_FORCE_DISABLE === "1";
+    const forceEnableWebGPU = process.env["WEBGPU_FORCE_ENABLE"] === "1";
+    const forceDisableWebGPU = process.env["WEBGPU_FORCE_DISABLE"] === "1";
 
     // 1. Try CUDA detection (NVIDIA only) - always safe, uses nvidia-smi
     try {
@@ -172,7 +172,7 @@ export class GPUDetector {
     try {
       // Option 1: Try native CUDA addon (if compiled)
       // Skip in bundled builds - use nvidia-smi instead
-      if (typeof process !== "undefined" && !process.env.BUNDLED) {
+      if (typeof process !== "undefined" && !process.env["BUNDLED"]) {
         try {
           // Dynamic require to avoid bundler resolution
           const modulePath = "../../../build/Release/cuda_vector_ops.node";
@@ -345,8 +345,8 @@ export class GPUDetector {
     const safetyCheck = GPUDetector.isWebGPUSafe(partialInfo);
 
     let envOverride: "force_enable" | "force_disable" | null = null;
-    if (process.env.WEBGPU_FORCE_ENABLE === "1") envOverride = "force_enable";
-    if (process.env.WEBGPU_FORCE_DISABLE === "1") envOverride = "force_disable";
+    if (process.env["WEBGPU_FORCE_ENABLE"] === "1") envOverride = "force_enable";
+    if (process.env["WEBGPU_FORCE_DISABLE"] === "1") envOverride = "force_disable";
 
     return {
       cudaDetected: cudaInfo !== null,

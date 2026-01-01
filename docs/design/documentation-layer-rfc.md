@@ -1222,8 +1222,8 @@ tool('semantic_search', {
   // ... existing params
 });
 
-// list_file_entities - включить связанную документацию
-tool('list_file_entities', {
+// get_members - включить связанную документацию
+tool('get_members', {
   filePath: z.string(),
   includeDocumentation: z.boolean().default(false),  // NEW
 });

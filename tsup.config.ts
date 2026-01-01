@@ -33,6 +33,8 @@ export default defineConfig([
   {
     entry: {
       index: "src/index.ts",
+      "pipe-preload": "src/pipe-preload.ts", // Quiet mode entry point for --pipe
+      "bun-proxy": "src/bun-proxy.ts", // Lightweight proxy for Claude's Bun
     },
     outDir: "dist",
     sourcemap: !isPackageMode, // Sourcemaps only in dev mode
@@ -66,10 +68,13 @@ export default defineConfig([
       // Keep heavy dependencies external to reduce memory footprint
       "@modelcontextprotocol/sdk",
 
-      // Native modules with dynamic requires
+      // Bun runtime modules (not available in Node.js)
+      "bun:sqlite",
+
+      // Native modules with dynamic requires - must not be bundled
+      "faiss-napi", // FAISS vector search - native NAPI bindings
       "sharp", // Image processing (optional - used by @xenova/transformers)
       "onnxruntime-node", // ONNX runtime native bindings (optional)
-      "better-sqlite3", // SQLite native bindings
       "@xenova/transformers", // Optional ML embeddings (requires sharp/onnxruntime)
     ],
 
@@ -80,7 +85,7 @@ export default defineConfig([
 
     // Ensure executable permissions for CLI and copy binaries
     onSuccess: async () => {
-      const { chmod, copyFile, access } = await import("node:fs/promises");
+      const { chmod, copyFile, access, mkdir } = await import("node:fs/promises");
       const { join } = await import("node:path");
 
       if (process.platform !== "win32") {
@@ -90,6 +95,7 @@ export default defineConfig([
       // Copy Cosmopolitan binary if it exists (built separately)
       const commSource = join("src", "comm", "ultrascript-tools.com");
       const commDest = join("dist", "ultrascript-tools.com");
+      const cmdDest = join("dist", "ultrascript-tools.cmd");
       try {
         await access(commSource);
         await copyFile(commSource, commDest);
@@ -97,8 +103,25 @@ export default defineConfig([
           await chmod(commDest, 0o755);
         }
         console.log("[tsup] Copied ultrascript-tools.com to dist/");
+
+        // Generate .cmd wrapper for Windows (Claude Code doesn't recognize .com)
+        const { writeFile } = await import("node:fs/promises");
+        await writeFile(cmdDest, '@echo off\r\n"%~dp0ultrascript-tools.com" %*\r\n');
+        console.log("[tsup] Generated ultrascript-tools.cmd wrapper");
       } catch {
         // Binary not built yet - that's fine, it's optional
+      }
+
+      // Copy gRPC proto files for OVMS provider
+      const protoDir = join("dist", "semantic", "providers", "proto");
+      const protoSource = join("src", "semantic", "providers", "proto", "grpc_predict_v2.proto");
+      const protoDest = join(protoDir, "grpc_predict_v2.proto");
+      try {
+        await mkdir(protoDir, { recursive: true });
+        await copyFile(protoSource, protoDest);
+        console.log("[tsup] Copied gRPC proto files to dist/");
+      } catch (e: any) {
+        console.warn("[tsup] Proto copy warning:", e.message);
       }
     },
   },
@@ -150,6 +173,68 @@ export default defineConfig([
     ],
 
     // No DTS for workers
+    dts: false,
+  },
+
+  // GPU worker - Unified Node.js subprocess for Faiss + CUDA operations
+  // Runs under Node.js (not Bun) for native module compatibility
+  {
+    entry: {
+      "semantic/gpu/gpu-worker": "src/semantic/gpu/gpu-worker.ts",
+    },
+    outDir: "dist",
+    sourcemap: !isPackageMode,
+    format: ["esm"],
+    platform: "node",
+    target: "node22", // Node.js target (native module compatibility)
+    shims: false,
+    splitting: false, // Single file for subprocess
+    minify: isPackageMode,
+    treeshake: true,
+    silent: true,
+
+    esbuildOptions(options) {
+      options.logOverride = {
+        ...options.logOverride,
+        "direct-eval": "silent",
+        "import-is-undefined": "silent",
+      };
+    },
+
+    external: [
+      "faiss-napi", // Must be external - native module
+      // CUDA addon is loaded via require() at runtime, not bundled
+    ],
+
+    dts: false,
+  },
+
+  // CLI setup command - used by setup-embeddings scripts
+  {
+    entry: {
+      "cli/setup-command": "src/cli/setup-command.ts",
+    },
+    outDir: "dist",
+    sourcemap: !isPackageMode,
+    format: ["esm"],
+    platform: "node",
+    target: "node24",
+    shims: false,
+    splitting: false, // Single file for CLI
+    minify: isPackageMode,
+    treeshake: true,
+    silent: true,
+
+    esbuildOptions(options) {
+      options.logOverride = {
+        ...options.logOverride,
+        "direct-eval": "silent",
+        "import-is-undefined": "silent",
+      };
+    },
+
+    external: ["@modelcontextprotocol/sdk", "sharp", "onnxruntime-node", "@xenova/transformers"],
+
     dts: false,
   },
 

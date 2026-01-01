@@ -21,7 +21,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation, getNodeText } from "./base-parser-utils.js";
 
 const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
@@ -50,7 +50,7 @@ export class PowerShellAnalyzer {
    * Main entry point for analyzing PowerShell scripts
    */
   async analyze(
-    rootNode: TreeSitterNode,
+    rootNode: ASTNode,
     filePath: string,
     sourceCode: string,
   ): Promise<{
@@ -90,7 +90,7 @@ export class PowerShellAnalyzer {
   }
 
   private extractEntities(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -160,7 +160,7 @@ export class PowerShellAnalyzer {
   }
 
   private extractFunction(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -214,7 +214,7 @@ export class PowerShellAnalyzer {
   }
 
   private extractFilter(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -243,7 +243,7 @@ export class PowerShellAnalyzer {
   }
 
   private extractClass(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -294,7 +294,7 @@ export class PowerShellAnalyzer {
     });
   }
 
-  private extractEnum(node: TreeSitterNode, filePath: string, entities: ParsedEntity[]): void {
+  private extractEnum(node: ASTNode, filePath: string, entities: ParsedEntity[]): void {
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return;
 
@@ -322,7 +322,7 @@ export class PowerShellAnalyzer {
     });
   }
 
-  private extractVariable(node: TreeSitterNode, _filePath: string, entities: ParsedEntity[]): void {
+  private extractVariable(node: ASTNode, _filePath: string, entities: ParsedEntity[]): void {
     const filePath = _filePath;
     const text = getNodeText(node, this.sourceCode) || "";
     const varMatch = text.match(/\$([A-Za-z_][A-Za-z0-9_]*)/);
@@ -346,7 +346,7 @@ export class PowerShellAnalyzer {
     });
   }
 
-  private extractImport(node: TreeSitterNode, filePath: string, relationships: EntityRelationship[]): void {
+  private extractImport(node: ASTNode, filePath: string, relationships: EntityRelationship[]): void {
     const text = getNodeText(node, this.sourceCode) || "";
 
     // Extract module name from using or Import-Module
@@ -374,7 +374,7 @@ export class PowerShellAnalyzer {
     }
   }
 
-  private extractCommand(node: TreeSitterNode, filePath: string, relationships: EntityRelationship[]): void {
+  private extractCommand(node: ASTNode, filePath: string, relationships: EntityRelationship[]): void {
     // Track cmdlet/function calls
     const text = getNodeText(node, this.sourceCode) || "";
     const cmdletMatch = text.match(/^([A-Z][a-z]+-[A-Z][a-z]+)/);
@@ -394,7 +394,7 @@ export class PowerShellAnalyzer {
   }
 
   private extractErrorHandling(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -408,12 +408,12 @@ export class PowerShellAnalyzer {
     }
   }
 
-  private validateScript(node: TreeSitterNode, _filePath: string): void {
+  private validateScript(node: ASTNode, _filePath: string): void {
     this.checkSecurityIssues(node);
     this.checkBestPractices(node);
   }
 
-  private checkSecurityIssues(node: TreeSitterNode): void {
+  private checkSecurityIssues(node: ASTNode): void {
     const text = getNodeText(node, this.sourceCode) || "";
 
     // Check for Invoke-Expression with user input
@@ -447,7 +447,7 @@ export class PowerShellAnalyzer {
     }
   }
 
-  private checkBestPractices(node: TreeSitterNode): void {
+  private checkBestPractices(node: ASTNode): void {
     // Check for approved verb usage in function names
     if (node.type === "function_statement") {
       const nameNode = node.childForFieldName("name");
@@ -475,7 +475,7 @@ export class PowerShellAnalyzer {
   }
 
   // Helper methods
-  private findChildByType(node: TreeSitterNode, type: string): TreeSitterNode | null {
+  private findChildByType(node: ASTNode, type: string): ASTNode | null {
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
       if (child && child.type === type) {
@@ -485,18 +485,18 @@ export class PowerShellAnalyzer {
     return null;
   }
 
-  private extractParameterName(node: TreeSitterNode): string | null {
+  private extractParameterName(node: ASTNode): string | null {
     const text = getNodeText(node, this.sourceCode) || "";
     const match = text.match(/\$([A-Za-z_][A-Za-z0-9_]*)/);
     return match?.[1] ?? null;
   }
 
-  private extractMemberName(node: TreeSitterNode): string | null {
+  private extractMemberName(node: ASTNode): string | null {
     const nameNode = node.childForFieldName("name");
     return nameNode ? getNodeText(nameNode, this.sourceCode) || null : null;
   }
 
-  private extractAttributes(node: TreeSitterNode): string[] {
+  private extractAttributes(node: ASTNode): string[] {
     const attributes: string[] = [];
     const text = getNodeText(node, this.sourceCode) || "";
     const attrMatches = text.matchAll(/\[([A-Za-z][A-Za-z0-9]*)\(/g);
@@ -508,8 +508,8 @@ export class PowerShellAnalyzer {
     return attributes;
   }
 
-  private determineScope(node: TreeSitterNode): string {
-    let current: TreeSitterNode | null = node;
+  private determineScope(node: ASTNode): string {
+    let current: ASTNode | null = node;
     while (current) {
       if (current.type === "function_statement") return "function";
       if (current.type === "script_block") return "script";

@@ -1,11 +1,13 @@
 /**
- * SQLite Adapter - Unified API for better-sqlite3 (Node.js) and bun:sqlite (Bun)
+ * SQLite Adapter - Sync SQLite for Bun runtime only
  *
- * Provides a consistent interface regardless of runtime environment.
- * Automatically detects runtime and loads appropriate module.
+ * Architecture:
+ * - Bun: uses bun:sqlite for fast sync cache operations
+ * - Node.js: sync SQLite NOT available, use libsql (async) instead
+ *
+ * This adapter is used for LayeredCacheManager and VectorCacheManager
+ * which need fast sync reads for delta lookups.
  */
-
-import { createRequire } from "node:module";
 
 // Type definitions for both APIs
 export interface SQLiteDatabase {
@@ -55,7 +57,8 @@ export function isBunRuntime(): boolean {
 }
 
 /**
- * Load appropriate SQLite module based on runtime
+ * Load SQLite module - only available under Bun runtime
+ * @throws Error if running under Node.js (use libsql instead)
  */
 export function loadSQLiteModule(): SQLiteDatabaseConstructor {
   if (isBunRuntime()) {
@@ -63,8 +66,18 @@ export function loadSQLiteModule(): SQLiteDatabaseConstructor {
     return loadBunSQLite();
   }
 
-  console.error("[SQLiteAdapter] Detected Node.js runtime, using better-sqlite3");
-  return loadBetterSQLite3();
+  throw new Error(
+    "[SQLiteAdapter] Sync SQLite not available under Node.js. " +
+      "Use libsql (async) for storage operations. " +
+      "Sync cache (LayeredCacheManager) is only available under Bun runtime.",
+  );
+}
+
+/**
+ * Check if sync SQLite is available (only under Bun)
+ */
+export function isSyncSQLiteAvailable(): boolean {
+  return isBunRuntime();
 }
 
 /**
@@ -76,10 +89,10 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
     const { Database } = require("bun:sqlite");
 
     // macOS: Check if custom SQLite path is needed for extension support
-    if (process.platform === "darwin" && process.env.SQLITE_LIB_PATH) {
+    if (process.platform === "darwin" && process.env["SQLITE_LIB_PATH"]) {
       try {
-        Database.setCustomSQLite(process.env.SQLITE_LIB_PATH);
-        console.error(`[SQLiteAdapter] Using custom SQLite from: ${process.env.SQLITE_LIB_PATH}`);
+        Database.setCustomSQLite(process.env["SQLITE_LIB_PATH"]);
+        console.error(`[SQLiteAdapter] Using custom SQLite from: ${process.env["SQLITE_LIB_PATH"]}`);
       } catch (error) {
         console.warn(`[SQLiteAdapter] Failed to set custom SQLite: ${(error as Error).message}`);
       }
@@ -252,75 +265,5 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
   }
 }
 
-/**
- * Load better-sqlite3 module (for Node.js runtime)
- */
-function loadBetterSQLite3(): SQLiteDatabaseConstructor {
-  try {
-    // Use createRequire for ES modules compatibility
-    const require = createRequire(import.meta.url);
-    const Database = require("better-sqlite3");
-    console.error("[SQLiteAdapter] better-sqlite3 loaded successfully");
-    return Database;
-  } catch (error) {
-    // Try auto-rebuild if native module error
-    if (isNativeModuleError(error)) {
-      console.warn("[SQLiteAdapter] Attempting to rebuild better-sqlite3...");
-      tryRebuild();
-      // Try loading again after rebuild
-      try {
-        const Database = require("better-sqlite3");
-        console.error("[SQLiteAdapter] better-sqlite3 loaded after rebuild");
-        return Database;
-      } catch (retryError) {
-        throw new Error(`Failed to load better-sqlite3 after rebuild: ${(retryError as Error).message}`);
-      }
-    }
-    throw new Error(`Failed to load better-sqlite3: ${(error as Error).message}`);
-  }
-}
-
-/**
- * Check if error is native module version mismatch
- */
-function isNativeModuleError(error: any): boolean {
-  if (!error) return false;
-  const message = error.message || "";
-  return (
-    message.includes("NODE_MODULE_VERSION") ||
-    message.includes("was compiled against a different Node.js version") ||
-    message.includes("The module") ||
-    error.code === "ERR_DLOPEN_FAILED"
-  );
-}
-
-/**
- * Attempt to rebuild better-sqlite3
- */
-function tryRebuild(): void {
-  const { spawnSync } = require("node:child_process");
-  const { fileURLToPath } = require("node:url");
-
-  try {
-    const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
-    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-
-    const rebuild = spawnSync(npmCommand, ["rebuild", "better-sqlite3"], {
-      cwd: packageRoot,
-      stdio: "inherit",
-      windowsHide: true,
-    });
-
-    if (rebuild.status !== 0) {
-      console.warn("[SQLiteAdapter] Rebuild failed with exit code", rebuild.status);
-    }
-
-    // Clear require cache
-    const resolvedPath = require.resolve("better-sqlite3");
-    if (require.cache[resolvedPath]) {
-      delete require.cache[resolvedPath];
-    }
-  } catch (rebuildError) {
-    console.warn("[SQLiteAdapter] Rebuild attempt failed:", (rebuildError as Error).message);
-  }
-}
+// better-sqlite3 removed - only bun:sqlite is supported for sync operations
+// Under Node.js, use libsql (async) instead

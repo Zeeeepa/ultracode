@@ -122,35 +122,24 @@ try {
 
         Write-Success "TypeScript собран в dist/ (минифицирован, без sourcemaps)"
 
-        # Копирование WASM из external-tools в dist
+        # Копирование WASM diff-simd (единственный используемый WASM модуль)
+        # Примечание: ultrascript-tools.com копируется через tsup.config.ts
+        # Примечание: vector-ops-simd НЕ используется (wasm-backend.ts импортирует из другого пути)
         Write-Step "Копирование WASM модулей..."
 
-        $WasmDirs = @(
-            @{ Src = "external-tools/wasm/diff-simd/pkg"; Dst = "dist/external-tools/wasm/diff-simd" },
-            @{ Src = "external-tools/wasm/vector-ops-simd/pkg"; Dst = "dist/external-tools/wasm/vector-ops-simd" }
-        )
+        $DiffSimdSrc = "external-tools/wasm/diff-simd/pkg"
+        $DiffSimdDst = "dist/external-tools/wasm/diff-simd"
 
-        foreach ($Dir in $WasmDirs) {
-            if (Test-Path $Dir.Src) {
-                if (-not (Test-Path $Dir.Dst)) {
-                    New-Item -ItemType Directory -Path $Dir.Dst -Force | Out-Null
-                }
-                Copy-Item "$($Dir.Src)/*" $Dir.Dst -Recurse -Force
-                Write-Host "  + $($Dir.Dst)" -ForegroundColor Gray
+        if (Test-Path $DiffSimdSrc) {
+            if (-not (Test-Path $DiffSimdDst)) {
+                New-Item -ItemType Directory -Path $DiffSimdDst -Force | Out-Null
             }
+            Copy-Item "$DiffSimdSrc/*" $DiffSimdDst -Recurse -Force
+            Write-Host "  + $DiffSimdDst" -ForegroundColor Gray
+            Write-Success "WASM diff-simd скопирован"
+        } else {
+            Write-Warning "WASM diff-simd не найден (optional)"
         }
-
-        # Копирование Comm binary если есть
-        if (Test-Path "src/comm/ultrascript-tools.com") {
-            try {
-                Copy-Item "src/comm/ultrascript-tools.com" "dist/" -Force -ErrorAction Stop
-                Write-Host "  + dist/ultrascript-tools.com" -ForegroundColor Gray
-            } catch {
-                Write-Warning "  Не удалось скопировать ultrascript-tools.com (файл заблокирован)"
-            }
-        }
-
-        Write-Success "Все модули скопированы в dist/"
     }
 
     # Шаг 3: Показать файлы, которые войдут в пакет

@@ -20,7 +20,7 @@
  * This analyzer handles common patterns but may not catch all edge cases.
  */
 
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError } from "./base-parser-utils.js";
 
 export interface BatchValidationIssue {
@@ -43,7 +43,7 @@ export class BatchAnalyzer {
    * Main entry point for analyzing Batch scripts
    */
   async analyze(
-    _rootNode: TreeSitterNode,
+    _rootNode: ASTNode,
     filePath: string,
     sourceCode: string,
   ): Promise<{

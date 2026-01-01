@@ -7,9 +7,9 @@
 | Instead of | Use | Why |
 |------------|-----|-----|
 | `Grep` for code search | `semantic_search` | Understands meaning, 5-10x faster |
-| `Glob` + read files | `list_file_entities` | AST parsing, finds classes/functions |
+| `Glob` + read files | `get_members` | AST parsing, finds classes/functions |
 | Manual dependency check | `analyze_code_impact` | Shows what breaks |
-| `Grep` for duplicates | `detect_code_clones` | Semantic similarity |
+| `Grep` for duplicates | `find_duplicates` | Semantic similarity |
 
 ## Before First Use
 
@@ -18,10 +18,10 @@ Run `index` tool once to index the project.
 ## Quick Tools
 
 - **Search**: `semantic_search`, `pattern_search`, `find_similar_code`
-- **Navigate**: `list_file_entities`, `list_entity_relationships`, `get_members`
-- **Analyze**: `analyze_code_impact`, `detect_code_clones`, `analyze_hotspots`
+- **Navigate**: `get_members`, `list_entity_relationships`
+- **Analyze**: `analyze_code_impact`, `find_duplicates`, `analyze_hotspots`
 - **Trace**: `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`
-- **Modify**: `modify_code`, `rename_symbol`, `create_file`
+- **Modify**: `modify_code`, `rename_symbol`, `create_file`, `add_member`
 
 > For C# use UltrasharpTools MCP (Roslyn-based).
 

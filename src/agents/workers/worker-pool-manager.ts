@@ -11,6 +11,17 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -27,10 +38,10 @@ interface WorkerState {
 interface PendingTask {
   id: string;
   files: string[];
-  options?: ParserOptions;
+  options?: ParserOptions | undefined;
   resolve: (results: ParseResult[]) => void;
   reject: (error: Error) => void;
-  timeout?: NodeJS.Timeout;
+  abortController?: AbortController | undefined;
 }
 
 interface PoolStats {
@@ -127,9 +138,12 @@ export class WorkerPoolManager {
           this.workers.delete(workerId);
         });
 
-        // Wait for ready signal
+        // Wait for ready signal with timeout
+        const abortController = new AbortController();
+
         const readyHandler = (message: any) => {
           if (message.type === "ready") {
+            abortController.abort();
             this.workers.set(workerId, state);
             worker.off("message", readyHandler);
             resolve();
@@ -137,13 +151,15 @@ export class WorkerPoolManager {
         };
         worker.on("message", readyHandler);
 
-        // Timeout if worker doesn't become ready
-        setTimeout(() => {
-          if (!this.workers.has(workerId)) {
+        // Async timeout using sleep pattern (Bun compatible)
+        (async () => {
+          await sleep(5000);
+          if (!abortController.signal.aborted && !this.workers.has(workerId)) {
+            worker.off("message", readyHandler);
             worker.terminate();
             reject(new Error(`Worker ${workerId} initialization timeout`));
           }
-        }, 5000);
+        })();
       } catch (error) {
         reject(error);
       }
@@ -157,18 +173,24 @@ export class WorkerPoolManager {
     const taskId = `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     return new Promise((resolve, reject) => {
+      const abortController = new AbortController();
+
       const task: PendingTask = {
         id: taskId,
         files,
         options,
         resolve,
         reject,
+        abortController,
       };
 
-      // Set task timeout
-      task.timeout = setTimeout(() => {
-        this.handleTaskTimeout(taskId);
-      }, this.taskTimeout);
+      // Set task timeout using async sleep pattern (Bun compatible)
+      (async () => {
+        await sleep(this.taskTimeout);
+        if (!abortController.signal.aborted) {
+          this.handleTaskTimeout(taskId);
+        }
+      })();
 
       this.pendingTasks.set(taskId, task);
 
@@ -226,9 +248,9 @@ export class WorkerPoolManager {
         const task = this.pendingTasks.get(result.taskId);
 
         if (task) {
-          // Clear timeout
-          if (task.timeout) {
-            clearTimeout(task.timeout);
+          // Abort timeout
+          if (task.abortController) {
+            task.abortController.abort();
           }
 
           // Update stats
@@ -256,8 +278,8 @@ export class WorkerPoolManager {
       case "error": {
         const task = this.pendingTasks.get(message.taskId);
         if (task) {
-          if (task.timeout) {
-            clearTimeout(task.timeout);
+          if (task.abortController) {
+            task.abortController.abort();
           }
 
           this.failedTasks++;
@@ -351,8 +373,8 @@ export class WorkerPoolManager {
 
     // Reject all pending tasks
     for (const task of this.pendingTasks.values()) {
-      if (task.timeout) {
-        clearTimeout(task.timeout);
+      if (task.abortController) {
+        task.abortController.abort();
       }
       task.reject(new Error("Worker pool shutting down"));
     }

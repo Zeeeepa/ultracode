@@ -13,7 +13,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getNodeLocation } from "./base-parser-utils.js";
 
 // Circuit breaker constants
@@ -27,7 +27,7 @@ export class CAnalyzer {
    * Main entry point for analyzing C code
    */
   async analyze(
-    rootNode: TreeSitterNode,
+    rootNode: ASTNode,
     filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
     this.parseStartTime = Date.now();
@@ -50,7 +50,7 @@ export class CAnalyzer {
    * Extract entities from the AST with recursion protection
    */
   private extractEntities(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -117,7 +117,7 @@ export class CAnalyzer {
   /**
    * Extract function definitions (with body)
    */
-  private extractFunction(node: TreeSitterNode, entities: ParsedEntity[]): void {
+  private extractFunction(node: ASTNode, entities: ParsedEntity[]): void {
     const declaratorNode = node.childForFieldName("declarator");
     if (!declaratorNode) return;
 
@@ -138,7 +138,7 @@ export class CAnalyzer {
   /**
    * Extract declarations: functions without body (e.g. extern), variables/constants
    */
-  private extractDeclaration(node: TreeSitterNode, entities: ParsedEntity[]): void {
+  private extractDeclaration(node: ASTNode, entities: ParsedEntity[]): void {
     const text = this.getNodeText(node);
     const mods = this.collectModifiers(node);
     const isConst = /\bconst\b/.test(text);
@@ -202,7 +202,7 @@ export class CAnalyzer {
   /**
    * Extract struct definitions
    */
-  private extractStruct(node: TreeSitterNode, entities: ParsedEntity[]): void {
+  private extractStruct(node: ASTNode, entities: ParsedEntity[]): void {
     const nameNode =
       node.childForFieldName("name") || this.findFirstNamedChildByTypes(node, ["type_identifier", "identifier"]);
     if (!nameNode) {
@@ -233,14 +233,14 @@ export class CAnalyzer {
       name,
       type: "class", // Using 'class' for consistency with other analyzers
       location: getNodeLocation(node),
-      children: children.length > 0 ? children : undefined,
+      ...(children.length > 0 && { children: children }),
     });
   }
 
   /**
    * Extract union definitions
    */
-  private extractUnion(node: TreeSitterNode, entities: ParsedEntity[]): void {
+  private extractUnion(node: ASTNode, entities: ParsedEntity[]): void {
     const nameNode =
       node.childForFieldName("name") || this.findFirstNamedChildByTypes(node, ["type_identifier", "identifier"]);
     if (!nameNode) return;
@@ -255,7 +255,7 @@ export class CAnalyzer {
   /**
    * Extract enum definitions
    */
-  private extractEnum(node: TreeSitterNode, entities: ParsedEntity[]): void {
+  private extractEnum(node: ASTNode, entities: ParsedEntity[]): void {
     const nameNode =
       node.childForFieldName("name") || this.findFirstNamedChildByTypes(node, ["type_identifier", "identifier"]);
     const name = nameNode ? this.getNodeText(nameNode) : "anonymous";
@@ -284,14 +284,14 @@ export class CAnalyzer {
       name: `enum ${name}`,
       type: "enum",
       location: getNodeLocation(node),
-      children: children.length > 0 ? children : undefined,
+      ...(children.length > 0 && { children: children }),
     });
   }
 
   /**
    * Extract typedef definitions
    */
-  private extractTypedef(node: TreeSitterNode, entities: ParsedEntity[]): void {
+  private extractTypedef(node: ASTNode, entities: ParsedEntity[]): void {
     const typeDeclarators = this.descendantsOfType(node, "type_declarator");
     if (typeDeclarators.length > 0) {
       for (const td of typeDeclarators) {
@@ -328,7 +328,7 @@ export class CAnalyzer {
   /**
    * Extract macro definitions
    */
-  private extractMacro(node: TreeSitterNode, entities: ParsedEntity[]): void {
+  private extractMacro(node: ASTNode, entities: ParsedEntity[]): void {
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return;
 
@@ -343,7 +343,7 @@ export class CAnalyzer {
   /**
    * Extract function-like macros
    */
-  private extractFunctionMacro(node: TreeSitterNode, entities: ParsedEntity[]): void {
+  private extractFunctionMacro(node: ASTNode, entities: ParsedEntity[]): void {
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return;
 
@@ -359,7 +359,7 @@ export class CAnalyzer {
   /**
    * Extract include directives as relationships
    */
-  private extractInclude(node: TreeSitterNode, filePath: string, relationships: EntityRelationship[]): void {
+  private extractInclude(node: ASTNode, filePath: string, relationships: EntityRelationship[]): void {
     const pathNode =
       node.childForFieldName("path") || this.findFirstNamedChildByTypes(node, ["system_lib_string", "string_literal"]);
     if (!pathNode) return;
@@ -378,7 +378,7 @@ export class CAnalyzer {
   /**
    * Helper: Get function name from declarator
    */
-  private getFunctionName(declarator: TreeSitterNode): TreeSitterNode | null {
+  private getFunctionName(declarator: ASTNode): ASTNode | null {
     if (!declarator) return null;
 
     // Сам идентификатор
@@ -414,7 +414,7 @@ export class CAnalyzer {
   /**
    * Helper: Get declarator name
    */
-  private getDeclaratorName(declarator: TreeSitterNode): TreeSitterNode | null {
+  private getDeclaratorName(declarator: ASTNode): ASTNode | null {
     if (!declarator) return null;
     if (declarator.type === "identifier" || declarator.type === "field_identifier") return declarator;
 
@@ -432,7 +432,7 @@ export class CAnalyzer {
   /**
    * Helper: Extract field name from field declaration
    */
-  private extractFieldName(fieldNode: TreeSitterNode): string | null {
+  private extractFieldName(fieldNode: ASTNode): string | null {
     const declaratorNode = fieldNode.childForFieldName("declarator");
     if (!declaratorNode) return null;
 
@@ -443,7 +443,7 @@ export class CAnalyzer {
   /**
    * Helper: Get node text
    */
-  private getNodeText(node: TreeSitterNode): string {
+  private getNodeText(node: ASTNode): string {
     return node.text || "";
   }
 
@@ -452,12 +452,12 @@ export class CAnalyzer {
    */
 
   // Helpers
-  private descendantsOfType(node: TreeSitterNode, type: string): TreeSitterNode[] {
-    const anyNode = node as unknown as { descendantsOfType?: (t: string) => TreeSitterNode[] };
+  private descendantsOfType(node: ASTNode, type: string): ASTNode[] {
+    const anyNode = node as unknown as { descendantsOfType?: (t: string) => ASTNode[] };
     if (typeof anyNode.descendantsOfType === "function") {
       return anyNode.descendantsOfType(type) || [];
     }
-    const out: TreeSitterNode[] = [];
+    const out: ASTNode[] = [];
     for (let i = 0; i < node.childCount; i++) {
       const c = node.child(i);
       if (!c) continue;
@@ -467,7 +467,7 @@ export class CAnalyzer {
     return out;
   }
 
-  private findFirstDescendantByTypes(node: TreeSitterNode, types: string[]): TreeSitterNode | null {
+  private findFirstDescendantByTypes(node: ASTNode, types: string[]): ASTNode | null {
     for (const t of types) {
       const list = this.descendantsOfType(node, t);
       if (list.length > 0) return list[0] || null;
@@ -475,7 +475,7 @@ export class CAnalyzer {
     return null;
   }
 
-  private findLastDescendantByTypes(node: TreeSitterNode, types: string[]): TreeSitterNode | null {
+  private findLastDescendantByTypes(node: ASTNode, types: string[]): ASTNode | null {
     for (const t of types) {
       const list = this.descendantsOfType(node, t);
       if (list.length > 0) return list[list.length - 1] || null;
@@ -483,7 +483,7 @@ export class CAnalyzer {
     return null;
   }
 
-  private findFirstNamedChildByTypes(node: TreeSitterNode, types: string[]): TreeSitterNode | null {
+  private findFirstNamedChildByTypes(node: ASTNode, types: string[]): ASTNode | null {
     for (let i = 0; i < node.namedChildCount; i++) {
       const c = node.namedChild(i);
       if (c && types.includes(c.type)) return c;
@@ -491,14 +491,14 @@ export class CAnalyzer {
     return null;
   }
 
-  private isFunctionDeclarator(node: TreeSitterNode): boolean {
+  private isFunctionDeclarator(node: ASTNode): boolean {
     if (node.type === "function_declarator") return true;
     const inner = node.childForFieldName("declarator");
     if (inner) return this.isFunctionDeclarator(inner);
     return false;
   }
 
-  private collectModifiers(node: TreeSitterNode): string[] {
+  private collectModifiers(node: ASTNode): string[] {
     const text = this.getNodeText(node);
     const mods: string[] = [];
     if (/\bstatic\b/.test(text)) mods.push("static");

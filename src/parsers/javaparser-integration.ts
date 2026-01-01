@@ -16,6 +16,17 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ParsedEntity } from "../types/parser.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -518,44 +529,34 @@ export async function parseWithJavaParser(filePath: string, content: string): Pr
     return { entities: [], errors: [{ message: "JavaParser not available" }] };
   }
 
-  // Store in const to satisfy TypeScript's type narrowing
   const javaCommand = javaPath;
-
   const libDir = getLibDir();
   const jarPath = join(libDir, JAVAPARSER_JAR);
   const classpath = process.platform === "win32" ? `${jarPath};${libDir}` : `${jarPath}:${libDir}`;
 
-  return new Promise((resolve) => {
-    const proc = spawn(javaCommand, ["-cp", classpath, "JavaParserWrapper", filePath], {
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+  const proc = spawn(javaCommand, ["-cp", classpath, "JavaParserWrapper", filePath], {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
 
-    let stdout = "";
-    let stderr = "";
+  let stdout = "";
+  let stderr = "";
+  const abortController = new AbortController();
 
-    const timeoutHandle = setTimeout(() => {
-      proc.kill();
-      resolve({
-        entities: [],
-        errors: [{ message: "JavaParser timeout" }],
-      });
-    }, 30000);
+  proc.stdout.on("data", (data: Buffer) => {
+    stdout += data.toString();
+  });
 
-    proc.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
+  proc.stderr.on("data", (data: Buffer) => {
+    stderr += data.toString();
+  });
 
-    proc.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
+  proc.stdin.write(content);
+  proc.stdin.end();
 
-    proc.stdin.write(content);
-    proc.stdin.end();
-
+  const resultPromise = new Promise<JavaParseResult>((resolve) => {
     proc.on("close", (_code: number | null) => {
-      clearTimeout(timeoutHandle);
-
+      abortController.abort();
       try {
         const result = JSON.parse(stdout);
         resolve(result as JavaParseResult);
@@ -568,13 +569,24 @@ export async function parseWithJavaParser(filePath: string, content: string): Pr
     });
 
     proc.on("error", (err: Error) => {
-      clearTimeout(timeoutHandle);
+      abortController.abort();
       resolve({
         entities: [],
         errors: [{ message: `Spawn error: ${err.message}` }],
       });
     });
   });
+
+  const timeoutPromise = (async (): Promise<JavaParseResult> => {
+    await sleep(30000);
+    if (!abortController.signal.aborted) {
+      proc.kill();
+      return { entities: [], errors: [{ message: "JavaParser timeout" }] };
+    }
+    return new Promise(() => {});
+  })();
+
+  return Promise.race([resultPromise, timeoutPromise]);
 }
 
 // =============================================================================

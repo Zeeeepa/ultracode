@@ -25,14 +25,14 @@ export function getDataDir(): string {
 
   switch (process.platform) {
     case "win32":
-      baseDir = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+      baseDir = process.env["LOCALAPPDATA"] || join(homedir(), "AppData", "Local");
       break;
     case "darwin":
       baseDir = join(homedir(), "Library", "Application Support");
       break;
     default:
       // Linux and others
-      baseDir = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+      baseDir = process.env["XDG_DATA_HOME"] || join(homedir(), ".local", "share");
   }
 
   return join(baseDir, "UltraScriptTools");
@@ -254,6 +254,64 @@ export function getBranchPaths(projectPath: string, branchName: string) {
 }
 
 // =============================================================================
+// FAISS Index Paths (per-project, branch-aware)
+// =============================================================================
+
+/**
+ * Get FAISS index path for a specific project and branch
+ * Structure: projects/{projectHash}/faiss-{branchName}.bin
+ *
+ * This allows:
+ * - Separate FAISS indices per project
+ * - Delta indices per branch (for fast branch switching)
+ */
+export function getFaissIndexPath(projectPath: string, branchName: string = DEFAULT_BRANCH): string {
+  const projectDir = getProjectDir(projectPath);
+  const safeBranch = normalizeBranchName(branchName);
+
+  // Ensure project directory exists
+  if (!existsSync(projectDir)) {
+    mkdirSync(projectDir, { recursive: true });
+  }
+
+  return join(projectDir, `faiss-${safeBranch}.bin`);
+}
+
+/**
+ * Get FAISS index path using projectHash directly (when projectPath is not available)
+ * Structure: projects/{projectHash}/faiss-{branchName}.bin
+ */
+export function getFaissIndexPathByHash(projectHash: string, branchName: string = DEFAULT_BRANCH): string {
+  const projectDir = join(getProjectsDir(), projectHash);
+  const safeBranch = normalizeBranchName(branchName);
+
+  // Ensure project directory exists
+  if (!existsSync(projectDir)) {
+    mkdirSync(projectDir, { recursive: true });
+  }
+
+  return join(projectDir, `faiss-${safeBranch}.bin`);
+}
+
+/**
+ * Get FAISS ID mapping path (maps FAISS internal IDs to entity IDs)
+ */
+export function getFaissIdMapPath(projectPath: string, branchName: string = DEFAULT_BRANCH): string {
+  const projectDir = getProjectDir(projectPath);
+  const safeBranch = normalizeBranchName(branchName);
+  return join(projectDir, `faiss-${safeBranch}.idmap.json`);
+}
+
+/**
+ * Get hot buffer path for delta changes before merge into main index
+ */
+export function getFaissHotBufferPath(projectPath: string, branchName: string = DEFAULT_BRANCH): string {
+  const projectDir = getProjectDir(projectPath);
+  const safeBranch = normalizeBranchName(branchName);
+  return join(projectDir, `faiss-${safeBranch}-hot.bin`);
+}
+
+// =============================================================================
 // Cache paths
 // =============================================================================
 
@@ -273,45 +331,11 @@ export function getASTCacheDir(): string {
  * Initialize all required directories
  */
 export function initializeStorageDirs(): void {
-  const dirs = [
-    getDataDir(),
-    getLogsDir(),
-    getCacheDir(),
-    getProjectsDir(),
-    getModelsDir(),
-    getConfigDir(),
-    getTreeSitterCacheDir(),
-    getASTCacheDir(),
-  ];
+  const dirs = [getDataDir(), getLogsDir(), getProjectsDir(), getModelsDir(), getConfigDir()];
 
   for (const dir of dirs) {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
   }
-}
-
-// =============================================================================
-// Migration Helper
-// =============================================================================
-
-/**
- * Check if a project has local .ultrascript data that should be migrated
- */
-export function hasLocalData(projectPath: string): boolean {
-  const localUltrascript = join(projectPath, ".ultrascript");
-  return existsSync(localUltrascript);
-}
-
-/**
- * Get paths for local .ultrascript data (for migration)
- */
-export function getLocalPaths(projectPath: string) {
-  const localDir = join(projectPath, ".ultrascript");
-  return {
-    dir: localDir,
-    graphDbPath: join(localDir, "graph.db"),
-    vectorsDbPath: join(localDir, "vectors.db"),
-    logsDir: join(localDir, "logs"),
-  };
 }

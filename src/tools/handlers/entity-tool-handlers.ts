@@ -2,7 +2,7 @@
  * Entity Tool Handlers
  *
  * Handlers for entity operations:
- * - list_file_entities (get_members alias)
+ * - get_members
  * - list_entity_relationships
  * - query
  */

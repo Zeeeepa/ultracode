@@ -93,7 +93,11 @@ class LineTransformStream extends Transform {
     super({ encoding: (options.encoding || "utf-8") as BufferEncoding });
   }
 
-  _transform(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null, data?: string) => void): void {
+  override _transform(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null, data?: string) => void,
+  ): void {
     this.buffer += chunk.toString();
 
     const lines = this.buffer.split("\n");
@@ -120,7 +124,7 @@ class LineTransformStream extends Transform {
     callback(null, output.join("\n") + (output.length > 0 ? "\n" : ""));
   }
 
-  _flush(callback: (error?: Error | null, data?: string) => void): void {
+  override _flush(callback: (error?: Error | null, data?: string) => void): void {
     if (this.buffer.length > 0 && (!this.options.skipEmpty || this.buffer.trim().length > 0)) {
       this.lineNumber++;
 

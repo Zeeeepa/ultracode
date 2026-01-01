@@ -9,7 +9,7 @@
  * Eliminates ~150 lines of duplicated code across parsers
  */
 
-import type { TreeSitterNode } from "../types/parser.js";
+import type { ASTNode } from "../types/parser.js";
 
 export interface Location {
   start: {
@@ -37,7 +37,7 @@ export class CircuitBreakerError extends Error {
  * Used in: csharp-analyzer, rust-analyzer
  * Eliminates: 2x ~10 lines = 20 lines of duplication
  */
-export function hasChild(node: TreeSitterNode, type: string): boolean {
+export function hasChild(node: ASTNode, type: string): boolean {
   for (let childIndex = 0; childIndex < node.childCount; childIndex++) {
     const child = node.child(childIndex);
     if (child && child.type === type) {
@@ -53,7 +53,7 @@ export function hasChild(node: TreeSitterNode, type: string): boolean {
  * Used in: c-analyzer, cpp-analyzer
  * Eliminates: 2x ~20 lines = 40 lines of duplication
  */
-export function getNodeLocation(node: TreeSitterNode): Location {
+export function getNodeLocation(node: ASTNode): Location {
   return {
     start: {
       line: node.startPosition.row + 1, // tree-sitter is 0-indexed, we want 1-indexed
@@ -99,11 +99,11 @@ export function checkCircuitBreakers(
  *
  * Common pattern used across multiple analyzers
  */
-export function findNodesByType(rootNode: TreeSitterNode, types: string[], maxDepth: number = 50): TreeSitterNode[] {
-  const results: TreeSitterNode[] = [];
+export function findNodesByType(rootNode: ASTNode, types: string[], maxDepth: number = 50): ASTNode[] {
+  const results: ASTNode[] = [];
   const typeSet = new Set(types);
 
-  function traverse(node: TreeSitterNode, depth: number): void {
+  function traverse(node: ASTNode, depth: number): void {
     if (depth > maxDepth) return;
 
     if (typeSet.has(node.type)) {
@@ -125,7 +125,7 @@ export function findNodesByType(rootNode: TreeSitterNode, types: string[], maxDe
 /**
  * Get text content of a node, handling undefined cases
  */
-export function getNodeText(node: TreeSitterNode | undefined, sourceCode: string): string {
+export function getNodeText(node: ASTNode | undefined, sourceCode: string): string {
   if (!node) return "";
   return sourceCode.slice(node.startIndex, node.endIndex);
 }
@@ -133,7 +133,7 @@ export function getNodeText(node: TreeSitterNode | undefined, sourceCode: string
 /**
  * Check if a node contains a specific text pattern
  */
-export function nodeContainsText(node: TreeSitterNode, sourceCode: string, pattern: string | RegExp): boolean {
+export function nodeContainsText(node: ASTNode, sourceCode: string, pattern: string | RegExp): boolean {
   const text = getNodeText(node, sourceCode);
   if (typeof pattern === "string") {
     return text.includes(pattern);
@@ -144,7 +144,7 @@ export function nodeContainsText(node: TreeSitterNode, sourceCode: string, patte
 /**
  * Extract identifier name from various node types
  */
-export function extractIdentifierName(node: TreeSitterNode, sourceCode: string): string | null {
+export function extractIdentifierName(node: ASTNode, sourceCode: string): string | null {
   // Try common identifier child types
   const identifierTypes = ["identifier", "name", "property_identifier", "field_identifier"];
 

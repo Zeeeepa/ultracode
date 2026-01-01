@@ -9,13 +9,13 @@
  * - Template/Style metadata
  */
 
-import type { ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, ParsedEntity } from "../types/parser.js";
 
 export class AngularAnalyzer {
   /**
    * Extract Angular-specific metadata from decorators
    */
-  static extractAngularMetadata(decorators: TreeSitterNode[], entity: ParsedEntity): void {
+  static extractAngularMetadata(decorators: ASTNode[], entity: ParsedEntity): void {
     // Ensure metadata exists
     entity.metadata = entity.metadata || {};
 
@@ -24,32 +24,32 @@ export class AngularAnalyzer {
 
       switch (decoratorName) {
         case "Component":
-          entity.metadata.isAngularComponent = true;
-          entity.metadata.componentMetadata = AngularAnalyzer.parseComponentDecorator(decorator);
+          entity.metadata["isAngularComponent"] = true;
+          entity.metadata["componentMetadata"] = AngularAnalyzer.parseComponentDecorator(decorator);
           break;
 
         case "Directive":
-          entity.metadata.isAngularDirective = true;
+          entity.metadata["isAngularDirective"] = true;
           break;
 
         case "Injectable":
-          entity.metadata.isAngularService = true;
+          entity.metadata["isAngularService"] = true;
           break;
 
         case "Input":
-          entity.metadata.isAngularInput = true;
+          entity.metadata["isAngularInput"] = true;
           break;
 
         case "Output":
-          entity.metadata.isAngularOutput = true;
+          entity.metadata["isAngularOutput"] = true;
           break;
 
         case "ViewChild":
         case "ViewChildren":
         case "ContentChild":
         case "ContentChildren":
-          entity.metadata.isAngularQuery = true;
-          entity.metadata.queryType = decoratorName;
+          entity.metadata["isAngularQuery"] = true;
+          entity.metadata["queryType"] = decoratorName;
           break;
       }
     }
@@ -58,7 +58,7 @@ export class AngularAnalyzer {
   /**
    * Parse @Component decorator
    */
-  private static parseComponentDecorator(decorator: TreeSitterNode): Record<string, any> {
+  private static parseComponentDecorator(decorator: ASTNode): Record<string, any> {
     const metadata: Record<string, any> = {};
 
     // Look for decorator arguments
@@ -75,16 +75,16 @@ export class AngularAnalyzer {
         const value = prop.children?.[1]?.text;
 
         if (key === "selector") {
-          metadata.selector = value?.replace(/['"]/g, "");
+          metadata["selector"] = value?.replace(/['"]/g, "");
         } else if (key === "standalone") {
-          metadata.standalone = value === "true";
+          metadata["standalone"] = value === "true";
         } else if (key === "template" || key === "templateUrl") {
-          metadata.hasTemplate = true;
+          metadata["hasTemplate"] = true;
         } else if (key === "styles" || key === "styleUrls") {
-          metadata.hasStyles = true;
+          metadata["hasStyles"] = true;
         } else if (key === "imports") {
-          metadata.hasImports = true;
-          metadata.isStandalone = true;
+          metadata["hasImports"] = true;
+          metadata["isStandalone"] = true;
         }
       }
     }
@@ -95,7 +95,7 @@ export class AngularAnalyzer {
   /**
    * Get decorator name from node
    */
-  private static getDecoratorName(decorator: TreeSitterNode): string | null {
+  private static getDecoratorName(decorator: ASTNode): string | null {
     // @Component(...) -> "Component"
     const callExpr = decorator.children?.find((c) => c.type === "call_expression");
     if (callExpr) {
@@ -111,7 +111,7 @@ export class AngularAnalyzer {
   /**
    * Detect Angular signals (signal(), computed(), effect())
    */
-  static isAngularSignal(node: TreeSitterNode): boolean {
+  static isAngularSignal(node: ASTNode): boolean {
     if (node.type === "call_expression") {
       const funcName = node.children?.[0]?.text;
       return funcName === "signal" || funcName === "computed" || funcName === "effect";

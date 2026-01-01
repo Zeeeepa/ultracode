@@ -19,6 +19,7 @@ dist/
 native/
 *.node
 build/
+.build-cache/
 
 # WASM modules - built from Rust source
 # Sources moved to external-tools/wasm (also ignored)
@@ -134,3 +135,4 @@ models/
 
 # Benchmark results (regenerated on each run)
 benchmarks/results/
+.ids.json

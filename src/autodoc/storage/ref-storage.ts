@@ -8,11 +8,13 @@
  * - AutoDoc Types: src/autodoc/types.ts
  * - Schema: src/autodoc/storage/schema.sql
  * - RFC Section 2: Unified Reference System
+ *
+ * Uses libsql for cross-runtime compatibility (Bun + Node.js)
  */
 
+import type { Client, InStatement } from "@libsql/client";
+import { createClient } from "@libsql/client";
 import { nanoid } from "nanoid";
-import type { SQLiteDatabase, SQLiteStatement } from "../../storage/sqlite-adapter.js";
-import type { SQLiteManager } from "../../storage/sqlite-manager.js";
 import type { CommentRef, Reference, RefSourceType, RefTargetType, RefType } from "../types.js";
 
 // =============================================================================
@@ -26,30 +28,12 @@ const ID_LENGTH = 12;
 // =============================================================================
 
 export class RefStorage {
-  private db: SQLiteDatabase;
-  private sqliteManager: SQLiteManager;
+  private client: Client | null = null;
+  private dbPath: string;
   private initialized = false;
 
-  // Prepared statements cache
-  private statements: {
-    insertRef?: SQLiteStatement;
-    updateRef?: SQLiteStatement;
-    deleteRef?: SQLiteStatement;
-    getRef?: SQLiteStatement;
-    getRefsBySource?: SQLiteStatement;
-    getRefsByTarget?: SQLiteStatement;
-    getRefsByTargetFile?: SQLiteStatement;
-    getBrokenRefs?: SQLiteStatement;
-    insertComment?: SQLiteStatement;
-    updateComment?: SQLiteStatement;
-    deleteComment?: SQLiteStatement;
-    getComment?: SQLiteStatement;
-    getCommentsByFile?: SQLiteStatement;
-  } = {};
-
-  constructor(sqliteManager: SQLiteManager) {
-    this.sqliteManager = sqliteManager;
-    this.db = sqliteManager.getConnection();
+  constructor(dbPath: string) {
+    this.dbPath = dbPath;
   }
 
   /**
@@ -58,25 +42,29 @@ export class RefStorage {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    this.ensureReady();
-    this.createTables();
-    this.prepareStatements();
+    // Create libsql client
+    this.client = createClient({
+      url: `file:${this.dbPath}`,
+    });
+
+    await this.createTables();
     this.initialized = true;
   }
 
   private ensureReady(): void {
-    if (!this.sqliteManager.isOpen()) {
-      this.sqliteManager.initialize();
+    if (!this.client) {
+      throw new Error("RefStorage not initialized. Call initialize() first.");
     }
-    this.db = this.sqliteManager.getConnection();
   }
 
   /**
    * Create reference tables if they don't exist
    */
-  private createTables(): void {
+  private async createTables(): Promise<void> {
+    if (!this.client) return;
+
     // doc_references table
-    this.db.exec(`
+    await this.client.execute(`
       CREATE TABLE IF NOT EXISTS doc_references (
         id TEXT PRIMARY KEY,
         source_type TEXT NOT NULL,
@@ -97,20 +85,20 @@ export class RefStorage {
         target_file_path TEXT,
         target_line_start INTEGER,
         target_line_end INTEGER
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_ref_source_file ON doc_references(source_file_path);
-      CREATE INDEX IF NOT EXISTS idx_ref_source_type ON doc_references(source_type);
-      CREATE INDEX IF NOT EXISTS idx_ref_target_id ON doc_references(target_id);
-      CREATE INDEX IF NOT EXISTS idx_ref_target_type ON doc_references(target_type);
-      CREATE INDEX IF NOT EXISTS idx_ref_target_entity ON doc_references(target_entity_id);
-      CREATE INDEX IF NOT EXISTS idx_ref_target_file ON doc_references(target_file_path);
-      CREATE INDEX IF NOT EXISTS idx_ref_valid ON doc_references(valid);
-      CREATE INDEX IF NOT EXISTS idx_ref_type ON doc_references(ref_type);
+      )
     `);
 
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_source_file ON doc_references(source_file_path)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_source_type ON doc_references(source_type)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_target_id ON doc_references(target_id)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_target_type ON doc_references(target_type)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_target_entity ON doc_references(target_entity_id)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_target_file ON doc_references(target_file_path)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_valid ON doc_references(valid)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_type ON doc_references(ref_type)`);
+
     // comment_refs table
-    this.db.exec(`
+    await this.client.execute(`
       CREATE TABLE IF NOT EXISTS comment_refs (
         id TEXT PRIMARY KEY,
         file_path TEXT NOT NULL,
@@ -123,84 +111,14 @@ export class RefStorage {
         flow_tags TEXT DEFAULT '[]',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_comment_file ON comment_refs(file_path);
-      CREATE INDEX IF NOT EXISTS idx_comment_parent ON comment_refs(parent_entity_id);
-      CREATE INDEX IF NOT EXISTS idx_comment_lines ON comment_refs(file_path, line_start, line_end);
-    `);
-  }
-
-  /**
-   * Prepare commonly used statements
-   */
-  private prepareStatements(): void {
-    this.statements.insertRef = this.db.prepare(`
-      INSERT INTO doc_references (
-        id, source_type, source_file_path, source_line_start, source_line_end,
-        source_char_start, source_char_end, target_type, target_id, ref_type,
-        ref_syntax, valid, validation_error, created_at, updated_at,
-        target_entity_id, target_file_path, target_line_start, target_line_end
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      )
     `);
 
-    this.statements.updateRef = this.db.prepare(`
-      UPDATE doc_references SET
-        target_id = ?, ref_syntax = ?, valid = ?, validation_error = ?, updated_at = ?,
-        target_entity_id = ?, target_file_path = ?, target_line_start = ?, target_line_end = ?
-      WHERE id = ?
-    `);
-
-    this.statements.deleteRef = this.db.prepare(`
-      DELETE FROM doc_references WHERE id = ?
-    `);
-
-    this.statements.getRef = this.db.prepare(`
-      SELECT * FROM doc_references WHERE id = ?
-    `);
-
-    this.statements.getRefsBySource = this.db.prepare(`
-      SELECT * FROM doc_references WHERE source_file_path = ? ORDER BY source_line_start
-    `);
-
-    this.statements.getRefsByTarget = this.db.prepare(`
-      SELECT * FROM doc_references WHERE target_id = ?
-    `);
-
-    this.statements.getRefsByTargetFile = this.db.prepare(`
-      SELECT * FROM doc_references
-      WHERE target_file_path = ? AND target_line_start >= ? AND target_line_end <= ?
-    `);
-
-    this.statements.getBrokenRefs = this.db.prepare(`
-      SELECT * FROM doc_references WHERE valid = 0 ORDER BY source_file_path, source_line_start
-    `);
-
-    this.statements.insertComment = this.db.prepare(`
-      INSERT INTO comment_refs (
-        id, file_path, line_start, line_end, content, parent_entity_id,
-        doc_refs, entity_refs, flow_tags, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    this.statements.updateComment = this.db.prepare(`
-      UPDATE comment_refs SET
-        content = ?, parent_entity_id = ?, doc_refs = ?, entity_refs = ?,
-        flow_tags = ?, updated_at = ?
-      WHERE id = ?
-    `);
-
-    this.statements.deleteComment = this.db.prepare(`
-      DELETE FROM comment_refs WHERE id = ?
-    `);
-
-    this.statements.getComment = this.db.prepare(`
-      SELECT * FROM comment_refs WHERE id = ?
-    `);
-
-    this.statements.getCommentsByFile = this.db.prepare(`
-      SELECT * FROM comment_refs WHERE file_path = ? ORDER BY line_start
-    `);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_comment_file ON comment_refs(file_path)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_comment_parent ON comment_refs(parent_entity_id)`);
+    await this.client.execute(
+      `CREATE INDEX IF NOT EXISTS idx_comment_lines ON comment_refs(file_path, line_start, line_end)`,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -210,7 +128,7 @@ export class RefStorage {
   /**
    * Create a new reference
    */
-  createRef(ref: Omit<Reference, "id" | "createdAt" | "updatedAt">): Reference {
+  async createRef(ref: Omit<Reference, "id" | "createdAt" | "updatedAt">): Promise<Reference> {
     this.ensureReady();
 
     const now = Date.now();
@@ -223,27 +141,35 @@ export class RefStorage {
       updatedAt: now,
     };
 
-    this.statements.insertRef!.run(
-      entity.id,
-      entity.sourceType,
-      entity.sourceLocation.filePath,
-      entity.sourceLocation.lineStart,
-      entity.sourceLocation.lineEnd,
-      entity.sourceLocation.charStart ?? null,
-      entity.sourceLocation.charEnd ?? null,
-      entity.targetType,
-      entity.targetId,
-      entity.refType,
-      entity.refSyntax,
-      entity.valid ? 1 : 0,
-      entity.validationError ?? null,
-      entity.createdAt,
-      entity.updatedAt,
-      entity.targetEntityId ?? null,
-      entity.targetFilePath ?? null,
-      entity.targetLineStart ?? null,
-      entity.targetLineEnd ?? null,
-    );
+    await this.client!.execute({
+      sql: `INSERT INTO doc_references (
+              id, source_type, source_file_path, source_line_start, source_line_end,
+              source_char_start, source_char_end, target_type, target_id, ref_type,
+              ref_syntax, valid, validation_error, created_at, updated_at,
+              target_entity_id, target_file_path, target_line_start, target_line_end
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        entity.id,
+        entity.sourceType,
+        entity.sourceLocation.filePath,
+        entity.sourceLocation.lineStart,
+        entity.sourceLocation.lineEnd,
+        entity.sourceLocation.charStart ?? null,
+        entity.sourceLocation.charEnd ?? null,
+        entity.targetType,
+        entity.targetId,
+        entity.refType,
+        entity.refSyntax,
+        entity.valid ? 1 : 0,
+        entity.validationError ?? null,
+        entity.createdAt,
+        entity.updatedAt,
+        entity.targetEntityId ?? null,
+        entity.targetFilePath ?? null,
+        entity.targetLineStart ?? null,
+        entity.targetLineEnd ?? null,
+      ],
+    });
 
     return entity;
   }
@@ -251,13 +177,13 @@ export class RefStorage {
   /**
    * Update an existing reference
    */
-  updateRef(
+  async updateRef(
     id: string,
     updates: Partial<Omit<Reference, "id" | "sourceType" | "sourceLocation" | "createdAt">>,
-  ): Reference | null {
+  ): Promise<Reference | null> {
     this.ensureReady();
 
-    const existing = this.getRef(id);
+    const existing = await this.getRef(id);
     if (!existing) return null;
 
     const now = Date.now();
@@ -267,18 +193,24 @@ export class RefStorage {
       updatedAt: now,
     };
 
-    this.statements.updateRef!.run(
-      updated.targetId,
-      updated.refSyntax,
-      updated.valid ? 1 : 0,
-      updated.validationError ?? null,
-      updated.updatedAt,
-      updated.targetEntityId ?? null,
-      updated.targetFilePath ?? null,
-      updated.targetLineStart ?? null,
-      updated.targetLineEnd ?? null,
-      id,
-    );
+    await this.client!.execute({
+      sql: `UPDATE doc_references SET
+              target_id = ?, ref_syntax = ?, valid = ?, validation_error = ?, updated_at = ?,
+              target_entity_id = ?, target_file_path = ?, target_line_start = ?, target_line_end = ?
+            WHERE id = ?`,
+      args: [
+        updated.targetId,
+        updated.refSyntax,
+        updated.valid ? 1 : 0,
+        updated.validationError ?? null,
+        updated.updatedAt,
+        updated.targetEntityId ?? null,
+        updated.targetFilePath ?? null,
+        updated.targetLineStart ?? null,
+        updated.targetLineEnd ?? null,
+        id,
+      ],
+    });
 
     return updated;
   }
@@ -286,181 +218,252 @@ export class RefStorage {
   /**
    * Delete a reference
    */
-  deleteRef(id: string): boolean {
+  async deleteRef(id: string): Promise<boolean> {
     this.ensureReady();
 
-    const result = this.statements.deleteRef!.run(id);
-    return result.changes > 0;
+    const result = await this.client!.execute({
+      sql: `DELETE FROM doc_references WHERE id = ?`,
+      args: [id],
+    });
+    return result.rowsAffected > 0;
   }
 
   /**
    * Get a reference by ID
    */
-  getRef(id: string): Reference | null {
+  async getRef(id: string): Promise<Reference | null> {
     this.ensureReady();
 
-    const row = this.statements.getRef!.get(id) as RefRow | undefined;
-    return row ? this.rowToReference(row) : null;
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM doc_references WHERE id = ?`,
+      args: [id],
+    });
+
+    if (result.rows.length === 0) return null;
+    return this.rowToReference(result.rows[0] as unknown as RefRow);
   }
 
   /**
    * Get all references from a source file
    */
-  getRefsBySource(filePath: string): Reference[] {
+  async getRefsBySource(filePath: string): Promise<Reference[]> {
     this.ensureReady();
 
-    const rows = this.statements.getRefsBySource!.all(filePath) as RefRow[];
-    return rows.map((row) => this.rowToReference(row));
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM doc_references WHERE source_file_path = ? ORDER BY source_line_start`,
+      args: [filePath],
+    });
+
+    return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
   }
 
   /**
    * Get all references to a target
    */
-  getRefsByTarget(targetId: string): Reference[] {
+  async getRefsByTarget(targetId: string): Promise<Reference[]> {
     this.ensureReady();
 
-    const rows = this.statements.getRefsByTarget!.all(targetId) as RefRow[];
-    return rows.map((row) => this.rowToReference(row));
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM doc_references WHERE target_id = ?`,
+      args: [targetId],
+    });
+
+    return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
   }
 
   /**
    * Get references pointing to a line range in a file
    */
-  getRefsByTargetLines(filePath: string, lineStart: number, lineEnd: number): Reference[] {
+  async getRefsByTargetLines(filePath: string, lineStart: number, lineEnd: number): Promise<Reference[]> {
     this.ensureReady();
 
-    const rows = this.statements.getRefsByTargetFile!.all(filePath, lineStart, lineEnd) as RefRow[];
-    return rows.map((row) => this.rowToReference(row));
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM doc_references
+            WHERE target_file_path = ? AND target_line_start >= ? AND target_line_end <= ?`,
+      args: [filePath, lineStart, lineEnd],
+    });
+
+    return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
   }
 
   /**
    * Get all broken (invalid) references
    */
-  getBrokenRefs(): Reference[] {
+  async getBrokenRefs(): Promise<Reference[]> {
     this.ensureReady();
 
-    const rows = this.statements.getBrokenRefs!.all() as RefRow[];
-    return rows.map((row) => this.rowToReference(row));
+    const result = await this.client!.execute(
+      `SELECT * FROM doc_references WHERE valid = 0 ORDER BY source_file_path, source_line_start`,
+    );
+
+    return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
   }
 
   /**
    * Mark a reference as invalid
    */
-  invalidateRef(id: string, error: string): boolean {
+  async invalidateRef(id: string, error: string): Promise<boolean> {
     this.ensureReady();
 
-    return this.updateRef(id, { valid: false, validationError: error }) !== null;
+    return (await this.updateRef(id, { valid: false, validationError: error })) !== null;
   }
 
   /**
    * Mark a reference as valid
    */
-  validateRef(id: string): boolean {
+  async validateRef(id: string): Promise<boolean> {
     this.ensureReady();
 
-    return this.updateRef(id, { valid: true, validationError: undefined }) !== null;
+    return (await this.updateRef(id, { valid: true, validationError: undefined })) !== null;
   }
 
   /**
    * Update target line numbers for references affected by code changes
    */
-  updateTargetLines(filePath: string, oldLineStart: number, lineDelta: number): number {
+  async updateTargetLines(filePath: string, oldLineStart: number, lineDelta: number): Promise<number> {
     this.ensureReady();
 
-    const result = this.db
-      .prepare(`
-      UPDATE doc_references
-      SET
-        target_line_start = target_line_start + ?,
-        target_line_end = target_line_end + ?,
-        updated_at = ?
-      WHERE target_file_path = ? AND target_line_start >= ?
-    `)
-      .run(lineDelta, lineDelta, Date.now(), filePath, oldLineStart);
+    const result = await this.client!.execute({
+      sql: `UPDATE doc_references
+            SET
+              target_line_start = target_line_start + ?,
+              target_line_end = target_line_end + ?,
+              updated_at = ?
+            WHERE target_file_path = ? AND target_line_start >= ?`,
+      args: [lineDelta, lineDelta, Date.now(), filePath, oldLineStart],
+    });
 
-    return result.changes;
+    return result.rowsAffected;
   }
 
   /**
    * Delete all references from a source file
    */
-  deleteRefsBySource(filePath: string): number {
+  async deleteRefsBySource(filePath: string): Promise<number> {
     this.ensureReady();
 
-    const result = this.db.prepare("DELETE FROM doc_references WHERE source_file_path = ?").run(filePath);
+    const result = await this.client!.execute({
+      sql: `DELETE FROM doc_references WHERE source_file_path = ?`,
+      args: [filePath],
+    });
 
-    return result.changes;
+    return result.rowsAffected;
   }
 
   /**
    * Delete all references to a target
    */
-  deleteRefsByTarget(targetId: string): number {
+  async deleteRefsByTarget(targetId: string): Promise<number> {
     this.ensureReady();
 
-    const result = this.db.prepare("DELETE FROM doc_references WHERE target_id = ?").run(targetId);
+    const result = await this.client!.execute({
+      sql: `DELETE FROM doc_references WHERE target_id = ?`,
+      args: [targetId],
+    });
 
-    return result.changes;
+    return result.rowsAffected;
   }
 
   /**
    * Batch create references
    */
-  createRefs(refs: Array<Omit<Reference, "id" | "createdAt" | "updatedAt">>): Reference[] {
+  async createRefs(refs: Array<Omit<Reference, "id" | "createdAt" | "updatedAt">>): Promise<Reference[]> {
     this.ensureReady();
 
     const results: Reference[] = [];
+    const now = Date.now();
 
-    const transaction = this.db.transaction(() => {
-      for (const ref of refs) {
-        results.push(this.createRef(ref));
-      }
+    const statements: InStatement[] = refs.map((ref) => {
+      const id = nanoid(ID_LENGTH);
+      const entity: Reference = {
+        ...ref,
+        id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      results.push(entity);
+
+      return {
+        sql: `INSERT INTO doc_references (
+                id, source_type, source_file_path, source_line_start, source_line_end,
+                source_char_start, source_char_end, target_type, target_id, ref_type,
+                ref_syntax, valid, validation_error, created_at, updated_at,
+                target_entity_id, target_file_path, target_line_start, target_line_end
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          entity.id,
+          entity.sourceType,
+          entity.sourceLocation.filePath,
+          entity.sourceLocation.lineStart,
+          entity.sourceLocation.lineEnd,
+          entity.sourceLocation.charStart ?? null,
+          entity.sourceLocation.charEnd ?? null,
+          entity.targetType,
+          entity.targetId,
+          entity.refType,
+          entity.refSyntax,
+          entity.valid ? 1 : 0,
+          entity.validationError ?? null,
+          entity.createdAt,
+          entity.updatedAt,
+          entity.targetEntityId ?? null,
+          entity.targetFilePath ?? null,
+          entity.targetLineStart ?? null,
+          entity.targetLineEnd ?? null,
+        ],
+      };
     });
 
-    transaction();
+    await this.client!.batch(statements);
     return results;
   }
 
   /**
    * Get all references with optional pagination
-   * Avoids N+1 queries when getting refs for multiple files
    */
-  getAllRefs(options: { limit?: number; offset?: number; validOnly?: boolean } = {}): Reference[] {
+  async getAllRefs(options: { limit?: number; offset?: number; validOnly?: boolean } = {}): Promise<Reference[]> {
     this.ensureReady();
 
     const { limit, offset, validOnly } = options;
     let sql = "SELECT * FROM doc_references";
+    const args: (number | string)[] = [];
 
     if (validOnly !== undefined) {
-      sql += ` WHERE valid = ${validOnly ? 1 : 0}`;
+      sql += ` WHERE valid = ?`;
+      args.push(validOnly ? 1 : 0);
     }
 
     sql += " ORDER BY source_file_path, source_line_start";
 
     if (limit !== undefined) {
-      sql += ` LIMIT ${limit}`;
+      sql += ` LIMIT ?`;
+      args.push(limit);
       if (offset !== undefined) {
-        sql += ` OFFSET ${offset}`;
+        sql += ` OFFSET ?`;
+        args.push(offset);
       }
     }
 
-    const rows = this.db.prepare(sql).all() as RefRow[];
-    return rows.map((row) => this.rowToReference(row));
+    const result = await this.client!.execute({ sql, args });
+    return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
   }
 
   /**
    * Count total references
    */
-  countRefs(validOnly?: boolean): number {
+  async countRefs(validOnly?: boolean): Promise<number> {
     this.ensureReady();
 
     let sql = "SELECT COUNT(*) as count FROM doc_references";
+    const args: (number | string)[] = [];
+
     if (validOnly !== undefined) {
-      sql += ` WHERE valid = ${validOnly ? 1 : 0}`;
+      sql += ` WHERE valid = ?`;
+      args.push(validOnly ? 1 : 0);
     }
 
-    const result = this.db.prepare(sql).get() as { count: number };
-    return result.count;
+    const result = await this.client!.execute({ sql, args });
+    return (result.rows[0] as unknown as { count: number }).count;
   }
 
   // ---------------------------------------------------------------------------
@@ -477,7 +480,7 @@ export class RefStorage {
   /**
    * Create a comment reference
    */
-  createComment(comment: Omit<CommentRef, "id" | "createdAt" | "updatedAt">): CommentRef {
+  async createComment(comment: Omit<CommentRef, "id" | "createdAt" | "updatedAt">): Promise<CommentRef> {
     this.ensureReady();
 
     const now = Date.now();
@@ -490,19 +493,25 @@ export class RefStorage {
       updatedAt: now,
     };
 
-    this.statements.insertComment!.run(
-      entity.id,
-      entity.filePath,
-      entity.lineStart,
-      entity.lineEnd,
-      entity.content,
-      entity.parentEntityId ?? null,
-      JSON.stringify(entity.docRefs),
-      JSON.stringify(entity.entityRefs),
-      JSON.stringify(entity.flowTags),
-      entity.createdAt,
-      entity.updatedAt,
-    );
+    await this.client!.execute({
+      sql: `INSERT INTO comment_refs (
+              id, file_path, line_start, line_end, content, parent_entity_id,
+              doc_refs, entity_refs, flow_tags, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        entity.id,
+        entity.filePath,
+        entity.lineStart,
+        entity.lineEnd,
+        entity.content,
+        entity.parentEntityId ?? null,
+        JSON.stringify(entity.docRefs),
+        JSON.stringify(entity.entityRefs),
+        JSON.stringify(entity.flowTags),
+        entity.createdAt,
+        entity.updatedAt,
+      ],
+    });
 
     return entity;
   }
@@ -510,13 +519,13 @@ export class RefStorage {
   /**
    * Update a comment reference
    */
-  updateComment(
+  async updateComment(
     id: string,
     updates: Partial<Omit<CommentRef, "id" | "filePath" | "lineStart" | "lineEnd" | "createdAt">>,
-  ): CommentRef | null {
+  ): Promise<CommentRef | null> {
     this.ensureReady();
 
-    const existing = this.getComment(id);
+    const existing = await this.getComment(id);
     if (!existing) return null;
 
     const now = Date.now();
@@ -526,15 +535,21 @@ export class RefStorage {
       updatedAt: now,
     };
 
-    this.statements.updateComment!.run(
-      updated.content,
-      updated.parentEntityId ?? null,
-      JSON.stringify(updated.docRefs),
-      JSON.stringify(updated.entityRefs),
-      JSON.stringify(updated.flowTags),
-      updated.updatedAt,
-      id,
-    );
+    await this.client!.execute({
+      sql: `UPDATE comment_refs SET
+              content = ?, parent_entity_id = ?, doc_refs = ?, entity_refs = ?,
+              flow_tags = ?, updated_at = ?
+            WHERE id = ?`,
+      args: [
+        updated.content,
+        updated.parentEntityId ?? null,
+        JSON.stringify(updated.docRefs),
+        JSON.stringify(updated.entityRefs),
+        JSON.stringify(updated.flowTags),
+        updated.updatedAt,
+        id,
+      ],
+    });
 
     return updated;
   }
@@ -542,42 +557,57 @@ export class RefStorage {
   /**
    * Delete a comment reference
    */
-  deleteComment(id: string): boolean {
+  async deleteComment(id: string): Promise<boolean> {
     this.ensureReady();
 
-    const result = this.statements.deleteComment!.run(id);
-    return result.changes > 0;
+    const result = await this.client!.execute({
+      sql: `DELETE FROM comment_refs WHERE id = ?`,
+      args: [id],
+    });
+    return result.rowsAffected > 0;
   }
 
   /**
    * Get a comment reference by ID
    */
-  getComment(id: string): CommentRef | null {
+  async getComment(id: string): Promise<CommentRef | null> {
     this.ensureReady();
 
-    const row = this.statements.getComment!.get(id) as CommentRow | undefined;
-    return row ? this.rowToComment(row) : null;
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM comment_refs WHERE id = ?`,
+      args: [id],
+    });
+
+    if (result.rows.length === 0) return null;
+    return this.rowToComment(result.rows[0] as unknown as CommentRow);
   }
 
   /**
    * Get all comment references for a file
    */
-  getCommentsByFile(filePath: string): CommentRef[] {
+  async getCommentsByFile(filePath: string): Promise<CommentRef[]> {
     this.ensureReady();
 
-    const rows = this.statements.getCommentsByFile!.all(filePath) as CommentRow[];
-    return rows.map((row) => this.rowToComment(row));
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM comment_refs WHERE file_path = ? ORDER BY line_start`,
+      args: [filePath],
+    });
+
+    return result.rows.map((row) => this.rowToComment(row as unknown as CommentRow));
   }
 
   /**
    * Delete all comment references for a file
    */
-  deleteCommentsByFile(filePath: string): number {
+  async deleteCommentsByFile(filePath: string): Promise<number> {
     this.ensureReady();
 
-    const result = this.db.prepare("DELETE FROM comment_refs WHERE file_path = ?").run(filePath);
+    const result = await this.client!.execute({
+      sql: `DELETE FROM comment_refs WHERE file_path = ?`,
+      args: [filePath],
+    });
 
-    return result.changes;
+    return result.rowsAffected;
   }
 
   // ---------------------------------------------------------------------------
@@ -587,18 +617,17 @@ export class RefStorage {
   /**
    * Get reference statistics
    */
-  getStats(): { totalRefs: number; validRefs: number; brokenRefs: number; totalComments: number } {
+  async getStats(): Promise<{ totalRefs: number; validRefs: number; brokenRefs: number; totalComments: number }> {
     this.ensureReady();
 
-    const totalRefs = (this.db.prepare("SELECT COUNT(*) as count FROM doc_references").get() as { count: number })
-      .count;
+    const totalRefsResult = await this.client!.execute("SELECT COUNT(*) as count FROM doc_references");
+    const totalRefs = (totalRefsResult.rows[0] as unknown as { count: number }).count;
 
-    const validRefs = (
-      this.db.prepare("SELECT COUNT(*) as count FROM doc_references WHERE valid = 1").get() as { count: number }
-    ).count;
+    const validRefsResult = await this.client!.execute("SELECT COUNT(*) as count FROM doc_references WHERE valid = 1");
+    const validRefs = (validRefsResult.rows[0] as unknown as { count: number }).count;
 
-    const totalComments = (this.db.prepare("SELECT COUNT(*) as count FROM comment_refs").get() as { count: number })
-      .count;
+    const totalCommentsResult = await this.client!.execute("SELECT COUNT(*) as count FROM comment_refs");
+    const totalComments = (totalCommentsResult.rows[0] as unknown as { count: number }).count;
 
     return {
       totalRefs,
@@ -623,8 +652,8 @@ export class RefStorage {
         filePath: row.source_file_path,
         lineStart: row.source_line_start,
         lineEnd: row.source_line_end,
-        charStart: row.source_char_start ?? undefined,
-        charEnd: row.source_char_end ?? undefined,
+        ...(row.source_char_start && { charStart: row.source_char_start }),
+        ...(row.source_char_end && { charEnd: row.source_char_end }),
       },
       targetType: row.target_type as RefTargetType,
       targetId: row.target_id,
@@ -651,7 +680,7 @@ export class RefStorage {
       lineStart: row.line_start,
       lineEnd: row.line_end,
       content: row.content,
-      parentEntityId: row.parent_entity_id ?? undefined,
+      ...(row.parent_entity_id && { parentEntityId: row.parent_entity_id }),
       docRefs: JSON.parse(row.doc_refs || "[]"),
       entityRefs: JSON.parse(row.entity_refs || "[]"),
       flowTags: JSON.parse(row.flow_tags || "[]"),
@@ -663,20 +692,20 @@ export class RefStorage {
   /**
    * Clear all reference data
    */
-  clear(): void {
+  async clear(): Promise<void> {
     this.ensureReady();
 
-    this.db.exec(`
-      DELETE FROM doc_references;
-      DELETE FROM comment_refs;
-    `);
+    await this.client!.batch(["DELETE FROM doc_references", "DELETE FROM comment_refs"]);
   }
 
   /**
    * Clean up resources
    */
-  destroy(): void {
-    this.statements = {};
+  async destroy(): Promise<void> {
+    if (this.client) {
+      this.client.close();
+      this.client = null;
+    }
     this.initialized = false;
   }
 }

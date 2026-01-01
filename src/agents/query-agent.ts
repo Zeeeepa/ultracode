@@ -2,62 +2,61 @@
  * TASK-002: QueryAgent for Graph Traversal and Relationships
  *
  * High-performance query agent for graph traversal and relationship analysis.
- * Supports concurrent queries, multi-level caching, and streaming responses.
- *
- * External Dependencies:
- * - nanoid: https://github.com/ai/nanoid - Secure unique ID generation
- * - p-limit: https://github.com/sindresorhus/p-limit - Concurrency control
- *
- * Architecture References:
- * - Base Agent: src/agents/base.ts
- * - Agent Types: src/types/agent.ts
- * - Query Types: src/types/query.ts
- * - Knowledge Bus: src/core/knowledge-bus.ts
+ * Uses GraphStorageLibSQL for all database operations.
  *
  * @task_id TASK-002
  * @coding_standard Adheres to: doc/CODING_STANDARD.md
- * @history
- *  - 2025-01-14: Created by Dev-Agent - TASK-002: Initial QueryAgent implementation
  */
 
-import { nanoid } from "nanoid";
 import pLimit from "p-limit";
 import { getConfig } from "../config/yaml-config.js";
-import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
-import { ConnectionPool } from "../query/connection-pool.js";
-import { GraphQueryProcessor } from "../query/graph-query-processor.js";
-import { QueryCache } from "../query/query-cache.js";
-import { getSQLiteManager } from "../storage/sqlite-manager.js";
+import { knowledgeBus } from "../core/knowledge-bus.js";
+import { getGraphStorage } from "../storage/graph-storage-factory.js";
+import type { GraphStorageLibSQL } from "../storage/graph-storage-libsql.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
-import type {
-  Change,
-  Cycle,
-  DependencyTree,
-  Entity,
-  EntityFilter,
-  Graph,
-  GraphQuery,
-  Hotspot,
-  ImpactAnalysis,
-  Path,
-  QueryOperations,
-  Relationship,
-  RippleEffect,
-} from "../types/query.js";
-import type { RelationType } from "../types/storage.js";
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
+import type { Change, Cycle, Hotspot, Path, RippleEffect } from "../types/query.js";
+import type { Entity, EntityType, Relationship, RelationType } from "../types/storage.js";
+
+// Simplified local types for QueryAgent
+interface EntityFilter {
+  name?: string | RegExp;
+  type?: EntityType | EntityType[] | undefined;
+  filePath?: string | string[];
+}
+
+interface GraphQuery {
+  type: string;
+  params?: Record<string, unknown>;
+}
+
+interface SimpleGraph {
+  entities: Entity[];
+  relationships: Relationship[];
+}
+
+interface SimpleDependencyTree {
+  root: string;
+  children: SimpleDependencyTree[];
+}
+
+interface SimpleImpactAnalysis {
+  source: string;
+  directImpact: string[];
+  transitiveImpact: string[];
+  riskLevel: "low" | "medium" | "high" | "critical";
+}
+
 import { BaseAgent } from "./base.js";
 
 // =============================================================================
-// 2. CONSTANTS AND CONFIGURATION
+// CONSTANTS AND CONFIGURATION
 // =============================================================================
+
 function getQueryAgentConfig() {
   const config = getConfig();
   return {
     maxConcurrency: config.queryAgent?.maxConcurrency ?? 10,
-    memoryLimit: config.queryAgent?.memoryLimit ?? 112, // MB (64 base + 32 cache + 16 connections)
+    memoryLimit: config.queryAgent?.memoryLimit ?? 112,
     priority: config.queryAgent?.priority ?? 9,
     simpleQueryTimeout: config.queryAgent?.simpleQueryTimeout ?? 100,
     complexQueryTimeout: config.queryAgent?.complexQueryTimeout ?? 1000,
@@ -67,14 +66,37 @@ function getQueryAgentConfig() {
 
 const QUERY_AGENT_CONFIG = getQueryAgentConfig();
 
+// Simple in-memory cache
+class SimpleCache {
+  private cache = new Map<string, { value: unknown; expiry: number }>();
+  private readonly ttlMs = 30000; // 30 seconds
+
+  get<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiry) {
+      this.cache.delete(key);
+      return null;
+    }
+    return entry.value as T;
+  }
+
+  set(key: string, value: unknown): void {
+    this.cache.set(key, { value, expiry: Date.now() + this.ttlMs });
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+}
+
 // =============================================================================
-// 3. QUERY AGENT IMPLEMENTATION
+// QUERY AGENT IMPLEMENTATION
 // =============================================================================
 
-export class QueryAgent extends BaseAgent implements QueryOperations {
-  private queryProcessor!: GraphQueryProcessor;
-  private cache!: QueryCache;
-  private connectionPool!: ConnectionPool;
+export class QueryAgent extends BaseAgent {
+  private storage: GraphStorageLibSQL | null = null;
+  private cache = new SimpleCache();
   private concurrencyLimiter = pLimit(QUERY_AGENT_CONFIG.maxConcurrency);
   private queryMetrics = {
     totalQueries: 0,
@@ -82,7 +104,6 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     cacheHits: 0,
     cacheMisses: 0,
   };
-  private readonly defaultMaxConcurrency: number;
 
   constructor() {
     super(AgentType.QUERY, {
@@ -90,54 +111,32 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
       memoryLimit: QUERY_AGENT_CONFIG.memoryLimit,
       priority: QUERY_AGENT_CONFIG.priority,
     });
-    this.defaultMaxConcurrency = QUERY_AGENT_CONFIG.maxConcurrency;
+  }
+
+  // Implement abstract handleMessage from BaseAgent
+  protected async handleMessage(_message: AgentMessage): Promise<void> {
+    // QueryAgent doesn't process direct messages, only tasks
   }
 
   // =============================================================================
-  // 4. LIFECYCLE METHODS
+  // LIFECYCLE METHODS
   // =============================================================================
 
   protected async onInitialize(): Promise<void> {
     console.error(`[${this.id}] Initializing QueryAgent...`);
-
-    // Initialize components
-    const sqliteManager = getSQLiteManager();
-    this.connectionPool = new ConnectionPool({
-      maxConnections: 4,
-      minConnections: 1,
-      acquireTimeout: 5000,
-      idleTimeout: 30000,
-      connectionTestInterval: 60000,
-      sqliteManager,
-    });
-    await this.connectionPool.initialize();
-
-    this.cache = new QueryCache();
-    await this.cache.initialize();
-
-    this.queryProcessor = new GraphQueryProcessor(this.connectionPool, this.cache);
-
-    // Subscribe to knowledge bus events
+    this.storage = await getGraphStorage();
     this.subscribeToKnowledgeBus();
-
-    // Warm up cache with common queries
-    await this.warmupCache();
-
     console.error(`[${this.id}] QueryAgent initialized successfully`);
   }
 
   protected async onShutdown(): Promise<void> {
     console.error(`[${this.id}] Shutting down QueryAgent...`);
-
-    // Cleanup resources
-    await this.cache.flush();
-    await this.connectionPool.shutdown();
-
+    this.cache.clear();
     console.error(`[${this.id}] QueryAgent shutdown complete`);
   }
 
   // =============================================================================
-  // 5. TASK PROCESSING
+  // TASK PROCESSING
   // =============================================================================
 
   protected canProcessTask(task: AgentTask): boolean {
@@ -148,404 +147,206 @@ export class QueryAgent extends BaseAgent implements QueryOperations {
     const startTime = Date.now();
 
     try {
-      let result: unknown;
+      const result = await this.concurrencyLimiter(async () => {
+        switch (task.type) {
+          case "query:entities":
+            return this.findEntities(task.payload as EntityFilter);
+          case "query:relationships":
+            return this.findRelationships(
+              (task.payload as { entityId: string; type?: RelationType }).entityId,
+              (task.payload as { entityId: string; type?: RelationType }).type,
+            );
+          case "query:graph":
+            return this.getGraph(task.payload as GraphQuery);
+          case "query:dependencies":
+            return this.analyzeDependencies((task.payload as { entityId: string }).entityId);
+          case "query:impact":
+            return this.analyzeImpact((task.payload as { entityId: string }).entityId);
+          default:
+            throw new Error(`Unknown query type: ${task.type}`);
+        }
+      });
 
-      switch (task.type) {
-        case "query:entity":
-          result = await this.handleEntityQuery(task.payload as EntityFilter);
-          break;
-        case "query:relationships":
-          result = await this.handleRelationshipQuery(task.payload as { entityId: string; type?: RelationType });
-          break;
-        case "query:traversal":
-          result = await this.handleTraversalQuery(task.payload as { type: string; params: unknown });
-          break;
-        case "query:analysis":
-          result = await this.handleAnalysisQuery(task.payload as { type: string; params: unknown });
-          break;
-        default:
-          throw new Error(`Unknown query task type: ${task.type}`);
-      }
-
-      const duration = Date.now() - startTime;
-      this.updateMetrics(duration, true);
-
-      // Publish result to knowledge bus
-      knowledgeBus.publish(
-        `query:result:${task.id}`,
-        result,
-        this.id,
-        300000, // 5 minute TTL
-      );
+      this.queryMetrics.totalQueries++;
+      this.queryMetrics.totalTime += Date.now() - startTime;
 
       return result;
     } catch (error) {
-      const duration = Date.now() - startTime;
-      this.updateMetrics(duration, false);
+      console.error(`[${this.id}] Query failed:`, error);
       throw error;
     }
   }
 
-  protected async handleMessage(message: AgentMessage): Promise<void> {
-    if (message.type === "query:execute") {
-      const task: AgentTask = {
-        id: nanoid(),
-        type: `query:${(message.payload as any).type}`,
-        priority: 9,
-        payload: message.payload,
-        createdAt: Date.now(),
-      };
+  // =============================================================================
+  // QUERY OPERATIONS (implements QueryOperations interface)
+  // =============================================================================
 
-      await this.process(task);
+  async findEntities(filter: EntityFilter): Promise<Entity[]> {
+    if (!this.storage) return [];
+
+    const cacheKey = `entities:${JSON.stringify(filter)}`;
+    const cached = this.cache.get<Entity[]>(cacheKey);
+    if (cached) {
+      this.queryMetrics.cacheHits++;
+      return cached;
     }
-  }
 
-  // =============================================================================
-  // 6. QUERY OPERATIONS IMPLEMENTATION
-  // =============================================================================
+    this.queryMetrics.cacheMisses++;
+    // Convert complex filter to storage-compatible format
+    const namePattern = typeof filter.name === "string" ? filter.name : filter.name?.source;
+    const types = Array.isArray(filter.type) ? filter.type : filter.type ? [filter.type] : undefined;
+    const filePath = Array.isArray(filter.filePath) ? filter.filePath[0] : filter.filePath;
 
-  async getEntity(id: string): Promise<Entity | null> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "entity",
-        operation: "getEntity",
-        params: { id },
-        hash: `entity:${id}`,
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as Entity | null;
+    const results = await this.storage.searchEntities({
+      namePattern,
+      types,
+      filePath,
+      limit: 100,
     });
+
+    this.cache.set(cacheKey, results);
+    return results;
   }
 
-  async listEntities(filter: EntityFilter): Promise<Entity[]> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "entity",
-        operation: "listEntities",
-        params: filter as Record<string, unknown>,
-        hash: `entities:${JSON.stringify(filter)}`,
-        timestamp: Date.now(),
-      };
+  async findRelationships(entityId: string, type?: RelationType): Promise<Relationship[]> {
+    if (!this.storage) return [];
 
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as Entity[];
-    });
-  }
-
-  async getRelationships(entityId: string, type?: RelationType): Promise<Relationship[]> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "relationship",
-        operation: "getRelationships",
-        params: { entityId, type },
-        hash: `relationships:${entityId}:${type || "all"}`,
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as Relationship[];
-    });
-  }
-
-  async getRelatedEntities(entityId: string, depth: number): Promise<Entity[]> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "traversal",
-        operation: "getRelatedEntities",
-        params: { entityId, depth },
-        hash: `related:${entityId}:${depth}`,
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as Entity[];
-    });
-  }
-
-  async findPath(fromId: string, toId: string): Promise<Path | null> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "traversal",
-        operation: "findPath",
-        params: { fromId, toId },
-        hash: `path:${fromId}:${toId}`,
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as Path | null;
-    });
-  }
-
-  async getSubgraph(rootId: string, depth: number): Promise<Graph> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "traversal",
-        operation: "getSubgraph",
-        params: { rootId, depth },
-        hash: `subgraph:${rootId}:${depth}`,
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as Graph;
-    });
-  }
-
-  async findDependencies(entityId: string): Promise<DependencyTree> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "analysis",
-        operation: "findDependencies",
-        params: { entityId },
-        hash: `dependencies:${entityId}`,
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as DependencyTree;
-    });
-  }
-
-  async detectCycles(): Promise<Cycle[]> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "analysis",
-        operation: "detectCycles",
-        params: {},
-        hash: "cycles:all",
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as Cycle[];
-    });
-  }
-
-  async analyzeHotspots(): Promise<Hotspot[]> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "analysis",
-        operation: "analyzeHotspots",
-        params: {},
-        hash: "hotspots:all",
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as Hotspot[];
-    });
-  }
-
-  async getImpactedEntities(entityId: string): Promise<ImpactAnalysis> {
-    return this.concurrencyLimiter(async () => {
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "analysis",
-        operation: "getImpactedEntities",
-        params: { entityId },
-        hash: `impact:${entityId}`,
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as ImpactAnalysis;
-    });
-  }
-
-  async calculateChangeRipple(changes: Change[]): Promise<RippleEffect> {
-    return this.concurrencyLimiter(async () => {
-      const changeIds = changes
-        .map((c) => c.entityId)
-        .sort()
-        .join(",");
-      const query: GraphQuery = {
-        id: nanoid(),
-        type: "analysis",
-        operation: "calculateChangeRipple",
-        params: { changes },
-        hash: `ripple:${changeIds}`,
-        timestamp: Date.now(),
-      };
-
-      const result = await this.queryProcessor.executeQuery(query);
-      return result.data as RippleEffect;
-    });
-  }
-
-  // =============================================================================
-  // 7. HELPER METHODS
-  // =============================================================================
-
-  private async handleEntityQuery(filter: EntityFilter): Promise<Entity[]> {
-    return this.listEntities(filter);
-  }
-
-  private async handleRelationshipQuery(params: { entityId: string; type?: RelationType }): Promise<Relationship[]> {
-    return this.getRelationships(params.entityId, params.type);
-  }
-
-  private async handleTraversalQuery(params: { type: string; params: any }): Promise<unknown> {
-    switch (params.type) {
-      case "path":
-        return this.findPath(params.params.fromId, params.params.toId);
-      case "subgraph":
-        return this.getSubgraph(params.params.rootId, params.params.depth);
-      case "related":
-        return this.getRelatedEntities(params.params.entityId, params.params.depth);
-      default:
-        throw new Error(`Unknown traversal type: ${params.type}`);
+    const cacheKey = `rels:${entityId}:${type ?? "all"}`;
+    const cached = this.cache.get<Relationship[]>(cacheKey);
+    if (cached) {
+      this.queryMetrics.cacheHits++;
+      return cached;
     }
+
+    this.queryMetrics.cacheMisses++;
+    const results = await this.storage.getRelationshipsForEntity(entityId, type);
+    this.cache.set(cacheKey, results);
+    return results;
   }
 
-  private async handleAnalysisQuery(params: { type: string; params: any }): Promise<unknown> {
-    switch (params.type) {
-      case "dependencies":
-        return this.findDependencies(params.params.entityId);
-      case "cycles":
-        return this.detectCycles();
-      case "hotspots":
-        return this.analyzeHotspots();
-      case "impact":
-        return this.getImpactedEntities(params.params.entityId);
-      case "ripple":
-        return this.calculateChangeRipple(params.params.changes);
-      default:
-        throw new Error(`Unknown analysis type: ${params.type}`);
+  async getGraph(query: { type: string; params?: Record<string, unknown> }): Promise<SimpleGraph> {
+    if (!this.storage) {
+      return { entities: [], relationships: [] };
     }
-  }
 
-  private subscribeToKnowledgeBus(): void {
-    // Subscribe to index updates
-    knowledgeBus.subscribe(this.id, "index:updated", this.handleIndexUpdate.bind(this));
-
-    // Subscribe to cache invalidation requests
-    knowledgeBus.subscribe(this.id, "cache:invalidate", this.handleCacheInvalidation.bind(this));
-
-    // Subscribe to query requests
-    knowledgeBus.subscribe(this.id, /^query:request:.*/, this.handleQueryRequest.bind(this));
-
-    // Subscribe to resource adjustments
-    knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this));
-  }
-
-  private async handleIndexUpdate(entry: KnowledgeEntry): Promise<void> {
-    console.error(`[${this.id}] Handling index update: ${entry.topic}`);
-
-    // Invalidate affected cache entries
-    const affectedQueries = await this.cache.findAffectedQueries(entry.data);
-    await this.cache.invalidate(affectedQueries);
-
-    // Publish cache invalidation event
-    knowledgeBus.publish("cache:invalidated", { queries: affectedQueries, reason: "index_update" }, this.id);
-  }
-
-  private async handleCacheInvalidation(entry: KnowledgeEntry): Promise<void> {
-    const { queries } = entry.data as { queries: string[] };
-    console.error(`[${this.id}] Invalidating ${queries.length} cache entries`);
-    await this.cache.invalidate(queries);
-  }
-
-  private async handleQueryRequest(entry: KnowledgeEntry): Promise<void> {
-    const message: AgentMessage = {
-      id: nanoid(),
-      from: entry.source,
-      to: this.id,
-      type: "query:execute",
-      payload: entry.data,
-      timestamp: Date.now(),
+    const result = await this.storage.executeQuery(query as any);
+    return {
+      entities: result.entities,
+      relationships: result.relationships,
     };
-
-    await this.receive(message);
   }
 
-  private handleResourceAdjustment(entry: KnowledgeEntry): void {
-    const data = entry.data as {
-      newAgentLimit?: number;
-    };
-
-    if (typeof data.newAgentLimit === "number" && Number.isFinite(data.newAgentLimit)) {
-      const adjustedConcurrency = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(data.newAgentLimit)));
-      if (this.capabilities.maxConcurrency !== adjustedConcurrency) {
-        console.error(
-          `[${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjustedConcurrency} (resources:adjusted)`,
-        );
-        this.capabilities.maxConcurrency = adjustedConcurrency;
-        this.concurrencyLimiter = pLimit(adjustedConcurrency);
-      }
+  async analyzeDependencies(entityId: string): Promise<SimpleDependencyTree> {
+    if (!this.storage) {
+      return { root: entityId, children: [] };
     }
-  }
 
-  private async warmupCache(): Promise<void> {
-    console.error(`[${this.id}] Warming up cache...`);
+    const relationships = await this.storage.getRelationshipsForEntity(entityId);
+    const children: SimpleDependencyTree[] = [];
 
-    // Pre-load commonly accessed entities
-    const commonQueries = [
-      { type: "entity", operation: "listEntities", params: { type: "class" } },
-      { type: "entity", operation: "listEntities", params: { type: "function" } },
-      { type: "analysis", operation: "analyzeHotspots", params: {} },
-    ];
-
-    for (const queryDef of commonQueries) {
-      try {
-        const query: GraphQuery = {
-          id: nanoid(),
-          type: queryDef.type as any,
-          operation: queryDef.operation,
-          params: queryDef.params,
-          hash: `warmup:${queryDef.operation}`,
-          timestamp: Date.now(),
-        };
-
-        await this.queryProcessor.executeQuery(query);
-      } catch (error) {
-        console.warn(`[${this.id}] Cache warmup failed for ${queryDef.operation}:`, error);
+    for (const rel of relationships) {
+      if (rel.fromId === entityId) {
+        children.push({
+          root: rel.toId,
+          children: [],
+        });
       }
     }
 
-    console.error(`[${this.id}] Cache warmup complete`);
+    return { root: entityId, children };
   }
 
-  private updateMetrics(duration: number, success: boolean): void {
-    this.queryMetrics.totalQueries++;
-    this.queryMetrics.totalTime += duration;
-
-    if (success) {
-      const cacheStats = this.cache.getStats();
-      this.queryMetrics.cacheHits = cacheStats.totalHits;
-      this.queryMetrics.cacheMisses = cacheStats.totalMisses;
+  async analyzeImpact(entityId: string): Promise<SimpleImpactAnalysis> {
+    if (!this.storage) {
+      return {
+        source: entityId,
+        directImpact: [],
+        transitiveImpact: [],
+        riskLevel: "low",
+      };
     }
-  }
 
-  /**
-   * Get query performance metrics
-   */
-  getQueryMetrics(): {
-    totalQueries: number;
-    averageResponseTime: number;
-    cacheHitRate: number;
-  } {
-    const cacheStats = this.cache.getStats();
+    const relationships = await this.storage.getRelationshipsForEntity(entityId);
+    const directImpact: string[] = [];
+    const transitiveImpact: string[] = [];
 
-    const totalCacheRequests = cacheStats.totalHits + cacheStats.totalMisses;
-    const cacheHitRate = totalCacheRequests > 0 ? cacheStats.totalHits / totalCacheRequests : 0;
+    for (const rel of relationships) {
+      if (rel.toId === entityId) {
+        directImpact.push(rel.fromId);
+      }
+    }
+
+    // Get transitive impact (2nd degree)
+    for (const impactedId of directImpact) {
+      const transitiveRels = await this.storage.getRelationshipsForEntity(impactedId);
+      for (const rel of transitiveRels) {
+        if (rel.toId === impactedId && !directImpact.includes(rel.fromId) && rel.fromId !== entityId) {
+          transitiveImpact.push(rel.fromId);
+        }
+      }
+    }
+
+    const totalImpact = directImpact.length + transitiveImpact.length;
+    const riskLevel = totalImpact > 50 ? "critical" : totalImpact > 20 ? "high" : totalImpact > 5 ? "medium" : "low";
 
     return {
-      totalQueries: this.queryMetrics.totalQueries,
-      averageResponseTime:
-        this.queryMetrics.totalQueries > 0 ? this.queryMetrics.totalTime / this.queryMetrics.totalQueries : 0,
-      cacheHitRate,
+      source: entityId,
+      directImpact,
+      transitiveImpact,
+      riskLevel,
+    };
+  }
+
+  // Additional interface methods with stub implementations
+  async findPaths(_source: string, _target: string, _maxDepth?: number): Promise<Path[]> {
+    return [];
+  }
+
+  async findCycles(_entityId: string, _maxDepth?: number): Promise<Cycle[]> {
+    return [];
+  }
+
+  async analyzeHotspots(_filter?: EntityFilter): Promise<Hotspot[]> {
+    return [];
+  }
+
+  async analyzeRippleEffects(_changeSet: Change[]): Promise<RippleEffect[]> {
+    return [];
+  }
+
+  // =============================================================================
+  // KNOWLEDGE BUS INTEGRATION
+  // =============================================================================
+
+  private subscribeToKnowledgeBus(): void {
+    knowledgeBus.subscribe(this.id, "graph:updated", () => {
+      console.error(`[${this.id}] Graph updated, clearing cache`);
+      this.cache.clear();
+    });
+
+    knowledgeBus.subscribe(this.id, "index:complete", () => {
+      console.error(`[${this.id}] Index complete, clearing cache`);
+      this.cache.clear();
+    });
+  }
+
+  // =============================================================================
+  // METRICS
+  // =============================================================================
+
+  getQueryMetrics() {
+    return {
+      ...this.queryMetrics,
+      avgQueryTime:
+        this.queryMetrics.totalQueries > 0
+          ? Math.round(this.queryMetrics.totalTime / this.queryMetrics.totalQueries)
+          : 0,
+      cacheHitRate:
+        this.queryMetrics.totalQueries > 0
+          ? Math.round(
+              (this.queryMetrics.cacheHits / (this.queryMetrics.cacheHits + this.queryMetrics.cacheMisses)) * 100,
+            )
+          : 0,
     };
   }
 }

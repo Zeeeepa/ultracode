@@ -256,17 +256,74 @@ index({ directory: "D:\\work\\main-project", incremental: true })
 // → Контекст: main-project, данные сохранены
 ```
 
+## GPU/CUDA Worker Architecture (v2.5)
+
+CUDA операции вынесены в отдельный worker-процесс для изоляции и стабильности:
+
+### Архитектура
+
+```
+Main Process (MCP Server)
+    ↓
+GPU Backend Selector
+    ↓
+┌─────────────────────────────────────────┐
+│  GPU Worker Subprocess                  │
+│  ├── CUDA Backend (RTX/GTX)            │
+│  ├── Dawn/WebGPU Backend (cross-platform)│
+│  └── WASM SIMD Fallback                │
+└─────────────────────────────────────────┘
+```
+
+### Компоненты
+
+- **`src/gpu/backend-selector.ts`** - выбор GPU бэкенда по доступности
+- **`src/gpu/backends/cuda-backend.ts`** - Native CUDA addon для NVIDIA
+- **`src/gpu/backends/gpu-worker-backend.ts`** - Worker subprocess для изоляции
+- **`external-tools/native/cuda/`** - C++ CUDA addon исходники
+
+### Особенности
+
+- **Изоляция crashes**: GPU ошибки не роняют основной MCP процесс
+- **Blackwell detection**: CC ≥12.0 автоматически fallback на WASM SIMD
+- **Windows `windowsHide`**: Скрытые консольные окна subprocess'ов
+- **Graceful fallback**: CUDA → Dawn WebGPU → WASM SIMD → Pure JS
+
+### Native модули
+
+```
+external-libs/
+├── cuda-win32-x64/ultrascript_cuda.node
+├── cuda-linux-x64/ultrascript_cuda.node
+├── dawn-win32-x64/*.node
+└── dawn-linux-x64/*.node
+```
+
+### Сборка CUDA модуля
+
+```bash
+npm run build:cuda        # Windows PowerShell
+npm run build:cuda:debug  # Debug build
+npm run build:cuda:clean  # Clean rebuild
+```
+
+Требования: CUDA Toolkit 12.x, cmake-js, node-addon-api
+
 ## Storage Layer
 
-**SQLite-based graph storage** (`src/storage/`):
+**libSQL-based unified storage** (`src/storage/`):
 
-- **GraphStorage** (`graph-storage.ts`) - основной интерфейс для entities/relationships
-- **SQLiteManager** (`sqlite-manager.ts`) - singleton для управления SQLite соединением
-- **VectorStore** (`src/semantic/vector-store.ts`) - sqlite-vec интеграция для семантического поиска
-- **BatchOperations** (`batch-operations.ts`) - батчинг для массовых вставок
-- **SchemaMigrations** (`schema-migrations.ts`) - миграции схемы БД
+- **GraphStorageLibSQL** (`graph-storage-libsql.ts`) - основной интерфейс для entities/relationships/vectors
+- **LibSQLGraphAdapter** (`libsql-graph-adapter.ts`) - адаптер для libSQL/Turso
+- **BunSQLiteAdapter** (`bun-sqlite-adapter.ts`) - адаптер для Bun native SQLite
+- **VectorStore** (`src/semantic/vector-store.ts`) - интеграция для семантического поиска
+- **GraphStorageFactory** (`graph-storage-factory.ts`) - factory для создания storage
 
-База данных: `vectors.db` (WAL mode), хранит entities, relationships, embeddings.
+**Унифицированное хранилище** (`project.db`):
+- Entities и relationships
+- Vector embeddings (vectors таблица)
+- WAL mode для конкурентного доступа
+- Поддержка Turso edge database
 
 ## Semantic Search & Embeddings
 
@@ -276,15 +333,46 @@ index({ directory: "D:\\work\\main-project", incremental: true })
 
 | Провайдер | Файл | Время/запрос | Batch | Рекомендация |
 |-----------|------|-------------|-------|--------------|
-| **openvino** | `openvino-provider.ts` | **1.3ms** | ✅ Native | CPU, самый быстрый |
-| **tei** | `tei-provider.ts` | 5-15ms | ✅ Native | NVIDIA GPU |
+| **ovms-native** | `ovms-provider.ts` | **0.8-2ms** | ✅ Native | ⭐ CPU/NPU, рекомендуется |
+| **vllm** | `vllm-provider.ts` | 1-3ms | ✅ Native | ⭐ NVIDIA GPU Production |
+| **tei** | `tei-provider.ts` | 5-15ms | ✅ Native | Альтернатива OVMS |
 | **ollama** | `ollama-provider.ts` | 10-50ms | ❌ | Простая установка |
-| **memory** | `memory-provider.ts` | <1ms | ✅ | Без ML (hash) |
 | **openai** | `openai-provider.ts` | 50-200ms | ✅ | Cloud API |
-| **cloudru** | `cloudru-provider.ts` | 50-200ms | ✅ | Cloud API |
 | **huggingface** | `huggingface-provider.ts` | 100-500ms | ❌ | Cloud API |
 
-### OpenVINO Provider (NEW)
+### OVMS Provider (v2.5 - Recommended)
+
+**OVMS (OpenVINO Model Server)** - рекомендуемый провайдер эмбеддингов:
+
+**Варианты:**
+- `ovms-native` - локальный бинарник OVMS, автоматическое управление lifecycle
+- `vllm` - Docker контейнер vLLM для NVIDIA GPU (высокая производительность)
+
+**Файлы:**
+- `src/semantic/providers/ovms-provider.ts` - провайдер для V3/V2 API
+- `src/semantic/providers/ovms-grpc-client.ts` - gRPC клиент для V2 API
+- `src/semantic/ovms-native-manager.ts` - lifecycle management OVMS процесса
+
+**Особенности:**
+- V3 OpenAI-compatible API (`/v3/embeddings`) - batch requests, base64 encoding
+- V2 API fallback (`/v2/models/{model}/infer`) для legacy моделей
+- Автоматическое завершение OVMS процесса при shutdown (taskkill /T на Windows)
+- Поддержка моделей: jina-embeddings-v3, bge-m3, multilingual-e5-large
+
+**Конфигурация:**
+```yaml
+embedding:
+  platform: "ovms-native"  # или "vllm" для NVIDIA GPU
+  ovms:
+    endpoint: "http://127.0.0.1:8083"  # Native: 8083, Docker: 8082
+    batch_size: 200
+    ovms_mini_batch: 8
+    target_device: "CPU"  # CPU, GPU, NPU
+    useEmbeddingsApi: true  # V3 API
+    encodingFormat: "base64"
+```
+
+### OpenVINO Provider (Legacy)
 
 Локальный CPU провайдер с native batch inference:
 
@@ -397,22 +485,16 @@ bun add openvino-node @xenova/transformers
 **Graph queries:**
 - `get_graph` - получение графа сущностей
 - `list_entity_relationships` - связи сущности
-- `list_file_entities` - список сущностей в файле
+- `get_members` - список сущностей в файле (UltrasharpTools-совместимое имя)
 - `query` - универсальный запрос к графу
 - `get_graph_health` - диагностика БД
 - `get_graph_stats` - статистика графа
 
-**Unified Tools (cross-compatibility with UltrasharpTools):**
-- `get_members` - alias для list_file_entities
-- `find_duplicates` - alias для detect_code_clones
-- `modify_code` - alias для modify_entity_code
-- `undo` - alias для rollback_snapshot
+**Code Modification:**
+- `modify_code` - модификация кода сущности (UltrasharpTools-совместимое имя)
 - `create_file` - создание файла с auto-parse в граф
 - `rename_symbol` - переименование символа с обновлением ссылок
 - `add_member` - добавление члена в класс/интерфейс
-
-**Code Modification:**
-- `modify_entity_code` - модификация кода сущности
 - `copy_file` - копирование файла с обновлением графа
 - `rename_file` - переименование файла с обновлением импортов
 - `split_file` - разделение файла на части
@@ -426,7 +508,7 @@ bun add openvino-node @xenova/transformers
 - `semantic_search` - семантический поиск по коду с rich metadata
   - **Filters**: minCyclomatic, maxCyclomatic, hasExceptions, hasLoops, hasAwaits, hasDocumentation, isDeprecated, minCallCount
   - **Returns**: complexity metrics, control flow info, call counts, documentation status
-- `detect_code_clones` - поиск дубликатов (семантический)
+- `find_duplicates` - поиск дубликатов (семантический, UltrasharpTools-совместимое имя)
 - `jscpd_detect_clones` - JSCPD-based поиск дубликатов (без эмбеддингов)
 - `find_similar_code` - поиск похожего кода
 - `suggest_refactoring` - AI рефакторинг
@@ -443,7 +525,7 @@ bun add openvino-node @xenova/transformers
 
 **Version Management:**
 - `create_snapshot` - создание snapshot для rollback
-- `rollback_snapshot` - откат к snapshot
+- `undo` - откат к snapshot (UltrasharpTools-совместимое имя)
 - `list_snapshots` - список доступных snapshot'ов
 - `cleanup_snapshots` - очистка старых snapshot'ов
 
@@ -664,9 +746,116 @@ package.json                          - Scripts and dependencies
 tsup.config.ts                        - Build configuration (externals)
 ```
 
+## Logs & Debugging
+
+### Расположение логов
+
+```
+Windows: %LOCALAPPDATA%\UltraScriptTools\logs\mcp-server-YYYY-MM-DD.log
+Linux:   ~/.local/share/ultrascript-tools/logs/mcp-server-YYYY-MM-DD.log
+macOS:   ~/Library/Application Support/ultrascript-tools/logs/mcp-server-YYYY-MM-DD.log
+```
+
+### Скрипт read-logs.ps1 (рекомендуется)
+
+**ВАЖНО**: Используй этот скрипт вместо ручных PowerShell команд!
+
+```powershell
+# Из корня проекта:
+.\scripts\read-logs.ps1 PERFORMANCE          # PERFORMANCE логи (последние 50)
+.\scripts\read-logs.ps1 ERROR                # ERROR и FATAL
+.\scripts\read-logs.ps1 PERFORMANCE -Lines 100   # Больше строк
+.\scripts\read-logs.ps1 -Stats               # Статистика по категориям
+.\scripts\read-logs.ps1 PERFORMANCE -Date 2025-12-24  # Конкретная дата
+
+# Примеры вывода -Stats:
+# By Level:
+#   DEBUG         11801
+#   INFO           4852
+#   FATAL             3
+# By Subcategory:
+#   EMBEDDING          12503
+#   PERFORMANCE         3499
+#   CRASH                  3
+```
+
+### Быстрый поиск логов (PowerShell)
+
+```powershell
+# Найти сегодняшний лог
+$log = "$env:LOCALAPPDATA\UltraScriptTools\logs\mcp-server-$(Get-Date -Format 'yyyy-MM-dd').log"
+
+# Показать последние 100 строк
+Get-Content $log -Tail 100
+
+# Поиск по паттерну
+Select-String -Path $log -Pattern "PERFORMANCE|ERROR|FATAL" | Select-Object -Last 50
+
+# Только PERFORMANCE логи
+Select-String -Path $log -Pattern "PERFORMANCE" | Select-Object -Last 30
+
+# Поиск ошибок
+Select-String -Path $log -Pattern "ERROR|FATAL|crash" -CaseSensitive:$false
+
+# Статистика по категориям
+Select-String -Path $log -Pattern "^\[.*\] \[(\w+)\]" |
+  ForEach-Object { $_.Matches.Groups[1].Value } |
+  Group-Object | Sort-Object Count -Descending
+```
+
+### PERFORMANCE логи (этапы эмбеддинга)
+
+Формат: `[PERFORMANCE] <PHASE> | entities: N | ms: X | speed: X/s`
+
+| Фаза | Описание |
+|------|----------|
+| `1_FILE_READ` | Чтение файлов и вычисление content hash |
+| `2_COMMENT_EXTRACT` | Извлечение комментариев из файлов |
+| `3_TEXT_BUILD` | Построение текстов для эмбеддинга |
+| `4_EMBEDDING_GEN` | Генерация эмбеддингов через TEI/OVMS |
+| `5_DB_INSERT` | Вставка в vector store |
+| `6_INDEX_REBUILD` | Пересоздание индекса (bulk mode) |
+| `BATCH_COMPLETE` | Итог по batch (50 entities) |
+| `QUEUE_COMPLETE` | Итог по всей очереди |
+
+**Пример вывода:**
+```
+[PERFORMANCE] 1_FILE_READ       | entities: 50 | ms: 12  | speed: 4166/s
+[PERFORMANCE] 2_COMMENT_EXTRACT | entities: 50 | ms: 8   | speed: 6250/s
+[PERFORMANCE] 3_TEXT_BUILD      | entities: 50 | ms: 3   | speed: 16666/s
+[PERFORMANCE] 4_EMBEDDING_GEN   | entities: 50 | ms: 45  | speed: 1111/s
+[PERFORMANCE] 5_DB_INSERT       | entities: 50 | ms: 15  | speed: 3333/s
+[PERFORMANCE] BATCH_COMPLETE    | entities: 50 | totalMs: 83 | speed: 602/s
+```
+
+**Анализ производительности:**
+```powershell
+# Средняя скорость эмбеддинга
+Select-String -Path $log -Pattern "4_EMBEDDING_GEN.*speed: (\d+)" |
+  ForEach-Object { [int]$_.Matches.Groups[1].Value } |
+  Measure-Object -Average -Maximum -Minimum
+
+# Общая скорость очереди
+Select-String -Path $log -Pattern "QUEUE_COMPLETE.*speed: (\d+)" |
+  ForEach-Object { $_.Line }
+```
+
+### Уровни логирования
+
+Конфигурация в `config/default.yaml`:
+```yaml
+logging:
+  level: info        # trace, debug, info, warn, error
+  fileLevel: debug   # уровень для файла (обычно ниже)
+  maxFiles: 7        # ротация логов
+  maxSizeMB: 50      # макс размер файла
+```
+
 ## Documentation References
 
 См. подробную документацию:
-- [README.md](./README.md) - Полное описание возможностей
-- [AGENTS_CODEX.md](./AGENTS_CODEX.md) - Руководство для агентов по репозиторию
-- [docs/guides/](./docs/guides/) - Детальные гайды (если существуют)
+- [README.md](../README.md) - Полное описание возможностей
+- [BACKLOG.md](./BACKLOG.md) - Roadmap и задачи проекта
+- [TEI_GRPC_MIGRATION_PLAN.md](./TEI_GRPC_MIGRATION_PLAN.md) - План миграции на gRPC
+- [GPU_COMPATIBILITY.md](./GPU_COMPATIBILITY.md) - Совместимость GPU
+- [MULTIPROCESS_ARCHITECTURE.md](./MULTIPROCESS_ARCHITECTURE.md) - Архитектура многопроцессности

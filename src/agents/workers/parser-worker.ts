@@ -16,7 +16,7 @@ import type { ParseResult, ParserOptions } from "../../types/parser.js";
 interface WorkerTask {
   id: string;
   files: string[];
-  options?: ParserOptions;
+  options?: ParserOptions | undefined;
 }
 
 interface WorkerResult {
@@ -94,7 +94,7 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
   return {
     taskId: task.id,
     results,
-    errors: errors.length > 0 ? errors : undefined,
+    ...(errors.length > 0 && { errors: errors }),
     stats: {
       filesProcessed: task.files.length,
       totalTime,

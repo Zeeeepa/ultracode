@@ -31,8 +31,8 @@ export class ConflictDetector {
     baseUnit: CodeUnit | null,
     branchAUnit: CodeUnit,
     branchBUnit: CodeUnit,
-    branchAIntent?: ChangeIntent,
-    branchBIntent?: ChangeIntent,
+    branchAIntent?: ChangeIntent | undefined,
+    branchBIntent?: ChangeIntent | undefined,
   ): SemanticConflict | null {
     // Если обе ветки сделали идентичные изменения - нет конфликта
     if (branchAUnit.contentHash === branchBUnit.contentHash) {
@@ -191,8 +191,8 @@ export class ConflictDetector {
    */
   private isAutoResolvable(
     conflict: SemanticConflict,
-    branchAIntent?: ChangeIntent,
-    branchBIntent?: ChangeIntent,
+    branchAIntent?: ChangeIntent | undefined,
+    branchBIntent?: ChangeIntent | undefined,
   ): boolean {
     // Critical conflicts - не разрешаются автоматически
     if (conflict.severity === ConflictSeverity.Critical) {
@@ -226,8 +226,8 @@ export class ConflictDetector {
       baseUnit: CodeUnit | null;
       branchAUnit: CodeUnit;
       branchBUnit: CodeUnit;
-      branchAIntent?: ChangeIntent;
-      branchBIntent?: ChangeIntent;
+      branchAIntent?: ChangeIntent | undefined;
+      branchBIntent?: ChangeIntent | undefined;
     }>,
   ): SemanticConflict[] {
     const conflicts: SemanticConflict[] = [];

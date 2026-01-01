@@ -8,6 +8,6 @@ export type IHandler = (payload: IEventPayload) => void;
 
 export interface IEventPayload {
   clone?: IClone;
-  source?: ITokensMap;
+  source?: ITokensMap | undefined;
   validation?: IValidationResult;
 }

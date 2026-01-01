@@ -97,31 +97,31 @@ export interface AngularTemplateInfo {
 export interface TemplateBinding {
   name: string;
   expression: string;
-  line?: number;
+  line?: number | undefined;
 }
 
 export interface TemplateEvent {
   name: string;
   handler: string;
-  line?: number;
+  line?: number | undefined;
 }
 
 export interface StructuralDirective {
   name: string; // ngIf, ngFor, ngSwitch
   expression: string;
   variables?: string[]; // let item of items
-  line?: number;
+  line?: number | undefined;
 }
 
 export interface TemplateInterpolation {
   expression: string;
-  line?: number;
+  line?: number | undefined;
 }
 
 export interface PipeUsage {
   name: string;
   args?: string[];
-  line?: number;
+  line?: number | undefined;
 }
 
 // =============================================================================

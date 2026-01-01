@@ -7,7 +7,7 @@
 
 import xxhash from "xxhash-wasm";
 import { DEFAULT_BRANCH, getProjectHash } from "../shared/storage-paths.js";
-import type { BatchResult, Entity, Relationship, RelationType } from "../types/storage.js";
+import { type BatchResult, type Entity, type Relationship, RelationType } from "../types/storage.js";
 import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.js";
 
 // =============================================================================
@@ -86,6 +86,52 @@ export class BatchOperationsLibSQL {
     }
     const key = this.relationshipKey(r);
     return this.xxhashInstance.h64ToString(key).slice(0, ID_LENGTH);
+  }
+
+  /**
+   * Generate reverse relationships for bidirectional graph traversal.
+   * For each CALLS relationship A→B, creates a CALLED_BY relationship B→A.
+   * This enables trace_backwards to find callers efficiently.
+   */
+  private generateReverseRelationships(relationships: Relationship[]): Relationship[] {
+    const reverseMap: Record<RelationType, RelationType | null> = {
+      [RelationType.CALLS]: RelationType.CALLED_BY,
+      [RelationType.IMPORTS]: RelationType.IMPORTED_BY,
+      [RelationType.REFERENCES]: RelationType.REFERENCED_BY,
+      [RelationType.EXTENDS]: RelationType.EXTENDED_BY,
+      [RelationType.IMPLEMENTS]: RelationType.IMPLEMENTED_BY,
+      // No reverse for these (already bidirectional or self-referential)
+      [RelationType.CALLED_BY]: null,
+      [RelationType.IMPORTED_BY]: null,
+      [RelationType.REFERENCED_BY]: null,
+      [RelationType.EXTENDED_BY]: null,
+      [RelationType.IMPLEMENTED_BY]: null,
+      [RelationType.EXPORTS]: null,
+      [RelationType.CONTAINS]: null,
+      [RelationType.DEPENDS_ON]: null,
+      [RelationType.DOCUMENTS]: null,
+      // NgRx relationships - no auto-reverse for now
+      [RelationType.DISPATCHES_ACTION]: null,
+      [RelationType.LISTENS_TO_ACTION]: null,
+      [RelationType.HANDLES_ACTION]: null,
+      [RelationType.SELECTS_STATE]: null,
+      [RelationType.MODIFIES_STATE]: null,
+    };
+
+    const reverse: Relationship[] = [];
+    for (const r of relationships) {
+      const reverseType = reverseMap[r.type];
+      if (reverseType) {
+        reverse.push({
+          id: "", // Will be assigned stable ID later
+          fromId: r.toId,
+          toId: r.fromId,
+          type: reverseType,
+          metadata: { ...r.metadata, isReverse: true, originalType: r.type },
+        });
+      }
+    }
+    return reverse;
   }
 
   // ---------------------------------------------------------------------------
@@ -241,14 +287,19 @@ export class BatchOperationsLibSQL {
     let totalProcessed = 0;
 
     const { projectHash, branchName } = this.currentContext;
+
+    // Generate reverse relationships for bidirectional graph traversal
+    const reverseRels = this.generateReverseRelationships(relationships);
+    const allRelationships = [...relationships, ...reverseRels];
+
     console.error(
-      `[BatchOperationsLibSQL] insertRelationships: context=${projectHash}/${branchName}, count=${relationships.length}`,
+      `[BatchOperationsLibSQL] insertRelationships: context=${projectHash}/${branchName}, original=${relationships.length}, reverse=${reverseRels.length}, total=${allRelationships.length}`,
     );
 
     // Deduplicate
     const seen = new Set<string>();
     const uniq: Relationship[] = [];
-    for (const r of relationships) {
+    for (const r of allRelationships) {
       const key = this.relationshipKey(r);
       if (!seen.has(key)) {
         seen.add(key);
