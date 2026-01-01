@@ -2,7 +2,7 @@
  * Multi-Pass Parser Types
  *
  * Defines the data structures for tiered parsing strategy:
- * - Pass 1 (SWC): Fast structural analysis (~1ms/file)
+ * - Pass 1 (OXC): Fast structural analysis (~0.5-2ms/file, 2x faster than SWC)
  * - Pass 2 (TS API): Detailed type analysis (on-demand)
  */
 
@@ -31,7 +31,7 @@ export interface ComplexityScore {
 }
 
 /**
- * Quick parse result from SWC (Pass 1)
+ * Quick parse result from OXC (Pass 1)
  */
 export interface QuickParseResult {
   filePath: string;
@@ -48,7 +48,7 @@ export interface QuickParseResult {
   /** Whether detailed pass is recommended */
   needsDetailedPass: boolean;
   /** Cached content for reuse in detailed pass */
-  content?: string;
+  content?: string | undefined;
 }
 
 /**
@@ -84,7 +84,7 @@ export interface ExportInfo {
   name: string;
   isDefault: boolean;
   isTypeOnly: boolean;
-  source?: string; // re-export source
+  source?: string | undefined; // re-export source
 }
 
 /**
@@ -103,19 +103,19 @@ export interface BatchStrategy {
  * Multi-pass configuration
  */
 export interface MultiPassConfig {
-  /** Enable SWC fast pass */
+  /** Enable OXC fast pass */
   enableFastPass: boolean;
   /** Complexity threshold for detailed pass (0-100) */
   detailedThreshold: number;
-  /** Max concurrent SWC parses */
-  swcConcurrency: number;
+  /** Max concurrent OXC parses */
+  oxcConcurrency: number;
   /** Max concurrent TS parses */
   tsConcurrency: number;
   /** Worker pool size for medium files */
   workerPoolSize: number;
-  /** Cache SWC results */
+  /** Cache OXC results */
   cacheQuickResults: boolean;
-  /** Skip TS API for low-complexity files (use SWC results only) */
+  /** Skip TS API for low-complexity files (use OXC results only) */
   skipDetailedForSimple: boolean;
   /** Complexity threshold below which to skip detailed pass */
   simpleFileThreshold: number;
@@ -124,7 +124,7 @@ export interface MultiPassConfig {
 export const DEFAULT_MULTIPASS_CONFIG: MultiPassConfig = {
   enableFastPass: true,
   detailedThreshold: 50,
-  swcConcurrency: 16, // SWC is very fast
+  oxcConcurrency: 16, // OXC is very fast (~2x faster than SWC)
   tsConcurrency: 8, // TS API with parallelism
   workerPoolSize: 16,
   cacheQuickResults: true,

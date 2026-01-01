@@ -137,6 +137,30 @@ src/merge/
 
 ---
 
+## 🟡 WAITING — Ожидают внешние зависимости
+
+### TEI gRPC Migration
+
+**Документация:** [TEI_GRPC_MIGRATION_PLAN.md](./TEI_GRPC_MIGRATION_PLAN.md)
+
+**Статус:** Ожидаем merge PR в upstream TEI для поддержки Blackwell (GTX 50xx)
+
+**Проблема:** Форк `hotchpotch/tei-blackwell-testing` не включает gRPC бинарник.
+Официальный TEI gRPC образ не поддерживает Blackwell.
+
+**Ожидаемый результат:**
+- GPU загрузка: 20% → 60-80%
+- Throughput: ~450 chunks/s → ~1000+ chunks/s
+- Latency: ~10ms → ~3-5ms
+
+**Временные оптимизации (применены):**
+- [x] Sliding window pipeline (не ждём весь batch)
+- [x] Concurrency 8 → 16
+- [x] max_batch_tokens 16K → 32K
+- [x] max_client_batch_size 512 → 1024
+
+---
+
 ## 🟢 MEDIUM — Улучшения
 
 ### 7. ~~Multi-Version Indexer Integration~~ ✅ DONE

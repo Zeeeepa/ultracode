@@ -1,11 +1,11 @@
-import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } from "./base.js";
+import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
 
 export interface HuggingFaceOptions {
   model: string;
   apiKey: string;
-  baseUrl?: string;
-  timeoutMs?: number;
-  concurrency?: number;
+  baseUrl?: string | undefined;
+  timeoutMs?: number | undefined;
+  concurrency?: number | undefined;
   warmupText?: string;
   logger?: ProviderLogger;
 }
@@ -17,7 +17,7 @@ export class HuggingFaceProvider implements EmbeddingProvider {
   private timeoutMs: number;
   private concurrency: number;
   private warmupText: string;
-  private log?: ProviderLogger;
+  private log?: ProviderLogger | undefined;
   private client: any; // InferenceClient from @huggingface/inference
 
   constructor(opts: HuggingFaceOptions) {
@@ -79,31 +79,25 @@ export class HuggingFaceProvider implements EmbeddingProvider {
     }
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+      // Note: HuggingFace SDK doesn't support AbortSignal, timeout is handled internally
+      // Removed setTimeout for Bun compatibility
+      const result = await this.client.featureExtraction({
+        model: this.info.model,
+        inputs: text,
+      });
 
-      try {
-        // Используем featureExtraction для получения эмбеддингов
-        const result = await this.client.featureExtraction({
-          model: this.info.model,
-          inputs: text,
-        });
-
-        // Результат может быть массивом или вложенным массивом
-        let embedding: number[];
-        if (Array.isArray(result)) {
-          // Если вернулся массив массивов (batch), берем первый
-          embedding = Array.isArray(result[0]) ? result[0] : result;
-        } else {
-          throw new Error("Unexpected featureExtraction response format");
-        }
-
-        const arr = new Float32Array(embedding);
-        this.info.dimension = this.info.dimension ?? arr.length;
-        return arr;
-      } finally {
-        clearTimeout(timeoutId);
+      // Результат может быть массивом или вложенным массивом
+      let embedding: number[];
+      if (Array.isArray(result)) {
+        // Если вернулся массив массивов (batch), берем первый
+        embedding = Array.isArray(result[0]) ? result[0] : result;
+      } else {
+        throw new Error("Unexpected featureExtraction response format");
       }
+
+      const arr = new Float32Array(embedding);
+      this.info.dimension = this.info.dimension ?? arr.length;
+      return arr;
     } catch (error: any) {
       this.log?.error("embed failed", { error: error.message }, opts?.requestId, error);
 
@@ -129,5 +123,14 @@ export class HuggingFaceProvider implements EmbeddingProvider {
     const pLimit = (await import("p-limit")).default;
     const limit = pLimit(this.concurrency);
     return Promise.all(texts.map((t) => limit(() => this.embed(t, opts))));
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    return {
+      embeddings: true,
+      rerank: false,
+      score: false,
+      classify: false,
+    };
   }
 }

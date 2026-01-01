@@ -1,5 +1,8 @@
 # Branch-Aware Indexing Design
 
+> **Related:** См. также [embedding-pipeline.md](./embedding-pipeline.md) для описания процесса генерации embeddings,
+> и [worker-threads.md](./worker-threads.md) для архитектуры worker pool.
+
 ## Problem Statement
 
 When users switch Git branches or make large code changes, the code graph index becomes stale and inaccurate. Current implementation uses a single `vectors.db` database that doesn't track branch context.

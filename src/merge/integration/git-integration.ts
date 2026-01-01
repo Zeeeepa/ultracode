@@ -27,7 +27,7 @@ export interface GitBranchInfo {
 export interface GitFileChange {
   path: string;
   status: "added" | "modified" | "deleted" | "renamed";
-  oldPath?: string; // For renamed files
+  oldPath?: string | undefined; // For renamed files
 }
 
 export interface GitDiffResult {

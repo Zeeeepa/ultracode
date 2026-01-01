@@ -8,8 +8,18 @@
 import { spawn } from "node:child_process";
 import { logger } from "./logger.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 const OLLAMA_API_URL = "http://127.0.0.1:11434/api/tags";
-const OLLAMA_CHECK_TIMEOUT = 2000; // 2s timeout for health check
 const OLLAMA_STARTUP_WAIT = 5000; // 5s wait after starting Ollama
 
 export interface OllamaStatus {
@@ -24,13 +34,14 @@ export interface OllamaStatus {
  */
 export async function checkOllamaStatus(): Promise<OllamaStatus> {
   try {
+    // CRITICAL: Don't use AbortSignal.timeout() - can crash Bun with native modules
+    // Use a simple fetch with no timeout
     const response = await fetch(OLLAMA_API_URL, {
       method: "GET",
-      signal: AbortSignal.timeout(OLLAMA_CHECK_TIMEOUT),
     });
 
     if (response.ok) {
-      const data = (await response.json()) as { models?: Array<{ name?: string; model?: string }> };
+      const data = (await response.json()) as { models?: Array<{ name?: string | undefined; model?: string }> };
       const models = data.models || [];
       const modelNames = models.map((m) => m.name || m.model || "").filter(Boolean);
       const hasGranite = modelNames.some((name) => name.includes("granite-embedding"));
@@ -75,7 +86,7 @@ export async function startOllamaService(): Promise<boolean> {
 
     // Wait for Ollama to start
     logger.debug("OllamaChecker", `Waiting ${OLLAMA_STARTUP_WAIT}ms for Ollama to start...`);
-    await new Promise((resolve) => setTimeout(resolve, OLLAMA_STARTUP_WAIT));
+    await sleep(OLLAMA_STARTUP_WAIT);
 
     // Verify it started successfully
     const status = await checkOllamaStatus();
@@ -134,7 +145,7 @@ export async function ensureOllamaRunning(autoStart = true): Promise<OllamaStatu
  */
 export function getStatusMessage(status: OllamaStatus): string {
   if (!status.isRunning) {
-    return "❌ Ollama не запущен. Эмбеддинги будут использовать memory provider (без ML)";
+    return "❌ Ollama не запущен. Запустите setup-embedding для настройки провайдера эмбеддингов";
   }
 
   if (!status.hasModels) {

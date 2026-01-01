@@ -1,42 +1,48 @@
 {
   "compilerOptions": {
-    // Target Node.js 24+ with ES modules
-    "lib": ["ES2023"],
-    "target": "ES2023",
-    "module": "ES2022",
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "ESNext",
     "moduleDetection": "force",
     "allowJs": true,
 
-    // Module resolution for Node.js
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
+    "verbatimModuleSyntax": true,
 
-    // Output configuration
     "outDir": "./dist",
     "rootDir": "./src",
     "sourceMap": true,
     "declaration": true,
     "declarationMap": true,
 
-    // Strict type checking
+    "importHelpers": true,
+    "removeComments": true,
+
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "exactOptionalPropertyTypes": false, // TODO: Enable after fixing ~214 remaining errors (nested types in ParsedEntity)
+    "useUnknownInCatchVariables": true,
 
-    // Performance optimizations
+    "useDefineForClassFields": true,
+
     "incremental": true,
     "tsBuildInfoFile": ".tsbuildinfo",
 
-    // Code quality
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noUncheckedIndexedAccess": true,
+    "noUncheckedSideEffectImports": true,
 
-    // Include Node.js and Bun types
+    "isolatedModules": true,
+
     "types": ["node", "bun"]
   },
   "include": ["src/**/*", "src/types/**/*.d.ts"],

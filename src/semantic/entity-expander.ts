@@ -18,6 +18,7 @@
  */
 
 import type { ParsedEntity } from "../types/parser.js";
+import { logger } from "../utils/logger.js";
 
 export interface ExpanderConfig {
   /** Maximum tokens for a single entity (from embedding provider) */
@@ -154,10 +155,11 @@ export function expandLargeEntities(entities: ParsedEntity[], config: ExpanderCo
   }
 
   if (expandedCount > 0) {
-    console.error(
-      `[EntityExpander] Expanded ${expandedCount} large entities into ${childrenAdded} children ` +
-        `(maxTokens: ${cfg.maxTokens})`,
-    );
+    logger.debug("EntityExpander", "Expanded large entities", {
+      expandedCount,
+      childrenAdded,
+      maxTokens: cfg.maxTokens,
+    });
   }
 
   return result;

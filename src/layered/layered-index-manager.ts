@@ -379,6 +379,11 @@ export class LayeredIndexManager {
   async shutdown(): Promise<void> {
     console.error("[LayeredIndexManager] Shutting down...");
 
+    // Stop git watcher polling loops
+    if (this.gitWatcher) {
+      this.gitWatcher.stopWatching();
+    }
+
     // Stop maintenance
     if (this.maintenanceService) {
       this.maintenanceService.stop();
@@ -427,10 +432,11 @@ export class LayeredIndexManager {
       // Medium project
       return LayeredIndexConfigPresets.production(this.config.workingDirectory);
     } else {
-      // Large project (>50K files) - use libsql DiskANN
+      // Large project (>50K files) - use vectorlite
       const config = LayeredIndexConfigPresets.server(this.config.workingDirectory);
 
-      // Note: VectorStore's adaptive backend will auto-select libsql
+      // Override vector backend to vectorlite
+      // Note: This will be handled by VectorStore's adaptive backend
 
       return config;
     }
@@ -445,6 +451,6 @@ export class LayeredIndexManager {
     if (fileCount === 0) return "default";
     if (fileCount < 10000) return "development";
     if (fileCount < 50000) return "production";
-    return "server (libsql)";
+    return "server (vectorlite)";
   }
 }

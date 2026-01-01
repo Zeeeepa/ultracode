@@ -2,8 +2,7 @@
  * Tool for querying the graph database directly via GraphStorage API
  */
 
-import type { GraphStorage } from "../storage/graph-storage.js";
-import type { Entity, Relationship } from "../types/storage.js";
+import type { Entity, GraphStorage, Relationship } from "../types/storage.js";
 
 function likePattern(input: string): string {
   // Minimal escaping for LIKE; wrap with % for contains semantics

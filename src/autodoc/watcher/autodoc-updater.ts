@@ -16,11 +16,11 @@ import { extractEntitiesFromContent, extractExportsFromFile, getModuleFiles } fr
 
 export interface UpdateOptions {
   /** Use LLM for description generation */
-  useLlm?: boolean;
+  useLlm?: boolean | undefined;
   /** LLM config */
   llmConfig?: {
     provider: "ollama" | "openai" | "tgi";
-    model?: string;
+    model?: string | undefined;
     endpoint?: string;
   };
 }

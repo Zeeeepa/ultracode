@@ -256,9 +256,9 @@ function processNormalClassDeclaration(classDecl: NormalClassDeclarationContext,
     type: "class",
     filePath: ctx.filePath,
     location,
-    modifiers: modifiers.length > 0 ? modifiers : undefined,
+    ...(modifiers.length > 0 && { modifiers: modifiers }),
     inheritance: inheritance.baseClasses.length > 0 || inheritance.interfaces.length > 0 ? inheritance : undefined,
-    decorators: annotations.length > 0 ? annotations : undefined,
+    ...(annotations.length > 0 && { decorators: annotations }),
     children: [],
   };
 
@@ -382,10 +382,10 @@ function processNormalInterfaceDeclaration(interfaceDecl: NormalInterfaceDeclara
     type: "interface",
     filePath: ctx.filePath,
     location,
-    modifiers: modifiers.length > 0 ? modifiers : undefined,
+    ...(modifiers.length > 0 && { modifiers: modifiers }),
     inheritance:
       inheritance.interfaces.length > 0 ? { baseClasses: [], interfaces: inheritance.interfaces } : undefined,
-    decorators: annotations.length > 0 ? annotations : undefined,
+    ...(annotations.length > 0 && { decorators: annotations }),
     children: [],
   };
 
@@ -496,9 +496,9 @@ function processEnumDeclaration(enumDecl: EnumDeclarationContext, ctx: ParserCon
     type: "enum",
     filePath: ctx.filePath,
     location,
-    modifiers: modifiers.length > 0 ? modifiers : undefined,
+    ...(modifiers.length > 0 && { modifiers: modifiers }),
     inheritance: interfaces.length > 0 ? { baseClasses: [], interfaces } : undefined,
-    decorators: annotations.length > 0 ? annotations : undefined,
+    ...(annotations.length > 0 && { decorators: annotations }),
   });
 
   // Create implements relationships
@@ -612,9 +612,9 @@ function processRecordDeclaration(recordDecl: RecordDeclarationContext, ctx: Par
     filePath: ctx.filePath,
     location,
     modifiers: [...modifiers, "record"],
-    parameters: params.length > 0 ? params : undefined,
+    ...(params.length > 0 && { parameters: params }),
     inheritance: interfaces.length > 0 ? { baseClasses: [], interfaces } : undefined,
-    decorators: annotations.length > 0 ? annotations : undefined,
+    ...(annotations.length > 0 && { decorators: annotations }),
   });
 
   // Process record body
@@ -698,10 +698,10 @@ function processMethodDeclaration(methodDecl: MethodDeclarationContext, ctx: Par
     type: "method",
     filePath: ctx.filePath,
     location,
-    modifiers: modifiers.length > 0 ? modifiers : undefined,
-    parameters: params.length > 0 ? params : undefined,
+    ...(modifiers.length > 0 && { modifiers: modifiers }),
+    ...(params.length > 0 && { parameters: params }),
     returnType: returnType !== "void" ? returnType : undefined,
-    decorators: annotations.length > 0 ? annotations : undefined,
+    ...(annotations.length > 0 && { decorators: annotations }),
     metadata: throwsTypes.length > 0 ? { throws: throwsTypes } : undefined,
   };
 
@@ -779,8 +779,8 @@ function processInterfaceMethodDeclaration(methodDecl: InterfaceMethodDeclaratio
     type: "method",
     filePath: ctx.filePath,
     location,
-    modifiers: modifiers.length > 0 ? modifiers : undefined,
-    parameters: params.length > 0 ? params : undefined,
+    ...(modifiers.length > 0 && { modifiers: modifiers }),
+    ...(params.length > 0 && { parameters: params }),
     returnType: returnType !== "void" ? returnType : undefined,
   });
 
@@ -812,7 +812,7 @@ function processConstructorDeclaration(constructorDecl: ConstructorDeclarationCo
     filePath: ctx.filePath,
     location,
     modifiers: [...modifiers, "constructor"],
-    parameters: params.length > 0 ? params : undefined,
+    ...(params.length > 0 && { parameters: params }),
   });
 
   if (ctx.currentClass) {
@@ -858,9 +858,9 @@ function processFieldDeclaration(fieldDecl: FieldDeclarationContext, ctx: Parser
       type: isConstant ? "constant" : "property",
       filePath: ctx.filePath,
       location: getLocation(varDecl),
-      modifiers: modifiers.length > 0 ? modifiers : undefined,
+      ...(modifiers.length > 0 && { modifiers: modifiers }),
       metadata: fieldType ? { propertyType: fieldType } : undefined,
-      decorators: annotations.length > 0 ? annotations : undefined,
+      ...(annotations.length > 0 && { decorators: annotations }),
     });
 
     if (ctx.currentClass) {
@@ -911,7 +911,7 @@ function processConstantDeclaration(constantDecl: any, ctx: ParserContext): void
       type: "constant",
       filePath: ctx.filePath,
       location: getLocation(varDecl),
-      modifiers: modifiers.length > 0 ? modifiers : undefined,
+      ...(modifiers.length > 0 && { modifiers: modifiers }),
       metadata: fieldType ? { propertyType: fieldType } : undefined,
     });
 
@@ -1146,10 +1146,10 @@ function extractInterfaceInheritance(interfaceDecl: NormalInterfaceDeclarationCo
 
 function extractMethodParameters(methodDeclarator: any): Array<{
   name: string;
-  type?: string;
+  type?: string | undefined;
   optional?: boolean;
 }> {
-  const params: Array<{ name: string; type?: string; optional?: boolean }> = [];
+  const params: Array<{ name: string; type?: string | undefined; optional?: boolean }> = [];
 
   const formalParameterList = methodDeclarator.formalParameterList?.();
   if (!formalParameterList) return params;
@@ -1190,10 +1190,10 @@ function extractMethodParameters(methodDeclarator: any): Array<{
 
 function extractConstructorParameters(declarator: any): Array<{
   name: string;
-  type?: string;
+  type?: string | undefined;
   optional?: boolean;
 }> {
-  const params: Array<{ name: string; type?: string; optional?: boolean }> = [];
+  const params: Array<{ name: string; type?: string | undefined; optional?: boolean }> = [];
 
   const formalParameterList = declarator.formalParameterList?.();
   if (!formalParameterList) return params;

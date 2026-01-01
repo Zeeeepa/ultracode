@@ -532,7 +532,7 @@ export function createReadStream(path: string): ReadableStream<Uint8Array> {
  */
 export async function readFilesParallel(
   paths: string[],
-  options: { concurrency?: number; encoding?: "text" | "bytes" } = {},
+  options: { concurrency?: number | undefined; encoding?: "text" | "bytes" } = {},
 ): Promise<(string | Uint8Array)[]> {
   const { concurrency = 12, encoding = "text" } = options; // 12 is in optimal 8-16 range
 

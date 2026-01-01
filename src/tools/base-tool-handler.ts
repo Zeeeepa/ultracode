@@ -10,7 +10,6 @@
  */
 
 import { getProjectContext, type ProjectContextManager } from "../shared/project-context.js";
-import { getProjectSQLiteManager } from "../storage/sqlite-manager.js";
 import { MAX_RESPONSE_SIZE_BYTES, truncateResponse } from "./response-limits.js";
 
 export interface ToolResult {
@@ -57,14 +56,6 @@ export abstract class BaseToolHandler<TArgs = any> {
    */
   protected resolveProjectPath(args: { projectPath?: string }): string {
     return getProjectContext().resolveProjectPath(args.projectPath);
-  }
-
-  /**
-   * Get SQLiteManager for a specific project (or current if not specified)
-   */
-  protected getProjectSQLiteManager(projectPath?: string): ReturnType<typeof getProjectSQLiteManager> {
-    const resolved = getProjectContext().resolveProjectPath(projectPath);
-    return getProjectSQLiteManager(resolved);
   }
 
   /**

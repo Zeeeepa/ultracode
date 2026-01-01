@@ -15,6 +15,7 @@
 import ts from "typescript";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { enhanceWithAngularInfo, isAngularFile } from "./angular-parser.js";
+import { isNgRxFile, parseNgRxFile } from "./ngrx-parser.js";
 
 // =============================================================================
 // CONFIGURATION
@@ -138,7 +139,12 @@ function getParameters(node: ts.FunctionLikeDeclaration, sourceFile: ts.SourceFi
     const optional = !!param.questionToken;
     const defaultValue = param.initializer ? param.initializer.getText(sourceFile) : undefined;
 
-    return { name, type, optional, defaultValue };
+    return {
+      name,
+      optional,
+      ...(type && { type }),
+      ...(defaultValue && { defaultValue }),
+    };
   });
 }
 
@@ -166,7 +172,7 @@ function getDecorators(node: ts.Node, sourceFile: ts.SourceFile): ParsedEntity["
           name = dec.expression.getText(sourceFile);
         }
 
-        decorators.push({ name, arguments: args });
+        decorators.push({ name, ...(args && { arguments: args }) });
       }
     }
   }
@@ -315,13 +321,13 @@ function extractCallInfo(
 
   return {
     name,
-    target,
+    ...(target && { target }),
     location: getLocation(sourceFile, node),
-    isAwait: isAwaited || undefined,
-    isOptional: isOptional || undefined,
-    isNew: isNew || undefined,
+    ...(isAwaited && { isAwait: isAwaited }),
+    ...(isOptional && { isOptional: isOptional }),
+    ...(isNew && { isNew: isNew }),
     argumentCount: node.arguments?.length ?? 0,
-    typeArguments,
+    ...(typeArguments && { typeArguments }),
   };
 }
 
@@ -447,7 +453,7 @@ function extractControlFlow(node: ts.Node, sourceFile: ts.SourceFile): ControlFl
           : undefined;
         exceptions.push({
           type: "catch",
-          catchType,
+          ...(catchType && { catchType }),
           location: getLocation(sourceFile, n.catchClause),
         });
       }
@@ -571,7 +577,7 @@ function extractDocumentation(node: ts.Node, sourceFile: ts.SourceFile): Documen
                   name: paramName.replace(/^\[|\]$/g, "").split("=")[0] ?? paramName,
                   type: paramType,
                   description: paramDesc,
-                  optional: isOptional || undefined,
+                  ...(isOptional && { optional: isOptional }),
                 });
               }
               break;
@@ -648,12 +654,12 @@ function extractDocumentation(node: ts.Node, sourceFile: ts.SourceFile): Documen
 
   return {
     description,
-    params: params.length > 0 ? params : undefined,
+    ...(params.length > 0 && { params: params }),
     returns,
-    throws: throws.length > 0 ? throws : undefined,
-    examples: examples.length > 0 ? examples : undefined,
+    ...(throws.length > 0 && { throws: throws }),
+    ...(examples.length > 0 && { examples: examples }),
     deprecated,
-    see: see.length > 0 ? see : undefined,
+    ...(see.length > 0 && { see: see }),
     since,
     author,
   };
@@ -1465,7 +1471,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
       parameters: getParameters(node, sourceFile),
       returnType: getReturnType(node, sourceFile),
       decorators: getDecorators(node, sourceFile),
-      calls: calls.length > 0 ? calls : undefined,
+      ...(calls.length > 0 && { calls: calls }),
       controlFlow,
       documentation,
       typeReferences: typeRefs,
@@ -1505,7 +1511,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
           modifiers: [...modifiers, ...(isAsync ? ["async"] : [])],
           parameters: getParameters(decl.initializer, sourceFile),
           returnType: getReturnType(decl.initializer, sourceFile),
-          calls: calls.length > 0 ? calls : undefined,
+          ...(calls.length > 0 && { calls: calls }),
           controlFlow,
           documentation,
           typeReferences: typeRefs,
@@ -1646,7 +1652,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
         baseClasses.length > 0 || interfaces.length > 0
           ? {
               baseClasses,
-              interfaces: interfaces.length > 0 ? interfaces : undefined,
+              ...(interfaces.length > 0 && { interfaces: interfaces }),
               isAbstract: modifiers.includes("abstract"),
             }
           : undefined,
@@ -1768,7 +1774,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
           parameters: getParameters(member, sourceFile),
           returnType: getReturnType(member, sourceFile),
           decorators: methodDecorators,
-          calls: methodCalls.length > 0 ? methodCalls : undefined,
+          ...(methodCalls.length > 0 && { calls: methodCalls }),
           controlFlow: methodControlFlow,
           documentation: methodDoc,
           typeReferences: methodTypeRefs,
@@ -1965,7 +1971,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
           location: constructorLocation,
           modifiers: getModifiers(member),
           parameters: getParameters(member, sourceFile),
-          calls: constructorCalls.length > 0 ? constructorCalls : undefined,
+          ...(constructorCalls.length > 0 && { calls: constructorCalls }),
           controlFlow: constructorControlFlow,
           documentation: constructorDoc,
           typeReferences: constructorTypeRefs,
@@ -1992,7 +1998,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
           location: getterLocation,
           modifiers: [...getModifiers(member), "getter"],
           returnType: getReturnType(member, sourceFile),
-          calls: getterCalls.length > 0 ? getterCalls : undefined,
+          ...(getterCalls.length > 0 && { calls: getterCalls }),
           controlFlow: getterControlFlow,
           documentation: getterDoc,
           typeReferences: getterTypeRefs,
@@ -2019,7 +2025,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
           location: setterLocation,
           modifiers: [...getModifiers(member), "setter"],
           parameters: getParameters(member, sourceFile),
-          calls: setterCalls.length > 0 ? setterCalls : undefined,
+          ...(setterCalls.length > 0 && { calls: setterCalls }),
           controlFlow: setterControlFlow,
           documentation: setterDoc,
           typeReferences: setterTypeRefs,
@@ -2144,8 +2150,8 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
 
     const specifiers: Array<{
       local: string;
-      imported?: string;
-      alias?: string;
+      imported?: string | undefined;
+      alias?: string | undefined;
     }> = [];
     let isDefault = false;
     let isNamespace = false;
@@ -2278,7 +2284,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
             modifiers,
             parameters: getParameters(right, sourceFile),
             returnType: getReturnType(right, sourceFile),
-            calls: calls.length > 0 ? calls : undefined,
+            ...(calls.length > 0 && { calls: calls }),
             controlFlow,
             documentation,
             complexity,
@@ -2387,7 +2393,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
               modifiers: ["export", ...(isAsync ? ["async"] : [])],
               parameters: getParameters(right, sourceFile),
               returnType: getReturnType(right, sourceFile),
-              calls: calls.length > 0 ? calls : undefined,
+              ...(calls.length > 0 && { calls: calls }),
               controlFlow,
               documentation,
               complexity,
@@ -2467,7 +2473,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
               modifiers: methodModifiers,
               parameters: getParameters(prop, sourceFile),
               returnType: getReturnType(prop, sourceFile),
-              calls: methodCalls.length > 0 ? methodCalls : undefined,
+              ...(methodCalls.length > 0 && { calls: methodCalls }),
               controlFlow: methodControlFlow,
               documentation: methodDoc,
               complexity: methodComplexity,
@@ -2530,7 +2536,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
                 modifiers: isAsync ? ["async"] : [],
                 parameters: getParameters(propValue, sourceFile),
                 returnType: getReturnType(propValue, sourceFile),
-                calls: methodCalls.length > 0 ? methodCalls : undefined,
+                ...(methodCalls.length > 0 && { calls: methodCalls }),
                 controlFlow: methodControlFlow,
                 documentation: methodDoc,
                 complexity: methodComplexity,
@@ -2599,7 +2605,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
             location: objectLocation,
             modifiers: isConst ? ["const"] : [],
             documentation: objectDoc,
-            children: children.length > 0 ? children : undefined,
+            ...(children.length > 0 && { children: children }),
             metadata: {
               jsPattern: "object_literal",
               methodCount,
@@ -2658,7 +2664,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
         location: getLocation(sourceFile, node),
         modifiers: ["iife", ...(isAsync ? ["async"] : [])],
         parameters: getParameters(funcExpr, sourceFile),
-        calls: calls.length > 0 ? calls : undefined,
+        ...(calls.length > 0 && { calls: calls }),
         controlFlow,
         documentation,
         complexity,
@@ -2737,7 +2743,7 @@ function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
             });
           } else if (ts.isObjectBindingPattern(decl.name)) {
             // const { a, b } = require('foo')
-            const specifiers: Array<{ local: string; imported?: string; alias?: string }> = [];
+            const specifiers: Array<{ local: string; imported?: string | undefined; alias?: string }> = [];
 
             for (const element of decl.name.elements) {
               if (ts.isBindingElement(element) && ts.isIdentifier(element.name)) {
@@ -3196,7 +3202,7 @@ export class IncrementalTypeScriptBuilder {
             baseClasses.length > 0 || interfaces.length > 0
               ? {
                   baseClasses,
-                  interfaces: interfaces.length > 0 ? interfaces : undefined,
+                  ...(interfaces.length > 0 && { interfaces: interfaces }),
                   isAbstract: modifiers.includes("abstract"),
                 }
               : undefined,
@@ -3365,7 +3371,7 @@ export class IncrementalTypeScriptBuilder {
         const moduleSpecifier = node.moduleSpecifier.getText(sourceFile);
         const source = moduleSpecifier.slice(1, -1);
 
-        const specifiers: Array<{ local: string; imported?: string; alias?: string }> = [];
+        const specifiers: Array<{ local: string; imported?: string | undefined; alias?: string }> = [];
         let isDefault = false;
         let isNamespace = false;
 
@@ -3502,6 +3508,24 @@ export class TypeScriptParser {
         enhanceWithAngularInfo(entities, sourceFile);
       }
 
+      // Parse NgRx constructs (actions, effects, reducers, selectors)
+      if (isNgRxFile(sourceFile)) {
+        const ngrxResult = parseNgRxFile(sourceFile, filePath);
+
+        // Add NgRx entities
+        entities.push(...ngrxResult.entities);
+
+        // Convert NgRx relationships to EntityRelationship format
+        for (const rel of ngrxResult.relationships) {
+          relationships.push({
+            from: rel.fromName,
+            to: rel.toName,
+            type: rel.type as EntityRelationship["type"],
+            metadata: rel.metadata,
+          });
+        }
+      }
+
       // Collect diagnostics
       const errors: Array<{ message: string; location?: { line: number; column: number } }> = [];
 
@@ -3533,11 +3557,11 @@ export class TypeScriptParser {
         filePath,
         language: getLanguage(filePath),
         entities,
-        relationships: relationships.length > 0 ? relationships : undefined,
+        ...(relationships.length > 0 && { relationships: relationships }),
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
-        errors: errors.length > 0 ? errors : undefined,
+        ...(errors.length > 0 && { errors: errors }),
       };
     } catch (error) {
       this.stats.errorCount++;

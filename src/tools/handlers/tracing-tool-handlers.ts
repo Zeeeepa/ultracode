@@ -21,6 +21,7 @@ import {
   StateTracker,
   TraceEngine,
 } from "../../tracing/index.js";
+import { NgRxTraceEngine } from "../../tracing/ngrx-trace-engine.js";
 import type {
   AnalyzeStateImpactParams,
   FindDecisionPointsParams,
@@ -87,6 +88,15 @@ const FindDecisionPointsSchema = z.object({
   groupBy: z.enum(["impact", "location", "type"]).optional().default("impact").describe("How to group results"),
 });
 
+const TraceNgRxFlowSchema = z.object({
+  from: z.string().describe("Starting point (component method, effect name, or action)"),
+  to: z.string().describe("Ending point (component property, selector, or state property)"),
+  projectPath: projectPathParam,
+  maxDepth: z.number().optional().default(20).describe("Maximum traversal depth"),
+  includeActions: z.boolean().optional().default(true).describe("Include intermediate action details"),
+  format: z.enum(["sequence", "mermaid", "json"]).optional().default("sequence").describe("Output format"),
+});
+
 // =============================================================================
 // 2. TRACE FLOW HANDLER
 // =============================================================================
@@ -102,6 +112,11 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
   protected async execute(args: z.infer<typeof TraceFlowSchema>): Promise<ToolResult> {
     // v3: Ensure correct project context for GraphStorage queries
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
+
+    // Debug: log storage context
+    const projectContext = (storage as any).getProjectContext?.();
+    console.error(`[TraceFlowToolHandler] Storage project context: ${JSON.stringify(projectContext)}`);
+
     let semanticAgent: Awaited<ReturnType<typeof this.context.getSemanticAgent>> | undefined;
     try {
       semanticAgent = await this.context.getSemanticAgent();
@@ -140,6 +155,8 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
           success: true,
           ...result,
           formatted: this.formatter.formatTraceFlowAsText(result),
+          // Include debug info if present
+          _debug: (result as any)._debug,
         },
         null,
         2,
@@ -335,7 +352,83 @@ export class FindDecisionPointsToolHandler extends BaseToolHandler<z.infer<typeo
 }
 
 // =============================================================================
-// 7. FACTORY FUNCTION
+// 7. TRACE NgRx FLOW HANDLER
+// =============================================================================
+
+export class TraceNgRxFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceNgRxFlowSchema>> {
+  private ngrxEngine: NgRxTraceEngine | null = null;
+
+  protected parseArgs(args: unknown): z.infer<typeof TraceNgRxFlowSchema> {
+    return TraceNgRxFlowSchema.parse(args);
+  }
+
+  protected async execute(args: z.infer<typeof TraceNgRxFlowSchema>): Promise<ToolResult> {
+    // v3: Ensure correct project context for GraphStorage queries
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
+
+    this.ngrxEngine = new NgRxTraceEngine(storage);
+
+    const result = await this.ngrxEngine.traceNgRxFlow({
+      from: args.from,
+      to: args.to,
+      maxDepth: args.maxDepth,
+      includeActions: args.includeActions,
+      format: args.format,
+    });
+
+    // Format output
+    let output: string;
+    if (args.format === "mermaid") {
+      output = JSON.stringify(
+        {
+          success: true,
+          ...result,
+          formatted: result.mermaid || "No paths found",
+        },
+        null,
+        2,
+      );
+    } else {
+      // Generate text format
+      const lines: string[] = [];
+      lines.push(`NgRx Flow: ${args.from} → ${args.to}`);
+      lines.push(`Found ${result.paths.length} path(s)\n`);
+
+      for (const path of result.paths) {
+        lines.push(`Path ${path.id} (confidence: ${Math.round(path.confidence * 100)}%)`);
+        lines.push(`Summary: ${path.summary}`);
+        lines.push("Steps:");
+        for (const step of path.steps) {
+          lines.push(`  ${step.order}. [${step.type}] ${step.description}`);
+          lines.push(`     File: ${step.file}:${step.line}`);
+        }
+        lines.push("");
+      }
+
+      lines.push("Action Flow:");
+      lines.push(`  Dispatched: ${result.actionFlow.dispatched.join(", ") || "none"}`);
+      lines.push(`  Handled: ${result.actionFlow.handled.join(", ") || "none"}`);
+      lines.push(`  State Changes: ${result.actionFlow.stateChanges.join(", ") || "none"}`);
+
+      output = JSON.stringify(
+        {
+          success: true,
+          ...result,
+          formatted: lines.join("\n"),
+        },
+        null,
+        2,
+      );
+    }
+
+    return {
+      content: [{ type: "text", text: output }],
+    };
+  }
+}
+
+// =============================================================================
+// 8. FACTORY FUNCTION
 // =============================================================================
 
 /**
@@ -348,6 +441,7 @@ export function createTracingToolHandlers(context: ToolContext): Map<string, Bas
   handlers.set("trace_data_flow", new TraceDataFlowToolHandler(context));
   handlers.set("analyze_state_impact", new AnalyzeStateImpactToolHandler(context));
   handlers.set("find_decision_points", new FindDecisionPointsToolHandler(context));
+  handlers.set("trace_ngrx_flow", new TraceNgRxFlowToolHandler(context));
   return handlers;
 }
 
@@ -509,6 +603,46 @@ Returns decision points grouped by impact with Mermaid flowchart.`,
         },
       },
       required: ["scenario"],
+    },
+  },
+  {
+    name: "trace_ngrx_flow",
+    description: `Trace NgRx/Redux event-driven flow from action dispatch to state subscription.
+
+**IMPORTANT**: Use this for Angular projects with NgRx state management instead of trace_flow.
+Standard trace_flow cannot follow NgRx event-driven relationships.
+
+Follows the NgRx chain:
+1. Component/Effect dispatches action
+2. Effect listens via ofType()
+3. Effect dispatches new action
+4. Reducer handles action via on()
+5. Reducer modifies state
+6. Selector reads state
+7. Component subscribes via select()
+
+Example: trace_ngrx_flow(from: "MobileTaskEffects.postMessages2$", to: "TestEndComponent.setCompleteContent")
+
+Returns:
+- Flow paths through NgRx entities
+- Action chain (all actions traversed)
+- State changes made
+- Mermaid sequence diagram`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        from: { type: "string", description: "Starting point (component method, effect name, or action)" },
+        to: { type: "string", description: "Ending point (component property, selector, or state property)" },
+        maxDepth: { type: "number", description: "Maximum traversal depth", default: 20 },
+        includeActions: { type: "boolean", description: "Include intermediate action details", default: true },
+        format: {
+          type: "string",
+          enum: ["sequence", "mermaid", "json"],
+          description: "Output format",
+          default: "sequence",
+        },
+      },
+      required: ["from", "to"],
     },
   },
 ];

@@ -21,13 +21,7 @@
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import type {
-  EntityRelationship,
-  ImportDependency,
-  ParsedEntity,
-  PatternAnalysis,
-  TreeSitterNode,
-} from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ImportDependency, ParsedEntity, PatternAnalysis } from "../types/parser.js";
 import { getNodeLocation, hasChild } from "./base-parser-utils.js";
 
 // =============================================================================
@@ -46,7 +40,7 @@ export class RustAnalyzer {
    * Main entry point for Rust analysis
    */
   public async analyze(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
   ): Promise<{
     entities: ParsedEntity[];
@@ -97,7 +91,7 @@ export class RustAnalyzer {
    * Extract module declarations
    */
   private extractModules(
-    node: TreeSitterNode,
+    node: ASTNode,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
     filePath: string,
@@ -144,7 +138,7 @@ export class RustAnalyzer {
    * Extract struct declarations
    */
   private extractStructs(
-    node: TreeSitterNode,
+    node: ASTNode,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
     filePath: string,
@@ -192,7 +186,7 @@ export class RustAnalyzer {
    * Extract enum declarations
    */
   private extractEnums(
-    node: TreeSitterNode,
+    node: ASTNode,
     entities: ParsedEntity[],
     _relationships: EntityRelationship[],
     filePath: string,
@@ -232,7 +226,7 @@ export class RustAnalyzer {
    * Extract trait declarations
    */
   private extractTraits(
-    node: TreeSitterNode,
+    node: ASTNode,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
     filePath: string,
@@ -284,7 +278,7 @@ export class RustAnalyzer {
   /**
    * Extract function declarations
    */
-  private extractFunctions(node: TreeSitterNode, entities: ParsedEntity[], filePath: string): void {
+  private extractFunctions(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
     const functionNodes = this.findNodes(node, "function_item");
 
     for (const fnNode of functionNodes) {
@@ -324,7 +318,7 @@ export class RustAnalyzer {
   /**
    * Extract type aliases
    */
-  private extractTypeAliases(node: TreeSitterNode, entities: ParsedEntity[], filePath: string): void {
+  private extractTypeAliases(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
     const typeNodes = this.findNodes(node, "type_item");
 
     for (const typeNode of typeNodes) {
@@ -354,7 +348,7 @@ export class RustAnalyzer {
   /**
    * Extract constants
    */
-  private extractConstants(node: TreeSitterNode, entities: ParsedEntity[], filePath: string): void {
+  private extractConstants(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
     // Extract const items
     const constNodes = this.findNodes(node, "const_item");
     for (const constNode of constNodes) {
@@ -409,7 +403,7 @@ export class RustAnalyzer {
   /**
    * Extract macro definitions
    */
-  private extractMacros(node: TreeSitterNode, entities: ParsedEntity[], filePath: string): void {
+  private extractMacros(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
     // Extract macro_rules! definitions
     const macroRulesNodes = this.findNodes(node, "macro_definition");
     for (const macroNode of macroRulesNodes) {
@@ -470,7 +464,7 @@ export class RustAnalyzer {
    * Extract struct fields
    */
   private extractStructFields(
-    structNode: TreeSitterNode,
+    structNode: ASTNode,
     structName: string,
     entities: ParsedEntity[],
     filePath: string,
@@ -517,7 +511,7 @@ export class RustAnalyzer {
    * Extract enum variants
    */
   private extractEnumVariants(
-    enumNode: TreeSitterNode,
+    enumNode: ASTNode,
     enumName: string,
     entities: ParsedEntity[],
     filePath: string,
@@ -563,7 +557,7 @@ export class RustAnalyzer {
    * Extract trait methods
    */
   private extractTraitMethods(
-    traitNode: TreeSitterNode,
+    traitNode: ASTNode,
     traitName: string,
     entities: ParsedEntity[],
     filePath: string,
@@ -643,7 +637,7 @@ export class RustAnalyzer {
    * Extract associated types
    */
   private extractAssociatedTypes(
-    traitNode: TreeSitterNode,
+    traitNode: ASTNode,
     traitName: string,
     entities: ParsedEntity[],
     filePath: string,
@@ -686,7 +680,7 @@ export class RustAnalyzer {
    * Extract impl blocks for a type
    */
   private extractImplBlocks(
-    node: TreeSitterNode,
+    node: ASTNode,
     typeName: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -775,7 +769,7 @@ export class RustAnalyzer {
    * Extract impl blocks globally (even when no struct node provided)
    */
   private extractImplBlocksGlobal(
-    node: TreeSitterNode,
+    node: ASTNode,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
     filePath: string,
@@ -828,7 +822,7 @@ export class RustAnalyzer {
   /**
    * Extract use statements (imports)
    */
-  private extractUseStatements(node: TreeSitterNode, importsList: ImportDependency[], filePath: string): void {
+  private extractUseStatements(node: ASTNode, importsList: ImportDependency[], filePath: string): void {
     const useNodes = this.findNodes(node, "use_declaration");
 
     for (const useNode of useNodes) {
@@ -894,7 +888,7 @@ export class RustAnalyzer {
   /**
    * Identify Rust patterns (Layer 4)
    */
-  private identifyPatterns(node: TreeSitterNode, entities: ParsedEntity[]): PatternAnalysis {
+  private identifyPatterns(node: ASTNode, entities: ParsedEntity[]): PatternAnalysis {
     const result: PatternAnalysis = {
       contextManagers: [],
       exceptionHandling: [],
@@ -937,7 +931,7 @@ export class RustAnalyzer {
       if (entity.name.endsWith("Builder")) {
         // Look for build() method
         const buildMethod = entities.find(
-          (e) => e.type === "method" && e.metadata?.implType === entity.name && e.name === "build",
+          (e) => e.type === "method" && e.metadata?.["implType"] === entity.name && e.name === "build",
         );
 
         if (buildMethod) {
@@ -958,12 +952,12 @@ export class RustAnalyzer {
    * Identify Iterator pattern
    */
   private identifyIteratorPattern(
-    node: TreeSitterNode,
+    node: ASTNode,
     entities: ParsedEntity[],
   ): PatternAnalysis["designPatterns"][number] | null {
     // Try via methods
     const iteratorImpls = entities.filter(
-      (e) => e.type === "method" && e.metadata?.traitName === "Iterator" && e.name === "next",
+      (e) => e.type === "method" && e.metadata?.["traitName"] === "Iterator" && e.name === "next",
     );
     if (iteratorImpls.length > 0) {
       return {
@@ -992,7 +986,7 @@ export class RustAnalyzer {
   /**
    * Identify error handling patterns
    */
-  private identifyErrorHandlingPatterns(node: TreeSitterNode): NonNullable<PatternAnalysis["otherPatterns"]> {
+  private identifyErrorHandlingPatterns(node: ASTNode): NonNullable<PatternAnalysis["otherPatterns"]> {
     const patterns: NonNullable<PatternAnalysis["otherPatterns"]> = [];
 
     // Count Result<T, E> usage
@@ -1028,7 +1022,7 @@ export class RustAnalyzer {
   /**
    * Identify ownership patterns
    */
-  private identifyOwnershipPatterns(node: TreeSitterNode): NonNullable<PatternAnalysis["otherPatterns"]> {
+  private identifyOwnershipPatterns(node: ASTNode): NonNullable<PatternAnalysis["otherPatterns"]> {
     const patterns: NonNullable<PatternAnalysis["otherPatterns"]> = [];
 
     // Count borrowing patterns
@@ -1064,7 +1058,7 @@ export class RustAnalyzer {
   /**
    * Identify unsafe code blocks
    */
-  private identifyUnsafePatterns(node: TreeSitterNode): NonNullable<PatternAnalysis["otherPatterns"]> {
+  private identifyUnsafePatterns(node: ASTNode): NonNullable<PatternAnalysis["otherPatterns"]> {
     const patterns: NonNullable<PatternAnalysis["otherPatterns"]> = [];
 
     // Count unsafe blocks
@@ -1099,9 +1093,9 @@ export class RustAnalyzer {
   /**
    * Find all nodes of a specific type
    */
-  private findNodes(node: TreeSitterNode, type: string): TreeSitterNode[] {
-    const results: TreeSitterNode[] = [];
-    const visit = (n: TreeSitterNode) => {
+  private findNodes(node: ASTNode, type: string): ASTNode[] {
+    const results: ASTNode[] = [];
+    const visit = (n: ASTNode) => {
       if (n.type === type) {
         results.push(n);
       }
@@ -1117,7 +1111,7 @@ export class RustAnalyzer {
   /**
    * Get text content of a node
    */
-  private getNodeText(node: TreeSitterNode): string {
+  private getNodeText(node: ASTNode): string {
     return node.text || "";
   }
 
@@ -1128,7 +1122,7 @@ export class RustAnalyzer {
   /**
    * Extract visibility modifier
    */
-  private extractVisibility(node: TreeSitterNode): string {
+  private extractVisibility(node: ASTNode): string {
     const visNode = node.childForFieldName("visibility_modifier");
     return visNode ? this.getNodeText(visNode) : "private";
   }
@@ -1136,7 +1130,7 @@ export class RustAnalyzer {
   /**
    * Check if node has specific modifier
    */
-  private hasModifier(node: TreeSitterNode, modifier: string): boolean {
+  private hasModifier(node: ASTNode, modifier: string): boolean {
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
       if (child && child.type === modifier) {
@@ -1149,7 +1143,7 @@ export class RustAnalyzer {
   /**
    * Extract generic parameters
    */
-  private extractGenerics(node: TreeSitterNode): string[] {
+  private extractGenerics(node: ASTNode): string[] {
     const generics: string[] = [];
     const genericNode = node.childForFieldName("type_parameters");
 
@@ -1169,7 +1163,7 @@ export class RustAnalyzer {
   /**
    * Extract lifetime parameters
    */
-  private extractLifetimes(node: TreeSitterNode): string[] {
+  private extractLifetimes(node: ASTNode): string[] {
     const lifetimes: string[] = [];
     const genericNode = node.childForFieldName("type_parameters");
 
@@ -1186,7 +1180,7 @@ export class RustAnalyzer {
   /**
    * Extract derive attributes
    */
-  private extractDerives(node: TreeSitterNode): string[] {
+  private extractDerives(node: ASTNode): string[] {
     const derives: string[] = [];
     const attributes = this.findNodes(node, "attribute_item");
 
@@ -1208,7 +1202,7 @@ export class RustAnalyzer {
   /**
    * Extract attributes
    */
-  private extractAttributes(node: TreeSitterNode): string[] {
+  private extractAttributes(node: ASTNode): string[] {
     const attributes: string[] = [];
     const attrNodes = this.findNodes(node, "attribute_item");
 
@@ -1222,7 +1216,7 @@ export class RustAnalyzer {
   /**
    * Get attribute name
    */
-  private getAttributeName(node: TreeSitterNode): string {
+  private getAttributeName(node: ASTNode): string {
     const pathNode = node.childForFieldName("path");
     return pathNode ? this.getNodeText(pathNode) : "";
   }
@@ -1230,7 +1224,7 @@ export class RustAnalyzer {
   /**
    * Check if struct is a tuple struct
    */
-  private isTupleStruct(node: TreeSitterNode): boolean {
+  private isTupleStruct(node: ASTNode): boolean {
     const body = node.childForFieldName("body");
     return body ? body.type === "ordered_field_declaration_list" : false;
   }
@@ -1238,7 +1232,7 @@ export class RustAnalyzer {
   /**
    * Check if node has a body
    */
-  private hasBody(node: TreeSitterNode): boolean {
+  private hasBody(node: ASTNode): boolean {
     return node.childForFieldName("body") !== null;
   }
 
@@ -1249,7 +1243,7 @@ export class RustAnalyzer {
   /**
    * Count nested items in a module
    */
-  private countNestedItems(node: TreeSitterNode): number {
+  private countNestedItems(node: ASTNode): number {
     const itemTypes = [
       "function_item",
       "struct_item",
@@ -1273,7 +1267,7 @@ export class RustAnalyzer {
   /**
    * Extract trait bounds
    */
-  private extractTraitBounds(node: TreeSitterNode): string[] {
+  private extractTraitBounds(node: ASTNode): string[] {
     const bounds: string[] = [];
     const boundsNode = node.childForFieldName("bounds");
 
@@ -1290,7 +1284,7 @@ export class RustAnalyzer {
   /**
    * Extract supertraits
    */
-  private extractSupertraits(node: TreeSitterNode): string[] {
+  private extractSupertraits(node: ASTNode): string[] {
     const supertraits: string[] = [];
     const boundsNode = node.childForFieldName("supertraits");
 
@@ -1307,7 +1301,7 @@ export class RustAnalyzer {
   /**
    * Extract function parameters
    */
-  private extractFunctionParameters(node: TreeSitterNode): Array<{ name: string; type: string }> {
+  private extractFunctionParameters(node: ASTNode): Array<{ name: string; type: string }> {
     const parameters: Array<{ name: string; type: string }> = [];
     const paramList = node.childForFieldName("parameters");
 
@@ -1350,7 +1344,7 @@ export class RustAnalyzer {
   /**
    * Extract return type
    */
-  private extractReturnType(node: TreeSitterNode): string {
+  private extractReturnType(node: ASTNode): string {
     const returnNode = node.childForFieldName("return_type");
     return returnNode ? this.getNodeText(returnNode) : "()";
   }
@@ -1358,7 +1352,7 @@ export class RustAnalyzer {
   /**
    * Extract field type
    */
-  private extractFieldType(node: TreeSitterNode): string {
+  private extractFieldType(node: ASTNode): string {
     const typeNode = node.childForFieldName("type");
     return typeNode ? this.getNodeText(typeNode) : "unknown";
   }
@@ -1366,7 +1360,7 @@ export class RustAnalyzer {
   /**
    * Extract discriminant value from enum variant
    */
-  private extractDiscriminant(node: TreeSitterNode): string | undefined {
+  private extractDiscriminant(node: ASTNode): string | undefined {
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
       if (child && child.type === "=") {
@@ -1382,7 +1376,7 @@ export class RustAnalyzer {
   /**
    * Extract type bounds for associated type
    */
-  private extractTypeBounds(node: TreeSitterNode): string[] {
+  private extractTypeBounds(node: ASTNode): string[] {
     const bounds: string[] = [];
     const boundsNode = node.childForFieldName("bounds");
 
@@ -1396,7 +1390,7 @@ export class RustAnalyzer {
   /**
    * Extract aliased type
    */
-  private extractAliasedType(node: TreeSitterNode): string {
+  private extractAliasedType(node: ASTNode): string {
     const typeNode = node.childForFieldName("type");
     return typeNode ? this.getNodeText(typeNode) : "unknown";
   }
@@ -1404,7 +1398,7 @@ export class RustAnalyzer {
   /**
    * Extract const type
    */
-  private extractConstType(node: TreeSitterNode): string {
+  private extractConstType(node: ASTNode): string {
     const typeNode = node.childForFieldName("type");
     return typeNode ? this.getNodeText(typeNode) : "unknown";
   }
@@ -1412,7 +1406,7 @@ export class RustAnalyzer {
   /**
    * Extract static type
    */
-  private extractStaticType(node: TreeSitterNode): string {
+  private extractStaticType(node: ASTNode): string {
     const typeNode = node.childForFieldName("type");
     return typeNode ? this.getNodeText(typeNode) : "unknown";
   }
@@ -1420,7 +1414,7 @@ export class RustAnalyzer {
   /**
    * Extract macro rules
    */
-  private extractMacroRules(node: TreeSitterNode): string[] {
+  private extractMacroRules(node: ASTNode): string[] {
     const rules: string[] = [];
     const body = node.childForFieldName("body");
 
@@ -1437,10 +1431,10 @@ export class RustAnalyzer {
   /**
    * Extract use tree (handles nested imports)
    */
-  private extractUseTree(node: TreeSitterNode): string[] {
+  private extractUseTree(node: ASTNode): string[] {
     const paths: string[] = [];
 
-    const processUseTree = (tree: TreeSitterNode, prefix: string = ""): void => {
+    const processUseTree = (tree: ASTNode, prefix: string = ""): void => {
       if (tree.type === "use_wildcard") {
         paths.push(`${prefix}::*`);
       } else if (tree.type === "use_list") {
@@ -1491,7 +1485,7 @@ export class RustAnalyzer {
    * 2) first immediate identifier/type_identifier child
    * 3) fallback to node.text (if non-empty)
    */
-  private resolveName(node: TreeSitterNode): string | null {
+  private resolveName(node: ASTNode): string | null {
     try {
       const nameField = node.childForFieldName?.("name");
       if (nameField) {

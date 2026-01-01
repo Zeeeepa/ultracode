@@ -277,7 +277,7 @@ export interface GitFileChange {
   status: "added" | "modified" | "deleted" | "renamed";
 
   /** Old path (for renamed files) */
-  oldPath?: string;
+  oldPath?: string | undefined;
 
   /** Number of additions */
   additions?: number;

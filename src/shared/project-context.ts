@@ -9,12 +9,13 @@
  * - Provide project-specific storage paths
  * - Check if project is indexed
  * - Trigger auto-indexing when needed
- * - Manage project-specific SQLiteManager instances
+ *
+ * Note: Storage is now managed via libsql through getGraphStorage() which
+ * handles project context via setProject().
  */
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { getProjectSQLiteManager, type SQLiteManager } from "../storage/sqlite-manager.js";
 import { ensureProjectDir, getProjectDir, getProjectPaths } from "./storage-paths.js";
 
 // =============================================================================
@@ -27,13 +28,12 @@ export interface ProjectInfo {
   isIndexed: boolean;
   hasGraphDb: boolean;
   hasVectorsDb: boolean;
-  lastIndexedAt?: number;
+  lastIndexedAt?: number | undefined;
 }
 
 export interface ProjectContextState {
   currentProject: string;
   previousProject: string | null;
-  sqliteManager: SQLiteManager | null;
 }
 
 // =============================================================================
@@ -49,7 +49,6 @@ export class ProjectContextManager {
     this.state = {
       currentProject: cwd,
       previousProject: null,
-      sqliteManager: null,
     };
   }
 
@@ -138,19 +137,9 @@ export class ProjectContextManager {
     // Ensure project directory exists in centralized storage
     ensureProjectDir(resolved);
 
-    // Close previous manager if exists
-    if (this.state.sqliteManager?.isOpen()) {
-      try {
-        this.state.sqliteManager.close();
-      } catch (error) {
-        console.error(`[ProjectContext] Error closing previous SQLiteManager:`, error);
-      }
-    }
-
     // Update state
     this.state.previousProject = this.state.currentProject;
     this.state.currentProject = resolved;
-    this.state.sqliteManager = null; // Will be lazy-loaded
 
     console.error(`[ProjectContext] Switched project: ${this.state.previousProject} -> ${resolved}`);
 
@@ -164,29 +153,6 @@ export class ProjectContextManager {
     }
 
     return true;
-  }
-
-  /**
-   * Get SQLiteManager for current or specified project
-   * Creates/returns cached instance
-   */
-  getSQLiteManager(projectPath?: string): SQLiteManager {
-    const resolved = this.resolveProjectPath(projectPath);
-
-    // If requesting current project and we have cached manager, return it
-    if (resolved === this.state.currentProject && this.state.sqliteManager?.isOpen()) {
-      return this.state.sqliteManager;
-    }
-
-    // Get or create manager for the project
-    const manager = getProjectSQLiteManager(resolved);
-
-    // Cache if it's for current project
-    if (resolved === this.state.currentProject) {
-      this.state.sqliteManager = manager;
-    }
-
-    return manager;
   }
 
   /**
@@ -251,13 +217,9 @@ export class ProjectContextManager {
    * Reset to default state (mainly for testing)
    */
   reset(): void {
-    if (this.state.sqliteManager?.isOpen()) {
-      this.state.sqliteManager.close();
-    }
     this.state = {
       currentProject: process.cwd(),
       previousProject: null,
-      sqliteManager: null,
     };
     this.indexingInProgress.clear();
     this.onProjectChangeCallbacks = [];

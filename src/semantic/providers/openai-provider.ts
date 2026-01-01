@@ -2,13 +2,13 @@ import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } fr
 import { HttpEngine } from "./http-engine.js";
 
 export interface OpenAIOptions {
-  baseUrl?: string;
+  baseUrl?: string | undefined;
   apiKey: string;
   model: string;
-  timeoutMs?: number;
-  concurrency?: number;
+  timeoutMs?: number | undefined;
+  concurrency?: number | undefined;
   dimensions?: number;
-  maxBatchSize?: number;
+  maxBatchSize?: number | undefined;
   logger?: ProviderLogger;
 }
 
@@ -16,7 +16,7 @@ export class OpenAIProvider implements EmbeddingProvider {
   public info: ProviderInfo;
   private engine: HttpEngine;
   private opts: OpenAIOptions;
-  private log?: ProviderLogger;
+  private log?: ProviderLogger | undefined;
 
   constructor(opts: OpenAIOptions) {
     this.opts = { baseUrl: "https://api.openai.com", ...opts };

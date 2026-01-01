@@ -9,7 +9,7 @@ import type { CodeUnit, CodeUnitType } from "./code-unit.js";
 export interface VersionedIndex {
   // Version info
   branch: string; // Branch name (e.g., "main", "feature/auth")
-  commit?: string; // Git commit hash (if available)
+  commit?: string | undefined; // Git commit hash (if available)
   indexedAt: Date; // Timestamp when indexed
 
   // Code units storage

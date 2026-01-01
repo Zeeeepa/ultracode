@@ -12,24 +12,39 @@ REM ============================================================================
 
 cd /d "%~dp0.."
 
+REM Determine which file to run - prefer dist (npm install), fallback to src (dev)
+set "SETUP_FILE=dist\cli\setup-command.js"
+if not exist "%SETUP_FILE%" (
+    set "SETUP_FILE=src\cli\setup-command.ts"
+)
+
+REM Check if using compiled JS or TypeScript source
+echo "%SETUP_FILE%" | findstr /C:".js" >nul
+if %errorlevel% equ 0 (
+    REM Running compiled JS - use node directly
+    node "%SETUP_FILE%" %*
+    goto :done
+)
+
+REM Running TypeScript source - need TS runtime
 REM Check if bun is available
 where bun >nul 2>&1
 if %errorlevel% equ 0 (
-    bun run src/cli/setup-command.ts %*
+    bun run "%SETUP_FILE%" %*
     goto :done
 )
 
 REM Fallback to tsx if bun not available
 where tsx >nul 2>&1
 if %errorlevel% equ 0 (
-    tsx src/cli/setup-command.ts %*
+    tsx "%SETUP_FILE%" %*
     goto :done
 )
 
 REM Fallback to node with ts-node
 where npx >nul 2>&1
 if %errorlevel% equ 0 (
-    npx tsx src/cli/setup-command.ts %*
+    npx tsx "%SETUP_FILE%" %*
     goto :done
 )
 

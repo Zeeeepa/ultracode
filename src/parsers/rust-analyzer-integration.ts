@@ -17,6 +17,17 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ParsedEntity } from "../types/parser.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -29,7 +40,7 @@ export interface RustDiagnostic {
     end: { line: number; character: number };
   };
   code?: string;
-  source?: string;
+  source?: string | undefined;
 }
 
 export interface RustAnalyzerResult {
@@ -50,7 +61,7 @@ export interface RustSymbolInfo {
 // LSP message types
 interface LSPMessage {
   jsonrpc: "2.0";
-  id?: number;
+  id?: number | undefined;
   method?: string;
   params?: unknown;
   result?: unknown;
@@ -83,8 +94,8 @@ export async function findRustAnalyzer(): Promise<string | null> {
     "rust-analyzer",
     "rust-analyzer.exe",
     // Common installation paths
-    join(process.env.HOME || "", ".cargo", "bin", "rust-analyzer"),
-    join(process.env.USERPROFILE || "", ".cargo", "bin", "rust-analyzer.exe"),
+    join(process.env["HOME"] || "", ".cargo", "bin", "rust-analyzer"),
+    join(process.env["USERPROFILE"] || "", ".cargo", "bin", "rust-analyzer.exe"),
   ];
 
   for (const cmd of commands) {
@@ -107,28 +118,35 @@ export async function findRustAnalyzer(): Promise<string | null> {
 /**
  * Check if a command is available
  */
-function checkCommand(cmd: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const proc = spawn(cmd, ["--version"], {
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+async function checkCommand(cmd: string): Promise<boolean> {
+  const proc = spawn(cmd, ["--version"], {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
 
-    const timeout = setTimeout(() => {
-      proc.kill();
-      resolve(false);
-    }, 5000);
+  const abortController = new AbortController();
 
+  const resultPromise = new Promise<boolean>((resolve) => {
     proc.on("error", () => {
-      clearTimeout(timeout);
+      abortController.abort();
       resolve(false);
     });
-
     proc.on("close", (code) => {
-      clearTimeout(timeout);
+      abortController.abort();
       resolve(code === 0);
     });
   });
+
+  const timeoutPromise = (async (): Promise<boolean> => {
+    await sleep(5000);
+    if (!abortController.signal.aborted) {
+      proc.kill();
+      return false;
+    }
+    return new Promise(() => {}); // Never resolves if aborted
+  })();
+
+  return Promise.race([resultPromise, timeoutPromise]);
 }
 
 /**
@@ -254,9 +272,9 @@ function handleLspMessage(message: LSPMessage): void {
 /**
  * Send LSP request
  */
-function sendRequest(method: string, params: unknown): Promise<unknown> {
+async function sendRequest(method: string, params: unknown): Promise<unknown> {
   if (!rustAnalyzerProcess?.stdin) {
-    return Promise.reject(new Error("rust-analyzer not running"));
+    throw new Error("rust-analyzer not running");
   }
 
   const id = ++messageId;
@@ -270,27 +288,32 @@ function sendRequest(method: string, params: unknown): Promise<unknown> {
   const body = JSON.stringify(message);
   const header = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n`;
 
-  return new Promise((resolve, reject) => {
-    pendingRequests.set(id, { resolve, reject });
+  const abortController = new AbortController();
 
-    const timeout = setTimeout(() => {
-      pendingRequests.delete(id);
-      reject(new Error(`Request ${method} timed out`));
-    }, 30000);
-
+  const responsePromise = new Promise<unknown>((resolve, reject) => {
     pendingRequests.set(id, {
       resolve: (value) => {
-        clearTimeout(timeout);
+        abortController.abort();
         resolve(value);
       },
       reject: (err) => {
-        clearTimeout(timeout);
+        abortController.abort();
         reject(err);
       },
     });
-
     rustAnalyzerProcess!.stdin!.write(header + body);
   });
+
+  const timeoutPromise = (async (): Promise<never> => {
+    await sleep(30000);
+    if (!abortController.signal.aborted) {
+      pendingRequests.delete(id);
+      throw new Error(`Request ${method} timed out`);
+    }
+    return new Promise(() => {});
+  })();
+
+  return Promise.race([responsePromise, timeoutPromise]);
 }
 
 /**

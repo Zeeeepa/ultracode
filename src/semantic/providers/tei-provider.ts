@@ -1,12 +1,33 @@
-import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } from "./base.js";
+import type {
+  EmbeddingProvider,
+  EmbedOptions,
+  ProviderCapabilities,
+  ProviderInfo,
+  ProviderLogger,
+  RerankDocument,
+  RerankOptions,
+  RerankResult,
+} from "./base.js";
+
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
 
 export interface TEIOptions {
   model: string;
-  baseUrl?: string;
-  timeoutMs?: number;
-  concurrency?: number;
+  baseUrl?: string | undefined;
+  timeoutMs?: number | undefined;
+  concurrency?: number | undefined;
   checkServer?: boolean;
   logger?: ProviderLogger;
+  maxBatchSize?: number | undefined; // Max texts per request (TEI max_client_batch_size)
 }
 
 /**
@@ -16,7 +37,7 @@ export interface TEIOptions {
  * TEI is HuggingFace's optimized inference server for embeddings.
  *
  * Setup:
- * docker run -d --name tei-server -p 8080:80 \
+ * docker run -d --name tei-server -p 8081:80 \
  *   --pull always \
  *   ghcr.io/huggingface/text-embeddings-inference:latest \
  *   --model-id ibm-granite/granite-embedding-english-r2
@@ -27,14 +48,16 @@ export class TEIProvider implements EmbeddingProvider {
   private timeoutMs: number;
   private concurrency: number;
   private checkServer: boolean;
-  private log?: ProviderLogger;
+  private log?: ProviderLogger | undefined;
+  private maxBatchSize: number;
 
   constructor(opts: TEIOptions) {
     this.log = opts.logger;
-    this.baseUrl = opts.baseUrl ?? "http://127.0.0.1:8080";
+    this.baseUrl = opts.baseUrl ?? "http://127.0.0.1:8081";
     this.timeoutMs = opts.timeoutMs ?? 30_000;
-    this.concurrency = Math.max(1, opts.concurrency ?? 4);
+    this.concurrency = Math.max(1, opts.concurrency ?? 16); // High concurrency for GPU saturation
     this.checkServer = opts.checkServer !== false;
+    this.maxBatchSize = opts.maxBatchSize ?? 500; // TEI default max_client_batch_size
 
     this.info = {
       name: "tei",
@@ -56,16 +79,31 @@ export class TEIProvider implements EmbeddingProvider {
       await this.ensureContainerRunning();
     }
 
-    // Get model info including max_input_length
+    // Wait for TEI to be ready (model loading can take time)
+    await this.waitForReady();
+
+    // Get model info including max_input_length and max_client_batch_size
     try {
       const infoRes = await fetch(`${this.baseUrl}/info`, {
         method: "GET",
         signal: AbortSignal.timeout(5000),
       });
       if (infoRes.ok) {
-        const modelInfo = (await infoRes.json()) as { max_input_length?: number; model_id?: string };
+        const modelInfo = (await infoRes.json()) as {
+          max_input_length?: number;
+          max_client_batch_size?: number;
+          model_id?: string | undefined;
+        };
         this.info.maxTokens = modelInfo.max_input_length || 512;
-        this.log?.debug("TEI model info", { maxTokens: this.info.maxTokens, model: modelInfo.model_id });
+        // Use server's max_client_batch_size if available and not overridden
+        if (modelInfo.max_client_batch_size && this.maxBatchSize === 500) {
+          this.maxBatchSize = modelInfo.max_client_batch_size;
+        }
+        this.log?.debug("TEI model info", {
+          maxTokens: this.info.maxTokens,
+          maxBatchSize: this.maxBatchSize,
+          model: modelInfo.model_id,
+        });
       }
     } catch {
       this.info.maxTokens = 512; // Default fallback
@@ -81,7 +119,7 @@ export class TEIProvider implements EmbeddingProvider {
       throw new Error(
         `TEI warmup failed: ${e.message}\n` +
           `Make sure TEI Docker container is running:\n` +
-          `docker run -d --name tei-server -p 8080:80 \\\n` +
+          `docker run -d --name tei-server -p 8081:80 \\\n` +
           `  ghcr.io/huggingface/text-embeddings-inference:latest \\\n` +
           `  --model-id ${this.info.model}`,
       );
@@ -141,7 +179,7 @@ export class TEIProvider implements EmbeddingProvider {
         }
 
         // Wait 2 seconds before next check
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await sleep(2000);
       }
 
       throw new Error("TEI container started but did not become ready within 30 seconds");
@@ -151,6 +189,52 @@ export class TEIProvider implements EmbeddingProvider {
     }
   }
 
+  /**
+   * Wait for TEI server to be fully ready (model loaded)
+   * This is important on first start when model needs to download
+   */
+  private async waitForReady(maxWaitMs = 300_000): Promise<void> {
+    const startTime = Date.now();
+    const checkInterval = 3000; // Check every 3 seconds
+    let lastStatus = "";
+
+    this.log?.info("Waiting for TEI to be ready (model may be downloading)...");
+
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        const healthRes = await fetch(`${this.baseUrl}/health`, {
+          method: "GET",
+          signal: AbortSignal.timeout(5000),
+        });
+
+        if (healthRes.ok) {
+          const elapsed = Math.round((Date.now() - startTime) / 1000);
+          this.log?.info("TEI is ready", { waitedSeconds: elapsed });
+          return;
+        }
+
+        // Check status for progress info
+        const status = healthRes.status.toString();
+        if (status !== lastStatus) {
+          this.log?.debug("TEI not ready yet", { status, elapsed: Math.round((Date.now() - startTime) / 1000) });
+          lastStatus = status;
+        }
+      } catch (e: any) {
+        // Connection refused means server not ready yet
+        if (!e.message?.includes("ECONNREFUSED")) {
+          this.log?.debug("TEI health check error", { error: e.message });
+        }
+      }
+
+      await sleep(checkInterval);
+    }
+
+    throw new Error(
+      `TEI did not become ready within ${maxWaitMs / 1000} seconds.\n` +
+        `Model may still be downloading. Check: docker logs tei-server`,
+    );
+  }
+
   getDimension(): number | undefined {
     return this.info.dimension;
   }
@@ -158,16 +242,14 @@ export class TEIProvider implements EmbeddingProvider {
   async embed(text: string, opts?: EmbedOptions): Promise<Float32Array> {
     this.log?.debug("embed()", { len: text?.length }, opts?.requestId);
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-
     try {
       // TEI embed endpoint expects { inputs: string } or { inputs: string[] }
+      // EXPERIMENT: Remove AbortSignal.timeout() - may cause crashes in Bun
       const res = await fetch(`${this.baseUrl}/embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ inputs: text }),
-        signal: opts?.signal ?? controller.signal,
+        // signal removed for crash debugging
       });
 
       if (!res.ok) {
@@ -199,24 +281,75 @@ export class TEIProvider implements EmbeddingProvider {
       }
 
       throw new Error(`TEI embed error: ${error.message}`);
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 
   async embedBatch(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
-    this.log?.debug("embedBatch()", { count: texts.length }, opts?.requestId);
+    this.log?.debug(
+      "embedBatch()",
+      { count: texts.length, maxBatchSize: this.maxBatchSize, concurrency: this.concurrency },
+      opts?.requestId,
+    );
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Split into chunks to respect TEI max_client_batch_size
+    if (texts.length > this.maxBatchSize) {
+      // Create chunks with indices for ordered results
+      const chunks: { idx: number; texts: string[] }[] = [];
+      for (let i = 0; i < texts.length; i += this.maxBatchSize) {
+        chunks.push({ idx: chunks.length, texts: texts.slice(i, i + this.maxBatchSize) });
+      }
 
+      // Pipeline: keep exactly `concurrency` requests in flight using sliding window
+      const results: { idx: number; embeddings: Float32Array[] }[] = [];
+      let inFlight = 0;
+
+      const processChunk = async (chunk: { idx: number; texts: string[] }) => {
+        const embeddings = await this.embedBatchInternal(chunk.texts, opts);
+        return { idx: chunk.idx, embeddings };
+      };
+
+      // Use promise pool for true pipelining
+      const pending: Promise<void>[] = [];
+
+      for (const chunk of chunks) {
+        // Wait if at concurrency limit
+        while (inFlight >= this.concurrency) {
+          await Promise.race(pending);
+        }
+
+        inFlight++;
+        const promise = processChunk(chunk).then((result) => {
+          results.push(result);
+          inFlight--;
+          pending.splice(pending.indexOf(promise), 1);
+        });
+        pending.push(promise);
+      }
+
+      // Wait for remaining
+      await Promise.all(pending);
+
+      // Sort by original order and flatten
+      results.sort((a, b) => a.idx - b.idx);
+      const allEmbeddings: Float32Array[] = [];
+      for (const r of results) {
+        allEmbeddings.push(...r.embeddings);
+      }
+      return allEmbeddings;
+    }
+
+    return this.embedBatchInternal(texts, opts);
+  }
+
+  private async embedBatchInternal(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
     try {
       // TEI supports batch embedding with { inputs: string[] }
+      // EXPERIMENT: Remove AbortSignal.timeout() - may cause crashes in Bun
       const res = await fetch(`${this.baseUrl}/embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ inputs: texts }),
-        signal: opts?.signal ?? controller.signal,
+        // signal removed for crash debugging
       });
 
       if (!res.ok) {
@@ -246,10 +379,80 @@ export class TEIProvider implements EmbeddingProvider {
       }
 
       throw new Error(`TEI embedBatch error: ${error.message}`);
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 
   async close(): Promise<void> {}
+
+  // ═══════════════════════════════════════════════════════════════
+  // Extended Capabilities: Rerank
+  // ═══════════════════════════════════════════════════════════════
+
+  getCapabilities(): ProviderCapabilities {
+    return {
+      embeddings: true,
+      rerank: true,
+      score: false,
+      classify: false,
+    };
+  }
+
+  /**
+   * Rerank documents by relevance to query
+   * Uses TEI's /rerank endpoint for cross-encoder scoring
+   */
+  async rerank(query: string, documents: RerankDocument[], opts?: RerankOptions): Promise<RerankResult[]> {
+    this.log?.debug("rerank()", { query: query.slice(0, 50), docCount: documents.length }, opts?.requestId);
+
+    try {
+      const res = await fetch(`${this.baseUrl}/rerank`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          texts: documents.map((d) => d.text),
+          truncate: true,
+        }),
+        signal: opts?.signal,
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`TEI rerank HTTP ${res.status}: ${body}`);
+      }
+
+      const json = (await res.json()) as Array<{ index: number; score: number }>;
+
+      let results: RerankResult[] = json.map((r) => ({
+        index: r.index,
+        id: documents[r.index]?.id,
+        score: r.score,
+        text: documents[r.index]?.text ?? "",
+      }));
+
+      // Apply threshold filter if specified
+      if (opts?.threshold !== undefined) {
+        results = results.filter((r) => r.score >= opts.threshold!);
+      }
+
+      // Apply topK if specified
+      if (opts?.topK !== undefined) {
+        results = results.slice(0, opts.topK);
+      }
+
+      // Sort by score descending
+      results.sort((a, b) => b.score - a.score);
+
+      this.log?.debug("rerank() complete", { resultCount: results.length }, opts?.requestId);
+      return results;
+    } catch (error: any) {
+      this.log?.error("rerank failed", { error: error.message }, opts?.requestId, error);
+
+      if (error.message?.includes("ECONNREFUSED")) {
+        throw new Error(`TEI server not reachable at ${this.baseUrl}. Is Docker container running?`);
+      }
+
+      throw new Error(`TEI rerank error: ${error.message}`);
+    }
+  }
 }

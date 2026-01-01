@@ -282,7 +282,7 @@ export class ImpactAnalyzer {
     const meta = entity.metadata as Record<string, any>;
 
     // Get states modified by this entity
-    const modifiedStates: string[] = Array.isArray(meta.stateModifications) ? meta.stateModifications : [];
+    const modifiedStates: string[] = Array.isArray(meta["stateModifications"]) ? meta["stateModifications"] : [];
 
     for (const state of modifiedStates) {
       // Find other entities that read this state
@@ -293,14 +293,14 @@ export class ImpactAnalyzer {
         if (e.id === entity.id) continue;
         const eMeta = e.metadata as Record<string, any>;
 
-        const reads = Array.isArray(eMeta.stateReads) ? eMeta.stateReads : [];
+        const reads = Array.isArray(eMeta["stateReads"]) ? eMeta["stateReads"] : [];
         if (reads.includes(state)) {
           affected.push(e.name);
         }
 
         // Also check conditions
-        if (eMeta.controlFlow?.branches && Array.isArray(eMeta.controlFlow.branches)) {
-          for (const branch of eMeta.controlFlow.branches) {
+        if (eMeta["controlFlow"]?.branches && Array.isArray(eMeta["controlFlow"].branches)) {
+          for (const branch of eMeta["controlFlow"].branches) {
             if (branch.condition?.includes(state)) {
               if (!affected.includes(e.name)) {
                 affected.push(e.name);
@@ -330,7 +330,7 @@ export class ImpactAnalyzer {
     const meta = entity.metadata as Record<string, any>;
 
     // Check if this is a public API
-    const isExported = meta.exported === true || entity.name.startsWith("export");
+    const isExported = meta["exported"] === true || entity.name.startsWith("export");
     if (isExported && callers.length > 3) {
       changes.push({
         description: `Exported entity with ${callers.length} callers - signature changes may break consumers`,
@@ -340,7 +340,7 @@ export class ImpactAnalyzer {
     }
 
     // Check for parameter changes
-    const params = Array.isArray(meta.parameters) ? meta.parameters : [];
+    const params = Array.isArray(meta["parameters"]) ? meta["parameters"] : [];
     if (params.length > 0 && callers.length > 0) {
       changes.push({
         description: `Function has ${params.length} parameters - changes may require updating ${callers.length} call sites`,

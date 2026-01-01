@@ -241,20 +241,28 @@ bunx ultrascript-tools-mcp /путь/к/проекту
 
 Для продвинутого семантического анализа можно включить ML-модели:
 
-**🏆 Рекомендуется: TEI (локально, Docker)**
+**🏆 Рекомендуется: OVMS (OpenVINO Model Server)**
 ```bash
-# Установка за 2 минуты
-./setup-tei.sh  # macOS/Linux
-setup-tei.cmd   # Windows
+# Интерактивная установка
+npx ultrascript-tools-mcp setup
 
-# Что получите:
-✅ 8192 токена контекста (в 16 раз больше чем Ollama)
-✅ Локальный инференс (без облачных API)
-✅ Автоматический запуск Docker контейнера
-✅ Лучшая производительность
+# Автоматически:
+✅ Обнаруживает ваше железо (CPU/GPU/NPU)
+✅ Рекомендует оптимальный провайдер
+✅ Скачивает модели и настраивает конфигурацию
 ```
 
+**Провайдеры эмбеддингов:**
+
+| Провайдер | Скорость | Контекст | Рекомендация |
+|-----------|----------|----------|--------------|
+| **ovms-native** | 0.8-2ms | 512-8K | ⭐ CPU/NPU, лучший выбор |
+| **vllm** | 1-3ms | 512-8K | ⭐ NVIDIA GPU Production |
+| **tei** | 5-15ms | 8K | Альтернатива Docker |
+| **ollama** | 10-50ms | 512 | Простая установка |
+
 **Альтернативы:**
+- **TEI** - Docker, 8192 токенов, локальный инференс
 - **Ollama** - проще (без Docker), но только 512 токенов
 - **HuggingFace API** - облако, 8192 токенов, бесплатный API ключ
 
@@ -335,19 +343,23 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 - **QueryAgent** - Оптимизация и выполнение запросов
 - **DoraAgent** - Метрики сложности и анализ
 
-**Storage**: SQLite (WAL mode) + адаптивные векторные бэкенды:
-- **Автовыбор**: система автоматически выбирает оптимальный бэкенд по размеру кодовой базы
-- **sqlite-vec** (<10k векторов) - точный поиск, быстрая вставка
-- **vectorlite** (>10k векторов) - HNSW индекс, 3-100x быстрее поиск
-- **fallback** - работает без расширений (медленнее)
+**Storage**: libSQL unified database (WAL mode):
+- **Унифицированное хранилище**: entities, relationships, vectors в одной БД
+- **libSQL/Turso**: поддержка edge database для распределенных систем
+- **Bun native SQLite**: автоматическое использование bun:sqlite
+
+**GPU Acceleration** (опционально):
+- **CUDA Worker**: изолированный subprocess для NVIDIA GPU операций
+- **Dawn WebGPU**: cross-platform GPU через WebGPU стандарт
+- **WASM SIMD**: fallback для CPU без AVX2
+- **Blackwell detection**: автоматический fallback для RTX 50xx (CC ≥12.0)
 
 **Performance**:
 - Prepared statements caching - +25-30% для batch операций
 - xxHash вместо SHA-256 - 10-15x быстрее
 - LRU cache v11 - +10-15% операций кеша
 - Adaptive resource monitoring - 70% меньше CPU в idle
-- Hybrid vector search - 90% быстрее для >10k векторов
-- **Adaptive backend switching** - автоматический выбор между sqlite-vec и vectorlite по размеру базы
+- **OVMS V3 API** - batch embeddings с base64 encoding, 0.8-2ms/запрос
 
 ### 24 MCP метода
 
@@ -355,14 +367,14 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 - `index` - индексация кодовой базы
 - `semantic_search` - семантический поиск
 - `find_similar_code` - поиск похожего кода
-- `detect_code_clones` - обнаружение дубликатов
+- `find_duplicates` - обнаружение дубликатов
 - `jscpd_detect_clones` - JSCPD-based поиск (без ML)
 - `suggest_refactoring` - AI рефакторинг
 
 **Граф зависимостей:**
 - `get_graph` - получение графа сущностей
 - `list_entity_relationships` - связи сущности
-- `list_file_entities` - сущности в файле
+- `get_members` - сущности в файле
 - `analyze_code_impact` - анализ влияния изменений
 - `analyze_hotspots` - поиск проблемных зон
 
@@ -394,27 +406,31 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 ### Конфигурация
 
 Через YAML файлы (`config/default.yaml`) или environment variables:
-- `MCP_EMBEDDING_PROVIDER` - провайдер эмбеддингов (tei/ollama/huggingface)
+- `MCP_EMBEDDING_PROVIDER` - провайдер эмбеддингов (ovms/tei/ollama)
 - `MCP_EMBEDDING_ENABLED` - включить семантический поиск
 - `INDEXING_BRANCH_AWARE` - режим Git-веток
 
-**Адаптивные векторные бэкенды** (`config/default.yaml`):
-```yaml
-vectorBackend:
-  backend: "auto"              # auto | vectorlite | sqlite-vec | fallback
-  autoSwitchThreshold: 10000   # порог переключения (векторов)
-  vectorlite:                  # настройки HNSW для больших баз
-    maxElements: 100000
-    M: 16                      # связей на слой (выше = лучше recall)
-    efConstruction: 200        # качество построения индекса
-    efSearch: 50               # качество поиска (выше = точнее, медленнее)
+**Конфигурация semantic-config.json** (создается через `setup`):
+```json
+{
+  "enabled": true,
+  "embedding": {
+    "platform": "ovms-native",
+    "ovms": {
+      "endpoint": "http://127.0.0.1:8083",
+      "batch_size": 200,
+      "target_device": "CPU",
+      "useEmbeddingsApi": true
+    }
+  }
+}
 ```
 
-**Когда использовать**:
-- `auto` (рекомендуется) - автоматический выбор по размеру
-- `vectorlite` - для больших проектов (>10k векторов), приоритет скорости поиска
-- `sqlite-vec` - для малых/средних проектов (<10k векторов), приоритет скорости вставки
-- `fallback` - когда расширения недоступны (медленнее)
+**Провайдеры эмбеддингов**:
+- `ovms-native` (рекомендуется для CPU/Intel GPU) - локальный OVMS бинарник, автоматический lifecycle
+- `vllm` (рекомендуется для NVIDIA GPU) - Docker контейнер vLLM, высокая производительность
+- `tei` - HuggingFace Text Embeddings Inference (Docker)
+- `ollama` - простая установка, но медленнее
 
 </details>
 
@@ -445,6 +461,20 @@ bun install
 ---
 
 ## 📝 **Changelog**
+
+### v2.5.0 (2025-12) - OVMS & GPU Isolation
+
+**Новое:**
+- 🚀 **OVMS провайдер** - OpenVINO Model Server с V3 API (0.8-2ms/запрос)
+- 🎮 **GPU Worker изоляция** - CUDA операции в отдельном subprocess
+- 💾 **libSQL хранилище** - унифицированная БД для entities + vectors
+- 🔧 **Интерактивный setup** - `npx ultrascript-tools-mcp setup`
+- 🪟 **Windows fixes** - скрытые консольные окна, корректный shutdown OVMS
+
+**Улучшения:**
+- Автоматическое обнаружение CPU/GPU/NPU при setup
+- Поддержка Blackwell (RTX 50xx) с fallback на WASM SIMD
+- Корректное завершение OVMS процесса (taskkill /T на Windows)
 
 ### v2.8.0 (2025-11-13) - ULTRA Performance
 

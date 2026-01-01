@@ -107,7 +107,7 @@ export class BashNativeParser {
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
-        errors: result.errors.length > 0 ? result.errors : undefined,
+        ...(result.errors.length > 0 && { errors: result.errors }),
       };
     } catch (error) {
       this.stats.errorCount++;
@@ -296,7 +296,7 @@ export class BashNativeParser {
         type: isReadonly ? "constant" : "variable",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers }),
       });
     }
 

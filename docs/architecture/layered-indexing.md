@@ -5,6 +5,10 @@
 **Статус:** Ready for Implementation
 **Источник:** Адаптировано из [ultrasharp-tools-mcp](https://github.com/faxg/ultrasharp-tools-mcp)
 
+> **Note:** Этот документ описывает планируемую трёхслойную архитектуру индексации.
+> Текущая архитектура embedding pipeline описана в [embedding-pipeline.md](./embedding-pipeline.md).
+> Worker-based генерация embeddings описана в [worker-threads.md](./worker-threads.md).
+
 ---
 
 ## 🎯 Цели проекта

@@ -22,6 +22,14 @@ import type { ILayeredIndex } from "../core/layered-index.js";
 import type { LayeredCacheManager } from "./layered-cache-manager.js";
 import type { VectorCacheManager } from "./vector-cache-manager.js";
 
+// Event-driven architecture: maintenance triggered on-demand or on shutdown
+// No polling loops - call runMaintenance() when needed
+
+/** Check if running in Bun */
+function isBunRuntime(): boolean {
+  return typeof (globalThis as any).Bun !== "undefined";
+}
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -95,7 +103,7 @@ export class DeltaMaintenanceService {
   private config: DeltaMaintenanceConfig;
 
   // State
-  private maintenanceInterval: NodeJS.Timeout | null = null;
+  private maintenanceLoopRunning = false;
   private isRunning = false;
 
   // Statistics
@@ -146,43 +154,49 @@ export class DeltaMaintenanceService {
 
   /**
    * Start maintenance service
+   * Event-driven: runs initial maintenance, then relies on on-demand calls
+   * For Node.js only: optionally starts a setInterval-based loop
    */
   start(): void {
     if (!this.config.enabled) {
-      console.error("[DeltaMaintenanceService] Maintenance is disabled");
       return;
     }
 
-    if (this.maintenanceInterval) {
-      console.error("[DeltaMaintenanceService] Already running");
+    if (this.maintenanceLoopRunning) {
       return;
     }
 
-    console.error(
-      `[DeltaMaintenanceService] Starting maintenance service (interval: ${this.config.maintenanceIntervalMs}ms)`,
-    );
+    this.maintenanceLoopRunning = true;
 
-    // Run immediately
-    this.runMaintenance().catch((error) => {
-      console.error("[DeltaMaintenanceService] Initial maintenance failed:", error);
+    // Run initial maintenance
+    this.runMaintenance().catch(() => {
+      // Ignore initial errors
     });
 
-    // Schedule periodic maintenance
-    this.maintenanceInterval = setInterval(() => {
-      this.runMaintenance().catch((error) => {
-        console.error("[DeltaMaintenanceService] Maintenance failed:", error);
-      });
-    }, this.config.maintenanceIntervalMs);
+    // For Node.js: start periodic maintenance using setInterval (safe in Node)
+    // For Bun: skip polling - rely on on-demand calls to runMaintenance()
+    if (!isBunRuntime()) {
+      this.maintenanceTimer = setInterval(() => {
+        if (this.maintenanceLoopRunning) {
+          this.runMaintenance().catch(() => {
+            // Ignore errors, continue
+          });
+        }
+      }, this.config.maintenanceIntervalMs);
+    }
   }
+
+  /** Timer handle for Node.js setInterval */
+  private maintenanceTimer?: ReturnType<typeof setInterval> | undefined;
 
   /**
    * Stop maintenance service
    */
   stop(): void {
-    if (this.maintenanceInterval) {
-      clearInterval(this.maintenanceInterval);
-      this.maintenanceInterval = null;
-      console.error("[DeltaMaintenanceService] Stopped maintenance service");
+    this.maintenanceLoopRunning = false;
+    if (this.maintenanceTimer) {
+      clearInterval(this.maintenanceTimer);
+      this.maintenanceTimer = undefined;
     }
   }
 

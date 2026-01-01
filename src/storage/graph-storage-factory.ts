@@ -2,22 +2,25 @@
  * Graph Storage Factory - Unified LibSQL Storage
  *
  * Creates and manages the singleton GraphStorage instance using LibSQL.
- * v4: Unified storage - both graph and vectors in single libsql database.
- *
- * MIGRATION FROM v3:
- * - Replaced better-sqlite3 with @libsql/client
- * - GraphStorageImpl replaced with GraphStorageLibSQL
- * - Single database for entities, relationships, AND vectors
+ * Single database for entities, relationships, AND vectors.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getGlobalDbPaths } from "../shared/storage-paths.js";
+import { logger } from "../utils/logger.js";
 import { GraphStorageLibSQL } from "./graph-storage-libsql.js";
-import { LibSQLGraphAdapter, type LibSQLGraphConfig } from "./libsql-graph-adapter.js";
+import { DatabaseCorruptionError, LibSQLGraphAdapter, type LibSQLGraphConfig } from "./libsql-graph-adapter.js";
 
-// Re-export types for compatibility
+// Re-export types and helpers for compatibility
 export type { ProjectContext } from "./libsql-graph-adapter.js";
+export {
+  DatabaseCorruptionError,
+  getEmbeddingColumn,
+  normalizeToSupportedDimension,
+  SUPPORTED_DIMENSIONS,
+  type SupportedDimension,
+} from "./libsql-graph-adapter.js";
 
 // Singleton instances
 let graphStorage: GraphStorageLibSQL | null = null;
@@ -25,12 +28,14 @@ let libsqlAdapter: LibSQLGraphAdapter | null = null;
 let initializationPromise: Promise<GraphStorageLibSQL> | null = null;
 
 // Configuration from yaml-config
+// NOTE: These are defaults, may be overridden by configureGraphStorage()
 let globalConfig: LibSQLGraphConfig = {
-  dimensions: 384,
+  dimensions: 768, // granite-278m = 768, all-MiniLM-L6-v2 = 384
   metric: "cosine",
-  compression: "float32",
-  searchL: 200,
-  insertL: 70,
+  compression: "float8", // float8 = 1 byte/dim, float32 = 4 bytes/dim (4x savings!)
+  searchL: 150,
+  insertL: 30,
+  maxNeighbors: 12, // DiskANN neighbors (lower = smaller index)
 };
 
 /**
@@ -38,7 +43,12 @@ let globalConfig: LibSQLGraphConfig = {
  */
 export function configureGraphStorage(config: LibSQLGraphConfig): void {
   globalConfig = { ...globalConfig, ...config };
-  console.error(`[GraphStorageFactory] Configured with: ${JSON.stringify(globalConfig)}`);
+  logger.warn("GraphStorageFactory", `[CONFIG] DiskANN params`, {
+    dims: globalConfig.dimensions,
+    compression: globalConfig.compression,
+    maxNeighbors: globalConfig.maxNeighbors,
+    insertL: globalConfig.insertL,
+  });
 }
 
 /**
@@ -89,6 +99,29 @@ export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
     } catch (error) {
       // Reset on failure so next call can retry
       initializationPromise = null;
+
+      // Auto-recovery: if initialization fails, try to delete corrupt DB and retry once
+      const paths = getGlobalDbPaths();
+      const unifiedDbPath = join(dirname(paths.graphDbPath), "unified-storage.db");
+      if (existsSync(unifiedDbPath)) {
+        logger.warn("STORAGE", `Initialization failed, attempting auto-recovery by deleting corrupt DB`, {
+          path: unifiedDbPath,
+          error: (error as Error).message,
+        });
+        try {
+          unlinkSync(unifiedDbPath);
+          // Also delete WAL and SHM files if they exist
+          const walPath = unifiedDbPath + "-wal";
+          const shmPath = unifiedDbPath + "-shm";
+          if (existsSync(walPath)) unlinkSync(walPath);
+          if (existsSync(shmPath)) unlinkSync(shmPath);
+          logger.info("STORAGE", `Deleted corrupt DB, will recreate on next access`);
+        } catch (deleteError) {
+          logger.error("STORAGE", `Failed to delete corrupt DB`, {
+            error: (deleteError as Error).message,
+          });
+        }
+      }
       throw error;
     }
   })();
@@ -141,4 +174,63 @@ export function setGlobalProjectContext(projectPath: string, branchName?: string
  */
 export function isStorageReady(): boolean {
   return graphStorage !== null && libsqlAdapter?.isReady() === true;
+}
+
+/**
+ * Handle database corruption by deleting corrupt files and reinitializing.
+ * Call this when DatabaseCorruptionError is caught.
+ * @returns true if recovery was successful
+ */
+export async function handleDatabaseCorruption(): Promise<boolean> {
+  console.error("[GraphStorageFactory] ⚠️ HANDLING DATABASE CORRUPTION");
+
+  // Get database path
+  const paths = getGlobalDbPaths();
+  const unifiedDbPath = join(dirname(paths.graphDbPath), "unified-storage.db");
+
+  // Close existing adapter
+  if (libsqlAdapter) {
+    try {
+      await libsqlAdapter.close();
+    } catch {
+      // Ignore close errors on corrupt db
+    }
+    libsqlAdapter = null;
+  }
+  graphStorage = null;
+  initializationPromise = null;
+
+  // Delete corrupt database files
+  const filesToDelete = [unifiedDbPath, `${unifiedDbPath}-journal`, `${unifiedDbPath}-wal`, `${unifiedDbPath}-shm`];
+
+  for (const file of filesToDelete) {
+    try {
+      if (existsSync(file)) {
+        const size = statSync(file).size;
+        const sizeMB = (size / 1024 / 1024).toFixed(1);
+        unlinkSync(file);
+        console.error(`[GraphStorageFactory] Deleted: ${file} (${sizeMB} MB)`);
+      }
+    } catch (error) {
+      console.error(`[GraphStorageFactory] Failed to delete ${file}: ${(error as Error).message}`);
+    }
+  }
+
+  // Reinitialize with fresh database
+  try {
+    console.error("[GraphStorageFactory] 🔄 Reinitializing with fresh database...");
+    await getGraphStorage();
+    console.error("[GraphStorageFactory] ✓ Database recreated successfully");
+    return true;
+  } catch (error) {
+    console.error("[GraphStorageFactory] ✗ Failed to recreate database:", error);
+    return false;
+  }
+}
+
+/**
+ * Check if an error is a database corruption error
+ */
+export function isDatabaseCorruptionError(error: unknown): error is DatabaseCorruptionError {
+  return error instanceof DatabaseCorruptionError;
 }

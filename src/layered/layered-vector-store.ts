@@ -35,7 +35,7 @@ export interface LayeredSimilarityResult extends SimilarityResult {
   layer: "base" | "branch" | "working";
 
   /** Branch name (if applicable) */
-  branch?: string;
+  branch?: string | undefined;
 }
 
 // =============================================================================

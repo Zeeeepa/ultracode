@@ -50,31 +50,13 @@ export class CUDABackend implements VectorBackend {
 
   async isAvailable(): Promise<boolean> {
     // Check environment override
-    if (process.env.CUDA_FORCE_DISABLE === "1") {
+    if (process.env["CUDA_FORCE_DISABLE"] === "1") {
       console.error("[CUDA Backend] Disabled via CUDA_FORCE_DISABLE=1");
       return false;
     }
 
-    // Check for Blackwell architecture - native addon crashes on CC >= 12.0
-    // Both Bun and Node crash when loading ultrascript_cuda.node on Blackwell GPUs
-    try {
-      const { execSync } = await import("node:child_process");
-      const output = execSync("nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits", {
-        encoding: "utf8",
-        timeout: 2000,
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-      }).trim();
-
-      const cc = Number.parseFloat(output);
-      if (cc >= 12.0) {
-        console.error(`[CUDA Backend] Skipped: Blackwell architecture (CC ${cc}) - native addon incompatible`);
-        console.error("[CUDA Backend] Using WASM SIMD or Pure JS fallback");
-        return false;
-      }
-    } catch {
-      // nvidia-smi not available, continue to try addon
-    }
+    // Note: Blackwell (CC 12.0) support added to CMakeLists.txt
+    // Try loading addon directly - it's compiled for CC 120
 
     try {
       // Try to load native CUDA addon from multiple possible locations

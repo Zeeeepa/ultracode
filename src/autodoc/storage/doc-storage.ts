@@ -8,11 +8,13 @@
  * - AutoDoc Types: src/autodoc/types.ts
  * - Schema: src/autodoc/storage/schema.sql
  * - Graph Storage: src/storage/graph-storage.ts
+ *
+ * Uses libsql for cross-runtime compatibility (Bun + Node.js)
  */
 
+import type { Client, InStatement, ResultSet } from "@libsql/client";
+import { createClient } from "@libsql/client";
 import { nanoid } from "nanoid";
-import type { SQLiteDatabase, SQLiteStatement } from "../../storage/sqlite-adapter.js";
-import type { SQLiteManager } from "../../storage/sqlite-manager.js";
 import type { AutoDocStatus, AutoDocTodo, ChangeLogEntry, DocEntity, DocEntityType, OutdatedDoc } from "../types.js";
 
 // =============================================================================
@@ -27,28 +29,12 @@ const OUTDATED_CONFIDENCE_THRESHOLD = 0.7;
 // =============================================================================
 
 export class DocStorage {
-  private db: SQLiteDatabase;
-  private sqliteManager: SQLiteManager;
+  private client: Client | null = null;
+  private dbPath: string;
   private initialized = false;
 
-  // Prepared statements cache
-  private statements: {
-    insertDoc?: SQLiteStatement;
-    updateDoc?: SQLiteStatement;
-    deleteDoc?: SQLiteStatement;
-    getDoc?: SQLiteStatement;
-    getDocsByFile?: SQLiteStatement;
-    getDocsByType?: SQLiteStatement;
-    getOutdatedDocs?: SQLiteStatement;
-    insertTodo?: SQLiteStatement;
-    updateTodo?: SQLiteStatement;
-    getTodos?: SQLiteStatement;
-    insertChangelog?: SQLiteStatement;
-  } = {};
-
-  constructor(sqliteManager: SQLiteManager) {
-    this.sqliteManager = sqliteManager;
-    this.db = sqliteManager.getConnection();
+  constructor(dbPath: string) {
+    this.dbPath = dbPath;
   }
 
   /**
@@ -57,25 +43,29 @@ export class DocStorage {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    this.ensureReady();
-    this.createTables();
-    this.prepareStatements();
+    // Create libsql client
+    this.client = createClient({
+      url: `file:${this.dbPath}`,
+    });
+
+    await this.createTables();
     this.initialized = true;
   }
 
   private ensureReady(): void {
-    if (!this.sqliteManager.isOpen()) {
-      this.sqliteManager.initialize();
+    if (!this.client) {
+      throw new Error("DocStorage not initialized. Call initialize() first.");
     }
-    this.db = this.sqliteManager.getConnection();
   }
 
   /**
    * Create AutoDoc tables if they don't exist
    */
-  private createTables(): void {
+  private async createTables(): Promise<void> {
+    if (!this.client) return;
+
     // doc_entities table
-    this.db.exec(`
+    await this.client.execute(`
       CREATE TABLE IF NOT EXISTS doc_entities (
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL,
@@ -89,17 +79,17 @@ export class DocStorage {
         last_sync INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_doc_file ON doc_entities(file_path);
-      CREATE INDEX IF NOT EXISTS idx_doc_type ON doc_entities(type);
-      CREATE INDEX IF NOT EXISTS idx_doc_section ON doc_entities(section);
-      CREATE INDEX IF NOT EXISTS idx_doc_confidence ON doc_entities(confidence);
-      CREATE INDEX IF NOT EXISTS idx_doc_updated ON doc_entities(updated_at);
+      )
     `);
 
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_doc_file ON doc_entities(file_path)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_doc_type ON doc_entities(type)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_doc_section ON doc_entities(section)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_doc_confidence ON doc_entities(confidence)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_doc_updated ON doc_entities(updated_at)`);
+
     // doc_changelog table
-    this.db.exec(`
+    await this.client.execute(`
       CREATE TABLE IF NOT EXISTS doc_changelog (
         id TEXT PRIMARY KEY,
         timestamp INTEGER NOT NULL,
@@ -108,15 +98,15 @@ export class DocStorage {
         summary TEXT,
         changes TEXT NOT NULL,
         impacted_docs TEXT DEFAULT '[]'
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_changelog_time ON doc_changelog(timestamp);
-      CREATE INDEX IF NOT EXISTS idx_changelog_commit ON doc_changelog(commit_hash);
-      CREATE INDEX IF NOT EXISTS idx_changelog_branch ON doc_changelog(branch);
+      )
     `);
 
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_changelog_time ON doc_changelog(timestamp)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_changelog_commit ON doc_changelog(commit_hash)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_changelog_branch ON doc_changelog(branch)`);
+
     // doc_todos table
-    this.db.exec(`
+    await this.client.execute(`
       CREATE TABLE IF NOT EXISTS doc_todos (
         id TEXT PRIMARY KEY,
         file_path TEXT NOT NULL,
@@ -127,72 +117,12 @@ export class DocStorage {
         completed INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
         completed_at INTEGER
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_todo_priority ON doc_todos(priority);
-      CREATE INDEX IF NOT EXISTS idx_todo_completed ON doc_todos(completed);
-      CREATE INDEX IF NOT EXISTS idx_todo_file ON doc_todos(file_path);
-    `);
-  }
-
-  /**
-   * Prepare commonly used statements for performance
-   */
-  private prepareStatements(): void {
-    this.statements.insertDoc = this.db.prepare(`
-      INSERT INTO doc_entities (id, type, file_path, section, title, content, tags, auto_generated, confidence, last_sync, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      )
     `);
 
-    this.statements.updateDoc = this.db.prepare(`
-      UPDATE doc_entities
-      SET type = ?, title = ?, content = ?, tags = ?, auto_generated = ?, confidence = ?, last_sync = ?, updated_at = ?
-      WHERE id = ?
-    `);
-
-    this.statements.deleteDoc = this.db.prepare(`
-      DELETE FROM doc_entities WHERE id = ?
-    `);
-
-    this.statements.getDoc = this.db.prepare(`
-      SELECT * FROM doc_entities WHERE id = ?
-    `);
-
-    this.statements.getDocsByFile = this.db.prepare(`
-      SELECT * FROM doc_entities WHERE file_path = ? ORDER BY section
-    `);
-
-    this.statements.getDocsByType = this.db.prepare(`
-      SELECT * FROM doc_entities WHERE type = ? ORDER BY file_path, section
-    `);
-
-    this.statements.getOutdatedDocs = this.db.prepare(`
-      SELECT * FROM doc_entities WHERE confidence < ? ORDER BY confidence ASC
-    `);
-
-    this.statements.insertTodo = this.db.prepare(`
-      INSERT OR REPLACE INTO doc_todos (id, file_path, title, priority, reason, related_entity_id, completed, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-    `);
-
-    this.statements.updateTodo = this.db.prepare(`
-      UPDATE doc_todos SET completed = 1, completed_at = ? WHERE id = ?
-    `);
-
-    this.statements.getTodos = this.db.prepare(`
-      SELECT * FROM doc_todos WHERE completed = 0 ORDER BY
-        CASE priority
-          WHEN 'high' THEN 1
-          WHEN 'medium' THEN 2
-          WHEN 'low' THEN 3
-        END,
-        created_at ASC
-    `);
-
-    this.statements.insertChangelog = this.db.prepare(`
-      INSERT INTO doc_changelog (id, timestamp, commit_hash, branch, summary, changes, impacted_docs)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_todo_priority ON doc_todos(priority)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_todo_completed ON doc_todos(completed)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_todo_file ON doc_todos(file_path)`);
   }
 
   // ---------------------------------------------------------------------------
@@ -210,7 +140,7 @@ export class DocStorage {
   /**
    * Create a new documentation entity
    */
-  createDoc(doc: Omit<DocEntity, "id" | "createdAt" | "updatedAt">): DocEntity {
+  async createDoc(doc: Omit<DocEntity, "id" | "createdAt" | "updatedAt">): Promise<DocEntity> {
     this.ensureReady();
 
     const now = Date.now();
@@ -223,20 +153,24 @@ export class DocStorage {
       updatedAt: now,
     };
 
-    this.statements.insertDoc!.run(
-      entity.id,
-      entity.type,
-      entity.filePath,
-      entity.section,
-      entity.title,
-      entity.content,
-      JSON.stringify(entity.tags),
-      entity.autoGenerated ? 1 : 0,
-      entity.confidence,
-      entity.lastSync,
-      entity.createdAt,
-      entity.updatedAt,
-    );
+    await this.client!.execute({
+      sql: `INSERT INTO doc_entities (id, type, file_path, section, title, content, tags, auto_generated, confidence, last_sync, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        entity.id,
+        entity.type,
+        entity.filePath,
+        entity.section ?? null,
+        entity.title,
+        entity.content,
+        JSON.stringify(entity.tags),
+        entity.autoGenerated ? 1 : 0,
+        entity.confidence,
+        entity.lastSync ?? null,
+        entity.createdAt,
+        entity.updatedAt,
+      ],
+    });
 
     return entity;
   }
@@ -244,10 +178,13 @@ export class DocStorage {
   /**
    * Update an existing documentation entity
    */
-  updateDoc(id: string, updates: Partial<Omit<DocEntity, "id" | "filePath" | "createdAt">>): DocEntity | null {
+  async updateDoc(
+    id: string,
+    updates: Partial<Omit<DocEntity, "id" | "filePath" | "createdAt">>,
+  ): Promise<DocEntity | null> {
     this.ensureReady();
 
-    const existing = this.getDoc(id);
+    const existing = await this.getDoc(id);
     if (!existing) return null;
 
     const now = Date.now();
@@ -257,17 +194,22 @@ export class DocStorage {
       updatedAt: now,
     };
 
-    this.statements.updateDoc!.run(
-      updated.type,
-      updated.title,
-      updated.content,
-      JSON.stringify(updated.tags),
-      updated.autoGenerated ? 1 : 0,
-      updated.confidence,
-      updated.lastSync,
-      updated.updatedAt,
-      id,
-    );
+    await this.client!.execute({
+      sql: `UPDATE doc_entities
+            SET type = ?, title = ?, content = ?, tags = ?, auto_generated = ?, confidence = ?, last_sync = ?, updated_at = ?
+            WHERE id = ?`,
+      args: [
+        updated.type,
+        updated.title,
+        updated.content,
+        JSON.stringify(updated.tags),
+        updated.autoGenerated ? 1 : 0,
+        updated.confidence,
+        updated.lastSync ?? null,
+        updated.updatedAt,
+        id,
+      ],
+    });
 
     return updated;
   }
@@ -275,123 +217,149 @@ export class DocStorage {
   /**
    * Delete a documentation entity
    */
-  deleteDoc(id: string): boolean {
+  async deleteDoc(id: string): Promise<boolean> {
     this.ensureReady();
 
-    const result = this.statements.deleteDoc!.run(id);
-    return result.changes > 0;
+    const result = await this.client!.execute({
+      sql: `DELETE FROM doc_entities WHERE id = ?`,
+      args: [id],
+    });
+    return result.rowsAffected > 0;
   }
 
   /**
    * Get a documentation entity by ID
    */
-  getDoc(id: string): DocEntity | null {
+  async getDoc(id: string): Promise<DocEntity | null> {
     this.ensureReady();
 
-    const row = this.statements.getDoc!.get(id) as DocEntityRow | undefined;
-    return row ? this.rowToDocEntity(row) : null;
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM doc_entities WHERE id = ?`,
+      args: [id],
+    });
+
+    if (result.rows.length === 0) return null;
+    return this.rowToDocEntity(result.rows[0] as unknown as DocEntityRow);
   }
 
   /**
    * Get all documentation entities for a file
    */
-  getDocsByFile(filePath: string): DocEntity[] {
+  async getDocsByFile(filePath: string): Promise<DocEntity[]> {
     this.ensureReady();
 
-    const rows = this.statements.getDocsByFile!.all(filePath) as DocEntityRow[];
-    return rows.map((row) => this.rowToDocEntity(row));
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM doc_entities WHERE file_path = ? ORDER BY section`,
+      args: [filePath],
+    });
+
+    return result.rows.map((row) => this.rowToDocEntity(row as unknown as DocEntityRow));
   }
 
   /**
    * Get all documentation entities of a specific type
    */
-  getDocsByType(type: DocEntityType): DocEntity[] {
+  async getDocsByType(type: DocEntityType): Promise<DocEntity[]> {
     this.ensureReady();
 
-    const rows = this.statements.getDocsByType!.all(type) as DocEntityRow[];
-    return rows.map((row) => this.rowToDocEntity(row));
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM doc_entities WHERE type = ? ORDER BY file_path, section`,
+      args: [type],
+    });
+
+    return result.rows.map((row) => this.rowToDocEntity(row as unknown as DocEntityRow));
   }
 
   /**
    * Get all documentation entities
    */
-  getAllDocs(options: { limit?: number; offset?: number } = {}): DocEntity[] {
+  async getAllDocs(options: { limit?: number; offset?: number } = {}): Promise<DocEntity[]> {
     this.ensureReady();
 
     const { limit, offset } = options;
     let sql = "SELECT * FROM doc_entities ORDER BY file_path, section";
+    const args: (number | string)[] = [];
 
     if (limit !== undefined) {
-      sql += ` LIMIT ${limit}`;
+      sql += ` LIMIT ?`;
+      args.push(limit);
       if (offset !== undefined) {
-        sql += ` OFFSET ${offset}`;
+        sql += ` OFFSET ?`;
+        args.push(offset);
       }
     }
 
-    const rows = this.db.prepare(sql).all() as DocEntityRow[];
-    return rows.map((row) => this.rowToDocEntity(row));
+    const result = await this.client!.execute({ sql, args });
+    return result.rows.map((row) => this.rowToDocEntity(row as unknown as DocEntityRow));
   }
 
   /**
    * Get max lastSync timestamp efficiently
    */
-  getMaxLastSync(): number | null {
+  async getMaxLastSync(): Promise<number | null> {
     this.ensureReady();
 
-    const result = this.db
-      .prepare("SELECT MAX(last_sync) as max_sync FROM doc_entities WHERE last_sync IS NOT NULL")
-      .get() as { max_sync: number | null } | undefined;
+    const result = await this.client!.execute(
+      "SELECT MAX(last_sync) as max_sync FROM doc_entities WHERE last_sync IS NOT NULL",
+    );
 
-    return result?.max_sync ?? null;
+    const row = result.rows[0] as unknown as { max_sync: number | null } | undefined;
+    return row?.max_sync ?? null;
   }
 
   /**
    * Search documents by text (using SQL LIKE for efficiency)
    */
-  searchByText(query: string, limit = 10): DocEntity[] {
+  async searchByText(query: string, limit = 10): Promise<DocEntity[]> {
     this.ensureReady();
 
     const likePattern = `%${query}%`;
-    const rows = this.db
-      .prepare(`
-      SELECT * FROM doc_entities
-      WHERE title LIKE ? COLLATE NOCASE OR content LIKE ? COLLATE NOCASE
-      ORDER BY
-        CASE WHEN title LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END,
-        updated_at DESC
-      LIMIT ?
-    `)
-      .all(likePattern, likePattern, likePattern, limit) as DocEntityRow[];
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM doc_entities
+            WHERE title LIKE ? COLLATE NOCASE OR content LIKE ? COLLATE NOCASE
+            ORDER BY
+              CASE WHEN title LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END,
+              updated_at DESC
+            LIMIT ?`,
+      args: [likePattern, likePattern, likePattern, limit],
+    });
 
-    return rows.map((row) => this.rowToDocEntity(row));
+    return result.rows.map((row) => this.rowToDocEntity(row as unknown as DocEntityRow));
   }
 
   /**
    * Get outdated documentation (confidence below threshold)
    */
-  getOutdatedDocs(threshold = OUTDATED_CONFIDENCE_THRESHOLD): OutdatedDoc[] {
+  async getOutdatedDocs(threshold = OUTDATED_CONFIDENCE_THRESHOLD): Promise<OutdatedDoc[]> {
     this.ensureReady();
 
-    const rows = this.statements.getOutdatedDocs!.all(threshold) as DocEntityRow[];
-    return rows.map((row) => ({
-      docId: row.id,
-      filePath: row.file_path,
-      section: row.section || undefined,
-      reason: `Confidence ${row.confidence.toFixed(2)} below threshold ${threshold}`,
-      confidence: row.confidence,
-    }));
+    const result = await this.client!.execute({
+      sql: `SELECT * FROM doc_entities WHERE confidence < ? ORDER BY confidence ASC`,
+      args: [threshold],
+    });
+
+    return result.rows.map((row) => {
+      const r = row as unknown as DocEntityRow;
+      return {
+        docId: r.id,
+        filePath: r.file_path,
+        section: r.section || undefined,
+        reason: `Confidence ${r.confidence.toFixed(2)} below threshold ${threshold}`,
+        confidence: r.confidence,
+      };
+    });
   }
 
   /**
    * Mark documentation as outdated (reduce confidence)
    */
-  markOutdated(id: string, _reason?: string): boolean {
+  async markOutdated(id: string, _reason?: string): Promise<boolean> {
     this.ensureReady();
 
-    const doc = this.getDoc(id);
+    const doc = await this.getDoc(id);
     if (!doc) return false;
 
-    this.updateDoc(id, {
+    await this.updateDoc(id, {
       confidence: Math.max(0, doc.confidence - 0.3),
     });
 
@@ -399,42 +367,39 @@ export class DocStorage {
   }
 
   /**
-   * Batch upsert documents (optimized - single INSERT OR REPLACE per doc)
+   * Batch upsert documents (optimized)
    */
-  upsertDocs(docs: Array<Omit<DocEntity, "id" | "createdAt" | "updatedAt">>): number {
+  async upsertDocs(docs: Array<Omit<DocEntity, "id" | "createdAt" | "updatedAt">>): Promise<number> {
     this.ensureReady();
 
     const now = Date.now();
 
-    // Use INSERT OR REPLACE - avoids N+1 getDoc() calls
-    const upsertStmt = this.db.prepare(`
-      INSERT OR REPLACE INTO doc_entities
-        (id, type, file_path, section, title, content, tags, auto_generated, confidence, last_sync, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM doc_entities WHERE id = ?), ?), ?)
-    `);
-
-    const transaction = this.db.transaction(() => {
-      for (const doc of docs) {
-        const id = this.generateDocId(doc.filePath, doc.section);
-        upsertStmt.run(
+    // Use batch execute for efficiency
+    const statements: InStatement[] = docs.map((doc) => {
+      const id = this.generateDocId(doc.filePath, doc.section);
+      return {
+        sql: `INSERT OR REPLACE INTO doc_entities
+              (id, type, file_path, section, title, content, tags, auto_generated, confidence, last_sync, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM doc_entities WHERE id = ?), ?), ?)`,
+        args: [
           id,
           doc.type,
           doc.filePath,
-          doc.section,
+          doc.section ?? null,
           doc.title,
           doc.content,
           JSON.stringify(doc.tags),
           doc.autoGenerated ? 1 : 0,
           doc.confidence,
-          doc.lastSync,
+          doc.lastSync ?? null,
           id, // For COALESCE subquery
           now, // created_at fallback
           now, // updated_at
-        );
-      }
+        ],
+      };
     });
 
-    transaction();
+    await this.client!.batch(statements);
     return docs.length;
   }
 
@@ -445,62 +410,69 @@ export class DocStorage {
   /**
    * Add a todo item for documentation
    */
-  addTodo(todo: Omit<AutoDocTodo, "sectionId"> & { sectionId?: string }): void {
+  async addTodo(todo: Omit<AutoDocTodo, "sectionId"> & { sectionId?: string }): Promise<void> {
     this.ensureReady();
 
     const id = todo.sectionId || nanoid(ID_LENGTH);
     const now = Date.now();
 
-    this.statements.insertTodo!.run(
-      id,
-      todo.filePath,
-      todo.title,
-      todo.priority,
-      todo.reason,
-      todo.relatedEntityId || null,
-      now,
-    );
+    await this.client!.execute({
+      sql: `INSERT OR REPLACE INTO doc_todos (id, file_path, title, priority, reason, related_entity_id, completed, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+      args: [id, todo.filePath, todo.title, todo.priority, todo.reason ?? null, todo.relatedEntityId ?? null, now],
+    });
   }
 
   /**
    * Mark a todo as completed
    */
-  completeTodo(id: string): boolean {
+  async completeTodo(id: string): Promise<boolean> {
     this.ensureReady();
 
-    const result = this.statements.updateTodo!.run(Date.now(), id);
-    return result.changes > 0;
+    const result = await this.client!.execute({
+      sql: `UPDATE doc_todos SET completed = 1, completed_at = ? WHERE id = ?`,
+      args: [Date.now(), id],
+    });
+    return result.rowsAffected > 0;
   }
 
   /**
    * Get pending todos
    */
-  getTodos(priority?: "high" | "medium" | "low"): AutoDocTodo[] {
+  async getTodos(priority?: "high" | "medium" | "low"): Promise<AutoDocTodo[]> {
     this.ensureReady();
 
-    let rows: TodoRow[];
+    let result: ResultSet;
     if (priority) {
-      rows = this.db
-        .prepare(
-          `
-        SELECT * FROM doc_todos
-        WHERE completed = 0 AND priority = ?
-        ORDER BY created_at ASC
-      `,
-        )
-        .all(priority) as TodoRow[];
+      result = await this.client!.execute({
+        sql: `SELECT * FROM doc_todos
+              WHERE completed = 0 AND priority = ?
+              ORDER BY created_at ASC`,
+        args: [priority],
+      });
     } else {
-      rows = this.statements.getTodos!.all() as TodoRow[];
+      result = await this.client!.execute(`
+        SELECT * FROM doc_todos WHERE completed = 0 ORDER BY
+          CASE priority
+            WHEN 'high' THEN 1
+            WHEN 'medium' THEN 2
+            WHEN 'low' THEN 3
+          END,
+          created_at ASC
+      `);
     }
 
-    return rows.map((row) => ({
-      sectionId: row.id,
-      filePath: row.file_path,
-      title: row.title,
-      priority: row.priority as "high" | "medium" | "low",
-      reason: row.reason || "",
-      relatedEntityId: row.related_entity_id || undefined,
-    }));
+    return result.rows.map((row) => {
+      const r = row as unknown as TodoRow;
+      return {
+        sectionId: r.id,
+        filePath: r.file_path,
+        title: r.title,
+        priority: r.priority as "high" | "medium" | "low",
+        reason: r.reason || "",
+        relatedEntityId: r.related_entity_id || undefined,
+      };
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -510,21 +482,25 @@ export class DocStorage {
   /**
    * Record a changelog entry
    */
-  recordChange(entry: Omit<ChangeLogEntry, "id">): ChangeLogEntry {
+  async recordChange(entry: Omit<ChangeLogEntry, "id">): Promise<ChangeLogEntry> {
     this.ensureReady();
 
     const id = nanoid(ID_LENGTH);
     const fullEntry: ChangeLogEntry = { ...entry, id };
 
-    this.statements.insertChangelog!.run(
-      id,
-      entry.timestamp,
-      entry.commitHash || null,
-      entry.branch,
-      entry.summary || null,
-      JSON.stringify(entry.changes),
-      JSON.stringify(entry.impactedDocs),
-    );
+    await this.client!.execute({
+      sql: `INSERT INTO doc_changelog (id, timestamp, commit_hash, branch, summary, changes, impacted_docs)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        id,
+        entry.timestamp,
+        entry.commitHash ?? null,
+        entry.branch,
+        entry.summary ?? null,
+        JSON.stringify(entry.changes),
+        JSON.stringify(entry.impactedDocs),
+      ],
+    });
 
     return fullEntry;
   }
@@ -532,38 +508,43 @@ export class DocStorage {
   /**
    * Get changelog entries
    */
-  getChangelog(options: { since?: number; limit?: number; branch?: string } = {}): ChangeLogEntry[] {
+  async getChangelog(
+    options: { since?: number | undefined; limit?: number; branch?: string } = {},
+  ): Promise<ChangeLogEntry[]> {
     this.ensureReady();
 
     const { since, limit = 50, branch } = options;
 
     let sql = "SELECT * FROM doc_changelog WHERE 1=1";
-    const params: (number | string)[] = [];
+    const args: (number | string)[] = [];
 
     if (since) {
       sql += " AND timestamp >= ?";
-      params.push(since);
+      args.push(since);
     }
 
     if (branch) {
       sql += " AND branch = ?";
-      params.push(branch);
+      args.push(branch);
     }
 
     sql += " ORDER BY timestamp DESC LIMIT ?";
-    params.push(limit);
+    args.push(limit);
 
-    const rows = this.db.prepare(sql).all(...params) as ChangelogRow[];
+    const result = await this.client!.execute({ sql, args });
 
-    return rows.map((row) => ({
-      id: row.id,
-      timestamp: row.timestamp,
-      commitHash: row.commit_hash || undefined,
-      branch: row.branch,
-      summary: row.summary || undefined,
-      changes: JSON.parse(row.changes),
-      impactedDocs: JSON.parse(row.impacted_docs),
-    }));
+    return result.rows.map((row) => {
+      const r = row as unknown as ChangelogRow;
+      return {
+        id: r.id,
+        timestamp: r.timestamp,
+        commitHash: r.commit_hash || undefined,
+        branch: r.branch,
+        summary: r.summary || undefined,
+        changes: JSON.parse(r.changes),
+        impactedDocs: JSON.parse(r.impacted_docs),
+      };
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -573,26 +554,27 @@ export class DocStorage {
   /**
    * Get documentation statistics
    */
-  getStats(): AutoDocStatus["stats"] {
+  async getStats(): Promise<AutoDocStatus["stats"]> {
     this.ensureReady();
 
-    const totalDocs = (this.db.prepare("SELECT COUNT(*) as count FROM doc_entities").get() as { count: number }).count;
+    const totalDocsResult = await this.client!.execute("SELECT COUNT(*) as count FROM doc_entities");
+    const totalDocs = (totalDocsResult.rows[0] as unknown as { count: number }).count;
 
-    const totalSections = (
-      this.db.prepare("SELECT COUNT(*) as count FROM doc_entities WHERE section IS NOT NULL").get() as { count: number }
-    ).count;
+    const totalSectionsResult = await this.client!.execute(
+      "SELECT COUNT(*) as count FROM doc_entities WHERE section IS NOT NULL",
+    );
+    const totalSections = (totalSectionsResult.rows[0] as unknown as { count: number }).count;
 
-    const filledSections = (
-      this.db
-        .prepare("SELECT COUNT(*) as count FROM doc_entities WHERE section IS NOT NULL AND LENGTH(content) > 50")
-        .get() as { count: number }
-    ).count;
+    const filledSectionsResult = await this.client!.execute(
+      "SELECT COUNT(*) as count FROM doc_entities WHERE section IS NOT NULL AND LENGTH(content) > 50",
+    );
+    const filledSections = (filledSectionsResult.rows[0] as unknown as { count: number }).count;
 
-    const outdatedSections = (
-      this.db
-        .prepare(`SELECT COUNT(*) as count FROM doc_entities WHERE confidence < ${OUTDATED_CONFIDENCE_THRESHOLD}`)
-        .get() as { count: number }
-    ).count;
+    const outdatedSectionsResult = await this.client!.execute({
+      sql: `SELECT COUNT(*) as count FROM doc_entities WHERE confidence < ?`,
+      args: [OUTDATED_CONFIDENCE_THRESHOLD],
+    });
+    const outdatedSections = (outdatedSectionsResult.rows[0] as unknown as { count: number }).count;
 
     // Reference stats will be added when RefStorage is implemented
     return {
@@ -644,21 +626,20 @@ export class DocStorage {
   /**
    * Clear all documentation data
    */
-  clear(): void {
+  async clear(): Promise<void> {
     this.ensureReady();
 
-    this.db.exec(`
-      DELETE FROM doc_entities;
-      DELETE FROM doc_changelog;
-      DELETE FROM doc_todos;
-    `);
+    await this.client!.batch(["DELETE FROM doc_entities", "DELETE FROM doc_changelog", "DELETE FROM doc_todos"]);
   }
 
   /**
    * Clean up resources
    */
-  destroy(): void {
-    this.statements = {};
+  async destroy(): Promise<void> {
+    if (this.client) {
+      this.client.close();
+      this.client = null;
+    }
     this.initialized = false;
   }
 }

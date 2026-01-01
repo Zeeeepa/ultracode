@@ -8,11 +8,11 @@
  */
 
 export interface LLMConfig {
-  provider: "ollama" | "tgi" | "openai";
+  provider: "ollama" | "tgi" | "openai" | "docker-model-runner";
   baseUrl: string;
   model: string;
-  apiKey?: string;
-  maxTokens?: number;
+  apiKey?: string | undefined;
+  maxTokens?: number | undefined;
   temperature?: number;
 }
 
@@ -34,7 +34,7 @@ export interface LLMProvider {
 }
 
 export interface GenerateOptions {
-  maxTokens?: number;
+  maxTokens?: number | undefined;
   temperature?: number;
   stopSequences?: string[];
   systemPrompt?: string;
@@ -44,6 +44,7 @@ const DEFAULT_TIMEOUT = 120000; // 120s for generation (larger models need more 
 
 // Preferred LLM models for code documentation (best first)
 const PREFERRED_LLM_MODELS = [
+  "devstral-small", // 24B, excels at codebase exploration & multi-file editing
   "qwen3-coder:30b", // MoE, 262K context, best quality
   "qwen3-coder:8b", // Dense, 262K context
   "qwen2.5-coder:14b", // 128K context, excellent
@@ -65,7 +66,7 @@ export class OllamaProvider implements LLMProvider {
   private baseUrl: string;
   private model: string;
 
-  constructor(config: { baseUrl?: string; model?: string }) {
+  constructor(config: { baseUrl?: string | undefined; model?: string }) {
     this.baseUrl = config.baseUrl || "http://localhost:11434";
     this.model = config.model || ""; // Will be auto-selected in checkHealth
   }
@@ -253,7 +254,7 @@ export class OpenAIProvider implements LLMProvider {
   private model: string;
   private apiKey: string;
 
-  constructor(config: { baseUrl?: string; model?: string; apiKey?: string }) {
+  constructor(config: { baseUrl?: string | undefined; model?: string | undefined; apiKey?: string }) {
     this.baseUrl = config.baseUrl || "http://localhost:8000/v1";
     this.model = config.model || "gpt-3.5-turbo";
     this.apiKey = config.apiKey || "not-needed";
@@ -333,10 +334,132 @@ export class OpenAIProvider implements LLMProvider {
   }
 }
 
+// Docker Model Runner recommended models for autodoc
+const DMR_PREFERRED_MODELS = [
+  // Quality (best reasoning)
+  "ai/qwen2.5", // Best multilingual, RU/EN
+  "ai/deepseek-r1-distill-llama", // Best reasoning
+  // Fast (smaller, quicker response)
+  "ai/phi4", // Compact, fast
+  "ai/llama3.2", // Fast, good quality
+];
+
+/**
+ * Docker Model Runner Provider (Docker Desktop 4.40+)
+ * Uses OpenAI-compatible API via docker model CLI
+ */
+export class DockerModelRunnerProvider implements LLMProvider {
+  readonly name = "docker-model-runner";
+  private _isAvailable = false;
+  private baseUrl: string;
+  private model: string;
+
+  constructor(config: { baseUrl?: string | undefined; model?: string }) {
+    // Docker Model Runner API endpoint (from host)
+    this.baseUrl = config.baseUrl || "http://localhost:12434/engines/llama.cpp/v1";
+    this.model = config.model || "";
+  }
+
+  get isAvailable(): boolean {
+    return this._isAvailable;
+  }
+
+  get selectedModel(): string {
+    return this.model;
+  }
+
+  async checkHealth(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/models`, {
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) {
+        this._isAvailable = false;
+        return false;
+      }
+
+      // Auto-select best available model if not specified
+      if (!this.model) {
+        const models = await this.listModels();
+        this.model = this.selectBestModel(models);
+      }
+
+      this._isAvailable = !!this.model;
+      return this._isAvailable;
+    } catch {
+      this._isAvailable = false;
+      return false;
+    }
+  }
+
+  private selectBestModel(availableModels: string[]): string {
+    // Find first preferred model that's available
+    for (const preferred of DMR_PREFERRED_MODELS) {
+      if (availableModels.includes(preferred)) {
+        return preferred;
+      }
+    }
+
+    // Fallback: first available model
+    return availableModels[0] || "";
+  }
+
+  async listModels(): Promise<string[]> {
+    try {
+      const response = await fetch(`${this.baseUrl}/models`);
+      if (!response.ok) return [];
+      const data = (await response.json()) as { data?: { id: string }[] };
+      return (data.data || []).map((m) => m.id);
+    } catch {
+      return [];
+    }
+  }
+
+  async generate(prompt: string, options?: GenerateOptions): Promise<LLMResponse> {
+    const messages: { role: string; content: string }[] = [];
+    if (options?.systemPrompt) {
+      messages.push({ role: "system", content: options.systemPrompt });
+    }
+    messages.push({ role: "user", content: prompt });
+
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        max_tokens: options?.maxTokens || 2048,
+        temperature: options?.temperature || 0.3,
+        stop: options?.stopSequences,
+      }),
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Docker Model Runner error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens: number; completion_tokens: number };
+    };
+    return {
+      text: data.choices?.[0]?.message?.content || "",
+      usage: data.usage
+        ? {
+            promptTokens: data.usage.prompt_tokens,
+            completionTokens: data.usage.completion_tokens,
+          }
+        : undefined,
+    };
+  }
+}
+
 /**
  * Load LLM config from semantic-config.json
  */
-async function loadLLMConfig(): Promise<{ provider?: string; model?: string; endpoint?: string } | null> {
+async function loadLLMConfig(): Promise<{ provider?: string; model?: string | undefined; endpoint?: string } | null> {
   try {
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
@@ -344,7 +467,7 @@ async function loadLLMConfig(): Promise<{ provider?: string; model?: string; end
 
     // Check standard config locations
     const configPaths = [
-      join(process.env.LOCALAPPDATA || "", "UltraScriptTools", "config", "semantic-config.json"),
+      join(process.env["LOCALAPPDATA"] || "", "UltraScriptTools", "config", "semantic-config.json"),
       join(homedir(), ".ultrascript-tools", "config", "semantic-config.json"),
     ].filter((p) => p && !p.startsWith(join(""))); // Filter out empty paths
 
@@ -398,9 +521,20 @@ export async function detectLLMProviders(): Promise<{
         model: savedConfig.model,
       }),
     );
+  } else if (savedConfig?.provider === "docker-model-runner") {
+    providers.push(
+      new DockerModelRunnerProvider({
+        baseUrl: savedConfig.endpoint,
+        model: savedConfig.model,
+      }),
+    );
   }
 
   // Add default providers if not already added
+  // Docker Model Runner first (simplest if available)
+  if (!providers.some((p) => p.name === "docker-model-runner")) {
+    providers.push(new DockerModelRunnerProvider({}));
+  }
   if (!providers.some((p) => p.name === "ollama")) {
     providers.push(new OllamaProvider({}));
   }
@@ -420,13 +554,14 @@ export async function detectLLMProviders(): Promise<{
     }),
   );
 
-  // Prefer configured provider > Ollama > TGI > OpenAI
+  // Prefer configured provider > Docker Model Runner > Ollama > TGI > OpenAI
   let recommended: LLMProvider | null = null;
   if (savedConfig?.provider) {
     recommended = available.find((p) => p.name === savedConfig.provider) || null;
   }
   if (!recommended) {
     recommended =
+      available.find((p) => p.name === "docker-model-runner") ||
       available.find((p) => p.name === "ollama") ||
       available.find((p) => p.name === "tgi") ||
       available.find((p) => p.name === "openai") ||
@@ -450,6 +585,11 @@ export function createLLMProvider(config: LLMConfig): LLMProvider {
         baseUrl: config.baseUrl,
         model: config.model,
         apiKey: config.apiKey,
+      });
+    case "docker-model-runner":
+      return new DockerModelRunnerProvider({
+        baseUrl: config.baseUrl,
+        model: config.model,
       });
     default:
       throw new Error(`Unknown LLM provider: ${config.provider}`);

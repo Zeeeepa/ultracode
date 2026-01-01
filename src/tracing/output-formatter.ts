@@ -29,7 +29,7 @@ export class OutputFormatter {
   /**
    * Format trace flow result as text
    */
-  formatTraceFlowAsText(result: TraceFlowResult): string {
+  formatTraceFlowAsText(result: TraceFlowResult & { _debug?: any }): string {
     const lines: string[] = [];
 
     lines.push(`═══ Trace Flow: ${result.from} → ${result.to} ═══`);
@@ -37,6 +37,16 @@ export class OutputFormatter {
 
     if (result.paths.length === 0) {
       lines.push("❌ No paths found between these points.");
+      // Add debug info if available
+      if (result._debug) {
+        lines.push("");
+        lines.push("--- Debug Info ---");
+        lines.push(`Source: ${result._debug.sourceEntityName} (${result._debug.sourceEntityId})`);
+        lines.push(`Target: ${result._debug.targetEntityName} (${result._debug.targetEntityId})`);
+        lines.push(`Graph: ${result._debug.graphStats?.nodes} nodes, ${result._debug.graphStats?.edges} edges`);
+        lines.push(`Linear trace: ${result._debug.linearTraceSummary}`);
+        lines.push(`Nodes visited: ${result._debug.nodesVisited}`);
+      }
       return lines.join("\n");
     }
 

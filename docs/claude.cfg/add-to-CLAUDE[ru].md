@@ -7,9 +7,9 @@
 | Вместо | Используй | Почему |
 |--------|-----------|--------|
 | `Grep` для поиска кода | `semantic_search` | Понимает смысл, в 5-10x быстрее |
-| `Glob` + чтение файлов | `list_file_entities` | AST-парсинг, находит классы/функции |
+| `Glob` + чтение файлов | `get_members` | AST-парсинг, находит классы/функции |
 | Ручная проверка зависимостей | `analyze_code_impact` | Показывает что сломается |
-| `Grep` для дубликатов | `detect_code_clones` | Семантическое сходство |
+| `Grep` для дубликатов | `find_duplicates` | Семантическое сходство |
 
 ## Перед первым использованием
 
@@ -18,9 +18,10 @@
 ## Быстрый справочник
 
 - **Поиск**: `semantic_search`, `pattern_search`, `find_similar_code`
-- **Навигация**: `list_file_entities`, `list_entity_relationships`, `get_members`
-- **Анализ**: `analyze_code_impact`, `detect_code_clones`, `analyze_hotspots`
-- **Модификация**: `modify_code`, `rename_symbol`, `create_file`
+- **Навигация**: `get_members`, `list_entity_relationships`
+- **Анализ**: `analyze_code_impact`, `find_duplicates`, `analyze_hotspots`
+- **Трассировка**: `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`
+- **Модификация**: `modify_code`, `rename_symbol`, `create_file`, `add_member`
 
 > Для C# используй UltrasharpTools MCP (на базе Roslyn).
 

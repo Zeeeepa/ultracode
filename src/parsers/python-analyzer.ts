@@ -29,6 +29,7 @@
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type {
+  ASTNode,
   EntityRelationship,
   ImportDependency,
   MagicType,
@@ -38,7 +39,6 @@ import type {
   PythonClassInfo,
   PythonMethodInfo,
   PythonParserMetrics,
-  TreeSitterNode,
 } from "../types/parser.js";
 import { findNodesByType } from "./base-parser-utils.js";
 
@@ -127,7 +127,7 @@ interface AnalysisContext {
 /**
  * Convert tree-sitter position to our format
  */
-function convertPosition(node: TreeSitterNode) {
+function convertPosition(node: ASTNode) {
   return {
     start: {
       line: node.startPosition.row + 1,
@@ -145,7 +145,7 @@ function convertPosition(node: TreeSitterNode) {
 /**
  * Extract text content from a node
  */
-function getNodeText(node: TreeSitterNode, source: string): string {
+function getNodeText(node: ASTNode, source: string): string {
   return source.substring(node.startIndex, node.endIndex);
 }
 
@@ -222,7 +222,7 @@ export class PythonAnalyzer {
    */
   async analyzePythonCode(
     filePath: string,
-    rootNode: TreeSitterNode,
+    rootNode: ASTNode,
     source: string,
   ): Promise<{
     entities: ParsedEntity[];
@@ -307,7 +307,7 @@ export class PythonAnalyzer {
    * Layer 1: Enhanced basic parsing with improved method classification,
    * complex type hints, and advanced decorator chaining
    */
-  private async executeLayer1Analysis(rootNode: TreeSitterNode, context: AnalysisContext): Promise<void> {
+  private async executeLayer1Analysis(rootNode: ASTNode, context: AnalysisContext): Promise<void> {
     console.error("[PythonAnalyzer] Executing Layer 1: Enhanced Basic Parsing");
     const layer1StartTime = Date.now();
 
@@ -328,7 +328,7 @@ export class PythonAnalyzer {
   /**
    * Traverse nodes for Layer 1 analysis
    */
-  private traverseNodeForLayer1(node: TreeSitterNode, context: AnalysisContext): void {
+  private traverseNodeForLayer1(node: ASTNode, context: AnalysisContext): void {
     switch (node.type) {
       case "function_definition":
       case "async_function_definition":
@@ -362,7 +362,7 @@ export class PythonAnalyzer {
   /**
    * Analyze enhanced function with improved method classification
    */
-  private analyzeEnhancedFunction(node: TreeSitterNode, context: AnalysisContext): void {
+  private analyzeEnhancedFunction(node: ASTNode, context: AnalysisContext): void {
     const nameNode = node.namedChildren.find((child) => child.type === "identifier");
     if (!nameNode) return;
 
@@ -437,7 +437,7 @@ export class PythonAnalyzer {
   /**
    * Analyze enhanced class with comprehensive information
    */
-  private analyzeEnhancedClass(node: TreeSitterNode, context: AnalysisContext): void {
+  private analyzeEnhancedClass(node: ASTNode, context: AnalysisContext): void {
     const nameNode = node.namedChildren.find((child) => child.type === "identifier");
     if (!nameNode) return;
 
@@ -489,7 +489,7 @@ export class PythonAnalyzer {
     const bodyNode = node.namedChildren.find((child) => child.type === "block");
     if (bodyNode) {
       for (const child of bodyNode.namedChildren) {
-        let fnNode: TreeSitterNode | null = null;
+        let fnNode: ASTNode | null = null;
 
         if (child.type === "function_definition" || child.type === "async_function_definition") {
           fnNode = child;
@@ -520,7 +520,7 @@ export class PythonAnalyzer {
    * Extract decorators with chaining analysis
    */
   private extractDecoratorsWithChaining(
-    node: TreeSitterNode,
+    node: ASTNode,
     context: AnalysisContext,
   ): Array<{ name: string; arguments?: string[] }> {
     const decorators: Array<{ name: string; arguments?: string[] }> = [];
@@ -553,7 +553,7 @@ export class PythonAnalyzer {
   /**
    * Extract complex function parameters with type hints
    */
-  private extractComplexParameters(node: TreeSitterNode, context: AnalysisContext): ParsedEntity["parameters"] {
+  private extractComplexParameters(node: ASTNode, context: AnalysisContext): ParsedEntity["parameters"] {
     const params: NonNullable<ParsedEntity["parameters"]> = [];
     const parametersNode = node.namedChildren.find((child) => child.type === "parameters");
 
@@ -611,7 +611,7 @@ export class PythonAnalyzer {
   /**
    * Extract complex type hints including Union, Optional, Generic, etc.
    */
-  private extractComplexTypeHint(node: TreeSitterNode, context: AnalysisContext): string {
+  private extractComplexTypeHint(node: ASTNode, context: AnalysisContext): string {
     // Handle various type hint patterns
     switch (node.type) {
       case "identifier":
@@ -639,7 +639,7 @@ export class PythonAnalyzer {
    * Classify method type (instance, class, static, property, abstract, magic)
    */
   private classifyMethodType(
-    node: TreeSitterNode,
+    node: ASTNode,
     decorators: Array<{ name: string; arguments?: string[] }>,
     _context: AnalysisContext,
   ): PythonMethodInfo["classification"] {
@@ -670,7 +670,7 @@ export class PythonAnalyzer {
    * Layer 2: Advanced feature analysis including magic methods, properties,
    * async patterns, generators, and dataclasses
    */
-  private async executeLayer2Analysis(rootNode: TreeSitterNode, context: AnalysisContext): Promise<void> {
+  private async executeLayer2Analysis(rootNode: ASTNode, context: AnalysisContext): Promise<void> {
     console.error("[PythonAnalyzer] Executing Layer 2: Advanced Feature Analysis");
     const layer2StartTime = Date.now();
 
@@ -711,7 +711,7 @@ export class PythonAnalyzer {
    * Layer 3: Relationship mapping including inheritance hierarchies,
    * method overrides, import dependencies, and cross-file references
    */
-  private async executeLayer3Analysis(rootNode: TreeSitterNode, context: AnalysisContext): Promise<void> {
+  private async executeLayer3Analysis(rootNode: ASTNode, context: AnalysisContext): Promise<void> {
     console.error("[PythonAnalyzer] Executing Layer 3: Relationship Mapping");
     const layer3StartTime = Date.now();
 
@@ -738,7 +738,7 @@ export class PythonAnalyzer {
    * Layer 4: Pattern recognition including context managers,
    * exception handling, design patterns, and Python idioms
    */
-  private async executeLayer4Analysis(rootNode: TreeSitterNode, context: AnalysisContext): Promise<PatternAnalysis> {
+  private async executeLayer4Analysis(rootNode: ASTNode, context: AnalysisContext): Promise<PatternAnalysis> {
     console.error("[PythonAnalyzer] Executing Layer 4: Pattern Recognition");
     const layer4StartTime = Date.now();
 
@@ -822,7 +822,7 @@ export class PythonAnalyzer {
   /**
    * Extract decorator arguments from decorator node
    */
-  private extractDecoratorArguments(node: TreeSitterNode, context: AnalysisContext): string[] {
+  private extractDecoratorArguments(node: ASTNode, context: AnalysisContext): string[] {
     const args: string[] = [];
 
     // Look for argument_list child
@@ -841,7 +841,7 @@ export class PythonAnalyzer {
   /**
    * Extract complex return type annotation
    */
-  private extractComplexReturnType(node: TreeSitterNode, context: AnalysisContext): string | undefined {
+  private extractComplexReturnType(node: ASTNode, context: AnalysisContext): string | undefined {
     // Look for type annotation after the colon
     const typeNode = node.namedChildren.find((child) => child.type === "type");
     if (!typeNode) return undefined;
@@ -852,7 +852,7 @@ export class PythonAnalyzer {
   /**
    * Check if function contains yield expressions (generator)
    */
-  private hasYieldExpression(node: TreeSitterNode): boolean {
+  private hasYieldExpression(node: ASTNode): boolean {
     // Recursively check for yield or yield_from expressions
     if (node.type === "yield" || node.type === "yield_from") {
       return true;
@@ -874,10 +874,10 @@ export class PythonAnalyzer {
   /**
    * Extract all function/method calls within a node
    */
-  private extractCalls(node: TreeSitterNode, source: string): ParsedEntity["calls"] {
+  private extractCalls(node: ASTNode, source: string): ParsedEntity["calls"] {
     const calls: NonNullable<ParsedEntity["calls"]> = [];
 
-    const visit = (n: TreeSitterNode, isAwaited = false): void => {
+    const visit = (n: ASTNode, isAwaited = false): void => {
       // Handle await expressions
       if (n.type === "await") {
         const awaited = n.namedChildren[0];
@@ -925,8 +925,8 @@ export class PythonAnalyzer {
    * Extract information from a single call expression
    */
   private extractCallInfo(
-    funcNode: TreeSitterNode,
-    callNode: TreeSitterNode,
+    funcNode: ASTNode,
+    callNode: ASTNode,
     source: string,
     isAwaited: boolean,
   ): NonNullable<ParsedEntity["calls"]>[number] | null {
@@ -968,7 +968,7 @@ export class PythonAnalyzer {
       name,
       target,
       location: convertPosition(callNode),
-      isAwait: isAwaited || undefined,
+      ...(isAwaited && { isAwait: isAwaited }),
       argumentCount,
     };
   }
@@ -980,7 +980,7 @@ export class PythonAnalyzer {
   /**
    * Extract control flow structures from a function/method
    */
-  private extractControlFlow(node: TreeSitterNode, source: string): ParsedEntity["controlFlow"] {
+  private extractControlFlow(node: ASTNode, source: string): ParsedEntity["controlFlow"] {
     type BranchInfo = NonNullable<ParsedEntity["controlFlow"]>["branches"][number];
     type LoopInfo = NonNullable<ParsedEntity["controlFlow"]>["loops"][number];
     type ExceptionInfo = NonNullable<ParsedEntity["controlFlow"]>["exceptions"][number];
@@ -993,7 +993,7 @@ export class PythonAnalyzer {
     const returns: ReturnInfo[] = [];
     const awaits: AwaitInfo[] = [];
 
-    const visit = (n: TreeSitterNode): void => {
+    const visit = (n: ASTNode): void => {
       // If statements
       if (n.type === "if_statement") {
         const condition = n.namedChildren.find(
@@ -1158,7 +1158,7 @@ export class PythonAnalyzer {
    * Extract documentation from Python docstrings
    * Supports Google, NumPy, and reStructuredText docstring formats
    */
-  private extractDocumentation(node: TreeSitterNode, source: string): ParsedEntity["documentation"] {
+  private extractDocumentation(node: ASTNode, source: string): ParsedEntity["documentation"] {
     // Find docstring - first string literal in function/class body
     const bodyNode = node.namedChildren.find((c) => c.type === "block");
     if (!bodyNode) return undefined;
@@ -1168,7 +1168,7 @@ export class PythonAnalyzer {
     if (!firstStmt) return undefined;
 
     // Check for expression_statement containing string
-    let docstringNode: TreeSitterNode | null = null;
+    let docstringNode: ASTNode | null = null;
     if (firstStmt.type === "expression_statement") {
       const expr = firstStmt.namedChildren[0];
       if (expr && (expr.type === "string" || expr.type === "concatenated_string")) {
@@ -1200,7 +1200,7 @@ export class PythonAnalyzer {
     const examples: string[] = [];
     // biome-ignore lint/style/useConst: reassigned later in the function
     let description: string | undefined;
-    let returns: { type?: string; description?: string } | undefined;
+    let returns: { type?: string | undefined; description?: string } | undefined;
     let deprecated: string | boolean | undefined;
     let since: string | undefined;
     let author: string | undefined;
@@ -1242,7 +1242,7 @@ export class PythonAnalyzer {
             params.push({
               name,
               type: type1 || type2,
-              description: desc || undefined,
+              ...(desc && { description: desc }),
               optional: (type1 || type2 || "").includes("optional"),
             });
           }
@@ -1343,12 +1343,12 @@ export class PythonAnalyzer {
 
     return {
       description,
-      params: params.length > 0 ? params : undefined,
+      ...(params.length > 0 && { params: params }),
       returns,
-      throws: throws.length > 0 ? throws : undefined,
-      examples: examples.length > 0 ? examples : undefined,
+      ...(throws.length > 0 && { throws: throws }),
+      ...(examples.length > 0 && { examples: examples }),
       deprecated,
-      see: see.length > 0 ? see : undefined,
+      ...(see.length > 0 && { see: see }),
       since,
       author,
     };
@@ -1431,10 +1431,7 @@ export class PythonAnalyzer {
   /**
    * Extract enhanced modifiers from function/class
    */
-  private extractEnhancedModifiers(
-    node: TreeSitterNode,
-    decorators: Array<{ name: string; arguments?: string[] }>,
-  ): string[] {
+  private extractEnhancedModifiers(node: ASTNode, decorators: Array<{ name: string; arguments?: string[] }>): string[] {
     const modifiers: string[] = [];
 
     // Add async modifier
@@ -1477,7 +1474,7 @@ export class PythonAnalyzer {
   /**
    * Extract base classes from class definition
    */
-  private extractBaseClasses(node: TreeSitterNode): string[] {
+  private extractBaseClasses(node: ASTNode): string[] {
     const baseClasses: string[] = [];
 
     // Look for argument_list containing base classes
@@ -1498,7 +1495,7 @@ export class PythonAnalyzer {
    */
   private determineClassType(
     decorators: Array<{ name: string; arguments?: string[] }>,
-    node: TreeSitterNode,
+    node: ASTNode,
     _context: AnalysisContext,
   ): PythonClassInfo["classType"] {
     // Check decorators
@@ -1535,7 +1532,7 @@ export class PythonAnalyzer {
   /**
    * Check if class is abstract (has abstract methods)
    */
-  private isAbstractClass(node: TreeSitterNode): boolean {
+  private isAbstractClass(node: ASTNode): boolean {
     // Look for methods with @abstractmethod decorator
     const bodyNode = node.namedChildren.find((child) => child.type === "block");
     if (!bodyNode) return false;
@@ -1557,10 +1554,10 @@ export class PythonAnalyzer {
   /**
    * Analyze enhanced import statements
    */
-  private analyzeEnhancedImport(node: TreeSitterNode, context: AnalysisContext): void {
+  private analyzeEnhancedImport(node: ASTNode, context: AnalysisContext): void {
     let importSource = "";
     let isRelative = false;
-    const specifiers: Array<{ local: string; imported?: string; alias?: string }> = [];
+    const specifiers: Array<{ local: string; imported?: string | undefined; alias?: string }> = [];
 
     if (node.type === "import_statement") {
       // Handle: import module, import module as alias
@@ -1623,7 +1620,7 @@ export class PythonAnalyzer {
   /**
    * Analyze enhanced lambda functions
    */
-  private analyzeEnhancedLambda(node: TreeSitterNode, context: AnalysisContext): void {
+  private analyzeEnhancedLambda(node: ASTNode, context: AnalysisContext): void {
     // Extract lambda parameters
     const parameters = this.extractLambdaParameters(node, context);
 
@@ -1646,7 +1643,7 @@ export class PythonAnalyzer {
   /**
    * Extract lambda parameters
    */
-  private extractLambdaParameters(node: TreeSitterNode, _context: AnalysisContext): ParsedEntity["parameters"] {
+  private extractLambdaParameters(node: ASTNode, _context: AnalysisContext): ParsedEntity["parameters"] {
     const params: NonNullable<ParsedEntity["parameters"]> = [];
 
     // Lambda parameters are the first children before ':'
@@ -1665,7 +1662,7 @@ export class PythonAnalyzer {
   /**
    * Analyze decorated definitions
    */
-  private analyzeDecoratedDefinition(node: TreeSitterNode, context: AnalysisContext): void {
+  private analyzeDecoratedDefinition(node: ASTNode, context: AnalysisContext): void {
     // The actual function/class is the last child
     const definition = node.namedChildren[node.namedChildren.length - 1];
 
@@ -1725,7 +1722,7 @@ export class PythonAnalyzer {
     }
   }
 
-  private analyzeAsyncPatterns(node: TreeSitterNode, context: AnalysisContext): void {
+  private analyzeAsyncPatterns(node: ASTNode, context: AnalysisContext): void {
     // Traverse all async function definitions
     const asyncNodes = findNodesByType(node, ["async_function_definition"]);
 
@@ -1751,7 +1748,7 @@ export class PythonAnalyzer {
     }
   }
 
-  private analyzeGeneratorPatterns(node: TreeSitterNode, context: AnalysisContext): void {
+  private analyzeGeneratorPatterns(node: ASTNode, context: AnalysisContext): void {
     // Find yield expressions to identify generators
     const yieldNodes = findNodesByType(node, ["yield", "yield_from_expression"]);
 
@@ -1868,7 +1865,7 @@ export class PythonAnalyzer {
     }
   }
 
-  private analyzeImportDependencies(rootNode: TreeSitterNode, context: AnalysisContext): void {
+  private analyzeImportDependencies(rootNode: ASTNode, context: AnalysisContext): void {
     const importNodes = findNodesByType(rootNode, ["import_statement", "import_from_statement"]);
 
     for (const importNode of importNodes) {
@@ -1977,7 +1974,7 @@ export class PythonAnalyzer {
   // LAYER 4: PATTERN RECOGNITION HELPER METHODS
   // =============================================================================
 
-  private analyzeContextManagers(rootNode: TreeSitterNode): any[] {
+  private analyzeContextManagers(rootNode: ASTNode): any[] {
     const withNodes = findNodesByType(rootNode, ["with_statement"]);
     const contextManagers = [];
 
@@ -1994,7 +1991,7 @@ export class PythonAnalyzer {
     return contextManagers;
   }
 
-  private analyzeExceptionHandling(rootNode: TreeSitterNode): any[] {
+  private analyzeExceptionHandling(rootNode: ASTNode): any[] {
     const tryNodes = findNodesByType(rootNode, ["try_statement"]);
     const exceptionHandling = [];
 
@@ -2043,7 +2040,7 @@ export class PythonAnalyzer {
     return patterns;
   }
 
-  private identifyPythonIdioms(rootNode: TreeSitterNode): any[] {
+  private identifyPythonIdioms(rootNode: ASTNode): any[] {
     const idioms = [];
 
     // Check for list comprehensions
@@ -2373,7 +2370,7 @@ export class PythonAnalyzer {
 
   // findNodesByType moved to base-parser-utils.js (optimized with Set + iterative traverse)
 
-  private convertNodeToLocation(node: TreeSitterNode) {
+  private convertNodeToLocation(node: ASTNode) {
     return {
       start: {
         line: node.startPosition.row + 1,
@@ -2388,7 +2385,7 @@ export class PythonAnalyzer {
     };
   }
 
-  private detectAsyncPatterns(node: TreeSitterNode): string[] {
+  private detectAsyncPatterns(node: ASTNode): string[] {
     const patterns = [];
     const awaitNodes = findNodesByType(node, ["await"]);
 
@@ -2431,7 +2428,7 @@ export function createPythonAnalyzer(config?: Partial<PythonAnalysisConfig>): Py
  */
 export async function analyzePythonFile(
   filePath: string,
-  rootNode: TreeSitterNode,
+  rootNode: ASTNode,
   source: string,
   config?: Partial<PythonAnalysisConfig>,
 ) {

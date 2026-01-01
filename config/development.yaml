@@ -6,13 +6,21 @@ debug: true
 
 mcp:
   embedding:
-    model: "Xenova/all-MiniLM-L6-v2"
-    provider: "tei"
+    model: "all-MiniLM-L6-v2"
+    provider: "ovms"
     enabled: true
-    fallbackToMemory: true
+    fallbackToMemory: false
     apiKey: ""
 
-    # TEI - AGGRESSIVE settings
+    # OVMS - Docker-based OpenVINO inference (CPU)
+    # Uses Mediapipe graph with V3 Embeddings API (text → vector)
+    ovms:
+      baseUrl: "http://127.0.0.1:8082"
+      timeoutMs: 60000         # 1 min for small batches
+      concurrency: 1           # Sequential for CPU stability
+      checkServer: true        # Auto-start container if stopped
+
+    # TEI - Alternative GPU provider
     tei:
       baseUrl: "http://127.0.0.1:8081"
       timeoutMs: 120000        # 2 min for massive batches
@@ -25,6 +33,9 @@ mcp:
     rerankerFinalK: 10
     queryLanguage: "english"
 
+    # Two-phase mode disabled - setTimeout fix resolved Bun + OpenVINO crashes
+    twoPhaseMode: false
+
   server:
     host: "localhost"
     port: 3000
@@ -34,7 +45,7 @@ mcp:
     maxConcurrent: 20
     defaultTimeout: 300000
     useParser: true
-    devIndexBatch: 50
+    devIndexBatch: 500  # Increased for fewer batches, better worker utilization
 
 database:
   path: ""
@@ -76,7 +87,7 @@ parser:
     maxConcurrency: 8
     memoryLimit: 2048
     priority: 8
-    batchSize: 50
+    batchSize: 500  # Increased from 50 for fewer batches
     cacheSize: 209715200     # 200MB
     workerPoolSize: 8
 
@@ -92,6 +103,9 @@ git:
   watchUncommitted: true
   uncommittedPollIntervalMs: 5000
   includeUntracked: true
+  # Debounce for embedding generation - wait for user to stop editing
+  debounceMs: 60000              # 60 sec after last change
+  bulkModeThreshold: 1000        # >1000 files = drop/rebuild index
 
 indexer:
   maxConcurrency: 8
@@ -119,14 +133,14 @@ queryAgent:
   complexQueryTimeout: 5000
   cacheWarmupSize: 500
 
-# Semantic Agent - AGGRESSIVE for TEI
+# Semantic Agent - Optimized for OVMS on CPU
 semanticAgent:
-  maxConcurrency: 8
+  maxConcurrency: 2
   memoryLimit: 4096          # 4GB
   priority: 8
-  batchSize: 500             # LARGE - TEI handles server-side
+  batchSize: 50              # Large batch for single tokenization call, OVMS splits to 4 internally
   modelPath: "./models"
-  queueBatchSize: 100
+  queueBatchSize: 50         # Match batchSize for efficient processing
 
 coordinator:
   maxConcurrency: 200

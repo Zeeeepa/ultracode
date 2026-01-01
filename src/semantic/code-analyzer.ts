@@ -21,11 +21,12 @@ import type {
   SemanticAnalysis,
   SimilarCode,
 } from "../types/semantic.js";
-import type { EmbeddingGenerator } from "./embedding-generator.js";
-import type { SemanticCache } from "./semantic-cache.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
+import { logger } from "../utils/logger.js";
+import type { EmbeddingGenerator } from "./embedding-generator.js";
+import type { SemanticCache } from "./semantic-cache.js";
 import type { VectorStore } from "./vector-store.js";
 
 // =============================================================================
@@ -218,10 +219,13 @@ export class CodeAnalyzer {
       .filter((r) => r.similarity >= threshold)
       .map((r) => ({
         id: r.id,
-        path: (r.metadata?.path as string) || "",
+        path: (r.metadata?.["path"] as string) || (r.metadata?.["filePath"] as string) || "",
         content: r.content,
         similarity: r.similarity,
         type: this.determineSimilarityType(r.similarity),
+        startLine: r.metadata?.["startLine"] as number | undefined,
+        endLine: r.metadata?.["endLine"] as number | undefined,
+        name: r.metadata?.["name"] as string | undefined,
       }));
 
     return similarCode;
@@ -229,6 +233,10 @@ export class CodeAnalyzer {
 
   /**
    * Detect code clones in the codebase
+   * Optimized with:
+   * - Entity caching to avoid redundant get() calls
+   * - Union-Find for O(α(n)) group merging
+   * - Parallel processing where possible
    */
   async detectClones(minSimilarity = 0.65): Promise<CloneGroup[]> {
     // Get total count
@@ -240,38 +248,90 @@ export class CodeAnalyzer {
 
     // Limit clone detection to avoid performance issues on large codebases
     const maxSamples = Math.min(100, totalCount);
-    const cloneGroupMap: Map<string, Set<string>> = new Map();
-    const processedPairs: Set<string> = new Set();
 
-    console.error(`[CodeAnalyzer] Analyzing ${maxSamples} code fragments for clones (threshold: ${minSimilarity})`);
+    logger.debug("CodeAnalyzer", "Analyzing code fragments for clones", { maxSamples, minSimilarity });
 
-    // Sample vectors by getting random entities
-    // We'll use a simple approach: search with random small vectors to get diverse samples
-    const sampleVectors: Array<{ id: string; vector: Float32Array; content: string; metadata: any }> = [];
+    // Cache for entity metadata to avoid redundant get() calls
+    const entityCache = new Map<string, { content: string; metadata: any; vector?: Float32Array }>();
 
-    // Get sample embeddings using multiple random searches
-    for (let i = 0; i < Math.min(5, Math.ceil(maxSamples / 20)); i++) {
+    // Union-Find data structure for O(α(n)) group merging
+    const parent = new Map<string, string>();
+    const rank = new Map<string, number>();
+
+    const find = (x: string): string => {
+      if (!parent.has(x)) {
+        parent.set(x, x);
+        rank.set(x, 0);
+      }
+      if (parent.get(x) !== x) {
+        parent.set(x, find(parent.get(x)!)); // Path compression
+      }
+      return parent.get(x)!;
+    };
+
+    const union = (x: string, y: string): void => {
+      const rootX = find(x);
+      const rootY = find(y);
+      if (rootX === rootY) return;
+
+      // Union by rank
+      const rankX = rank.get(rootX) || 0;
+      const rankY = rank.get(rootY) || 0;
+      if (rankX < rankY) {
+        parent.set(rootX, rootY);
+      } else if (rankX > rankY) {
+        parent.set(rootY, rootX);
+      } else {
+        parent.set(rootY, rootX);
+        rank.set(rootX, rankX + 1);
+      }
+    };
+
+    // Sample vectors using diverse random searches
+    const sampleIds = new Set<string>();
+    const searchPromises: Promise<void>[] = [];
+
+    // Get samples in parallel using multiple random vectors
+    const numSearches = Math.min(5, Math.ceil(maxSamples / 20));
+    for (let i = 0; i < numSearches; i++) {
       const randomVector = new Float32Array(384).map(() => Math.random() - 0.5);
-      const results = await this.vectorStore.search(randomVector, 20);
-
-      for (const result of results) {
-        if (sampleVectors.length >= maxSamples) break;
-        if (!sampleVectors.some((v) => v.id === result.id)) {
-          // Reconstruct vector by doing another search with this result as query
-          const entity = await this.vectorStore.get(result.id);
-          if (entity) {
-            sampleVectors.push({
-              id: result.id,
-              vector: entity.vector,
-              content: result.content,
-              metadata: result.metadata,
-            });
+      searchPromises.push(
+        this.vectorStore.search(randomVector, 20).then((results) => {
+          for (const result of results) {
+            if (sampleIds.size >= maxSamples) break;
+            if (!sampleIds.has(result.id)) {
+              sampleIds.add(result.id);
+              // Cache entity data from search results
+              entityCache.set(result.id, {
+                content: result.content,
+                metadata: result.metadata,
+              });
+            }
           }
+        }),
+      );
+    }
+    await Promise.all(searchPromises);
+
+    // Get vectors for sampled entities (needed for similarity search)
+    const sampleVectors: Array<{ id: string; vector: Float32Array }> = [];
+    const vectorPromises = Array.from(sampleIds).map(async (id) => {
+      const entity = await this.vectorStore.get(id);
+      if (entity) {
+        sampleVectors.push({ id, vector: entity.vector });
+        // Update cache with vector
+        const cached = entityCache.get(id);
+        if (cached) {
+          cached.vector = entity.vector;
         }
       }
-    }
+    });
+    await Promise.all(vectorPromises);
 
-    // For each sample, find similar code
+    // Find similar pairs using Union-Find
+    const processedPairs = new Set<string>();
+    const similarityMap = new Map<string, number>(); // Track actual similarities
+
     for (const sample of sampleVectors) {
       const similar = await this.vectorStore.search(sample.vector, 50);
 
@@ -287,52 +347,84 @@ export class CodeAnalyzer {
         if (processedPairs.has(pairKey)) continue;
         processedPairs.add(pairKey);
 
-        // Find or create clone group
-        let groupId: string | null = null;
-        for (const [gid, members] of cloneGroupMap) {
-          if (members.has(sample.id) || members.has(match.id)) {
-            groupId = gid;
-            members.add(sample.id);
-            members.add(match.id);
-            break;
-          }
+        // Track similarity for averaging
+        similarityMap.set(pairKey, match.similarity);
+
+        // Cache match entity data
+        if (!entityCache.has(match.id)) {
+          entityCache.set(match.id, {
+            content: match.content,
+            metadata: match.metadata,
+          });
         }
 
-        if (!groupId) {
-          groupId = `clone-${cloneGroupMap.size + 1}`;
-          cloneGroupMap.set(groupId, new Set([sample.id, match.id]));
-        }
+        // Union the pair using Union-Find (O(α(n)) instead of O(groups))
+        union(sample.id, match.id);
       }
+    }
+
+    // Build clone groups from Union-Find structure
+    const groupMembers = new Map<string, Set<string>>();
+    for (const id of parent.keys()) {
+      const root = find(id);
+      if (!groupMembers.has(root)) {
+        groupMembers.set(root, new Set());
+      }
+      groupMembers.get(root)!.add(id);
     }
 
     // Convert to CloneGroup format
     const cloneGroups: CloneGroup[] = [];
-    for (const [groupId, memberIds] of cloneGroupMap) {
+    let groupIndex = 0;
+
+    for (const [, memberIds] of groupMembers) {
       if (memberIds.size < 2) continue; // Skip groups with single member
 
       const members = Array.from(memberIds);
-      const clones = await Promise.all(
-        members.map(async (id) => {
-          const embedding = await this.vectorStore.get(id);
-          return {
-            id,
-            path: (embedding?.metadata?.path as string) || "",
-            content: embedding?.content || "",
-            similarity: minSimilarity, // Approximate
-            type: this.determineSimilarityType(minSimilarity),
-          };
-        }),
-      );
+
+      // Calculate average similarity for the group
+      let totalSimilarity = 0;
+      let pairCount = 0;
+      for (let i = 0; i < members.length; i++) {
+        for (let j = i + 1; j < members.length; j++) {
+          const pairKey = [members[i], members[j]].sort().join("|");
+          if (similarityMap.has(pairKey)) {
+            totalSimilarity += similarityMap.get(pairKey)!;
+            pairCount++;
+          }
+        }
+      }
+      const avgSimilarity = pairCount > 0 ? totalSimilarity / pairCount : minSimilarity;
+
+      // Build member list from cache (no additional get() calls needed)
+      const clones: SimilarCode[] = members.map((id) => {
+        const cached = entityCache.get(id);
+        return {
+          id,
+          path: (cached?.metadata?.["path"] as string) || (cached?.metadata?.["filePath"] as string) || "",
+          content: cached?.content || "",
+          similarity: avgSimilarity,
+          type: this.determineSimilarityType(avgSimilarity),
+          startLine: cached?.metadata?.["startLine"] as number | undefined,
+          endLine: cached?.metadata?.["endLine"] as number | undefined,
+          name: cached?.metadata?.["name"] as string | undefined,
+        };
+      });
 
       cloneGroups.push({
-        id: groupId,
-        cloneType: this.determineCloneType(minSimilarity),
+        id: `clone-${++groupIndex}`,
+        cloneType: this.determineCloneType(avgSimilarity),
         members: clones,
-        avgSimilarity: minSimilarity,
+        avgSimilarity,
       });
     }
 
-    console.error(`[CodeAnalyzer] Found ${cloneGroups.length} clone groups`);
+    logger.debug("CodeAnalyzer", "Clone detection complete", {
+      cloneGroups: cloneGroups.length,
+      entitiesCached: entityCache.size,
+      pairsProcessed: processedPairs.size,
+    });
+
     return cloneGroups;
   }
 
@@ -349,15 +441,18 @@ export class CodeAnalyzer {
     // Filter by language and map to CrossLangResult
     const crossLangResults: CrossLangResult[] = results
       .filter((r) => {
-        const lang = r.metadata?.language as string;
+        const lang = r.metadata?.["language"] as string;
         return languages.includes(lang);
       })
       .map((r) => ({
         id: r.id,
-        language: (r.metadata?.language as string) || "unknown",
-        path: (r.metadata?.path as string) || "",
+        language: (r.metadata?.["language"] as string) || "unknown",
+        path: (r.metadata?.["path"] as string) || (r.metadata?.["filePath"] as string) || "",
         content: r.content,
         similarity: r.similarity,
+        startLine: r.metadata?.["startLine"] as number | undefined,
+        endLine: r.metadata?.["endLine"] as number | undefined,
+        name: r.metadata?.["name"] as string | undefined,
       }));
 
     return crossLangResults;

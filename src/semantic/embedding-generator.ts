@@ -31,9 +31,9 @@
 import { CACHE_CONSTANTS } from "../config/constants.js";
 import type { EmbeddingConfig } from "../types/semantic.js";
 import { hashText } from "../utils/fast-hash.js";
+import { logger } from "../utils/logger.js";
 import type { EmbeddingProvider } from "./providers/base.js";
 import { createProvider } from "./providers/factory.js";
-import { MemoryProvider } from "./providers/memory-provider.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -43,8 +43,9 @@ const DEFAULT_CONFIG: EmbeddingConfig = {
   modelName: DEFAULT_MODEL,
   quantized: true,
   localPath: "./models",
-  batchSize: 8,
-  provider: "memory",
+  // NOTE: Large batch for GPU efficiency - providers split internally if needed
+  batchSize: 256,
+  provider: "auto",
 };
 
 const DEFAULT_TTL_MS = CACHE_CONSTANTS.CACHE_TTL_MS;
@@ -77,7 +78,6 @@ function ensureEmbedding(embedding: Float32Array | undefined, dimension: number)
 // =============================================================================
 export class EmbeddingGenerator {
   private provider: EmbeddingProvider | null = null;
-  private fallback: EmbeddingProvider | null = null;
 
   private cache: Map<string, EmbeddingCache> = new Map();
   private config: EmbeddingConfig;
@@ -86,17 +86,17 @@ export class EmbeddingGenerator {
 
   private cacheHits = 0;
   private cacheMisses = 0;
-  private debugMode = process.env.EMBEDDING_DEBUG === "true";
+  private debugMode = process.env["EMBEDDING_DEBUG"] === "true";
 
   constructor(config: Partial<EmbeddingConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
   private providerKey(): string {
-    const info = this.provider?.info ?? this.fallback?.info;
-    const dim = this.provider?.getDimension() ?? this.fallback?.getDimension() ?? 384;
-    const name = info?.name ?? "memory";
-    const model = info?.model ?? "deterministic-hash";
+    const info = this.provider?.info;
+    const dim = this.provider?.getDimension() ?? 384;
+    const name = info?.name ?? "unknown";
+    const model = info?.model ?? "unknown";
     return `${name}:${model}:${dim}`;
   }
 
@@ -105,16 +105,29 @@ export class EmbeddingGenerator {
    * Used for adaptive entity expansion
    */
   get maxTokens(): number {
-    return this.provider?.info?.maxTokens ?? this.fallback?.info?.maxTokens ?? 512;
+    return this.provider?.info?.maxTokens ?? 512;
+  }
+
+  /**
+   * Get the underlying embedding provider
+   * Useful for accessing extended capabilities (rerank, score, etc.)
+   */
+  getProvider(): EmbeddingProvider | null {
+    return this.provider;
   }
 
   async initialize(): Promise<void> {
     if (this.initPromise) return this.initPromise;
     this.isInitializing = true;
+    const startTime = Date.now();
+    logger.trace("EMBEDDING", `[EmbeddingGenerator] ▶ initialize() START`);
 
     this.initPromise = (async () => {
       try {
-        const providerName = this.config.provider ?? "memory";
+        const providerName = this.config.provider ?? "auto";
+        logger.trace("EMBEDDING", `[EmbeddingGenerator] ▶ createProvider(${providerName})`);
+        logger.info("EmbeddingGenerator", `initialize() called, provider=${providerName}`, { tei: this.config.tei });
+        const createStart = Date.now();
         this.provider = await createProvider({
           provider: providerName,
           modelName: this.config.modelName ?? DEFAULT_MODEL,
@@ -123,25 +136,21 @@ export class EmbeddingGenerator {
           cloudru: this.config.cloudru,
           huggingface: this.config.huggingface,
           tei: this.config.tei,
-          memory: this.config.memory,
+          ovms: this.config.ovms,
         });
+        logger.trace("EMBEDDING", `[EmbeddingGenerator] ◀ createProvider (${Date.now() - createStart}ms)`);
 
-        this.fallback = new MemoryProvider();
+        logger.trace("EMBEDDING", `[EmbeddingGenerator] ▶ provider.initialize()`);
+        const providerStart = Date.now();
+        await this.provider.initialize();
+        logger.trace("EMBEDDING", `[EmbeddingGenerator] ◀ provider.initialize() (${Date.now() - providerStart}ms)`);
+        logger.trace("EMBEDDING", `[EmbeddingGenerator] ◀ initialize() END (${Date.now() - startTime}ms)`);
 
-        try {
-          await this.provider.initialize();
-          if (this.debugMode) {
-            console.error(
-              `[EmbeddingGenerator] Provider initialized: ${this.provider.info.name} (${this.provider.info.model})`,
-            );
-          }
-        } catch (e) {
-          console.warn("[EmbeddingGenerator] Provider init failed, using memory fallback:", (e as Error)?.message || e);
-          this.provider = this.fallback;
-        }
-
-        if (!this.provider) {
-          this.provider = this.fallback;
+        if (this.debugMode) {
+          logger.debug("EmbeddingGenerator", "Provider initialized", {
+            name: this.provider.info.name,
+            model: this.provider.info.model,
+          });
         }
       } finally {
         this.isInitializing = false;
@@ -157,9 +166,13 @@ export class EmbeddingGenerator {
   async generateEmbedding(text: string): Promise<Float32Array> {
     if (!this.provider && !this.isInitializing) {
       await this.initialize();
-    } else if (this.isInitializing && this.fallback) {
-      if (this.debugMode) console.error("[EmbeddingGenerator] fallback during init");
-      return this.fallback.embed(normalizeText(text));
+    } else if (this.isInitializing) {
+      // Wait for initialization to complete
+      await this.initPromise;
+    }
+
+    if (!this.provider) {
+      throw new Error("No embedding provider available. Run setup-embedding to configure one.");
     }
 
     const normalized = normalizeText(text);
@@ -168,28 +181,14 @@ export class EmbeddingGenerator {
     const cached = this.cache.get(key);
     if (cached && Date.now() - cached.timestamp < DEFAULT_TTL_MS) {
       this.cacheHits++;
+      // LRU: move to end by delete + re-set (Map preserves insertion order)
+      this.cache.delete(key);
+      this.cache.set(key, cached);
       return cached.embedding;
     }
     this.cacheMisses++;
 
-    const dimension = this.provider?.getDimension() ?? this.fallback?.getDimension() ?? 384;
-
-    let embedding: Float32Array | undefined;
-    try {
-      if (this.provider) {
-        embedding = await this.provider.embed(normalized);
-      }
-      if (!embedding && this.fallback) {
-        embedding = await this.fallback.embed(normalized);
-      }
-    } catch (e) {
-      console.warn("[EmbeddingGenerator] embed failed, using fallback:", (e as Error)?.message || e);
-      if (this.fallback) {
-        embedding = await this.fallback.embed(normalized);
-      }
-    }
-
-    embedding = ensureEmbedding(embedding, dimension);
+    const embedding = await this.provider!.embed(normalized);
 
     // Cache with simple LRU eviction
     if (this.cache.size >= MAX_CACHE_ENTRIES) {
@@ -213,6 +212,10 @@ export class EmbeddingGenerator {
       await this.initialize();
     }
 
+    if (!this.provider) {
+      throw new Error("No embedding provider available. Run setup-embedding to configure one.");
+    }
+
     const results: Float32Array[] = [];
     const batchSize = this.config.batchSize ?? 8;
 
@@ -229,6 +232,9 @@ export class EmbeddingGenerator {
 
         if (cached && Date.now() - cached.timestamp < DEFAULT_TTL_MS) {
           this.cacheHits++;
+          // LRU: move to end by delete + re-set
+          this.cache.delete(key);
+          this.cache.set(key, cached);
           batchResults[j] = cached.embedding;
         } else {
           this.cacheMisses++;
@@ -236,39 +242,20 @@ export class EmbeddingGenerator {
         }
       }
 
-      // Process uncached
+      // Process uncached texts
       if (toProcess.length > 0) {
-        const dimension = this.provider?.getDimension() ?? this.fallback?.getDimension() ?? 384;
-        let embeddings: Float32Array[] = [];
-        try {
-          if (this.provider && typeof this.provider.embedBatch === "function") {
-            embeddings = (await this.provider.embedBatch(toProcess.map((t) => t.text))) ?? [];
-          } else {
-            // sequential fallback
-            embeddings = [];
-            for (const item of toProcess) {
-              try {
-                let emb: Float32Array | undefined;
-                if (this.provider) {
-                  emb = await this.provider.embed(item.text);
-                }
-                if (!emb && this.fallback) {
-                  emb = await this.fallback.embed(item.text);
-                }
-                embeddings.push(ensureEmbedding(emb, dimension));
-              } catch (e) {
-                console.warn("[EmbeddingGenerator] embed failed in batch, using fallback:", (e as Error)?.message || e);
-                const fallbackEmbedding =
-                  (this.fallback && (await this.fallback.embed(item.text))) ?? new Float32Array(dimension);
-                embeddings.push(fallbackEmbedding);
-              }
-            }
+        const dimension = this.provider.getDimension() ?? 384;
+        let embeddings: Float32Array[];
+
+        if (typeof this.provider!.embedBatch === "function") {
+          embeddings = (await this.provider!.embedBatch(toProcess.map((t) => t.text))) ?? [];
+        } else {
+          // Sequential processing when batch not supported
+          embeddings = [];
+          for (const item of toProcess) {
+            const emb = await this.provider!.embed(item.text);
+            embeddings.push(ensureEmbedding(emb, dimension));
           }
-        } catch (_e) {
-          const fallbackBatch = this.fallback?.embedBatch
-            ? await this.fallback.embedBatch(toProcess.map((t) => t.text))
-            : undefined;
-          embeddings = fallbackBatch?.map((emb) => ensureEmbedding(emb, dimension)) ?? [];
         }
 
         toProcess.forEach((item, k) => {
@@ -294,7 +281,7 @@ export class EmbeddingGenerator {
     const normalized = Number.isFinite(size) ? Math.max(1, Math.floor(size)) : (this.config.batchSize ?? 8);
     this.config.batchSize = normalized;
     if (this.debugMode) {
-      console.error(`[EmbeddingGenerator] Batch size updated to ${normalized}`);
+      logger.debug("EmbeddingGenerator", "Batch size updated", { size: normalized });
     }
   }
 
@@ -317,22 +304,16 @@ export class EmbeddingGenerator {
   }
 
   private evictOldestCacheEntry(): void {
-    let oldestKey: string | null = null;
-    let oldestTime = Infinity;
-    for (const [key, entry] of this.cache) {
-      if (entry.timestamp < oldestTime) {
-        oldestTime = entry.timestamp;
-        oldestKey = key;
-      }
-    }
-    if (oldestKey) this.cache.delete(oldestKey);
+    // O(1) LRU eviction: Map preserves insertion order, first key is oldest
+    const firstKey = this.cache.keys().next().value;
+    if (firstKey) this.cache.delete(firstKey);
   }
 
   clearCache(): void {
     this.cache.clear();
     this.cacheHits = 0;
     this.cacheMisses = 0;
-    console.error("[EmbeddingGenerator] Cache cleared");
+    logger.debug("EmbeddingGenerator", "Cache cleared");
   }
 
   getCacheStats(): { size: number; hits: number; misses: number; hitRate: number } {
@@ -348,10 +329,8 @@ export class EmbeddingGenerator {
   async cleanup(): Promise<void> {
     this.clearCache();
     await this.provider?.close?.();
-    await this.fallback?.close?.();
     this.provider = null;
-    this.fallback = null;
     this.initPromise = null;
-    console.error("[EmbeddingGenerator] Cleaned up");
+    logger.debug("EmbeddingGenerator", "Cleaned up");
   }
 }

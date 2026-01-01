@@ -122,7 +122,7 @@ export class JavaNativeParser {
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
-        errors: errors.length > 0 ? errors : undefined,
+        ...(errors.length > 0 && { errors: errors }),
       };
     } catch (error) {
       this.stats.errorCount++;
@@ -217,12 +217,12 @@ export class JavaNativeParser {
         type: entityType,
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
         inheritance:
           baseClasses.length > 0 || interfaces.length > 0
             ? {
                 baseClasses,
-                interfaces: interfaces.length > 0 ? interfaces : undefined,
+                ...(interfaces.length > 0 && { interfaces: interfaces }),
                 isAbstract: modifiers.includes("abstract"),
               }
             : undefined,
@@ -257,7 +257,7 @@ export class JavaNativeParser {
         type: isAsync ? "async_function" : "method",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
         returnType,
         parameters,
       });
@@ -281,7 +281,7 @@ export class JavaNativeParser {
           type: "method",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
-          modifiers: modifiers.length > 0 ? modifiers : undefined,
+          ...(modifiers.length > 0 && { modifiers: modifiers }),
           parameters: this.parseParameters(paramsStr),
         });
       }
@@ -307,7 +307,7 @@ export class JavaNativeParser {
         type: modifiers.includes("final") ? "constant" : "field",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
         metadata: { fieldType: type },
       });
     }

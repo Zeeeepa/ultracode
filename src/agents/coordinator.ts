@@ -15,6 +15,13 @@ import {
 } from "../types/agent.js";
 import { BaseAgent } from "./base.js";
 
+// Event-driven architecture: health monitoring uses setInterval for Node.js, disabled for Bun
+
+/** Check if running in Bun */
+function isBunRuntime(): boolean {
+  return typeof (globalThis as any).Bun !== "undefined";
+}
+
 type EventfulAgent = Agent & {
   on: (event: string, listener: (...args: any[]) => void) => void;
 };
@@ -97,7 +104,9 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   private config: CoordinatorConfig;
   private roundRobinIndex: Map<AgentType, number> = new Map();
   private pendingTasks: Map<string, AgentTask> = new Map();
-  private healthMonitorTimer: ReturnType<typeof setInterval> | null = null;
+  private healthMonitorRunning = false;
+  private stopped = false; // Flag to stop async loops on shutdown
+  private readonly HEALTH_CHECK_INTERVAL_MS = 10000;
 
   constructor(config: CoordinatorConfigOverrides = {}) {
     const defaults = getCoordinatorAgentDefaults();
@@ -135,10 +144,13 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   protected async onShutdown(): Promise<void> {
     console.error(`[Coordinator] Shutting down all agents...`);
 
-    // Clear interval to prevent memory leak
+    // Stop all async loops
+    this.stopped = true;
+
+    // Clear timer
     if (this.healthMonitorTimer) {
       clearInterval(this.healthMonitorTimer);
-      this.healthMonitorTimer = null;
+      this.healthMonitorTimer = undefined;
     }
 
     const shutdownPromises = Array.from(this.agents.values()).map((agent) =>
@@ -322,11 +334,30 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
     return agents.slice().sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0]!;
   }
 
+  /** Timer handle for Node.js setInterval */
+  private healthMonitorTimer?: ReturnType<typeof setInterval> | undefined;
+
+  /**
+   * Start health monitoring
+   * Event-driven: uses setInterval for Node.js, disabled for Bun (no polling)
+   */
   private startHealthMonitoring(): void {
-    if (this.healthMonitorTimer) return;
-    this.healthMonitorTimer = setInterval(() => {
-      this.checkAgentHealth();
-    }, 5000); // Check every 5 seconds
+    if (this.healthMonitorRunning) return;
+    this.healthMonitorRunning = true;
+
+    // For Node.js: use setInterval (safe)
+    // For Bun: skip health monitoring loop to avoid CPU spinning
+    if (!isBunRuntime()) {
+      this.healthMonitorTimer = setInterval(() => {
+        if (!this.stopped) {
+          try {
+            this.checkAgentHealth();
+          } catch (error) {
+            console.error("[Coordinator] Health check error:", error);
+          }
+        }
+      }, this.HEALTH_CHECK_INTERVAL_MS);
+    }
   }
 
   private checkAgentHealth(): void {
@@ -335,8 +366,6 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
         console.warn(`[Coordinator] Agent ${agentId} is in error state`);
         this.emit("agent:unhealthy", agentId);
       }
-
-      // Memory limit check disabled - let OS handle memory management
     }
   }
 

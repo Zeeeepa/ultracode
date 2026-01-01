@@ -97,12 +97,27 @@ if (-not $NoCopy) {
     $FullOutputDir = Join-Path $ScriptDir $OutputDir
     $FullOutputDir = [System.IO.Path]::GetFullPath($FullOutputDir)
 
-    Write-Status "Copying to $FullOutputDir..."
+    # Clean dist directory to prevent old files from interfering
+    if (Test-Path $FullOutputDir) {
+        Write-Status "Cleaning $FullOutputDir..."
 
-    if (-not (Test-Path $FullOutputDir)) {
+        # Handle potentially locked .com file - rename to .blocked first
+        $comFile = Join-Path $FullOutputDir "ultrascript-tools.com"
+        $blockedFile = Join-Path $FullOutputDir "ultrascript-tools.com.blocked"
+        if (Test-Path $comFile) {
+            Remove-Item $blockedFile -Force -ErrorAction SilentlyContinue
+            Rename-Item $comFile $blockedFile -Force -ErrorAction SilentlyContinue
+        }
+
+        Remove-Item (Join-Path $FullOutputDir "*.js") -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $FullOutputDir "*.map") -Force -ErrorAction SilentlyContinue
+        Remove-Item $blockedFile -Force -ErrorAction SilentlyContinue
+        Write-Success "Cleaned old files"
+    } else {
         New-Item -ItemType Directory -Path $FullOutputDir -Force | Out-Null
     }
 
+    Write-Status "Copying to $FullOutputDir..."
     Copy-Item $OutputCom (Join-Path $FullOutputDir "ultrascript-tools.com") -Force
     Write-Success "Copied to: $FullOutputDir\ultrascript-tools.com"
 }

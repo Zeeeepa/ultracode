@@ -8,6 +8,17 @@
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -19,7 +30,7 @@ export interface IPCRequest {
   type: "request";
   method: string;
   params?: unknown;
-  projectPath?: string;
+  projectPath?: string | undefined;
 }
 
 export interface IPCResponse {
@@ -34,7 +45,7 @@ export interface IPCEvent {
   type: "event";
   event: string;
   data?: unknown;
-  projectPath?: string;
+  projectPath?: string | undefined;
 }
 
 export interface IPCError {
@@ -204,7 +215,7 @@ export function createEvent(event: string, data?: unknown, projectPath?: string)
 export interface PendingRequest {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  abortController: AbortController;
 }
 
 /**
@@ -232,7 +243,7 @@ export class IPCClient {
     socket.on("close", () => {
       // Reject all pending requests
       for (const [id, pending] of this.pendingRequests) {
-        clearTimeout(pending.timeout);
+        pending.abortController.abort();
         pending.reject(new Error("Connection closed"));
         this.pendingRequests.delete(id);
       }
@@ -247,12 +258,18 @@ export class IPCClient {
     const req = createRequest(method, params, projectPath);
 
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(req.id);
-        reject(new Error(`Request timeout: ${method}`));
-      }, this.requestTimeout);
+      const abortController = new AbortController();
 
-      this.pendingRequests.set(req.id, { resolve: resolve as (r: unknown) => void, reject, timeout });
+      // Async timeout using sleep pattern (Bun compatible)
+      (async () => {
+        await sleep(this.requestTimeout);
+        if (!abortController.signal.aborted) {
+          this.pendingRequests.delete(req.id);
+          reject(new Error(`Request timeout: ${method}`));
+        }
+      })();
+
+      this.pendingRequests.set(req.id, { resolve: resolve as (r: unknown) => void, reject, abortController });
       this.socket.write(encodeMessage(req));
     });
   }
@@ -286,7 +303,7 @@ export class IPCClient {
     if (message.type === "response") {
       const pending = this.pendingRequests.get(message.id);
       if (pending) {
-        clearTimeout(pending.timeout);
+        pending.abortController.abort();
         this.pendingRequests.delete(message.id);
 
         if (message.error) {

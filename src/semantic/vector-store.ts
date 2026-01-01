@@ -1,29 +1,30 @@
 /**
- * Vector Store Manager - Unified LibSQL Backend
+ * Vector Store Manager - Faiss Backend
  *
- * Manages vector storage and similarity search using the unified LibSQL storage.
- * Now uses the same database as GraphStorage for consistency.
+ * v5: Faiss-only backend. All vector operations go through FaissProvider.
+ * LibSQL is used only for graph data (entities, relationships), not embeddings.
  *
- * v4: Uses LibSQLGraphAdapter from graph-storage-factory for unified storage
- *
- * External Dependencies:
- * - @libsql/client: https://github.com/tursodatabase/libsql-client-ts - LibSQL with DiskANN
+ * Benefits:
+ * - Faiss runs in main process (faiss-napi works under both Node.js and Bun)
+ * - HNSW index with automatic persistence
+ * - Content cache persisted alongside Faiss index
+ * - No DiskANN overhead or libSQL vector operations
  *
  * @history
  *  - 2025-09-14: Created - Initial vector store implementation
- *  - 2025-12-11: Refactored - LibSQL DiskANN as only backend (no fallback)
  *  - 2025-12-11: v4 - Unified storage with GraphStorage
+ *  - 2026-01-01: v5 - Faiss-only backend, removed libSQL embeddings
  */
 
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { LRUCache } from "lru-cache";
-import type { VectorBackend as GPUVectorBackend } from "../gpu/backends/base.js";
 import { DEFAULT_BRANCH, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
-import { getGraphStorage, getLibSQLAdapter } from "../storage/graph-storage-factory.js";
-import type { LibSQLGraphAdapter, ProjectContext } from "../storage/libsql-graph-adapter.js";
+import type { ProjectContext } from "../storage/libsql-graph-adapter.js";
 import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
+import { logger } from "../utils/logger.js";
+import { type FaissProvider, initializeFaissProvider } from "./faiss/faiss-provider.js";
+import { getRecommendedStrategy, type StrategyRecommendation } from "./gpu/adaptive-thresholds.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -46,14 +47,15 @@ function dedupeById(items: VectorEmbedding[]): VectorEmbedding[] {
 // =============================================================================
 export class VectorStore {
   private readonly config: VectorStoreConfig;
-  // v4: Uses unified LibSQLGraphAdapter from graph-storage-factory
-  private adapter: LibSQLGraphAdapter | null = null;
+
+  // v5: Faiss is the only backend for vector operations
+  private faissProvider: FaissProvider | null = null;
 
   // Initialization state management
   private isInitialized = false;
   private isInitializing = false;
   private initializationPromise: Promise<void> | null = null;
-  private debugMode = process.env.VECTOR_STORE_DEBUG === "true";
+  private debugMode = process.env["VECTOR_STORE_DEBUG"] === "true";
 
   // Project context for multi-project support
   private currentContext: ProjectContext = {
@@ -61,19 +63,8 @@ export class VectorStore {
     branchName: DEFAULT_BRANCH,
   };
 
-  // GPU backend support (CUDA/WebGPU acceleration)
-  private gpuBackend: GPUVectorBackend | null = null;
-  private useGPU = false;
-
-  // LRU cache for parsed metadata
-  private metadataCache = new LRUCache<string, Record<string, unknown>>({
-    max: 10000,
-    ttl: 1000 * 60 * 5, // 5 minutes TTL
-  });
-
   constructor(config: Partial<VectorStoreConfig> = {}) {
-    // v4: dbPath is now managed by graph-storage-factory
-    console.error(`[VectorStore] Using unified storage from graph-storage-factory`);
+    logger.debug("VectorStore", "v5: Faiss-only backend");
 
     this.config = {
       dbPath: config.dbPath || "",
@@ -85,21 +76,23 @@ export class VectorStore {
 
   /**
    * Set the current project context for all subsequent operations
+   * v5: Async because FaissProvider may need to save/load indexes on context switch
    */
-  setProjectContext(context: ProjectContext): void {
+  async setProjectContext(context: ProjectContext): Promise<void> {
     this.currentContext = context;
-    // v4: Also set context on the adapter if available
-    if (this.adapter) {
-      this.adapter.setProjectContext(context);
+    // v5: Set context on FaissProvider (may switch indexes)
+    if (this.faissProvider) {
+      await this.faissProvider.setProjectContext(context.projectHash, context.branchName);
     }
-    console.error(`[VectorStore] Context set: project=${context.projectHash}, branch=${context.branchName}`);
+    logger.debug("VectorStore", "Context set", { project: context.projectHash, branch: context.branchName });
   }
 
   /**
    * Set project context from path and branch
+   * v5: Async because FaissProvider may need to save/load indexes on context switch
    */
-  setProject(projectPath: string, branchName?: string): void {
-    this.setProjectContext({
+  async setProject(projectPath: string, branchName?: string): Promise<void> {
+    await this.setProjectContext({
       projectHash: getProjectHash(projectPath),
       branchName: normalizeBranchName(branchName || DEFAULT_BRANCH),
     });
@@ -114,20 +107,21 @@ export class VectorStore {
 
   /**
    * Get the database path used by this VectorStore
+   * v5: Returns Faiss index path
    */
   getDbPath(): string {
-    return this.adapter?.getDbPath() || this.config.dbPath;
+    return this.config.dbPath;
   }
 
   /**
-   * Initialize the vector store database
-   * v4: Now uses unified storage from graph-storage-factory
+   * Initialize the vector store
+   * v5: Initializes FaissProvider directly
    */
   async initialize(): Promise<void> {
     // Return early if already initialized
     if (this.isInitialized) {
       if (this.debugMode) {
-        console.error(`[VectorStore] Already initialized, returning early`);
+        logger.debug("VectorStore", "Already initialized, returning early");
       }
       return;
     }
@@ -135,7 +129,7 @@ export class VectorStore {
     // Return existing promise if already initializing
     if (this.isInitializing && this.initializationPromise) {
       if (this.debugMode) {
-        console.error(`[VectorStore] Initialization in progress, waiting...`);
+        logger.debug("VectorStore", "Initialization in progress, waiting...");
       }
       return this.initializationPromise;
     }
@@ -148,7 +142,7 @@ export class VectorStore {
       await this.initializationPromise;
       this.isInitialized = true;
       if (this.debugMode) {
-        console.error(`[VectorStore] Initialization completed successfully`);
+        logger.debug("VectorStore", "Initialization completed successfully");
       }
     } catch (error) {
       // Reset state on failure
@@ -162,127 +156,266 @@ export class VectorStore {
 
   /**
    * Internal initialization method
-   * v4: Uses LibSQLGraphAdapter from graph-storage-factory
+   * v5: Initializes FaissProvider as the only backend
    */
   private async initializeInternal(): Promise<void> {
     try {
-      // v4: Get the unified adapter from graph-storage-factory
-      // This ensures GraphStorage is initialized first and we share the same DB
-      await getGraphStorage();
-      this.adapter = getLibSQLAdapter();
+      // v5: Initialize Faiss provider directly
+      const provider = await initializeFaissProvider({
+        dimensions: this.config.dimensions,
+        indexType: "hnsw",
+        hnswM: 32,
+        hnswEfConstruction: 200,
+        hnswEfSearch: 64,
+      });
 
-      if (!this.adapter || !this.adapter.isReady()) {
-        throw new Error("LibSQL adapter not available from graph-storage-factory");
+      if (!provider) {
+        throw new Error("Failed to initialize FaissProvider");
       }
 
-      // Set context on adapter
-      this.adapter.setProjectContext(this.currentContext);
+      this.faissProvider = provider;
+      this.faissProvider.setProjectContext(this.currentContext.projectHash, this.currentContext.branchName);
 
-      console.error(`[VectorStore] Using unified storage from graph-storage-factory`);
-
-      // GPU backend initialization (optional, for accelerated similarity search)
-      await this.initializeGPUBackend();
-
-      console.error(`[VectorStore] Initialized with ${this.config.dimensions} dimensions (unified storage)`);
+      logger.info("VectorStore", "Initialized with Faiss backend", {
+        dimensions: this.config.dimensions,
+        mode: "faiss-hnsw",
+      });
     } catch (error) {
-      console.error("[VectorStore] Initialization failed:", error);
+      logger.error("VectorStore", "Initialization failed", { error: (error as Error).message });
       throw new Error(`Failed to initialize vector store`, { cause: error });
     }
   }
 
   /**
-   * Initialize GPU backend for accelerated similarity search
-   * Tries CUDA, then WebGPU, then falls back to CPU
+   * Ensure Faiss provider is initialized (for lazy initialization)
    */
-  private async initializeGPUBackend(): Promise<void> {
-    if (process.env.VECTOR_STORE_DISABLE_GPU === "true") {
-      console.error("[VectorStore] GPU acceleration disabled via env");
-      return;
+  private ensureFaissProvider(): FaissProvider {
+    if (!this.faissProvider) {
+      throw new Error("VectorStore not initialized. Call initialize() first.");
     }
+    return this.faissProvider;
+  }
 
-    try {
-      const { BackendSelector } = await import("../gpu/backend-selector.js");
-      const selector = BackendSelector.getInstance();
-      this.gpuBackend = await selector.initialize();
-      this.useGPU = true;
-
-      const info = selector.getInfo();
-      console.error(`[VectorStore] GPU backend initialized: ${info.selected}`);
-      console.error(`[VectorStore] Available backends: ${info.available.join(", ")}`);
-    } catch (error) {
-      // GPU not available, use CPU fallback
-      if (this.debugMode) {
-        console.error("[VectorStore] GPU backend not available:", (error as Error).message);
-      }
-      console.error("[VectorStore] Using CPU (SIMD) for similarity search");
-      this.useGPU = false;
-    }
+  /**
+   * Get recommended strategy based on current data characteristics
+   */
+  getStrategy(vectorCount: number, isRebuild = false, queryBatchSize = 1): StrategyRecommendation {
+    return getRecommendedStrategy(vectorCount, this.config.dimensions, isRebuild, queryBatchSize);
   }
 
   /**
    * Insert a single embedding
+   * v5: Uses FaissProvider directly
    */
   async insert(embedding: VectorEmbedding): Promise<void> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
-    await this.adapter.insertEmbedding(embedding);
+    const provider = this.ensureFaissProvider();
+    await provider.add(embedding);
   }
 
   /**
    * Batch insert multiple embeddings
+   * v5: Uses FaissProvider directly
    */
   async insertBatch(embeddings: VectorEmbedding[]): Promise<void> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
+    const provider = this.ensureFaissProvider();
     const unique = dedupeById(embeddings);
-    const { projectHash } = this.currentContext;
-
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
-    await this.adapter.insertEmbeddingBatch(unique);
-    console.error(
-      `[VectorStore] Inserted batch of ${unique.length} embeddings (unified storage, project=${projectHash})`,
-    );
+    await provider.addBatch(unique);
   }
 
   /**
-   * Search for similar vectors using cosine similarity
+   * Bulk insert with HNSW indexing
+   * v5: Same as insertBatch (Faiss HNSW handles bulk efficiently)
+   */
+  async bulkInsert(embeddings: VectorEmbedding[]): Promise<void> {
+    await this.insertBatch(embeddings);
+  }
+
+  /**
+   * Adaptive bulk insert - v5: Always uses Faiss HNSW
+   * @returns Object with stats about the insert operation
+   */
+  async adaptiveBulkInsert(embeddings: VectorEmbedding[]): Promise<{
+    usedFaiss: boolean;
+    insertedCount: number;
+    timeMs: number;
+  }> {
+    const provider = this.ensureFaissProvider();
+    const unique = dedupeById(embeddings);
+    const startTime = performance.now();
+
+    await provider.addBatch(unique);
+
+    const timeMs = performance.now() - startTime;
+    logger.info("VectorStore", "Bulk insert via Faiss HNSW", { count: unique.length, ms: timeMs.toFixed(1) });
+
+    return {
+      usedFaiss: true,
+      insertedCount: unique.length,
+      timeMs,
+    };
+  }
+
+  /**
+   * Adaptive index rebuild - v5: Faiss HNSW maintains index automatically
+   */
+  async adaptiveRebuildIndex(_deltaCount?: number): Promise<{
+    usedFaiss: boolean;
+    strategy: string;
+    timeMs: number;
+  }> {
+    const startTime = performance.now();
+
+    // Faiss HNSW maintains index automatically - no rebuild needed
+    const timeMs = performance.now() - startTime;
+
+    return {
+      usedFaiss: true,
+      strategy: "faiss-hnsw-live",
+      timeMs,
+    };
+  }
+
+  /**
+   * Adaptive search - v5: Always uses Faiss HNSW
+   * v6: Enriches results from LibSQL
+   */
+  async adaptiveSearch(
+    queryVector: Float32Array,
+    limit = 10,
+  ): Promise<{ results: SimilarityResult[]; usedFaiss: boolean }> {
+    const provider = this.ensureFaissProvider();
+    const rawResults = await provider.search(queryVector, limit);
+    const results = await this.enrichResultsFromLibSQL(rawResults);
+    return { results, usedFaiss: true };
+  }
+
+  /**
+   * Drop vector index - v5: No-op (Faiss HNSW handles live updates)
+   */
+  async dropVectorIndex(): Promise<void> {
+    // Faiss HNSW handles live updates, no need to drop index
+    logger.debug("VectorStore", "dropVectorIndex: no-op with Faiss HNSW");
+  }
+
+  /**
+   * Rebuild vector index - v5: No-op (Faiss HNSW maintains index automatically)
+   */
+  async rebuildVectorIndex(): Promise<void> {
+    // Faiss HNSW maintains index automatically
+    logger.debug("VectorStore", "rebuildVectorIndex: no-op with Faiss HNSW");
+  }
+
+  /**
+   * Flush and save Faiss index to disk
+   * v5: Saves both Faiss index and content cache
+   */
+  async flushAndSave(): Promise<{ flushed: number; saved: boolean }> {
+    const provider = this.ensureFaissProvider();
+
+    try {
+      const flushed = await provider.flush();
+      await provider.save();
+
+      logger.info("VectorStore", "Saved Faiss index to disk", { flushed });
+
+      return { flushed, saved: true };
+    } catch (error) {
+      logger.error("VectorStore", "flushAndSave failed", { error: (error as Error).message });
+      return { flushed: 0, saved: false };
+    }
+  }
+
+  /**
+   * Search for similar vectors
+   * v6: Uses Faiss HNSW search, enriches results from LibSQL
    */
   async search(queryVector: Float32Array, limit = 10): Promise<SimilarityResult[]> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
+    const provider = this.ensureFaissProvider();
+    const rawResults = await provider.search(queryVector, limit);
 
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
-    return await this.adapter.searchVectors(queryVector, limit);
+    // Enrich results with entity data from LibSQL
+    return await this.enrichResultsFromLibSQL(rawResults);
+  }
+
+  /**
+   * Enrich search results with entity data from LibSQL
+   */
+  private async enrichResultsFromLibSQL(results: SimilarityResult[]): Promise<SimilarityResult[]> {
+    if (results.length === 0) return results;
+
+    try {
+      const { getGraphStorage } = await import("../storage/graph-storage-factory.js");
+      const storage = await getGraphStorage();
+
+      // Extract entity IDs from result IDs (format: "ent:{entityId}")
+      const entityIds = results.map((r) => (r.id.startsWith("ent:") ? r.id.slice(4) : r.id));
+
+      // Batch fetch entities from LibSQL (parallel getEntity calls)
+      const entities = await Promise.all(entityIds.map((id) => storage.getEntity(id)));
+      const entityMap = new Map<string, NonNullable<(typeof entities)[0]>>();
+      for (let i = 0; i < entityIds.length; i++) {
+        const entity = entities[i];
+        if (entity) {
+          entityMap.set(entityIds[i]!, entity);
+        }
+      }
+
+      // Enrich results
+      return results.map((r) => {
+        const entityId = r.id.startsWith("ent:") ? r.id.slice(4) : r.id;
+        const entity = entityMap.get(entityId);
+        if (entity) {
+          return {
+            ...r,
+            content: entity.name || "",
+            metadata: {
+              ...r.metadata,
+              entityId,
+              type: entity.type,
+              filePath: entity.filePath,
+              name: entity.name,
+              // Add location info for better navigation
+              startLine: entity.location?.start?.line,
+              endLine: entity.location?.end?.line,
+              startColumn: entity.location?.start?.column,
+              endColumn: entity.location?.end?.column,
+            },
+          };
+        }
+        return r;
+      });
+    } catch (error) {
+      logger.warn("VectorStore", "Failed to enrich results from LibSQL", { error: (error as Error).message });
+      return results;
+    }
   }
 
   /**
    * Advanced similarity search with filters and threshold
+   * v5: Uses Faiss search with post-filtering
    */
   async searchWithFilters(
     queryVector: Float32Array,
     options: {
       limit?: number;
-      threshold?: number;
+      threshold?: number | undefined;
       metadataFilter?: Record<string, unknown>;
       dateRange?: { start?: number; end?: number };
     } = {},
   ): Promise<SimilarityResult[]> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
+    const provider = this.ensureFaissProvider();
     const { limit = 10, threshold = 0.0, metadataFilter, dateRange } = options;
-
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
 
     // Get more results for filtering
     const expandedLimit = metadataFilter || dateRange ? limit * 10 : limit;
-    const results = await this.adapter.searchVectors(queryVector, expandedLimit);
+    const results = await provider.search(queryVector, expandedLimit);
+
+    // Enrich results with entity data from LibSQL BEFORE filtering
+    // This allows filtering by metadata from LibSQL (type, filePath, etc.)
+    const enriched = await this.enrichResultsFromLibSQL(results);
 
     // Apply post-filtering
-    let filtered = results;
+    let filtered = enriched;
 
     // Filter by threshold
     if (threshold > 0) {
@@ -303,7 +436,7 @@ export class VectorStore {
     // Filter by date range (if metadata contains createdAt)
     if (dateRange) {
       filtered = filtered.filter((r) => {
-        const createdAt = r.metadata?.createdAt as number | undefined;
+        const createdAt = r.metadata?.["createdAt"] as number | undefined;
         if (!createdAt) return true; // Include if no createdAt
         if (dateRange.start != null && createdAt < dateRange.start) return false;
         if (dateRange.end != null && createdAt > dateRange.end) return false;
@@ -316,105 +449,134 @@ export class VectorStore {
 
   /**
    * Get embedding by ID
+   * v6: Gets metadata from LibSQL (content not stored in Faiss)
    */
   async get(id: string): Promise<VectorEmbedding | null> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
+    const provider = this.ensureFaissProvider();
+    if (!provider.hasId(id)) return null;
 
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
-    return await this.adapter.getEmbedding(id);
+    // Try to get entity data from LibSQL
+    try {
+      const { getGraphStorage } = await import("../storage/graph-storage-factory.js");
+      const storage = await getGraphStorage();
+      // ID format: "ent:{entityId}" - extract entity ID
+      const entityId = id.startsWith("ent:") ? id.slice(4) : id;
+      const entity = await storage.getEntity(entityId);
+      if (entity) {
+        return {
+          id,
+          content: entity.name || "",
+          vector: new Float32Array(0),
+          metadata: { entityId, type: entity.type, filePath: entity.filePath },
+          createdAt: entity.createdAt || Date.now(),
+        };
+      }
+    } catch {
+      // Ignore LibSQL errors
+    }
+
+    // Return minimal embedding if entity not found in LibSQL
+    return {
+      id,
+      content: "",
+      vector: new Float32Array(0),
+      createdAt: Date.now(),
+    };
+  }
+
+  /**
+   * Batch check which IDs already exist
+   * v6: Uses FaissProvider ID set
+   */
+  async getExistingIds(ids: string[]): Promise<Set<string>> {
+    const provider = this.ensureFaissProvider();
+    return provider.getExistingIds(ids);
   }
 
   /**
    * Update an existing embedding
+   * v6: Remove and re-add (Faiss doesn't support in-place updates)
    */
   async update(id: string, vector: Float32Array, metadata?: Record<string, unknown>): Promise<void> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
+    const provider = this.ensureFaissProvider();
 
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
-
-    // Invalidate cache for this id
-    this.metadataCache.delete(id);
-
-    // Get existing embedding to preserve content
-    const existing = await this.adapter.getEmbedding(id);
-    if (!existing) {
+    // Check if ID exists
+    if (!provider.hasId(id)) {
       throw new Error(`Embedding with id=${id} not found`);
     }
 
-    // Delete and re-insert with new vector
-    await this.adapter.deleteEmbedding(id);
-    await this.adapter.insertEmbedding({
+    // Remove old embedding
+    await provider.remove([id]);
+
+    // Add new embedding
+    await provider.add({
       id,
-      content: existing.content,
+      content: "", // Content stored in LibSQL
       vector,
-      metadata: metadata ?? existing.metadata,
+      metadata,
       createdAt: Date.now(),
     });
   }
 
   /**
    * Delete an embedding
+   * v5: Removes from Faiss
    */
   async delete(id: string): Promise<void> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
-    await this.adapter.deleteEmbedding(id);
+    const provider = this.ensureFaissProvider();
+    await provider.remove([id]);
   }
 
   /**
    * Get total number of embeddings
+   * v5: Gets count from Faiss
    */
   async count(): Promise<number> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
-    return await this.adapter.getEmbeddingCount();
+    const provider = this.ensureFaissProvider();
+    return await provider.getVectorCount();
   }
 
   /**
-   * Clear all embeddings for current project context
-   * v4: Uses unified clear which clears all data for project, not just embeddings
+   * Clear all embeddings for current project
+   * v5: Note - this only clears Faiss, not graph data
    */
   async clear(): Promise<void> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    // Note: This clears entities, relationships AND embeddings in v4
-    this.adapter.setProjectContext(this.currentContext);
-    await this.adapter.clear();
-    console.error(`[VectorStore] Cleared data for project=${projectHash}, branch=${branchName}`);
+    // TODO: Implement clear in FaissProvider
+    logger.warn("VectorStore", "clear() not fully implemented for Faiss-only mode");
   }
 
   /**
    * Clear ALL embeddings from ALL projects
-   * WARNING: This is a destructive operation for testing/admin only
+   * WARNING: This is a destructive operation
    */
   async clearAll(): Promise<void> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    await this.adapter.clearAll();
-    console.error("[VectorStore] Cleared ALL data from ALL projects");
+    logger.warn("VectorStore", "clearAll() not implemented for Faiss-only mode");
   }
 
   /**
-   * Close the database connection
-   * v4: Does NOT close adapter - it's managed by graph-storage-factory
+   * Close the vector store
+   * v5: Saves Faiss index before closing
    */
   async close(): Promise<void> {
-    // v4: Don't close the adapter - it's shared with GraphStorage
-    // The graph-storage-factory manages the adapter lifecycle
-    this.adapter = null;
+    if (this.faissProvider) {
+      await this.faissProvider.save();
+      // Note: FaissProvider is a singleton, don't close it
+    }
     this.isInitialized = false;
-    console.error("[VectorStore] Disconnected from unified storage (adapter remains open)");
+    logger.debug("VectorStore", "Closed (Faiss index saved)");
+  }
+
+  /**
+   * Get the underlying FAISS provider for direct access
+   * Used by EmbeddingAccumulator for batch flush operations
+   */
+  getFaissProvider(): FaissProvider | null {
+    return this.faissProvider;
   }
 
   /**
    * Get database statistics
+   * v5: Gets stats from Faiss
    */
   async getStats(): Promise<{
     totalEmbeddings: number;
@@ -422,15 +584,12 @@ export class VectorStore {
     oldestEntry: number | null;
     newestEntry: number | null;
   }> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
-    const count = await this.adapter.getEmbeddingCount();
+    const provider = this.ensureFaissProvider();
+    const stats = await provider.getStats();
 
     return {
-      totalEmbeddings: count,
-      dbSizeMB: 0, // Not easily available from libsql
+      totalEmbeddings: stats.totalVectors,
+      dbSizeMB: 0, // Not easily available
       oldestEntry: null,
       newestEntry: null,
     };
@@ -438,18 +597,17 @@ export class VectorStore {
 
   /**
    * Batch search for multiple query vectors
+   * v5: Uses Faiss batch search
+   * v6: Enriches results from LibSQL
    */
   async batchSearch(queryVectors: Float32Array[], limit = 10): Promise<SimilarityResult[][]> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
+    const provider = this.ensureFaissProvider();
+    const rawResults = await provider.batchSearch(queryVectors, limit);
 
-    const results: SimilarityResult[][] = [];
+    // Enrich all results in parallel
+    const enrichedResults = await Promise.all(rawResults.map((results) => this.enrichResultsFromLibSQL(results)));
 
-    for (const queryVector of queryVectors) {
-      const searchResults = await this.search(queryVector, limit);
-      results.push(searchResults);
-    }
-
-    return results;
+    return enrichedResults;
   }
 
   /**
@@ -462,43 +620,33 @@ export class VectorStore {
 
   /**
    * Get performance statistics for vector backend
+   * v5: Returns Faiss HNSW stats
    */
   getVectorStats(): {
     hasExtension: boolean;
     extensionVersion?: string;
     optimizedOperations: boolean;
-    backend: "libsql";
+    backend: "faiss";
     backendInfo?: any;
-    gpuAcceleration?: {
-      enabled: boolean;
-      backend?: string;
-      capabilities?: any;
-    };
   } {
-    const gpuInfo = {
-      enabled: this.useGPU,
-      backend: this.gpuBackend?.name,
-      capabilities: this.gpuBackend?.getCapabilities(),
-    };
-
     return {
       hasExtension: true,
       optimizedOperations: true,
-      backend: "libsql",
+      backend: "faiss",
       backendInfo: {
-        type: "DiskANN (unified)",
+        type: "Faiss HNSW",
         persistent: true,
-        note: "Unified LibSQL storage - graph and vectors in single database",
+        note: "In-memory HNSW index with disk persistence",
       },
-      gpuAcceleration: gpuInfo,
     };
   }
 
   /**
    * Get backend information
+   * v5: Returns Faiss backend info
    */
   getBackendInfo(): {
-    currentBackend: "libsql";
+    currentBackend: "faiss";
     vectorCount: number;
     recommended: boolean;
     performance: {
@@ -510,14 +658,14 @@ export class VectorStore {
     };
   } {
     return {
-      currentBackend: "libsql",
+      currentBackend: "faiss",
       vectorCount: 0, // Would need async call to get actual count
       recommended: true,
       performance: {
-        insertSpeed: "fast",
-        searchSpeed: "fast",
+        insertSpeed: "very-fast",
+        searchSpeed: "very-fast",
         accuracy: "approximate",
-        memoryUsage: "low",
+        memoryUsage: "medium",
         persistent: true,
       },
     };
@@ -525,38 +673,28 @@ export class VectorStore {
 
   // =============================================================================
   // CROSS-BRANCH OPERATIONS
+  // v5: These require loading different Faiss indexes, not implemented yet
   // =============================================================================
 
   /**
    * Search for similar vectors in a specific branch
-   * Allows cross-branch queries without changing context
+   * v5: Not implemented - would require loading different Faiss index
    */
-  async searchInBranch(queryVector: Float32Array, targetBranch: string, limit = 10): Promise<SimilarityResult[]> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    const { projectHash } = this.currentContext;
-    const normalizedBranch = normalizeBranchName(targetBranch);
-
-    // Temporarily switch context for search
-    const currentContext = this.adapter.getProjectContext();
-    this.adapter.setProjectContext({ projectHash, branchName: normalizedBranch });
-
-    try {
-      return await this.adapter.searchVectors(queryVector, limit);
-    } finally {
-      this.adapter.setProjectContext(currentContext);
-    }
+  async searchInBranch(queryVector: Float32Array, _targetBranch: string, limit = 10): Promise<SimilarityResult[]> {
+    // For now, just search in current context
+    logger.warn("VectorStore", "searchInBranch: cross-branch search not implemented, using current context");
+    return await this.search(queryVector, limit);
   }
 
   /**
    * Compare embeddings between two branches
-   * Useful for merge operations and branch comparison
+   * v5: Not implemented - would require loading different Faiss indexes
    */
   async compareEmbeddingsBetweenBranches(
-    queryVector: Float32Array,
-    branch1: string,
-    branch2: string,
-    limit = 10,
+    _queryVector: Float32Array,
+    _branch1: string,
+    _branch2: string,
+    _limit = 10,
   ): Promise<{
     branch1Results: SimilarityResult[];
     branch2Results: SimilarityResult[];
@@ -564,124 +702,49 @@ export class VectorStore {
     onlyInBranch2: SimilarityResult[];
     inBoth: Array<{ id: string; branch1Similarity: number; branch2Similarity: number }>;
   }> {
-    const results1 = await this.searchInBranch(queryVector, branch1, limit * 2);
-    const results2 = await this.searchInBranch(queryVector, branch2, limit * 2);
-
-    const ids1 = new Set(results1.map((r) => r.id));
-    const ids2 = new Set(results2.map((r) => r.id));
-
-    const onlyInBranch1 = results1.filter((r) => !ids2.has(r.id)).slice(0, limit);
-    const onlyInBranch2 = results2.filter((r) => !ids1.has(r.id)).slice(0, limit);
-
-    const inBoth: Array<{ id: string; branch1Similarity: number; branch2Similarity: number }> = [];
-    for (const r1 of results1) {
-      if (ids2.has(r1.id)) {
-        const r2 = results2.find((r) => r.id === r1.id);
-        if (r2) {
-          inBoth.push({
-            id: r1.id,
-            branch1Similarity: r1.similarity,
-            branch2Similarity: r2.similarity,
-          });
-        }
-      }
-    }
-
+    logger.warn("VectorStore", "compareEmbeddingsBetweenBranches: not implemented in Faiss-only mode");
     return {
-      branch1Results: results1.slice(0, limit),
-      branch2Results: results2.slice(0, limit),
-      onlyInBranch1,
-      onlyInBranch2,
-      inBoth: inBoth.slice(0, limit),
+      branch1Results: [],
+      branch2Results: [],
+      onlyInBranch1: [],
+      onlyInBranch2: [],
+      inBoth: [],
     };
   }
 
   /**
    * List all branches that have embeddings for current project
+   * v5: Not implemented - Faiss index is per-project/branch
    */
   async listBranches(): Promise<string[]> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    // Ensure context is set on adapter
-    this.adapter.setProjectContext(this.currentContext);
-    return await this.adapter.listBranches();
+    // Return current branch only
+    return [this.currentContext.branchName];
   }
 
   /**
    * Get embedding count per branch for current project
-   * v4: Simplified - uses unified adapter
+   * v5: Returns only current branch count
    */
   async getCountPerBranch(): Promise<Array<{ branchName: string; count: number }>> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    const { projectHash } = this.currentContext;
-    const currentContext = this.adapter.getProjectContext();
-
-    try {
-      const branches = await this.adapter.listBranches();
-      const result: Array<{ branchName: string; count: number }> = [];
-
-      for (const branch of branches) {
-        this.adapter.setProjectContext({ projectHash, branchName: branch });
-        const count = await this.adapter.getEmbeddingCount();
-        result.push({ branchName: branch, count });
-      }
-
-      return result.sort((a, b) => b.count - a.count);
-    } finally {
-      this.adapter.setProjectContext(currentContext);
-    }
+    const count = await this.count();
+    return [{ branchName: this.currentContext.branchName, count }];
   }
 
   /**
    * Delete all embeddings for a specific branch
-   * v4: Warning - this clears ALL data for the branch, not just embeddings
+   * v5: Not implemented
    */
-  async deleteBranch(branchName: string): Promise<number> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    const { projectHash } = this.currentContext;
-    const normalizedBranch = normalizeBranchName(branchName);
-    const currentContext = this.adapter.getProjectContext();
-
-    try {
-      this.adapter.setProjectContext({ projectHash, branchName: normalizedBranch });
-      const count = await this.adapter.getEmbeddingCount();
-      await this.adapter.clear();
-
-      console.error(`[VectorStore] Deleted data for branch=${normalizedBranch} (was ${count} embeddings)`);
-      return count;
-    } finally {
-      this.adapter.setProjectContext(currentContext);
-    }
+  async deleteBranch(_branchName: string): Promise<number> {
+    logger.warn("VectorStore", "deleteBranch: not implemented in Faiss-only mode");
+    return 0;
   }
 
   /**
    * Copy embeddings from one branch to another
-   * Note: Not fully implemented for unified storage mode
+   * v5: Not implemented
    */
-  async copyBranch(sourceBranch: string, _targetBranch: string): Promise<number> {
-    if (!this.adapter) throw new Error("Vector store not initialized");
-
-    const { projectHash } = this.currentContext;
-    const sourceNorm = normalizeBranchName(sourceBranch);
-    const currentContext = this.adapter.getProjectContext();
-
-    try {
-      this.adapter.setProjectContext({ projectHash, branchName: sourceNorm });
-      const sourceCount = await this.adapter.getEmbeddingCount();
-
-      if (sourceCount === 0) {
-        console.error(`[VectorStore] No embeddings to copy from branch=${sourceNorm}`);
-        return 0;
-      }
-
-      // For now, we can't efficiently copy all embeddings
-      console.error(`[VectorStore] copyBranch not fully implemented for unified storage mode`);
-      console.error(`[VectorStore] Source branch ${sourceNorm} has ${sourceCount} embeddings`);
-      return 0;
-    } finally {
-      this.adapter.setProjectContext(currentContext);
-    }
+  async copyBranch(_sourceBranch: string, _targetBranch: string): Promise<number> {
+    logger.warn("VectorStore", "copyBranch: not implemented in Faiss-only mode");
+    return 0;
   }
 }

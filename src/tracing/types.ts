@@ -83,7 +83,7 @@ export interface TraceFlowParams {
   /** Track conditions (if/switch/case) */
   trackConditions?: boolean;
   /** Maximum depth of analysis */
-  maxDepth?: number;
+  maxDepth?: number | undefined;
   /** Output format */
   format?: "sequence" | "tree" | "graph" | "mermaid";
 }
@@ -121,7 +121,7 @@ export interface TraceStep {
 
   // For action === 'condition'
   /** Condition expression */
-  condition?: string;
+  condition?: string | undefined;
   /** Possible branches: outcome → next action description */
   branches?: Record<string, string>;
 
@@ -131,7 +131,7 @@ export interface TraceStep {
 
   // For action === 'await'
   /** Whether this step involves await */
-  awaits?: boolean;
+  awaits?: boolean | undefined;
   /** What is being awaited */
   awaitTarget?: string;
 
@@ -141,7 +141,7 @@ export interface TraceStep {
   /** Postconditions after this step */
   postconditions?: string[];
   /** Documentation/comments */
-  documentation?: string;
+  documentation?: string | undefined;
   /** Code snippet */
   code?: string;
 }
@@ -201,7 +201,19 @@ export interface TraceFlowResult {
   /** Summary of conditions */
   conditionsSummary: ConditionsSummary;
   /** Mermaid diagram (if format === 'mermaid') */
-  mermaid?: string;
+  mermaid?: string | undefined;
+  /** Debug info for troubleshooting */
+  _debug?: {
+    sourceEntityId: string;
+    sourceEntityName: string;
+    targetEntityId: string;
+    targetEntityName: string;
+    graphStats: { nodes: number; edges: number; loadTimeMs: number; memoryMB: number };
+    linearTraceSummary: string;
+    nodesVisited: number;
+    found: boolean;
+    timeMs: number;
+  };
 }
 
 // =============================================================================
@@ -242,7 +254,7 @@ export interface CallerInfo {
   /** Line number */
   line: number;
   /** Condition under which call happens */
-  condition?: string;
+  condition?: string | undefined;
   /** Probability of call */
   probability: CallProbability;
   /** Code context */
@@ -288,7 +300,7 @@ export interface CallChain {
   /** Likelihood of this chain executing */
   likelihood: ConfidenceLevel;
   /** Entry point of the chain */
-  entryPoint?: string;
+  entryPoint?: string | undefined;
 }
 
 /**
@@ -300,7 +312,7 @@ export interface Diagnosis {
   /** Suggested debug points */
   suggestedDebugPoints: string[];
   /** Most likely cause */
-  mostLikely?: string;
+  mostLikely?: string | undefined;
 }
 
 /**
@@ -363,7 +375,7 @@ export interface DataFlowStep {
 
   // For action === 'branch'
   /** Condition for branching */
-  condition?: string;
+  condition?: string | undefined;
   /** Branches: condition → next action */
   branches?: Record<string, string>;
 
@@ -436,7 +448,7 @@ export interface AnalyzeStateImpactParams {
     label: string;
   }>;
   /** Scope of analysis (semantic search query) */
-  scope?: string;
+  scope?: string | undefined;
 }
 
 /**
@@ -530,7 +542,7 @@ export interface DecisionPoint {
   /** Type of decision */
   type: DecisionPointType;
   /** Condition (if applicable) */
-  condition?: string;
+  condition?: string | undefined;
   /** Action (if applicable) */
   action?: string;
   /** Possible outcomes */
@@ -609,7 +621,7 @@ export interface GraphNode {
     exceptions?: Array<{ type: string }>;
   };
   /** Calls made */
-  calls?: Array<{ name: string; target?: string; isAwait?: boolean }>;
+  calls?: Array<{ name: string; target?: string | undefined; isAwait?: boolean }>;
   /** Complexity metrics */
   complexity?: {
     cyclomatic?: number;

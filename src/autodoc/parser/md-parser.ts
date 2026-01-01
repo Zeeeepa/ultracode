@@ -120,7 +120,7 @@ export function parseMarkdown(content: string, filePath: string): ParsedDocument
     title,
     sections,
     allRefs,
-    errors: errors.length > 0 ? errors : undefined,
+    ...(errors.length > 0 && { errors: errors }),
   };
 }
 

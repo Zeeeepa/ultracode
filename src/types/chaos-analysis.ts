@@ -56,7 +56,7 @@ export interface StateOperation {
   file: string;
   line: number;
   column: number;
-  entityId?: string; // From Code Graph RAG
+  entityId?: string | undefined; // From Code Graph RAG
   entityName: string; // Function/class/component name
   operationType: StateOperationType;
   angularPattern?: AngularStatePattern;
@@ -71,7 +71,7 @@ export interface StateOperation {
  */
 export interface StatePattern {
   identifier: string; // Variable name (e.g., "token", "userId")
-  type?: string; // TypeScript type
+  type?: string | undefined; // TypeScript type
   scope: "global" | "module" | "component" | "local";
   operations: StateOperation[]; // All operations on this state
   relatedIdentifiers: string[]; // Similar names (e.g., ["_token", "tokenValue", "savedToken"])
@@ -87,7 +87,7 @@ export interface StatePattern {
 export interface StateOrigin {
   file: string;
   line: number;
-  entityId?: string;
+  entityId?: string | undefined;
   entityName: string;
   type: "initialization" | "import" | "parameter" | "service_injection";
   angularPattern?: AngularStatePattern;
@@ -105,7 +105,7 @@ export interface StateOrigin {
 export interface StateFlowNode {
   id: string; // Unique node ID
   file: string;
-  entityId?: string;
+  entityId?: string | undefined;
   entityName: string;
   operationType: StateOperationType;
   angularPattern?: AngularStatePattern;
@@ -325,7 +325,7 @@ export interface ChaosAnalysisOptions {
   includeVisualization?: boolean; // Generate graph visualization
   generateRefactoringPlan?: boolean;
   useEmbeddings?: boolean; // Use semantic similarity for grouping
-  maxDepth?: number; // Maximum trace depth (default: 10)
+  maxDepth?: number | undefined; // Maximum trace depth (default: 10)
   excludePatterns?: string[]; // Files to exclude
   technology?: TechnologyContext; // Override auto-detection
 }
@@ -356,10 +356,10 @@ export type RaceRisk = "none" | "low" | "medium" | "high" | "critical";
 export interface MutationPoint {
   file: string;
   line: number;
-  entityId?: string;
+  entityId?: string | undefined;
   entityName: string; // Function/method containing the mutation
   mutationType: "write" | "reset" | "increment" | "toggle" | "conditional-write";
-  condition?: string; // Guard condition if present (e.g., "if (isProcessing)")
+  condition?: string | undefined; // Guard condition if present (e.g., "if (isProcessing)")
   isAsync: boolean; // Inside async function or callback
   hasLock: boolean; // Protected by mutex/semaphore/lock pattern
   code: string; // Code snippet
@@ -389,7 +389,7 @@ export interface RaceAnalysis {
   asyncWriters: number; // Writers in async context
   unprotectedWriters: number; // Writers without synchronization
   raceRisk: RaceRisk;
-  raceReason?: string; // Human-readable explanation
+  raceReason?: string | undefined; // Human-readable explanation
   conflicts: RaceConflict[];
   mutations: MutationPoint[];
 }

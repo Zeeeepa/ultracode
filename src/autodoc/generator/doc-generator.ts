@@ -16,7 +16,7 @@ export interface ModuleInfo {
   files: string[];
   hasIndex: boolean;
   exports: string[];
-  description?: string;
+  description?: string | undefined;
 }
 
 export interface GenerateOptions {
@@ -27,9 +27,9 @@ export interface GenerateOptions {
   /** Patterns to exclude */
   exclude?: string[];
   /** Max depth to scan */
-  maxDepth?: number;
+  maxDepth?: number | undefined;
   /** Concurrency for parallel operations */
-  concurrency?: number;
+  concurrency?: number | undefined;
 }
 
 export interface GenerateResult {
@@ -55,8 +55,8 @@ export async function scanModules(
   rootDir: string,
   options: {
     exclude?: string[];
-    maxDepth?: number;
-    concurrency?: number;
+    maxDepth?: number | undefined;
+    concurrency?: number | undefined;
   } = {},
 ): Promise<ModuleInfo[]> {
   const exclude = options.exclude || DEFAULT_EXCLUDE;
@@ -270,9 +270,14 @@ export function generateArchitectureDoc(projectName: string, modules: ModuleInfo
 
 /**
  * Generate all documentation files (preview mode)
+ *
+ * NOTE: .autodoc/ files (architecture, dependencies, etc.) are NOT generated here.
+ * They are handled separately by ensureGeneralDocs() which:
+ * - Creates template files if they don't exist
+ * - Only updates file references (line numbers) in existing files
+ * - NEVER overwrites user content
  */
 export async function generateDocs(options: GenerateOptions): Promise<GenerateResult> {
-  const autodocDir = options.autodocDir || path.join(options.rootDir, ".autodoc");
   const modules = await scanModules(options.rootDir, {
     exclude: options.exclude,
     maxDepth: options.maxDepth,
@@ -281,15 +286,11 @@ export async function generateDocs(options: GenerateOptions): Promise<GenerateRe
 
   const files: GenerateResult["files"] = [];
 
-  // Generate architecture doc
-  const projectName = path.basename(options.rootDir);
-  files.push({
-    path: path.join(autodocDir, "architecture.md"),
-    type: "general",
-    content: generateArchitectureDoc(projectName, modules),
-  });
+  // NOTE: We intentionally DO NOT generate .autodoc/ files here
+  // Those files contain high-level documentation written by humans
+  // and should only have their file references updated, not content
 
-  // Generate module AUTODOC.md files
+  // Generate module AUTODOC.md files only
   for (const mod of modules) {
     const autodocPath = path.join(mod.path, MODULE_DOC_FILENAME);
     files.push({

@@ -16,13 +16,16 @@ import { extname } from "node:path";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { getConfig } from "../config/yaml-config.js";
-import { IncrementalParser } from "../parsers/incremental-parser.js";
+// NOTE: IncrementalParser removed from main - all parsing done via subprocess workers
 import { isFileSupported } from "../parsers/language-configs.js";
+import { type EmbeddingAccumulator, getEmbeddingAccumulator } from "../semantic/embedding-accumulator.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { FileChange, ParseResult, ParserOptions, ParserStats, ParserTask } from "../types/parser.js";
+import type { WorkerEmbeddingConfig } from "../types/semantic.js";
 import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
-import { LanguageWorkerPool } from "./workers/language-worker-pool.js";
+import type { BinaryEmbedding } from "./workers/language-worker-pool.js";
+import { ParsingSubprocessPool } from "./workers/parsing-subprocess-pool.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -142,14 +145,18 @@ function groupFilesByLanguage(files: string[]): Map<string, string[]> {
  * - Threshold: workers activated only for 50+ files
  * - Pool reuse: workers persist across indexing sessions
  */
+// All parsing via subprocess workers for memory isolation
+type WorkerPool = ParsingSubprocessPool;
+
 export class ParserAgent extends BaseAgent {
-  private parser: IncrementalParser;
-  private languagePools: Map<string, LanguageWorkerPool> = new Map();
+  private languagePools: Map<string, WorkerPool> = new Map();
   private knowledgeBus: EventEmitter | null = null;
   private isProcessing = false;
   private stats: ParserStats;
-  private useWorkers: boolean = false;
-  private keepPoolsAlive: boolean = true; // Optimization: reuse pools across sessions
+  private keepPoolsAlive: boolean = false; // Kill pools after batch for memory release
+  private embeddingConfig: WorkerEmbeddingConfig | null = null; // Embedding config for workers
+  private embeddingAccumulator: EmbeddingAccumulator | null = null; // Accumulator for batch FAISS flush
+  private onVectorsWritten: ((workerId: string, count: number, dumpDir: string) => void) | null = null; // Callback for incremental Faiss load
 
   constructor(knowledgeBus?: EventEmitter) {
     const config = getParserConfig();
@@ -161,7 +168,6 @@ export class ParserAgent extends BaseAgent {
       priority: config.priority,
     });
 
-    this.parser = new IncrementalParser(config.cacheSize);
     this.knowledgeBus = knowledgeBus || null;
 
     this.stats = {
@@ -179,13 +185,37 @@ export class ParserAgent extends BaseAgent {
   }
 
   /**
+   * Get callback for handling binary embeddings from workers
+   * Routes embeddings to accumulator for batch FAISS flush
+   */
+  private getEmbeddingsCallback(): (embeddings: BinaryEmbedding[]) => void {
+    return (embeddings: BinaryEmbedding[]) => {
+      if (!this.embeddingAccumulator) {
+        // Lazy init accumulator on first embeddings
+        this.embeddingAccumulator = getEmbeddingAccumulator();
+        logger.debug("PARSER_AGENT", "Initialized embedding accumulator");
+      }
+      // Add to accumulator (will auto-flush when threshold reached)
+      this.embeddingAccumulator.addBinaryEmbeddings(embeddings).catch((err) => {
+        logger.error("PARSER_AGENT", "Failed to add embeddings to accumulator", {
+          error: (err as Error).message,
+        });
+      });
+    };
+  }
+
+  /**
+   * Get the embedding accumulator for external flush/stats access
+   */
+  getAccumulator(): EmbeddingAccumulator | null {
+    return this.embeddingAccumulator;
+  }
+
+  /**
    * Initialize the parser agent
    */
   protected async onInitialize(): Promise<void> {
-    console.error(`[${this.id}] Initializing Parser Agent...`);
-
-    // Initialize incremental parser
-    await this.parser.initialize();
+    logger.info("PARSER_AGENT", `Initializing Parser Agent (subprocess mode)`);
 
     // Initialize worker pool for parallel processing
     await this.initializeWorkerPool();
@@ -196,7 +226,7 @@ export class ParserAgent extends BaseAgent {
     }
 
     const config = getParserConfig();
-    console.error(`[${this.id}] Parser Agent initialized with ${config.workerPoolSize} workers`);
+    logger.info("PARSER_AGENT", `Parser Agent initialized with ${config.workerPoolSize} workers`);
   }
 
   /**
@@ -206,11 +236,11 @@ export class ParserAgent extends BaseAgent {
    * Call destroyWorkerPools() explicitly if you need to cleanup workers.
    */
   protected async onShutdown(): Promise<void> {
-    console.error(`[${this.id}] Shutting down Parser Agent...`);
+    logger.info("PARSER_AGENT", `Shutting down Parser Agent...`);
 
     // Optimization 3: Keep worker pools alive for reuse (unless explicitly disabled)
     if (!this.keepPoolsAlive) {
-      console.error(`[${this.id}] Shutting down worker pools...`);
+      logger.info("PARSER_AGENT", `Shutting down worker pools...`);
       const shutdownPromises: Promise<void>[] = [];
       for (const [_language, pool] of this.languagePools) {
         shutdownPromises.push(pool.shutdown());
@@ -218,18 +248,17 @@ export class ParserAgent extends BaseAgent {
       await Promise.all(shutdownPromises);
       this.languagePools.clear();
     } else {
-      console.error(`[${this.id}] Worker pools kept alive for reuse (${this.languagePools.size} pools active)`);
+      logger.info("PARSER_AGENT", `Worker pools kept alive for reuse (${this.languagePools.size} pools active)`);
     }
 
-    // Clear caches
-    this.parser.clearCache();
+    // NOTE: Cache clearing removed - caches are per-subprocess worker now
 
     // Unsubscribe from events
     if (this.knowledgeBus) {
       this.knowledgeBus.removeAllListeners(TOPICS.FILE_CHANGED);
     }
 
-    console.error(`[${this.id}] Parser Agent shutdown complete`);
+    logger.info("PARSER_AGENT", `Parser Agent shutdown complete`);
   }
 
   /**
@@ -241,18 +270,18 @@ export class ParserAgent extends BaseAgent {
    * - For testing cleanup
    */
   async destroyWorkerPools(): Promise<void> {
-    console.error(`[${this.id}] Destroying worker pools...`);
+    logger.info("PARSER_AGENT", `Destroying worker pools...`);
 
     const shutdownPromises: Promise<void>[] = [];
     for (const [language, pool] of this.languagePools) {
-      console.error(`[${this.id}] Shutting down ${language} pool...`);
+      logger.info("PARSER_AGENT", `Shutting down ${language} pool...`);
       shutdownPromises.push(pool.shutdown());
     }
 
     await Promise.all(shutdownPromises);
     this.languagePools.clear();
 
-    console.error(`[${this.id}] All worker pools destroyed`);
+    logger.info("PARSER_AGENT", `All worker pools destroyed`);
   }
 
   /**
@@ -283,7 +312,7 @@ export class ParserAgent extends BaseAgent {
     const parserTask = task as ParserTask;
     const startTime = Date.now();
 
-    console.error(`[${this.id}] Processing task: ${parserTask.type}`);
+    logger.info("PARSER_AGENT", `Processing task: ${parserTask.type}`);
 
     try {
       let results: ParseResult[] = [];
@@ -331,7 +360,7 @@ export class ParserAgent extends BaseAgent {
           })
           .join("; ");
 
-        console.warn(`[${this.id}] ${resultsWithErrors.length} file(s) reported parse errors: ${summaries}`);
+        logger.warn("PARSER_AGENT", `${resultsWithErrors.length} file(s) reported parse errors: ${summaries}`);
 
         if (this.knowledgeBus) {
           for (const result of resultsWithErrors) {
@@ -363,14 +392,15 @@ export class ParserAgent extends BaseAgent {
         });
       }
 
-      console.error(
-        `[${this.id}] Task completed: ${results.length} files parsed in ${elapsed}ms ` +
-          `(${Math.round((results.length / elapsed) * 1000)} files/sec)`,
-      );
+      logger.info("PARSER_AGENT", "Task completed", {
+        filesCount: results.length,
+        elapsedMs: elapsed,
+        filesPerSec: Math.round((results.length / elapsed) * 1000),
+      });
 
       return results;
     } catch (error) {
-      console.error(`[${this.id}] Task failed:`, error);
+      logger.info("PARSER_AGENT", `Task failed:`, error);
 
       // Publish error to knowledge bus
       if (this.knowledgeBus) {
@@ -389,7 +419,7 @@ export class ParserAgent extends BaseAgent {
    * Handle incoming messages
    */
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    console.error(`[${this.id}] Received message: ${message.type}`);
+    logger.info("PARSER_AGENT", `Received message: ${message.type}`);
 
     switch (message.type) {
       case "parse:request": {
@@ -406,9 +436,9 @@ export class ParserAgent extends BaseAgent {
       }
 
       case "cache:clear":
-        // Clear parser cache
-        this.parser.clearCache();
-        console.error(`[${this.id}] Cache cleared`);
+        // NOTE: Cache clearing is per-subprocess worker now
+        // Each worker manages its own cache and releases on process exit
+        logger.info("PARSER_AGENT", `Cache clear requested (no-op: caches are per-subprocess worker)`);
         break;
 
       case "stats:request":
@@ -425,15 +455,30 @@ export class ParserAgent extends BaseAgent {
         break;
 
       default:
-        console.warn(`[${this.id}] Unknown message type: ${message.type}`);
+        logger.warn("PARSER_AGENT", `Unknown message type: ${message.type}`);
     }
   }
 
   /**
-   * Parse a single file
+   * Parse a single file via subprocess worker
    */
   async parseFile(filePath: string, options?: ParserOptions): Promise<ParseResult> {
-    return await this.parser.parseFile(filePath, undefined, options || {});
+    // Route single file through worker pool
+    const results = await this.parseBatch([filePath], options);
+    if (results[0]) {
+      return results[0];
+    }
+    // Return error result if parsing failed
+    const language = detectLanguage(filePath) as ParseResult["language"];
+    return {
+      filePath,
+      language,
+      entities: [],
+      contentHash: "",
+      timestamp: Date.now(),
+      parseTimeMs: 0,
+      errors: [{ message: "Failed to parse file via worker" }],
+    };
   }
 
   /**
@@ -441,13 +486,13 @@ export class ParserAgent extends BaseAgent {
    */
   async parseBatch(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
     // DEBUG: Log input files count
-    console.error(`[ParserAgent.parseBatch] Received ${files.length} files`);
+    logger.info("PARSER_AGENT", `[ParserAgent.parseBatch] Received ${files.length} files`);
 
     // Filter to supported files only
     const supportedFiles = filterSupportedFiles(files);
 
     // DEBUG: Log filtered files count
-    console.error(`[ParserAgent.parseBatch] After filter: ${supportedFiles.length} supported files`);
+    logger.info("PARSER_AGENT", `[ParserAgent.parseBatch] After filter: ${supportedFiles.length} supported files`);
 
     // DEBUG: Log filtering stats via logger (for file logging)
     const extStats: Record<string, { total: number; supported: number }> = {};
@@ -477,61 +522,45 @@ export class ParserAgent extends BaseAgent {
       fileCount: supportedFiles.length,
     });
 
-    // Use language-specific worker pools for parallel processing
-    // Threshold: 20 files minimum to justify worker pool overhead (optimization)
-    // TEMPORARILY DISABLED: Worker pools have path issues, using single-threaded parsing
-    const WORKER_THRESHOLD = 20;
-    const USE_WORKERS_TEMP_DISABLED = false; // TODO: Re-enable after fixing worker path issue
-    if (USE_WORKERS_TEMP_DISABLED && this.useWorkers && supportedFiles.length >= WORKER_THRESHOLD) {
-      const startTime = Date.now();
-      const results = await this.parseWithWorkers(supportedFiles, options);
-      const elapsed = Date.now() - startTime;
+    // Always use subprocess worker pools for memory isolation
+    const startTime = Date.now();
+    const results = await this.parseWithWorkers(supportedFiles, options);
+    const elapsed = Date.now() - startTime;
 
-      logger.info("PARSER_AGENT", "Worker pool parsing completed", {
-        agentId: this.id,
-        filesProcessed: supportedFiles.length,
-        resultsCount: results.length,
-        elapsedMs: elapsed,
-        filesPerSec: Math.round(supportedFiles.length / (elapsed / 1000)),
-      });
+    const totalEntities = results.reduce((sum, r) => sum + (r.entities?.length || 0), 0);
+    logger.info("PARSER_AGENT", "Worker pool parsing completed", {
+      agentId: this.id,
+      filesProcessed: supportedFiles.length,
+      resultsCount: results.length,
+      totalEntities,
+      elapsedMs: elapsed,
+      filesPerSec: Math.round(supportedFiles.length / (elapsed / 1000)),
+    });
 
-      return results;
-    } else {
-      // Fall back to single-threaded batch processing for small batches
-      logger.info("PARSER_AGENT", "Using single-threaded parser", {
-        agentId: this.id,
-        fileCount: supportedFiles.length,
-        threshold: WORKER_THRESHOLD,
-        useWorkers: this.useWorkers,
-      });
-
-      const result = await this.parser.parseBatch(supportedFiles, options);
-
-      logger.info("PARSER_AGENT", "Single-threaded parsing completed", {
-        agentId: this.id,
-        inputFiles: supportedFiles.length,
-        resultsCount: result.results.length,
-        resultsWithEntities: result.results.filter((r) => r.entities && r.entities.length > 0).length,
-      });
-
-      return result.results;
-    }
+    return results;
   }
 
   /**
-   * Process incremental file changes
+   * Process incremental file changes via subprocess workers
    */
   async processIncremental(changes: FileChange[], options?: ParserOptions): Promise<ParseResult[]> {
-    console.error(`[${this.id}] Processing ${changes.length} incremental changes...`);
+    logger.info("PARSER_AGENT", `Processing ${changes.length} incremental changes...`);
 
-    // TASK-001: Use incremental parsing for maximum performance
-    const results = await this.parser.processIncremental(changes, options);
+    // Route incremental changes through worker pools
+    // Workers will re-parse modified files (caching is per-worker)
+    const filesToParse = changes.filter((c) => c.changeType !== "deleted").map((c) => c.filePath);
 
-    // Update cache statistics
+    if (filesToParse.length === 0) {
+      return [];
+    }
+
+    const results = await this.parseBatch(filesToParse, options);
+
+    // Emit cache updated event (stats are aggregated from workers)
     if (this.knowledgeBus) {
       this.knowledgeBus.emit(TOPICS.CACHE_UPDATED, {
         agentId: this.id,
-        cacheStats: this.parser.getStats(),
+        stats: this.getParserStats(),
       });
     }
 
@@ -539,28 +568,26 @@ export class ParserAgent extends BaseAgent {
   }
 
   /**
-   * Initialize language-specific worker pools (lazy - enabled but not created yet)
+   * Initialize subprocess worker pools (lazy - enabled but not created yet)
    *
    * Optimization: Pools are created on-demand only for languages that are actually used.
    * This saves ~3-5 seconds of initialization overhead for small projects.
    */
   private async initializeWorkerPool(): Promise<void> {
-    const enableWorkers = process.env.PARSER_USE_WORKERS !== "0";
-
-    if (!enableWorkers) {
-      console.error(`[${this.id}] Language worker pools disabled via environment variable`);
-      return;
-    }
-
-    // Enable lazy initialization mode
-    this.useWorkers = true;
-    console.error(`[${this.id}] Language worker pools enabled (lazy initialization mode)`);
+    // Subprocess workers are always enabled for memory isolation
+    // Pools are created lazily in getOrCreateLanguagePool()
+    logger.info("PARSER_AGENT", "Subprocess worker pools enabled (lazy initialization mode)");
   }
 
   /**
-   * Get or create a language worker pool on-demand (lazy initialization)
+   * Get or create a subprocess worker pool on-demand (lazy initialization)
+   *
+   * Uses ParsingSubprocessPool (separate OS processes):
+   * - Memory is released when process dies
+   * - Visible in Task Manager
+   * - Workers restart automatically when memory exceeds limit
    */
-  private async getOrCreateLanguagePool(language: string): Promise<LanguageWorkerPool | null> {
+  private async getOrCreateLanguagePool(language: string): Promise<WorkerPool | null> {
     // Check if pool already exists
     if (this.languagePools.has(language)) {
       return this.languagePools.get(language)!;
@@ -568,105 +595,95 @@ export class ParserAgent extends BaseAgent {
 
     // Create new pool for this language
     try {
-      console.error(`[${this.id}] Creating worker pool for language: ${language}`);
-      const pool = new LanguageWorkerPool(language);
+      // Always use subprocess pools for memory isolation
+      logger.info("PARSER_AGENT", `Creating subprocess pool for ${language}`, {
+        hasVectorsWrittenCallback: !!this.onVectorsWritten,
+        hasEmbeddingConfig: !!this.embeddingConfig,
+      });
+
+      const pool: WorkerPool = new ParsingSubprocessPool(language, {
+        killAfterBatch: !this.keepPoolsAlive, // Kill process after batch for memory release
+        memoryLimitMB: 512, // Restart if memory exceeds 512MB
+        ...(this.embeddingConfig && { embeddingConfig: this.embeddingConfig }),
+        onEmbeddings: this.getEmbeddingsCallback(), // Binary embeddings callback
+        ...(this.onVectorsWritten && { onVectorsWritten: this.onVectorsWritten }), // Incremental Faiss loading
+      });
+
       await pool.initialize();
       this.languagePools.set(language, pool);
 
       const stats = pool.getStats();
-      console.error(`[${this.id}] ${language} pool ready: ${stats.totalWorkers} workers`);
+      logger.info("PARSER_AGENT", `${language} subprocess pool ready: ${stats.totalWorkers} workers`);
 
       return pool;
     } catch (error) {
-      console.warn(`[${this.id}] Failed to create ${language} worker pool:`, error);
+      logger.warn("PARSER_AGENT", `Failed to create ${language} pool`, { error: (error as Error).message });
       return null;
     }
   }
 
   /**
-   * Parse files using language-specific worker pools
+   * Parse files using subprocess worker pools
    *
-   * Optimizations:
-   * 1. Lazy initialization - create pools only for used languages
-   * 2. Threshold - skip workers for small batches (<50 files)
-   * 3. Parallel execution - all language pools work simultaneously
-   *
-   * Performance: 2-3.4x speedup for large projects with diverse languages
+   * All parsing goes through subprocess workers for memory isolation.
+   * Worker pools are created lazily on-demand for each language.
    */
   private async parseWithWorkers(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
-    if (!this.useWorkers) {
-      // Fallback to single-threaded
-      const result = await this.parser.parseBatch(files, options);
-      return result.results;
+    // Step 1: Group files by programming language
+    const languageGroups = groupFilesByLanguage(files);
+
+    logger.info("PARSER_AGENT", "Language distribution", {
+      agentId: this.id,
+      distribution: Object.fromEntries(
+        Array.from(languageGroups.entries()).map(([lang, files]) => [lang, files.length]),
+      ),
+    });
+
+    // Step 2: Submit each language group to its dedicated subprocess pool (in PARALLEL)
+    const poolPromises: Promise<ParseResult[]>[] = [];
+    const languagesUsed: string[] = [];
+    const skippedFiles: string[] = [];
+
+    for (const [language, languageFiles] of languageGroups) {
+      // Get or create subprocess pool lazily
+      const pool = await this.getOrCreateLanguagePool(language);
+
+      if (pool) {
+        // Submit to language-specific subprocess pool
+        languagesUsed.push(language);
+        poolPromises.push(pool.submitTask(languageFiles, options));
+      } else {
+        // Skip files for unsupported languages (no fallback)
+        logger.warn("PARSER_AGENT", `No worker pool for ${language}, skipping ${languageFiles.length} files`);
+        skippedFiles.push(...languageFiles);
+      }
     }
 
-    try {
-      // Optimization 2: Threshold - skip workers for small batches
-      const WORKER_THRESHOLD = 20; // Configurable threshold
-      if (files.length < WORKER_THRESHOLD) {
-        console.error(
-          `[${this.id}] File count (${files.length}) below worker threshold (${WORKER_THRESHOLD}), using single-threaded parser`,
-        );
-        const result = await this.parser.parseBatch(files, options);
-        return result.results;
+    // Step 3: Wait for ALL subprocess pools to complete (parallel execution)
+    const results = await Promise.all(poolPromises);
+
+    // Step 4: Flatten results from all pools
+    const flatResults = results.flat();
+
+    // Log pool statistics
+    for (const language of languagesUsed) {
+      const pool = this.languagePools.get(language);
+      if (pool) {
+        const stats = pool.getStats();
+        logger.debug("PARSER_AGENT", `Pool stats: ${language}`, {
+          activeWorkers: stats.activeWorkers,
+          totalWorkers: stats.totalWorkers,
+          completedTasks: stats.completedTasks,
+          avgProcessingTimeMs: Math.round(stats.avgProcessingTime),
+        });
       }
-
-      // Step 1: Group files by programming language
-      const languageGroups = groupFilesByLanguage(files);
-
-      console.error(
-        `[${this.id}] Language distribution:`,
-        Array.from(languageGroups.entries())
-          .map(([lang, files]) => `${lang}:${files.length}`)
-          .join(", "),
-      );
-
-      // Step 2: Submit each language group to its dedicated pool (in PARALLEL)
-      // Optimization 1: Lazy initialization - create pools on-demand
-      const poolPromises: Promise<ParseResult[]>[] = [];
-      const languagesUsed: string[] = [];
-
-      for (const [language, languageFiles] of languageGroups) {
-        // Get or create pool lazily
-        const pool = await this.getOrCreateLanguagePool(language);
-
-        if (pool) {
-          // Submit to language-specific worker pool
-          languagesUsed.push(language);
-          poolPromises.push(pool.submitTask(languageFiles, options));
-        } else {
-          // Fallback to single-threaded for unsupported language or failed init
-          console.warn(`[${this.id}] No worker pool for ${language}, using single-threaded parser`);
-          const parsePromises = languageFiles.map((file) => this.parser.parseFile(file, undefined, options));
-          poolPromises.push(Promise.all(parsePromises));
-        }
-      }
-
-      // Step 3: Wait for ALL language pools to complete (parallel execution)
-      const results = await Promise.all(poolPromises);
-
-      // Step 4: Flatten results from all pools
-      const flatResults = results.flat();
-
-      // Log pool statistics
-      console.error(`[${this.id}] Language pool stats:`);
-      for (const language of languagesUsed) {
-        const pool = this.languagePools.get(language);
-        if (pool) {
-          const stats = pool.getStats();
-          console.error(
-            `  - ${language}: ${stats.activeWorkers}/${stats.totalWorkers} workers active, ${stats.completedTasks} tasks completed, ${Math.round(stats.avgProcessingTime)}ms avg`,
-          );
-        }
-      }
-
-      return flatResults;
-    } catch (error) {
-      console.warn(`[${this.id}] Language pool parsing failed, falling back to single-threaded:`, error);
-      // Fallback to single-threaded
-      const result = await this.parser.parseBatch(files, options);
-      return result.results;
     }
+
+    if (skippedFiles.length > 0) {
+      logger.warn("PARSER_AGENT", `Skipped ${skippedFiles.length} files (unsupported languages)`);
+    }
+
+    return flatResults;
   }
 
   /**
@@ -676,7 +693,7 @@ export class ParserAgent extends BaseAgent {
     if (this.isProcessing) return;
 
     const change: FileChange = event.change;
-    console.error(`[${this.id}] File change detected: ${change.filePath}`);
+    logger.info("PARSER_AGENT", `File change detected: ${change.filePath}`);
 
     // Create incremental parse task
     const task: ParserTask = {
@@ -691,7 +708,7 @@ export class ParserAgent extends BaseAgent {
 
     // Process asynchronously
     this.process(task).catch((error) => {
-      console.error(`[${this.id}] Failed to process file change:`, error);
+      logger.info("PARSER_AGENT", `Failed to process file change:`, error);
     });
   }
 
@@ -703,19 +720,19 @@ export class ParserAgent extends BaseAgent {
     this.on("resource:warning", (usage) => {
       const config = getParserConfig();
       if (usage.memory > config.memoryLimit * 0.9) {
-        console.warn(`[${this.id}] Memory usage high: ${usage.memory}MB`);
-        // Clear some cache to free memory
-        this.parser.clearCache();
+        logger.warn("PARSER_AGENT", `Memory usage high: ${usage.memory}MB`, { agentId: this.id });
+        // NOTE: Cache is per-subprocess worker now
+        // Workers are killed and restarted automatically when memory exceeds limit
       }
     });
 
     // Monitor task completion
     this.on("task:completed", (event) => {
-      console.error(`[${this.id}] Task completed: ${event.task.id}`);
+      logger.info("PARSER_AGENT", `Task completed: ${event.task.id}`);
     });
 
     this.on("task:failed", (event) => {
-      console.error(`[${this.id}] Task failed: ${event.task.id}`, event.error);
+      logger.info("PARSER_AGENT", `Task failed: ${event.task.id}`, event.error);
       this.stats.errorCount++;
     });
   }
@@ -729,11 +746,8 @@ export class ParserAgent extends BaseAgent {
     this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
     this.stats.throughput = (results.length / elapsedMs) * 1000;
 
-    // Update cache stats from parser
-    const parserStats = this.parser.getStats();
-    this.stats.cacheHits = parserStats.cacheHits;
-    this.stats.cacheMisses = parserStats.cacheMisses;
-    this.stats.cacheMemoryMB = parserStats.cacheMemoryMB;
+    // NOTE: Cache stats are per-subprocess worker now (no aggregated cache stats)
+    // Each worker manages its own cache and releases on process exit
   }
 
   /**
@@ -741,6 +755,61 @@ export class ParserAgent extends BaseAgent {
    */
   getParserStats(): ParserStats {
     return { ...this.stats };
+  }
+
+  /**
+   * Set embedding configuration for subprocess workers.
+   * Workers will use this config to generate embeddings during parsing.
+   * Call this before parsing to enable embedding generation in workers.
+   */
+  setEmbeddingConfig(config: WorkerEmbeddingConfig | null): void {
+    this.embeddingConfig = config;
+
+    // Update existing pools with new config
+    for (const pool of this.languagePools.values()) {
+      if (pool instanceof ParsingSubprocessPool) {
+        pool.configureEmbeddings(config ?? undefined);
+      }
+    }
+
+    if (config) {
+      logger.info("PARSER_AGENT", `Embedding config set: ${config.provider}/${config.modelName}`);
+    } else {
+      logger.info("PARSER_AGENT", `Embedding config cleared`);
+    }
+  }
+
+  /**
+   * Set callback for incremental Faiss loading.
+   * Called when a worker writes vectors to dump files.
+   * Enables parallel indexing: Faiss loads vectors as each worker completes.
+   */
+  setVectorsWrittenCallback(callback: ((workerId: string, count: number, dumpDir: string) => void) | null): void {
+    this.onVectorsWritten = callback;
+    if (callback) {
+      logger.info("PARSER_AGENT", `Incremental Faiss loading enabled`);
+    }
+  }
+
+  /**
+   * Set incremental mode for workers.
+   *
+   * Full indexing (incremental=false, default):
+   *   - Workers are one-shot: process batch → die
+   *   - New worker spawned lazily when new task arrives
+   *   - Best for bulk processing where we know all files upfront
+   *
+   * Incremental mode (incremental=true):
+   *   - Workers stay alive and process incoming tasks
+   *   - Worker dies only when memory exceeds 500MB
+   *   - Best for watch mode / file change handling
+   */
+  setIncrementalMode(enabled: boolean): void {
+    this.keepPoolsAlive = enabled;
+    logger.info("PARSER_AGENT", `Incremental mode: ${enabled ? "enabled" : "disabled"}`);
+
+    // Note: existing pools keep their current killAfterBatch setting
+    // New pools will use the updated setting
   }
 
   /**
@@ -752,16 +821,75 @@ export class ParserAgent extends BaseAgent {
 
   /**
    * Export cache for persistence
+   * @deprecated Cache is per-subprocess worker now, not exportable from main process
    */
-  exportCache() {
-    return this.parser.exportCache();
+  exportCache(): any[] {
+    // Cache is per-subprocess worker now
+    // Workers manage their own caches and release on process exit
+    logger.warn("PARSER_AGENT", "exportCache() called but cache is per-subprocess worker now");
+    return [];
   }
 
   /**
    * Import cache for warm restart
+   * @deprecated Cache is per-subprocess worker now, not importable to main process
    */
-  async importCache(cacheData: any[]) {
-    await this.parser.warmRestart(cacheData);
-    console.error(`[${this.id}] Cache imported with ${cacheData.length} entries`);
+  async importCache(_cacheData: any[]): Promise<void> {
+    // Cache is per-subprocess worker now
+    // Workers manage their own caches
+    logger.warn("PARSER_AGENT", "importCache() called but cache is per-subprocess worker now");
+  }
+
+  /**
+   * Get total memory usage of all worker pools in MB
+   */
+  getTotalMemoryMB(): number {
+    let totalMB = 0;
+    for (const pool of this.languagePools.values()) {
+      if ("getTotalMemoryMB" in pool) {
+        totalMB += (pool as ParsingSubprocessPool).getTotalMemoryMB();
+      }
+    }
+    return totalMB;
+  }
+
+  /**
+   * Kill all worker pools if total memory exceeds threshold.
+   * Returns true if any pools were killed.
+   *
+   * Use case: After indexing, call killIfMemoryHigh(500) to release memory
+   * if workers accumulated more than 500MB total.
+   */
+  async killIfMemoryHigh(thresholdMB: number): Promise<boolean> {
+    const totalMB = this.getTotalMemoryMB();
+
+    if (totalMB > thresholdMB) {
+      logger.info("PARSER_AGENT", `Total memory ${totalMB}MB > ${thresholdMB}MB threshold, killing all pools`, {
+        agentId: this.id,
+        poolCount: this.languagePools.size,
+      });
+
+      // Kill all subprocess pools
+      const shutdownPromises: Promise<void>[] = [];
+      for (const [language, pool] of this.languagePools) {
+        if ("shutdown" in pool) {
+          logger.debug("PARSER_AGENT", `Killing ${language} pool`);
+          shutdownPromises.push(pool.shutdown());
+        }
+      }
+      await Promise.all(shutdownPromises);
+      this.languagePools.clear();
+
+      logger.info("PARSER_AGENT", "All pools killed, memory released to OS", {
+        agentId: this.id,
+        previousMemoryMB: totalMB,
+      });
+      return true;
+    } else {
+      logger.debug("PARSER_AGENT", `Total memory ${totalMB}MB <= ${thresholdMB}MB, keeping pools alive`, {
+        agentId: this.id,
+      });
+      return false;
+    }
   }
 }

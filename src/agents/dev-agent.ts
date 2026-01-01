@@ -6,11 +6,13 @@
 
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
+import { buildWorkerEmbeddingConfig } from "../config/worker-embedding-config.js";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { getFaissProvider } from "../semantic/faiss/faiss-provider.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
 import { setGlobalProjectContext } from "../storage/graph-storage-factory.js";
-import { getProjectSQLiteManager } from "../storage/sqlite-manager.js";
+// SQLiteManager removed - using libsql via GraphStorage
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParserOptions } from "../types/parser.js";
 import { hashText } from "../utils/fast-hash.js";
@@ -107,7 +109,6 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     super(AgentType.DEV, {
       maxConcurrency: agentConfig.maxConcurrency,
       memoryLimit: agentConfig.memoryLimit,
-      cpuAffinity: undefined,
       priority: agentConfig.priority,
     });
 
@@ -134,18 +135,15 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         }
       }
 
-      // Use project-specific SQLiteManager based on current indexing directory
+      // Initialize IndexerAgent with current indexing directory context
       const currentDir = getCurrentIndexingDirectory() || process.cwd();
       console.error(`[DevAgent ${this.id}] Using project directory for IndexerAgent: ${currentDir}`);
-      const sqliteManager = getProjectSQLiteManager(currentDir);
-      this.indexerAgent = new IndexerAgent(sqliteManager);
+      this.indexerAgent = new IndexerAgent();
       await this.indexerAgent.initialize();
-      // v3: Set project context on GLOBAL GraphStorage singleton
+      // Set project context on GLOBAL GraphStorage singleton
       setGlobalProjectContext(currentDir);
       console.error(`[DevAgent ${this.id}] Called setGlobalProjectContext(${currentDir}) during init`);
-      console.error(
-        `[DevAgent ${this.id}] IndexerAgent initialized with db: ${(sqliteManager as any).config?.path || "unknown"}`,
-      );
+      console.error(`[DevAgent ${this.id}] IndexerAgent initialized`);
     } catch (error) {
       console.error(`[DevAgent ${this.id}] Failed to initialize sub-agents:`, error);
       throw error;
@@ -374,11 +372,27 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       samplePatterns: excludePatterns.slice(0, 5),
     });
 
-    const files = await this.collectFiles(directory, excludePatterns);
-    logger.info("DEV_AGENT", "Files collected", { count: files.length });
+    const allFiles = await this.collectFiles(directory, excludePatterns);
+    logger.info("DEV_AGENT", "Files collected", { count: allFiles.length });
+
+    // Separate code files (AST parsing) from data files (heuristic entities)
+    const codeFiles: string[] = [];
+    const dataFiles: string[] = [];
+    for (const file of allFiles) {
+      const ext = extname(file).toLowerCase();
+      if (isCodeExtension(ext)) {
+        codeFiles.push(file);
+      } else {
+        dataFiles.push(file);
+      }
+    }
+    logger.info("DEV_AGENT", "Files separated", {
+      codeFiles: codeFiles.length,
+      dataFiles: dataFiles.length,
+    });
 
     const configLoader = ConfigLoader.getInstance();
-    const isDebugMode = process.env.MCP_DEBUG_MODE === "1";
+    const isDebugMode = process.env["MCP_DEBUG_MODE"] === "1";
     const configuredBatchSize = this.indexBatchSize ?? configLoader.getDevIndexBatchSize();
     // Removed artificial batch size limit in debug mode to allow worker pool to function effectively
     // Old: const effectiveBatchSize = isDebugMode ? Math.min(configuredBatchSize, 5) : configuredBatchSize;
@@ -397,6 +411,40 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     let totalRelationships = 0;
     let filesProcessed = 0;
 
+    // Configure embedding generation in parser workers (lightweight HTTP client)
+    if (this.parserAgent) {
+      const embeddingConfig = buildWorkerEmbeddingConfig();
+      if (embeddingConfig) {
+        this.parserAgent.setEmbeddingConfig(embeddingConfig);
+        logger.info("DEV_AGENT", "Embedding config passed to parser workers", {
+          provider: embeddingConfig.provider,
+          model: embeddingConfig.modelName,
+        });
+
+        // Set up incremental Faiss loading callback
+        // When a worker completes, Faiss loads its vectors immediately
+        const faissProvider = getFaissProvider();
+        const dimensions = embeddingConfig.dimensions || 384;
+        logger.info("DEV_AGENT", "Setting up incremental Faiss callback", {
+          dimensions,
+          faissReady: faissProvider.isReady(),
+        });
+        this.parserAgent.setVectorsWrittenCallback((workerId, count, _dumpDir) => {
+          logger.info("DEV_AGENT", ">>> vectors.written callback TRIGGERED", { workerId, count });
+          faissProvider
+            .loadWorkerDump(workerId, dimensions)
+            .then((result) => {
+              logger.info("DEV_AGENT", "Faiss loadWorkerDump completed", { workerId, ...result });
+            })
+            .catch((err) => {
+              logger.warn("DEV_AGENT", "Failed to load worker dump", { workerId, error: (err as Error).message });
+            });
+        });
+      }
+    }
+
+    // Process CODE files through ParserAgent (AST parsing with worker pools)
+    const files = codeFiles; // Use only code files for parsing
     for (let i = 0; i < files.length; i += effectiveBatchSize) {
       const batch = files.slice(i, Math.min(i + effectiveBatchSize, files.length));
 
@@ -478,10 +526,25 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             byFile.set(fp, slot);
           }
 
-          // DEBUG: Log how many unique files have results
+          // DEBUG: Count total relationships extracted from parse results
+          let totalRelationshipsExtracted = 0;
+          let resultsWithRelationships = 0;
+          for (const res of results || []) {
+            if (Array.isArray(res?.relationships) && res.relationships.length > 0) {
+              resultsWithRelationships++;
+              totalRelationshipsExtracted += res.relationships.length;
+            }
+          }
+          console.error(
+            `[DevAgent] Batch ${i} relationships: resultsWithRels=${resultsWithRelationships}, totalRels=${totalRelationshipsExtracted}`,
+          );
+
+          // DEBUG: Log how many unique files have results (totalEntityCount already calculated above)
           logger.info("DEV_AGENT", "Files ready for indexing", {
             uniqueFiles: byFile.size,
             batchIndex: i,
+            totalEntities: totalEntityCount,
+            totalRelationships: totalRelationshipsExtracted,
           });
 
           // VERBOSE DEBUG: Show actual numbers in console
@@ -492,7 +555,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           // PARALLEL indexing using enqueue() - all tasks are queued and processed in order
           // enqueue() accepts tasks even when agent is busy, queuing them internally
           // Use CPU cores * 2 for better I/O parallelism (file reads + parsing)
-          const { cpus } = await import("os");
+          const { cpus } = await import("node:os");
           const INDEXING_CONCURRENCY = Math.max(32, cpus().length * 2); // Minimum 32, or CPU cores * 2
           const fileEntries = Array.from(byFile.entries());
 
@@ -534,9 +597,10 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             }
           }
 
-          if (isDebugMode) {
-            global.gc?.();
-          }
+          // DISABLED: gc() crashes Bun when called during OpenVINO native operations
+          // if (isDebugMode) {
+          //   global.gc?.();
+          // }
         } else {
           const entities: any[] = [];
           const relationships: any[] = [];
@@ -720,16 +784,50 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       }
     }
 
+    // Process DATA files with heuristic entities (no AST, just file-level indexing)
+    if (dataFiles.length > 0 && this.indexerAgent) {
+      logger.info("DEV_AGENT", "Processing data files with heuristic entities", {
+        count: dataFiles.length,
+      });
+
+      for (const file of dataFiles) {
+        try {
+          const heuristicResult = this._createHeuristicEntities(file);
+          if (heuristicResult.entities.length > 0) {
+            const result = await this.indexerAgent.indexEntities(heuristicResult.entities, file);
+            totalEntities += result.entitiesIndexed;
+          }
+          filesProcessed++;
+        } catch (err) {
+          // Ignore errors for data files - they're not critical
+        }
+      }
+    }
+
     // VERBOSE DEBUG: Final summary
     console.error(
-      `[DevAgent] INDEXING COMPLETE: filesProcessed=${filesProcessed}/${files.length}, entities=${totalEntities}, relationships=${totalRelationships}`,
+      `[DevAgent] INDEXING COMPLETE: filesProcessed=${filesProcessed}/${allFiles.length}, entities=${totalEntities}, relationships=${totalRelationships}`,
     );
+
+    // FULL INDEXING: Kill ALL parser workers after completion
+    // Full indexing is done, workers not needed until next incremental change
+    if (this.parserAgent) {
+      try {
+        const memoryBeforeMB = this.parserAgent.getTotalMemoryMB();
+        logger.info("DEV_AGENT", "Full indexing complete, killing all parser workers", { memoryMB: memoryBeforeMB });
+        await this.parserAgent.shutdown();
+        this.parserAgent = null as any; // Will be recreated on next indexing
+        logger.info("DEV_AGENT", "All parser workers killed, memory released to OS");
+      } catch (err) {
+        logger.warn("DEV_AGENT", "Failed to cleanup parser workers", { error: (err as Error).message });
+      }
+    }
 
     return {
       filesProcessed,
       entitiesExtracted: totalEntities,
       relationshipsCreated: totalRelationships,
-      totalFiles: files.length,
+      totalFiles: allFiles.length,
     };
   }
 
@@ -879,6 +977,71 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     return files;
   }
 
+  /**
+   * Create heuristic entities for non-TS/JS files without tree-sitter.
+   * Lightweight indexing: creates module entity based on file path.
+   * Used when ParserAgent is unavailable or useSubprocess=true.
+   *
+   * Benefits:
+   * - No tree-sitter memory accumulation
+   * - Instant (~0ms per file)
+   * - Still provides basic searchability
+   */
+  private _createHeuristicEntities(filePath: string): import("../types/parser.js").ParseResult {
+    const path = require("node:path");
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    // Map extension to language
+    const langMap: Record<string, import("../types/parser.js").SupportedLanguage> = {
+      ".py": "python",
+      ".go": "go",
+      ".rs": "rust",
+      ".java": "java",
+      ".kt": "kotlin",
+      ".cpp": "cpp",
+      ".c": "c",
+      ".h": "c",
+      ".hpp": "cpp",
+      ".swift": "swift",
+    };
+    const language = langMap[ext] || "python"; // Default to python for unknown
+
+    // Create module name from path
+    const moduleName = fileName.replace(ext, "");
+
+    // Generate stable entity ID
+    const moduleId = `module:${filePath}:${moduleName}`;
+
+    const entities: import("../types/parser.js").ParsedEntity[] = [
+      {
+        id: moduleId,
+        name: moduleName,
+        type: "module",
+        filePath,
+        location: {
+          start: { line: 1, column: 0, index: 0 },
+          end: { line: 1, column: 0, index: 0 },
+        },
+        language,
+        metadata: {
+          heuristic: true,
+          extension: ext,
+        },
+      },
+    ];
+
+    return {
+      filePath,
+      language,
+      entities,
+      relationships: [],
+      contentHash: moduleId,
+      timestamp: Date.now(),
+      parseTimeMs: 0,
+    };
+  }
+
   private handleResourceAdjustment(entry: KnowledgeEntry): void {
     this.resourceMixin.handleResourceAdjustment.call(this, entry);
   }
@@ -917,19 +1080,28 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     const startTime = Date.now();
     console.error(`[DevAgent ${this.id}] Starting incremental reindex for ${files.length} files`);
 
-    // Filter to supported file extensions
+    // Separate files into supported (full parsing) and other (heuristic entities)
     const supportedExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".kt"];
-    const supportedFiles = files.filter((f) => {
-      const ext = f.slice(f.lastIndexOf(".")).toLowerCase();
-      return supportedExtensions.includes(ext);
-    });
+    const supportedFiles: string[] = [];
+    const otherFiles: string[] = [];
 
-    if (supportedFiles.length === 0) {
-      console.error(`[DevAgent ${this.id}] No supported files to reindex`);
+    for (const f of files) {
+      const ext = f.slice(f.lastIndexOf(".")).toLowerCase();
+      if (supportedExtensions.includes(ext)) {
+        supportedFiles.push(f);
+      } else {
+        otherFiles.push(f);
+      }
+    }
+
+    if (supportedFiles.length === 0 && otherFiles.length === 0) {
+      console.error(`[DevAgent ${this.id}] No files to reindex`);
       return;
     }
 
-    console.error(`[DevAgent ${this.id}] Reindexing ${supportedFiles.length} supported files`);
+    console.error(
+      `[DevAgent ${this.id}] Reindexing ${supportedFiles.length} supported + ${otherFiles.length} heuristic files`,
+    );
 
     let successCount = 0;
     let errorCount = 0;
@@ -956,10 +1128,37 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       }
     }
 
+    // Process non-supported files with heuristic entities (lightweight, no parser needed)
+    for (const filePath of otherFiles) {
+      try {
+        const heuristicResult = this._createHeuristicEntities(filePath);
+        if (heuristicResult.entities.length > 0) {
+          await this.indexerAgent.indexEntities(heuristicResult.entities, filePath, heuristicResult.relationships);
+          successCount++;
+        }
+      } catch (error) {
+        console.error(`[DevAgent ${this.id}] Failed to create heuristic entities for ${filePath}:`, error);
+        errorCount++;
+      }
+    }
+
     const elapsed = Date.now() - startTime;
     console.error(
       `[DevAgent ${this.id}] Incremental reindex completed: ${successCount} files updated, ${errorCount} errors in ${elapsed}ms`,
     );
+
+    // INCREMENTAL: Kill workers only if memory > 500MB (keep alive for next changes)
+    if (this.parserAgent) {
+      try {
+        const killed = await this.parserAgent.killIfMemoryHigh(500);
+        if (killed) {
+          this.parserAgent = null as any;
+          logger.info("DEV_AGENT", "Parser workers killed (memory > 500MB after incremental)");
+        }
+      } catch (err) {
+        // Ignore memory check errors for incremental
+      }
+    }
 
     // Publish completion event (without source to avoid circular loop)
     knowledgeBus.publish(

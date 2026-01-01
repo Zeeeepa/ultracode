@@ -39,7 +39,7 @@ export interface CommentBlock {
   location: SourceLocation;
   raw: string;
   isLeading?: boolean; // Comment before entity
-  isInline?: boolean; // Comment inside entity
+  isInline?: boolean | undefined; // Comment inside entity
   isTrailing?: boolean; // Comment after code line
   associatedEntityId?: string; // ID of entity this comment documents
 }

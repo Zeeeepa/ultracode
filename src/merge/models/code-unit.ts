@@ -22,7 +22,7 @@ export interface CodeUnit {
   content: string; // Normalized source code
   contentHash: string; // SHA256 hash (Fast Path Level 1)
   structuralHash: string; // AST hash, ignores whitespace (Fast Path Level 2)
-  signature?: string; // FQN + params for functions (Fast Path Level 3)
+  signature?: string | undefined; // FQN + params for functions (Fast Path Level 3)
 
   // Semantic (lazy-loaded)
   embedding?: Float32Array; // Vector embedding, generated on-demand (Slow Path)

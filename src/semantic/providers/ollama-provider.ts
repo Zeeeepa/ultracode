@@ -1,10 +1,10 @@
-import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } from "./base.js";
+import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
 
 export interface OllamaOptions {
   model: string;
-  baseUrl?: string;
-  timeoutMs?: number;
-  concurrency?: number;
+  baseUrl?: string | undefined;
+  timeoutMs?: number | undefined;
+  concurrency?: number | undefined;
   headers?: Record<string, string>;
   autoPull?: boolean;
   warmupText?: string;
@@ -21,14 +21,14 @@ export class OllamaProvider implements EmbeddingProvider {
   private concurrency: number;
   private headers: Record<string, string>;
   private opts: Required<Pick<OllamaOptions, "autoPull" | "warmupText" | "checkServer">>;
-  private log?: ProviderLogger;
+  private log?: ProviderLogger | undefined;
 
   constructor(opts: OllamaOptions) {
     this.log = opts.logger;
     this.baseUrl = opts.baseUrl ?? "http://127.0.0.1:11434";
     this.timeoutMs = opts.timeoutMs ?? 10_000;
     this.pullTimeoutMs = opts.pullTimeoutMs ?? 120_000;
-    this.concurrency = Math.max(1, opts.concurrency ?? 4);
+    this.concurrency = Math.max(1, opts.concurrency ?? 8); // Higher concurrency for throughput
     this.headers = {
       "Content-Type": "application/json",
       ...(opts.headers ?? {}),
@@ -94,34 +94,30 @@ export class OllamaProvider implements EmbeddingProvider {
   }
 
   private async checkServerAvailability(): Promise<void> {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), Math.min(this.timeoutMs, 5000));
+    // Use AbortSignal.timeout() for Bun compatibility (no setTimeout)
+    const signal = AbortSignal.timeout(Math.min(this.timeoutMs, 5000));
     try {
-      const res = await fetch(`${this.baseUrl}/api/version`, { method: "GET", signal: controller.signal });
+      const res = await fetch(`${this.baseUrl}/api/version`, { method: "GET", signal });
       if (!res.ok) {
-        const tags = await fetch(`${this.baseUrl}/api/tags`, { method: "GET", signal: controller.signal }).catch(
-          () => null,
-        );
+        const tags = await fetch(`${this.baseUrl}/api/tags`, { method: "GET", signal }).catch(() => null);
         if (!tags || !tags.ok) {
           throw new Error(`Ollama server is not reachable: HTTP ${res.status}`);
         }
       }
     } catch (e) {
       throw new Error(`Ollama server check failed: ${(e as Error).message}`);
-    } finally {
-      clearTimeout(id);
     }
   }
 
   private async pullModel(): Promise<void> {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), this.pullTimeoutMs);
+    // Use AbortSignal.timeout() for Bun compatibility (no setTimeout)
+    const signal = AbortSignal.timeout(this.pullTimeoutMs);
     try {
       const res = await fetch(`${this.baseUrl}/api/pull`, {
         method: "POST",
         headers: this.headers,
         body: JSON.stringify({ name: this.info.model }),
-        signal: controller.signal,
+        signal,
       });
 
       if (!res.ok) {
@@ -140,41 +136,33 @@ export class OllamaProvider implements EmbeddingProvider {
       }
     } catch (e) {
       throw new Error(`Ollama pull error: ${(e as Error).message}`);
-    } finally {
-      clearTimeout(id);
     }
   }
 
   async embed(text: string, opts?: EmbedOptions): Promise<Float32Array> {
     this.log?.debug("embed()", { len: text?.length }, opts?.requestId);
 
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Use AbortSignal.timeout() for Bun compatibility (no setTimeout)
+    const res = await fetch(`${this.baseUrl}/api/embeddings`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify({ model: this.info.model, prompt: text }),
+      signal: opts?.signal ?? AbortSignal.timeout(this.timeoutMs),
+    });
 
-    try {
-      const res = await fetch(`${this.baseUrl}/api/embeddings`, {
-        method: "POST",
-        headers: this.headers,
-        body: JSON.stringify({ model: this.info.model, prompt: text }),
-        signal: opts?.signal ?? controller.signal,
-      });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(`Ollama HTTP ${res.status}: ${body}`);
-      }
-
-      const json: any = await res.json();
-      if (!json || !Array.isArray(json.embedding)) {
-        throw new Error("Ollama invalid response: missing embedding array");
-      }
-
-      const arr = new Float32Array(json.embedding);
-      this.info.dimension = this.info.dimension ?? arr.length;
-      return arr;
-    } finally {
-      clearTimeout(id);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Ollama HTTP ${res.status}: ${body}`);
     }
+
+    const json: any = await res.json();
+    if (!json || !Array.isArray(json.embedding)) {
+      throw new Error("Ollama invalid response: missing embedding array");
+    }
+
+    const arr = new Float32Array(json.embedding);
+    this.info.dimension = this.info.dimension ?? arr.length;
+    return arr;
   }
 
   async embedBatch(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
@@ -183,5 +171,14 @@ export class OllamaProvider implements EmbeddingProvider {
     const pLimit = (await import("p-limit")).default;
     const limit = pLimit(this.concurrency);
     return Promise.all(texts.map((t) => limit(() => this.embed(t, opts))));
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    return {
+      embeddings: true,
+      rerank: false,
+      score: false,
+      classify: false,
+    };
   }
 }

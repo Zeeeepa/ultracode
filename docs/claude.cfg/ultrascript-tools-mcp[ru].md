@@ -112,7 +112,7 @@ find_similar_code code="function validate(email) { return email.includes('@') }"
 
 ## Анализ сущностей
 
-### `list_file_entities`
+### `get_members`
 Список всех сущностей в файле (классы, функции, интерфейсы...).
 
 | Параметр | Тип | По умолчанию | Описание |
@@ -121,15 +121,8 @@ find_similar_code code="function validate(email) { return email.includes('@') }"
 | `entityTypes` | string[] | все | Типы сущностей для фильтрации |
 
 ```
-list_file_entities filePath="src/auth/login.ts" entityTypes=["function", "class"]
+get_members filePath="src/auth/login.ts" entityTypes=["function", "class"]
 ```
-
-### `get_members`
-Получить члены класса/интерфейса/модуля.
-
-| Параметр | Тип | По умолчанию | Описание |
-|----------|-----|--------------|----------|
-| `entityId` | string | **обязательный** | ID сущности |
 
 ### `list_entity_relationships`
 Показать зависимости сущности (кто вызывает, от кого зависит).
@@ -157,7 +150,7 @@ list_entity_relationships entityName="UserService" depth=2
 
 ## Качество кода
 
-### `detect_code_clones`
+### `find_duplicates`
 Семантический поиск дублирующегося кода.
 
 | Параметр | Тип | По умолчанию | Описание |
@@ -166,11 +159,8 @@ list_entity_relationships entityName="UserService" depth=2
 | `scope` | string | "all" | Область: `all` / `file` / `module` |
 
 ```
-detect_code_clones minSimilarity=0.7 scope="module"
+find_duplicates minSimilarity=0.7 scope="module"
 ```
-
-### `find_duplicates`
-Быстрый поиск дубликатов (хеш-based).
 
 ### `jscpd_detect_clones`
 Детектор клонов на базе jscpd.
@@ -277,9 +267,6 @@ AI-предложения по рефакторингу.
 | `preview` | boolean | true | Превью изменений |
 | `skipValidation` | boolean | false | Пропустить валидацию |
 
-### `modify_entity_code`
-Аналогично `modify_code`, но по имени сущности.
-
 ### `create_file`
 Создание нового файла.
 
@@ -362,15 +349,12 @@ rename_symbol entityName="getUserData" newName="fetchUserProfile" updateReferenc
 create_snapshot description="Перед рефакторингом UserService"
 ```
 
-### `rollback_snapshot`
-Откат к снапшоту.
+### `undo`
+Откат к снапшоту / отмена последнего изменения.
 
 | Параметр | Тип | По умолчанию | Описание |
 |----------|-----|--------------|----------|
-| `snapshotId` | string | **обязательный** | ID снапшота |
-
-### `undo`
-Отмена последнего изменения.
+| `snapshotId` | string | опциональный | ID снапшота (если не указан, отменяет последнее изменение) |
 
 ### `list_snapshots`
 Список снапшотов.
@@ -527,7 +511,7 @@ get_changed_files fromBranch="main" toBranch="feature/auth"
 
 ### Поиск дубликатов
 ```
-1. detect_code_clones minSimilarity=0.75
+1. find_duplicates minSimilarity=0.75
 2. find_similar_code code="<фрагмент>" threshold=0.6
 3. suggest_refactoring
 ```

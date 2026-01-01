@@ -223,9 +223,9 @@ function processClassDeclaration(classDecl: ClassDeclarationContext | null, ctx:
     type: entityType,
     filePath: ctx.filePath,
     location,
-    modifiers: modInfo.modifiers.length > 0 ? modInfo.modifiers : undefined,
+    ...(modInfo.modifiers.length > 0 && { modifiers: modInfo.modifiers }),
     inheritance: inheritance.baseClasses.length > 0 || inheritance.interfaces.length > 0 ? inheritance : undefined,
-    decorators: modInfo.annotations.length > 0 ? modInfo.annotations : undefined,
+    ...(modInfo.annotations.length > 0 && { decorators: modInfo.annotations }),
     children: [],
   };
 
@@ -466,10 +466,10 @@ function processFunctionDeclaration(funcDecl: any, ctx: ParserContext): void {
     type: ctx.currentClass ? "method" : isSuspend ? "async_function" : "function",
     filePath: ctx.filePath,
     location,
-    modifiers: modInfo.modifiers.length > 0 ? modInfo.modifiers : undefined,
-    parameters: params.length > 0 ? params : undefined,
-    returnType: returnType || undefined,
-    decorators: modInfo.annotations.length > 0 ? modInfo.annotations : undefined,
+    ...(modInfo.modifiers.length > 0 && { modifiers: modInfo.modifiers }),
+    ...(params.length > 0 && { parameters: params }),
+    ...(returnType && { returnType: returnType }),
+    ...(modInfo.annotations.length > 0 && { decorators: modInfo.annotations }),
   };
 
   ctx.entities.push(entity);
@@ -525,7 +525,7 @@ function processSecondaryConstructor(ctor: any, ctx: ParserContext): void {
     filePath: ctx.filePath,
     location: getLocation(ctor),
     modifiers: [...modInfo.modifiers, "constructor"],
-    parameters: params.length > 0 ? params : undefined,
+    ...(params.length > 0 && { parameters: params }),
   });
 
   ctx.relationships.push({
@@ -630,7 +630,7 @@ function processTypeAlias(typeAlias: any, ctx: ParserContext): void {
     type: "type",
     filePath: ctx.filePath,
     location: getLocation(typeAlias),
-    modifiers: modInfo.modifiers.length > 0 ? modInfo.modifiers : undefined,
+    ...(modInfo.modifiers.length > 0 && { modifiers: modInfo.modifiers }),
     metadata: aliasedType ? { aliasedType } : undefined,
   });
 }
@@ -753,10 +753,10 @@ function extractInheritance(delegationCtx: any): {
 
 function extractParameters(paramsCtx: any): Array<{
   name: string;
-  type?: string;
+  type?: string | undefined;
   optional?: boolean;
 }> {
-  const result: Array<{ name: string; type?: string; optional?: boolean }> = [];
+  const result: Array<{ name: string; type?: string | undefined; optional?: boolean }> = [];
   if (!paramsCtx) return result;
 
   const params = paramsCtx.functionValueParameter?.() || [];

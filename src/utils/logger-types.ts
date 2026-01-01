@@ -4,6 +4,7 @@
  */
 
 export enum LogLevel {
+  TRACE = -1, // Most verbose - for startup timing and async flow analysis
   DEBUG = 0,
   INFO = 1,
   WARN = 2,
@@ -27,7 +28,7 @@ export interface LogEntry {
   category: string;
   message: string;
   data?: any;
-  stackTrace?: string;
-  requestId?: string;
+  stackTrace?: string | undefined;
+  requestId?: string | undefined;
   duration?: number;
 }

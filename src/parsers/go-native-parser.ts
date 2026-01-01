@@ -462,11 +462,11 @@ export class GoNativeParser {
         filePath,
         language: "go" as SupportedLanguage,
         entities: result.entities,
-        relationships: result.relationships.length > 0 ? result.relationships : undefined,
+        ...(result.relationships.length > 0 && { relationships: result.relationships }),
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
-        errors: result.errors.length > 0 ? result.errors : undefined,
+        ...(result.errors.length > 0 && { errors: result.errors }),
       };
     } catch (error) {
       this.stats.errorCount++;
@@ -705,7 +705,7 @@ export class GoNativeParser {
         type: "function",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
       });
     }
 
@@ -724,7 +724,7 @@ export class GoNativeParser {
         type: kind === "struct" ? "class" : "interface",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
       });
     }
 
@@ -743,7 +743,7 @@ export class GoNativeParser {
         type: isConst ? "constant" : "variable",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
-        modifiers: modifiers.length > 0 ? modifiers : undefined,
+        ...(modifiers.length > 0 && { modifiers: modifiers }),
       });
     }
 

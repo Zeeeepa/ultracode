@@ -54,7 +54,7 @@ function parseSize(limit: string | undefined): number | undefined {
 
   const supportedUnits = new Set(["kb", "mb", "gb"]);
   const normalizedUnit = supportedUnits.has(unit) ? (unit as "kb" | "mb" | "gb") : "kb";
-  const multiplier = (units[normalizedUnit] ?? units.kb) as number;
+  const multiplier = (units[normalizedUnit] ?? units["kb"]) as number;
   return value * multiplier;
 }
 

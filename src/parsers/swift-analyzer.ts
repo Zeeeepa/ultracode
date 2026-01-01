@@ -22,7 +22,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
-import type { EntityRelationship, ParsedEntity, TreeSitterNode } from "../types/parser.js";
+import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
 const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
@@ -64,7 +64,7 @@ export class SwiftAnalyzer {
    * Parse Swift source code
    */
   async analyze(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -78,7 +78,7 @@ export class SwiftAnalyzer {
   }
 
   private async traverseNode(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -140,7 +140,7 @@ export class SwiftAnalyzer {
   }
 
   private async handleImport(
-    _node: TreeSitterNode,
+    _node: ASTNode,
     _filePath: string,
     _entities: ParsedEntity[],
     _relationships: EntityRelationship[],
@@ -151,7 +151,7 @@ export class SwiftAnalyzer {
   }
 
   private async handleClass(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -234,7 +234,7 @@ export class SwiftAnalyzer {
   }
 
   private async handleStruct(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -292,7 +292,7 @@ export class SwiftAnalyzer {
   }
 
   private async handleEnum(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -345,7 +345,7 @@ export class SwiftAnalyzer {
   }
 
   private async handleProtocol(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -390,7 +390,7 @@ export class SwiftAnalyzer {
   }
 
   private async handleExtension(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -432,7 +432,7 @@ export class SwiftAnalyzer {
   }
 
   private async handleActor(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -477,7 +477,7 @@ export class SwiftAnalyzer {
   }
 
   private async handleFunction(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -494,8 +494,8 @@ export class SwiftAnalyzer {
       if (child.type === "modifiers" || child.type === "attribute") {
         if (child.text) {
           modifiers.push(child.text);
-          if (child.text === "async") metadata.isAsync = true;
-          if (child.text === "throws") metadata.throws = true;
+          if (child.text === "async") metadata["isAsync"] = true;
+          if (child.text === "throws") metadata["throws"] = true;
         }
       }
     }
@@ -533,7 +533,7 @@ export class SwiftAnalyzer {
   }
 
   private async handleProperty(
-    node: TreeSitterNode,
+    node: ASTNode,
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
@@ -550,7 +550,7 @@ export class SwiftAnalyzer {
     // Check for computed property
     const hasGetter = node.children?.some((c) => c.type === "getter_clause" || c.type === "computed_property");
     if (hasGetter) {
-      metadata.isComputed = true;
+      metadata["isComputed"] = true;
     }
 
     // Check for let/var
@@ -558,7 +558,7 @@ export class SwiftAnalyzer {
     const isVar = node.children?.some((c) => c.text === "var");
     if (isLet) modifiers.push("let");
     if (isVar) modifiers.push("var");
-    metadata.mutable = isVar;
+    metadata["mutable"] = isVar;
 
     const fullName = this.currentType ? `${this.currentType}.${propName}` : propName;
     const propId = `${filePath}:property:${fullName}`;

@@ -12,7 +12,8 @@ export const LOGGING_CONFIG: LoggerConfig = {
   logDir: getLogsDir(),
   maxFileSize: 10 * 1024 * 1024, // 10MB
   maxFiles: 20,
-  logLevel: LogLevel.DEBUG,
+  // TRACE level for startup/async flow analysis - change to DEBUG when done investigating
+  logLevel: LogLevel.TRACE,
   enableRotation: true,
   enableTimestamp: true,
   enableStackTrace: true,
@@ -29,6 +30,13 @@ export const MCP_LOG_CATEGORIES = {
   PERFORMANCE: "PERFORMANCE",
   INCIDENT: "INCIDENT",
   RECOVERY: "RECOVERY",
+  // TRACE categories for startup analysis
+  STARTUP: "STARTUP",
+  ASYNC: "ASYNC",
+  STORAGE: "STORAGE",
+  EMBEDDING: "EMBEDDING",
+  INDEXING: "INDEXING",
+  AGENT: "AGENT",
 } as const;
 
 export type MCPLogCategory = (typeof MCP_LOG_CATEGORIES)[keyof typeof MCP_LOG_CATEGORIES];

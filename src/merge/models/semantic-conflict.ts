@@ -38,8 +38,8 @@ export interface SemanticConflict {
   branchBUnit: CodeUnit; // Unit в branchB
 
   // Intent information
-  branchAIntent?: ChangeIntent;
-  branchBIntent?: ChangeIntent;
+  branchAIntent?: ChangeIntent | undefined;
+  branchBIntent?: ChangeIntent | undefined;
 
   // Conflict details
   description: string; // Человекочитаемое описание

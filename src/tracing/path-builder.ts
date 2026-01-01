@@ -36,11 +36,11 @@ const ASYNC_WEIGHT = 0.2; // Penalty for async boundaries
 
 // NgRx relationship types that should be traversed in flow tracing
 const NGRX_RELATIONSHIP_TYPES = new Set([
-  "listens_to", // effect -> action
-  "reduces", // reducer -> action
-  "selects", // selector -> selector, component -> selector
-  "dispatches", // component -> action
-  "updates_state", // reducer -> featureSelector (implicit via store state)
+  RelationType.LISTENS_TO_ACTION, // effect -> action (ofType)
+  RelationType.HANDLES_ACTION, // reducer -> action (on)
+  RelationType.SELECTS_STATE, // component -> selector
+  RelationType.DISPATCHES_ACTION, // component/effect -> action
+  RelationType.MODIFIES_STATE, // reducer -> state slice
 ]);
 
 // =============================================================================
@@ -135,11 +135,12 @@ export class PathBuilder {
         const incomingNgRx = await this.findIncomingNgRxRelationships(entity.name);
         for (const rel of incomingNgRx) {
           // For NgRx flow tracing, we need to INVERT certain relationships:
-          // - "reduces": reducer -> action means action TRIGGERS reducer (action -> reducer in flow)
-          // - "listens_to": effect -> action means action TRIGGERS effect (action -> effect in flow)
+          // - HANDLES_ACTION: reducer -> action means action TRIGGERS reducer (action -> reducer in flow)
+          // - LISTENS_TO_ACTION: effect -> action means action TRIGGERS effect (action -> effect in flow)
           // These are semantically "incoming" to the action but should be "outgoing" in flow graph
-          const relType = rel.type as string;
-          const isInvertedRelation = relType === "reduces" || relType === "listens_to";
+          const relType = rel.type;
+          const isInvertedRelation =
+            relType === RelationType.HANDLES_ACTION || relType === RelationType.LISTENS_TO_ACTION;
 
           if (isInvertedRelation) {
             // Inverted: action -> reducer/effect (add as outgoing from current entity)
@@ -256,21 +257,21 @@ export class PathBuilder {
     // Extract control flow from metadata
     const meta = entity.metadata as Record<string, any>;
 
-    if (meta.controlFlow) {
+    if (meta["controlFlow"]) {
       node.controlFlow = {
-        branches: meta.controlFlow.branches,
-        loops: meta.controlFlow.loops,
-        awaits: meta.controlFlow.awaits,
-        exceptions: meta.controlFlow.exceptions,
+        branches: meta["controlFlow"].branches,
+        loops: meta["controlFlow"].loops,
+        awaits: meta["controlFlow"].awaits,
+        exceptions: meta["controlFlow"].exceptions,
       };
     }
 
-    if (meta.calls) {
-      node.calls = meta.calls as Array<{ name: string; target?: string; isAwait?: boolean }>;
+    if (meta["calls"]) {
+      node.calls = meta["calls"] as Array<{ name: string; target?: string | undefined; isAwait?: boolean }>;
     }
 
-    if (meta.complexity) {
-      node.complexity = meta.complexity;
+    if (meta["complexity"]) {
+      node.complexity = meta["complexity"];
     }
 
     this.nodeCache.set(entity.id, node);
@@ -316,7 +317,7 @@ export class PathBuilder {
       }
       // Check metadata for featureName (if parser saved it)
       const meta = s.metadata as Record<string, any>;
-      if (meta?.ngrxSelector?.featureName) {
+      if (meta?.["ngrxSelector"]?.featureName) {
         return true;
       }
       return false;
@@ -453,12 +454,12 @@ export class PathBuilder {
     let weight = CALL_WEIGHT;
 
     // Conditional calls have higher weight (lower priority)
-    if (rel.metadata?.conditional) {
+    if (rel.metadata?.["conditional"]) {
       weight += CONDITION_WEIGHT;
     }
 
     // Async calls have penalty
-    if (rel.metadata?.isAwait || rel.metadata?.isAsync) {
+    if (rel.metadata?.["isAwait"] || rel.metadata?.["isAsync"]) {
       weight += ASYNC_WEIGHT;
     }
 

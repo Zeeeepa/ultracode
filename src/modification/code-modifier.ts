@@ -44,7 +44,7 @@ export interface CodeModificationResult {
   embeddingsUpdated: number;
   relationshipsUpdated: number;
   preview?: DiffPreview; // Если preview: true
-  validationReport?: BeforeAfterReport; // Авто-валидация
+  validationReport?: BeforeAfterReport | undefined; // Авто-валидация
   snapshotId?: string; // ID snapshot для rollback
 }
 

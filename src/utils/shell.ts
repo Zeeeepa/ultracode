@@ -38,7 +38,7 @@ export interface ShellOptions {
   /** Environment variables */
   env?: Record<string, string>;
   /** Timeout in milliseconds */
-  timeout?: number;
+  timeout?: number | undefined;
   /** Encoding for output (default: utf-8) */
   encoding?: BufferEncoding;
   /** Suppress stderr in output */
@@ -77,7 +77,7 @@ export async function exec(command: string, options: ShellOptions = {}): Promise
  */
 async function execBun(
   command: string,
-  options: { cwd: string; env?: Record<string, string>; timeout?: number; quiet?: boolean },
+  options: { cwd: string; env?: Record<string, string>; timeout?: number | undefined; quiet?: boolean },
 ): Promise<ShellResult> {
   try {
     const Bun = globalThis.Bun!;
@@ -88,12 +88,20 @@ async function execBun(
     const shell = isWindows ? "cmd.exe" : "sh";
     const shellArgs = isWindows ? ["/c", command] : ["-c", command];
 
-    const proc = Bun.spawn([shell, ...shellArgs], {
+    // Bun.spawn options - windowsHide is supported in Bun 1.0+
+    const spawnOptions: any = {
       cwd: options.cwd,
       env: options.env ? { ...process.env, ...options.env } : undefined,
       stdout: "pipe",
       stderr: "pipe",
-    });
+    };
+
+    // Hide console window on Windows to prevent flashing
+    if (isWindows) {
+      spawnOptions.windowsHide = true;
+    }
+
+    const proc = Bun.spawn([shell, ...shellArgs], spawnOptions);
 
     // Read output
     const [stdoutBuffer, stderrBuffer] = await Promise.all([
@@ -360,8 +368,7 @@ export async function countFiles(dir: string, _pattern: string = "**/*"): Promis
             entry.name === "node_modules" ||
             entry.name === ".git" ||
             entry.name === "dist" ||
-            entry.name === "build" ||
-            entry.name === ".ultrascript"
+            entry.name === "build"
           ) {
             continue;
           }
@@ -406,8 +413,7 @@ export async function getDirSize(dir: string): Promise<number> {
             entry.name === "node_modules" ||
             entry.name === ".git" ||
             entry.name === "dist" ||
-            entry.name === "build" ||
-            entry.name === ".ultrascript"
+            entry.name === "build"
           ) {
             continue;
           }
@@ -470,7 +476,6 @@ const SKIP_DIRS = new Set([
   ".git",
   "dist",
   "build",
-  ".ultrascript",
   "coverage",
   "__pycache__",
   ".pytest_cache",

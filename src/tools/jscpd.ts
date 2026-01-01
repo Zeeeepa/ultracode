@@ -13,11 +13,11 @@ type NumericOption = number | undefined | null;
 
 export interface JscpdRunOptions {
   paths: string[];
-  pattern?: string;
+  pattern?: string | undefined;
   ignore?: string[];
   formats?: string[];
-  minLines?: NumericOption;
-  maxLines?: NumericOption;
+  minLines?: NumericOption | undefined;
+  maxLines?: NumericOption | undefined;
   minTokens?: NumericOption;
   ignoreCase?: boolean;
 }

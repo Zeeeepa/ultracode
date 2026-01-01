@@ -180,7 +180,7 @@ export interface Reference {
   /** Whether reference is valid */
   valid: boolean;
   /** Validation error if invalid */
-  validationError?: string;
+  validationError?: string | undefined;
   /** Creation timestamp */
   createdAt: number;
   /** Last update timestamp */
@@ -188,11 +188,11 @@ export interface Reference {
 
   // Denormalized fields for fast querying
   /** Target entity ID if applicable */
-  targetEntityId?: string;
+  targetEntityId?: string | undefined;
   /** Target file path */
-  targetFilePath?: string;
+  targetFilePath?: string | undefined;
   /** Target line start */
-  targetLineStart?: number;
+  targetLineStart?: number | undefined;
   /** Target line end */
   targetLineEnd?: number;
 }
@@ -206,11 +206,11 @@ export interface ChangeLogEntry {
   /** Timestamp of change */
   timestamp: number;
   /** Git commit hash if available */
-  commitHash?: string;
+  commitHash?: string | undefined;
   /** Git branch name */
   branch: string;
   /** Human-readable summary */
-  summary?: string;
+  summary?: string | undefined;
   /** Detailed changes */
   changes: Array<{
     entityId: string;
@@ -267,7 +267,7 @@ export interface AutoDocConfig {
   /** When AutoDoc was initialized */
   created?: string;
   /** Absolute path to project */
-  projectPath?: string;
+  projectPath?: string | undefined;
 }
 
 /**
@@ -296,7 +296,7 @@ export interface AutoDocStatus {
     brokenRefs: number;
   };
   /** When last synced */
-  lastSync?: number;
+  lastSync?: number | undefined;
 }
 
 /**
@@ -314,7 +314,7 @@ export interface AutoDocTodo {
   /** Why this section is important */
   reason: string;
   /** Related entity ID if applicable */
-  relatedEntityId?: string;
+  relatedEntityId?: string | undefined;
 }
 
 // =============================================================================
@@ -338,7 +338,7 @@ export interface DocSearchResult {
   /** File path */
   filePath: string;
   /** Section if applicable */
-  section?: string;
+  section?: string | undefined;
   /** Line range if applicable */
   lineRange?: { start: number; end: number };
   /** Code references */
@@ -361,7 +361,7 @@ export interface DocContext {
     type: string;
     filePath: string;
     code: string;
-    signature?: string;
+    signature?: string | undefined;
   };
   /** Callers of this entity */
   callers?: Array<{
@@ -393,7 +393,7 @@ export interface OutdatedDoc {
   /** File path */
   filePath: string;
   /** Section */
-  section?: string;
+  section?: string | undefined;
   /** Reason for being outdated */
   reason: string;
   /** Related code changes */
@@ -485,7 +485,7 @@ export interface InitParams {
 export interface SaveParams {
   filePath: string;
   content: string;
-  entityId?: string;
+  entityId?: string | undefined;
 }
 
 /**
@@ -526,8 +526,8 @@ export interface ValidateParams {
  * Parameters for autodoc_changelog
  */
 export interface ChangelogParams {
-  since?: string;
-  entityId?: string;
+  since?: string | undefined;
+  entityId?: string | undefined;
   limit?: number;
 }
 

@@ -11,7 +11,6 @@ export {
   AnalyzeStateChaosToolHandler,
   DetectTechnologyStackToolHandler,
   FindRelatedConceptsToolHandler,
-  LernaProjectGraphToolHandler,
   SuggestRefactoringToolHandler,
 } from "./analysis-tool-handlers.js";
 // Branch tools

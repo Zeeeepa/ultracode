@@ -17,9 +17,9 @@ import type { ParsedEntity } from "../types/parser.js";
 export interface KotlinDiagnostic {
   severity: "error" | "warning" | "info";
   message: string;
-  line?: number;
+  line?: number | undefined;
   column?: number;
-  file?: string;
+  file?: string | undefined;
 }
 
 export interface KotlinCompileResult {

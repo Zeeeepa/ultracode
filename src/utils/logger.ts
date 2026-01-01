@@ -5,10 +5,12 @@
  * Stores logs in logs_llm folder with automatic rotation based on size and time
  */
 
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { LoggerConfig } from "./logger-types.js";
 import { LogLevel } from "./logger-types.js";
+// Event-driven architecture: buffer flush triggered by size threshold, not polling
 
 // =============================================================================
 // LOGGING CONFIGURATION
@@ -19,9 +21,9 @@ export interface LogEntry {
   level: LogLevel;
   category: string;
   message: string;
-  data?: any;
-  stackTrace?: string;
-  requestId?: string;
+  data?: unknown;
+  stackTrace?: string | undefined;
+  requestId?: string | undefined;
   duration?: number;
 }
 
@@ -40,11 +42,50 @@ export class RotatedLogger {
   private currentLogFile: string;
   private logDir: string;
 
+  // Buffered async logging to reduce CPU usage
+  // Event-driven: flush triggered by BUFFER_SIZE threshold, not by polling
+  private logBuffer: string[] = [];
+  private readonly BUFFER_SIZE = 50; // Flush every 50 entries
+
   constructor(config: Partial<LoggerConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logDir = resolve(this.config.logDir);
     this.ensureLogDirectory();
     this.currentLogFile = this.getCurrentLogFile();
+    // Event-driven: flush is triggered by buffer size threshold in writeLog()
+  }
+
+  /**
+   * Synchronously flush buffer to disk (for shutdown/crash scenarios)
+   * Uses appendFileSync to guarantee data is written before process exit
+   */
+  private flushBufferSync(): void {
+    if (this.logBuffer.length === 0) return;
+
+    // Check if we need to rotate
+    if (this.shouldRotate()) {
+      this.rotateLogFile();
+      this.currentLogFile = this.getCurrentLogFile();
+    }
+
+    // Take all buffered entries and clear buffer
+    const entries = this.logBuffer.join("");
+    this.logBuffer = [];
+
+    // Write synchronously - BLOCKS until written to disk
+    try {
+      appendFileSync(this.currentLogFile, entries, "utf8");
+    } catch (error) {
+      console.error("Failed to write log (sync):", error);
+    }
+  }
+
+  /**
+   * Final flush on shutdown (for cleanup)
+   */
+  stopFlushLoop(): void {
+    // Flush any remaining entries SYNCHRONOUSLY
+    this.flushBufferSync();
   }
 
   private ensureLogDirectory(): void {
@@ -55,7 +96,11 @@ export class RotatedLogger {
 
   private getCurrentLogFile(): string {
     const now = new Date();
-    const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+    // Use local date for log file name (not UTC)
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const dateStr = `${year}-${month}-${day}`;
     return join(this.logDir, `mcp-server-${dateStr}.log`);
   }
 
@@ -144,42 +189,94 @@ export class RotatedLogger {
       return; // Skip logs below configured level
     }
 
+    // Add to buffer instead of writing immediately
+    const logLine = this.formatLogEntry(entry);
+    this.logBuffer.push(logLine);
+
+    // Flush immediately if buffer is full (async, non-blocking)
+    if (this.logBuffer.length >= this.BUFFER_SIZE) {
+      this.flushBuffer();
+    }
+  }
+
+  /**
+   * Async flush buffer to disk (non-blocking)
+   * Uses appendFile for better Bun compatibility
+   */
+  private flushBuffer(): void {
+    if (this.logBuffer.length === 0) return;
+
     // Check if we need to rotate
     if (this.shouldRotate()) {
       this.rotateLogFile();
       this.currentLogFile = this.getCurrentLogFile();
     }
 
-    try {
-      const logLine = this.formatLogEntry(entry);
-      writeFileSync(this.currentLogFile, logLine, { flag: "a" });
-    } catch (error) {
+    // Take all buffered entries and clear buffer
+    const entries = this.logBuffer.join("");
+    this.logBuffer = [];
+
+    // Write async - fire and forget
+    appendFile(this.currentLogFile, entries).catch((error) => {
       console.error("Failed to write log:", error);
-    }
+    });
   }
 
   // =============================================================================
   // PUBLIC LOGGING METHODS
   // =============================================================================
 
-  debug(category: string, message: string, data?: any, requestId?: string): void {
+  /**
+   * TRACE level - for startup timing and async flow analysis
+   * Uses sync flush to ensure visibility before crashes
+   */
+  trace(category: string, message: string, data?: unknown, requestId?: string): void {
+    this.log(LogLevel.TRACE, category, message, data, requestId);
+    // Sync flush for crash debugging - ensures trace is visible
+    this.flushBufferSync();
+  }
+
+  /**
+   * TRACE with timing - logs with delta from a start time
+   */
+  traceTime(category: string, message: string, startTime: number, data?: unknown): void {
+    const elapsed = Date.now() - startTime;
+    const uptimeMs = process.uptime() * 1000;
+    this.log(LogLevel.TRACE, category, `[+${uptimeMs.toFixed(0)}ms] ${message} (${elapsed}ms)`, data);
+  }
+
+  /**
+   * Start a trace timer, returns a function to end it
+   */
+  traceStart(category: string, operation: string): () => void {
+    const startTime = Date.now();
+    const uptimeMs = process.uptime() * 1000;
+    this.log(LogLevel.TRACE, category, `[+${uptimeMs.toFixed(0)}ms] ▶ START: ${operation}`);
+    return () => {
+      const elapsed = Date.now() - startTime;
+      const endUptimeMs = process.uptime() * 1000;
+      this.log(LogLevel.TRACE, category, `[+${endUptimeMs.toFixed(0)}ms] ◀ END: ${operation} (${elapsed}ms)`);
+    };
+  }
+
+  debug(category: string, message: string, data?: unknown, requestId?: string): void {
     this.log(LogLevel.DEBUG, category, message, data, requestId);
   }
 
-  info(category: string, message: string, data?: any, requestId?: string): void {
+  info(category: string, message: string, data?: unknown, requestId?: string): void {
     this.log(LogLevel.INFO, category, message, data, requestId);
   }
 
-  warn(category: string, message: string, data?: any, requestId?: string): void {
+  warn(category: string, message: string, data?: unknown, requestId?: string): void {
     this.log(LogLevel.WARN, category, message, data, requestId);
   }
 
-  error(category: string, message: string, data?: any, requestId?: string, error?: Error): void {
+  error(category: string, message: string, data?: unknown, requestId?: string | undefined, error?: Error): void {
     const stackTrace = error?.stack || (this.config.enableStackTrace ? new Error().stack : undefined);
     this.log(LogLevel.ERROR, category, message, data, requestId, stackTrace);
   }
 
-  critical(category: string, message: string, data?: any, requestId?: string, error?: Error): void {
+  critical(category: string, message: string, data?: unknown, requestId?: string | undefined, error?: Error): void {
     const stackTrace = error?.stack || (this.config.enableStackTrace ? new Error().stack : undefined);
     this.log(LogLevel.CRITICAL, category, message, data, requestId, stackTrace);
   }
@@ -188,12 +285,12 @@ export class RotatedLogger {
     level: LogLevel,
     category: string,
     message: string,
-    data?: any,
-    requestId?: string,
-    stackTrace?: string,
+    data?: unknown,
+    requestId?: string | undefined,
+    stackTrace?: string | undefined,
   ): void {
     const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
+      timestamp: this.getLocalTimestamp(),
       level,
       category,
       message,
@@ -205,15 +302,35 @@ export class RotatedLogger {
     this.writeLog(entry);
   }
 
+  /**
+   * Get timestamp in local timezone (ISO-like format)
+   * Example: 2025-12-27T22:51:38.090+03:00
+   */
+  private getLocalTimestamp(): string {
+    const now = new Date();
+    const offsetMs = now.getTimezoneOffset() * 60000;
+    const localTime = new Date(now.getTime() - offsetMs);
+    const iso = localTime.toISOString().slice(0, -1); // Remove 'Z'
+
+    // Format offset as +HH:MM or -HH:MM
+    const offsetMin = -now.getTimezoneOffset();
+    const sign = offsetMin >= 0 ? "+" : "-";
+    const absOffset = Math.abs(offsetMin);
+    const hours = String(Math.floor(absOffset / 60)).padStart(2, "0");
+    const mins = String(absOffset % 60).padStart(2, "0");
+
+    return `${iso}${sign}${hours}:${mins}`;
+  }
+
   // =============================================================================
   // MCP-SPECIFIC LOGGING METHODS
   // =============================================================================
 
-  mcpRequest(method: string, params: any, requestId: string): void {
+  mcpRequest(method: string, params: unknown, requestId: string): void {
     this.info("MCP_REQUEST", `Incoming MCP request: ${method}`, { method, params }, requestId);
   }
 
-  mcpResponse(method: string, result: any, duration: number, requestId: string): void {
+  mcpResponse(method: string, result: unknown, duration: number, requestId: string): void {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level: LogLevel.INFO,
@@ -230,7 +347,7 @@ export class RotatedLogger {
     this.error("MCP_ERROR", `MCP request failed: ${method}`, { method, error: error.message }, requestId, error);
   }
 
-  agentActivity(agentId: string, activity: string, data?: any, requestId?: string): void {
+  agentActivity(agentId: string, activity: string, data?: Record<string, unknown>, requestId?: string): void {
     this.debug("AGENT_ACTIVITY", `Agent ${agentId}: ${activity}`, { agentId, ...data }, requestId);
   }
 
@@ -261,11 +378,11 @@ export class RotatedLogger {
     );
   }
 
-  performanceMetrics(component: string, metrics: any, requestId?: string): void {
+  performanceMetrics(component: string, metrics: unknown, requestId?: string): void {
     this.debug("PERFORMANCE", `Performance metrics for ${component}`, metrics, requestId);
   }
 
-  systemEvent(event: string, data?: any): void {
+  systemEvent(event: string, data?: unknown): void {
     this.info("SYSTEM", event, data);
   }
 
@@ -273,7 +390,7 @@ export class RotatedLogger {
   // INCIDENT/RECOVERY LOGGING (for SYSTEM_HANG_RECOVERY_PLAN)
   // =============================================================================
 
-  incident(event: string, data?: any, requestId?: string, error?: Error): void {
+  incident(event: string, data?: Record<string, unknown>, requestId?: string | undefined, error?: Error): void {
     if (error) {
       this.error("INCIDENT", event, { ...data, error: error.message }, requestId, error);
     } else {
@@ -281,7 +398,7 @@ export class RotatedLogger {
     }
   }
 
-  recovery(event: string, data?: any, requestId?: string): void {
+  recovery(event: string, data?: unknown, requestId?: string): void {
     this.info("RECOVERY", event, data, requestId);
   }
 }
@@ -300,7 +417,11 @@ export function createRequestId(): string {
   return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
-export function logMCPOperation<T>(operation: string, fn: (requestId: string) => Promise<T>, params?: any): Promise<T> {
+export function logMCPOperation<T>(
+  operation: string,
+  fn: (requestId: string) => Promise<T>,
+  params?: unknown,
+): Promise<T> {
   const requestId = createRequestId();
   const startTime = Date.now();
 
@@ -316,6 +437,52 @@ export function logMCPOperation<T>(operation: string, fn: (requestId: string) =>
       logger.mcpError(operation, error, requestId);
       throw error;
     });
+}
+
+// =============================================================================
+// MEMORY PROFILING
+// =============================================================================
+
+/**
+ * Detailed memory profiling for diagnosing memory issues.
+ * Logs RSS, heap, external (native), and array buffers separately.
+ */
+export function logMemoryProfile(label: string): void {
+  const mem = process.memoryUsage();
+  const rss = Math.round(mem.rss / 1024 / 1024);
+  const heapTotal = Math.round(mem.heapTotal / 1024 / 1024);
+  const heapUsed = Math.round(mem.heapUsed / 1024 / 1024);
+  const external = Math.round(mem.external / 1024 / 1024);
+  const arrayBuffers = Math.round(mem.arrayBuffers / 1024 / 1024);
+
+  // Calculate native memory (RSS - heap - external approximation)
+  const nativeApprox = rss - heapTotal - external;
+
+  logger.info("MEMORY_PROFILE", label, {
+    rssMB: rss,
+    heapTotalMB: heapTotal,
+    heapUsedMB: heapUsed,
+    externalMB: external, // C++ objects bound to JS (libsql, faiss bindings)
+    arrayBuffersMB: arrayBuffers, // ArrayBuffer/SharedArrayBuffer
+    nativeApproxMB: nativeApprox, // Rough estimate of other native memory
+  });
+}
+
+/**
+ * Force garbage collection if available (node --expose-gc or bun).
+ * Returns true if GC was triggered.
+ */
+export function forceGC(): boolean {
+  if (typeof (globalThis as any).gc === "function") {
+    (globalThis as any).gc();
+    return true;
+  }
+  // Bun has Bun.gc()
+  if (typeof (globalThis as any).Bun?.gc === "function") {
+    (globalThis as any).Bun.gc(true); // true = sync
+    return true;
+  }
+  return false;
 }
 
 // Re-export types for backward compatibility

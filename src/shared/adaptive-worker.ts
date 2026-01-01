@@ -16,6 +16,17 @@ import { EventEmitter } from "node:events";
 import { cpus } from "node:os";
 import { detectRuntime, type Runtime } from "./runtime-detect.js";
 
+/**
+ * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ */
+async function sleep(ms: number): Promise<void> {
+  if (typeof (globalThis as any).Bun?.sleep === "function") {
+    await (globalThis as any).Bun.sleep(ms);
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -40,7 +51,7 @@ export interface AdaptiveWorkerOptions {
   /** Worker script path */
   scriptPath: string;
   /** Task timeout in ms (default: 60000) */
-  timeout?: number;
+  timeout?: number | undefined;
   /** Enable smol mode for Bun (reduced memory, default: true) */
   smolMode?: boolean;
   /** Retry failed tasks (default: 1) */
@@ -203,14 +214,17 @@ export class AdaptiveWorkerPool extends EventEmitter {
     pooledWorker.busy = true;
     pooledWorker.taskId = queuedTask.task.id;
 
-    // Set timeout
-    const timeoutId = setTimeout(() => {
-      if (pooledWorker!.taskId === queuedTask.task.id) {
+    // Set timeout using AbortController pattern (Bun compatible)
+    const abortController = new AbortController();
+
+    (async () => {
+      await sleep(this.options.timeout);
+      if (!abortController.signal.aborted && pooledWorker!.taskId === queuedTask.task.id) {
         console.warn(`[AdaptiveWorkerPool] Task ${queuedTask.task.id} timed out`);
         this.handleWorkerError(pooledWorker!, new Error("Task timeout"));
         queuedTask.reject(new Error("Task timeout"));
       }
-    }, this.options.timeout);
+    })();
 
     // Send task to worker
     try {
@@ -230,7 +244,7 @@ export class AdaptiveWorkerPool extends EventEmitter {
       const result = await new Promise<unknown>((resolve, reject) => {
         const handler = (msg: WorkerMessage) => {
           if (msg.taskId === queuedTask.task.id) {
-            clearTimeout(timeoutId);
+            abortController.abort();
             pooledWorker!.busy = false;
             pooledWorker!.taskId = null;
 
@@ -267,7 +281,7 @@ export class AdaptiveWorkerPool extends EventEmitter {
 
       queuedTask.resolve(result);
     } catch (error) {
-      clearTimeout(timeoutId);
+      abortController.abort();
       pooledWorker.busy = false;
       pooledWorker.taskId = null;
 

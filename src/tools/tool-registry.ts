@@ -48,7 +48,6 @@ import {
   // Index
   IndexToolHandler,
   JscpdDetectClonesToolHandler,
-  LernaProjectGraphToolHandler,
   // Branch tools
   ListBranchesToolHandler,
   ListEntityRelationshipsToolHandler,
@@ -146,8 +145,7 @@ export class ToolRegistry {
     // ==========================================================================
     // Entity tools
     // ==========================================================================
-    this.register("list_file_entities", ListFileEntitiesToolHandler);
-    this.register("get_members", ListFileEntitiesToolHandler); // Alias for UltrasharpTools compatibility
+    this.register("get_members", ListFileEntitiesToolHandler);
     this.register("list_entity_relationships", ListEntityRelationshipsToolHandler);
     this.register("query", QueryToolHandler);
 
@@ -156,8 +154,7 @@ export class ToolRegistry {
     // ==========================================================================
     this.register("semantic_search", SemanticSearchToolHandler);
     this.register("find_similar_code", FindSimilarCodeToolHandler);
-    this.register("detect_code_clones", DetectCodeClonesToolHandler);
-    this.register("find_duplicates", DetectCodeClonesToolHandler); // Alias
+    this.register("find_duplicates", DetectCodeClonesToolHandler);
     this.register("jscpd_detect_clones", JscpdDetectClonesToolHandler);
     this.register("cross_language_search", CrossLanguageSearchToolHandler);
     this.register("pattern_search", PatternSearchToolHandler);
@@ -171,7 +168,6 @@ export class ToolRegistry {
     this.register("analyze_state_chaos", AnalyzeStateChaosToolHandler);
     this.register("analyze_code_impact", AnalyzeCodeImpactToolHandler);
     this.register("detect_technology_stack", DetectTechnologyStackToolHandler);
-    this.register("lerna_project_graph", LernaProjectGraphToolHandler);
 
     // ==========================================================================
     // Branch tools
@@ -186,16 +182,14 @@ export class ToolRegistry {
     // Snapshot tools
     // ==========================================================================
     this.register("create_snapshot", CreateSnapshotToolHandler);
-    this.register("rollback_snapshot", RollbackSnapshotToolHandler);
-    this.register("undo", RollbackSnapshotToolHandler); // Alias for UltrasharpTools compatibility
+    this.register("undo", RollbackSnapshotToolHandler);
     this.register("list_snapshots", ListSnapshotsToolHandler);
     this.register("cleanup_snapshots", CleanupSnapshotsToolHandler);
 
     // ==========================================================================
     // File modification tools
     // ==========================================================================
-    this.register("modify_entity_code", ModifyEntityCodeToolHandler);
-    this.register("modify_code", ModifyEntityCodeToolHandler); // Alias for UltrasharpTools compatibility
+    this.register("modify_code", ModifyEntityCodeToolHandler);
     this.register("copy_file", CopyFileToolHandler);
     this.register("rename_file", RenameFileToolHandler);
     this.register("split_file", SplitFileToolHandler);

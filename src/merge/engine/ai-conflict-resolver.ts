@@ -47,7 +47,7 @@ export interface AIAnalysisResult {
   explanation: string;
 
   // Merged code (если AI смог сгенерировать)
-  mergedCode?: string;
+  mergedCode?: string | undefined;
 }
 
 export class AIConflictResolver {
@@ -167,7 +167,7 @@ export class AIConflictResolver {
     strategy: ResolutionStrategy;
     confidence: number;
     explanation: string;
-    mergedCode?: string;
+    mergedCode?: string | undefined;
   } {
     const { branchAUnit, branchBUnit } = conflict;
 

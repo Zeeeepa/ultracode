@@ -40,7 +40,7 @@ export interface PatternSearchQuery {
   contentFilter?: {
     contains?: string; // Content must contain this string
     regex?: string; // Content must match this regex
-    semantic?: string; // Semantic similarity to this description
+    semantic?: string | undefined; // Semantic similarity to this description
   };
   limit?: number;
   mode: "entity" | "content" | "semantic" | "hybrid";
@@ -50,7 +50,7 @@ export interface PatternSearchResult {
   entity: Entity;
   matchType: "name" | "content" | "semantic";
   score: number;
-  snippet?: string; // Code snippet showing match
+  snippet?: string | undefined; // Code snippet showing match
   highlights?: {
     // Highlighted match positions
     start: number;

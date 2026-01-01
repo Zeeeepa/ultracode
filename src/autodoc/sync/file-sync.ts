@@ -117,8 +117,8 @@ export async function findMarkdownFiles(dir: string, maxDepth = 5): Promise<File
  */
 export async function syncDiskToDb(
   docsDir: string,
-  getDocsByFile: (filePath: string) => DocEntity[],
-  saveDocument: (filePath: string, content: string) => DocEntity[],
+  getDocsByFile: (filePath: string) => DocEntity[] | Promise<DocEntity[]>,
+  saveDocument: (filePath: string, content: string) => DocEntity[] | Promise<DocEntity[]>,
   concurrency = 8,
 ): Promise<FileSyncResult["diskToDb"]> {
   const result: FileSyncResult["diskToDb"] = {
@@ -139,13 +139,13 @@ export async function syncDiskToDb(
     files,
     async (fileInfo) => {
       try {
-        const existingDocs = getDocsByFile(fileInfo.path);
+        const existingDocs = await getDocsByFile(fileInfo.path);
         const lastSync = existingDocs.length > 0 ? Math.max(...existingDocs.map((d) => d.lastSync || 0)) : 0;
 
         // Only sync if file is newer than last sync
         if (fileInfo.mtime > lastSync) {
           const content = await readText(fileInfo.path);
-          saveDocument(fileInfo.path, content);
+          await saveDocument(fileInfo.path, content);
 
           if (existingDocs.length === 0) {
             result.added.push(fileInfo.path);
@@ -235,7 +235,7 @@ async function writeDocToFile(filePath: string, content: string): Promise<void> 
  * Writes files that don't exist or are older than DB
  */
 export async function syncDbToDisk(
-  getAllDocs: () => DocEntity[],
+  getAllDocs: () => DocEntity[] | Promise<DocEntity[]>,
   concurrency = 8,
 ): Promise<FileSyncResult["dbToDisk"]> {
   const result: FileSyncResult["dbToDisk"] = {
@@ -243,7 +243,7 @@ export async function syncDbToDisk(
     errors: [],
   };
 
-  const allDocs = getAllDocs();
+  const allDocs = await getAllDocs();
   if (allDocs.length === 0) {
     return result;
   }
@@ -299,9 +299,9 @@ export async function syncDbToDisk(
  */
 export async function syncBidirectional(
   docsDir: string,
-  getDocsByFile: (filePath: string) => DocEntity[],
-  getAllDocs: () => DocEntity[],
-  saveDocument: (filePath: string, content: string) => DocEntity[],
+  getDocsByFile: (filePath: string) => DocEntity[] | Promise<DocEntity[]>,
+  getAllDocs: () => DocEntity[] | Promise<DocEntity[]>,
+  saveDocument: (filePath: string, content: string) => DocEntity[] | Promise<DocEntity[]>,
   concurrency = 8,
 ): Promise<FileSyncResult> {
   // First: Disk → DB (pick up user changes)

@@ -91,20 +91,13 @@ Find related concepts for entity.
 
 ## Entity Analysis
 
-### `list_file_entities`
+### `get_members`
 List all entities in file (classes, functions, interfaces...).
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `filePath` | string | **required** | File path |
 | `entityTypes` | string[] | all | Entity types to filter |
-
-### `get_members`
-Get class/interface/module members.
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `entityId` | string | **required** | Entity ID |
 
 ### `list_entity_relationships`
 Show entity dependencies (callers, callees).
@@ -128,16 +121,13 @@ Detect project technology stack.
 
 ## Code Quality
 
-### `detect_code_clones`
+### `find_duplicates`
 Semantic duplicate code detection.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `minSimilarity` | number | 0.8 | Min similarity (0-1) |
 | `scope` | string | "all" | Scope: `all` / `file` / `module` |
-
-### `find_duplicates`
-Fast duplicate detection (hash-based).
 
 ### `jscpd_detect_clones`
 Clone detector based on jscpd.
@@ -240,9 +230,6 @@ Modify entity code.
 | `preview` | boolean | true | Preview changes |
 | `skipValidation` | boolean | false | Skip validation |
 
-### `modify_entity_code`
-Same as `modify_code`, by entity name.
-
 ### `create_file`
 Create new file.
 
@@ -317,15 +304,12 @@ Create state snapshot.
 | `description` | string | **required** | Snapshot description |
 | `files` | string[] | all | Files to include |
 
-### `rollback_snapshot`
-Rollback to snapshot.
+### `undo`
+Rollback to snapshot / undo last change.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `snapshotId` | string | **required** | Snapshot ID |
-
-### `undo`
-Undo last change.
+| `snapshotId` | string | optional | Snapshot ID (if not specified, undoes last change) |
 
 ### `list_snapshots`
 List snapshots.
@@ -474,7 +458,7 @@ Clear bus topic.
 
 ### Find duplicates
 ```
-1. detect_code_clones minSimilarity=0.75
+1. find_duplicates minSimilarity=0.75
 2. find_similar_code code="<snippet>" threshold=0.6
 3. suggest_refactoring
 ```

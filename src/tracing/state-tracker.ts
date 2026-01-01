@@ -54,8 +54,8 @@ export class StateTracker {
     const meta = entity.metadata as Record<string, any>;
 
     // Check explicit state modifications from metadata
-    if (Array.isArray(meta.stateModifications)) {
-      for (const state of meta.stateModifications) {
+    if (Array.isArray(meta["stateModifications"])) {
+      for (const state of meta["stateModifications"]) {
         changes.push({
           variable: state,
           isMutation: true,
@@ -64,8 +64,8 @@ export class StateTracker {
     }
 
     // Check assignments in code (from metadata or source)
-    if (Array.isArray(meta.assignments)) {
-      for (const assignment of meta.assignments) {
+    if (Array.isArray(meta["assignments"])) {
+      for (const assignment of meta["assignments"]) {
         changes.push({
           variable: assignment.target,
           from: assignment.from,
@@ -76,8 +76,8 @@ export class StateTracker {
     }
 
     // Analyze method calls for mutations
-    if (Array.isArray(meta.calls)) {
-      for (const call of meta.calls) {
+    if (Array.isArray(meta["calls"])) {
+      for (const call of meta["calls"]) {
         if (this.isMutatingCall(call.name)) {
           const target = this.extractMutationTarget(call);
           if (target) {
@@ -101,22 +101,22 @@ export class StateTracker {
     const meta = entity.metadata as Record<string, any>;
 
     // Check explicit state reads from metadata
-    if (Array.isArray(meta.stateReads)) {
-      for (const state of meta.stateReads) {
+    if (Array.isArray(meta["stateReads"])) {
+      for (const state of meta["stateReads"]) {
         reads.add(state);
       }
     }
 
     // Check parameters (inputs are state reads)
-    if (Array.isArray(meta.parameters)) {
-      for (const param of meta.parameters) {
+    if (Array.isArray(meta["parameters"])) {
+      for (const param of meta["parameters"]) {
         reads.add(param.name);
       }
     }
 
     // Check conditions (state used in conditions)
-    if (meta.controlFlow?.branches && Array.isArray(meta.controlFlow.branches)) {
-      for (const branch of meta.controlFlow.branches) {
+    if (meta["controlFlow"]?.branches && Array.isArray(meta["controlFlow"].branches)) {
+      for (const branch of meta["controlFlow"].branches) {
         const statesInCondition = this.extractStatesFromCondition(branch.condition);
         for (const state of statesInCondition) {
           reads.add(state);
@@ -248,7 +248,7 @@ export class StateTracker {
       const meta = entity.metadata as Record<string, any>;
 
       // Check reads
-      if (Array.isArray(meta.stateReads) && meta.stateReads.includes(state)) {
+      if (Array.isArray(meta["stateReads"]) && meta["stateReads"].includes(state)) {
         usages.push({
           location: `${entity.filePath}:${entity.location.start.line}`,
           usage: "read",
@@ -258,7 +258,7 @@ export class StateTracker {
       }
 
       // Check modifications
-      if (Array.isArray(meta.stateModifications) && meta.stateModifications.includes(state)) {
+      if (Array.isArray(meta["stateModifications"]) && meta["stateModifications"].includes(state)) {
         usages.push({
           location: `${entity.filePath}:${entity.location.start.line}`,
           usage: "assignment",
@@ -268,8 +268,8 @@ export class StateTracker {
       }
 
       // Check conditions
-      if (meta.controlFlow?.branches && Array.isArray(meta.controlFlow.branches)) {
-        for (const branch of meta.controlFlow.branches) {
+      if (meta["controlFlow"]?.branches && Array.isArray(meta["controlFlow"].branches)) {
+        for (const branch of meta["controlFlow"].branches) {
           if (branch.condition?.includes(state)) {
             usages.push({
               location: `${entity.filePath}:${entity.location.start.line}`,
@@ -282,7 +282,7 @@ export class StateTracker {
       }
 
       // Check parameters
-      if (Array.isArray(meta.parameters) && meta.parameters.some((p: any) => p.name === state)) {
+      if (Array.isArray(meta["parameters"]) && meta["parameters"].some((p: any) => p.name === state)) {
         usages.push({
           location: `${entity.filePath}:${entity.location.start.line}`,
           usage: "parameter",
@@ -466,7 +466,7 @@ export class StateTracker {
 
     for (const entity of entities) {
       const meta = entity.metadata as Record<string, any>;
-      if (Array.isArray(meta.stateModifications) && meta.stateModifications.includes(state)) {
+      if (Array.isArray(meta["stateModifications"]) && meta["stateModifications"].includes(state)) {
         modifiers.push(entity.name);
       }
 

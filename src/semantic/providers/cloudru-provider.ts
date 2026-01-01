@@ -2,12 +2,12 @@ import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } fr
 import { HttpEngine } from "./http-engine.js";
 
 export interface CloudRUOptions {
-  baseUrl?: string;
-  apiKey?: string;
+  baseUrl?: string | undefined;
+  apiKey?: string | undefined;
   model: string;
-  timeoutMs?: number;
-  concurrency?: number;
-  maxBatchSize?: number;
+  timeoutMs?: number | undefined;
+  concurrency?: number | undefined;
+  maxBatchSize?: number | undefined;
   logger?: ProviderLogger;
 }
 
@@ -15,7 +15,7 @@ export class CloudRUProvider implements EmbeddingProvider {
   public info: ProviderInfo;
   private engine: HttpEngine;
   private opts: CloudRUOptions;
-  private log?: ProviderLogger;
+  private log?: ProviderLogger | undefined;
 
   constructor(opts: CloudRUOptions) {
     this.opts = { baseUrl: "https://foundation-models.api.cloud.ru", ...opts };
@@ -30,7 +30,7 @@ export class CloudRUProvider implements EmbeddingProvider {
     };
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.opts.apiKey) headers.Authorization = `Bearer ${this.opts.apiKey}`;
+    if (this.opts.apiKey) headers["Authorization"] = `Bearer ${this.opts.apiKey}`;
 
     this.engine = new HttpEngine({
       baseUrl: this.opts.baseUrl ?? "https://foundation-models.api.cloud.ru",
