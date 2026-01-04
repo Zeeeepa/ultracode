@@ -19,6 +19,7 @@
  */
 
 import { join } from "node:path";
+import type { z } from "zod";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import {
   AutoDocChangelogSchema,
@@ -33,7 +34,6 @@ import {
   AutoDocSyncSchema,
   AutoDocValidateSchema,
 } from "../schemas/autodoc-schemas.js";
-import type { z } from "zod";
 
 // =============================================================================
 // HELPER: Check if AutoDoc is available
@@ -407,9 +407,7 @@ export class AutoDocValidateToolHandler extends BaseToolHandler<z.infer<typeof A
 
     if (args.filePath) {
       const normalizedPath = this.context.normalizeInputPath(args.filePath) || args.filePath;
-      result.brokenInFile = validation.broken.filter(
-        (b: any) => b.ref.sourceLocation.filePath === normalizedPath,
-      );
+      result.brokenInFile = validation.broken.filter((b: any) => b.ref.sourceLocation.filePath === normalizedPath);
     } else {
       result.brokenRefs = validation.broken.slice(0, 20);
     }
@@ -470,9 +468,7 @@ export class AutoDocSyncToolHandler extends BaseToolHandler<z.infer<typeof AutoD
       return autodocNotEnabledResult();
     }
 
-    const { syncBidirectional, syncDbToDisk, syncDiskToDb } = await import(
-      "../../autodoc/sync/file-sync.js"
-    );
+    const { syncBidirectional, syncDbToDisk, syncDiskToDb } = await import("../../autodoc/sync/file-sync.js");
 
     const syncResult: {
       validated: number;
@@ -629,9 +625,7 @@ export class AutoDocGenerateToolHandler extends BaseToolHandler<z.infer<typeof A
       result.modules = result.modules.filter(
         (m: any) => m.name.toLowerCase() === filterLower || m.name.toLowerCase().includes(filterLower),
       );
-      result.files = result.files.filter((f: any) =>
-        result.modules.some((m: any) => f.path.includes(m.path)),
-      );
+      result.files = result.files.filter((f: any) => result.modules.some((m: any) => f.path.includes(m.path)));
     }
 
     // Detect and use LLM if requested
