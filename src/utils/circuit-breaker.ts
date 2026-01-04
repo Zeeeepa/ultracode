@@ -41,7 +41,7 @@ export interface CircuitBreakerConfig {
 // DEFAULT CONFIG
 // =============================================================================
 
-export const DEFAULT_CIRCUIT_BREAKER_CONFIG: CircuitBreakerConfig = {
+export const DEFAULT_CIRCUIT_BREAKER_CONFIG: Required<CircuitBreakerConfig> = {
   failureThreshold: 5,
   recoveryTimeout: 30000,
   successThreshold: 3,
@@ -137,9 +137,7 @@ export class CircuitBreaker {
    */
   private cleanupFailureWindow(): void {
     const now = Date.now();
-    this.failureWindow = this.failureWindow.filter(
-      (failureTime) => now - failureTime <= this.config.monitorWindow,
-    );
+    this.failureWindow = this.failureWindow.filter((failureTime) => now - failureTime <= this.config.monitorWindow);
   }
 
   /**
@@ -190,5 +188,19 @@ export class CircuitBreaker {
       lastFailureTime: this.lastFailureTime,
       successCount: this.successCount,
     };
+  }
+}
+
+// =============================================================================
+// CIRCUIT BREAKER ERROR
+// =============================================================================
+
+/**
+ * Custom error for circuit breaker triggers (used by parsers)
+ */
+export class CircuitBreakerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CircuitBreakerError";
   }
 }

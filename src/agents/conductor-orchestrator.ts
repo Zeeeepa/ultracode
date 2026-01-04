@@ -17,7 +17,6 @@
  * - Task Completion Checklist: At the end of each task, always proceed with checklist: what was required vs what was done, do you follow requirements.
  */
 
-import { getConfig } from "../config/yaml-config.js";
 import {
   type Agent,
   type AgentMessage,
@@ -29,6 +28,20 @@ import {
 } from "../types/agent.js";
 import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
+import {
+  analyzeTaskComplexity as analyzeComplexity,
+  type ConductorConfig,
+  type ConductorConfigOverrides,
+  generateMethodProposals,
+  getConductorAgentDefaults,
+  getTaskTypeKey,
+  initializeMethodProposalTemplates,
+  isDirectImplementation,
+  isIndexingTask,
+  type MethodProposal,
+  type SubTask,
+  type TaskComplexityAnalysis,
+} from "./conductor/index.js";
 import { isEventfulAgent } from "./coordinator.js";
 
 // Event-driven architecture: monitoring uses setInterval for Node.js, disabled for Bun
@@ -36,107 +49,6 @@ import { isEventfulAgent } from "./coordinator.js";
 /** Check if running in Bun */
 function isBunRuntime(): boolean {
   return typeof (globalThis as any).Bun !== "undefined";
-}
-
-interface ConductorConfig {
-  resourceConstraints: ResourceConstraints;
-  taskQueueLimit: number;
-  loadBalancingStrategy: "round-robin" | "least-loaded" | "priority";
-  complexityThreshold: number; // Complexity threshold for approval workflow
-  mandatoryDelegation: boolean; // Force delegation to specialized agents
-  maxConcurrency: number;
-  memoryLimit: number;
-  priority: number;
-}
-
-interface TaskComplexityAnalysis {
-  score: number; // 1-10 scale
-  factors: string[];
-  requiresApproval: boolean;
-  delegationStrategy: "dev-agent" | "dora" | "multi-agent";
-  subtasks: SubTask[];
-}
-
-interface SubTask {
-  id: string;
-  description: string;
-  targetAgent: "dev-agent" | "dora";
-  dependencies: string[];
-  priority: number;
-  payload?: any; // For passing task-specific data
-}
-
-interface MethodProposal {
-  id: string;
-  name: string;
-  description: string;
-  pros: string[];
-  cons: string[];
-  timeline: string;
-  riskLevel: "low" | "medium" | "high" | "very-high";
-  recommended: boolean;
-}
-
-type ConductorConfigOverrides = Partial<Omit<ConductorConfig, "resourceConstraints">> & {
-  resourceConstraints?: Partial<ResourceConstraints>;
-};
-
-const DEFAULT_RESOURCE_CONSTRAINTS: ResourceConstraints = {
-  maxMemoryMB: 1024,
-  maxCpuPercent: 80,
-  maxConcurrentAgents: 10,
-  maxTaskQueueSize: 100,
-};
-
-const DEFAULT_CONDUCTOR_CONFIG: ConductorConfig = {
-  resourceConstraints: DEFAULT_RESOURCE_CONSTRAINTS,
-  taskQueueLimit: 100,
-  loadBalancingStrategy: "least-loaded",
-  complexityThreshold: 8,
-  mandatoryDelegation: true,
-  maxConcurrency: 100,
-  memoryLimit: 128,
-  priority: 10,
-};
-
-function getConductorAgentDefaults(): {
-  capabilities: { maxConcurrency: number; memoryLimit: number; priority: number };
-  config: ConductorConfig;
-} {
-  const appConfig = getConfig();
-  const conductorOverrides = (appConfig.conductor ?? {}) as ConductorConfigOverrides;
-  const fallbackConcurrentAgents =
-    conductorOverrides.resourceConstraints?.maxConcurrentAgents ??
-    appConfig.mcp.agents?.maxConcurrent ??
-    DEFAULT_RESOURCE_CONSTRAINTS.maxConcurrentAgents;
-
-  const resourceConstraints: ResourceConstraints = {
-    maxMemoryMB: conductorOverrides.resourceConstraints?.maxMemoryMB ?? DEFAULT_RESOURCE_CONSTRAINTS.maxMemoryMB,
-    maxCpuPercent: conductorOverrides.resourceConstraints?.maxCpuPercent ?? DEFAULT_RESOURCE_CONSTRAINTS.maxCpuPercent,
-    maxConcurrentAgents: fallbackConcurrentAgents,
-    maxTaskQueueSize:
-      conductorOverrides.resourceConstraints?.maxTaskQueueSize ?? DEFAULT_RESOURCE_CONSTRAINTS.maxTaskQueueSize,
-  };
-
-  const maxConcurrency = conductorOverrides.maxConcurrency ?? DEFAULT_CONDUCTOR_CONFIG.maxConcurrency;
-  const memoryLimit = conductorOverrides.memoryLimit ?? DEFAULT_CONDUCTOR_CONFIG.memoryLimit;
-  const priority = conductorOverrides.priority ?? DEFAULT_CONDUCTOR_CONFIG.priority;
-
-  const config: ConductorConfig = {
-    resourceConstraints,
-    taskQueueLimit: conductorOverrides.taskQueueLimit ?? DEFAULT_CONDUCTOR_CONFIG.taskQueueLimit,
-    loadBalancingStrategy: conductorOverrides.loadBalancingStrategy ?? DEFAULT_CONDUCTOR_CONFIG.loadBalancingStrategy,
-    complexityThreshold: conductorOverrides.complexityThreshold ?? DEFAULT_CONDUCTOR_CONFIG.complexityThreshold,
-    mandatoryDelegation: conductorOverrides.mandatoryDelegation ?? DEFAULT_CONDUCTOR_CONFIG.mandatoryDelegation,
-    maxConcurrency,
-    memoryLimit,
-    priority,
-  };
-
-  return {
-    capabilities: { maxConcurrency, memoryLimit, priority },
-    config,
-  };
 }
 
 export class ConductorOrchestrator extends BaseAgent implements AgentPool {
@@ -299,12 +211,9 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     // Step 2: Generate method proposals if complexity > threshold
     // Skip approval for automated indexing operations
-    const isIndexingTask =
-      task.type === "index" ||
-      task.type === "semantic" ||
-      (task.payload && typeof task.payload === "object" && "directory" in task.payload);
+    const indexing = isIndexingTask(task);
 
-    if (complexity.requiresApproval && !isIndexingTask) {
+    if (complexity.requiresApproval && !indexing) {
       const proposals = await this.generateOptimizedMethodProposals(task, complexity);
       this.methodProposals.set(task.id, proposals);
 
@@ -320,7 +229,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         proposals,
         message: `Task complexity ${complexity.score}/10 exceeds threshold. Please review proposals and approve.`,
       };
-    } else if (complexity.requiresApproval && isIndexingTask) {
+    } else if (complexity.requiresApproval && indexing) {
       console.error(`[CONDUCTOR] Bypassing approval for indexing task (complexity ${complexity.score}/10)`);
     }
 
@@ -340,121 +249,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     return this.synthesizeResults(task, results);
   }
 
-  private async analyzeTaskComplexity(task: AgentTask): Promise<TaskComplexityAnalysis> {
-    const factors: string[] = [];
-    let score = 1;
-
-    // Analyze based on task type
-    if (task.type === "refactor" || task.type === "architecture") {
-      score += 3;
-      factors.push("Architectural changes required");
-    }
-
-    if (task.type === "multi-file" || task.type === "cross-module") {
-      score += 2;
-      factors.push("Multiple files affected");
-    }
-
-    if (task.payload && typeof task.payload === "object") {
-      const payload = task.payload as any;
-
-      if (payload.fileCount > 10) {
-        score += 2;
-        factors.push(`Large scope: ${payload.fileCount} files`);
-      }
-
-      if (payload.requiresResearch) {
-        score += 1;
-        factors.push("Research required");
-      }
-
-      if (payload.requiresTesting) {
-        score += 1;
-        factors.push("Testing required");
-      }
-    }
-
-    // Determine delegation strategy
-    let delegationStrategy: "dev-agent" | "dora" | "multi-agent" = "dev-agent";
-
-    if (task.type === "research" || task.type === "analysis") {
-      delegationStrategy = "dora";
-    } else if (score >= 7) {
-      delegationStrategy = "multi-agent";
-    }
-
-    return {
-      score: Math.min(10, score),
-      factors,
-      requiresApproval: score > this.config.complexityThreshold,
-      delegationStrategy,
-      subtasks: [], // Will be populated during decomposition
-    };
-  }
-
-  private async generateMethodProposals(
-    _task: AgentTask,
-    complexity: TaskComplexityAnalysis,
-  ): Promise<MethodProposal[]> {
-    const proposals: MethodProposal[] = [];
-
-    // Always generate 5 proposals as per specification
-    proposals.push({
-      id: "method-1",
-      name: "Incremental Implementation",
-      description: "Gradually implement changes with continuous validation",
-      pros: ["Lower risk", "Continuous testing", "Easy rollback"],
-      cons: ["Slower completion", "Potential inconsistencies during transition"],
-      timeline: "1-2 weeks",
-      riskLevel: "low",
-      recommended: complexity.score <= 6,
-    });
-
-    proposals.push({
-      id: "method-2",
-      name: "Parallel Development",
-      description: "Multiple agents work on independent components simultaneously",
-      pros: ["Faster completion", "Efficient resource usage"],
-      cons: ["Coordination complexity", "Integration challenges"],
-      timeline: "3-5 days",
-      riskLevel: "medium",
-      recommended: complexity.delegationStrategy === "multi-agent",
-    });
-
-    proposals.push({
-      id: "method-3",
-      name: "Research-First Approach",
-      description: "Dora conducts comprehensive research before implementation",
-      pros: ["Well-informed decisions", "Best practices applied"],
-      cons: ["Longer initial phase", "Potential over-engineering"],
-      timeline: "1 week",
-      riskLevel: "low",
-      recommended: complexity.factors.includes("Research required"),
-    });
-
-    proposals.push({
-      id: "method-4",
-      name: "Rapid Prototyping",
-      description: "Quick implementation followed by iterative refinement",
-      pros: ["Fast initial results", "Early feedback"],
-      cons: ["Technical debt", "Requires refactoring"],
-      timeline: "2-3 days",
-      riskLevel: "medium",
-      recommended: false,
-    });
-
-    proposals.push({
-      id: "method-5",
-      name: "Comprehensive Refactor",
-      description: "Complete restructuring with modern patterns",
-      pros: ["Optimal final architecture", "Long-term maintainability"],
-      cons: ["High complexity", "Risk of breaking changes"],
-      timeline: "2-3 weeks",
-      riskLevel: "high",
-      recommended: complexity.score >= 8,
-    });
-
-    return proposals;
+  private analyzeTaskComplexity(task: AgentTask): TaskComplexityAnalysis {
+    return analyzeComplexity(task, this.config);
   }
 
   private async decomposeTask(task: AgentTask, complexity: TaskComplexityAnalysis): Promise<SubTask[]> {
@@ -644,7 +440,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     // Override any attempt to bypass delegation
     const originalProcess = this.process.bind(this);
     this.process = async (task: AgentTask) => {
-      if (this.isDirectImplementation(task)) {
+      if (this.checkDirectImplementation(task)) {
         this.directImplementationAttempts++;
         console.error(`[CONDUCTOR] BLOCKED: Direct implementation attempt #${this.directImplementationAttempts}`);
         throw new Error(
@@ -658,10 +454,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     };
   }
 
-  private isDirectImplementation(task: AgentTask): boolean {
-    // Check if task is trying to bypass delegation
-    const payload = task.payload as any;
-    return payload?.directImplementation === true || payload?.bypassDelegation === true || task.type === "direct";
+  private checkDirectImplementation(task: AgentTask): boolean {
+    return isDirectImplementation(task);
   }
 
   // AgentPool implementation (inherited from original)
@@ -929,42 +723,11 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private initializeMethodProposalTemplates(): void {
-    // Create reusable templates for common task patterns
-    const templateTypes = ["refactor", "implementation", "analysis", "optimization", "debugging"];
-
-    for (const type of templateTypes) {
-      this.methodProposalTemplates.set(type, this.createMethodProposalTemplate(type));
+    const templates = initializeMethodProposalTemplates();
+    for (const [key, value] of templates) {
+      this.methodProposalTemplates.set(key, value);
     }
-
-    console.error(`[CONDUCTOR] TASK-004B: Method proposal templates cached for ${templateTypes.length} task types`);
-  }
-
-  private createMethodProposalTemplate(taskType: string): MethodProposal[] {
-    // Generate optimized templates based on task type
-    const baseProposals: MethodProposal[] = [
-      {
-        id: "method-1",
-        name: "Incremental Approach",
-        description: `Incremental ${taskType} with continuous validation`,
-        pros: ["Lower risk", "Continuous feedback", "Easy rollback"],
-        cons: ["Slower completion", "Multiple validation steps"],
-        timeline: "1-2 weeks",
-        riskLevel: "low",
-        recommended: true,
-      },
-      {
-        id: "method-2",
-        name: "Parallel Processing",
-        description: `Parallel ${taskType} with independent components`,
-        pros: ["Faster completion", "Efficient resource usage"],
-        cons: ["Coordination complexity", "Integration challenges"],
-        timeline: "3-5 days",
-        riskLevel: "medium",
-        recommended: false,
-      },
-    ];
-
-    return baseProposals;
+    console.error(`[CONDUCTOR] TASK-004B: Method proposal templates cached for ${templates.size} task types`);
   }
 
   private updatePerformanceMetrics(): void {
@@ -1022,7 +785,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     const startTime = Date.now();
 
     // Try to use cached template first
-    const taskTypeKey = this.getTaskTypeKey(task);
+    const taskTypeKey = getTaskTypeKey(task);
     const template = this.methodProposalTemplates.get(taskTypeKey);
 
     if (template) {
@@ -1035,7 +798,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     }
 
     // Fallback to original method
-    const proposals = await this.generateMethodProposals(task, complexity);
+    const proposals = generateMethodProposals(task, complexity);
 
     // Cache the result for future use
     this.methodProposalTemplates.set(taskTypeKey, proposals);
@@ -1044,15 +807,5 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     console.error(`[CONDUCTOR] TASK-004B: Generated and cached proposals for ${taskTypeKey} in ${duration}ms`);
 
     return proposals;
-  }
-
-  private getTaskTypeKey(task: AgentTask): string {
-    const payload = task.payload as any;
-    if (payload?.requiresResearch) return "analysis";
-    if (task.type.includes("refactor")) return "refactor";
-    if (task.type.includes("implement")) return "implementation";
-    if (task.type.includes("optimize")) return "optimization";
-    if (task.type.includes("debug") || task.type.includes("fix")) return "debugging";
-    return "implementation"; // default
   }
 }

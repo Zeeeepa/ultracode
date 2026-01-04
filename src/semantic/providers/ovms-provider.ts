@@ -1,16 +1,7 @@
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
+import { ensureContainerRunning, waitForReady } from "./ovms-container.js";
 import { OVMSGrpcClient } from "./ovms-grpc-client.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+import { GPU_WARMUP_TEXTS, getTokenizerModel, normalizeVector, sleep } from "./ovms-utils.js";
 
 // Will be loaded dynamically
 let TokenizerClass: any = null;
@@ -147,7 +138,7 @@ export class OVMSProvider implements EmbeddingProvider {
     // NOTE: @xenova/transformers downloads tokenizer files on first run (~5-50MB depending on model)
     // This is cached in ~/.cache/huggingface/ and reused on subsequent runs
     try {
-      const tokenizerModel = this.getTokenizerModel();
+      const tokenizerModel = getTokenizerModel(this.modelId);
       this.log?.info("Loading tokenizer", { model: tokenizerModel });
 
       const startTime = Date.now();
@@ -160,11 +151,15 @@ export class OVMSProvider implements EmbeddingProvider {
     }
 
     if (this.checkServer) {
-      await this.ensureContainerRunning();
+      await ensureContainerRunning({
+        baseUrl: this.baseUrl,
+        isNative: this.isNative,
+        log: this.log,
+      });
     }
 
     // Wait for OVMS to be ready
-    await this.waitForReady();
+    await waitForReady(this.baseUrl, 120_000, this.log);
 
     // Get model info from OVMS
     try {
@@ -263,23 +258,11 @@ export class OVMSProvider implements EmbeddingProvider {
       miniBatchSize: this.miniBatchSize,
     });
 
-    // Generate warmup texts that resemble real code snippets
-    const warmupTexts: string[] = [];
-    const sampleTexts = [
-      "function processData(input: string): Promise<Result>",
-      "class UserService implements IUserRepository",
-      "async function fetchApiData(url: string, options?: RequestOptions)",
-      "interface ConfigOptions { timeout: number; retries: number }",
-      "export const validateInput = (data: unknown): data is ValidData =>",
-      "const handleError = (error: Error): void => console.error(error)",
-      "type AsyncHandler<T> = (request: Request) => Promise<T>",
-      "abstract class BaseController extends EventEmitter",
-    ];
-
     // Create enough texts to hit all endpoints at least once with full batches
+    const warmupTexts: string[] = [];
     const totalTexts = this.endpoints.length * this.miniBatchSize;
     for (let i = 0; i < totalTexts; i++) {
-      warmupTexts.push(sampleTexts[i % sampleTexts.length]!);
+      warmupTexts.push(GPU_WARMUP_TEXTS[i % GPU_WARMUP_TEXTS.length]!);
     }
 
     try {
@@ -296,135 +279,6 @@ export class OVMSProvider implements EmbeddingProvider {
       // Don't fail initialization on warmup error, just log it
       this.log?.warn("GPU warmup failed (non-fatal)", { error: e.message });
     }
-  }
-
-  /**
-   * Get the HuggingFace model ID for tokenizer
-   */
-  private getTokenizerModel(): string {
-    // Map common model names to HuggingFace model IDs
-    const modelMap: Record<string, string> = {
-      "all-MiniLM-L6-v2": "Xenova/all-MiniLM-L6-v2",
-      "bge-small-en-v1.5": "Xenova/bge-small-en-v1.5",
-      "gte-small": "Xenova/gte-small",
-      "multilingual-e5-base": "Xenova/multilingual-e5-base",
-      "distiluse-base-multilingual-cased-v2": "Xenova/distiluse-base-multilingual-cased-v2",
-      "paraphrase-multilingual-MiniLM-L12-v2": "Xenova/paraphrase-multilingual-MiniLM-L12-v2",
-      // IBM Granite Embedding (ModernBERT) - use original HuggingFace models
-      "granite-embedding-278m-multilingual": "ibm-granite/granite-embedding-278m-multilingual",
-      "granite-embedding-30m-english": "ibm-granite/granite-embedding-30m-english",
-    };
-
-    return modelMap[this.modelId] || `Xenova/${this.modelId}`;
-  }
-
-  /**
-   * Ensure OVMS server is running (Docker or Native)
-   */
-  private async ensureContainerRunning(): Promise<void> {
-    try {
-      // Check if server is already running
-      const healthCheck = await fetch(`${this.baseUrl}/v2/health/ready`, {
-        method: "GET",
-        signal: AbortSignal.timeout(2000),
-      }).catch(() => null);
-
-      if (healthCheck?.ok) {
-        this.log?.debug("OVMS server already running");
-        return;
-      }
-
-      // Server not responding
-      if (this.isNative) {
-        // Native mode: managed by ovms-native-manager, don't try Docker
-        throw new Error(
-          `OVMS Native not responding at ${this.baseUrl}.\n` +
-            `Native mode is enabled - OVMS should be started by MCP server.\n` +
-            `Check logs or run: setup-embedding to reinstall.`,
-        );
-      }
-
-      // Docker mode: try to start container
-      this.log?.info("OVMS Docker container not running, attempting to start...");
-
-      const { exec } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      const execPromise = promisify(exec);
-
-      // Check if container exists
-      const { stdout: containerList } = await execPromise(
-        'docker ps -a --filter "name=ovms-embedding" --format "{{.Names}}"',
-        { windowsHide: true },
-      ).catch(() => ({ stdout: "" }));
-
-      if (!containerList.includes("ovms-embedding")) {
-        throw new Error("OVMS Docker container 'ovms-embedding' not found. Please run setup script first.");
-      }
-
-      // Start the container
-      await execPromise("docker start ovms-embedding", { windowsHide: true });
-      this.log?.info("Started OVMS Docker container");
-
-      // Wait for container to be ready
-      const maxWaitTime = 30000;
-      const startTime = Date.now();
-      while (Date.now() - startTime < maxWaitTime) {
-        const check = await fetch(`${this.baseUrl}/v2/health/ready`, {
-          method: "GET",
-          signal: AbortSignal.timeout(2000),
-        }).catch(() => null);
-
-        if (check?.ok) {
-          this.log?.info("OVMS container is ready");
-          return;
-        }
-
-        await sleep(2000);
-      }
-
-      throw new Error("OVMS container started but did not become ready within 30 seconds");
-    } catch (error: any) {
-      this.log?.warn("Failed to auto-start OVMS", { error: error.message, isNative: this.isNative });
-      if (this.isNative) {
-        throw new Error(`OVMS Native not available: ${error.message}`);
-      }
-      throw new Error(`OVMS auto-start failed: ${error.message}\nPlease start manually: docker start ovms-embedding`);
-    }
-  }
-
-  /**
-   * Wait for OVMS server to be ready
-   */
-  private async waitForReady(maxWaitMs = 120_000): Promise<void> {
-    const startTime = Date.now();
-    const checkInterval = 2000;
-
-    this.log?.info("Waiting for OVMS to be ready...");
-
-    while (Date.now() - startTime < maxWaitMs) {
-      try {
-        const healthRes = await fetch(`${this.baseUrl}/v2/health/ready`, {
-          method: "GET",
-          signal: AbortSignal.timeout(5000),
-        });
-
-        if (healthRes.ok) {
-          const elapsed = Math.round((Date.now() - startTime) / 1000);
-          this.log?.info("OVMS is ready", { waitedSeconds: elapsed });
-          return;
-        }
-      } catch (e: any) {
-        if (!e.message?.includes("ECONNREFUSED")) {
-          this.log?.debug("OVMS health check error", { error: e.message });
-        }
-      }
-
-      await sleep(checkInterval);
-    }
-
-    throw new Error(
-      `OVMS did not become ready within ${maxWaitMs / 1000} seconds.\n` + `Check: docker logs ovms-embedding`,
-    );
   }
 
   getDimension(): number | undefined {
@@ -558,7 +412,7 @@ export class OVMSProvider implements EmbeddingProvider {
             throw new Error(`Unknown embedding format: ${typeof item.embedding}`);
           }
 
-          this.normalizeVector(embedding);
+          normalizeVector(embedding);
           embeddings.push(embedding);
         }
 
@@ -817,7 +671,7 @@ export class OVMSProvider implements EmbeddingProvider {
         for (let i = 0; i < config.miniBatchSize; i++) {
           const startIdx = i * hiddenSize;
           const embedding = new Float32Array(outputData.slice(startIdx, startIdx + hiddenSize));
-          this.normalizeVector(embedding);
+          normalizeVector(embedding);
           embeddings.push(embedding);
         }
       } else if (outputShape.length === 3) {
@@ -846,7 +700,7 @@ export class OVMSProvider implements EmbeddingProvider {
             }
           }
 
-          this.normalizeVector(embedding);
+          normalizeVector(embedding);
           embeddings.push(embedding);
         }
       } else {
@@ -1016,23 +870,6 @@ export class OVMSProvider implements EmbeddingProvider {
 
     this.info.dimension = this.info.dimension ?? allEmbeddings[0]?.length;
     return allEmbeddings;
-  }
-
-  /**
-   * L2 normalize a vector in-place
-   */
-  private normalizeVector(vec: Float32Array): void {
-    let norm = 0;
-    for (let i = 0; i < vec.length; i++) {
-      const val = vec[i]!;
-      norm += val * val;
-    }
-    norm = Math.sqrt(norm);
-    if (norm > 0) {
-      for (let i = 0; i < vec.length; i++) {
-        vec[i] = vec[i]! / norm;
-      }
-    }
   }
 
   async close(): Promise<void> {

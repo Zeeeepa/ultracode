@@ -12,6 +12,15 @@
 
 import type { Entity, GraphStorage, Relationship } from "../types/storage.js";
 import { RelationType } from "../types/storage.js";
+// Extracted modules
+import {
+  findIncomingNgRxRelationships,
+  findReducerToSelectorConnections,
+  isInvertedNgRxRelation,
+  NGRX_RELATIONSHIP_TYPES,
+  resolveNgRxTarget,
+} from "./ngrx-resolution.js";
+import { enrichPaths as enrichPathsUtil, getConfidenceLevel as getConfidenceLevelUtil } from "./path-enrichment.js";
 import type {
   AdjacencyGraph,
   CallProbability,
@@ -19,9 +28,7 @@ import type {
   GraphNode,
   PathFindingOptions,
   RawPath,
-  TraceActionType,
   TracePath,
-  TraceStep,
 } from "./types.js";
 
 // =============================================================================
@@ -33,15 +40,6 @@ const DEFAULT_MAX_PATHS = 10;
 const CONDITION_WEIGHT = 0.3; // Penalty for conditional paths
 const CALL_WEIGHT = 0.1; // Base weight for calls
 const ASYNC_WEIGHT = 0.2; // Penalty for async boundaries
-
-// NgRx relationship types that should be traversed in flow tracing
-const NGRX_RELATIONSHIP_TYPES = new Set([
-  RelationType.LISTENS_TO_ACTION, // effect -> action (ofType)
-  RelationType.HANDLES_ACTION, // reducer -> action (on)
-  RelationType.SELECTS_STATE, // component -> selector
-  RelationType.DISPATCHES_ACTION, // component/effect -> action
-  RelationType.MODIFIES_STATE, // reducer -> state slice
-]);
 
 // =============================================================================
 // 2. PATH BUILDER CLASS
@@ -112,7 +110,7 @@ export class PathBuilder {
 
             if (NGRX_RELATIONSHIP_TYPES.has(rel.type)) {
               // For NgRx relationships, try to resolve target by name
-              const resolvedId = await this.resolveNgRxTarget(rel.toId);
+              const resolvedId = await resolveNgRxTarget(this.storage, rel.toId);
               if (resolvedId) {
                 targetId = resolvedId;
               }
@@ -132,15 +130,13 @@ export class PathBuilder {
         }
 
         // Also find incoming NgRx relationships by entity name
-        const incomingNgRx = await this.findIncomingNgRxRelationships(entity.name);
+        const incomingNgRx = await findIncomingNgRxRelationships(this.storage, entity.name);
         for (const rel of incomingNgRx) {
           // For NgRx flow tracing, we need to INVERT certain relationships:
           // - HANDLES_ACTION: reducer -> action means action TRIGGERS reducer (action -> reducer in flow)
           // - LISTENS_TO_ACTION: effect -> action means action TRIGGERS effect (action -> effect in flow)
           // These are semantically "incoming" to the action but should be "outgoing" in flow graph
-          const relType = rel.type;
-          const isInvertedRelation =
-            relType === RelationType.HANDLES_ACTION || relType === RelationType.LISTENS_TO_ACTION;
+          const isInvertedRelation = isInvertedNgRxRelation(rel.type);
 
           if (isInvertedRelation) {
             // Inverted: action -> reducer/effect (add as outgoing from current entity)
@@ -175,7 +171,7 @@ export class PathBuilder {
     }
 
     // Add implicit NgRx reducer -> featureSelector connections
-    const reducerSelectorConnections = await this.findReducerToSelectorConnections();
+    const reducerSelectorConnections = await findReducerToSelectorConnections(this.storage);
     for (const conn of reducerSelectorConnections) {
       // Only add if both nodes are in the graph
       if (nodes.has(conn.reducerId) || nodes.has(conn.selectorId)) {
@@ -276,175 +272,6 @@ export class PathBuilder {
 
     this.nodeCache.set(entity.id, node);
     return node;
-  }
-
-  // ===========================================================================
-  // NgRx RELATIONSHIP RESOLUTION
-  // ===========================================================================
-
-  /**
-   * Find implicit reducer -> featureSelector connections.
-   * NgRx reducers update store state, featureSelectors read from it.
-   * We connect them by:
-   * 1. Same directory (e.g., store/roles/)
-   * 2. Similar file names (roles.reducer.ts -> roles.selector.ts)
-   * 3. Feature name matching
-   */
-  private async findReducerToSelectorConnections(): Promise<
-    Array<{ reducerId: string; selectorId: string; confidence: number }>
-  > {
-    const connections: Array<{ reducerId: string; selectorId: string; confidence: number }> = [];
-
-    // Find all reducers and selectors
-    const reducers = await this.storage.findEntities({
-      type: "entity",
-      filters: { entityType: ["ngrx_reducer"] as any },
-      limit: 500,
-    });
-
-    const selectors = await this.storage.findEntities({
-      type: "entity",
-      filters: { entityType: ["ngrx_selector"] as any },
-      limit: 500,
-    });
-
-    // Consider all selectors - featureSelectors typically have "Feature" or "State" in name
-    // or are the first selector in the file (no dependencies on other selectors)
-    const featureSelectors = selectors.filter((s) => {
-      // Check if name contains Feature or State suffix
-      if (s.name.includes("Feature") || s.name.endsWith("State")) {
-        return true;
-      }
-      // Check metadata for featureName (if parser saved it)
-      const meta = s.metadata as Record<string, any>;
-      if (meta?.["ngrxSelector"]?.featureName) {
-        return true;
-      }
-      return false;
-    });
-
-    for (const reducer of reducers) {
-      const reducerDir = this.getDirectory(reducer.filePath);
-      const reducerBaseName = this.getFeatureBaseName(reducer.filePath);
-
-      for (const selector of featureSelectors) {
-        const selectorDir = this.getDirectory(selector.filePath);
-        const selectorBaseName = this.getFeatureBaseName(selector.filePath);
-
-        let confidence = 0;
-
-        // Same directory = strong signal
-        if (reducerDir === selectorDir) {
-          confidence += 0.5;
-        }
-
-        // Same parent directory (e.g., store/roles/reducers/ and store/roles/selectors/)
-        const reducerParent = this.getDirectory(reducerDir);
-        const selectorParent = this.getDirectory(selectorDir);
-        if (reducerParent === selectorParent && reducerParent !== "") {
-          confidence += 0.3;
-        }
-
-        // Similar base names (roles.reducer.ts -> roles.selector.ts)
-        if (reducerBaseName && selectorBaseName && reducerBaseName === selectorBaseName) {
-          confidence += 0.4;
-        }
-
-        // Name contains same feature keyword (rolesReducer -> selectRolesFeature)
-        const reducerFeature = this.extractFeatureFromName(reducer.name);
-        const selectorFeature = this.extractFeatureFromName(selector.name);
-        if (reducerFeature && selectorFeature && reducerFeature.toLowerCase() === selectorFeature.toLowerCase()) {
-          confidence += 0.3;
-        }
-
-        if (confidence >= 0.5) {
-          connections.push({
-            reducerId: reducer.id,
-            selectorId: selector.id,
-            confidence: Math.min(1.0, confidence),
-          });
-        }
-      }
-    }
-
-    return connections;
-  }
-
-  /**
-   * Get directory from file path
-   */
-  private getDirectory(filePath: string): string {
-    const lastSlash = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-    return lastSlash >= 0 ? filePath.slice(0, lastSlash) : "";
-  }
-
-  /**
-   * Extract feature base name from file path
-   * e.g., "roles.reducer.ts" -> "roles", "users.selector.ts" -> "users"
-   */
-  private getFeatureBaseName(filePath: string): string | null {
-    const fileName = filePath.split(/[/\\]/).pop() || "";
-    // Match: featureName.reducer.ts, featureName.selector.ts, featureName.reducers.ts, etc.
-    const match = fileName.match(/^([a-z0-9-]+)\.(reducer|selector|reducers|selectors|state)/i);
-    return match ? match[1]! : null;
-  }
-
-  /**
-   * Extract feature name from entity name
-   * e.g., "rolesReducer" -> "roles", "selectRolesFeature" -> "Roles"
-   */
-  private extractFeatureFromName(name: string): string | null {
-    // rolesReducer -> roles
-    let match = name.match(/^([a-z]+)Reducer$/i);
-    if (match) return match[1]!;
-
-    // selectRolesFeature -> Roles
-    match = name.match(/^select([A-Z][a-z]+)Feature$/);
-    if (match) return match[1]!;
-
-    // selectRolesState -> Roles
-    match = name.match(/^select([A-Z][a-z]+)State$/);
-    if (match) return match[1]!;
-
-    return null;
-  }
-
-  /**
-   * Resolve NgRx phantom entity target to real entity ID.
-   * Phantom entities have names like "file:actionName", we extract the action name
-   * and search for real entity with that name.
-   */
-  private async resolveNgRxTarget(phantomId: string): Promise<string | null> {
-    // Get the phantom entity
-    const phantomEntity = await this.storage.getEntity(phantomId);
-    if (!phantomEntity) return null;
-
-    // Extract the action/selector name from phantom entity name
-    // Format: "\\path\\to\\file.ts:actionName" or just "actionName"
-    const name = phantomEntity.name;
-    const colonIndex = name.lastIndexOf(":");
-    const targetName = colonIndex >= 0 ? name.slice(colonIndex + 1) : name;
-
-    // Search for real entity with this name
-    const entities = await this.storage.searchEntities({ namePattern: targetName });
-
-    // Find exact match (not phantom)
-    for (const entity of entities) {
-      if (entity.name === targetName && entity.id !== phantomId) {
-        return entity.id;
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Find incoming NgRx relationships by entity name.
-   * Searches for relationships where target name matches this entity.
-   */
-  private async findIncomingNgRxRelationships(entityName: string): Promise<Relationship[]> {
-    const types = Array.from(NGRX_RELATIONSHIP_TYPES) as any[];
-    return this.storage.findIncomingRelationshipsByName(entityName, types);
   }
 
   /**
@@ -757,171 +584,15 @@ export class PathBuilder {
   }
 
   // ===========================================================================
-  // 6. PATH ENRICHMENT
+  // 6. PATH ENRICHMENT (Delegated to extracted module)
   // ===========================================================================
 
   /**
-   * Convert raw paths to enriched TracePaths with full information
+   * Convert raw paths to enriched TracePaths with full information.
+   * Delegates to the extracted path-enrichment module.
    */
   async enrichPaths(rawPaths: RawPath[], graph: AdjacencyGraph): Promise<TracePath[]> {
-    const enriched: TracePath[] = [];
-
-    for (let i = 0; i < rawPaths.length; i++) {
-      const raw = rawPaths[i]!;
-      const steps: TraceStep[] = [];
-
-      for (let j = 0; j < raw.entityIds.length; j++) {
-        const nodeId = raw.entityIds[j]!;
-        const node = graph.nodes.get(nodeId);
-
-        if (!node) continue;
-
-        const step: TraceStep = {
-          order: j + 1,
-          entity: node.name,
-          entityId: nodeId,
-          file: node.file,
-          line: node.line,
-          action: this.determineAction(node, j, raw.entityIds.length),
-        };
-
-        // Add condition info if present
-        if (node.controlFlow?.branches && node.controlFlow.branches.length > 0) {
-          step.condition = node.controlFlow.branches[0]?.condition;
-          step.branches = {};
-          for (const branch of node.controlFlow.branches) {
-            step.branches[branch.condition] = branch.target || "continue";
-          }
-        }
-
-        // Add await info if present
-        if (node.controlFlow?.awaits && node.controlFlow.awaits.length > 0) {
-          step.awaits = true;
-          step.awaitTarget = node.controlFlow.awaits[0]?.target;
-        }
-
-        steps.push(step);
-      }
-
-      const confidence = this.calculateConfidence(raw);
-
-      enriched.push({
-        id: `path-${i + 1}`,
-        confidence,
-        steps,
-        summary: this.generatePathSummary(steps),
-        warnings: this.generateWarnings(raw, graph),
-      });
-    }
-
-    return enriched;
-  }
-
-  /**
-   * Determine action type for a step
-   */
-  private determineAction(node: GraphNode, position: number, totalLength: number): TraceActionType {
-    // Last step is typically a return
-    if (position === totalLength - 1) {
-      return "return";
-    }
-
-    // Check for specific patterns
-    if (node.controlFlow?.branches && node.controlFlow.branches.length > 0) {
-      return "condition";
-    }
-
-    if (node.controlFlow?.awaits && node.controlFlow.awaits.length > 0) {
-      return "await";
-    }
-
-    if (node.controlFlow?.loops && node.controlFlow.loops.length > 0) {
-      return "loop";
-    }
-
-    if (node.controlFlow?.exceptions && node.controlFlow.exceptions.length > 0) {
-      return "throw";
-    }
-
-    return "call";
-  }
-
-  /**
-   * Calculate confidence score for a path
-   */
-  private calculateConfidence(raw: RawPath): number {
-    // Base confidence
-    let confidence = 1.0;
-
-    // Reduce for longer paths
-    confidence -= raw.entityIds.length * 0.02;
-
-    // Reduce for conditional paths
-    confidence -= raw.conditionCount * 0.1;
-
-    // Reduce for high weight
-    confidence -= raw.weight * 0.05;
-
-    return Math.max(0.1, Math.min(1.0, confidence));
-  }
-
-  /**
-   * Generate human-readable path summary
-   */
-  private generatePathSummary(steps: TraceStep[]): string {
-    if (steps.length === 0) return "Empty path";
-
-    if (steps.length === 1) {
-      return `Direct call to ${steps[0]!.entity}`;
-    }
-
-    const first = steps[0]!;
-    const last = steps[steps.length - 1]!;
-    const conditions = steps.filter((s) => s.action === "condition").length;
-    const awaits = steps.filter((s) => s.awaits).length;
-
-    let summary = `${first.entity} → ${last.entity} (${steps.length} steps)`;
-
-    if (conditions > 0) {
-      summary += `, ${conditions} condition${conditions > 1 ? "s" : ""}`;
-    }
-
-    if (awaits > 0) {
-      summary += `, ${awaits} await${awaits > 1 ? "s" : ""}`;
-    }
-
-    return summary;
-  }
-
-  /**
-   * Generate warnings for a path
-   */
-  private generateWarnings(raw: RawPath, graph: AdjacencyGraph): string[] {
-    const warnings: string[] = [];
-
-    // Warn about long paths
-    if (raw.entityIds.length > 10) {
-      warnings.push("Long call chain - may indicate design issues");
-    }
-
-    // Warn about many conditions
-    if (raw.conditionCount > 5) {
-      warnings.push("Many conditional branches - path may be rarely executed");
-    }
-
-    // Warn about async boundaries
-    let asyncCount = 0;
-    for (const id of raw.entityIds) {
-      const node = graph.nodes.get(id);
-      if (node?.controlFlow?.awaits && node.controlFlow.awaits.length > 0) {
-        asyncCount++;
-      }
-    }
-    if (asyncCount > 3) {
-      warnings.push("Multiple async boundaries - consider timing issues");
-    }
-
-    return warnings;
+    return enrichPathsUtil(rawPaths, graph);
   }
 
   // ===========================================================================
@@ -958,9 +629,7 @@ export class PathBuilder {
    * Get confidence level from numeric score
    */
   getConfidenceLevel(score: number): ConfidenceLevel {
-    if (score >= 0.7) return "high";
-    if (score >= 0.4) return "medium";
-    return "low";
+    return getConfidenceLevelUtil(score);
   }
 
   /**

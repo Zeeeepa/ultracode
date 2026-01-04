@@ -14,492 +14,44 @@ import { parse as parseYaml } from "yaml";
 import { existsSync, readTextSync } from "../utils/file-ops.js";
 
 // =============================================================================
-// 1. CONFIGURATION INTERFACES
+// IMPORTS FROM EXTRACTED MODULES
 // =============================================================================
 
-export interface MCPConfig {
-  embedding?: {
-    model?: string | undefined;
-    provider?: "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "ovms" | "auto";
-    apiKey?: string | undefined;
-    enabled?: boolean | undefined;
+import { DEFAULT_CONFIG } from "./config-defaults.js";
 
-    // Two-stage retrieval with reranker
-    useReranker?: boolean;
-    rerankerModel?: string;
-    rerankerTopK?: number;
-    rerankerFinalK?: number;
+// Re-export types for backward compatibility
+export type {
+  AgentResourceConstraints,
+  AgentRuntimeConfig,
+  AppConfig,
+  ConductorConfig,
+  CoordinatorConfig,
+  DatabaseConfig,
+  DevAgentConfig,
+  DoraAgentConfig,
+  EmbeddingConfigResolved,
+  GitConfig,
+  IndexerConfig,
+  IndexingConfig,
+  LoggingConfig,
+  MCPConfig,
+  ParserConfig,
+  QueryAgentConfig,
+  SemanticAgentConfig,
+  VectorBackendConfig,
+} from "./config-types.js";
 
-    // Language hint for optimization
-    queryLanguage?: "english" | "multilingual";
-
-    // Two-phase mode: dump embeddings to disk, then insert to DB
-    // Improves stability by separating CPU-intensive embedding from DB writes
-    twoPhaseMode?: boolean;
-
-    // Provider-specific configurations
-    ollama?: {
-      baseUrl?: string | undefined;
-      timeout?: number | undefined;
-      timeoutMs?: number | undefined;
-      concurrency?: number | undefined;
-      headers?: Record<string, string>;
-      autoPull?: boolean;
-      warmupText?: string;
-      checkServer?: boolean;
-      pullTimeoutMs?: number;
-    };
-    openai?: {
-      baseUrl?: string | undefined;
-      apiKey?: string | undefined;
-      timeout?: number | undefined;
-      timeoutMs?: number | undefined;
-      concurrency?: number | undefined;
-      maxBatchSize?: number | undefined;
-    };
-    cloudru?: {
-      baseUrl?: string | undefined;
-      apiKey?: string | undefined;
-      timeout?: number | undefined;
-      timeoutMs?: number | undefined;
-      concurrency?: number | undefined;
-      maxBatchSize?: number | undefined;
-    };
-    huggingface?: {
-      apiKey?: string | undefined;
-      baseUrl?: string | undefined;
-      timeout?: number | undefined;
-      timeoutMs?: number | undefined;
-      concurrency?: number | undefined;
-      warmupText?: string;
-    };
-    tei?: {
-      baseUrl?: string | undefined;
-      timeoutMs?: number | undefined;
-      concurrency?: number | undefined;
-      checkServer?: boolean;
-    };
-  };
-  server?: { host?: string | undefined; port?: number | undefined; timeout?: number };
-  agents?: {
-    maxConcurrent?: number | undefined;
-    defaultTimeout?: number | undefined;
-    useParser?: boolean; // MCP_USE_PARSER
-    devIndexBatch?: number; // MCP_DEV_INDEX_BATCH
-  };
-  semantic?: {
-    cacheWarmupLimit?: number | undefined;
-    popularEntitiesTopic?: string | undefined;
-  };
-  autodoc?: {
-    /** Enable AutoDoc watcher for automatic documentation updates */
-    watcherEnabled?: boolean;
-    /** Debounce delay in milliseconds (default: 45000) */
-    debounceMs?: number;
-    /** Minimum debounce delay in milliseconds (default: 30000) */
-    minDebounceMs?: number;
-    /** Maximum debounce delay in milliseconds (default: 60000) */
-    maxDebounceMs?: number;
-    /** Use LLM for description generation */
-    useLlm?: boolean | undefined;
-    /** LLM configuration for AutoDoc */
-    llmConfig?: {
-      provider: "ollama" | "openai" | "tgi";
-      model?: string | undefined;
-      endpoint?: string;
-    };
-  };
-}
-
-// Resolved embedding configuration returned to callers
-export interface EmbeddingConfigResolved {
-  model: string;
-  provider: "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "ovms" | "auto" | string;
-  apiKey: string;
-  enabled: boolean;
-
-  // Two-stage retrieval with reranker
-  useReranker: boolean;
-  rerankerModel: string;
-  rerankerTopK: number;
-  rerankerFinalK: number;
-
-  // Language hint for optimization
-  queryLanguage: "english" | "multilingual";
-
-  // Two-phase mode: dump embeddings to disk, then insert to DB
-  // Improves stability by separating CPU-intensive embedding from DB writes
-  twoPhaseMode: boolean;
-
-  // Provider-specific configurations
-  ollama?: {
-    baseUrl?: string | undefined;
-    timeout?: number | undefined;
-    timeoutMs?: number | undefined;
-    concurrency?: number | undefined;
-    headers?: Record<string, string>;
-    autoPull?: boolean;
-    warmupText?: string;
-    checkServer?: boolean;
-    pullTimeoutMs?: number;
-  };
-  openai?: {
-    baseUrl?: string | undefined;
-    apiKey?: string | undefined;
-    timeout?: number | undefined;
-    timeoutMs?: number | undefined;
-    concurrency?: number | undefined;
-    maxBatchSize?: number | undefined;
-  };
-  cloudru?: {
-    baseUrl?: string | undefined;
-    apiKey?: string | undefined;
-    timeout?: number | undefined;
-    timeoutMs?: number | undefined;
-    concurrency?: number | undefined;
-    maxBatchSize?: number | undefined;
-  };
-  huggingface?: {
-    apiKey?: string | undefined;
-    baseUrl?: string | undefined;
-    timeout?: number | undefined;
-    timeoutMs?: number | undefined;
-    concurrency?: number | undefined;
-    warmupText?: string;
-  };
-  tei?: {
-    baseUrl?: string | undefined;
-    timeoutMs?: number | undefined;
-    concurrency?: number | undefined;
-    checkServer?: boolean;
-  };
-}
-
-export interface DatabaseConfig {
-  path?: string | undefined;
-  mode?: "WAL" | "DELETE" | "TRUNCATE";
-  cacheSize?: number | undefined;
-  mmapSize?: number;
-  synchronous?: "OFF" | "NORMAL" | "FULL";
-  tempStore?: "DEFAULT" | "FILE" | "MEMORY";
-}
-
-export interface LoggingConfig {
-  level?: "debug" | "info" | "warn" | "error";
-  format?: "json" | "text";
-  outputFile?: string | undefined;
-  maxFileSize?: string | undefined;
-  maxFiles?: number;
-  enableConsole?: boolean;
-}
-
-export interface ParserConfig {
-  treeSitter?: {
-    enabled?: boolean | undefined;
-    languageConfigs?: string[];
-    maxFileSize?: number | undefined;
-    timeout?: number | undefined;
-    bufferSize?: number;
-  };
-  incremental?: { enabled?: boolean | undefined; cacheSize?: number | undefined; cacheTTL?: number };
-  agent?: {
-    maxConcurrency?: number | undefined;
-    memoryLimit?: number | undefined;
-    priority?: number;
-    batchSize?: number | undefined;
-    cacheSize?: number | undefined;
-    workerPoolSize?: number;
-  };
-}
-
-export interface IndexerConfig {
-  maxConcurrency?: number | undefined;
-  memoryLimit?: number | undefined;
-  priority?: number;
-  batchSize?: number | undefined;
-  cacheSize?: number | undefined;
-  cacheTTL?: number;
-}
-
-export interface AgentRuntimeConfig {
-  maxConcurrency?: number | undefined;
-  memoryLimit?: number | undefined;
-  priority?: number;
-}
-
-export type DevAgentConfig = AgentRuntimeConfig;
-export type DoraAgentConfig = AgentRuntimeConfig;
-
-export interface QueryAgentConfig extends AgentRuntimeConfig {
-  simpleQueryTimeout?: number | undefined;
-  complexQueryTimeout?: number | undefined;
-  cacheWarmupSize?: number;
-}
-
-export interface SemanticAgentConfig extends AgentRuntimeConfig {
-  queueBatchSize?: number;
-  batchSize?: number | undefined;
-  modelPath?: string | undefined;
-}
-
-export interface AgentResourceConstraints {
-  maxMemoryMB: number;
-  maxCpuPercent: number;
-  maxConcurrentAgents: number;
-  maxTaskQueueSize: number;
-}
-
-export interface CoordinatorConfig extends AgentRuntimeConfig {
-  taskQueueLimit?: number | undefined;
-  loadBalancingStrategy?: "round-robin" | "least-loaded" | "priority";
-  resourceConstraints: AgentResourceConstraints;
-}
-
-export interface ConductorConfig extends CoordinatorConfig {
-  complexityThreshold?: number | undefined;
-  mandatoryDelegation?: boolean | undefined;
-}
-
-export interface IndexingConfig {
-  branchAware?: boolean | undefined;
-  autoSwitchOnBranchChange?: boolean | undefined;
-  maxBranchesPerRepo?: number;
-  maxTotalBranches?: number;
-  evictionStrategy?: "LRU" | "LFU" | "FIFO";
-  cleanupIntervalMs?: number;
-  incrementalThreshold?: number;
-  dataDir?: string;
-  /** Auto-index on startup if supported files detected (default: true) */
-  autoIndex?: boolean;
-  /** Supported file extensions for auto-index detection */
-  autoIndexExtensions?: string[];
-}
-
-export interface GitConfig {
-  enabled?: boolean | undefined;
-  watchBranchChanges?: boolean | undefined;
-  /** Watch uncommitted file changes via git status polling (default: true) */
-  watchUncommitted?: boolean;
-  /** Interval for uncommitted changes polling in ms (default: 10000) */
-  uncommittedPollIntervalMs?: number;
-  /** Include untracked (new) files in uncommitted watch (default: true) */
-  includeUntracked?: boolean;
-  autoReindex?: boolean;
-  diffMode?: "incremental" | "full";
-  pollIntervalMs?: number;
-  /** Debounce delay for embedding generation in ms (default: 60000 = 1 min) */
-  debounceMs?: number;
-  /** Threshold for bulk mode (drop/rebuild index). Files > threshold = bulk mode (default: 1000) */
-  bulkModeThreshold?: number;
-}
-
-export interface VectorBackendConfig {
-  libsql?: {
-    metric?: "cosine" | "l2";
-    compression?: "float8" | "float16" | "float32";
-    searchL?: number | undefined;
-    insertL?: number | undefined;
-  };
-}
-
-export interface AppConfig {
-  mcp: MCPConfig;
-  database: DatabaseConfig;
-  logging: LoggingConfig;
-  parser: ParserConfig;
-  indexer: IndexerConfig;
-  indexing: IndexingConfig;
-  git: GitConfig;
-  vectorBackend?: VectorBackendConfig;
-  devAgent: DevAgentConfig;
-  doraAgent: DoraAgentConfig;
-  queryAgent: QueryAgentConfig;
-  semanticAgent: SemanticAgentConfig;
-  coordinator: CoordinatorConfig;
-  conductor: ConductorConfig;
-  environment: string;
-  debug: boolean;
-}
+import type {
+  AppConfig,
+  DatabaseConfig,
+  EmbeddingConfigResolved,
+  LoggingConfig,
+  MCPConfig,
+  ParserConfig,
+} from "./config-types.js";
 
 // =============================================================================
-// 2. DEFAULT CONFIGURATION VALUES
-// =============================================================================
-
-const DEFAULT_CONFIG: AppConfig = {
-  mcp: {
-    embedding: {
-      model: "all-MiniLM-L6-v2",
-      provider: "auto",
-      enabled: false,
-    },
-    server: {
-      host: "localhost",
-      port: 3000,
-      timeout: 30000,
-    },
-    agents: {
-      // Allow more registered agents by default; conductor still reuses by type
-      maxConcurrent: 12,
-      defaultTimeout: 15000,
-      useParser: true, // MCP_USE_PARSER: Enable ParserAgent by default
-      devIndexBatch: 100, // MCP_DEV_INDEX_BATCH: Default batch size for indexing
-    },
-    semantic: {
-      cacheWarmupLimit: 50,
-      popularEntitiesTopic: "semantic:warmup:entities",
-    },
-  },
-  database: {
-    path: "", // Empty = use centralized storage (AppData/UltraScriptTools/projects/<hash>/)
-    mode: "WAL",
-    cacheSize: 10000,
-    mmapSize: 268435456, // 256MB
-    synchronous: "NORMAL",
-    tempStore: "MEMORY",
-  },
-  logging: {
-    level: "info",
-    format: "text",
-    enableConsole: true,
-    maxFileSize: "10MB",
-    maxFiles: 5,
-  },
-  parser: {
-    treeSitter: {
-      enabled: true,
-      languageConfigs: ["typescript", "javascript", "python", "c", "cpp"],
-      maxFileSize: 1048576, // 1MB
-      timeout: 5000,
-      bufferSize: 1024 * 1024, // 1MB buffer
-    },
-    incremental: {
-      enabled: true,
-      cacheSize: 1000,
-      cacheTTL: 300000, // 5 minutes
-    },
-    agent: {
-      maxConcurrency: 8, // Increased for multi-pass
-      memoryLimit: 1024, // 1GB for SWC + TS API
-      priority: 8,
-      batchSize: 50, // Increased - SWC handles large batches efficiently
-      cacheSize: 209715200, // 200MB - more cache for multi-pass results
-      workerPoolSize: 8, // Match CPU cores for parallel TS parsing
-    },
-  },
-  indexer: {
-    maxConcurrency: 2,
-    memoryLimit: 512,
-    priority: 7,
-    batchSize: 1000,
-    cacheSize: 52428800, // 50MB
-    cacheTTL: 300000, // 5 minutes
-  },
-  indexing: {
-    branchAware: true, // Enabled by default for accurate per-branch indexing
-    autoSwitchOnBranchChange: true,
-    maxBranchesPerRepo: 10,
-    maxTotalBranches: 50,
-    evictionStrategy: "LRU",
-    cleanupIntervalMs: 3600000, // 1 hour
-    incrementalThreshold: 20, // If >20 files changed, do full reindex
-    dataDir: "", // Empty = use centralized storage (AppData/UltraScriptTools/projects/<hash>/branches/)
-    autoIndex: false, // Disabled: tree-sitter parsing blocks UI 25+ sec. Use `index` command.
-    autoIndexExtensions: [
-      ".ts",
-      ".tsx",
-      ".js",
-      ".jsx",
-      ".mjs",
-      ".cjs", // JavaScript/TypeScript
-      ".py",
-      ".pyw", // Python
-      ".go", // Go
-      ".rs", // Rust
-      ".kt",
-      ".kts", // Kotlin
-      ".swift", // Swift
-      ".c",
-      ".h",
-      ".cpp",
-      ".hpp",
-      ".cc",
-      ".cxx", // C/C++
-      ".java", // Java
-      ".rb", // Ruby
-      ".php", // PHP
-      ".sh",
-      ".bash", // Shell
-    ],
-  },
-  git: {
-    enabled: false, // Disabled by default
-    watchBranchChanges: true,
-    watchUncommitted: true, // Watch uncommitted file changes
-    uncommittedPollIntervalMs: 10000, // Check for uncommitted changes every 10 seconds
-    includeUntracked: true, // Include new (untracked) files
-    autoReindex: true,
-    diffMode: "incremental",
-    pollIntervalMs: 5000, // Check for commits every 5 seconds
-  },
-  devAgent: {
-    maxConcurrency: 3,
-    memoryLimit: 256,
-    priority: 7,
-  },
-  doraAgent: {
-    maxConcurrency: 2,
-    memoryLimit: 128,
-    priority: 6,
-  },
-  queryAgent: {
-    maxConcurrency: 10,
-    memoryLimit: 112,
-    priority: 9,
-    simpleQueryTimeout: 100,
-    complexQueryTimeout: 1000,
-    cacheWarmupSize: 100,
-  },
-  semanticAgent: {
-    maxConcurrency: 5,
-    memoryLimit: 240,
-    priority: 8,
-    batchSize: 8,
-    modelPath: "./models",
-  },
-  coordinator: {
-    maxConcurrency: 100,
-    memoryLimit: 128,
-    priority: 10,
-    taskQueueLimit: 100,
-    loadBalancingStrategy: "least-loaded",
-    resourceConstraints: {
-      maxMemoryMB: 1024,
-      maxCpuPercent: 80,
-      maxConcurrentAgents: 10,
-      maxTaskQueueSize: 100,
-    },
-  },
-  conductor: {
-    maxConcurrency: 100,
-    memoryLimit: 128,
-    priority: 10,
-    taskQueueLimit: 100,
-    loadBalancingStrategy: "least-loaded",
-    resourceConstraints: {
-      maxMemoryMB: 1024,
-      maxCpuPercent: 80,
-      maxConcurrentAgents: 10,
-      maxTaskQueueSize: 100,
-    },
-    complexityThreshold: 8,
-    mandatoryDelegation: true,
-  },
-  environment: "development",
-  debug: false,
-};
-
-// =============================================================================
-// 3. CONFIGURATION LOADER CLASS
+// CONFIGURATION LOADER CLASS
 // =============================================================================
 
 export class ConfigLoader {
@@ -625,7 +177,7 @@ export class ConfigLoader {
   }
 
   // =============================================================================
-  // 4. PRIVATE HELPER METHODS
+  // PRIVATE HELPER METHODS
   // =============================================================================
 
   /**
@@ -1172,7 +724,7 @@ export class ConfigLoader {
 }
 
 // =============================================================================
-// 5. UTILITY FUNCTIONS
+// UTILITY FUNCTIONS
 // =============================================================================
 
 /**
@@ -1210,7 +762,7 @@ export function initializeConfig(): AppConfig {
 }
 
 // =============================================================================
-// 6. VALIDATION FUNCTIONS
+// VALIDATION FUNCTIONS
 // =============================================================================
 
 /**

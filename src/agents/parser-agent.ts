@@ -25,7 +25,7 @@ import type { WorkerEmbeddingConfig } from "../types/semantic.js";
 import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 import type { BinaryEmbedding } from "./workers/language-worker-pool.js";
-import { ParsingSubprocessPool } from "./workers/parsing-subprocess-pool.js";
+import { ParsingSubprocessPool, type StreamingResultCallback } from "./workers/parsing-subprocess-pool.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -157,6 +157,8 @@ export class ParserAgent extends BaseAgent {
   private embeddingConfig: WorkerEmbeddingConfig | null = null; // Embedding config for workers
   private embeddingAccumulator: EmbeddingAccumulator | null = null; // Accumulator for batch FAISS flush
   private onVectorsWritten: ((workerId: string, count: number, dumpDir: string) => void) | null = null; // Callback for incremental Faiss load
+  private streamingMode: boolean = false; // Streaming mode: send results as they become ready
+  private onStreamingResult: StreamingResultCallback | null = null; // Callback for streaming results
 
   constructor(knowledgeBus?: EventEmitter) {
     const config = getParserConfig();
@@ -607,6 +609,8 @@ export class ParserAgent extends BaseAgent {
         ...(this.embeddingConfig && { embeddingConfig: this.embeddingConfig }),
         onEmbeddings: this.getEmbeddingsCallback(), // Binary embeddings callback
         ...(this.onVectorsWritten && { onVectorsWritten: this.onVectorsWritten }), // Incremental Faiss loading
+        streamingMode: this.streamingMode, // Streaming results via IPC
+        ...(this.onStreamingResult && { onStreamingResult: this.onStreamingResult }), // Streaming callback
       });
 
       await pool.initialize();
@@ -792,6 +796,24 @@ export class ParserAgent extends BaseAgent {
   }
 
   /**
+   * Enable streaming mode for workers.
+   * When enabled, workers send parse results immediately after each file via IPC.
+   * Use for parallel indexing: start processing results while parsing continues.
+   *
+   * @param callback Called for each file as it's parsed (before batch completes)
+   */
+  setStreamingMode(enabled: boolean, callback?: StreamingResultCallback): void {
+    this.streamingMode = enabled;
+    this.onStreamingResult = callback ?? null;
+
+    if (enabled && callback) {
+      logger.info("PARSER_AGENT", "Streaming mode enabled");
+    } else {
+      logger.info("PARSER_AGENT", "Streaming mode disabled");
+    }
+  }
+
+  /**
    * Set incremental mode for workers.
    *
    * Full indexing (incremental=false, default):
@@ -810,6 +832,58 @@ export class ParserAgent extends BaseAgent {
 
     // Note: existing pools keep their current killAfterBatch setting
     // New pools will use the updated setting
+  }
+
+  /**
+   * Enable keepalive mode for fast incremental processing.
+   * After bulk indexing, call this to:
+   * 1. Spawn one keepalive worker for TypeScript (main language)
+   * 2. Other language workers spawn on-demand
+   *
+   * The keepalive worker stays alive until memory exceeds 500MB.
+   */
+  async enableKeepaliveMode(): Promise<void> {
+    logger.info("PARSER_AGENT", "Enabling keepalive mode for incremental processing", {
+      poolCount: this.languagePools.size,
+      pools: Array.from(this.languagePools.keys()),
+    });
+
+    // Enable keepalive mode on all existing pools
+    const poolStats: Record<string, number> = {};
+    for (const [language, pool] of this.languagePools.entries()) {
+      if (pool instanceof ParsingSubprocessPool) {
+        pool.setKeepaliveMode(true);
+        poolStats[language] = pool.getActiveWorkerCount();
+      }
+    }
+    logger.debug("PARSER_AGENT", "Keepalive mode set on all pools", { poolStats });
+
+    // Spawn keepalive worker only for TypeScript (most common changes)
+    const tsPool = this.languagePools.get("typescript");
+    if (tsPool instanceof ParsingSubprocessPool) {
+      logger.info("PARSER_AGENT", "Spawning TypeScript keepalive worker...");
+      await tsPool.ensureKeepaliveWorker();
+      logger.info("PARSER_AGENT", "TypeScript keepalive worker spawned", {
+        activeWorkers: tsPool.getActiveWorkerCount(),
+      });
+    } else {
+      logger.warn("PARSER_AGENT", "No TypeScript pool found for keepalive");
+    }
+
+    this.keepPoolsAlive = true;
+    logger.info("PARSER_AGENT", "Keepalive mode enabled, ready for incremental updates");
+  }
+
+  /**
+   * Disable keepalive mode. Workers will be killed after completing tasks.
+   */
+  disableKeepaliveMode(): void {
+    for (const pool of this.languagePools.values()) {
+      if (pool instanceof ParsingSubprocessPool) {
+        pool.setKeepaliveMode(false);
+      }
+    }
+    logger.info("PARSER_AGENT", "Keepalive mode disabled");
   }
 
   /**

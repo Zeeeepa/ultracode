@@ -24,6 +24,37 @@
 import type { ASTNode, EntityRelationship, ImportDependency, ParsedEntity, PatternAnalysis } from "../types/parser.js";
 import { getNodeLocation, hasChild } from "./base-parser-utils.js";
 
+// Import from extracted modules
+import {
+  countNestedItems,
+  extractAliasedType,
+  extractAttributes,
+  extractConstType,
+  extractDerives,
+  extractDiscriminant,
+  extractFieldType,
+  extractFunctionParameters,
+  extractGenerics,
+  extractLifetimes,
+  extractMacroRules,
+  extractReturnType,
+  extractStaticType,
+  extractSupertraits,
+  extractTraitBounds,
+  extractTypeBounds,
+  extractUseTree,
+  extractVisibility,
+  findNodes,
+  getAttributeName,
+  getNodeText,
+  hasBody,
+  hasModifier,
+  isTupleStruct,
+  resolveName,
+} from "./rust/ast-helpers.js";
+
+import { identifyPatterns } from "./rust/pattern-identifier.js";
+
 // =============================================================================
 // 3. RUST ENTITY EXTRACTION (Layer 1)
 // =============================================================================
@@ -70,7 +101,7 @@ export class RustAnalyzer {
     this.extractUseStatements(node, imports, filePath);
 
     // Identify patterns (Layer 4)
-    const patterns = this.identifyPatterns(node, entities);
+    const patterns = identifyPatterns(node, entities);
 
     // Update metrics
     this.metrics.entitiesExtracted = entities.length;
@@ -96,14 +127,14 @@ export class RustAnalyzer {
     relationships: EntityRelationship[],
     filePath: string,
   ): void {
-    const moduleNodes = this.findNodes(node, "mod_item");
+    const moduleNodes = findNodes(node, "mod_item");
 
     for (const modNode of moduleNodes) {
-      const name = this.resolveName(modNode);
+      const name = resolveName(modNode);
       if (!name) continue;
       const location = getNodeLocation(modNode);
-      const visibility = this.extractVisibility(modNode);
-      const isInline = this.hasBody(modNode);
+      const visibility = extractVisibility(modNode);
+      const isInline = hasBody(modNode);
 
       entities.push({
         id: `${filePath}:module:${name}`,
@@ -121,7 +152,7 @@ export class RustAnalyzer {
       if (isInline) {
         const body = modNode.childForFieldName("body");
         if (body) {
-          const nestedCount = this.countNestedItems(body);
+          const nestedCount = countNestedItems(body);
           relationships.push({
             from: `${filePath}:module:${name}`,
             to: filePath,
@@ -143,20 +174,20 @@ export class RustAnalyzer {
     relationships: EntityRelationship[],
     filePath: string,
   ): void {
-    const structNodes = this.findNodes(node, "struct_item");
+    const structNodes = findNodes(node, "struct_item");
 
     for (const structNode of structNodes) {
-      const name = this.resolveName(structNode);
+      const name = resolveName(structNode);
       if (!name) continue;
       const location = getNodeLocation(structNode);
-      const visibility = this.extractVisibility(structNode);
-      const generics = this.extractGenerics(structNode);
-      const lifetimes = this.extractLifetimes(structNode);
-      const derives = this.extractDerives(structNode);
+      const visibility = extractVisibility(structNode);
+      const generics = extractGenerics(structNode);
+      const lifetimes = extractLifetimes(structNode);
+      const derives = extractDerives(structNode);
       const fields = this.extractStructFields(structNode, name, entities, filePath);
 
       // Determine struct type
-      const isTuple = this.isTupleStruct(structNode);
+      const isTuple = isTupleStruct(structNode);
       const isUnit = fields.length === 0 && !isTuple;
 
       entities.push({
@@ -191,16 +222,16 @@ export class RustAnalyzer {
     _relationships: EntityRelationship[],
     filePath: string,
   ): void {
-    const enumNodes = this.findNodes(node, "enum_item");
+    const enumNodes = findNodes(node, "enum_item");
 
     for (const enumNode of enumNodes) {
-      const name = this.resolveName(enumNode);
+      const name = resolveName(enumNode);
       if (!name) continue;
       const location = getNodeLocation(enumNode);
-      const visibility = this.extractVisibility(enumNode);
-      const generics = this.extractGenerics(enumNode);
-      const lifetimes = this.extractLifetimes(enumNode);
-      const derives = this.extractDerives(enumNode);
+      const visibility = extractVisibility(enumNode);
+      const generics = extractGenerics(enumNode);
+      const lifetimes = extractLifetimes(enumNode);
+      const derives = extractDerives(enumNode);
       const variants = this.extractEnumVariants(enumNode, name, entities, filePath);
 
       entities.push({
@@ -231,16 +262,16 @@ export class RustAnalyzer {
     relationships: EntityRelationship[],
     filePath: string,
   ): void {
-    const traitNodes = this.findNodes(node, "trait_item");
+    const traitNodes = findNodes(node, "trait_item");
 
     for (const traitNode of traitNodes) {
-      const name = this.resolveName(traitNode);
+      const name = resolveName(traitNode);
       if (!name) continue;
       const location = getNodeLocation(traitNode);
-      const visibility = this.extractVisibility(traitNode);
-      const generics = this.extractGenerics(traitNode);
-      const bounds = this.extractTraitBounds(traitNode);
-      const supertraits = this.extractSupertraits(traitNode);
+      const visibility = extractVisibility(traitNode);
+      const generics = extractGenerics(traitNode);
+      const bounds = extractTraitBounds(traitNode);
+      const supertraits = extractSupertraits(traitNode);
 
       // Extract trait methods
       const methods = this.extractTraitMethods(traitNode, name, entities, filePath);
@@ -279,20 +310,20 @@ export class RustAnalyzer {
    * Extract function declarations
    */
   private extractFunctions(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
-    const functionNodes = this.findNodes(node, "function_item");
+    const functionNodes = findNodes(node, "function_item");
 
     for (const fnNode of functionNodes) {
-      const name = this.resolveName(fnNode);
+      const name = resolveName(fnNode);
       if (!name) continue;
       const location = getNodeLocation(fnNode);
-      const visibility = this.extractVisibility(fnNode);
-      const isAsync = this.hasModifier(fnNode, "async");
-      const isConst = this.hasModifier(fnNode, "const");
-      const isUnsafe = this.hasModifier(fnNode, "unsafe");
-      const generics = this.extractGenerics(fnNode);
-      const lifetimes = this.extractLifetimes(fnNode);
-      const parameters = this.extractFunctionParameters(fnNode);
-      const returnType = this.extractReturnType(fnNode);
+      const visibility = extractVisibility(fnNode);
+      const isAsync = hasModifier(fnNode, "async");
+      const isConst = hasModifier(fnNode, "const");
+      const isUnsafe = hasModifier(fnNode, "unsafe");
+      const generics = extractGenerics(fnNode);
+      const lifetimes = extractLifetimes(fnNode);
+      const parameters = extractFunctionParameters(fnNode);
+      const returnType = extractReturnType(fnNode);
 
       entities.push({
         id: `${filePath}:function:${name}`,
@@ -319,15 +350,15 @@ export class RustAnalyzer {
    * Extract type aliases
    */
   private extractTypeAliases(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
-    const typeNodes = this.findNodes(node, "type_item");
+    const typeNodes = findNodes(node, "type_item");
 
     for (const typeNode of typeNodes) {
-      const name = this.resolveName(typeNode);
+      const name = resolveName(typeNode);
       if (!name) continue;
       const location = getNodeLocation(typeNode);
-      const visibility = this.extractVisibility(typeNode);
-      const generics = this.extractGenerics(typeNode);
-      const aliasedType = this.extractAliasedType(typeNode);
+      const visibility = extractVisibility(typeNode);
+      const generics = extractGenerics(typeNode);
+      const aliasedType = extractAliasedType(typeNode);
 
       entities.push({
         id: `${filePath}:type:${name}`,
@@ -350,13 +381,13 @@ export class RustAnalyzer {
    */
   private extractConstants(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
     // Extract const items
-    const constNodes = this.findNodes(node, "const_item");
+    const constNodes = findNodes(node, "const_item");
     for (const constNode of constNodes) {
-      const name = this.resolveName(constNode);
+      const name = resolveName(constNode);
       if (!name) continue;
       const location = getNodeLocation(constNode);
-      const visibility = this.extractVisibility(constNode);
-      const constType = this.extractConstType(constNode);
+      const visibility = extractVisibility(constNode);
+      const constType = extractConstType(constNode);
 
       entities.push({
         id: `${filePath}:const:${name}`,
@@ -374,14 +405,14 @@ export class RustAnalyzer {
     }
 
     // Extract static items
-    const staticNodes = this.findNodes(node, "static_item");
+    const staticNodes = findNodes(node, "static_item");
     for (const staticNode of staticNodes) {
-      const name = this.resolveName(staticNode);
+      const name = resolveName(staticNode);
       if (!name) continue;
       const location = getNodeLocation(staticNode);
-      const visibility = this.extractVisibility(staticNode);
-      const staticType = this.extractStaticType(staticNode);
-      const isMutable = this.hasModifier(staticNode, "mut");
+      const visibility = extractVisibility(staticNode);
+      const staticType = extractStaticType(staticNode);
+      const isMutable = hasModifier(staticNode, "mut");
 
       entities.push({
         id: `${filePath}:static:${name}`,
@@ -405,13 +436,13 @@ export class RustAnalyzer {
    */
   private extractMacros(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
     // Extract macro_rules! definitions
-    const macroRulesNodes = this.findNodes(node, "macro_definition");
+    const macroRulesNodes = findNodes(node, "macro_definition");
     for (const macroNode of macroRulesNodes) {
-      const name = this.resolveName(macroNode);
+      const name = resolveName(macroNode);
       if (!name) continue;
       const location = getNodeLocation(macroNode);
-      const visibility = this.extractVisibility(macroNode);
-      const rules = this.extractMacroRules(macroNode);
+      const visibility = extractVisibility(macroNode);
+      const rules = extractMacroRules(macroNode);
 
       entities.push({
         id: `${filePath}:macro:${name}`,
@@ -429,8 +460,8 @@ export class RustAnalyzer {
     }
 
     // Extract proc macros (attribute, derive, function-like)
-    const procMacroNodes = this.findNodes(node, "attribute_item").filter((attr) => {
-      const name = this.getAttributeName(attr);
+    const procMacroNodes = findNodes(node, "attribute_item").filter((attr) => {
+      const name = getAttributeName(attr);
       return name === "proc_macro" || name === "proc_macro_derive" || name === "proc_macro_attribute";
     });
 
@@ -441,9 +472,9 @@ export class RustAnalyzer {
       const nameNode = parent.childForFieldName("name");
       if (!nameNode) continue;
 
-      const name = this.getNodeText(nameNode);
+      const name = getNodeText(nameNode);
       const location = getNodeLocation(parent);
-      const macroType = this.getAttributeName(procMacro);
+      const macroType = getAttributeName(procMacro);
 
       entities.push({
         id: `${filePath}:proc_macro:${name}`,
@@ -473,16 +504,16 @@ export class RustAnalyzer {
     const body = structNode.childForFieldName("body");
 
     if (body) {
-      const fieldNodes = this.findNodes(body, "field_declaration");
+      const fieldNodes = findNodes(body, "field_declaration");
       for (const fieldNode of fieldNodes) {
         const nameNode = fieldNode.childForFieldName("name");
         if (!nameNode) continue;
 
-        const name = this.getNodeText(nameNode);
+        const name = getNodeText(nameNode);
         const location = getNodeLocation(fieldNode);
-        const visibility = this.extractVisibility(fieldNode);
-        const fieldType = this.extractFieldType(fieldNode);
-        const attributes = this.extractAttributes(fieldNode);
+        const visibility = extractVisibility(fieldNode);
+        const fieldType = extractFieldType(fieldNode);
+        const attributes = extractAttributes(fieldNode);
 
         const field: ParsedEntity = {
           id: `${filePath}:struct:${structName}:field:${name}`,
@@ -520,16 +551,16 @@ export class RustAnalyzer {
     const body = enumNode.childForFieldName("body");
 
     if (body) {
-      const variantNodes = this.findNodes(body, "enum_variant");
+      const variantNodes = findNodes(body, "enum_variant");
       for (const variantNode of variantNodes) {
-        const name = this.resolveName(variantNode);
+        const name = resolveName(variantNode);
         if (!name) continue;
         const location = getNodeLocation(variantNode);
 
         // Check variant type
         const hasFields = hasChild(variantNode, "field_declaration_list");
         const hasTuple = hasChild(variantNode, "ordered_field_declaration_list");
-        const discriminant = this.extractDiscriminant(variantNode);
+        const discriminant = extractDiscriminant(variantNode);
 
         variants.push(name);
 
@@ -566,18 +597,18 @@ export class RustAnalyzer {
     const body = traitNode.childForFieldName("body");
 
     if (body) {
-      const methodNodes = this.findNodes(body, "function_signature_item");
-      const defaultMethodNodes = this.findNodes(body, "function_item");
+      const methodNodes = findNodes(body, "function_signature_item");
+      const defaultMethodNodes = findNodes(body, "function_item");
 
       // Abstract methods (signatures only)
       for (const methodNode of methodNodes) {
         const nameNode = methodNode.childForFieldName("name");
         if (!nameNode) continue;
 
-        const name = this.getNodeText(nameNode);
+        const name = getNodeText(nameNode);
         const location = getNodeLocation(methodNode);
-        const parameters = this.extractFunctionParameters(methodNode);
-        const returnType = this.extractReturnType(methodNode);
+        const parameters = extractFunctionParameters(methodNode);
+        const returnType = extractReturnType(methodNode);
 
         const method: ParsedEntity = {
           id: `${filePath}:trait:${traitName}:method:${name}`,
@@ -604,10 +635,10 @@ export class RustAnalyzer {
         const nameNode = methodNode.childForFieldName("name");
         if (!nameNode) continue;
 
-        const name = this.getNodeText(nameNode);
+        const name = getNodeText(nameNode);
         const location = getNodeLocation(methodNode);
-        const parameters = this.extractFunctionParameters(methodNode);
-        const returnType = this.extractReturnType(methodNode);
+        const parameters = extractFunctionParameters(methodNode);
+        const returnType = extractReturnType(methodNode);
 
         const method: ParsedEntity = {
           id: `${filePath}:trait:${traitName}:method:${name}`,
@@ -646,14 +677,14 @@ export class RustAnalyzer {
     const body = traitNode.childForFieldName("body");
 
     if (body) {
-      const typeNodes = this.findNodes(body, "associated_type");
+      const typeNodes = findNodes(body, "associated_type");
       for (const typeNode of typeNodes) {
         const nameNode = typeNode.childForFieldName("name");
         if (!nameNode) continue;
 
-        const name = this.getNodeText(nameNode);
+        const name = getNodeText(nameNode);
         const location = getNodeLocation(typeNode);
-        const bounds = this.extractTypeBounds(typeNode);
+        const bounds = extractTypeBounds(typeNode);
 
         const associatedType: ParsedEntity = {
           id: `${filePath}:trait:${traitName}:type:${name}`,
@@ -686,19 +717,19 @@ export class RustAnalyzer {
     relationships: EntityRelationship[],
     filePath: string,
   ): void {
-    const implNodes = this.findNodes(node, "impl_item");
+    const implNodes = findNodes(node, "impl_item");
 
     for (const implNode of implNodes) {
       const typeNode = implNode.childForFieldName("type");
       if (!typeNode) continue;
 
-      const implType = this.getNodeText(typeNode);
+      const implType = getNodeText(typeNode);
       if (!implType.includes(typeName)) continue;
 
       // Check if it's a trait implementation
       const traitNode = implNode.childForFieldName("trait");
       if (traitNode) {
-        const traitName = this.getNodeText(traitNode);
+        const traitName = getNodeText(traitNode);
 
         relationships.push({
           from: `${filePath}:struct:${typeName}`,
@@ -710,12 +741,12 @@ export class RustAnalyzer {
         // Extract implemented methods
         const body = implNode.childForFieldName("body");
         if (body) {
-          const methods = this.findNodes(body, "function_item");
+          const methods = findNodes(body, "function_item");
           for (const method of methods) {
             const nameNode = method.childForFieldName("name");
             if (!nameNode) continue;
 
-            const methodName = this.getNodeText(nameNode);
+            const methodName = getNodeText(nameNode);
             const location = getNodeLocation(method);
 
             entities.push({
@@ -737,14 +768,14 @@ export class RustAnalyzer {
         // Inherent implementation
         const body = implNode.childForFieldName("body");
         if (body) {
-          const methods = this.findNodes(body, "function_item");
+          const methods = findNodes(body, "function_item");
           for (const method of methods) {
             const nameNode = method.childForFieldName("name");
             if (!nameNode) continue;
 
-            const methodName = this.getNodeText(nameNode);
+            const methodName = getNodeText(nameNode);
             const location = getNodeLocation(method);
-            const visibility = this.extractVisibility(method);
+            const visibility = extractVisibility(method);
 
             entities.push({
               id: `${filePath}:impl:${typeName}:${methodName}`,
@@ -774,12 +805,12 @@ export class RustAnalyzer {
     relationships: EntityRelationship[],
     filePath: string,
   ): void {
-    const implNodes = this.findNodes(node, "impl_item");
+    const implNodes = findNodes(node, "impl_item");
     for (const implNode of implNodes) {
       const typeNode = implNode.childForFieldName("type");
       const traitNode = implNode.childForFieldName("trait");
-      const typeName = typeNode ? this.getNodeText(typeNode) : undefined;
-      const traitName = traitNode ? this.getNodeText(traitNode) : undefined;
+      const typeName = typeNode ? getNodeText(typeNode) : undefined;
+      const traitName = traitNode ? getNodeText(traitNode) : undefined;
 
       // Relationship for trait impl
       if (typeName && traitName) {
@@ -793,11 +824,11 @@ export class RustAnalyzer {
 
       const body = implNode.childForFieldName("body");
       if (body) {
-        const methods = this.findNodes(body, "function_item");
+        const methods = findNodes(body, "function_item");
         for (const method of methods) {
           const nameNode = method.childForFieldName("name");
           if (!nameNode) continue;
-          const methodName = this.getNodeText(nameNode);
+          const methodName = getNodeText(nameNode);
           const location = getNodeLocation(method);
 
           entities.push({
@@ -823,11 +854,11 @@ export class RustAnalyzer {
    * Extract use statements (imports)
    */
   private extractUseStatements(node: ASTNode, importsList: ImportDependency[], filePath: string): void {
-    const useNodes = this.findNodes(node, "use_declaration");
+    const useNodes = findNodes(node, "use_declaration");
 
     for (const useNode of useNodes) {
-      const visibility = this.extractVisibility(useNode);
-      const importPaths = this.extractUseTree(useNode);
+      const visibility = extractVisibility(useNode);
+      const importPaths = extractUseTree(useNode);
       const line = useNode.startPosition.row + 1;
 
       for (const full of importPaths) {
@@ -864,12 +895,12 @@ export class RustAnalyzer {
     }
 
     // Extract extern crate declarations
-    const externNodes = this.findNodes(node, "extern_crate_declaration");
+    const externNodes = findNodes(node, "extern_crate_declaration");
     for (const externNode of externNodes) {
       const nameNode = externNode.childForFieldName("name");
       if (!nameNode) continue;
 
-      const name = this.getNodeText(nameNode);
+      const name = getNodeText(nameNode);
       const line = externNode.startPosition.row + 1;
       importsList.push({
         sourceFile: filePath,
@@ -883,632 +914,6 @@ export class RustAnalyzer {
         metadata: { isExternCrate: true },
       });
     }
-  }
-
-  /**
-   * Identify Rust patterns (Layer 4)
-   */
-  private identifyPatterns(node: ASTNode, entities: ParsedEntity[]): PatternAnalysis {
-    const result: PatternAnalysis = {
-      contextManagers: [],
-      exceptionHandling: [],
-      designPatterns: [],
-      pythonIdioms: [],
-      circularDependencies: [],
-      otherPatterns: [],
-    };
-
-    // Identify Builder pattern
-    const builderPattern = this.identifyBuilderPattern(entities);
-    if (builderPattern) result.designPatterns.push(builderPattern);
-
-    // Identify Iterator pattern
-    const iteratorPattern = this.identifyIteratorPattern(node, entities);
-    if (iteratorPattern) result.designPatterns.push(iteratorPattern);
-
-    // Identify Error handling patterns
-    const errorPatterns = this.identifyErrorHandlingPatterns(node);
-    result.otherPatterns?.push(...errorPatterns);
-
-    // Identify Ownership patterns
-    const ownershipPatterns = this.identifyOwnershipPatterns(node);
-    result.otherPatterns?.push(...ownershipPatterns);
-
-    // Identify unsafe code blocks
-    const unsafePatterns = this.identifyUnsafePatterns(node);
-    result.otherPatterns?.push(...unsafePatterns);
-
-    return result;
-  }
-
-  /**
-   * Identify Builder pattern
-   */
-  private identifyBuilderPattern(entities: ParsedEntity[]): PatternAnalysis["designPatterns"][number] | null {
-    for (const entity of entities) {
-      if (entity.type !== "struct") continue;
-
-      if (entity.name.endsWith("Builder")) {
-        // Look for build() method
-        const buildMethod = entities.find(
-          (e) => e.type === "method" && e.metadata?.["implType"] === entity.name && e.name === "build",
-        );
-
-        if (buildMethod) {
-          return {
-            pattern: "builder",
-            confidence: 0.95,
-            entities: [entity.id!, buildMethod.id!],
-            description: `Builder pattern detected in struct ${entity.name}`,
-          };
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Identify Iterator pattern
-   */
-  private identifyIteratorPattern(
-    node: ASTNode,
-    entities: ParsedEntity[],
-  ): PatternAnalysis["designPatterns"][number] | null {
-    // Try via methods
-    const iteratorImpls = entities.filter(
-      (e) => e.type === "method" && e.metadata?.["traitName"] === "Iterator" && e.name === "next",
-    );
-    if (iteratorImpls.length > 0) {
-      return {
-        pattern: "iterator",
-        confidence: 1.0,
-        entities: iteratorImpls.map((e) => e.id!).filter(Boolean),
-        description: `Found ${iteratorImpls.length} Iterator implementations`,
-      };
-    }
-    // Fallback: find impl_item with trait "Iterator" in AST
-    const impls = this.findNodes(node, "impl_item").filter((n) => {
-      const traitNode = n.childForFieldName("trait");
-      return traitNode && this.getNodeText(traitNode) === "Iterator";
-    });
-    if (impls.length > 0) {
-      return {
-        pattern: "iterator",
-        confidence: 0.8,
-        entities: [],
-        description: `Found ${impls.length} Iterator impl blocks`,
-      };
-    }
-    return null;
-  }
-
-  /**
-   * Identify error handling patterns
-   */
-  private identifyErrorHandlingPatterns(node: ASTNode): NonNullable<PatternAnalysis["otherPatterns"]> {
-    const patterns: NonNullable<PatternAnalysis["otherPatterns"]> = [];
-
-    // Count Result<T, E> usage
-    const resultTypes = this.findNodes(node, "generic_type").filter((n) => {
-      const typeNode = n.childForFieldName("type");
-      const name = typeNode ? this.getNodeText(typeNode) : "";
-      return name.includes("Result");
-    });
-
-    if (resultTypes.length > 0) {
-      patterns.push({
-        kind: "result_error_handling",
-        confidence: 1.0,
-        description: `Found ${resultTypes.length} Result type usages`,
-        metadata: { count: resultTypes.length },
-      });
-    }
-
-    // Count ? operator usage
-    const tryOperators = this.findNodes(node, "try_expression");
-    if (tryOperators.length > 0) {
-      patterns.push({
-        kind: "try_operator",
-        confidence: 1.0,
-        description: `Found ${tryOperators.length} ? operator usages`,
-        metadata: { count: tryOperators.length },
-      });
-    }
-
-    return patterns;
-  }
-
-  /**
-   * Identify ownership patterns
-   */
-  private identifyOwnershipPatterns(node: ASTNode): NonNullable<PatternAnalysis["otherPatterns"]> {
-    const patterns: NonNullable<PatternAnalysis["otherPatterns"]> = [];
-
-    // Count borrowing patterns
-    const references = this.findNodes(node, "reference_type");
-    const mutReferences = references.filter((r) => hasChild(r, "mutable_specifier"));
-
-    if (references.length > 0) {
-      patterns.push({
-        kind: "borrowing",
-        confidence: 1.0,
-        description: `Found ${references.length} references (${mutReferences.length} mutable)`,
-        metadata: {
-          totalReferences: references.length,
-          mutableReferences: mutReferences.length,
-        },
-      });
-    }
-
-    // Count lifetime annotations
-    const lifetimes = this.findNodes(node, "lifetime");
-    if (lifetimes.length > 0) {
-      patterns.push({
-        kind: "lifetime_annotations",
-        confidence: 1.0,
-        description: `Found ${lifetimes.length} lifetime annotations`,
-        metadata: { count: lifetimes.length },
-      });
-    }
-
-    return patterns;
-  }
-
-  /**
-   * Identify unsafe code blocks
-   */
-  private identifyUnsafePatterns(node: ASTNode): NonNullable<PatternAnalysis["otherPatterns"]> {
-    const patterns: NonNullable<PatternAnalysis["otherPatterns"]> = [];
-
-    // Count unsafe blocks
-    const unsafeBlocks = this.findNodes(node, "unsafe_block");
-    const unsafeFunctions = this.findNodes(node, "function_item").filter((f) => this.hasModifier(f, "unsafe"));
-    const unsafeTraits = this.findNodes(node, "trait_item").filter((t) => this.hasModifier(t, "unsafe"));
-    const unsafeImpls = this.findNodes(node, "impl_item").filter((i) => this.hasModifier(i, "unsafe"));
-
-    const totalUnsafe = unsafeBlocks.length + unsafeFunctions.length + unsafeTraits.length + unsafeImpls.length;
-
-    if (totalUnsafe > 0) {
-      patterns.push({
-        kind: "unsafe_code",
-        confidence: 1.0,
-        description: `Found ${totalUnsafe} unsafe code usages`,
-        metadata: {
-          unsafeBlocks: unsafeBlocks.length,
-          unsafeFunctions: unsafeFunctions.length,
-          unsafeTraits: unsafeTraits.length,
-          unsafeImpls: unsafeImpls.length,
-        },
-      });
-    }
-
-    return patterns;
-  }
-
-  // =============================================================================
-  // 4. HELPER METHODS
-  // =============================================================================
-
-  /**
-   * Find all nodes of a specific type
-   */
-  private findNodes(node: ASTNode, type: string): ASTNode[] {
-    const results: ASTNode[] = [];
-    const visit = (n: ASTNode) => {
-      if (n.type === type) {
-        results.push(n);
-      }
-      for (let i = 0; i < n.childCount; i++) {
-        const child = n.child(i);
-        if (child) visit(child);
-      }
-    };
-    visit(node);
-    return results;
-  }
-
-  /**
-   * Get text content of a node
-   */
-  private getNodeText(node: ASTNode): string {
-    return node.text || "";
-  }
-
-  /**
-   * Get location of a node - now returns proper format
-   */
-
-  /**
-   * Extract visibility modifier
-   */
-  private extractVisibility(node: ASTNode): string {
-    const visNode = node.childForFieldName("visibility_modifier");
-    return visNode ? this.getNodeText(visNode) : "private";
-  }
-
-  /**
-   * Check if node has specific modifier
-   */
-  private hasModifier(node: ASTNode, modifier: string): boolean {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (child && child.type === modifier) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Extract generic parameters
-   */
-  private extractGenerics(node: ASTNode): string[] {
-    const generics: string[] = [];
-    const genericNode = node.childForFieldName("type_parameters");
-
-    if (genericNode) {
-      const params = this.findNodes(genericNode, "type_parameter");
-      for (const param of params) {
-        const nameNode = param.childForFieldName("name");
-        if (nameNode) {
-          generics.push(this.getNodeText(nameNode));
-        }
-      }
-    }
-
-    return generics;
-  }
-
-  /**
-   * Extract lifetime parameters
-   */
-  private extractLifetimes(node: ASTNode): string[] {
-    const lifetimes: string[] = [];
-    const genericNode = node.childForFieldName("type_parameters");
-
-    if (genericNode) {
-      const params = this.findNodes(genericNode, "lifetime");
-      for (const param of params) {
-        lifetimes.push(this.getNodeText(param));
-      }
-    }
-
-    return lifetimes;
-  }
-
-  /**
-   * Extract derive attributes
-   */
-  private extractDerives(node: ASTNode): string[] {
-    const derives: string[] = [];
-    const attributes = this.findNodes(node, "attribute_item");
-
-    for (const attr of attributes) {
-      if (this.getAttributeName(attr) === "derive") {
-        const args = attr.childForFieldName("arguments");
-        if (args) {
-          const tokens = this.findNodes(args, "identifier");
-          for (const token of tokens) {
-            derives.push(this.getNodeText(token));
-          }
-        }
-      }
-    }
-
-    return derives;
-  }
-
-  /**
-   * Extract attributes
-   */
-  private extractAttributes(node: ASTNode): string[] {
-    const attributes: string[] = [];
-    const attrNodes = this.findNodes(node, "attribute_item");
-
-    for (const attr of attrNodes) {
-      attributes.push(this.getAttributeName(attr));
-    }
-
-    return attributes;
-  }
-
-  /**
-   * Get attribute name
-   */
-  private getAttributeName(node: ASTNode): string {
-    const pathNode = node.childForFieldName("path");
-    return pathNode ? this.getNodeText(pathNode) : "";
-  }
-
-  /**
-   * Check if struct is a tuple struct
-   */
-  private isTupleStruct(node: ASTNode): boolean {
-    const body = node.childForFieldName("body");
-    return body ? body.type === "ordered_field_declaration_list" : false;
-  }
-
-  /**
-   * Check if node has a body
-   */
-  private hasBody(node: ASTNode): boolean {
-    return node.childForFieldName("body") !== null;
-  }
-
-  /**
-   * Check if node has child of specific type
-   */
-
-  /**
-   * Count nested items in a module
-   */
-  private countNestedItems(node: ASTNode): number {
-    const itemTypes = [
-      "function_item",
-      "struct_item",
-      "enum_item",
-      "trait_item",
-      "impl_item",
-      "type_item",
-      "const_item",
-      "static_item",
-      "mod_item",
-    ];
-
-    let count = 0;
-    for (const type of itemTypes) {
-      count += this.findNodes(node, type).length;
-    }
-
-    return count;
-  }
-
-  /**
-   * Extract trait bounds
-   */
-  private extractTraitBounds(node: ASTNode): string[] {
-    const bounds: string[] = [];
-    const boundsNode = node.childForFieldName("bounds");
-
-    if (boundsNode) {
-      const boundNodes = this.findNodes(boundsNode, "trait_bound");
-      for (const bound of boundNodes) {
-        bounds.push(this.getNodeText(bound));
-      }
-    }
-
-    return bounds;
-  }
-
-  /**
-   * Extract supertraits
-   */
-  private extractSupertraits(node: ASTNode): string[] {
-    const supertraits: string[] = [];
-    const boundsNode = node.childForFieldName("supertraits");
-
-    if (boundsNode) {
-      const traitNodes = this.findNodes(boundsNode, "type");
-      for (const trait of traitNodes) {
-        supertraits.push(this.getNodeText(trait));
-      }
-    }
-
-    return supertraits;
-  }
-
-  /**
-   * Extract function parameters
-   */
-  private extractFunctionParameters(node: ASTNode): Array<{ name: string; type: string }> {
-    const parameters: Array<{ name: string; type: string }> = [];
-    const paramList = node.childForFieldName("parameters");
-
-    if (paramList) {
-      const params = this.findNodes(paramList, "parameter");
-      for (const param of params) {
-        const pattern = param.childForFieldName("pattern");
-        const typeNode = param.childForFieldName("type");
-
-        if (pattern && typeNode) {
-          parameters.push({
-            name: this.getNodeText(pattern),
-            type: this.getNodeText(typeNode),
-          });
-        }
-      }
-
-      // Check for self parameter
-      const selfParam = this.findNodes(paramList, "self_parameter");
-      if (selfParam.length > 0) {
-        const selfNode = selfParam[0];
-        const isMut = selfNode ? hasChild(selfNode, "mutable_specifier") : false;
-        const isRef = selfNode ? hasChild(selfNode, "&") : false;
-
-        let selfType = "self";
-        if (isRef && isMut) selfType = "&mut self";
-        else if (isRef) selfType = "&self";
-        else if (isMut) selfType = "mut self";
-
-        parameters.unshift({
-          name: "self",
-          type: selfType,
-        });
-      }
-    }
-
-    return parameters;
-  }
-
-  /**
-   * Extract return type
-   */
-  private extractReturnType(node: ASTNode): string {
-    const returnNode = node.childForFieldName("return_type");
-    return returnNode ? this.getNodeText(returnNode) : "()";
-  }
-
-  /**
-   * Extract field type
-   */
-  private extractFieldType(node: ASTNode): string {
-    const typeNode = node.childForFieldName("type");
-    return typeNode ? this.getNodeText(typeNode) : "unknown";
-  }
-
-  /**
-   * Extract discriminant value from enum variant
-   */
-  private extractDiscriminant(node: ASTNode): string | undefined {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (child && child.type === "=") {
-        const nextChild = node.child(i + 1);
-        if (nextChild) {
-          return this.getNodeText(nextChild);
-        }
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * Extract type bounds for associated type
-   */
-  private extractTypeBounds(node: ASTNode): string[] {
-    const bounds: string[] = [];
-    const boundsNode = node.childForFieldName("bounds");
-
-    if (boundsNode) {
-      bounds.push(this.getNodeText(boundsNode));
-    }
-
-    return bounds;
-  }
-
-  /**
-   * Extract aliased type
-   */
-  private extractAliasedType(node: ASTNode): string {
-    const typeNode = node.childForFieldName("type");
-    return typeNode ? this.getNodeText(typeNode) : "unknown";
-  }
-
-  /**
-   * Extract const type
-   */
-  private extractConstType(node: ASTNode): string {
-    const typeNode = node.childForFieldName("type");
-    return typeNode ? this.getNodeText(typeNode) : "unknown";
-  }
-
-  /**
-   * Extract static type
-   */
-  private extractStaticType(node: ASTNode): string {
-    const typeNode = node.childForFieldName("type");
-    return typeNode ? this.getNodeText(typeNode) : "unknown";
-  }
-
-  /**
-   * Extract macro rules
-   */
-  private extractMacroRules(node: ASTNode): string[] {
-    const rules: string[] = [];
-    const body = node.childForFieldName("body");
-
-    if (body) {
-      const ruleNodes = this.findNodes(body, "macro_rule");
-      for (const rule of ruleNodes) {
-        rules.push(this.getNodeText(rule));
-      }
-    }
-
-    return rules;
-  }
-
-  /**
-   * Extract use tree (handles nested imports)
-   */
-  private extractUseTree(node: ASTNode): string[] {
-    const paths: string[] = [];
-
-    const processUseTree = (tree: ASTNode, prefix: string = ""): void => {
-      if (tree.type === "use_wildcard") {
-        paths.push(`${prefix}::*`);
-      } else if (tree.type === "use_list") {
-        for (let i = 0; i < tree.childCount; i++) {
-          const child = tree.child(i);
-          if (child && child.type !== "{" && child.type !== "}" && child.type !== ",") {
-            processUseTree(child, prefix);
-          }
-        }
-      } else if (tree.type === "use_as_clause") {
-        const pathNode = tree.childForFieldName("path");
-        if (pathNode) {
-          const fullPath = prefix ? `${prefix}::${this.getNodeText(pathNode)}` : this.getNodeText(pathNode);
-          paths.push(fullPath);
-        }
-      } else if (tree.type === "scoped_use_list") {
-        const pathNode = tree.childForFieldName("path");
-        const listNode = tree.childForFieldName("list");
-        const newPrefix = pathNode
-          ? prefix
-            ? `${prefix}::${this.getNodeText(pathNode)}`
-            : this.getNodeText(pathNode)
-          : prefix;
-
-        if (listNode) {
-          processUseTree(listNode, newPrefix);
-        }
-      } else {
-        const text = this.getNodeText(tree);
-        if (text && text !== "use" && text !== ";") {
-          const fullPath = prefix ? `${prefix}::${text}` : text;
-          paths.push(fullPath);
-        }
-      }
-    };
-
-    const tree = node.childForFieldName("argument");
-    if (tree) {
-      processUseTree(tree);
-    }
-
-    return paths;
-  }
-
-  /**
-   * Resolve entity name robustly:
-   * 1) field name via childForFieldName("name")
-   * 2) first immediate identifier/type_identifier child
-   * 3) fallback to node.text (if non-empty)
-   */
-  private resolveName(node: ASTNode): string | null {
-    try {
-      const nameField = node.childForFieldName?.("name");
-      if (nameField) {
-        const t = this.getNodeText(nameField);
-        if (t) return t;
-      }
-    } catch {
-      // ignore
-    }
-
-    // Try immediate identifier/type_identifier
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (!child) continue;
-      if (child.type === "identifier" || child.type === "type_identifier") {
-        const t = this.getNodeText(child);
-        if (t) return t;
-      }
-    }
-
-    // Fallback to node.text
-    const txt = (node.text || "").trim();
-    return txt.length > 0 ? txt : null;
   }
 }
 

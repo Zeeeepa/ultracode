@@ -15,7 +15,6 @@
 
 import { nanoid } from "nanoid";
 // p-map removed - was used for handleParseBatchComplete which is now disabled
-import xxhash from "xxhash-wasm";
 import { getConfig } from "../config/yaml-config.js";
 import { BranchManager } from "../core/branch-manager.js";
 import { GitWatcher } from "../core/git-watcher.js";
@@ -37,9 +36,23 @@ import type {
   GraphStorage,
   Relationship,
 } from "../types/storage.js";
-import { EntityType, flattenParsedEntities, parsedEntityToEntity, RelationType } from "../types/storage.js";
+import { flattenParsedEntities, parsedEntityToEntity, type RelationType } from "../types/storage.js";
 import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
+import { buildEntityNameMap, resolveByNameAndLine } from "./indexer/entity-resolution.js";
+import { processExternalRelationships } from "./indexer/external-placeholder.js";
+import {
+  type EmbeddingSchedulerContext,
+  type GitEventContext,
+  handleBranchChange as handleBranchChangeEvent,
+  handleDebouncedEmbeddingGeneration as handleDebouncedEmbeddingEvent,
+  handleUncommittedChanges as handleUncommittedChangesEvent,
+  scheduleEmbeddingGeneration,
+  triggerEmbeddingGeneration,
+} from "./indexer/git-event-handlers.js";
+// Import from extracted modules
+import { buildRelationships } from "./indexer/relationship-builder.js";
+import { initXXHash, stableEntityId, stableRelationshipId } from "./indexer/stable-id.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -55,39 +68,6 @@ function getIndexerConfig() {
     cacheSize: config.indexer?.cacheSize ?? 100 * 1024 * 1024,
     cacheTTL: config.indexer?.cacheTTL ?? 5 * 60 * 1000,
   };
-}
-
-// =============================================================================
-// 3. STABLE ID HELPERS
-// =============================================================================
-const ID_LENGTH = 12;
-let xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
-
-// Initialize xxHash once
-async function initXXHash() {
-  if (!xxhashInstance) {
-    xxhashInstance = await xxhash();
-  }
-}
-
-function stableEntityId(base: Omit<Entity, "id" | "createdAt" | "updatedAt">): string {
-  // For packages and imports, use global ID (no filePath, no location) since they represent the same entity across files
-  const isGlobal = base.type === "package" || base.type === "import";
-
-  const key = isGlobal
-    ? `${base.type}|${base.name}` // Only type and name for global entities
-    : `${base.filePath}|${base.type}|${base.name}|${base.location?.start?.index ?? -1}-${base.location?.end?.index ?? -1}`; // Full path for file-specific entities
-
-  if (!xxhashInstance) {
-    throw new Error("xxHash not initialized - call initXXHash() first");
-  }
-  return xxhashInstance.h64ToString(key).slice(0, ID_LENGTH);
-}
-function stableRelationshipId(fromId: string, toId: string, type: RelationType | string): string {
-  if (!xxhashInstance) {
-    throw new Error("xxHash not initialized - call initXXHash() first");
-  }
-  return xxhashInstance.h64ToString(`${fromId}|${toId}|${type}`).slice(0, ID_LENGTH);
 }
 
 // =============================================================================
@@ -455,12 +435,7 @@ export class IndexerAgent extends BaseAgent {
 
     // Use provided relationships if available
     if (providedRelationships && providedRelationships.length > 0) {
-      const byName = new Map<string, Entity[]>();
-      for (const e of storageEntities) {
-        const arr = byName.get(e.name) || [];
-        arr.push(e);
-        byName.set(e.name, arr);
-      }
+      const byName = buildEntityNameMap(storageEntities);
 
       console.error(
         `[${this.id}] DEBUG: storageEntities names: ${Array.from(byName.keys()).slice(0, 10).join(", ")}...`,
@@ -470,30 +445,11 @@ export class IndexerAgent extends BaseAgent {
         `[${this.id}] DEBUG: First 3 raw relationships:`,
         JSON.stringify(first3.map((r) => ({ from: r.from, to: r.to, type: r.type }))),
       );
-
-      function resolveByNameAndLine(name: string, line?: number): string | undefined {
-        const candidates = byName.get(name);
-        if (!candidates || candidates.length === 0) return undefined;
-
-        if (line == null) return candidates[0]?.id;
-
-        let best: Entity | undefined;
-        let bestDelta = Infinity;
-
-        for (const c of candidates) {
-          const d = Math.abs((c.location?.start?.line ?? 0) - line);
-          if (d < bestDelta) {
-            best = c;
-            bestDelta = d;
-          }
-        }
-        return best?.id;
-      }
       const relLoopStart = Date.now();
       console.error(`[${this.id}] DEBUG: Processing ${providedRelationships.length} provided relationships`);
       for (const rel of providedRelationships) {
-        let fromId = resolveByNameAndLine(rel.from, rel.metadata?.line);
-        let toId = resolveByNameAndLine(rel.to, rel.metadata?.line);
+        let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line);
+        let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line);
 
         // DEBUG: Log resolution results for first relationship
         if (relationships.length === 0) {
@@ -534,87 +490,12 @@ export class IndexerAgent extends BaseAgent {
       });
       console.error(`[${this.id}] Using ${relationships.length} provided relationships (${relLoopMs}ms)`);
     } else {
-      relationships = await this.buildRelationships(validParsed, storageEntities);
+      relationships = await this.buildRelationshipsInternal(validParsed, storageEntities);
       console.error(`[${this.id}] Built ${relationships.length} relationships automatically`);
     }
 
-    // Ensure placeholder entities exist for any external relationship sources/targets
-    const externalPlaceholders: Entity[] = [];
-    const seenExternal = new Map<string, string>(); // extKey -> placeholderId
-
-    const createExternalPlaceholder = (extId: string): string => {
-      // Parse extId format: "external:SOURCE:SYMBOL"
-      // Handle Windows paths like "external:D:\path\file.ts:Symbol"
-      // where the path contains ":" after drive letter
-      let source = "unknown";
-      let symbol = "unknown";
-
-      if (extId.startsWith("external:")) {
-        const rest = extId.slice("external:".length); // Remove "external:" prefix
-
-        // Check for Windows drive letter pattern (e.g., "D:\...")
-        if (/^[A-Za-z]:[\\/]/.test(rest)) {
-          // Windows path: find the last ":" which separates path from symbol
-          const lastColonIdx = rest.lastIndexOf(":");
-          if (lastColonIdx > 2) {
-            // Must be after "D:\"
-            source = rest.slice(0, lastColonIdx);
-            symbol = rest.slice(lastColonIdx + 1) || "unknown";
-          } else {
-            source = rest;
-          }
-        } else {
-          // Unix path or simple format: "SOURCE:SYMBOL"
-          const colonIdx = rest.indexOf(":");
-          if (colonIdx !== -1) {
-            source = rest.slice(0, colonIdx);
-            symbol = rest.slice(colonIdx + 1) || "unknown";
-          } else {
-            source = rest;
-          }
-        }
-      }
-
-      const placeholderBase: Omit<Entity, "id" | "createdAt" | "updatedAt"> = {
-        name: symbol,
-        type: EntityType.IMPORT,
-        filePath: `external://${source}`,
-        location: {
-          start: { line: 0, column: 0, index: 0 },
-          end: { line: 0, column: 0, index: 0 },
-        },
-        metadata: { isExternal: true, source, symbol } as any,
-        hash: `external:${source}:${symbol}`,
-      };
-
-      const placeholderId = stableEntityId(placeholderBase);
-
-      if (!seenExternal.has(extId)) {
-        seenExternal.set(extId, placeholderId);
-        externalPlaceholders.push({
-          ...placeholderBase,
-          id: placeholderId,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        });
-      }
-
-      return placeholderId;
-    };
-
-    for (const rel of relationships) {
-      // Handle external fromId (e.g., decorators from imported modules)
-      if (typeof rel.fromId === "string" && rel.fromId.startsWith("external:")) {
-        rel.fromId = createExternalPlaceholder(rel.fromId);
-      }
-
-      // Handle external toId
-      if (typeof rel.toId === "string" && rel.toId.startsWith("external:")) {
-        rel.toId = createExternalPlaceholder(rel.toId);
-      }
-
-      rel.id = stableRelationshipId(rel.fromId, rel.toId, rel.type);
-    }
+    // Process external relationships and create placeholder entities
+    const externalPlaceholders = processExternalRelationships(relationships, stableRelationshipId);
 
     if (externalPlaceholders.length > 0) {
       await this.batchOps.insertEntities(externalPlaceholders);
@@ -696,172 +577,13 @@ export class IndexerAgent extends BaseAgent {
 
   /**
    * Build relationships from parsed entities
+   * Delegates to extracted relationship-builder module
    */
-  private async buildRelationships(parsedEntities: ParsedEntity[], storageEntities: Entity[]): Promise<Relationship[]> {
-    const relationships: Relationship[] = [];
-    const entityMap = new Map<string, string>(); // name -> id mapping
-
-    // Build entity map
-    for (const entity of storageEntities) {
-      entityMap.set(`${entity.name}:${entity.location.start.line}`, entity.id);
-    }
-
-    // Create relationships
-    const len = Math.min(parsedEntities.length, storageEntities.length);
-    for (let i = 0; i < len; i++) {
-      const parsed = parsedEntities[i]!;
-      const entity = storageEntities[i]!;
-
-      // Import relationships
-      if (parsed.type === "import" && parsed.importData) {
-        for (const specifier of parsed.importData.specifiers) {
-          relationships.push({
-            id: nanoid(12),
-            fromId: entity.id,
-            toId: `external:${parsed.importData.source}:${specifier.imported || specifier.local}`,
-            type: RelationType.IMPORTS,
-            metadata: {
-              line: parsed.location.start.line,
-              column: parsed.location.start.column,
-              context: `Import from ${parsed.importData.source}`,
-            },
-          });
-        }
-      }
-
-      // Reference relationships
-      if (parsed.references) {
-        for (const ref of parsed.references) {
-          // Try to find referenced entity in current file
-          const refKey = Array.from(entityMap.keys()).find((key) => key.startsWith(`${ref}:`));
-          if (refKey) {
-            relationships.push({
-              id: nanoid(12),
-              fromId: entity.id,
-              toId: entityMap.get(refKey)!,
-              type: RelationType.REFERENCES,
-              metadata: {
-                line: parsed.location.start.line,
-                column: parsed.location.start.column,
-              },
-            });
-          }
-        }
-      }
-
-      // Parent-child relationships
-      if (parsed.children) {
-        for (const child of parsed.children) {
-          const childKey = `${child.name}:${child.location.start.line}`;
-          const childId = entityMap.get(childKey);
-          if (childId) {
-            relationships.push({
-              id: nanoid(12),
-              fromId: entity.id,
-              toId: childId,
-              type: RelationType.CONTAINS,
-              metadata: {
-                line: child.location.start.line,
-                column: child.location.start.column,
-              },
-            });
-          }
-        }
-      }
-
-      // Inheritance relationships (extends/implements)
-      if (parsed.inheritance) {
-        // Base classes -> EXTENDS relationship
-        if (parsed.inheritance.baseClasses) {
-          for (const baseClass of parsed.inheritance.baseClasses) {
-            // Try to find base class in current file first
-            const baseKey = Array.from(entityMap.keys()).find((key) => key.startsWith(`${baseClass}:`));
-            const targetId = baseKey ? entityMap.get(baseKey)! : `external:${baseClass}`;
-
-            relationships.push({
-              id: nanoid(12),
-              fromId: entity.id,
-              toId: targetId,
-              type: RelationType.EXTENDS,
-              metadata: {
-                line: parsed.location.start.line,
-                column: parsed.location.start.column,
-                context: `${parsed.name} extends ${baseClass}`,
-              },
-            });
-          }
-        }
-
-        // Interfaces -> IMPLEMENTS relationship
-        if (parsed.inheritance.interfaces) {
-          for (const iface of parsed.inheritance.interfaces) {
-            // Try to find interface in current file first
-            const ifaceKey = Array.from(entityMap.keys()).find((key) => key.startsWith(`${iface}:`));
-            const targetId = ifaceKey ? entityMap.get(ifaceKey)! : `external:${iface}`;
-
-            relationships.push({
-              id: nanoid(12),
-              fromId: entity.id,
-              toId: targetId,
-              type: RelationType.IMPLEMENTS,
-              metadata: {
-                line: parsed.location.start.line,
-                column: parsed.location.start.column,
-                context: `${parsed.name} implements ${iface}`,
-              },
-            });
-          }
-        }
-      }
-
-      // Parser-provided relationships (calls, decorates, overrides, etc.)
-      if (parsed.relationships) {
-        for (const rel of parsed.relationships) {
-          // Try to find target entity in current file
-          const targetKey = Array.from(entityMap.keys()).find((key) => key.startsWith(`${rel.target}:`));
-          const targetId = targetKey ? entityMap.get(targetKey)! : `external:${rel.target}`;
-
-          // Map parser relationship types to storage RelationType
-          let relType: RelationType;
-          switch (rel.type) {
-            case "calls":
-              relType = RelationType.CALLS;
-              break;
-            case "inherits":
-              relType = RelationType.EXTENDS;
-              break;
-            case "implements":
-              relType = RelationType.IMPLEMENTS;
-              break;
-            case "imports":
-              relType = RelationType.IMPORTS;
-              break;
-            case "contains":
-              relType = RelationType.CONTAINS;
-              break;
-            default:
-              relType = RelationType.REFERENCES;
-              break;
-          }
-
-          relationships.push({
-            id: nanoid(12),
-            fromId: entity.id,
-            toId: targetId,
-            type: relType,
-            metadata: {
-              line: parsed.location.start.line,
-              column: parsed.location.start.column,
-              context: `${parsed.name} ${rel.type} ${rel.target}`,
-              originalType: rel.type,
-              ...rel.metadata,
-            },
-          });
-        }
-      }
-    }
-
-    return relationships;
+  private async buildRelationshipsInternal(
+    parsedEntities: ParsedEntity[],
+    storageEntities: Entity[],
+  ): Promise<Relationship[]> {
+    return buildRelationships(parsedEntities, storageEntities);
   }
 
   /**
@@ -929,7 +651,7 @@ export class IndexerAgent extends BaseAgent {
     this.cacheManager.clear();
 
     // Trigger debounced embedding generation
-    this.scheduleEmbeddingGeneration();
+    this.doScheduleEmbeddingGeneration();
 
     return {
       processed,
@@ -940,74 +662,32 @@ export class IndexerAgent extends BaseAgent {
   }
 
   /**
-   * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+   * Get embedding scheduler context for extracted functions
    */
-  private async sleep(ms: number): Promise<void> {
-    if (typeof (globalThis as any).Bun?.sleep === "function") {
-      await (globalThis as any).Bun.sleep(ms);
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, ms));
-    }
+  private getEmbeddingSchedulerContext(): EmbeddingSchedulerContext {
+    return {
+      agentId: this.id,
+      debouncePeriodMs: this.EMBEDDING_DEBOUNCE_MS,
+      abortController: this.embeddingDebounceAbort,
+      pendingGeneration: this.pendingEmbeddingGeneration,
+      setPendingGeneration: (value: boolean) => {
+        this.pendingEmbeddingGeneration = value;
+      },
+      setAbortController: (controller: AbortController | null) => {
+        this.embeddingDebounceAbort = controller;
+      },
+    };
   }
 
   /**
    * Schedule debounced embedding generation
    * Waits 1 minute after last change before triggering generation
    */
-  private scheduleEmbeddingGeneration(): void {
-    // Cancel existing timer
-    if (this.embeddingDebounceAbort) {
-      this.embeddingDebounceAbort.abort();
-    }
-
-    // Create new abort controller
-    this.embeddingDebounceAbort = new AbortController();
-    const signal = this.embeddingDebounceAbort.signal;
-
-    logger.debug("IndexerAgent", `Embedding generation scheduled in ${this.EMBEDDING_DEBOUNCE_MS}ms`);
-
-    // Start async timer
-    (async () => {
-      try {
-        const startTime = Date.now();
-        while (!signal.aborted && Date.now() - startTime < this.EMBEDDING_DEBOUNCE_MS) {
-          await this.sleep(1000); // Check every second
-        }
-        if (!signal.aborted) {
-          this.triggerEmbeddingGeneration();
-        }
-      } catch (error) {
-        // Aborted or error - do nothing
-      }
-    })();
-  }
-
-  /**
-   * Trigger embedding generation via knowledge bus
-   * SemanticAgent subscribes to this event
-   */
-  private async triggerEmbeddingGeneration(): Promise<void> {
-    if (this.pendingEmbeddingGeneration) {
-      logger.debug("IndexerAgent", "Embedding generation already pending, skipping");
-      return;
-    }
-
-    this.pendingEmbeddingGeneration = true;
-    logger.info("IndexerAgent", "Triggering batch embedding generation after incremental update");
-
-    // Publish event for SemanticAgent
-    knowledgeBus.publish(
-      "indexer:incremental:complete",
-      {
-        timestamp: Date.now(),
-        reason: "debounced_after_incremental_update",
-      },
-      this.id,
-    );
-
-    // Reset flag after a delay using runtime-aware sleep
-    await this.sleep(5000);
-    this.pendingEmbeddingGeneration = false;
+  private doScheduleEmbeddingGeneration(): void {
+    const ctx = this.getEmbeddingSchedulerContext();
+    scheduleEmbeddingGeneration(ctx, async () => {
+      await triggerEmbeddingGeneration(this.getEmbeddingSchedulerContext());
+    });
   }
 
   /**
@@ -1104,109 +784,37 @@ export class IndexerAgent extends BaseAgent {
   }
 
   /**
+   * Get Git event context for extracted handlers
+   */
+  private getGitEventContext(): GitEventContext {
+    return {
+      agentId: this.id,
+      currentRepositoryPath: this.currentRepositoryPath,
+      branchManager: this.branchManager,
+    };
+  }
+
+  /**
    * Handle uncommitted file changes detected by GitWatcher
    * Triggers incremental reindexing for changed files
    */
   private async handleUncommittedChanges(files: string[]): Promise<void> {
-    if (!this.currentRepositoryPath || files.length === 0) {
-      return;
-    }
-
-    console.error(`[${this.id}] Uncommitted changes detected: ${files.length} files`);
-
-    // Resolve relative paths to absolute
-    const { join, isAbsolute } = await import("node:path");
-    const absolutePaths = files.map((f) => (isAbsolute(f) ? f : join(this.currentRepositoryPath!, f)));
-
-    // Publish file:changed events for each file
-    // These will be picked up by components subscribed to the knowledge bus
-    for (const filePath of absolutePaths) {
-      knowledgeBus.publish(
-        "file:changed",
-        {
-          filePath,
-          changeType: "modified",
-          source: "git-watcher",
-        },
-        this.id,
-      );
-    }
-
-    // Also publish a batch event for efficiency
-    knowledgeBus.publish(
-      "indexer:files:changed",
-      {
-        files: absolutePaths,
-        count: absolutePaths.length,
-        repositoryPath: this.currentRepositoryPath,
-        source: "git-watcher-uncommitted",
-      },
-      this.id,
-    );
-
-    console.error(`[${this.id}] Published change events for ${absolutePaths.length} files`);
+    await handleUncommittedChangesEvent(files, this.getGitEventContext());
   }
 
   /**
    * Handle debounced file changes for embedding generation.
    * Called after user stops editing (debounce period elapsed).
-   * @param files - List of changed files (accumulated during debounce)
-   * @param bulkMode - If true, many files changed -> drop/rebuild index. If false, incremental insert.
    */
   private async handleDebouncedEmbeddingGeneration(files: string[], bulkMode: boolean): Promise<void> {
-    if (!this.currentRepositoryPath || files.length === 0) {
-      return;
-    }
-
-    console.error(`[${this.id}] Debounced embedding generation: ${files.length} files (bulkMode: ${bulkMode})`);
-
-    // Publish event for SemanticAgent to pick up
-    // SemanticAgent will handle the actual embedding generation with bulk mode flag
-    knowledgeBus.publish(
-      "indexer:embeddings:generate",
-      {
-        files,
-        count: files.length,
-        bulkMode,
-        repositoryPath: this.currentRepositoryPath,
-        source: "git-watcher-debounced",
-      },
-      this.id,
-    );
-
-    console.error(`[${this.id}] Published embedding generation event: ${files.length} files, bulkMode=${bulkMode}`);
+    await handleDebouncedEmbeddingEvent(files, bulkMode, this.getGitEventContext());
   }
 
   /**
    * Handle branch change event
    */
   private async handleBranchChange(newBranch: string, oldBranch: string): Promise<void> {
-    console.error(`[${this.id}] Branch changed from ${oldBranch} to ${newBranch}`);
-
-    if (!this.branchManager || !this.currentRepositoryPath) {
-      console.warn(`[${this.id}] BranchManager not initialized, skipping branch switch`);
-      return;
-    }
-
-    try {
-      // Switch to new branch database
-      await this.branchManager.switchBranch(newBranch, this.currentRepositoryPath);
-
-      // Emit event for other components
-      knowledgeBus.publish(
-        "indexer:branch:changed",
-        {
-          oldBranch,
-          newBranch,
-          repositoryPath: this.currentRepositoryPath,
-        },
-        this.id,
-      );
-
-      console.error(`[${this.id}] Successfully switched to branch: ${newBranch}`);
-    } catch (error) {
-      console.error(`[${this.id}] Failed to handle branch change:`, error);
-    }
+    await handleBranchChangeEvent(newBranch, oldBranch, this.getGitEventContext());
   }
 
   /**

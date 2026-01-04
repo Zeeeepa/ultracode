@@ -21,6 +21,13 @@ import { z } from "zod";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { formatImpactForResponse, ImpactAnalyzer } from "../impact-analyzer.js";
+import {
+  buildErrorResponse,
+  buildSuccessResponse,
+  ensureDirectoryExists,
+  reindexFiles,
+  setupSemanticSearch,
+} from "./file-tool-utils.js";
 
 // =============================================================================
 // MODIFY ENTITY CODE
@@ -43,25 +50,13 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
   protected async execute(args: z.infer<typeof ModifyEntityCodeSchema>): Promise<ToolResult> {
     const { CodeModifier } = await import("../../modification/code-modifier.js");
 
-    // v3: Ensure correct project context for GraphStorage queries
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
+    const semanticSearch = await setupSemanticSearch(this.context);
+
     let vectorStore: any = null;
-    let semanticSearch: ImpactAnalyzer["semanticSearch"] | undefined;
     try {
       const semanticAgent = await this.context.getSemanticAgent();
       vectorStore = semanticAgent.getVectorStore?.();
-      // Get semantic search capability for impact analysis
-      if (vectorStore) {
-        const vs = vectorStore;
-        semanticSearch = {
-          search: async (query: string, options: { limit: number; minSimilarity: number }) => {
-            const results = await vs.search(query, options.limit);
-            return results
-              .filter((r: any) => r.similarity >= options.minSimilarity)
-              .map((r: any) => ({ entityId: r.entityId, similarity: r.similarity }));
-          },
-        };
-      }
     } catch {
       // Vector store not available
     }
@@ -168,50 +163,23 @@ export class CopyFileToolHandler extends BaseToolHandler<z.infer<typeof CopyFile
 
   protected async execute(args: z.infer<typeof CopyFileSchema>): Promise<ToolResult> {
     const { copyFile } = await import("node:fs/promises");
-    const { dirname } = await import("node:path");
-    const { mkdir } = await import("node:fs/promises");
 
     const sourcePath = this.context.normalizeInputPath(args.sourcePath) || args.sourcePath;
     const destinationPath = this.context.normalizeInputPath(args.destinationPath) || args.destinationPath;
 
     try {
-      // Ensure destination directory exists
-      await mkdir(dirname(destinationPath), { recursive: true });
-
-      // Copy the file
+      await ensureDirectoryExists(destinationPath);
       await copyFile(sourcePath, destinationPath);
+      await reindexFiles(this.context, [destinationPath], "copy-index");
 
-      // Re-index the new file
-      const conductor = this.context.getConductor();
-      await conductor.process({
-        id: `copy-index-${Date.now()}`,
-        type: "index",
-        priority: 5,
-        payload: { files: [destinationPath] },
-        createdAt: Date.now(),
+      return buildSuccessResponse({
+        success: true,
+        source: sourcePath,
+        destination: destinationPath,
+        indexed: true,
       });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                source: sourcePath,
-                destination: destinationPath,
-                indexed: true,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
     } catch (error) {
-      return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
-      };
+      return buildErrorResponse(error as Error);
     }
   }
 }
@@ -233,17 +201,13 @@ export class RenameFileToolHandler extends BaseToolHandler<z.infer<typeof Rename
   }
 
   protected async execute(args: z.infer<typeof RenameFileSchema>): Promise<ToolResult> {
-    const { rename, mkdir } = await import("node:fs/promises");
-    const { dirname } = await import("node:path");
+    const { rename } = await import("node:fs/promises");
 
     const sourcePath = this.context.normalizeInputPath(args.sourcePath) || args.sourcePath;
     const destinationPath = this.context.normalizeInputPath(args.destinationPath) || args.destinationPath;
 
     try {
-      // Ensure destination directory exists
-      await mkdir(dirname(destinationPath), { recursive: true });
-
-      // Rename the file
+      await ensureDirectoryExists(destinationPath);
       await rename(sourcePath, destinationPath);
 
       // v3: Ensure correct project context for GraphStorage queries
@@ -258,40 +222,17 @@ export class RenameFileToolHandler extends BaseToolHandler<z.infer<typeof Rename
         await storage.deleteEntity(entity.id);
       }
 
-      // Re-index new location
-      const conductor = this.context.getConductor();
-      await conductor.process({
-        id: `rename-index-${Date.now()}`,
-        type: "index",
-        priority: 5,
-        payload: { files: [destinationPath] },
-        createdAt: Date.now(),
+      await reindexFiles(this.context, [destinationPath], "rename-index");
+
+      return buildSuccessResponse({
+        success: true,
+        source: sourcePath,
+        destination: destinationPath,
+        entitiesMoved: oldEntities.length,
+        importsUpdated: args.updateImports,
       });
-
-      // TODO: Update imports in other files if requested
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                source: sourcePath,
-                destination: destinationPath,
-                entitiesMoved: oldEntities.length,
-                importsUpdated: args.updateImports,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
     } catch (error) {
-      return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
-      };
+      return buildErrorResponse(error as Error);
     }
   }
 }
@@ -429,8 +370,6 @@ export class SynthesizeFilesToolHandler extends BaseToolHandler<z.infer<typeof S
 
   protected async execute(args: z.infer<typeof SynthesizeFilesSchema>): Promise<ToolResult> {
     const { readText, writeFile } = await import("../../utils/file-ops.js");
-    const { dirname } = await import("node:path");
-    const { mkdir } = await import("node:fs/promises");
 
     const filePaths = args.filePaths.map((p) => this.context.normalizeInputPath(p) || p);
     const outputPath = this.context.normalizeInputPath(args.outputPath) || args.outputPath;
@@ -472,40 +411,18 @@ export class SynthesizeFilesToolHandler extends BaseToolHandler<z.infer<typeof S
       }
 
       // Write synthesized file
-      await mkdir(dirname(outputPath), { recursive: true });
+      await ensureDirectoryExists(outputPath);
       await writeFile(outputPath, synthesized);
+      await reindexFiles(this.context, [outputPath], "synthesize-index");
 
-      // Re-index
-      const conductor = this.context.getConductor();
-      await conductor.process({
-        id: `synthesize-index-${Date.now()}`,
-        type: "index",
-        priority: 5,
-        payload: { files: [outputPath] },
-        createdAt: Date.now(),
+      return buildSuccessResponse({
+        success: true,
+        inputFiles: filePaths.length,
+        outputPath,
+        indexed: true,
       });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                inputFiles: filePaths.length,
-                outputPath,
-                indexed: true,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
     } catch (error) {
-      return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
-      };
+      return buildErrorResponse(error as Error);
     }
   }
 }
@@ -528,62 +445,21 @@ export class CreateFileToolHandler extends BaseToolHandler<z.infer<typeof Create
 
   protected async execute(args: z.infer<typeof CreateFileSchema>): Promise<ToolResult> {
     const { writeFile, existsSync } = await import("../../utils/file-ops.js");
-    const { dirname } = await import("node:path");
-    const { mkdir } = await import("node:fs/promises");
 
     const filePath = this.context.normalizeInputPath(args.filePath) || args.filePath;
-
-    // Setup semantic search for similar code detection
-    let semanticSearch: ImpactAnalyzer["semanticSearch"] | undefined;
-    try {
-      const semanticAgent = await this.context.getSemanticAgent();
-      const vectorStore = semanticAgent.getVectorStore?.();
-      if (vectorStore) {
-        semanticSearch = {
-          search: async (query: string, options: { limit: number; minSimilarity: number }) => {
-            const results = await vectorStore.search(query, options.limit);
-            return results
-              .filter((r: any) => r.similarity >= options.minSimilarity)
-              .map((r: any) => ({ entityId: r.entityId, similarity: r.similarity }));
-          },
-        };
-      }
-    } catch {
-      // Vector store not available
-    }
+    const semanticSearch = await setupSemanticSearch(this.context);
 
     try {
-      // Check if file exists
       if (!args.overwrite && existsSync(filePath)) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                error: "File already exists",
-                path: filePath,
-                hint: "Use overwrite: true to replace",
-              }),
-            },
-          ],
-        };
+        return buildErrorResponse("File already exists", {
+          path: filePath,
+          hint: "Use overwrite: true to replace",
+        });
       }
 
-      // Ensure directory exists
-      await mkdir(dirname(filePath), { recursive: true });
-
-      // Write file
+      await ensureDirectoryExists(filePath);
       await writeFile(filePath, args.content);
-
-      // Index the new file
-      const conductor = this.context.getConductor();
-      await conductor.process({
-        id: `create-index-${Date.now()}`,
-        type: "index",
-        priority: 5,
-        payload: { files: [filePath] },
-        createdAt: Date.now(),
-      });
+      await reindexFiles(this.context, [filePath], "create-index");
 
       // Build response
       const response: Record<string, any> = {
@@ -741,16 +617,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
 
       // Update entity in graph
       await storage.updateEntity(entity.id, { name: args.newName });
-
-      // Re-index affected files
-      const conductor = this.context.getConductor();
-      await conductor.process({
-        id: `rename-reindex-${Date.now()}`,
-        type: "index",
-        priority: 5,
-        payload: { files: Array.from(filesToUpdate) },
-        createdAt: Date.now(),
-      });
+      await reindexFiles(this.context, Array.from(filesToUpdate), "rename-reindex");
 
       const response: Record<string, any> = {
         success: true,
@@ -893,16 +760,7 @@ export class AddMemberToolHandler extends BaseToolHandler<z.infer<typeof AddMemb
       content = lines.join("\n");
 
       await writeFile(entity.filePath, content);
-
-      // Re-index
-      const conductor = this.context.getConductor();
-      await conductor.process({
-        id: `add-member-index-${Date.now()}`,
-        type: "index",
-        priority: 5,
-        payload: { files: [entity.filePath] },
-        createdAt: Date.now(),
-      });
+      await reindexFiles(this.context, [entity.filePath], "add-member-index");
 
       // Build response
       const response: Record<string, any> = {

@@ -67,8 +67,7 @@ function createSafeEnvironment() {
 // Initialize safe environment BEFORE any imports that might use embedding generator
 createSafeEnvironment();
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // Consolidated MCP SDK imports
@@ -81,74 +80,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 // Schema and Node.js built-ins
-import { z } from "zod";
-
-// Tool schemas (extracted to separate files)
-import {
-  AddMemberSchema,
-  AnalyzeCodeImpactSchema,
-  AnalyzeHotspotsSchema,
-  AnalyzeMergeConflictsSchema,
-  AnalyzeStateChaosSchema,
-  AutoDocChangelogSchema,
-  AutoDocDetectLanguageSchema,
-  AutoDocGenerateSchema,
-  AutoDocGetSchema,
-  AutoDocInitSchema,
-  AutoDocInstallHooksSchema,
-  AutoDocSaveSchema,
-  AutoDocSearchSchema,
-  AutoDocStatusSchema,
-  AutoDocSyncSchema,
-  AutoDocValidateSchema,
-  CleanIndexSchema,
-  CleanupSnapshotsSchema,
-  ClearBusTopicSchema,
-  CopyFileSchema,
-  CreateFileSchema,
-  CreateSnapshotSchema,
-  CrossLanguageSearchSchema,
-  DetectCodeClonesSchema,
-  DetectTechnologyStackSchema,
-  FindRelatedConceptsSchema,
-  FindSimilarCodeSchema,
-  GetAgentMetricsSchema,
-  GetBusStatsSchema,
-  GetGraphHealthSchema,
-  GetGraphSchema,
-  GetGraphStatsSchema,
-  GetMergeSuggestionsSchema,
-  GetSemanticMergeInfoSchema,
-  IndexToolSchema,
-  JscpdCloneDetectionSchema,
-  ListEntitiesToolSchema,
-  ListRelationshipsToolSchema,
-  ListSnapshotsSchema,
-  ModifyEntityCodeSchema,
-  PatternSearchSchema,
-  QueryToolSchema,
-  RenameFileSchema,
-  RenameSymbolSchema,
-  RollbackSnapshotSchema,
-  SemanticMergeSchema,
-  SemanticSearchSchema,
-  SplitFileSchema,
-  SuggestRefactoringSchema,
-  SynthesizeFilesSchema,
-  ValidateDirectorySchema,
-  ValidateFileSchema,
-} from "./tools/schemas/index.js";
-
-// Helper to convert Zod schemas to JSON Schema using native Zod v4 method
-function zodToJsonSchema(schema: z.ZodSchema): Record<string, unknown> {
-  const result = z.toJSONSchema(schema) as Record<string, unknown>;
-  // Ensure type: "object" is present for MCP compatibility
-  if (!result["type"]) {
-    result["type"] = "object";
-  }
-  return result;
-}
-
+import type { z } from "zod";
 // Import our multi-agent components
 import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
 import type { IndexerAgent } from "./agents/indexer-agent.js";
@@ -159,6 +91,13 @@ import { handleSetupCommand, parseArgs, printHelp } from "./cli/args-parser.js";
 // TASK-001: Import new YAML configuration system
 import { ConfigLoader, initializeConfig, validateConfig } from "./config/yaml-config.js";
 import { getOrCreateAgent, registerAllAgents } from "./core/agent-registry.js";
+// Auto-indexing
+import {
+  type AutoIndexContext,
+  countSourceFiles,
+  detectSupportedProject,
+  performAutoIndex,
+} from "./core/auto-indexer.js";
 // VARIANT-C: DI Container integration
 import { getGlobalContainer } from "./core/di-container.js";
 // Indexing state management
@@ -180,12 +119,12 @@ import { shutdownFaissProvider } from "./semantic/faiss/faiss-provider.js";
 import { getGpuClient, shutdownGpuClient } from "./semantic/gpu/gpu-client.js";
 // OVMS Native lifecycle management
 import { initializeOVMSNative, type OVMSNativeConfig, shutdownOVMSNative } from "./semantic/ovms-native-manager.js";
-import { detectRuntime } from "./shared/runtime-detect.js";
 // Storage initialization
-import { DEFAULT_BRANCH, getLogsDir, getProjectHash, initializeStorageDirs } from "./shared/storage-paths.js";
+import { DEFAULT_BRANCH, getProjectHash, initializeStorageDirs } from "./shared/storage-paths.js";
 import { configureGraphStorage, getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
 import type { ToolContext } from "./tools/base-tool-handler.js";
-import { branchToolDefinitions } from "./tools/branch-schemas.js";
+// Tool list (extracted to separate file)
+import { getToolsList } from "./tools/tool-definitions.js";
 import { toolRegistry } from "./tools/tool-registry.js";
 // Re-export for external consumers
 export {
@@ -198,68 +137,29 @@ export {
   setIndexingState,
 };
 
+import { expandHome, getVersionInfo } from "./core/environment-setup.js";
 // Service container for dependency injection
 import { initServiceContainer, type ServiceContainer } from "./core/service-container.js";
-
-import type { AgentTask } from "./types/agent.js";
+import { registerDebugSignalHandler, registerSignalHandlers, setShutdownContext } from "./core/shutdown-handlers.js";
+import { runOllamaCheck, runOrphanedEmbeddingsCheck } from "./core/startup-checks.js";
+// Import extracted modules
+import {
+  endTimer as _endTimer,
+  startTimer as _startTimer,
+  getLocalTimestamp,
+  setProcessStartTime,
+  sleep,
+  writeToLogFile,
+} from "./core/startup-utils.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
 import { getVectorDimensions, loadSemanticConfig } from "./utils/config-paths.js";
 import { initHasher } from "./utils/fast-hash.js";
 import { createRequestId, logger } from "./utils/logger.js";
-import { ensureOllamaRunning, getStatusMessage } from "./utils/ollama-checker.js";
-
-// =============================================================================
-// RUNTIME-AWARE SLEEP HELPER
-// Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
-// =============================================================================
-const currentRuntime = detectRuntime();
-async function sleep(ms: number): Promise<void> {
-  if (currentRuntime === "bun" && typeof (globalThis as any).Bun?.sleep === "function") {
-    // Bun: use Bun.sleep which works correctly
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    // Node.js: setTimeout
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
 
 // =============================================================================
 // GLOBAL EXCEPTION HANDLERS - Catch crashes and log them to file
 // =============================================================================
-
-// Local timestamp with timezone (e.g., 2026-01-01T03:45:30.123+04:00)
-function getLocalTimestamp(): string {
-  const now = new Date();
-  const offsetMin = -now.getTimezoneOffset();
-  const sign = offsetMin >= 0 ? "+" : "-";
-  const hours = String(Math.floor(Math.abs(offsetMin) / 60)).padStart(2, "0");
-  const mins = String(Math.abs(offsetMin) % 60).padStart(2, "0");
-  const localTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  return `${localTime.toISOString().slice(0, -1)}${sign}${hours}:${mins}`;
-}
-
-// Get local date string for log file names (YYYY-MM-DD in local time)
-function getLocalDateString(): string {
-  const now = new Date();
-  const localTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  return localTime.toISOString().slice(0, 10);
-}
-
-function writeToLogFile(message: string): void {
-  try {
-    const logsDir = getLogsDir();
-    if (!existsSync(logsDir)) {
-      mkdirSync(logsDir, { recursive: true });
-    }
-    const dateStr = getLocalDateString();
-    const logFile = join(logsDir, `mcp-server-${dateStr}.log`);
-    appendFileSync(logFile, message + "\n");
-  } catch {
-    // Fallback to stderr if log file fails
-    process.stderr.write(message + "\n");
-  }
-}
 
 process.on("uncaughtException", (error, origin) => {
   const timestamp = getLocalTimestamp();
@@ -285,22 +185,9 @@ process.on("unhandledRejection", (reason, _promise) => {
 // SIGTERM/SIGINT handlers are defined later in startMcpServer() after all imports
 // This allows proper async shutdown including OVMS Native
 
-// === STARTUP TIMING WITH TRACE LOGGING ===
-const _startupTimers: Record<string, number> = {};
+// === STARTUP TIMING ===
 const PROCESS_START_TIME = Date.now();
-
-function _startTimer(name: string) {
-  _startupTimers[name] = Date.now();
-  const uptimeMs = Date.now() - PROCESS_START_TIME;
-  logger.trace("STARTUP", `[+${uptimeMs}ms] ▶ START: ${name}`);
-}
-function _endTimer(name: string) {
-  const elapsed = Date.now() - (_startupTimers[name] || Date.now());
-  const uptimeMs = Date.now() - PROCESS_START_TIME;
-  logger.trace("STARTUP", `[+${uptimeMs}ms] ◀ END: ${name} (${elapsed}ms)`);
-  console.error(`[STARTUP] ${name}: ${elapsed}ms`);
-  return elapsed;
-}
+setProcessStartTime(PROCESS_START_TIME);
 
 // Initialize xxHash WASM BEFORE any hashing operations (required for deterministic project paths)
 _startTimer("initHasher");
@@ -335,7 +222,7 @@ if (setupRequested) {
   handleSetupCommand(import.meta.url);
 }
 
-const versionInfo = getVersionInfo();
+const versionInfo = getVersionInfo(import.meta.url);
 
 if (versionRequested) {
   console.error(
@@ -349,55 +236,8 @@ if (positionalArgs.length < 1) {
   positionalArgs.push(process.cwd());
 }
 
-function expandHome(filepath: string): string {
-  if (filepath.startsWith("~/") || filepath === "~") {
-    return join(homedir(), filepath.slice(1));
-  }
-  return filepath;
-}
-
 if (overrideConfigPath) {
   ConfigLoader.setOverridePath(overrideConfigPath);
-}
-
-/**
- * Get version information from package.json
- */
-function getVersionInfo() {
-  try {
-    // Get the directory of the current file
-    const currentFileUrl = import.meta.url;
-    const currentFilePath = fileURLToPath(currentFileUrl);
-    const currentDir = dirname(currentFilePath);
-
-    // package.json is in the root, one level up from dist/
-    const packageJsonPath = join(currentDir, "../package.json");
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-
-    return {
-      name: packageJson.name || "@er77/ultrascript-tools-mcp",
-      version: packageJson.version || "unknown",
-      description: packageJson.description || "",
-      homepage: packageJson.homepage || "",
-      repository: packageJson.repository?.url || "",
-      nodeVersion: process.version,
-      platform: process.platform,
-      arch: process.arch,
-    };
-  } catch (error) {
-    // Fallback if package.json cannot be read
-    return {
-      name: "@er77/ultrascript-tools-mcp",
-      version: "unknown",
-      description: "Multi-agent LiteRAG MCP server for advanced code graph analysis",
-      homepage: "https://github.com/er77/ultrascript-tools-mcp",
-      repository: "git+https://github.com/er77/ultrascript-tools-mcp.git",
-      nodeVersion: process.version,
-      platform: process.platform,
-      arch: process.arch,
-      error: error instanceof Error ? error.message : "Failed to read package.json",
-    };
-  }
 }
 
 const directory = normalize(resolve(expandHome(positionalArgs[0]!)));
@@ -586,13 +426,15 @@ function getConductor(): ConductorOrchestrator {
   if (!conductor) {
     // TASK-001: Use YAML configuration for conductor setup
     conductor = new ConductorOrchestrator(config.conductor ?? {});
+    // Update shutdown context with conductor reference
+    setShutdownContext({ conductor });
   }
   return conductor;
 }
 
 // Global VectorStore instance (lazy-loaded from SemanticAgent)
 // Used by code modification components (CodeModifier, FileOperations, PatternSearch)
-let globalVectorStore: any = null;
+const globalVectorStore: any = null;
 
 // ============================================================================
 // PHASE 8: Service Container initialization
@@ -657,420 +499,6 @@ async function getDoraAgent(): Promise<any> {
 }
 
 // GraphStorage singleton is now managed by graph-storage-factory.ts
-
-// Full list of available tools (used by all MCP server instances)
-function getToolsList() {
-  return [
-    {
-      name: "index",
-      description: "Index a codebase using multi-agent parsing and analysis",
-      inputSchema: zodToJsonSchema(IndexToolSchema),
-    },
-    {
-      name: "get_members",
-      description:
-        "List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
-      inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
-    },
-    {
-      name: "list_entity_relationships",
-      description:
-        "List outgoing relationships for an entity (imports, references, containment). Provide either the entity id (preferred) or name+file path to inspect its dependencies.",
-      inputSchema: zodToJsonSchema(ListRelationshipsToolSchema),
-    },
-    {
-      name: "query",
-      description: "Query the code graph using natural language or structured queries",
-      inputSchema: zodToJsonSchema(QueryToolSchema),
-    },
-    {
-      name: "get_metrics",
-      description: "Get system metrics and agent performance statistics",
-      inputSchema: zodToJsonSchema(z.object({})) as any,
-    },
-    {
-      name: "get_version",
-      description: "Get MCP server version information and runtime details",
-      inputSchema: zodToJsonSchema(z.object({})) as any,
-    },
-    {
-      name: "semantic_search",
-      description:
-        "Search the codebase using natural language keywords or file/module paths. Useful for discovery before diving into structural graph queries.",
-      inputSchema: zodToJsonSchema(SemanticSearchSchema),
-    },
-    {
-      name: "find_similar_code",
-      description: "Find code similar to a given snippet using semantic analysis",
-      inputSchema: zodToJsonSchema(FindSimilarCodeSchema),
-    },
-    {
-      name: "analyze_code_impact",
-      description:
-        "Discover entities and files that depend on a given symbol. Use together with get_members to obtain the precise entity id for impact analysis.",
-      inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema),
-    },
-    {
-      name: "find_duplicates",
-      description: "Find duplicate or similar code blocks across the codebase using semantic similarity",
-      inputSchema: zodToJsonSchema(DetectCodeClonesSchema),
-    },
-    {
-      name: "jscpd_detect_clones",
-      description: "Run JSCPD clone detection using a lightweight tokenizer",
-      inputSchema: zodToJsonSchema(JscpdCloneDetectionSchema),
-    },
-    {
-      name: "suggest_refactoring",
-      description: "Get refactoring suggestions for improving code quality",
-      inputSchema: zodToJsonSchema(SuggestRefactoringSchema),
-    },
-    {
-      name: "cross_language_search",
-      description: "Search across multiple programming languages",
-      inputSchema: zodToJsonSchema(CrossLanguageSearchSchema),
-    },
-    {
-      name: "analyze_hotspots",
-      description: "Find code hotspots based on complexity, changes, or coupling",
-      inputSchema: zodToJsonSchema(AnalyzeHotspotsSchema),
-    },
-    {
-      name: "find_related_concepts",
-      description: "Find conceptually related code to a given entity",
-      inputSchema: zodToJsonSchema(FindRelatedConceptsSchema),
-    },
-    {
-      name: "analyze_state_chaos",
-      description:
-        "Analyze state management chaos in TypeScript/Angular codebases. Detects scattered state, measures coupling, identifies mutations, and suggests refactoring strategies. Returns AI-friendly summary or detailed report.",
-      inputSchema: zodToJsonSchema(AnalyzeStateChaosSchema),
-    },
-    {
-      name: "get_graph",
-      description: "Get the code graph with all entities and relationships",
-      inputSchema: zodToJsonSchema(GetGraphSchema),
-    },
-    {
-      name: "get_graph_stats",
-      description: "Get statistics about the code graph",
-      inputSchema: zodToJsonSchema(GetGraphStatsSchema),
-    },
-    {
-      name: "reset_graph",
-      description: "Clear all graph data (entities, relationships, files)",
-      inputSchema: zodToJsonSchema(z.object({})) as any,
-    },
-    {
-      name: "clean_index",
-      description: "Reset graph and then perform a full index",
-      inputSchema: zodToJsonSchema(CleanIndexSchema),
-    },
-    {
-      name: "get_graph_health",
-      description: "Health check for graph storage (totals + sample)",
-      inputSchema: zodToJsonSchema(GetGraphHealthSchema),
-    },
-    {
-      name: "get_agent_metrics",
-      description: "Collect runtime telemetry for conductor and registered agents",
-      inputSchema: zodToJsonSchema(GetAgentMetricsSchema),
-    },
-    {
-      name: "get_bus_stats",
-      description: "Inspect knowledge bus statistics (topics, entries, subscriptions)",
-      inputSchema: zodToJsonSchema(GetBusStatsSchema),
-    },
-    {
-      name: "clear_bus_topic",
-      description: "Remove cached knowledge entries for a specific topic",
-      inputSchema: zodToJsonSchema(ClearBusTopicSchema),
-    },
-    {
-      name: "create_snapshot",
-      description:
-        "Create a version snapshot for rollback. Uses git stash if available, otherwise .backup/ directory. Returns snapshot ID for rollback.",
-      inputSchema: zodToJsonSchema(CreateSnapshotSchema),
-    },
-    {
-      name: "undo",
-      description: "Rollback to a previous snapshot by ID. Restores all files to their snapshot state.",
-      inputSchema: zodToJsonSchema(RollbackSnapshotSchema),
-    },
-    {
-      name: "list_snapshots",
-      description: "List available snapshots with creation time and description.",
-      inputSchema: zodToJsonSchema(ListSnapshotsSchema),
-    },
-    {
-      name: "cleanup_snapshots",
-      description: "Delete old snapshots to free disk space.",
-      inputSchema: zodToJsonSchema(CleanupSnapshotsSchema),
-    },
-    {
-      name: "modify_code",
-      description:
-        "Modify code of a specific entity by ID. Automatically creates snapshot, validates before/after, updates embeddings, and can rollback on error. Default preview mode shows changes without applying.",
-      inputSchema: zodToJsonSchema(ModifyEntityCodeSchema),
-    },
-    {
-      name: "copy_file",
-      description:
-        "Copy file or directory with automatic graph updates. Streaming for large files. Token-efficient alternative to reading full content.",
-      inputSchema: zodToJsonSchema(CopyFileSchema),
-    },
-    {
-      name: "rename_file",
-      description:
-        "Rename file with automatic import updates across project. Updates graph and embeddings. Token-efficient alternative to read-write pattern.",
-      inputSchema: zodToJsonSchema(RenameFileSchema),
-    },
-    {
-      name: "split_file",
-      description:
-        "Extract entities from a file into separate files. Useful for refactoring large files. Updates graph with new locations.",
-      inputSchema: zodToJsonSchema(SplitFileSchema),
-    },
-    {
-      name: "synthesize_files",
-      description:
-        "Combine multiple files into one. Merges entities in graph. Can optionally delete originals. Token-efficient way to consolidate code.",
-      inputSchema: zodToJsonSchema(SynthesizeFilesSchema),
-    },
-    {
-      name: "create_file",
-      description:
-        "Create a new file with content. Automatically parses and adds entities to graph. Unified naming with UltrasharpTools.",
-      inputSchema: zodToJsonSchema(CreateFileSchema),
-    },
-    {
-      name: "rename_symbol",
-      description:
-        "Rename a symbol (variable, function, class, etc.) and update all references. Supports entity ID or name-based lookup. Unified naming with UltrasharpTools.",
-      inputSchema: zodToJsonSchema(RenameSymbolSchema),
-    },
-    {
-      name: "add_member",
-      description:
-        "Add a new member (method, property, field) to a class or interface. Supports precise positioning. Unified naming with UltrasharpTools.",
-      inputSchema: zodToJsonSchema(AddMemberSchema),
-    },
-    {
-      name: "validate_file",
-      description:
-        "Validate code file using appropriate linter (ESLint for JS/TS, Pylint for Python). Returns problems categorized by severity.",
-      inputSchema: zodToJsonSchema(ValidateFileSchema),
-    },
-    {
-      name: "validate_directory",
-      description:
-        "Validate all code files in directory. Batch processing with concurrency limit. Returns aggregated validation report.",
-      inputSchema: zodToJsonSchema(ValidateDirectorySchema),
-    },
-    {
-      name: "detect_technology_stack",
-      description:
-        "Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
-      inputSchema: zodToJsonSchema(DetectTechnologyStackSchema),
-    },
-    {
-      name: "pattern_search",
-      description:
-        "Advanced search with multiple modes: entity (name/type regex), content (inside entity bodies), semantic (vector similarity), hybrid (all combined). Framework-aware filtering. SIMD-accelerated similarity computation.",
-      inputSchema: zodToJsonSchema(PatternSearchSchema),
-    },
-    // ==========================================================================
-    // Merge Tools
-    // ==========================================================================
-    {
-      name: "semantic_merge",
-      description:
-        "AI-powered semantic merge of git branches. Automatically finds merge-base, reads files from branches, performs semantic 3-way merge, and writes results as unstaged changes. Supports dry-run mode and auto-resolve.",
-      inputSchema: zodToJsonSchema(SemanticMergeSchema),
-    },
-    {
-      name: "analyze_merge_conflicts",
-      description:
-        "Analyze potential merge conflicts between two branches without performing the merge. Returns conflicts with severity classification and affected code units.",
-      inputSchema: zodToJsonSchema(AnalyzeMergeConflictsSchema),
-    },
-    {
-      name: "get_merge_suggestions",
-      description:
-        "Get AI-generated suggestions for resolving a specific merge conflict. Requires conflict ID from analyze_merge_conflicts.",
-      inputSchema: zodToJsonSchema(GetMergeSuggestionsSchema),
-    },
-    {
-      name: "get_semantic_merge_info",
-      description: "Get information about semantic merge capabilities, supported features, and usage examples.",
-      inputSchema: zodToJsonSchema(GetSemanticMergeInfoSchema),
-    },
-    // ==========================================================================
-    // AutoDoc Tools
-    // ==========================================================================
-    {
-      name: "autodoc_init",
-      description:
-        "Initialize AutoDoc semantic documentation layer. Configure language, docs directory, and enable/disable.",
-      inputSchema: zodToJsonSchema(AutoDocInitSchema),
-    },
-    {
-      name: "autodoc_save",
-      description:
-        "Save a markdown documentation file. Parses sections, extracts references to code entities, and indexes for search.",
-      inputSchema: zodToJsonSchema(AutoDocSaveSchema),
-    },
-    {
-      name: "autodoc_get",
-      description: "Get documentation by ID or file path. Returns parsed sections with metadata.",
-      inputSchema: zodToJsonSchema(AutoDocGetSchema),
-    },
-    {
-      name: "autodoc_search",
-      description: "Search documentation by text query. Returns matching sections with relevance scores.",
-      inputSchema: zodToJsonSchema(AutoDocSearchSchema),
-    },
-    {
-      name: "autodoc_validate",
-      description:
-        "Validate documentation references. Checks that all code entity references point to existing entities.",
-      inputSchema: zodToJsonSchema(AutoDocValidateSchema),
-    },
-    {
-      name: "autodoc_status",
-      description: "Get AutoDoc status including statistics on documents, references, and broken links.",
-      inputSchema: zodToJsonSchema(AutoDocStatusSchema),
-    },
-    {
-      name: "autodoc_sync",
-      description: "Sync documentation with code changes. Validates references and marks outdated docs.",
-      inputSchema: zodToJsonSchema(AutoDocSyncSchema),
-    },
-    {
-      name: "autodoc_generate",
-      description:
-        "Auto-generate documentation for the codebase. Creates .autodoc/ for general docs and README.md in each module folder.",
-      inputSchema: zodToJsonSchema(AutoDocGenerateSchema),
-    },
-    {
-      name: "autodoc_changelog",
-      description: "View documentation change history. Shows what docs were affected by code changes.",
-      inputSchema: zodToJsonSchema(AutoDocChangelogSchema),
-    },
-    {
-      name: "autodoc_install_hooks",
-      description:
-        "Install or uninstall git pre-commit hooks for documentation validation. Ensures references are valid before commits.",
-      inputSchema: zodToJsonSchema(AutoDocInstallHooksSchema),
-    },
-    {
-      name: "autodoc_detect_language",
-      description: "Detect documentation language from code comments and existing docs. Supports en, ru, zh.",
-      inputSchema: zodToJsonSchema(AutoDocDetectLanguageSchema),
-    },
-    ...branchToolDefinitions,
-    // Tracing tools
-    {
-      name: "trace_flow",
-      description: `Trace execution flow from point A to point B in the codebase. Finds all possible paths and analyzes state changes, conditions, and async boundaries along each path. Returns paths with confidence scores and optional Mermaid diagrams.`,
-      inputSchema: {
-        type: "object",
-        properties: {
-          from: { type: "string", description: "Starting point (function/method name or semantic query)" },
-          to: { type: "string", description: "Ending point (function/method name or semantic query)" },
-          trackStates: { type: "boolean", description: "Track state changes along paths", default: true },
-          trackConditions: { type: "boolean", description: "Track conditions/branches", default: true },
-          maxDepth: { type: "number", description: "Maximum traversal depth", default: 15 },
-          format: {
-            type: "string",
-            enum: ["sequence", "tree", "graph", "mermaid"],
-            description: "Output format",
-            default: "sequence",
-          },
-        },
-        required: ["from", "to"],
-      },
-    },
-    {
-      name: "trace_backwards",
-      description: `Trace backwards from a method to find why it might not be called. Analysis types: why_not_called (blocking conditions), what_affects (dependencies), dependencies (full graph). Returns callers, blocking conditions, state dependencies, and diagnosis.`,
-      inputSchema: {
-        type: "object",
-        properties: {
-          target: { type: "string", description: "Target method/function to analyze" },
-          question: {
-            type: "string",
-            enum: ["why_not_called", "what_affects", "dependencies"],
-            description: "Type of analysis",
-          },
-          depth: { type: "number", description: "Backward traversal depth", default: 15 },
-          includeStates: { type: "boolean", description: "Include state dependencies", default: true },
-          includeEffects: { type: "boolean", description: "Include side effects", default: true },
-        },
-        required: ["target", "question"],
-      },
-    },
-    {
-      name: "trace_data_flow",
-      description: `Trace how data flows from sources to affect a target state. Identifies data sources, transformations, branching, and builds behavior matrix for different inputs.`,
-      inputSchema: {
-        type: "object",
-        properties: {
-          entryPoint: { type: "string", description: "Entry point function" },
-          targetState: { type: "string", description: "Target state to trace" },
-          dataSources: {
-            type: "array",
-            items: { type: "string" },
-            description: "Data sources to analyze (auto-detected if not specified)",
-          },
-          trackTransformations: { type: "boolean", description: "Track data transformations", default: true },
-        },
-        required: ["entryPoint", "targetState"],
-      },
-    },
-    {
-      name: "analyze_state_impact",
-      description: `Analyze the impact of a state variable across different scenarios. Shows usages, reachable/blocked paths per scenario, conflicts, and ripple effects.`,
-      inputSchema: {
-        type: "object",
-        properties: {
-          state: { type: "string", description: "State variable to analyze" },
-          scenarios: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: { value: {}, label: { type: "string" } },
-              required: ["value", "label"],
-            },
-            description: "Scenarios to analyze",
-            minItems: 1,
-          },
-          scope: { type: "string", description: "Scope of analysis (semantic query)" },
-        },
-        required: ["state", "scenarios"],
-      },
-    },
-    {
-      name: "find_decision_points",
-      description: `Find all decision points in a scenario's execution flow. Types: validation, api_response, state_mutation, guard, loop, error_handling, feature_flag. Returns grouped by impact with Mermaid flowchart.`,
-      inputSchema: {
-        type: "object",
-        properties: {
-          scenario: { type: "string", description: "Scenario to analyze" },
-          includeGuards: { type: "boolean", description: "Include guard conditions", default: true },
-          includeEffects: { type: "boolean", description: "Include side effects", default: true },
-          groupBy: {
-            type: "string",
-            enum: ["impact", "location", "type"],
-            description: "How to group results",
-            default: "impact",
-          },
-        },
-        required: ["scenario"],
-      },
-    },
-  ];
-}
 
 // Function to create MCP server with handlers (supports multiple clients in pipe mode)
 function createMcpServer(): Server {
@@ -1376,473 +804,23 @@ async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
   }
 }
 
-// Graceful shutdown - shared logic for SIGINT and SIGTERM
-let isShuttingDownGlobal = false;
-
-async function performGlobalShutdown(signal: string): Promise<void> {
-  if (isShuttingDownGlobal) return;
-  isShuttingDownGlobal = true;
-
-  console.error(`\n[${signal}] Shutting down gracefully...`);
-  logger.systemEvent("MCP Server Shutdown Initiated", { signal });
-
-  // Shutdown OVMS Native first (if running)
-  try {
-    await shutdownOVMSNative();
-    logger.systemEvent("OVMS Native Shutdown Complete");
-  } catch (error) {
-    console.error("[Shutdown] OVMS Native shutdown error:", error);
-  }
-
-  // Shutdown GPU worker (if running)
-  try {
-    await shutdownGpuClient();
-    logger.systemEvent("GPU Client Shutdown Complete");
-  } catch (error) {
-    logger.error("GPU_CLIENT", "Shutdown error", { error: String(error) });
-  }
-
-  // Shutdown FAISS provider (if running)
-  try {
-    await shutdownFaissProvider();
-    logger.systemEvent("FAISS Provider Shutdown Complete");
-  } catch (error) {
-    logger.error("FAISS", "Shutdown error", { error: String(error) });
-  }
-
-  if (conductor) {
-    await conductor.shutdown();
-    logger.systemEvent("Conductor Shutdown Complete");
-  }
-
-  if (layeredIndexManager) {
-    await layeredIndexManager.shutdown();
-    logger.systemEvent("LayeredIndexManager Shutdown Complete");
-  }
-
-  resourceManager.stopMonitoring();
-  logger.systemEvent("Resource Manager Stopped");
-  logger.systemEvent("MCP Server Shutdown Complete", { signal });
-
-  process.exit(0);
-}
-
-process.on("SIGINT", () => {
-  performGlobalShutdown("SIGINT");
-});
-
-process.on("SIGTERM", () => {
-  performGlobalShutdown("SIGTERM");
-});
-
-// Fallback: beforeExit fires when event loop is empty but before exit
-// This catches cases where parent process closes stdin/stdout
-process.on("beforeExit", async (code) => {
-  if (code === 0 && !isShuttingDownGlobal) {
-    await performGlobalShutdown("beforeExit");
-  }
-});
-
-// Windows: detect parent process exit via stdin close
-// When comm.c closes, stdin pipe closes - we must exit
-process.stdin.on("close", () => {
-  if (!isShuttingDownGlobal) {
-    logger.info("SHUTDOWN", "stdin closed (parent exited), shutting down...");
-    performGlobalShutdown("stdin-close");
-  }
-});
-
-process.stdin.on("end", () => {
-  if (!isShuttingDownGlobal) {
-    logger.info("SHUTDOWN", "stdin ended (parent exited), shutting down...");
-    performGlobalShutdown("stdin-end");
-  }
-});
-
-// Debug signal: dump runtime state (aligns with SYSTEM_HANG_RECOVERY_PLAN)
-process.on("SIGUSR1", async () => {
-  try {
-    const snapshot: any = {
-      pid: process.pid,
-      memory: process.memoryUsage(),
-      uptime: process.uptime(),
-    };
-    if (conductor) {
-      snapshot.conductor = {
-        pendingTasks: (conductor as any).pendingTasks?.size ?? undefined,
-        agents: Array.from(conductor.agents.values()).map((a) => ({
-          id: a.id,
-          type: a.type,
-          status: a.status,
-          memMB: a.getMemoryUsage(),
-          queue: a.getTaskQueue().length,
-          lastActivity: (a as any).getMetrics ? (a as any).getMetrics().lastActivity : undefined,
-        })),
-      };
-    }
-    logger.incident("SIGUSR1 dump", snapshot);
-  } catch (err) {
-    logger.incident("SIGUSR1 dump failed", {}, undefined, err as Error);
-  }
-});
-
-// =============================================================================
-// AUTO-INDEXING: Detect supported project and trigger indexing on startup
-// =============================================================================
+// Register signal handlers from extracted module
+registerSignalHandlers();
+registerDebugSignalHandler();
 
 /**
- * Quickly detect if directory contains files with supported extensions.
- * Uses fast glob with early exit (limit: 1) for performance.
+ * Create context for auto-indexer
  */
-async function detectSupportedProject(
-  targetDir: string,
-  extensions: string[],
-): Promise<{ supported: boolean; detectedExt?: string; sampleFile?: string }> {
-  try {
-    const { glob } = await import("glob");
-
-    // Build glob pattern for all supported extensions
-    // e.g., **/*.{ts,tsx,js,jsx,py,go,rs,kt,swift,c,cpp,java}
-    const extList = extensions.map((e) => e.replace(/^\./, "")).join(",");
-    const pattern = `**/*.{${extList}}`;
-
-    // Use glob with limit 1 for fast detection
-    const files = await glob(pattern, {
-      cwd: targetDir,
-      nodir: true,
-      ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/vendor/**", "**/target/**", "**/__pycache__/**"],
-      maxDepth: 5, // Don't go too deep for quick detection
-      absolute: false,
-    });
-
-    if (files.length > 0) {
-      const sampleFile = files[0]!;
-      const ext = "." + sampleFile.split(".").pop();
-      return { supported: true, detectedExt: ext, sampleFile };
-    }
-
-    return { supported: false };
-  } catch (error) {
-    logger.warn("AUTO_INDEX", "Failed to detect project type", { error: (error as Error).message });
-    return { supported: false };
-  }
-}
-
-/**
- * Base exclude patterns for source file counting and indexing
- * Used by both countSourceFiles and buildAutoIndexExcludePatterns for consistency
- */
-const BASE_EXCLUDE_PATTERNS = [
-  // Build/dependency directories
-  "**/node_modules/**",
-  "**/.git/**",
-  "**/dist/**",
-  "**/build/**",
-  "**/out/**",
-  "**/.next/**",
-  "**/.nuxt/**",
-  "**/coverage/**",
-  "**/__pycache__/**",
-  "**/.pytest_cache/**",
-  "**/venv/**",
-  "**/.venv/**",
-  "**/vendor/**",
-  "**/target/**", // Rust
-  "**/bin/**",
-  "**/obj/**", // .NET
-  "**/.vs/**",
-  "**/.idea/**",
-  "**/.vscode/**",
-  "**/packages/**",
-  // Test data directories (not actual source code)
-  "**/fixtures/**",
-  "**/testdata/**",
-  // Mock files
-  "**/mocks/**",
-  "**/__mocks__/**",
-  // External/third-party
-  "**/external-tools/**",
-  "**/third_party/**",
-  "**/third-party/**",
-  "**/thirdparty/**",
-  "**/archives/**",
-  "**/archive/**",
-  "**/backups/**",
-  "**/backup/**",
-  "**/tmp/**",
-  "**/temp/**",
-];
-
-/**
- * Fast count of source files on disk for consistency check.
- * Uses glob with stats disabled for maximum speed.
- */
-async function countSourceFiles(targetDir: string, extensions: string[]): Promise<number> {
-  try {
-    const { glob } = await import("glob");
-    const extList = extensions.map((e) => e.replace(/^\./, "")).join(",");
-    const pattern = `**/*.{${extList}}`;
-
-    const files = await glob(pattern, {
-      cwd: targetDir,
-      nodir: true,
-      ignore: BASE_EXCLUDE_PATTERNS,
-      stat: false,
-      absolute: false,
-    });
-
-    return files.length;
-  } catch {
-    return -1; // Error - skip consistency check
-  }
-}
-
-/**
- * Build smart exclude patterns for auto-indexing
- * - Base patterns from BASE_EXCLUDE_PATTERNS
- * - Patterns from .gitignore if exists
- * - Binary/archive extensions
- */
-async function buildAutoIndexExcludePatterns(targetDir: string): Promise<string[]> {
-  const patterns: string[] = [
-    // Include all base directory patterns
-    ...BASE_EXCLUDE_PATTERNS,
-    // Mock files (often large JSON/generated data)
-    "**/*.mock.json",
-    "**/*.mock.ts",
-    "**/*.mock.js",
-    // Binary and archive files
-    "**/*.zip",
-    "**/*.tar",
-    "**/*.tar.gz",
-    "**/*.tgz",
-    "**/*.rar",
-    "**/*.7z",
-    "**/*.exe",
-    "**/*.dll",
-    "**/*.so",
-    "**/*.dylib",
-    "**/*.bin",
-    "**/*.iso",
-    "**/*.img",
-    "**/*.dmg",
-    "**/*.wasm",
-    // Large generated files
-    "**/*.min.js",
-    "**/*.min.css",
-    "**/*.bundle.js",
-    "**/*.chunk.js",
-    "**/package-lock.json",
-    "**/yarn.lock",
-    "**/pnpm-lock.yaml",
-    "**/*.lock",
-    // Media files
-    "**/*.jpg",
-    "**/*.jpeg",
-    "**/*.png",
-    "**/*.gif",
-    "**/*.ico",
-    "**/*.svg",
-    "**/*.mp3",
-    "**/*.mp4",
-    "**/*.wav",
-    "**/*.avi",
-    "**/*.mov",
-    "**/*.pdf",
-    // Database files
-    "**/*.db",
-    "**/*.sqlite",
-    "**/*.sqlite3",
-  ];
-
-  // Try to read .gitignore and add patterns
-  try {
-    const { join } = await import("node:path");
-    const gitignorePath = join(targetDir, ".gitignore");
-    const { readTextSync, existsSync } = await import("./utils/file-ops.js");
-
-    if (existsSync(gitignorePath)) {
-      const content = readTextSync(gitignorePath);
-      const lines = content.split("\n");
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        // Skip comments and empty lines
-        if (!trimmed || trimmed.startsWith("#")) continue;
-        // Skip negation patterns (we only want excludes)
-        if (trimmed.startsWith("!")) continue;
-
-        // Convert gitignore pattern to glob pattern
-        let pattern = trimmed;
-        // Handle directory patterns
-        if (pattern.endsWith("/")) {
-          pattern = `**/${pattern}**`;
-        } else if (!pattern.includes("/")) {
-          // Pattern without slash matches anywhere
-          pattern = `**/${pattern}`;
-        } else if (!pattern.startsWith("/") && !pattern.startsWith("**/")) {
-          pattern = `**/${pattern}`;
-        }
-        // Remove leading slash
-        if (pattern.startsWith("/")) {
-          pattern = pattern.slice(1);
-        }
-
-        patterns.push(pattern);
-      }
-      console.error(
-        `   📋 Loaded ${lines.filter((l) => l.trim() && !l.startsWith("#")).length} patterns from .gitignore`,
-      );
-    }
-  } catch (_error) {
-    // .gitignore not found or unreadable - that's fine
-  }
-
-  return patterns;
-}
-
-/**
- * Perform auto-indexing in background (non-blocking)
- */
-async function performAutoIndex(targetDir: string, extensions: string[], incremental = false): Promise<void> {
-  const requestId = createRequestId();
-  const startTime = Date.now();
-  logger.trace("INDEXING", `[+${startTime - PROCESS_START_TIME}ms] ▶ performAutoIndex() START`);
-
-  // Set indexing state for user-friendly error messages
-  setIndexingState(true, targetDir);
-
-  const mode = incremental ? "incremental" : "full";
-  logger.systemEvent(`Auto-indexing started (${mode})`, { directory: targetDir, incremental });
-  logger.trace("INDEXING", `[+${Date.now() - PROCESS_START_TIME}ms] mode=${mode}, incremental=${incremental}`);
-  console.error(`\n📂 Auto-indexing project (${mode}): ${targetDir}`);
-
-  try {
-    // Build smart exclude patterns
-    const excludePatterns = await buildAutoIndexExcludePatterns(targetDir);
-    console.error(`   🚫 Excluding ${excludePatterns.length} patterns (node_modules, .git, binaries, .gitignore)`);
-    // TRACE: Show first 10 patterns
-    console.error(`   📋 Sample patterns: ${excludePatterns.slice(0, 10).join(", ")}...`);
-    console.error(`   📋 Extensions: ${extensions.join(", ")}`);
-
-    // Set current indexing directory
-    setCurrentIndexingDirectory(targetDir);
-
-    // Initialize SemanticAgent and optionally drop vector index for bulk insert mode
-    // Only drop index for FULL rebuild, not for incremental updates
-    if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
-      logger.trace("INDEXING", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ getSemanticAgent for auto-index`);
-      console.error("🔄 Initializing SemanticAgent in background...");
-      try {
-        const semAgentStart = Date.now();
-        const semanticAgent = await getSemanticAgent();
-        logger.trace(
-          "INDEXING",
-          `[+${Date.now() - PROCESS_START_TIME}ms] ◀ getSemanticAgent (${Date.now() - semAgentStart}ms)`,
-        );
-        if (!incremental) {
-          // Drop vector index before bulk inserts for faster performance (full rebuild only)
-          logger.trace("INDEXING", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ dropVectorIndex`);
-          console.error("🔄 Dropping vector index for bulk insert mode...");
-          await semanticAgent.dropVectorIndex();
-          logger.trace("INDEXING", `[+${Date.now() - PROCESS_START_TIME}ms] ◀ dropVectorIndex`);
-        } else {
-          console.error("🔄 Incremental mode - keeping existing vector index");
-        }
-      } catch (err) {
-        console.error("⚠️ SemanticAgent initialization failed:", (err as Error).message);
-      }
-    }
-
-    // Create indexing task with smart excludes
-    const task: AgentTask = {
-      id: `auto-index-${Date.now()}`,
-      type: "index",
-      priority: 8,
-      payload: {
-        directory: targetDir,
-        incremental, // Use incremental mode when resuming incomplete index
-        excludePatterns,
-        // Pass extensions to limit file types
-        includeExtensions: extensions,
-      },
-      createdAt: Date.now(),
-    };
-
-    // Initialize agents
-    await getDevAgent();
-    await getDoraAgent();
-
-    // Run indexing via conductor
-    const cond = getConductor();
-    await cond.initialize();
-    const result = (await cond.process(task)) as { success?: boolean; data?: any; entities?: any[] };
-
-    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-
-    if (result?.success !== false) {
-      const entityCount = result?.data?.entityCount ?? result?.data?.entities ?? result?.entities?.length ?? "?";
-      console.error(`✅ Auto-indexing complete: ${entityCount} entities indexed in ${duration}s`);
-      logger.systemEvent("Auto-indexing completed", {
-        directory: targetDir,
-        entityCount,
-        durationMs: Date.now() - startTime,
-      });
-
-      // Finalize embeddings (workers generate, main just loads dump files as fallback)
-      if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
-        try {
-          const semanticAgent = await getSemanticAgent();
-          console.error(`🔄 Finalizing embeddings...`);
-          await semanticAgent.generateEmbeddingsFromStorage();
-          console.error(`✅ Embeddings finalized`);
-        } catch (error) {
-          console.error(`⚠️  Failed to finalize embeddings:`, (error as Error).message);
-        }
-      }
-
-      // Update incremental tracking
-      try {
-        const graphStorage = await getGraphStorage();
-        if (incremental) {
-          // Record incremental changes (count how many files were indexed)
-          const indexedCount = typeof entityCount === "number" ? entityCount : parseInt(String(entityCount), 10) || 0;
-          // Estimate files from entities (rough: ~3 entities per file on average)
-          const estimatedFiles = Math.max(1, Math.ceil(indexedCount / 3));
-          await graphStorage.recordIncrementalChanges(estimatedFiles);
-          logger.info("TRACKING", `Recorded incremental changes`, { files: estimatedFiles });
-        } else {
-          // Full rebuild - reset tracking
-          await graphStorage.resetIncrementalTracking();
-          logger.info("TRACKING", `Reset incremental tracking (full rebuild complete)`);
-        }
-      } catch (error) {
-        logger.warn("TRACKING", `Failed to update tracking`, { error: (error as Error).message });
-      }
-
-      // Start GitWatcher for incremental updates (if branchAware enabled)
-      try {
-        const cond = getConductor();
-        const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as any;
-        if (indexerAgent?.setRepositoryPath) {
-          indexerAgent.setRepositoryPath(targetDir);
-          console.error(`✅ GitWatcher started for incremental updates`);
-        }
-      } catch (error) {
-        console.error(`⚠️  Failed to start GitWatcher:`, (error as Error).message);
-      }
-    } else {
-      console.error(`⚠️  Auto-indexing completed with warnings in ${duration}s`);
-      logger.warn("AUTO_INDEX", "Auto-indexing completed with issues", { result }, requestId);
-    }
-  } catch (error) {
-    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.error(`❌ Auto-indexing failed after ${duration}s: ${(error as Error).message}`);
-    logger.error("AUTO_INDEX", "Auto-indexing failed", { error: (error as Error).message }, requestId);
-  } finally {
-    // Always clear indexing state
-    setIndexingState(false);
-  }
+function createAutoIndexContext(): AutoIndexContext {
+  return {
+    getSemanticAgent,
+    getDevAgent,
+    getDoraAgent,
+    getConductor,
+    getGraphStorage,
+    setCurrentIndexingDirectory,
+    processStartTime: PROCESS_START_TIME,
+  };
 }
 
 // Start the server
@@ -1859,110 +837,20 @@ async function main() {
   const embeddingEnabled = config.mcp?.embedding?.enabled ?? false;
   const embeddingProvider: string = config.mcp?.embedding?.provider ?? "auto";
 
-  if (embeddingEnabled && (embeddingProvider === "auto" || embeddingProvider === "ollama")) {
-    // Run Ollama check in background - don't block MCP startup
-    logger.trace("ASYNC", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ Launching async: Ollama check`);
-    console.error("🔍 Ollama check running in background...");
-    (async () => {
-      try {
-        const ollamaStartTime = Date.now();
-        logger.trace("ASYNC", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: ensureOllamaRunning`);
-        const ollamaStatus = await ensureOllamaRunning(true); // auto-start enabled
-        logger.trace(
-          "ASYNC",
-          `[+${Date.now() - PROCESS_START_TIME}ms] ◀ END: ensureOllamaRunning (${Date.now() - ollamaStartTime}ms)`,
-        );
-        const statusMessage = getStatusMessage(ollamaStatus);
-        console.error(statusMessage);
+  // Run startup checks in background (extracted to startup-checks.ts)
+  runOllamaCheck({
+    embeddingEnabled,
+    embeddingProvider,
+    pipeServerMode,
+    processStartTime: PROCESS_START_TIME,
+  });
 
-        if (!ollamaStatus.isRunning) {
-          console.error(
-            "💡 Tip: Install Ollama from https://ollama.com or run setup-embeddings.cmd/sh for automatic setup",
-          );
-        } else if (!ollamaStatus.hasGranite && ollamaStatus.hasModels) {
-          console.error("💡 Tip: Install granite-embedding with: ollama pull granite-embedding");
-        }
-      } catch (error) {
-        logger.warn("STARTUP", "Ollama check failed, will use auto-detection", {
-          error: (error as Error).message,
-        });
-        console.error("⚠️  Ollama check failed, embedding provider will be auto-detected");
-      }
-    })();
-  }
-
-  // Check for orphaned embeddings (entities without embeddings) in background
-  // This handles the case when server was restarted before embeddings completed
-  // Runs asynchronously without setTimeout (Bun compatibility)
-  if (embeddingEnabled && !pipeServerMode) {
-    logger.trace("ASYNC", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: orphaned embeddings check`);
-    (async () => {
-      try {
-        const checkStartTime = Date.now();
-        const semanticAgent = await getSemanticAgent();
-        logger.trace(
-          "ASYNC",
-          `[+${Date.now() - PROCESS_START_TIME}ms] getSemanticAgent took ${Date.now() - checkStartTime}ms`,
-        );
-        if (!semanticAgent) return;
-
-        // Check if there are entities without embeddings
-        const { getGraphStorage } = await import("./storage/graph-storage-factory.js");
-        const storage = await getGraphStorage();
-        const allEntities = await storage.findEntities({ type: "entity", limit: 1 });
-        const entityCount =
-          allEntities.length > 0 ? (await storage.findEntities({ type: "entity", limit: 100000 })).length : 0;
-
-        if (entityCount === 0) return; // No entities indexed yet
-
-        const embeddingCount = (await semanticAgent.getVectorStore()?.count()) ?? 0;
-        const missing = entityCount - embeddingCount;
-
-        if (missing > 10) {
-          // Check if generation is already in progress
-          if (semanticAgent.isEmbeddingGenerationInProgress()) {
-            logger.warn("AUTO_RESUME", `[SKIPPED] generation already in progress`, { missing });
-            return;
-          }
-          // Check if generation was recently completed (within 30s)
-          if (semanticAgent.wasGenerationRecentlyCompleted(30000)) {
-            logger.warn("AUTO_RESUME", `[SKIPPED] generation recently completed`, { missing });
-            return;
-          }
-          logger.info("STARTUP", `Found ${missing} entities without embeddings, generating in background`, { missing });
-          logger.trace(
-            "EMBEDDING",
-            `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: generateEmbeddingsFromStorage (${missing} missing)`,
-          );
-          logger.info("STARTUP", "Resuming embedding generation", { missing, entityCount, embeddingCount });
-          const embGenStartTime = Date.now();
-          // CRITICAL FIX: Run in background (non-blocking) - don't await!
-          semanticAgent
-            .generateEmbeddingsFromStorage()
-            .then((stats: { generated: number; skipped: number }) => {
-              logger.trace(
-                "EMBEDDING",
-                `[+${Date.now() - PROCESS_START_TIME}ms] ◀ END: generateEmbeddingsFromStorage (${Date.now() - embGenStartTime}ms)`,
-              );
-              logger.info("STARTUP", `Background embedding complete`, {
-                generated: stats.generated,
-                skipped: stats.skipped,
-              });
-            })
-            .catch((error: Error) => {
-              logger.error("EMBEDDING", "Background embedding generation failed", { error: error.message });
-            });
-        } else {
-          logger.trace(
-            "EMBEDDING",
-            `[+${Date.now() - PROCESS_START_TIME}ms] ◀ END: orphaned embeddings check (no action needed, missing=${missing})`,
-          );
-        }
-      } catch (error) {
-        logger.warn("STARTUP", "Background embedding check failed", { error: (error as Error).message });
-      }
-    })();
-  }
+  runOrphanedEmbeddingsCheck({
+    embeddingEnabled,
+    pipeServerMode,
+    processStartTime: PROCESS_START_TIME,
+    getSemanticAgent,
+  });
   // Initialize AutoDoc Watcher for automatic documentation updates
   logger.trace("STARTUP", `[+${Date.now() - PROCESS_START_TIME}ms] Checking AutoDoc watcher config`);
   const autodocWatcherEnabled = config.mcp?.autodoc?.watcherEnabled ?? true;
@@ -2378,7 +1266,7 @@ async function main() {
 
         // Perform indexing with extension filter
         // Use incremental mode when resuming incomplete index
-        await performAutoIndex(directory, extensions, useIncrementalMode);
+        await performAutoIndex(directory, extensions, createAutoIndexContext(), useIncrementalMode);
       } catch (error) {
         console.error("❌ Auto-index failed:", (error as Error).message);
         logger.error("AUTO_INDEX", "Auto-index check failed", { error: (error as Error).message });

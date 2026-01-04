@@ -18,137 +18,41 @@
  * @see https://docs.turso.tech/features/ai-and-embeddings
  */
 
-import type { Client, InStatement, ResultSet } from "@libsql/client";
+import type { Client } from "@libsql/client";
 import * as cbor from "cbor-x";
 import { LRUCache } from "lru-cache";
 import { DEFAULT_BRANCH, normalizeBranchName } from "../shared/storage-paths.js";
 import type { SimilarityResult, VectorEmbedding } from "../types/semantic.js";
 import type { BatchResult, Entity, EntityType, FileInfo, Relationship, RelationType } from "../types/storage.js";
 import { logger } from "../utils/logger.js";
+import { CacheOperations } from "./libsql/cache-ops.js";
+import { EntityOperations } from "./libsql/entity-ops.js";
+import { MetadataOperations } from "./libsql/metadata-ops.js";
+import { RelationshipOperations } from "./libsql/relationship-ops.js";
+// Import shared types and operation classes from libsql/ modules
+import {
+  CACHE_CONFIG,
+  DatabaseCorruptionError,
+  DEFAULT_CONFIG,
+  getEmbeddingColumn,
+  type LibSQLGraphConfig,
+  normalizeToSupportedDimension,
+  type ProjectContext,
+  SUPPORTED_DIMENSIONS,
+  type SupportedDimension,
+} from "./libsql/types.js";
+import { VectorOperations, type VectorOpsContext } from "./libsql/vector-ops.js";
 
-// =============================================================================
-// CONFIGURATION
-// =============================================================================
-
-export interface LibSQLGraphConfig {
-  // Vector dimensions (default: 384 for all-MiniLM-L6-v2)
-  dimensions?: number;
-  // Distance metric for vector search
-  metric?: "cosine" | "l2";
-  // Compression level for neighbor storage
-  compression?: "float8" | "float16" | "float32";
-  // DiskANN search list size (higher = better recall, slower)
-  searchL?: number | undefined;
-  // DiskANN insert list size (higher = better quality, slower build)
-  insertL?: number | undefined;
-  // DiskANN max neighbors (lower = smaller index, less memory)
-  maxNeighbors?: number;
-}
-
-const DEFAULT_CONFIG: Required<LibSQLGraphConfig> = {
-  dimensions: 384,
-  metric: "cosine",
-  compression: "float8", // 40-50% less memory than float32
-  searchL: 150,
-  insertL: 30, // Reduced for lower memory peak during batch inserts
-  maxNeighbors: 12, // Reduced from 24 to lower DiskANN disk footprint (~12KB per neighbor, ~3x data overhead)
+// Re-export types for backwards compatibility
+export {
+  type LibSQLGraphConfig,
+  type ProjectContext,
+  type SupportedDimension,
+  SUPPORTED_DIMENSIONS,
+  getEmbeddingColumn,
+  normalizeToSupportedDimension,
+  DatabaseCorruptionError,
 };
-
-// =============================================================================
-// MULTI-DIMENSION SUPPORT
-// =============================================================================
-
-/** Supported embedding dimensions (maps to column names) */
-export const SUPPORTED_DIMENSIONS = [384, 768, 1024, 4096] as const;
-export type SupportedDimension = (typeof SUPPORTED_DIMENSIONS)[number];
-
-/**
- * Get the embedding column name for a given dimension.
- * Throws if dimension is not supported.
- */
-export function getEmbeddingColumn(dimensions: number): string {
-  if (!SUPPORTED_DIMENSIONS.includes(dimensions as SupportedDimension)) {
-    throw new Error(`Unsupported embedding dimension: ${dimensions}. Supported: ${SUPPORTED_DIMENSIONS.join(", ")}`);
-  }
-  return `embedding_${dimensions}`;
-}
-
-/**
- * Normalize dimensions to nearest supported value (rounds up).
- * E.g., 512 → 768, 900 → 1024
- */
-export function normalizeToSupportedDimension(dimensions: number): SupportedDimension {
-  for (const supported of SUPPORTED_DIMENSIONS) {
-    if (dimensions <= supported) return supported;
-  }
-  return 4096; // Max supported
-}
-
-// =============================================================================
-// PROJECT CONTEXT
-// =============================================================================
-
-export interface ProjectContext {
-  projectHash: string;
-  branchName: string;
-  /** Embedding dimensions for this project (default: from global config) */
-  dimensions?: SupportedDimension;
-}
-
-// =============================================================================
-// CACHE CONFIGURATION
-// =============================================================================
-
-const CACHE_CONFIG = {
-  // Embedding cache: store frequently accessed embeddings in memory
-  embeddingCache: {
-    max: 5000, // Max embeddings to cache
-    ttl: 1000 * 60 * 10, // 10 minutes TTL
-  },
-  // Search result cache: cache recent similarity searches
-  searchCache: {
-    max: 500, // Max search results to cache
-    ttl: 1000 * 60 * 2, // 2 minutes TTL (shorter as data changes)
-  },
-  // Metadata cache: parsed metadata objects
-  metadataCache: {
-    max: 10000,
-    ttl: 1000 * 60 * 5, // 5 minutes TTL
-  },
-  // Batch processing concurrency - reduced to prevent native crashes
-  batchConcurrency: 1, // Sequential to avoid libsql native issues with parallel writes
-};
-
-// =============================================================================
-// DATABASE CORRUPTION ERROR
-// =============================================================================
-
-/**
- * Special error class for database corruption.
- * When thrown, callers should trigger database recreation.
- */
-export class DatabaseCorruptionError extends Error {
-  constructor(
-    message: string,
-    public readonly originalError?: Error,
-  ) {
-    super(`DATABASE_CORRUPT: ${message}`);
-    this.name = "DatabaseCorruptionError";
-  }
-}
-
-/**
- * Check if an error indicates database corruption
- */
-function isCorruptionError(error: unknown): boolean {
-  const msg = (error as Error)?.message || String(error);
-  return (
-    msg.includes("SQLITE_CORRUPT") ||
-    msg.includes("database disk image is malformed") ||
-    msg.includes("file is not a database") ||
-    msg.includes("database or disk is full")
-  );
-}
 
 // =============================================================================
 // LIBSQL GRAPH ADAPTER
@@ -171,6 +75,13 @@ export class LibSQLGraphAdapter {
   private searchCache: LRUCache<string, SimilarityResult[]>;
   private metadataCache: LRUCache<string, Record<string, unknown>>;
 
+  // Delegated operations (composition pattern)
+  private entityOps: EntityOperations;
+  private relationshipOps: RelationshipOperations;
+  private vectorOps: VectorOperations;
+  private cacheOps: CacheOperations;
+  private metadataOps: MetadataOperations;
+
   constructor(config: LibSQLGraphConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
 
@@ -178,6 +89,32 @@ export class LibSQLGraphAdapter {
     this.embeddingCache = new LRUCache<string, VectorEmbedding>(CACHE_CONFIG.embeddingCache);
     this.searchCache = new LRUCache<string, SimilarityResult[]>(CACHE_CONFIG.searchCache);
     this.metadataCache = new LRUCache<string, Record<string, unknown>>(CACHE_CONFIG.metadataCache);
+
+    // Initialize operation delegates
+    const getClient = () => this.client;
+    const getContext = () => this.currentContext;
+
+    this.entityOps = new EntityOperations(getClient, getContext, (row) => this.rowToEntity(row));
+    this.relationshipOps = new RelationshipOperations(getClient, getContext, (row) => this.rowToRelationship(row));
+
+    const vectorOpsContext: VectorOpsContext = {
+      getClient,
+      getContext,
+      config: this.config,
+      getEffectiveDimensions: () => this.getEffectiveDimensions(),
+      getEmbeddingColumnName: () => this.getEmbeddingColumnName(),
+      vectorToString: (v) => this.vectorToString(v),
+      stringToVector: (s) => this.stringToVector(s),
+      encodeMetadata: (m) => this.encodeMetadata(m),
+      decodeMetadata: (d) => this.decodeMetadata(d),
+      embeddingCache: this.embeddingCache,
+      searchCache: this.searchCache,
+      ensureProjectVectorIndex: () => this.ensureProjectVectorIndex(),
+    };
+    this.vectorOps = new VectorOperations(vectorOpsContext);
+
+    this.cacheOps = new CacheOperations(getClient, (v) => this.vectorToString(v));
+    this.metadataOps = new MetadataOperations(getClient, getContext);
   }
 
   // ===========================================================================
@@ -756,150 +693,15 @@ export class LibSQLGraphAdapter {
     }
   }
 
-  private async getProjectIndexName(): Promise<string | null> {
-    if (!this.client) return null;
-    const dims = this.getEffectiveDimensions();
-    const indexName = `idx_emb_${dims}_${this.currentContext.projectHash.substring(0, 8)}`;
-    const r = await this.client.execute({
-      sql: `SELECT name FROM sqlite_master WHERE type='index' AND name=?`,
-      args: [indexName],
-    });
-    return r.rows.length > 0 ? indexName : null;
-  }
-
   // ===========================================================================
-  // ENTITY OPERATIONS
+  // ENTITY OPERATIONS (delegated to EntityOperations)
   // ===========================================================================
 
-  async insertEntity(entity: Entity): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
+  insertEntity = (entity: Entity): Promise<void> => this.entityOps.insertEntity(entity);
+  insertEntities = (entities: Entity[]): Promise<BatchResult> => this.entityOps.insertEntities(entities);
+  getEntity = (id: string): Promise<Entity | null> => this.entityOps.getEntity(id);
 
-    const { projectHash, branchName } = this.currentContext;
-    const now = Date.now();
-
-    await this.client.execute({
-      sql: `
-        INSERT OR REPLACE INTO entities
-        (id, project_hash, branch_name, name, type, file_path, location, metadata, hash,
-         created_at, updated_at, complexity_score, language, size_bytes, embedding_base64, embedding_text)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      args: [
-        entity.id,
-        projectHash,
-        branchName,
-        entity.name,
-        entity.type,
-        entity.filePath,
-        JSON.stringify(entity.location),
-        JSON.stringify(entity.metadata),
-        entity.hash || null,
-        entity.createdAt || now,
-        entity.updatedAt || now,
-        entity.complexityScore || 1,
-        entity.language || null,
-        entity.sizeBytes || 0,
-        entity.embeddingBase64 || null,
-        entity.embeddingText || null,
-      ],
-    });
-  }
-
-  async insertEntities(entities: Entity[]): Promise<BatchResult> {
-    if (!this.client) throw new Error("Client not initialized");
-    if (entities.length === 0) return { processed: 0, failed: 0, errors: [], timeMs: 0 };
-
-    const start = Date.now();
-    const errors: Array<{ item: unknown; error: string }> = [];
-    const { projectHash, branchName } = this.currentContext;
-    const now = Date.now();
-
-    // Deduplicate by ID
-    const seen = new Set<string>();
-    const unique: Entity[] = [];
-    for (const e of entities) {
-      if (!seen.has(e.id)) {
-        seen.add(e.id);
-        unique.push(e);
-      }
-    }
-
-    // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
-    // Much faster than N separate INSERT statements (reduces parsing overhead)
-    // SQLite limit: ~32767 params, 16 fields per entity → batch 500 = 8000 params (safe)
-    const batchSize = 500;
-
-    let processed = 0;
-
-    for (let i = 0; i < unique.length; i += batchSize) {
-      const batch = unique.slice(i, i + batchSize);
-
-      // Build multi-row VALUES clause
-      const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
-
-      // Flatten all args into single array
-      const args: (string | number | null)[] = [];
-      for (const entity of batch) {
-        args.push(
-          entity.id,
-          projectHash,
-          branchName,
-          entity.name,
-          entity.type,
-          entity.filePath,
-          JSON.stringify(entity.location),
-          JSON.stringify(entity.metadata),
-          entity.hash || null,
-          entity.createdAt || now,
-          entity.updatedAt || now,
-          entity.complexityScore || 1,
-          entity.language || null,
-          entity.sizeBytes || 0,
-          entity.embeddingBase64 || null,
-          entity.embeddingText || null,
-        );
-      }
-
-      const sql = `
-        INSERT OR REPLACE INTO entities
-        (id, project_hash, branch_name, name, type, file_path, location, metadata, hash,
-         created_at, updated_at, complexity_score, language, size_bytes, embedding_base64, embedding_text)
-        VALUES ${valuePlaceholders}
-      `;
-
-      try {
-        await this.client.execute({ sql, args });
-        processed += batch.length;
-      } catch (error) {
-        errors.push({
-          item: { batchStart: i, batchEnd: i + batch.length },
-          error: (error as Error).message,
-        });
-      }
-    }
-
-    return {
-      processed,
-      failed: errors.length,
-      errors,
-      timeMs: Date.now() - start,
-    };
-  }
-
-  async getEntity(id: string): Promise<Entity | null> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    const result = await this.client.execute({
-      sql: `SELECT * FROM entities WHERE id = ? AND project_hash = ? AND branch_name = ?`,
-      args: [id, projectHash, branchName],
-    });
-
-    if (result.rows.length === 0) return null;
-    return this.rowToEntity(result.rows[0]);
-  }
-
-  async findEntities(query: {
+  findEntities(query: {
     filters?: {
       entityType?: EntityType | EntityType[];
       filePath?: string | string[];
@@ -908,1106 +710,131 @@ export class LibSQLGraphAdapter {
     limit?: number;
     offset?: number;
   }): Promise<Entity[]> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    let sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
-    const args: any[] = [projectHash, branchName];
-
-    if (query.filters) {
-      if (query.filters.entityType) {
-        const types = Array.isArray(query.filters.entityType) ? query.filters.entityType : [query.filters.entityType];
-        sql += ` AND type IN (${types.map(() => "?").join(",")})`;
-        args.push(...types);
-      }
-
-      if (query.filters.filePath) {
-        const paths = Array.isArray(query.filters.filePath) ? query.filters.filePath : [query.filters.filePath];
-        // Normalize paths for cross-platform
-        const normalized: string[] = [];
-        for (const p of paths) {
-          normalized.push(p);
-          if (p.includes("/")) normalized.push(p.replace(/\//g, "\\"));
-          if (p.includes("\\")) normalized.push(p.replace(/\\/g, "/"));
-        }
-        const unique = [...new Set(normalized)];
-        sql += ` AND file_path IN (${unique.map(() => "?").join(",")})`;
-        args.push(...unique);
-      }
-
-      if (query.filters.name) {
-        if (query.filters.name instanceof RegExp) {
-          let pattern = query.filters.name.source;
-          pattern = pattern.replace(/\.\*/g, "%").replace(/\*/g, "%").replace(/\./g, "_");
-          if (!pattern.includes("%") && !pattern.includes("_")) {
-            pattern = `%${pattern}%`;
-          }
-          sql += " AND name LIKE ?";
-          args.push(pattern);
-        } else {
-          sql += " AND name = ?";
-          args.push(query.filters.name);
-        }
-      }
-    }
-
-    const limit = Math.min(query.limit || 100, 1000);
-    sql += " LIMIT ? OFFSET ?";
-    args.push(limit, query.offset || 0);
-
-    const result = await this.client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToEntity(row));
+    return this.entityOps.findEntities(query);
   }
 
-  async searchEntities(options: {
+  searchEntities = (options: {
     namePattern?: string | undefined;
     types?: EntityType[] | undefined;
     filePath?: string | undefined;
     limit?: number;
-  }): Promise<Entity[]> {
-    if (!this.client) throw new Error("Client not initialized");
+  }): Promise<Entity[]> => this.entityOps.searchEntities(options);
 
-    const { projectHash, branchName } = this.currentContext;
-    let sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
-    const args: any[] = [projectHash, branchName];
+  searchEntitiesInDirectory = (directoryPath: string): Promise<Entity[]> =>
+    this.entityOps.searchEntitiesInDirectory(directoryPath);
 
-    if (options.namePattern) {
-      sql += " AND name LIKE ?";
-      args.push(`%${options.namePattern}%`);
-    }
+  deleteEntity = (id: string): Promise<void> => this.entityOps.deleteEntity(id);
 
-    if (options.types && options.types.length > 0) {
-      sql += ` AND type IN (${options.types.map(() => "?").join(",")})`;
-      args.push(...options.types);
-    }
-
-    if (options.filePath) {
-      sql += " AND file_path = ?";
-      args.push(options.filePath);
-    }
-
-    sql += " LIMIT ?";
-    args.push(options.limit || 100);
-
-    const result = await this.client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToEntity(row));
-  }
-
-  /**
-   * Search entities by directory path (LIKE pattern)
-   */
-  async searchEntitiesInDirectory(directoryPath: string): Promise<Entity[]> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-
-    // Normalize path separators for cross-platform search
-    const forwardPath = directoryPath.replace(/\\/g, "/");
-    const backPath = directoryPath.replace(/\//g, "\\");
-
-    const sql = `
-      SELECT * FROM entities
-      WHERE project_hash = ? AND branch_name = ?
-      AND (file_path LIKE ? OR file_path LIKE ?)
-    `;
-    const args = [projectHash, branchName, `${forwardPath}%`, `${backPath}%`];
-
-    const result = await this.client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToEntity(row));
-  }
-
-  async deleteEntity(id: string): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    await this.client.execute({
-      sql: "DELETE FROM entities WHERE id = ? AND project_hash = ? AND branch_name = ?",
-      args: [id, projectHash, branchName],
-    });
-  }
-
-  async getAllEntities(): Promise<Entity[]> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    const result = await this.client.execute({
-      sql: "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?",
-      args: [projectHash, branchName],
-    });
-
-    return result.rows.map((row) => this.rowToEntity(row));
-  }
+  getAllEntities = (): Promise<Entity[]> => this.entityOps.getAllEntities();
 
   // ===========================================================================
-  // RELATIONSHIP OPERATIONS
+  // RELATIONSHIP OPERATIONS (delegated to RelationshipOperations)
   // ===========================================================================
 
-  async insertRelationship(relationship: Relationship): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
+  insertRelationship = (relationship: Relationship): Promise<void> =>
+    this.relationshipOps.insertRelationship(relationship);
 
-    const { projectHash, branchName } = this.currentContext;
-    const now = Date.now();
+  insertRelationships = (relationships: Relationship[]): Promise<BatchResult> =>
+    this.relationshipOps.insertRelationships(relationships);
 
-    await this.client.execute({
-      sql: `
-        INSERT OR REPLACE INTO relationships
-        (id, project_hash, branch_name, from_id, to_id, type, metadata, weight, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      args: [
-        relationship.id,
-        projectHash,
-        branchName,
-        relationship.fromId,
-        relationship.toId,
-        relationship.type,
-        relationship.metadata ? JSON.stringify(relationship.metadata) : null,
-        relationship.weight ?? 1.0,
-        relationship.createdAt ?? now,
-      ],
-    });
-  }
+  getRelationshipsForEntity = (entityId: string, type?: RelationType): Promise<Relationship[]> =>
+    this.relationshipOps.getRelationshipsForEntity(entityId, type);
 
-  async insertRelationships(relationships: Relationship[]): Promise<BatchResult> {
-    if (!this.client) throw new Error("Client not initialized");
-    if (relationships.length === 0) return { processed: 0, failed: 0, errors: [], timeMs: 0 };
-
-    const start = Date.now();
-    const errors: Array<{ item: unknown; error: string }> = [];
-    const { projectHash, branchName } = this.currentContext;
-    const now = Date.now();
-
-    // Deduplicate
-    const seen = new Set<string>();
-    const unique: Relationship[] = [];
-    for (const r of relationships) {
-      if (!seen.has(r.id)) {
-        seen.add(r.id);
-        unique.push(r);
-      }
-    }
-
-    // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
-    // Much faster than N separate INSERT statements (reduces parsing overhead)
-    // SQLite limit: ~32767 params, 9 fields per rel → batch 1000 = 9000 params (safe)
-    const batchSize = 1000;
-
-    let processed = 0;
-
-    for (let i = 0; i < unique.length; i += batchSize) {
-      const batch = unique.slice(i, i + batchSize);
-
-      // Build multi-row VALUES clause
-      const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
-
-      // Flatten all args into single array
-      const args: (string | number | null)[] = [];
-      for (const r of batch) {
-        args.push(
-          r.id,
-          projectHash,
-          branchName,
-          r.fromId,
-          r.toId,
-          r.type,
-          r.metadata ? JSON.stringify(r.metadata) : null,
-          r.weight ?? 1.0,
-          r.createdAt ?? now,
-        );
-      }
-
-      const sql = `
-        INSERT OR REPLACE INTO relationships
-        (id, project_hash, branch_name, from_id, to_id, type, metadata, weight, created_at)
-        VALUES ${valuePlaceholders}
-      `;
-
-      try {
-        await this.client.execute({ sql, args });
-        processed += batch.length;
-      } catch (error) {
-        errors.push({
-          item: { batchStart: i, batchEnd: i + batch.length },
-          error: (error as Error).message,
-        });
-      }
-    }
-
-    return {
-      processed,
-      failed: errors.length,
-      errors,
-      timeMs: Date.now() - start,
-    };
-  }
-
-  async getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    let sql = `
-      SELECT * FROM relationships
-      WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
-    `;
-    const args: any[] = [projectHash, branchName, entityId, entityId];
-
-    if (type) {
-      sql += " AND type = ?";
-      args.push(type);
-    }
-
-    const result = await this.client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToRelationship(row));
-  }
-
-  async findRelationships(query: {
+  findRelationships = (query: {
     filters?: { relationshipType?: RelationType | RelationType[] };
     limit?: number;
     offset?: number;
-  }): Promise<Relationship[]> {
-    if (!this.client) throw new Error("Client not initialized");
+  }): Promise<Relationship[]> => this.relationshipOps.findRelationships(query);
 
-    const { projectHash, branchName } = this.currentContext;
-    let sql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
-    const args: any[] = [projectHash, branchName];
-
-    if (query.filters?.relationshipType) {
-      const types = Array.isArray(query.filters.relationshipType)
-        ? query.filters.relationshipType
-        : [query.filters.relationshipType];
-      sql += ` AND type IN (${types.map(() => "?").join(",")})`;
-      args.push(...types);
-    }
-
-    const limit = Math.min(query.limit || 100, 1000);
-    sql += " LIMIT ? OFFSET ?";
-    args.push(limit, query.offset || 0);
-
-    const result = await this.client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToRelationship(row));
-  }
-
-  async deleteRelationship(id: string): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    await this.client.execute({
-      sql: "DELETE FROM relationships WHERE id = ? AND project_hash = ? AND branch_name = ?",
-      args: [id, projectHash, branchName],
-    });
-  }
+  deleteRelationship = (id: string): Promise<void> => this.relationshipOps.deleteRelationship(id);
 
   // ===========================================================================
-  // FILE OPERATIONS
+  // FILE/METADATA OPERATIONS (delegated to MetadataOperations)
   // ===========================================================================
 
-  async updateFileInfo(info: FileInfo): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
+  updateFileInfo = (info: FileInfo): Promise<void> => this.metadataOps.updateFileInfo(info);
 
-    const { projectHash, branchName } = this.currentContext;
-    await this.client.execute({
-      sql: `
-        INSERT OR REPLACE INTO files
-        (path, project_hash, branch_name, hash, last_indexed, entity_count)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `,
-      args: [info.path, projectHash, branchName, info.hash, info.lastIndexed, info.entityCount],
-    });
-  }
+  getFileInfo = (path: string): Promise<FileInfo | null> => this.metadataOps.getFileInfo(path);
 
-  async getFileInfo(path: string): Promise<FileInfo | null> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    const result = await this.client.execute({
-      sql: "SELECT * FROM files WHERE path = ? AND project_hash = ? AND branch_name = ?",
-      args: [path, projectHash, branchName],
-    });
-
-    if (result.rows.length === 0 || !result.rows[0]) return null;
-    const row = result.rows[0];
-    return {
-      path: row["path"] as string,
-      hash: row["hash"] as string,
-      lastIndexed: row["last_indexed"] as number,
-      entityCount: row["entity_count"] as number,
-    };
-  }
-
-  async getOutdatedFiles(since: number): Promise<FileInfo[]> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    const result = await this.client.execute({
-      sql: `
-        SELECT * FROM files
-        WHERE project_hash = ? AND branch_name = ? AND last_indexed < ?
-        ORDER BY last_indexed ASC
-      `,
-      args: [projectHash, branchName, since],
-    });
-
-    return result.rows.map((row) => ({
-      path: row["path"] as string,
-      hash: row["hash"] as string,
-      lastIndexed: row["last_indexed"] as number,
-      entityCount: row["entity_count"] as number,
-    }));
-  }
+  getOutdatedFiles = (since: number): Promise<FileInfo[]> => this.metadataOps.getOutdatedFiles(since);
 
   // ===========================================================================
-  // VECTOR OPERATIONS (DEPRECATED - Use FaissProvider instead)
-  // These methods remain for backwards compatibility but VectorStore v5
-  // now uses FaissProvider directly for all vector operations.
+  // VECTOR OPERATIONS (delegated to VectorOperations)
   // ===========================================================================
 
-  /**
-   * @deprecated Use FaissProvider.add() instead. VectorStore v5 uses Faiss directly.
-   */
-  async insertEmbedding(embedding: VectorEmbedding): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
+  /** @deprecated Use FaissProvider.add() instead */
+  insertEmbedding = (embedding: VectorEmbedding): Promise<void> => this.vectorOps.insertEmbedding(embedding);
 
-    const { projectHash, branchName } = this.currentContext;
-    const dims = this.getEffectiveDimensions();
-    const colName = this.getEmbeddingColumnName();
-    const vectorStr = this.vectorToString(embedding.vector);
+  /** @deprecated Use FaissProvider.addBatch() instead */
+  insertEmbeddingBatch = (embeddings: VectorEmbedding[]): Promise<void> =>
+    this.vectorOps.insertEmbeddingBatch(embeddings);
 
-    // Use CBOR for metadata serialization
-    const metadataBlob = this.encodeMetadata(embedding.metadata);
+  /** @deprecated Faiss HNSW handles live updates, no need to drop/rebuild */
+  dropVectorIndex = (): Promise<void> => this.vectorOps.dropVectorIndex();
 
-    await this.client.execute({
-      sql: `
-        INSERT OR REPLACE INTO embeddings
-        (id, project_hash, branch_name, content, dim_size, ${colName}, metadata, created_at)
-        VALUES (?, ?, ?, ?, ?, vector32(?), ?, ?)
-      `,
-      args: [
-        embedding.id,
-        projectHash,
-        branchName,
-        embedding.content,
-        dims,
-        vectorStr,
-        metadataBlob,
-        embedding.createdAt || Date.now(),
-      ],
-    });
+  /** @deprecated Faiss HNSW maintains index automatically, no rebuild needed */
+  rebuildVectorIndex = (): Promise<void> => this.vectorOps.rebuildVectorIndex();
 
-    // Update cache
-    const cacheKey = `${projectHash}:${branchName}:${embedding.id}`;
-    this.embeddingCache.set(cacheKey, embedding);
+  /** @deprecated Use FaissProvider.addBatch() instead */
+  bulkInsertEmbeddings = (embeddings: VectorEmbedding[]): Promise<void> =>
+    this.vectorOps.bulkInsertEmbeddings(embeddings);
 
-    // Invalidate search cache for this project (data changed)
-    this.invalidateSearchCache(projectHash, branchName);
-  }
+  /** @deprecated Use FaissProvider.search() instead */
+  searchVectors = (queryVector: Float32Array, limit: number): Promise<SimilarityResult[]> =>
+    this.vectorOps.searchVectors(queryVector, limit);
 
-  /**
-   * @deprecated Use FaissProvider.addBatch() instead. VectorStore v5 uses Faiss directly.
-   */
-  async insertEmbeddingBatch(embeddings: VectorEmbedding[]): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-    if (embeddings.length === 0) return;
+  /** @deprecated Use FaissProvider.getContent() instead */
+  getEmbedding = (id: string): Promise<VectorEmbedding | null> => this.vectorOps.getEmbedding(id);
 
-    const { projectHash, branchName } = this.currentContext;
-    const dims = this.getEffectiveDimensions();
-    const colName = this.getEmbeddingColumnName();
-    const now = Date.now();
+  /** @deprecated Use FaissProvider.remove() instead */
+  deleteEmbedding = (id: string): Promise<void> => this.vectorOps.deleteEmbedding(id);
 
-    // Prepare statements with CBOR metadata and dimension-specific column
-    const statements: InStatement[] = embeddings.map((e) => ({
-      sql: `
-        INSERT OR REPLACE INTO embeddings
-        (id, project_hash, branch_name, content, dim_size, ${colName}, metadata, created_at)
-        VALUES (?, ?, ?, ?, ?, vector32(?), ?, ?)
-      `,
-      args: [
-        e.id,
-        projectHash,
-        branchName,
-        e.content,
-        dims,
-        this.vectorToString(e.vector),
-        this.encodeMetadata(e.metadata),
-        e.createdAt || now,
-      ],
-    }));
+  /** @deprecated Use FaissProvider.getVectorCount() instead */
+  getEmbeddingCount = (): Promise<number> => this.vectorOps.getEmbeddingCount();
 
-    // Optimized batch size: 500 for parallel embedding inserts
-    // Balance between round-trips and memory usage
-    const batchSize = 500;
-    const chunks: InStatement[][] = [];
-    for (let i = 0; i < statements.length; i += batchSize) {
-      chunks.push(statements.slice(i, i + batchSize));
-    }
-
-    let totalInserted = 0;
-
-    // Process all chunks in parallel for better throughput
-    // libsql handles concurrent writes safely with WAL mode
-    const batchPromises = chunks.map(async (batch, index) => {
-      if (!batch || batch.length === 0) return 0;
-      try {
-        await this.client!.batch(batch, "write");
-        return batch.length;
-      } catch (error) {
-        logger.error("EMBEDDING_INSERT", `Batch ${index} failed`, { error: (error as Error).message });
-        throw error;
-      }
-    });
-
-    const results = await Promise.all(batchPromises);
-    totalInserted = results.reduce((sum, count) => sum + count, 0);
-
-    // Update embedding cache
-    for (const e of embeddings) {
-      const cacheKey = `${projectHash}:${branchName}:${e.id}`;
-      this.embeddingCache.set(cacheKey, e);
-    }
-
-    // Invalidate search cache
-    this.invalidateSearchCache(projectHash, branchName);
-
-    // PRAGMA optimize only after very large batches (500+) to avoid overhead
-    // This improves query planning without slowing down small inserts
-    if (totalInserted >= 500) {
-      try {
-        await this.client.execute("PRAGMA optimize");
-      } catch {
-        // Ignore PRAGMA errors
-      }
-    }
-
-    // WAL checkpoint only after very large batches (500+)
-    // Frequent checkpoints were causing 8-12s delays on large batches
-    if (totalInserted >= 500) {
-      try {
-        await this.client.execute("PRAGMA wal_checkpoint(TRUNCATE)");
-      } catch {
-        // Ignore checkpoint errors (might not be in WAL mode)
-      }
-    }
-  }
-
-  /**
-   * @deprecated Faiss HNSW handles live updates, no need to drop/rebuild.
-   * Drop project-specific vector index for faster bulk inserts
-   */
-  async dropVectorIndex(): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-    const { projectHash } = this.currentContext;
-    const dims = this.getEffectiveDimensions();
-    const partialIndexName = `idx_emb_${dims}_${projectHash.substring(0, 8)}`;
-    const start = Date.now();
-    logger.trace("LIBSQL_INDEX", `▶ dropVectorIndex START`, { indexName: partialIndexName, projectHash, dims });
-
-    // Drop project partial index only (no global index anymore)
-    try {
-      await this.client.execute(`DROP INDEX IF EXISTS ${partialIndexName}`);
-      logger.trace("LIBSQL_INDEX", `◀ dropVectorIndex END`, { indexName: partialIndexName, ms: Date.now() - start });
-      logger.info("LIBSQL_INDEX", `Dropped project vector index`, {
-        indexName: partialIndexName,
-        projectHash,
-        dims,
-        ms: Date.now() - start,
-      });
-    } catch (error) {
-      logger.warn("LIBSQL_INDEX", `Failed to drop project vector index`, {
-        indexName: partialIndexName,
-        error: (error as Error).message,
-      });
-    }
-  }
-
-  /**
-   * @deprecated Faiss HNSW maintains index automatically, no rebuild needed.
-   * Rebuild vector index for current project (partial index) after bulk inserts
-   */
-  async rebuildVectorIndex(): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-    const { projectHash } = this.currentContext;
-    const dims = this.getEffectiveDimensions();
-    const colName = this.getEmbeddingColumnName();
-    const indexName = `idx_emb_${dims}_${projectHash.substring(0, 8)}`;
-    const start = Date.now();
-    logger.warn("LIBSQL_INDEX", `[REBUILD] START`, { indexName, projectHash, dims });
-    logger.trace("LIBSQL_INDEX", `▶ rebuildVectorIndex START`, { indexName, projectHash, dims });
-
-    const indexParams = [
-      `'metric=${this.config.metric}'`,
-      `'compress_neighbors=${this.config.compression}'`,
-      `'max_neighbors=${this.config.maxNeighbors}'`,
-      `'search_l=${this.config.searchL}'`,
-      `'insert_l=${this.config.insertL}'`,
-    ].join(", ");
-
-    try {
-      await this.client.execute(`
-        CREATE INDEX IF NOT EXISTS ${indexName}
-        ON embeddings(libsql_vector_idx(${colName}, ${indexParams}))
-        WHERE project_hash = '${projectHash}' AND dim_size = ${dims}
-      `);
-      const elapsed = Date.now() - start;
-      logger.warn("LIBSQL_INDEX", `[REBUILD] END`, { indexName, dims, ms: elapsed });
-      logger.trace("LIBSQL_INDEX", `◀ rebuildVectorIndex END`, { indexName, ms: elapsed });
-      logger.info("LIBSQL_INDEX", `Rebuilt project vector index`, { indexName, projectHash, dims, ms: elapsed });
-    } catch (error) {
-      logger.trace("LIBSQL_INDEX", `◀ rebuildVectorIndex FAILED`, { indexName, error: (error as Error).message });
-      logger.warn("LIBSQL_INDEX", `Failed to rebuild project vector index`, {
-        indexName,
-        error: (error as Error).message,
-      });
-    }
-  }
-
-  /**
-   * @deprecated Use FaissProvider.addBatch() instead. VectorStore v5 uses Faiss directly.
-   * Bulk insert embeddings with index drop/rebuild for maximum performance
-   */
-  async bulkInsertEmbeddings(embeddings: VectorEmbedding[]): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-    if (embeddings.length === 0) return;
-
-    const start = Date.now();
-    logger.trace("LIBSQL_BULK", `▶ bulkInsertEmbeddings START`, { count: embeddings.length });
-    logger.info("LIBSQL_BULK", `Starting bulk insert`, { count: embeddings.length });
-
-    // Drop index for faster inserts
-    await this.dropVectorIndex();
-
-    const { projectHash, branchName } = this.currentContext;
-    const dims = this.getEffectiveDimensions();
-    const colName = this.getEmbeddingColumnName();
-    const now = Date.now();
-
-    // Prepare all statements with dimension-specific column
-    const statements: InStatement[] = embeddings.map((e) => ({
-      sql: `
-        INSERT OR REPLACE INTO embeddings
-        (id, project_hash, branch_name, content, dim_size, ${colName}, metadata, created_at)
-        VALUES (?, ?, ?, ?, ?, vector32(?), ?, ?)
-      `,
-      args: [
-        e.id,
-        projectHash,
-        branchName,
-        e.content,
-        dims,
-        this.vectorToString(e.vector),
-        this.encodeMetadata(e.metadata),
-        e.createdAt || now,
-      ],
-    }));
-
-    // Large batch size since no index updates during insert
-    const batchSize = 500;
-    const totalBatches = Math.ceil(statements.length / batchSize);
-    for (let i = 0; i < statements.length; i += batchSize) {
-      const batch = statements.slice(i, i + batchSize);
-      const batchNum = Math.floor(i / batchSize) + 1;
-      logger.trace("LIBSQL_BULK", `  batch ${batchNum}/${totalBatches}`, { size: batch.length });
-      await this.client.batch(batch, "write");
-    }
-
-    // Update cache
-    for (const e of embeddings) {
-      const cacheKey = `${projectHash}:${branchName}:${e.id}`;
-      this.embeddingCache.set(cacheKey, e);
-    }
-
-    // Rebuild index
-    await this.rebuildVectorIndex();
-
-    this.invalidateSearchCache(projectHash, branchName);
-    logger.trace("LIBSQL_BULK", `◀ bulkInsertEmbeddings END`, { count: embeddings.length, ms: Date.now() - start });
-    logger.info("LIBSQL_BULK", `Bulk insert complete`, { count: embeddings.length, ms: Date.now() - start });
-  }
-
-  /**
-   * Invalidate search cache for a specific project/branch
-   */
-  private invalidateSearchCache(_projectHash: string, _branchName: string): void {
-    // LRU cache doesn't support prefix deletion, but we can clear entries on access
-    // For now, just clear all search cache when data changes (simple approach)
-    this.searchCache.clear();
-  }
-
-  /**
-   * @deprecated Use FaissProvider.search() instead. VectorStore v5 uses Faiss directly.
-   */
-  async searchVectors(queryVector: Float32Array, limit: number): Promise<SimilarityResult[]> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    const dims = this.getEffectiveDimensions();
-    const colName = this.getEmbeddingColumnName();
-    const vectorStr = this.vectorToString(queryVector);
-
-    // Check search cache first (use first 16 floats as key for speed)
-    const cacheKey = `${projectHash}:${branchName}:${dims}:${limit}:${Array.from(queryVector.slice(0, 16)).join(",")}`;
-    const cached = this.searchCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
-    // Check embedding count for this project and dimension
-    const countResult = await this.client.execute({
-      sql: `SELECT COUNT(*) as cnt FROM embeddings WHERE project_hash = ? AND branch_name = ? AND dim_size = ?`,
-      args: [projectHash, branchName, dims],
-    });
-    const embeddingCount = (countResult.rows[0]?.["cnt"] as number) || 0;
-
-    if (embeddingCount === 0) {
-      return [];
-    }
-
-    let result: Awaited<ReturnType<typeof this.client.execute>> | undefined;
-
-    if (embeddingCount <= 500) {
-      // Direct cosine distance for small sets - fast and accurate
-      result = await this.client.execute({
-        sql: `SELECT id, content, metadata, vector_distance_cos(${colName}, vector32(?)) as distance
-            FROM embeddings WHERE project_hash = ? AND branch_name = ? AND dim_size = ?
-            ORDER BY distance ASC LIMIT ?`,
-        args: [vectorStr, projectHash, branchName, dims, limit],
-      });
-    } else {
-      // Use project-specific partial index for fast ANN search
-      let partialIndexName = await this.getProjectIndexName();
-
-      // Auto-create partial index if missing
-      if (!partialIndexName) {
-        await this.ensureProjectVectorIndex();
-        partialIndexName = await this.getProjectIndexName();
-      }
-
-      if (!partialIndexName) {
-        throw new Error(
-          `Vector index not available for project ${projectHash}. Ensure embeddings are generated first.`,
-        );
-      }
-
-      result = await this.client.execute({
-        sql: `SELECT t.id, t.content, t.metadata
-            FROM vector_top_k('${partialIndexName}', vector32(?), ?) AS v
-            JOIN embeddings t ON t.rowid = v.id`,
-        args: [vectorStr, limit],
-      });
-    }
-
-    const results = this.processVectorResults(result, limit);
-
-    // Cache results for repeated queries
-    this.searchCache.set(cacheKey, results);
-
-    return results;
-  }
-
-  /**
-   * @deprecated Use FaissProvider.getContent() instead. VectorStore v5 uses Faiss directly.
-   */
-  async getEmbedding(id: string): Promise<VectorEmbedding | null> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    const colName = this.getEmbeddingColumnName();
-
-    // Check embedding cache first
-    const cacheKey = `${projectHash}:${branchName}:${id}`;
-    const cached = this.embeddingCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
-    const result = await this.client.execute({
-      sql: `
-        SELECT id, content, vector_extract(${colName}) as vector, metadata, created_at
-        FROM embeddings
-        WHERE id = ? AND project_hash = ? AND branch_name = ?
-      `,
-      args: [id, projectHash, branchName],
-    });
-
-    if (result.rows.length === 0 || !result.rows[0]) return null;
-    const row = result.rows[0];
-
-    // Decode metadata using CBOR (with fallback to JSON)
-    const metadataRaw = row["metadata"];
-    const metadata = metadataRaw ? this.decodeMetadata(metadataRaw as Buffer | string) : undefined;
-
-    const embedding: VectorEmbedding = {
-      id: row["id"] as string,
-      content: row["content"] as string,
-      vector: this.stringToVector(row["vector"] as string),
-      metadata,
-      createdAt: row["created_at"] as number,
-    };
-
-    // Cache for future access
-    this.embeddingCache.set(cacheKey, embedding);
-
-    return embedding;
-  }
-
-  /**
-   * @deprecated Use FaissProvider.remove() instead. VectorStore v5 uses Faiss directly.
-   */
-  async deleteEmbedding(id: string): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    await this.client.execute({
-      sql: "DELETE FROM embeddings WHERE id = ? AND project_hash = ? AND branch_name = ?",
-      args: [id, projectHash, branchName],
-    });
-
-    // Invalidate caches
-    const cacheKey = `${projectHash}:${branchName}:${id}`;
-    this.embeddingCache.delete(cacheKey);
-    this.invalidateSearchCache(projectHash, branchName);
-  }
-
-  /**
-   * @deprecated Use FaissProvider.getVectorCount() instead. VectorStore v5 uses Faiss directly.
-   */
-  async getEmbeddingCount(): Promise<number> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    logger.trace("LIBSQL", "[getEmbeddingCount] Executing SQL...", { projectHash, branchName });
-    const result = await this.client.execute({
-      sql: "SELECT COUNT(*) as cnt FROM embeddings WHERE project_hash = ? AND branch_name = ?",
-      args: [projectHash, branchName],
-    });
-    logger.trace("LIBSQL", "[getEmbeddingCount] SQL done", { rowCount: result.rows.length });
-
-    return (result.rows[0]?.["cnt"] as number) || 0;
-  }
-
-  /**
-   * @deprecated Use FaissProvider.getExistingIds() instead. VectorStore v5 uses Faiss directly.
-   * Batch check which embedding IDs already exist
-   */
-  async getExistingEmbeddingIds(ids: string[]): Promise<Set<string>> {
-    if (!this.client) throw new Error("Client not initialized");
-    if (ids.length === 0) return new Set();
-
-    const { projectHash, branchName } = this.currentContext;
-    // Debug: log context to diagnose mismatch
-    if (ids.length > 0 && ids.length <= 100) {
-      logger.trace("LIBSQL", `getExistingEmbeddingIds context`, { projectHash, branchName, idsCount: ids.length });
-    }
-    const existingIds = new Set<string>();
-
-    // First check cache
-    const uncachedIds: string[] = [];
-    for (const id of ids) {
-      const cacheKey = `${projectHash}:${branchName}:${id}`;
-      if (this.embeddingCache.has(cacheKey)) {
-        existingIds.add(id);
-      } else {
-        uncachedIds.push(id);
-      }
-    }
-
-    if (uncachedIds.length === 0) {
-      return existingIds;
-    }
-
-    // Query in batches of 500 to avoid SQL limits
-    const batchSize = 500;
-    for (let i = 0; i < uncachedIds.length; i += batchSize) {
-      const batch = uncachedIds.slice(i, i + batchSize);
-      const placeholders = batch.map(() => "?").join(",");
-
-      try {
-        const result = await this.client.execute({
-          sql: `
-            SELECT id FROM embeddings
-            WHERE id IN (${placeholders})
-            AND project_hash = ? AND branch_name = ?
-          `,
-          args: [...batch, projectHash, branchName],
-        });
-
-        // Debug: log SQL result for first batch
-        if (i === 0 && batch.length > 0) {
-          logger.trace("LIBSQL", `getExistingEmbeddingIds SQL result`, {
-            queriedIds: batch.slice(0, 3),
-            foundCount: result.rows.length,
-            foundIds: result.rows.slice(0, 3).map((r) => r["id"]),
-          });
-        }
-
-        for (const row of result.rows) {
-          existingIds.add(row["id"] as string);
-        }
-      } catch (error) {
-        // Re-throw corruption errors to prevent silent duplicate generation
-        if (isCorruptionError(error)) {
-          throw new DatabaseCorruptionError("Database corruption detected during embedding ID check", error as Error);
-        }
-        throw error;
-      }
-    }
-
-    return existingIds;
-  }
+  /** @deprecated Use FaissProvider.getExistingIds() instead */
+  getExistingEmbeddingIds = (ids: string[]): Promise<Set<string>> => this.vectorOps.getExistingEmbeddingIds(ids);
 
   // ===========================================================================
-  // EMBEDDING CACHE OPERATIONS (global cache by content hash)
+  // EMBEDDING CACHE OPERATIONS (delegated to CacheOperations)
   // ===========================================================================
 
-  /**
-   * Get cached embedding by content hash.
-   * Returns null if not found.
-   */
-  async getEmbeddingFromCache(contentHash: string): Promise<Float32Array | null> {
-    if (!this.client) return null;
+  getEmbeddingFromCache = (contentHash: string): Promise<Float32Array | null> =>
+    this.cacheOps.getEmbeddingFromCache(contentHash);
 
-    try {
-      const result = await this.client.execute({
-        sql: `SELECT embedding FROM embedding_cache WHERE content_hash = ?`,
-        args: [contentHash],
-      });
+  getEmbeddingsFromCache = (contentHashes: string[]): Promise<Map<string, Float32Array>> =>
+    this.cacheOps.getEmbeddingsFromCache(contentHashes);
 
-      if (result.rows.length === 0) return null;
-
-      // Update last_used_at and hit_count for LRU tracking
-      await this.client.execute({
-        sql: `UPDATE embedding_cache SET last_used_at = ?, hit_count = hit_count + 1 WHERE content_hash = ?`,
-        args: [Date.now(), contentHash],
-      });
-
-      const row = result.rows[0];
-      if (!row?.["embedding"]) return null;
-      const embeddingBlob = row["embedding"] as ArrayBuffer;
-      return new Float32Array(embeddingBlob);
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Get multiple cached embeddings by content hashes.
-   * Returns Map of contentHash -> Float32Array for found entries.
-   */
-  async getEmbeddingsFromCache(contentHashes: string[]): Promise<Map<string, Float32Array>> {
-    if (!this.client || contentHashes.length === 0) return new Map();
-
-    const result = new Map<string, Float32Array>();
-    const now = Date.now();
-
-    try {
-      // Batch query for efficiency
-      const placeholders = contentHashes.map(() => "?").join(",");
-      const queryResult = await this.client.execute({
-        sql: `SELECT content_hash, embedding FROM embedding_cache WHERE content_hash IN (${placeholders})`,
-        args: contentHashes,
-      });
-
-      const foundHashes: string[] = [];
-      for (const row of queryResult.rows) {
-        const hash = row["content_hash"] as string;
-        const embeddingBlob = row["embedding"] as ArrayBuffer;
-        result.set(hash, new Float32Array(embeddingBlob));
-        foundHashes.push(hash);
-      }
-
-      // Batch update last_used_at for LRU
-      if (foundHashes.length > 0) {
-        const updatePlaceholders = foundHashes.map(() => "?").join(",");
-        await this.client.execute({
-          sql: `UPDATE embedding_cache SET last_used_at = ?, hit_count = hit_count + 1 WHERE content_hash IN (${updatePlaceholders})`,
-          args: [now, ...foundHashes],
-        });
-      }
-    } catch {
-      // Ignore cache errors
-    }
-
-    return result;
-  }
-
-  /**
-   * Store embedding in cache by content hash.
-   */
-  async setEmbeddingInCache(
+  setEmbeddingInCache = (
     contentHash: string,
     model: string,
     embedding: Float32Array,
-    textPreview?: string | undefined,
-  ): Promise<void> {
-    if (!this.client) return;
+    textPreview?: string,
+  ): Promise<void> => this.cacheOps.setEmbeddingInCache(contentHash, model, embedding, textPreview);
 
-    const now = Date.now();
-    try {
-      const vectorStr = this.vectorToString(embedding);
-      await this.client.execute({
-        sql: `INSERT OR REPLACE INTO embedding_cache
-              (content_hash, model, embedding, text_preview, hit_count, created_at, last_used_at)
-              VALUES (?, ?, vector32(?), ?, 0, ?, ?)`,
-        args: [contentHash, model, vectorStr, textPreview?.slice(0, 100) ?? null, now, now],
-      });
-    } catch {
-      // Ignore cache write errors
-    }
-  }
-
-  /**
-   * Store multiple embeddings in cache (batch operation).
-   */
-  async setEmbeddingsInCache(
+  setEmbeddingsInCache = (
     entries: Array<{ contentHash: string; model: string; embedding: Float32Array; textPreview?: string }>,
-  ): Promise<void> {
-    if (!this.client || entries.length === 0) return;
-
-    const now = Date.now();
-    try {
-      const statements = entries.map((entry) => ({
-        sql: `INSERT OR REPLACE INTO embedding_cache
-              (content_hash, model, embedding, text_preview, hit_count, created_at, last_used_at)
-              VALUES (?, ?, vector32(?), ?, 0, ?, ?)`,
-        args: [
-          entry.contentHash,
-          entry.model,
-          this.vectorToString(entry.embedding),
-          entry.textPreview?.slice(0, 100) ?? null,
-          now,
-          now,
-        ],
-      }));
-
-      await this.client.batch(statements as any, "write");
-    } catch {
-      // Ignore cache write errors
-    }
-  }
+  ): Promise<void> => this.cacheOps.setEmbeddingsInCache(entries);
 
   // ===========================================================================
-  // METADATA OPERATIONS
+  // METADATA OPERATIONS (delegated to MetadataOperations)
   // ===========================================================================
 
-  async updateProjectMetadata(projectPath: string, isFullIndex = false): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
+  updateProjectMetadata = (projectPath: string, isFullIndex?: boolean): Promise<void> =>
+    this.metadataOps.updateProjectMetadata(projectPath, isFullIndex);
 
-    const { projectHash, branchName } = this.currentContext;
-    const now = Date.now();
-
-    // Count entities and files
-    const entityCount = await this.client.execute({
-      sql: "SELECT COUNT(*) as count FROM entities WHERE project_hash = ? AND branch_name = ?",
-      args: [projectHash, branchName],
-    });
-    const fileCount = await this.client.execute({
-      sql: "SELECT COUNT(*) as count FROM files WHERE project_hash = ? AND branch_name = ?",
-      args: [projectHash, branchName],
-    });
-
-    // Get existing tracking data to preserve it (or reset if full index)
-    const existing = await this.client.execute({
-      sql: `SELECT last_full_index_at, incremental_changes_count, created_at
-            FROM project_metadata WHERE project_hash = ? AND branch_name = ?`,
-      args: [projectHash, branchName],
-    });
-
-    const existingRow = existing.rows[0];
-    const createdAt = (existingRow?.["created_at"] as number) || now;
-
-    // On full index: reset counter and update last_full_index_at
-    // On incremental: preserve existing values
-    const lastFullIndexAt = isFullIndex ? now : (existingRow?.["last_full_index_at"] as number) || 0;
-    const incrementalChangesCount = isFullIndex ? 0 : (existingRow?.["incremental_changes_count"] as number) || 0;
-
-    await this.client.execute({
-      sql: `
-        INSERT OR REPLACE INTO project_metadata
-        (project_hash, branch_name, project_path, last_indexed_at, entity_count, file_count,
-         created_at, updated_at, last_full_index_at, incremental_changes_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      args: [
-        projectHash,
-        branchName,
-        projectPath,
-        now,
-        (entityCount.rows[0]?.["count"] as number) || 0,
-        (fileCount.rows[0]?.["count"] as number) || 0,
-        createdAt,
-        now,
-        lastFullIndexAt,
-        incrementalChangesCount,
-      ],
-    });
-  }
-
-  /**
-   * Get incremental tracking info for the current project/branch
-   */
-  async getIncrementalTrackingInfo(): Promise<{
+  getIncrementalTrackingInfo = (): Promise<{
     lastFullIndexAt: number;
     incrementalChangesCount: number;
     totalFiles: number;
-  }> {
-    if (!this.client) throw new Error("Client not initialized");
+  }> => this.metadataOps.getIncrementalTrackingInfo();
 
-    const { projectHash, branchName } = this.currentContext;
+  recordIncrementalChanges = (changedFileCount: number): Promise<void> =>
+    this.metadataOps.recordIncrementalChanges(changedFileCount);
 
-    const result = await this.client.execute({
-      sql: `SELECT last_full_index_at, incremental_changes_count, file_count
-            FROM project_metadata WHERE project_hash = ? AND branch_name = ?`,
-      args: [projectHash, branchName],
-    });
+  resetIncrementalTracking = (): Promise<void> => this.metadataOps.resetIncrementalTracking();
 
-    if (result.rows.length === 0) {
-      return { lastFullIndexAt: 0, incrementalChangesCount: 0, totalFiles: 0 };
-    }
-
-    const row = result.rows[0]!;
-    return {
-      lastFullIndexAt: (row["last_full_index_at"] as number) || 0,
-      incrementalChangesCount: (row["incremental_changes_count"] as number) || 0,
-      totalFiles: (row["file_count"] as number) || 0,
-    };
-  }
-
-  /**
-   * Record incremental file changes (called after each incremental update)
-   * @param changedFileCount Number of files changed in this update
-   */
-  async recordIncrementalChanges(changedFileCount: number): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-
-    await this.client.execute({
-      sql: `UPDATE project_metadata
-            SET incremental_changes_count = incremental_changes_count + ?,
-                updated_at = ?
-            WHERE project_hash = ? AND branch_name = ?`,
-      args: [changedFileCount, Date.now(), projectHash, branchName],
-    });
-  }
-
-  /**
-   * Reset incremental tracking (called after full index)
-   */
-  async resetIncrementalTracking(): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.currentContext;
-    const now = Date.now();
-
-    await this.client.execute({
-      sql: `UPDATE project_metadata
-            SET last_full_index_at = ?,
-                incremental_changes_count = 0,
-                updated_at = ?
-            WHERE project_hash = ? AND branch_name = ?`,
-      args: [now, now, projectHash, branchName],
-    });
-  }
-
-  async listProjects(): Promise<
+  listProjects = (): Promise<
     Array<{
       projectHash: string;
       branchName: string;
@@ -2016,152 +843,35 @@ export class LibSQLGraphAdapter {
       entityCount: number;
       fileCount: number;
     }>
-  > {
-    if (!this.client) throw new Error("Client not initialized");
+  > => this.metadataOps.listProjects();
 
-    const result = await this.client.execute(`
-      SELECT project_hash, branch_name, project_path, last_indexed_at, entity_count, file_count
-      FROM project_metadata
-      ORDER BY updated_at DESC
-    `);
-
-    return result.rows.map((r) => ({
-      projectHash: r["project_hash"] as string,
-      branchName: r["branch_name"] as string,
-      projectPath: r["project_path"] as string,
-      lastIndexedAt: r["last_indexed_at"] as number,
-      entityCount: r["entity_count"] as number,
-      fileCount: r["file_count"] as number,
-    }));
-  }
-
-  async listBranches(): Promise<string[]> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const { projectHash } = this.currentContext;
-    const result = await this.client.execute({
-      sql: `
-        SELECT DISTINCT branch_name FROM project_metadata
-        WHERE project_hash = ?
-        ORDER BY branch_name
-      `,
-      args: [projectHash],
-    });
-
-    return result.rows.map((r) => r["branch_name"] as string);
-  }
+  listBranches = (): Promise<string[]> => this.metadataOps.listBranches();
 
   // ===========================================================================
-  // METRICS & STATS
+  // METRICS & STATS (delegated to MetadataOperations)
   // ===========================================================================
 
-  async getStats(): Promise<{
+  getStats = (): Promise<{
     totalEntities: number;
     totalRelationships: number;
     totalFiles: number;
     totalEmbeddings: number;
-  }> {
-    if (!this.client) throw new Error("Client not initialized");
+  }> => this.metadataOps.getStats();
 
-    const { projectHash, branchName } = this.currentContext;
-
-    const [entities, relationships, files, embeddings] = await Promise.all([
-      this.client.execute({
-        sql: "SELECT COUNT(*) as cnt FROM entities WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
-      }),
-      this.client.execute({
-        sql: "SELECT COUNT(*) as cnt FROM relationships WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
-      }),
-      this.client.execute({
-        sql: "SELECT COUNT(*) as cnt FROM files WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
-      }),
-      this.client.execute({
-        sql: "SELECT COUNT(*) as cnt FROM embeddings WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
-      }),
-    ]);
-
-    return {
-      totalEntities: (entities.rows[0]?.["cnt"] as number) || 0,
-      totalRelationships: (relationships.rows[0]?.["cnt"] as number) || 0,
-      totalFiles: (files.rows[0]?.["cnt"] as number) || 0,
-      totalEmbeddings: (embeddings.rows[0]?.["cnt"] as number) || 0,
-    };
-  }
-
-  async getTotalStats(): Promise<{
+  getTotalStats = (): Promise<{
     totalEntities: number;
     totalRelationships: number;
     totalFiles: number;
     totalEmbeddings: number;
-  }> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    const [entities, relationships, files, embeddings] = await Promise.all([
-      this.client.execute("SELECT COUNT(*) as cnt FROM entities"),
-      this.client.execute("SELECT COUNT(*) as cnt FROM relationships"),
-      this.client.execute("SELECT COUNT(*) as cnt FROM files"),
-      this.client.execute("SELECT COUNT(*) as cnt FROM embeddings"),
-    ]);
-
-    return {
-      totalEntities: (entities.rows[0]?.["cnt"] as number) || 0,
-      totalRelationships: (relationships.rows[0]?.["cnt"] as number) || 0,
-      totalFiles: (files.rows[0]?.["cnt"] as number) || 0,
-      totalEmbeddings: (embeddings.rows[0]?.["cnt"] as number) || 0,
-    };
-  }
+  }> => this.metadataOps.getTotalStats();
 
   // ===========================================================================
-  // CLEAR OPERATIONS
+  // CLEAR OPERATIONS (delegated to MetadataOperations)
   // ===========================================================================
 
-  async clear(): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
+  clear = (): Promise<void> => this.metadataOps.clear();
 
-    const { projectHash, branchName } = this.currentContext;
-
-    await this.client.batch(
-      [
-        { sql: "DELETE FROM embeddings WHERE project_hash = ? AND branch_name = ?", args: [projectHash, branchName] },
-        {
-          sql: "DELETE FROM relationships WHERE project_hash = ? AND branch_name = ?",
-          args: [projectHash, branchName],
-        },
-        { sql: "DELETE FROM entities WHERE project_hash = ? AND branch_name = ?", args: [projectHash, branchName] },
-        { sql: "DELETE FROM files WHERE project_hash = ? AND branch_name = ?", args: [projectHash, branchName] },
-        { sql: "DELETE FROM query_cache WHERE project_hash = ? AND branch_name = ?", args: [projectHash, branchName] },
-        {
-          sql: "DELETE FROM project_metadata WHERE project_hash = ? AND branch_name = ?",
-          args: [projectHash, branchName],
-        },
-      ],
-      "write",
-    );
-
-    console.error(`[LibSQLGraphAdapter] Cleared data for ${projectHash}/${branchName}`);
-  }
-
-  async clearAll(): Promise<void> {
-    if (!this.client) throw new Error("Client not initialized");
-
-    await this.client.batch(
-      [
-        { sql: "DELETE FROM embeddings", args: [] },
-        { sql: "DELETE FROM relationships", args: [] },
-        { sql: "DELETE FROM entities", args: [] },
-        { sql: "DELETE FROM files", args: [] },
-        { sql: "DELETE FROM query_cache", args: [] },
-        { sql: "DELETE FROM project_metadata", args: [] },
-      ],
-      "write",
-    );
-
-    console.error(`[LibSQLGraphAdapter] Cleared ALL data`);
-  }
+  clearAll = (): Promise<void> => this.metadataOps.clearAll();
 
   async close(): Promise<void> {
     if (this.client) {
@@ -2216,31 +926,6 @@ export class LibSQLGraphAdapter {
     const clean = str.replace(/[[\]]/g, "");
     const values = clean.split(",").map((s) => parseFloat(s.trim()));
     return new Float32Array(values);
-  }
-
-  // parseMetadata removed - using decodeMetadata instead (CBOR-based)
-
-  private processVectorResults(result: ResultSet, limit: number): SimilarityResult[] {
-    const results: SimilarityResult[] = [];
-
-    for (const row of result.rows) {
-      const position = results.length;
-      const estimatedSimilarity = Math.max(0.1, 1 - position * 0.05);
-
-      // Use CBOR decoding with JSON fallback
-      const metadata = row["metadata"] ? this.decodeMetadata(row["metadata"] as Buffer | string) : undefined;
-
-      results.push({
-        id: row["id"] as string,
-        content: row["content"] as string,
-        similarity: estimatedSimilarity,
-        metadata,
-      });
-
-      if (results.length >= limit) break;
-    }
-
-    return results;
   }
 
   // ===========================================================================

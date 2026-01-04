@@ -146,16 +146,7 @@ export interface SemanticResult {
   processingTime: number;
 }
 
-/**
- * Cache entry for embeddings
- */
-export interface CacheEntry<T> {
-  key: string;
-  value: T;
-  timestamp: number;
-  hits: number;
-  ttl?: number | undefined;
-}
+// CacheEntry removed - use CacheEntry from storage.ts instead
 
 /**
  * Vector backend type

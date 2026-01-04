@@ -20,6 +20,7 @@
 
 import { join } from "node:path";
 import type { z } from "zod";
+import { executeGenerateDocs } from "../../autodoc/generator/generate-handler-utils.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import {
   AutoDocChangelogSchema,
@@ -570,221 +571,31 @@ export class AutoDocGenerateToolHandler extends BaseToolHandler<z.infer<typeof A
       return autodocNotEnabledResult();
     }
 
-    const nodePath = await import("node:path");
-    const { execSync } = await import("node:child_process");
-    const { writeDocumentToDisk } = await import("../../autodoc/sync/file-sync.js");
-
-    // Use provided rootDir or current directory
-    const targetDir = this.context.normalizeInputPath(args.rootDir || "") || process.cwd();
-
-    // Find git repo root for .autodoc/ (falls back to targetDir)
-    let repoRoot = targetDir;
-    try {
-      repoRoot = execSync("git rev-parse --show-toplevel", {
-        cwd: targetDir,
-        encoding: "utf-8",
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
-    } catch {
-      // Not a git repo, use targetDir
-    }
-
-    const targetAutodocDir = args.autodocDir
-      ? this.context.normalizeInputPath(args.autodocDir) || args.autodocDir
-      : nodePath.join(repoRoot, ".autodoc");
-
-    // Detect language if auto
-    let docLanguage: "auto" | "en" | "ru" | "zh" = args.language || "auto";
-    if (docLanguage === "auto") {
-      try {
-        const adm = await container.getAutoDocManager();
-        docLanguage = adm?.getConfig()?.language || "en";
-      } catch {
-        docLanguage = "en";
-      }
-    }
-
-    // Import generator and general docs handler
-    const { generateDocs } = await import("../../autodoc/generator/doc-generator.js");
-    const { ensureGeneralDocs } = await import("../../autodoc/generator/general-docs.js");
-
-    // Ensure .autodoc/ exists with template files (creates only if missing)
-    ensureGeneralDocs(targetAutodocDir);
-
-    // Generate module docs only (NOT .autodoc/ files - those are user-maintained)
-    const result = await generateDocs({
-      rootDir: targetDir,
-      exclude: args.exclude,
-      maxDepth: args.maxDepth,
-    });
-
-    // Filter by module name if specified
-    if (args.module) {
-      const filterLower = args.module.toLowerCase();
-      result.modules = result.modules.filter(
-        (m: any) => m.name.toLowerCase() === filterLower || m.name.toLowerCase().includes(filterLower),
-      );
-      result.files = result.files.filter((f: any) => result.modules.some((m: any) => f.path.includes(m.path)));
-    }
-
-    // Detect and use LLM if requested
-    let llmStatus = "not_requested";
-    if (args.useLlm && result.modules.length > 0) {
-      const { detectLLMProviders, batchGenerateDocs } = await import("../../autodoc/llm/index.js");
-      const { recommended } = await detectLLMProviders();
-
-      if (recommended) {
-        const modelName = (recommended as any).selectedModel || recommended.name;
-        llmStatus = `using_${recommended.name}:${modelName}`;
-        this.context.logger.info?.(
-          "AUTODOC",
-          `Using LLM: ${recommended.name} (${modelName}) for ${result.modules.length} module(s), lang=${docLanguage}`,
-          {},
-          this.context.requestId,
-        );
-
-        try {
-          const enhancedDocs = await batchGenerateDocs(recommended, result.modules, {
-            concurrency: 1,
-            language: docLanguage,
-            onProgress: (completed: number, total: number) => {
-              this.context.logger.debug?.("AUTODOC", `LLM progress: ${completed}/${total}`, {}, this.context.requestId);
-            },
-          });
-
-          for (const file of result.files) {
-            const enhanced = enhancedDocs.get(file.path.replace(/AUTODOC\.md$/, "").replace(/[\\/]$/, ""));
-            if (enhanced) {
-              file.content = enhanced;
-            }
-          }
-        } catch (error) {
-          this.context.logger.warn?.(
-            "AUTODOC",
-            `LLM generation failed: ${(error as Error).message}`,
-            {},
-            this.context.requestId,
-          );
-          llmStatus = `error_${recommended.name}`;
-        }
-      } else {
-        llmStatus = "no_provider_available";
-        this.context.logger.warn?.(
-          "AUTODOC",
-          "No LLM provider available. Install Ollama or configure TGI/OpenAI.",
-          {},
-          this.context.requestId,
-        );
-      }
-    }
-
-    // If not preview, write files (with incremental update support)
-    let filesWritten = 0;
-    const incrementalChanges: Array<{ path: string; changes: string[] }> = [];
-
-    if (!args.preview) {
-      const adm = await container.getAutoDocManager();
-
-      if (args.incremental) {
-        const { updateModuleDoc } = await import("../../autodoc/generator/incremental-updater.js");
-
-        for (const file of result.files) {
-          try {
-            const modulePath = file.path.replace(/[\\/]AUTODOC\.md$/, "");
-
-            const updateResult = await updateModuleDoc(modulePath, file.path, file.content, {
-              useLlm: args.useLlm,
-            });
-
-            if (updateResult.updated && updateResult.newContent) {
-              if (adm) {
-                await adm.saveDocument(file.path, updateResult.newContent, { autoGenerated: true });
-              }
-              await writeDocumentToDisk(file.path, updateResult.newContent);
-              filesWritten++;
-
-              incrementalChanges.push({
-                path: file.path,
-                changes: updateResult.changes.map((c: any) => c.description),
-              });
-            }
-          } catch (error) {
-            this.context.logger.warn?.(
-              "AUTODOC",
-              `Incremental update failed for ${file.path}: ${(error as Error).message}`,
-              {},
-              this.context.requestId,
-            );
-            // Fall back to full overwrite
-            try {
-              if (adm) {
-                await adm.saveDocument(file.path, file.content, { autoGenerated: true });
-              }
-              await writeDocumentToDisk(file.path, file.content);
-              filesWritten++;
-            } catch (innerError) {
-              this.context.logger.warn?.(
-                "AUTODOC",
-                `Failed to write ${file.path}: ${(innerError as Error).message}`,
-                {},
-                this.context.requestId,
-              );
-            }
-          }
-        }
-      } else {
-        // Full overwrite mode (incremental=false)
-        for (const file of result.files) {
-          try {
-            if (adm) {
-              await adm.saveDocument(file.path, file.content, { autoGenerated: true });
-            }
-            await writeDocumentToDisk(file.path, file.content);
-            filesWritten++;
-          } catch (error) {
-            this.context.logger.warn?.(
-              "AUTODOC",
-              `Failed to write ${file.path}: ${(error as Error).message}`,
-              {},
-              this.context.requestId,
-            );
-          }
-        }
-      }
-    }
+    const result = await executeGenerateDocs(
+      {
+        rootDir: args.rootDir,
+        autodocDir: args.autodocDir,
+        exclude: args.exclude,
+        maxDepth: args.maxDepth,
+        module: args.module,
+        useLlm: args.useLlm,
+        preview: args.preview,
+        incremental: args.incremental,
+        language: args.language,
+      },
+      {
+        normalizeInputPath: this.context.normalizeInputPath,
+        logger: this.context.logger,
+        requestId: this.context.requestId,
+        getAutoDocManager: () => container.getAutoDocManager(),
+      },
+    );
 
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              success: true,
-              preview: args.preview,
-              useLlm: args.useLlm,
-              llmStatus,
-              incremental: args.incremental,
-              language: docLanguage,
-              modulesFound: result.modules.length,
-              filesToGenerate: result.files.length,
-              filesWritten,
-              incrementalChanges: args.incremental ? incrementalChanges : undefined,
-              modules: result.modules.map((m: any) => ({
-                name: m.name,
-                path: m.path,
-                files: m.files.length,
-                exports: m.exports.slice(0, 5),
-              })),
-              files: result.files.map((f: any) => ({
-                path: f.path,
-                type: f.type,
-                preview: args.preview ? f.content.slice(0, 200) + "..." : undefined,
-              })),
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify(result, null, 2),
         },
       ],
     };
