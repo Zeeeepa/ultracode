@@ -30,6 +30,7 @@ export interface ToolContext {
   getBranchManager: () => any;
   getSnapshotManager: () => any;
   getKnowledgeBus: () => any;
+  getServiceContainer?: () => any; // DI Container for services
   normalizeInputPath: (path?: string) => string | undefined;
   withTimeout: <T>(promise: Promise<T>, ms: number, operation: string, reqId: string) => Promise<T>;
 }

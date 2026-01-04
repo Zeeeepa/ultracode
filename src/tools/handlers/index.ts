@@ -4,6 +4,20 @@
  * Re-exports all tool handlers for easy registration in ToolRegistry
  */
 
+// AutoDoc tools
+export {
+  AutoDocChangelogToolHandler,
+  AutoDocDetectLanguageToolHandler,
+  AutoDocGenerateToolHandler,
+  AutoDocGetToolHandler,
+  AutoDocInitToolHandler,
+  AutoDocInstallHooksToolHandler,
+  AutoDocSaveToolHandler,
+  AutoDocSearchToolHandler,
+  AutoDocStatusToolHandler,
+  AutoDocSyncToolHandler,
+  AutoDocValidateToolHandler,
+} from "./autodoc-tool-handlers.js";
 // Analysis tools
 export {
   AnalyzeCodeImpactToolHandler,

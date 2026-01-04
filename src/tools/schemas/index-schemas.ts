@@ -55,11 +55,7 @@ export const IndexToolSchema = z.object({
   directory: z.string().describe("Directory to index").optional(),
   incremental: z.boolean().describe("Perform incremental indexing").optional().default(false),
   reset: z.boolean().describe("Clear existing graph before indexing").optional().default(false),
-  excludePatterns: z
-    .array(z.string())
-    .describe("Patterns to exclude")
-    .optional()
-    .default(DEFAULT_EXCLUDE_PATTERNS),
+  excludePatterns: z.array(z.string()).describe("Patterns to exclude").optional().default(DEFAULT_EXCLUDE_PATTERNS),
   fullScan: z.boolean().optional().default(false),
 });
 
