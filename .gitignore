@@ -14,6 +14,9 @@ bun.lock
 dist/
 *.tsbuildinfo
 
+# Backup files from refactoring
+.backup/
+
 # Native modules (CUDA) - platform-specific, built locally
 # Sources moved to external-tools/native (also ignored)
 native/
