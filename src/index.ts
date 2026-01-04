@@ -83,6 +83,62 @@ import {
 // Schema and Node.js built-ins
 import { z } from "zod";
 
+// Tool schemas (extracted to separate files)
+import {
+  AddMemberSchema,
+  AnalyzeCodeImpactSchema,
+  AnalyzeHotspotsSchema,
+  AnalyzeMergeConflictsSchema,
+  AnalyzeStateChaosSchema,
+  AutoDocChangelogSchema,
+  AutoDocDetectLanguageSchema,
+  AutoDocGenerateSchema,
+  AutoDocGetSchema,
+  AutoDocInitSchema,
+  AutoDocInstallHooksSchema,
+  AutoDocSaveSchema,
+  AutoDocSearchSchema,
+  AutoDocStatusSchema,
+  AutoDocSyncSchema,
+  AutoDocValidateSchema,
+  CleanIndexSchema,
+  CleanupSnapshotsSchema,
+  ClearBusTopicSchema,
+  CopyFileSchema,
+  CreateFileSchema,
+  CreateSnapshotSchema,
+  CrossLanguageSearchSchema,
+  DetectCodeClonesSchema,
+  DetectTechnologyStackSchema,
+  FindRelatedConceptsSchema,
+  FindSimilarCodeSchema,
+  GetAgentMetricsSchema,
+  GetBusStatsSchema,
+  GetGraphHealthSchema,
+  GetGraphSchema,
+  GetGraphStatsSchema,
+  GetMergeSuggestionsSchema,
+  GetSemanticMergeInfoSchema,
+  IndexToolSchema,
+  JscpdCloneDetectionSchema,
+  ListEntitiesToolSchema,
+  ListRelationshipsToolSchema,
+  ListSnapshotsSchema,
+  ModifyEntityCodeSchema,
+  PatternSearchSchema,
+  QueryToolSchema,
+  RenameFileSchema,
+  RenameSymbolSchema,
+  RollbackSnapshotSchema,
+  SemanticMergeSchema,
+  SemanticSearchSchema,
+  SplitFileSchema,
+  SuggestRefactoringSchema,
+  SynthesizeFilesSchema,
+  ValidateDirectorySchema,
+  ValidateFileSchema,
+} from "./tools/schemas/index.js";
+
 // Helper to convert Zod schemas to JSON Schema using native Zod v4 method
 function zodToJsonSchema(schema: z.ZodSchema): Record<string, unknown> {
   const result = z.toJSONSchema(schema) as Record<string, unknown>;
@@ -142,6 +198,30 @@ import * as branchTools from "./tools/branch-tools.js";
 // graph-query removed - functionality in graph-storage-libsql
 import { runJscpdCloneDetection } from "./tools/jscpd.js";
 import { toolRegistry } from "./tools/tool-registry.js";
+
+// CLI argument parsing
+import { handleSetupCommand, parseArgs, printHelp } from "./cli/args-parser.js";
+
+// Indexing state management
+import {
+  areTimersSuspended,
+  getIndexingStatus,
+  isIndexing,
+  isProjectIndexing,
+  registerAsyncLoopStarter,
+  resumeTimers,
+  setIndexingState,
+} from "./core/indexing-state.js";
+// Re-export for external consumers
+export {
+  areTimersSuspended,
+  getIndexingStatus,
+  isIndexing,
+  isProjectIndexing,
+  registerAsyncLoopStarter,
+  resumeTimers,
+  setIndexingState,
+};
 import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
@@ -261,200 +341,19 @@ initializeStorageDirs();
 _endTimer("initializeStorageDirs");
 
 // Parse command line arguments
-const args = process.argv.slice(2);
-let overrideConfigPath: string | undefined;
-let helpRequested = false;
-let versionRequested = false;
-let setupRequested = false;
-let noAutoIndex = false;
-let pipeServerMode = false; // Default: use stdio transport (for Claude Code)
-let quietMode = false; // Disable console.* output (auto-enabled in --pipe mode)
+const cliArgs = parseArgs();
+const {
+  configPath: overrideConfigPath,
+  helpRequested,
+  versionRequested,
+  setupRequested,
+  noAutoIndex,
+  pipeServerMode,
+  quietMode,
+  positionalArgs,
+} = cliArgs;
 
-// Per-project indexing state tracking (no longer global blocking)
-interface IndexingState {
-  startTime: number;
-  directory: string;
-}
-const indexingProjects = new Map<string, IndexingState>();
 
-// Legacy global state for backward compatibility
-let legacyIndexingDirectory: string | null = null;
-
-// =============================================================================
-// TIMER SYSTEM (Simplified - no longer need suspension for HTTP providers)
-// =============================================================================
-
-// Legacy exports for compatibility (no-op now)
-export const registerAsyncLoopStarter = (_starter: () => void): void => {};
-export function areTimersSuspended(): boolean {
-  return false;
-}
-export function resumeTimers(): void {}
-
-/**
- * Check if indexing is currently in progress for ANY project
- */
-export function isIndexing(): boolean {
-  return indexingProjects.size > 0;
-}
-
-/**
- * Check if a specific project is being indexed
- */
-export function isProjectIndexing(directory: string): boolean {
-  const normalizedDir = directory.toLowerCase().replace(/\\/g, "/");
-  for (const [key] of indexingProjects) {
-    if (key.toLowerCase().replace(/\\/g, "/") === normalizedDir) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Get indexing status for user-friendly messages
- */
-export function getIndexingStatus(): {
-  inProgress: boolean;
-  directory: string | null;
-  elapsedSeconds: number | null;
-  allProjects: string[];
-} {
-  if (indexingProjects.size === 0) {
-    return { inProgress: false, directory: null, elapsedSeconds: null, allProjects: [] };
-  }
-
-  // Return first project for backward compatibility
-  const [firstDir, firstState] = indexingProjects.entries().next().value || [null, null];
-  return {
-    inProgress: true,
-    directory: firstDir,
-    elapsedSeconds: firstState ? Math.round((Date.now() - firstState.startTime) / 1000) : null,
-    allProjects: Array.from(indexingProjects.keys()),
-  };
-}
-
-/**
- * Set indexing state for a specific project
- * No longer blocks other projects!
- */
-export function setIndexingState(inProgress: boolean, directory?: string): void {
-  const dir = directory || legacyIndexingDirectory || "unknown";
-
-  if (inProgress) {
-    indexingProjects.set(dir, {
-      startTime: Date.now(),
-      directory: dir,
-    });
-    legacyIndexingDirectory = dir;
-  } else {
-    // Remove this project from indexing
-    indexingProjects.delete(dir);
-    if (legacyIndexingDirectory === dir) {
-      legacyIndexingDirectory = null;
-    }
-
-    // Resume timers when all indexing completes
-    if (indexingProjects.size === 0) {
-      resumeTimers();
-    }
-  }
-}
-const positionalArgs: string[] = [];
-
-// Check for "setup" command first
-if (args[0] === "setup") {
-  setupRequested = true;
-}
-
-for (let i = 0; i < args.length; i++) {
-  const arg = args[i]!;
-
-  // Skip "setup" and its arguments if setup was requested
-  if (setupRequested && i === 0) {
-    continue;
-  }
-
-  if (arg === "--config") {
-    const next = args[++i];
-    if (!next) {
-      console.error("Error: --config requires a path argument");
-      console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
-      process.exit(1);
-    }
-    overrideConfigPath = next;
-  } else if (arg.startsWith("--config=")) {
-    const value = arg.slice("--config=".length);
-    if (!value) {
-      console.error("Error: --config requires a non-empty path");
-      console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
-      process.exit(1);
-    }
-    overrideConfigPath = value;
-  } else if (arg === "--help" || arg === "-h") {
-    helpRequested = true;
-  } else if (arg === "--version" || arg === "-v") {
-    versionRequested = true;
-  } else if (arg === "--no-auto-index") {
-    noAutoIndex = true;
-  } else if (arg === "--stdio") {
-    pipeServerMode = false; // Use stdio transport (explicit, same as default)
-  } else if (arg === "--pipe") {
-    pipeServerMode = true; // Use pipe/TCP transport for multi-client mode
-    quietMode = true; // Auto-enable quiet mode (disable console output)
-    process.env["MCP_QUIET_MODE"] = "true"; // Set env for imported modules
-  } else if (arg === "-d" || arg === "--directory") {
-    // Support -d <path> for compatibility with other tools
-    const next = args[++i];
-    if (next) {
-      positionalArgs.push(next);
-    }
-  } else if (arg.startsWith("-d=") || arg.startsWith("--directory=")) {
-    const value = arg.includes("=") ? arg.split("=")[1] : undefined;
-    if (value) {
-      positionalArgs.push(value);
-    }
-  } else if (arg.startsWith("-")) {
-    console.error(`Unknown option: ${arg}`);
-    console.error("Usage: ultrascript-tools-mcp [--config <path>] [-d] <directory>");
-    process.exit(1);
-  } else {
-    positionalArgs.push(arg);
-  }
-}
-
-function printHelp() {
-  console.error(`UltraScript Tools MCP Server
-
-Usage:
-  ultrascript-tools-mcp [options] <directory>
-  ultrascript-tools-mcp [options] -d <directory>
-  ultrascript-tools-mcp setup [--provider <tei|ollama|memory>]
-
-Commands:
-  setup             Interactive setup for semantic embedding providers
-
-Options:
-  -d, --directory   Project directory to index (alternative syntax)
-  --config <path>   Use an alternate YAML configuration file
-  --no-auto-index   Disable automatic indexing on startup
-  --stdio           Use stdio transport (default)
-  --pipe            Use pipe transport for multi-client mode
-  --help, -h        Show this help message and exit
-  --version, -v     Print version information and exit
-
-Setup Options:
-  --provider <provider>   Choose provider (tei, ollama, memory)
-  --model <model-id>      Choose specific model
-
-Examples:
-  ultrascript-tools-mcp /path/to/project
-  ultrascript-tools-mcp --config config/production.yaml /repo
-  ultrascript-tools-mcp setup
-  ultrascript-tools-mcp setup --provider ollama
-  ultrascript-tools-mcp --version
-`);
-}
 
 if (helpRequested) {
   printHelp();
@@ -463,55 +362,7 @@ if (helpRequested) {
 
 // Handle setup command - launch PowerShell/Bash script
 if (setupRequested) {
-  const { spawnSync } = await import("node:child_process");
-  const { dirname, join } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const { existsSync } = await import("node:fs");
-
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-
-  // Find scripts directory (works for both dev and installed package)
-  let scriptsDir = join(__dirname, "..", "scripts");
-  if (!existsSync(scriptsDir)) {
-    scriptsDir = join(__dirname, "scripts");
-  }
-
-  const isWindows = process.platform === "win32";
-
-  if (isWindows) {
-    const ps1Script = join(scriptsDir, "setup-semantic-embedding.ps1");
-    if (existsSync(ps1Script)) {
-      // Try pwsh first, fallback to powershell
-      const pwshResult = spawnSync("pwsh", ["-ExecutionPolicy", "Bypass", "-File", ps1Script], {
-        stdio: "inherit",
-        windowsHide: true,
-      });
-      if (pwshResult.error) {
-        // Fallback to Windows PowerShell
-        const psResult = spawnSync("powershell", ["-ExecutionPolicy", "Bypass", "-File", ps1Script], {
-          stdio: "inherit",
-          windowsHide: true,
-        });
-        process.exit(psResult.status ?? 1);
-      } else {
-        process.exit(pwshResult.status ?? 0);
-      }
-    } else {
-      console.error(`Setup script not found: ${ps1Script}`);
-      process.exit(1);
-    }
-  } else {
-    // Linux/macOS - use bash script
-    const shScript = join(scriptsDir, "setup-embeddings-interactive.sh");
-    if (existsSync(shScript)) {
-      const result = spawnSync("bash", [shScript], { stdio: "inherit" });
-      process.exit(result.status ?? 0);
-    } else {
-      console.error(`Setup script not found: ${shScript}`);
-      process.exit(1);
-    }
-  }
+  handleSetupCommand(import.meta.url);
 }
 
 const versionInfo = getVersionInfo();
@@ -1370,470 +1221,6 @@ function normalizeEntityTypes(types?: string[]): EntityType[] | undefined {
 }
 
 // GraphStorage singleton is now managed by graph-storage-factory.ts
-
-// Tool schemas
-const IndexToolSchema = z.object({
-  directory: z.string().describe("Directory to index").optional(),
-  incremental: z.boolean().describe("Perform incremental indexing").optional().default(false),
-  reset: z.boolean().describe("Clear existing graph before indexing").optional().default(false),
-  excludePatterns: z.array(z.string()).describe("Patterns to exclude").optional().default([
-    // Standard ignore patterns for large codebases
-    "node_modules/**",
-    ".git/**",
-    "dist/**",
-    "build/**",
-    "out/**",
-    ".next/**",
-    ".nuxt/**",
-    "coverage/**",
-    ".nyc_output/**",
-    "__pycache__/**",
-    "*.pyc",
-    ".pytest_cache/**",
-    "venv/**",
-    "env/**",
-    ".venv/**",
-    ".env/**",
-    "vendor/**",
-    "target/**",
-    ".gradle/**",
-    ".idea/**",
-    ".vscode/**",
-    "**/.memory_bank/**",
-    "tmp/**",
-    "temp/**",
-    "**/tmp/**",
-    "**/temp/**",
-    "*.log",
-    "*.tmp",
-    "*.cache",
-    "**/*.md",
-    "*.zip",
-    "*.tar",
-    "*.tar.gz",
-    "*.tgz",
-    "*.gz",
-    "*.bz2",
-    "*.xz",
-    "*.7z",
-    "*.rar",
-    "*.zst",
-    ".DS_Store",
-    "Thumbs.db",
-  ]),
-  fullScan: z.boolean().optional().default(false),
-});
-
-const ListEntitiesToolSchema = z.object({
-  filePath: z.string().describe("Path to the file to list entities from"),
-  entityTypes: z.array(z.string()).describe("Types of entities to list").optional(),
-});
-
-const ListRelationshipsToolSchema = z
-  .object({
-    entityId: z.string().optional().describe("Exact entity ID to find relationships for"),
-    entityName: z.string().optional().describe("Name of the entity to find relationships for"),
-    filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
-    depth: z.number().optional().default(1).describe("Depth of relationship traversal"),
-    relationshipTypes: z.array(z.string()).optional().describe("Types of relationships to include"),
-  })
-  .refine((value) => Boolean(value.entityId || value.entityName), {
-    message: "Provide either entityId or entityName",
-    path: ["entityId"],
-  });
-
-const QueryToolSchema = z.object({
-  query: z.string().describe("Natural language or structured query"),
-  limit: z.number().describe("Maximum number of results").optional().default(10),
-  branch: z.string().optional().describe("Branch name (null = main branch)"),
-});
-
-// New semantic tool schemas - TASK-002
-const SemanticSearchSchema = z.object({
-  query: z.string().describe("Natural language search query"),
-  limit: z.number().optional().default(10).describe("Maximum results to return"),
-  branch: z.string().optional().describe("Branch name (null = main branch)"),
-  projectPath: z.string().optional().describe("Project directory path for cross-project search"),
-});
-
-const FindSimilarCodeSchema = z.object({
-  code: z.string().describe("Code snippet to find similar code for"),
-  threshold: z.number().optional().default(0.5).describe("Similarity threshold (0-1)"),
-  limit: z.number().optional().default(10).describe("Maximum results to return"),
-  branch: z.string().optional().describe("Branch name (null = main branch)"),
-});
-
-const AnalyzeCodeImpactSchema = z.object({
-  entityId: z.string().describe("Entity ID or name to analyze impact for"),
-  filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
-  depth: z.number().optional().default(2).describe("Depth of impact analysis"),
-  branch: z.string().optional().describe("Branch name (null = main branch)"),
-});
-
-const DetectCodeClonesSchema = z.object({
-  minSimilarity: z.number().optional().default(0.8).describe("Minimum similarity for clones"),
-  scope: z.string().optional().default("all").describe("Scope: all, file, or module"),
-});
-
-const JscpdCloneDetectionSchema = z.object({
-  paths: z
-    .array(z.string())
-    .nonempty()
-    .optional()
-    .describe("Directories or files to scan. Relative paths resolve against the server root."),
-  pattern: z.string().optional().describe("Glob pattern to apply within each path (default **/*)."),
-  ignore: z.array(z.string()).optional().describe("Glob patterns to exclude from scanning."),
-  formats: z
-    .array(z.string().regex(/^[^.]+$/))
-    .optional()
-    .describe("File extensions to include without dots (e.g. ['ts','js'])."),
-  minLines: z.number().int().min(1).optional().describe("Minimum lines per clone block."),
-  maxLines: z.number().int().min(1).optional().describe("Maximum lines per clone block."),
-  minTokens: z.number().int().min(1).optional().describe("Minimum tokens per clone (interpreted as lines)."),
-  ignoreCase: z.boolean().optional().describe("Lowercase tokens before comparison."),
-});
-
-const SuggestRefactoringSchema = z
-  .object({
-    filePath: z.string().describe("File to analyze for refactoring"),
-    focusArea: z.string().optional().describe("Specific entity name to focus on"),
-    entityId: z.string().optional().describe("Exact entity ID to analyze"),
-    startLine: z.number().int().min(1).optional().describe("1-based start line for manual selection"),
-    endLine: z.number().int().min(1).optional().describe("1-based end line (exclusive)"),
-  })
-  .refine(
-    (v) =>
-      (v.startLine == null && v.endLine == null) ||
-      (v.startLine != null && v.endLine != null && v.startLine < v.endLine),
-    {
-      message: "startLine and endLine must both be provided and startLine < endLine",
-      path: ["startLine"],
-    },
-  );
-
-const CrossLanguageSearchSchema = z.object({
-  query: z.string().describe("Search query"),
-  languages: z.array(z.string()).optional().describe("Languages to search in"),
-});
-
-const AnalyzeHotspotsSchema = z.object({
-  metric: z.string().optional().default("complexity").describe("Metric: complexity, changes, or coupling"),
-  limit: z.number().optional().default(10).describe("Maximum hotspots to return"),
-});
-
-const FindRelatedConceptsSchema = z.object({
-  entityId: z.string().describe("Entity to find related concepts for"),
-  limit: z.number().optional().default(10).describe("Maximum results to return"),
-});
-
-// Chaos Analysis Schema
-const AnalyzeStateChaosSchema = z.object({
-  scope: z.enum(["file", "module", "project"]).describe("Analysis scope"),
-  stateIdentifiers: z
-    .array(z.string())
-    .optional()
-    .describe("Specific state identifiers to analyze (e.g., ['token', 'userId'])"),
-  autoDetect: z.boolean().optional().default(false).describe("Automatically detect state patterns"),
-  format: z
-    .enum(["summary", "detailed", "json"])
-    .optional()
-    .default("summary")
-    .describe("Output format: summary (AI-friendly), detailed (human), json (raw)"),
-  maxDepth: z.number().optional().default(10).describe("Maximum trace depth"),
-  excludePatterns: z.array(z.string()).optional().describe("File patterns to exclude"),
-});
-
-const GetGraphSchema = z.object({
-  query: z.string().optional().describe("Optional search query"),
-  limit: z.number().optional().default(100).describe("Maximum entities to return"),
-});
-
-const GetGraphStatsSchema = z.object({});
-const GetGraphHealthSchema = z.object({
-  minEntities: z.number().optional().default(1).describe("Minimum entity count for healthy status"),
-  minRelationships: z.number().optional().default(0).describe("Minimum relationship count for healthy status"),
-  sample: z.number().optional().default(1).describe("Sample size to fetch for verification"),
-});
-
-const GetBusStatsSchema = z.object({});
-const ClearBusTopicSchema = z.object({
-  topic: z
-    .string()
-    .min(1)
-    .describe("Exact knowledge bus topic to clear (use wildcards via knowledgeBus.query for inspection)"),
-});
-
-// Convenience tool: clean index (reset + index)
-const CleanIndexSchema = z.object({
-  directory: z.string().describe("Directory to index after reset").optional(),
-  excludePatterns: z.array(z.string()).describe("Patterns to exclude during indexing").optional().default([]),
-  fullScan: z.boolean().optional().default(false),
-});
-
-const GetAgentMetricsSchema = z.object({});
-
-// ============================================================================
-// PHASE 8: NEW TOOL SCHEMAS - Code Modification & Analysis Features
-// ============================================================================
-
-// Version Manager Schemas
-const CreateSnapshotSchema = z.object({
-  description: z.string().describe("Description of the snapshot"),
-  files: z.array(z.string()).optional().describe("Files to include in snapshot (all if not specified)"),
-});
-
-const RollbackSnapshotSchema = z.object({
-  snapshotId: z.string().describe("Snapshot ID to rollback to"),
-});
-
-const ListSnapshotsSchema = z.object({
-  limit: z.number().optional().default(10).describe("Maximum number of snapshots to return"),
-});
-
-const CleanupSnapshotsSchema = z.object({
-  olderThanDays: z.number().optional().default(30).describe("Delete snapshots older than N days"),
-});
-
-// Code Modification Schema
-const ModifyEntityCodeSchema = z.object({
-  entityId: z.string().describe("ID of entity to modify"),
-  newCode: z.string().describe("New code to replace entity"),
-  preserveComments: z.boolean().optional().default(true).describe("Preserve leading comments"),
-  updateImports: z.boolean().optional().default(true).describe("Update imports if signature changed"),
-  preview: z.boolean().optional().default(true).describe("Preview changes before applying"),
-  skipValidation: z.boolean().optional().default(false).describe("Skip validation checks"),
-});
-
-// File Operations Schemas
-const CopyFileSchema = z.object({
-  source: z.string().describe("Source file or directory path"),
-  target: z.string().describe("Target path"),
-  preview: z.boolean().optional().default(true).describe("Preview before copying"),
-  updateGraph: z.boolean().optional().default(true).describe("Update graph with copied entities"),
-});
-
-const RenameFileSchema = z.object({
-  oldPath: z.string().describe("Current file path"),
-  newPath: z.string().describe("New file path"),
-  preview: z.boolean().optional().default(true).describe("Preview before renaming"),
-  updateImports: z.boolean().optional().default(true).describe("Update imports across project"),
-  updateGraph: z.boolean().optional().default(true).describe("Update graph with new paths"),
-});
-
-const SplitFileSchema = z.object({
-  filePath: z.string().describe("File to split"),
-  entityIds: z.array(z.string()).describe("Entity IDs to extract to separate files"),
-  preview: z.boolean().optional().default(true).describe("Preview before splitting"),
-  updateGraph: z.boolean().optional().default(true).describe("Update graph with new file locations"),
-});
-
-const SynthesizeFilesSchema = z.object({
-  files: z.array(z.string()).min(2).describe("Files to combine into one"),
-  targetPath: z.string().describe("Target file path for combined result"),
-  preview: z.boolean().optional().default(true).describe("Preview before synthesizing"),
-  deleteOriginals: z.boolean().optional().default(false).describe("Delete original files after synthesis"),
-  updateGraph: z.boolean().optional().default(true).describe("Update graph with merged entities"),
-});
-
-// Code Validation Schemas
-const ValidateFileSchema = z.object({
-  filePath: z.string().describe("File to validate"),
-  linter: z.string().optional().describe("Specific linter to use (auto-detect if not specified): eslint, pylint"),
-});
-
-const ValidateDirectorySchema = z.object({
-  dirPath: z.string().describe("Directory to validate"),
-  extensions: z.array(z.string()).optional().describe("File extensions to validate (e.g., ['.ts', '.js', '.py'])"),
-  recursive: z.boolean().optional().default(true).describe("Recursively validate subdirectories"),
-});
-
-// Technology Detection Schema
-const DetectTechnologyStackSchema = z.object({
-  generateContext: z.boolean().optional().default(false).describe("Generate tech context string for embeddings"),
-});
-
-// Pattern Search Schema
-const PatternSearchSchema = z.object({
-  pattern: z.string().describe("Regex pattern or semantic query"),
-  mode: z
-    .enum(["entity", "content", "semantic", "hybrid"])
-    .describe("Search mode: entity (name/type), content (inside bodies), semantic (vector), hybrid (all)"),
-  entityTypes: z.array(z.string()).optional().describe("Filter by entity types (function, class, interface, etc.)"),
-  files: z.array(z.string()).optional().describe("Filter by file paths"),
-  frameworks: z.array(z.string()).optional().describe("Filter by frameworks (React, Vue, Angular, etc.)"),
-  contentContains: z.string().optional().describe("Content must contain this string"),
-  contentRegex: z.string().optional().describe("Content must match this regex"),
-  semanticQuery: z.string().optional().describe("Semantic similarity query for content"),
-  limit: z.number().optional().default(10).describe("Maximum results to return"),
-});
-
-// =============================================================================
-// Merge Tool Schemas
-// =============================================================================
-const SemanticMergeSchema = z.object({
-  sourceBranch: z.string().describe("Source branch name (where changes come from), e.g. 'feature/caching'"),
-  targetBranch: z
-    .string()
-    .optional()
-    .describe("Target branch name (where to merge), e.g. 'main'. Defaults to current branch."),
-  dryRun: z.boolean().optional().default(true).describe("Preview only, don't apply changes (default: true)"),
-  autoResolve: z.boolean().optional().default(false).describe("Auto-resolve compatible conflicts (default: false)"),
-  includeAISuggestions: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe("Generate AI suggestions for conflicts (default: true)"),
-});
-
-const AnalyzeMergeConflictsSchema = z.object({
-  branchA: z.string().describe("First branch name"),
-  branchB: z.string().describe("Second branch name"),
-});
-
-const GetMergeSuggestionsSchema = z.object({
-  conflictId: z.string().describe("ID of the conflict to get suggestions for (from analyze_merge_conflicts)"),
-  branchA: z.string().describe("First branch name"),
-  branchB: z.string().describe("Second branch name"),
-});
-
-const GetSemanticMergeInfoSchema = z.object({});
-
-// Unified Tool Schemas (cross-compatibility with UltrasharpTools)
-const CreateFileSchema = z.object({
-  filePath: z.string().describe("Absolute path for the new file to create"),
-  content: z.string().describe("Content to write to the file"),
-  createDirectories: z.boolean().optional().default(true).describe("Create parent directories if they don't exist"),
-  updateGraph: z.boolean().optional().default(true).describe("Parse and add entities to graph after creation"),
-  overwrite: z.boolean().optional().default(false).describe("Overwrite file if it already exists"),
-});
-
-const RenameSymbolSchema = z.object({
-  entityId: z.string().optional().describe("Entity ID to rename (preferred)"),
-  entityName: z.string().optional().describe("Entity name to rename (if entityId not provided)"),
-  filePath: z.string().optional().describe("File path hint for disambiguation"),
-  newName: z.string().describe("New name for the symbol"),
-  updateReferences: z.boolean().optional().default(true).describe("Update all references to this symbol"),
-  preview: z.boolean().optional().default(true).describe("Preview changes before applying"),
-});
-
-const AddMemberSchema = z.object({
-  entityId: z.string().optional().describe("Parent entity ID (class/interface) to add member to"),
-  filePath: z.string().describe("File path where to add the member"),
-  memberCode: z.string().describe("Code for the new member (method, property, etc.)"),
-  position: z.enum(["start", "end", "after"]).optional().default("end").describe("Where to insert the member"),
-  afterMember: z.string().optional().describe("Member name to insert after (when position='after')"),
-  preview: z.boolean().optional().default(true).describe("Preview changes before applying"),
-  updateGraph: z.boolean().optional().default(true).describe("Update graph with new member"),
-});
-
-// ==========================================================================
-// AutoDoc Tool Schemas
-// ==========================================================================
-
-const AutoDocInitSchema = z.object({
-  enabled: z.boolean().optional().default(true).describe("Enable AutoDoc functionality"),
-  language: z.enum(["en", "ru"]).optional().default("en").describe("Documentation language"),
-  docsDir: z.string().optional().describe("Directory for documentation files"),
-});
-
-const AutoDocSaveSchema = z.object({
-  filePath: z.string().describe("Path to the markdown documentation file"),
-  content: z.string().describe("Markdown content to save"),
-  type: z
-    .enum(["entity_doc", "architecture", "flow", "process", "dependency", "deployment", "glossary", "module_index"])
-    .optional()
-    .describe("Document type"),
-  autoGenerated: z.boolean().optional().default(true).describe("Mark as auto-generated"),
-});
-
-const AutoDocGetSchema = z.object({
-  docId: z.string().optional().describe("Document ID to retrieve"),
-  filePath: z.string().optional().describe("File path to retrieve documents for"),
-});
-
-const AutoDocSearchSchema = z.object({
-  query: z.string().describe("Search query for documentation"),
-  limit: z.number().optional().default(10).describe("Maximum results to return"),
-  mode: z
-    .enum(["text", "semantic", "hybrid"])
-    .optional()
-    .default("text")
-    .describe("Search mode: text (keyword), semantic (vector similarity), hybrid (both)"),
-});
-
-const AutoDocValidateSchema = z.object({
-  filePath: z.string().optional().describe("Validate references in a specific file"),
-  fixBroken: z.boolean().optional().default(false).describe("Attempt to fix broken references"),
-});
-
-const AutoDocStatusSchema = z.object({});
-
-const AutoDocSyncSchema = z.object({
-  scope: z
-    .enum(["all", "outdated", "file"])
-    .optional()
-    .default("outdated")
-    .describe("Sync scope: all docs, only outdated, or specific file"),
-  filePath: z.string().optional().describe("File path when scope is 'file'"),
-  docsDir: z.string().optional().describe("Documentation directory for bidirectional sync"),
-  direction: z
-    .enum(["both", "disk-to-db", "db-to-disk"])
-    .optional()
-    .default("both")
-    .describe("Sync direction: both (bidirectional), disk-to-db, or db-to-disk"),
-});
-
-const AutoDocGenerateSchema = z.object({
-  rootDir: z.string().optional().describe("Root directory to scan (default: current indexed directory)"),
-  autodocDir: z.string().optional().describe("Output directory for general docs (default: .autodoc)"),
-  preview: z.boolean().optional().default(true).describe("Preview mode - show what would be generated without writing"),
-  exclude: z.array(z.string()).optional().describe("Patterns to exclude from scanning"),
-  maxDepth: z.number().optional().default(4).describe("Max depth to scan for modules"),
-  useLlm: z
-    .boolean()
-    .optional()
-    .default(false)
-    .describe("Use LLM to generate meaningful documentation (requires Ollama/TGI/OpenAI)"),
-  incremental: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe(
-      "Incremental mode: only update changed parts, preserve existing content, mark deleted items. Set to false to regenerate from scratch.",
-    ),
-  module: z
-    .string()
-    .optional()
-    .describe("Generate docs for a single module by name (e.g., 'utils', 'parsers'). Faster for testing LLM."),
-  language: z
-    .enum(["auto", "en", "ru", "zh"])
-    .optional()
-    .default("auto")
-    .describe("Documentation language: 'auto' (detect from comments), 'en', 'ru', 'zh'"),
-});
-
-const AutoDocChangelogSchema = z.object({
-  since: z.number().optional().describe("Unix timestamp to filter changes since"),
-  limit: z.number().optional().default(20).describe("Maximum entries to return"),
-  branch: z.string().optional().describe("Filter by git branch"),
-});
-
-const AutoDocInstallHooksSchema = z.object({
-  action: z
-    .enum(["install", "uninstall", "status"])
-    .optional()
-    .default("install")
-    .describe("Action: install, uninstall, or check status"),
-});
-
-const AutoDocDetectLanguageSchema = z.object({
-  scope: z
-    .enum(["comments", "docs", "all"])
-    .optional()
-    .default("all")
-    .describe("Scope: analyze code comments, existing docs, or both"),
-  sampleSize: z.number().optional().default(20).describe("Number of files to sample for detection"),
-});
 
 // Full list of available tools (used by all MCP server instances)
 function getToolsList() {
