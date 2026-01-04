@@ -8,6 +8,8 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ConductorOrchestrator } from "../agents/conductor-orchestrator.js";
+import type { TechnologyDetector } from "../analysis/technology-detector.js";
+import { TechnologyDetector as TechnologyDetectorClass } from "../analysis/technology-detector.js";
 import type { AutoDocManager } from "../autodoc/storage/autodoc-manager.js";
 import { getAutoDocManager as getAutoDocManagerFactory } from "../autodoc/storage/autodoc-manager.js";
 import type { CodeModifier } from "../modification/code-modifier.js";
@@ -19,8 +21,6 @@ import type { PatternSearch } from "../search/pattern-search.js";
 import { PatternSearch as PatternSearchClass } from "../search/pattern-search.js";
 import { getGlobalDbPaths } from "../shared/storage-paths.js";
 import { getGraphStorage } from "../storage/graph-storage-factory.js";
-import type { TechnologyDetector } from "../analysis/technology-detector.js";
-import { TechnologyDetector as TechnologyDetectorClass } from "../analysis/technology-detector.js";
 import type { CodeValidator } from "../validation/code-validator.js";
 import { CodeValidator as CodeValidatorClass } from "../validation/code-validator.js";
 import type { VersionManager } from "../versioning/version-manager.js";

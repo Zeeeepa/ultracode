@@ -4,6 +4,15 @@
  * Re-exports all tool handlers for easy registration in ToolRegistry
  */
 
+// Analysis tools
+export {
+  AnalyzeCodeImpactToolHandler,
+  AnalyzeHotspotsToolHandler,
+  AnalyzeStateChaosToolHandler,
+  DetectTechnologyStackToolHandler,
+  FindRelatedConceptsToolHandler,
+  SuggestRefactoringToolHandler,
+} from "./analysis-tool-handlers.js";
 // AutoDoc tools
 export {
   AutoDocChangelogToolHandler,
@@ -18,15 +27,6 @@ export {
   AutoDocSyncToolHandler,
   AutoDocValidateToolHandler,
 } from "./autodoc-tool-handlers.js";
-// Analysis tools
-export {
-  AnalyzeCodeImpactToolHandler,
-  AnalyzeHotspotsToolHandler,
-  AnalyzeStateChaosToolHandler,
-  DetectTechnologyStackToolHandler,
-  FindRelatedConceptsToolHandler,
-  SuggestRefactoringToolHandler,
-} from "./analysis-tool-handlers.js";
 // Branch tools
 export {
   CleanupBranchesToolHandler,

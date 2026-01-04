@@ -59,10 +59,7 @@ export function getLanguage(filePath: string): SupportedLanguage {
   }
 }
 
-export function getPosition(
-  sourceFile: ts.SourceFile,
-  pos: number,
-): { line: number; column: number; index: number } {
+export function getPosition(sourceFile: ts.SourceFile, pos: number): { line: number; column: number; index: number } {
   const { line, character } = sourceFile.getLineAndCharacterOfPosition(pos);
   return { line: line + 1, column: character, index: pos };
 }
@@ -126,10 +123,7 @@ export function getModifiers(node: ts.Node): string[] {
   return modifiers;
 }
 
-export function getParameters(
-  node: ts.FunctionLikeDeclaration,
-  sourceFile: ts.SourceFile,
-): ParsedEntity["parameters"] {
+export function getParameters(node: ts.FunctionLikeDeclaration, sourceFile: ts.SourceFile): ParsedEntity["parameters"] {
   return node.parameters.map((param) => {
     const name = param.name.getText(sourceFile);
     const type = param.type ? param.type.getText(sourceFile) : undefined;
@@ -145,10 +139,7 @@ export function getParameters(
   });
 }
 
-export function getReturnType(
-  node: ts.FunctionLikeDeclaration,
-  sourceFile: ts.SourceFile,
-): string | undefined {
+export function getReturnType(node: ts.FunctionLikeDeclaration, sourceFile: ts.SourceFile): string | undefined {
   if (node.type) {
     return node.type.getText(sourceFile);
   }

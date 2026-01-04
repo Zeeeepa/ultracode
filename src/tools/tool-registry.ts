@@ -15,6 +15,10 @@ import type { BaseToolHandler, ToolContext } from "./base-tool-handler.js";
 import {
   AddMemberToolHandler,
   AnalyzeCodeImpactToolHandler,
+  AnalyzeHotspotsToolHandler,
+  AnalyzeMergeConflictsToolHandler,
+  AnalyzeStateChaosToolHandler,
+  AnalyzeStateImpactToolHandler,
   // AutoDoc tools
   AutoDocChangelogToolHandler,
   AutoDocDetectLanguageToolHandler,
@@ -27,10 +31,6 @@ import {
   AutoDocStatusToolHandler,
   AutoDocSyncToolHandler,
   AutoDocValidateToolHandler,
-  AnalyzeHotspotsToolHandler,
-  AnalyzeMergeConflictsToolHandler,
-  AnalyzeStateChaosToolHandler,
-  AnalyzeStateImpactToolHandler,
   CleanIndexToolHandler,
   CleanupBranchesToolHandler,
   CleanupSnapshotsToolHandler,
