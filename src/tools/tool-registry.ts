@@ -15,6 +15,18 @@ import type { BaseToolHandler, ToolContext } from "./base-tool-handler.js";
 import {
   AddMemberToolHandler,
   AnalyzeCodeImpactToolHandler,
+  // AutoDoc tools
+  AutoDocChangelogToolHandler,
+  AutoDocDetectLanguageToolHandler,
+  AutoDocGenerateToolHandler,
+  AutoDocGetToolHandler,
+  AutoDocInitToolHandler,
+  AutoDocInstallHooksToolHandler,
+  AutoDocSaveToolHandler,
+  AutoDocSearchToolHandler,
+  AutoDocStatusToolHandler,
+  AutoDocSyncToolHandler,
+  AutoDocValidateToolHandler,
   AnalyzeHotspotsToolHandler,
   AnalyzeMergeConflictsToolHandler,
   AnalyzeStateChaosToolHandler,
@@ -229,6 +241,21 @@ export class ToolRegistry {
     this.register("trace_data_flow", TraceDataFlowToolHandler);
     this.register("analyze_state_impact", AnalyzeStateImpactToolHandler);
     this.register("find_decision_points", FindDecisionPointsToolHandler);
+
+    // ==========================================================================
+    // AutoDoc tools
+    // ==========================================================================
+    this.register("autodoc_init", AutoDocInitToolHandler);
+    this.register("autodoc_save", AutoDocSaveToolHandler);
+    this.register("autodoc_get", AutoDocGetToolHandler);
+    this.register("autodoc_search", AutoDocSearchToolHandler);
+    this.register("autodoc_validate", AutoDocValidateToolHandler);
+    this.register("autodoc_status", AutoDocStatusToolHandler);
+    this.register("autodoc_sync", AutoDocSyncToolHandler);
+    this.register("autodoc_generate", AutoDocGenerateToolHandler);
+    this.register("autodoc_changelog", AutoDocChangelogToolHandler);
+    this.register("autodoc_install_hooks", AutoDocInstallHooksToolHandler);
+    this.register("autodoc_detect_language", AutoDocDetectLanguageToolHandler);
   }
 }
 
