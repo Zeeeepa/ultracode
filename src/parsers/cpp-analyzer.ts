@@ -24,7 +24,17 @@
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
+import { CircuitBreakerError } from "../utils/circuit-breaker.js";
 import { getNodeLocation } from "./base-parser-utils.js";
+import {
+  canonicalizeOperatorName,
+  extractFieldName,
+  extractFunctionName,
+  extractMethodQualifiers,
+  isAbstractClass,
+  isFinalClass,
+} from "./cpp-declarator-utils.js";
+import { extractTemplateParameters, isComplexTemplate } from "./cpp-template-utils.js";
 
 // Circuit breaker constants
 const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
@@ -265,8 +275,8 @@ export class CppAnalyzer {
     // Collect modifiers for the class
     const modifiers: string[] = [];
     if (node.type === "struct_specifier") modifiers.push("struct");
-    if (this.isAbstractClass(node)) modifiers.push("abstract");
-    if (this.isFinalClass(node)) modifiers.push("final");
+    if (isAbstractClass(node)) modifiers.push("abstract");
+    if (isFinalClass(node)) modifiers.push("final");
 
     const entity: ParsedEntity = {
       name: fullName,
@@ -369,9 +379,9 @@ export class CppAnalyzer {
   ): void {
     const declaratorNode = node.childForFieldName("declarator");
     if (!declaratorNode) return;
-    let functionName = this.extractFunctionName(declaratorNode);
+    let functionName = extractFunctionName(declaratorNode);
     if (!functionName) return;
-    functionName = this.canonicalizeOperatorName(functionName, node);
+    functionName = canonicalizeOperatorName(functionName, node);
     const fullName = `${className}::${functionName}`;
 
     // Check for operator overloading
@@ -385,7 +395,7 @@ export class CppAnalyzer {
     const isDestructor = functionName.startsWith("~");
 
     // Extract method qualifiers
-    const qualifiers = this.extractMethodQualifiers(node);
+    const qualifiers = extractMethodQualifiers(node);
 
     // Collect modifiers
     const modifiers: string[] = [];
@@ -434,7 +444,7 @@ export class CppAnalyzer {
     const declaratorNode = node.childForFieldName("declarator");
     if (!declaratorNode) return;
 
-    const fieldName = this.extractFieldName(declaratorNode);
+    const fieldName = extractFieldName(declaratorNode);
     if (!fieldName) return;
 
     const fullName = `${className}::${fieldName}`;
@@ -482,10 +492,10 @@ export class CppAnalyzer {
     const declaratorNode = node.childForFieldName("declarator");
     if (!declaratorNode) return;
 
-    let functionName = this.extractFunctionName(declaratorNode);
+    let functionName = extractFunctionName(declaratorNode);
     if (!functionName) return;
 
-    functionName = this.canonicalizeOperatorName(functionName, node);
+    functionName = canonicalizeOperatorName(functionName, node);
 
     const fullName = namespace ? `${namespace}::${functionName}` : functionName;
 
@@ -544,9 +554,9 @@ export class CppAnalyzer {
       return;
     }
 
-    const templateParams = this.extractTemplateParameters(parametersNode);
+    const templateParams = extractTemplateParameters(parametersNode);
 
-    if (this.isComplexTemplate(templateParams, node.text)) {
+    if (isComplexTemplate(templateParams, node.text)) {
       console.warn(`[CppAnalyzer] Skipping complex template pattern`);
       this.templateDepth--;
       return;
@@ -556,7 +566,7 @@ export class CppAnalyzer {
     let declName = "";
     if (declarationNode.type === "function_definition") {
       const d = declarationNode.childForFieldName("declarator");
-      declName = this.extractFunctionName(d) || "";
+      declName = extractFunctionName(d) || "";
     } else if (declarationNode.type === "class_specifier" || declarationNode.type === "struct_specifier") {
       const n = declarationNode.childForFieldName("name");
       declName = n?.text || "";
@@ -763,7 +773,7 @@ export class CppAnalyzer {
     if (friendTarget) {
       const friendName =
         friendTarget.type === "function_definition"
-          ? this.extractFunctionName(friendTarget.childForFieldName("declarator"))
+          ? extractFunctionName(friendTarget.childForFieldName("declarator"))
           : friendTarget.text;
 
       if (friendName) {
@@ -794,244 +804,5 @@ export class CppAnalyzer {
     // Update relationships array
     relationships.length = 0;
     relationships.push(...validRelationships);
-  }
-
-  /**
-   * Helper: Extract function name from declarator
-   */
-  private extractFunctionName(declaratorNode: ASTNode | null): string | null {
-    if (!declaratorNode) return null;
-
-    // Handle different declarator types
-    if (declaratorNode.type === "function_declarator") {
-      const nameNode = declaratorNode.childForFieldName("declarator");
-      if (nameNode?.type === "identifier") {
-        return nameNode.text;
-      } else if (nameNode?.type === "qualified_identifier") {
-        return nameNode.text.split("::").pop() || null;
-      } else if (nameNode?.type === "operator_function_id") {
-        return nameNode.text; // e.g. "operator[]", "operator()"
-      } else if (nameNode?.type === "operator_cast") {
-        return nameNode.text; // e.g. "operator int"
-      } else if (nameNode?.type === "operator_name") {
-        return nameNode.text;
-      } else if (nameNode?.type === "destructor_name") {
-        return nameNode.text;
-      } else if (nameNode) {
-        return this.extractFunctionName(nameNode);
-      } else {
-        const cand = declaratorNode.children.find(
-          (c) =>
-            c.type === "identifier" ||
-            c.type === "qualified_identifier" ||
-            c.type === "operator_function_id" ||
-            c.type === "operator_cast" ||
-            c.type === "operator_name" ||
-            c.type === "destructor_name",
-        );
-        if (cand) {
-          return cand.type === "qualified_identifier" ? cand.text.split("::").pop() || null : cand.text;
-        }
-      }
-    } else if (declaratorNode.type === "identifier") {
-      return declaratorNode.text;
-    } else if (declaratorNode.type === "field_identifier") {
-      return declaratorNode.text;
-    } else if (declaratorNode.type === "operator_function_id") {
-      return declaratorNode.text;
-    } else if (declaratorNode.type === "operator_cast") {
-      return declaratorNode.text;
-    } else if (declaratorNode.type === "qualified_identifier") {
-      return declaratorNode.text.split("::").pop() || null;
-    } else if (declaratorNode.type === "operator_name") {
-      return declaratorNode.text;
-    } else if (declaratorNode.type === "destructor_name") {
-      return declaratorNode.text;
-    } else if (
-      declaratorNode.type === "reference_declarator" ||
-      declaratorNode.type === "pointer_declarator" ||
-      declaratorNode.type === "parenthesized_declarator" ||
-      declaratorNode.type === "array_declarator"
-    ) {
-      const inner =
-        declaratorNode.childForFieldName("declarator") ||
-        declaratorNode.children.find(
-          (c) =>
-            c.type === "function_declarator" ||
-            c.type === "identifier" ||
-            c.type === "field_identifier" ||
-            c.type === "qualified_identifier" ||
-            c.type === "operator_function_id" ||
-            c.type === "operator_cast" ||
-            c.type === "operator_name" ||
-            c.type === "destructor_name",
-        ) ||
-        null;
-
-      return this.extractFunctionName(inner);
-    }
-
-    return null;
-  }
-
-  /**
-   * Produce a canonical operator name:
-   * - remove spaces: "operator []" => "operator[]"
-   * - reconstruct bracket/call operators if parser split tokens:
-   *    e.g. "operator[" or plain "operator" -> use context to detect [] or ()
-   * - normalize symbols: "operator  +" => "operator+"
-   */
-  private canonicalizeOperatorName(name: string, contextNode: ASTNode): string {
-    if (!name.startsWith("operator")) return name;
-    // First pass: strip all spaces
-    const n = name.replace(/\s+/g, "");
-    if (n === "operator" || n === "operator[" || n === "operator(") {
-      const text = contextNode.text || "";
-      // Try to reconstruct from full function definition text
-      if (/operator\s*\[\s*\]/.test(text)) {
-        return "operator[]";
-      }
-      if (/operator\s*\(\s*\)/.test(text)) {
-        return "operator()";
-      }
-      const mSym = /operator\s*([^\s(]+)/.exec(text);
-      if (mSym?.[1]) return `operator${mSym[1].replace(/\s+/g, "")}`;
-    }
-    return n;
-  }
-
-  /**
-   * Helper: Extract field name from declarator
-   */
-  private extractFieldName(declaratorNode: ASTNode | null): string | null {
-    if (!declaratorNode) return null;
-
-    if (declaratorNode.type === "identifier") {
-      return declaratorNode.text;
-    } else if (declaratorNode.type === "field_identifier") {
-      return declaratorNode.text;
-    } else if (declaratorNode.type === "array_declarator") {
-      const nameNode = declaratorNode.childForFieldName("declarator");
-      return this.extractFieldName(nameNode);
-    } else if (declaratorNode.type === "pointer_declarator" || declaratorNode.type === "reference_declarator") {
-      const innerDeclarator = declaratorNode.childForFieldName("declarator");
-      return this.extractFieldName(innerDeclarator);
-    }
-
-    return null;
-  }
-
-  /**
-   * Helper: Extract method qualifiers
-   */
-  private extractMethodQualifiers(node: ASTNode): {
-    isStatic: boolean;
-    isConst: boolean;
-    isVirtual: boolean;
-    isOverride: boolean;
-    isFinal: boolean;
-    isNoexcept: boolean;
-  } {
-    const text = node.text;
-
-    return {
-      isStatic: text.includes("static"),
-      isConst: /\bconst\s*[{;]/.test(text) || /\)\s*const/.test(text),
-      isVirtual: text.includes("virtual"),
-      isOverride: text.includes("override"),
-      isFinal: text.includes("final"),
-      isNoexcept: text.includes("noexcept"),
-    };
-  }
-
-  /**
-   * Helper: Check if class is abstract
-   */
-  private isAbstractClass(node: ASTNode): boolean {
-    // A class is abstract if it has pure virtual methods (= 0)
-    return node.text.includes("= 0");
-  }
-
-  /**
-   * Helper: Check if class is final
-   */
-  private isFinalClass(node: ASTNode): boolean {
-    // Check for final keyword after class name
-    const nameNode = node.childForFieldName("name");
-    if (nameNode) {
-      const nextNode = nameNode.nextSibling;
-      return nextNode?.text === "final";
-    }
-    return false;
-  }
-
-  /**
-   * Helper: Extract template parameters (simple support)
-   */
-  private extractTemplateParameters(parametersNode: ASTNode | null): string {
-    if (!parametersNode) return "";
-
-    // - type_parameter_declaration
-    // - parameter_declaration
-    // - type_parameter_pack
-
-    const names = new Set<string>();
-    const stack: ASTNode[] = [...parametersNode.children];
-    while (stack.length) {
-      const n = stack.pop()!;
-      if (n.type === "type_identifier" || n.type === "identifier") {
-        const t = n.text.trim();
-        if (t && /^[A-Za-z_]\w*$/.test(t)) {
-          names.add(t);
-        }
-      }
-
-      for (const c of n.children) stack.push(c);
-    }
-    return Array.from(names).join(", ");
-  }
-
-  /**
-   * Helper: Check if template is too complex to analyze
-   */
-  private isComplexTemplate(templateParams: string, nodeText: string): boolean {
-    // Skip variadic templates
-    if (templateParams.includes("...") || nodeText.includes("...")) {
-      return true;
-    }
-
-    // Skip SFINAE patterns (enable_if, is_same, etc.)
-    const sfainaePatterns = [
-      "enable_if",
-      "is_same",
-      "is_base_of",
-      "conditional",
-      "decay",
-      "remove_reference",
-      "typename std::enable_if",
-    ];
-
-    for (const pattern of sfainaePatterns) {
-      if (nodeText.includes(pattern)) {
-        return true;
-      }
-    }
-
-    // Skip complex template metaprogramming patterns
-    if (nodeText.includes("template<template")) {
-      return true;
-    }
-
-    return false;
-  }
-}
-
-/**
- * Custom error for circuit breaker triggers
- */
-class CircuitBreakerError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CircuitBreakerError";
   }
 }

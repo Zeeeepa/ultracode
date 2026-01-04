@@ -43,9 +43,11 @@ export class RotatedLogger {
   private logDir: string;
 
   // Buffered async logging to reduce CPU usage
-  // Event-driven: flush triggered by BUFFER_SIZE threshold, not by polling
+  // Event-driven: flush triggered by BUFFER_SIZE threshold or time elapsed
   private logBuffer: string[] = [];
   private readonly BUFFER_SIZE = 50; // Flush every 50 entries
+  private readonly FLUSH_INTERVAL_MS = 500; // Flush every 500ms (lazy, no setTimeout)
+  private lastFlushTime: number = Date.now();
 
   constructor(config: Partial<LoggerConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -71,6 +73,7 @@ export class RotatedLogger {
     // Take all buffered entries and clear buffer
     const entries = this.logBuffer.join("");
     this.logBuffer = [];
+    this.lastFlushTime = Date.now(); // Update flush time
 
     // Write synchronously - BLOCKS until written to disk
     try {
@@ -86,6 +89,31 @@ export class RotatedLogger {
   stopFlushLoop(): void {
     // Flush any remaining entries SYNCHRONOUSLY
     this.flushBufferSync();
+  }
+
+  /**
+   * Public method to force flush buffer to disk
+   * Call this after critical operations to ensure logs are visible
+   */
+  flush(): void {
+    this.flushBufferSync();
+  }
+
+  /**
+   * Register process exit handlers to flush logs
+   * Call this once during initialization
+   */
+  registerExitHandlers(): void {
+    const flushAndExit = () => {
+      this.flushBufferSync();
+    };
+    process.on("exit", flushAndExit);
+    process.on("SIGINT", flushAndExit);
+    process.on("SIGTERM", flushAndExit);
+    process.on("uncaughtException", (err) => {
+      this.error("PROCESS", "Uncaught exception", { error: err.message, stack: err.stack });
+      this.flushBufferSync();
+    });
   }
 
   private ensureLogDirectory(): void {
@@ -193,9 +221,12 @@ export class RotatedLogger {
     const logLine = this.formatLogEntry(entry);
     this.logBuffer.push(logLine);
 
-    // Flush immediately if buffer is full (async, non-blocking)
-    if (this.logBuffer.length >= this.BUFFER_SIZE) {
+    // Flush if buffer is full OR time interval exceeded (lazy, no setTimeout)
+    const now = Date.now();
+    const timeExceeded = now - this.lastFlushTime >= this.FLUSH_INTERVAL_MS;
+    if (this.logBuffer.length >= this.BUFFER_SIZE || timeExceeded) {
       this.flushBuffer();
+      this.lastFlushTime = now;
     }
   }
 
@@ -215,6 +246,7 @@ export class RotatedLogger {
     // Take all buffered entries and clear buffer
     const entries = this.logBuffer.join("");
     this.logBuffer = [];
+    this.lastFlushTime = Date.now(); // Update flush time
 
     // Write async - fire and forget
     appendFile(this.currentLogFile, entries).catch((error) => {
@@ -408,6 +440,9 @@ export class RotatedLogger {
 // =============================================================================
 
 export const logger = new RotatedLogger();
+
+// Register exit handlers to ensure logs are flushed on shutdown
+logger.registerExitHandlers();
 
 // =============================================================================
 // HELPER FUNCTIONS

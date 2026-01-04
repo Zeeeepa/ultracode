@@ -4,8 +4,9 @@
  * that are delegated by the Conductor orchestrator
  */
 
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { cpus } from "node:os";
+import { extname } from "node:path";
 import { buildWorkerEmbeddingConfig } from "../config/worker-embedding-config.js";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
@@ -14,77 +15,19 @@ import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
 import { setGlobalProjectContext } from "../storage/graph-storage-factory.js";
 // SQLiteManager removed - using libsql via GraphStorage
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
-import type { ParserOptions } from "../types/parser.js";
+import type { ParseResult, ParserOptions } from "../types/parser.js";
 import { hashText } from "../utils/fast-hash.js";
 import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
+import { createHeuristicEntities } from "./dev/heuristic-parser.js";
+import { collectFiles, isCodeExtension, isDataExtension } from "./dev/index.js";
 import { IndexerAgent } from "./indexer-agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
 import { ParserAgent } from "./parser-agent.js";
 import { type ResourceAdjustmentCapable, ResourceAdjustmentMixin } from "./resource-adjustment-mixin.js";
 
-const SUPPORTED_CODE_EXTENSIONS = [
-  ".js",
-  ".ts",
-  ".jsx",
-  ".tsx", // JavaScript/TypeScript
-  ".py", // Python
-  ".java", // Java
-  ".cpp",
-  ".c", // C/C++
-  ".go", // Go
-  ".rs", // Rust
-  ".swift", // Swift
-  ".kt",
-  ".kts", // Kotlin
-  ".css",
-  ".scss",
-  ".sass",
-  ".less", // CSS
-  ".html",
-  ".htm", // HTML
-  ".json", // JSON with AST parsing (swagger, package.json, tsconfig.json)
-] as const;
-
-/**
- * Non-AST файлы для semantic merge.
- * Эти файлы индексируются как File units с contentHash,
- * без AST-парсинга, для поддержки merge конфигов, документации и ресурсов.
- */
-const SUPPORTED_DATA_EXTENSIONS = [
-  ".yaml",
-  ".yml", // Config files
-  ".toml", // Cargo.toml, pyproject.toml
-  ".xml", // Maven pom.xml, Android layouts
-  ".md",
-  ".mdx", // Documentation
-  ".txt", // Plain text
-  ".svg", // Vector graphics (часто в коде)
-  ".graphql",
-  ".gql", // GraphQL schemas
-  ".proto", // Protocol Buffers
-  ".sql", // SQL scripts
-  ".env",
-  ".env.example", // Environment configs
-  ".gitignore",
-  ".dockerignore", // Ignore files
-  ".editorconfig", // Editor config
-  ".prettierrc",
-  ".eslintrc", // Linter configs (without .json)
-] as const;
-
-/** Все поддерживаемые расширения для индексации */
-export const ALL_SUPPORTED_EXTENSIONS = [...SUPPORTED_CODE_EXTENSIONS, ...SUPPORTED_DATA_EXTENSIONS] as const;
-
-/** Проверяет, является ли расширение code-файлом (требует AST-парсинг) */
-function isCodeExtension(ext: string): boolean {
-  return SUPPORTED_CODE_EXTENSIONS.includes(ext as (typeof SUPPORTED_CODE_EXTENSIONS)[number]);
-}
-
-/** Проверяет, является ли расширение data-файлом (без AST-парсинга) */
-function isDataExtension(ext: string): boolean {
-  return SUPPORTED_DATA_EXTENSIONS.includes(ext as (typeof SUPPORTED_DATA_EXTENSIONS)[number]);
-}
+// Re-export for backward compatibility
+export { ALL_SUPPORTED_EXTENSIONS } from "./dev/index.js";
 
 function getDevAgentConfig() {
   const config = getConfig();
@@ -372,7 +315,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       samplePatterns: excludePatterns.slice(0, 5),
     });
 
-    const allFiles = await this.collectFiles(directory, excludePatterns);
+    const collectResult = collectFiles(directory, { excludePatterns, agentId: this.id });
+    const allFiles = collectResult.files;
     logger.info("DEV_AGENT", "Files collected", { count: allFiles.length });
 
     // Separate code files (AST parsing) from data files (heuristic entities)
@@ -391,16 +335,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       dataFiles: dataFiles.length,
     });
 
-    const configLoader = ConfigLoader.getInstance();
     const isDebugMode = process.env["MCP_DEBUG_MODE"] === "1";
-    const configuredBatchSize = this.indexBatchSize ?? configLoader.getDevIndexBatchSize();
-    // Removed artificial batch size limit in debug mode to allow worker pool to function effectively
-    // Old: const effectiveBatchSize = isDebugMode ? Math.min(configuredBatchSize, 5) : configuredBatchSize;
-    const effectiveBatchSize = configuredBatchSize;
+    // All files go to parser in ONE batch - parser distributes to workers via chunks
+    // No artificial batching needed here, ParserAgent handles parallelization
+    const effectiveBatchSize = Infinity;
 
-    console.error(
-      `[${this.id}] Batch configuration: configured=${configuredBatchSize}, effective=${effectiveBatchSize}, debugMode=${isDebugMode}`,
-    );
+    console.error(`[${this.id}] Sending all ${codeFiles.length} files to parser in one batch`);
     const parseOptions: ParserOptions = isDebugMode
       ? {
           batchSize: Math.max(1, Math.min(3, effectiveBatchSize)),
@@ -443,6 +383,48 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       }
     }
 
+    // Enable streaming mode: index results as they arrive from workers
+    // This allows parallel processing - indexing starts before parsing completes
+    const streamingIndexedFiles = new Set<string>();
+    let streamingEntities = 0;
+    let streamingRelationships = 0;
+
+    if (this.parserAgent && this.indexerAgent) {
+      this.parserAgent.setStreamingMode(true, async (result, _taskId, fileIndex, totalFiles) => {
+        if (!result.filePath || !result.entities || result.entities.length === 0) {
+          return;
+        }
+
+        // Index immediately as result arrives
+        try {
+          const indexResult = await this.indexerAgent!.indexEntities(
+            result.entities,
+            result.filePath,
+            result.relationships || [],
+          );
+          streamingIndexedFiles.add(result.filePath);
+          streamingEntities += indexResult.entitiesIndexed || 0;
+          streamingRelationships += indexResult.relationshipsCreated || 0;
+
+          // Log progress periodically
+          if (streamingIndexedFiles.size % 50 === 0 || fileIndex === totalFiles - 1) {
+            logger.info("DEV_AGENT", "Streaming indexing progress", {
+              indexed: streamingIndexedFiles.size,
+              totalFiles,
+              entities: streamingEntities,
+              relationships: streamingRelationships,
+            });
+          }
+        } catch (err) {
+          logger.warn("DEV_AGENT", "Streaming indexing failed", {
+            file: result.filePath,
+            error: (err as Error).message,
+          });
+        }
+      });
+      logger.info("DEV_AGENT", "Streaming mode enabled for parallel indexing");
+    }
+
     // Process CODE files through ParserAgent (AST parsing with worker pools)
     const files = codeFiles; // Use only code files for parsing
     for (let i = 0; i < files.length; i += effectiveBatchSize) {
@@ -478,6 +460,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             resultsReceived: results?.length || 0,
             batchIndex: i,
           });
+          logger.flush(); // Ensure batch completion is visible in logs
 
           // VERBOSE DEBUG: Analyze results structure
           let resultsWithFilePath = 0;
@@ -557,7 +540,17 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           // Use CPU cores * 2 for better I/O parallelism (file reads + parsing)
           const { cpus } = await import("node:os");
           const INDEXING_CONCURRENCY = Math.max(32, cpus().length * 2); // Minimum 32, or CPU cores * 2
-          const fileEntries = Array.from(byFile.entries());
+
+          // Filter out files already indexed via streaming
+          const fileEntries = Array.from(byFile.entries()).filter(([file]) => !streamingIndexedFiles.has(file));
+
+          if (fileEntries.length > 0) {
+            logger.info("DEV_AGENT", "Post-batch indexing (non-streamed files)", {
+              total: byFile.size,
+              alreadyStreamed: streamingIndexedFiles.size,
+              remaining: fileEntries.length,
+            });
+          }
 
           // Process in chunks to avoid overwhelming the queue
           for (let j = 0; j < fileEntries.length; j += INDEXING_CONCURRENCY) {
@@ -596,6 +589,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               }
             }
           }
+
+          // Add streaming results to totals
+          totalEntities += streamingEntities;
+          totalRelationships += streamingRelationships;
+          filesProcessed += streamingIndexedFiles.size;
 
           // DISABLED: gc() crashes Bun when called during OpenVINO native operations
           // if (isDebugMode) {
@@ -784,24 +782,21 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       }
     }
 
-    // Process DATA files with heuristic entities (no AST, just file-level indexing)
-    if (dataFiles.length > 0 && this.indexerAgent) {
-      logger.info("DEV_AGENT", "Processing data files with heuristic entities", {
-        count: dataFiles.length,
+    // Disable streaming mode after code files parsing is complete
+    if (this.parserAgent) {
+      this.parserAgent.setStreamingMode(false);
+      logger.info("DEV_AGENT", "Streaming mode disabled, code parsing complete", {
+        streamedFiles: streamingIndexedFiles.size,
+        streamedEntities: streamingEntities,
       });
+    }
 
-      for (const file of dataFiles) {
-        try {
-          const heuristicResult = this._createHeuristicEntities(file);
-          if (heuristicResult.entities.length > 0) {
-            const result = await this.indexerAgent.indexEntities(heuristicResult.entities, file);
-            totalEntities += result.entitiesIndexed;
-          }
-          filesProcessed++;
-        } catch (err) {
-          // Ignore errors for data files - they're not critical
-        }
-      }
+    // Process DATA files with heuristic entities (no AST, just file-level indexing)
+    // Use parallel processing for better performance
+    if (dataFiles.length > 0) {
+      const dataResult = await this.processDataFilesParallel(dataFiles);
+      totalEntities += dataResult.entities;
+      filesProcessed += dataResult.files;
     }
 
     // VERBOSE DEBUG: Final summary
@@ -809,17 +804,47 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       `[DevAgent] INDEXING COMPLETE: filesProcessed=${filesProcessed}/${allFiles.length}, entities=${totalEntities}, relationships=${totalRelationships}`,
     );
 
-    // FULL INDEXING: Kill ALL parser workers after completion
-    // Full indexing is done, workers not needed until next incremental change
+    // FULL INDEXING COMPLETE: Switch to keepalive mode for fast incremental processing
+    // Keep one worker alive per language for instant response to file changes
+    logger.info("DEV_AGENT", "=== ALL BATCH PROCESSING COMPLETE ===", {
+      totalBatches: Math.ceil(codeFiles.length / effectiveBatchSize),
+      codeFiles: codeFiles.length,
+      dataFiles: dataFiles.length,
+      filesProcessed,
+      totalEntities,
+      totalRelationships,
+    });
+    logger.flush(); // Force flush to ensure completion message is visible
+
     if (this.parserAgent) {
       try {
         const memoryBeforeMB = this.parserAgent.getTotalMemoryMB();
-        logger.info("DEV_AGENT", "Full indexing complete, killing all parser workers", { memoryMB: memoryBeforeMB });
-        await this.parserAgent.shutdown();
-        this.parserAgent = null as any; // Will be recreated on next indexing
-        logger.info("DEV_AGENT", "All parser workers killed, memory released to OS");
+        logger.info("DEV_AGENT", "Switching to keepalive mode (spawning ONE worker for incremental updates)", {
+          memoryMB: memoryBeforeMB,
+        });
+
+        // Enable keepalive mode - keeps worker 0 alive in each pool
+        // Other workers are killed to release memory
+        await this.parserAgent.enableKeepaliveMode();
+
+        const memoryAfterMB = this.parserAgent.getTotalMemoryMB();
+        logger.info("DEV_AGENT", "Keepalive mode enabled, ready for incremental updates", {
+          memoryBeforeMB,
+          memoryAfterMB,
+        });
+        // Force flush to ensure keepalive logs are visible
+        logger.flush();
       } catch (err) {
-        logger.warn("DEV_AGENT", "Failed to cleanup parser workers", { error: (err as Error).message });
+        logger.warn("DEV_AGENT", "Failed to enable keepalive mode, falling back to shutdown", {
+          error: (err as Error).message,
+        });
+        // Fallback: kill all workers
+        try {
+          await this.parserAgent.shutdown();
+          this.parserAgent = null as any;
+        } catch {
+          // ignore
+        }
       }
     }
 
@@ -828,217 +853,6 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       entitiesExtracted: totalEntities,
       relationshipsCreated: totalRelationships,
       totalFiles: allFiles.length,
-    };
-  }
-
-  private async collectFiles(directory: string, excludePatterns: string[]): Promise<string[]> {
-    const files: string[] = [];
-    // Note: test/tests/__tests__ NOT excluded - they can contain real code
-    // Use excludePatterns parameter to explicitly exclude test directories if needed
-    const defaultExcludedDirNames = new Set([
-      "node_modules",
-      "tmp",
-      "temp",
-      "cache",
-      "__pycache__",
-      ".pytest_cache",
-      "venv",
-      ".venv",
-      ".memory_bank",
-      "build",
-      "dist",
-      "out",
-      ".next",
-      ".nuxt",
-      "coverage",
-      "archives",
-      "archive",
-      "backups",
-      "backup",
-    ]);
-    const agentId = this.id; // Capture this.id for use in nested function
-
-    function shouldExclude(filePath: string): boolean {
-      // Normalize path to forward slashes for cross-platform pattern matching
-      const normalizedPath = filePath.replace(/\\/g, "/");
-      for (const pattern of excludePatterns) {
-        if (pattern.includes("**")) {
-          // Convert glob pattern to regex
-          // IMPORTANT: Directory names must match exactly as path segments, not substrings
-          // e.g., **/test/** should match /test/ but NOT /testrunner/
-          const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-
-          // Replace ** with pattern that matches any path segments
-          // Replace * with pattern that matches within a single segment (no slashes)
-          // Ensure directory names are matched as complete segments (between slashes)
-          const regex = escaped
-            .replace(/\*\*\//g, "(?:[^/]+/)*") // **/ matches zero or more directory levels
-            .replace(/\/\*\*/g, "(?:/[^/]+)*") // /** matches zero or more trailing levels
-            .replace(/\*\*/g, ".*") // standalone ** (rare)
-            .replace(/\*/g, "[^/]*"); // * matches within segment
-
-          // For patterns like **/dirname/** also match the directory itself
-          // by making trailing pattern optional
-          const flexibleRegex = regex.replace(/\(\?:\/\[\^\/\]\+\)\*$/, "(?:/[^/]+)*");
-
-          if (new RegExp(flexibleRegex).test(normalizedPath)) return true;
-        } else {
-          // Simple pattern matching - extract core path segment
-          const normalizedPattern = pattern.replace(/\*/g, "").replace(/\\/g, "/");
-          if (normalizedPath.includes(normalizedPattern)) {
-            return true;
-          }
-        }
-      }
-      return false;
-    }
-
-    // TRACE logging for directory scanning
-    const dirStats: Record<string, number> = {};
-    let excludedByPattern = 0;
-    let excludedByDefault = 0;
-    let scannedDirs = 0;
-
-    function walkDir(dir: string) {
-      try {
-        scannedDirs++;
-        const items = readdirSync(dir);
-        for (const item of items) {
-          const fullPath = join(dir, item);
-
-          if (shouldExclude(fullPath)) {
-            excludedByPattern++;
-            continue;
-          }
-
-          const lstat = lstatSync(fullPath, { throwIfNoEntry: false });
-          if (!lstat) {
-            continue;
-          }
-          if (lstat.isSymbolicLink()) {
-            continue;
-          }
-
-          if (lstat.isDirectory()) {
-            const lowerItem = item.toLowerCase();
-            if (defaultExcludedDirNames.has(lowerItem)) {
-              excludedByDefault++;
-              continue;
-            }
-            if (!item.startsWith(".")) {
-              walkDir(fullPath);
-            }
-          } else if (lstat.isFile()) {
-            const ext = extname(fullPath).toLowerCase();
-            // Поддержка code и data файлов для semantic merge
-            const fileName = item.toLowerCase();
-            const isSupported =
-              isCodeExtension(ext) ||
-              isDataExtension(ext) ||
-              // Dotfiles без расширения (e.g. .gitignore, .dockerignore)
-              SUPPORTED_DATA_EXTENSIONS.some((d) => fileName === d.slice(1) || fileName.endsWith(d));
-            if (isSupported) {
-              files.push(fullPath);
-              // Track files by directory (relative to root)
-              const relDir = dir.replace(directory, "").replace(/^[\\/]/, "") || ".";
-              dirStats[relDir] = (dirStats[relDir] || 0) + 1;
-            }
-          }
-        }
-      } catch (error) {
-        console.error(`[DevAgent ${agentId}] Error reading directory ${dir}:`, error);
-      }
-    }
-
-    walkDir(directory);
-
-    // TRACE: Final summary - use structured logger so it appears in log file
-    const sortedDirs = Object.entries(dirStats)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 20);
-
-    // Count files by extension for diagnostics
-    const extStats: Record<string, number> = {};
-    for (const f of files) {
-      const ext = extname(f).toLowerCase() || "(no ext)";
-      extStats[ext] = (extStats[ext] || 0) + 1;
-    }
-
-    logger.info("FILE_SCAN", "File collection complete", {
-      root: directory,
-      dirsScanned: scannedDirs,
-      filesCollected: files.length,
-      excludedByPattern,
-      excludedByDefault,
-      byExtension: extStats,
-      topDirs: Object.fromEntries(sortedDirs),
-    });
-
-    return files;
-  }
-
-  /**
-   * Create heuristic entities for non-TS/JS files without tree-sitter.
-   * Lightweight indexing: creates module entity based on file path.
-   * Used when ParserAgent is unavailable or useSubprocess=true.
-   *
-   * Benefits:
-   * - No tree-sitter memory accumulation
-   * - Instant (~0ms per file)
-   * - Still provides basic searchability
-   */
-  private _createHeuristicEntities(filePath: string): import("../types/parser.js").ParseResult {
-    const path = require("node:path");
-    const fileName = path.basename(filePath);
-    const ext = path.extname(filePath).toLowerCase();
-
-    // Map extension to language
-    const langMap: Record<string, import("../types/parser.js").SupportedLanguage> = {
-      ".py": "python",
-      ".go": "go",
-      ".rs": "rust",
-      ".java": "java",
-      ".kt": "kotlin",
-      ".cpp": "cpp",
-      ".c": "c",
-      ".h": "c",
-      ".hpp": "cpp",
-      ".swift": "swift",
-    };
-    const language = langMap[ext] || "python"; // Default to python for unknown
-
-    // Create module name from path
-    const moduleName = fileName.replace(ext, "");
-
-    // Generate stable entity ID
-    const moduleId = `module:${filePath}:${moduleName}`;
-
-    const entities: import("../types/parser.js").ParsedEntity[] = [
-      {
-        id: moduleId,
-        name: moduleName,
-        type: "module",
-        filePath,
-        location: {
-          start: { line: 1, column: 0, index: 0 },
-          end: { line: 1, column: 0, index: 0 },
-        },
-        language,
-        metadata: {
-          heuristic: true,
-          extension: ext,
-        },
-      },
-    ];
-
-    return {
-      filePath,
-      language,
-      entities,
-      relationships: [],
-      contentHash: moduleId,
-      timestamp: Date.now(),
-      parseTimeMs: 0,
     };
   }
 
@@ -1131,7 +945,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     // Process non-supported files with heuristic entities (lightweight, no parser needed)
     for (const filePath of otherFiles) {
       try {
-        const heuristicResult = this._createHeuristicEntities(filePath);
+        const heuristicResult = createHeuristicEntities(filePath);
         if (heuristicResult.entities.length > 0) {
           await this.indexerAgent.indexEntities(heuristicResult.entities, filePath, heuristicResult.relationships);
           successCount++;
@@ -1171,6 +985,93 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       },
       this.id,
     );
+  }
+
+  /**
+   * Process data files in parallel with batch insert
+   * OPTIMIZATION: Instead of sequential await per file, we:
+   * 1. Create heuristic entities for all files in parallel (CPU-bound, fast)
+   * 2. Group by file and batch insert via indexerAgent
+   * 3. Use Promise.all with chunking for controlled parallelism
+   */
+  private async processDataFilesParallel(dataFiles: string[]): Promise<{ entities: number; files: number }> {
+    if (dataFiles.length === 0 || !this.indexerAgent) {
+      return { entities: 0, files: 0 };
+    }
+
+    const startTime = Date.now();
+    logger.info("DEV_AGENT", "Processing data files in PARALLEL", {
+      count: dataFiles.length,
+    });
+
+    // Step 1: Create heuristic entities for ALL files in parallel
+    // createHeuristicEntities is synchronous and fast - just creates module entity
+    const CHUNK_SIZE = Math.max(32, cpus().length * 4);
+    const allResults: ParseResult[] = [];
+
+    for (let i = 0; i < dataFiles.length; i += CHUNK_SIZE) {
+      const chunk = dataFiles.slice(i, i + CHUNK_SIZE);
+
+      // Process chunk in parallel
+      const chunkResults = await Promise.all(
+        chunk.map(async (file) => {
+          try {
+            return createHeuristicEntities(file);
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      // Collect non-null results
+      for (const result of chunkResults) {
+        if (result && result.entities.length > 0) {
+          allResults.push(result);
+        }
+      }
+    }
+
+    // Step 2: Batch insert all entities via indexerAgent
+    // Group by file for proper file tracking
+    const INDEXING_CHUNK_SIZE = Math.max(32, cpus().length * 2);
+    let totalEntities = 0;
+    let filesProcessed = 0;
+
+    // Process indexing in parallel chunks
+    for (let i = 0; i < allResults.length; i += INDEXING_CHUNK_SIZE) {
+      const chunk = allResults.slice(i, i + INDEXING_CHUNK_SIZE);
+
+      const indexPromises = chunk.map(async (result) => {
+        try {
+          const indexResult = await this.indexerAgent!.indexEntities(
+            result.entities,
+            result.filePath,
+            result.relationships,
+          );
+          return { entities: indexResult.entitiesIndexed, success: true };
+        } catch {
+          return { entities: 0, success: false };
+        }
+      });
+
+      const results = await Promise.all(indexPromises);
+      for (const r of results) {
+        if (r.success) {
+          totalEntities += r.entities;
+          filesProcessed++;
+        }
+      }
+    }
+
+    const elapsed = Date.now() - startTime;
+    logger.info("DEV_AGENT", "Data files processed in PARALLEL", {
+      files: filesProcessed,
+      entities: totalEntities,
+      elapsedMs: elapsed,
+      filesPerSec: Math.round((filesProcessed / elapsed) * 1000),
+    });
+
+    return { entities: totalEntities, files: filesProcessed };
   }
 
   protected async onShutdown(): Promise<void> {

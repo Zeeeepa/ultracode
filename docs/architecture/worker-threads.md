@@ -197,6 +197,7 @@ interface WorkerTask {
   files: string[];
   language: string;
   options?: ParserOptions;
+  streamingMode?: boolean;  // Enable streaming results
 }
 ```
 
@@ -216,6 +217,24 @@ interface WorkerResult {
 }
 ```
 
+### Worker → Main (Streaming Result) — NEW
+
+```typescript
+// Sent immediately after parsing each file (streaming mode)
+{
+  type: "streaming_result",
+  taskId: string,
+  result: ParseResult,     // Single file result
+  fileIndex: number,       // 0-based index
+  totalFiles: number       // Total files in batch
+}
+```
+
+**Преимущества streaming mode:**
+- Главный процесс начинает индексацию **сразу** после парсинга первого файла
+- Нет ожидания завершения всего batch'а
+- Память распределяется равномернее (результаты обрабатываются по мере поступления)
+
 ### Worker → Main (Vectors Written)
 
 ```typescript
@@ -232,13 +251,36 @@ interface WorkerResult {
 
 ## Performance
 
-### Parsing Speedup
+### Parsing + Indexing Speedup (Streaming Mode)
 
-| Project Size | Without Workers | With Workers | Speedup |
-|--------------|-----------------|--------------|---------|
+| Project Size | Without Streaming | With Streaming | Speedup |
+|--------------|-------------------|----------------|---------|
 | Small (<50 files) | Direct | Direct | N/A (threshold) |
-| Medium (100 files) | ~60s | ~45s | 1.3x |
-| Large (500 files) | ~300s | ~180s | 1.7x |
+| Medium (152 files) | ~16.8s | ~10.5s | **1.6x (37% faster)** |
+| Large (500+ files) | ~45s | ~28s | **1.6x** |
+
+### Data Files Processing (Parallel)
+
+| Operation | Sequential | Parallel (Promise.all) | Speedup |
+|-----------|------------|------------------------|---------|
+| 174 JSON/YAML files | ~6.7s | **195ms** | **34x faster** |
+| Throughput | ~26 files/s | **892 files/s** | **34x** |
+
+### Streaming Mode Benefits
+
+```
+Batch mode (old):
+  1. Parse all files → 2. Wait → 3. Index all
+  Timeline: [===PARSE===][WAIT][===INDEX===]
+
+Streaming mode (new):
+  Parse file → Index immediately → Parse next
+  Timeline: [P1][I1][P2][I2][P3][I3]...
+
+→ 37% faster overall (parsing + indexing overlap)
+→ 91.6% files indexed via streaming (495/527)
+→ 8.4% via fallback (empty results, errors)
+```
 
 ### Memory Impact
 
@@ -249,11 +291,14 @@ With embedding in workers: ~800MB (+60%)
 
 → Workers isolate crashes (subprocess dies, main survives)
 → Memory reclaimed when subprocess exits
+→ Streaming reduces peak memory (no full batch accumulation)
 ```
 
 ---
 
 ## Worker Lifecycle
+
+### Standard Mode (Batch)
 
 ```
 1. Main: scanFiles() → group by language
@@ -265,12 +310,32 @@ With embedding in workers: ~800MB (+60%)
 7. Worker: deduplicate (local Set)
 8. Worker: generate embeddings (HTTP to TEI/vLLM)
 9. Worker: write to dump file (binary format)
-10. Worker: send results to main (IPC)
+10. Worker: send all results to main (IPC)
 11. Worker: notify vectors written
 12. Main: collect results, update graph DB
 13. Main: generateEmbeddingsFromStorage() → load dumps into Faiss
 14. Main: terminate workers (or reuse for next batch)
 ```
+
+### Streaming Mode (NEW)
+
+```
+1. Main: setStreamingMode(true, callback)
+2. Main: scanFiles() → group by language
+3. Main: getWorkerPool(language) → lazy create pool
+4. Main: pool.processFiles(files, { streamingMode: true })
+5. Worker: receive task via IPC
+6. FOR EACH file:
+   6a. Worker: parse file with native parser
+   6b. Worker: send streaming_result immediately via IPC
+   6c. Main: callback(result) → index immediately
+7. Worker: send final batch result (stats, errors)
+8. Main: filter out already-indexed files
+9. Main: index remaining files (fallback for errors)
+10. Main: generateEmbeddingsFromStorage()
+```
+
+**Key difference:** В streaming mode индексация происходит **параллельно** с парсингом следующих файлов, а не после завершения всего batch'а.
 
 ---
 

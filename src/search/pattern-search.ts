@@ -219,14 +219,18 @@ export class PatternSearch {
 
       const results: PatternSearchResult[] = [];
 
+      // Pre-convert arrays to Sets for O(1) lookups instead of O(n)
+      const entityTypesSet = query.scope?.entityTypes ? new Set(query.scope.entityTypes) : null;
+      const filesSet = query.scope?.files ? new Set(query.scope.files) : null;
+
       for (const result of similarResults) {
         // Get entity from graph storage
         const entity = await this.graphStorage.getEntity(result.id);
         if (!entity) continue;
 
-        // Apply scope filters
-        if (query.scope?.entityTypes && !query.scope.entityTypes.includes(entity.type)) continue;
-        if (query.scope?.files && !query.scope.files.includes(entity.filePath)) continue;
+        // Apply scope filters with O(1) Set lookups
+        if (entityTypesSet && !entityTypesSet.has(entity.type)) continue;
+        if (filesSet && !filesSet.has(entity.filePath)) continue;
 
         results.push({
           entity,
@@ -249,9 +253,13 @@ export class PatternSearch {
     const results: PatternSearchResult[] = [];
     const entities = await this.graphStorage.searchEntities({ namePattern: query.pattern });
 
+    // Pre-convert arrays to Sets for O(1) lookups instead of O(n)
+    const entityTypesSet = query.scope?.entityTypes ? new Set(query.scope.entityTypes) : null;
+    const filesSet = query.scope?.files ? new Set(query.scope.files) : null;
+
     for (const entity of entities.slice(0, query.limit || 10)) {
-      if (query.scope?.entityTypes && !query.scope.entityTypes.includes(entity.type)) continue;
-      if (query.scope?.files && !query.scope.files.includes(entity.filePath)) continue;
+      if (entityTypesSet && !entityTypesSet.has(entity.type)) continue;
+      if (filesSet && !filesSet.has(entity.filePath)) continue;
 
       results.push({
         entity,

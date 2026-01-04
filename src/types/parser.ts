@@ -18,6 +18,26 @@
 // =============================================================================
 import type { AgentTask } from "./agent.js";
 
+export type {
+  ASTNode,
+  TreeSitterCursor,
+  TreeSitterEdit,
+  TreeSitterNode,
+  TreeSitterTree,
+} from "./parser-ast-types.js";
+// Re-export types from extracted modules
+export type {
+  ImportDependency,
+  MagicType,
+  PythonAnalysisConfig,
+  PythonClassInfo,
+  PythonMethodInfo,
+  PythonParserMetrics,
+} from "./parser-python-types.js";
+
+// Import for internal use
+import type { MagicType } from "./parser-python-types.js";
+
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
@@ -47,52 +67,6 @@ export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 // =============================================================================
 // 3. DATA MODELS AND TYPE DEFINITIONS
 // =============================================================================
-
-/**
- * Magic method types for Python special methods
- */
-export type MagicType =
-  | "init"
-  | "new"
-  | "del"
-  | "str"
-  | "repr"
-  | "format"
-  | "bytes"
-  | "hash"
-  | "bool"
-  | "call"
-  | "len"
-  | "getitem"
-  | "setitem"
-  | "delitem"
-  | "contains"
-  | "iter"
-  | "next"
-  | "reversed"
-  | "enter"
-  | "exit"
-  | "aenter"
-  | "aexit"
-  | "eq"
-  | "ne"
-  | "lt"
-  | "le"
-  | "gt"
-  | "ge"
-  | "add"
-  | "sub"
-  | "mul"
-  | "truediv"
-  | "floordiv"
-  | "mod"
-  | "pow"
-  | "and"
-  | "or"
-  | "xor"
-  | "lshift"
-  | "rshift"
-  | "invert";
 
 /**
  * Represents a parsed entity from the source code
@@ -624,81 +598,8 @@ export interface ParserStats {
   errorCount: number;
 }
 
-/**
- * AST Node interface (generic, works with any parser)
- * Used for interoperability between different parser implementations.
- */
-export interface ASTNode {
-  type: string;
-  startPosition: { row: number; column: number };
-  endPosition: { row: number; column: number };
-  startIndex: number;
-  endIndex: number;
-  text: string;
-  children: ASTNode[];
-  namedChildren: ASTNode[];
-  childCount: number;
-  namedChildCount: number;
-  parent: ASTNode | null;
-  nextSibling: ASTNode | null;
-  previousSibling: ASTNode | null;
-
-  // Methods for tree-sitter compatibility (required for analyzers)
-  child(index: number): ASTNode | null;
-  namedChild(index: number): ASTNode | null;
-  childForFieldName(fieldName: string): ASTNode | null;
-  firstChild: ASTNode | null;
-  lastChild: ASTNode | null;
-  firstNamedChild: ASTNode | null;
-  lastNamedChild: ASTNode | null;
-  descendantForPosition(position: { row: number; column: number }): ASTNode;
-  descendantsOfType(type: string): ASTNode[];
-}
-
-/**
- * @deprecated Use ASTNode instead. Kept for backward compatibility with analyzers.
- */
-export type TreeSitterNode = ASTNode;
-
-/**
- * @deprecated Use standard tree traversal. Kept for backward compatibility.
- */
-export interface TreeSitterTree {
-  rootNode: ASTNode;
-  edit?(edit: TreeSitterEdit): void;
-  walk?(): TreeSitterCursor;
-}
-
-/**
- * @deprecated Kept for backward compatibility with incremental parsing.
- */
-export interface TreeSitterEdit {
-  startIndex: number;
-  oldEndIndex: number;
-  newEndIndex: number;
-  startPosition: { row: number; column: number };
-  oldEndPosition: { row: number; column: number };
-  newEndPosition: { row: number; column: number };
-}
-
-/**
- * @deprecated Kept for backward compatibility.
- */
-export interface TreeSitterCursor {
-  nodeType: string;
-  nodeText: string;
-  startPosition: { row: number; column: number };
-  endPosition: { row: number; column: number };
-  startIndex: number;
-  endIndex: number;
-  currentNode(): ASTNode;
-  gotoFirstChild(): boolean;
-  gotoNextSibling(): boolean;
-  gotoParent(): boolean;
-}
-
 // =============================================================================
-// TASK-003B: ENHANCED PYTHON TYPE DEFINITIONS
+// RELATIONSHIP AND PATTERN TYPES
 // =============================================================================
 
 /**
@@ -802,234 +703,4 @@ export interface PatternAnalysis {
     locations?: Array<{ line: number; column: number }>;
     metadata?: Record<string, any>;
   }>;
-}
-
-/**
- * Python-specific analysis configuration
- */
-export interface PythonAnalysisConfig {
-  /** Enable Layer 1: Enhanced basic parsing */
-  enhancedBasicParsing: boolean;
-
-  /** Enable Layer 2: Advanced feature analysis */
-  advancedFeatureAnalysis: boolean;
-
-  /** Enable Layer 3: Relationship mapping */
-  relationshipMapping: boolean;
-
-  /** Enable Layer 4: Pattern recognition */
-  patternRecognition: boolean;
-
-  /** Extract all magic methods */
-  extractAllMagicMethods: boolean;
-
-  /** Analyze property decorators */
-  analyzePropertyDecorators: boolean;
-
-  /** Build inheritance hierarchies */
-  buildInheritanceHierarchies: boolean;
-
-  /** Detect circular dependencies */
-  detectCircularDependencies: boolean;
-
-  /** Pattern detection thresholds */
-  patternConfidenceThreshold: number;
-}
-
-/**
- * Enhanced Python method information
- */
-export interface PythonMethodInfo {
-  /** Method classification */
-  classification: "instance" | "class" | "static" | "property" | "abstract" | "magic";
-
-  /** Is this method async */
-  isAsync: boolean;
-
-  /** Is this a generator method */
-  isGenerator: boolean;
-
-  /** Decorator stack */
-  decorators: Array<{
-    name: string;
-    module?: string;
-    arguments?: string[];
-    line: number;
-  }>;
-
-  /** Magic method type (if applicable) */
-  magicType?: MagicType | undefined;
-
-  /** Property information (if property) */
-  propertyInfo?: {
-    hasGetter: boolean;
-    hasSetter: boolean;
-    hasDeleter: boolean;
-    getterName?: string;
-    setterName?: string;
-    deleterName?: string;
-  };
-
-  /** Override information */
-  overrideInfo?: {
-    overrides: string; // Parent method being overridden
-    parentClass: string;
-    callsSuper: boolean;
-    changeSignature: boolean;
-  };
-
-  location?: {
-    start: { line: number; column: number; index: number };
-    end: { line: number; column: number; index: number };
-  };
-}
-
-/**
- * Enhanced Python class information
- */
-export interface PythonClassInfo {
-  /** Class type */
-  classType: "regular" | "abstract" | "dataclass" | "namedtuple" | "enum" | "protocol";
-
-  /** Base classes */
-  baseClasses: string[];
-
-  /** Method Resolution Order */
-  mro: string[];
-
-  /** Abstract methods that need implementation */
-  abstractMethods: string[];
-
-  /** Magic methods implemented */
-  magicMethods: string[];
-
-  /** Properties defined */
-  properties: Array<{
-    name: string;
-    hasGetter: boolean;
-    hasSetter: boolean;
-    hasDeleter: boolean;
-  }>;
-
-  /** Metaclass information */
-  metaclass?: string;
-
-  /** Decorator information */
-  classDecorators: Array<{
-    name: string;
-    arguments?: string[];
-  }>;
-
-  methods: string[];
-
-  decorators?: string[];
-
-  location?: {
-    start: { line: number; column: number; index: number };
-    end: { line: number; column: number; index: number };
-  };
-
-  methodResolutionOrder?: string[];
-}
-
-/**
- * Import dependency information for Layer 3
- */
-export interface ImportDependency {
-  /** Source file */
-  sourceFile: string;
-
-  /** Target module/file */
-  targetModule: string;
-
-  /** Import type */
-  importType: "absolute" | "relative" | "conditional" | "dynamic";
-
-  /** Imported symbols */
-  symbols: Array<{
-    name: string;
-    alias?: string | undefined;
-    isDefault?: boolean;
-  }>;
-
-  /** Line number of import */
-  line: number;
-
-  /** Is this import used */
-  isUsed: boolean;
-
-  /** Usage locations */
-  usageLocations: Array<{ line: number; column: number; context: string }>;
-
-  module?: string;
-
-  imported?: string | undefined;
-
-  alias?: string | undefined;
-
-  isLocal?: boolean;
-
-  metadata?: Record<string, any>;
-
-  type?: "import" | "from_import" | "use" | "extern_crate";
-}
-
-/**
- * Performance metrics for enhanced Python parsing
- */
-export interface PythonParserMetrics {
-  /** Layer 1 metrics */
-  basicParsing: {
-    methodsClassified: number;
-    typeHintsProcessed: number;
-    decoratorsExtracted: number;
-    parseTimeMs: number;
-  };
-
-  /** Layer 2 metrics */
-  advancedFeatures: {
-    magicMethodsFound: number;
-    propertiesAnalyzed: number;
-    asyncPatternsDetected: number;
-    generatorsFound: number;
-    dataclassesProcessed: number;
-    analysisTimeMs: number;
-  };
-
-  /** Layer 3 metrics */
-  relationshipMapping: {
-    inheritanceHierarchiesBuilt: number;
-    methodOverridesDetected: number;
-    crossFileReferencesResolved: number;
-    circularDependenciesFound: number;
-    mappingTimeMs: number;
-
-    timeMs?: number;
-    inheritanceRelationships?: number;
-    methodOverrides?: number;
-    importDependencies?: number;
-    crossReferences?: number;
-    mroCalculations?: number;
-  };
-
-  /** Layer 4 metrics */
-  patternRecognition: {
-    contextManagersDetected: number;
-    exceptionPatternsFound: number;
-    designPatternsIdentified: number;
-    pythonIdiomsDetected: number;
-    recognitionTimeMs: number;
-
-    timeMs?: number;
-    totalPatternsFound?: number;
-  };
-
-  /** Overall metrics */
-  overall: {
-    totalEntities: number;
-    totalRelationships: number;
-    totalPatterns: number;
-    totalTimeMs: number;
-    memoryUsedMB: number;
-  };
 }

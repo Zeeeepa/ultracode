@@ -1,0 +1,326 @@
+/**
+ * AutoDoc Generate Handler Utilities
+ *
+ * Extracted logic from AutoDocGenerateToolHandler for better modularity.
+ */
+
+import { execSync } from "node:child_process";
+import { join } from "node:path";
+import { writeDocumentToDisk } from "../sync/file-sync.js";
+import { generateDocs } from "./doc-generator.js";
+import { ensureGeneralDocs } from "./general-docs.js";
+
+/**
+ * Options for documentation generation
+ */
+export interface GenerateDocsOptions {
+  rootDir?: string;
+  autodocDir?: string;
+  exclude?: string[];
+  maxDepth?: number;
+  module?: string;
+  useLlm?: boolean;
+  preview?: boolean;
+  incremental?: boolean;
+  language?: "auto" | "en" | "ru" | "zh";
+}
+
+/**
+ * Context required for documentation generation
+ */
+export interface GenerateDocsContext {
+  normalizeInputPath: (path?: string) => string | null | undefined;
+  logger: {
+    info?: (category: string, msg: string, meta: object, requestId?: string) => void;
+    debug?: (category: string, msg: string, meta: object, requestId?: string) => void;
+    warn?: (category: string, msg: string, meta: object, requestId?: string) => void;
+  };
+  requestId?: string;
+  getAutoDocManager: () => Promise<any | null>;
+}
+
+/**
+ * Result of documentation generation
+ */
+export interface GenerateDocsResult {
+  success: boolean;
+  preview: boolean;
+  useLlm: boolean;
+  llmStatus: string;
+  incremental: boolean;
+  language: string;
+  modulesFound: number;
+  filesToGenerate: number;
+  filesWritten: number;
+  incrementalChanges?: Array<{ path: string; changes: string[] }>;
+  modules: Array<{
+    name: string;
+    path: string;
+    files: number;
+    exports: any[];
+  }>;
+  files: Array<{
+    path: string;
+    type: string;
+    preview?: string;
+  }>;
+}
+
+/**
+ * Find git repository root, falling back to target directory
+ */
+export function findRepoRoot(targetDir: string): string {
+  try {
+    return execSync("git rev-parse --show-toplevel", {
+      cwd: targetDir,
+      encoding: "utf-8",
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return targetDir;
+  }
+}
+
+/**
+ * Detect language for documentation
+ */
+export async function detectDocLanguage(
+  requestedLang: "auto" | "en" | "ru" | "zh",
+  getAutoDocManager: () => Promise<any | null>,
+): Promise<"en" | "ru" | "zh"> {
+  if (requestedLang !== "auto") {
+    return requestedLang;
+  }
+
+  try {
+    const adm = await getAutoDocManager();
+    return adm?.getConfig()?.language || "en";
+  } catch {
+    return "en";
+  }
+}
+
+/**
+ * Generate documentation using LLM if available
+ */
+export async function enhanceWithLLM(
+  modules: any[],
+  files: any[],
+  docLanguage: string,
+  context: GenerateDocsContext,
+): Promise<{ llmStatus: string }> {
+  const { detectLLMProviders, batchGenerateDocs } = await import("../llm/index.js");
+  const { recommended } = await detectLLMProviders();
+
+  if (!recommended) {
+    context.logger.warn?.(
+      "AUTODOC",
+      "No LLM provider available. Install Ollama or configure TGI/OpenAI.",
+      {},
+      context.requestId,
+    );
+    return { llmStatus: "no_provider_available" };
+  }
+
+  const modelName = (recommended as any).selectedModel || recommended.name;
+  context.logger.info?.(
+    "AUTODOC",
+    `Using LLM: ${recommended.name} (${modelName}) for ${modules.length} module(s), lang=${docLanguage}`,
+    {},
+    context.requestId,
+  );
+
+  try {
+    const enhancedDocs = await batchGenerateDocs(recommended, modules, {
+      concurrency: 1,
+      language: docLanguage,
+      onProgress: (completed: number, total: number) => {
+        context.logger.debug?.("AUTODOC", `LLM progress: ${completed}/${total}`, {}, context.requestId);
+      },
+    });
+
+    for (const file of files) {
+      const enhanced = enhancedDocs.get(file.path.replace(/AUTODOC\.md$/, "").replace(/[\\/]$/, ""));
+      if (enhanced) {
+        file.content = enhanced;
+      }
+    }
+
+    return { llmStatus: `using_${recommended.name}:${modelName}` };
+  } catch (error) {
+    context.logger.warn?.("AUTODOC", `LLM generation failed: ${(error as Error).message}`, {}, context.requestId);
+    return { llmStatus: `error_${recommended.name}` };
+  }
+}
+
+/**
+ * Write files with incremental update support
+ */
+export async function writeFilesIncremental(
+  files: any[],
+  adm: any | null,
+  useLlm: boolean,
+  context: GenerateDocsContext,
+): Promise<{ filesWritten: number; incrementalChanges: Array<{ path: string; changes: string[] }> }> {
+  const { updateModuleDoc } = await import("./incremental-updater.js");
+  let filesWritten = 0;
+  const incrementalChanges: Array<{ path: string; changes: string[] }> = [];
+
+  for (const file of files) {
+    try {
+      const modulePath = file.path.replace(/[\\/]AUTODOC\.md$/, "");
+      const updateResult = await updateModuleDoc(modulePath, file.path, file.content, { useLlm });
+
+      if (updateResult.updated && updateResult.newContent) {
+        if (adm) {
+          await adm.saveDocument(file.path, updateResult.newContent, { autoGenerated: true });
+        }
+        await writeDocumentToDisk(file.path, updateResult.newContent);
+        filesWritten++;
+
+        incrementalChanges.push({
+          path: file.path,
+          changes: updateResult.changes.map((c: any) => c.description),
+        });
+      }
+    } catch (error) {
+      context.logger.warn?.(
+        "AUTODOC",
+        `Incremental update failed for ${file.path}: ${(error as Error).message}`,
+        {},
+        context.requestId,
+      );
+      // Fall back to full overwrite
+      try {
+        if (adm) {
+          await adm.saveDocument(file.path, file.content, { autoGenerated: true });
+        }
+        await writeDocumentToDisk(file.path, file.content);
+        filesWritten++;
+      } catch (innerError) {
+        context.logger.warn?.(
+          "AUTODOC",
+          `Failed to write ${file.path}: ${(innerError as Error).message}`,
+          {},
+          context.requestId,
+        );
+      }
+    }
+  }
+
+  return { filesWritten, incrementalChanges };
+}
+
+/**
+ * Write files in full overwrite mode
+ */
+export async function writeFilesOverwrite(
+  files: any[],
+  adm: any | null,
+  context: GenerateDocsContext,
+): Promise<number> {
+  let filesWritten = 0;
+
+  for (const file of files) {
+    try {
+      if (adm) {
+        await adm.saveDocument(file.path, file.content, { autoGenerated: true });
+      }
+      await writeDocumentToDisk(file.path, file.content);
+      filesWritten++;
+    } catch (error) {
+      context.logger.warn?.(
+        "AUTODOC",
+        `Failed to write ${file.path}: ${(error as Error).message}`,
+        {},
+        context.requestId,
+      );
+    }
+  }
+
+  return filesWritten;
+}
+
+/**
+ * Main documentation generation function
+ */
+export async function executeGenerateDocs(
+  options: GenerateDocsOptions,
+  context: GenerateDocsContext,
+): Promise<GenerateDocsResult> {
+  const targetDir = context.normalizeInputPath(options.rootDir || "") || process.cwd();
+  const repoRoot = findRepoRoot(targetDir);
+  const targetAutodocDir = options.autodocDir
+    ? context.normalizeInputPath(options.autodocDir) || options.autodocDir
+    : join(repoRoot, ".autodoc");
+
+  // Detect language
+  const docLanguage = await detectDocLanguage(options.language || "auto", context.getAutoDocManager);
+
+  // Ensure .autodoc/ exists with template files
+  ensureGeneralDocs(targetAutodocDir);
+
+  // Generate module docs
+  const result = await generateDocs({
+    rootDir: targetDir,
+    exclude: options.exclude,
+    maxDepth: options.maxDepth,
+  });
+
+  // Filter by module name if specified
+  if (options.module) {
+    const filterLower = options.module.toLowerCase();
+    result.modules = result.modules.filter(
+      (m: any) => m.name.toLowerCase() === filterLower || m.name.toLowerCase().includes(filterLower),
+    );
+    result.files = result.files.filter((f: any) => result.modules.some((m: any) => f.path.includes(m.path)));
+  }
+
+  // Enhance with LLM if requested
+  let llmStatus = "not_requested";
+  if (options.useLlm && result.modules.length > 0) {
+    const llmResult = await enhanceWithLLM(result.modules, result.files, docLanguage, context);
+    llmStatus = llmResult.llmStatus;
+  }
+
+  // Write files if not preview
+  let filesWritten = 0;
+  let incrementalChanges: Array<{ path: string; changes: string[] }> = [];
+
+  if (!options.preview) {
+    const adm = await context.getAutoDocManager();
+
+    if (options.incremental) {
+      const writeResult = await writeFilesIncremental(result.files, adm, options.useLlm || false, context);
+      filesWritten = writeResult.filesWritten;
+      incrementalChanges = writeResult.incrementalChanges;
+    } else {
+      filesWritten = await writeFilesOverwrite(result.files, adm, context);
+    }
+  }
+
+  return {
+    success: true,
+    preview: options.preview || false,
+    useLlm: options.useLlm || false,
+    llmStatus,
+    incremental: options.incremental || false,
+    language: docLanguage,
+    modulesFound: result.modules.length,
+    filesToGenerate: result.files.length,
+    filesWritten,
+    incrementalChanges: options.incremental ? incrementalChanges : undefined,
+    modules: result.modules.map((m: any) => ({
+      name: m.name,
+      path: m.path,
+      files: m.files.length,
+      exports: m.exports.slice(0, 5),
+    })),
+    files: result.files.map((f: any) => ({
+      path: f.path,
+      type: f.type,
+      preview: options.preview ? f.content.slice(0, 200) + "..." : undefined,
+    })),
+  };
+}

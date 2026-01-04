@@ -21,107 +21,31 @@ import { fileURLToPath } from "node:url";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 import type { WorkerEmbeddingConfig } from "../../types/semantic.js";
 import { logger } from "../../utils/logger.js";
+import {
+  type BinaryEmbedding,
+  type EmbeddingsCallback,
+  killProcess,
+  type ParseRequest,
+  type ParseResponse,
+  type QueuedTask,
+  type SpawnContext,
+  type StreamingResultCallback,
+  type SubprocessPoolOptions,
+  type SubprocessPoolStats,
+  type SubprocessState,
+  spawnProcess,
+  type VectorsWrittenCallback,
+} from "./subprocess-pool/index.js";
 
-// =============================================================================
-// TYPES
-// =============================================================================
-
-interface SubprocessState {
-  id: number;
-  process: ChildProcess | BunProcess | null;
-  busy: boolean;
-  tasksProcessed: number;
-  totalProcessingTime: number;
-  memoryUsage: number;
-  pendingResolve: ((results: ParseResult[]) => void) | null;
-  pendingReject: ((error: Error) => void) | null;
-  // For ready signal
-  readyResolve: (() => void) | null;
-  readyReject: ((error: Error) => void) | null;
-  // For ping/pong memory check
-  pendingPingResolve: ((memoryMB: number) => void) | null;
-  // Flag to distinguish intentional kill from crash
-  intentionalKill: boolean;
-}
-
-interface BunProcess {
-  stdin: WritableStream<Uint8Array>;
-  stdout: ReadableStream<Uint8Array>;
-  stderr: ReadableStream<Uint8Array>;
-  pid: number;
-  kill(): void;
-  exited: Promise<number>;
-}
-
-interface ParseRequest {
-  type: "parse";
-  id: string;
-  files: string[];
-  language: string;
-  options?: ParserOptions | undefined;
-}
-
-interface ParseResponse {
-  type: "result" | "error" | "ready" | "pong";
-  id?: string | undefined;
-  results?: ParseResult[];
-  error?: string;
-  stats?: {
-    filesProcessed: number;
-    totalTime: number;
-    memoryUsed: number;
-  };
-  // Pong response fields
-  memoryMB?: number;
-  rssMB?: number;
-}
-
-export interface SubprocessPoolStats {
-  language: string;
-  totalWorkers: number;
-  activeWorkers: number;
-  idleWorkers: number;
-  queuedTasks: number;
-  completedTasks: number;
-  failedTasks: number;
-  avgProcessingTime: number;
-  filesProcessed: number;
-  processRestarts: number;
-}
-
-/**
- * Binary embedding received from worker via IPC
- */
-export interface BinaryEmbedding {
-  id: string;
-  vectorBuffer: ArrayBuffer;
-  content: string;
-  metadata?: Record<string, unknown>;
-}
-
-/**
- * Callback for receiving embeddings from workers
- */
-export type EmbeddingsCallback = (embeddings: BinaryEmbedding[]) => void;
-
-/**
- * Callback for vectors.written event (incremental Faiss loading)
- */
-export type VectorsWrittenCallback = (workerId: string, count: number, dumpDir: string) => void;
-
-export interface SubprocessPoolOptions {
-  poolSize?: number;
-  taskTimeout?: number;
-  memoryLimitMB?: number; // Kill and restart process if memory exceeds this
-  killAfterBatch?: boolean; // Kill process after each batch to release memory
-  maxFilesPerChunk?: number; // Max files per worker batch (default: 100, prevents memory bloat)
-  /** Embedding configuration for workers. If provided, workers generate embeddings. */
-  embeddingConfig?: WorkerEmbeddingConfig;
-  /** Callback for binary embeddings from workers */
-  onEmbeddings?: EmbeddingsCallback;
-  /** Callback when worker writes vectors to dump files (for incremental Faiss loading) */
-  onVectorsWritten?: VectorsWrittenCallback;
-}
+// Re-export types for backward compatibility
+export type {
+  BinaryEmbedding,
+  EmbeddingsCallback,
+  StreamingResultCallback,
+  SubprocessPoolOptions,
+  SubprocessPoolStats,
+  VectorsWrittenCallback,
+};
 
 // =============================================================================
 // PARSING SUBPROCESS POOL
@@ -130,13 +54,7 @@ export interface SubprocessPoolOptions {
 export class ParsingSubprocessPool {
   private language: string;
   private workers: Map<number, SubprocessState> = new Map();
-  private taskQueue: Array<{
-    id: string;
-    files: string[];
-    options?: ParserOptions | undefined;
-    resolve: (results: ParseResult[]) => void;
-    reject: (error: Error) => void;
-  }> = [];
+  private taskQueue: QueuedTask[] = [];
 
   private completedTasks = 0;
   private failedTasks = 0;
@@ -152,6 +70,12 @@ export class ParsingSubprocessPool {
   private readonly embeddingConfig?: WorkerEmbeddingConfig;
   private readonly onEmbeddings?: EmbeddingsCallback;
   private readonly onVectorsWritten?: VectorsWrittenCallback;
+  private readonly onStreamingResult?: StreamingResultCallback;
+  private readonly streamingMode: boolean;
+
+  // Keepalive mode: keep worker 0 alive for fast incremental processing
+  private keepaliveMode: boolean;
+  private readonly keepaliveMemoryLimitMB: number;
 
   private isShuttingDown = false;
   private isBun: boolean;
@@ -166,9 +90,13 @@ export class ParsingSubprocessPool {
     this.memoryLimitMB = options.memoryLimitMB || 512; // 512MB default
     this.killAfterBatch = options.killAfterBatch ?? true; // Kill after batch by default
     this.maxFilesPerChunk = options.maxFilesPerChunk || 100; // Limit chunk size for memory safety
+    this.keepaliveMode = options.keepaliveMode ?? false;
+    this.keepaliveMemoryLimitMB = options.keepaliveMemoryLimitMB || 500; // 500MB for keepalive worker
     this.embeddingConfig = options.embeddingConfig;
     this.onEmbeddings = options.onEmbeddings;
     this.onVectorsWritten = options.onVectorsWritten;
+    this.streamingMode = options.streamingMode ?? false;
+    this.onStreamingResult = options.onStreamingResult;
 
     // Resolve paths
     const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -216,130 +144,18 @@ export class ParsingSubprocessPool {
 
     this.workers.set(workerId, state);
 
+    const context: SpawnContext = {
+      language: this.language,
+      workerScript: this.workerScript,
+      isBun: this.isBun,
+      isShuttingDown: () => this.isShuttingDown,
+      onMessage: (wid, msg) => this.handleResponse(wid, msg),
+      onUnexpectedExit: (wid, code) => this.handleWorkerExit(wid, code),
+    };
+
     try {
-      if (this.isBun) {
-        // Bun: use Bun.spawn with native IPC (same API as Node's fork)
-        // See: https://bun.com/guides/process/ipc
-        const bunProc = Bun.spawn(["bun", this.workerScript], {
-          stderr: "pipe",
-          env: {
-            ...process.env,
-            PARSING_WORKER_ID: `${this.language}-${workerId}`,
-            PARSING_WORKER_LANGUAGE: this.language,
-          },
-          ipc: (message: ParseResponse) => {
-            // IPC message handler - same as Node's 'message' event
-            this.handleResponse(workerId, message);
-          },
-          serialization: "advanced", // JSC structured clone (like V8)
-        });
-
-        // Wrap Bun process to match ChildProcess interface
-        const proc = {
-          stderr: bunProc.stderr,
-          pid: bunProc.pid,
-          kill: () => bunProc.kill(),
-          send: (msg: any) => bunProc.send(msg), // Native IPC send
-          on: (event: string, handler: any) => {
-            if (event === "exit" || event === "close") {
-              bunProc.exited.then((code) => handler(code));
-            }
-          },
-        } as any;
-
-        state.process = proc;
-
-        logger.debug("PARSING_SUBPROCESS", `Spawned bun process with native IPC`, {
-          workerId,
-          language: this.language,
-          pid: proc.pid,
-        });
-
-        // Log stderr for Bun process
-        (async () => {
-          const reader = bunProc.stderr.getReader();
-          const decoder = new TextDecoder();
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const msg = decoder.decode(value).trim();
-              if (msg) {
-                logger.debug("PARSING_WORKER_STDERR", `[${this.language}-${workerId}] ${msg}`);
-              }
-            }
-          } catch {}
-        })();
-
-        // Handle exit - only process if this exact process crashes (not intentional kill)
-        // Capture state reference in closure to detect if state was replaced by killAndRespawn
-        const stateRef = state;
-        bunProc.exited.then((code) => {
-          const currentState = this.workers.get(workerId);
-          // Only handle if: not shutting down, same state object (not replaced), not intentional kill
-          if (!this.isShuttingDown && currentState === stateRef && !stateRef.intentionalKill) {
-            logger.warn("PARSING_SUBPROCESS", `Worker ${workerId} exited unexpectedly`, {
-              code,
-              language: this.language,
-            });
-            this.handleWorkerExit(workerId, code);
-          }
-        });
-      } else {
-        // Node: use fork() with V8 native IPC
-        const { fork } = await import("node:child_process");
-
-        const proc = fork(this.workerScript, [], {
-          stdio: ["pipe", "pipe", "pipe", "ipc"],
-          serialization: "advanced", // V8 structured clone - faster than JSON
-          env: {
-            ...process.env,
-            PARSING_WORKER_ID: `${this.language}-${workerId}`,
-            PARSING_WORKER_LANGUAGE: this.language,
-          },
-        } as any);
-
-        proc.unref();
-        state.process = proc;
-
-        logger.debug("PARSING_SUBPROCESS", `Forked node process with V8 IPC`, {
-          workerId,
-          language: this.language,
-          pid: proc.pid,
-        });
-
-        // V8 native IPC message handler
-        proc.on("message", (message: ParseResponse) => {
-          this.handleResponse(workerId, message);
-        });
-
-        // Log stderr
-        proc.stderr?.on("data", (data: Buffer) => {
-          const msg = data.toString().trim();
-          if (msg) {
-            logger.debug("PARSING_WORKER_STDERR", `[${this.language}-${workerId}] ${msg}`);
-          }
-        });
-
-        // Handle exit - only process if this exact process crashes (not intentional kill)
-        // Capture state reference in closure to detect if state was replaced by killAndRespawn
-        const stateRef = state;
-        proc.on("exit", (code) => {
-          const currentState = this.workers.get(workerId);
-          // Only handle if: not shutting down, same state object (not replaced), not intentional kill
-          if (!this.isShuttingDown && currentState === stateRef && !stateRef.intentionalKill) {
-            logger.warn("PARSING_SUBPROCESS", `Worker ${workerId} exited unexpectedly`, {
-              code,
-              language: this.language,
-            });
-            this.handleWorkerExit(workerId, code);
-          }
-        });
-      }
-
-      // Wait for ready signal
+      await spawnProcess(workerId, state, context);
       await this.waitForReady(workerId);
-
       logger.debug("PARSING_SUBPROCESS", `Subprocess ${workerId} ready`, { language: this.language });
     } catch (error) {
       logger.error("PARSING_SUBPROCESS", `Failed to spawn worker ${workerId}`, {
@@ -457,6 +273,14 @@ export class ParsingSubprocessPool {
       return;
     }
 
+    // Handle streaming_result (individual file result via IPC)
+    if (response.type === "streaming_result") {
+      if (this.onStreamingResult && response.result && response.taskId !== undefined) {
+        this.onStreamingResult(response.result, response.taskId, response.fileIndex ?? 0, response.totalFiles ?? 0);
+      }
+      return;
+    }
+
     if (response.type === "result") {
       // Update stats
       state.tasksProcessed++;
@@ -483,8 +307,30 @@ export class ParsingSubprocessPool {
         if (this.taskQueue.length > 0) {
           this.killAndRespawn(workerId);
         } else {
-          // Just kill, don't respawn - will spawn lazily when new task arrives
-          this.killWorkerOnly(workerId);
+          // Keepalive mode: keep worker 0 alive for fast incremental processing
+          const isKeepaliveWorker = this.keepaliveMode && workerId === 0;
+          const memoryMB = Math.round(state.memoryUsage / 1024 / 1024);
+
+          if (isKeepaliveWorker) {
+            // Check keepalive memory limit (default 500MB)
+            if (state.memoryUsage > this.keepaliveMemoryLimitMB * 1024 * 1024) {
+              logger.info("PARSING_SUBPROCESS", `Keepalive worker memory limit exceeded, restarting`, {
+                language: this.language,
+                memoryMB,
+                limitMB: this.keepaliveMemoryLimitMB,
+              });
+              this.killAndRespawn(workerId);
+            } else {
+              // Keep worker 0 alive for fast incremental processing
+              logger.debug("PARSING_SUBPROCESS", `Keepalive worker ${workerId} staying alive`, {
+                language: this.language,
+                memoryMB,
+              });
+            }
+          } else {
+            // Just kill, don't respawn - will spawn lazily when new task arrives
+            this.killWorkerOnly(workerId);
+          }
         }
       } else {
         // Check memory limit
@@ -522,18 +368,9 @@ export class ParsingSubprocessPool {
       language: this.language,
     });
 
-    // Mark as intentional kill
     state.intentionalKill = true;
-
-    // Kill current process
-    if (state.process) {
-      try {
-        (state.process as ChildProcess).kill?.();
-      } catch {}
-      state.process = null;
-    }
-
-    // Clear state but keep worker slot for lazy respawn
+    killProcess(state.process);
+    state.process = null;
     state.busy = false;
     state.memoryUsage = 0;
   }
@@ -547,23 +384,13 @@ export class ParsingSubprocessPool {
 
     logger.debug("PARSING_SUBPROCESS", `Killing and respawning worker ${workerId}`, { language: this.language });
 
-    // Mark as intentional kill to prevent exit handler from interfering
     state.intentionalKill = true;
-
-    // Kill current process
-    if (state.process) {
-      try {
-        (state.process as ChildProcess).kill?.();
-      } catch {}
-      state.process = null;
-    }
-
+    killProcess(state.process);
+    state.process = null;
     this.processRestarts++;
 
-    // Respawn - this creates a new state with intentionalKill = false
     try {
       await this.spawnWorker(workerId);
-      // Process next task if any
       this.processNextTask(workerId);
     } catch (error) {
       logger.error("PARSING_SUBPROCESS", `Failed to respawn worker ${workerId}`, {
@@ -780,6 +607,7 @@ export class ParsingSubprocessPool {
       files: task.files,
       language: this.language,
       options: task.options,
+      streamingMode: this.streamingMode,
     };
 
     // Send via V8 native IPC
@@ -834,12 +662,8 @@ export class ParsingSubprocessPool {
   async shutdown(): Promise<void> {
     this.isShuttingDown = true;
 
-    for (const [, state] of this.workers) {
-      if (state.process) {
-        try {
-          (state.process as ChildProcess).kill?.();
-        } catch {}
-      }
+    for (const state of this.workers.values()) {
+      killProcess(state.process);
     }
 
     this.workers.clear();
@@ -914,6 +738,81 @@ export class ParsingSubprocessPool {
       totalBytes += state.memoryUsage || 0;
     }
     return Math.round(totalBytes / 1024 / 1024);
+  }
+
+  /**
+   * Enable or disable keepalive mode.
+   * When enabled, worker 0 stays alive after tasks complete for fast incremental processing.
+   * Call this after bulk indexing to switch to incremental mode.
+   */
+  setKeepaliveMode(enabled: boolean): void {
+    const wasEnabled = this.keepaliveMode;
+    this.keepaliveMode = enabled;
+
+    if (enabled && !wasEnabled) {
+      logger.info("PARSING_SUBPROCESS", `Keepalive mode enabled`, {
+        language: this.language,
+        memoryLimitMB: this.keepaliveMemoryLimitMB,
+      });
+    } else if (!enabled && wasEnabled) {
+      logger.info("PARSING_SUBPROCESS", `Keepalive mode disabled`, {
+        language: this.language,
+      });
+    }
+  }
+
+  /**
+   * Check if keepalive mode is enabled
+   */
+  isKeepaliveMode(): boolean {
+    return this.keepaliveMode;
+  }
+
+  /**
+   * Get count of active (spawned) workers
+   */
+  getActiveWorkerCount(): number {
+    let count = 0;
+    for (const state of this.workers.values()) {
+      if (state.process !== null) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Ensure keepalive worker (worker 0) is running.
+   * Call this after enabling keepalive mode to spawn the worker if needed.
+   */
+  async ensureKeepaliveWorker(): Promise<void> {
+    if (!this.keepaliveMode) {
+      logger.warn("PARSING_SUBPROCESS", "ensureKeepaliveWorker called but keepalive mode not enabled", {
+        language: this.language,
+      });
+      return;
+    }
+
+    const state = this.workers.get(0);
+    if (state && state.process !== null) {
+      // Worker 0 already running with active process
+      logger.debug("PARSING_SUBPROCESS", "Keepalive worker already running", {
+        language: this.language,
+        pid: state.process?.pid,
+      });
+      return;
+    }
+
+    logger.info("PARSING_SUBPROCESS", "Spawning KEEPALIVE worker (for incremental updates, not batch)", {
+      language: this.language,
+    });
+
+    await this.spawnWorker(0);
+
+    logger.info("PARSING_SUBPROCESS", "KEEPALIVE worker ready (idle, waiting for incremental tasks)", {
+      language: this.language,
+      pid: this.workers.get(0)?.process?.pid,
+    });
   }
 
   /**

@@ -207,17 +207,7 @@ export interface OptimizedQuery {
   useIndex?: string | undefined;
 }
 
-/**
- * Cache entry structure
- */
-export interface CacheEntry<T = unknown> {
-  key: string;
-  value: T;
-  timestamp: number;
-  ttl: number;
-  hits: number;
-  size: number;
-}
+// CacheEntry removed - use CacheEntry from storage.ts instead
 
 /**
  * Cache statistics

@@ -87,12 +87,12 @@ const semanticAgent = await getOrCreateAgent(container, conductor, AgentType.SEM
 - Lazy initialization - агенты создаются только при первом запросе
 - Интеграция с ConductorOrchestrator
 
-## Parser Worker Pool System (NEW)
+## Parser Worker Pool System
 
 **Generic Language Worker Pool** для параллельного парсинга файлов:
 
 **Архитектура:**
-- **LanguageWorkerPool** (`src/agents/workers/language-worker-pool.ts`) - Generic pool для любого языка
+- **SubprocessPool** (`src/agents/workers/parsing-subprocess-pool.ts`) - Subprocess pool management
 - **GenericLanguageWorker** (`src/agents/workers/generic-language-worker.ts`) - Universal worker для всех 10 языков
 - Автоматическое определение pool size на основе скорости парсинга языка:
   - Python: 4 workers (медленный: ~266ms/file)
@@ -100,13 +100,25 @@ const semanticAgent = await getOrCreateAgent(container, conductor, AgentType.SEM
   - Go/C: 2 workers (быстрый: ~10-15ms/file)
 
 **Оптимизации:**
+- **Streaming Mode**: Workers отправляют `streaming_result` после парсинга каждого файла → главный процесс индексирует сразу
+- **Parallel Data Files**: JSON/YAML обрабатываются через `Promise.all` с chunking
 - **Lazy initialization**: Pools создаются только для используемых языков
 - **Smart threshold**: Workers активируются только для >50 файлов (предотвращает overhead)
 - **Pool reuse**: Workers переиспользуются между сессиями индексации
 
-**Performance:**
-- Большие проекты (152 файла): **1.22x speedup** (96.3s → 78.9s)
-- Малые проекты (40 файлов): Threshold предотвращает overhead
+**Performance (Streaming Mode):**
+- Средние проекты (152 файла): **1.6x speedup** (16.8s → 10.5s, **37% faster**)
+- Data files (174 JSON/YAML): **34x speedup** (6.7s → 195ms, **892 files/s**)
+- **91.6%** файлов индексируется через streaming (495/527)
+
+**Streaming Mode API:**
+```typescript
+// Enable streaming in ParserAgent
+parserAgent.setStreamingMode(true, async (result, taskId, fileIndex, totalFiles) => {
+  // Index immediately as results arrive
+  await indexerAgent.indexEntities(result.entities, result.filePath, result.relationships);
+});
+```
 
 **Конфигурация** (`config/production.yaml`):
 ```yaml
