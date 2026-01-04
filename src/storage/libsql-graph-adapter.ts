@@ -686,28 +686,6 @@ export class LibSQLGraphAdapter {
     }
   }
 
-  /**
-   * Release memory by shrinking cache and running VACUUM.
-   * Call after heavy operations to free up memory.
-   */
-  async releaseMemory(): Promise<void> {
-    if (!this.client) return;
-
-    try {
-      // Shrink cache to minimum
-      await this.client.execute("PRAGMA shrink_memory");
-      // Clear query cache
-      this.searchCache.clear();
-      this.embeddingCache.clear();
-
-      logger.info("LIBSQL_MEMORY", "Memory released", {
-        rssMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
-      });
-    } catch (error) {
-      logger.debug("LIBSQL_MEMORY", "Failed to release memory", { error: (error as Error).message });
-    }
-  }
-
   isReady(): boolean {
     return this.isInitialized && this.client !== null;
   }
@@ -1902,65 +1880,6 @@ export class LibSQLGraphAdapter {
       await this.client.batch(statements as any, "write");
     } catch {
       // Ignore cache write errors
-    }
-  }
-
-  /**
-   * Get cache statistics.
-   */
-  async getEmbeddingCacheStats(): Promise<{ total: number; hitRate: number; oldestMs: number }> {
-    if (!this.client) return { total: 0, hitRate: 0, oldestMs: 0 };
-
-    try {
-      const result = await this.client.execute(`
-        SELECT
-          COUNT(*) as total,
-          SUM(hit_count) as total_hits,
-          MIN(last_used_at) as oldest
-        FROM embedding_cache
-      `);
-
-      const row = result.rows[0];
-      const total = Number(row?.["total"] ?? 0);
-      const totalHits = Number(row?.["total_hits"] ?? 0);
-      const oldest = Number(row?.["oldest"] ?? Date.now());
-
-      return {
-        total,
-        hitRate: total > 0 ? totalHits / total : 0,
-        oldestMs: Date.now() - oldest,
-      };
-    } catch {
-      return { total: 0, hitRate: 0, oldestMs: 0 };
-    }
-  }
-
-  /**
-   * Evict old entries from cache using LRU strategy.
-   * Keeps maxEntries most recently used entries.
-   */
-  async evictEmbeddingCache(maxEntries = 100000): Promise<number> {
-    if (!this.client) return 0;
-
-    try {
-      const countResult = await this.client.execute(`SELECT COUNT(*) as count FROM embedding_cache`);
-      const total = Number(countResult.rows[0]?.["count"] ?? 0);
-
-      if (total <= maxEntries) return 0;
-
-      const toDelete = total - maxEntries;
-
-      // Delete oldest entries by last_used_at
-      await this.client.execute({
-        sql: `DELETE FROM embedding_cache WHERE content_hash IN (
-          SELECT content_hash FROM embedding_cache ORDER BY last_used_at ASC LIMIT ?
-        )`,
-        args: [toDelete],
-      });
-
-      return toDelete;
-    } catch {
-      return 0;
     }
   }
 

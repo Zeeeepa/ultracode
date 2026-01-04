@@ -75,6 +75,7 @@ import {
   type VectorEmbedding,
 } from "../types/semantic.js";
 import { type Entity, EntityType } from "../types/storage.js";
+import { CircuitBreaker } from "../utils/circuit-breaker.js";
 import { loadSemanticConfig, type SemanticConfig } from "../utils/config-paths.js";
 import { hashText } from "../utils/fast-hash.js";
 import { logger } from "../utils/logger.js";
@@ -87,21 +88,6 @@ import { type ResourceAdjustmentCapable, ResourceAdjustmentMixin } from "./resou
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
 // =============================================================================
-
-// TASK-004B: Circuit breaker states
-enum CircuitBreakerState {
-  CLOSED = "CLOSED", // Normal operation
-  OPEN = "OPEN", // Failures detected, blocking requests
-  HALF_OPEN = "HALF_OPEN", // Testing if service has recovered
-}
-
-// TASK-004B: Circuit breaker configuration
-interface CircuitBreakerConfig {
-  failureThreshold: number; // Number of failures before opening
-  recoveryTimeout: number; // Time before trying HALF_OPEN (ms)
-  successThreshold: number; // Successes needed to close from HALF_OPEN
-  monitorWindow: number; // Time window for failure counting (ms)
-}
 
 function getSemanticAgentConfig() {
   const config = getConfig();
@@ -116,14 +102,6 @@ function getSemanticAgentConfig() {
 }
 
 const AGENT_CONFIG = getSemanticAgentConfig();
-
-// TASK-004B: Circuit breaker configuration
-const CIRCUIT_BREAKER_CONFIG: CircuitBreakerConfig = {
-  failureThreshold: 5, // Open after 5 failures
-  recoveryTimeout: 30000, // Try recovery after 30 seconds
-  successThreshold: 3, // Close after 3 consecutive successes
-  monitorWindow: 60000, // 1 minute failure window
-};
 
 /**
  * Path patterns to EXCLUDE from embedding generation only
@@ -176,11 +154,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   private readonly defaultBatchSize: number = AGENT_CONFIG.batchSize;
   private resourceMixin = new ResourceAdjustmentMixin();
 
-  // TASK-004B: Circuit breaker implementation
-  private circuitBreakerState = CircuitBreakerState.CLOSED;
-  private lastFailureTime = 0;
-  private successCount = 0;
-  private failureWindow: number[] = [];
+  // TASK-004B: Circuit breaker for reliability
+  private circuitBreaker = new CircuitBreaker({ name: "SemanticAgent" });
 
   // Last indexing warning about oversized entities
   private lastOversizedWarning: OversizedEntitiesWarning | null = null;
@@ -697,108 +672,6 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     });
   }
 
-  // TASK-004B: Circuit breaker implementation methods
-
-  /**
-   * Check if circuit breaker allows execution
-   */
-  private canExecute(): boolean {
-    const now = Date.now();
-
-    switch (this.circuitBreakerState) {
-      case CircuitBreakerState.CLOSED:
-        return true;
-
-      case CircuitBreakerState.OPEN:
-        // Check if we should transition to HALF_OPEN
-        if (now - this.lastFailureTime >= CIRCUIT_BREAKER_CONFIG.recoveryTimeout) {
-          this.circuitBreakerState = CircuitBreakerState.HALF_OPEN;
-          this.successCount = 0;
-          logger.debug("SemanticAgent", "Circuit breaker HALF_OPEN");
-          return true;
-        }
-        return false;
-
-      case CircuitBreakerState.HALF_OPEN:
-        return true;
-
-      default:
-        return false;
-    }
-  }
-
-  /**
-   * Record a successful operation
-   */
-  private recordSuccess(): void {
-    if (this.circuitBreakerState === CircuitBreakerState.HALF_OPEN) {
-      this.successCount++;
-      if (this.successCount >= CIRCUIT_BREAKER_CONFIG.successThreshold) {
-        this.circuitBreakerState = CircuitBreakerState.CLOSED;
-        this.failureWindow = [];
-        logger.debug("SemanticAgent", "Circuit breaker CLOSED", { successes: this.successCount });
-      }
-    } else if (this.circuitBreakerState === CircuitBreakerState.CLOSED) {
-      // Clean up old failures from monitoring window
-      this.cleanupFailureWindow();
-    }
-  }
-
-  /**
-   * Record a failure
-   */
-  private recordFailure(): void {
-    const now = Date.now();
-    this.lastFailureTime = now;
-    this.failureWindow.push(now);
-
-    // Clean up old failures outside monitoring window
-    this.cleanupFailureWindow();
-
-    const recentFailures = this.failureWindow.length;
-
-    if (recentFailures >= CIRCUIT_BREAKER_CONFIG.failureThreshold) {
-      this.circuitBreakerState = CircuitBreakerState.OPEN;
-      logger.warn("SemanticAgent", "Circuit breaker OPENED", { failures: recentFailures });
-    }
-  }
-
-  /**
-   * Clean up old failures outside the monitoring window
-   */
-  private cleanupFailureWindow(): void {
-    const now = Date.now();
-    this.failureWindow = this.failureWindow.filter(
-      (failureTime) => now - failureTime <= CIRCUIT_BREAKER_CONFIG.monitorWindow,
-    );
-  }
-
-  /**
-   * Execute operation with circuit breaker protection
-   */
-  private async executeWithCircuitBreaker<T>(
-    operation: () => Promise<T>,
-    fallback: () => T,
-    operationName: string,
-  ): Promise<T> {
-    if (!this.canExecute()) {
-      return fallback();
-    }
-
-    try {
-      const result = await operation();
-      this.recordSuccess();
-      return result;
-    } catch (error) {
-      this.recordFailure();
-      logger.warn("SemanticAgent", "Operation failed, using fallback", {
-        operation: operationName,
-        error: (error as Error).message,
-      });
-      return fallback();
-    }
-  }
-
   /**
    * Shutdown the semantic agent
    */
@@ -925,7 +798,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     this.updateCacheHitRate(false);
 
     // TASK-004B: Execute with circuit breaker protection
-    return this.executeWithCircuitBreaker(
+    return this.circuitBreaker.execute(
       async () => {
         const result = await this.hybridSearch.semanticSearch(query, limit);
         // Cache the result
@@ -957,7 +830,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   }
 
   async generateCodeEmbedding(code: string): Promise<Float32Array> {
-    return this.executeWithCircuitBreaker(
+    return this.circuitBreaker.execute(
       async () => this.codeAnalyzer.generateCodeEmbedding(code),
       () => new Float32Array(this.embeddingDim),
       "generateCodeEmbedding",

@@ -69,7 +69,7 @@ createSafeEnvironment();
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // Consolidated MCP SDK imports
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -152,14 +152,8 @@ function zodToJsonSchema(schema: z.ZodSchema): Record<string, unknown> {
 // Import our multi-agent components
 import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
 import type { IndexerAgent } from "./agents/indexer-agent.js";
-import { TechnologyDetector } from "./analysis/technology-detector.js";
 // AutoDoc: Semantic documentation layer
-import {
-  type AutoDocManager,
-  type AutoDocWatcherConfig,
-  getAutoDocManager as getAutoDocManagerFactory,
-  getAutoDocWatcher,
-} from "./autodoc/index.js";
+import { type AutoDocWatcherConfig, getAutoDocWatcher } from "./autodoc/index.js";
 // CLI argument parsing
 import { handleSetupCommand, parseArgs, printHelp } from "./cli/args-parser.js";
 // TASK-001: Import new YAML configuration system
@@ -181,11 +175,7 @@ import { knowledgeBus } from "./core/knowledge-bus.js";
 import { PipeServer } from "./core/pipe-transport.js";
 import { resourceManager } from "./core/resource-manager.js";
 // LayeredIndexManager for branch-aware indexing
-import { LayeredIndexManager } from "./layered/index.js";
-import { CodeModifier } from "./modification/code-modifier.js";
-import { FileOperations } from "./modification/file-operations.js";
-import { PreviewManager } from "./modification/preview-manager.js";
-import { PatternSearch } from "./search/pattern-search.js";
+import type { LayeredIndexManager } from "./layered/index.js";
 import { shutdownFaissProvider } from "./semantic/faiss/faiss-provider.js";
 import { getGpuClient, shutdownGpuClient } from "./semantic/gpu/gpu-client.js";
 // OVMS Native lifecycle management
@@ -214,9 +204,6 @@ import { initServiceContainer, type ServiceContainer } from "./core/service-cont
 import type { AgentTask } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
-import type { CloneGroup } from "./types/semantic.js";
-import type { Entity, Relationship } from "./types/storage.js";
-import { EntityType } from "./types/storage.js";
 import { getVectorDimensions, loadSemanticConfig } from "./utils/config-paths.js";
 import { initHasher } from "./utils/fast-hash.js";
 import { createRequestId, logger } from "./utils/logger.js";
@@ -298,10 +285,6 @@ process.on("unhandledRejection", (reason, _promise) => {
 // SIGTERM/SIGINT handlers are defined later in startMcpServer() after all imports
 // This allows proper async shutdown including OVMS Native
 
-import { CodeValidator } from "./validation/code-validator.js";
-// PHASE 8: Import new code modification and analysis components
-import { VersionManager } from "./versioning/version-manager.js";
-
 // === STARTUP TIMING WITH TRACE LOGGING ===
 const _startupTimers: Record<string, number> = {};
 const PROCESS_START_TIME = Date.now();
@@ -353,103 +336,6 @@ if (setupRequested) {
 }
 
 const versionInfo = getVersionInfo();
-
-type NormalizedSemanticGroup = {
-  id: string;
-  cloneType: CloneGroup["cloneType"];
-  avgSimilarity: number;
-  files: Array<{
-    filePath: string;
-    occurrences: Array<{
-      id: string;
-      similarity: number;
-      startLine?: number | undefined;
-      snippet: string;
-    }>;
-  }>;
-};
-
-function parseSemanticMemberPath(
-  memberId: string,
-  memberPath: string | undefined,
-): {
-  filePath: string;
-  startLine?: number | undefined;
-} {
-  let filePath = memberPath ?? "";
-  let startLine: number | undefined;
-
-  if (!filePath || filePath.startsWith("parsed:")) {
-    const match = /^parsed:(.*?):(\d+):\d+$/.exec(memberId);
-    if (match) {
-      filePath = match[1] ?? filePath;
-      startLine = Number.parseInt(match[2] ?? "", 10);
-    }
-  }
-
-  if (!filePath && memberId.includes(":")) {
-    filePath = memberId.split(":")[0] ?? memberId;
-  }
-
-  return { filePath, startLine };
-}
-
-function _normalizeSemanticCloneGroups(
-  groups: CloneGroup[],
-  baseDir: string,
-): {
-  groups: NormalizedSemanticGroup[];
-  skippedGroups: number;
-} {
-  const normalized: NormalizedSemanticGroup[] = [];
-  let skippedGroups = 0;
-
-  for (const group of groups) {
-    const files = new Map<
-      string,
-      {
-        filePath: string;
-        occurrences: Array<{
-          id: string;
-          similarity: number;
-          startLine?: number | undefined;
-          snippet: string;
-        }>;
-      }
-    >();
-
-    for (const member of group.members) {
-      const { filePath: rawPath, startLine } = parseSemanticMemberPath(member.id, member.path);
-      const sanitizedPath =
-        rawPath && baseDir && rawPath.startsWith(baseDir)
-          ? relative(baseDir, rawPath) || rawPath
-          : rawPath || member.id;
-      const record =
-        files.get(sanitizedPath) ??
-        files.set(sanitizedPath, { filePath: sanitizedPath, occurrences: [] }).get(sanitizedPath)!;
-      record.occurrences.push({
-        id: member.id,
-        similarity: member.similarity,
-        startLine,
-        snippet: member.content,
-      });
-    }
-
-    if (files.size < 2) {
-      skippedGroups += 1;
-      continue;
-    }
-
-    normalized.push({
-      id: group.id,
-      cloneType: group.cloneType,
-      avgSimilarity: group.avgSimilarity,
-      files: Array.from(files.values()),
-    });
-  }
-
-  return { groups: normalized, skippedGroups };
-}
 
 if (versionRequested) {
   console.error(
@@ -590,65 +476,7 @@ console.error("[Main] Set current indexing directory to:", directory);
 // Storage initialization happens lazily via getGraphStorage()
 
 // Track current project for context switching
-let currentProjectPath = directory;
-
-/**
- * Switch global context to a different project
- * v3: With unified database, we just change project context on GraphStorage and VectorStore
- * No SQLiteManager recreation needed!
- *
- * @param projectPath - Path to the new project
- * @param branchName - Optional branch name (defaults to DEFAULT_BRANCH)
- */
-async function _switchGlobalProjectContext(projectPath: string, branchName?: string): Promise<void> {
-  const newBranch = branchName || DEFAULT_BRANCH;
-
-  if (projectPath === currentProjectPath) {
-    console.error(`[Main] v3: Already on project: ${projectPath}`);
-    return; // Already on this project
-  }
-
-  console.error(`[Main] v3: Switching project context: ${currentProjectPath} -> ${projectPath}`);
-  console.error(`[Main] v3: Project hash: ${getProjectHash(projectPath)}, branch: ${newBranch}`);
-
-  // v3: Update project path tracking
-  currentProjectPath = projectPath;
-
-  // v3: Update GraphStorage context (no recreation needed!)
-  const storage = await getGraphStorage();
-  storage.setProject(projectPath, newBranch);
-  console.error(`[Main] v3: GraphStorage context updated`);
-
-  // v3: Update SemanticAgent's VectorStore context (no recreation needed!)
-  try {
-    const cond = getConductor();
-    if (cond) {
-      const existingAgents = cond.getAgentsByType(AgentType.SEMANTIC);
-      if (existingAgents.length > 0) {
-        const semanticAgent = existingAgents[0] as any;
-        if (semanticAgent && typeof semanticAgent.reinitializeForProject === "function") {
-          // v3: reinitializeForProject now just changes context
-          await semanticAgent.reinitializeForProject(projectPath, newBranch);
-        }
-      }
-    }
-  } catch (e) {
-    console.error(`[Main] v3: Failed to update SemanticAgent context: ${(e as Error).message}`);
-  }
-
-  // Update indexing directory for compatibility
-  console.error(`[Main] v3: Setting indexing directory to ${projectPath}`);
-  setCurrentIndexingDirectory(projectPath);
-  console.error(`[Main] v3: getCurrentIndexingDirectory() now = ${getCurrentIndexingDirectory()}`);
-
-  // v3: No need to reset conductor or recreate agents - context change is sufficient!
-  // Just reset cached search/modifier instances that may have cached project-specific data
-  patternSearch = null;
-  codeModifier = null;
-  fileOperations = null;
-
-  console.error(`[Main] v3: Project context switched to: ${projectPath} (branch: ${newBranch})`);
-}
+const currentProjectPath = directory;
 
 // Initialize global GraphStorage (libsql unified storage)
 console.error("[Main] Initializing global GraphStorage (libsql unified)");
@@ -766,23 +594,6 @@ function getConductor(): ConductorOrchestrator {
 // Used by code modification components (CodeModifier, FileOperations, PatternSearch)
 let globalVectorStore: any = null;
 
-// Initialize globalVectorStore on first semantic agent access
-async function initializeGlobalVectorStore(): Promise<void> {
-  if (!globalVectorStore) {
-    try {
-      const semanticAgent = await getSemanticAgent();
-      globalVectorStore = semanticAgent.getVectorStore();
-    } catch (error) {
-      console.warn("[Main] Failed to get VectorStore:", error);
-      globalVectorStore = null;
-      patternSearch = null; // Reset PatternSearch to use new GraphStorage
-      codeModifier = null; // Reset CodeModifier (uses GraphStorage)
-      fileOperations = null; // Reset FileOperations (uses GraphStorage)
-      autoDocManager = null; // Reset AutoDocManager
-    }
-  }
-}
-
 // ============================================================================
 // PHASE 8: Service Container initialization
 // ============================================================================
@@ -802,134 +613,8 @@ function getOrInitServiceContainer(): ServiceContainer {
   return serviceContainerInstance;
 }
 
-// Legacy global instances (will be migrated to ServiceContainer)
-let versionManager: VersionManager | null = null;
-let codeModifier: CodeModifier | null = null;
-let fileOperations: FileOperations | null = null;
-let codeValidator: CodeValidator | null = null;
-let technologyDetector: TechnologyDetector | null = null;
-let patternSearch: PatternSearch | null = null;
-let autoDocManager: AutoDocManager | null = null;
-
-async function _getVersionManager(): Promise<VersionManager> {
-  if (!versionManager) {
-    versionManager = new VersionManager({ workingDirectory: directory });
-    await versionManager.initialize();
-  }
-  return versionManager;
-}
-
-async function _getCodeModifier(): Promise<CodeModifier> {
-  if (!codeModifier) {
-    const storage = await getGraphStorage();
-    const vectorStore = globalVectorStore || null;
-    codeModifier = new CodeModifier(storage, vectorStore, directory);
-    await codeModifier.initialize();
-  }
-  return codeModifier;
-}
-
-async function _getFileOperations(): Promise<FileOperations> {
-  if (!fileOperations) {
-    const storage = await getGraphStorage();
-    const vectorStore = globalVectorStore || null;
-    const previewManager = new PreviewManager(storage, vectorStore);
-    await previewManager.initialize();
-    fileOperations = new FileOperations(storage, vectorStore, previewManager);
-  }
-  return fileOperations;
-}
-
-async function _getCodeValidator(): Promise<CodeValidator> {
-  if (!codeValidator) {
-    codeValidator = new CodeValidator();
-  }
-  return codeValidator;
-}
-
-async function getTechnologyDetector(): Promise<TechnologyDetector> {
-  if (!technologyDetector) {
-    const storage = await getGraphStorage();
-    technologyDetector = new TechnologyDetector(storage, directory);
-  }
-  return technologyDetector;
-}
-
-async function _getPatternSearch(): Promise<PatternSearch> {
-  if (!patternSearch) {
-    const storage = await getGraphStorage();
-    const vectorStore = globalVectorStore || null;
-    const techDetector = await getTechnologyDetector();
-    patternSearch = new PatternSearch(storage, vectorStore, techDetector);
-    await patternSearch.initialize();
-  }
-  return patternSearch;
-}
-
-async function _getAutoDocManager(): Promise<AutoDocManager> {
-  if (!autoDocManager) {
-    // Use autodoc.db in the same directory as unified storage
-    const { getGlobalDbPaths } = await import("./shared/storage-paths.js");
-    const { dirname, join } = await import("node:path");
-    const paths = getGlobalDbPaths();
-    const autodocDbPath = join(dirname(paths.graphDbPath), "autodoc.db");
-    autoDocManager = getAutoDocManagerFactory(autodocDbPath);
-    const graphStorage = await getGraphStorage();
-    await autoDocManager.initialize(graphStorage);
-  }
-  return autoDocManager;
-}
-
 // LayeredIndexManager - orchestrates branch-aware indexing with delta layers
-let layeredIndexManager: LayeredIndexManager | null = null;
-
-async function _getLayeredIndexManager(): Promise<LayeredIndexManager | null> {
-  if (layeredIndexManager) {
-    return layeredIndexManager;
-  }
-
-  try {
-    // Get required dependencies
-    const baseIndex = await getGraphStorage();
-    const cond = getConductor();
-    await cond.initialize();
-
-    // Get semantic agent for vector store
-    const agent = await getOrCreateAgent(container, cond, AgentType.SEMANTIC);
-    const baseVectorStore = agent?.getVectorStore?.();
-
-    if (!baseVectorStore) {
-      console.error("[Main] getLayeredIndexManager: No vector store available");
-      return null;
-    }
-
-    // Get indexer agent for branch manager and git watcher
-    const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as any;
-    const branchManager = indexerAgent?.getBranchManager?.();
-    const gitWatcher = indexerAgent?.getGitWatcher?.();
-
-    if (!branchManager) {
-      console.error("[Main] getLayeredIndexManager: No branch manager available");
-      return null;
-    }
-
-    // Create LayeredIndexManager
-    layeredIndexManager = new LayeredIndexManager(baseIndex, baseVectorStore, branchManager, gitWatcher || null, {
-      workingDirectory: directory,
-      enableFileWatching: !!gitWatcher,
-      enableMaintenance: true,
-      debug: false,
-    });
-
-    await layeredIndexManager.initialize();
-    console.error("[Main] LayeredIndexManager initialized successfully");
-
-    return layeredIndexManager;
-  } catch (error) {
-    console.error("[Main] Failed to initialize LayeredIndexManager:", error);
-    return null;
-  }
-}
+const layeredIndexManager: LayeredIndexManager | null = null;
 
 // VARIANT-C: Unified agent getter using DI Container
 async function getSemanticAgent(): Promise<any> {
@@ -969,259 +654,6 @@ async function getDoraAgent(): Promise<any> {
   const cond = getConductor();
   await cond.initialize();
   return await getOrCreateAgent(container, cond, AgentType.DORA);
-}
-
-async function _ensureSemanticsReady(minVectors = 1, timeoutMs = 15000): Promise<boolean> {
-  if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] === "1") {
-    return true;
-  }
-  const startEnsure = Date.now();
-  const agent = await getSemanticAgent();
-  const agentTime = Date.now() - startEnsure;
-
-  await initializeGlobalVectorStore(); // Initialize global vector store for code modification
-  const initTime = Date.now() - startEnsure - agentTime;
-
-  // First check cached metrics
-  const metrics = typeof agent.getSemanticMetrics === "function" ? agent.getSemanticMetrics() : undefined;
-  if (metrics && metrics.vectorsStored >= minVectors) {
-    logger.info("SEMANTIC_READY", `Ready immediately (cached)`, {
-      vectors: metrics.vectorsStored,
-      agentMs: agentTime,
-      initMs: initTime,
-    });
-    return true;
-  }
-
-  // If cached metrics show 0, check vector store directly (metrics may not be updated)
-  const vectorStore = agent.getVectorStore();
-  if (vectorStore) {
-    const actualCount = await vectorStore.count();
-    if (actualCount >= minVectors) {
-      logger.info("SEMANTIC_READY", `Ready (actual count)`, {
-        actualVectors: actualCount,
-        cachedVectors: metrics?.vectorsStored ?? 0,
-        agentMs: agentTime,
-        initMs: initTime,
-      });
-      return true;
-    }
-  }
-
-  // Poll for vectors during indexing
-  logger.info("SEMANTIC_READY", `No vectors found, polling...`, { timeoutMs });
-  const start = Date.now();
-
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const currentMetrics = typeof agent.getSemanticMetrics === "function" ? agent.getSemanticMetrics() : undefined;
-      if (currentMetrics && currentMetrics.vectorsStored >= minVectors) {
-        logger.info("SEMANTIC_READY", `Ready after polling`, {
-          pollingMs: Date.now() - start,
-          vectors: currentMetrics.vectorsStored,
-        });
-        return true;
-      }
-    } catch {}
-
-    // Small delay to allow initialization to complete
-    await sleep(100);
-  }
-  logger.warn("SEMANTIC_READY", `Timeout, proceeding anyway`, { timeoutMs });
-  return false;
-}
-
-function toPosixPath(p?: string): string {
-  return (p || "").replace(/\\/g, "/");
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-async function _resolveEntity(
-  storage: Awaited<ReturnType<typeof getGraphStorage>>,
-  identifier: string,
-): Promise<Entity | null> {
-  const direct = await storage.getEntity(identifier);
-  if (direct) return direct;
-
-  const query = await storage.executeQuery({
-    type: "entity",
-    filters: { name: new RegExp(escapeRegExp(identifier), "i") },
-    limit: 5,
-  });
-  if (query.entities.length > 0) {
-    return query.entities[0]!;
-  }
-
-  const fallback = await storage.executeQuery({ type: "entity", limit: 1 });
-  return fallback.entities[0] ?? null;
-}
-
-async function _resolveEntityWithHint(
-  storage: Awaited<ReturnType<typeof getGraphStorage>>,
-  name: string,
-  hintFilePath?: string,
-): Promise<Entity | null> {
-  const esc = (s: string) => escapeRegExp(s);
-  const resolvedHintPath = hintFilePath ? normalizeInputPath(hintFilePath) : undefined;
-
-  if (resolvedHintPath) {
-    const hintLower = toPosixPath(resolvedHintPath).toLowerCase();
-
-    const exact = await storage.executeQuery({
-      type: "entity",
-      filters: {
-        filePath: resolvedHintPath,
-        name: new RegExp(`^${esc(name)}$`, "i"),
-      },
-      limit: 5,
-    });
-    if (exact.entities.length > 0) {
-      exact.entities.sort((a, b) => (a.filePath?.length ?? 0) - (b.filePath?.length ?? 0));
-      return exact.entities[0]!;
-    }
-
-    const fuzzy = await storage.executeQuery({
-      type: "entity",
-      filters: { name: new RegExp(`^${esc(name)}$`, "i") },
-      limit: 30,
-    });
-
-    const badPaths = [
-      "/dist/",
-      "/build/",
-      "/out/",
-      "/.next/",
-      "/.nuxt/",
-      "/coverage/",
-      "/node_modules/",
-      "/tmp/",
-      "/temp/",
-      "/archives/",
-      "/archive/",
-      ".zip",
-      ".tar",
-      ".gz",
-      ".tgz",
-      ".rar",
-      ".7z",
-      ".xz",
-      ".bz2",
-      ".zst",
-    ];
-
-    const ranked = fuzzy.entities
-      .map((e) => {
-        const p = toPosixPath(e.filePath).toLowerCase();
-        let score = 0;
-        if (p === hintLower) score += 5;
-        else if (p.endsWith(hintLower)) score += 4;
-        else if (p.includes(hintLower)) score += 3;
-
-        if (badPaths.some((b) => p.includes(b))) score -= 2;
-        else score += 1;
-
-        return { e, score };
-      })
-      .sort((a, b) => b.score - a.score || (a.e.filePath?.length ?? 0) - (b.e.filePath?.length ?? 0));
-
-    const top = ranked[0];
-    if (top && top.score > 0) {
-      return top.e ?? null;
-    }
-  }
-
-  const query = await storage.executeQuery({
-    type: "entity",
-    filters: { name: new RegExp(esc(name), "i") },
-    limit: 20,
-  });
-  if (query.entities.length === 0) {
-    const fb = await storage.executeQuery({ type: "entity", limit: 1 });
-    return fb.entities[0] ?? null;
-  }
-
-  const badPaths = [
-    "/dist/",
-    "/build/",
-    "/out/",
-    "/.next/",
-    "/.nuxt/",
-    "/coverage/",
-    "/node_modules/",
-    "/tmp/",
-    "/temp/",
-    "/archives/",
-    "/archive/",
-    ".zip",
-    ".tar",
-    ".gz",
-    ".tgz",
-    ".rar",
-    ".7z",
-    ".xz",
-    ".bz2",
-    ".zst",
-  ];
-
-  const ranked = query.entities
-    .map((e) => {
-      const p = toPosixPath(e.filePath).toLowerCase();
-      let score = 0;
-      if (e.name?.toLowerCase() === name.toLowerCase()) score += 1;
-      if (badPaths.some((b) => p.includes(b))) score -= 2;
-      else score += 1;
-      return { e, score };
-    })
-    .sort((a, b) => b.score - a.score || (a.e.filePath?.length ?? 0) - (b.e.filePath?.length ?? 0));
-
-  return ranked[0]?.e ?? null;
-}
-
-function _mapEntitySummary(entity: Entity) {
-  const normalizedPath = normalizeInputPath(entity.filePath) ?? entity.filePath;
-  return {
-    id: entity.id,
-    name: entity.name,
-    type: entity.type,
-    filePath: normalizedPath,
-    location: entity.location,
-    metadata: entity.metadata,
-  };
-}
-
-function _summarizeRelationships(relationships: Relationship[], neighbors: Map<string, Entity>) {
-  return relationships.map((rel) => ({
-    id: rel.id,
-    type: rel.type,
-    from: {
-      id: rel.fromId,
-      name: neighbors.get(rel.fromId)?.name ?? null,
-    },
-    to: {
-      id: rel.toId,
-      name: neighbors.get(rel.toId)?.name ?? null,
-    },
-    metadata: rel.metadata,
-  }));
-}
-
-function _normalizeEntityTypes(types?: string[]): EntityType[] | undefined {
-  if (!types?.length) return undefined;
-
-  const allowed = new Set<string>(Object.values(EntityType));
-  const normalized: EntityType[] = [];
-
-  for (const value of types) {
-    const lower = value.toLowerCase();
-    if (allowed.has(lower)) {
-      normalized.push(lower as EntityType);
-    }
-  }
-
-  return normalized.length > 0 ? normalized : undefined;
 }
 
 // GraphStorage singleton is now managed by graph-storage-factory.ts
@@ -1826,7 +1258,10 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
         const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as IndexerAgent | undefined;
         return indexerAgent?.getBranchManager?.() || null;
       },
-      getSnapshotManager: () => versionManager,
+      getSnapshotManager: async () => {
+        const container = getOrInitServiceContainer();
+        return await container.getVersionManager();
+      },
       getKnowledgeBus: () => knowledgeBus,
       getServiceContainer: () => getOrInitServiceContainer(),
       normalizeInputPath,
@@ -1838,7 +1273,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
       return await handler.handle(args);
     }
 
-    throw new Error(`Unknown tool: ${name}. Available tools: ${toolRegistry.listTools().join(", ")}`);
+    throw new Error(`Unknown tool: ${name}. Available tools: ${toolRegistry.getRegisteredTools().join(", ")}`);
 
     // Legacy switch removed - all 47 case statements now in src/tools/handlers/
     // This reduces index.ts from 5165 to ~2900 lines (-44%)
