@@ -13,9 +13,12 @@ import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.
 // =============================================================================
 // CONSTANTS
 // =============================================================================
-const DEFAULT_BATCH_SIZE = 500;
+const DEFAULT_BATCH_SIZE = 1000; // Increased from 500 to reduce DB round-trips
 const MAX_BATCH_SIZE = 2000;
 const ID_LENGTH = 12;
+
+// Helper: yield to event loop between batches (non-blocking)
+const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 // =============================================================================
 // LIBSQL BATCH OPERATIONS CLASS
@@ -162,9 +165,11 @@ export class BatchOperationsLibSQL {
       }
     }
 
-    // Process in batches
+    // Process in batches with event loop yields (non-blocking)
+    const batchCount = Math.ceil(uniq.length / this.batchSize);
     for (let i = 0; i < uniq.length; i += this.batchSize) {
       const batch = uniq.slice(i, Math.min(i + this.batchSize, uniq.length));
+      const batchNum = Math.floor(i / this.batchSize);
 
       try {
         // Prepare entities with stable IDs
@@ -188,6 +193,11 @@ export class BatchOperationsLibSQL {
 
         if (onProgress) {
           onProgress(totalProcessed, uniq.length);
+        }
+
+        // OPTIMIZATION: Yield to event loop every batch to allow callbacks to process
+        if (batchNum < batchCount - 1) {
+          await yieldToEventLoop();
         }
       } catch (error) {
         console.error(`[BatchOperationsLibSQL] Batch error:`, error);
@@ -307,9 +317,11 @@ export class BatchOperationsLibSQL {
       }
     }
 
-    // Process in batches
+    // Process in batches with event loop yields (non-blocking)
+    const batchCount = Math.ceil(uniq.length / this.batchSize);
     for (let i = 0; i < uniq.length; i += this.batchSize) {
       const batch = uniq.slice(i, Math.min(i + this.batchSize, uniq.length));
+      const batchNum = Math.floor(i / this.batchSize);
 
       try {
         // Prepare relationships with stable IDs
@@ -332,6 +344,12 @@ export class BatchOperationsLibSQL {
 
         if (onProgress) {
           onProgress(totalProcessed, uniq.length);
+        }
+
+        // OPTIMIZATION: Yield to event loop every batch to allow callbacks to process
+        // This prevents blocking vectors.written and other IPC callbacks
+        if (batchNum < batchCount - 1) {
+          await yieldToEventLoop();
         }
       } catch (error) {
         console.error(`[BatchOperationsLibSQL] Relationship batch error:`, error);

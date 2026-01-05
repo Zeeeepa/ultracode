@@ -643,15 +643,22 @@ export class ParserAgent extends BaseAgent {
       ),
     });
 
-    // Step 2: Submit each language group to its dedicated subprocess pool (in PARALLEL)
+    // Step 2: Create all language pools IN PARALLEL (avoid sequential await blocking)
+    const languages = Array.from(languageGroups.keys());
+    const poolResults = await Promise.all(
+      languages.map(async (language) => ({
+        language,
+        pool: await this.getOrCreateLanguagePool(language),
+        files: languageGroups.get(language) || [],
+      })),
+    );
+
+    // Step 3: Submit tasks to pools
     const poolPromises: Promise<ParseResult[]>[] = [];
     const languagesUsed: string[] = [];
     const skippedFiles: string[] = [];
 
-    for (const [language, languageFiles] of languageGroups) {
-      // Get or create subprocess pool lazily
-      const pool = await this.getOrCreateLanguagePool(language);
-
+    for (const { language, pool, files: languageFiles } of poolResults) {
       if (pool) {
         // Submit to language-specific subprocess pool
         languagesUsed.push(language);
@@ -663,10 +670,10 @@ export class ParserAgent extends BaseAgent {
       }
     }
 
-    // Step 3: Wait for ALL subprocess pools to complete (parallel execution)
+    // Step 4: Wait for ALL subprocess pools to complete (parallel execution)
     const results = await Promise.all(poolPromises);
 
-    // Step 4: Flatten results from all pools
+    // Step 5: Flatten results from all pools
     const flatResults = results.flat();
 
     // Log pool statistics
@@ -848,18 +855,36 @@ export class ParserAgent extends BaseAgent {
       pools: Array.from(this.languagePools.keys()),
     });
 
-    // Enable keepalive mode on all existing pools
-    const poolStats: Record<string, number> = {};
+    // Enable keepalive mode on TypeScript pool only (most common changes)
+    // Kill ALL workers from other pools to free memory
+    const killedPools: string[] = [];
+    const tsPool = this.languagePools.get("typescript");
+
     for (const [language, pool] of this.languagePools.entries()) {
       if (pool instanceof ParsingSubprocessPool) {
-        pool.setKeepaliveMode(true);
-        poolStats[language] = pool.getActiveWorkerCount();
+        if (language === "typescript") {
+          // TypeScript: enable keepalive, keep worker 0
+          pool.setKeepaliveMode(true);
+        } else {
+          // Other pools: shutdown completely to free memory
+          await pool.shutdown();
+          killedPools.push(language);
+        }
       }
     }
-    logger.debug("PARSER_AGENT", "Keepalive mode set on all pools", { poolStats });
 
-    // Spawn keepalive worker only for TypeScript (most common changes)
-    const tsPool = this.languagePools.get("typescript");
+    // Remove killed pools from the map
+    for (const lang of killedPools) {
+      this.languagePools.delete(lang);
+    }
+
+    if (killedPools.length > 0) {
+      logger.info("PARSER_AGENT", "Killed non-TypeScript pools to free memory", {
+        killedPools,
+      });
+    }
+
+    // Spawn keepalive worker only for TypeScript
     if (tsPool instanceof ParsingSubprocessPool) {
       logger.info("PARSER_AGENT", "Spawning TypeScript keepalive worker...");
       await tsPool.ensureKeepaliveWorker();

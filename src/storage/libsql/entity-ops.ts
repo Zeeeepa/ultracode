@@ -91,8 +91,8 @@ export class EntityOperations {
 
     // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
     // Much faster than N separate INSERT statements (reduces parsing overhead)
-    // SQLite limit: ~32767 params, 16 fields per entity → batch 500 = 8000 params (safe)
-    const batchSize = 500;
+    // SQLite limit: ~32767 params, 16 fields per entity → batch 1000 = 16000 params (safe)
+    const batchSize = 1000;
 
     let processed = 0;
 

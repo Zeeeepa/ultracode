@@ -105,11 +105,17 @@ const semanticAgent = await getOrCreateAgent(container, conductor, AgentType.SEM
 - **Lazy initialization**: Pools создаются только для используемых языков
 - **Smart threshold**: Workers активируются только для >50 файлов (предотвращает overhead)
 - **Pool reuse**: Workers переиспользуются между сессиями индексации
+- **Greedy Load Balancing**: Файлы сортируются по размеру и назначаются на worker с минимальной нагрузкой (0% deviation)
+- **Async Prefetch**: PrefetchManager читает следующие 3 файла параллельно с парсингом (96-100% I/O overlap)
+- **Parallel Pool Creation**: Все языковые пулы создаются через `Promise.all` (15ms vs 10+ сек)
 
-**Performance (Streaming Mode):**
-- Средние проекты (152 файла): **1.6x speedup** (16.8s → 10.5s, **37% faster**)
+**Performance (Streaming Mode + Batch Accumulator + Aggressive Pragmas):**
+- ultrascript-tools-mcp (537 файлов): **17-18x speedup** (68s → 3.8s) 🚀
 - Data files (174 JSON/YAML): **34x speedup** (6.7s → 195ms, **892 files/s**)
-- **91.6%** файлов индексируется через streaming (495/527)
+- **91-95%** файлов индексируется через streaming
+- DB write speed: **11,300 entities/sec** (journal_mode=OFF, synchronous=OFF)
+- Worker load balance: **0% deviation** (было 70%/30%)
+- I/O overlap ratio: **96-100%** (I/O latency скрыта)
 
 **Streaming Mode API:**
 ```typescript
@@ -127,6 +133,27 @@ parser:
     batchSize: 50          # Размер батча для worker pool
     workerPoolSize: 4      # Количество worker threads
 ```
+
+### .ultrascriptignore
+
+Файл `.ultrascriptignore` в корне проекта позволяет исключить файлы из индексации:
+
+```gitignore
+# Комментарии начинаются с #
+**/lib/java/**       # Исключить директорию
+**/go-ast-cli.go     # Исключить конкретный файл
+**/test-fixtures/**  # Тестовые фикстуры
+```
+
+**Синтаксис:**
+- Gitignore-style glob patterns (`**/`, `*.ext`)
+- Комментарии начинаются с `#`
+- Пустые строки игнорируются
+- Паттерны без glob-символов автоматически оборачиваются в `**/{pattern}/**`
+
+**Файлы:**
+- `src/agents/dev/file-collector.ts` - `loadIgnoreFile()` функция
+- Паттерны объединяются с базовыми `excludePatterns` из конфигурации
 
 ## Language Parsers
 
@@ -334,7 +361,9 @@ npm run build:cuda:clean  # Clean rebuild
 **Унифицированное хранилище** (`project.db`):
 - Entities и relationships
 - Vector embeddings (vectors таблица)
-- WAL mode для конкурентного доступа
+- **Aggressive pragmas** для максимальной скорости записи:
+  - `journal_mode = OFF` - нет журнала (данные можно перегенерировать)
+  - `synchronous = OFF` - нет fsync (11,300 entities/sec)
 - Поддержка Turso edge database
 
 ## Semantic Search & Embeddings

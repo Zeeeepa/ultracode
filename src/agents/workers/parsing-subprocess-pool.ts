@@ -16,6 +16,7 @@
  */
 
 import type { ChildProcess } from "node:child_process";
+import { stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
@@ -76,6 +77,9 @@ export class ParsingSubprocessPool {
   // Keepalive mode: keep worker 0 alive for fast incremental processing
   private keepaliveMode: boolean;
   private readonly keepaliveMemoryLimitMB: number;
+
+  // Batch processing mode: don't kill workers while batch is in progress
+  private isBatchProcessing = false;
 
   private isShuttingDown = false;
   private isBun: boolean;
@@ -301,6 +305,14 @@ export class ParsingSubprocessPool {
 
       state.busy = false;
 
+      // OPTIMIZATION: Don't kill workers during batch processing
+      // This prevents 3+ second respawn delays between chunks
+      if (this.isBatchProcessing) {
+        // Batch in progress - keep worker alive, just process next task if any
+        this.processNextTask(workerId);
+        return;
+      }
+
       // Kill process after batch if configured (for memory isolation)
       if (this.killAfterBatch) {
         // Only respawn if there are more tasks in queue
@@ -483,10 +495,109 @@ export class ParsingSubprocessPool {
   }
 
   /**
+   * Streaming load balancer: processes files in batches for low latency.
+   *
+   * Algorithm (Batched Streaming Greedy):
+   * 1. Process files in small batches (STAT_BATCH_SIZE)
+   * 2. For each batch: parallel stat → sort by size → greedy assign
+   * 3. Workers start receiving files after first batch (~30ms)
+   *
+   * Benefits:
+   * - Low latency: parsing starts after first batch, not after all files
+   * - Good balance: greedy considers real-time worker loads
+   * - Fast stat: parallel within each batch
+   *
+   * Trade-off: Slightly less optimal than full sort, but much lower latency.
+   */
+  private async distributeFilesBySizeAsync(files: string[], workerCount: number): Promise<string[][]> {
+    if (workerCount <= 1 || files.length <= workerCount) {
+      return [files];
+    }
+
+    const STAT_BATCH_SIZE = 30; // stat 30 files at a time (parallel)
+    const chunks: string[][] = Array.from({ length: workerCount }, () => []);
+    const chunkSizes: number[] = Array(workerCount).fill(0);
+
+    const startTime = Date.now();
+    let totalStatTime = 0;
+    let batchCount = 0;
+
+    // Helper: find worker with minimum load
+    const findMinWorker = (): number => {
+      let minIdx = 0;
+      let minSize = chunkSizes[0] ?? 0;
+      for (let i = 1; i < workerCount; i++) {
+        if ((chunkSizes[i] ?? 0) < minSize) {
+          minSize = chunkSizes[i] ?? 0;
+          minIdx = i;
+        }
+      }
+      return minIdx;
+    };
+
+    // Process files in streaming batches
+    for (let i = 0; i < files.length; i += STAT_BATCH_SIZE) {
+      const batch = files.slice(i, i + STAT_BATCH_SIZE);
+      batchCount++;
+
+      // Parallel stat for this batch
+      const statStart = Date.now();
+      const sizedBatch = await Promise.all(
+        batch.map(async (file) => {
+          try {
+            const s = await stat(file);
+            return { file, size: s.size };
+          } catch {
+            return { file, size: 0 };
+          }
+        }),
+      );
+      totalStatTime += Date.now() - statStart;
+
+      // Sort batch by size descending (local optimization)
+      sizedBatch.sort((a, b) => b.size - a.size);
+
+      // Greedy assign: each file goes to worker with current minimum load
+      for (const { file, size } of sizedBatch) {
+        const minIdx = findMinWorker();
+        chunks[minIdx]!.push(file);
+        chunkSizes[minIdx] = (chunkSizes[minIdx] ?? 0) + size;
+      }
+    }
+
+    const totalTime = Date.now() - startTime;
+
+    // Log distribution stats
+    const nonEmptyChunks = chunks.filter((c) => c.length > 0);
+    const totalSize = chunkSizes.reduce((a, b) => a + b, 0);
+    const avgSize = nonEmptyChunks.length > 0 ? totalSize / nonEmptyChunks.length : 0;
+    const maxDeviation = avgSize > 0 ? Math.max(...chunkSizes.map((s) => Math.abs(s - avgSize))) : 0;
+
+    logger.info("PARSING_SUBPROCESS", `Streaming file distribution`, {
+      language: this.language,
+      workers: workerCount,
+      files: files.length,
+      batches: batchCount,
+      batchSize: STAT_BATCH_SIZE,
+      chunksUsed: nonEmptyChunks.length,
+      fileCounts: nonEmptyChunks.map((c) => c.length).join(","),
+      chunkSizesKB: chunkSizes.map((s) => Math.round(s / 1024)).join(","),
+      balanceDeviation: avgSize > 0 ? `${Math.round((maxDeviation / avgSize) * 100)}%` : "0%",
+      statTimeMs: totalStatTime,
+      totalTimeMs: totalTime,
+    });
+
+    return nonEmptyChunks;
+  }
+
+  /**
    * Submit a parsing task
    */
   async submitTask(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
     if (files.length === 0) return [];
+
+    // Mark batch processing started - prevents workers from being killed mid-batch
+    this.isBatchProcessing = true;
 
     // Dynamic worker scaling based on file count
     const optimalWorkers = this.getOptimalWorkerCount(files.length);
@@ -502,33 +613,44 @@ export class ParsingSubprocessPool {
       workersAfter,
     });
 
-    // Chunk files across workers with size limit
-    // 1. Calculate ideal chunk size (distribute evenly)
-    // 2. Cap at maxFilesPerChunk (prevents memory bloat on large projects)
-    const workerCount = this.workers.size;
-    const idealChunkSize = Math.ceil(files.length / workerCount);
-    const chunkSize = Math.min(idealChunkSize, this.maxFilesPerChunk);
-    const chunks: string[][] = [];
-    for (let i = 0; i < files.length; i += chunkSize) {
-      chunks.push(files.slice(i, i + chunkSize));
+    // Distribute files using size-based round-robin for balanced load
+    // This replaces the old sequential slice approach
+    // Now async with parallel stat() for better performance
+    const chunks = await this.distributeFilesBySizeAsync(files, this.workers.size);
+
+    // Apply maxFilesPerChunk limit - split large chunks if needed
+    const limitedChunks: string[][] = [];
+    for (const chunk of chunks) {
+      if (chunk.length <= this.maxFilesPerChunk) {
+        limitedChunks.push(chunk);
+      } else {
+        // Split oversized chunk
+        for (let i = 0; i < chunk.length; i += this.maxFilesPerChunk) {
+          limitedChunks.push(chunk.slice(i, i + this.maxFilesPerChunk));
+        }
+      }
     }
 
-    logger.info("PARSING_SUBPROCESS", `Chunking files`, {
+    logger.info("PARSING_SUBPROCESS", `Chunking files (size-balanced)`, {
       language: this.language,
       files: files.length,
-      chunks: chunks.length,
-      chunkSize,
+      chunks: limitedChunks.length,
       maxFilesPerChunk: this.maxFilesPerChunk,
     });
 
     // Submit all chunks IN PARALLEL to different workers
-    const promises = chunks.map((chunk, idx) => {
+    const promises = limitedChunks.map((chunk, idx) => {
       logger.debug("PARSING_SUBPROCESS", `Submitting chunk ${idx}`, { language: this.language, files: chunk.length });
       return this.submitSingleTask(chunk, options);
     });
-    const results = await Promise.all(promises);
 
-    return results.flat();
+    try {
+      const results = await Promise.all(promises);
+      return results.flat();
+    } finally {
+      // Mark batch processing complete - workers can now be killed if needed
+      this.isBatchProcessing = false;
+    }
   }
 
   /**
@@ -784,6 +906,7 @@ export class ParsingSubprocessPool {
   /**
    * Ensure keepalive worker (worker 0) is running.
    * Call this after enabling keepalive mode to spawn the worker if needed.
+   * Also kills all non-keepalive workers to free memory.
    */
   async ensureKeepaliveWorker(): Promise<void> {
     if (!this.keepaliveMode) {
@@ -791,6 +914,26 @@ export class ParsingSubprocessPool {
         language: this.language,
       });
       return;
+    }
+
+    // Kill all workers except worker 0 (keepalive)
+    const killedWorkers: number[] = [];
+    for (const [workerId, state] of this.workers) {
+      if (workerId !== 0 && state.process !== null) {
+        state.intentionalKill = true;
+        killProcess(state.process);
+        state.process = null;
+        state.busy = false;
+        state.memoryUsage = 0;
+        killedWorkers.push(workerId);
+      }
+    }
+
+    if (killedWorkers.length > 0) {
+      logger.info("PARSING_SUBPROCESS", "Killed non-keepalive workers", {
+        language: this.language,
+        killedWorkers: killedWorkers.join(","),
+      });
     }
 
     const state = this.workers.get(0);

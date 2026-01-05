@@ -122,6 +122,15 @@ export class IndexerAgent extends BaseAgent {
     lastIndexTime: 0,
   };
 
+  // Batch accumulator for streaming indexing optimization
+  // Accumulates entities/relationships and flushes in batches to reduce DB operations
+  private readonly BATCH_FLUSH_THRESHOLD = 50; // Flush every 50 files
+  private pendingStorageEntities: Entity[] = [];
+  private pendingRelationships: Relationship[] = [];
+  private pendingParsedEntities: Array<{ entities: ParsedEntity[]; filePath: string }> = [];
+  private pendingFilesCount = 0;
+  private batchFlushPromise: Promise<void> | null = null;
+
   constructor() {
     super(AgentType.INDEXER, getIndexerConfig());
     console.error(`[IndexerAgent] Created with ID: ${this.id}`);
@@ -584,6 +593,153 @@ export class IndexerAgent extends BaseAgent {
     storageEntities: Entity[],
   ): Promise<Relationship[]> {
     return buildRelationships(parsedEntities, storageEntities);
+  }
+
+  // ===========================================================================
+  // BATCH ACCUMULATOR METHODS - Optimized streaming indexing
+  // ===========================================================================
+
+  /**
+   * Queue entities for batch indexing (streaming mode optimization)
+   * Accumulates data and flushes in batches to reduce DB operations
+   */
+  queueForIndexing(entities: ParsedEntity[], filePath: string, providedRelationships?: EntityRelationship[]): void {
+    if (!entities || entities.length === 0) return;
+
+    // Flatten and convert entities
+    const flatEntities = flattenParsedEntities(entities);
+    const fileHash = nanoid(8);
+
+    for (const parsed of flatEntities) {
+      try {
+        if (!parsed?.name || !parsed?.type || !parsed?.location) continue;
+
+        const entityFilePath = parsed.filePath || filePath;
+        const base = parsedEntityToEntity(parsed, entityFilePath, fileHash);
+        const entity: Entity = {
+          ...base,
+          id: stableEntityId(base),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+
+        this.pendingStorageEntities.push(entity);
+      } catch {
+        // Skip invalid entities
+      }
+    }
+
+    // Build relationships
+    if (providedRelationships && providedRelationships.length > 0) {
+      const byName = buildEntityNameMap(this.pendingStorageEntities);
+      for (const rel of providedRelationships) {
+        let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line);
+        let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line);
+
+        if (!fromId) fromId = `external:${rel.sourceFile || filePath}:${rel.from}`;
+        if (!toId) toId = `external:${rel.targetFile || "unknown"}:${rel.to}`;
+
+        this.pendingRelationships.push({
+          id: stableRelationshipId(fromId, toId, rel.type as RelationType),
+          fromId,
+          toId,
+          type: rel.type as RelationType,
+          metadata: { line: rel.metadata?.line, context: rel.type },
+          createdAt: Date.now(),
+        } as Relationship);
+      }
+    }
+
+    // Store for embedding generation
+    this.pendingParsedEntities.push({ entities: flatEntities, filePath });
+    this.pendingFilesCount++;
+
+    // Auto-flush if threshold reached
+    if (this.pendingFilesCount >= this.BATCH_FLUSH_THRESHOLD) {
+      this.flushPendingBatch().catch((err) => {
+        logger.warn("IndexerAgent", "Auto-flush failed", { error: (err as Error).message });
+      });
+    }
+  }
+
+  /**
+   * Flush all pending entities/relationships to DB in one batch
+   * Returns stats about what was flushed
+   */
+  async flushPendingBatch(): Promise<{ entities: number; relationships: number; files: number }> {
+    // Prevent concurrent flushes
+    if (this.batchFlushPromise) {
+      await this.batchFlushPromise;
+    }
+
+    const entitiesToFlush = this.pendingStorageEntities;
+    const relationshipsToFlush = this.pendingRelationships;
+    const parsedToFlush = this.pendingParsedEntities;
+    const filesCount = this.pendingFilesCount;
+
+    // Reset accumulators
+    this.pendingStorageEntities = [];
+    this.pendingRelationships = [];
+    this.pendingParsedEntities = [];
+    this.pendingFilesCount = 0;
+
+    if (entitiesToFlush.length === 0) {
+      return { entities: 0, relationships: 0, files: 0 };
+    }
+
+    const flushStart = Date.now();
+
+    this.batchFlushPromise = (async () => {
+      // Insert entities in one batch
+      const entityResult = await this.batchOps.insertEntities(entitiesToFlush);
+
+      // Publish for embedding generation (all at once)
+      for (const { entities, filePath } of parsedToFlush) {
+        const entitiesWithPath = entities.map((e) => ({ ...e, filePath }));
+        knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
+      }
+
+      // Process external relationships
+      const externalPlaceholders = processExternalRelationships(relationshipsToFlush, stableRelationshipId);
+      if (externalPlaceholders.length > 0) {
+        await this.batchOps.insertEntities(externalPlaceholders);
+      }
+
+      // Insert relationships in one batch
+      const relResult = await this.batchOps.insertRelationships(relationshipsToFlush);
+
+      // Update stats
+      this.indexingStats.entitiesIndexed += entityResult.processed;
+      this.indexingStats.relationshipsCreated += relResult.processed;
+      this.indexingStats.filesProcessed += filesCount;
+
+      logger.info("IndexerAgent", "Batch flush completed", {
+        entities: entityResult.processed,
+        relationships: relResult.processed,
+        files: filesCount,
+        ms: Date.now() - flushStart,
+      });
+    })();
+
+    await this.batchFlushPromise;
+    this.batchFlushPromise = null;
+
+    return {
+      entities: entitiesToFlush.length,
+      relationships: relationshipsToFlush.length,
+      files: filesCount,
+    };
+  }
+
+  /**
+   * Get pending batch stats (for monitoring)
+   */
+  getPendingBatchStats(): { entities: number; relationships: number; files: number } {
+    return {
+      entities: this.pendingStorageEntities.length,
+      relationships: this.pendingRelationships.length,
+      files: this.pendingFilesCount,
+    };
   }
 
   /**
