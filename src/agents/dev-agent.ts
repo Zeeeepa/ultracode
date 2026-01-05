@@ -29,6 +29,9 @@ import { type ResourceAdjustmentCapable, ResourceAdjustmentMixin } from "./resou
 // Re-export for backward compatibility
 export { ALL_SUPPORTED_EXTENSIONS } from "./dev/index.js";
 
+// Helper: yield to event loop between indexing chunks (allows vectors.written callbacks to process)
+const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
 function getDevAgentConfig() {
   const config = getConfig();
   return {
@@ -384,45 +387,24 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
 
     // Enable streaming mode: index results as they arrive from workers
-    // This allows parallel processing - indexing starts before parsing completes
+    // BATCH ACCUMULATOR: Queue data and flush in batches to reduce DB operations
+    // Instead of 492 separate DB calls, we do ~10 batch calls (50 files each)
     const streamingIndexedFiles = new Set<string>();
-    let streamingEntities = 0;
-    let streamingRelationships = 0;
 
     if (this.parserAgent && this.indexerAgent) {
-      this.parserAgent.setStreamingMode(true, async (result, _taskId, fileIndex, totalFiles) => {
+      // Streaming callback - queues for batch indexing (instant, non-blocking)
+      this.parserAgent.setStreamingMode(true, (result, _taskId, _fileIndex, _totalFiles) => {
         if (!result.filePath || !result.entities || result.entities.length === 0) {
           return;
         }
 
-        // Index immediately as result arrives
-        try {
-          const indexResult = await this.indexerAgent!.indexEntities(
-            result.entities,
-            result.filePath,
-            result.relationships || [],
-          );
-          streamingIndexedFiles.add(result.filePath);
-          streamingEntities += indexResult.entitiesIndexed || 0;
-          streamingRelationships += indexResult.relationshipsCreated || 0;
+        // Mark as streaming immediately
+        streamingIndexedFiles.add(result.filePath);
 
-          // Log progress periodically
-          if (streamingIndexedFiles.size % 50 === 0 || fileIndex === totalFiles - 1) {
-            logger.info("DEV_AGENT", "Streaming indexing progress", {
-              indexed: streamingIndexedFiles.size,
-              totalFiles,
-              entities: streamingEntities,
-              relationships: streamingRelationships,
-            });
-          }
-        } catch (err) {
-          logger.warn("DEV_AGENT", "Streaming indexing failed", {
-            file: result.filePath,
-            error: (err as Error).message,
-          });
-        }
+        // Queue for batch indexing (non-blocking, accumulates data)
+        this.indexerAgent!.queueForIndexing(result.entities, result.filePath, result.relationships || []);
       });
-      logger.info("DEV_AGENT", "Streaming mode enabled for parallel indexing");
+      logger.info("DEV_AGENT", "Streaming mode enabled (batch accumulator)");
     }
 
     // Process CODE files through ParserAgent (AST parsing with worker pools)
@@ -535,11 +517,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             `[DevAgent] Batch ${i}: sent=${batch.length}, results=${results?.length || 0}, uniqueFiles=${byFile.size}`,
           );
 
-          // PARALLEL indexing using enqueue() - all tasks are queued and processed in order
-          // enqueue() accepts tasks even when agent is busy, queuing them internally
-          // Use CPU cores * 2 for better I/O parallelism (file reads + parsing)
-          const { cpus } = await import("node:os");
-          const INDEXING_CONCURRENCY = Math.max(32, cpus().length * 2); // Minimum 32, or CPU cores * 2
+          // PARALLEL indexing with frequent yields to allow IPC callbacks
+          // OPTIMIZATION 1: Reduced from 32 to 8 for more frequent event loop yields
+          const INDEXING_CONCURRENCY = 8;
 
           // Filter out files already indexed via streaming
           const fileEntries = Array.from(byFile.entries()).filter(([file]) => !streamingIndexedFiles.has(file));
@@ -552,36 +532,58 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             });
           }
 
-          // Process in chunks to avoid overwhelming the queue
-          for (let j = 0; j < fileEntries.length; j += INDEXING_CONCURRENCY) {
-            const chunk = fileEntries.slice(j, j + INDEXING_CONCURRENCY);
+          // OPTIMIZATION 2: Process files with yields INSIDE the loop, not just between chunks
+          // This allows vectors.written callbacks to process between individual file indexings
+          let pendingPromises: Promise<{ result: any; error: any }>[] = [];
+          let pendingCount = 0;
 
-            const chunkPromises = chunk.map(async ([file, group]) => {
-              const indexTask: AgentTask = {
-                id: `index-entities-${Date.now()}-${i}-${file}`,
-                type: "index:entities",
-                priority: 7,
-                payload: {
-                  entities: group.entities,
-                  relationships: group.relationships,
-                  filePath: file,
-                },
-                createdAt: Date.now(),
-              };
+          for (const [file, group] of fileEntries) {
+            const indexTask: AgentTask = {
+              id: `index-entities-${Date.now()}-${i}-${file}`,
+              type: "index:entities",
+              priority: 7,
+              payload: {
+                entities: group.entities,
+                relationships: group.relationships,
+                filePath: file,
+              },
+              createdAt: Date.now(),
+            };
 
+            const promise = (async () => {
               try {
-                // Use enqueue() instead of process() - accepts tasks even when busy
                 const indexResult = await this.indexerAgent?.enqueue(indexTask);
                 return { result: indexResult as any, error: null };
               } catch (err) {
                 console.error(`[DevAgent ${this.id}] Indexing failed for file ${file}:`, (err as Error).message);
                 return { result: null, error: err };
               }
-            });
+            })();
 
-            const chunkResults = await Promise.all(chunkPromises);
+            pendingPromises.push(promise);
+            pendingCount++;
 
-            for (const { result } of chunkResults) {
+            // When we hit concurrency limit, wait for all and yield
+            if (pendingCount >= INDEXING_CONCURRENCY) {
+              const results = await Promise.all(pendingPromises);
+              for (const { result } of results) {
+                if (result) {
+                  totalEntities += result.entitiesIndexed || 0;
+                  totalRelationships += result.relationshipsCreated || 0;
+                  filesProcessed += 1;
+                }
+              }
+              pendingPromises = [];
+              pendingCount = 0;
+              // Yield to event loop - allows vectors.written callbacks to process
+              await yieldToEventLoop();
+            }
+          }
+
+          // Process remaining files
+          if (pendingPromises.length > 0) {
+            const results = await Promise.all(pendingPromises);
+            for (const { result } of results) {
               if (result) {
                 totalEntities += result.entitiesIndexed || 0;
                 totalRelationships += result.relationshipsCreated || 0;
@@ -590,10 +592,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             }
           }
 
-          // Add streaming results to totals
-          totalEntities += streamingEntities;
-          totalRelationships += streamingRelationships;
-          filesProcessed += streamingIndexedFiles.size;
+          // NOTE: Streaming results are added after the main loop completes
+          // to avoid double-counting (moved outside the batch loop)
 
           // DISABLED: gc() crashes Bun when called during OpenVINO native operations
           // if (isDebugMode) {
@@ -785,11 +785,31 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     // Disable streaming mode after code files parsing is complete
     if (this.parserAgent) {
       this.parserAgent.setStreamingMode(false);
+    }
+
+    // Flush any remaining queued data from batch accumulator
+    let streamingEntities = 0;
+    let streamingRelationships = 0;
+    if (this.indexerAgent) {
+      const pendingStats = this.indexerAgent.getPendingBatchStats();
+      if (pendingStats.files > 0) {
+        logger.info("DEV_AGENT", "Flushing remaining batch accumulator", pendingStats);
+      }
+      const flushResult = await this.indexerAgent.flushPendingBatch();
+      streamingEntities = flushResult.entities;
+      streamingRelationships = flushResult.relationships;
+
       logger.info("DEV_AGENT", "Streaming mode disabled, code parsing complete", {
         streamedFiles: streamingIndexedFiles.size,
-        streamedEntities: streamingEntities,
+        flushedEntities: streamingEntities,
+        flushedRelationships: streamingRelationships,
       });
     }
+
+    // Add streaming results to totals
+    totalEntities += streamingEntities;
+    totalRelationships += streamingRelationships;
+    filesProcessed += streamingIndexedFiles.size;
 
     // Process DATA files with heuristic entities (no AST, just file-level indexing)
     // Use parallel processing for better performance

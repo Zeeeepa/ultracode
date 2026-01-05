@@ -198,15 +198,16 @@ export class LibSQLGraphAdapter {
       await this.client.execute("SELECT 1");
       logger.trace("STORAGE", `[LibSQLGraphAdapter] ◀ createClient + verify (${Date.now() - clientStart}ms)`);
 
-      // Memory optimization PRAGMAs
+      // Performance optimization PRAGMAs (aggressive - data is regeneratable)
       // cache_size: negative = KB, -8192 = 8MB page cache (smaller = less RSS)
       await this.client.execute("PRAGMA cache_size = -8192");
       await this.client.execute("PRAGMA temp_store = MEMORY");
       // mmap_size = 0 disables memory-mapped I/O (forces regular reads, may reduce RSS)
       await this.client.execute("PRAGMA mmap_size = 0");
-      // WAL mode for concurrency, but wal_autocheckpoint limits WAL file size
-      await this.client.execute("PRAGMA journal_mode = WAL");
-      await this.client.execute("PRAGMA wal_autocheckpoint = 100"); // checkpoint every 100 pages
+      // AGGRESSIVE: No journaling, no fsync - maximum write speed
+      // Safe for index data that can be regenerated on corruption
+      await this.client.execute("PRAGMA journal_mode = OFF");
+      await this.client.execute("PRAGMA synchronous = OFF");
 
       // Proactive integrity check to detect corruption early
       logger.trace("STORAGE", `[LibSQLGraphAdapter] ▶ integrityCheck`);

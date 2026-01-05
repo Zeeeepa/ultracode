@@ -5,10 +5,63 @@
  * respecting exclude patterns and default exclusions.
  */
 
-import { lstatSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { isCodeExtension, isDataExtension, SUPPORTED_DATA_EXTENSIONS } from "./file-extensions.js";
+
+/** Name of the ignore file */
+const IGNORE_FILE_NAME = ".ultrascriptignore";
+
+/**
+ * Load patterns from .ultrascriptignore file if it exists
+ * Supports gitignore-style syntax:
+ * - Lines starting with # are comments
+ * - Empty lines are ignored
+ * - Patterns follow glob syntax
+ */
+export function loadIgnoreFile(directory: string): string[] {
+  const ignoreFilePath = join(directory, IGNORE_FILE_NAME);
+  if (!existsSync(ignoreFilePath)) {
+    return [];
+  }
+
+  try {
+    const content = readFileSync(ignoreFilePath, "utf-8");
+    const patterns: string[] = [];
+
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      // Skip empty lines and comments
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+      // Convert to glob pattern if needed
+      let pattern = trimmed;
+      // If pattern doesn't have glob markers, treat as directory/file name
+      if (!pattern.includes("*") && !pattern.includes("/")) {
+        pattern = `**/${pattern}/**`;
+      }
+      patterns.push(pattern);
+    }
+
+    if (patterns.length > 0) {
+      logger.info("FILE_SCAN", `Loaded ${IGNORE_FILE_NAME}`, {
+        path: ignoreFilePath,
+        patterns: patterns.length,
+        sample: patterns.slice(0, 5),
+      });
+    }
+
+    return patterns;
+  } catch (error) {
+    logger.warn("FILE_SCAN", `Failed to read ${IGNORE_FILE_NAME}`, {
+      path: ignoreFilePath,
+      error: String(error),
+    });
+    return [];
+  }
+}
 
 /** Default directory names to exclude from scanning */
 const DEFAULT_EXCLUDED_DIR_NAMES = new Set([
@@ -90,7 +143,12 @@ export interface CollectFilesResult {
  * Recursively collect source files from a directory
  */
 export function collectFiles(directory: string, options: CollectFilesOptions): CollectFilesResult {
-  const { excludePatterns, agentId } = options;
+  const { excludePatterns: baseExcludePatterns, agentId } = options;
+
+  // Load project-specific ignore patterns from .ultrascriptignore
+  const ignorePatterns = loadIgnoreFile(directory);
+  const excludePatterns = [...baseExcludePatterns, ...ignorePatterns];
+
   const files: string[] = [];
 
   // Stats for logging
