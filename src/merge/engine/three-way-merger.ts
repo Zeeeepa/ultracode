@@ -1,5 +1,6 @@
 import type { ConductorOrchestrator } from "../../agents/conductor-orchestrator.js";
 import type { BranchManager } from "../../core/branch-manager.js";
+import { log } from "../../logging/index.js";
 import { ConflictDetector } from "../analysis/conflict-detector.js";
 import { IntentClassifier } from "../analysis/intent-classifier.js";
 import { type EmbeddingGeneratorFn, LazyEmbeddingCache } from "../indexing/lazy-embedding-cache.js";
@@ -91,39 +92,42 @@ export class ThreeWayMerger {
    * @returns MergeResult с matched units, conflicts, и merge actions
    */
   async performMerge(branchA: string, branchB: string): Promise<MergeResult> {
-    console.error(`[ThreeWayMerger] Starting 3-way merge: ${branchA} + ${branchB}`);
+    log.i("3WAYMERGE", `[ThreeWayMerger] Starting 3-way merge: ${branchA} + ${branchB}`);
     const startTime = Date.now();
 
     // === Phase 1: Multi-Version Indexing ===
-    console.error("[ThreeWayMerger] Phase 1: Indexing 3 branches...");
+    log.i("3WAYMERGE", "[ThreeWayMerger] Phase 1: Indexing 3 branches...");
     const indexResult = await this.multiVersionIndexer.indexThreeBranches(branchA, branchB);
 
     const { base, branchA: indexA, branchB: indexB, mergeBase } = indexResult;
 
-    console.error(
+    log.i(
+      "3WAYMERGE",
       `[ThreeWayMerger] Indexed: base=${base.stats.totalUnits}, A=${indexA.stats.totalUnits}, B=${indexB.stats.totalUnits}`,
     );
 
     // === Phase 1.5: Get git file changes for rename detection ===
-    console.error("[ThreeWayMerger] Phase 1.5: Detecting file changes from git...");
+    log.i("3WAYMERGE", "[ThreeWayMerger] Phase 1.5: Detecting file changes from git...");
     const changesA = await this.gitIntegration.getChangedFilesBetween(mergeBase, branchA);
     const changesB = await this.gitIntegration.getChangedFilesBetween(mergeBase, branchB);
     const renamedInA = changesA.filter((c) => c.status === "renamed");
     const renamedInB = changesB.filter((c) => c.status === "renamed");
-    console.error(
+    log.i(
+      "3WAYMERGE",
       `[ThreeWayMerger] Git changes: A=${changesA.length} (${renamedInA.length} renamed), B=${changesB.length} (${renamedInB.length} renamed)`,
     );
 
     // === Phase 2: Fast Path Matching ===
-    console.error("[ThreeWayMerger] Phase 2: Fast Path matching...");
+    log.i("3WAYMERGE", "[ThreeWayMerger] Phase 2: Fast Path matching...");
     const { matchedUnits, unmatchedA, unmatchedB } = await this.fastPathMatch(base, indexA, indexB);
 
-    console.error(
+    log.i(
+      "3WAYMERGE",
       `[ThreeWayMerger] Fast Path: ${matchedUnits.length} matched, ${unmatchedA.length} unmapped in A, ${unmatchedB.length} unmapped in B`,
     );
 
     // === Phase 2.5: Detect added/deleted units ===
-    console.error("[ThreeWayMerger] Phase 2.5: Detecting added/deleted units...");
+    log.i("3WAYMERGE", "[ThreeWayMerger] Phase 2.5: Detecting added/deleted units...");
     const { addedInA, addedInB, deletedUnits, renamedUnits } = this.detectAddedDeletedRenamed(
       base,
       indexA,
@@ -133,7 +137,8 @@ export class ThreeWayMerger {
       renamedInA,
       renamedInB,
     );
-    console.error(
+    log.i(
+      "3WAYMERGE",
       `[ThreeWayMerger] Added: A=${addedInA.length}, B=${addedInB.length}, Deleted=${deletedUnits.length}, Renamed=${renamedUnits.length}`,
     );
 
@@ -146,9 +151,9 @@ export class ThreeWayMerger {
 
     let semanticMatches: typeof matchedUnits = [];
     if (this.config.semanticMatchingEnabled && (remainingUnmatchedA.length > 0 || remainingUnmatchedB.length > 0)) {
-      console.error("[ThreeWayMerger] Phase 3: Semantic matching...");
+      log.i("3WAYMERGE", "[ThreeWayMerger] Phase 3: Semantic matching...");
       semanticMatches = await this.semanticMatch(base, remainingUnmatchedA, remainingUnmatchedB);
-      console.error(`[ThreeWayMerger] Semantic: ${semanticMatches.length} matched`);
+      log.i("3WAYMERGE", `[ThreeWayMerger] Semantic: ${semanticMatches.length} matched`);
     }
 
     const allMatches = [...matchedUnits, ...semanticMatches];
@@ -157,21 +162,21 @@ export class ThreeWayMerger {
     let intents: Map<string, { branchAIntent?: ChangeIntent | undefined; branchBIntent?: ChangeIntent }> = new Map();
 
     if (this.config.classifyIntents) {
-      console.error("[ThreeWayMerger] Phase 4: Classifying intents...");
+      log.i("3WAYMERGE", "[ThreeWayMerger] Phase 4: Classifying intents...");
       intents = this.classifyIntents(allMatches);
-      console.error(`[ThreeWayMerger] Classified intents for ${intents.size} unit pairs`);
+      log.i("3WAYMERGE", `[ThreeWayMerger] Classified intents for ${intents.size} unit pairs`);
     }
 
     // === Phase 5: Conflict Detection ===
     let conflicts: SemanticConflict[] = [];
 
     if (this.config.detectConflicts) {
-      console.error("[ThreeWayMerger] Phase 5: Detecting conflicts...");
+      log.i("3WAYMERGE", "[ThreeWayMerger] Phase 5: Detecting conflicts...");
       conflicts = this.detectConflicts(allMatches, intents);
       // Add delete-modify conflicts
       const deleteModifyConflicts = this.detectDeleteModifyConflicts(deletedUnits);
       conflicts = [...conflicts, ...deleteModifyConflicts];
-      console.error(`[ThreeWayMerger] Detected ${conflicts.length} conflicts`);
+      log.i("3WAYMERGE", `[ThreeWayMerger] Detected ${conflicts.length} conflicts`);
     }
 
     // === Generate Merge Actions ===
@@ -216,7 +221,8 @@ export class ThreeWayMerger {
       stats,
     };
 
-    console.error(
+    log.i(
+      "3WAYMERGE",
       `[ThreeWayMerger] Merge completed in ${stats.mergeTimeMs}ms: ` +
         `${stats.autoMergedCount} auto-merged, ${stats.conflictCount} conflicts, ` +
         `${stats.addedFromACount + stats.addedFromBCount} added, ${stats.deletedCount} deleted, ${stats.renamedCount} renamed`,

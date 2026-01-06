@@ -4,6 +4,7 @@
  * Magic methods, properties, async patterns, generators, dataclasses.
  */
 
+import { log } from "../../logging/index.js";
 import type { ASTNode, ParsedEntity } from "../../types/parser.js";
 import { findNodesByType } from "../base-parser-utils.js";
 import type { AnalysisContext } from "./types.js";
@@ -18,7 +19,7 @@ export class Layer2FeatureAnalyzer {
    * Execute Layer 2 analysis - advanced feature analysis
    */
   async executeAnalysis(rootNode: ASTNode, context: AnalysisContext): Promise<void> {
-    console.error("[PythonAnalyzer] Executing Layer 2: Advanced Feature Analysis");
+    log.d("PYFEATURES", "layer2_start");
     const layer2StartTime = Date.now();
 
     await withPerformanceMonitoring(
@@ -34,9 +35,7 @@ export class Layer2FeatureAnalyzer {
     );
 
     context.metrics.advancedFeatures.analysisTimeMs = Date.now() - layer2StartTime;
-    console.error(
-      `[PythonAnalyzer] Layer 2 complete: ${context.metrics.advancedFeatures.magicMethodsFound} magic methods found`,
-    );
+    log.d("PYFEATURES", "layer2_done", { magic: context.metrics.advancedFeatures.magicMethodsFound });
   }
 
   /**

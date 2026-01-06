@@ -12,6 +12,7 @@
 
 import { execSync } from "node:child_process";
 import os from "node:os";
+import { log } from "../logging/index.js";
 
 export interface CPUInfo {
   vendor: "intel" | "amd" | "arm" | "unknown";
@@ -108,7 +109,7 @@ export class CPUDetector {
         return CPUDetector.inferFlagsFromModel(model);
       }
     } catch (e) {
-      console.debug("[CPUDetector] Failed to get CPU flags:", e);
+      log.d("CPUDETECT", "flags_fail", { err: String(e) });
     }
 
     // Fallback: infer from model name

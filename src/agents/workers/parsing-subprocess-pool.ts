@@ -19,9 +19,9 @@ import type { ChildProcess } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 import type { WorkerEmbeddingConfig } from "../../types/semantic.js";
-import { logger } from "../../utils/logger.js";
 import {
   type BinaryEmbedding,
   type EmbeddingsCallback,
@@ -119,7 +119,7 @@ export class ParsingSubprocessPool {
     }
 
     await Promise.all(initPromises);
-    logger.info("PARSING_SUBPROCESS", `Initialized ${this.poolSize} subprocesses`, {
+    log.i("SUBPROCESS", `Initialized ${this.poolSize} subprocesses`, {
       language: this.language,
       runtime: this.isBun ? "bun" : "node",
       killAfterBatch: this.killAfterBatch,
@@ -160,9 +160,9 @@ export class ParsingSubprocessPool {
     try {
       await spawnProcess(workerId, state, context);
       await this.waitForReady(workerId);
-      logger.debug("PARSING_SUBPROCESS", `Subprocess ${workerId} ready`, { language: this.language });
+      log.d("SUBPROCESS", `Subprocess ${workerId} ready`, { language: this.language });
     } catch (error) {
-      logger.error("PARSING_SUBPROCESS", `Failed to spawn worker ${workerId}`, {
+      log.e("SUBPROCESS", `Failed to spawn worker ${workerId}`, {
         error: (error as Error).message,
         language: this.language,
       });
@@ -200,14 +200,14 @@ export class ParsingSubprocessPool {
             type: "init",
             embeddingConfig: this.embeddingConfig,
           });
-          logger.debug("PARSING_SUBPROCESS", `Sent embedding config to worker ${workerId}, waiting for initialized`, {
+          log.d("SUBPROCESS", `Sent embedding config to worker ${workerId}, waiting for initialized`, {
             language: this.language,
             provider: this.embeddingConfig.provider,
           });
           // DON'T resolve yet - wait for "initialized" response
           return;
         } catch (error) {
-          logger.warn("PARSING_SUBPROCESS", `Failed to send embedding config to worker ${workerId}`, {
+          log.w("SUBPROCESS", `Failed to send embedding config to worker ${workerId}`, {
             error: (error as Error).message,
           });
           // Fall through to resolve without embeddings
@@ -225,7 +225,7 @@ export class ParsingSubprocessPool {
 
     // Handle initialized response (embeddings configured) - NOW we're ready
     if ((response as any).type === "initialized") {
-      logger.debug("PARSING_SUBPROCESS", `Worker ${workerId} initialized with embeddings`, {
+      log.d("SUBPROCESS", `Worker ${workerId} initialized with embeddings`, {
         language: this.language,
         embeddingEnabled: (response as any).embeddingEnabled,
       });
@@ -253,7 +253,7 @@ export class ParsingSubprocessPool {
     if ((response as any).type === "embeddings.ready") {
       const embeddingsMsg = response as any;
       if (this.onEmbeddings && embeddingsMsg.embeddings?.length > 0) {
-        logger.debug("PARSING_SUBPROCESS", `Received ${embeddingsMsg.count} embeddings from worker ${workerId}`, {
+        log.d("SUBPROCESS", `Received ${embeddingsMsg.count} embeddings from worker ${workerId}`, {
           language: this.language,
           count: embeddingsMsg.count,
         });
@@ -266,7 +266,7 @@ export class ParsingSubprocessPool {
     if ((response as any).type === "vectors.written") {
       const msg = response as any;
       if (this.onVectorsWritten && msg.count > 0) {
-        logger.info("PARSING_SUBPROCESS", `Worker wrote vectors to dump`, {
+        log.i("SUBPROCESS", `Worker wrote vectors to dump`, {
           language: this.language,
           workerId: msg.workerId,
           count: msg.count,
@@ -326,7 +326,7 @@ export class ParsingSubprocessPool {
           if (isKeepaliveWorker) {
             // Check keepalive memory limit (default 500MB)
             if (state.memoryUsage > this.keepaliveMemoryLimitMB * 1024 * 1024) {
-              logger.info("PARSING_SUBPROCESS", `Keepalive worker memory limit exceeded, restarting`, {
+              log.i("SUBPROCESS", `Keepalive worker memory limit exceeded, restarting`, {
                 language: this.language,
                 memoryMB,
                 limitMB: this.keepaliveMemoryLimitMB,
@@ -334,7 +334,7 @@ export class ParsingSubprocessPool {
               this.killAndRespawn(workerId);
             } else {
               // Keep worker 0 alive for fast incremental processing
-              logger.debug("PARSING_SUBPROCESS", `Keepalive worker ${workerId} staying alive`, {
+              log.d("SUBPROCESS", `Keepalive worker ${workerId} staying alive`, {
                 language: this.language,
                 memoryMB,
               });
@@ -347,7 +347,7 @@ export class ParsingSubprocessPool {
       } else {
         // Check memory limit
         if (state.memoryUsage > this.memoryLimitMB * 1024 * 1024) {
-          logger.info("PARSING_SUBPROCESS", `Memory limit exceeded, restarting worker ${workerId}`, {
+          log.i("SUBPROCESS", `Memory limit exceeded, restarting worker ${workerId}`, {
             memoryMB: Math.round(state.memoryUsage / 1024 / 1024),
             limitMB: this.memoryLimitMB,
           });
@@ -376,7 +376,7 @@ export class ParsingSubprocessPool {
     const state = this.workers.get(workerId);
     if (!state || this.isShuttingDown) return;
 
-    logger.debug("PARSING_SUBPROCESS", `Killing worker ${workerId} (no respawn - queue empty)`, {
+    log.d("SUBPROCESS", `Killing worker ${workerId} (no respawn - queue empty)`, {
       language: this.language,
     });
 
@@ -394,7 +394,7 @@ export class ParsingSubprocessPool {
     const state = this.workers.get(workerId);
     if (!state || this.isShuttingDown) return;
 
-    logger.debug("PARSING_SUBPROCESS", `Killing and respawning worker ${workerId}`, { language: this.language });
+    log.d("SUBPROCESS", `Killing and respawning worker ${workerId}`, { language: this.language });
 
     state.intentionalKill = true;
     killProcess(state.process);
@@ -405,7 +405,7 @@ export class ParsingSubprocessPool {
       await this.spawnWorker(workerId);
       this.processNextTask(workerId);
     } catch (error) {
-      logger.error("PARSING_SUBPROCESS", `Failed to respawn worker ${workerId}`, {
+      log.e("SUBPROCESS", `Failed to respawn worker ${workerId}`, {
         error: (error as Error).message,
       });
     }
@@ -463,7 +463,7 @@ export class ParsingSubprocessPool {
   private async ensureWorkers(targetCount: number): Promise<void> {
     const currentCount = this.workers.size;
     if (currentCount >= targetCount) {
-      logger.debug("PARSING_SUBPROCESS", `Workers already sufficient`, {
+      log.d("SUBPROCESS", `Workers already sufficient`, {
         language: this.language,
         current: currentCount,
         target: targetCount,
@@ -471,7 +471,7 @@ export class ParsingSubprocessPool {
       return;
     }
 
-    logger.info("PARSING_SUBPROCESS", `Spawning additional workers`, {
+    log.i("SUBPROCESS", `Spawning additional workers`, {
       language: this.language,
       current: currentCount,
       target: targetCount,
@@ -487,7 +487,7 @@ export class ParsingSubprocessPool {
 
     // Verify all workers are ready
     const readyWorkers = Array.from(this.workers.values()).filter((w) => w.process && !w.busy).length;
-    logger.info("PARSING_SUBPROCESS", `Workers ready after spawn`, {
+    log.i("SUBPROCESS", `Workers ready after spawn`, {
       language: this.language,
       total: this.workers.size,
       ready: readyWorkers,
@@ -573,7 +573,7 @@ export class ParsingSubprocessPool {
     const avgSize = nonEmptyChunks.length > 0 ? totalSize / nonEmptyChunks.length : 0;
     const maxDeviation = avgSize > 0 ? Math.max(...chunkSizes.map((s) => Math.abs(s - avgSize))) : 0;
 
-    logger.info("PARSING_SUBPROCESS", `Streaming file distribution`, {
+    log.i("SUBPROCESS", `Streaming file distribution`, {
       language: this.language,
       workers: workerCount,
       files: files.length,
@@ -605,7 +605,7 @@ export class ParsingSubprocessPool {
     await this.ensureWorkers(optimalWorkers);
     const workersAfter = this.workers.size;
 
-    logger.info("PARSING_SUBPROCESS", `submitTask scaling`, {
+    log.i("SUBPROCESS", `submitTask scaling`, {
       language: this.language,
       files: files.length,
       optimalWorkers,
@@ -631,7 +631,7 @@ export class ParsingSubprocessPool {
       }
     }
 
-    logger.info("PARSING_SUBPROCESS", `Chunking files (size-balanced)`, {
+    log.i("SUBPROCESS", `Chunking files (size-balanced)`, {
       language: this.language,
       files: files.length,
       chunks: limitedChunks.length,
@@ -640,7 +640,7 @@ export class ParsingSubprocessPool {
 
     // Submit all chunks IN PARALLEL to different workers
     const promises = limitedChunks.map((chunk, idx) => {
-      logger.debug("PARSING_SUBPROCESS", `Submitting chunk ${idx}`, { language: this.language, files: chunk.length });
+      log.d("SUBPROCESS", `Submitting chunk ${idx}`, { language: this.language, files: chunk.length });
       return this.submitSingleTask(chunk, options);
     });
 
@@ -664,7 +664,7 @@ export class ParsingSubprocessPool {
 
       // Debug: log worker states
       const workerStates = Array.from(this.workers.entries()).map(([id, s]) => `${id}:${s.busy ? "busy" : "idle"}`);
-      logger.debug("PARSING_SUBPROCESS", `submitSingleTask`, {
+      log.d("SUBPROCESS", `submitSingleTask`, {
         language: this.language,
         workers: workerStates.join(","),
       });
@@ -672,7 +672,7 @@ export class ParsingSubprocessPool {
       // Find idle worker (with active process)
       for (const [workerId, state] of this.workers) {
         if (!state.busy && state.process) {
-          logger.debug("PARSING_SUBPROCESS", `Assigning to worker ${workerId}`, { language: this.language });
+          log.d("SUBPROCESS", `Assigning to worker ${workerId}`, { language: this.language });
           this.assignTask(workerId, task);
           return;
         }
@@ -681,11 +681,11 @@ export class ParsingSubprocessPool {
       // Try lazy spawn: find worker slot without process and spawn it
       for (const [workerId, state] of this.workers) {
         if (!state.busy && !state.process) {
-          logger.debug("PARSING_SUBPROCESS", `Lazy spawning worker ${workerId}`, { language: this.language });
+          log.d("SUBPROCESS", `Lazy spawning worker ${workerId}`, { language: this.language });
           this.spawnWorker(workerId)
             .then(() => this.assignTask(workerId, task))
             .catch((err) => {
-              logger.error("PARSING_SUBPROCESS", `Lazy spawn failed for worker ${workerId}`, {
+              log.e("SUBPROCESS", `Lazy spawn failed for worker ${workerId}`, {
                 error: (err as Error).message,
               });
               task.reject(err as Error);
@@ -695,7 +695,7 @@ export class ParsingSubprocessPool {
       }
 
       // Queue task if no worker slot available
-      logger.warn("PARSING_SUBPROCESS", `No idle worker, queuing task`, {
+      log.w("SUBPROCESS", `No idle worker, queuing task`, {
         language: this.language,
         queueSize: this.taskQueue.length + 1,
       });
@@ -736,7 +736,7 @@ export class ParsingSubprocessPool {
     const proc = state.process as ChildProcess;
     proc.send(request);
 
-    logger.trace("PARSING_SUBPROCESS", `[${this.language}] Worker ${workerId} processing files`, {
+    log.t("SUBPROCESS", `[${this.language}] Worker ${workerId} processing files`, {
       taskId: task.id,
       fileCount: task.files.length,
     });
@@ -789,7 +789,7 @@ export class ParsingSubprocessPool {
     }
 
     this.workers.clear();
-    logger.info("PARSING_SUBPROCESS", "Pool shutdown complete", { language: this.language });
+    log.i("SUBPROCESS", "Pool shutdown complete", { language: this.language });
   }
 
   /**
@@ -872,12 +872,12 @@ export class ParsingSubprocessPool {
     this.keepaliveMode = enabled;
 
     if (enabled && !wasEnabled) {
-      logger.info("PARSING_SUBPROCESS", `Keepalive mode enabled`, {
+      log.i("SUBPROCESS", `Keepalive mode enabled`, {
         language: this.language,
         memoryLimitMB: this.keepaliveMemoryLimitMB,
       });
     } else if (!enabled && wasEnabled) {
-      logger.info("PARSING_SUBPROCESS", `Keepalive mode disabled`, {
+      log.i("SUBPROCESS", `Keepalive mode disabled`, {
         language: this.language,
       });
     }
@@ -910,7 +910,7 @@ export class ParsingSubprocessPool {
    */
   async ensureKeepaliveWorker(): Promise<void> {
     if (!this.keepaliveMode) {
-      logger.warn("PARSING_SUBPROCESS", "ensureKeepaliveWorker called but keepalive mode not enabled", {
+      log.w("SUBPROCESS", "ensureKeepaliveWorker called but keepalive mode not enabled", {
         language: this.language,
       });
       return;
@@ -930,7 +930,7 @@ export class ParsingSubprocessPool {
     }
 
     if (killedWorkers.length > 0) {
-      logger.info("PARSING_SUBPROCESS", "Killed non-keepalive workers", {
+      log.i("SUBPROCESS", "Killed non-keepalive workers", {
         language: this.language,
         killedWorkers: killedWorkers.join(","),
       });
@@ -939,20 +939,20 @@ export class ParsingSubprocessPool {
     const state = this.workers.get(0);
     if (state && state.process !== null) {
       // Worker 0 already running with active process
-      logger.debug("PARSING_SUBPROCESS", "Keepalive worker already running", {
+      log.d("SUBPROCESS", "Keepalive worker already running", {
         language: this.language,
         pid: state.process?.pid,
       });
       return;
     }
 
-    logger.info("PARSING_SUBPROCESS", "Spawning KEEPALIVE worker (for incremental updates, not batch)", {
+    log.i("SUBPROCESS", "Spawning KEEPALIVE worker (for incremental updates, not batch)", {
       language: this.language,
     });
 
     await this.spawnWorker(0);
 
-    logger.info("PARSING_SUBPROCESS", "KEEPALIVE worker ready (idle, waiting for incremental tasks)", {
+    log.i("SUBPROCESS", "KEEPALIVE worker ready (idle, waiting for incremental tasks)", {
       language: this.language,
       pid: this.workers.get(0)?.process?.pid,
     });
@@ -971,7 +971,7 @@ export class ParsingSubprocessPool {
     const totalMB = await this.refreshAllWorkersMemory();
 
     if (totalMB > thresholdMB) {
-      logger.info("PARSING_SUBPROCESS", `Memory ${totalMB}MB > ${thresholdMB}MB threshold, killing pool`, {
+      log.i("SUBPROCESS", `Memory ${totalMB}MB > ${thresholdMB}MB threshold, killing pool`, {
         language: this.language,
         totalMemoryMB: totalMB,
         workerCount: this.workers.size,
@@ -979,7 +979,7 @@ export class ParsingSubprocessPool {
       await this.shutdown();
       return true;
     } else {
-      logger.debug("PARSING_SUBPROCESS", `Memory ${totalMB}MB <= ${thresholdMB}MB, keeping pool alive`, {
+      log.d("SUBPROCESS", `Memory ${totalMB}MB <= ${thresholdMB}MB, keeping pool alive`, {
         language: this.language,
       });
       return false;
@@ -993,13 +993,13 @@ export class ParsingSubprocessPool {
    */
   async configureEmbeddings(config?: WorkerEmbeddingConfig): Promise<void> {
     if (!config) {
-      logger.info("PARSING_SUBPROCESS", `Clearing embedding config for ${this.workers.size} workers`, {
+      log.i("SUBPROCESS", `Clearing embedding config for ${this.workers.size} workers`, {
         language: this.language,
       });
       return;
     }
 
-    logger.info("PARSING_SUBPROCESS", `Configuring embeddings for ${this.workers.size} workers`, {
+    log.i("SUBPROCESS", `Configuring embeddings for ${this.workers.size} workers`, {
       language: this.language,
       provider: config.provider,
       enabled: config.enabled,
@@ -1014,7 +1014,7 @@ export class ParsingSubprocessPool {
             config,
           });
         } catch (error) {
-          logger.warn("PARSING_SUBPROCESS", `Failed to configure embeddings for worker ${workerId}`, {
+          log.w("SUBPROCESS", `Failed to configure embeddings for worker ${workerId}`, {
             error: (error as Error).message,
           });
         }

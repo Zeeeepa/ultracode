@@ -11,6 +11,7 @@
  */
 
 import { CACHE_CONSTANTS, DATABASE_CONSTANTS } from "../config/constants.js";
+import { log } from "../logging/index.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -482,9 +483,7 @@ export function flattenParsedEntities(entities: ParsedEntity[]): ParsedEntity[] 
   }
 
   if (childrenCount > 0) {
-    console.error(
-      `[flattenParsedEntities] Flattened ${childrenCount} children from ${entities.length} top-level entities`,
-    );
+    log.d("STORAGE", "flatten_children", { children: childrenCount, topLevel: entities.length });
   }
 
   return result;

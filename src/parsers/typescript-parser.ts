@@ -21,6 +21,7 @@
  */
 
 import ts from "typescript";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult } from "../types/parser.js";
 import { enhanceWithAngularInfo, isAngularFile } from "./angular-parser.js";
 import { isNgRxFile, parseNgRxFile } from "./ngrx-parser.js";
@@ -176,7 +177,7 @@ export class TypeScriptParser {
    * Initialize the parser (no-op for TypeScript API, kept for interface compatibility)
    */
   async initialize(): Promise<void> {
-    console.error("[TypeScriptParser] Initialized (TypeScript Compiler API)");
+    log.i("TSPARSER", "init_done");
   }
 
   /**

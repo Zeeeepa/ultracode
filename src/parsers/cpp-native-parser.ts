@@ -15,6 +15,7 @@ import { execSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
@@ -54,15 +55,15 @@ export class CppNativeParser {
    * Initialize the parser and check if clang is available
    */
   async initialize(): Promise<void> {
-    console.error("[CppNativeParser] Checking clang availability...");
+    log.d("CPPPARSER", "check_avail");
 
     try {
       execSync("clang --version", { stdio: "ignore", windowsHide: true });
       this.clangAvailable = true;
-      console.error("[CppNativeParser] Initialized (clang available)");
+      log.i("CPPPARSER", "init_done", { clang: true });
     } catch {
       this.clangAvailable = false;
-      console.error("[CppNativeParser] clang not found, using regex parser");
+      log.i("CPPPARSER", "init_done", { clang: false });
     }
   }
 

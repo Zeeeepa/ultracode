@@ -15,8 +15,8 @@ import { type ChildProcess, exec, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { log } from "../logging/index.js";
 import { getDataDir } from "../utils/config-paths.js";
-import { logger } from "../utils/logger.js";
 
 // Event-driven architecture: health check uses setInterval for Node.js, disabled for Bun
 
@@ -151,7 +151,7 @@ class OVMSNativeManager {
               // Check if it's an OVMS process before killing
               const { stdout: taskInfo } = await execAsync(`tasklist /FI "PID eq ${pid}" /FO CSV`, { timeout: 2000 });
               if (taskInfo.includes("ovms") || taskInfo.includes("cmd.exe")) {
-                logger.warn("OVMS_NATIVE", `Killing orphaned process on port ${port}`, { pid });
+                log.w("OVMS", `Killing orphaned process on port ${port}`, { pid });
                 await execAsync(`taskkill /F /PID ${pid}`, { timeout: 3000 });
                 killedAny = true;
               }
@@ -165,7 +165,7 @@ class OVMSNativeManager {
             const { stdout } = await execAsync(`lsof -ti:${port}`, { timeout: 2000 });
             const pids = stdout.trim().split("\n").filter(Boolean);
             for (const pid of pids) {
-              logger.warn("OVMS_NATIVE", `Killing orphaned process on port ${port}`, { pid });
+              log.w("OVMS", `Killing orphaned process on port ${port}`, { pid });
               await execAsync(`kill -9 ${pid}`, { timeout: 2000 });
               killedAny = true;
             }
@@ -198,7 +198,7 @@ class OVMSNativeManager {
    */
   configure(config: Partial<OVMSNativeConfig>): void {
     this.config = { ...this.config, ...config };
-    logger.info("OVMS_NATIVE", "Configured", { config: this.config });
+    log.i("OVMS", "configured", { ...this.config });
   }
 
   /**
@@ -220,7 +220,7 @@ class OVMSNativeManager {
    */
   async start(): Promise<boolean> {
     if (this.state.isRunning) {
-      logger.info("OVMS_NATIVE", "Already running", { pid: this.state.pid });
+      log.i("OVMS", "Already running", { pid: this.state.pid });
       return true;
     }
 
@@ -229,23 +229,23 @@ class OVMSNativeManager {
 
     if (!existsSync(ovmsBin)) {
       this.state.lastError = "OVMS binary not found";
-      logger.error("OVMS_NATIVE", this.state.lastError, { path: ovmsBin });
+      log.e("OVMS", this.state.lastError, { path: ovmsBin });
       return false;
     }
 
     if (!existsSync(configPath)) {
       this.state.lastError = "OVMS config not found";
-      logger.error("OVMS_NATIVE", this.state.lastError, { path: configPath });
+      log.e("OVMS", this.state.lastError, { path: configPath });
       return false;
     }
 
     // Debug: skip subprocess spawning to identify console window source
     if (process.env["ULTRASCRIPT_NO_SUBPROCESS"] === "1") {
-      logger.warn("OVMS_NATIVE", "SKIPPED (ULTRASCRIPT_NO_SUBPROCESS=1)");
+      log.w("OVMS", "SKIPPED (ULTRASCRIPT_NO_SUBPROCESS=1)");
       return false;
     }
 
-    logger.info("OVMS_NATIVE", "Starting OVMS Native", {
+    log.i("OVMS", "Starting OVMS Native", {
       binary: ovmsBin,
       config: configPath,
       restPort: this.config.restPort,
@@ -299,7 +299,7 @@ class OVMSNativeManager {
           env["OPENVINO_LOG_LEVEL"] = "3";
         }
 
-        logger.info("OVMS_NATIVE", "Starting with direct env", {
+        log.i("OVMS", "Starting with direct env", {
           cwd: ovmsDir,
           binary: ovmsBin,
           libPaths: libPaths.slice(0, 3),
@@ -336,7 +336,7 @@ class OVMSNativeManager {
       proc.stdout?.on("data", (data: Buffer) => {
         const msg = data.toString().trim();
         if (msg) {
-          logger.debug("OVMS_NATIVE", `stdout: ${msg.slice(0, 200)}`);
+          log.d("OVMS", `stdout: ${msg.slice(0, 200)}`);
         }
       });
 
@@ -346,16 +346,16 @@ class OVMSNativeManager {
         if (msg) {
           // OVMS logs to stderr, filter important messages
           if (msg.includes("error") || msg.includes("Error") || msg.includes("ERROR")) {
-            logger.warn("OVMS_NATIVE", `stderr: ${msg.slice(0, 300)}`);
+            log.w("OVMS", `stderr: ${msg.slice(0, 300)}`);
           } else {
-            logger.debug("OVMS_NATIVE", `stderr: ${msg.slice(0, 200)}`);
+            log.d("OVMS", `stderr: ${msg.slice(0, 200)}`);
           }
         }
       });
 
       // Handle process exit
       proc.on("exit", (code, signal) => {
-        logger.info("OVMS_NATIVE", "Process exited", { code, signal, pid: this.state.pid });
+        log.i("OVMS", "Process exited", { code, signal, pid: this.state.pid });
         this.state.isRunning = false;
         this.state.process = null;
         this.state.pid = null;
@@ -364,7 +364,7 @@ class OVMSNativeManager {
       // Handle process error
       proc.on("error", (err) => {
         this.state.lastError = err.message;
-        logger.error("OVMS_NATIVE", "Process error", { error: err.message });
+        log.e("OVMS", "Process error", { error: err.message });
         this.state.isRunning = false;
       });
 
@@ -374,20 +374,20 @@ class OVMSNativeManager {
       if (ready) {
         this.state.isRunning = true;
         this.startHealthCheck();
-        logger.info("OVMS_NATIVE", "Started successfully", {
+        log.i("OVMS", "Started successfully", {
           pid: this.state.pid,
           endpoint: this.getEndpoint(),
         });
         return true;
       } else {
         this.state.lastError = "Startup timeout";
-        logger.error("OVMS_NATIVE", "Startup timeout - killing process");
+        log.e("OVMS", "Startup timeout - killing process");
         await this.stop();
         return false;
       }
     } catch (error: any) {
       this.state.lastError = error.message;
-      logger.error("OVMS_NATIVE", "Failed to start", { error: error.message });
+      log.e("OVMS", "Failed to start", { error: error.message });
       return false;
     }
   }
@@ -410,7 +410,7 @@ class OVMSNativeManager {
 
         if (response.ok) {
           const elapsed = Date.now() - startTime;
-          logger.info("OVMS_NATIVE", "Server ready", { elapsedMs: elapsed });
+          log.i("OVMS", "Server ready", { elapsedMs: elapsed });
           return true;
         }
       } catch {
@@ -419,7 +419,7 @@ class OVMSNativeManager {
 
       // Check if process exited (error during startup)
       if (this.state.process?.exitCode !== null) {
-        logger.error("OVMS_NATIVE", "Process exited during startup");
+        log.e("OVMS", "Process exited during startup");
         return false;
       }
 
@@ -451,7 +451,7 @@ class OVMSNativeManager {
     }
 
     const pid = this.state.pid;
-    logger.info("OVMS_NATIVE", "Stopping OVMS Native", { pid });
+    log.i("OVMS", "Stopping OVMS Native", { pid });
 
     return new Promise((resolve) => {
       const abortController = new AbortController();
@@ -461,7 +461,7 @@ class OVMSNativeManager {
         await sleep(5000);
         if (!abortController.signal.aborted) {
           if (this.state.process || pid) {
-            logger.warn("OVMS_NATIVE", "Force killing process tree");
+            log.w("OVMS", "Force killing process tree");
             await this.forceKillProcessTree(pid);
           }
           this.state.isRunning = false;
@@ -476,7 +476,7 @@ class OVMSNativeManager {
         this.state.isRunning = false;
         this.state.process = null;
         this.state.pid = null;
-        logger.info("OVMS_NATIVE", "Stopped successfully");
+        log.i("OVMS", "Stopped successfully");
         resolve();
       });
 
@@ -503,10 +503,10 @@ class OVMSNativeManager {
     try {
       // /T = terminate child processes, /F = force
       await execAsync(`taskkill /T /F /PID ${pid}`, { timeout: 5000 });
-      logger.debug("OVMS_NATIVE", "Process tree killed via taskkill", { pid });
+      log.d("OVMS", "Process tree killed via taskkill", { pid });
     } catch (error: any) {
       // Process might already be dead
-      logger.debug("OVMS_NATIVE", "taskkill returned error (process may already be dead)", {
+      log.d("OVMS", "taskkill returned error (process may already be dead)", {
         pid,
         error: error.message,
       });
@@ -561,10 +561,10 @@ class OVMSNativeManager {
         this.state.lastHealthCheck = Date.now();
 
         if (!response.ok) {
-          logger.warn("OVMS_NATIVE", "Health check failed", { status: response.status });
+          log.w("OVMS", "Health check failed", { status: response.status });
         }
       } catch (error: any) {
-        logger.warn("OVMS_NATIVE", "Health check error", { error: error.message });
+        log.w("OVMS", "Health check error", { error: error.message });
       }
     };
 
@@ -605,7 +605,7 @@ class OVMSNativeManager {
    * Restart OVMS Native
    */
   async restart(): Promise<boolean> {
-    logger.info("OVMS_NATIVE", "Restarting");
+    log.i("OVMS", "Restarting");
     await this.stop();
     this.state.restartCount++;
     return this.start();
@@ -621,12 +621,12 @@ export const ovmsNativeManager = new OVMSNativeManager();
  */
 export async function initializeOVMSNative(config?: OVMSNativeConfig): Promise<boolean> {
   if (!config?.enabled) {
-    logger.debug("OVMS_NATIVE", "Disabled in config");
+    log.d("OVMS", "Disabled in config");
     return false;
   }
 
   if (!ovmsNativeManager.isInstalled()) {
-    logger.warn("OVMS_NATIVE", "Not installed - run setup-embedding first");
+    log.w("OVMS", "Not installed - run setup-embedding first");
     return false;
   }
 
@@ -687,11 +687,11 @@ function registerSignalHandlers(): void {
   signalHandlersRegistered = true;
 
   const shutdownHandler = async (signal: string) => {
-    logger.info("OVMS_NATIVE", `Received ${signal}, shutting down OVMS...`);
+    log.i("OVMS", "signal_received", { signal });
     try {
       await shutdownOVMSNative();
     } catch (error) {
-      logger.error("OVMS_NATIVE", `Shutdown error on ${signal}`, { error });
+      log.e("OVMS", "shutdown_error", { signal, err: String(error) });
     }
     // Don't call process.exit here - let the main process handle it
   };
@@ -712,7 +712,7 @@ function registerSignalHandlers(): void {
   process.on("exit", (code) => {
     const state = ovmsNativeManager.getState();
     if (state.isRunning && state.pid) {
-      logger.info("OVMS_NATIVE", `exit event (code=${code}) - killing OVMS synchronously`);
+      log.i("OVMS", `exit event (code=${code}) - killing OVMS synchronously`);
       killOVMSSync(state.pid);
     }
   });
@@ -720,7 +720,7 @@ function registerSignalHandlers(): void {
   // Also handle beforeExit for graceful async cleanup
   process.on("beforeExit", () => {
     if (ovmsNativeManager.getState().isRunning) {
-      logger.info("OVMS_NATIVE", "beforeExit - stopping OVMS");
+      log.i("OVMS", "beforeExit - stopping OVMS");
       const state = ovmsNativeManager.getState();
       if (state.pid) {
         killOVMSSync(state.pid);
@@ -730,14 +730,14 @@ function registerSignalHandlers(): void {
 
   // Handle uncaught exceptions - try to cleanup OVMS
   process.on("uncaughtException", (error) => {
-    logger.error("OVMS_NATIVE", "Uncaught exception - attempting OVMS cleanup", { error: error.message });
+    log.e("OVMS", "Uncaught exception - attempting OVMS cleanup", { error: error.message });
     const state = ovmsNativeManager.getState();
     if (state.pid) {
       killOVMSSync(state.pid);
     }
   });
 
-  logger.debug("OVMS_NATIVE", "Signal handlers registered");
+  log.d("OVMS", "Signal handlers registered");
 }
 
 // Auto-register signal handlers when module is loaded

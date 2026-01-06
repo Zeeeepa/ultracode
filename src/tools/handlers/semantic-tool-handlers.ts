@@ -11,6 +11,7 @@
  */
 
 import { z } from "zod";
+import { log } from "../../logging/index.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
@@ -64,9 +65,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
     const currentProject = this.getProjectContext().getCurrentProject();
 
     // DEBUG: Log project paths
-    console.error(
-      `[SemanticSearch] args.projectPath=${args.projectPath}, resolvedPath=${resolvedPath}, currentProject=${currentProject}`,
-    );
+    log.d("SEMSEARCH", "proj_paths", { arg: args.projectPath, resolved: resolvedPath, current: currentProject });
 
     if (args.projectPath && resolvedPath !== currentProject) {
       // Check if requested project is indexed
@@ -92,9 +91,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
       }
 
       // Warn that cross-project search requires project switch
-      console.warn(
-        `[SemanticSearch] Cross-project search requested. Current: ${currentProject}, Requested: ${resolvedPath}`,
-      );
+      log.w("SEMSEARCH", "cross_proj", { current: currentProject, requested: resolvedPath });
     }
 
     // Ensure SemanticAgent uses the correct project's VectorStore
@@ -148,7 +145,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
 
           rerankStats = { reranked: true, provider: provider.info?.name || "unknown" };
         } catch (e: any) {
-          console.warn(`[SemanticSearch] Reranking failed: ${e.message}`);
+          log.w("SEMSEARCH", "rerank_fail", { err: e.message });
           // Continue with embedding-only results
         }
       }

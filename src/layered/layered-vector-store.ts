@@ -18,6 +18,7 @@
 
 import { LRUCache } from "lru-cache";
 import type { ILayeredVectorIndex } from "../core/layered-index.js";
+import { log } from "../logging/index.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { VectorDelta as IVectorDelta, LayeredIndexConfig } from "../types/layered.js";
@@ -81,10 +82,10 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
     // Initialize embedding generator
     this.embeddingGenerator = new EmbeddingGenerator();
     this.embeddingGenerator.initialize().catch((err) => {
-      console.warn("[LayeredVectorStore] Failed to initialize embedding generator:", err);
+      log.w("LAYEREDVEC", "[LayeredVectorStore] Failed to initialize embedding generator:", err);
     });
 
-    console.error(`[LayeredVectorStore] Initialized with max ${this.config.maxBranchDeltas} branch deltas`);
+    log.i("LAYEREDVEC", `[LayeredVectorStore] Initialized with max ${this.config.maxBranchDeltas} branch deltas`);
   }
 
   // =========================================================================
@@ -153,7 +154,8 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
 
     const totalTime = Date.now() - startTime;
 
-    console.error(
+    log.i(
+      "LAYEREDVEC",
       `[LayeredVectorStore] Search in '${branch || "main"}': ` +
         `${finalResults.length} results, ` +
         `L0=${layer0Time}ms L1=${layer1Time}ms L2=${layer2Time}ms Total=${totalTime}ms`,
@@ -225,10 +227,13 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
     entityIds: string[],
     entityContents?: Map<string, string>,
   ): Promise<void> {
-    console.error(`[LayeredVectorStore] Generating embeddings for ${entityIds.length} entities in branch ${branch}`);
+    log.i(
+      "LAYEREDVEC",
+      `[LayeredVectorStore] Generating embeddings for ${entityIds.length} entities in branch ${branch}`,
+    );
 
     if (!this.embeddingGenerator) {
-      console.warn("[LayeredVectorStore] EmbeddingGenerator not available, skipping");
+      log.w("LAYEREDVEC", "[LayeredVectorStore] EmbeddingGenerator not available, skipping");
       return;
     }
 
@@ -242,7 +247,7 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
     for (const entityId of entityIds) {
       const content = entityContents?.get(entityId);
       if (!content) {
-        console.warn(`[LayeredVectorStore] No content for entity ${entityId}, skipping`);
+        log.w("LAYEREDVEC", `[LayeredVectorStore] No content for entity ${entityId}, skipping`);
         continue;
       }
 
@@ -250,14 +255,14 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
         const embedding = await this.embeddingGenerator.generateCodeEmbedding(content);
         delta.addVector(entityId, embedding);
       } catch (error) {
-        console.error(`[LayeredVectorStore] Failed to generate embedding for ${entityId}:`, error);
+        log.e("LAYEREDVEC", "emb_gen_fail", { entityId, err: String(error) });
       }
     }
 
     // Save delta
     await this.setVectorDelta(branch, delta);
 
-    console.error(`[LayeredVectorStore] Generated ${entityIds.length} embeddings for branch ${branch}`);
+    log.i("LAYEREDVEC", `[LayeredVectorStore] Generated ${entityIds.length} embeddings for branch ${branch}`);
   }
 
   /**
@@ -392,12 +397,12 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
       return;
     }
 
-    console.error(`[LayeredVectorStore] Branch delta evicted from cache, saving: ${branch}`);
+    log.i("LAYEREDVEC", `[LayeredVectorStore] Branch delta evicted from cache, saving: ${branch}`);
 
     // Async save (don't block eviction)
     this.cacheManager
       .saveVectorDelta(delta)
-      .catch((err: Error) => console.error(`[LayeredVectorStore] Failed to save evicted delta:`, err));
+      .catch((err: Error) => log.e("LAYEREDVEC", "save_evict_fail", { err: err.message }));
   }
 
   // =========================================================================
@@ -502,7 +507,7 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
    * Shutdown vector store gracefully
    */
   async shutdown(): Promise<void> {
-    console.error("[LayeredVectorStore] Shutting down...");
+    log.i("LAYEREDVEC", "[LayeredVectorStore] Shutting down...");
 
     // Save all cached deltas
     for (const [_branch, delta] of this.branchDeltaCache.entries()) {
@@ -515,6 +520,6 @@ export class LayeredVectorStore implements ILayeredVectorIndex {
     this.branchDeltaCache.clear();
     this.workingDeltas.clear();
 
-    console.error("[LayeredVectorStore] Shutdown complete");
+    log.i("LAYEREDVEC", "[LayeredVectorStore] Shutdown complete");
   }
 }

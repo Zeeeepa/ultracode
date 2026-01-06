@@ -13,6 +13,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
+import { log } from "../logging/index.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getNodeLocation } from "./base-parser-utils.js";
 
@@ -39,7 +40,7 @@ export class CAnalyzer {
       // Extract all top-level entities
       this.extractEntities(rootNode, filePath, entities, relationships);
     } catch (error) {
-      console.error(`[CAnalyzer] Error analyzing ${filePath}:`, error);
+      log.e("CANALYZER", "analyze_err", { file: filePath, err: String(error) });
       // Return partial results on error
     }
 

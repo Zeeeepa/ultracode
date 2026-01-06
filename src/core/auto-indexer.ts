@@ -5,9 +5,10 @@
  * Extracted from index.ts for better modularity.
  */
 
+import { log } from "../logging/index.js";
 import type { AgentTask } from "../types/agent.js";
 import { AgentType } from "../types/agent.js";
-import { createRequestId, logger } from "../utils/logger.js";
+import { createRequestId } from "../utils/logger.js";
 import { setIndexingState } from "./indexing-state.js";
 
 /**
@@ -88,7 +89,7 @@ export async function detectSupportedProject(
 
     return { supported: false };
   } catch (error) {
-    logger.warn("AUTO_INDEX", "Failed to detect project type", { error: (error as Error).message });
+    log.w("AUTOINDEX", "detect_fail", { err: (error as Error).message });
     return { supported: false };
   }
 }
@@ -210,9 +211,7 @@ export async function buildAutoIndexExcludePatterns(targetDir: string): Promise<
 
         patterns.push(pattern);
       }
-      console.error(
-        `   📋 Loaded ${lines.filter((l) => l.trim() && !l.startsWith("#")).length} patterns from .gitignore`,
-      );
+      log.d("AUTOINDEX", "gitignore_loaded", { cnt: lines.filter((l) => l.trim() && !l.startsWith("#")).length });
     }
   } catch (_error) {
     // .gitignore not found or unreadable - that's fine
@@ -246,23 +245,18 @@ export async function performAutoIndex(
 ): Promise<void> {
   const requestId = createRequestId();
   const startTime = Date.now();
-  logger.trace("INDEXING", `[+${startTime - ctx.processStartTime}ms] ▶ performAutoIndex() START`);
+  log.t("INDEXER", "auto_index_start", { offset: startTime - ctx.processStartTime });
 
   // Set indexing state for user-friendly error messages
   setIndexingState(true, targetDir);
 
   const mode = incremental ? "incremental" : "full";
-  logger.systemEvent(`Auto-indexing started (${mode})`, { directory: targetDir, incremental });
-  logger.trace("INDEXING", `[+${Date.now() - ctx.processStartTime}ms] mode=${mode}, incremental=${incremental}`);
-  console.error(`\n📂 Auto-indexing project (${mode}): ${targetDir}`);
+  log.i("INDEXER", "auto_index", { mode, dir: targetDir, req: requestId });
 
   try {
     // Build smart exclude patterns
     const excludePatterns = await buildAutoIndexExcludePatterns(targetDir);
-    console.error(`   🚫 Excluding ${excludePatterns.length} patterns (node_modules, .git, binaries, .gitignore)`);
-    // TRACE: Show first 10 patterns
-    console.error(`   📋 Sample patterns: ${excludePatterns.slice(0, 10).join(", ")}...`);
-    console.error(`   📋 Extensions: ${extensions.join(", ")}`);
+    log.d("INDEXER", "exclude_patterns", { cnt: excludePatterns.length, exts: extensions.join(",") });
 
     // Set current indexing directory
     ctx.setCurrentIndexingDirectory(targetDir);
@@ -270,26 +264,21 @@ export async function performAutoIndex(
     // Initialize SemanticAgent and optionally drop vector index for bulk insert mode
     // Only drop index for FULL rebuild, not for incremental updates
     if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
-      logger.trace("INDEXING", `[+${Date.now() - ctx.processStartTime}ms] ▶ getSemanticAgent for auto-index`);
-      console.error("🔄 Initializing SemanticAgent in background...");
+      log.t("INDEXER", "semantic_init_start", {});
       try {
         const semAgentStart = Date.now();
         const semanticAgent = await ctx.getSemanticAgent();
-        logger.trace(
-          "INDEXING",
-          `[+${Date.now() - ctx.processStartTime}ms] ◀ getSemanticAgent (${Date.now() - semAgentStart}ms)`,
-        );
+        log.t("INDEXER", "semantic_init_done", { dur: Date.now() - semAgentStart });
         if (!incremental) {
           // Drop vector index before bulk inserts for faster performance (full rebuild only)
-          logger.trace("INDEXING", `[+${Date.now() - ctx.processStartTime}ms] ▶ dropVectorIndex`);
-          console.error("🔄 Dropping vector index for bulk insert mode...");
+          log.t("INDEXER", "drop_index_start", {});
           await semanticAgent.dropVectorIndex();
-          logger.trace("INDEXING", `[+${Date.now() - ctx.processStartTime}ms] ◀ dropVectorIndex`);
+          log.t("INDEXER", "drop_index_done", {});
         } else {
-          console.error("🔄 Incremental mode - keeping existing vector index");
+          log.d("INDEXER", "keep_index", { reason: "incremental" });
         }
       } catch (err) {
-        console.error("⚠️ SemanticAgent initialization failed:", (err as Error).message);
+        log.w("INDEXER", "semantic_init_fail", { err: (err as Error).message });
       }
     }
 
@@ -320,23 +309,18 @@ export async function performAutoIndex(
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
     if (result?.success !== false) {
-      const entityCount = result?.data?.entityCount ?? result?.data?.entities ?? result?.entities?.length ?? "?";
-      console.error(`✅ Auto-indexing complete: ${entityCount} entities indexed in ${duration}s`);
-      logger.systemEvent("Auto-indexing completed", {
-        directory: targetDir,
-        entityCount,
-        durationMs: Date.now() - startTime,
-      });
+      const entityCount = result?.data?.entityCount ?? result?.data?.entities ?? result?.entities?.length ?? 0;
+      log.i("INDEXER", "auto_index_done", { entities: entityCount, dur: Date.now() - startTime, req: requestId });
 
       // Finalize embeddings (workers generate, main just loads dump files as fallback)
       if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
         try {
           const semanticAgent = await ctx.getSemanticAgent();
-          console.error(`🔄 Finalizing embeddings...`);
+          log.t("INDEXER", "embed_finalize_start", {});
           await semanticAgent.generateEmbeddingsFromStorage();
-          console.error(`✅ Embeddings finalized`);
+          log.t("INDEXER", "embed_finalize_done", {});
         } catch (error) {
-          console.error(`⚠️  Failed to finalize embeddings:`, (error as Error).message);
+          log.w("INDEXER", "embed_finalize_fail", { err: (error as Error).message });
         }
       }
 
@@ -349,14 +333,14 @@ export async function performAutoIndex(
           // Estimate files from entities (rough: ~3 entities per file on average)
           const estimatedFiles = Math.max(1, Math.ceil(indexedCount / 3));
           await graphStorage.recordIncrementalChanges(estimatedFiles);
-          logger.info("TRACKING", `Recorded incremental changes`, { files: estimatedFiles });
+          log.i("INDEXER", "tracking_recorded", { files: estimatedFiles });
         } else {
           // Full rebuild - reset tracking
           await graphStorage.resetIncrementalTracking();
-          logger.info("TRACKING", `Reset incremental tracking (full rebuild complete)`);
+          log.i("INDEXER", "tracking_reset", { reason: "full_rebuild" });
         }
       } catch (error) {
-        logger.warn("TRACKING", `Failed to update tracking`, { error: (error as Error).message });
+        log.w("INDEXER", "tracking_fail", { err: (error as Error).message });
       }
 
       // Start FileWatcher/GitWatcher for incremental updates
@@ -365,19 +349,17 @@ export async function performAutoIndex(
         const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as any;
         if (indexerAgent?.setRepositoryPath) {
           await indexerAgent.setRepositoryPath(targetDir);
-          console.error(`✅ FileWatcher/GitWatcher started for incremental updates`);
+          log.i("INDEXER", "watcher_started", { dir: targetDir });
         }
       } catch (error) {
-        console.error(`⚠️  Failed to start file watching:`, (error as Error).message);
+        log.w("INDEXER", "watcher_fail", { err: (error as Error).message });
       }
     } else {
-      console.error(`⚠️  Auto-indexing completed with warnings in ${duration}s`);
-      logger.warn("AUTO_INDEX", "Auto-indexing completed with issues", { result }, requestId);
+      log.w("INDEXER", "auto_index_warn", { dur: duration, req: requestId });
     }
   } catch (error) {
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.error(`❌ Auto-indexing failed after ${duration}s: ${(error as Error).message}`);
-    logger.error("AUTO_INDEX", "Auto-indexing failed", { error: (error as Error).message }, requestId);
+    log.e("INDEXER", "auto_index_fail", { dur: duration, err: (error as Error).message, req: requestId });
   } finally {
     // Always clear indexing state
     setIndexingState(false);

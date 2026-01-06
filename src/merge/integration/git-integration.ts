@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../../logging/index.js";
 
 /**
  * Git Integration - Utilities for merge operations
@@ -168,7 +169,7 @@ export class GitIntegration {
         windowsHide: true,
       });
 
-      console.error(`[GitIntegration] Checked out branch: ${branch}`);
+      log.i("GITINTEGR", `[GitIntegration] Checked out branch: ${branch}`);
     } catch (error) {
       if (this.config.restoreOnError && this.originalBranch) {
         await this.restoreOriginalBranch();
@@ -182,7 +183,7 @@ export class GitIntegration {
    */
   async restoreOriginalBranch(): Promise<void> {
     if (!this.originalBranch) {
-      console.warn("[GitIntegration] No original branch to restore");
+      log.w("GITINTEGR", "[GitIntegration] No original branch to restore");
       return;
     }
 
@@ -193,10 +194,10 @@ export class GitIntegration {
         windowsHide: true,
       });
 
-      console.error(`[GitIntegration] Restored original branch: ${this.originalBranch}`);
+      log.i("GITINTEGR", `[GitIntegration] Restored original branch: ${this.originalBranch}`);
       this.originalBranch = null;
     } catch (error) {
-      console.error(`[GitIntegration] Failed to restore branch: ${error}`);
+      log.i("GITINTEGR", `[GitIntegration] Failed to restore branch: ${error}`);
       throw error;
     }
   }
@@ -271,7 +272,7 @@ export class GitIntegration {
 
       return changes;
     } catch (error) {
-      console.error(`[GitIntegration] Failed to get changed files: ${error}`);
+      log.i("GITINTEGR", `[GitIntegration] Failed to get changed files: ${error}`);
       return [];
     }
   }
@@ -306,7 +307,7 @@ export class GitIntegration {
         deletions,
       };
     } catch (error) {
-      console.error(`[GitIntegration] Failed to get diff stats: ${error}`);
+      log.i("GITINTEGR", `[GitIntegration] Failed to get diff stats: ${error}`);
       return {
         files: [],
         filesChanged: 0,
@@ -332,7 +333,7 @@ export class GitIntegration {
 
       return base;
     } catch (error) {
-      console.error(`[GitIntegration] Failed to get merge base: ${error}`);
+      log.i("GITINTEGR", `[GitIntegration] Failed to get merge base: ${error}`);
       return null;
     }
   }
@@ -384,7 +385,7 @@ export class GitIntegration {
         .split("\n")
         .filter((path) => path.length > 0);
     } catch (error) {
-      console.error(`[GitIntegration] Failed to get changed files: ${error}`);
+      log.i("GITINTEGR", `[GitIntegration] Failed to get changed files: ${error}`);
       return [];
     }
   }

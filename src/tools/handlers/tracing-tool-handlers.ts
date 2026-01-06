@@ -14,6 +14,7 @@
  */
 
 import { z } from "zod";
+import { log } from "../../logging/index.js";
 import {
   ConditionAnalyzer,
   DataFlowAnalyzer,
@@ -115,7 +116,7 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
 
     // Debug: log storage context
     const projectContext = (storage as any).getProjectContext?.();
-    console.error(`[TraceFlowToolHandler] Storage project context: ${JSON.stringify(projectContext)}`);
+    log.d("TRACEFLOW", "storage_ctx", { ctx: JSON.stringify(projectContext) });
 
     let semanticAgent: Awaited<ReturnType<typeof this.context.getSemanticAgent>> | undefined;
     try {

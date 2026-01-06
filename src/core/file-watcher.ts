@@ -18,7 +18,7 @@ import { type FSWatcher, watch as fsWatch } from "node:fs";
 import { stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { glob } from "glob";
-import { logger } from "../utils/logger.js";
+import { log } from "../logging/index.js";
 
 // =============================================================================
 // TYPES
@@ -88,12 +88,12 @@ export class FileWatcher extends EventEmitter {
     this.isRunning = true;
 
     const runtime = isBunRuntime ? "Bun.watch" : "fs.watch";
-    logger.info("FileWatcher", "Starting", { runtime, rootDir: this.config.rootDir });
+    log.i("FILEWATCHER", "Starting", { runtime, rootDir: this.config.rootDir });
 
     try {
       // Initial file scan with glob
       const files = await this.scanFiles();
-      logger.debug("FileWatcher", "Initial scan complete", { files: files.length });
+      log.d("FILEWATCHER", "Initial scan complete", { files: files.length });
 
       // Start watching
       if (isBunRuntime) {
@@ -105,7 +105,7 @@ export class FileWatcher extends EventEmitter {
       this.emit("ready");
     } catch (error) {
       this.isRunning = false;
-      logger.error("FileWatcher", "Failed to start", { error: (error as Error).message });
+      log.e("FILEWATCHER", "Failed to start", { error: (error as Error).message });
       throw error;
     }
   }
@@ -137,7 +137,7 @@ export class FileWatcher extends EventEmitter {
     this.watchedFiles.clear();
     this.pendingChanges.clear();
 
-    logger.debug("FileWatcher", "Stopped");
+    log.d("FILEWATCHER", "Stopped");
   }
 
   /**
@@ -191,7 +191,7 @@ export class FileWatcher extends EventEmitter {
       }
     });
 
-    logger.info("FileWatcher", "Bun.watch started", { dirs: dirs.size, files: files.length });
+    log.i("FILEWATCHER", "Bun.watch started", { dirs: dirs.size, files: files.length });
   }
 
   /**
@@ -224,16 +224,16 @@ export class FileWatcher extends EventEmitter {
         });
 
         watcher.on("error", (err) => {
-          logger.warn("FileWatcher", "Watcher error", { dir, error: err.message });
+          log.w("FILEWATCHER", "Watcher error", { dir, error: err.message });
         });
 
         this.watchers.set(dir, watcher);
       } catch (err) {
-        logger.warn("FileWatcher", "Failed to watch directory", { dir, error: (err as Error).message });
+        log.w("FILEWATCHER", "Failed to watch directory", { dir, error: (err as Error).message });
       }
     }
 
-    logger.info("FileWatcher", "fs.watch started", { dirs: this.watchers.size, files: files.length });
+    log.i("FILEWATCHER", "fs.watch started", { dirs: this.watchers.size, files: files.length });
   }
 
   /**
@@ -336,7 +336,7 @@ export class FileWatcher extends EventEmitter {
     this.pendingChanges.clear();
 
     const isBulk = events.length >= this.config.bulkThreshold;
-    logger.debug("FileWatcher", "Emitting changes", { count: events.length, bulkMode: isBulk });
+    log.d("FILEWATCHER", "Emitting changes", { count: events.length, bulkMode: isBulk });
 
     this.emit("change", events, isBulk);
   }

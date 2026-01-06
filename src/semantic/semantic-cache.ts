@@ -21,8 +21,8 @@
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { LRUCache } from "lru-cache";
+import { log } from "../logging/index.js";
 import type { SemanticAnalysis, SimilarityResult, VectorEmbedding } from "../types/semantic.js";
-import { logger } from "../utils/logger.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -130,7 +130,7 @@ export class SemanticCache {
       dispose: () => this.stats.evictions++,
     });
 
-    logger.debug("SemanticCache", "Initialized", { maxSize: config.maxSize, ttl: config.ttl });
+    log.d("CACHE", "Initialized", { maxSize: config.maxSize, ttl: config.ttl });
   }
 
   /**
@@ -233,7 +233,7 @@ export class SemanticCache {
     this.resultCache.clear();
     this.generalCache.clear();
     this.stats = { hits: 0, misses: 0, evictions: 0 };
-    logger.debug("SemanticCache", "All caches cleared");
+    log.d("CACHE", "All caches cleared");
   }
 
   /**
@@ -247,7 +247,7 @@ export class SemanticCache {
     this.generalCache.purgeStale();
 
     const pruned = before - this.size();
-    logger.debug("SemanticCache", "Pruned expired entries", { count: pruned });
+    log.d("CACHE", "Pruned expired entries", { count: pruned });
 
     return pruned;
   }
@@ -323,7 +323,7 @@ export class SemanticCache {
       loaded++;
     }
 
-    logger.debug("SemanticCache", "Warmed up", { embeddings: loaded });
+    log.d("CACHE", "Warmed up", { embeddings: loaded });
   }
 
   /**
@@ -367,6 +367,6 @@ export class SemanticCache {
       }
     }
 
-    logger.debug("SemanticCache", "Imported entries", { count: this.size() });
+    log.d("CACHE", "Imported entries", { count: this.size() });
   }
 }

@@ -16,6 +16,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import type { SQLiteDatabase, SQLiteStatement } from "../storage/sqlite-adapter.js";
 import { isSyncSQLiteAvailable, loadSQLiteModule } from "../storage/sqlite-adapter.js";
 import { BranchDelta } from "./branch-delta.js";
@@ -42,7 +43,7 @@ export class LayeredCacheManager {
     // Check if sync SQLite is available (Bun only)
     if (!isSyncSQLiteAvailable()) {
       this.useInMemoryOnly = true;
-      console.error(`[LayeredCacheManager] Sync SQLite not available (Node.js), using in-memory only`);
+      log.i("LAYEREDCACHE", `[LayeredCacheManager] Sync SQLite not available (Node.js), using in-memory only`);
       return;
     }
 
@@ -64,7 +65,7 @@ export class LayeredCacheManager {
     this.initializeSchema();
     this.prepareStatements();
 
-    console.error(`[LayeredCacheManager] Initialized with database: ${this.dbPath}`);
+    log.i("LAYEREDCACHE", `[LayeredCacheManager] Initialized with database: ${this.dbPath}`);
   }
 
   // =========================================================================
@@ -103,7 +104,7 @@ export class LayeredCacheManager {
         ON branch_deltas(base_commit_sha);
     `);
 
-    console.error("[LayeredCacheManager] Schema initialized");
+    log.i("LAYEREDCACHE", "[LayeredCacheManager] Schema initialized");
   }
 
   private prepareStatements(): void {
@@ -145,7 +146,8 @@ export class LayeredCacheManager {
     // In-memory mode (Node.js)
     if (this.useInMemoryOnly) {
       this.memoryCache.set(delta.branchName, delta);
-      console.error(
+      log.i(
+        "LAYEREDCACHE",
         `[LayeredCacheManager] Saved delta in-memory for branch: ${delta.branchName} (${delta.totalChanges} changes)`,
       );
       return;
@@ -173,11 +175,12 @@ export class LayeredCacheManager {
         serialized.relationshipDeleted,
       );
 
-      console.error(
+      log.i(
+        "LAYEREDCACHE",
         `[LayeredCacheManager] Saved delta for branch: ${delta.branchName} (${delta.totalChanges} changes)`,
       );
     } catch (error) {
-      console.error(`[LayeredCacheManager] Failed to save delta for ${delta.branchName}:`, error);
+      log.e("LAYEREDCACHE", "delta_save_fail", { err: String(error), branch: delta.branchName });
       throw error;
     }
   }
@@ -206,11 +209,14 @@ export class LayeredCacheManager {
       // Deserialize from JSON
       const delta = this.deserializeDelta(row);
 
-      console.error(`[LayeredCacheManager] Loaded delta for branch: ${branchName} (${delta.totalChanges} changes)`);
+      log.i(
+        "LAYEREDCACHE",
+        `[LayeredCacheManager] Loaded delta for branch: ${branchName} (${delta.totalChanges} changes)`,
+      );
 
       return delta;
     } catch (error) {
-      console.error(`[LayeredCacheManager] Failed to load delta for ${branchName}:`, error);
+      log.e("LAYEREDCACHE", "delta_load_fail", { err: String(error), branch: branchName });
       return null;
     }
   }
@@ -222,7 +228,7 @@ export class LayeredCacheManager {
     // In-memory mode (Node.js)
     if (this.useInMemoryOnly) {
       this.memoryCache.delete(branchName);
-      console.error(`[LayeredCacheManager] Deleted delta in-memory for branch: ${branchName}`);
+      log.i("LAYEREDCACHE", `[LayeredCacheManager] Deleted delta in-memory for branch: ${branchName}`);
       return;
     }
 
@@ -233,9 +239,9 @@ export class LayeredCacheManager {
 
     try {
       this.deleteStmt.run(branchName);
-      console.error(`[LayeredCacheManager] Deleted delta for branch: ${branchName}`);
+      log.i("LAYEREDCACHE", `[LayeredCacheManager] Deleted delta for branch: ${branchName}`);
     } catch (error) {
-      console.error(`[LayeredCacheManager] Failed to delete delta for ${branchName}:`, error);
+      log.e("LAYEREDCACHE", "delta_delete_fail", { err: String(error), branch: branchName });
       throw error;
     }
   }
@@ -258,7 +264,7 @@ export class LayeredCacheManager {
       const rows = this.listStmt.all() as Array<{ branch_name: string }>;
       return rows.map((row) => row.branch_name);
     } catch (error) {
-      console.error(`[LayeredCacheManager] Failed to list branches:`, error);
+      log.e("LAYEREDCACHE", "list_branches_fail", { err: String(error) });
       return [];
     }
   }
@@ -305,7 +311,7 @@ export class LayeredCacheManager {
       delta.entityDelta.modified = new Map(entityModified);
       delta.entityDelta.deleted = new Set(entityDeleted);
     } catch (error) {
-      console.warn(`[LayeredCacheManager] Failed to parse entity delta for ${row.branch_name}:`, error);
+      log.e("LAYEREDCACHE", "entity_parse_fail", { err: String(error), branch: row.branch_name });
     }
 
     // Parse relationship delta
@@ -318,7 +324,7 @@ export class LayeredCacheManager {
       delta.relationshipDelta.modified = new Map(relationshipModified);
       delta.relationshipDelta.deleted = new Set(relationshipDeleted);
     } catch (error) {
-      console.warn(`[LayeredCacheManager] Failed to parse relationship delta for ${row.branch_name}:`, error);
+      log.e("LAYEREDCACHE", "rel_parse_fail", { err: String(error), branch: row.branch_name });
     }
 
     return delta;
@@ -376,13 +382,13 @@ export class LayeredCacheManager {
   compact(): void {
     if (!this.db) return;
 
-    console.error("[LayeredCacheManager] Compacting database...");
+    log.i("LAYEREDCACHE", "[LayeredCacheManager] Compacting database...");
 
     try {
       this.db.exec("VACUUM");
-      console.error("[LayeredCacheManager] Database compacted successfully");
+      log.i("LAYEREDCACHE", "[LayeredCacheManager] Database compacted successfully");
     } catch (error) {
-      console.error("[LayeredCacheManager] Database compaction failed:", error);
+      log.e("LAYEREDCACHE", "compact_fail", { err: String(error) });
     }
   }
 
@@ -403,11 +409,14 @@ export class LayeredCacheManager {
       const result = stmt.run(cutoffTime);
 
       const deletedCount = result.changes;
-      console.error(`[LayeredCacheManager] Deleted ${deletedCount} old deltas (older than ${olderThanDays} days)`);
+      log.i(
+        "LAYEREDCACHE",
+        `[LayeredCacheManager] Deleted ${deletedCount} old deltas (older than ${olderThanDays} days)`,
+      );
 
       return deletedCount;
     } catch (error) {
-      console.error("[LayeredCacheManager] Failed to delete old deltas:", error);
+      log.e("LAYEREDCACHE", "old_deltas_fail", { err: String(error) });
       return 0;
     }
   }
@@ -420,7 +429,7 @@ export class LayeredCacheManager {
    * Close database connection
    */
   close(): void {
-    console.error("[LayeredCacheManager] Closing database...");
+    log.i("LAYEREDCACHE", "[LayeredCacheManager] Closing database...");
 
     if (this.db) {
       this.db.close();

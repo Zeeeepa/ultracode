@@ -9,6 +9,8 @@
  * which need fast sync reads for delta lookups.
  */
 
+import { log } from "../logging/index.js";
+
 // Type definitions for both APIs
 export interface SQLiteDatabase {
   prepare(sql: string): SQLiteStatement;
@@ -62,7 +64,7 @@ export function isBunRuntime(): boolean {
  */
 export function loadSQLiteModule(): SQLiteDatabaseConstructor {
   if (isBunRuntime()) {
-    console.error("[SQLiteAdapter] Detected Bun runtime, using bun:sqlite");
+    log.i("SQLITEADAPT", "bun_detected", { msg: "using bun:sqlite" });
     return loadBunSQLite();
   }
 
@@ -92,9 +94,9 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
     if (process.platform === "darwin" && process.env["SQLITE_LIB_PATH"]) {
       try {
         Database.setCustomSQLite(process.env["SQLITE_LIB_PATH"]);
-        console.error(`[SQLiteAdapter] Using custom SQLite from: ${process.env["SQLITE_LIB_PATH"]}`);
+        log.i("SQLITEADAPT", "custom_sqlite", { path: process.env["SQLITE_LIB_PATH"] });
       } catch (error) {
-        console.warn(`[SQLiteAdapter] Failed to set custom SQLite: ${(error as Error).message}`);
+        log.w("SQLITEADAPT", "custom_sqlite_fail", { err: (error as Error).message });
       }
     }
 
@@ -213,13 +215,13 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
       function(..._args: any[]): this {
         // Support both function(name, fn) and function(name, options, fn) signatures
         // Bun may not support custom functions, but we provide the interface
-        console.warn("[BunDatabaseAdapter] Custom functions not fully supported in Bun");
+        log.w("SQLITEADAPT", "custom_fn_unsupported", { runtime: "bun" });
         return this;
       }
 
       aggregate(_name: string, _options: any): this {
         // Bun may not support aggregate functions
-        console.warn("[BunDatabaseAdapter] Aggregate functions not fully supported in Bun");
+        log.w("SQLITEADAPT", "aggregate_unsupported", { runtime: "bun" });
         return this;
       }
 

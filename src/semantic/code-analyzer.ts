@@ -14,6 +14,10 @@
  *  - 2025-09-14: Created by Dev-Agent - TASK-002: Semantic code analysis implementation
  */
 
+// =============================================================================
+// 1. IMPORTS AND DEPENDENCIES
+// =============================================================================
+import { log } from "../logging/index.js";
 import type {
   CloneGroup,
   CrossLangResult,
@@ -21,10 +25,6 @@ import type {
   SemanticAnalysis,
   SimilarCode,
 } from "../types/semantic.js";
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
-import { logger } from "../utils/logger.js";
 import type { EmbeddingGenerator } from "./embedding-generator.js";
 import type { SemanticCache } from "./semantic-cache.js";
 import type { VectorStore } from "./vector-store.js";
@@ -249,7 +249,7 @@ export class CodeAnalyzer {
     // Limit clone detection to avoid performance issues on large codebases
     const maxSamples = Math.min(100, totalCount);
 
-    logger.debug("CodeAnalyzer", "Analyzing code fragments for clones", { maxSamples, minSimilarity });
+    log.d("ANALYZER", "Analyzing code fragments for clones", { maxSamples, minSimilarity });
 
     // Cache for entity metadata to avoid redundant get() calls
     const entityCache = new Map<string, { content: string; metadata: any; vector?: Float32Array }>();
@@ -419,7 +419,7 @@ export class CodeAnalyzer {
       });
     }
 
-    logger.debug("CodeAnalyzer", "Clone detection complete", {
+    log.d("ANALYZER", "Clone detection complete", {
       cloneGroups: cloneGroups.length,
       entitiesCached: entityCache.size,
       pairsProcessed: processedPairs.size,

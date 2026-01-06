@@ -12,7 +12,7 @@
  * @task_id UNIFIED-GPU-001
  */
 
-import { logger } from "../utils/logger.js";
+import { log } from "../logging/index.js";
 import { getGpuClient, type IGpuClient } from "./gpu/gpu-client.js";
 import type { EmbeddingItem } from "./gpu/types.js";
 
@@ -81,14 +81,14 @@ export class EmbeddingRouter {
     if (this.isInitialized) return true;
 
     try {
-      logger.info("EMBEDDING_ROUTER", "Initializing...");
+      log.i("ROUTER", "Initializing...");
 
       // Get GPU client (will be subprocess under Bun, direct under Node)
       this.gpuClient = getGpuClient();
       const started = await this.gpuClient.start();
 
       if (!started) {
-        logger.error("EMBEDDING_ROUTER", "Failed to start GPU client");
+        log.e("ROUTER", "Failed to start GPU client");
         return false;
       }
 
@@ -107,7 +107,7 @@ export class EmbeddingRouter {
       this.startFlushTimer();
 
       this.isInitialized = true;
-      logger.info("EMBEDDING_ROUTER", "Initialized", {
+      log.i("ROUTER", "Initialized", {
         dimensions: this.config.dimensions,
         indexType: this.config.indexType,
         batchSize: this.config.batchSize,
@@ -116,7 +116,7 @@ export class EmbeddingRouter {
 
       return true;
     } catch (error) {
-      logger.error("EMBEDDING_ROUTER", "Initialization failed", { error: (error as Error).message });
+      log.e("ROUTER", "Initialization failed", { error: (error as Error).message });
       return false;
     }
   }
@@ -133,7 +133,7 @@ export class EmbeddingRouter {
     }
 
     this.isInitialized = false;
-    logger.info("EMBEDDING_ROUTER", "Closed", { stats: this.stats });
+    log.i("ROUTER", "Closed", { stats: this.stats });
   }
 
   // ===========================================================================
@@ -155,7 +155,7 @@ export class EmbeddingRouter {
     this.pendingItems.push(...items);
     this.stats.totalAdded += items.length;
 
-    logger.debug("EMBEDDING_ROUTER", "Added to batch", {
+    log.d("ROUTER", "Added to batch", {
       added: items.length,
       pending: this.pendingItems.length,
     });
@@ -182,7 +182,7 @@ export class EmbeddingRouter {
 
     // Start flush in background
     this.pendingFlush = this.flush().catch((err) => {
-      logger.warn("EMBEDDING_ROUTER", "Background flush failed", { error: (err as Error).message });
+      log.w("ROUTER", "Background flush failed", { error: (err as Error).message });
     });
   }
 
@@ -234,7 +234,7 @@ export class EmbeddingRouter {
       this.stats.avgFlushTimeMs =
         (this.stats.avgFlushTimeMs * (this.stats.flushCount - 1) + flushTime) / this.stats.flushCount;
 
-      logger.info("EMBEDDING_ROUTER", "Flushed", {
+      log.i("ROUTER", "Flushed", {
         count: itemsToFlush.length,
         flushTimeMs: flushTime.toFixed(1),
         totalFlushed: this.stats.totalFlushed,
@@ -242,7 +242,7 @@ export class EmbeddingRouter {
     } catch (error) {
       // Put items back in queue on failure
       this.pendingItems = itemsToFlush.concat(this.pendingItems);
-      logger.error("EMBEDDING_ROUTER", "Flush failed", { error: (error as Error).message });
+      log.e("ROUTER", "Flush failed", { error: (error as Error).message });
       throw error;
     } finally {
       this.isFlushing = false;
@@ -338,7 +338,7 @@ export class EmbeddingRouter {
     const savePath = path || this.config.persistPath;
     if (savePath) {
       await this.gpuClient.faissSave(savePath);
-      logger.info("EMBEDDING_ROUTER", "Index saved", { path: savePath });
+      log.i("ROUTER", "Index saved", { path: savePath });
     }
   }
 
@@ -351,7 +351,7 @@ export class EmbeddingRouter {
     }
 
     await this.gpuClient.faissLoad(path);
-    logger.info("EMBEDDING_ROUTER", "Index loaded", { path });
+    log.i("ROUTER", "Index loaded", { path });
   }
 
   // ===========================================================================

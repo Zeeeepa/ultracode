@@ -151,11 +151,12 @@ import {
   sleep,
   writeToLogFile,
 } from "./core/startup-utils.js";
+import { log } from "./logging/index.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
 import { getVectorDimensions, loadSemanticConfig } from "./utils/config-paths.js";
 import { initHasher } from "./utils/fast-hash.js";
-import { createRequestId, logger } from "./utils/logger.js";
+import { createRequestId, initNewLogger, setLoggerProject } from "./utils/logger.js";
 
 // =============================================================================
 // GLOBAL EXCEPTION HANDLERS - Catch crashes and log them to file
@@ -261,8 +262,8 @@ for (const raw of debugRequestStrings) {
   try {
     debugRequests.push({ raw: trimmed, parsed: JSON.parse(trimmed) });
   } catch (error) {
-    console.error(`[Debug] Failed to parse JSON request: ${trimmed}`);
-    console.error(error instanceof Error ? error.message : String(error));
+    // Pre-logger init - write to stderr directly
+    process.stderr.write(`[Debug] Failed to parse JSON: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
   }
 }
@@ -302,24 +303,20 @@ if (!validation.valid) {
   process.exit(1);
 }
 
-// Initialize global SQLiteManager with database configuration
-console.error("[Main] Initializing global SQLiteManager with config.database.path:", config.database.path);
-console.error("[Main] CLI directory argument:", directory);
-console.error("[Main] process.cwd():", process.cwd());
-
 // IMPORTANT: Set the indexing directory BEFORE creating SQLiteManager
 // This ensures getDefaultDbPath() uses the correct project path
 setCurrentIndexingDirectory(directory);
-console.error("[Main] Set current indexing directory to:", directory);
+
+// Initialize new fixed-position logger with project context
+initNewLogger();
+setLoggerProject(getProjectHash(directory));
+log.i("STARTUP", "init", { dir: directory, dbPath: config.database.path ?? "default", cwd: process.cwd() });
 
 // SQLiteManager removed - using libsql-based storage via graph-storage-factory
 // Storage initialization happens lazily via getGraphStorage()
 
-// Track current project for context switching
-const currentProjectPath = directory;
-
 // Initialize global GraphStorage (libsql unified storage)
-console.error("[Main] Initializing global GraphStorage (libsql unified)");
+log.i("STORAGE", "graph_init", { type: "libsql" });
 
 // Configure vector dimensions from semantic-config.json BEFORE initializing storage
 const vectorDimensions = getVectorDimensions();
@@ -338,31 +335,27 @@ try {
   gpuWorkerStartPromise = gpuClient.start();
   gpuWorkerStartPromise
     .then((success) => {
-      console.error(`[Main] GPU worker started in background (${Date.now() - gpuStartTime}ms, success=${success})`);
+      log.i("GPU", "worker_started", { dur: Date.now() - gpuStartTime, ok: success });
     })
     .catch((err) => {
-      console.error(`[Main] GPU worker background start failed: ${(err as Error).message}`);
+      log.e("GPU", "worker_start_fail", { err: (err as Error).message });
     });
-  console.error("[Main] GPU worker start initiated (non-blocking)");
+  log.i("GPU", "worker_init", { blocking: false });
 } catch (err) {
-  console.error(`[Main] Failed to initiate GPU worker: ${(err as Error).message}`);
+  log.e("GPU", "worker_init_fail", { err: (err as Error).message });
 }
 
 // v3: Set initial project context for GraphStorage
 const initialStorage = await getGraphStorage();
 initialStorage.setProject(directory, DEFAULT_BRANCH);
-console.error(
-  `[Main] v3: Initial GraphStorage context: project=${getProjectHash(directory)}, branch=${DEFAULT_BRANCH}`,
-);
+log.i("STORAGE", "project_set", { proj: getProjectHash(directory), branch: DEFAULT_BRANCH });
 
-// Initialize logging system with config
-logger.systemEvent("MCP Server Starting", {
-  directory,
-  nodeVersion: process.version,
-  platform: process.platform,
-  pid: process.pid,
-  configEnvironment: config.environment,
-  embeddingEnabled: config.mcp.embedding?.enabled,
+// Log MCP server starting
+log.i("SYSTEM", "mcp_starting", {
+  dir: directory,
+  node: process.version,
+  plat: process.platform,
+  env: config.environment,
 });
 
 // Initialize resource manager with configuration constraints
@@ -379,13 +372,10 @@ if (!pipeServerMode) {
   resourceManager.startMonitoring();
 }
 
-logger.systemEvent("Resource Manager Started", {
-  maxMemoryMB: conductorResources.maxMemoryMB,
-  maxCpuPercent: conductorResources.maxCpuPercent,
-  embeddingProvider: actualProvider,
-  semanticConfigProvider: semanticProvider,
-  yamlProvider,
-  monitoringEnabled: true,
+log.i("SYSTEM", "resource_mgr", {
+  memMB: conductorResources.maxMemoryMB,
+  cpu: conductorResources.maxCpuPercent,
+  provider: actualProvider,
 });
 
 // Initialize OVMS Native if configured (auto-start embedding server)
@@ -401,13 +391,9 @@ if (actualProvider === "ovms-native") {
 
   const ovmsStarted = await initializeOVMSNative(ovmsNativeConfig);
   if (ovmsStarted) {
-    logger.systemEvent("OVMS Native Started", { provider: actualProvider, restPort: 8083, grpcPort: 9001 });
-    console.error("[Main] OVMS Native started on port 8083");
+    log.i("OVMS", "started", { port: 8083, grpc: 9001 });
   } else {
-    // No fallback - if ovms-native is configured, it must start
-    console.error("[Main] ERROR: OVMS Native failed to start. Check installation with: setup-embedding");
-    console.error("[Main] Embedding generation will not work until OVMS Native is running.");
-    logger.error("OVMS_NATIVE", "Failed to start OVMS Native - embedding disabled");
+    log.e("OVMS", "start_fail", { hint: "run setup-embedding" });
   }
 }
 
@@ -417,7 +403,7 @@ const container = getGlobalContainer();
 // Storage is accessed via getGraphStorage() - no need to register SQLiteManager
 await registerAllAgents(container);
 _endTimer("registerAllAgents");
-console.error("[Main] DI Container initialized with all agents");
+log.i("SYSTEM", "di_ready", { agents: "all" });
 
 // Initialize conductor orchestrator lazily
 let conductor: ConductorOrchestrator | null = null;
@@ -461,9 +447,7 @@ const layeredIndexManager: LayeredIndexManager | null = null;
 // VARIANT-C: Unified agent getter using DI Container
 async function getSemanticAgent(): Promise<any> {
   const currentDir = getCurrentIndexingDirectory();
-  console.error(
-    `[Main] getSemanticAgent: getCurrentIndexingDirectory()=${currentDir}, currentProjectPath=${currentProjectPath}`,
-  );
+  log.t("AGENT", "get_semantic", { dir: currentDir ?? "none" });
 
   const cond = getConductor();
   await cond.initialize();
@@ -476,9 +460,7 @@ async function getSemanticAgent(): Promise<any> {
     const expectedProjectHash = getProjectHash(currentDir);
 
     if (currentContext?.projectHash !== expectedProjectHash) {
-      console.error(
-        `[Main] v3: getSemanticAgent: VectorStore project mismatch! current=${currentContext?.projectHash}, expected=${expectedProjectHash}`,
-      );
+      log.w("AGENT", "project_mismatch", { cur: currentContext?.projectHash, exp: expectedProjectHash });
       await agent.reinitializeForProject(currentDir);
     }
   }
@@ -581,7 +563,7 @@ function createMcpServer(): Server {
     const requestId = createRequestId();
     const startTime = Date.now();
 
-    logger.mcpRequest(name, args, requestId);
+    log.i("MCP", "request", { tool: name, req: requestId });
 
     return executeToolCall(name, args, requestId, startTime);
   });
@@ -605,7 +587,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, re
       }
       if (!aborted) {
         const err = new Error(`${label} timed out after ${ms}ms`);
-        logger.incident("Operation timeout", { label, timeoutMs: ms }, requestId, err);
+        log.e("MCP", "timeout", { label, ms, req: requestId });
         reject(err);
       }
     };
@@ -647,7 +629,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
       `⏱️ Elapsed: ${status.elapsedSeconds || 0} seconds\n\n` +
       `Tip: You can work with other projects while this one is indexing.`;
 
-    logger.info("INDEXING_BUSY", `Tool ${name} blocked - indexing in progress for ${targetDir}`, { status }, requestId);
+    log.i("INDEXER", "tool_blocked", { tool: name, dir: targetDir, elapsed: status.elapsedSeconds ?? 0 });
 
     return {
       content: [
@@ -682,7 +664,6 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
     const toolContext: ToolContext = {
       requestId,
       config,
-      logger,
       getConductor,
       getGraphStorage,
       getSQLiteManager: () => null, // Legacy - now using libsql via getGraphStorage()
@@ -714,12 +695,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     if (error instanceof AgentBusyError) {
-      logger.info(
-        "AGENT_BUSY",
-        `Agent ${error.details.agentId} busy while handling ${name}`,
-        { details: error.details },
-        requestId,
-      );
+      log.w("AGENT", "busy", { agent: error.details.agentId, tool: name, req: requestId });
 
       return {
         content: [
@@ -740,7 +716,7 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
       };
     }
 
-    logger.mcpError(name, error instanceof Error ? error : new Error(errorMessage), requestId);
+    log.e("MCP", "error", { tool: name, req: requestId, err: errorMessage });
 
     return {
       content: [
@@ -769,7 +745,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // Mark activity to prevent idle mode during active requests
   getConductor().markActivity();
 
-  logger.mcpRequest(name, args, requestId);
+  log.i("MCP", "request", { tool: name, req: requestId });
 
   return executeToolCall(name, args, requestId, startTime);
 });
@@ -780,7 +756,7 @@ async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
       try {
         return CallToolRequestSchema.parse(parsed);
       } catch (error: unknown) {
-        console.error(`[Debug] Invalid tools/call request payload: ${raw}`);
+        log.e("DEBUG", "invalid_payload", { raw });
         throw error;
       }
     })();
@@ -796,7 +772,7 @@ async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
     // Mark activity to prevent idle mode during active requests
     getConductor().markActivity();
 
-    logger.mcpRequest(name, args, requestId);
+    log.i("MCP", "request", { tool: name, req: requestId });
     const result = await executeToolCall(name, args, requestId, startTime);
 
     const response = {
@@ -831,11 +807,11 @@ function createAutoIndexContext(): AutoIndexContext {
 // Start the server
 async function main() {
   const mainStartTime = Date.now();
-  logger.trace("STARTUP", `[+${mainStartTime - PROCESS_START_TIME}ms] ▶ main() started`);
+  log.t("STARTUP", "main_started", { ms: mainStartTime - PROCESS_START_TIME });
 
-  console.error(`Starting MCP Code Graph Server for directory: ${directory}`);
-  console.error("Multi-agent LiteRAG architecture initialized");
-  console.error(`Resource constraints: 1GB memory, 80% CPU, 10 concurrent agents`);
+  log.i("STARTUP", "server_starting", { dir: directory });
+  log.i("STARTUP", "architecture", { type: "multi_agent_literag" });
+  log.i("STARTUP", "constraints", { mem: "1GB", cpu: "80%", agents: 10 });
 
   // Check and auto-start Ollama if embeddings are enabled (non-blocking)
   const config = ConfigLoader.getInstance().getConfig();
@@ -857,10 +833,10 @@ async function main() {
     getSemanticAgent,
   });
   // Initialize AutoDoc Watcher for automatic documentation updates
-  logger.trace("STARTUP", `[+${Date.now() - PROCESS_START_TIME}ms] Checking AutoDoc watcher config`);
+  log.t("STARTUP", "autodoc_check", { ms: Date.now() - PROCESS_START_TIME });
   const autodocWatcherEnabled = config.mcp?.autodoc?.watcherEnabled ?? true;
   if (autodocWatcherEnabled) {
-    logger.trace("STARTUP", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: AutoDoc watcher initialization`);
+    log.t("STARTUP", "autodoc_init", { ms: Date.now() - PROCESS_START_TIME });
     try {
       const watcherConfig: AutoDocWatcherConfig = {
         rootDir: directory,
@@ -873,16 +849,9 @@ async function main() {
       };
       const watcher = getAutoDocWatcher(watcherConfig);
       watcher.start();
-      console.error("📝 AutoDoc watcher started (auto-updates AUTODOC.md on file changes)");
-      logger.systemEvent("AutoDoc watcher started", {
-        rootDir: directory,
-        debounceMs: watcherConfig.debounceMs,
-      });
+      log.i("AUTODOC", "watcher_started", { dir: directory, debounce: watcherConfig.debounceMs ?? 0 });
     } catch (error) {
-      logger.warn("STARTUP", "AutoDoc watcher failed to start", {
-        error: (error as Error).message,
-      });
-      console.error("⚠️  AutoDoc watcher failed to start");
+      log.w("AUTODOC", "watcher_failed", { err: (error as Error).message });
     }
   }
 
@@ -908,17 +877,16 @@ async function main() {
       if (isShuttingDown) return;
       isShuttingDown = true;
 
-      console.error("[PipeServer] All clients disconnected. Starting graceful shutdown...");
-      logger.systemEvent("Auto-Shutdown Initiated", { reason: "all_clients_disconnected" });
+      log.i("PIPE", "shutdown_start", { reason: "all_clients_disconnected" });
 
       try {
         // 1. Close pipe server to prevent new connections
         await pipeServer.close();
-        console.error("[PipeServer] Server closed, no new connections accepted");
+        log.i("PIPE", "server_closed", {});
 
         // 2. Wait for pending indexing operations to complete
         if (conductor) {
-          console.error("[PipeServer] Waiting for pending operations to complete...");
+          log.t("PIPE", "wait_pending", {});
 
           // Poll until all agent task queues are empty
           let waitIterations = 0;
@@ -935,66 +903,64 @@ async function main() {
 
             if (waitIterations % 50 === 0) {
               // Log every 5 sec
-              console.error(`[PipeServer] Still waiting for ${totalPending} pending tasks...`);
+              log.t("PIPE", "pending_tasks", { cnt: totalPending });
             }
             // Real sleep without busy-wait
             await sleep(100);
             waitIterations++;
           }
-          console.error("[PipeServer] All agents idle");
+          log.i("PIPE", "agents_idle", {});
         }
 
         // 2.5. Shutdown OVMS Native (if running)
         try {
-          console.error("[PipeServer] Shutting down OVMS Native...");
+          log.t("OVMS", "shutdown_start", {});
           await shutdownOVMSNative();
-          console.error("[PipeServer] OVMS Native shutdown complete");
+          log.i("OVMS", "shutdown_ok", {});
         } catch (error) {
-          console.error("[PipeServer] OVMS Native shutdown error:", error);
+          log.e("OVMS", "shutdown_err", { err: String(error) });
         }
 
         // 2.6. Shutdown GPU worker (if running)
         try {
-          logger.systemEvent("Shutting down GPU Client...");
+          log.t("GPU", "shutdown_start", {});
           await shutdownGpuClient();
-          logger.systemEvent("GPU Client shutdown complete");
+          log.i("GPU", "shutdown_ok", {});
         } catch (error) {
-          logger.error("GPU_CLIENT", "Shutdown error", { error: String(error) });
+          log.e("GPU", "shutdown_err", { err: String(error) });
         }
 
         // 2.7. Shutdown FAISS provider (if running)
         try {
-          logger.systemEvent("Shutting down FAISS Provider...");
+          log.t("FAISS", "shutdown_start", {});
           await shutdownFaissProvider();
-          logger.systemEvent("FAISS Provider shutdown complete");
+          log.i("FAISS", "shutdown_ok", {});
         } catch (error) {
-          logger.error("FAISS", "Shutdown error", { error: String(error) });
+          log.e("FAISS", "shutdown_err", { err: String(error) });
         }
 
         // 3. Shutdown conductor and agents
         if (conductor) {
-          console.error("[PipeServer] Shutting down Conductor...");
+          log.t("CONDUCTOR", "shutdown_start", {});
           await conductor.shutdown();
-          console.error("[PipeServer] Conductor shutdown complete");
+          log.i("CONDUCTOR", "shutdown_ok", {});
         }
 
         // 4. Shutdown layered index manager
         if (layeredIndexManager) {
-          console.error("[PipeServer] Shutting down LayeredIndexManager...");
+          log.t("INDEXER", "shutdown_start", {});
           await layeredIndexManager.shutdown();
-          console.error("[PipeServer] LayeredIndexManager shutdown complete");
+          log.i("INDEXER", "shutdown_ok", {});
         }
 
         // 5. Stop resource monitoring
         resourceManager.stopMonitoring();
 
-        console.error("[PipeServer] Graceful shutdown complete. Exiting.");
-        logger.systemEvent("Auto-Shutdown Complete", { exitCode: 0 });
+        log.i("PIPE", "shutdown_complete", { exitCode: 0 });
 
         process.exit(0);
       } catch (error) {
-        console.error("[PipeServer] Shutdown error:", error);
-        logger.error("SHUTDOWN", "Auto-shutdown failed", { error: (error as Error).message });
+        log.e("PIPE", "shutdown_err", { err: (error as Error).message });
         process.exit(1);
       }
     }
@@ -1005,8 +971,7 @@ async function main() {
     function scheduleShutdown() {
       shutdownScheduled = false; // Cancel any previous shutdown
 
-      console.error(`[PipeServer] No active clients. Shutdown scheduled in ${SHUTDOWN_DELAY_MS}ms...`);
-      logger.systemEvent("Shutdown Scheduled", { delayMs: SHUTDOWN_DELAY_MS, activeClients: 0 });
+      log.i("PIPE", "shutdown_scheduled", { delay: SHUTDOWN_DELAY_MS, clients: 0 });
 
       // Shutdown delay via polling (no setTimeout for Bun compatibility)
       shutdownScheduled = true;
@@ -1027,17 +992,11 @@ async function main() {
     function cancelShutdown() {
       if (shutdownScheduled) {
         shutdownScheduled = false;
-        console.error("[PipeServer] Shutdown cancelled - client reconnected");
-        logger.systemEvent("Shutdown Cancelled", { reason: "client_reconnected" });
+        log.i("PIPE", "shutdown_cancelled", { reason: "client_reconnected" });
       }
     }
 
-    console.error(`[PipeServer] Starting multi-client mode on ${pipeServer.getPath()}...`);
-    logger.systemEvent("MCP Server Transport Starting", {
-      transport: "pipe",
-      path: pipeServer.getPath(),
-      mode: "multi-client",
-    });
+    log.i("PIPE", "starting", { path: pipeServer.getPath(), mode: "multi-client" });
 
     await pipeServer.start(async (clientTransport) => {
       clientCount++;
@@ -1047,8 +1006,7 @@ async function main() {
       // Cancel any pending shutdown
       cancelShutdown();
 
-      console.error(`[PipeServer] Client #${clientId} connected (active: ${activeClients})`);
-      logger.systemEvent("MCP Client Connected", { clientId, activeClients, transport: "pipe" });
+      log.i("PIPE", "client_connected", { client: clientId, active: activeClients });
 
       // Create new MCP Server for this client
       const clientServer = createMcpServer();
@@ -1056,8 +1014,7 @@ async function main() {
       // Handle client disconnect
       clientTransport.onclose = () => {
         activeClients--;
-        console.error(`[PipeServer] Client #${clientId} disconnected (active: ${activeClients})`);
-        logger.systemEvent("MCP Client Disconnected", { clientId, activeClients });
+        log.i("PIPE", "client_disconnected", { client: clientId, active: activeClients });
 
         // Schedule shutdown if no more clients
         if (activeClients === 0) {
@@ -1068,38 +1025,21 @@ async function main() {
       // Connect server to client transport (server.connect() calls transport.start() internally)
       await clientServer.connect(clientTransport as any);
 
-      console.error(`[PipeServer] Client #${clientId} ready`);
-      logger.systemEvent("MCP Client Ready", { clientId, activeClients });
+      log.i("PIPE", "client_ready", { client: clientId, active: activeClients });
     });
 
     transportType = "pipe-multi";
-    console.error(`MCP server running on pipe transport (multi-client): ${pipeServer.getPath()}`);
-    logger.systemEvent("MCP Server Ready", {
-      directory,
-      transport: transportType,
-      toolsCount: getToolsList().length,
-      readyTime: Date.now(),
-    });
+    log.i("MCP", "server_ready", { dir: directory, transport: transportType, tools: getToolsList().length });
   } else {
     // Default: stdio transport (single client)
-    logger.trace("STARTUP", `[+${Date.now() - PROCESS_START_TIME}ms] ▶ START: stdio transport connect`);
-    logger.systemEvent("MCP Server Transport Connecting", { transport: "stdio" });
+    log.t("STARTUP", "stdio_connect", { ms: Date.now() - PROCESS_START_TIME });
     const transport = new StdioServerTransport();
     transportType = "stdio";
-    console.error("MCP server running on stdio transport");
 
     const connectStartTime = Date.now();
     await server.connect(transport as any);
-    logger.trace(
-      "STARTUP",
-      `[+${Date.now() - PROCESS_START_TIME}ms] ◀ END: stdio transport connect (${Date.now() - connectStartTime}ms)`,
-    );
-    logger.systemEvent("MCP Server Ready", {
-      directory,
-      transport: transportType,
-      toolsCount: getToolsList().length,
-      readyTime: Date.now(),
-    });
+    log.t("STARTUP", "stdio_connected", { ms: Date.now() - PROCESS_START_TIME, dur: Date.now() - connectStartTime });
+    log.i("MCP", "server_ready", { dir: directory, transport: transportType, tools: getToolsList().length });
   }
 
   if (debugRequests.length > 0) {
@@ -1110,17 +1050,10 @@ async function main() {
         await getSemanticAgent();
       }
       await processDebugRequests(debugRequests);
-      console.error("[Debug] Completed processing supplied requests.");
+      log.i("DEBUG", "requests_complete", {});
       process.exit(0);
     } catch (error) {
-      console.error("[Debug] Request execution failed:", error instanceof Error ? error.message : error);
-      logger.error(
-        "DEBUG_MODE",
-        "Debug request execution failed",
-        { error: error instanceof Error ? error.message : String(error) },
-        undefined,
-        error instanceof Error ? error : undefined,
-      );
+      log.e("DEBUG", "request_failed", { err: error instanceof Error ? error.message : String(error) });
       process.exit(1);
     }
     return;
@@ -1131,18 +1064,15 @@ async function main() {
   setCurrentIndexingDirectory(directory);
 
   // All agents are initialized lazily when first used (prevents stdio blocking in MCP)
-  console.error("Core agents registered and ready for lazy initialization");
+  log.i("STARTUP", "agents_registered", {});
 
   // =============================================================================
   // AUTO-INDEXING: Check and index project on startup
   // =============================================================================
-  logger.trace("STARTUP", `[+${Date.now() - PROCESS_START_TIME}ms] Checking auto-indexing config`);
+  log.t("STARTUP", "autoindex_check", { ms: Date.now() - PROCESS_START_TIME });
   const indexingConfig = config.indexing;
   const shouldAutoIndex = !noAutoIndex && (indexingConfig?.autoIndex ?? true);
-  logger.trace(
-    "INDEXING",
-    `[+${Date.now() - PROCESS_START_TIME}ms] shouldAutoIndex=${shouldAutoIndex}, noAutoIndex=${noAutoIndex}`,
-  );
+  log.t("INDEXER", "autoindex_config", { shouldAutoIndex, noAutoIndex });
 
   if (shouldAutoIndex) {
     const extensions = indexingConfig?.autoIndexExtensions ?? [
@@ -1167,15 +1097,11 @@ async function main() {
         // v4: Use libsql unified storage instead of better-sqlite3
         const graphStorage = await getGraphStorage();
         const projectHash = getProjectHash(directory);
-        console.error(
-          `[AUTO-INDEX] Checking for existing index: dir=${directory}, hash=${projectHash}, branch=${DEFAULT_BRANCH}`,
-        );
+        log.t("INDEXER", "check_index", { dir: directory, hash: projectHash, branch: DEFAULT_BRANCH });
         graphStorage.setProject(directory, DEFAULT_BRANCH);
         const stats = await graphStorage.getStatistics();
         const entityCount = stats.totalEntities ?? 0;
-        console.error(
-          `[AUTO-INDEX] Statistics result: entities=${entityCount}, rels=${stats.totalRelationships}, files=${stats.totalFiles}`,
-        );
+        log.t("INDEXER", "stats", { entities: entityCount, rels: stats.totalRelationships, files: stats.totalFiles });
 
         // Track whether we need incremental vs full indexing
         let useIncrementalMode = false;
@@ -1194,17 +1120,12 @@ async function main() {
 
           // If cumulative changes exceed threshold, force full rebuild
           if (cumulativePercent > CUMULATIVE_REBUILD_THRESHOLD) {
-            logger.systemEvent("Cumulative changes threshold exceeded, performing full rebuild", {
-              directory,
-              cumulativeChanges,
-              totalFiles: indexedFileCount,
-              cumulativePercent: (cumulativePercent * 100).toFixed(1),
-              thresholdPercent: (CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0),
+            log.i("INDEXER", "cumulative_threshold", {
+              changes: cumulativeChanges,
+              files: indexedFileCount,
+              pct: (cumulativePercent * 100).toFixed(1),
+              threshold: (CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0),
             });
-            console.error(
-              `🔄 Cumulative changes (${cumulativeChanges}/${indexedFileCount} = ${(cumulativePercent * 100).toFixed(0)}%) exceed ${(CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0)}% threshold`,
-            );
-            console.error(`   → Performing full index rebuild for optimal search quality`);
             // Full rebuild - don't use incremental mode
             useIncrementalMode = false;
           } else {
@@ -1213,41 +1134,21 @@ async function main() {
             const mismatchPercent = indexedFileCount > 0 ? (missingFiles / indexedFileCount) * 100 : 0;
 
             if (diskFileCount > 0 && (missingFiles > 10 || mismatchPercent > 20)) {
-              logger.systemEvent("Index incomplete, resuming incremental indexing", {
-                directory,
-                diskFileCount,
-                indexedFileCount,
-                missingFiles,
-                mismatchPercent: mismatchPercent.toFixed(1),
-                cumulativeChanges,
+              log.i("INDEXER", "index_incomplete", {
+                indexed: indexedFileCount,
+                disk: diskFileCount,
+                missing: missingFiles,
+                changes: cumulativeChanges,
               });
-              console.error(
-                `⚠️  Index incomplete: ${indexedFileCount}/${diskFileCount} files indexed, resuming incrementally...`,
-              );
-              if (cumulativeChanges > 0) {
-                console.error(
-                  `   (cumulative changes: ${cumulativeChanges}, will rebuild at ${(CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0)}%)`,
-                );
-              }
               // Use incremental mode - only index new/changed files
               useIncrementalMode = true;
             } else {
-              logger.systemEvent("Existing index found for directory, skipping auto-index", {
-                directory,
-                entityCount,
-                projectHash,
-                diskFileCount,
-                indexedFileCount,
-                cumulativeChanges,
+              log.i("INDEXER", "index_exists", {
+                entities: entityCount,
+                files: indexedFileCount,
+                disk: diskFileCount,
+                changes: cumulativeChanges,
               });
-              console.error(
-                `📊 Existing index found (${entityCount} entities, ${indexedFileCount}/${diskFileCount} files), ready for queries`,
-              );
-              if (cumulativeChanges > 0) {
-                console.error(
-                  `   (cumulative changes: ${cumulativeChanges}/${indexedFileCount}, rebuild at ${(CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0)}%)`,
-                );
-              }
               return;
             }
           }
@@ -1256,32 +1157,26 @@ async function main() {
         // Detect if project has supported files
         const detection = await detectSupportedProject(directory, extensions);
         if (!detection.supported) {
-          logger.systemEvent("No supported files detected, skipping auto-index", { directory });
-          console.error("ℹ️  No supported source files detected, auto-indexing skipped");
-          console.error(`   Supported extensions: ${extensions.slice(0, 8).join(", ")}...`);
+          log.i("INDEXER", "no_files", { dir: directory });
           return;
         }
 
-        logger.systemEvent("Supported project detected", {
-          directory,
-          detectedExt: detection.detectedExt,
-          sampleFile: detection.sampleFile,
+        log.i("INDEXER", "project_detected", {
+          ext: detection.detectedExt ?? "unknown",
+          sample: detection.sampleFile ?? "none",
         });
-        console.error(`🔍 Detected ${detection.detectedExt} project (${detection.sampleFile})`);
 
         // Perform indexing with extension filter
         // Use incremental mode when resuming incomplete index
         await performAutoIndex(directory, extensions, createAutoIndexContext(), useIncrementalMode);
       } catch (error) {
-        console.error("❌ Auto-index failed:", (error as Error).message);
-        logger.error("AUTO_INDEX", "Auto-index check failed", { error: (error as Error).message });
+        log.e("INDEXER", "autoindex_failed", { err: (error as Error).message });
       }
     });
   }
 }
 
 main().catch((error) => {
-  console.error("Failed to start server:", error);
-  logger.critical("MCP Server Startup Failed", error.message, undefined, undefined, error);
+  log.e("STARTUP", "server_failed", { err: error.message });
   process.exit(1);
 });

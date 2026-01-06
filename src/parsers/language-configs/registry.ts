@@ -4,6 +4,7 @@
  * Central registry for all language configurations with lookup functions.
  */
 
+import { log } from "../../logging/index.js";
 import type { SupportedLanguage } from "../../types/parser.js";
 import {
   C_CONFIG,
@@ -106,15 +107,15 @@ export function isTypeNode(nodeType: string, language: SupportedLanguage): boole
  * Validate language configurations on startup
  */
 export function validateConfigurations(): boolean {
-  console.error("[LanguageConfig] Validating configurations...");
+  log.d("LANGCONFIG", "validate_start");
 
   for (const [lang, config] of Object.entries(LANGUAGE_CONFIGS)) {
     if (!config.language || !config.extensions.length) {
-      console.error(`[LanguageConfig] Invalid configuration for ${lang}`);
+      log.e("LANGCONFIG", "invalid_config", { lang });
       return false;
     }
   }
 
-  console.error("[LanguageConfig] All configurations valid");
+  log.i("LANGCONFIG", "validate_done");
   return true;
 }

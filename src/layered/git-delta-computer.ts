@@ -14,6 +14,7 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BranchManager } from "../core/branch-manager.js";
+import { log } from "../logging/index.js";
 import type { GitDiffResult, GitFileChange } from "../types/layered.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
 import { hashText } from "../utils/fast-hash.js";
@@ -52,7 +53,7 @@ export class GitDeltaComputer {
    * @returns Branch delta with all changes
    */
   async computeDeltaFromGitDiff(branchName: string, baseBranch: string = "main"): Promise<BranchDelta> {
-    console.error(`[GitDeltaComputer] Computing delta: ${branchName} relative to ${baseBranch}`);
+    log.i("GITDELTA", `[GitDeltaComputer] Computing delta: ${branchName} relative to ${baseBranch}`);
 
     // Get git diff
     const diffResult = await this.getGitDiff(branchName, baseBranch);
@@ -68,7 +69,8 @@ export class GitDeltaComputer {
       await this.processFileChange(fileChange, delta);
     }
 
-    console.error(
+    log.i(
+      "GITDELTA",
       `[GitDeltaComputer] Delta computed: ${delta.totalChanges} changes ` +
         `(+${delta.entityDelta.added.size} ~${delta.entityDelta.modified.size} -${delta.entityDelta.deleted.size})`,
     );
@@ -108,7 +110,7 @@ export class GitDeltaComputer {
         totalFiles: files.length,
       };
     } catch (error) {
-      console.error(`[GitDeltaComputer] Git diff failed:`, error);
+      log.e("GITDELTA", "git_diff_fail", { err: String(error) });
       // Return empty diff on error
       return {
         files: [],
@@ -134,7 +136,7 @@ export class GitDeltaComputer {
 
       return sha;
     } catch (_error) {
-      console.warn(`[GitDeltaComputer] Could not find merge-base, using ${branch2} HEAD`);
+      log.w("GITDELTA", `[GitDeltaComputer] Could not find merge-base, using ${branch2} HEAD`);
       return this.getCommitSha(branch2);
     }
   }
@@ -153,7 +155,7 @@ export class GitDeltaComputer {
 
       return sha;
     } catch (_error) {
-      console.error(`[GitDeltaComputer] Could not get commit SHA for ${branch}`);
+      log.i("GITDELTA", `[GitDeltaComputer] Could not get commit SHA for ${branch}`);
       return "";
     }
   }
@@ -324,7 +326,7 @@ export class GitDeltaComputer {
       // Convert ParsedEntity[] to Entity[]
       return this.convertParsedEntitiesToEntities(parseResult.entities, filePath);
     } catch (error) {
-      console.error(`[GitDeltaComputer] Failed to extract entities from ${filePath}:`, error);
+      log.e("GITDELTA", "extract_fail", { err: String(error), filePath });
       return [];
     }
   }
@@ -359,7 +361,7 @@ export class GitDeltaComputer {
 
         entities.push(entity);
       } catch (error) {
-        console.warn(`[GitDeltaComputer] Failed to convert entity ${parsed.name}:`, error);
+        log.e("GITDELTA", "entity_convert_fail", { err: String(error), name: parsed.name });
       }
     }
 
@@ -420,7 +422,7 @@ export class GitDeltaComputer {
 
       return [];
     } catch (error) {
-      console.error(`[GitDeltaComputer] Failed to get entities by file path ${filePath}:`, error);
+      log.e("GITDELTA", "path_query_fail", { err: String(error), filePath });
       return [];
     }
   }
@@ -468,7 +470,7 @@ export class GitDeltaComputer {
 
       return [...new Set(branches)]; // Deduplicate
     } catch (error) {
-      console.error(`[GitDeltaComputer] Failed to get branches:`, error);
+      log.e("GITDELTA", "get_branches_fail", { err: String(error) });
       return [];
     }
   }
@@ -503,7 +505,7 @@ export class GitDeltaComputer {
         stats.set(filePath, { additions, deletions });
       }
     } catch (error) {
-      console.error(`[GitDeltaComputer] Failed to get file stats:`, error);
+      log.e("GITDELTA", "file_stats_fail", { err: String(error) });
     }
 
     return stats;

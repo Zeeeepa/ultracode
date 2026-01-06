@@ -15,6 +15,7 @@
  *   const diff = await gitDiff("main", "HEAD", "/project");
  */
 
+import { log } from "../logging/index.js";
 import { runtime } from "./runtime.js";
 
 // =============================================================================
@@ -609,7 +610,7 @@ export async function commandExists(command: string): Promise<boolean> {
  * Log shell utilities info (for debugging)
  */
 export function logShellInfo(): void {
-  console.error(`[Shell] Runtime: ${runtime.name}`);
-  console.error(`[Shell] Platform: ${process.platform}`);
-  console.error(`[Shell] Bun shell: ${runtime.isBun ? "enabled" : "disabled"}`);
+  log.i("SHELL", `[Shell] Runtime: ${runtime.name}`);
+  log.i("SHELL", `[Shell] Platform: ${process.platform}`);
+  log.i("SHELL", `[Shell] Bun shell: ${runtime.isBun ? "enabled" : "disabled"}`);
 }

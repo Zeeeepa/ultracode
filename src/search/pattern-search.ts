@@ -20,6 +20,7 @@
  */
 
 import type { TechnologyDetector } from "../analysis/technology-detector.js";
+import { log } from "../logging/index.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { Entity, EntityType, GraphStorage } from "../types/storage.js";
@@ -78,9 +79,9 @@ export class PatternSearch {
     try {
       this.embeddingGenerator = new EmbeddingGenerator();
       await this.embeddingGenerator.initialize();
-      console.error("[PatternSearch] EmbeddingGenerator initialized for semantic search");
+      log.i("PATTERNSEARCH", "embgen_init");
     } catch (error) {
-      console.warn("[PatternSearch] Failed to initialize EmbeddingGenerator:", error);
+      log.w("PATTERNSEARCH", "embgen_init_fail", { err: String(error) });
       this.embeddingGenerator = null;
     }
   }
@@ -196,7 +197,7 @@ export class PatternSearch {
 
   private async searchSemantic(query: PatternSearchQuery): Promise<PatternSearchResult[]> {
     if (!this.vectorStore) {
-      console.warn("[PatternSearch] VectorStore not available");
+      log.w("PATTERNSEARCH", "vectorstore_unavail");
       return [];
     }
 
@@ -208,7 +209,7 @@ export class PatternSearch {
     try {
       // Generate query embedding
       if (!this.embeddingGenerator) {
-        console.warn("[PatternSearch] EmbeddingGenerator not available, falling back to entity search");
+        log.w("PATTERNSEARCH", "embgen_unavail_fallback");
         return this.fallbackEntitySearch(query);
       }
 
@@ -241,7 +242,7 @@ export class PatternSearch {
 
       return results;
     } catch (error) {
-      console.error("[PatternSearch] Semantic search failed:", error);
+      log.e("PATTERNSEARCH", "semantic_fail", { err: String(error) });
       return this.fallbackEntitySearch(query);
     }
   }
@@ -304,7 +305,7 @@ export class PatternSearch {
       const content = await readLineRange(entity.filePath, entity.location.start.line, entity.location.end.line, 10000);
       return content || "";
     } catch (error) {
-      console.warn(`[PatternSearch] Failed to read entity content: ${entity.filePath}`, error);
+      log.w("PATTERNSEARCH", "entity_read_fail", { file: entity.filePath, err: String(error) });
       return "";
     }
   }
@@ -368,7 +369,7 @@ export class PatternSearch {
       // Normalize from [-1, 1] to [0, 1]
       return (similarity + 1) / 2;
     } catch (error) {
-      console.error("[PatternSearch] Semantic similarity computation failed:", error);
+      log.e("PATTERNSEARCH", "sim_compute_fail", { err: String(error) });
       // Fallback: string matching
       return content.toLowerCase().includes(query.toLowerCase()) ? 1.0 : 0.0;
     }

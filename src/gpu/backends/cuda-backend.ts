@@ -21,6 +21,7 @@
  * - If crashing, set CUDA_FORCE_DISABLE=1 to use WASM fallback
  */
 
+import { log } from "../../logging/index.js";
 import type { BackendCapabilities, VectorBackend } from "./base.js";
 
 // CUDA native addon interface (Node.js N-API) - matches binding.cpp exports
@@ -51,7 +52,7 @@ export class CUDABackend implements VectorBackend {
   async isAvailable(): Promise<boolean> {
     // Check environment override
     if (process.env["CUDA_FORCE_DISABLE"] === "1") {
-      console.error("[CUDA Backend] Disabled via CUDA_FORCE_DISABLE=1");
+      log.i("CUDABACKEND", "disabled_env");
       return false;
     }
 
@@ -84,11 +85,11 @@ export class CUDABackend implements VectorBackend {
         }
       }
 
-      console.debug("[CUDA Backend] Native addon not found in any expected location");
-      console.debug("[CUDA Backend] To build: npm run build:cuda (requires CUDA Toolkit)");
+      log.d("CUDABACKEND", "addon_not_found");
+      log.d("CUDABACKEND", "build_hint", { cmd: "npm run build:cuda" });
       return false;
     } catch (error) {
-      console.debug("[CUDA Backend] Error checking availability:", (error as Error).message);
+      log.d("CUDABACKEND", "avail_check_err", { err: (error as Error).message });
       return false;
     }
   }
@@ -101,11 +102,11 @@ export class CUDABackend implements VectorBackend {
     this.deviceInfo = cudaAddon.getDeviceInfo();
     this.initialized = true;
 
-    console.error("[CUDA Backend] Initialized:", {
+    log.i("CUDABACKEND", "init", {
       device: this.deviceInfo.deviceName || "Unknown",
-      computeCapability: this.deviceInfo.computeCapability || "N/A",
-      memoryMB: this.deviceInfo.totalMemoryMB || 0,
-      multiProcessors: this.deviceInfo.multiProcessorCount || 0,
+      cc: this.deviceInfo.computeCapability || "N/A",
+      memMB: this.deviceInfo.totalMemoryMB || 0,
+      sms: this.deviceInfo.multiProcessorCount || 0,
     });
   }
 
@@ -178,6 +179,6 @@ export class CUDABackend implements VectorBackend {
 
   async close(): Promise<void> {
     this.initialized = false;
-    console.error("[CUDA Backend] Closed");
+    log.i("CUDABACKEND", "closed");
   }
 }

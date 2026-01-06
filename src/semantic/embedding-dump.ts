@@ -14,8 +14,8 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import { getDataDir } from "../utils/config-paths.js";
-import { logger } from "../utils/logger.js";
 
 export interface DumpedEmbedding {
   id: string;
@@ -49,12 +49,12 @@ export function initDumpDir(): string {
     try {
       rmSync(dumpDir, { recursive: true, force: true });
     } catch (e) {
-      logger.warn("DUMP", `Could not clean dump dir: ${e}`);
+      log.w("DUMP", `Could not clean dump dir: ${e}`);
     }
   }
 
   mkdirSync(dumpDir, { recursive: true });
-  logger.info("DUMP", `Initialized dump directory: ${dumpDir}`);
+  log.i("DUMP", `Initialized dump directory: ${dumpDir}`);
 
   return dumpDir;
 }
@@ -80,7 +80,7 @@ export function saveBatch(embeddings: DumpedEmbedding[], batchIndex: number): vo
 
   writeFileSync(filepath, JSON.stringify(batch));
 
-  logger.debug("DUMP", `Saved batch ${batchIndex} with ${embeddings.length} embeddings`);
+  log.d("DUMP", `Saved batch ${batchIndex} with ${embeddings.length} embeddings`);
 }
 
 /**
@@ -105,11 +105,11 @@ export function loadAllBatches(): DumpedEmbedding[] {
       const batch: DumpBatch = JSON.parse(content);
       allEmbeddings.push(...batch.embeddings);
     } catch (e) {
-      logger.error("DUMP", `Failed to load batch ${file}: ${e}`);
+      log.e("DUMP", `Failed to load batch ${file}: ${e}`);
     }
   }
 
-  logger.info("DUMP", `Loaded ${allEmbeddings.length} embeddings from ${files.length} batch files`);
+  log.i("DUMP", `Loaded ${allEmbeddings.length} embeddings from ${files.length} batch files`);
 
   return allEmbeddings;
 }
@@ -153,9 +153,9 @@ export function cleanupDump(): void {
   if (existsSync(dumpDir)) {
     try {
       rmSync(dumpDir, { recursive: true, force: true });
-      logger.info("DUMP", `Cleaned up dump directory`);
+      log.i("DUMP", `Cleaned up dump directory`);
     } catch (e) {
-      logger.warn("DUMP", `Could not clean dump dir: ${e}`);
+      log.w("DUMP", `Could not clean dump dir: ${e}`);
     }
   }
 }

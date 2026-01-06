@@ -8,6 +8,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { log } from "../logging/index.js";
 import type { ParsedEntity } from "../types/parser.js";
 
 // =============================================================================
@@ -55,7 +56,7 @@ export async function findKotlinc(): Promise<string | null> {
       });
       if (result.status === 0 || result.stdout?.includes("Kotlin")) {
         kotlincPath = cmd;
-        console.error(`[KotlinCompilerIntegration] Found kotlinc: ${cmd}`);
+        log.i("KOTLINC", "found", { cmd });
         return kotlincPath;
       }
     } catch {
@@ -63,7 +64,7 @@ export async function findKotlinc(): Promise<string | null> {
     }
   }
 
-  console.error("[KotlinCompilerIntegration] kotlinc not found");
+  log.w("KOTLINC", "not_found");
   return null;
 }
 

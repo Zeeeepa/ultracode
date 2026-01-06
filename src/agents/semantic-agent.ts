@@ -29,6 +29,7 @@
 
 import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { log } from "../logging/index.js";
 import { CodeAnalyzer } from "../semantic/code-analyzer.js";
 import {
   arrayToVector,
@@ -77,7 +78,6 @@ import {
 import { CircuitBreaker } from "../utils/circuit-breaker.js";
 import { loadSemanticConfig } from "../utils/config-paths.js";
 import { hashText } from "../utils/fast-hash.js";
-import { logger } from "../utils/logger.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -189,10 +189,10 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       const testEmbedding = await this.embeddingGen.generateEmbedding("dimension detection test");
       const dimensions = testEmbedding.length;
       this.embeddingDim = dimensions;
-      logger.info("SemanticAgent", "Detected dimensions", { dimensions });
+      log.i("SEMANTIC", "dims_detected", { dims: dimensions });
       return dimensions;
     } catch (error) {
-      logger.warn("SemanticAgent", "Dimension detection failed, using 384", { error: (error as Error).message });
+      log.w("SEMANTIC", "dims_fallback", { err: (error as Error).message, dims: 384 });
       this.embeddingDim = 384;
       return 384;
     }
@@ -241,20 +241,16 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   private async setupComponents(): Promise<void> {
     const startTime = Date.now();
     const config = getConfig();
-    logger.trace("AGENT", `[SemanticAgent] setupComponents ▶ loading config`);
-    logger.info("SemanticAgent", `setupComponents START`, {
-      yamlTei: config.mcp?.embedding?.tei,
-      yamlProvider: config.mcp?.embedding?.provider,
-    });
+    log.t("SEMANTIC", "setup_start", {});
     // Load semantic config from semantic-config.json (set by setup-embedding command)
     const semanticConfig = loadSemanticConfig();
-    logger.trace("AGENT", `[SemanticAgent] setupComponents: semanticConfig loaded (${Date.now() - startTime}ms)`);
+    log.t("SEMANTIC", "config_loaded", { ms: Date.now() - startTime });
 
     // Two-phase mode: dump embeddings to disk, then insert to DB
     // Workaround for Bun crash with concurrent OpenVINO + LibSQL native modules
     this.twoPhaseMode = config.mcp?.embedding?.twoPhaseMode ?? false;
     if (this.twoPhaseMode) {
-      logger.info("SemanticAgent", "Two-phase mode enabled");
+      log.i("SEMANTIC", "two_phase_mode", {});
       initDumpDir();
       this.dumpBatchIndex = 0;
     }
@@ -271,7 +267,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     const providerSource =
       jsonProvider !== "auto" ? "semantic-config.json" : yamlProvider ? "YAML config" : "auto-detect";
-    logger.info("SemanticAgent", "Initializing", { provider, model: modelName, source: providerSource });
+    log.i("SEMANTIC", "init", { provider, model: modelName, src: providerSource });
 
     // Batch size: warmup settings, then semantic-config.json, then default
     const warmupSettings = config.mcp?.semantic;
@@ -282,7 +278,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       );
     }
     this.embeddingBatchSize = getBatchSizeFromConfig(semanticConfig, this.embeddingBatchSize);
-    logger.debug("SemanticAgent", "Batch size configured", { batchSize: this.embeddingBatchSize });
+    log.d("SEMANTIC", "batch_size", { size: this.embeddingBatchSize });
 
     // Build embedding generator options from config (provider-config.ts)
     const embeddingOptions = buildEmbeddingGeneratorOptions(
@@ -303,7 +299,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Use global path unless explicit path is configured
     const isExplicitPath = config.database?.path && config.database.path.length > 0;
     const dbPath = isExplicitPath ? config.database.path : globalPaths.vectorsDbPath;
-    logger.debug("SemanticAgent", "VectorStore config", { dbPath, dimensions });
+    log.d("SEMANTIC", "vectorstore_cfg", { path: dbPath, dims: dimensions });
 
     // Get vector backend configuration (libsql only)
     const vectorBackend = config.vectorBackend || {};
@@ -320,7 +316,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     // v3: Set project context for the current working directory
     await this.vectorStore.setProject(workingDir, DEFAULT_BRANCH);
-    logger.info("SemanticAgent", "VectorStore ready", { project: getProjectHash(workingDir), branch: DEFAULT_BRANCH });
+    log.i("SEMANTIC", "vectorstore_ready", { project: getProjectHash(workingDir), branch: DEFAULT_BRANCH });
 
     this.hybridSearch = new HybridSearchEngine(this.vectorStore, this.embeddingGen);
 
@@ -334,18 +330,15 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    */
   override async initialize(): Promise<void> {
     const startTime = Date.now();
-    logger.trace("AGENT", `[SemanticAgent] ▶ initialize() START`);
+    log.t("SEMANTIC", "init_start", {});
 
-    logger.trace("AGENT", `[SemanticAgent] ▶ setupComponents`);
     await this.setupComponents();
-    logger.trace("AGENT", `[SemanticAgent] ◀ setupComponents (${Date.now() - startTime}ms)`);
+    log.t("SEMANTIC", "setup_done", { ms: Date.now() - startTime });
 
-    logger.trace("AGENT", `[SemanticAgent] ▶ subscribeToKnowledgeBus`);
     this.subscribeToKnowledgeBus();
 
-    logger.trace("AGENT", `[SemanticAgent] ▶ super.initialize`);
     await super.initialize();
-    logger.trace("AGENT", `[SemanticAgent] ◀ initialize() END (${Date.now() - startTime}ms)`);
+    log.t("SEMANTIC", "init_done", { ms: Date.now() - startTime });
   }
 
   /**
@@ -361,7 +354,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     // Update initial metrics
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
-    logger.info("SemanticAgent", "Initialized", { vectors: this.semanticMetrics.vectorsStored });
+    log.i("SEMANTIC", "ready", { vectors: this.semanticMetrics.vectorsStored });
   }
 
   /**
@@ -376,17 +369,17 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         this.embeddingGen.setBatchSize(this.embeddingBatchSize);
         this.embeddingReady = true;
         const initTime = Date.now() - startTime;
-        logger.info("SemanticAgent", "Embedding generator ready", { initMs: initTime });
+        log.i("SEMANTIC", "embedding_ready", { ms: initTime });
 
         // Initialize global embedding cache for language built-ins
         await this.initializeGlobalCache();
 
         // Warmup cache in background (don't block embeddingReady)
         this.warmupSemanticCache().catch((err) => {
-          logger.warn("SemanticAgent", "Warmup failed", { error: (err as Error).message });
+          log.w("SEMANTIC", "warmup_failed", { err: (err as Error).message });
         });
       } catch (error) {
-        logger.error("SemanticAgent", "Embedding init failed", { error: (error as Error).message });
+        log.e("SEMANTIC", "embedding_init_fail", { err: (error as Error).message });
         throw error;
       }
     })();
@@ -524,7 +517,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       return;
     }
 
-    logger.debug("SemanticAgent", "Switching project context", {
+    log.d("SEMANTIC", "Switching project context", {
       from: currentContext?.projectHash,
       to: newProjectHash,
       branch: newBranchName,
@@ -535,7 +528,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     // Update metrics for new context
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
-    logger.info("SemanticAgent", "Context switched", {
+    log.i("SEMANTIC", "Context switched", {
       project: newProjectHash,
       vectors: this.semanticMetrics.vectorsStored,
     });
@@ -548,7 +541,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   async switchBranch(branchName: string): Promise<void> {
     const currentContext = this.vectorStore?.getProjectContext?.();
     if (!currentContext) {
-      logger.warn("SemanticAgent", "Cannot switch branch - no context");
+      log.w("SEMANTIC", "Cannot switch branch - no context");
       return;
     }
 
@@ -567,7 +560,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     // Update metrics for new branch
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
-    logger.info("SemanticAgent", "Branch switched", {
+    log.i("SEMANTIC", "Branch switched", {
       branch: newBranchName,
       vectors: this.semanticMetrics.vectorsStored,
     });
@@ -581,7 +574,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     await this.embeddingGen.cleanup();
     await this.vectorStore.close();
     this.cache.clear();
-    logger.info("SemanticAgent", "Shutdown complete");
+    log.i("SEMANTIC", "Shutdown complete");
   }
 
   /**
@@ -632,7 +625,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         break;
 
       default:
-        logger.debug("SemanticAgent", "Unknown message type", { type: message.type, from: message.from });
+        log.d("SEMANTIC", "Unknown message type", { type: message.type, from: message.from });
     }
   }
 
@@ -678,7 +671,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Wait for embedding generator to be ready
     const ready = await this.waitForEmbeddingReady(60000);
     if (!ready) {
-      logger.warn("SemanticAgent", "Embedding generator not ready, returning empty results", { query });
+      log.w("SEMANTIC", "Embedding generator not ready, returning empty results", { query });
       return {
         results: [],
         totalResults: 0,
@@ -793,14 +786,14 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Subscribe to incremental update completion for debounced embedding generation
     knowledgeBus.subscribe(this.id, "indexer:incremental:complete", async (entry: KnowledgeEntry) => {
       const data = entry.data as { reason?: string; timestamp?: number } | undefined;
-      logger.info("SemanticAgent", "Incremental update complete, generating embeddings", {
+      log.i("SEMANTIC", "Incremental update complete, generating embeddings", {
         reason: data?.reason,
         timestamp: data?.timestamp,
       });
       try {
         await this.generateEmbeddingsFromStorage(false); // Use incremental mode
       } catch (error) {
-        logger.error("SemanticAgent", "Incremental embedding generation failed", {
+        log.e("SEMANTIC", "Incremental embedding generation failed", {
           error: (error as Error).message,
         });
       }
@@ -847,7 +840,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       // Wait for embedding generator to be ready
       const ready = await this.waitForEmbeddingReady(60000);
       if (!ready) {
-        logger.warn("SemanticAgent", "Embedding not ready, skipping incremental");
+        log.w("SEMANTIC", "Embedding not ready, skipping incremental");
         return;
       }
 
@@ -855,7 +848,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       const result = await this.generateEmbeddingsFromStorage(bulkMode);
 
       const elapsed = Date.now() - startTime;
-      logger.info("EMBEDDING_GEN", "Incremental complete", {
+      log.i("EMBEDDING", "Incremental complete", {
         generated: result.generated,
         skipped: result.skipped,
         bulkMode,
@@ -875,7 +868,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         this.id,
       );
     } catch (error) {
-      logger.error("SemanticAgent", "Incremental embedding failed", { error: (error as Error).message });
+      log.e("SEMANTIC", "Incremental embedding failed", { error: (error as Error).message });
     }
   }
 
@@ -890,7 +883,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   async generateEmbeddingsFromStorage(_bulkMode = true): Promise<{ generated: number; skipped: number }> {
     // Prevent duplicate concurrent calls
     if (this.isGeneratingEmbeddings) {
-      logger.warn("EMBEDDING_GEN", `[DUPLICATE] generateEmbeddingsFromStorage skipped - already running`);
+      log.w("EMBEDDING", `[DUPLICATE] generateEmbeddingsFromStorage skipped - already running`);
       return { generated: 0, skipped: 0 };
     }
 
@@ -910,19 +903,19 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
           // With incremental loading, most/all should already be loaded
           const result = await faissProvider.loadFromDumpFiles(workerConfig.dimensions || 384);
           if (result.loaded > 0 || result.skipped > 0) {
-            logger.info("EMBEDDING_GEN", "Faiss loaded remaining dump files (fallback)", result);
+            log.i("EMBEDDING", "Faiss loaded remaining dump files (fallback)", result);
           }
           // Save Faiss index after loading
           await this.vectorStore.flushAndSave();
         }
-        logger.info("EMBEDDING_GEN", "generateEmbeddingsFromStorage complete - workers generated embeddings", {
+        log.i("EMBEDDING", "generateEmbeddingsFromStorage complete - workers generated embeddings", {
           dumpDir: workerConfig.vectorDumpDir,
         });
       }
 
       return { generated: 0, skipped: 0 };
     } catch (error) {
-      logger.error("EMBEDDING_GEN", "generateEmbeddingsFromStorage failed", {
+      log.e("EMBEDDING", "generateEmbeddingsFromStorage failed", {
         error: (error as Error).message,
       });
       return { generated: 0, skipped: 0 };
@@ -948,7 +941,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       const { buildWorkerEmbeddingConfig } = await import("../config/worker-embedding-config.js");
       const workerConfig = buildWorkerEmbeddingConfig(false); // Don't clean
       if (workerConfig?.vectorDumpDir) {
-        logger.debug("EMBEDDING_GEN", "Skipping - workers generate to dump files", {
+        log.d("EMBEDDING", "Skipping - workers generate to dump files", {
           agentId: this.id,
           entities: entities.length,
           dumpDir: workerConfig.vectorDumpDir,
@@ -965,7 +958,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const perfLog = (phase: string, count: number) => {
       const elapsed = Date.now() - perfPhaseStart;
       const speed = elapsed > 0 ? Math.round((count / elapsed) * 1000) : 0;
-      logger.info("PERFORMANCE", `${phase}`, { entities: count, ms: elapsed, speed: `${speed}/s` });
+      log.i("PERF", `${phase}`, { entities: count, ms: elapsed, speed: `${speed}/s` });
       perfPhaseStart = Date.now();
     };
 
@@ -999,7 +992,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     }
 
     if (filteredCount > 0) {
-      logger.info("EMBEDDING_GEN", `Filtered out machine-generated code during indexing`, {
+      log.i("EMBEDDING", `Filtered out machine-generated code during indexing`, {
         before: beforeFilter,
         after: beforeFilter - filteredCount,
         skipped: filteredCount,
@@ -1014,7 +1007,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // PRE-GENERATED EMBEDDINGS: Handle entities with embeddings from workers
     // ========================================================================
     if (preGeneratedEntities.length > 0) {
-      logger.info("EMBEDDING_GEN", `Processing pre-generated embeddings from workers`, {
+      log.i("EMBEDDING", `Processing pre-generated embeddings from workers`, {
         preGenerated: preGeneratedEntities.length,
         needGeneration: needGenerationEntities.length,
       });
@@ -1037,7 +1030,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       // If all entities were pre-generated, we're done
       if (embeddingEntities.length === 0) {
         this.semanticMetrics.vectorsStored = await this.vectorStore.count();
-        logger.info("EMBEDDING_GEN", `All embeddings were pre-generated by workers`, { total: processed });
+        log.i("EMBEDDING", `All embeddings were pre-generated by workers`, { total: processed });
         return;
       }
     }
@@ -1045,7 +1038,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Check for oversized entities and store warning for index tool response
     this.lastOversizedWarning = getOversizedEntitiesWarning(embeddingEntities, maxTokens);
     if (this.lastOversizedWarning.hasWarning) {
-      logger.warn("SemanticAgent", "Oversized entities", {
+      log.w("SEMANTIC", "Oversized entities", {
         count: this.lastOversizedWarning.oversizedCount,
         maxTokens,
       });
@@ -1081,7 +1074,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const allIds = Array.from(entityIdMap.keys());
     try {
       existingIds = await this.vectorStore.getExistingIds(allIds);
-      logger.debug("EMBEDDING_GEN", `Batch existence check`, {
+      log.d("EMBEDDING", `Batch existence check`, {
         agentId: this.id,
         total: entityIdMap.size,
         existing: existingIds.size,
@@ -1089,14 +1082,14 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     } catch (error) {
       // CRITICAL: Handle corruption errors immediately to prevent duplicate generation
       if (error instanceof DatabaseCorruptionError) {
-        logger.error("EMBEDDING_GEN", `DATABASE CORRUPTION - recreating database`, {
+        log.e("EMBEDDING", `DATABASE CORRUPTION - recreating database`, {
           error: (error as Error).message,
         });
         // Recreate database and return - caller will need to retry with fresh db
         await handleDatabaseCorruption();
         throw new Error("Database was corrupt and has been recreated. Please retry the operation.");
       }
-      logger.warn("EMBEDDING_GEN", `Batch existence check failed, processing all`, {
+      log.w("EMBEDDING", `Batch existence check failed, processing all`, {
         error: (error as Error).message,
       });
     }
@@ -1115,12 +1108,12 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       return;
     }
 
-    logger.info("EMBEDDING_GEN", `Generating embeddings`, { agentId: this.id, count: filteredEntities.length });
+    log.i("EMBEDDING", `Generating embeddings`, { agentId: this.id, count: filteredEntities.length });
 
     // readTextSync already imported above for content hash computation
-    logger.debug("EMBEDDING_GEN", `Importing comment-extractor`, { agentId: this.id });
+    log.d("EMBEDDING", `Importing comment-extractor`, { agentId: this.id });
     const { CommentExtractor } = await import("../utils/comment-extractor.js");
-    logger.debug("EMBEDDING_GEN", `Imports done`, { agentId: this.id });
+    log.d("EMBEDDING", `Imports done`, { agentId: this.id });
 
     // Group entities by file for efficient comment extraction
     const entitiesByFile = new Map<string, ParsedEntity[]>();
@@ -1138,38 +1131,38 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const commentsByFile = new Map<string, ReturnType<typeof CommentExtractor.extractComments>>();
     const associationsByFile = new Map<string, Map<string, any[]>>();
 
-    logger.debug("EMBEDDING_GEN", `Extracting comments from files`, {
+    log.d("EMBEDDING", `Extracting comments from files`, {
       agentId: this.id,
       fileCount: entitiesByFile.size,
     });
     let fileIdx = 0;
     const mem = process.memoryUsage();
-    logger.debug("EMBEDDING_GEN", "Memory before comment extraction", {
+    log.d("EMBEDDING", "Memory before comment extraction", {
       heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
       rssMB: Math.round(mem.rss / 1024 / 1024),
     });
     for (const [filePath, fileEntities] of entitiesByFile.entries()) {
       fileIdx++;
-      logger.trace("EMBEDDING_GEN", "For loop iteration start", { fileIdx, filePath });
+      log.t("EMBEDDING", "For loop iteration start", { fileIdx, filePath });
       // Skip external/virtual paths that cannot be read from filesystem
       if (filePath.startsWith("external://") || filePath.includes("://")) {
         continue;
       }
       try {
-        logger.debug("EMBEDDING_GEN", `Reading file ${fileIdx}/${entitiesByFile.size}`, {
+        log.d("EMBEDDING", `Reading file ${fileIdx}/${entitiesByFile.size}`, {
           agentId: this.id,
           filePath,
           entityCount: fileEntities.length,
         });
         // Use sync read to avoid Bun event loop hangs with many pending promises
         const full = readTextSync(filePath);
-        logger.debug("EMBEDDING_GEN", `File read, extracting comments`, {
+        log.d("EMBEDDING", `File read, extracting comments`, {
           agentId: this.id,
           filePath,
           contentLen: full.length,
         });
         const commentsResult = CommentExtractor.extractComments(full, filePath);
-        logger.debug("EMBEDDING_GEN", `Comments extracted`, {
+        log.d("EMBEDDING", `Comments extracted`, {
           agentId: this.id,
           filePath,
           commentCount: commentsResult.comments.length,
@@ -1182,15 +1175,15 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
           commentsResult.leadingComments,
         );
         associationsByFile.set(filePath, associations);
-        logger.debug("EMBEDDING_GEN", `File ${fileIdx} done`, { agentId: this.id });
+        log.d("EMBEDDING", `File ${fileIdx} done`, { agentId: this.id });
       } catch (error) {
-        logger.debug("SemanticAgent", "Comment extraction failed", { filePath, error: (error as Error).message });
+        log.d("SEMANTIC", "Comment extraction failed", { filePath, error: (error as Error).message });
       }
     }
 
     perfLog("2_COMMENT_EXTRACT", filteredEntities.length);
 
-    logger.debug("EMBEDDING_GEN", `Comments extracted, building texts`, {
+    log.d("EMBEDDING", `Comments extracted, building texts`, {
       agentId: this.id,
       entityCount: filteredEntities.length,
     });
@@ -1312,7 +1305,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Clear file cache to free memory
     fileContentCache.clear();
     perfLog("3_TEXT_BUILD", texts.length);
-    logger.debug("EMBEDDING_GEN", `Texts built`, { agentId: this.id, textCount: texts.length });
+    log.d("EMBEDDING", `Texts built`, { agentId: this.id, textCount: texts.length });
 
     // MEMORY OPTIMIZATION: Clear comment extraction maps before embedding generation
     // These can hold many MB of file contents and are no longer needed
@@ -1380,14 +1373,14 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
           }
         }
         if (persistentCacheHitCount > 0) {
-          logger.info("PERSISTENT_CACHE", "Batch hits", {
+          log.i("CACHE", "Batch hits", {
             checked: uncachedHashes.length,
             hits: persistentCacheHitCount,
             remaining: textsNeedingGeneration.length,
           });
         }
       } catch (error) {
-        logger.warn("PERSISTENT_CACHE", "Batch lookup failed", { error: (error as Error).message });
+        log.w("CACHE", "Batch lookup failed", { error: (error as Error).message });
         // Fallback: all uncached texts need generation
         textsNeedingGeneration.push(...uncachedTexts);
         textsNeedingGenerationHashes.push(...uncachedHashes);
@@ -1401,7 +1394,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const dedupeSaved = texts.length - uniqueTexts.length;
     const needsGeneration = textsNeedingGeneration.length;
 
-    logger.trace("EMBEDDING_GEN", "Text deduplication complete", {
+    log.t("EMBEDDING", "Text deduplication complete", {
       unique: uniqueTexts.length,
       dedupe: dedupeSaved,
       needsGen: needsGeneration,
@@ -1410,7 +1403,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Log cache efficiency
     const totalCacheHits = globalCacheHitCount + persistentCacheHitCount;
     if (totalCacheHits > 0 || dedupeSaved > 0) {
-      logger.info("EMBEDDING_CACHE", "Batch optimization", {
+      log.i("CACHE", "Batch optimization", {
         total: texts.length,
         toGenerate: needsGeneration,
         fromMemory: globalCacheHitCount,
@@ -1420,7 +1413,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       });
     }
 
-    logger.trace("EMBEDDING_GEN", "Before mutex wait");
+    log.t("EMBEDDING", "Before mutex wait");
 
     // Mutex: wait for previous embedding operation to complete
     // OpenVINO native module crashes on concurrent calls
@@ -1431,7 +1424,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     });
     await prevMutex;
 
-    logger.trace("EMBEDDING_GEN", "Mutex acquired");
+    log.t("EMBEDDING", "Mutex acquired");
 
     let embeddings: Float32Array[];
     // Declare storage before try block so it's accessible in processStandaloneComments after finally
@@ -1444,7 +1437,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     let profileStart = 0;
     const profile = (phase: string) => {
       const elapsed = Date.now() - profileStart;
-      logger.info("PROFILE", phase, { elapsedMs: elapsed, sinceStart: `${elapsed}ms` });
+      log.i("PERF", phase, { elapsedMs: elapsed, sinceStart: `${elapsed}ms` });
     };
 
     try {
@@ -1452,9 +1445,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       const hashToEmbedding = new Map<string, Float32Array>(cacheHits);
 
       if (textsNeedingGeneration.length > 0) {
-        logger.trace("EMBEDDING_GEN", "Before generateBatch", { count: textsNeedingGeneration.length });
+        log.t("EMBEDDING", "Before generateBatch", { count: textsNeedingGeneration.length });
         const generatedEmbeddings = await this.embeddingGen.generateBatch(textsNeedingGeneration);
-        logger.trace("EMBEDDING_GEN", "After generateBatch", { count: generatedEmbeddings.length });
+        log.t("EMBEDDING", "After generateBatch", { count: generatedEmbeddings.length });
 
         // Map generated embeddings by hash
         for (let i = 0; i < textsNeedingGenerationHashes.length; i++) {
@@ -1472,12 +1465,12 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
           }));
           // Don't await - save in background
           persistAdapter.setEmbeddingsInCache(cacheEntries).catch((err) => {
-            logger.warn("PERSISTENT_CACHE", "Failed to save embeddings", { error: (err as Error).message });
+            log.w("CACHE", "Failed to save embeddings", { error: (err as Error).message });
           });
-          logger.debug("PERSISTENT_CACHE", "Saving new embeddings", { count: cacheEntries.length });
+          log.d("CACHE", "Saving new embeddings", { count: cacheEntries.length });
         }
       } else {
-        logger.info("EMBEDDING_CACHE", "100% cache hit", { count: totalCacheHits });
+        log.i("CACHE", "100% cache hit", { count: totalCacheHits });
       }
 
       // Expand back to original order
@@ -1608,19 +1601,19 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         // Normal mode: insert directly to DB
         // Debug: log sample IDs being inserted
         if (vectorEmbeddings.length > 0) {
-          logger.debug("EMBEDDING_GEN", `Insert sample IDs`, {
+          log.d("EMBEDDING", `Insert sample IDs`, {
             sampleIds: vectorEmbeddings.slice(0, 3).map((v) => v.id),
           });
         }
-        logger.debug("EMBEDDING_GEN", `Calling adaptiveBulkInsert`, {
+        log.d("EMBEDDING", `Calling adaptiveBulkInsert`, {
           agentId: this.id,
           count: vectorEmbeddings.length,
         });
         const insertResult = await this.vectorStore.adaptiveBulkInsert(vectorEmbeddings);
         profile("5d_FAISS_INSERT");
-        logger.trace("EMBEDDING_GEN", "adaptiveBulkInsert returned to caller");
+        log.t("EMBEDDING", "adaptiveBulkInsert returned to caller");
         perfLog("5_DB_INSERT", vectorEmbeddings.length);
-        logger.debug("EMBEDDING_GEN", `adaptiveBulkInsert done`, {
+        log.d("EMBEDDING", `adaptiveBulkInsert done`, {
           agentId: this.id,
           usedFaiss: insertResult.usedFaiss,
           timeMs: insertResult.timeMs.toFixed(1),
@@ -1629,7 +1622,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         this.semanticMetrics.vectorsStored = await this.vectorStore.count();
         profile("5e_COUNT");
         knowledgeBus.publish("semantic:embeddings:complete", { count: embeddings.length }, this.id);
-        logger.info("EMBEDDING_GEN", `Stored embeddings`, {
+        log.i("EMBEDDING", `Stored embeddings`, {
           agentId: this.id,
           count: embeddings.length,
           total: this.semanticMetrics.vectorsStored,
@@ -1639,27 +1632,27 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       // Release mutex after all native operations (OpenVINO + LibSQL) complete
       releaseMutex!();
       profile("5f_MUTEX_RELEASE");
-      logger.debug("EMBEDDING_GEN", `Mutex released, about to process comments`, { agentId: this.id });
+      log.d("EMBEDDING", `Mutex released, about to process comments`, { agentId: this.id });
     }
 
     // Process standalone comments (comments not associated with any entity)
-    logger.debug("EMBEDDING_GEN", `Starting processStandaloneComments`, {
+    log.d("EMBEDDING", `Starting processStandaloneComments`, {
       agentId: this.id,
       commentFiles: commentsByFile.size,
     });
     await this.processStandaloneComments(commentsByFile, associationsByFile, storage);
     profile("6_COMMENTS");
-    logger.trace("EMBEDDING_GEN", "processStandaloneComments returned successfully", { agentId: this.id });
+    log.t("EMBEDDING", "processStandaloneComments returned successfully", { agentId: this.id });
 
     // Final performance summary
     const totalMs = Date.now() - perfStart;
     const totalSpeed = totalMs > 0 ? Math.round((filteredEntities.length / totalMs) * 1000) : 0;
-    logger.info("PERFORMANCE", `BATCH_COMPLETE`, {
+    log.i("PERF", `BATCH_COMPLETE`, {
       entities: filteredEntities.length,
       totalMs,
       speed: `${totalSpeed}/s`,
     });
-    logger.debug("EMBEDDING_GEN", `handleNewEntities complete`, { agentId: this.id });
+    log.d("EMBEDDING", `handleNewEntities complete`, { agentId: this.id });
   }
 
   /**
@@ -1675,11 +1668,11 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const stats = getDumpStats();
 
     if (stats.totalEmbeddings === 0) {
-      logger.info("DUMP_FLUSH", `No embeddings to flush`);
+      log.i("DUMP", `No embeddings to flush`);
       return { inserted: 0, skipped: 0 };
     }
 
-    logger.info("DUMP_FLUSH", `Starting flush`, {
+    log.i("DUMP", `Starting flush`, {
       totalEmbeddings: stats.totalEmbeddings,
       batchCount: stats.batchCount,
       diskSizeMB: (stats.diskSizeBytes / 1024 / 1024).toFixed(2),
@@ -1689,7 +1682,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     const dumpedEmbeddings = loadAllBatches();
 
     if (dumpedEmbeddings.length === 0) {
-      logger.warn("DUMP_FLUSH", `No embeddings loaded from dump files`);
+      log.w("DUMP", `No embeddings loaded from dump files`);
       return { inserted: 0, skipped: 0 };
     }
 
@@ -1715,7 +1708,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         const result = await this.vectorStore.adaptiveBulkInsert(batch);
         inserted += result.insertedCount;
       } catch (e) {
-        logger.error("DUMP_FLUSH", `Batch ${batchNum} failed`, { error: (e as Error).message });
+        log.e("DUMP", `Batch ${batchNum} failed`, { error: (e as Error).message });
         skipped += batch.length;
       }
 
@@ -1732,7 +1725,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     cleanupDump();
     this.dumpBatchIndex = 0;
 
-    logger.info("DUMP_FLUSH", `Flush completed`, {
+    log.i("DUMP", `Flush completed`, {
       inserted,
       skipped,
       totalVectors: this.semanticMetrics.vectorsStored,
@@ -1801,7 +1794,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       // Check if we need to populate the cache
       const entriesNeeded = this.globalCache.getEntriesNeedingEmbeddings();
       if (entriesNeeded.length > 0) {
-        logger.info("GLOBAL_CACHE", "Populating cache", {
+        log.i("CACHE", "Populating cache", {
           entriesNeeded: entriesNeeded.length,
           model: modelName,
           dimension,
@@ -1823,19 +1816,19 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
               generated++;
             }
           } catch (err) {
-            logger.warn("GLOBAL_CACHE", "Batch generation failed", { error: (err as Error).message });
+            log.w("CACHE", "Batch generation failed", { error: (err as Error).message });
           }
         }
 
         // Save to disk
         await this.globalCache.saveCache();
-        logger.info("GLOBAL_CACHE", "Cache populated", { generated, model: modelName });
+        log.i("CACHE", "Cache populated", { generated, model: modelName });
       } else {
         const stats = this.globalCache.getStats();
-        logger.info("GLOBAL_CACHE", "Cache loaded", { total: stats.total, model: modelName });
+        log.i("CACHE", "Cache loaded", { total: stats.total, model: modelName });
       }
     } catch (err) {
-      logger.warn("GLOBAL_CACHE", "Init failed (non-fatal)", { error: (err as Error).message });
+      log.w("CACHE", "Init failed (non-fatal)", { error: (err as Error).message });
       // Non-fatal - continue without global cache
     }
   }

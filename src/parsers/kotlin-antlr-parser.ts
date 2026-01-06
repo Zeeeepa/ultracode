@@ -16,6 +16,7 @@ import {
   type KotlinFileContext,
   KotlinParser,
 } from "../generated/kotlin/KotlinParser.js";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 
 // =============================================================================
@@ -69,7 +70,7 @@ export class KotlinAntlrParser {
       // Process AST
       processKotlinFile(tree, ctx);
     } catch (error) {
-      console.error(`[KotlinAntlrParser] Error parsing ${filePath}:`, error);
+      log.e("KOTLINANTLR", "parse_err", { file: filePath, err: String(error) });
     }
 
     return {

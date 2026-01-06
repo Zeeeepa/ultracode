@@ -13,6 +13,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { log } from "../logging/index.js";
 import type { ParsedEntity } from "../types/parser.js";
 
 /**
@@ -106,7 +107,7 @@ async function findPyright(): Promise<string | null> {
       const available = await checkCommand(cmd);
       if (available) {
         pyrightPath = cmd;
-        console.error(`[PyrightIntegration] Found Pyright: ${cmd}`);
+        log.i("PYRIGHT", "found", { cmd });
         return pyrightPath;
       }
     } catch {
@@ -114,7 +115,7 @@ async function findPyright(): Promise<string | null> {
     }
   }
 
-  console.error("[PyrightIntegration] Pyright not found");
+  log.w("PYRIGHT", "not_found");
   return null;
 }
 
@@ -205,14 +206,14 @@ export async function runPyrightAnalysis(
         const output = JSON.parse(stdout);
         resolve(output as PyrightOutput);
       } catch (e) {
-        console.error("[PyrightIntegration] Failed to parse output:", e);
+        log.w("PYRIGHT", "parse_fail", { err: String(e) });
         resolve(null);
       }
     });
 
     proc.on("error", (err: Error) => {
       abortController.abort();
-      console.error("[PyrightIntegration] Spawn error:", err);
+      log.e("PYRIGHT", "spawn_err", { err: String(err) });
       resolve(null);
     });
   });
@@ -221,7 +222,7 @@ export async function runPyrightAnalysis(
     await sleep(timeout);
     if (!abortController.signal.aborted) {
       proc.kill();
-      console.error("[PyrightIntegration] Analysis timed out");
+      log.w("PYRIGHT", "timeout");
       return null;
     }
     return new Promise(() => {});

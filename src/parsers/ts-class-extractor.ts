@@ -5,6 +5,7 @@
  */
 
 import ts from "typescript";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getDecorators, getLocation, getModifiers, getParameters, getReturnType } from "./ts-ast-helpers.js";
 import { type CallInfo, extractCalls, extractTypeReferences, type TypeReference } from "./ts-call-extractor.js";
@@ -342,9 +343,11 @@ function extractProperty(member: ts.PropertyDeclaration, ctx: MemberContext): vo
   if (member.initializer) {
     ngrxEffectInfo = extractNgRxEffectInfo(member.initializer, sourceFile);
     if (ngrxEffectInfo) {
-      console.error(
-        `[NgRx] Found effect: ${className}.${propName}, listensTo: ${ngrxEffectInfo.listensTo.map((a) => a.actionName).join(", ")}`,
-      );
+      log.d("TSEXTRACT", "ngrx_effect", {
+        cls: className,
+        prop: propName,
+        listens: ngrxEffectInfo.listensTo.map((a) => a.actionName).join(","),
+      });
       entityType = "ngrx_effect";
     }
   }

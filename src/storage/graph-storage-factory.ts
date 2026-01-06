@@ -7,8 +7,8 @@
 
 import { existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { log } from "../logging/index.js";
 import { getGlobalDbPaths } from "../shared/storage-paths.js";
-import { logger } from "../utils/logger.js";
 import { GraphStorageLibSQL } from "./graph-storage-libsql.js";
 import { DatabaseCorruptionError, LibSQLGraphAdapter, type LibSQLGraphConfig } from "./libsql-graph-adapter.js";
 
@@ -43,7 +43,7 @@ let globalConfig: LibSQLGraphConfig = {
  */
 export function configureGraphStorage(config: LibSQLGraphConfig): void {
   globalConfig = { ...globalConfig, ...config };
-  logger.warn("GraphStorageFactory", `[CONFIG] DiskANN params`, {
+  log.w("FACTORY", `[CONFIG] DiskANN params`, {
     dims: globalConfig.dimensions,
     compression: globalConfig.compression,
     maxNeighbors: globalConfig.maxNeighbors,
@@ -69,7 +69,7 @@ export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
   // Start initialization (only one will run)
   initializationPromise = (async () => {
     try {
-      console.error("[GraphStorageFactory] Creating LibSQL GraphStorage singleton");
+      log.i("STORAGEFACT", "creating_singleton");
 
       // Get global database path
       const paths = getGlobalDbPaths();
@@ -78,7 +78,7 @@ export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
       // Ensure directory exists
       const dbDir = dirname(unifiedDbPath);
       if (!existsSync(dbDir)) {
-        console.error(`[GraphStorageFactory] Creating directory: ${dbDir}`);
+        log.i("STORAGEFACT", "creating_dir", { dir: dbDir });
         mkdirSync(dbDir, { recursive: true });
       }
 
@@ -94,7 +94,7 @@ export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
       graphStorage = new GraphStorageLibSQL(libsqlAdapter);
       await graphStorage.initialize();
 
-      console.error(`[GraphStorageFactory] Initialized unified storage at ${unifiedDbPath}`);
+      log.i("STORAGEFACT", "init_complete", { path: unifiedDbPath });
       return graphStorage;
     } catch (error) {
       // Reset on failure so next call can retry
@@ -104,7 +104,7 @@ export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
       const paths = getGlobalDbPaths();
       const unifiedDbPath = join(dirname(paths.graphDbPath), "unified-storage.db");
       if (existsSync(unifiedDbPath)) {
-        logger.warn("STORAGE", `Initialization failed, attempting auto-recovery by deleting corrupt DB`, {
+        log.w("STORAGE", `Initialization failed, attempting auto-recovery by deleting corrupt DB`, {
           path: unifiedDbPath,
           error: (error as Error).message,
         });
@@ -115,9 +115,9 @@ export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
           const shmPath = unifiedDbPath + "-shm";
           if (existsSync(walPath)) unlinkSync(walPath);
           if (existsSync(shmPath)) unlinkSync(shmPath);
-          logger.info("STORAGE", `Deleted corrupt DB, will recreate on next access`);
+          log.i("STORAGE", `Deleted corrupt DB, will recreate on next access`);
         } catch (deleteError) {
-          logger.error("STORAGE", `Failed to delete corrupt DB`, {
+          log.e("STORAGE", `Failed to delete corrupt DB`, {
             error: (deleteError as Error).message,
           });
         }
@@ -153,7 +153,7 @@ export async function resetGraphStorage(): Promise<void> {
   }
   graphStorage = null;
   initializationPromise = null;
-  console.error("[GraphStorageFactory] Storage reset");
+  log.i("STORAGEFACT", "storage_reset");
 }
 
 /**
@@ -163,9 +163,9 @@ export async function resetGraphStorage(): Promise<void> {
 export function setGlobalProjectContext(projectPath: string, branchName?: string): void {
   if (graphStorage) {
     graphStorage.setProject(projectPath, branchName);
-    console.error(`[GraphStorageFactory] Global context set: ${projectPath}, branch: ${branchName || "main"}`);
+    log.i("STORAGEFACT", "context_set", { path: projectPath, branch: branchName || "main" });
   } else {
-    console.error(`[GraphStorageFactory] WARNING: Cannot set context - graphStorage not initialized yet`);
+    log.w("STORAGEFACT", "context_set_fail", { reason: "not initialized" });
   }
 }
 
@@ -182,7 +182,7 @@ export function isStorageReady(): boolean {
  * @returns true if recovery was successful
  */
 export async function handleDatabaseCorruption(): Promise<boolean> {
-  console.error("[GraphStorageFactory] ⚠️ HANDLING DATABASE CORRUPTION");
+  log.e("STORAGEFACT", "corruption_handler_start");
 
   // Get database path
   const paths = getGlobalDbPaths();
@@ -209,21 +209,21 @@ export async function handleDatabaseCorruption(): Promise<boolean> {
         const size = statSync(file).size;
         const sizeMB = (size / 1024 / 1024).toFixed(1);
         unlinkSync(file);
-        console.error(`[GraphStorageFactory] Deleted: ${file} (${sizeMB} MB)`);
+        log.i("STORAGEFACT", "file_deleted", { file, sizeMB });
       }
     } catch (error) {
-      console.error(`[GraphStorageFactory] Failed to delete ${file}: ${(error as Error).message}`);
+      log.w("STORAGEFACT", "file_delete_fail", { file, err: (error as Error).message });
     }
   }
 
   // Reinitialize with fresh database
   try {
-    console.error("[GraphStorageFactory] 🔄 Reinitializing with fresh database...");
+    log.i("STORAGEFACT", "reinit_start");
     await getGraphStorage();
-    console.error("[GraphStorageFactory] ✓ Database recreated successfully");
+    log.i("STORAGEFACT", "reinit_success");
     return true;
   } catch (error) {
-    console.error("[GraphStorageFactory] ✗ Failed to recreate database:", error);
+    log.e("STORAGEFACT", "reinit_fail", { err: String(error) });
     return false;
   }
 }

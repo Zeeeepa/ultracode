@@ -16,6 +16,7 @@
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { LRUCache } from "lru-cache";
+import { log } from "../logging/index.js";
 import type { CacheEntry, CacheManager } from "../types/storage.js";
 import { hashText } from "../utils/fast-hash.js";
 
@@ -54,7 +55,7 @@ export class QueryCacheManager implements CacheManager {
       dispose: (_value: CacheEntry, key: string, reason: LRUCache.DisposeReason) => {
         if (reason === "evict" || reason === "delete") {
           this.stats.evictions++;
-          console.debug(`[CacheManager] Evicted cache entry: ${key} (reason: ${reason})`);
+          log.d("CACHEMGR", "evicted", { key, reason });
         }
       },
 
@@ -121,7 +122,7 @@ export class QueryCacheManager implements CacheManager {
    */
   clear(): void {
     this.cache.clear();
-    console.error("[CacheManager] Cache cleared");
+    log.i("CACHEMGR", "cache_cleared");
   }
 
   /**
@@ -213,7 +214,7 @@ export class QueryCacheManager implements CacheManager {
   prune(): void {
     const pruned = this.cache.purgeStale();
     if (pruned) {
-      console.error("[CacheManager] Pruned stale entries");
+      log.i("CACHEMGR", "pruned_stale");
     }
   }
 
@@ -279,7 +280,7 @@ export function Cacheable(ttl?: number) {
       // Check cache
       const cached = cacheManager.get(key);
       if (cached !== null) {
-        console.debug(`[Cache] Hit for ${propertyKey}`);
+        log.d("CACHEMGR", "cache_hit", { key: propertyKey });
         return cached;
       }
 

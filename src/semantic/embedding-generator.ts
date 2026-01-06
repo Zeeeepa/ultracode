@@ -29,9 +29,9 @@
 // =============================================================================
 
 import { CACHE_CONSTANTS } from "../config/constants.js";
+import { log } from "../logging/index.js";
 import type { EmbeddingConfig } from "../types/semantic.js";
 import { hashText } from "../utils/fast-hash.js";
-import { logger } from "../utils/logger.js";
 import type { EmbeddingProvider } from "./providers/base.js";
 import { createProvider } from "./providers/factory.js";
 
@@ -120,13 +120,13 @@ export class EmbeddingGenerator {
     if (this.initPromise) return this.initPromise;
     this.isInitializing = true;
     const startTime = Date.now();
-    logger.trace("EMBEDDING", `[EmbeddingGenerator] ▶ initialize() START`);
+    log.t("EMBEDDING", `[EmbeddingGenerator] ▶ initialize() START`);
 
     this.initPromise = (async () => {
       try {
         const providerName = this.config.provider ?? "auto";
-        logger.trace("EMBEDDING", `[EmbeddingGenerator] ▶ createProvider(${providerName})`);
-        logger.info("EmbeddingGenerator", `initialize() called, provider=${providerName}`, { tei: this.config.tei });
+        log.t("EMBEDDING", `[EmbeddingGenerator] ▶ createProvider(${providerName})`);
+        log.i("EMBEDDING", `initialize() called, provider=${providerName}`, { tei: this.config.tei });
         const createStart = Date.now();
         this.provider = await createProvider({
           provider: providerName,
@@ -138,16 +138,16 @@ export class EmbeddingGenerator {
           tei: this.config.tei,
           ovms: this.config.ovms,
         });
-        logger.trace("EMBEDDING", `[EmbeddingGenerator] ◀ createProvider (${Date.now() - createStart}ms)`);
+        log.t("EMBEDDING", `[EmbeddingGenerator] ◀ createProvider (${Date.now() - createStart}ms)`);
 
-        logger.trace("EMBEDDING", `[EmbeddingGenerator] ▶ provider.initialize()`);
+        log.t("EMBEDDING", `[EmbeddingGenerator] ▶ provider.initialize()`);
         const providerStart = Date.now();
         await this.provider.initialize();
-        logger.trace("EMBEDDING", `[EmbeddingGenerator] ◀ provider.initialize() (${Date.now() - providerStart}ms)`);
-        logger.trace("EMBEDDING", `[EmbeddingGenerator] ◀ initialize() END (${Date.now() - startTime}ms)`);
+        log.t("EMBEDDING", `[EmbeddingGenerator] ◀ provider.initialize() (${Date.now() - providerStart}ms)`);
+        log.t("EMBEDDING", `[EmbeddingGenerator] ◀ initialize() END (${Date.now() - startTime}ms)`);
 
         if (this.debugMode) {
-          logger.debug("EmbeddingGenerator", "Provider initialized", {
+          log.d("EMBEDDING", "Provider initialized", {
             name: this.provider.info.name,
             model: this.provider.info.model,
           });
@@ -281,7 +281,7 @@ export class EmbeddingGenerator {
     const normalized = Number.isFinite(size) ? Math.max(1, Math.floor(size)) : (this.config.batchSize ?? 8);
     this.config.batchSize = normalized;
     if (this.debugMode) {
-      logger.debug("EmbeddingGenerator", "Batch size updated", { size: normalized });
+      log.d("EMBEDDING", "Batch size updated", { size: normalized });
     }
   }
 
@@ -313,7 +313,7 @@ export class EmbeddingGenerator {
     this.cache.clear();
     this.cacheHits = 0;
     this.cacheMisses = 0;
-    logger.debug("EmbeddingGenerator", "Cache cleared");
+    log.d("EMBEDDING", "Cache cleared");
   }
 
   getCacheStats(): { size: number; hits: number; misses: number; hitRate: number } {
@@ -331,6 +331,6 @@ export class EmbeddingGenerator {
     await this.provider?.close?.();
     this.provider = null;
     this.initPromise = null;
-    logger.debug("EmbeddingGenerator", "Cleaned up");
+    log.d("EMBEDDING", "Cleaned up");
   }
 }

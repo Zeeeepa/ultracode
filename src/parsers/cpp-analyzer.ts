@@ -23,6 +23,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
+import { log } from "../logging/index.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError } from "../utils/circuit-breaker.js";
 import { getNodeLocation } from "./base-parser-utils.js";
@@ -86,9 +87,9 @@ export class CppAnalyzer {
       this.buildSemanticGraph(entities, relationships);
     } catch (error) {
       if (error instanceof CircuitBreakerError) {
-        console.warn(`[CppAnalyzer] Circuit breaker triggered for ${filePath}: ${error.message}`);
+        log.w("CPPANALYZER", "circuit_break", { file: filePath, err: error.message });
       } else {
-        console.error(`[CppAnalyzer] Error analyzing ${filePath}:`, error);
+        log.e("CPPANALYZER", "analyze_err", { file: filePath, err: String(error) });
       }
       // Return partial results on error
     }
@@ -538,7 +539,7 @@ export class CppAnalyzer {
     this.complexityScore.templateDepth++;
 
     if (this.templateDepth > MAX_TEMPLATE_DEPTH) {
-      console.warn(`[CppAnalyzer] Skipping deeply nested template at depth ${this.templateDepth}`);
+      log.w("CPPANALYZER", "tpl_too_deep", { depth: this.templateDepth });
       this.templateDepth--;
       return;
     }
@@ -557,7 +558,7 @@ export class CppAnalyzer {
     const templateParams = extractTemplateParameters(parametersNode);
 
     if (isComplexTemplate(templateParams, node.text)) {
-      console.warn(`[CppAnalyzer] Skipping complex template pattern`);
+      log.w("CPPANALYZER", "tpl_complex");
       this.templateDepth--;
       return;
     }

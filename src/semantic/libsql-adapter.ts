@@ -21,6 +21,7 @@
  */
 
 import type { Client, InStatement, ResultSet } from "@libsql/client";
+import { log } from "../logging/index.js";
 import type { SimilarityResult, VectorEmbedding } from "../types/semantic.js";
 
 export interface LibSQLConfig {
@@ -101,19 +102,17 @@ export class LibSQLAdapter {
           CREATE INDEX IF NOT EXISTS ${this.indexName}
           ON ${this.tableName}(libsql_vector_idx(embedding, ${indexParams}))
         `);
-        console.error(`[LibSQLAdapter] Created DiskANN index with ${this.config.metric} metric`);
+        log.i("LIBSQLADAPTER", "diskann_idx", { metric: this.config.metric });
       } catch (indexError) {
         // Index might already exist with different params
-        console.error(`[LibSQLAdapter] Index creation note:`, (indexError as Error).message);
+        log.d("LIBSQLADAPTER", "idx_note", { msg: (indexError as Error).message });
       }
 
       this.isInitialized = true;
-      console.error(
-        `[LibSQLAdapter] Initialized with ${this.config.dimensions}D vectors, ${this.config.metric} metric`,
-      );
+      log.i("LIBSQLADAPTER", "init", { dims: this.config.dimensions, metric: this.config.metric });
       return true;
     } catch (error) {
-      console.error("[LibSQLAdapter] Failed to initialize:", error);
+      log.e("LIBSQLADAPTER", "init_fail", { err: String(error) });
       return false;
     }
   }

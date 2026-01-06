@@ -25,6 +25,7 @@ import {
   type RecordComponentContext,
   type RecordDeclarationContext,
 } from "../generated/java/Java20Parser.js";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 
 // Import extracted modules
@@ -90,7 +91,7 @@ export class JavaAntlrParser {
         }
       }
     } catch (error) {
-      console.error(`[JavaAntlrParser] Error parsing ${filePath}:`, error);
+      log.e("JAVAANTLR", "parse_err", { file: filePath, err: String(error) });
     }
 
     return {

@@ -12,6 +12,7 @@ import { cpus } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 
 /**
@@ -109,7 +110,7 @@ export class PythonWorkerPool {
     }
 
     await Promise.all(initPromises);
-    console.error(`[PythonWorkerPool] Initialized ${this.poolSize} Python workers (TASK-003B 4-layer)`);
+    log.i("PYTHONPOOL", "init_done", { cnt: this.poolSize });
   }
 
   /**
@@ -144,14 +145,14 @@ export class PythonWorkerPool {
 
         // Handle worker errors
         worker.on("error", (error: Error) => {
-          console.error(`[PythonWorkerPool] Worker ${workerId} error:`, error);
+          log.e("PYTHONPOOL", "worker_err", { id: workerId, err: String(error) });
           this.handleWorkerError(workerId, error);
         });
 
         // Handle worker exit
         worker.on("exit", (code) => {
           if (code !== 0) {
-            console.error(`[PythonWorkerPool] Worker ${workerId} exited with code ${code}`);
+            log.w("PYTHONPOOL", "worker_exit", { id: workerId, code });
           }
           this.workers.delete(workerId);
         });
@@ -192,12 +193,12 @@ export class PythonWorkerPool {
     const pythonFiles = files.filter((f) => f.endsWith(".py") || f.endsWith(".pyi") || f.endsWith(".pyw"));
 
     if (pythonFiles.length === 0) {
-      console.warn("[PythonWorkerPool] No Python files in task - returning empty results");
+      log.d("PYTHONPOOL", "no_py_files");
       return [];
     }
 
     if (pythonFiles.length !== files.length) {
-      console.warn(`[PythonWorkerPool] Filtered ${files.length - pythonFiles.length} non-Python files`);
+      log.d("PYTHONPOOL", "filtered", { cnt: files.length - pythonFiles.length });
     }
 
     const taskId = `python-task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -290,7 +291,7 @@ export class PythonWorkerPool {
     } else if (message.type === "error") {
       this.handleTaskError(message.taskId, new Error(message.error));
     } else if (message.type === "initialized") {
-      console.error(`[PythonWorkerPool] Worker ${workerId} initialized with ${message.layers}`);
+      log.d("PYTHONPOOL", "worker_init", { id: workerId, layers: message.layers });
     }
   }
 
@@ -454,7 +455,7 @@ export class PythonWorkerPool {
 
     await Promise.all(shutdownPromises);
     this.workers.clear();
-    console.error("[PythonWorkerPool] Shutdown complete");
+    log.i("PYTHONPOOL", "shutdown_done");
   }
 
   /**

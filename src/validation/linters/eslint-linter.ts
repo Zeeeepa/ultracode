@@ -4,6 +4,7 @@
  * Provides ESLint linting for TypeScript/JavaScript files.
  */
 
+import { log } from "../../logging/index.js";
 import type { Linter, ValidationProblem } from "../code-validator.js";
 
 export class ESLintLinter implements Linter {
@@ -22,7 +23,7 @@ export class ESLintLinter implements Linter {
       }
 
       if (!this.eslintInstance) {
-        console.warn("[ESLintLinter] ESLint not available");
+        log.w("ESLINT", "unavailable");
         return [];
       }
 
@@ -48,7 +49,7 @@ export class ESLintLinter implements Linter {
 
       return problems;
     } catch (error) {
-      console.warn("[ESLintLinter] Linting failed:", error);
+      log.w("ESLINT", "lint_fail", { err: String(error) });
       return [];
     }
   }
@@ -68,9 +69,9 @@ export class ESLintLinter implements Linter {
       });
 
       this.eslintLoaded = true;
-      console.error("[ESLintLinter] ESLint loaded successfully");
+      log.i("ESLINT", "loaded");
     } catch (error) {
-      console.warn("[ESLintLinter] Failed to load ESLint:", error);
+      log.w("ESLINT", "load_fail", { err: String(error) });
       this.eslintLoaded = true; // Don't try again
       this.eslintInstance = null;
     }

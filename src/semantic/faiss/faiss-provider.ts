@@ -14,10 +14,9 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-
+import { log } from "../../logging/index.js";
 import { getFaissIndexPathByHash, normalizeBranchName } from "../../shared/storage-paths.js";
 import type { SimilarityResult, VectorEmbedding } from "../../types/semantic.js";
-import { logger } from "../../utils/logger.js";
 import { simdL2Normalize } from "../../utils/simd-vector-ops.js";
 import { getGpuClient, type IGpuClient } from "../gpu/gpu-client.js";
 import type { FaissIndexConfig, FaissSearchResult } from "./types.js";
@@ -99,7 +98,7 @@ class FaissProvider {
 
     // If already initialized with different context, save and switch
     if (this.isInitialized && this.client) {
-      logger.info("FAISS", "Switching project context", {
+      log.i("FAISS", "Switching project context", {
         from: { projectHash: this.projectHash, branchName: this.branchName },
         to: { projectHash, branchName: normalizedBranch },
       });
@@ -138,7 +137,7 @@ class FaissProvider {
       }
 
       const stats = await this.client.faissGetStats();
-      logger.info("FAISS", "Switched to new context", {
+      log.i("FAISS", "Switched to new context", {
         projectHash,
         branchName: normalizedBranch,
         vectors: stats.totalVectors,
@@ -150,7 +149,7 @@ class FaissProvider {
       this.branchName = normalizedBranch;
       this.config.persistPath = newPersistPath;
 
-      logger.debug("FAISS", "Project context set", {
+      log.d("FAISS", "Project context set", {
         projectHash: this.projectHash,
         branchName: this.branchName,
         persistPath: this.config.persistPath,
@@ -176,13 +175,13 @@ class FaissProvider {
 
   private async initializeInternal(): Promise<boolean> {
     try {
-      logger.info("FAISS", "Initializing...");
+      log.i("FAISS", "Initializing...");
 
       // Create and start GPU client (unified Faiss + CUDA)
       this.client = getGpuClient();
       const started = await this.client.start();
       if (!started) {
-        logger.error("FAISS", "Failed to start Faiss client");
+        log.e("FAISS", "Failed to start Faiss client");
         return false;
       }
 
@@ -210,7 +209,7 @@ class FaissProvider {
       this.lastSaveTime = Date.now();
 
       const stats = await this.client.faissGetStats();
-      logger.info("FAISS", "Initialized", {
+      log.i("FAISS", "Initialized", {
         indexType: this.config.indexType,
         vectors: stats.totalVectors,
         loaded: !!loadPath,
@@ -219,7 +218,7 @@ class FaissProvider {
 
       return true;
     } catch (error) {
-      logger.error("FAISS", "Initialization failed", { error: (error as Error).message });
+      log.e("FAISS", "Initialization failed", { error: (error as Error).message });
       return false;
     }
   }
@@ -277,7 +276,7 @@ class FaissProvider {
     const pStart = performance.now();
     const pLog = (phase: string) => {
       const elapsed = (performance.now() - pStart).toFixed(1);
-      logger.info("PROFILE_FAISS", phase, { elapsedMs: elapsed });
+      log.i("FAISS", phase, { elapsedMs: elapsed });
     };
 
     const dim = this.config.dimensions;
@@ -309,7 +308,7 @@ class FaissProvider {
 
     this.unsavedCount += count;
 
-    logger.debug("FAISS", "Added embeddings", {
+    log.d("FAISS", "Added embeddings", {
       count,
       unsaved: this.unsavedCount,
     });
@@ -319,7 +318,7 @@ class FaissProvider {
       this.saveScheduled = true;
       // Fire-and-forget save in background
       this.pendingSave = this.save()
-        .catch((err) => logger.warn("FAISS", "Background save failed", { error: (err as Error).message }))
+        .catch((err) => log.w("FAISS", "Background save failed", { error: (err as Error).message }))
         .finally(() => {
           this.saveScheduled = false;
           this.pendingSave = null;
@@ -422,13 +421,13 @@ class FaissProvider {
       this.unsavedCount = 0;
       this.lastSaveTime = Date.now();
 
-      logger.info("FAISS", "Index saved", {
+      log.i("FAISS", "Index saved", {
         path: this.config.persistPath,
         savedCount,
         idSetSize: this.idSet.size,
       });
     } catch (error) {
-      logger.error("FAISS", "Failed to save index", { error: (error as Error).message });
+      log.e("FAISS", "Failed to save index", { error: (error as Error).message });
       throw error;
     }
   }
@@ -453,9 +452,9 @@ class FaissProvider {
     try {
       const ids = Array.from(this.idSet);
       writeFileSync(idSetPath, JSON.stringify(ids), "utf-8");
-      logger.debug("FAISS", "ID set saved", { path: idSetPath, size: this.idSet.size });
+      log.d("FAISS", "ID set saved", { path: idSetPath, size: this.idSet.size });
     } catch (error) {
-      logger.warn("FAISS", "Failed to save ID set", { error: (error as Error).message });
+      log.w("FAISS", "Failed to save ID set", { error: (error as Error).message });
     }
   }
 
@@ -475,7 +474,7 @@ class FaissProvider {
           for (const id of Object.keys(cacheObj)) {
             this.idSet.add(id);
           }
-          logger.info("FAISS", "Migrated IDs from legacy content cache", { size: this.idSet.size });
+          log.i("FAISS", "Migrated IDs from legacy content cache", { size: this.idSet.size });
           // Save as new format
           this.saveIdSet();
           return;
@@ -483,7 +482,7 @@ class FaissProvider {
           // Ignore legacy load errors
         }
       }
-      logger.debug("FAISS", "No ID set file found", { path: idSetPath });
+      log.d("FAISS", "No ID set file found", { path: idSetPath });
       return;
     }
 
@@ -496,9 +495,9 @@ class FaissProvider {
         this.idSet.add(id);
       }
 
-      logger.info("FAISS", "ID set loaded", { path: idSetPath, size: this.idSet.size });
+      log.i("FAISS", "ID set loaded", { path: idSetPath, size: this.idSet.size });
     } catch (error) {
-      logger.warn("FAISS", "Failed to load ID set", { error: (error as Error).message });
+      log.w("FAISS", "Failed to load ID set", { error: (error as Error).message });
     }
   }
 
@@ -542,7 +541,7 @@ class FaissProvider {
     }
 
     await this.client.faissTrain(new Float32Array(flatVectors), trainingVectors.length);
-    logger.info("FAISS", "Trained index", { vectorCount: trainingVectors.length });
+    log.i("FAISS", "Trained index", { vectorCount: trainingVectors.length });
   }
 
   // ===========================================================================
@@ -616,7 +615,7 @@ class FaissProvider {
       this.idSet.delete(id);
     }
 
-    logger.debug("FAISS", "Removed embeddings", { count: ids.length });
+    log.d("FAISS", "Removed embeddings", { count: ids.length });
   }
 
   /**
@@ -631,7 +630,7 @@ class FaissProvider {
     const { getVectorDumpDir } = await import("../vector-dump.js");
     const dumpDir = getVectorDumpDir();
 
-    logger.info("FAISS", "Requesting gpu-worker to load from dump", { dumpDir, dimensions });
+    log.i("FAISS", "Requesting gpu-worker to load from dump", { dumpDir, dimensions });
 
     // GPU worker reads dump files directly and adds to Faiss
     // Main process doesn't read or transfer vector data
@@ -642,7 +641,7 @@ class FaissProvider {
       // Note: GPU worker maintains its own idMap, we just track count
       this.unsavedCount += result.loaded;
 
-      logger.info("FAISS", "Vectors loaded from dump by gpu-worker", {
+      log.i("FAISS", "Vectors loaded from dump by gpu-worker", {
         loaded: result.loaded,
         skipped: result.skipped,
         files: result.files,
@@ -660,7 +659,7 @@ class FaissProvider {
     workerId: string,
     dimensions: number,
   ): Promise<{ loaded: number; skipped: number; files: number }> {
-    logger.info("FAISS", "loadWorkerDump called", {
+    log.i("FAISS", "loadWorkerDump called", {
       workerId,
       dimensions,
       hasClient: !!this.client,
@@ -669,7 +668,7 @@ class FaissProvider {
 
     if (!this.client || !this.isInitialized) {
       // Log at WARN level - this is unexpected during indexing
-      logger.warn("FAISS", "loadWorkerDump skipped - not initialized (vectors will be loaded later)", {
+      log.w("FAISS", "loadWorkerDump skipped - not initialized (vectors will be loaded later)", {
         workerId,
         hasClient: !!this.client,
         isInitialized: this.isInitialized,
@@ -677,7 +676,7 @@ class FaissProvider {
       return { loaded: 0, skipped: 0, files: 0 };
     }
 
-    logger.info("FAISS", "Requesting gpu-worker to load worker dump", { workerId, dimensions });
+    log.i("FAISS", "Requesting gpu-worker to load worker dump", { workerId, dimensions });
 
     // GPU worker reads worker's dump files directly and adds to Faiss
     const result = await this.client.faissLoadWorkerDump(workerId, dimensions);
@@ -685,7 +684,7 @@ class FaissProvider {
     if (result.loaded > 0) {
       this.unsavedCount += result.loaded;
 
-      logger.info("FAISS", "Worker vectors loaded from dump", {
+      log.i("FAISS", "Worker vectors loaded from dump", {
         workerId,
         loaded: result.loaded,
         skipped: result.skipped,

@@ -12,7 +12,7 @@
  * @task_id TASK-004B
  */
 
-import { logger } from "./logger.js";
+import { log } from "../logging/index.js";
 
 // =============================================================================
 // TYPES
@@ -85,7 +85,7 @@ export class CircuitBreaker {
         if (now - this.lastFailureTime >= this.config.recoveryTimeout) {
           this.state = CircuitBreakerState.HALF_OPEN;
           this.successCount = 0;
-          logger.debug(this.config.name, "Circuit breaker HALF_OPEN");
+          log.d("CIRCUITBREAK", "half_open", { name: this.config.name });
           return true;
         }
         return false;
@@ -107,7 +107,7 @@ export class CircuitBreaker {
       if (this.successCount >= this.config.successThreshold) {
         this.state = CircuitBreakerState.CLOSED;
         this.failureWindow = [];
-        logger.debug(this.config.name, "Circuit breaker CLOSED", { successes: this.successCount });
+        log.d("CIRCUITBREAK", "closed", { name: this.config.name, successes: this.successCount });
       }
     } else if (this.state === CircuitBreakerState.CLOSED) {
       this.cleanupFailureWindow();
@@ -128,7 +128,7 @@ export class CircuitBreaker {
 
     if (recentFailures >= this.config.failureThreshold) {
       this.state = CircuitBreakerState.OPEN;
-      logger.warn(this.config.name, "Circuit breaker OPENED", { failures: recentFailures });
+      log.w("CIRCUITBREAK", "opened", { name: this.config.name, failures: recentFailures });
     }
   }
 
@@ -145,7 +145,7 @@ export class CircuitBreaker {
    */
   async execute<T>(operation: () => Promise<T>, fallback: () => T, operationName: string): Promise<T> {
     if (!this.canExecute()) {
-      logger.debug(this.config.name, "Circuit open, using fallback", { operation: operationName });
+      log.d("CIRCUITBREAK", "fallback_open", { name: this.config.name, op: operationName });
       return fallback();
     }
 
@@ -155,9 +155,10 @@ export class CircuitBreaker {
       return result;
     } catch (error) {
       this.recordFailure();
-      logger.warn(this.config.name, "Operation failed, using fallback", {
-        operation: operationName,
-        error: (error as Error).message,
+      log.w("CIRCUITBREAK", "fallback_error", {
+        name: this.config.name,
+        op: operationName,
+        err: (error as Error).message,
       });
       return fallback();
     }

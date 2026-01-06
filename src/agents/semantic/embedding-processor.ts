@@ -13,13 +13,13 @@
  * - Store embeddings in vector store
  */
 
+import { log } from "../../logging/index.js";
 import type { EmbeddingGenerator } from "../../semantic/embedding-generator.js";
 import type { GlobalEmbeddingCache } from "../../semantic/global-embedding-cache.js";
 import type { VectorStore } from "../../semantic/vector-store.js";
 import type { ParsedEntity } from "../../types/parser.js";
 import type { SemanticMetrics, VectorEmbedding } from "../../types/semantic.js";
 import { hashText } from "../../utils/fast-hash.js";
-import { logger } from "../../utils/logger.js";
 
 // =============================================================================
 // CONSTANTS
@@ -261,7 +261,7 @@ export async function processPreGeneratedEmbeddings(
         createdAt: Date.now(),
       });
     } catch (error) {
-      logger.warn("EMBEDDING_GEN", `Failed to decode pre-generated embedding`, {
+      log.w("EMBEDDING", `Failed to decode pre-generated embedding`, {
         entityId: e.id,
         name: e.name,
         error: (error as Error).message,
@@ -272,7 +272,7 @@ export async function processPreGeneratedEmbeddings(
 
   if (vectorEmbeddings.length > 0) {
     const insertResult = await ctx.vectorStore.adaptiveBulkInsert(vectorEmbeddings);
-    logger.info("EMBEDDING_GEN", `Inserted pre-generated embeddings`, {
+    log.i("EMBEDDING", `Inserted pre-generated embeddings`, {
       count: vectorEmbeddings.length,
       timeMs: insertResult.timeMs.toFixed(1),
     });
@@ -357,14 +357,14 @@ export async function deduplicateAndCheckCaches(
         }
       }
       if (persistentCacheHitCount > 0) {
-        logger.info("PERSISTENT_CACHE", "Batch hits", {
+        log.i("EMBCACHE", "Batch hits", {
           checked: uncachedHashes.length,
           hits: persistentCacheHitCount,
           remaining: textsNeedingGeneration.length,
         });
       }
     } catch (error) {
-      logger.warn("PERSISTENT_CACHE", "Batch lookup failed", { error: (error as Error).message });
+      log.w("EMBCACHE", "Batch lookup failed", { error: (error as Error).message });
       textsNeedingGeneration.push(...uncachedTexts);
       textsNeedingGenerationHashes.push(...uncachedHashes);
     }
@@ -401,9 +401,9 @@ export async function generateEmbeddings(
   const hashToEmbedding = new Map<string, Float32Array>(dedup.cacheHits);
 
   if (dedup.textsNeedingGeneration.length > 0) {
-    logger.trace("EMBEDDING_GEN", "Before generateBatch", { count: dedup.textsNeedingGeneration.length });
+    log.t("EMBEDDING", "Before generateBatch", { count: dedup.textsNeedingGeneration.length });
     const generatedEmbeddings = await ctx.embeddingGen.generateBatch(dedup.textsNeedingGeneration);
-    logger.trace("EMBEDDING_GEN", "After generateBatch", { count: generatedEmbeddings.length });
+    log.t("EMBEDDING", "After generateBatch", { count: generatedEmbeddings.length });
 
     // Map generated embeddings by hash
     for (let i = 0; i < dedup.textsNeedingGenerationHashes.length; i++) {
@@ -420,13 +420,13 @@ export async function generateEmbeddings(
         textPreview: dedup.textsNeedingGeneration[i]?.slice(0, 100),
       }));
       persistAdapter.setEmbeddingsInCache(cacheEntries).catch((err: Error) => {
-        logger.warn("PERSISTENT_CACHE", "Failed to save embeddings", { error: err.message });
+        log.w("EMBCACHE", "Failed to save embeddings", { error: err.message });
       });
-      logger.debug("PERSISTENT_CACHE", "Saving new embeddings", { count: cacheEntries.length });
+      log.d("EMBCACHE", "Saving new embeddings", { count: cacheEntries.length });
     }
   } else {
     const totalCacheHits = dedup.globalCacheHitCount + dedup.persistentCacheHitCount;
-    logger.info("EMBEDDING_CACHE", "100% cache hit", { count: totalCacheHits });
+    log.i("EMBCACHE", "100% cache hit", { count: totalCacheHits });
   }
 
   return hashToEmbedding;

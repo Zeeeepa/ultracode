@@ -25,6 +25,7 @@ import {
   type UseDeclarationContext,
   type VisItemContext,
 } from "../generated/rust/RustParser.js";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 
 // =============================================================================
@@ -78,7 +79,7 @@ export class RustAntlrParser {
       // Process AST
       processCrate(tree, ctx);
     } catch (error) {
-      console.error(`[RustAntlrParser] Error parsing ${filePath}:`, error);
+      log.e("RUSTANTLR", "parse_err", { file: filePath, err: String(error) });
     }
 
     return {

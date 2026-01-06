@@ -7,9 +7,8 @@
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-
+import { log } from "../../logging/index.js";
 import { getDataDir } from "../../shared/storage-paths.js";
-import { logger } from "../../utils/logger.js";
 import type {
   FaissAddResponse,
   FaissIndexConfig,
@@ -97,7 +96,7 @@ class FaissNapiClient implements IFaissClient {
 
       // Verify the module loaded correctly (has Index class)
       if (typeof this.faiss?.Index?.fromFactory === "function") {
-        logger.info("FAISS", "Loaded faiss-napi", {
+        log.i("FAISS", "Loaded faiss-napi", {
           runtime: isBun ? "Bun" : "Node.js",
           available: Object.keys(this.faiss),
         });
@@ -107,7 +106,7 @@ class FaissNapiClient implements IFaissClient {
       // Module loaded but Index not available - try alternative loading
       throw new Error("Index.fromFactory not available, trying alternative");
     } catch (error) {
-      logger.warn("FAISS", "Standard import failed, trying createRequire", {
+      log.w("FAISS", "Standard import failed, trying createRequire", {
         error: (error as Error).message,
       });
     }
@@ -130,7 +129,7 @@ class FaissNapiClient implements IFaissClient {
           this.faiss = faissModule as unknown as FaissNapiModule;
 
           if (typeof this.faiss?.Index?.fromFactory === "function") {
-            logger.info("FAISS", "Loaded faiss-napi via createRequire", {
+            log.i("FAISS", "Loaded faiss-napi via createRequire", {
               runtime: isBun ? "Bun" : "Node.js",
               path: searchPath,
               available: Object.keys(this.faiss),
@@ -142,7 +141,7 @@ class FaissNapiClient implements IFaissClient {
 
       throw new Error("Could not locate faiss-napi with valid Index class");
     } catch (error) {
-      logger.error("FAISS", "Failed to load faiss-napi", { error: (error as Error).message });
+      log.e("FAISS", "Failed to load faiss-napi", { error: (error as Error).message });
       return false;
     }
   }
@@ -160,7 +159,7 @@ class FaissNapiClient implements IFaissClient {
     this.totalVectors = 0;
     this.isInitialized = false;
 
-    logger.info("FAISS", "Stopped and cleared", { freedMaps: mapSize });
+    log.i("FAISS", "Stopped and cleared", { freedMaps: mapSize });
   }
 
   async initialize(config: FaissIndexConfig, loadPath?: string): Promise<FaissInitResponse> {
@@ -188,7 +187,7 @@ class FaissNapiClient implements IFaissClient {
         // Log memory after loading index
         const mem = process.memoryUsage();
         const idMapSizeMB = (this.idMap.size * 100) / 1024 / 1024; // rough estimate: 100 bytes per entry
-        logger.info("FAISS", "Loaded index", {
+        log.i("FAISS", "Loaded index", {
           path: loadPath,
           vectors: this.totalVectors,
           idMapSize: this.idMap.size,
@@ -204,7 +203,7 @@ class FaissNapiClient implements IFaissClient {
           loadedVectors: this.totalVectors,
         };
       } catch (error) {
-        logger.error("FAISS", "Failed to load index", { error: (error as Error).message });
+        log.e("FAISS", "Failed to load index", { error: (error as Error).message });
       }
     }
 
@@ -260,7 +259,7 @@ class FaissNapiClient implements IFaissClient {
     }
 
     this.index = this.faiss.Index.fromFactory(dimensions, factoryString, metricEnum);
-    logger.info("FAISS", "Created index via factory", {
+    log.i("FAISS", "Created index via factory", {
       factoryString,
       indexType,
       dimensions,
@@ -297,7 +296,7 @@ class FaissNapiClient implements IFaissClient {
     this.totalVectors += count;
 
     const endTime = performance.now();
-    logger.info("PROFILE_FAISS_CLIENT", "add", {
+    log.i("FAISS", "add", {
       count,
       addMs: (afterAdd - startTime).toFixed(1),
       mapMs: (endTime - afterAdd).toFixed(1),
@@ -415,7 +414,7 @@ class FaissNapiClient implements IFaissClient {
     );
 
     const stats = statSync(savePath);
-    logger.info("FAISS", "Saved index", { path: savePath, sizeBytes: stats.size });
+    log.i("FAISS", "Saved index", { path: savePath, sizeBytes: stats.size });
 
     return {
       success: true,
@@ -489,7 +488,7 @@ let faissClient: IFaissClient | null = null;
 export function getFaissClient(): IFaissClient {
   if (!faissClient) {
     const isBun = typeof (globalThis as any).Bun !== "undefined";
-    logger.info("FAISS", `Initializing client (${isBun ? "Bun" : "Node.js"} runtime)`);
+    log.i("FAISS", `Initializing client (${isBun ? "Bun" : "Node.js"} runtime)`);
     faissClient = new FaissNapiClient();
   }
   return faissClient;

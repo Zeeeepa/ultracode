@@ -21,6 +21,7 @@
 
 import type { BranchManager } from "../core/branch-manager.js";
 import type { GitWatcher } from "../core/git-watcher.js";
+import { log } from "../logging/index.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { LayeredIndexConfig } from "../types/layered.js";
 import { LayeredIndexConfigPresets } from "../types/layered.js";
@@ -148,7 +149,8 @@ export class LayeredIndexManager {
       debug: config.debug || false,
     });
 
-    console.error(
+    log.i(
+      "LAYEREDMGR",
       `[LayeredIndexManager] Initialized with preset: ${this.getConfigPresetName()}, ` +
         `fileWatching: ${config.enableFileWatching ?? true}, ` +
         `maintenance: ${config.enableMaintenance ?? true}`,
@@ -167,7 +169,7 @@ export class LayeredIndexManager {
       return;
     }
 
-    console.error("[LayeredIndexManager] Initializing...");
+    log.i("LAYEREDMGR", "[LayeredIndexManager] Initializing...");
 
     // Initialize layered index
     await this.layeredIndex.initialize();
@@ -229,7 +231,7 @@ export class LayeredIndexManager {
 
     this.isInitialized = true;
 
-    console.error("[LayeredIndexManager] Initialization complete");
+    log.i("LAYEREDMGR", "[LayeredIndexManager] Initialization complete");
   }
 
   // =========================================================================
@@ -295,7 +297,7 @@ export class LayeredIndexManager {
    * @param branch - Branch name
    */
   async switchBranch(branch: string): Promise<void> {
-    console.error(`[LayeredIndexManager] Switching to branch: ${branch}`);
+    log.i("LAYEREDMGR", `[LayeredIndexManager] Switching to branch: ${branch}`);
 
     // Ensure branch delta exists
     await this.layeredIndex.ensureBranchDelta(branch);
@@ -305,7 +307,7 @@ export class LayeredIndexManager {
       this.fileIntegration.setCurrentBranch(branch);
     }
 
-    console.error(`[LayeredIndexManager] Switched to branch: ${branch}`);
+    log.i("LAYEREDMGR", `[LayeredIndexManager] Switched to branch: ${branch}`);
   }
 
   /**
@@ -377,7 +379,7 @@ export class LayeredIndexManager {
    * Shutdown gracefully
    */
   async shutdown(): Promise<void> {
-    console.error("[LayeredIndexManager] Shutting down...");
+    log.i("LAYEREDMGR", "[LayeredIndexManager] Shutting down...");
 
     // Stop git watcher polling loops
     if (this.gitWatcher) {
@@ -409,7 +411,7 @@ export class LayeredIndexManager {
     this.cacheManager.close();
     this.vectorCacheManager.close();
 
-    console.error("[LayeredIndexManager] Shutdown complete");
+    log.i("LAYEREDMGR", "[LayeredIndexManager] Shutdown complete");
   }
 
   // =========================================================================

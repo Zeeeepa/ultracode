@@ -7,10 +7,10 @@
 
 import type { ConductorOrchestrator } from "../agents/conductor-orchestrator.js";
 import type { LayeredIndexManager } from "../layered/index.js";
+import { log } from "../logging/index.js";
 import { shutdownFaissProvider } from "../semantic/faiss/faiss-provider.js";
 import { shutdownGpuClient } from "../semantic/gpu/gpu-client.js";
 import { shutdownOVMSNative } from "../semantic/ovms-native-manager.js";
-import { logger } from "../utils/logger.js";
 import { resourceManager } from "./resource-manager.js";
 
 // =============================================================================
@@ -58,46 +58,45 @@ export async function performGlobalShutdown(signal: string): Promise<void> {
   if (isShuttingDownGlobal) return;
   isShuttingDownGlobal = true;
 
-  console.error(`\n[${signal}] Shutting down gracefully...`);
-  logger.systemEvent("MCP Server Shutdown Initiated", { signal });
+  log.i("SHUTDOWN", "shutdown_start", { signal });
 
   // Shutdown OVMS Native first (if running)
   try {
     await shutdownOVMSNative();
-    logger.systemEvent("OVMS Native Shutdown Complete");
+    log.i("SHUTDOWN", "ovms_shutdown_ok");
   } catch (error) {
-    console.error("[Shutdown] OVMS Native shutdown error:", error);
+    log.e("SHUTDOWN", "ovms_shutdown_fail", { err: String(error) });
   }
 
   // Shutdown GPU worker (if running)
   try {
     await shutdownGpuClient();
-    logger.systemEvent("GPU Client Shutdown Complete");
+    log.i("SHUTDOWN", "GPU Client Shutdown Complete");
   } catch (error) {
-    logger.error("GPU_CLIENT", "Shutdown error", { error: String(error) });
+    log.e("SHUTDOWN", "Shutdown error", { error: String(error) });
   }
 
   // Shutdown FAISS provider (if running)
   try {
     await shutdownFaissProvider();
-    logger.systemEvent("FAISS Provider Shutdown Complete");
+    log.i("SHUTDOWN", "FAISS Provider Shutdown Complete");
   } catch (error) {
-    logger.error("FAISS", "Shutdown error", { error: String(error) });
+    log.e("SHUTDOWN", "Shutdown error", { error: String(error) });
   }
 
   if (shutdownContext.conductor) {
     await shutdownContext.conductor.shutdown();
-    logger.systemEvent("Conductor Shutdown Complete");
+    log.i("SHUTDOWN", "Conductor Shutdown Complete");
   }
 
   if (shutdownContext.layeredIndexManager) {
     await shutdownContext.layeredIndexManager.shutdown();
-    logger.systemEvent("LayeredIndexManager Shutdown Complete");
+    log.i("SHUTDOWN", "LayeredIndexManager Shutdown Complete");
   }
 
   resourceManager.stopMonitoring();
-  logger.systemEvent("Resource Manager Stopped");
-  logger.systemEvent("MCP Server Shutdown Complete", { signal });
+  log.i("SHUTDOWN", "Resource Manager Stopped");
+  log.i("SHUTDOWN", "MCP Server Shutdown Complete", { signal });
 
   process.exit(0);
 }
@@ -128,14 +127,14 @@ export function registerSignalHandlers(): void {
   // Windows: detect parent process exit via stdin close
   process.stdin.on("close", () => {
     if (!isShuttingDownGlobal) {
-      logger.info("SHUTDOWN", "stdin closed (parent exited), shutting down...");
+      log.i("SHUTDOWN", "stdin closed (parent exited), shutting down...");
       performGlobalShutdown("stdin-close");
     }
   });
 
   process.stdin.on("end", () => {
     if (!isShuttingDownGlobal) {
-      logger.info("SHUTDOWN", "stdin ended (parent exited), shutting down...");
+      log.i("SHUTDOWN", "stdin ended (parent exited), shutting down...");
       performGlobalShutdown("stdin-end");
     }
   });
@@ -169,9 +168,9 @@ export function registerDebugSignalHandler(): void {
           })),
         };
       }
-      logger.incident("SIGUSR1 dump", snapshot);
+      log.w("INCIDENT", "SIGUSR1 dump", snapshot);
     } catch (err) {
-      logger.incident("SIGUSR1 dump failed", {}, undefined, err as Error);
+      log.w("INCIDENT", "sigusr1_dump_fail", { err: String(err) });
     }
   });
 }

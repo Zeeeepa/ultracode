@@ -4,6 +4,7 @@
  * Inheritance hierarchies, method overrides, import dependencies, cross-file references.
  */
 
+import { log } from "../../logging/index.js";
 import type { ASTNode, EntityRelationship, ImportDependency } from "../../types/parser.js";
 import { findNodesByType } from "../base-parser-utils.js";
 import type { AnalysisContext } from "./types.js";
@@ -18,7 +19,7 @@ export class Layer3RelationshipAnalyzer {
    * Execute Layer 3 analysis - relationship mapping
    */
   async executeAnalysis(rootNode: ASTNode, context: AnalysisContext): Promise<void> {
-    console.error("[PythonAnalyzer] Executing Layer 3: Relationship Mapping");
+    log.d("PYRELATIONS", "layer3_start");
     const layer3StartTime = Date.now();
 
     await withPerformanceMonitoring(
@@ -34,7 +35,7 @@ export class Layer3RelationshipAnalyzer {
     );
 
     context.metrics.relationshipMapping.timeMs = Date.now() - layer3StartTime;
-    console.error(`[PythonAnalyzer] Layer 3 completed in ${context.metrics.relationshipMapping.timeMs}ms`);
+    log.d("PYRELATIONS", "layer3_done", { dur: context.metrics.relationshipMapping.timeMs });
   }
 
   /**

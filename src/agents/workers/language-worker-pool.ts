@@ -12,9 +12,9 @@
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { log } from "../../logging/index.js";
 import { detectRuntime, type Runtime } from "../../shared/runtime-detect.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
-import { logger } from "../../utils/logger.js";
 
 // Runtime-aware worker type
 type NodeWorker = import("node:worker_threads").Worker;
@@ -167,7 +167,7 @@ export class LanguageWorkerPool {
     }
 
     await Promise.all(initPromises);
-    logger.info("WORKER_POOL", `Initialized ${this.poolSize} workers`, {
+    log.i("WORKERPOOL", `Initialized ${this.poolSize} workers`, {
       language: this.language,
       runtime: this.runtime,
       smol: this.runtime === "bun",
@@ -200,7 +200,7 @@ export class LanguageWorkerPool {
         type: "module",
         smol: true, // Bun-specific option for reduced memory footprint
       }) as BunWorker;
-      logger.debug("WORKER_POOL", `Created Bun worker ${workerId}`, { language: this.language, smol: true });
+      log.d("WORKERPOOL", `Created Bun worker ${workerId}`, { language: this.language, smol: true });
     } else {
       // Node.js: Use worker_threads (native, stable)
       if (!this.nodeWorkerModule) {
@@ -212,7 +212,7 @@ export class LanguageWorkerPool {
           language: this.language,
         },
       });
-      logger.debug("WORKER_POOL", `Created Node.js worker ${workerId}`, { language: this.language });
+      log.d("WORKERPOOL", `Created Node.js worker ${workerId}`, { language: this.language });
     }
 
     const state: WorkerState = {
@@ -234,7 +234,7 @@ export class LanguageWorkerPool {
         });
         bunWorker.addEventListener("error", (event) => {
           const errorEvent = event as { message?: string };
-          logger.error("WORKER_POOL", `Worker ${workerId} error: ${errorEvent.message}`, { language: this.language });
+          log.e("WORKERPOOL", `Worker ${workerId} error: ${errorEvent.message}`, { language: this.language });
           this.handleWorkerError(workerId, new Error(errorEvent.message || "Unknown worker error"));
         });
       } else {
@@ -243,12 +243,12 @@ export class LanguageWorkerPool {
           this.handleWorkerMessage(workerId, message);
         });
         nodeWorker.on("error", (error: Error) => {
-          logger.error("WORKER_POOL", `Worker ${workerId} error: ${error.message}`, { language: this.language });
+          log.e("WORKERPOOL", `Worker ${workerId} error: ${error.message}`, { language: this.language });
           this.handleWorkerError(workerId, error);
         });
         nodeWorker.on("exit", (code) => {
           if (code !== 0) {
-            logger.error("WORKER_POOL", `Worker ${workerId} exited with code ${code}`, { language: this.language });
+            log.e("WORKERPOOL", `Worker ${workerId} exited with code ${code}`, { language: this.language });
           }
           this.workers.delete(workerId);
         });
@@ -338,7 +338,7 @@ export class LanguageWorkerPool {
       chunks.push(files.slice(i, i + chunkSize));
     }
 
-    logger.info("WORKER_POOL", `Chunking ${files.length} files into ${chunks.length} tasks`, {
+    log.i("WORKERPOOL", `Chunking ${files.length} files into ${chunks.length} tasks`, {
       language: this.language,
     });
 
@@ -424,7 +424,7 @@ export class LanguageWorkerPool {
     state.busy = true;
     // CRITICAL: Log files being processed BEFORE sending to worker
     // This helps identify which file causes worker crashes/timeouts
-    logger.trace("WORKER_POOL", `[${this.language}] Worker ${workerId} processing files`, {
+    log.t("WORKERPOOL", `[${this.language}] Worker ${workerId} processing files`, {
       taskId: task.id,
       fileCount: task.files.length,
       files: task.files.map((f) => f.split(/[/]/).pop()).slice(0, 10),
@@ -476,7 +476,7 @@ export class LanguageWorkerPool {
       return;
     }
 
-    logger.debug("WORKER_POOL", `Received ${count} embeddings from worker`, {
+    log.d("WORKERPOOL", `Received ${count} embeddings from worker`, {
       language: this.language,
       count,
     });
@@ -538,13 +538,13 @@ export class LanguageWorkerPool {
     const state = this.workers.get(workerId);
     if (!state) return;
     // CRITICAL: Log worker crash and flush logs
-    logger.error("WORKER_POOL", `Worker ${workerId} crashed`, {
+    log.e("WORKERPOOL", `Worker ${workerId} crashed`, {
       workerId,
       error: error.message,
       stack: error.stack,
       language: this.language,
     });
-    logger.stopFlushLoop();
+    log.flush();
 
     // Mark worker as idle
     state.busy = false;
@@ -561,13 +561,13 @@ export class LanguageWorkerPool {
    */
   private handleTaskTimeout(taskId: string): void {
     const task = this.pendingTasks.get(taskId);
-    logger.error("WORKER_POOL", `Task timeout`, {
+    log.e("WORKERPOOL", `Task timeout`, {
       taskId,
       fileCount: task?.files.length,
       files: task?.files.map((f) => f.split(/[/]/).pop()),
       timeout: this.taskTimeout,
     });
-    logger.stopFlushLoop();
+    log.flush();
     this.handleTaskError(taskId, new Error(`Task timeout (${this.taskTimeout}ms) for language: ${this.language}`));
   }
 
@@ -667,7 +667,7 @@ export class LanguageWorkerPool {
 
     await Promise.all(shutdownPromises);
     this.workers.clear();
-    logger.info("WORKER_POOL", `Shutdown complete`, { language: this.language, runtime: this.runtime });
+    log.i("WORKERPOOL", `Shutdown complete`, { language: this.language, runtime: this.runtime });
   }
 
   /**

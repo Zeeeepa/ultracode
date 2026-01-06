@@ -4,6 +4,7 @@
  * Shared helpers, constants, and utility types for the Python analyzer.
  */
 
+import { log } from "../../../logging/index.js";
 import type { ASTNode, MagicType, PythonParserMetrics } from "../../../types/parser.js";
 
 // =============================================================================
@@ -138,7 +139,7 @@ export function withPerformanceMonitoring<T>(operation: string, fn: () => T, met
 
     return result;
   } catch (error) {
-    console.error(`Performance monitoring error in ${operation}:`, error);
+    log.e("PYHELPERS", "perf_monitor_err", { op: operation, err: String(error) });
     throw error;
   }
 }

@@ -1,4 +1,4 @@
-import { logger as appLogger } from "../../utils/logger.js";
+import { log } from "../../logging/index.js";
 import { makeProviderLogger } from "../../utils/provider-logger.js";
 import { OVMS_NATIVE_GRPC_PORT, OVMS_NATIVE_REST_PORT } from "../ovms-native-manager.js";
 import type { EmbeddingProvider, ProviderKind } from "./base.js";
@@ -23,11 +23,11 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
     });
 
     if (ovmsNativeResponse.ok) {
-      appLogger.info("EmbeddingFactory", "Auto-detected: OVMS Native (port 8083)");
+      log.i("FACTORY", "Auto-detected: OVMS Native (port 8083)");
       return { provider: "ovms-native", model: "multilingual-e5-base" };
     }
   } catch (_error) {
-    appLogger.debug("EmbeddingFactory", "OVMS Native not available, checking Docker");
+    log.d("FACTORY", "OVMS Native not available, checking Docker");
   }
 
   // Try vLLM Docker (port 8000)
@@ -38,11 +38,11 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
     });
 
     if (vllmResponse.ok) {
-      appLogger.info("EmbeddingFactory", "Auto-detected: vLLM Docker (port 8000)");
+      log.i("FACTORY", "Auto-detected: vLLM Docker (port 8000)");
       return { provider: "vllm", model: "intfloat/multilingual-e5-large-instruct" };
     }
   } catch (_error) {
-    appLogger.debug("EmbeddingFactory", "vLLM not available, checking TEI");
+    log.d("FACTORY", "vLLM not available, checking TEI");
   }
 
   // Try TEI (Text Embeddings Inference) Docker container
@@ -53,11 +53,11 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
     });
 
     if (teiResponse.ok) {
-      appLogger.info("EmbeddingFactory", "Auto-detected: TEI (Text Embeddings Inference) Docker");
+      log.i("FACTORY", "Auto-detected: TEI (Text Embeddings Inference) Docker");
       return { provider: "tei", model: "BAAI/bge-m3" };
     }
   } catch (_error) {
-    appLogger.debug("EmbeddingFactory", "TEI not available, checking Ollama");
+    log.d("FACTORY", "TEI not available, checking Ollama");
   }
 
   // Try Ollama with all-minilm (best quality)
@@ -75,7 +75,7 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
       const hasMinilm = models.some((m: any) => m.name?.includes("all-minilm") || m.model?.includes("all-minilm"));
 
       if (hasMinilm) {
-        appLogger.info("EmbeddingFactory", "Auto-detected: Ollama with all-minilm (best quality)");
+        log.i("FACTORY", "Auto-detected: Ollama with all-minilm (best quality)");
         return { provider: "ollama", model: "all-minilm" };
       }
 
@@ -85,7 +85,7 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
       );
 
       if (hasGranite) {
-        appLogger.info("EmbeddingFactory", "Auto-detected: Ollama with granite-embedding");
+        log.i("FACTORY", "Auto-detected: Ollama with granite-embedding");
         return { provider: "ollama", model: "granite-embedding:30m" };
       }
 
@@ -93,12 +93,12 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
       const embeddingModel = models.find((m: any) => m.name?.includes("embed") || m.model?.includes("embed"));
       if (embeddingModel) {
         const model = embeddingModel.name ?? embeddingModel.model ?? "all-minilm";
-        appLogger.info("EmbeddingFactory", `Auto-detected: Ollama with ${model}`);
+        log.i("FACTORY", `Auto-detected: Ollama with ${model}`);
         return { provider: "ollama", model };
       }
     }
   } catch (_error) {
-    appLogger.debug("EmbeddingFactory", "Ollama not available");
+    log.d("FACTORY", "Ollama not available");
   }
 
   // No provider available - throw error
@@ -182,7 +182,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
     const detected = await detectAvailableProvider();
     actualProvider = detected.provider;
     actualModel = detected.model;
-    appLogger.info("EmbeddingFactory", `Auto mode selected: ${actualProvider} with ${actualModel}`);
+    log.i("FACTORY", `Auto mode selected: ${actualProvider} with ${actualModel}`);
   }
 
   switch (actualProvider) {
@@ -197,7 +197,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         warmupText: opts.ollama?.warmupText,
         checkServer: opts.ollama?.checkServer,
         pullTimeoutMs: opts.ollama?.pullTimeoutMs,
-        logger: makeProviderLogger(appLogger, "PROVIDER_OLLAMA"),
+        logger: makeProviderLogger(null, "PROVIDER_OLLAMA"),
       });
 
     case "openai":
@@ -210,7 +210,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         concurrency: opts.openai.concurrency,
         dimensions: opts.openai.dimensions,
         maxBatchSize: opts.openai.maxBatchSize,
-        logger: makeProviderLogger(appLogger, "PROVIDER_OPENAI"),
+        logger: makeProviderLogger(null, "PROVIDER_OPENAI"),
       });
 
     case "cloudru":
@@ -221,7 +221,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         timeoutMs: opts.cloudru?.timeoutMs,
         concurrency: opts.cloudru?.concurrency,
         maxBatchSize: opts.cloudru?.maxBatchSize,
-        logger: makeProviderLogger(appLogger, "PROVIDER_CLOUDRU"),
+        logger: makeProviderLogger(null, "PROVIDER_CLOUDRU"),
       });
 
     case "huggingface":
@@ -233,12 +233,12 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         timeoutMs: opts.huggingface.timeoutMs,
         concurrency: opts.huggingface.concurrency,
         warmupText: opts.huggingface.warmupText,
-        logger: makeProviderLogger(appLogger, "PROVIDER_HUGGINGFACE"),
+        logger: makeProviderLogger(null, "PROVIDER_HUGGINGFACE"),
       });
 
     case "tei":
-      appLogger.info("FACTORY", `Creating TEI provider`, { tei: opts.tei });
-      appLogger.info("FACTORY", `TEI baseUrl=${opts.tei?.baseUrl || "UNDEFINED - will use default 8081"}`);
+      log.i("FACTORY", `Creating TEI provider`, { tei: opts.tei });
+      log.i("FACTORY", `TEI baseUrl=${opts.tei?.baseUrl || "UNDEFINED - will use default 8081"}`);
       return new TEIProvider({
         model: actualModel,
         baseUrl: opts.tei?.baseUrl,
@@ -246,7 +246,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         concurrency: opts.tei?.concurrency,
         checkServer: opts.tei?.checkServer,
         maxBatchSize: opts.tei?.maxBatchSize,
-        logger: makeProviderLogger(appLogger, "PROVIDER_TEI"),
+        logger: makeProviderLogger(null, "PROVIDER_TEI"),
       });
 
     case "ovms":
@@ -257,7 +257,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
       const defaultGrpcPort = OVMS_NATIVE_GRPC_PORT;
       const defaultBaseUrl = opts.ovms?.baseUrl || `http://127.0.0.1:${defaultRestPort}`;
 
-      appLogger.info("FACTORY", `Creating OVMS provider (${actualProvider})`, {
+      log.i("FACTORY", `Creating OVMS provider (${actualProvider})`, {
         ovms: opts.ovms,
         isNative,
         baseUrl: defaultBaseUrl,
@@ -280,7 +280,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         isNative, // Tells provider not to try Docker auto-start
         // Multi-device round-robin: ["embeddings-cpu", "embeddings-gpu"]
         endpoints: opts.ovms?.endpoints,
-        logger: makeProviderLogger(appLogger, `PROVIDER_${actualProvider.toUpperCase().replace("-", "_")}`),
+        logger: makeProviderLogger(null, `PROVIDER_${actualProvider.toUpperCase().replace("-", "_")}`),
       });
     }
 
@@ -293,7 +293,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         concurrency: opts.vllm?.concurrency,
         maxBatchSize: opts.vllm?.maxBatchSize,
         checkServer: opts.vllm?.checkServer,
-        logger: makeProviderLogger(appLogger, "PROVIDER_VLLM"),
+        logger: makeProviderLogger(null, "PROVIDER_VLLM"),
       });
     }
 

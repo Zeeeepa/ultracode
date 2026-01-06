@@ -16,13 +16,13 @@
  *  - 2026-01-01: v5 - Faiss-only backend, removed libSQL embeddings
  */
 
+import { log } from "../logging/index.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { DEFAULT_BRANCH, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
 import type { ProjectContext } from "../storage/libsql-graph-adapter.js";
 import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
-import { logger } from "../utils/logger.js";
 import { type FaissProvider, initializeFaissProvider } from "./faiss/faiss-provider.js";
 import { getRecommendedStrategy, type StrategyRecommendation } from "./gpu/adaptive-thresholds.js";
 
@@ -62,7 +62,7 @@ export class VectorStore {
   private currentContext: ProjectContext | null = null;
 
   constructor(config: Partial<VectorStoreConfig> = {}) {
-    logger.debug("VectorStore", "v5: Faiss-only backend");
+    log.d("VECTOR", "v5: Faiss-only backend");
 
     this.config = {
       dbPath: config.dbPath || "",
@@ -82,7 +82,7 @@ export class VectorStore {
     if (this.faissProvider) {
       await this.faissProvider.setProjectContext(context.projectHash, context.branchName);
     }
-    logger.debug("VectorStore", "Context set", { project: context.projectHash, branch: context.branchName });
+    log.d("VECTOR", "Context set", { project: context.projectHash, branch: context.branchName });
   }
 
   /**
@@ -128,7 +128,7 @@ export class VectorStore {
     // Return early if already initialized
     if (this.isInitialized) {
       if (this.debugMode) {
-        logger.debug("VectorStore", "Already initialized, returning early");
+        log.d("VECTOR", "Already initialized, returning early");
       }
       return;
     }
@@ -136,7 +136,7 @@ export class VectorStore {
     // Return existing promise if already initializing
     if (this.isInitializing && this.initializationPromise) {
       if (this.debugMode) {
-        logger.debug("VectorStore", "Initialization in progress, waiting...");
+        log.d("VECTOR", "Initialization in progress, waiting...");
       }
       return this.initializationPromise;
     }
@@ -149,7 +149,7 @@ export class VectorStore {
       await this.initializationPromise;
       this.isInitialized = true;
       if (this.debugMode) {
-        logger.debug("VectorStore", "Initialization completed successfully");
+        log.d("VECTOR", "Initialization completed successfully");
       }
     } catch (error) {
       // Reset state on failure
@@ -187,12 +187,12 @@ export class VectorStore {
         this.faissProvider.setProjectContext(this.currentContext.projectHash, this.currentContext.branchName);
       }
 
-      logger.info("VectorStore", "Initialized with Faiss backend", {
+      log.i("VECTOR", "Initialized with Faiss backend", {
         dimensions: this.config.dimensions,
         mode: "faiss-hnsw",
       });
     } catch (error) {
-      logger.error("VectorStore", "Initialization failed", { error: (error as Error).message });
+      log.e("VECTOR", "Initialization failed", { error: (error as Error).message });
       throw new Error(`Failed to initialize vector store`, { cause: error });
     }
   }
@@ -212,7 +212,9 @@ export class VectorStore {
    */
   private ensureContextSet(): ProjectContext {
     if (!this.currentContext) {
-      throw new Error("VectorStore project context not set. Call setProjectContext() or setProject() before operations.");
+      throw new Error(
+        "VectorStore project context not set. Call setProjectContext() or setProject() before operations.",
+      );
     }
     return this.currentContext;
   }
@@ -267,7 +269,7 @@ export class VectorStore {
     await provider.addBatch(unique);
 
     const timeMs = performance.now() - startTime;
-    logger.info("VectorStore", "Bulk insert via Faiss HNSW", { count: unique.length, ms: timeMs.toFixed(1) });
+    log.i("VECTOR", "Bulk insert via Faiss HNSW", { count: unique.length, ms: timeMs.toFixed(1) });
 
     return {
       usedFaiss: true,
@@ -315,7 +317,7 @@ export class VectorStore {
    */
   async dropVectorIndex(): Promise<void> {
     // Faiss HNSW handles live updates, no need to drop index
-    logger.debug("VectorStore", "dropVectorIndex: no-op with Faiss HNSW");
+    log.d("VECTOR", "dropVectorIndex: no-op with Faiss HNSW");
   }
 
   /**
@@ -323,7 +325,7 @@ export class VectorStore {
    */
   async rebuildVectorIndex(): Promise<void> {
     // Faiss HNSW maintains index automatically
-    logger.debug("VectorStore", "rebuildVectorIndex: no-op with Faiss HNSW");
+    log.d("VECTOR", "rebuildVectorIndex: no-op with Faiss HNSW");
   }
 
   /**
@@ -337,11 +339,11 @@ export class VectorStore {
       const flushed = await provider.flush();
       await provider.save();
 
-      logger.info("VectorStore", "Saved Faiss index to disk", { flushed });
+      log.i("VECTOR", "Saved Faiss index to disk", { flushed });
 
       return { flushed, saved: true };
     } catch (error) {
-      logger.error("VectorStore", "flushAndSave failed", { error: (error as Error).message });
+      log.e("VECTOR", "flushAndSave failed", { error: (error as Error).message });
       return { flushed: 0, saved: false };
     }
   }
@@ -406,7 +408,7 @@ export class VectorStore {
         return r;
       });
     } catch (error) {
-      logger.warn("VectorStore", "Failed to enrich results from LibSQL", { error: (error as Error).message });
+      log.w("VECTOR", "Failed to enrich results from LibSQL", { error: (error as Error).message });
       return results;
     }
   }
@@ -563,7 +565,7 @@ export class VectorStore {
    */
   async clear(): Promise<void> {
     // TODO: Implement clear in FaissProvider
-    logger.warn("VectorStore", "clear() not fully implemented for Faiss-only mode");
+    log.w("VECTOR", "clear() not fully implemented for Faiss-only mode");
   }
 
   /**
@@ -571,7 +573,7 @@ export class VectorStore {
    * WARNING: This is a destructive operation
    */
   async clearAll(): Promise<void> {
-    logger.warn("VectorStore", "clearAll() not implemented for Faiss-only mode");
+    log.w("VECTOR", "clearAll() not implemented for Faiss-only mode");
   }
 
   /**
@@ -584,7 +586,7 @@ export class VectorStore {
       // Note: FaissProvider is a singleton, don't close it
     }
     this.isInitialized = false;
-    logger.debug("VectorStore", "Closed (Faiss index saved)");
+    log.d("VECTOR", "Closed (Faiss index saved)");
   }
 
   /**
@@ -703,7 +705,7 @@ export class VectorStore {
    */
   async searchInBranch(queryVector: Float32Array, _targetBranch: string, limit = 10): Promise<SimilarityResult[]> {
     // For now, just search in current context
-    logger.warn("VectorStore", "searchInBranch: cross-branch search not implemented, using current context");
+    log.w("VECTOR", "searchInBranch: cross-branch search not implemented, using current context");
     return await this.search(queryVector, limit);
   }
 
@@ -723,7 +725,7 @@ export class VectorStore {
     onlyInBranch2: SimilarityResult[];
     inBoth: Array<{ id: string; branch1Similarity: number; branch2Similarity: number }>;
   }> {
-    logger.warn("VectorStore", "compareEmbeddingsBetweenBranches: not implemented in Faiss-only mode");
+    log.w("VECTOR", "compareEmbeddingsBetweenBranches: not implemented in Faiss-only mode");
     return {
       branch1Results: [],
       branch2Results: [],
@@ -758,7 +760,7 @@ export class VectorStore {
    * v5: Not implemented
    */
   async deleteBranch(_branchName: string): Promise<number> {
-    logger.warn("VectorStore", "deleteBranch: not implemented in Faiss-only mode");
+    log.w("VECTOR", "deleteBranch: not implemented in Faiss-only mode");
     return 0;
   }
 
@@ -767,7 +769,7 @@ export class VectorStore {
    * v5: Not implemented
    */
   async copyBranch(_sourceBranch: string, _targetBranch: string): Promise<number> {
-    logger.warn("VectorStore", "copyBranch: not implemented in Faiss-only mode");
+    log.w("VECTOR", "copyBranch: not implemented in Faiss-only mode");
     return 0;
   }
 }

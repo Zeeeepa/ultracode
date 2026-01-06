@@ -17,6 +17,7 @@
 
 import Graph from "graphology";
 import { bidirectional } from "graphology-shortest-path";
+import { log } from "../logging/index.js";
 import type { Entity, GraphStorage, Relationship } from "../types/storage.js";
 import type { CallProbability, ConfidenceLevel, RawPath, TraceActionType, TracePath, TraceStep } from "./types.js";
 
@@ -148,7 +149,7 @@ export class GraphologyPathBuilder {
 
     // Debug: log current project context
     const projectContext = (this.storage as any).getProjectContext?.();
-    console.error(`[GraphologyPathBuilder] Loading graph with project context: ${JSON.stringify(projectContext)}`);
+    log.d("GRAPHPATH", "loading_graph", { ctx: JSON.stringify(projectContext) });
 
     // Two queries instead of thousands
     const [entities, relationships] = await Promise.all([this.storage.getAllEntities(), this.getAllRelationships()]);
@@ -211,7 +212,7 @@ export class GraphologyPathBuilder {
     }
 
     if (resolvedExternalRefs > 0) {
-      console.error(`[GraphologyPathBuilder] Resolved ${resolvedExternalRefs} external references`);
+      log.d("GRAPHPATH", "resolved_ext_refs", { count: resolvedExternalRefs });
     }
 
     const loadTimeMs = performance.now() - startTime;
@@ -231,12 +232,14 @@ export class GraphologyPathBuilder {
       .sort((a, b) => b[1] - a[1])
       .map(([type, count]) => `${type}:${count}`)
       .join(", ");
-    console.error(
-      `[GraphologyPathBuilder] Loaded ${this.loadStats.nodes} nodes, ${this.loadStats.edges} edges in ${loadTimeMs.toFixed(0)}ms`,
-    );
-    console.error(`[GraphologyPathBuilder] Edge types: ${edgeTypeSummary}`);
+    log.i("GRAPHPATH", "graph_loaded", {
+      nodes: this.loadStats.nodes,
+      edges: this.loadStats.edges,
+      timeMs: +loadTimeMs.toFixed(0),
+    });
+    log.d("GRAPHPATH", "edge_types", { types: edgeTypeSummary });
     if (skippedMissingNodes > 0) {
-      console.error(`[GraphologyPathBuilder] Skipped ${skippedMissingNodes} edges with missing nodes`);
+      log.d("GRAPHPATH", "skipped_edges", { count: skippedMissingNodes });
     }
 
     return this.loadStats;
@@ -261,16 +264,19 @@ export class GraphologyPathBuilder {
       });
 
       batchNum++;
-      console.error(
-        `[GraphologyPathBuilder] Batch ${batchNum}: loaded ${batch.length} relationships (offset=${offset}, total=${allRelationships.length + batch.length})`,
-      );
+      log.d("GRAPHPATH", "rel_batch", {
+        batch: batchNum,
+        count: batch.length,
+        offset,
+        total: allRelationships.length + batch.length,
+      });
 
       allRelationships.push(...batch);
       offset += batchSize;
       hasMore = batch.length === batchSize;
     }
 
-    console.error(`[GraphologyPathBuilder] Total relationships loaded: ${allRelationships.length}`);
+    log.d("GRAPHPATH", "rels_total", { count: allRelationships.length });
     return allRelationships;
   }
 
@@ -474,13 +480,11 @@ export class GraphologyPathBuilder {
     // Debug: log source node info
     const sourceAttrs = this.graph.getNodeAttributes(fromId);
     const sourceNeighbors = this.getCallNeighbors(fromId);
-    console.error(
-      `[traceLinearFlow] Source: ${sourceAttrs.name} (${fromId}), call-neighbors: ${sourceNeighbors.length}`,
-    );
+    log.d("GRAPHPATH", "trace_src", { name: sourceAttrs.name, id: fromId, neighbors: sourceNeighbors.length });
     if (sourceNeighbors.length > 0 && sourceNeighbors.length <= 10) {
       for (const n of sourceNeighbors) {
         const nAttrs = this.graph.getNodeAttributes(n);
-        console.error(`  -> ${nAttrs.name} (${n})`);
+        log.t("GRAPHPATH", "trace_neighbor", { name: nAttrs.name, id: n });
       }
     }
 

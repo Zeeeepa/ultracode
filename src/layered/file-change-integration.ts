@@ -16,6 +16,7 @@
 
 import type { FileChange, GitWatcher } from "../core/git-watcher.js";
 import type { ILayeredIndex } from "../core/layered-index.js";
+import { log } from "../logging/index.js";
 import type { FileChangeEvent, IncrementalUpdateQueue } from "./incremental-update-queue.js";
 
 // =============================================================================
@@ -95,7 +96,8 @@ export class FileChangeIntegration {
     };
 
     if (this.config.debug) {
-      console.error(
+      log.i(
+        "FILECHANGE",
         `[FileChangeIntegration] Initialized with ` +
           `file=${this.config.enableFileWatching}, ` +
           `branch=${this.config.enableBranchWatching}, ` +
@@ -117,14 +119,14 @@ export class FileChangeIntegration {
     }
 
     if (this.config.debug) {
-      console.error("[FileChangeIntegration] Registering event handlers...");
+      log.i("FILECHANGE", "[FileChangeIntegration] Registering event handlers...");
     }
 
     // Register GitWatcher callbacks
     if (this.config.enableBranchWatching) {
       this.gitWatcher.onBranchChange((newBranch, oldBranch) => {
         this.handleBranchChange(newBranch, oldBranch).catch((error) => {
-          console.error("[FileChangeIntegration] Branch change handler failed:", error);
+          log.e("FILECHANGE", "branch_handler_fail", { err: String(error) });
         });
       });
     }
@@ -132,7 +134,7 @@ export class FileChangeIntegration {
     if (this.config.enableCommitWatching) {
       this.gitWatcher.onCommit((commitHash) => {
         this.handleCommit(commitHash).catch((error) => {
-          console.error("[FileChangeIntegration] Commit handler failed:", error);
+          log.e("FILECHANGE", "commit_handler_fail", { err: String(error) });
         });
       });
     }
@@ -140,7 +142,7 @@ export class FileChangeIntegration {
     if (this.config.enableFileWatching) {
       this.gitWatcher.onFileChange((files) => {
         this.handleFileChanges(files).catch((error) => {
-          console.error("[FileChangeIntegration] File change handler failed:", error);
+          log.e("FILECHANGE", "file_handler_fail", { err: String(error) });
         });
       });
     }
@@ -148,7 +150,8 @@ export class FileChangeIntegration {
     // Subscribe to update queue events (for logging/monitoring)
     this.updateQueue.on("batch-processed", (result) => {
       if (this.config.debug) {
-        console.error(
+        log.i(
+          "FILECHANGE",
           `[FileChangeIntegration] Batch processed: ` +
             `${result.filesProcessed} files in ${result.processingTimeMs}ms`,
         );
@@ -156,13 +159,13 @@ export class FileChangeIntegration {
     });
 
     this.updateQueue.on("full-rebuild-triggered", (info) => {
-      console.warn(`[FileChangeIntegration] Full rebuild triggered:`, info);
+      log.w("FILECHANGE", `[FileChangeIntegration] Full rebuild triggered:`, info);
     });
 
     this.isInitialized = true;
 
     if (this.config.debug) {
-      console.error("[FileChangeIntegration] Initialization complete");
+      log.i("FILECHANGE", "[FileChangeIntegration] Initialization complete");
     }
   }
 
@@ -182,7 +185,7 @@ export class FileChangeIntegration {
    * @param oldBranch - Old branch name
    */
   private async handleBranchChange(newBranch: string, oldBranch: string): Promise<void> {
-    console.error(`[FileChangeIntegration] Branch changed: ${oldBranch} -> ${newBranch}`);
+    log.i("FILECHANGE", `[FileChangeIntegration] Branch changed: ${oldBranch} -> ${newBranch}`);
 
     this.currentBranch = newBranch;
     this.stats.totalBranchSwitches++;
@@ -192,13 +195,13 @@ export class FileChangeIntegration {
       // Ensure branch delta exists (will compute from git diff if missing)
       const delta = await this.layeredIndex.ensureBranchDelta(newBranch);
 
-      console.error(`[FileChangeIntegration] Branch delta ready: ${delta.totalChanges} changes`);
+      log.i("FILECHANGE", `[FileChangeIntegration] Branch delta ready: ${delta.totalChanges} changes`);
 
       // Get changed files between branches
       const changedFiles = await this.gitWatcher.getChangedFilesBetweenBranches(oldBranch, newBranch);
 
       if (this.config.debug) {
-        console.error(`[FileChangeIntegration] ${changedFiles.length} files changed between branches`);
+        log.i("FILECHANGE", `[FileChangeIntegration] ${changedFiles.length} files changed between branches`);
       }
 
       // Check if we should do incremental update or full rebuild
@@ -208,13 +211,14 @@ export class FileChangeIntegration {
         this.updateQueue.enqueueBatch(events);
       } else if (changedFiles.length > this.config.maxIncrementalFiles) {
         // Too many files - full rebuild recommended
-        console.warn(
+        log.w(
+          "FILECHANGE",
           `[FileChangeIntegration] ${changedFiles.length} files changed, ` +
             `exceeds max ${this.config.maxIncrementalFiles} - consider full rebuild`,
         );
       }
     } catch (error) {
-      console.error(`[FileChangeIntegration] Failed to handle branch change:`, error);
+      log.e("FILECHANGE", "branch_change_fail", { err: String(error) });
     }
   }
 
@@ -230,7 +234,7 @@ export class FileChangeIntegration {
    */
   private async handleCommit(commitHash: string): Promise<void> {
     if (this.config.debug) {
-      console.error(`[FileChangeIntegration] New commit: ${commitHash.slice(0, 8)}`);
+      log.i("FILECHANGE", `[FileChangeIntegration] New commit: ${commitHash.slice(0, 8)}`);
     }
 
     this.stats.totalCommits++;
@@ -242,7 +246,7 @@ export class FileChangeIntegration {
 
       if (changedFiles.length > 0) {
         if (this.config.debug) {
-          console.error(`[FileChangeIntegration] ${changedFiles.length} files changed in commit`);
+          log.i("FILECHANGE", `[FileChangeIntegration] ${changedFiles.length} files changed in commit`);
         }
 
         const events = this.convertFileChangesToEvents(changedFiles, this.currentBranch);
@@ -255,7 +259,7 @@ export class FileChangeIntegration {
         await this.layeredIndex.ensureBranchDelta(this.currentBranch);
       }
     } catch (error) {
-      console.error(`[FileChangeIntegration] Failed to handle commit:`, error);
+      log.e("FILECHANGE", "commit_fail", { err: String(error) });
     }
   }
 
@@ -266,7 +270,7 @@ export class FileChangeIntegration {
    */
   private async handleFileChanges(files: string[]): Promise<void> {
     if (this.config.debug) {
-      console.error(`[FileChangeIntegration] ${files.length} files changed`);
+      log.i("FILECHANGE", `[FileChangeIntegration] ${files.length} files changed`);
     }
 
     this.stats.totalFileChanges += files.length;
@@ -283,7 +287,7 @@ export class FileChangeIntegration {
 
       this.updateQueue.enqueueBatch(events);
     } catch (error) {
-      console.error(`[FileChangeIntegration] Failed to handle file changes:`, error);
+      log.e("FILECHANGE", "file_changes_fail", { err: String(error) });
     }
   }
 
@@ -359,11 +363,11 @@ export class FileChangeIntegration {
    * Shutdown integration
    */
   async shutdown(): Promise<void> {
-    console.error("[FileChangeIntegration] Shutting down...");
+    log.i("FILECHANGE", "[FileChangeIntegration] Shutting down...");
 
     // Flush pending changes
     await this.updateQueue.flush();
 
-    console.error("[FileChangeIntegration] Shutdown complete");
+    log.i("FILECHANGE", "[FileChangeIntegration] Shutdown complete");
   }
 }

@@ -9,6 +9,7 @@
  * - RTX 5060: ~0.1-0.15ms per 10K vectors
  */
 
+import { log } from "../../logging/index.js";
 import type { GPUInfo } from "../detection/gpu-detector.js";
 import type { BackendCapabilities, VectorBackend } from "./base.js";
 
@@ -99,7 +100,7 @@ export class WebGPUBackend implements VectorBackend {
       const adapter = await this.getAdapter();
       return adapter !== null;
     } catch (error) {
-      console.debug("[WebGPU Backend] Not available:", (error as Error).message);
+      log.d("WEBGPUBACKEND", "unavail", { err: (error as Error).message });
       return false;
     }
   }
@@ -133,9 +134,9 @@ export class WebGPUBackend implements VectorBackend {
     // Request device
     this.device = await this.adapter.requestDevice();
 
-    console.error("[WebGPU Backend] Initialized:", {
-      maxBufferSize: this.adapter.limits.maxStorageBufferBindingSize,
-      maxWorkgroupSize: this.adapter.limits.maxComputeWorkgroupSizeX,
+    log.i("WEBGPUBACKEND", "init", {
+      maxBuf: this.adapter.limits.maxStorageBufferBindingSize,
+      maxWg: this.adapter.limits.maxComputeWorkgroupSizeX,
     });
 
     // Create compute shader module
@@ -272,6 +273,6 @@ export class WebGPUBackend implements VectorBackend {
     }
     this.pipeline = null;
     this.bindGroupLayout = null;
-    console.error("[WebGPU Backend] Closed");
+    log.i("WEBGPUBACKEND", "closed");
   }
 }

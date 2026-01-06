@@ -5,10 +5,10 @@
  * Used by DevAgent to configure embedding generation in parser workers.
  */
 
+import { log } from "../logging/index.js";
 import { initVectorDumpDir } from "../semantic/vector-dump.js";
 import type { EmbeddingProviderKind, WorkerEmbeddingConfig } from "../types/semantic.js";
 import { loadSemanticConfig } from "../utils/config-paths.js";
-import { logger } from "../utils/logger.js";
 import { getConfig } from "./yaml-config.js";
 
 /**
@@ -146,15 +146,15 @@ export function buildWorkerEmbeddingConfig(cleanDumpDir = true): WorkerEmbedding
 
   // Debug logging (only on first call)
   if (!cacheInitialized) {
-    logger.debug("WorkerEmbeddingConfig", `semanticConfig exists: ${!!semanticConfig}`);
+    log.d("WORKEMBCONF", "config_check", { hasSemanticConfig: !!semanticConfig });
     if (embeddingConfig) {
-      logger.debug("WorkerEmbeddingConfig", `platform=${embeddingConfig.platform}, hasVllm=${!!embeddingConfig.vllm}`);
+      log.d("WORKEMBCONF", "config_details", { platform: embeddingConfig.platform, hasVllm: !!embeddingConfig.vllm });
     }
   }
 
   if (!embeddingConfig) {
     if (!cacheInitialized) {
-      logger.debug("WorkerEmbeddingConfig", "No embedding config found, returning null");
+      log.d("WORKEMBCONF", "no_config_found", {});
     }
     cacheInitialized = true;
     cachedConfig = null;
@@ -266,10 +266,14 @@ export function buildWorkerEmbeddingConfig(cleanDumpDir = true): WorkerEmbedding
 
   // Log only on first call
   if (!cacheInitialized) {
-    logger.info(
-      "WorkerEmbeddingConfig",
-      `Built config: provider=${providerKind}, model=${modelName}, dims=${dimensions}, contextTokens=${contextTokens}, batchSize=${batchSize}, dumpDir=${vectorDumpDir}`,
-    );
+    log.i("WORKEMBCONF", "config_built", {
+      provider: providerKind,
+      model: modelName,
+      dims: dimensions,
+      contextTokens,
+      batchSize,
+      dumpDir: vectorDumpDir,
+    });
   }
 
   // Cache for subsequent read-only calls

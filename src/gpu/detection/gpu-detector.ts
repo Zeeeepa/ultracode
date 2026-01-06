@@ -18,6 +18,7 @@
  */
 
 import { execSync } from "node:child_process";
+import { log } from "../../logging/index.js";
 
 // =============================================================================
 // CONSTANTS
@@ -76,14 +77,14 @@ export class GPUDetector {
         info.memoryMB = cudaInfo.totalMemory;
         info.cudaAvailable = true;
 
-        console.error("[GPUDetector] CUDA GPU detected:", {
+        log.i("GPUDETECT", "cuda_found", {
           model: cudaInfo.name,
           cc: cudaInfo.computeCapability,
-          memoryGB: (cudaInfo.totalMemory / 1024).toFixed(1),
+          memGB: (cudaInfo.totalMemory / 1024).toFixed(1),
         });
       }
     } catch (_e) {
-      console.debug("[GPUDetector] CUDA not available");
+      log.d("GPUDETECT", "cuda_unavail");
     }
 
     // 2. Check if WebGPU should be skipped for this GPU
@@ -93,17 +94,16 @@ export class GPUDetector {
     if (forceDisableWebGPU) {
       info.webgpuSkipped = true;
       info.webgpuSkipReason = "Disabled via WEBGPU_FORCE_DISABLE=1";
-      console.error("[GPUDetector] WebGPU disabled via environment variable");
+      log.i("GPUDETECT", "webgpu_disabled", { env: "WEBGPU_FORCE_DISABLE" });
     } else if (!webgpuSafetyCheck.safe && !forceEnableWebGPU) {
       info.webgpuSkipped = true;
       info.webgpuSkipReason = webgpuSafetyCheck.reason;
-      console.error(`[GPUDetector] WebGPU skipped: ${webgpuSafetyCheck.reason}`);
-      console.error("[GPUDetector] To force enable, set WEBGPU_FORCE_ENABLE=1");
+      log.w("GPUDETECT", "webgpu_skipped", { reason: webgpuSafetyCheck.reason });
+      log.i("GPUDETECT", "webgpu_hint", { hint: "set WEBGPU_FORCE_ENABLE=1" });
     } else {
       // 3. Try WebGPU detection (all vendors)
       if (forceEnableWebGPU && !webgpuSafetyCheck.safe) {
-        console.warn("[GPUDetector] WebGPU force-enabled despite potential instability!");
-        console.warn(`[GPUDetector] Known issue: ${webgpuSafetyCheck.reason}`);
+        log.w("GPUDETECT", "webgpu_forced", { issue: webgpuSafetyCheck.reason });
       }
 
       try {
@@ -118,13 +118,13 @@ export class GPUDetector {
             info.memoryMB = webgpuInfo.memoryMB;
           }
 
-          console.error("[GPUDetector] WebGPU available:", {
+          log.i("GPUDETECT", "webgpu_avail", {
             vendor: webgpuInfo.vendor,
             adapter: webgpuInfo.adapter,
           });
         }
       } catch (_e) {
-        console.debug("[GPUDetector] WebGPU not available");
+        log.d("GPUDETECT", "webgpu_unavail");
       }
     }
 

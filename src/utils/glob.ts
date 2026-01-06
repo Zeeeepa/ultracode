@@ -16,6 +16,7 @@
  */
 
 import { join, relative, sep } from "node:path";
+import { log } from "../logging/index.js";
 import { features } from "./runtime.js";
 
 // =============================================================================
@@ -370,5 +371,5 @@ export async function findConfigFiles(cwd: string, options?: GlobOptions): Promi
  * Log glob info (for debugging)
  */
 export function logGlobInfo(): void {
-  console.error(`[Glob] Bun.Glob: ${features.bunGlob ? "enabled" : "disabled (using Node fallback)"}`);
+  log.i("GLOB", `[Glob] Bun.Glob: ${features.bunGlob ? "enabled" : "disabled (using Node fallback)"}`);
 }

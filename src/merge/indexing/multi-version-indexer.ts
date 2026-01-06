@@ -2,6 +2,7 @@ import type { ConductorOrchestrator } from "../../agents/conductor-orchestrator.
 import { getOrCreateAgent } from "../../core/agent-registry.js";
 import type { BranchManager } from "../../core/branch-manager.js";
 import { getGlobalContainer } from "../../core/di-container.js";
+import { log } from "../../logging/index.js";
 import { AgentType } from "../../types/agent.js";
 import type { GitIntegration } from "../integration/git-integration.js";
 import type { VersionedIndex } from "../models/versioned-index.js";
@@ -70,7 +71,7 @@ export class MultiVersionIndexer {
     const startTime = Date.now();
     let cacheHits = 0;
 
-    console.error(`[MultiVersionIndexer] Starting 3-way indexing: ${branchA} + ${branchB}`);
+    log.i("MULTIVIDX", `[MultiVersionIndexer] Starting 3-way indexing: ${branchA} + ${branchB}`);
 
     try {
       // 1. Find merge base (common ancestor)
@@ -79,7 +80,7 @@ export class MultiVersionIndexer {
         throw new Error(`No merge base found between ${branchA} and ${branchB}`);
       }
 
-      console.error(`[MultiVersionIndexer] Merge base: ${mergeBase.slice(0, 8)}`);
+      log.i("MULTIVIDX", `[MultiVersionIndexer] Merge base: ${mergeBase.slice(0, 8)}`);
 
       // 2. Index base commit
       const baseIndex = await this.indexBranch(mergeBase, "base", options);
@@ -106,8 +107,8 @@ export class MultiVersionIndexer {
 
       const indexingTimeMs = Date.now() - startTime;
 
-      console.error(`[MultiVersionIndexer] Completed in ${indexingTimeMs}ms`);
-      console.error(`[MultiVersionIndexer] Total units: ${totalUnits}, Cache hits: ${cacheHits}/3`);
+      log.i("MULTIVIDX", `[MultiVersionIndexer] Completed in ${indexingTimeMs}ms`);
+      log.i("MULTIVIDX", `[MultiVersionIndexer] Total units: ${totalUnits}, Cache hits: ${cacheHits}/3`);
 
       return {
         base: baseIndex,
@@ -137,13 +138,13 @@ export class MultiVersionIndexer {
    * 3. If no → checkout branch, run full index, save to cache
    */
   private async indexBranch(branch: string, label: string, options: IndexingOptions): Promise<VersionedIndex> {
-    console.error(`[MultiVersionIndexer] Indexing ${label}...`);
+    log.i("MULTIVIDX", `[MultiVersionIndexer] Indexing ${label}...`);
 
     // Check if we can use cached index
     if (!options.fullScan && !options.reset) {
       const cachedIndex = await this.loadCachedIndex(branch);
       if (cachedIndex) {
-        console.error(`[MultiVersionIndexer] Loaded ${label} from cache`);
+        log.i("MULTIVIDX", `[MultiVersionIndexer] Loaded ${label} from cache`);
         return cachedIndex;
       }
     }
@@ -168,7 +169,7 @@ export class MultiVersionIndexer {
     await this.saveCachedIndex(branch, index);
 
     const elapsed = Date.now() - startTime;
-    console.error(`[MultiVersionIndexer] Indexed ${label} in ${elapsed}ms (${index.stats.totalUnits} units)`);
+    log.i("MULTIVIDX", `[MultiVersionIndexer] Indexed ${label} in ${elapsed}ms (${index.stats.totalUnits} units)`);
 
     return index;
   }
@@ -317,14 +318,14 @@ export class MultiVersionIndexer {
       // Get GraphStorage from conductor
       const storage = (this.conductor as any).getGraphStorage?.();
       if (!storage) {
-        console.warn("[MultiVersionIndexer] GraphStorage not available for fallback");
+        log.w("MULTIVIDX", "[MultiVersionIndexer] GraphStorage not available for fallback");
         return;
       }
 
       // Load all entities from storage
       const entities = await storage.getAllEntities?.();
       if (!entities || entities.length === 0) {
-        console.warn("[MultiVersionIndexer] No entities found in GraphStorage");
+        log.w("MULTIVIDX", "[MultiVersionIndexer] No entities found in GraphStorage");
         return;
       }
 
@@ -333,9 +334,9 @@ export class MultiVersionIndexer {
         this.addUnitToIndex(index, codeUnit);
       }
 
-      console.error(`[MultiVersionIndexer] Loaded ${index.stats.totalUnits} units from GraphStorage`);
+      log.i("MULTIVIDX", "storage_loaded", { units: index.stats.totalUnits });
     } catch (error) {
-      console.error("[MultiVersionIndexer] Failed to populate from storage:", error);
+      log.e("MULTIVIDX", "storage_populate_fail", { err: String(error) });
     }
   }
 
@@ -358,7 +359,8 @@ export class MultiVersionIndexer {
       // Check if index is up-to-date
       const currentCommit = this.gitIntegration.getCommitHash(branch);
       if (metadata.lastCommitHash !== currentCommit) {
-        console.error(
+        log.i(
+          "MULTIVIDX",
           `[MultiVersionIndexer] Cache outdated for ${branch} (${metadata.lastCommitHash?.slice(0, 8)} vs ${currentCommit.slice(0, 8)})`,
         );
         return null;
@@ -391,7 +393,7 @@ export class MultiVersionIndexer {
 
       return index;
     } catch (error) {
-      console.error(`[MultiVersionIndexer] Failed to load cached index for ${branch}:`, error);
+      log.e("MULTIVIDX", "cache_load_fail", { branch, err: String(error) });
       return null;
     }
   }
@@ -419,9 +421,9 @@ export class MultiVersionIndexer {
         accessedAt: Date.now(),
       });
 
-      console.error(`[MultiVersionIndexer] Saved cache for ${branch} (${commitHash.slice(0, 8)})`);
+      log.i("MULTIVIDX", "cache_saved", { branch, commit: commitHash.slice(0, 8) });
     } catch (error) {
-      console.error(`[MultiVersionIndexer] Failed to save cached index for ${branch}:`, error);
+      log.e("MULTIVIDX", "cache_save_fail", { branch, err: String(error) });
     }
   }
 

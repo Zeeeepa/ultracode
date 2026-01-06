@@ -18,6 +18,7 @@
  */
 
 import { dirname, extname, join } from "node:path";
+import { log } from "../logging/index.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
 import { mkdir, readdir, readText, rm, stat, writeFile } from "../utils/file-ops.js";
@@ -450,19 +451,19 @@ export class FileOperations {
     // Note: VectorStore doesn't have a direct method to update filePath
     // In full implementation, would need to add this method to VectorStore
     // For now, return 0
-    console.warn("[FileOperations] Embedding filePath update not implemented");
+    log.w("FILEOPS", "emb_path_not_impl");
     return 0;
   }
 
   private async duplicateEmbeddings(_source: string, _target: string): Promise<number> {
     // Note: Would need to implement in VectorStore
-    console.warn("[FileOperations] Embedding duplication not implemented");
+    log.w("FILEOPS", "emb_dup_not_impl");
     return 0;
   }
 
   private async mergeEmbeddings(_files: string[], _targetPath: string): Promise<number> {
     // Note: Would need to implement in VectorStore
-    console.warn("[FileOperations] Embedding merge not implemented");
+    log.w("FILEOPS", "emb_merge_not_impl");
     return 0;
   }
 

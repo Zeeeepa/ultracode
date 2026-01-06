@@ -10,6 +10,7 @@ import { extname } from "node:path";
 import { buildWorkerEmbeddingConfig } from "../config/worker-embedding-config.js";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
+import { log } from "../logging/index.js";
 import { getFaissProvider } from "../semantic/faiss/faiss-provider.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
 import { setGlobalProjectContext } from "../storage/graph-storage-factory.js";
@@ -17,7 +18,6 @@ import { setGlobalProjectContext } from "../storage/graph-storage-factory.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParseResult, ParserOptions } from "../types/parser.js";
 import { hashText } from "../utils/fast-hash.js";
-import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 import { createHeuristicEntities } from "./dev/heuristic-parser.js";
 import { collectFiles, isCodeExtension, isDataExtension } from "./dev/index.js";
@@ -74,24 +74,24 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         try {
           this.parserAgent = new ParserAgent();
           await this.parserAgent.initialize();
-          console.error(`[DevAgent ${this.id}] ParserAgent initialized`);
+          log.i("DEVAGENT", "parser_init_ok");
         } catch (e) {
-          console.warn(`[DevAgent ${this.id}] ParserAgent unavailable, fallback to heuristic indexing:`, e);
+          log.w("DEVAGENT", "parser_unavail", { err: String(e) });
           this.parserAgent = null;
         }
       }
 
       // Initialize IndexerAgent with current indexing directory context
       const currentDir = getCurrentIndexingDirectory() || process.cwd();
-      console.error(`[DevAgent ${this.id}] Using project directory for IndexerAgent: ${currentDir}`);
+      log.i("DEVAGENT", "indexer_ctx", { dir: currentDir });
       this.indexerAgent = new IndexerAgent();
       await this.indexerAgent.initialize();
       // Set project context on GLOBAL GraphStorage singleton
       setGlobalProjectContext(currentDir);
-      console.error(`[DevAgent ${this.id}] Called setGlobalProjectContext(${currentDir}) during init`);
-      console.error(`[DevAgent ${this.id}] IndexerAgent initialized`);
+      log.i("DEVAGENT", "global_ctx_set", { dir: currentDir });
+      log.i("DEVAGENT", "indexer_init_ok");
     } catch (error) {
-      console.error(`[DevAgent ${this.id}] Failed to initialize sub-agents:`, error);
+      log.e("DEVAGENT", "subagent_init_fail", { err: String(error) });
       throw error;
     }
 
@@ -118,14 +118,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       const data = entry.data as { files: string[]; repositoryPath?: string; source?: string };
       // Only process events from git-watcher to avoid circular loop
       if (data.files && data.files.length > 0 && data.source?.startsWith("git-watcher")) {
-        console.error(
-          `[DevAgent ${this.id}] Received file change event: ${data.files.length} files from ${data.source}`,
-        );
+        log.d("DEVAGENT", "file_change_evt", { cnt: data.files.length, src: data.source });
         await this.handleIncrementalReindex(data.files, data.repositoryPath);
       }
     });
 
-    console.error(`[DevAgent ${this.id}] Initialized and ready for implementation tasks`);
+    log.i("DEVAGENT", "init_ready");
   }
 
   protected canProcessTask(task: AgentTask): boolean {
@@ -140,12 +138,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   }
 
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    console.error(`[DevAgent ${this.id}] Received message from ${message.from}: ${message.type}`);
+    log.d("DEVAGENT", "recv_msg", { from: message.from, type: message.type });
     // Handle inter-agent messages if needed
   }
 
   protected async processTask(task: AgentTask): Promise<unknown> {
-    console.error(`[DevAgent ${this.id}] Processing task ${task.id} of type ${task.type}`);
+    log.d("DEVAGENT", "proc_task", { id: task.id, type: task.type });
 
     try {
       switch (task.type) {
@@ -166,14 +164,14 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           return await this.delegateTask(task);
       }
     } catch (error) {
-      console.error(`[DevAgent ${this.id}] Error processing task:`, error);
+      log.e("DEVAGENT", "task_error", { err: String(error) });
       throw error;
     }
   }
 
   private async handleIndexTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.error(`[DevAgent ${this.id}] Starting real indexing for ${payload.directory}`);
+    log.i("DEVAGENT", "index_start", { dir: payload.directory });
 
     if (!this.indexerAgent) {
       throw new Error("Indexer agent not initialized");
@@ -183,7 +181,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     setGlobalProjectContext(payload.directory);
     // v3: Also set context on IndexerAgent (for BatchOperations)
     this.indexerAgent.setProjectContext(payload.directory);
-    console.error(`[DevAgent ${this.id}] Set project context: ${payload.directory}`);
+    log.d("DEVAGENT", "set_ctx", { dir: payload.directory });
 
     const result = {
       status: "started",
@@ -214,7 +212,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
   private async handleImplementationTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.error(`[DevAgent ${this.id}] Implementing: ${payload.description || "task"}`);
+    log.i("DEVAGENT", "impl_start", { desc: payload.description || "task" });
 
     // Implementation tasks would involve code generation, modifications, etc.
     // For now, we'll return a success response
@@ -232,7 +230,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
   private async handleRefactorTask(task: AgentTask): Promise<unknown> {
     const payload = task.payload as any;
-    console.error(`[DevAgent ${this.id}] Refactoring: ${payload.target || "code"}`);
+    log.i("DEVAGENT", "refactor_start", { target: payload.target || "code" });
 
     return {
       status: "completed",
@@ -257,10 +255,10 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       throw new Error("Parse task requires filePath in payload");
     }
 
-    console.error(`[DevAgent ${this.id}] Parsing file: ${filePath}`);
+    log.d("DEVAGENT", "parse_file", { file: filePath });
 
     if (!this.parserAgent) {
-      console.warn(`[DevAgent ${this.id}] ParserAgent not available, returning empty result`);
+      log.w("DEVAGENT", "parser_unavail_empty");
       return {
         filePath,
         entities: [],
@@ -274,7 +272,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       // Use ParserAgent's parseFile directly for single file parsing
       const result = await this.parserAgent.parseFile(filePath, {});
 
-      console.error(`[DevAgent ${this.id}] Parsed ${filePath}: ${result.entities?.length || 0} entities`);
+      log.d("DEVAGENT", "parsed_ok", { file: filePath, cnt: result.entities?.length || 0 });
 
       return {
         filePath,
@@ -283,7 +281,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         timestamp: Date.now(),
       };
     } catch (error) {
-      console.error(`[DevAgent ${this.id}] Parse error for ${filePath}:`, error);
+      log.e("DEVAGENT", "parse_err", { file: filePath, err: String(error) });
       // Return empty result instead of crashing
       return {
         filePath,
@@ -296,7 +294,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   }
 
   private async delegateTask(task: AgentTask): Promise<unknown> {
-    console.error(`[DevAgent ${this.id}] Delegating task ${task.id} to appropriate agent`);
+    log.d("DEVAGENT", "delegate_task", { id: task.id });
 
     // For now, just return success
     // In a full implementation, this would coordinate with other agents
@@ -312,7 +310,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     const directory = payload.directory;
     const excludePatterns = payload.excludePatterns || [];
 
-    logger.info("DEV_AGENT", "Starting indexing", {
+    log.i("DEVAGENT", "Starting indexing", {
       directory,
       excludePatternsCount: excludePatterns.length,
       samplePatterns: excludePatterns.slice(0, 5),
@@ -320,7 +318,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
     const collectResult = collectFiles(directory, { excludePatterns, agentId: this.id });
     const allFiles = collectResult.files;
-    logger.info("DEV_AGENT", "Files collected", { count: allFiles.length });
+    log.i("DEVAGENT", "Files collected", { count: allFiles.length });
 
     // Separate code files (AST parsing) from data files (heuristic entities)
     const codeFiles: string[] = [];
@@ -333,7 +331,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         dataFiles.push(file);
       }
     }
-    logger.info("DEV_AGENT", "Files separated", {
+    log.i("DEVAGENT", "Files separated", {
       codeFiles: codeFiles.length,
       dataFiles: dataFiles.length,
     });
@@ -343,7 +341,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     // No artificial batching needed here, ParserAgent handles parallelization
     const effectiveBatchSize = Infinity;
 
-    console.error(`[${this.id}] Sending all ${codeFiles.length} files to parser in one batch`);
+    log.i("DEVAGENT", "parser_batch", { files: codeFiles.length });
     const parseOptions: ParserOptions = isDebugMode
       ? {
           batchSize: Math.max(1, Math.min(3, effectiveBatchSize)),
@@ -359,7 +357,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       const embeddingConfig = buildWorkerEmbeddingConfig();
       if (embeddingConfig) {
         this.parserAgent.setEmbeddingConfig(embeddingConfig);
-        logger.info("DEV_AGENT", "Embedding config passed to parser workers", {
+        log.i("DEVAGENT", "Embedding config passed to parser workers", {
           provider: embeddingConfig.provider,
           model: embeddingConfig.modelName,
         });
@@ -368,19 +366,19 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         // When a worker completes, Faiss loads its vectors immediately
         const faissProvider = getFaissProvider();
         const dimensions = embeddingConfig.dimensions || 384;
-        logger.info("DEV_AGENT", "Setting up incremental Faiss callback", {
+        log.i("DEVAGENT", "Setting up incremental Faiss callback", {
           dimensions,
           faissReady: faissProvider.isReady(),
         });
         this.parserAgent.setVectorsWrittenCallback((workerId, count, _dumpDir) => {
-          logger.info("DEV_AGENT", ">>> vectors.written callback TRIGGERED", { workerId, count });
+          log.i("DEVAGENT", ">>> vectors.written callback TRIGGERED", { workerId, count });
           faissProvider
             .loadWorkerDump(workerId, dimensions)
             .then((result) => {
-              logger.info("DEV_AGENT", "Faiss loadWorkerDump completed", { workerId, ...result });
+              log.i("DEVAGENT", "Faiss loadWorkerDump completed", { workerId, ...result });
             })
             .catch((err) => {
-              logger.warn("DEV_AGENT", "Failed to load worker dump", { workerId, error: (err as Error).message });
+              log.w("DEVAGENT", "Failed to load worker dump", { workerId, error: (err as Error).message });
             });
         });
       }
@@ -404,7 +402,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         // Queue for batch indexing (non-blocking, accumulates data)
         this.indexerAgent!.queueForIndexing(result.entities, result.filePath, result.relationships || []);
       });
-      logger.info("DEV_AGENT", "Streaming mode enabled (batch accumulator)");
+      log.i("DEVAGENT", "Streaming mode enabled (batch accumulator)");
     }
 
     // Process CODE files through ParserAgent (AST parsing with worker pools)
@@ -420,7 +418,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             const ext = extname(f).toLowerCase() || "(no ext)";
             batchExtStats[ext] = (batchExtStats[ext] || 0) + 1;
           }
-          logger.info("DEV_AGENT", "Sending batch to parser", {
+          log.i("DEVAGENT", "Sending batch to parser", {
             batchSize: batch.length,
             batchIndex: i,
             extensions: batchExtStats,
@@ -437,12 +435,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           const results = (await this.parserAgent.process(parseTask)) as any[]; // ParseResult[]
 
           // DEBUG: Log parse results count
-          logger.info("DEV_AGENT", "Parser batch completed", {
+          log.i("DEVAGENT", "Parser batch completed", {
             batchSent: batch.length,
             resultsReceived: results?.length || 0,
             batchIndex: i,
           });
-          logger.flush(); // Ensure batch completion is visible in logs
+          log.flush(); // Ensure batch completion is visible in logs
 
           // VERBOSE DEBUG: Analyze results structure
           let resultsWithFilePath = 0;
@@ -460,9 +458,14 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               }
             }
           }
-          console.error(
-            `[DevAgent] Batch ${i} parse analysis: results=${results?.length || 0}, withFilePath=${resultsWithFilePath}, withEntities=${resultsWithEntities}, emptyEntities=${resultsWithEmptyEntities}, totalEntities=${totalEntityCount}`,
-          );
+          log.d("DEVAGENT", "batch_parse_analysis", {
+            batch: i,
+            results: results?.length || 0,
+            withPath: resultsWithFilePath,
+            withEnts: resultsWithEntities,
+            empty: resultsWithEmptyEntities,
+            total: totalEntityCount,
+          });
 
           const byFile = new Map<string, { entities: any[]; relationships: any[] }>();
 
@@ -500,22 +503,26 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               totalRelationshipsExtracted += res.relationships.length;
             }
           }
-          console.error(
-            `[DevAgent] Batch ${i} relationships: resultsWithRels=${resultsWithRelationships}, totalRels=${totalRelationshipsExtracted}`,
-          );
+          log.d("DEVAGENT", "batch_rels", {
+            batch: i,
+            withRels: resultsWithRelationships,
+            total: totalRelationshipsExtracted,
+          });
 
           // DEBUG: Log how many unique files have results (totalEntityCount already calculated above)
-          logger.info("DEV_AGENT", "Files ready for indexing", {
+          log.i("DEVAGENT", "Files ready for indexing", {
             uniqueFiles: byFile.size,
             batchIndex: i,
             totalEntities: totalEntityCount,
             totalRelationships: totalRelationshipsExtracted,
           });
 
-          // VERBOSE DEBUG: Show actual numbers in console
-          console.error(
-            `[DevAgent] Batch ${i}: sent=${batch.length}, results=${results?.length || 0}, uniqueFiles=${byFile.size}`,
-          );
+          log.d("DEVAGENT", "batch_summary", {
+            batch: i,
+            sent: batch.length,
+            results: results?.length || 0,
+            unique: byFile.size,
+          });
 
           // PARALLEL indexing with frequent yields to allow IPC callbacks
           // OPTIMIZATION 1: Reduced from 32 to 8 for more frequent event loop yields
@@ -525,7 +532,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           const fileEntries = Array.from(byFile.entries()).filter(([file]) => !streamingIndexedFiles.has(file));
 
           if (fileEntries.length > 0) {
-            logger.info("DEV_AGENT", "Post-batch indexing (non-streamed files)", {
+            log.i("DEVAGENT", "Post-batch indexing (non-streamed files)", {
               total: byFile.size,
               alreadyStreamed: streamingIndexedFiles.size,
               remaining: fileEntries.length,
@@ -555,7 +562,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 const indexResult = await this.indexerAgent?.enqueue(indexTask);
                 return { result: indexResult as any, error: null };
               } catch (err) {
-                console.error(`[DevAgent ${this.id}] Indexing failed for file ${file}:`, (err as Error).message);
+                log.w("DEVAGENT", "index_file_fail", { file, err: (err as Error).message });
                 return { result: null, error: err };
               }
             })();
@@ -764,21 +771,21 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 filesProcessed += 1;
               }
             } catch (err) {
-              console.error(`[DevAgent ${this.id}] Indexing failed for file ${file}:`, err);
+              log.w("DEVAGENT", "idx_fail", { file, err: String(err) });
             }
           }
         }
       } catch (error) {
-        console.error(
-          `[DevAgent ${this.id}] Error processing batch ${i} (${batch.length} files):`,
-          error instanceof Error ? error.message : error,
-        );
-        console.error(`[DevAgent ${this.id}] Batch files:`, batch);
+        log.e("DEVAGENT", "batch_err", {
+          batch: i,
+          cnt: batch.length,
+          err: error instanceof Error ? error.message : String(error),
+        });
         // Continue processing next batch despite error
       }
 
       if ((i + effectiveBatchSize) % 500 === 0 || i + effectiveBatchSize >= files.length) {
-        console.error(`[DevAgent ${this.id}] Progress: ${filesProcessed}/${files.length} files processed`);
+        log.i("DEVAGENT", "progress", { done: filesProcessed, total: files.length });
       }
     }
 
@@ -793,13 +800,13 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     if (this.indexerAgent) {
       const pendingStats = this.indexerAgent.getPendingBatchStats();
       if (pendingStats.files > 0) {
-        logger.info("DEV_AGENT", "Flushing remaining batch accumulator", pendingStats);
+        log.i("DEVAGENT", "Flushing remaining batch accumulator", pendingStats);
       }
       const flushResult = await this.indexerAgent.flushPendingBatch();
       streamingEntities = flushResult.entities;
       streamingRelationships = flushResult.relationships;
 
-      logger.info("DEV_AGENT", "Streaming mode disabled, code parsing complete", {
+      log.i("DEVAGENT", "Streaming mode disabled, code parsing complete", {
         streamedFiles: streamingIndexedFiles.size,
         flushedEntities: streamingEntities,
         flushedRelationships: streamingRelationships,
@@ -819,14 +826,16 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       filesProcessed += dataResult.files;
     }
 
-    // VERBOSE DEBUG: Final summary
-    console.error(
-      `[DevAgent] INDEXING COMPLETE: filesProcessed=${filesProcessed}/${allFiles.length}, entities=${totalEntities}, relationships=${totalRelationships}`,
-    );
+    log.i("DEVAGENT", "index_done", {
+      files: filesProcessed,
+      total: allFiles.length,
+      entities: totalEntities,
+      rels: totalRelationships,
+    });
 
     // FULL INDEXING COMPLETE: Switch to keepalive mode for fast incremental processing
     // Keep one worker alive per language for instant response to file changes
-    logger.info("DEV_AGENT", "=== ALL BATCH PROCESSING COMPLETE ===", {
+    log.i("DEVAGENT", "=== ALL BATCH PROCESSING COMPLETE ===", {
       totalBatches: Math.ceil(codeFiles.length / effectiveBatchSize),
       codeFiles: codeFiles.length,
       dataFiles: dataFiles.length,
@@ -834,12 +843,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       totalEntities,
       totalRelationships,
     });
-    logger.flush(); // Force flush to ensure completion message is visible
+    log.flush(); // Force flush to ensure completion message is visible
 
     if (this.parserAgent) {
       try {
         const memoryBeforeMB = this.parserAgent.getTotalMemoryMB();
-        logger.info("DEV_AGENT", "Switching to keepalive mode (spawning ONE worker for incremental updates)", {
+        log.i("DEVAGENT", "Switching to keepalive mode (spawning ONE worker for incremental updates)", {
           memoryMB: memoryBeforeMB,
         });
 
@@ -848,14 +857,14 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         await this.parserAgent.enableKeepaliveMode();
 
         const memoryAfterMB = this.parserAgent.getTotalMemoryMB();
-        logger.info("DEV_AGENT", "Keepalive mode enabled, ready for incremental updates", {
+        log.i("DEVAGENT", "Keepalive mode enabled, ready for incremental updates", {
           memoryBeforeMB,
           memoryAfterMB,
         });
         // Force flush to ensure keepalive logs are visible
-        logger.flush();
+        log.flush();
       } catch (err) {
-        logger.warn("DEV_AGENT", "Failed to enable keepalive mode, falling back to shutdown", {
+        log.w("DEVAGENT", "Failed to enable keepalive mode, falling back to shutdown", {
           error: (err as Error).message,
         });
         // Fallback: kill all workers
@@ -883,9 +892,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   adjustConcurrency(newLimit: number): void {
     const adjusted = Math.max(1, Math.min(this.defaultMaxConcurrency * 2, Math.floor(newLimit)));
     if (this.capabilities.maxConcurrency !== adjusted) {
-      console.error(
-        `[DevAgent ${this.id}] Adjusting concurrency from ${this.capabilities.maxConcurrency} to ${adjusted} (resources:adjusted)`,
-      );
+      log.d("DEVAGENT", "adj_concurrency", { from: this.capabilities.maxConcurrency, to: adjusted });
       this.capabilities.maxConcurrency = adjusted;
     }
   }
@@ -894,9 +901,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     const ratio = Math.max(0.5, Math.min(2, newMemoryLimit / this.defaultMemoryLimit));
     const newBatchSize = Math.max(10, Math.round(this.defaultBatchSize * ratio));
     if (this.indexBatchSize !== newBatchSize) {
-      console.error(
-        `[DevAgent ${this.id}] Adjusting batch size from ${this.indexBatchSize} to ${newBatchSize} (resources:adjusted)`,
-      );
+      log.d("DEVAGENT", "adj_batch", { from: this.indexBatchSize, to: newBatchSize });
       this.indexBatchSize = newBatchSize;
     }
   }
@@ -907,12 +912,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
    */
   private async handleIncrementalReindex(files: string[], _repositoryPath?: string): Promise<void> {
     if (!this.parserAgent || !this.indexerAgent) {
-      console.warn(`[DevAgent ${this.id}] ParserAgent or IndexerAgent not available, skipping incremental reindex`);
+      log.w("DEVAGENT", "skip_reindex_no_agents");
       return;
     }
 
     const startTime = Date.now();
-    console.error(`[DevAgent ${this.id}] Starting incremental reindex for ${files.length} files`);
+    log.i("DEVAGENT", "incr_reindex_start", { files: files.length });
 
     // Separate files into supported (full parsing) and other (heuristic entities)
     const supportedExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".kt"];
@@ -929,13 +934,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
 
     if (supportedFiles.length === 0 && otherFiles.length === 0) {
-      console.error(`[DevAgent ${this.id}] No files to reindex`);
+      log.d("DEVAGENT", "no_files_to_reindex");
       return;
     }
 
-    console.error(
-      `[DevAgent ${this.id}] Reindexing ${supportedFiles.length} supported + ${otherFiles.length} heuristic files`,
-    );
+    log.d("DEVAGENT", "reindex_breakdown", { supported: supportedFiles.length, heuristic: otherFiles.length });
 
     let successCount = 0;
     let errorCount = 0;
@@ -956,7 +959,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             successCount++;
           }
         } catch (error) {
-          console.error(`[DevAgent ${this.id}] Failed to reindex ${filePath}:`, error);
+          log.e("DEVAGENT", "reindex_fail", { file: filePath, err: String(error) });
           errorCount++;
         }
       }
@@ -971,15 +974,13 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           successCount++;
         }
       } catch (error) {
-        console.error(`[DevAgent ${this.id}] Failed to create heuristic entities for ${filePath}:`, error);
+        log.e("DEVAGENT", "heuristic_fail", { file: filePath, err: String(error) });
         errorCount++;
       }
     }
 
     const elapsed = Date.now() - startTime;
-    console.error(
-      `[DevAgent ${this.id}] Incremental reindex completed: ${successCount} files updated, ${errorCount} errors in ${elapsed}ms`,
-    );
+    log.i("DEVAGENT", "incr_reindex_done", { success: successCount, errors: errorCount, ms: elapsed });
 
     // INCREMENTAL: Kill workers only if memory > 500MB (keep alive for next changes)
     if (this.parserAgent) {
@@ -987,7 +988,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         const killed = await this.parserAgent.killIfMemoryHigh(500);
         if (killed) {
           this.parserAgent = null as any;
-          logger.info("DEV_AGENT", "Parser workers killed (memory > 500MB after incremental)");
+          log.i("DEVAGENT", "Parser workers killed (memory > 500MB after incremental)");
         }
       } catch (err) {
         // Ignore memory check errors for incremental
@@ -1020,7 +1021,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
 
     const startTime = Date.now();
-    logger.info("DEV_AGENT", "Processing data files in PARALLEL", {
+    log.i("DEVAGENT", "Processing data files in PARALLEL", {
       count: dataFiles.length,
     });
 
@@ -1084,7 +1085,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
 
     const elapsed = Date.now() - startTime;
-    logger.info("DEV_AGENT", "Data files processed in PARALLEL", {
+    log.i("DEVAGENT", "Data files processed in PARALLEL", {
       files: filesProcessed,
       entities: totalEntities,
       elapsedMs: elapsed,
@@ -1095,7 +1096,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   }
 
   protected async onShutdown(): Promise<void> {
-    console.error(`[DevAgent ${this.id}] Shutting down...`);
+    log.i("DEVAGENT", "shutdown_start");
 
     // Shutdown sub-agents
     if (this.parserAgent) {

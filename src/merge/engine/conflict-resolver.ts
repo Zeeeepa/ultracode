@@ -1,3 +1,4 @@
+import { log } from "../../logging/index.js";
 import { hashText } from "../../utils/fast-hash.js";
 import type { CodeUnit } from "../models/code-unit.js";
 import {
@@ -64,11 +65,12 @@ export class ConflictResolver {
         }
 
         // AI не уверен - продолжаем с fallback логикой
-        console.error(
-          `[ConflictResolver] AI confidence ${aiAnalysis.confidence.toFixed(2)} below threshold ${this.config.minConfidenceThreshold}, using fallback`,
-        );
+        log.d("CONFLICTRES", "ai_low_confidence", {
+          confidence: aiAnalysis.confidence,
+          threshold: this.config.minConfidenceThreshold,
+        });
       } catch (error) {
-        console.warn("[ConflictResolver] AI analysis failed, using fallback:", error);
+        log.w("CONFLICTRES", "ai_fail", { err: String(error) });
       }
     }
 

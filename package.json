@@ -31,7 +31,8 @@
   "main": "dist/index.js",
   "bin": {
     "ultrascript-tools-mcp": "dist/index.js",
-    "ultrascript": "bin/ultrascript.js"
+    "ultrascript": "bin/ultrascript.js",
+    "ulog": "dist/cli/log-query/log-query-cli.js"
   },
   "files": [
     "bin/**/*.js",

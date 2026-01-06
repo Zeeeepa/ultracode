@@ -18,6 +18,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
+import { log } from "../logging/index.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation, getNodeText } from "./base-parser-utils.js";
 
@@ -67,9 +68,9 @@ export class BashAnalyzer {
       this.validateScript(rootNode, filePath);
     } catch (error) {
       if (error instanceof CircuitBreakerError) {
-        console.warn(`[BashAnalyzer] Circuit breaker triggered for ${filePath}: ${error.message}`);
+        log.w("BASHANALYZER", "circuit_break", { file: filePath, err: error.message });
       } else {
-        console.error(`[BashAnalyzer] Error analyzing ${filePath}:`, error);
+        log.e("BASHANALYZER", "analyze_err", { file: filePath, err: String(error) });
       }
     }
 

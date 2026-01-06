@@ -10,8 +10,8 @@
  * - Memory-efficient accumulation
  */
 
+import { log } from "../logging/index.js";
 import type { VectorEmbedding } from "../types/semantic.js";
-import { logger } from "../utils/logger.js";
 import type { FaissProvider } from "./faiss/faiss-provider.js";
 
 // =============================================================================
@@ -90,7 +90,7 @@ export class EmbeddingAccumulator {
 
       // Validate dimensions
       if (vector.length !== this.config.dimensions) {
-        logger.warn("ACCUMULATOR", `Invalid vector dimensions`, {
+        log.w("ACCUMULATOR", `Invalid vector dimensions`, {
           expected: this.config.dimensions,
           got: vector.length,
           id: emb.id,
@@ -125,7 +125,7 @@ export class EmbeddingAccumulator {
     }
 
     if (!this.faissProvider) {
-      logger.warn("ACCUMULATOR", "No FAISS provider set, cannot flush");
+      log.w("ACCUMULATOR", "No FAISS provider set, cannot flush");
       return 0;
     }
 
@@ -140,7 +140,7 @@ export class EmbeddingAccumulator {
       this.stats.flushed += count;
       this.stats.flushCount++;
 
-      logger.info("ACCUMULATOR", `Flushed to FAISS`, {
+      log.i("ACCUMULATOR", `Flushed to FAISS`, {
         count,
         elapsed: `${elapsed.toFixed(1)}ms`,
         speed: `${Math.round(count / (elapsed / 1000))}/s`,
@@ -152,7 +152,7 @@ export class EmbeddingAccumulator {
 
       return count;
     } catch (error) {
-      logger.error("ACCUMULATOR", "Flush failed", { error: (error as Error).message });
+      log.e("ACCUMULATOR", "Flush failed", { error: (error as Error).message });
       throw error;
     }
   }

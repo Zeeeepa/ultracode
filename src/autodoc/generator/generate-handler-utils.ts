@@ -6,6 +6,7 @@
 
 import { execSync } from "node:child_process";
 import { join } from "node:path";
+import { log } from "../../logging/index.js";
 import { writeDocumentToDisk } from "../sync/file-sync.js";
 import { generateDocs } from "./doc-generator.js";
 import { ensureGeneralDocs } from "./general-docs.js";
@@ -30,11 +31,6 @@ export interface GenerateDocsOptions {
  */
 export interface GenerateDocsContext {
   normalizeInputPath: (path?: string) => string | null | undefined;
-  logger: {
-    info?: (category: string, msg: string, meta: object, requestId?: string) => void;
-    debug?: (category: string, msg: string, meta: object, requestId?: string) => void;
-    warn?: (category: string, msg: string, meta: object, requestId?: string) => void;
-  };
   requestId?: string;
   getAutoDocManager: () => Promise<any | null>;
 }
@@ -108,35 +104,30 @@ export async function enhanceWithLLM(
   modules: any[],
   files: any[],
   docLanguage: string,
-  context: GenerateDocsContext,
+  _context: GenerateDocsContext,
 ): Promise<{ llmStatus: string }> {
   const { detectLLMProviders, batchGenerateDocs } = await import("../llm/index.js");
   const { recommended } = await detectLLMProviders();
 
   if (!recommended) {
-    context.logger.warn?.(
-      "AUTODOC",
-      "No LLM provider available. Install Ollama or configure TGI/OpenAI.",
-      {},
-      context.requestId,
-    );
+    log.w("AUTODOCGEN", "no_llm_provider", { hint: "Install Ollama or configure TGI/OpenAI" });
     return { llmStatus: "no_provider_available" };
   }
 
   const modelName = (recommended as any).selectedModel || recommended.name;
-  context.logger.info?.(
-    "AUTODOC",
-    `Using LLM: ${recommended.name} (${modelName}) for ${modules.length} module(s), lang=${docLanguage}`,
-    {},
-    context.requestId,
-  );
+  log.i("AUTODOCGEN", "using_llm", {
+    provider: recommended.name,
+    model: modelName,
+    modules: modules.length,
+    lang: docLanguage,
+  });
 
   try {
     const enhancedDocs = await batchGenerateDocs(recommended, modules, {
       concurrency: 1,
       language: docLanguage,
       onProgress: (completed: number, total: number) => {
-        context.logger.debug?.("AUTODOC", `LLM progress: ${completed}/${total}`, {}, context.requestId);
+        log.d("AUTODOCGEN", "llm_progress", { completed, total });
       },
     });
 
@@ -149,7 +140,7 @@ export async function enhanceWithLLM(
 
     return { llmStatus: `using_${recommended.name}:${modelName}` };
   } catch (error) {
-    context.logger.warn?.("AUTODOC", `LLM generation failed: ${(error as Error).message}`, {}, context.requestId);
+    log.w("AUTODOCGEN", "llm_gen_failed", { error: (error as Error).message });
     return { llmStatus: `error_${recommended.name}` };
   }
 }
@@ -161,7 +152,7 @@ export async function writeFilesIncremental(
   files: any[],
   adm: any | null,
   useLlm: boolean,
-  context: GenerateDocsContext,
+  _context: GenerateDocsContext,
 ): Promise<{ filesWritten: number; incrementalChanges: Array<{ path: string; changes: string[] }> }> {
   const { updateModuleDoc } = await import("./incremental-updater.js");
   let filesWritten = 0;
@@ -185,12 +176,7 @@ export async function writeFilesIncremental(
         });
       }
     } catch (error) {
-      context.logger.warn?.(
-        "AUTODOC",
-        `Incremental update failed for ${file.path}: ${(error as Error).message}`,
-        {},
-        context.requestId,
-      );
+      log.w("AUTODOCGEN", "incr_update_failed", { path: file.path, error: (error as Error).message });
       // Fall back to full overwrite
       try {
         if (adm) {
@@ -199,12 +185,7 @@ export async function writeFilesIncremental(
         await writeDocumentToDisk(file.path, file.content);
         filesWritten++;
       } catch (innerError) {
-        context.logger.warn?.(
-          "AUTODOC",
-          `Failed to write ${file.path}: ${(innerError as Error).message}`,
-          {},
-          context.requestId,
-        );
+        log.w("AUTODOCGEN", "write_failed", { path: file.path, error: (innerError as Error).message });
       }
     }
   }
@@ -218,7 +199,7 @@ export async function writeFilesIncremental(
 export async function writeFilesOverwrite(
   files: any[],
   adm: any | null,
-  context: GenerateDocsContext,
+  _context: GenerateDocsContext,
 ): Promise<number> {
   let filesWritten = 0;
 
@@ -230,12 +211,7 @@ export async function writeFilesOverwrite(
       await writeDocumentToDisk(file.path, file.content);
       filesWritten++;
     } catch (error) {
-      context.logger.warn?.(
-        "AUTODOC",
-        `Failed to write ${file.path}: ${(error as Error).message}`,
-        {},
-        context.requestId,
-      );
+      log.w("AUTODOCGEN", "write_failed", { path: file.path, error: (error as Error).message });
     }
   }
 

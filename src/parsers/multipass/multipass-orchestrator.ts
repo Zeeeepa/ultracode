@@ -22,6 +22,7 @@
  */
 
 import { cpus } from "node:os";
+import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 import { readFilesParallel, readText } from "../../utils/file-ops.js";
 import { fastParse, fastParseBatch } from "./oxc-fast-parser.js";
@@ -68,7 +69,7 @@ export class MultiPassOrchestrator {
   async initialize(): Promise<void> {
     // Pre-warm OXC by parsing a dummy file
     await fastParse("warmup.ts", "const x = 1;");
-    console.error("[MultiPassOrchestrator] OXC warmed up");
+    log.i("MULTIPASS", "oxc_warm");
   }
 
   /**
@@ -78,23 +79,22 @@ export class MultiPassOrchestrator {
     const startTime = performance.now();
 
     // PHASE 1: Fast discovery pass with SWC
-    console.error(`[MultiPassOrchestrator] Phase 1: Fast discovery for ${files.length} files`);
+    log.d("MULTIPASS", "phase1_start", { cnt: files.length });
     const phase1Start = performance.now();
 
     const quickResults = await this.fastPass(files);
     this.stats.fastPassTime += performance.now() - phase1Start;
 
-    console.error(
-      `[MultiPassOrchestrator] Phase 1 complete: ${quickResults.length} files in ${(performance.now() - phase1Start).toFixed(0)}ms`,
-    );
+    log.d("MULTIPASS", "phase1_done", { cnt: quickResults.length, dur: Math.round(performance.now() - phase1Start) });
 
     // PHASE 2: Strategize and execute detailed parsing
     const strategy = this.buildStrategy(quickResults);
 
-    console.error(
-      `[MultiPassOrchestrator] Strategy: ${strategy.fastOnly.length} fast-only, ` +
-        `${strategy.detailed.length} detailed, ${strategy.workers.length} workers`,
-    );
+    log.d("MULTIPASS", "strategy", {
+      fast: strategy.fastOnly.length,
+      detailed: strategy.detailed.length,
+      workers: strategy.workers.length,
+    });
 
     const phase2Start = performance.now();
     const detailedResults = await this.detailedPass(strategy, quickResults, options);
@@ -106,10 +106,11 @@ export class MultiPassOrchestrator {
     const totalTime = performance.now() - startTime;
     this.stats.filesProcessed += files.length;
 
-    console.error(
-      `[MultiPassOrchestrator] Complete: ${files.length} files in ${totalTime.toFixed(0)}ms ` +
-        `(${Math.round((files.length / totalTime) * 1000)} files/sec)`,
-    );
+    log.i("MULTIPASS", "batch_done", {
+      cnt: files.length,
+      dur: Math.round(totalTime),
+      rate: Math.round((files.length / totalTime) * 1000),
+    });
 
     return results;
   }

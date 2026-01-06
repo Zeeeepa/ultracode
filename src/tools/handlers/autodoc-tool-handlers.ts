@@ -21,6 +21,7 @@
 import { join } from "node:path";
 import type { z } from "zod";
 import { executeGenerateDocs } from "../../autodoc/generator/generate-handler-utils.js";
+import { log } from "../../logging/index.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import {
   AutoDocChangelogSchema,
@@ -135,12 +136,7 @@ export class AutoDocSaveToolHandler extends BaseToolHandler<z.infer<typeof AutoD
       await writeDocumentToDisk(normalizedPath, args.content);
       fileWritten = true;
     } catch (error) {
-      this.context.logger.warn?.(
-        "AUTODOC",
-        `Failed to write file to disk: ${(error as Error).message}`,
-        {},
-        this.context.requestId,
-      );
+      log.w("AUTODOCTOOL", "file_write_failed", { error: (error as Error).message, path: normalizedPath });
     }
 
     // Generate embeddings for semantic search (if SemanticAgent available)
@@ -175,12 +171,7 @@ export class AutoDocSaveToolHandler extends BaseToolHandler<z.infer<typeof AutoD
           }
         }
       } catch (error) {
-        this.context.logger.warn?.(
-          "AUTODOC",
-          `Failed to generate embeddings: ${(error as Error).message}`,
-          {},
-          this.context.requestId,
-        );
+        log.w("AUTODOCTOOL", "embedding_failed", { error: (error as Error).message });
       }
     }
 
@@ -349,12 +340,7 @@ export class AutoDocSearchToolHandler extends BaseToolHandler<z.infer<typeof Aut
           }
         }
       } catch (error) {
-        this.context.logger.warn?.(
-          "AUTODOC",
-          `Semantic search failed: ${(error as Error).message}`,
-          {},
-          this.context.requestId,
-        );
+        log.w("AUTODOCTOOL", "semantic_search_err", { error: (error as Error).message });
       }
     }
 
@@ -585,7 +571,6 @@ export class AutoDocGenerateToolHandler extends BaseToolHandler<z.infer<typeof A
       },
       {
         normalizeInputPath: this.context.normalizeInputPath,
-        logger: this.context.logger,
         requestId: this.context.requestId,
         getAutoDocManager: () => container.getAutoDocManager(),
       },

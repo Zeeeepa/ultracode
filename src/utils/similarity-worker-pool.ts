@@ -15,6 +15,7 @@ import os from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { log } from "../logging/index.js";
 import { cosineSimilarity } from "./simd-vector-ops.js";
 
 // Get worker script path
@@ -79,7 +80,7 @@ export class SimilarityWorkerPool {
     await Promise.all(workerPromises);
     this.initialized = true;
 
-    console.error(`[SimilarityWorkerPool] Initialized with ${this.numWorkers} workers`);
+    log.i("SIMWORKER", `[SimilarityWorkerPool] Initialized with ${this.numWorkers} workers`);
   }
 
   private async createWorker(): Promise<void> {
@@ -103,14 +104,14 @@ export class SimilarityWorkerPool {
         });
 
         worker.on("error", (error: Error) => {
-          console.error("[SimilarityWorkerPool] Worker error:", error);
+          log.e("SIMWORKER", "worker_error", { err: error.message });
           state.busy = false;
           this.processQueue();
         });
 
         worker.on("exit", (code) => {
           if (code !== 0) {
-            console.error(`[SimilarityWorkerPool] Worker exited with code ${code}`);
+            log.i("SIMWORKER", `[SimilarityWorkerPool] Worker exited with code ${code}`);
           }
           const idx = this.workers.indexOf(state);
           if (idx >= 0) {
@@ -283,7 +284,7 @@ export class SimilarityWorkerPool {
     this.taskQueue = [];
     this.pendingResults.clear();
 
-    console.error("[SimilarityWorkerPool] Closed");
+    log.i("SIMWORKER", "[SimilarityWorkerPool] Closed");
   }
 }
 

@@ -18,6 +18,8 @@
  *   }
  */
 
+import { log } from "../logging/index.js";
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -98,7 +100,8 @@ export class Float32ArrayPool {
    */
   release(array: Float32Array): void {
     if (!array || array.length !== this.dimension) {
-      console.warn(
+      log.w(
+        "F32POOL",
         `[Float32Pool] Invalid array released (expected ${this.dimension} dimensions, got ${array?.length || 0})`,
       );
       return;

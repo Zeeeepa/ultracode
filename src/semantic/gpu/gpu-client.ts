@@ -11,9 +11,8 @@
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-
+import { log } from "../../logging/index.js";
 import { getDataDir } from "../../shared/storage-paths.js";
-import { logger } from "../../utils/logger.js";
 import { cosineSimilarity as cpuCosineSimilarity, simdL2Normalize } from "../../utils/simd-vector-ops.js";
 import {
   getRecommendedStrategy,
@@ -187,7 +186,7 @@ class GpuSubprocessClient implements IGpuClient {
       if (this.worker && !this.isShuttingDown) {
         // Set flag BEFORE kill to prevent handleWorkerCrash from rejecting as "Worker crashed"
         this.isShuttingDown = true;
-        logger.debug("GPU_SUBPROCESS", "Parent exiting, killing worker...");
+        log.d("GPU", "Parent exiting, killing worker...");
 
         // Disconnect Named Pipe client
         if (this.namedPipeClient) {
@@ -244,7 +243,7 @@ class GpuSubprocessClient implements IGpuClient {
 
     // Debug: skip subprocess spawning to identify console window source
     if (process.env["ULTRASCRIPT_NO_SUBPROCESS"] === "1") {
-      logger.debug("GPU_SUBPROCESS", "SKIPPED (ULTRASCRIPT_NO_SUBPROCESS=1)");
+      log.d("GPU", "SKIPPED (ULTRASCRIPT_NO_SUBPROCESS=1)");
       return false;
     }
 
@@ -255,7 +254,7 @@ class GpuSubprocessClient implements IGpuClient {
 
   private async startInternal(): Promise<boolean> {
     try {
-      logger.info("GPU_SUBPROCESS", "Starting worker", {
+      log.i("GPU", "Starting worker", {
         nodePath: this.config.nodePath,
         workerPath: this.config.workerPath,
       });
@@ -278,7 +277,7 @@ class GpuSubprocessClient implements IGpuClient {
           this.worker.stderr.on("data", (data: Buffer) => {
             const msg = data.toString().trim();
             if (msg) {
-              logger.debug("GPU_WORKER_STDERR", msg);
+              log.d("GPU", msg);
             }
           });
         }
@@ -302,7 +301,7 @@ class GpuSubprocessClient implements IGpuClient {
         //         if (done) break;
         //         const msg = decoder.decode(value).trim();
         //         if (msg) {
-        //           logger.debug("GPU_WORKER_STDERR", msg);
+        //           log.d("GPU", msg);
         //         }
         //       }
         //     } catch {
@@ -335,10 +334,10 @@ class GpuSubprocessClient implements IGpuClient {
         this._cudaAvailable = info.available;
       } catch {}
 
-      logger.info("GPU_SUBPROCESS", "Worker started", { cuda: this._cudaAvailable });
+      log.i("GPU", "Worker started", { cuda: this._cudaAvailable });
       return true;
     } catch (error) {
-      logger.error("GPU_SUBPROCESS", "Failed to start worker", { error: (error as Error).message });
+      log.e("GPU", "Failed to start worker", { error: (error as Error).message });
       return false;
     }
   }
@@ -353,14 +352,14 @@ class GpuSubprocessClient implements IGpuClient {
 
     this.worker.stdout.on("error", (error: Error) => {
       if (!this.isShuttingDown) {
-        logger.error("GPU_SUBPROCESS", "stdout read error", { error: error.message });
+        log.e("GPU", "stdout read error", { error: error.message });
         this.handleWorkerCrash();
       }
     });
 
     this.worker.on("exit", (code: number | null) => {
       if (!this.isShuttingDown) {
-        logger.warn("GPU_SUBPROCESS", "Worker exited", { code });
+        log.w("GPU", "Worker exited", { code });
         this.handleWorkerCrash();
       }
     });
@@ -377,7 +376,7 @@ class GpuSubprocessClient implements IGpuClient {
         // Handle pipe.ready message (special init message, not a request response)
         if (parsed.type === "pipe.ready" && parsed.path) {
           this.namedPipePath = parsed.path;
-          logger.debug("GPU_SUBPROCESS", "Received pipe.ready", { path: parsed.path });
+          log.d("GPU", "Received pipe.ready", { path: parsed.path });
           continue;
         }
         const response = parsed as GpuWorkerResponse;
@@ -418,30 +417,30 @@ class GpuSubprocessClient implements IGpuClient {
           pipeId,
           timeout: this.config.timeout,
           onConnect: () => {
-            logger.info("GPU_SUBPROCESS", "Connected to Named Pipe", { path: this.namedPipePath });
+            log.i("GPU", "Connected to Named Pipe", { path: this.namedPipePath });
           },
           onDisconnect: () => {
-            logger.debug("GPU_SUBPROCESS", "Named Pipe disconnected");
+            log.d("GPU", "Named Pipe disconnected");
             this.useNamedPipe = false;
           },
           onError: (err) => {
-            logger.warn("GPU_SUBPROCESS", "Named Pipe error", { error: err.message });
+            log.w("GPU", "Named Pipe error", { error: err.message });
             this.useNamedPipe = false;
           },
         });
 
         await this.namedPipeClient.connect();
         this.useNamedPipe = true;
-        logger.info("GPU_SUBPROCESS", "Using Named Pipe for binary IPC");
+        log.i("GPU", "Using Named Pipe for binary IPC");
       } catch (error) {
-        logger.warn("GPU_SUBPROCESS", "Failed to connect to Named Pipe, using stdin/stdout", {
+        log.w("GPU", "Failed to connect to Named Pipe, using stdin/stdout", {
           error: (error as Error).message,
         });
         this.namedPipeClient = null;
         this.useNamedPipe = false;
       }
     } else {
-      logger.debug("GPU_SUBPROCESS", "Named Pipe not available, using stdin/stdout");
+      log.d("GPU", "Named Pipe not available, using stdin/stdout");
       await sleep(100);
     }
   }
@@ -786,7 +785,7 @@ class GpuSubprocessClient implements IGpuClient {
         const similarities = await this.cudaBatchCosineSimilarity(query, database);
         return { similarities, usedCuda: true };
       } catch (error) {
-        logger.warn("GPU_SUBPROCESS", "CUDA batch cosine failed, falling back to CPU", {
+        log.w("GPU", "CUDA batch cosine failed, falling back to CPU", {
           error: (error as Error).message,
         });
       }
@@ -811,7 +810,7 @@ class GpuSubprocessClient implements IGpuClient {
         const normalized = await this.cudaNormalizeVectors(vectors);
         return { normalized, usedCuda: true };
       } catch (error) {
-        logger.warn("GPU_SUBPROCESS", "CUDA normalize failed, falling back to CPU", {
+        log.w("GPU", "CUDA normalize failed, falling back to CPU", {
           error: (error as Error).message,
         });
       }
@@ -858,7 +857,7 @@ let gpuClient: IGpuClient | null = null;
  */
 export function getGpuClient(config?: GpuClientConfig): IGpuClient {
   if (!gpuClient) {
-    logger.info("GPU", "Using subprocess mode");
+    log.i("GPU", "Using subprocess mode");
     gpuClient = new GpuSubprocessClient(config);
   }
   return gpuClient;

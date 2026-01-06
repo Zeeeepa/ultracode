@@ -10,6 +10,7 @@
 
 import { nanoid } from "nanoid";
 import xxhash from "xxhash-wasm";
+import { log } from "../logging/index.js";
 import { DEFAULT_BRANCH, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
 import {
   type BatchResult,
@@ -23,7 +24,6 @@ import {
   RelationType,
   type StorageMetrics,
 } from "../types/storage.js";
-import { logger } from "../utils/logger.js";
 import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.js";
 
 // =============================================================================
@@ -64,11 +64,11 @@ export class GraphStorageLibSQL implements GraphStorage {
 
   async initialize(): Promise<void> {
     const startTime = Date.now();
-    logger.trace("STORAGE", `[GraphStorageLibSQL] ▶ initialize() START`);
+    log.t("STORAGE", `[GraphStorageLibSQL] ▶ initialize() START`);
     // Initialize xxHash for fast entity ID generation
     this.xxhashInstance = await xxhash();
-    logger.trace("STORAGE", `[GraphStorageLibSQL] ◀ initialize() END (${Date.now() - startTime}ms)`);
-    console.error("[GraphStorageLibSQL] Initialized with xxHash");
+    log.t("STORAGE", `[GraphStorageLibSQL] ◀ initialize() END (${Date.now() - startTime}ms)`);
+    log.i("GRAPHSTORAGE", "init_xxhash");
   }
 
   // ===========================================================================
@@ -110,7 +110,7 @@ export class GraphStorageLibSQL implements GraphStorage {
 
   async insertEntities(entities: Entity[]): Promise<BatchResult> {
     const startTime = Date.now();
-    logger.trace("STORAGE", `[GraphStorageLibSQL] ▶ insertEntities (${entities.length} entities)`);
+    log.t("STORAGE", `[GraphStorageLibSQL] ▶ insertEntities (${entities.length} entities)`);
     const now = Date.now();
 
     // Deduplicate
@@ -136,10 +136,7 @@ export class GraphStorageLibSQL implements GraphStorage {
     }));
 
     const result = await this.adapter.insertEntities(entitiesWithIds);
-    logger.trace(
-      "STORAGE",
-      `[GraphStorageLibSQL] ◀ insertEntities (${unique.length} unique, ${Date.now() - startTime}ms)`,
-    );
+    log.t("STORAGE", `insertEntities`, { count: unique.length, ms: Date.now() - startTime });
     return result;
   }
 
@@ -293,7 +290,7 @@ export class GraphStorageLibSQL implements GraphStorage {
 
   async insertRelationships(relationships: Relationship[]): Promise<BatchResult> {
     const startTime = Date.now();
-    logger.trace("STORAGE", `[GraphStorageLibSQL] ▶ insertRelationships (${relationships.length} relationships)`);
+    log.t("STORAGE", `[GraphStorageLibSQL] ▶ insertRelationships (${relationships.length} relationships)`);
     const now = Date.now();
 
     // Deduplicate
@@ -325,10 +322,7 @@ export class GraphStorageLibSQL implements GraphStorage {
     }));
 
     const result = await this.adapter.insertRelationships(relsWithIds);
-    logger.trace(
-      "STORAGE",
-      `[GraphStorageLibSQL] ◀ insertRelationships (${unique.length} unique, ${Date.now() - startTime}ms)`,
-    );
+    log.t("STORAGE", `insertRelationships`, { count: unique.length, ms: Date.now() - startTime });
     return result;
   }
 
@@ -529,12 +523,12 @@ export class GraphStorageLibSQL implements GraphStorage {
 
   async vacuum(): Promise<void> {
     // LibSQL handles optimization automatically
-    console.error("[GraphStorageLibSQL] Vacuum requested (handled by libsql)");
+    log.i("GRAPHSTORAGE", "vacuum_requested");
   }
 
   async analyze(): Promise<void> {
     // LibSQL handles analysis automatically
-    console.error("[GraphStorageLibSQL] Analyze requested (handled by libsql)");
+    log.i("GRAPHSTORAGE", "analyze_requested");
   }
 
   async getMetrics(): Promise<StorageMetrics> {
@@ -642,7 +636,7 @@ export class GraphStorageLibSQL implements GraphStorage {
 
     // Restore original context
     this.adapter.setProjectContext(currentContext);
-    console.error(`[GraphStorageLibSQL] Deleted project: ${projectPath}`);
+    log.i("GRAPHSTORAGE", "project_deleted", { path: projectPath });
   }
 
   // ===========================================================================

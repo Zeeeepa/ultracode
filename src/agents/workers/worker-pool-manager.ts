@@ -9,6 +9,7 @@ import { cpus } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 
 /**
@@ -97,7 +98,7 @@ export class WorkerPoolManager {
     }
 
     await Promise.all(initPromises);
-    console.error(`[WorkerPoolManager] Initialized ${this.poolSize} workers`);
+    log.i("WORKERPOOL", "init_done", { cnt: this.poolSize });
   }
 
   /**
@@ -126,14 +127,14 @@ export class WorkerPoolManager {
 
         // Handle worker errors
         worker.on("error", (error: Error) => {
-          console.error(`[WorkerPoolManager] Worker ${workerId} error:`, error);
+          log.e("WORKERPOOL", "worker_err", { id: workerId, err: String(error) });
           this.handleWorkerError(workerId, error);
         });
 
         // Handle worker exit
         worker.on("exit", (code) => {
           if (code !== 0) {
-            console.error(`[WorkerPoolManager] Worker ${workerId} exited with code ${code}`);
+            log.w("WORKERPOOL", "worker_exit", { id: workerId, code });
           }
           this.workers.delete(workerId);
         });
@@ -300,7 +301,7 @@ export class WorkerPoolManager {
       }
 
       case "initialized":
-        console.error(`[WorkerPoolManager] Worker ${workerId} initialized`);
+        log.d("WORKERPOOL", "worker_ready", { id: workerId });
         break;
 
       case "ready":
@@ -308,7 +309,7 @@ export class WorkerPoolManager {
         break;
 
       default:
-        console.warn(`[WorkerPoolManager] Unknown message type: ${message.type}`);
+        log.w("WORKERPOOL", "unknown_msg", { type: message.type });
     }
   }
 
@@ -319,7 +320,7 @@ export class WorkerPoolManager {
     const state = this.workers.get(workerId);
     if (!state) return;
 
-    console.error(`[WorkerPoolManager] Worker ${workerId} error:`, error.message);
+    log.e("WORKERPOOL", "handle_err", { id: workerId, err: error.message });
 
     // Mark worker as not busy
     state.busy = false;
@@ -369,7 +370,7 @@ export class WorkerPoolManager {
    * Shutdown the worker pool
    */
   async shutdown(): Promise<void> {
-    console.error(`[WorkerPoolManager] Shutting down ${this.workers.size} workers...`);
+    log.i("WORKERPOOL", "shutdown_start", { cnt: this.workers.size });
 
     // Reject all pending tasks
     for (const task of this.pendingTasks.values()) {
@@ -388,7 +389,7 @@ export class WorkerPoolManager {
       state.worker.postMessage({ type: "shutdown" });
       terminationPromises.push(
         state.worker.terminate().then(() => {
-          console.error(`[WorkerPoolManager] Worker ${state.id} terminated`);
+          log.d("WORKERPOOL", "worker_term", { id: state.id });
         }),
       );
     }
@@ -396,6 +397,6 @@ export class WorkerPoolManager {
     await Promise.all(terminationPromises);
     this.workers.clear();
 
-    console.error("[WorkerPoolManager] Shutdown complete");
+    log.i("WORKERPOOL", "shutdown_done");
   }
 }

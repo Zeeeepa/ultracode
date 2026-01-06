@@ -16,6 +16,7 @@
 
 import { EventEmitter } from "node:events";
 import type { ILayeredIndex } from "../core/layered-index.js";
+import { log } from "../logging/index.js";
 
 /**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
@@ -125,7 +126,8 @@ export class IncrementalUpdateQueue extends EventEmitter {
     };
 
     if (this.config.debug) {
-      console.error(
+      log.i(
+        "INCQUEUE",
         `[IncrementalUpdateQueue] Initialized with ` +
           `debounce=${this.config.debounceWindowMs}ms, ` +
           `maxBatch=${this.config.maxBatchSize}`,
@@ -151,7 +153,7 @@ export class IncrementalUpdateQueue extends EventEmitter {
     this.pendingChanges.set(event.filePath, event);
 
     if (this.config.debug) {
-      console.error(`[IncrementalUpdateQueue] Enqueued: ${event.changeType} ${event.filePath}`);
+      log.i("INCQUEUE", `[IncrementalUpdateQueue] Enqueued: ${event.changeType} ${event.filePath}`);
     }
 
     // Reset debounce timer
@@ -176,7 +178,7 @@ export class IncrementalUpdateQueue extends EventEmitter {
     }
 
     if (this.config.debug) {
-      console.error(`[IncrementalUpdateQueue] Enqueued batch: ${events.length} files`);
+      log.i("INCQUEUE", `[IncrementalUpdateQueue] Enqueued batch: ${events.length} files`);
     }
 
     this.resetDebounceTimer();
@@ -204,7 +206,7 @@ export class IncrementalUpdateQueue extends EventEmitter {
       await sleep(this.config.debounceWindowMs);
       if (!abortController.signal.aborted) {
         this.processBatch().catch((error) => {
-          console.error(`[IncrementalUpdateQueue] Batch processing failed:`, error);
+          log.e("INCQUEUE", "batch_process_fail", { err: String(error) });
           this.emit("error", error);
         });
       }
@@ -222,7 +224,7 @@ export class IncrementalUpdateQueue extends EventEmitter {
     // Prevent concurrent processing
     if (this.isProcessing) {
       if (this.config.debug) {
-        console.error(`[IncrementalUpdateQueue] Already processing, skipping`);
+        log.i("INCQUEUE", `[IncrementalUpdateQueue] Already processing, skipping`);
       }
       return;
     }
@@ -237,7 +239,7 @@ export class IncrementalUpdateQueue extends EventEmitter {
     const startTime = Date.now();
 
     if (this.config.debug) {
-      console.error(`[IncrementalUpdateQueue] Processing batch: ${batchSize} files`);
+      log.i("INCQUEUE", `[IncrementalUpdateQueue] Processing batch: ${batchSize} files`);
     }
 
     // Extract changes (clone to allow new changes during processing)
@@ -254,7 +256,8 @@ export class IncrementalUpdateQueue extends EventEmitter {
     try {
       // Check if batch size exceeds threshold
       if (batchSize > this.config.maxBatchSize) {
-        console.warn(
+        log.w(
+          "INCQUEUE",
           `[IncrementalUpdateQueue] Batch size ${batchSize} exceeds max ${this.config.maxBatchSize}, ` +
             `triggering full rebuild`,
         );
@@ -278,7 +281,7 @@ export class IncrementalUpdateQueue extends EventEmitter {
             error: errorMsg,
           });
 
-          console.error(`[IncrementalUpdateQueue] Failed to process ${change.filePath}:`, error);
+          log.e("INCQUEUE", "file_process_fail", { err: String(error), file: change.filePath });
         }
       }
 
@@ -291,7 +294,8 @@ export class IncrementalUpdateQueue extends EventEmitter {
       result.processingTimeMs = Date.now() - startTime;
 
       if (this.config.debug) {
-        console.error(
+        log.i(
+          "INCQUEUE",
           `[IncrementalUpdateQueue] Batch processed: ` +
             `${result.filesProcessed}/${batchSize} files in ${result.processingTimeMs}ms, ` +
             `${result.errors.length} errors`,
@@ -368,7 +372,7 @@ export class IncrementalUpdateQueue extends EventEmitter {
     this.pendingChanges.clear();
 
     if (this.config.debug) {
-      console.error(`[IncrementalUpdateQueue] Cleared ${count} pending changes`);
+      log.i("INCQUEUE", `[IncrementalUpdateQueue] Cleared ${count} pending changes`);
     }
 
     this.emit("cleared", { count });
@@ -422,7 +426,7 @@ export class IncrementalUpdateQueue extends EventEmitter {
    * Shutdown queue gracefully
    */
   async shutdown(): Promise<void> {
-    console.error("[IncrementalUpdateQueue] Shutting down...");
+    log.i("INCQUEUE", "[IncrementalUpdateQueue] Shutting down...");
 
     // Flush pending changes
     await this.flush();
@@ -436,6 +440,6 @@ export class IncrementalUpdateQueue extends EventEmitter {
     // Remove all listeners
     this.removeAllListeners();
 
-    console.error("[IncrementalUpdateQueue] Shutdown complete");
+    log.i("INCQUEUE", "[IncrementalUpdateQueue] Shutdown complete");
   }
 }

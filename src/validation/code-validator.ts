@@ -16,6 +16,7 @@
  */
 
 import { extname, join } from "node:path";
+import { log } from "../logging/index.js";
 import { readdir, readText } from "../utils/file-ops.js";
 
 // =============================================================================
@@ -241,7 +242,7 @@ export class CodeValidator {
         return linter;
       }
     } catch (error) {
-      console.warn(`[CodeValidator] Failed to load ${linterName}:`, error);
+      log.w("CODEVALIDATOR", "linter_load_fail", { linter: linterName, err: String(error) });
       return null;
     }
 

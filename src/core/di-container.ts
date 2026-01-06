@@ -14,6 +14,7 @@
  */
 
 import type { AppConfig } from "../config/yaml-config.js";
+import { log } from "../logging/index.js";
 import type { Agent, AgentCapabilities, AgentType } from "../types/agent.js";
 
 // =============================================================================
@@ -102,7 +103,7 @@ export class DIContainer {
     };
 
     this.services.set(name, descriptor);
-    console.error(`[DIContainer] Registered service: ${name} (${lifetime})`);
+    log.i("DICONTAINER", "svc_registered", { name, lifetime });
   }
 
   /**
@@ -145,7 +146,7 @@ export class DIContainer {
     };
 
     this.services.set(name, descriptor);
-    console.error(`[DIContainer] Registered instance: ${name}`);
+    log.i("DICONTAINER", "inst_registered", { name });
   }
 
   /**
@@ -167,7 +168,7 @@ export class DIContainer {
 
     descriptor.instance = instance;
     descriptor.factory = () => instance;
-    console.error(`[DIContainer] Updated instance: ${name}`);
+    log.i("DICONTAINER", "inst_updated", { name });
   }
 
   /**
@@ -284,7 +285,7 @@ export class DIContainer {
         delete descriptor.instance;
       }
     }
-    console.error(`[DIContainer] Cleared transient instances`);
+    log.i("DICONTAINER", "transients_cleared");
   }
 
   /**
@@ -299,7 +300,7 @@ export class DIContainer {
         cleared++;
       }
     }
-    console.error(`[DIContainer] Cleared ${cleared} cached agent instances`);
+    log.i("DICONTAINER", "agents_cleared", { count: cleared });
   }
 
   /**
@@ -309,7 +310,7 @@ export class DIContainer {
     this.services.clear();
     this.resolutionStack.clear();
     this.disposed = false;
-    console.error(`[DIContainer] Container cleared`);
+    log.i("DICONTAINER", "container_cleared");
   }
 
   /**
@@ -320,7 +321,7 @@ export class DIContainer {
       return;
     }
 
-    console.error(`[DIContainer] Disposing container...`);
+    log.i("DICONTAINER", "disposing");
     this.disposed = true;
 
     // Dispose singleton instances in reverse registration order
@@ -330,16 +331,16 @@ export class DIContainer {
       if (descriptor.instance && this.isDisposable(descriptor.instance)) {
         try {
           await descriptor.instance.dispose();
-          console.error(`[DIContainer] Disposed: ${descriptor.name}`);
+          log.i("DICONTAINER", "disposed_svc", { name: descriptor.name });
         } catch (error) {
-          console.error(`[DIContainer] Failed to dispose ${descriptor.name}:`, error);
+          log.w("DICONTAINER", "dispose_fail", { name: descriptor.name, err: String(error) });
         }
       }
     }
 
     this.services.clear();
     this.resolutionStack.clear();
-    console.error(`[DIContainer] Container disposed`);
+    log.i("DICONTAINER", "disposed");
   }
 
   /**

@@ -17,6 +17,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { log } from "../logging/index.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
 import type { DiffSimdModule } from "../types/wasm-modules.js";
@@ -85,10 +86,10 @@ export class PreviewManager {
       if (typeof wasmModule.compute_diff_simd === "function") {
         this.computeDiffSimd = wasmModule.compute_diff_simd;
         this.wasmDiffAvailable = true;
-        console.error("[PreviewManager] WASM diff-simd loaded successfully");
+        log.i("PREVIEWMGR", "wasm_diff_loaded");
       }
     } catch (_error) {
-      console.warn("[PreviewManager] WASM diff-simd not available, using fallback");
+      log.w("PREVIEWMGR", "wasm_unavail_fallback");
       this.wasmDiffAvailable = false;
     }
   }
@@ -167,7 +168,7 @@ export class PreviewManager {
       try {
         return this.computeDiffSimd(oldCode, newCode);
       } catch (error) {
-        console.warn("[PreviewManager] WASM diff failed, using fallback:", error);
+        log.w("PREVIEWMGR", "wasm_diff_fail", { err: String(error) });
       }
     }
 
@@ -323,7 +324,7 @@ export class PreviewManager {
 
       return oldSignature !== newSignature;
     } catch (error) {
-      console.warn("[PreviewManager] Failed to detect signature change:", error);
+      log.w("PREVIEWMGR", "sig_detect_fail", { err: String(error) });
       return false;
     }
   }

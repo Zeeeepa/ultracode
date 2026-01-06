@@ -7,6 +7,7 @@
 
 import { z } from "zod";
 import { getIndexingStatus, isIndexing, setIndexingState } from "../../index.js";
+import { log } from "../../logging/index.js";
 import { type AgentTask, AgentType } from "../../types/agent.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
@@ -71,30 +72,25 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
         const conductor = this.context.getConductor();
         const devAgent = conductor.getAgentByType?.(AgentType.DEV) as any;
         if (devAgent?.parserAgent?.destroyWorkerPools) {
-          console.error(`[IndexToolHandler] Destroying existing worker pools before reindex...`);
+          log.d("INDEXTOOL", "destroy_pools");
           await devAgent.parserAgent.destroyWorkerPools();
-          console.error(`[IndexToolHandler] Worker pools destroyed`);
+          log.d("INDEXTOOL", "pools_destroyed");
         }
       } catch (error) {
         // Ignore - workers may not exist yet
-        this.context.logger.debug(
-          "INDEXING",
-          "Could not destroy worker pools",
-          { error: (error as Error).message },
-          this.context.requestId,
-        );
+        log.d("INDEXTOOL", "destroy_pools_skip", { err: (error as Error).message });
       }
     }
 
     // Step 1: Set project context for GraphStorage (like auto-indexer)
     const storage = await this.context.getGraphStorage();
     storage.setProject(targetDir);
-    this.context.logger.debug("INDEXING", "GraphStorage context set", { targetDir }, this.context.requestId);
+    log.d("INDEXTOOL", "storage_context_set", { dir: targetDir });
 
     // Step 2: Optional reset - clear storage BEFORE indexing starts
     if (reset) {
       await storage.clear();
-      this.context.logger.debug("INDEXING", "Graph storage cleared", { targetDir }, this.context.requestId);
+      log.d("INDEXTOOL", "storage_cleared", { dir: targetDir });
     }
 
     // Step 3: Drop vector index for faster bulk inserts (like auto-indexer)
@@ -103,15 +99,10 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       try {
         const semanticAgent = await this.context.getSemanticAgent();
         await semanticAgent.dropVectorIndex();
-        this.context.logger.debug("INDEXING", "Vector index dropped for bulk insert", {}, this.context.requestId);
+        log.d("INDEXTOOL", "vector_idx_dropped");
       } catch (error) {
         // Semantic agent may not be available yet, that's ok
-        this.context.logger.debug(
-          "INDEXING",
-          "Could not drop vector index",
-          { error: (error as Error).message },
-          this.context.requestId,
-        );
+        log.d("INDEXTOOL", "vector_idx_skip", { err: (error as Error).message });
       }
     }
 
@@ -128,11 +119,9 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
       try {
         const semanticAgent = await this.context.getSemanticAgent();
-        console.error(`[IndexToolHandler] Finalizing embeddings...`);
+        log.d("INDEXTOOL", "finalize_embed");
         embeddingStats = await semanticAgent.generateEmbeddingsFromStorage();
-        console.error(
-          `[IndexToolHandler] Embeddings: generated=${embeddingStats?.generated ?? 0}, skipped=${embeddingStats?.skipped ?? 0}`,
-        );
+        log.i("INDEXTOOL", "embed_done", { gen: embeddingStats?.generated ?? 0, skip: embeddingStats?.skipped ?? 0 });
 
         // Get warning about oversized entities
         const warning = semanticAgent.getLastOversizedWarning?.();
@@ -144,7 +133,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
           };
         }
       } catch (error) {
-        console.error(`[IndexToolHandler] Failed to finalize embeddings:`, error);
+        log.e("INDEXTOOL", "embed_fail", { err: String(error) });
       }
     }
 
@@ -154,10 +143,10 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       const indexerAgent = conductor.getAgent("indexer") as any;
       if (indexerAgent?.setRepositoryPath) {
         await indexerAgent.setRepositoryPath(targetDir);
-        console.error(`[IndexToolHandler] FileWatcher/GitWatcher started for ${targetDir}`);
+        log.i("INDEXTOOL", "watcher_start", { dir: targetDir });
       }
     } catch (error) {
-      console.error(`[IndexToolHandler] Failed to start file watching:`, error);
+      log.e("INDEXTOOL", "watcher_fail", { err: String(error) });
     }
 
     // Step 7: Log and publish result
@@ -237,17 +226,13 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
   }
 
   private logIndexingActivity(directory: string, incremental: boolean, excludePatterns: string[], result: any): void {
-    this.context.logger.agentActivity?.(
-      "conductor",
-      "indexing completed",
-      {
-        directory,
-        incremental,
-        excludePatterns,
-        entitiesFound: Array.isArray(result?.entities) ? result.entities.length : 0,
-      },
-      this.context.requestId,
-    );
+    const entitiesFound = Array.isArray(result?.entities) ? result.entities.length : 0;
+    log.i("INDEXTOOL", "index_complete", {
+      dir: directory,
+      incr: incremental,
+      exclude: excludePatterns.length,
+      entities: entitiesFound,
+    });
   }
 
   private publishToKnowledgeBus(result: any): void {

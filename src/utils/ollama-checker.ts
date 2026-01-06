@@ -6,7 +6,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { logger } from "./logger.js";
+import { log } from "../logging/index.js";
 
 /**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
@@ -71,7 +71,7 @@ export async function checkOllamaStatus(): Promise<OllamaStatus> {
  */
 export async function startOllamaService(): Promise<boolean> {
   try {
-    logger.info("OllamaChecker", "Attempting to start Ollama service...");
+    log.i("OLLAMA", "start_attempt");
 
     // Start Ollama in background (detached mode)
     const child = spawn("ollama", ["serve"], {
@@ -85,20 +85,20 @@ export async function startOllamaService(): Promise<boolean> {
     child.unref();
 
     // Wait for Ollama to start
-    logger.debug("OllamaChecker", `Waiting ${OLLAMA_STARTUP_WAIT}ms for Ollama to start...`);
+    log.d("OLLAMA", "waiting_startup", { wait_ms: OLLAMA_STARTUP_WAIT });
     await sleep(OLLAMA_STARTUP_WAIT);
 
     // Verify it started successfully
     const status = await checkOllamaStatus();
     if (status.isRunning) {
-      logger.info("OllamaChecker", "Ollama service started successfully");
+      log.i("OLLAMA", "service_started");
       return true;
     }
 
-    logger.warn("OllamaChecker", "Ollama service did not start within timeout");
+    log.w("OLLAMA", "start_timeout");
     return false;
   } catch (error) {
-    logger.warn("OllamaChecker", "Failed to start Ollama service", { error: (error as Error).message });
+    log.w("OLLAMA", "start_failed", { error: (error as Error).message });
     return false;
   }
 }
@@ -112,20 +112,20 @@ export async function ensureOllamaRunning(autoStart = true): Promise<OllamaStatu
   const initialStatus = await checkOllamaStatus();
 
   if (initialStatus.isRunning) {
-    logger.info("OllamaChecker", "Ollama service is running", {
+    log.i("OLLAMA", "service_running", {
       models: initialStatus.models.length,
-      hasGranite: initialStatus.hasGranite,
+      has_granite: initialStatus.hasGranite,
     });
     return initialStatus;
   }
 
   if (!autoStart) {
-    logger.debug("OllamaChecker", "Ollama not running, auto-start disabled");
+    log.d("OLLAMA", "autostart_disabled");
     return initialStatus;
   }
 
   // Try to start Ollama
-  logger.info("OllamaChecker", "Ollama not running, attempting auto-start...");
+  log.i("OLLAMA", "autostart_begin");
   const started = await startOllamaService();
 
   if (started) {
@@ -133,10 +133,7 @@ export async function ensureOllamaRunning(autoStart = true): Promise<OllamaStatu
     return await checkOllamaStatus();
   }
 
-  logger.warn(
-    "OllamaChecker",
-    "Could not auto-start Ollama. Install: https://ollama.com or run 'ollama serve' manually",
-  );
+  log.w("OLLAMA", "autostart_failed", { hint: "install from ollama.com or run 'ollama serve'" });
   return initialStatus;
 }
 

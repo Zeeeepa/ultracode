@@ -46,6 +46,7 @@ interface SimpleImpactAnalysis {
   riskLevel: "low" | "medium" | "high" | "critical";
 }
 
+import { log } from "../logging/index.js";
 import { BaseAgent } from "./base.js";
 
 // =============================================================================
@@ -123,16 +124,16 @@ export class QueryAgent extends BaseAgent {
   // =============================================================================
 
   protected async onInitialize(): Promise<void> {
-    console.error(`[${this.id}] Initializing QueryAgent...`);
+    log.i("QUERYAGENT", "init_start", { id: this.id });
     this.storage = await getGraphStorage();
     this.subscribeToKnowledgeBus();
-    console.error(`[${this.id}] QueryAgent initialized successfully`);
+    log.i("QUERYAGENT", "init_done", { id: this.id });
   }
 
   protected async onShutdown(): Promise<void> {
-    console.error(`[${this.id}] Shutting down QueryAgent...`);
+    log.i("QUERYAGENT", "shutdown_start", { id: this.id });
     this.cache.clear();
-    console.error(`[${this.id}] QueryAgent shutdown complete`);
+    log.i("QUERYAGENT", "shutdown_done", { id: this.id });
   }
 
   // =============================================================================
@@ -172,7 +173,7 @@ export class QueryAgent extends BaseAgent {
 
       return result;
     } catch (error) {
-      console.error(`[${this.id}] Query failed:`, error);
+      log.e("QUERYAGENT", "query_fail", { id: this.id, err: String(error) });
       throw error;
     }
   }
@@ -320,12 +321,12 @@ export class QueryAgent extends BaseAgent {
 
   private subscribeToKnowledgeBus(): void {
     knowledgeBus.subscribe(this.id, "graph:updated", () => {
-      console.error(`[${this.id}] Graph updated, clearing cache`);
+      log.d("QUERYAGENT", "graph_updated", { id: this.id });
       this.cache.clear();
     });
 
     knowledgeBus.subscribe(this.id, "index:complete", () => {
-      console.error(`[${this.id}] Index complete, clearing cache`);
+      log.d("QUERYAGENT", "index_complete", { id: this.id });
       this.cache.clear();
     });
   }

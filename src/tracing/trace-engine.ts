@@ -10,6 +10,7 @@
  * - Graph Storage: src/storage/graph-storage.ts
  */
 
+import { log } from "../logging/index.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
 import { GraphologyPathBuilder, type LinearTrace } from "./graphology-path-builder.js";
 import { PathBuilder } from "./path-builder.js";
@@ -111,9 +112,11 @@ export class TraceEngine {
 
     // 1. Load graph into memory (cached after first call)
     const stats = await this.graphologyBuilder.loadGraph();
-    console.error(
-      `[TraceEngine] Graph loaded: ${stats.nodes} nodes, ${stats.edges} edges in ${stats.loadTimeMs.toFixed(0)}ms`,
-    );
+    log.i("TRACEENGINE", "graph_loaded", {
+      nodes: stats.nodes,
+      edges: stats.edges,
+      timeMs: +stats.loadTimeMs.toFixed(0),
+    });
 
     // 2. Resolve entities
     const sourceEntity = await this.resolveEntity(params.from);
@@ -126,9 +129,14 @@ export class TraceEngine {
       throw new Error(`Could not find target entity: ${params.to}`);
     }
 
-    console.error(
-      `[TraceEngine] Resolved: "${params.from}" -> ${sourceEntity.id} (${sourceEntity.name}), "${params.to}" -> ${targetEntity.id} (${targetEntity.name})`,
-    );
+    log.d("TRACEENGINE", "resolved", {
+      from: params.from,
+      srcId: sourceEntity.id,
+      srcName: sourceEntity.name,
+      to: params.to,
+      tgtId: targetEntity.id,
+      tgtName: targetEntity.name,
+    });
 
     // 3. Use linear trace for fast single-path result
     const linearTrace = await this.graphologyBuilder.traceLinearFlow(sourceEntity.id, targetEntity.id, maxDepth);
@@ -174,9 +182,7 @@ export class TraceEngine {
     }
 
     const totalTime = performance.now() - startTime;
-    console.error(
-      `[TraceEngine] Optimized trace completed in ${totalTime.toFixed(0)}ms (visited ${linearTrace.nodesVisited} nodes)`,
-    );
+    log.i("TRACEENGINE", "trace_done", { timeMs: +totalTime.toFixed(0), visited: linearTrace.nodesVisited });
 
     return {
       from: params.from,
@@ -346,7 +352,7 @@ export class TraceEngine {
       }));
 
       const totalTime = performance.now() - startTime;
-      console.error(`[TraceEngine] Optimized backwards trace completed in ${totalTime.toFixed(0)}ms`);
+      log.i("TRACEENGINE", "back_trace_done", { timeMs: +totalTime.toFixed(0) });
 
       return {
         target: {
