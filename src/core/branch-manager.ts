@@ -96,6 +96,13 @@ export class BranchManager {
   }
 
   /**
+   * Get projects directory (centralized storage for all repos/branches)
+   */
+  private getProjectsDir(): string {
+    return join(this.config.dataDir, "projects");
+  }
+
+  /**
    * Initialize xxHash for repository hashing
    */
   async initialize(): Promise<void> {
@@ -223,13 +230,13 @@ export class BranchManager {
     const path = repoPath || this.currentRepoPath || process.cwd();
 
     if (!this.config.enabled) {
-      // Fallback to single database
-      return join(this.config.dataDir, "vectors.db");
+      // Fallback to single database in projects dir
+      return join(this.getProjectsDir(), "vectors.db");
     }
 
     const repoHash = this.getRepositoryHash(path);
     const sanitizedBranch = this.sanitizeBranchName(branch);
-    const branchDir = join(this.config.dataDir, repoHash, sanitizedBranch);
+    const branchDir = join(this.getProjectsDir(), repoHash, sanitizedBranch);
 
     // Ensure directory exists
     if (!existsSync(branchDir)) {
@@ -246,7 +253,7 @@ export class BranchManager {
     const path = repoPath || this.currentRepoPath || process.cwd();
     const repoHash = this.getRepositoryHash(path);
     const sanitizedBranch = this.sanitizeBranchName(branch);
-    const metadataPath = join(this.config.dataDir, repoHash, sanitizedBranch, "metadata.json");
+    const metadataPath = join(this.getProjectsDir(), repoHash, sanitizedBranch, "metadata.json");
 
     if (!existsSync(metadataPath)) {
       return null;
@@ -266,9 +273,9 @@ export class BranchManager {
    */
   updateBranchMetadata(metadata: BranchMetadata): void {
     const sanitizedBranch = this.sanitizeBranchName(metadata.branch);
-    const metadataPath = join(this.config.dataDir, metadata.repositoryHash, sanitizedBranch, "metadata.json");
+    const metadataPath = join(this.getProjectsDir(), metadata.repositoryHash, sanitizedBranch, "metadata.json");
 
-    const dir = join(this.config.dataDir, metadata.repositoryHash, sanitizedBranch);
+    const dir = join(this.getProjectsDir(), metadata.repositoryHash, sanitizedBranch);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
@@ -285,7 +292,7 @@ export class BranchManager {
   getActiveBranches(repoPath?: string): BranchInfo[] {
     const path = repoPath || this.currentRepoPath || process.cwd();
     const repoHash = this.getRepositoryHash(path);
-    const repoDir = join(this.config.dataDir, repoHash);
+    const repoDir = join(this.getProjectsDir(), repoHash);
 
     if (!existsSync(repoDir)) {
       return [];
@@ -330,7 +337,7 @@ export class BranchManager {
 
     for (const branch of toDelete) {
       try {
-        const branchDir = join(this.config.dataDir, branch.metadata?.repositoryHash || "", branch.name);
+        const branchDir = join(this.getProjectsDir(), branch.metadata?.repositoryHash || "", branch.name);
 
         // Delete all files in branch directory
         const files = readdirSync(branchDir);
