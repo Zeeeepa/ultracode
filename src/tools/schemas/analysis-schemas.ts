@@ -42,7 +42,11 @@ export const SuggestRefactoringSchema = z
   );
 
 export const AnalyzeHotspotsSchema = z.object({
-  metric: z.string().optional().default("complexity").describe("Metric: complexity, changes, or coupling"),
+  metric: z
+    .enum(["complexity", "changes", "coupling", "all"])
+    .optional()
+    .default("complexity")
+    .describe("Metric: complexity, changes, coupling, or all"),
   limit: z.number().optional().default(10).describe("Maximum hotspots to return"),
 });
 
