@@ -16,13 +16,13 @@ import { extname } from "node:path";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { getConfig } from "../config/yaml-config.js";
+import { log } from "../logging/index.js";
 // NOTE: IncrementalParser removed from main - all parsing done via subprocess workers
 import { isFileSupported } from "../parsers/language-configs.js";
 import { type EmbeddingAccumulator, getEmbeddingAccumulator } from "../semantic/embedding-accumulator.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { FileChange, ParseResult, ParserOptions, ParserStats, ParserTask } from "../types/parser.js";
 import type { WorkerEmbeddingConfig } from "../types/semantic.js";
-import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 import type { BinaryEmbedding } from "./workers/language-worker-pool.js";
 import { ParsingSubprocessPool, type StreamingResultCallback } from "./workers/parsing-subprocess-pool.js";
@@ -195,11 +195,11 @@ export class ParserAgent extends BaseAgent {
       if (!this.embeddingAccumulator) {
         // Lazy init accumulator on first embeddings
         this.embeddingAccumulator = getEmbeddingAccumulator();
-        logger.debug("PARSER_AGENT", "Initialized embedding accumulator");
+        log.d("PARSER", "Initialized embedding accumulator");
       }
       // Add to accumulator (will auto-flush when threshold reached)
       this.embeddingAccumulator.addBinaryEmbeddings(embeddings).catch((err) => {
-        logger.error("PARSER_AGENT", "Failed to add embeddings to accumulator", {
+        log.e("PARSER", "Failed to add embeddings to accumulator", {
           error: (err as Error).message,
         });
       });
@@ -217,7 +217,7 @@ export class ParserAgent extends BaseAgent {
    * Initialize the parser agent
    */
   protected async onInitialize(): Promise<void> {
-    logger.info("PARSER_AGENT", `Initializing Parser Agent (subprocess mode)`);
+    log.i("PARSER", `Initializing Parser Agent (subprocess mode)`);
 
     // Initialize worker pool for parallel processing
     await this.initializeWorkerPool();
@@ -228,7 +228,7 @@ export class ParserAgent extends BaseAgent {
     }
 
     const config = getParserConfig();
-    logger.info("PARSER_AGENT", `Parser Agent initialized with ${config.workerPoolSize} workers`);
+    log.i("PARSER", `Parser Agent initialized with ${config.workerPoolSize} workers`);
   }
 
   /**
@@ -238,11 +238,11 @@ export class ParserAgent extends BaseAgent {
    * Call destroyWorkerPools() explicitly if you need to cleanup workers.
    */
   protected async onShutdown(): Promise<void> {
-    logger.info("PARSER_AGENT", `Shutting down Parser Agent...`);
+    log.i("PARSER", `Shutting down Parser Agent...`);
 
     // Optimization 3: Keep worker pools alive for reuse (unless explicitly disabled)
     if (!this.keepPoolsAlive) {
-      logger.info("PARSER_AGENT", `Shutting down worker pools...`);
+      log.i("PARSER", `Shutting down worker pools...`);
       const shutdownPromises: Promise<void>[] = [];
       for (const [_language, pool] of this.languagePools) {
         shutdownPromises.push(pool.shutdown());
@@ -250,7 +250,7 @@ export class ParserAgent extends BaseAgent {
       await Promise.all(shutdownPromises);
       this.languagePools.clear();
     } else {
-      logger.info("PARSER_AGENT", `Worker pools kept alive for reuse (${this.languagePools.size} pools active)`);
+      log.i("PARSER", `Worker pools kept alive for reuse (${this.languagePools.size} pools active)`);
     }
 
     // NOTE: Cache clearing removed - caches are per-subprocess worker now
@@ -260,7 +260,7 @@ export class ParserAgent extends BaseAgent {
       this.knowledgeBus.removeAllListeners(TOPICS.FILE_CHANGED);
     }
 
-    logger.info("PARSER_AGENT", `Parser Agent shutdown complete`);
+    log.i("PARSER", `Parser Agent shutdown complete`);
   }
 
   /**
@@ -272,18 +272,18 @@ export class ParserAgent extends BaseAgent {
    * - For testing cleanup
    */
   async destroyWorkerPools(): Promise<void> {
-    logger.info("PARSER_AGENT", `Destroying worker pools...`);
+    log.i("PARSER", `Destroying worker pools...`);
 
     const shutdownPromises: Promise<void>[] = [];
     for (const [language, pool] of this.languagePools) {
-      logger.info("PARSER_AGENT", `Shutting down ${language} pool...`);
+      log.i("PARSER", `Shutting down ${language} pool...`);
       shutdownPromises.push(pool.shutdown());
     }
 
     await Promise.all(shutdownPromises);
     this.languagePools.clear();
 
-    logger.info("PARSER_AGENT", `All worker pools destroyed`);
+    log.i("PARSER", `All worker pools destroyed`);
   }
 
   /**
@@ -314,7 +314,7 @@ export class ParserAgent extends BaseAgent {
     const parserTask = task as ParserTask;
     const startTime = Date.now();
 
-    logger.info("PARSER_AGENT", `Processing task: ${parserTask.type}`);
+    log.i("PARSER", `Processing task: ${parserTask.type}`);
 
     try {
       let results: ParseResult[] = [];
@@ -362,7 +362,7 @@ export class ParserAgent extends BaseAgent {
           })
           .join("; ");
 
-        logger.warn("PARSER_AGENT", `${resultsWithErrors.length} file(s) reported parse errors: ${summaries}`);
+        log.w("PARSER", `${resultsWithErrors.length} file(s) reported parse errors: ${summaries}`);
 
         if (this.knowledgeBus) {
           for (const result of resultsWithErrors) {
@@ -394,7 +394,7 @@ export class ParserAgent extends BaseAgent {
         });
       }
 
-      logger.info("PARSER_AGENT", "Task completed", {
+      log.i("PARSER", "Task completed", {
         filesCount: results.length,
         elapsedMs: elapsed,
         filesPerSec: Math.round((results.length / elapsed) * 1000),
@@ -402,7 +402,7 @@ export class ParserAgent extends BaseAgent {
 
       return results;
     } catch (error) {
-      logger.info("PARSER_AGENT", `Task failed:`, error);
+      log.e("PARSER", "task_failed", { err: String(error) });
 
       // Publish error to knowledge bus
       if (this.knowledgeBus) {
@@ -421,7 +421,7 @@ export class ParserAgent extends BaseAgent {
    * Handle incoming messages
    */
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    logger.info("PARSER_AGENT", `Received message: ${message.type}`);
+    log.i("PARSER", `Received message: ${message.type}`);
 
     switch (message.type) {
       case "parse:request": {
@@ -440,7 +440,7 @@ export class ParserAgent extends BaseAgent {
       case "cache:clear":
         // NOTE: Cache clearing is per-subprocess worker now
         // Each worker manages its own cache and releases on process exit
-        logger.info("PARSER_AGENT", `Cache clear requested (no-op: caches are per-subprocess worker)`);
+        log.i("PARSER", `Cache clear requested (no-op: caches are per-subprocess worker)`);
         break;
 
       case "stats:request":
@@ -457,7 +457,7 @@ export class ParserAgent extends BaseAgent {
         break;
 
       default:
-        logger.warn("PARSER_AGENT", `Unknown message type: ${message.type}`);
+        log.w("PARSER", `Unknown message type: ${message.type}`);
     }
   }
 
@@ -488,13 +488,13 @@ export class ParserAgent extends BaseAgent {
    */
   async parseBatch(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
     // DEBUG: Log input files count
-    logger.info("PARSER_AGENT", `[ParserAgent.parseBatch] Received ${files.length} files`);
+    log.i("PARSER", `[ParserAgent.parseBatch] Received ${files.length} files`);
 
     // Filter to supported files only
     const supportedFiles = filterSupportedFiles(files);
 
     // DEBUG: Log filtered files count
-    logger.info("PARSER_AGENT", `[ParserAgent.parseBatch] After filter: ${supportedFiles.length} supported files`);
+    log.i("PARSER", `[ParserAgent.parseBatch] After filter: ${supportedFiles.length} supported files`);
 
     // DEBUG: Log filtering stats via logger (for file logging)
     const extStats: Record<string, { total: number; supported: number }> = {};
@@ -507,7 +507,7 @@ export class ParserAgent extends BaseAgent {
       const ext = file.split(".").pop()?.toLowerCase() || "(no ext)";
       if (extStats[ext]) extStats[ext].supported++;
     }
-    logger.info("PARSER_AGENT", "parseBatch filtering", {
+    log.i("PARSER", "parseBatch filtering", {
       agentId: this.id,
       inputFiles: files.length,
       supportedFiles: supportedFiles.length,
@@ -515,11 +515,11 @@ export class ParserAgent extends BaseAgent {
     });
 
     if (supportedFiles.length === 0) {
-      logger.warn("PARSER_AGENT", "No supported files to parse", { agentId: this.id });
+      log.w("PARSER", "No supported files to parse", { agentId: this.id });
       return [];
     }
 
-    logger.info("PARSER_AGENT", "Starting batch parse", {
+    log.i("PARSER", "Starting batch parse", {
       agentId: this.id,
       fileCount: supportedFiles.length,
     });
@@ -530,7 +530,7 @@ export class ParserAgent extends BaseAgent {
     const elapsed = Date.now() - startTime;
 
     const totalEntities = results.reduce((sum, r) => sum + (r.entities?.length || 0), 0);
-    logger.info("PARSER_AGENT", "Worker pool parsing completed", {
+    log.i("PARSER", "Worker pool parsing completed", {
       agentId: this.id,
       filesProcessed: supportedFiles.length,
       resultsCount: results.length,
@@ -546,7 +546,7 @@ export class ParserAgent extends BaseAgent {
    * Process incremental file changes via subprocess workers
    */
   async processIncremental(changes: FileChange[], options?: ParserOptions): Promise<ParseResult[]> {
-    logger.info("PARSER_AGENT", `Processing ${changes.length} incremental changes...`);
+    log.i("PARSER", `Processing ${changes.length} incremental changes...`);
 
     // Route incremental changes through worker pools
     // Workers will re-parse modified files (caching is per-worker)
@@ -578,7 +578,7 @@ export class ParserAgent extends BaseAgent {
   private async initializeWorkerPool(): Promise<void> {
     // Subprocess workers are always enabled for memory isolation
     // Pools are created lazily in getOrCreateLanguagePool()
-    logger.info("PARSER_AGENT", "Subprocess worker pools enabled (lazy initialization mode)");
+    log.i("PARSER", "Subprocess worker pools enabled (lazy initialization mode)");
   }
 
   /**
@@ -598,7 +598,7 @@ export class ParserAgent extends BaseAgent {
     // Create new pool for this language
     try {
       // Always use subprocess pools for memory isolation
-      logger.info("PARSER_AGENT", `Creating subprocess pool for ${language}`, {
+      log.i("PARSER", `Creating subprocess pool for ${language}`, {
         hasVectorsWrittenCallback: !!this.onVectorsWritten,
         hasEmbeddingConfig: !!this.embeddingConfig,
       });
@@ -617,11 +617,11 @@ export class ParserAgent extends BaseAgent {
       this.languagePools.set(language, pool);
 
       const stats = pool.getStats();
-      logger.info("PARSER_AGENT", `${language} subprocess pool ready: ${stats.totalWorkers} workers`);
+      log.i("PARSER", `${language} subprocess pool ready: ${stats.totalWorkers} workers`);
 
       return pool;
     } catch (error) {
-      logger.warn("PARSER_AGENT", `Failed to create ${language} pool`, { error: (error as Error).message });
+      log.w("PARSER", `Failed to create ${language} pool`, { error: (error as Error).message });
       return null;
     }
   }
@@ -636,7 +636,7 @@ export class ParserAgent extends BaseAgent {
     // Step 1: Group files by programming language
     const languageGroups = groupFilesByLanguage(files);
 
-    logger.info("PARSER_AGENT", "Language distribution", {
+    log.i("PARSER", "Language distribution", {
       agentId: this.id,
       distribution: Object.fromEntries(
         Array.from(languageGroups.entries()).map(([lang, files]) => [lang, files.length]),
@@ -665,7 +665,7 @@ export class ParserAgent extends BaseAgent {
         poolPromises.push(pool.submitTask(languageFiles, options));
       } else {
         // Skip files for unsupported languages (no fallback)
-        logger.warn("PARSER_AGENT", `No worker pool for ${language}, skipping ${languageFiles.length} files`);
+        log.w("PARSER", `No worker pool for ${language}, skipping ${languageFiles.length} files`);
         skippedFiles.push(...languageFiles);
       }
     }
@@ -681,7 +681,7 @@ export class ParserAgent extends BaseAgent {
       const pool = this.languagePools.get(language);
       if (pool) {
         const stats = pool.getStats();
-        logger.debug("PARSER_AGENT", `Pool stats: ${language}`, {
+        log.d("PARSER", `Pool stats: ${language}`, {
           activeWorkers: stats.activeWorkers,
           totalWorkers: stats.totalWorkers,
           completedTasks: stats.completedTasks,
@@ -691,7 +691,7 @@ export class ParserAgent extends BaseAgent {
     }
 
     if (skippedFiles.length > 0) {
-      logger.warn("PARSER_AGENT", `Skipped ${skippedFiles.length} files (unsupported languages)`);
+      log.w("PARSER", `Skipped ${skippedFiles.length} files (unsupported languages)`);
     }
 
     return flatResults;
@@ -704,7 +704,7 @@ export class ParserAgent extends BaseAgent {
     if (this.isProcessing) return;
 
     const change: FileChange = event.change;
-    logger.info("PARSER_AGENT", `File change detected: ${change.filePath}`);
+    log.i("PARSER", `File change detected: ${change.filePath}`);
 
     // Create incremental parse task
     const task: ParserTask = {
@@ -719,7 +719,7 @@ export class ParserAgent extends BaseAgent {
 
     // Process asynchronously
     this.process(task).catch((error) => {
-      logger.info("PARSER_AGENT", `Failed to process file change:`, error);
+      log.i("PARSER", `Failed to process file change:`, error);
     });
   }
 
@@ -731,7 +731,7 @@ export class ParserAgent extends BaseAgent {
     this.on("resource:warning", (usage) => {
       const config = getParserConfig();
       if (usage.memory > config.memoryLimit * 0.9) {
-        logger.warn("PARSER_AGENT", `Memory usage high: ${usage.memory}MB`, { agentId: this.id });
+        log.w("PARSER", `Memory usage high: ${usage.memory}MB`, { agentId: this.id });
         // NOTE: Cache is per-subprocess worker now
         // Workers are killed and restarted automatically when memory exceeds limit
       }
@@ -739,11 +739,11 @@ export class ParserAgent extends BaseAgent {
 
     // Monitor task completion
     this.on("task:completed", (event) => {
-      logger.info("PARSER_AGENT", `Task completed: ${event.task.id}`);
+      log.i("PARSER", `Task completed: ${event.task.id}`);
     });
 
     this.on("task:failed", (event) => {
-      logger.info("PARSER_AGENT", `Task failed: ${event.task.id}`, event.error);
+      log.i("PARSER", `Task failed: ${event.task.id}`, event.error);
       this.stats.errorCount++;
     });
   }
@@ -784,9 +784,9 @@ export class ParserAgent extends BaseAgent {
     }
 
     if (config) {
-      logger.info("PARSER_AGENT", `Embedding config set: ${config.provider}/${config.modelName}`);
+      log.i("PARSER", `Embedding config set: ${config.provider}/${config.modelName}`);
     } else {
-      logger.info("PARSER_AGENT", `Embedding config cleared`);
+      log.i("PARSER", `Embedding config cleared`);
     }
   }
 
@@ -798,7 +798,7 @@ export class ParserAgent extends BaseAgent {
   setVectorsWrittenCallback(callback: ((workerId: string, count: number, dumpDir: string) => void) | null): void {
     this.onVectorsWritten = callback;
     if (callback) {
-      logger.info("PARSER_AGENT", `Incremental Faiss loading enabled`);
+      log.i("PARSER", `Incremental Faiss loading enabled`);
     }
   }
 
@@ -814,9 +814,9 @@ export class ParserAgent extends BaseAgent {
     this.onStreamingResult = callback ?? null;
 
     if (enabled && callback) {
-      logger.info("PARSER_AGENT", "Streaming mode enabled");
+      log.i("PARSER", "Streaming mode enabled");
     } else {
-      logger.info("PARSER_AGENT", "Streaming mode disabled");
+      log.i("PARSER", "Streaming mode disabled");
     }
   }
 
@@ -835,7 +835,7 @@ export class ParserAgent extends BaseAgent {
    */
   setIncrementalMode(enabled: boolean): void {
     this.keepPoolsAlive = enabled;
-    logger.info("PARSER_AGENT", `Incremental mode: ${enabled ? "enabled" : "disabled"}`);
+    log.i("PARSER", `Incremental mode: ${enabled ? "enabled" : "disabled"}`);
 
     // Note: existing pools keep their current killAfterBatch setting
     // New pools will use the updated setting
@@ -850,7 +850,7 @@ export class ParserAgent extends BaseAgent {
    * The keepalive worker stays alive until memory exceeds 500MB.
    */
   async enableKeepaliveMode(): Promise<void> {
-    logger.info("PARSER_AGENT", "Enabling keepalive mode for incremental processing", {
+    log.i("PARSER", "Enabling keepalive mode for incremental processing", {
       poolCount: this.languagePools.size,
       pools: Array.from(this.languagePools.keys()),
     });
@@ -879,24 +879,24 @@ export class ParserAgent extends BaseAgent {
     }
 
     if (killedPools.length > 0) {
-      logger.info("PARSER_AGENT", "Killed non-TypeScript pools to free memory", {
+      log.i("PARSER", "Killed non-TypeScript pools to free memory", {
         killedPools,
       });
     }
 
     // Spawn keepalive worker only for TypeScript
     if (tsPool instanceof ParsingSubprocessPool) {
-      logger.info("PARSER_AGENT", "Spawning TypeScript keepalive worker...");
+      log.i("PARSER", "Spawning TypeScript keepalive worker...");
       await tsPool.ensureKeepaliveWorker();
-      logger.info("PARSER_AGENT", "TypeScript keepalive worker spawned", {
+      log.i("PARSER", "TypeScript keepalive worker spawned", {
         activeWorkers: tsPool.getActiveWorkerCount(),
       });
     } else {
-      logger.warn("PARSER_AGENT", "No TypeScript pool found for keepalive");
+      log.w("PARSER", "No TypeScript pool found for keepalive");
     }
 
     this.keepPoolsAlive = true;
-    logger.info("PARSER_AGENT", "Keepalive mode enabled, ready for incremental updates");
+    log.i("PARSER", "Keepalive mode enabled, ready for incremental updates");
   }
 
   /**
@@ -908,7 +908,7 @@ export class ParserAgent extends BaseAgent {
         pool.setKeepaliveMode(false);
       }
     }
-    logger.info("PARSER_AGENT", "Keepalive mode disabled");
+    log.i("PARSER", "Keepalive mode disabled");
   }
 
   /**
@@ -925,7 +925,7 @@ export class ParserAgent extends BaseAgent {
   exportCache(): any[] {
     // Cache is per-subprocess worker now
     // Workers manage their own caches and release on process exit
-    logger.warn("PARSER_AGENT", "exportCache() called but cache is per-subprocess worker now");
+    log.w("PARSER", "exportCache() called but cache is per-subprocess worker now");
     return [];
   }
 
@@ -936,7 +936,7 @@ export class ParserAgent extends BaseAgent {
   async importCache(_cacheData: any[]): Promise<void> {
     // Cache is per-subprocess worker now
     // Workers manage their own caches
-    logger.warn("PARSER_AGENT", "importCache() called but cache is per-subprocess worker now");
+    log.w("PARSER", "importCache() called but cache is per-subprocess worker now");
   }
 
   /**
@@ -963,7 +963,7 @@ export class ParserAgent extends BaseAgent {
     const totalMB = this.getTotalMemoryMB();
 
     if (totalMB > thresholdMB) {
-      logger.info("PARSER_AGENT", `Total memory ${totalMB}MB > ${thresholdMB}MB threshold, killing all pools`, {
+      log.i("PARSER", `Total memory ${totalMB}MB > ${thresholdMB}MB threshold, killing all pools`, {
         agentId: this.id,
         poolCount: this.languagePools.size,
       });
@@ -972,20 +972,20 @@ export class ParserAgent extends BaseAgent {
       const shutdownPromises: Promise<void>[] = [];
       for (const [language, pool] of this.languagePools) {
         if ("shutdown" in pool) {
-          logger.debug("PARSER_AGENT", `Killing ${language} pool`);
+          log.d("PARSER", `Killing ${language} pool`);
           shutdownPromises.push(pool.shutdown());
         }
       }
       await Promise.all(shutdownPromises);
       this.languagePools.clear();
 
-      logger.info("PARSER_AGENT", "All pools killed, memory released to OS", {
+      log.i("PARSER", "All pools killed, memory released to OS", {
         agentId: this.id,
         previousMemoryMB: totalMB,
       });
       return true;
     } else {
-      logger.debug("PARSER_AGENT", `Total memory ${totalMB}MB <= ${thresholdMB}MB, keeping pools alive`, {
+      log.d("PARSER", `Total memory ${totalMB}MB <= ${thresholdMB}MB, keeping pools alive`, {
         agentId: this.id,
       });
       return false;

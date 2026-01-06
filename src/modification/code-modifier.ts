@@ -15,6 +15,7 @@
  * - Stream Helpers: src/utils/stream-helpers.ts
  */
 
+import { log } from "../logging/index.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import type { VectorStore } from "../semantic/vector-store.js";
 import type { Entity, GraphStorage } from "../types/storage.js";
@@ -73,7 +74,7 @@ export class CodeModifier {
   async initialize(): Promise<void> {
     await this.versionManager.initialize();
     await this.previewManager.initialize();
-    console.error("[CodeModifier] Initialized");
+    log.i("CODEMOD", "init");
   }
 
   /**
@@ -105,16 +106,17 @@ export class CodeModifier {
       entity.filePath,
     ]);
 
-    console.error(`[CodeModifier] Created snapshot: ${snapshotId}`);
+    log.i("CODEMOD", "snapshot_created", { id: snapshotId });
 
     try {
       // Phase 4: Validation BEFORE modification
       let beforeValidation: BeforeAfterReport["before"] | undefined;
       if (!request.skipValidation) {
         beforeValidation = await this.validator.validateFile(entity.filePath);
-        console.error(
-          `[CodeModifier] Before: ${beforeValidation.summary.errors} errors, ${beforeValidation.summary.warnings} warnings`,
-        );
+        log.i("CODEMOD", "validate_before", {
+          errors: beforeValidation.summary.errors,
+          warnings: beforeValidation.summary.warnings,
+        });
       }
 
       // Phase 5: Modify file
@@ -141,9 +143,11 @@ export class CodeModifier {
           improvement,
         };
 
-        console.error(
-          `[CodeModifier] After: ${afterValidation.summary.errors} errors, ${afterValidation.summary.warnings} warnings (net change: ${improvement.netChange})`,
-        );
+        log.i("CODEMOD", "validate_after", {
+          errors: afterValidation.summary.errors,
+          warnings: afterValidation.summary.warnings,
+          net: improvement.netChange,
+        });
       }
 
       return {
@@ -157,7 +161,7 @@ export class CodeModifier {
       };
     } catch (error) {
       // Rollback on error
-      console.error("[CodeModifier] Modification failed, rolling back...", error);
+      log.e("CODEMOD", "mod_fail_rollback", { err: String(error) });
       await this.versionManager.rollback(snapshotId);
       throw error;
     }
@@ -168,7 +172,7 @@ export class CodeModifier {
    */
   async rollback(snapshotId: string): Promise<void> {
     await this.versionManager.rollback(snapshotId);
-    console.error(`[CodeModifier] Rolled back to snapshot: ${snapshotId}`);
+    log.i("CODEMOD", "rollback_done", { id: snapshotId });
   }
 
   // =============================================================================
@@ -260,7 +264,7 @@ export class CodeModifier {
    */
   private async updateEntityEmbedding(entity: Entity, newCode: string): Promise<boolean> {
     if (!this.vectorStore) {
-      console.warn("[CodeModifier] VectorStore not available, skipping embedding update");
+      log.w("CODEMOD", "no_vectorstore");
       return false;
     }
 
@@ -298,11 +302,11 @@ export class CodeModifier {
         updatedAt: Date.now(),
       });
 
-      console.error(`[CodeModifier] Entity embedding updated: ${entity.id}`);
+      log.i("CODEMOD", "embedding_updated", { entityId: entity.id });
       await generator.cleanup();
       return true;
     } catch (error) {
-      console.error("[CodeModifier] Failed to update embedding:", error);
+      log.e("CODEMOD", "embedding_fail", { err: String(error) });
       return false;
     }
   }
@@ -338,13 +342,13 @@ export class CodeModifier {
       // Signature changed - update relationships
       const relationships = await this.graphStorage.getRelationshipsForEntity(entity.id);
 
-      console.error(`[CodeModifier] Signature changed, updating ${relationships.length} relationships`);
+      log.i("CODEMOD", "sig_changed", { rels: relationships.length });
 
       // For now, just return count
       // In full implementation, would update import statements in dependent files
       return relationships.length;
     } catch (error) {
-      console.error("[CodeModifier] Failed to update relationships:", error);
+      log.e("CODEMOD", "rel_update_fail", { err: String(error) });
       return 0;
     }
   }

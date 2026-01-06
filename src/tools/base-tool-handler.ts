@@ -9,6 +9,7 @@
  * - Automatic response size limiting
  */
 
+import { log } from "../logging/index.js";
 import { getProjectContext, type ProjectContextManager } from "../shared/project-context.js";
 import { MAX_RESPONSE_SIZE_BYTES, truncateResponse } from "./response-limits.js";
 
@@ -22,7 +23,6 @@ export interface ToolResult {
 export interface ToolContext {
   requestId: string;
   config: any;
-  logger: any;
   getConductor: () => any;
   getGraphStorage: () => Promise<any>; // v4: libsql unified, no params needed
   getSQLiteManager: () => any; // legacy: kept for AutoDoc and BatchOperations
@@ -79,10 +79,10 @@ export abstract class BaseToolHandler<TArgs = any> {
    */
   protected async ensureGraphStorageForProject(projectPath?: string): Promise<any> {
     const resolved = getProjectContext().resolveProjectPath(projectPath);
-    console.error(`[BaseToolHandler.ensureGraphStorageForProject] resolved=${resolved}`);
+    log.d("BASETOOL", "ensure_storage", { resolved });
     const storage = await this.context.getGraphStorage();
     storage.setProject(resolved);
-    console.error(`[BaseToolHandler.ensureGraphStorageForProject] called storage.setProject(${resolved})`);
+    log.d("BASETOOL", "storage_set", { resolved });
     return storage;
   }
 
@@ -100,18 +100,16 @@ export abstract class BaseToolHandler<TArgs = any> {
     // v3: Log current project context instead of DB path
     const vectorStore = semanticAgent?.getVectorStore?.();
     const currentContext = vectorStore?.getProjectContext?.();
-    console.error(
-      `[BaseToolHandler] ensureSemanticAgentForProject: resolved=${resolved}, currentContext=${JSON.stringify(currentContext)}`,
-    );
+    log.d("BASETOOL", "semantic_ctx", { resolved, ctx: JSON.stringify(currentContext) });
 
     // v3: reinitializeForProject now just changes context, no VectorStore recreation
     if (semanticAgent && typeof semanticAgent.reinitializeForProject === "function") {
-      console.error(`[BaseToolHandler] Calling reinitializeForProject(${resolved})`);
+      log.d("BASETOOL", "reinit_proj", { resolved });
       await semanticAgent.reinitializeForProject(resolved);
 
       // Verify context switch happened
       const newContext = semanticAgent.getVectorStore?.()?.getProjectContext?.();
-      console.error(`[BaseToolHandler] After reinitialize: newContext=${JSON.stringify(newContext)}`);
+      log.d("BASETOOL", "ctx_switched", { ctx: JSON.stringify(newContext) });
     }
 
     return semanticAgent;
@@ -192,17 +190,17 @@ export abstract class BaseToolHandler<TArgs = any> {
       const limitedResult = this.applyResponseLimits(result);
 
       const duration = Date.now() - startTime;
-      this.context.logger.mcpResponse?.(toolName, limitedResult, duration, this.context.requestId);
+      log.i("BASETOOL", "mcp_response", { tool: toolName, durationMs: duration, reqId: this.context.requestId });
 
       return limitedResult;
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.context.logger.error?.(
-        toolName.toUpperCase(),
-        `Tool execution failed after ${duration}ms: ${(error as Error).message}`,
-        { error: error as Error, duration },
-        this.context.requestId,
-      );
+      log.e("BASETOOL", "exec_failed", {
+        tool: toolName,
+        durationMs: duration,
+        err: (error as Error).message,
+        reqId: this.context.requestId,
+      });
 
       return {
         content: [

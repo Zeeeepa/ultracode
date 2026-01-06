@@ -20,6 +20,7 @@
  * This analyzer handles common patterns but may not catch all edge cases.
  */
 
+import { log } from "../logging/index.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError } from "./base-parser-utils.js";
 
@@ -62,9 +63,9 @@ export class BatchAnalyzer {
       this.validateScript();
     } catch (error) {
       if (error instanceof CircuitBreakerError) {
-        console.warn(`[BatchAnalyzer] Circuit breaker triggered for ${filePath}: ${error.message}`);
+        log.w("BATCHANALYZER", "circuit_break", { file: filePath, err: error.message });
       } else {
-        console.error(`[BatchAnalyzer] Error analyzing ${filePath}:`, error);
+        log.e("BATCHANALYZER", "analyze_err", { file: filePath, err: String(error) });
       }
     }
 

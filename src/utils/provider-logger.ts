@@ -1,11 +1,11 @@
+import { log } from "../logging/index.js";
 import type { ProviderLogger } from "../semantic/providers/base.js";
-import type { RotatedLogger } from "./logger.js";
 
-export function makeProviderLogger(l: RotatedLogger, category: string): ProviderLogger {
+export function makeProviderLogger(_unused: unknown, category: string): ProviderLogger {
   return {
-    debug: (msg, data, requestId) => l.debug(category, msg, data, requestId),
-    info: (msg, data, requestId) => l.info(category, msg, data, requestId),
-    warn: (msg, data, requestId) => l.warn(category, msg, data, requestId),
-    error: (msg, data, requestId, err) => l.error(category, msg, data, requestId, err),
+    debug: (msg, data, requestId) => log.d(category, msg, { ...data, req: requestId }),
+    info: (msg, data, requestId) => log.i(category, msg, { ...data, req: requestId }),
+    warn: (msg, data, requestId) => log.w(category, msg, { ...data, req: requestId }),
+    error: (msg, data, requestId, err) => log.e(category, msg, { ...data, req: requestId, err: String(err) }),
   };
 }

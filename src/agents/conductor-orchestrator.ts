@@ -17,6 +17,7 @@
  * - Task Completion Checklist: At the end of each task, always proceed with checklist: what was required vs what was done, do you follow requirements.
  */
 
+import { log } from "../logging/index.js";
 import {
   type Agent,
   type AgentMessage,
@@ -26,7 +27,6 @@ import {
   AgentType,
   type ResourceConstraints,
 } from "../types/agent.js";
-import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 import {
   analyzeTaskComplexity as analyzeComplexity,
@@ -124,28 +124,25 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
   protected async onInitialize(): Promise<void> {
     const startTime = Date.now();
-    logger.trace("AGENT", `[Conductor] ▶ onInitialize() START`);
-    console.error(`[CONDUCTOR] Initializing with MANDATORY DELEGATION enabled`);
-    console.error(`[CONDUCTOR] Complexity threshold: ${this.config.complexityThreshold}/10`);
-    console.error(`[CONDUCTOR] All tasks MUST be delegated to dev-agent or Dora`);
+    log.t("CONDUCTOR", "init_start", { thresh: this.config.complexityThreshold, mandatory: true });
 
-    logger.trace("AGENT", `[Conductor] ▶ startHealthMonitoring`);
+    log.t("CONDUCTOR", "health_monitor_start", {});
     this.startHealthMonitoring();
-    logger.trace("AGENT", `[Conductor] ◀ startHealthMonitoring (${Date.now() - startTime}ms)`);
+    log.t("CONDUCTOR", "health_monitor_done", { dur: Date.now() - startTime });
 
-    logger.trace("AGENT", `[Conductor] ▶ startHeartbeat`);
+    log.t("CONDUCTOR", "heartbeat_start", {});
     this.startHeartbeat();
 
-    logger.trace("AGENT", `[Conductor] ▶ initializeDelegationEnforcement`);
+    log.t("CONDUCTOR", "delegation_init", {});
     this.initializeDelegationEnforcement();
 
-    logger.trace("AGENT", `[Conductor] ▶ initializePerformanceOptimizations`);
+    log.t("CONDUCTOR", "perf_opts_init", {});
     this.initializePerformanceOptimizations();
-    logger.trace("AGENT", `[Conductor] ◀ onInitialize() END (${Date.now() - startTime}ms)`);
+    log.t("CONDUCTOR", "init_done", { dur: Date.now() - startTime });
   }
 
   protected async onShutdown(): Promise<void> {
-    console.error(`[CONDUCTOR] Shutting down orchestrator and all managed agents...`);
+    log.i("CONDUCTOR", "shutdown_start", { agents: this.agents.size });
 
     // Stop all async loops
     this.stopped = true;
@@ -165,12 +162,13 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     }
 
     // Log delegation statistics
-    console.error(`[CONDUCTOR] Delegation Statistics:`);
-    console.error(`  - Direct implementation attempts blocked: ${this.directImplementationAttempts}`);
-    console.error(`  - Total delegations: ${this.delegationLog.size}`);
+    log.i("CONDUCTOR", "shutdown_stats", {
+      blocked: this.directImplementationAttempts,
+      delegations: this.delegationLog.size,
+    });
 
     const shutdownPromises = Array.from(this.agents.values()).map((agent) =>
-      agent.shutdown().catch((err) => console.error(`Failed to shutdown agent ${agent.id}:`, err)),
+      agent.shutdown().catch((err) => log.e("CONDUCTOR", "agent_shutdown_fail", { agent: agent.id, err: String(err) })),
     );
     await Promise.all(shutdownPromises);
     this.agents.clear();
@@ -190,7 +188,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   protected async processTask(task: AgentTask): Promise<unknown> {
-    console.error(`[CONDUCTOR] Processing task ${task.id} of type ${task.type}`);
+    log.i("CONDUCTOR", "process_task", { task: task.id, type: task.type });
 
     // CRITICAL: Enforce delegation
     if (this.config.mandatoryDelegation) {
@@ -206,8 +204,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     const complexity = await this.analyzeTaskComplexity(task);
     this.taskComplexityCache.set(task.id, complexity);
 
-    console.error(`[CONDUCTOR] Task complexity: ${complexity.score}/10`);
-    console.error(`[CONDUCTOR] Delegation strategy: ${complexity.delegationStrategy}`);
+    log.i("CONDUCTOR", "task_complexity", { score: complexity.score, strategy: complexity.delegationStrategy });
 
     // Step 2: Generate method proposals if complexity > threshold
     // Skip approval for automated indexing operations
@@ -217,8 +214,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       const proposals = await this.generateOptimizedMethodProposals(task, complexity);
       this.methodProposals.set(task.id, proposals);
 
-      console.error(`[CONDUCTOR] Generated ${proposals.length} method proposals`);
-      console.error(`[CONDUCTOR] APPROVAL REQUIRED for complexity ${complexity.score}/10`);
+      log.i("CONDUCTOR", "approval_required", { proposals: proposals.length, score: complexity.score });
 
       // Mark for approval and return proposals
       this.approvalRequired.add(task.id);
@@ -230,13 +226,13 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         message: `Task complexity ${complexity.score}/10 exceeds threshold. Please review proposals and approve.`,
       };
     } else if (complexity.requiresApproval && indexing) {
-      console.error(`[CONDUCTOR] Bypassing approval for indexing task (complexity ${complexity.score}/10)`);
+      log.i("CONDUCTOR", "approval_bypass", { reason: "indexing", score: complexity.score });
     }
 
     // Step 3: Decompose into subtasks
     const subtasks = complexity.subtasks.length > 0 ? complexity.subtasks : await this.decomposeTask(task, complexity);
 
-    console.error(`[CONDUCTOR] Decomposed into ${subtasks.length} subtasks`);
+    log.d("CONDUCTOR", "decomposed", { subtasks: subtasks.length });
 
     // Step 4: Delegate subtasks to appropriate agents
     const results = [];
@@ -267,7 +263,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       const isBatchProcessing = payload.excludePatterns?.includes("__batch_processing_enabled__");
 
       if (isBatchProcessing) {
-        console.error(`[CONDUCTOR] Decomposing large indexing task into batches`);
+        log.d("CONDUCTOR", "batch_decompose", { task: task.id });
 
         // Remove the batch processing marker before delegating
         const cleanedPatterns = payload.excludePatterns.filter((p: string) => p !== "__batch_processing_enabled__");
@@ -357,7 +353,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private async delegateSubtask(taskId: string, subtask: SubTask): Promise<unknown> {
-    console.error(`[CONDUCTOR] Delegating subtask ${subtask.id} to ${subtask.targetAgent}`);
+    log.d("CONDUCTOR", "delegate", { subtask: subtask.id, target: subtask.targetAgent });
 
     // Track delegation
     if (!this.delegationLog.has(taskId)) {
@@ -371,7 +367,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     // Check if target agent is available
     const agent = this.getAgentByName(subtask.targetAgent);
     if (!agent) {
-      console.error(`[CONDUCTOR] ${subtask.targetAgent} not available, queuing for later`);
+      log.w("CONDUCTOR", "agent_unavailable", { agent: subtask.targetAgent, subtask: subtask.id });
 
       // Queue for when agent becomes available
       this.pendingTasks.set(subtask.id, {
@@ -402,16 +398,16 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     // Process through agent
     try {
       const result = await agent.process(agentTask);
-      console.error(`[CONDUCTOR] Subtask ${subtask.id} completed by ${subtask.targetAgent}`);
+      log.d("CONDUCTOR", "subtask_done", { subtask: subtask.id, agent: subtask.targetAgent });
       return result;
     } catch (error) {
-      console.error(`[CONDUCTOR] Subtask ${subtask.id} failed:`, error);
+      log.e("CONDUCTOR", "subtask_fail", { subtask: subtask.id, err: String(error) });
       throw error;
     }
   }
 
   private async synthesizeResults(task: AgentTask, results: unknown[]): Promise<unknown> {
-    console.error(`[CONDUCTOR] Synthesizing ${results.length} results for task ${task.id}`);
+    log.d("CONDUCTOR", "synthesize", { task: task.id, results: results.length });
 
     return {
       taskId: task.id,
@@ -442,7 +438,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     this.process = async (task: AgentTask) => {
       if (this.checkDirectImplementation(task)) {
         this.directImplementationAttempts++;
-        console.error(`[CONDUCTOR] BLOCKED: Direct implementation attempt #${this.directImplementationAttempts}`);
+        log.w("CONDUCTOR", "direct_blocked", { attempt: this.directImplementationAttempts, task: task.id });
         throw new Error(
           "CONDUCTOR VIOLATION: Direct implementation is FORBIDDEN. " +
             "All tasks MUST be delegated to dev-agent or Dora. " +
@@ -465,7 +461,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     }
 
     this.agents.set(agent.id, agent);
-    console.error(`[CONDUCTOR] Registered agent ${agent.id} of type ${agent.type}`);
+    log.i("CONDUCTOR", "agent_registered", { agent: agent.id, type: agent.type });
 
     if (isEventfulAgent(agent)) {
       agent.on("task:completed", this.handleTaskCompleted.bind(this));
@@ -479,7 +475,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     const agent = this.agents.get(agentId);
     if (agent) {
       this.agents.delete(agentId);
-      console.error(`[CONDUCTOR] Unregistered agent ${agentId}`);
+      log.i("CONDUCTOR", "agent_unregistered", { agent: agentId });
       this.emit("agent:unregistered", agentId);
     }
   }
@@ -521,7 +517,9 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
   async broadcast(message: AgentMessage): Promise<void> {
     const promises = Array.from(this.agents.values()).map((agent) =>
-      agent.receive(message).catch((err) => console.error(`Failed to deliver message to agent ${agent.id}:`, err)),
+      agent
+        .receive(message)
+        .catch((err) => log.e("CONDUCTOR", "broadcast_fail", { agent: agent.id, err: String(err) })),
     );
     await Promise.all(promises);
   }
@@ -529,7 +527,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   async route(task: AgentTask): Promise<Agent | undefined> {
     // CRITICAL: Force delegation through proper channels
     if (this.config.mandatoryDelegation) {
-      console.warn(`[CONDUCTOR] Route called directly - redirecting to delegation system`);
+      log.w("CONDUCTOR", "route_redirect", { task: task.id });
       await this.processThroughDelegation(task);
       return undefined;
     }
@@ -593,7 +591,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
         try {
           this.checkAgentHealth();
         } catch (error) {
-          console.error("[CONDUCTOR] Health check error:", error);
+          log.e("CONDUCTOR", "health_check_fail", { err: String(error) });
         }
       }
     }, this.HEALTH_CHECK_INTERVAL_MS);
@@ -604,8 +602,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     for (const [agentId, agent] of this.agents) {
       if (agent.status === AgentStatus.ERROR) {
-        console.warn(`[CONDUCTOR] Agent ${agentId} is in error state`);
-        logger.incident("Agent error state", { agentId, type: agent.type, status: agent.status });
+        log.w("CONDUCTOR", "agent_error_state", { agent: agentId, type: agent.type });
         this.emit("agent:unhealthy", agentId);
       }
 
@@ -617,8 +614,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
           const last = metrics?.lastActivity ?? Date.now();
           this.agentLastSeen.set(agentId, last);
           if (Date.now() - last > this.AGENT_STALE_MS) {
-            // Use debug instead of incident - staleness is often normal
-            logger.debug("CONDUCTOR", "Agent inactive", { agentId, lastActivityMs: Date.now() - last });
+            log.d("CONDUCTOR", "agent_stale", { agent: agentId, lastMs: Date.now() - last });
           }
         } catch {
           // ignore metric errors
@@ -648,7 +644,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
             agents: this.agents.size,
           });
         } catch (error) {
-          console.error("[CONDUCTOR] Heartbeat error:", error);
+          log.e("CONDUCTOR", "heartbeat_fail", { err: String(error) });
         }
       }
     }, this.HEARTBEAT_INTERVAL_MS);
@@ -657,10 +653,10 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   protected async handleMessage(message: AgentMessage): Promise<void> {
     switch (message.type) {
       case "register":
-        console.error(`[CONDUCTOR] Registration request from ${message.from}`);
+        log.d("CONDUCTOR", "msg_register", { from: message.from });
         break;
       case "health":
-        console.error(`[CONDUCTOR] Health update from ${message.from}:`, message.payload);
+        log.t("CONDUCTOR", "msg_health", { from: message.from });
         break;
       case "broadcast":
         await this.broadcast(message);
@@ -675,19 +671,19 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
   }
 
   private handleTaskCompleted(data: any): void {
-    console.error(`[CONDUCTOR] Task ${data.task.id} completed by agent ${data.agentId}`);
+    log.d("CONDUCTOR", "task_completed", { task: data.task.id, agent: data.agentId });
     this.emit("task:routed:completed", data);
   }
 
   private handleTaskFailed(data: any): void {
-    console.error(`[CONDUCTOR] Task ${data.task.id} failed on agent ${data.agentId}:`, data.error);
+    log.e("CONDUCTOR", "task_failed", { task: data.task.id, agent: data.agentId, err: String(data.error) });
     this.emit("task:routed:failed", data);
   }
 
   // TASK-004B: Performance optimization methods
 
   private initializePerformanceOptimizations(): void {
-    console.error(`[CONDUCTOR] TASK-004B: Initializing performance optimizations`);
+    log.t("CONDUCTOR", "perf_init_start", {});
 
     // Pre-populate method proposal templates
     this.initializeMethodProposalTemplates();
@@ -695,7 +691,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     // Start async performance loop (safe for Bun + OpenVINO)
     this.startPerformanceLoop();
 
-    console.error(`[CONDUCTOR] TASK-004B: Performance optimizations active`);
+    log.t("CONDUCTOR", "perf_init_done", {});
   }
 
   /**
@@ -716,7 +712,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
           this.updatePerformanceMetrics();
           this.cleanupCaches();
         } catch (error) {
-          console.error("[CONDUCTOR] Performance loop error:", error);
+          log.e("CONDUCTOR", "perf_loop_fail", { err: String(error) });
         }
       }
     }, this.PERFORMANCE_INTERVAL_MS);
@@ -727,7 +723,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     for (const [key, value] of templates) {
       this.methodProposalTemplates.set(key, value);
     }
-    console.error(`[CONDUCTOR] TASK-004B: Method proposal templates cached for ${templates.size} task types`);
+    log.t("CONDUCTOR", "templates_cached", { cnt: templates.size });
   }
 
   private updatePerformanceMetrics(): void {
@@ -741,9 +737,10 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     // Log performance improvements every 100 tasks
     if (this.performanceMetrics.totalTasks > 0 && this.performanceMetrics.totalTasks % 100 === 0) {
-      console.error(
-        `[CONDUCTOR] TASK-004B: Performance metrics - overhead reduction: ${this.performanceMetrics.overheadReduction.toFixed(1)}%`,
-      );
+      log.i("CONDUCTOR", "perf_stats", {
+        overhead: this.performanceMetrics.overheadReduction,
+        tasks: this.performanceMetrics.totalTasks,
+      });
     }
   }
 
@@ -790,7 +787,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
     if (template) {
       this.performanceMetrics.cacheHitRate++;
-      console.error(`[CONDUCTOR] TASK-004B: Using cached method proposals for ${taskTypeKey}`);
+      log.t("CONDUCTOR", "proposal_cache_hit", { key: taskTypeKey });
       return template.map((proposal) => ({
         ...proposal,
         description: proposal.description.replace(taskTypeKey, `${taskTypeKey} for ${task.type}`),
@@ -804,7 +801,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     this.methodProposalTemplates.set(taskTypeKey, proposals);
 
     const duration = Date.now() - startTime;
-    console.error(`[CONDUCTOR] TASK-004B: Generated and cached proposals for ${taskTypeKey} in ${duration}ms`);
+    log.t("CONDUCTOR", "proposal_generated", { key: taskTypeKey, dur: duration });
 
     return proposals;
   }

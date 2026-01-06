@@ -10,6 +10,7 @@
 
 import { readFileSync } from "node:fs";
 import { parentPort, workerData } from "node:worker_threads";
+import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 
 // =============================================================================
@@ -127,7 +128,7 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
 
       // Log slow files for monitoring
       if (fileDuration > 500) {
-        console.warn(`[PythonWorker] Slow parse: ${file} took ${fileDuration}ms`);
+        log.w("PYTHONWORKER", "slow_parse", { file, dur: fileDuration });
       }
     } catch (error) {
       errors.push({

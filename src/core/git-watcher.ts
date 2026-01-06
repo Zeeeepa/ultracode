@@ -13,6 +13,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, type FSWatcher, watch } from "node:fs";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 
 // Event-driven architecture: git polling uses setInterval for Node.js, disabled for Bun
 
@@ -115,7 +116,7 @@ export class GitWatcher {
    */
   startWatching(repoPath: string): void {
     if (!this.config.enabled) {
-      console.error("[GitWatcher] Git watching is disabled");
+      log.i("GITWATCHER", "disabled");
       return;
     }
 
@@ -123,7 +124,7 @@ export class GitWatcher {
     const gitHeadPath = join(repoPath, ".git", "HEAD");
 
     if (!existsSync(gitHeadPath)) {
-      console.error("[GitWatcher] No .git directory found, skipping Git watch");
+      log.i("GITWATCHER", "no_git_dir");
       return;
     }
 
@@ -131,9 +132,9 @@ export class GitWatcher {
     this.currentBranch = this.getCurrentBranch();
     this.currentCommit = this.getCurrentCommit();
 
-    console.error(`[GitWatcher] Started watching repository: ${repoPath}`);
-    console.error(`[GitWatcher] Current branch: ${this.currentBranch}`);
-    console.error(`[GitWatcher] Current commit: ${this.currentCommit}`);
+    log.i("GITWATCHER", "started", { path: repoPath });
+    log.i("GITWATCHER", "current_branch", { branch: this.currentBranch });
+    log.i("GITWATCHER", "current_commit", { commit: this.currentCommit });
 
     // Reset stop flag for new watching session
     this.stopped = false;
@@ -150,14 +151,12 @@ export class GitWatcher {
 
     // Poll for uncommitted file changes (working directory)
     if (this.config.watchUncommitted) {
-      console.error(
-        `[GitWatcher] Uncommitted file watching enabled (interval: ${this.config.uncommittedPollIntervalMs}ms)`,
-      );
+      log.i("GITWATCHER", "uncommitted_watch_on", { interval: this.config.uncommittedPollIntervalMs });
 
       // Initial check to populate lastUncommittedFiles
       this.getUncommittedFiles().then((files) => {
         this.lastUncommittedFiles = new Set(files.map((f) => f.path));
-        console.error(`[GitWatcher] Initial uncommitted files: ${this.lastUncommittedFiles.size}`);
+        log.i("GITWATCHER", "init_uncommitted", { count: this.lastUncommittedFiles.size });
       });
 
       // Start async loop for uncommitted changes (safe for Bun + OpenVINO)
@@ -186,7 +185,7 @@ export class GitWatcher {
         try {
           this.checkCommitChange();
         } catch (error) {
-          console.error("[GitWatcher] Commit poll error:", error);
+          log.w("GITWATCHER", "commit_poll_err", { err: String(error) });
         }
       }
     }, this.config.pollIntervalMs);
@@ -207,7 +206,7 @@ export class GitWatcher {
     this.uncommittedPollTimer = setInterval(() => {
       if (!this.stopped) {
         this.checkUncommittedChanges().catch((error) => {
-          console.error("[GitWatcher] Uncommitted poll error:", error);
+          log.w("GITWATCHER", "uncommitted_poll_err", { err: String(error) });
         });
       }
     }, this.config.uncommittedPollIntervalMs!);
@@ -243,7 +242,7 @@ export class GitWatcher {
 
     this.lastUncommittedFiles.clear();
     this.pendingChanges.clear();
-    console.error("[GitWatcher] Stopped watching repository");
+    log.i("GITWATCHER", "stopped");
   }
 
   /**
@@ -312,9 +311,7 @@ export class GitWatcher {
     const files = Array.from(this.pendingChanges);
     const bulkMode = files.length >= this.bulkModeThreshold;
 
-    console.error(
-      `[GitWatcher] Flushing ${files.length} pending changes (bulkMode: ${bulkMode}, threshold: ${this.bulkModeThreshold})`,
-    );
+    log.i("GITWATCHER", "flushing", { count: files.length, bulkMode, threshold: this.bulkModeThreshold });
 
     // Clear pending changes
     this.pendingChanges.clear();
@@ -324,7 +321,7 @@ export class GitWatcher {
       try {
         callback(files, bulkMode);
       } catch (error) {
-        console.error("[GitWatcher] Debounced callback error:", error);
+        log.w("GITWATCHER", "debounce_cb_err", { err: String(error) });
       }
     }
   }
@@ -351,9 +348,10 @@ export class GitWatcher {
       }
     })();
 
-    console.error(
-      `[GitWatcher] Debounce scheduled: ${this.pendingChanges.size} files pending, flush in ${this.debounceMs / 1000}s`,
-    );
+    log.i("GITWATCHER", "debounce_scheduled", {
+      pending: this.pendingChanges.size,
+      flushInSec: this.debounceMs / 1000,
+    });
   }
 
   /**
@@ -407,7 +405,7 @@ export class GitWatcher {
 
       return changes;
     } catch (error) {
-      console.error("[GitWatcher] Failed to get changed files:", error);
+      log.w("GITWATCHER", "get_changed_fail", { err: String(error) });
       return [];
     }
   }
@@ -462,7 +460,7 @@ export class GitWatcher {
 
       return changes;
     } catch (error) {
-      console.error("[GitWatcher] Failed to get changed files between branches:", error);
+      log.w("GITWATCHER", "get_branch_diff_fail", { err: String(error) });
       return [];
     }
   }
@@ -521,7 +519,7 @@ export class GitWatcher {
 
     if (newBranch && newBranch !== this.currentBranch) {
       const oldBranch = this.currentBranch || "unknown";
-      console.error(`[GitWatcher] Branch changed: ${oldBranch} -> ${newBranch}`);
+      log.i("GITWATCHER", "branch_changed", { from: oldBranch, to: newBranch });
 
       this.currentBranch = newBranch;
       this.currentCommit = this.getCurrentCommit();
@@ -531,7 +529,7 @@ export class GitWatcher {
         try {
           callback(newBranch, oldBranch);
         } catch (error) {
-          console.error("[GitWatcher] Branch change callback error:", error);
+          log.w("GITWATCHER", "branch_cb_err", { err: String(error) });
         }
       }
     }
@@ -541,7 +539,7 @@ export class GitWatcher {
     const newCommit = this.getCurrentCommit();
 
     if (newCommit && newCommit !== this.currentCommit) {
-      console.error(`[GitWatcher] New commit detected: ${newCommit.slice(0, 8)}`);
+      log.i("GITWATCHER", "new_commit", { commit: newCommit.slice(0, 8) });
 
       const oldCommit = this.currentCommit;
       this.currentCommit = newCommit;
@@ -551,7 +549,7 @@ export class GitWatcher {
         try {
           callback(newCommit);
         } catch (error) {
-          console.error("[GitWatcher] Commit callback error:", error);
+          log.w("GITWATCHER", "commit_cb_err", { err: String(error) });
         }
       }
 
@@ -563,7 +561,7 @@ export class GitWatcher {
               try {
                 callback(files.map((f) => f.path));
               } catch (error) {
-                console.error("[GitWatcher] File change callback error:", error);
+                log.w("GITWATCHER", "file_cb_err", { err: String(error) });
               }
             }
           }
@@ -635,7 +633,7 @@ export class GitWatcher {
 
       return changes;
     } catch (error) {
-      console.error("[GitWatcher] Failed to get uncommitted files:", error);
+      log.w("GITWATCHER", "get_uncommitted_fail", { err: String(error) });
       return [];
     }
   }
@@ -670,14 +668,14 @@ export class GitWatcher {
 
     // Trigger callbacks if there are changes
     if (changedFiles.length > 0) {
-      console.error(`[GitWatcher] Uncommitted changes detected: ${changedFiles.length} files`);
+      log.i("GITWATCHER", "uncommitted_detected", { count: changedFiles.length });
 
       // Immediate callbacks (legacy, for non-debounced consumers)
       for (const callback of this.uncommittedChangeCallbacks) {
         try {
           callback(changedFiles);
         } catch (error) {
-          console.error("[GitWatcher] Uncommitted change callback error:", error);
+          log.w("GITWATCHER", "uncommitted_cb_err", { err: String(error) });
         }
       }
 
@@ -686,7 +684,7 @@ export class GitWatcher {
         try {
           callback(changedFiles);
         } catch (error) {
-          console.error("[GitWatcher] File change callback error:", error);
+          log.w("GITWATCHER", "file_cb_err", { err: String(error) });
         }
       }
 

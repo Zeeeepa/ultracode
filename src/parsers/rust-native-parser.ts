@@ -12,6 +12,7 @@
  * No native modules or Rust toolchain required - uses bundled ANTLR parser.
  */
 
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import {
   enhanceWithRustAnalyzer,
@@ -81,18 +82,18 @@ export class RustNativeParser {
    * Initialize the parser and check if rust-analyzer is available
    */
   async initialize(): Promise<void> {
-    console.error("[RustNativeParser] Initializing...");
+    log.d("RUSTPARSER", "init_start");
 
     if (this.rustAnalyzerEnabled) {
       const raPath = await findRustAnalyzer();
       if (raPath) {
         const version = await getRustAnalyzerVersion();
-        console.error(`[RustNativeParser] Initialized with rust-analyzer${version ? ` (v${version})` : ""}`);
+        log.i("RUSTPARSER", "init_done", { ra: true, ver: version || "unknown" });
         return;
       }
     }
 
-    console.error("[RustNativeParser] Initialized (regex-based fallback)");
+    log.i("RUSTPARSER", "init_done", { ra: false });
   }
 
   /**
@@ -155,7 +156,7 @@ export class RustNativeParser {
    */
   async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
-    console.error(`[RustNativeParser] Parsing file: ${filePath} (${content.length} bytes)`);
+    log.d("RUSTPARSER", "parse_start", { file: filePath, size: content.length });
 
     try {
       let entities: ParsedEntity[];
@@ -165,20 +166,18 @@ export class RustNativeParser {
       // Try ANTLR parser first (lazy-loaded)
       if (this.useAntlr) {
         try {
-          console.error(`[RustNativeParser] Trying ANTLR parser...`);
+          log.d("RUSTPARSER", "try_antlr");
           const RustAntlrParser = await getRustAntlrParser();
           const antlrResult = RustAntlrParser.parse(filePath, content);
           entities = antlrResult.entities;
           relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;
-          console.error(
-            `[RustNativeParser] ANTLR success: ${entities.length} entities, ${relationships?.length || 0} relationships`,
-          );
+          log.d("RUSTPARSER", "antlr_ok", { ent: entities.length, rel: relationships?.length || 0 });
         } catch (antlrError) {
-          console.error(`[RustNativeParser] ANTLR parser failed, using regex fallback: ${antlrError}`);
+          log.w("RUSTPARSER", "antlr_fail", { err: String(antlrError) });
           const result = this.parseWithRegex(filePath, content);
           entities = result.entities;
           errors = result.errors;
-          console.error(`[RustNativeParser] Regex fallback: ${entities.length} entities`);
+          log.d("RUSTPARSER", "regex_ok", { cnt: entities.length });
         }
       } else {
         // Fallback to regex-based parsing
@@ -197,7 +196,7 @@ export class RustNativeParser {
         try {
           await enhanceWithRustAnalyzer(entities, filePath, content);
         } catch (raError) {
-          console.error(`[RustNativeParser] rust-analyzer enhancement failed: ${raError}`);
+          log.d("RUSTPARSER", "ra_fail", { err: String(raError) });
         }
       }
 

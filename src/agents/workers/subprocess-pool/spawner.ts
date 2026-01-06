@@ -5,7 +5,7 @@
  */
 
 import type { ChildProcess } from "node:child_process";
-import { logger } from "../../../utils/logger.js";
+import { log } from "../../../logging/index.js";
 import type { ParseResponse, SubprocessState } from "./types.js";
 
 /**
@@ -32,7 +32,7 @@ async function logBunStderr(stderr: ReadableStream<Uint8Array>, language: string
       if (done) break;
       const msg = decoder.decode(value).trim();
       if (msg) {
-        logger.debug("PARSING_WORKER_STDERR", `[${language}-${workerId}] ${msg}`);
+        log.d("WORKER", "stderr", { language, workerId, msg });
       }
     }
   } catch {
@@ -72,11 +72,7 @@ export async function spawnBunProcess(workerId: number, state: SubprocessState, 
 
   state.process = proc;
 
-  logger.debug("PARSING_SUBPROCESS", `Spawned bun process with native IPC`, {
-    workerId,
-    language: context.language,
-    pid: proc.pid,
-  });
+  log.d("SUBPROCESS", "spawned_bun", { workerId, language: context.language, pid: proc.pid });
 
   // Log stderr asynchronously
   logBunStderr(bunProc.stderr, context.language, workerId);
@@ -85,10 +81,7 @@ export async function spawnBunProcess(workerId: number, state: SubprocessState, 
   const stateRef = state;
   bunProc.exited.then((code) => {
     if (!context.isShuttingDown() && !stateRef.intentionalKill) {
-      logger.warn("PARSING_SUBPROCESS", `Worker ${workerId} exited unexpectedly`, {
-        code,
-        language: context.language,
-      });
+      log.w("SUBPROCESS", "unexpected_exit", { workerId, code, language: context.language });
       context.onUnexpectedExit(workerId, code);
     }
   });
@@ -113,11 +106,7 @@ export async function spawnNodeProcess(workerId: number, state: SubprocessState,
   proc.unref();
   state.process = proc;
 
-  logger.debug("PARSING_SUBPROCESS", `Forked node process with V8 IPC`, {
-    workerId,
-    language: context.language,
-    pid: proc.pid,
-  });
+  log.d("SUBPROCESS", "forked_node", { workerId, language: context.language, pid: proc.pid });
 
   // V8 native IPC message handler
   proc.on("message", (message: ParseResponse) => {
@@ -128,7 +117,7 @@ export async function spawnNodeProcess(workerId: number, state: SubprocessState,
   proc.stderr?.on("data", (data: Buffer) => {
     const msg = data.toString().trim();
     if (msg) {
-      logger.debug("PARSING_WORKER_STDERR", `[${context.language}-${workerId}] ${msg}`);
+      log.d("WORKER", "stderr", { language: context.language, workerId, msg });
     }
   });
 
@@ -136,10 +125,7 @@ export async function spawnNodeProcess(workerId: number, state: SubprocessState,
   const stateRef = state;
   proc.on("exit", (code) => {
     if (!context.isShuttingDown() && !stateRef.intentionalKill) {
-      logger.warn("PARSING_SUBPROCESS", `Worker ${workerId} exited unexpectedly`, {
-        code,
-        language: context.language,
-      });
+      log.w("SUBPROCESS", "unexpected_exit", { workerId, code, language: context.language });
       context.onUnexpectedExit(workerId, code);
     }
   });

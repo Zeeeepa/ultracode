@@ -13,6 +13,7 @@
 import { execSync } from "node:child_process";
 import { join, normalize } from "node:path";
 import xxhash from "xxhash-wasm";
+import { log } from "../logging/index.js";
 import {
   existsSync,
   mkdirSync,
@@ -118,7 +119,7 @@ export class BranchManager {
     try {
       const gitDir = join(path, ".git");
       if (!existsSync(gitDir)) {
-        console.debug("[BranchManager] No .git directory found");
+        log.d("BRANCHMGR", "no_git_dir", { path });
         return null;
       }
 
@@ -160,7 +161,7 @@ export class BranchManager {
         }
       }
     } catch (error) {
-      console.debug("[BranchManager] Failed to get current branch:", error);
+      log.d("BRANCHMGR", "branch_get_fail", { err: String(error) });
       return null;
     }
   }
@@ -180,7 +181,7 @@ export class BranchManager {
       }).trim();
       return hash;
     } catch (error) {
-      console.debug("[BranchManager] Failed to get commit hash:", error);
+      log.d("BRANCHMGR", "commit_hash_fail", { err: String(error) });
       return null;
     }
   }
@@ -263,7 +264,7 @@ export class BranchManager {
       const data = readTextSync(metadataPath);
       return JSON.parse(data);
     } catch (error) {
-      console.error("[BranchManager] Failed to read branch metadata:", error);
+      log.e("BRANCHMGR", "metadata_read_fail", { err: String(error) });
       return null;
     }
   }
@@ -351,9 +352,9 @@ export class BranchManager {
         }
 
         deletedCount++;
-        console.error(`[BranchManager] Cleaned up branch: ${branch.name}`);
+        log.i("BRANCHMGR", "branch_cleaned", { branch: branch.name });
       } catch (error) {
-        console.error(`[BranchManager] Failed to cleanup branch ${branch.name}:`, error);
+        log.e("BRANCHMGR", "cleanup_fail", { branch: branch.name, err: String(error) });
       }
     }
 
@@ -370,7 +371,7 @@ export class BranchManager {
     this.currentBranch = newBranch;
     this.currentRepoPath = path;
 
-    console.error(`[BranchManager] Switched from ${oldBranch} to ${newBranch}`);
+    log.i("BRANCHMGR", "branch_switched", { from: oldBranch, to: newBranch });
 
     // Update access time in metadata
     const metadata = this.getBranchMetadata(newBranch, path);
@@ -408,7 +409,7 @@ export class BranchManager {
       const data = readTextSync(this.registryPath);
       return JSON.parse(data);
     } catch (error) {
-      console.error("[BranchManager] Failed to load registry:", error);
+      log.e("BRANCHMGR", "registry_load_fail", { err: String(error) });
       return {
         repositories: {},
         config: {

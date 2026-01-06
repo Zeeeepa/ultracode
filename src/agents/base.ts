@@ -5,6 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { log } from "../logging/index.js";
 import {
   type Agent,
   type AgentCapabilities,
@@ -76,7 +77,7 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
 
     this.initializePromise = (async () => {
       try {
-        console.error(`[${this.id}] Initializing agent...`);
+        log.d("BASEAGENT", "init_start", { id: this.id });
         this.status = AgentStatus.IDLE;
         await this.onInitialize();
         this.initialized = true;
@@ -90,7 +91,7 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   }
 
   async shutdown(): Promise<void> {
-    console.error(`[${this.id}] Shutting down agent...`);
+    log.d("BASEAGENT", "shutdown_start", { id: this.id });
     this.status = AgentStatus.SHUTDOWN;
     await this.onShutdown();
     // Clear resource monitor if set
@@ -105,21 +106,17 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
     this.lastRejection = undefined;
     // Debug logging for indexer agent issues
     if (this.type === "indexer") {
-      console.error(`[${this.id}] canHandle check:`, {
-        taskId: task.id,
-        taskType: task.type,
+      log.t("BASEAGENT", "can_handle_chk", {
+        id: task.id,
+        type: task.type,
         status: this.status,
-        queueLength: this.taskQueue.length,
-        maxConcurrency: this.capabilities.maxConcurrency,
-        memoryUsage: this.memoryUsage,
-        memoryLimit: this.capabilities.memoryLimit,
-        memoryUsagePercent: (this.memoryUsage / this.capabilities.memoryLimit) * 100,
+        queue: this.taskQueue.length,
       });
     }
 
     if (this.status !== AgentStatus.IDLE) {
       if (this.type === "indexer") {
-        console.error(`[${this.id}] Rejected: not idle (status: ${this.status})`);
+        log.t("BASEAGENT", "reject_not_idle", { status: this.status });
       }
       this.lastRejection = {
         agentId: this.id,
@@ -133,9 +130,10 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
     }
     if (this.taskQueue.length >= this.capabilities.maxConcurrency) {
       if (this.type === "indexer") {
-        console.error(
-          `[${this.id}] Rejected: queue full (${this.taskQueue.length}/${this.capabilities.maxConcurrency})`,
-        );
+        log.t("BASEAGENT", "reject_queue_full", {
+          queue: this.taskQueue.length,
+          max: this.capabilities.maxConcurrency,
+        });
       }
       this.lastRejection = {
         agentId: this.id,
@@ -152,7 +150,7 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
 
     const canProcess = this.canProcessTask(task);
     if (this.type === "indexer" && !canProcess) {
-      console.error(`[${this.id}] Rejected: canProcessTask returned false`);
+      log.t("BASEAGENT", "reject_cant_proc");
     }
 
     if (!canProcess) {

@@ -4,6 +4,7 @@
  * Method classification, complex type hints, decorator chaining.
  */
 
+import { log } from "../../logging/index.js";
 import type { ASTNode, ParsedEntity, PythonMethodInfo } from "../../types/parser.js";
 import { CallExtractor, ControlFlowExtractor, DocstringParser, TypeExtractor } from "./extractors/index.js";
 import type { AnalysisContext } from "./types.js";
@@ -38,7 +39,7 @@ export class Layer1BasicAnalyzer {
    * Execute Layer 1 analysis - enhanced basic parsing
    */
   async executeAnalysis(rootNode: ASTNode, context: AnalysisContext): Promise<void> {
-    console.error("[PythonAnalyzer] Executing Layer 1: Enhanced Basic Parsing");
+    log.d("PYBASIC", "layer1_start");
     const layer1StartTime = Date.now();
 
     await withPerformanceMonitoring(
@@ -50,9 +51,7 @@ export class Layer1BasicAnalyzer {
     );
 
     context.metrics.basicParsing.parseTimeMs = Date.now() - layer1StartTime;
-    console.error(
-      `[PythonAnalyzer] Layer 1 complete: ${context.metrics.basicParsing.methodsClassified} methods classified`,
-    );
+    log.d("PYBASIC", "layer1_done", { methods: context.metrics.basicParsing.methodsClassified });
   }
 
   /**

@@ -27,6 +27,7 @@ import {
   unlinkSync as nodeUnlinkSync,
   writeFileSync as nodeWriteFileSync,
 } from "node:fs";
+import { log } from "../logging/index.js";
 import { features, runtime } from "./runtime.js";
 
 // =============================================================================
@@ -773,7 +774,7 @@ export function ensureDirSync(path: string): void {
  * Log file operation statistics (for debugging)
  */
 export function logFileOpsInfo(): void {
-  console.error(`[FileOps] Runtime: ${runtime.name}`);
-  console.error(`[FileOps] Bun.file: ${features.bunFile ? "enabled" : "disabled"}`);
-  console.error(`[FileOps] Bun.write: ${features.bunWrite ? "enabled" : "disabled"}`);
+  log.i("FILEOPS", `[FileOps] Runtime: ${runtime.name}`);
+  log.i("FILEOPS", `[FileOps] Bun.file: ${features.bunFile ? "enabled" : "disabled"}`);
+  log.i("FILEOPS", `[FileOps] Bun.write: ${features.bunWrite ? "enabled" : "disabled"}`);
 }

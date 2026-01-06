@@ -15,6 +15,7 @@
  * - IPC optimized for batch operations
  */
 
+import { log } from "../../logging/index.js";
 import { getGpuClient, type IGpuClient, shutdownGpuClient } from "../../semantic/gpu/gpu-client.js";
 import type { BackendCapabilities, VectorBackend } from "./base.js";
 
@@ -35,7 +36,7 @@ export class GpuWorkerBackend implements VectorBackend {
   async isAvailable(): Promise<boolean> {
     // Check environment override
     if (process.env["CUDA_FORCE_DISABLE"] === "1") {
-      console.error("[GpuWorkerBackend] Disabled via CUDA_FORCE_DISABLE=1");
+      log.i("GPUWORKER", "disabled_env");
       return false;
     }
 
@@ -45,22 +46,22 @@ export class GpuWorkerBackend implements VectorBackend {
       const started = await this.client.start();
 
       if (!started) {
-        console.error("[GpuWorkerBackend] Failed to start GPU client");
+        log.e("GPUWORKER", "client_start_fail");
         return false;
       }
 
       // Check CUDA availability via worker
       const info = await this.client.cudaInfo();
       if (!info.available) {
-        console.error("[GpuWorkerBackend] CUDA not available in worker");
+        log.i("GPUWORKER", "cuda_unavail_worker");
         return false;
       }
 
       this.deviceInfo = info.deviceInfo;
-      console.error(`[GpuWorkerBackend] CUDA available: ${info.deviceInfo.deviceName}`);
+      log.i("GPUWORKER", "cuda_avail", { device: info.deviceInfo.deviceName });
       return true;
     } catch (error) {
-      console.error(`[GpuWorkerBackend] Error checking availability: ${(error as Error).message}`);
+      log.e("GPUWORKER", "avail_check_err", { err: (error as Error).message });
       return false;
     }
   }
@@ -75,10 +76,10 @@ export class GpuWorkerBackend implements VectorBackend {
 
     this.initialized = true;
 
-    console.error("[GpuWorkerBackend] Initialized:", {
+    log.i("GPUWORKER", "init", {
       device: this.deviceInfo.deviceName || "Unknown",
-      computeCapability: this.deviceInfo.computeCapability || "N/A",
-      memoryMB: this.deviceInfo.totalMemoryMB || 0,
+      cc: this.deviceInfo.computeCapability || "N/A",
+      memMB: this.deviceInfo.totalMemoryMB || 0,
     });
   }
 
@@ -112,6 +113,6 @@ export class GpuWorkerBackend implements VectorBackend {
     this.initialized = false;
     await shutdownGpuClient();
     this.client = null;
-    console.error("[GpuWorkerBackend] Closed");
+    log.i("GPUWORKER", "closed");
   }
 }

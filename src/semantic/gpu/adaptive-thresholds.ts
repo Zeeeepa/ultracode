@@ -10,7 +10,7 @@
  * - Index building: Always use Faiss for >500 vectors (faster than DiskANN rebuild)
  */
 
-import { logger } from "../../utils/logger.js";
+import { log } from "../../logging/index.js";
 
 // =============================================================================
 // Configuration Types
@@ -113,7 +113,7 @@ export function configureThresholds(overrides: Partial<AdaptiveThresholds>): voi
       ...overrides.faissSearch,
     },
   };
-  logger.debug("AdaptiveThresholds", "Configured", currentThresholds);
+  log.d("ADAPTIVE", "Configured", currentThresholds);
 }
 
 /**
@@ -148,7 +148,7 @@ export function shouldUseCudaBatchCosine(vectorCount: number, dimensions: number
   const shouldUse = vectorCount >= threshold;
 
   if (process.env["ADAPTIVE_DEBUG"] === "true") {
-    logger.debug("AdaptiveThresholds", "cudaBatchCosine decision", {
+    log.d("ADAPTIVE", "cudaBatchCosine decision", {
       count: vectorCount,
       dim: dimensions,
       threshold,

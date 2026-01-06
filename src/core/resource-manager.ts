@@ -5,6 +5,7 @@
 
 import { EventEmitter } from "node:events";
 import os from "node:os";
+import { log } from "../logging/index.js";
 import type { ResourceConstraints } from "../types/agent.js";
 import { knowledgeBus } from "./knowledge-bus.js";
 
@@ -75,9 +76,10 @@ export class ResourceManager extends EventEmitter {
       maxTaskQueueSize: 200,
     };
 
-    console.error(
-      `Resource Manager initialized: ${this.constraints.maxMemoryMB}MB memory, ${this.constraints.maxConcurrentAgents} max agents`,
-    );
+    log.i("RESOURCEMGR", "init", {
+      memMB: this.constraints.maxMemoryMB,
+      maxAgents: this.constraints.maxConcurrentAgents,
+    });
   }
 
   /** Timer handle for Node.js setInterval */
@@ -257,11 +259,11 @@ export class ResourceManager extends EventEmitter {
    */
   requestGarbageCollection(): void {
     if (global.gc) {
-      console.error("Forcing garbage collection...");
+      log.i("RESOURCEMGR", "gc_forced");
       global.gc();
       this.emit("gc:completed");
     } else {
-      console.warn("Garbage collection not exposed. Run with --expose-gc flag.");
+      log.w("RESOURCEMGR", "gc_not_exposed", { hint: "run with --expose-gc" });
     }
   }
 
@@ -332,7 +334,7 @@ export class ResourceManager extends EventEmitter {
     this.isThrottled = memoryPressure || cpuPressure;
 
     if (this.isThrottled && !wasThrottled) {
-      console.warn("System under resource pressure, enabling throttling");
+      log.w("RESOURCEMGR", "throttle_on", { mem: memoryPressure, cpu: cpuPressure });
       this.emit("throttle:enabled", { memory: memoryPressure, cpu: cpuPressure });
 
       // Try to free up memory
@@ -340,7 +342,7 @@ export class ResourceManager extends EventEmitter {
         this.requestGarbageCollection();
       }
     } else if (!this.isThrottled && wasThrottled) {
-      console.error("Resource pressure relieved, disabling throttling");
+      log.i("RESOURCEMGR", "throttle_off");
       this.emit("throttle:disabled");
     }
 
@@ -378,25 +380,29 @@ export class ResourceManager extends EventEmitter {
     // Large codebase (>2000 files) adjustments
     if (fileCount > 2000) {
       adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 1.5, 8192); // Increase by 50%, cap at 8GB
-      console.error(`Large codebase detected (${fileCount} files), increasing memory limit to ${adjustedMemoryMB}MB`);
+      log.i("RESOURCEMGR", "large_codebase", { files: fileCount, memMB: adjustedMemoryMB });
     }
 
     // Very large codebase (>5000 files) adjustments
     if (fileCount > 5000) {
       adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 2, 12288); // Double memory, cap at 12GB
       adjustedConcurrentAgents = Math.max(4, Math.floor(adjustedConcurrentAgents / 2)); // Keep some concurrency
-      console.error(
-        `Very large codebase detected (${fileCount} files), memory: ${adjustedMemoryMB}MB, agents: ${adjustedConcurrentAgents}`,
-      );
+      log.i("RESOURCEMGR", "vlarge_codebase", {
+        files: fileCount,
+        memMB: adjustedMemoryMB,
+        agents: adjustedConcurrentAgents,
+      });
     }
 
     // Extremely large codebase (>10000 files) adjustments
     if (fileCount > 10000) {
       adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 3, 16384); // Triple memory, cap at 16GB
       adjustedConcurrentAgents = 2; // Minimum 2 agents for stability
-      console.error(
-        `Extremely large codebase detected (${fileCount} files), memory: ${adjustedMemoryMB}MB, agents: ${adjustedConcurrentAgents}`,
-      );
+      log.i("RESOURCEMGR", "xlarge_codebase", {
+        files: fileCount,
+        memMB: adjustedMemoryMB,
+        agents: adjustedConcurrentAgents,
+      });
     }
 
     // Apply adjustments

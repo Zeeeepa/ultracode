@@ -7,6 +7,7 @@
  * No native modules or JDK required - uses bundled ANTLR parser.
  */
 
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // Lazy-loaded ANTLR parser (loaded on first use to reduce initial bundle size)
@@ -57,7 +58,7 @@ export class JavaNativeParser {
    * Initialize the parser
    */
   async initialize(): Promise<void> {
-    console.error("[JavaNativeParser] Initializing with ANTLR parser...");
+    log.i("JAVAPARSER", "init_done");
   }
 
   /**
@@ -79,7 +80,7 @@ export class JavaNativeParser {
    */
   async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
-    console.error(`[JavaNativeParser] Parsing file: ${filePath} (${content.length} bytes)`);
+    log.d("JAVAPARSER", "parse_start", { file: filePath, size: content.length });
 
     try {
       let entities: ParsedEntity[];
@@ -89,18 +90,16 @@ export class JavaNativeParser {
       // Try ANTLR parser first (lazy-loaded)
       if (this.useAntlr) {
         try {
-          console.error(`[JavaNativeParser] Trying ANTLR parser...`);
+          log.d("JAVAPARSER", "try_antlr");
           const JavaAntlrParser = await getJavaAntlrParser();
           const antlrResult = JavaAntlrParser.parse(filePath, content);
           entities = antlrResult.entities;
           relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;
-          console.error(
-            `[JavaNativeParser] ANTLR success: ${entities.length} entities, ${relationships?.length || 0} relationships`,
-          );
+          log.d("JAVAPARSER", "antlr_ok", { ent: entities.length, rel: relationships?.length || 0 });
         } catch (antlrError) {
-          console.error(`[JavaNativeParser] ANTLR parser failed, using regex fallback: ${antlrError}`);
+          log.w("JAVAPARSER", "antlr_fail", { err: String(antlrError) });
           entities = this.parseJava(filePath, content);
-          console.error(`[JavaNativeParser] Regex fallback: ${entities.length} entities`);
+          log.d("JAVAPARSER", "regex_ok", { cnt: entities.length });
         }
       } else {
         // Fallback to regex-based parsing

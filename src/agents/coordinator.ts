@@ -4,6 +4,7 @@
  */
 
 import { getConfig } from "../config/yaml-config.js";
+import { log } from "../logging/index.js";
 import {
   type Agent,
   type AgentMessage,
@@ -137,12 +138,12 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   }
 
   protected async onInitialize(): Promise<void> {
-    console.error(`[Coordinator] Initializing with constraints:`, this.config.resourceConstraints);
+    log.i("COORDINATOR", "init", { ...this.config.resourceConstraints });
     this.startHealthMonitoring();
   }
 
   protected async onShutdown(): Promise<void> {
-    console.error(`[Coordinator] Shutting down all agents...`);
+    log.i("COORDINATOR", "shutdown_start");
 
     // Stop all async loops
     this.stopped = true;
@@ -154,7 +155,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
     }
 
     const shutdownPromises = Array.from(this.agents.values()).map((agent) =>
-      agent.shutdown().catch((err) => console.error(`Failed to shutdown agent ${agent.id}:`, err)),
+      agent.shutdown().catch((err) => log.e("COORDINATOR", "shutdown_fail", { agent: agent.id, err: String(err) })),
     );
     await Promise.all(shutdownPromises);
     this.agents.clear();
@@ -186,7 +187,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
       // Try to route to another agent if available
       const alternativeAgent = await this.route(task);
       if (alternativeAgent && alternativeAgent.id !== agent.id) {
-        console.error(`[Coordinator] Retrying task ${task.id} with agent ${alternativeAgent.id}`);
+        log.d("COORDINATOR", "retry_task", { task: task.id, agent: alternativeAgent.id });
         return alternativeAgent.process(task);
       }
 
@@ -222,7 +223,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
     }
 
     this.agents.set(agent.id, agent);
-    console.error(`[Coordinator] Registered agent ${agent.id} of type ${agent.type}`);
+    log.i("COORDINATOR", "agent_registered", { id: agent.id, type: agent.type });
 
     if (isEventfulAgent(agent)) {
       agent.on("task:completed", this.handleTaskCompleted.bind(this));
@@ -235,7 +236,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
     const agent = this.agents.get(agentId);
     if (agent) {
       this.agents.delete(agentId);
-      console.error(`[Coordinator] Unregistered agent ${agentId}`);
+      log.i("COORDINATOR", "agent_unregistered", { id: agentId });
       this.emit("agent:unregistered", agentId);
     }
   }
@@ -269,7 +270,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
 
   async broadcast(message: AgentMessage): Promise<void> {
     const promises = Array.from(this.agents.values()).map((agent) =>
-      agent.receive(message).catch((err) => console.error(`Failed to deliver message to agent ${agent.id}:`, err)),
+      agent.receive(message).catch((err) => log.e("COORDINATOR", "msg_fail", { agent: agent.id, err: String(err) })),
     );
     await Promise.all(promises);
   }
@@ -281,7 +282,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
 
     // Check resource constraints
     if (!this.checkResourceAvailability()) {
-      console.warn(`[Coordinator] Resource constraints exceeded, queuing task ${task.id}`);
+      log.w("COORDINATOR", "res_exceeded", { task: task.id });
       return undefined;
     }
 
@@ -353,7 +354,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
           try {
             this.checkAgentHealth();
           } catch (error) {
-            console.error("[Coordinator] Health check error:", error);
+            log.e("COORDINATOR", "health_err", { err: String(error) });
           }
         }
       }, this.HEALTH_CHECK_INTERVAL_MS);
@@ -363,7 +364,7 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
   private checkAgentHealth(): void {
     for (const [agentId, agent] of this.agents) {
       if (agent.status === AgentStatus.ERROR) {
-        console.warn(`[Coordinator] Agent ${agentId} is in error state`);
+        log.w("COORDINATOR", "agent_err_state", { agent: agentId });
         this.emit("agent:unhealthy", agentId);
       }
     }
@@ -371,21 +372,21 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
 
   private handleAgentRegistration(message: AgentMessage): void {
     // Handle dynamic agent registration via messages
-    console.error(`[Coordinator] Received registration request from ${message.from}`);
+    log.d("COORDINATOR", "reg_request", { from: message.from });
   }
 
   private handleHealthUpdate(message: AgentMessage): void {
     // Handle health updates from agents
-    console.error(`[Coordinator] Health update from ${message.from}:`, message.payload);
+    log.d("COORDINATOR", "health_update", { from: message.from });
   }
 
   private handleTaskCompleted(data: any): void {
-    console.error(`[Coordinator] Task ${data.task.id} completed by agent ${data.agentId}`);
+    log.d("COORDINATOR", "task_done", { task: data.task.id, agent: data.agentId });
     this.emit("task:routed:completed", data);
   }
 
   private handleTaskFailed(data: any): void {
-    console.error(`[Coordinator] Task ${data.task.id} failed on agent ${data.agentId}:`, data.error);
+    log.e("COORDINATOR", "task_fail", { task: data.task.id, agent: data.agentId, err: data.error });
     this.emit("task:routed:failed", data);
   }
 }

@@ -6,6 +6,7 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { log } from "../../logging/index.js";
 import type { Linter, ValidationProblem } from "../code-validator.js";
 
 const execAsync = promisify(exec);
@@ -25,7 +26,7 @@ export class PylintLinter implements Linter {
       }
 
       if (!this.pylintAvailable) {
-        console.warn("[PylintLinter] Pylint not available");
+        log.w("PYLINT", "unavailable");
         return [];
       }
 
@@ -75,7 +76,7 @@ export class PylintLinter implements Linter {
         }
       }
 
-      console.warn("[PylintLinter] Linting failed:", error);
+      log.w("PYLINT", "lint_fail", { err: String(error) });
       return [];
     }
   }
@@ -86,10 +87,10 @@ export class PylintLinter implements Linter {
   private async checkPylintAvailable(): Promise<boolean> {
     try {
       await execAsync("pylint --version");
-      console.error("[PylintLinter] Pylint detected");
+      log.i("PYLINT", "detected");
       return true;
     } catch {
-      console.warn("[PylintLinter] Pylint not found in PATH");
+      log.w("PYLINT", "not_in_path");
       return false;
     }
   }

@@ -7,9 +7,9 @@
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import { detectRuntime } from "../shared/runtime-detect.js";
 import { getLogsDir } from "../shared/storage-paths.js";
-import { logger } from "../utils/logger.js";
 
 // =============================================================================
 // RUNTIME-AWARE SLEEP
@@ -99,7 +99,7 @@ export function getProcessStartTime(): number {
 export function startTimer(name: string): void {
   startupTimers[name] = Date.now();
   const uptimeMs = Date.now() - processStartTime;
-  logger.trace("STARTUP", `[+${uptimeMs}ms] ▶ START: ${name}`);
+  log.t("STARTUP", `[+${uptimeMs}ms] ▶ START: ${name}`);
 }
 
 /**
@@ -108,7 +108,7 @@ export function startTimer(name: string): void {
 export function endTimer(name: string): number {
   const elapsed = Date.now() - (startupTimers[name] || Date.now());
   const uptimeMs = Date.now() - processStartTime;
-  logger.trace("STARTUP", `[+${uptimeMs}ms] ◀ END: ${name} (${elapsed}ms)`);
-  console.error(`[STARTUP] ${name}: ${elapsed}ms`);
+  log.t("STARTUP", `[+${uptimeMs}ms] ◀ END: ${name} (${elapsed}ms)`);
+  log.i("STARTUP", "timer_end", { name, dur: elapsed });
   return elapsed;
 }

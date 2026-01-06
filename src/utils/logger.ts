@@ -523,3 +523,42 @@ export function forceGC(): boolean {
 // Re-export types for backward compatibility
 export type { LoggerConfig } from "./logger-types.js";
 export { LogLevel } from "./logger-types.js";
+
+// =============================================================================
+// NEW FIXED-POSITION LOGGER (for gradual migration)
+// =============================================================================
+
+// Re-export new logger for gradual migration
+// Usage: import { log } from './logger.js'; log.i('MODULE', 'event', { kv });
+export {
+  getLogger as getFixedLogger,
+  initLogger as initFixedLogger,
+  type KVPairs,
+  type LogLevelChar,
+  log,
+  MODULES,
+  setProjectHash,
+} from "../logging/index.js";
+
+import { getLogger, initLogger } from "../logging/index.js";
+import { getLogsDir } from "../shared/storage-paths.js";
+
+/**
+ * Initialize new fixed-position logger
+ * Call this once at startup after old logger is configured
+ */
+export function initNewLogger(): void {
+  initLogger({
+    logDir: getLogsDir(),
+    minLevel: "I",
+    consoleOutput: false,
+  });
+}
+
+/**
+ * Set project context for logging
+ * Call this when switching projects
+ */
+export function setLoggerProject(projectHash: string): void {
+  getLogger().setProjectHash(projectHash);
+}

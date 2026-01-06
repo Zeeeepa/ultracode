@@ -14,6 +14,7 @@
 
 import { EventEmitter } from "node:events";
 import { cpus } from "node:os";
+import { log } from "../logging/index.js";
 import { detectRuntime, type Runtime } from "./runtime-detect.js";
 
 /**
@@ -106,7 +107,8 @@ export class AdaptiveWorkerPool extends EventEmitter {
       retries: options.retries ?? 1,
     };
 
-    console.error(
+    log.i(
+      "ADAPTWORK",
       `[AdaptiveWorkerPool] Initialized: runtime=${this.runtime}, maxWorkers=${this.options.maxWorkers}, smolMode=${this.options.smolMode}`,
     );
   }
@@ -142,7 +144,7 @@ export class AdaptiveWorkerPool extends EventEmitter {
    */
   async shutdown(): Promise<void> {
     this.isShuttingDown = true;
-    console.error(`[AdaptiveWorkerPool] Shutting down ${this.workers.length} workers...`);
+    log.i("ADAPTWORK", `[AdaptiveWorkerPool] Shutting down ${this.workers.length} workers...`);
 
     const terminatePromises = this.workers.map(async (pw) => {
       try {
@@ -160,7 +162,7 @@ export class AdaptiveWorkerPool extends EventEmitter {
     this.workers.length = 0;
     this.taskQueue.length = 0;
 
-    console.error("[AdaptiveWorkerPool] Shutdown complete");
+    log.i("ADAPTWORK", "[AdaptiveWorkerPool] Shutdown complete");
   }
 
   /**
@@ -193,7 +195,7 @@ export class AdaptiveWorkerPool extends EventEmitter {
         pooledWorker = await this.createWorker();
         this.workers.push(pooledWorker);
       } catch (error) {
-        console.error("[AdaptiveWorkerPool] Failed to create worker:", error);
+        log.e("ADAPTWORK", "worker_create_fail", { err: String(error) });
         // Fallback: process in main thread
         const queuedTask = this.taskQueue.shift();
         if (queuedTask) {
@@ -220,7 +222,7 @@ export class AdaptiveWorkerPool extends EventEmitter {
     (async () => {
       await sleep(this.options.timeout);
       if (!abortController.signal.aborted && pooledWorker!.taskId === queuedTask.task.id) {
-        console.warn(`[AdaptiveWorkerPool] Task ${queuedTask.task.id} timed out`);
+        log.w("ADAPTWORK", `[AdaptiveWorkerPool] Task ${queuedTask.task.id} timed out`);
         this.handleWorkerError(pooledWorker!, new Error("Task timeout"));
         queuedTask.reject(new Error("Task timeout"));
       }
@@ -287,7 +289,8 @@ export class AdaptiveWorkerPool extends EventEmitter {
 
       // Retry logic
       if (queuedTask.retries < this.options.retries) {
-        console.warn(
+        log.w(
+          "ADAPTWORK",
           `[AdaptiveWorkerPool] Task ${queuedTask.task.id} failed, retrying (${queuedTask.retries + 1}/${this.options.retries})`,
         );
         queuedTask.retries++;
@@ -310,7 +313,7 @@ export class AdaptiveWorkerPool extends EventEmitter {
         smol: this.options.smolMode, // Bun-specific option
       }) as BunWorker;
 
-      console.error(`[AdaptiveWorkerPool] Created Bun worker (smol=${this.options.smolMode})`);
+      log.i("ADAPTWORK", `[AdaptiveWorkerPool] Created Bun worker (smol=${this.options.smolMode})`);
     } else {
       // Node.js: Use worker_threads
       if (!this.nodeWorkerModule) {
@@ -318,14 +321,14 @@ export class AdaptiveWorkerPool extends EventEmitter {
       }
       worker = new this.nodeWorkerModule.Worker(this.options.scriptPath);
 
-      console.error("[AdaptiveWorkerPool] Created Node.js worker");
+      log.i("ADAPTWORK", "[AdaptiveWorkerPool] Created Node.js worker");
     }
 
     // Setup error handler
     const errorHandler = (error: MessageEvent | ErrorEvent) => {
       const errEvent = error as { message?: string };
       const err = new Error(errEvent.message || "Unknown worker error");
-      console.error("[AdaptiveWorkerPool] Worker error:", err);
+      log.e("ADAPTWORK", "worker_error", { err: err.message });
       this.emit("worker-error", err);
     };
 
@@ -344,7 +347,7 @@ export class AdaptiveWorkerPool extends EventEmitter {
   }
 
   private handleWorkerError(pooledWorker: PooledWorker, error: Error): void {
-    console.error(`[AdaptiveWorkerPool] Worker error for task ${pooledWorker.taskId}:`, error);
+    log.e("ADAPTWORK", "task_error", { taskId: pooledWorker.taskId, err: error.message });
 
     // Remove failed worker from pool
     const index = this.workers.indexOf(pooledWorker);

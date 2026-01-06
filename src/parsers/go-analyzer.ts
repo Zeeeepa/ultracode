@@ -23,6 +23,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
+import { log } from "../logging/index.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
@@ -65,9 +66,9 @@ export class GoAnalyzer {
       this.extractEntities(rootNode, filePath, entities, relationships);
     } catch (error) {
       if (error instanceof CircuitBreakerError) {
-        console.warn(`[GoAnalyzer] Circuit breaker triggered for ${filePath}: ${error.message}`);
+        log.w("GOANALYZER", "circuit_break", { file: filePath, err: error.message });
       } else {
-        console.error(`[GoAnalyzer] Error analyzing ${filePath}:`, error);
+        log.e("GOANALYZER", "analyze_err", { file: filePath, err: String(error) });
       }
       // Return partial results on error
     }

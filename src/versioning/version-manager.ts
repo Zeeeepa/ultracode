@@ -20,6 +20,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import xxhash from "xxhash-wasm";
+import { log } from "../logging/index.js";
 import { streamCopyFile } from "../utils/stream-helpers.js";
 
 // =============================================================================
@@ -82,7 +83,7 @@ export class VersionManager {
     // Detect git
     this.hasGit = await this.detectGit();
 
-    console.error(`[VersionManager] Backend: ${this.hasGit ? "git-worktree/stash" : "backup"}`);
+    log.i("VERSIONMGR", "init", { backend: this.hasGit ? "git-stash" : "backup" });
 
     // Ensure backup directory exists
     const backupPath = join(this.config.workingDirectory, this.config.backupDir);
@@ -122,7 +123,7 @@ export class VersionManager {
       await this.rollbackBackup(metadata);
     }
 
-    console.error(`[VersionManager] Rolled back to snapshot: ${snapshotId}`);
+    log.i("VERSIONMGR", "rolled_back", { snapshot: snapshotId });
   }
 
   /**
@@ -187,7 +188,7 @@ export class VersionManager {
           windowsHide: true,
         });
       } catch (error) {
-        console.warn(`[VersionManager] Failed to drop stash: ${error}`);
+        log.w("VERSIONMGR", "stash_drop_fail", { err: String(error) });
       }
     }
 
@@ -197,7 +198,7 @@ export class VersionManager {
       await unlink(metadataPath);
     }
 
-    console.error(`[VersionManager] Deleted snapshot: ${snapshotId}`);
+    log.i("VERSIONMGR", "snapshot_deleted", { snapshot: snapshotId });
   }
 
   /**
@@ -217,7 +218,7 @@ export class VersionManager {
       }
     }
 
-    console.error(`[VersionManager] Cleaned up ${deletedCount} old snapshots (older than ${days} days)`);
+    log.i("VERSIONMGR", "cleanup_done", { deleted: deletedCount, olderThanDays: days });
     return deletedCount;
   }
 
@@ -245,7 +246,7 @@ export class VersionManager {
       }).trim();
 
       if (status.length === 0 && !files) {
-        console.warn("[VersionManager] No changes to snapshot");
+        log.w("VERSIONMGR", "no_changes");
       }
 
       // Create stash
@@ -280,7 +281,7 @@ export class VersionManager {
 
       await this.saveMetadata(snapshotId, metadata);
 
-      console.error(`[VersionManager] Created git snapshot: ${snapshotId} (stash: ${stashRef.slice(0, 8)})`);
+      log.i("VERSIONMGR", "git_snapshot", { snapshot: snapshotId, stash: stashRef.slice(0, 8) });
       return snapshotId;
     } catch (error) {
       throw new Error(`Failed to create git snapshot`, { cause: error });
@@ -388,9 +389,11 @@ export class VersionManager {
 
     await this.saveMetadata(snapshotId, metadata);
 
-    console.error(
-      `[VersionManager] Created backup snapshot: ${snapshotId} (${filesToBackup.length} files, ${(totalSize / 1024 / 1024).toFixed(2)}MB)`,
-    );
+    log.i("VERSIONMGR", "backup_snapshot", {
+      snapshot: snapshotId,
+      files: filesToBackup.length,
+      sizeMB: +(totalSize / 1024 / 1024).toFixed(2),
+    });
     return snapshotId;
   }
 
@@ -496,7 +499,7 @@ export class VersionManager {
       const data = await readFile(metadataPath, "utf-8");
       return JSON.parse(data);
     } catch (error) {
-      console.error("[VersionManager] Failed to load metadata:", error);
+      log.e("VERSIONMGR", "metadata_load_fail", { err: String(error) });
       return null;
     }
   }

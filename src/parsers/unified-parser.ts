@@ -12,6 +12,7 @@
  */
 
 import { extname, join } from "node:path";
+import { log } from "../logging/index.js";
 import type { ParseResult, SupportedLanguage } from "../types/parser.js";
 import { existsSync } from "../utils/file-ops.js";
 import type { BaseParser, ParserStats } from "./base-parser.js";
@@ -219,8 +220,10 @@ export class UnifiedParser implements BaseParser {
     this._workspaceRoot = workspaceRoot;
     this.projectInfo = detectProjectType(workspaceRoot);
 
-    console.error(`[UnifiedParser] Detected project type: ${this.projectInfo.type}`);
-    console.error(`[UnifiedParser] Primary languages: ${[...this.projectInfo.primaryLanguages].join(", ") || "none"}`);
+    log.i("UNIPARSER", "proj_detect", {
+      type: this.projectInfo.type,
+      langs: [...this.projectInfo.primaryLanguages].join(",") || "none",
+    });
 
     // Always load TypeScript parser (most common, needed for JS/TS/Angular)
     await this.ensureTypescriptParser();
@@ -260,18 +263,18 @@ export class UnifiedParser implements BaseParser {
 
     await Promise.all(initPromises);
 
-    console.error(`[UnifiedParser] Initialized parsers: ${[...this.initializedParsers].join(", ")}`);
+    log.i("UNIPARSER", "init_done", { parsers: [...this.initializedParsers].join(",") });
   }
 
   /**
    * Initialize all parsers (fallback for backward compatibility)
    */
   async initialize(): Promise<void> {
-    console.error("[UnifiedParser] Initializing all parsers (no workspace detected)...");
+    log.i("UNIPARSER", "init_start");
 
     await Promise.all([this.ensureTypescriptParser(), this.ensureBashParser(), this.ensurePowershellParser()]);
 
-    console.error("[UnifiedParser] Initialized (TypeScript + scripts only, others on-demand)");
+    log.i("UNIPARSER", "init_done", { mode: "ts+scripts" });
   }
 
   // =============================================================================
@@ -396,15 +399,15 @@ export class UnifiedParser implements BaseParser {
         await this.ensurePythonParser();
         result = await this.pythonParser!.parse(filePath, content, contentHash);
       } else if (JAVA_EXTENSIONS.has(ext)) {
-        console.error(`[UnifiedParser] Routing ${filePath} to JavaParser`);
+        log.d("UNIPARSER", "route_java", { file: filePath });
         await this.ensureJavaParser();
         result = await this.javaParser!.parse(filePath, content, contentHash);
-        console.error(`[UnifiedParser] JavaParser returned ${result.entities?.length || 0} entities`);
+        log.d("UNIPARSER", "java_done", { cnt: result.entities?.length || 0 });
       } else if (KOTLIN_EXTENSIONS.has(ext)) {
-        console.error(`[UnifiedParser] Routing ${filePath} to KotlinParser`);
+        log.d("UNIPARSER", "route_kotlin", { file: filePath });
         await this.ensureKotlinParser();
         result = await this.kotlinParser!.parse(filePath, content, contentHash);
-        console.error(`[UnifiedParser] KotlinParser returned ${result.entities?.length || 0} entities`);
+        log.d("UNIPARSER", "kotlin_done", { cnt: result.entities?.length || 0 });
       } else if (GO_EXTENSIONS.has(ext)) {
         await this.ensureGoParser();
         result = await this.goParser!.parse(filePath, content, contentHash);

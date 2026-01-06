@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { enhanceWithPyrightTypes, findPyright } from "./pyright-integration.js";
 
@@ -402,12 +403,12 @@ export class PythonNativeParser {
    * Initialize the parser and check if Python is available
    */
   async initialize(): Promise<void> {
-    console.error("[PythonNativeParser] Checking Python availability...");
+    log.d("PYTHONPARSER", "check_avail");
 
     // Check for external CLI script
     this.cliScriptAvailable = existsSync(PYTHON_CLI_SCRIPT_PATH);
     if (this.cliScriptAvailable) {
-      console.error(`[PythonNativeParser] CLI script found: ${PYTHON_CLI_SCRIPT_PATH}`);
+      log.d("PYTHONPARSER", "cli_found", { path: PYTHON_CLI_SCRIPT_PATH });
     }
 
     // Try different Python commands
@@ -420,7 +421,7 @@ export class PythonNativeParser {
           this.pythonPath = cmd;
           this.pythonAvailable = true;
           const mode = this.cliScriptAvailable && this.useCliScript ? "CLI script" : "inline script";
-          console.error(`[PythonNativeParser] Initialized (using ${cmd}, ${mode})`);
+          log.i("PYTHONPARSER", "init_done", { cmd, mode });
           break;
         }
       } catch {
@@ -430,7 +431,7 @@ export class PythonNativeParser {
 
     if (!this.pythonAvailable) {
       this.pythonAvailable = false;
-      console.error("[PythonNativeParser] Python not found, falling back to regex parser");
+      log.w("PYTHONPARSER", "no_python");
     }
 
     // Check for Pyright availability (optional enhancement)
@@ -438,7 +439,7 @@ export class PythonNativeParser {
       const pyrightPath = await findPyright();
       this.pyrightAvailable = pyrightPath !== null;
       if (this.pyrightAvailable) {
-        console.error("[PythonNativeParser] Pyright available for type diagnostics");
+        log.d("PYTHONPARSER", "pyright_avail");
       }
     }
   }
@@ -498,7 +499,7 @@ export class PythonNativeParser {
           await enhanceWithPyrightTypes(result.entities, filePath);
         } catch (pyrightError) {
           // Non-fatal: Pyright enhancement is optional
-          console.error(`[PythonNativeParser] Pyright enhancement failed: ${pyrightError}`);
+          log.d("PYTHONPARSER", "pyright_fail", { err: String(pyrightError) });
         }
       }
 

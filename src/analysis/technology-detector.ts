@@ -19,6 +19,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import type { EntityType, GraphStorage } from "../types/storage.js";
 
 // =============================================================================
@@ -288,7 +289,7 @@ export class TechnologyDetector {
         });
       }
     } catch (error) {
-      console.warn("[TechnologyDetector] Failed to parse package.json:", error);
+      log.w("TECHDETECT", "deps_parse_fail", { err: String(error) });
     }
 
     return frameworks;
@@ -417,7 +418,7 @@ export class TechnologyDetector {
         }
       }
     } catch (error) {
-      console.warn("[TechnologyDetector] Failed to parse package.json:", error);
+      log.w("TECHDETECT", "deps_parse_fail", { err: String(error) });
     }
 
     return dependencies;

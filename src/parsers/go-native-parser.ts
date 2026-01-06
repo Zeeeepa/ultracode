@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // Get the directory of this module to find the CLI script/binary
@@ -355,7 +356,7 @@ export class GoNativeParser {
    * Initialize the parser and check if Go is available
    */
   async initialize(): Promise<void> {
-    console.error("[GoNativeParser] Checking Go availability...");
+    log.d("GOPARSER", "check_avail");
 
     // Check for external CLI script or binary
     this.cliScriptAvailable = existsSync(GO_CLI_SCRIPT_PATH);
@@ -364,10 +365,10 @@ export class GoNativeParser {
     this.cliBinaryAvailable = existsSync(binaryPath);
 
     if (this.cliScriptAvailable) {
-      console.error(`[GoNativeParser] CLI script found: ${GO_CLI_SCRIPT_PATH}`);
+      log.d("GOPARSER", "cli_script", { path: GO_CLI_SCRIPT_PATH });
     }
     if (this.cliBinaryAvailable) {
-      console.error(`[GoNativeParser] CLI binary found: ${binaryPath}`);
+      log.d("GOPARSER", "cli_binary", { path: binaryPath });
     }
 
     try {
@@ -383,7 +384,7 @@ export class GoNativeParser {
           : this.cliScriptAvailable && this.useCliScript
             ? "CLI script (go run)"
             : "inline script (go run)";
-        console.error(`[GoNativeParser] Initialized (using ${mode})`);
+        log.i("GOPARSER", "init_done", { mode });
         return;
       }
     } catch {
@@ -391,7 +392,7 @@ export class GoNativeParser {
     }
 
     this.goAvailable = false;
-    console.error("[GoNativeParser] Go not found, falling back to regex parser");
+    log.w("GOPARSER", "no_go");
   }
 
   /**

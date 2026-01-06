@@ -15,6 +15,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { log } from "../logging/index.js";
 import type { ParsedEntity } from "../types/parser.js";
 
 /**
@@ -103,7 +104,7 @@ export async function findRustAnalyzer(): Promise<string | null> {
       const available = await checkCommand(cmd);
       if (available) {
         rustAnalyzerPath = cmd;
-        console.error(`[RustAnalyzerIntegration] Found rust-analyzer: ${cmd}`);
+        log.i("RAINTEGRATION", "found", { cmd });
         return rustAnalyzerPath;
       }
     } catch {
@@ -111,7 +112,7 @@ export async function findRustAnalyzer(): Promise<string | null> {
     }
   }
 
-  console.error("[RustAnalyzerIntegration] rust-analyzer not found");
+  log.w("RAINTEGRATION", "not_found");
   return null;
 }
 
@@ -185,11 +186,11 @@ export async function startRustAnalyzer(workspaceRoot: string): Promise<boolean>
       });
 
       rustAnalyzerProcess.stderr?.on("data", (data: Buffer) => {
-        console.error(`[rust-analyzer stderr] ${data.toString()}`);
+        log.d("RAINTEGRATION", "stderr", { msg: data.toString().trim() });
       });
 
       rustAnalyzerProcess.on("error", (err: Error) => {
-        console.error(`[RustAnalyzerIntegration] Process error: ${err}`);
+        log.e("RAINTEGRATION", "proc_err", { err: String(err) });
         rustAnalyzerProcess = null;
         resolve(false);
       });
@@ -206,11 +207,11 @@ export async function startRustAnalyzer(workspaceRoot: string): Promise<boolean>
           resolve(true);
         })
         .catch((err) => {
-          console.error(`[RustAnalyzerIntegration] Init failed: ${err}`);
+          log.e("RAINTEGRATION", "init_fail", { err: String(err) });
           resolve(false);
         });
     } catch (err) {
-      console.error(`[RustAnalyzerIntegration] Spawn error: ${err}`);
+      log.e("RAINTEGRATION", "spawn_err", { err: String(err) });
       resolve(false);
     }
   });
@@ -247,7 +248,7 @@ function handleLspData(data: string): void {
       const message = JSON.parse(body) as LSPMessage;
       handleLspMessage(message);
     } catch (e) {
-      console.error(`[RustAnalyzerIntegration] Parse error: ${e}`);
+      log.w("RAINTEGRATION", "parse_err", { err: String(e) });
     }
   }
 }
@@ -431,7 +432,7 @@ export async function getDocumentSymbols(filePath: string): Promise<RustSymbolIn
 
     return symbols;
   } catch (err) {
-    console.error(`[RustAnalyzerIntegration] getDocumentSymbols error: ${err}`);
+    log.w("RAINTEGRATION", "symbols_err", { err: String(err) });
     return [];
   }
 }
@@ -535,7 +536,7 @@ export async function enhanceWithRustAnalyzer(
     // Close document
     closeDocument(filePath);
   } catch (err) {
-    console.error(`[RustAnalyzerIntegration] Enhancement error: ${err}`);
+    log.w("RAINTEGRATION", "enhance_err", { err: String(err) });
   }
 }
 

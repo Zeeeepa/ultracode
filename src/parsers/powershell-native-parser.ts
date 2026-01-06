@@ -12,6 +12,7 @@
  */
 
 import { execSync, spawn } from "node:child_process";
+import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
@@ -202,7 +203,7 @@ export class PowerShellNativeParser {
    * Initialize the parser and check if PowerShell is available
    */
   async initialize(): Promise<void> {
-    console.error("[PowerShellNativeParser] Checking PowerShell availability...");
+    log.d("PSPARSER", "check_avail");
 
     // Try pwsh (PowerShell Core) first, then powershell (Windows PowerShell)
     const commands = ["pwsh", "powershell"];
@@ -212,7 +213,7 @@ export class PowerShellNativeParser {
         execSync(`${cmd} -Version`, { stdio: "ignore", windowsHide: true });
         this.psPath = cmd;
         this.psAvailable = true;
-        console.error(`[PowerShellNativeParser] Initialized (using ${cmd})`);
+        log.i("PSPARSER", "init_done", { cmd });
         return;
       } catch {
         // Try next
@@ -220,7 +221,7 @@ export class PowerShellNativeParser {
     }
 
     this.psAvailable = false;
-    console.error("[PowerShellNativeParser] PowerShell not found, using regex parser");
+    log.w("PSPARSER", "no_powershell");
   }
 
   /**

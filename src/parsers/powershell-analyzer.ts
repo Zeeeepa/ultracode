@@ -21,6 +21,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
+import { log } from "../logging/index.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation, getNodeText } from "./base-parser-utils.js";
 
@@ -68,9 +69,9 @@ export class PowerShellAnalyzer {
       this.validateScript(rootNode, filePath);
     } catch (error) {
       if (error instanceof CircuitBreakerError) {
-        console.warn(`[PowerShellAnalyzer] Circuit breaker triggered for ${filePath}: ${error.message}`);
+        log.w("PSANALYZER", "circuit_break", { file: filePath, err: error.message });
       } else {
-        console.error(`[PowerShellAnalyzer] Error analyzing ${filePath}:`, error);
+        log.e("PSANALYZER", "analyze_err", { file: filePath, err: String(error) });
       }
     }
 

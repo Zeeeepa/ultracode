@@ -1,3 +1,4 @@
+import { log } from "../../logging/index.js";
 import type { EmbeddingGenerator } from "../../semantic/embedding-generator.js";
 import type { CodeUnit } from "../models/code-unit.js";
 import { type Resolution, ResolutionStrategy, type SemanticConflict } from "../models/semantic-conflict.js";
@@ -126,7 +127,7 @@ export class AIConflictResolver {
       this.embeddingCache.set(cacheKey, embedding);
       return embedding;
     } catch (error) {
-      console.warn(`[AIConflictResolver] Failed to generate embedding for ${unit.id}:`, error);
+      log.w("AICONFLICT", "embedding_fail", { id: unit.id, err: String(error) });
       return null;
     }
   }

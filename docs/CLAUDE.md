@@ -789,6 +789,61 @@ tsup.config.ts                        - Build configuration (externals)
 
 ## Logs & Debugging
 
+### Новая система логов (v3.0+)
+
+**Формат с фиксированными позициями** для удобного парсинга:
+
+```
+20260107-143045.123 I 12345 a1b2c3d4 PARSER               file_parsed          file=/src/index.ts dur=45ms
+```
+
+**Использование в коде:**
+```typescript
+import { log } from "../logging/index.js";
+
+log.i("PARSER", "file_parsed", { file: "index.ts", dur: 45 });
+log.e("INDEXER", "batch_failed", { err: "timeout", retry: 2 });
+log.w("EMBEDDING", "rate_limited", { wait: 1000 });
+log.d("STORAGE", "cache_hit", { key: "abc123" });
+log.t("QUERY", "sql_exec", { rows: 150 });
+```
+
+📖 **Полная документация**: [docs/LOGGING.md](./LOGGING.md)
+
+### CLI: ulog (анализ логов)
+
+```bash
+# Установка (после сборки)
+npm link
+
+# Базовое использование
+ulog logs/mcp-server.log              # Все логи
+ulog -l E,W logs/                     # Только ERROR и WARN
+ulog -m PARSER logs/server.log        # Только модуль PARSER
+ulog -m "EMBED*" logs/                # Модули начинающиеся с EMBED
+
+# Фильтр по времени
+ulog --from 1h logs/server.log        # Последний час
+ulog --from 30m logs/                 # Последние 30 минут
+ulog --from "20260107-1400" logs/     # С конкретного времени
+ulog -t 15m logs/server.log           # Короткая форма --from
+
+# Фильтр по KV парам
+ulog -k "dur>100" logs/server.log     # Операции дольше 100ms
+ulog -k "err=*" logs/                 # Все записи с ошибками
+ulog -k "retry>1" logs/               # С повторными попытками
+
+# Вывод
+ulog --stats logs/server.log          # Статистика по уровням/модулям
+ulog -c logs/server.log               # Только количество
+ulog -f logs/server.log               # Follow mode (tail -f)
+ulog -o json logs/server.log          # JSON формат
+ulog --fields "ts,module,err" logs/   # Только указанные поля
+
+# Комбинированные фильтры
+ulog -l E -m PARSER --from 1h -k "dur>50" logs/
+```
+
 ### Расположение логов
 
 ```
@@ -896,6 +951,7 @@ logging:
 
 См. подробную документацию:
 - [README.md](../README.md) - Полное описание возможностей
+- [LOGGING.md](./LOGGING.md) - Система логирования и CLI ulog
 - [BACKLOG.md](./BACKLOG.md) - Roadmap и задачи проекта
 - [TEI_GRPC_MIGRATION_PLAN.md](./TEI_GRPC_MIGRATION_PLAN.md) - План миграции на gRPC
 - [GPU_COMPATIBILITY.md](./GPU_COMPATIBILITY.md) - Совместимость GPU

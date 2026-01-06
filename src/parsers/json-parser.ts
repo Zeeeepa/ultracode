@@ -16,6 +16,7 @@
  */
 
 import { basename } from "node:path";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult } from "../types/parser.js";
 
 // =============================================================================
@@ -58,7 +59,7 @@ export class JsonParser {
   };
 
   async initialize(): Promise<void> {
-    console.error("[JsonParser] Initialized");
+    log.i("JSONPARSER", "init_done");
   }
 
   supportsFile(filePath: string): boolean {

@@ -11,6 +11,7 @@
  * No native modules required - uses subprocess for kotlinc integration.
  */
 
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import {
   enhanceWithKotlinDiagnostics,
@@ -70,19 +71,19 @@ export class KotlinNativeParser {
    * Initialize the parser
    */
   async initialize(): Promise<void> {
-    console.error("[KotlinNativeParser] Initializing...");
+    log.d("KOTLINPARSER", "init_start");
 
     // Try to find kotlinc
     if (this.kotlincEnabled) {
       const kotlinc = await findKotlinc();
       if (kotlinc) {
         const version = getKotlinVersion();
-        console.error(`[KotlinNativeParser] Initialized with kotlinc${version ? ` (v${version})` : ""}`);
+        log.i("KOTLINPARSER", "init_done", { kotlinc: true, ver: version || "unknown" });
         return;
       }
     }
 
-    console.error("[KotlinNativeParser] Initialized (regex-based fallback)");
+    log.i("KOTLINPARSER", "init_done", { kotlinc: false });
   }
 
   /**
@@ -119,7 +120,7 @@ export class KotlinNativeParser {
    */
   async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
-    console.error(`[KotlinNativeParser] Parsing file: ${filePath} (${content.length} bytes)`);
+    log.d("KOTLINPARSER", "parse_start", { file: filePath, size: content.length });
 
     try {
       let entities: ParsedEntity[];
@@ -127,19 +128,17 @@ export class KotlinNativeParser {
 
       // Try ANTLR parser first (accurate AST-based parsing, lazy-loaded)
       try {
-        console.error(`[KotlinNativeParser] Trying ANTLR parser...`);
+        log.d("KOTLINPARSER", "try_antlr");
         const KotlinAntlrParser = await getKotlinAntlrParser();
         const antlrResult = KotlinAntlrParser.parse(filePath, content);
         entities = antlrResult.entities;
         relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;
-        console.error(
-          `[KotlinNativeParser] ANTLR success: ${entities.length} entities, ${relationships?.length || 0} relationships`,
-        );
+        log.d("KOTLINPARSER", "antlr_ok", { ent: entities.length, rel: relationships?.length || 0 });
       } catch (antlrError) {
         // Fallback to regex-based parsing
-        console.error(`[KotlinNativeParser] ANTLR parser failed, using regex fallback: ${antlrError}`);
+        log.w("KOTLINPARSER", "antlr_fail", { err: String(antlrError) });
         entities = this.parseKotlinRegex(filePath, content);
-        console.error(`[KotlinNativeParser] Regex fallback: ${entities.length} entities`);
+        log.d("KOTLINPARSER", "regex_ok", { cnt: entities.length });
       }
 
       // Enhance with kotlinc diagnostics if available
@@ -147,7 +146,7 @@ export class KotlinNativeParser {
         try {
           enhanceWithKotlinDiagnostics(entities, filePath, content);
         } catch (kotlincError) {
-          console.error(`[KotlinNativeParser] kotlinc diagnostics failed: ${kotlincError}`);
+          log.d("KOTLINPARSER", "kotlinc_fail", { err: String(kotlincError) });
         }
       }
 

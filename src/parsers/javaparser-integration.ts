@@ -14,6 +14,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import type { ParsedEntity } from "../types/parser.js";
 
 /**
@@ -410,7 +411,7 @@ async function ensureJavaParserJar(): Promise<string | null> {
     mkdirSync(libDir, { recursive: true });
   }
 
-  console.error(`[JavaParserIntegration] Downloading JavaParser ${JAVAPARSER_VERSION}...`);
+  log.i("JPINTEGRATION", "download_start", { ver: JAVAPARSER_VERSION });
 
   try {
     // Use fetch to download
@@ -423,10 +424,10 @@ async function ensureJavaParserJar(): Promise<string | null> {
     const buffer = Buffer.from(arrayBuffer);
     writeFileSync(jarPath, buffer);
 
-    console.error("[JavaParserIntegration] JavaParser downloaded successfully");
+    log.i("JPINTEGRATION", "download_done");
     return jarPath;
   } catch (error) {
-    console.error(`[JavaParserIntegration] Failed to download JavaParser: ${error}`);
+    log.e("JPINTEGRATION", "download_fail", { err: String(error) });
     return null;
   }
 }
@@ -445,7 +446,7 @@ async function ensureWrapperCompiled(jarPath: string): Promise<boolean> {
   // Compile wrapper (always recompile to ensure consistency)
   // biome-ignore lint/correctness/noConstantCondition: intentional - always recompile during development
   if (!existsSync(wrapperClass) || true) {
-    console.error("[JavaParserIntegration] Compiling wrapper...");
+    log.d("JPINTEGRATION", "compile_start");
 
     const java = await findJava();
     if (!java) return false;
@@ -462,14 +463,14 @@ async function ensureWrapperCompiled(jarPath: string): Promise<boolean> {
       });
 
       if (result.status !== 0) {
-        console.error(`[JavaParserIntegration] Compilation failed: ${result.stderr}`);
+        log.e("JPINTEGRATION", "compile_fail", { err: result.stderr });
         return false;
       }
 
-      console.error("[JavaParserIntegration] Wrapper compiled successfully");
+      log.i("JPINTEGRATION", "compile_done");
       return true;
     } catch (error) {
-      console.error(`[JavaParserIntegration] Compilation error: ${error}`);
+      log.e("JPINTEGRATION", "compile_err", { err: String(error) });
       return false;
     }
   }
@@ -490,7 +491,7 @@ export async function initializeJavaParser(): Promise<boolean> {
   // Find Java
   javaPath = await findJava();
   if (!javaPath) {
-    console.error("[JavaParserIntegration] Java not found");
+    log.w("JPINTEGRATION", "no_java");
     javaParserAvailable = false;
     return false;
   }
@@ -510,7 +511,7 @@ export async function initializeJavaParser(): Promise<boolean> {
   }
 
   javaParserAvailable = true;
-  console.error("[JavaParserIntegration] Initialized successfully");
+  log.i("JPINTEGRATION", "init_done");
   return true;
 }
 

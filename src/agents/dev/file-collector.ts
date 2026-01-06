@@ -7,7 +7,7 @@
 
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
-import { logger } from "../../utils/logger.js";
+import { log } from "../../logging/index.js";
 import { isCodeExtension, isDataExtension, SUPPORTED_DATA_EXTENSIONS } from "./file-extensions.js";
 
 /** Name of the ignore file */
@@ -46,19 +46,12 @@ export function loadIgnoreFile(directory: string): string[] {
     }
 
     if (patterns.length > 0) {
-      logger.info("FILE_SCAN", `Loaded ${IGNORE_FILE_NAME}`, {
-        path: ignoreFilePath,
-        patterns: patterns.length,
-        sample: patterns.slice(0, 5),
-      });
+      log.i("FILESCAN", "ignore_loaded", { path: ignoreFilePath, cnt: patterns.length });
     }
 
     return patterns;
   } catch (error) {
-    logger.warn("FILE_SCAN", `Failed to read ${IGNORE_FILE_NAME}`, {
-      path: ignoreFilePath,
-      error: String(error),
-    });
+    log.w("FILESCAN", "ignore_read_fail", { path: ignoreFilePath, err: String(error) });
     return [];
   }
 }
@@ -143,7 +136,7 @@ export interface CollectFilesResult {
  * Recursively collect source files from a directory
  */
 export function collectFiles(directory: string, options: CollectFilesOptions): CollectFilesResult {
-  const { excludePatterns: baseExcludePatterns, agentId } = options;
+  const { excludePatterns: baseExcludePatterns, agentId: _agentId } = options;
 
   // Load project-specific ignore patterns from .ultrascriptignore
   const ignorePatterns = loadIgnoreFile(directory);
@@ -204,7 +197,7 @@ export function collectFiles(directory: string, options: CollectFilesOptions): C
         }
       }
     } catch (error) {
-      console.error(`[DevAgent ${agentId}] Error reading directory ${dir}:`, error);
+      log.e("FILESCAN", "dir_read_error", { dir, err: String(error) });
     }
   }
 
@@ -217,19 +210,12 @@ export function collectFiles(directory: string, options: CollectFilesOptions): C
     extStats[ext] = (extStats[ext] || 0) + 1;
   }
 
-  // TRACE: Final summary
-  const sortedDirs = Object.entries(dirStats)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20);
-
-  logger.info("FILE_SCAN", "File collection complete", {
+  log.i("FILESCAN", "scan_done", {
     root: directory,
-    dirsScanned: scannedDirs,
-    filesCollected: files.length,
-    excludedByPattern,
-    excludedByDefault,
-    byExtension: extStats,
-    topDirs: Object.fromEntries(sortedDirs),
+    dirs: scannedDirs,
+    files: files.length,
+    excludedPat: excludedByPattern,
+    excludedDef: excludedByDefault,
   });
 
   return {

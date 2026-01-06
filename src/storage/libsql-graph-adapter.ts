@@ -21,10 +21,10 @@
 import type { Client } from "@libsql/client";
 import * as cbor from "cbor-x";
 import { LRUCache } from "lru-cache";
+import { log } from "../logging/index.js";
 import { DEFAULT_BRANCH, normalizeBranchName } from "../shared/storage-paths.js";
 import type { SimilarityResult, VectorEmbedding } from "../types/semantic.js";
 import type { BatchResult, Entity, EntityType, FileInfo, Relationship, RelationType } from "../types/storage.js";
-import { logger } from "../utils/logger.js";
 import { CacheOperations } from "./libsql/cache-ops.js";
 import { EntityOperations } from "./libsql/entity-ops.js";
 import { MetadataOperations } from "./libsql/metadata-ops.js";
@@ -174,21 +174,21 @@ export class LibSQLGraphAdapter {
 
   async initialize(dbPath: string, retryAfterCorruption = true): Promise<boolean> {
     const startTime = Date.now();
-    logger.trace("STORAGE", `[LibSQLGraphAdapter] ▶ initialize() START at ${dbPath}`);
+    log.t("STORAGE", `[LibSQLGraphAdapter] ▶ initialize() START at ${dbPath}`);
     try {
       this.dbPath = dbPath;
 
       // Remove stale lock files (single-user mode - we're the only consumer)
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ▶ cleanupStaleLocks`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ▶ cleanupStaleLocks`);
       await this.cleanupStaleLocks(dbPath);
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ◀ cleanupStaleLocks (${Date.now() - startTime}ms)`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ◀ cleanupStaleLocks (${Date.now() - startTime}ms)`);
 
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ▶ import @libsql/client`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ▶ import @libsql/client`);
       const importStart = Date.now();
       const { createClient } = await import("@libsql/client");
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ◀ import @libsql/client (${Date.now() - importStart}ms)`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ◀ import @libsql/client (${Date.now() - importStart}ms)`);
 
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ▶ createClient`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ▶ createClient`);
       const clientStart = Date.now();
       this.client = createClient({
         url: `file:${dbPath}`,
@@ -196,7 +196,7 @@ export class LibSQLGraphAdapter {
 
       // Verify connection
       await this.client.execute("SELECT 1");
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ◀ createClient + verify (${Date.now() - clientStart}ms)`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ◀ createClient + verify (${Date.now() - clientStart}ms)`);
 
       // Performance optimization PRAGMAs (aggressive - data is regeneratable)
       // cache_size: negative = KB, -8192 = 8MB page cache (smaller = less RSS)
@@ -210,20 +210,20 @@ export class LibSQLGraphAdapter {
       await this.client.execute("PRAGMA synchronous = OFF");
 
       // Proactive integrity check to detect corruption early
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ▶ integrityCheck`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ▶ integrityCheck`);
       const integrityStart = Date.now();
       await this.quickIntegrityCheck();
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ◀ integrityCheck (${Date.now() - integrityStart}ms)`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ◀ integrityCheck (${Date.now() - integrityStart}ms)`);
 
       // Create all tables
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ▶ createTables`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ▶ createTables`);
       const tablesStart = Date.now();
       await this.createTables();
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ◀ createTables (${Date.now() - tablesStart}ms)`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ◀ createTables (${Date.now() - tablesStart}ms)`);
 
       this.isInitialized = true;
-      logger.trace("STORAGE", `[LibSQLGraphAdapter] ◀ initialize() END (${Date.now() - startTime}ms)`);
-      console.error(`[LibSQLGraphAdapter] Initialized unified database at ${dbPath}`);
+      log.t("STORAGE", `[LibSQLGraphAdapter] ◀ initialize() END (${Date.now() - startTime}ms)`);
+      log.i("LIBSQLADAPT", "init_complete", { path: dbPath });
       return true;
     } catch (error) {
       const errorMessage = (error as Error).message || String(error);
@@ -236,8 +236,8 @@ export class LibSQLGraphAdapter {
         errorMessage.includes("database or disk is full");
 
       if (isCorrupted && retryAfterCorruption) {
-        console.error(`[LibSQLGraphAdapter] ⚠️ DATABASE CORRUPTION DETECTED: ${errorMessage}`);
-        console.error(`[LibSQLGraphAdapter] 🔄 Attempting to recreate database...`);
+        log.e("LIBSQLADAPT", "corruption_detected", { err: errorMessage });
+        log.i("LIBSQLADAPT", "recreating_db");
 
         // Close any existing client
         if (this.client) {
@@ -252,16 +252,16 @@ export class LibSQLGraphAdapter {
         // Delete corrupt database and auxiliary files
         const deleted = await this.deleteCorruptDatabase(dbPath);
         if (deleted) {
-          console.error(`[LibSQLGraphAdapter] ✓ Deleted corrupt database, retrying initialization...`);
+          log.i("LIBSQLADAPT", "corrupt_db_deleted");
           // Retry once without recursion
           return this.initialize(dbPath, false);
         } else {
-          console.error(`[LibSQLGraphAdapter] ✗ Failed to delete corrupt database`);
+          log.e("LIBSQLADAPT", "corrupt_db_delete_fail");
           return false;
         }
       }
 
-      console.error("[LibSQLGraphAdapter] Failed to initialize:", error);
+      log.e("LIBSQLADAPT", "init_fail", { err: String(error) });
       return false;
     }
   }
@@ -282,13 +282,13 @@ export class LibSQLGraphAdapter {
         const fileStats = await stat(file);
         const sizeMB = (fileStats.size / 1024 / 1024).toFixed(1);
         await unlink(file);
-        console.error(`[LibSQLGraphAdapter] Deleted: ${file} (${sizeMB} MB)`);
+        log.i("LIBSQLADAPT", "file_deleted", { file, sizeMB });
         anyDeleted = true;
       } catch (error) {
         // File doesn't exist or permission error - OK
         const err = error as NodeJS.ErrnoException;
         if (err.code !== "ENOENT") {
-          console.error(`[LibSQLGraphAdapter] Failed to delete ${file}: ${err.message}`);
+          log.w("LIBSQLADAPT", "file_delete_fail", { file, err: err.message });
         }
       }
     }
@@ -337,15 +337,15 @@ export class LibSQLGraphAdapter {
 
     // Run PRAGMA integrity_check - thorough check for corruption
     try {
-      console.error(`[LibSQLGraphAdapter] Running integrity check...`);
+      log.i("LIBSQLADAPT", "integrity_check_start");
       const integrityCheck = await this.client.execute("PRAGMA integrity_check");
       const firstRow = integrityCheck.rows[0];
       const result = firstRow ? String(Object.values(firstRow)[0]) : "ok";
       if (result !== "ok") {
-        console.error(`[LibSQLGraphAdapter] Integrity check FAILED: ${result}`);
+        log.e("LIBSQLADAPT", "integrity_check_fail", { result });
         throw new Error(`SQLITE_CORRUPT: integrity_check failed: ${result}`);
       }
-      console.error(`[LibSQLGraphAdapter] Integrity check OK`);
+      log.i("LIBSQLADAPT", "integrity_check_ok");
     } catch (error) {
       const msg = (error as Error).message || "";
       // Re-throw corruption errors
@@ -358,7 +358,7 @@ export class LibSQLGraphAdapter {
         throw error;
       }
       // Log but don't fail on other PRAGMA errors (might not be supported)
-      console.error(`[LibSQLGraphAdapter] PRAGMA integrity_check error: ${msg}`);
+      log.w("LIBSQLADAPT", "pragma_error", { err: msg });
       throw error; // Re-throw any error during integrity check
     }
 
@@ -366,7 +366,7 @@ export class LibSQLGraphAdapter {
     try {
       const countResult = await this.client.execute("SELECT COUNT(*) as cnt FROM embeddings");
       const count = (countResult.rows[0]?.["cnt"] as number) || 0;
-      console.error(`[LibSQLGraphAdapter] Embeddings count: ${count}`);
+      log.i("LIBSQLADAPT", "embeddings_count", { count });
 
       // Also check content column which often triggers corruption
       if (count > 0) {
@@ -377,7 +377,7 @@ export class LibSQLGraphAdapter {
       if (msg.includes("no such table")) {
         // Table doesn't exist - OK for fresh DB
       } else {
-        console.error(`[LibSQLGraphAdapter] Embeddings probe FAILED: ${msg}`);
+        log.e("LIBSQLADAPT", "embeddings_probe_fail", { err: msg });
         throw error;
       }
     }
@@ -394,11 +394,11 @@ export class LibSQLGraphAdapter {
           await this.client.execute(`SELECT COUNT(*) FROM "${tableName}"`);
         } catch (shadowError) {
           const smsg = (shadowError as Error).message || "";
-          console.error(`[LibSQLGraphAdapter] Shadow table ${tableName} CORRUPT: ${smsg}`);
+          log.e("LIBSQLADAPT", "shadow_table_corrupt", { table: tableName, err: smsg });
           throw shadowError;
         }
       }
-      console.error(`[LibSQLGraphAdapter] All shadow tables OK`);
+      log.i("LIBSQLADAPT", "shadow_tables_ok");
     } catch (error) {
       const msg = (error as Error).message || "";
       if (!msg.includes("no such table") && !msg.includes("All shadow")) {
@@ -406,7 +406,7 @@ export class LibSQLGraphAdapter {
       }
     }
 
-    console.error(`[LibSQLGraphAdapter] Integrity check passed`);
+    log.i("LIBSQLADAPT", "integrity_passed");
   }
 
   /**
@@ -420,7 +420,7 @@ export class LibSQLGraphAdapter {
     for (const lockFile of lockFiles) {
       try {
         await unlink(lockFile);
-        console.error(`[LibSQLGraphAdapter] Removed stale lock: ${lockFile}`);
+        log.i("LIBSQLADAPT", "stale_lock_removed", { file: lockFile });
       } catch {
         // File doesn't exist or already removed - OK
       }
@@ -568,15 +568,15 @@ export class LibSQLGraphAdapter {
     );
 
     const batchElapsed = Date.now() - startTime;
-    logger.info("LIBSQL_INIT", `Tables and basic indexes created`, { ms: batchElapsed });
+    log.i("STORAGE", `Tables and basic indexes created`, { ms: batchElapsed });
 
     // DiskANN vector index - DISABLED global index
     // Using project-specific partial indexes instead (ensureProjectVectorIndex)
     // Global index was causing 2+ GB overhead duplicating the data
-    logger.info("LIBSQL_INIT", `Skipping global DiskANN index (using partial indexes per project)`);
+    log.i("STORAGE", `Skipping global DiskANN index (using partial indexes per project)`);
 
     const totalElapsed = Date.now() - startTime;
-    logger.info("LIBSQL_INIT", `Total initialization complete`, { ms: totalElapsed });
+    log.i("STORAGE", `Total initialization complete`, { ms: totalElapsed });
 
     // Log memory and libsql stats after init
     await this.logDatabaseStats("after_init");
@@ -603,7 +603,7 @@ export class LibSQLGraphAdapter {
       const dbSizeMB = (pages * size) / 1024 / 1024;
       const cacheMB = cache < 0 ? -cache / 1024 : (cache * size) / 1024 / 1024;
 
-      logger.info("LIBSQL_STATS", label, {
+      log.i("STORAGE", label, {
         dbSizeMB: dbSizeMB.toFixed(1),
         pages,
         pageSize: size,
@@ -613,14 +613,14 @@ export class LibSQLGraphAdapter {
 
       // Log process memory
       const mem = process.memoryUsage();
-      logger.info("LIBSQL_MEMORY", label, {
+      log.i("STORAGE", label, {
         rssMB: Math.round(mem.rss / 1024 / 1024),
         heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
         externalMB: Math.round(mem.external / 1024 / 1024),
         arrayBuffersMB: Math.round(mem.arrayBuffers / 1024 / 1024),
       });
     } catch (error) {
-      logger.debug("LIBSQL_STATS", "Failed to get stats", { error: (error as Error).message });
+      log.d("STORAGE", "Failed to get stats", { error: (error as Error).message });
     }
   }
 
@@ -688,9 +688,9 @@ export class LibSQLGraphAdapter {
       await this.client.execute(
         `CREATE INDEX IF NOT EXISTS ${indexName} ON embeddings(libsql_vector_idx(${colName}, ${params})) WHERE project_hash = '${projectHash}' AND dim_size = ${dims}`,
       );
-      logger.info("LIBSQL_INDEX", `Created partial index`, { indexName, dims, ms: Date.now() - t });
+      log.i("STORAGE", `Created partial index`, { indexName, dims, ms: Date.now() - t });
     } catch (e) {
-      logger.warn("LIBSQL_INDEX", `Partial index failed`, { error: (e as Error).message });
+      log.w("STORAGE", `Partial index failed`, { error: (e as Error).message });
     }
   }
 
@@ -879,7 +879,7 @@ export class LibSQLGraphAdapter {
       this.client.close();
       this.client = null;
       this.isInitialized = false;
-      console.error("[LibSQLGraphAdapter] Connection closed");
+      log.i("LIBSQLADAPT", "connection_closed");
     }
   }
 
@@ -964,6 +964,6 @@ export class LibSQLGraphAdapter {
     this.embeddingCache.clear();
     this.searchCache.clear();
     this.metadataCache.clear();
-    logger.info("CACHE", `All caches cleared`);
+    log.i("CACHE", `All caches cleared`);
   }
 }

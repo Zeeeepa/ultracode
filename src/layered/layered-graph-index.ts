@@ -15,6 +15,7 @@
 import { LRUCache } from "lru-cache";
 import type { BranchManager } from "../core/branch-manager.js";
 import type { ILayeredIndex } from "../core/layered-index.js";
+import { log } from "../logging/index.js";
 import type { BranchDelta as IBranchDelta, LayeredIndexConfig, WorkingDelta } from "../types/layered.js";
 import { LayeredIndexConfigPresets } from "../types/layered.js";
 import type { Entity, GraphStorage, Relationship } from "../types/storage.js";
@@ -66,7 +67,8 @@ export class LayeredGraphIndex implements ILayeredIndex {
       },
     });
 
-    console.error(
+    log.i(
+      "LAYEREDIDX",
       `[LayeredGraphIndex] Initialized with max ${this.config.maxBranchDeltas} branch deltas, ` +
         `persistence: ${this.config.enablePersistence}, ` +
         `vector deltas: ${this.config.enableVectorDeltas}`,
@@ -81,25 +83,25 @@ export class LayeredGraphIndex implements ILayeredIndex {
    * Build base index from directory (Layer 0)
    */
   async buildFromDirectory(directory: string): Promise<void> {
-    console.error(`[LayeredGraphIndex] Building base index (Layer 0) from: ${directory}`);
+    log.i("LAYEREDIDX", `[LayeredGraphIndex] Building base index (Layer 0) from: ${directory}`);
     this.workingDirectory = directory;
 
     // Use existing GraphStorage indexing logic
     // (GraphStorage already has index method via agents)
     // We'll just mark it as base layer
 
-    console.error(`[LayeredGraphIndex] Base index built successfully`);
+    log.i("LAYEREDIDX", `[LayeredGraphIndex] Base index built successfully`);
 
     // Initialize git delta computer
     if (this.branchManager) {
       this.gitDeltaComputer = new GitDeltaComputer(this.branchManager, this.baseIndex, directory);
-      console.error(`[LayeredGraphIndex] GitDeltaComputer initialized`);
+      log.i("LAYEREDIDX", `[LayeredGraphIndex] GitDeltaComputer initialized`);
     }
 
     // Initialize cache manager for persistence
     if (this.config.enablePersistence && this.workingDirectory) {
       this.cacheManager = new LayeredCacheManager(this.workingDirectory);
-      console.error(`[LayeredGraphIndex] LayeredCacheManager initialized`);
+      log.i("LAYEREDIDX", `[LayeredGraphIndex] LayeredCacheManager initialized`);
     }
   }
 
@@ -165,7 +167,8 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
     const totalTime = Date.now() - startTime;
 
-    console.error(
+    log.i(
+      "LAYEREDIDX",
       `[LayeredGraphIndex] Query '${pattern}' in branch '${branch || "main"}': ` +
         `${finalResults.length} results, ` +
         `L0=${layer0Time}ms L1=${layer1Time}ms L2=${layer2Time}ms Total=${totalTime}ms`,
@@ -235,7 +238,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
     // Compute from git diff
     if (this.gitDeltaComputer) {
-      console.error(`[LayeredGraphIndex] Computing delta for branch: ${branch}`);
+      log.i("LAYEREDIDX", `[LayeredGraphIndex] Computing delta for branch: ${branch}`);
       delta = await this.gitDeltaComputer.computeDeltaFromGitDiff(branch, "main");
       this.branchDeltaCache.set(branch, delta);
 
@@ -250,7 +253,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
     }
 
     // Create empty delta as fallback
-    console.warn(`[LayeredGraphIndex] Creating empty delta for branch: ${branch} (no git integration)`);
+    log.w("LAYEREDIDX", `[LayeredGraphIndex] Creating empty delta for branch: ${branch} (no git integration)`);
     delta = new BranchDelta(branch);
     this.branchDeltaCache.set(branch, delta);
 
@@ -354,7 +357,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
   // =========================================================================
 
   async updateEntitiesFromFile(filePath: string, branch: string | null, clientId: string | null): Promise<void> {
-    console.error(`[LayeredGraphIndex] Updating entities from file: ${filePath}`);
+    log.i("LAYEREDIDX", `[LayeredGraphIndex] Updating entities from file: ${filePath}`);
 
     try {
       // Extract entities from file
@@ -386,14 +389,14 @@ export class LayeredGraphIndex implements ILayeredIndex {
         }
       }
 
-      console.error(`[LayeredGraphIndex] Successfully updated ${entities.length} entities from ${filePath}`);
+      log.i("LAYEREDIDX", `[LayeredGraphIndex] Successfully updated ${entities.length} entities from ${filePath}`);
     } catch (error) {
-      console.error(`[LayeredGraphIndex] Failed to update entities from ${filePath}:`, error);
+      log.e("LAYEREDIDX", "entity_update_fail", { err: String(error), filePath });
     }
   }
 
   async removeEntitiesFromFile(filePath: string, branch: string | null, clientId: string | null): Promise<void> {
-    console.error(`[LayeredGraphIndex] Removing entities from file: ${filePath}`);
+    log.i("LAYEREDIDX", `[LayeredGraphIndex] Removing entities from file: ${filePath}`);
 
     try {
       // Get entities by file path from base index
@@ -430,14 +433,14 @@ export class LayeredGraphIndex implements ILayeredIndex {
           try {
             await this.baseIndex.deleteEntity(entity.id);
           } catch (error) {
-            console.warn(`[LayeredGraphIndex] Failed to delete entity ${entity.id}:`, error);
+            log.e("LAYEREDIDX", "entity_delete_fail", { err: String(error), entityId: entity.id });
           }
         }
       }
 
-      console.error(`[LayeredGraphIndex] Successfully removed ${entities.length} entities from ${filePath}`);
+      log.i("LAYEREDIDX", `[LayeredGraphIndex] Successfully removed ${entities.length} entities from ${filePath}`);
     } catch (error) {
-      console.error(`[LayeredGraphIndex] Failed to remove entities from ${filePath}:`, error);
+      log.e("LAYEREDIDX", "entity_remove_fail", { err: String(error), filePath });
     }
   }
 
@@ -454,7 +457,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
       return;
     }
 
-    console.error("[LayeredGraphIndex] Initializing...");
+    log.i("LAYEREDIDX", "[LayeredGraphIndex] Initializing...");
 
     // Dependencies will be initialized in buildFromDirectory when working directory is known
     // If working directory already set, initialize now
@@ -468,11 +471,11 @@ export class LayeredGraphIndex implements ILayeredIndex {
     }
 
     this.isInitialized = true;
-    console.error("[LayeredGraphIndex] Initialized successfully");
+    log.i("LAYEREDIDX", "[LayeredGraphIndex] Initialized successfully");
   }
 
   async shutdown(): Promise<void> {
-    console.error("[LayeredGraphIndex] Shutting down...");
+    log.i("LAYEREDIDX", "[LayeredGraphIndex] Shutting down...");
 
     // Save all cached deltas
     for (const [_branch, delta] of this.branchDeltaCache.entries()) {
@@ -485,7 +488,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
     this.branchDeltaCache.clear();
     this.workingDeltas.clear();
 
-    console.error("[LayeredGraphIndex] Shutdown complete");
+    log.i("LAYEREDIDX", "[LayeredGraphIndex] Shutdown complete");
   }
 
   // =========================================================================
@@ -532,7 +535,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
       return await this.baseIndex.findEntities(query);
     } catch (error) {
-      console.error(`[LayeredGraphIndex] Failed to query base entities:`, error);
+      log.e("LAYEREDIDX", "base_query_fail", { err: String(error) });
       return [];
     }
   }
@@ -556,7 +559,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
       return relationships;
     } catch (error) {
-      console.error(`[LayeredGraphIndex] Failed to query base relationships:`, error);
+      log.e("LAYEREDIDX", "rel_query_fail", { err: String(error) });
       return [];
     }
   }
@@ -576,12 +579,12 @@ export class LayeredGraphIndex implements ILayeredIndex {
       return;
     }
 
-    console.error(`[LayeredGraphIndex] Branch delta evicted from cache, saving: ${branch}`);
+    log.i("LAYEREDIDX", `[LayeredGraphIndex] Branch delta evicted from cache, saving: ${branch}`);
 
     // Async save (don't block eviction)
     this.cacheManager
       .saveBranchDelta(delta)
-      .catch((err: Error) => console.error(`[LayeredGraphIndex] Failed to save evicted delta:`, err));
+      .catch((err: Error) => log.e("LAYEREDIDX", "delta_save_fail", { err: String(err) }));
   }
 
   /**
@@ -595,7 +598,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
       const fullPath = this.workingDirectory ? join(this.workingDirectory, filePath) : filePath;
 
       if (!existsSync(fullPath)) {
-        console.warn(`[LayeredGraphIndex] File not found: ${fullPath}`);
+        log.w("LAYEREDIDX", `[LayeredGraphIndex] File not found: ${fullPath}`);
         return [];
       }
 
@@ -611,7 +614,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
       // Convert ParsedEntity to Entity format
       return this.convertParsedEntitiesToEntities(parseResult.entities, filePath);
     } catch (error) {
-      console.error(`[LayeredGraphIndex] Failed to extract entities from ${filePath}:`, error);
+      log.e("LAYEREDIDX", "extract_fail", { err: String(error), filePath });
       return [];
     }
   }
@@ -652,7 +655,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
         entities.push(entity);
       } catch (error) {
-        console.warn(`[LayeredGraphIndex] Failed to convert entity ${parsed.name}:`, error);
+        log.e("LAYEREDIDX", "entity_convert_fail", { err: String(error), name: parsed.name });
       }
     }
 
@@ -711,7 +714,8 @@ export class LayeredGraphIndex implements ILayeredIndex {
     // Save updated delta
     await this.setWorkingDelta(clientId, branch, delta);
 
-    console.error(
+    log.i(
+      "LAYEREDIDX",
       `[LayeredGraphIndex] Updated working delta for client ${clientId}, branch ${branch}: ${delta.totalChanges} total changes`,
     );
   }
@@ -741,7 +745,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
       }
     }
 
-    console.error(`[LayeredGraphIndex] Updated branch delta: ${branchDelta.totalChanges} total changes`);
+    log.i("LAYEREDIDX", `[LayeredGraphIndex] Updated branch delta: ${branchDelta.totalChanges} total changes`);
   }
 
   /**
@@ -769,7 +773,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
       return await this.baseIndex.findEntities(query);
     } catch (error) {
-      console.error(`[LayeredGraphIndex] Failed to get entities by file path ${filePath}:`, error);
+      log.e("LAYEREDIDX", "path_query_fail", { err: String(error), filePath });
       return [];
     }
   }

@@ -10,6 +10,7 @@
  */
 
 import { z } from "zod";
+import { log } from "../../logging/index.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
@@ -70,7 +71,7 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
         }
       } catch (error) {
         // Semantic agent may not be available, that's ok for clean_index
-        console.error("[CleanIndex] Could not reinitialize SemanticAgent:", (error as Error).message);
+        log.w("CLEANINDEX", "sem_reinit_fail", { err: (error as Error).message });
       }
     }
 

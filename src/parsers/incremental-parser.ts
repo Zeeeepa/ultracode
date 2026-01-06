@@ -16,6 +16,7 @@
 import { extname } from "node:path";
 import { LRUCache } from "lru-cache";
 import xxhash from "xxhash-wasm";
+import { log } from "../logging/index.js";
 import { detectRuntime } from "../shared/runtime-detect.js";
 
 /**
@@ -128,7 +129,7 @@ export class IncrementalParser {
       updateAgeOnGet: true, // LRU semantics
       dispose: (entry) => {
         // Clean up when evicted
-        console.error(`[IncrementalParser] Evicted cache entry: ${entry.hash}`);
+        log.d("INCPARSER", "cache_evict", { hash: entry.hash });
       },
     });
 
@@ -148,7 +149,7 @@ export class IncrementalParser {
    * Initialize the parser and hash function
    */
   async initialize(): Promise<void> {
-    console.error("[IncrementalParser] Initializing...");
+    log.i("INCPARSER", "init_start");
 
     // Initialize unified parser (TypeScript Compiler API + fallbacks)
     await this.parser.initialize();
@@ -162,9 +163,9 @@ export class IncrementalParser {
           workerPoolSize: 8,
         });
         await this.multiPass.initialize();
-        console.error("[IncrementalParser] Multi-pass orchestrator initialized (OXC + TS API)");
+        log.i("INCPARSER", "multipass_init");
       } catch (e) {
-        console.warn("[IncrementalParser] Multi-pass init failed, using standard parser:", e);
+        log.w("INCPARSER", "multipass_fail", { err: String(e) });
         this.multiPass = null;
       }
     }
@@ -180,7 +181,7 @@ export class IncrementalParser {
       return hash.substring(0, 16); // Match previous hash length for compatibility
     };
 
-    console.error("[IncrementalParser] Initialization complete with xxHash");
+    log.i("INCPARSER", "init_done");
   }
 
   /**
@@ -230,7 +231,7 @@ export class IncrementalParser {
           options.timeoutMs || DEFAULT_TIMEOUT_MS,
         );
       } catch (parseError) {
-        console.error(`[IncrementalParser] Parser.parse failed for ${filePath}:`, parseError);
+        log.e("INCPARSER", "parse_fail", { file: filePath, err: String(parseError) });
         throw parseError;
       }
 
@@ -262,7 +263,7 @@ export class IncrementalParser {
       return result;
     } catch (error) {
       this.stats.errorCount++;
-      console.error(`[IncrementalParser] Error parsing ${filePath}:`, error);
+      log.e("INCPARSER", "parse_err", { file: filePath, err: String(error) });
 
       const errorResult: ParseResult = {
         filePath,
@@ -297,7 +298,7 @@ export class IncrementalParser {
     const startTime = Date.now();
     let fromCache = 0;
 
-    console.error(`[IncrementalParser] Processing ${files.length} files (batchSize=${batchSize})`);
+    log.i("INCPARSER", "batch_start", { cnt: files.length, batch: batchSize });
 
     // Separate TS/JS files for multi-pass and other files for standard parsing
     const tsFiles: string[] = [];
@@ -312,7 +313,7 @@ export class IncrementalParser {
       }
     }
 
-    console.error(`[IncrementalParser] File distribution: ${tsFiles.length} TS/JS, ${otherFiles.length} other`);
+    log.d("INCPARSER", "file_dist", { ts: tsFiles.length, other: otherFiles.length });
 
     // Process TS/JS files with multi-pass if available and batch is large enough
     const useMultiPassForBatch = this.multiPass && tsFiles.length >= MULTIPASS_THRESHOLD;
@@ -321,11 +322,11 @@ export class IncrementalParser {
 
     if (tsFiles.length > 0) {
       if (useMultiPassForBatch) {
-        console.error(`[IncrementalParser] Using multi-pass for ${tsFiles.length} TS/JS files`);
+        log.d("INCPARSER", "multipass_use", { cnt: tsFiles.length });
         try {
           tsResults = await this.multiPass!.parseBatch(tsFiles, options);
         } catch (e) {
-          console.warn("[IncrementalParser] Multi-pass failed, falling back to standard:", e);
+          log.w("INCPARSER", "multipass_err", { err: String(e) });
           const fallback = await this.parseBatchStandard(tsFiles, options);
           tsResults = fallback.results;
           tsErrors = fallback.errors;
@@ -357,16 +358,17 @@ export class IncrementalParser {
     // Update stats
     this.stats.throughput = (results.length / totalTimeMs) * 1000;
 
-    console.error(
-      `[IncrementalParser.parseBatch] DONE: ${results.length} files in ${totalTimeMs}ms ` +
-        `(${Math.round(this.stats.throughput)} files/sec)` +
-        (useMultiPassForBatch ? " [multi-pass]" : ""),
-    );
+    log.i("INCPARSER", "batch_done", {
+      cnt: results.length,
+      dur: totalTimeMs,
+      rate: Math.round(this.stats.throughput),
+      multipass: useMultiPassForBatch,
+    });
 
     if (errors.length > 0) {
-      console.error(`[IncrementalParser.parseBatch] ${errors.length} errors:`);
+      log.w("INCPARSER", "batch_errors", { cnt: errors.length });
       for (const e of errors.slice(0, 5)) {
-        console.error(`  - ${e.file}: ${e.error.message}`);
+        log.d("INCPARSER", "batch_err_item", { file: e.file, err: e.error.message });
       }
     }
 
@@ -402,7 +404,7 @@ export class IncrementalParser {
       try {
         contents = await readFilesParallel(batch, { concurrency: 24, encoding: "text" });
       } catch (readError) {
-        console.warn(`[IncrementalParser] Parallel read failed:`, readError);
+        log.w("INCPARSER", "read_fail", { err: String(readError) });
         contents = [];
         for (const file of batch) {
           try {
@@ -431,9 +433,11 @@ export class IncrementalParser {
       if (files.length > 100 && (i + batchSize) % 200 === 0) {
         const elapsed = Date.now() - startTime;
         const throughput = Math.round((results.length / elapsed) * 1000);
-        console.error(
-          `[IncrementalParser] Progress: ${Math.min(i + batchSize, files.length)}/${files.length} (${throughput} files/sec)`,
-        );
+        log.d("INCPARSER", "batch_progress", {
+          done: Math.min(i + batchSize, files.length),
+          total: files.length,
+          rate: throughput,
+        });
       }
     }
 
@@ -456,7 +460,7 @@ export class IncrementalParser {
   async processIncremental(changes: FileChange[], options: ParserOptions = {}): Promise<ParseResult[]> {
     const results: ParseResult[] = [];
 
-    console.error(`[IncrementalParser] Processing ${changes.length} incremental changes`);
+    log.d("INCPARSER", "incr_start", { cnt: changes.length });
 
     for (const change of changes) {
       const { filePath, changeType, content } = change;
@@ -646,21 +650,21 @@ export class IncrementalParser {
     this.fileHashes.clear();
     this.parser.clearCache();
     this.updateCacheStats();
-    console.error("[IncrementalParser] Cache cleared");
+    log.d("INCPARSER", "cache_clear");
   }
 
   /**
    * Warm restart from cached data
    */
   async warmRestart(cacheData: Array<{ file: string; hash: string; result: ParseResult }>): Promise<void> {
-    console.error(`[IncrementalParser] Warming cache with ${cacheData.length} entries`);
+    log.d("INCPARSER", "cache_warm", { cnt: cacheData.length });
 
     for (const { file, hash, result } of cacheData) {
       this.addToCache(file, hash, result);
       this.fileHashes.set(file, hash);
     }
 
-    console.error(`[IncrementalParser] Cache warmed, hit rate target: >80%`);
+    log.d("INCPARSER", "cache_warmed");
   }
 
   /**

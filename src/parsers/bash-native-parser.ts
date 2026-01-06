@@ -12,6 +12,7 @@
  */
 
 import { execSync, spawn } from "node:child_process";
+import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
@@ -51,15 +52,15 @@ export class BashNativeParser {
    * Initialize the parser and check if shfmt is available
    */
   async initialize(): Promise<void> {
-    console.error("[BashNativeParser] Checking shfmt availability...");
+    log.d("BASHPARSER", "check_avail");
 
     try {
       execSync("shfmt --version", { stdio: "ignore", windowsHide: true });
       this.shfmtAvailable = true;
-      console.error("[BashNativeParser] Initialized (shfmt available)");
+      log.i("BASHPARSER", "init_done", { shfmt: true });
     } catch {
       this.shfmtAvailable = false;
-      console.error("[BashNativeParser] shfmt not found, using regex parser");
+      log.i("BASHPARSER", "init_done", { shfmt: false });
     }
   }
 

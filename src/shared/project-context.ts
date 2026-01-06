@@ -16,6 +16,7 @@
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { log } from "../logging/index.js";
 import { ensureProjectDir, getProjectDir, getProjectPaths } from "./storage-paths.js";
 
 // =============================================================================
@@ -45,7 +46,7 @@ export class ProjectContextManager {
 
   constructor() {
     const cwd = process.cwd();
-    console.error(`[ProjectContextManager] Initializing with cwd: ${cwd}`);
+    log.i("PROJCTX", `[ProjectContextManager] Initializing with cwd: ${cwd}`);
     this.state = {
       currentProject: cwd,
       previousProject: null,
@@ -141,14 +142,14 @@ export class ProjectContextManager {
     this.state.previousProject = this.state.currentProject;
     this.state.currentProject = resolved;
 
-    console.error(`[ProjectContext] Switched project: ${this.state.previousProject} -> ${resolved}`);
+    log.i("PROJCTX", `[ProjectContext] Switched project: ${this.state.previousProject} -> ${resolved}`);
 
     // Notify callbacks
     for (const callback of this.onProjectChangeCallbacks) {
       try {
         callback(resolved, this.state.previousProject);
       } catch (error) {
-        console.error(`[ProjectContext] Callback error:`, error);
+        log.e("PROJCTX", "callback_error", { err: String(error) });
       }
     }
 
@@ -177,7 +178,7 @@ export class ProjectContextManager {
   startIndexing(projectPath?: string): void {
     const resolved = this.resolveProjectPath(projectPath);
     this.indexingInProgress.add(resolved);
-    console.error(`[ProjectContext] Indexing started for: ${resolved}`);
+    log.i("PROJCTX", `[ProjectContext] Indexing started for: ${resolved}`);
   }
 
   /**
@@ -186,7 +187,7 @@ export class ProjectContextManager {
   finishIndexing(projectPath?: string): void {
     const resolved = this.resolveProjectPath(projectPath);
     this.indexingInProgress.delete(resolved);
-    console.error(`[ProjectContext] Indexing completed for: ${resolved}`);
+    log.i("PROJCTX", `[ProjectContext] Indexing completed for: ${resolved}`);
   }
 
   /**

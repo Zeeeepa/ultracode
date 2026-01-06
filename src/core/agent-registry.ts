@@ -5,6 +5,7 @@
  * Uses configuration to determine capabilities and dependencies.
  */
 
+import { log } from "../logging/index.js";
 import { AgentType } from "../types/agent.js";
 import type { DIContainer } from "./di-container.js";
 
@@ -19,7 +20,7 @@ export async function registerAllAgents(
   container: DIContainer,
   // config parameter reserved for future use (agent-specific configurations)
 ): Promise<void> {
-  console.error(`[AgentRegistry] Registering all agents...`);
+  log.i("AGENTREG", "registering_all");
 
   // DevAgent
   container.registerAgent(AgentType.DEV, async (_c) => {
@@ -88,7 +89,7 @@ export async function registerAllAgents(
     });
   });
 
-  console.error(`[AgentRegistry] All agents registered with DI Container`);
+  log.i("AGENTREG", "all_registered");
 }
 
 /**
@@ -102,7 +103,7 @@ export async function registerAgentWithConductor(
   // Check if agent already registered in conductor
   const existing = conductor.getAgentsByType(agentType);
   if (existing.length > 0) {
-    console.error(`[AgentRegistry] ${agentType} already registered with conductor`);
+    log.d("AGENTREG", "already_registered", { type: agentType });
     return;
   }
 
@@ -111,7 +112,7 @@ export async function registerAgentWithConductor(
 
   // Register with conductor
   conductor.register(agent);
-  console.error(`[AgentRegistry] ${agentType} registered with conductor`);
+  log.i("AGENTREG", "registered_conductor", { type: agentType });
 }
 
 /**
@@ -134,7 +135,7 @@ export async function getOrCreateAgent(container: DIContainer, conductor: any, a
 
   // Initialize agent AFTER resolving (avoids circular dependency)
   await agent.initialize();
-  console.error(`[AgentRegistry] ${agentType} initialized`);
+  log.i("AGENTREG", "agent_init", { type: agentType });
 
   // Register with conductor
   conductor.register(agent);

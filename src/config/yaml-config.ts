@@ -11,6 +11,7 @@
 
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { log } from "../logging/index.js";
 import { existsSync, readTextSync } from "../utils/file-ops.js";
 
 // =============================================================================
@@ -186,7 +187,7 @@ export class ConfigLoader {
   private resolveConfigPath(): string {
     if (ConfigLoader.overridePath) {
       if (!existsSync(ConfigLoader.overridePath)) {
-        console.error(`[Config] Override config file not found: ${ConfigLoader.overridePath}`);
+        log.e("CONFIG", "override_not_found", { path: ConfigLoader.overridePath });
         process.exit(1);
       }
       return ConfigLoader.overridePath;
@@ -222,13 +223,13 @@ export class ConfigLoader {
       try {
         const yamlContent = readTextSync(this.configPath);
         yamlConfig = parseYaml(yamlContent) || {};
-        console.error(`[Config] Loaded configuration from: ${this.configPath}`);
+        log.i("CONFIG", "loaded", { path: this.configPath });
       } catch (error) {
-        console.warn(`[Config] Failed to load YAML config: ${error instanceof Error ? error.message : error}`);
-        console.warn(`[Config] Falling back to environment variables and defaults`);
+        log.w("CONFIG", "yaml_load_fail", { err: error instanceof Error ? error.message : String(error) });
+        log.w("CONFIG", "fallback_env");
       }
     } else {
-      console.error(`[Config] No YAML config found, using environment variables and defaults`);
+      log.i("CONFIG", "no_yaml_found");
     }
 
     // Merge with defaults and environment variables
@@ -750,10 +751,12 @@ export function getMCPConfigSafe(): MCPConfig & { embeddingAvailable: boolean } 
 export function initializeConfig(): AppConfig {
   const config = ConfigLoader.getInstance().getConfig();
 
-  console.error(`[Config] Environment: ${config.environment}`);
-  console.error(`[Config] Debug mode: ${config.debug}`);
-  console.error(`[Config] Embedding enabled: ${config.mcp.embedding?.enabled}`);
-  console.error(`[Config] Database path: ${config.database.path}`);
+  log.i("CONFIG", "init", {
+    env: config.environment,
+    debug: config.debug,
+    embEnabled: config.mcp.embedding?.enabled,
+    dbPath: config.database.path,
+  });
 
   return config;
 }

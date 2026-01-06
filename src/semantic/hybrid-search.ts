@@ -15,8 +15,8 @@
  */
 
 import type { QueryAgent } from "../agents/query-agent.js";
+import { log } from "../logging/index.js";
 import type { FusionOptions, HybridResult, SemanticResult, SimilarityResult } from "../types/semantic.js";
-import { logger } from "../utils/logger.js";
 import type { EmbeddingGenerator } from "./embedding-generator.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -123,11 +123,9 @@ export class HybridSearchEngine {
       ]);
       const semanticResults = semanticSearchResult.results;
 
-      logger.debug(
-        "HYBRID_SEARCH",
-        `Found ${structuralResults.length} structural and ${semanticResults.length} semantic results`,
-        { usedFaiss: semanticSearchResult.usedFaiss },
-      );
+      log.d("HYBRID", `Found ${structuralResults.length} structural and ${semanticResults.length} semantic results`, {
+        usedFaiss: semanticSearchResult.usedFaiss,
+      });
 
       // Apply Reciprocal Rank Fusion
       const fusedResults = this.fuseResults(structuralResults, semanticResults, fusionOptions);
@@ -136,14 +134,14 @@ export class HybridSearchEngine {
       const searchTime = Date.now() - startTime;
       this.updateMetrics(searchTime, fusedResults.length);
 
-      logger.info("HYBRID_SEARCH", `Hybrid search complete`, {
+      log.i("HYBRID", `Hybrid search complete`, {
         resultsCount: fusedResults.length,
         searchTimeMs: searchTime,
       });
 
       return fusedResults;
     } catch (error) {
-      logger.error("HYBRID_SEARCH", "Hybrid search failed", { error: (error as Error).message });
+      log.e("HYBRID", "Hybrid search failed", { error: (error as Error).message });
       throw error;
     }
   }
@@ -153,7 +151,7 @@ export class HybridSearchEngine {
    */
   private async performStructuralSearch(query: string, limit: number): Promise<StructuralResult[]> {
     if (!this.queryAgent) {
-      logger.debug("HYBRID_SEARCH", "QueryAgent not available, skipping structural search");
+      log.d("HYBRID", "QueryAgent not available, skipping structural search");
       return [];
     }
 
@@ -170,7 +168,7 @@ export class HybridSearchEngine {
       const results = (await this.queryAgent.process(task)) as StructuralResult[];
       return results || [];
     } catch (error) {
-      logger.error("HYBRID_SEARCH", "Structural search failed", { error: (error as Error).message });
+      log.e("HYBRID", "Structural search failed", { error: (error as Error).message });
       return [];
     }
   }
@@ -301,7 +299,7 @@ export class HybridSearchEngine {
         processingTime,
       };
     } catch (error) {
-      logger.error("HYBRID_SEARCH", "Semantic search failed", { query, error: (error as Error).message });
+      log.e("HYBRID", "Semantic search failed", { query, error: (error as Error).message });
       throw error;
     }
   }
@@ -367,6 +365,6 @@ export class HybridSearchEngine {
    */
   clearCaches(): void {
     this.embeddingGen.clearCache();
-    logger.info("HYBRID_SEARCH", "Caches cleared");
+    log.i("HYBRID", "Caches cleared");
   }
 }

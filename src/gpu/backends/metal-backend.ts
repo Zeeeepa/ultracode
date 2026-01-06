@@ -15,6 +15,7 @@
  */
 
 import { arch, platform } from "node:os";
+import { log } from "../../logging/index.js";
 import type { BackendCapabilities, VectorBackend } from "./base.js";
 
 // Metal native addon interface (Node.js N-API) - matches binding.mm exports
@@ -78,11 +79,11 @@ export class MetalBackend implements VectorBackend {
         }
       }
 
-      console.debug("[Metal Backend] Native addon not found in any expected location");
-      console.debug("[Metal Backend] To build: scripts/build-native-libs-macos.sh");
+      log.d("METALBACKEND", "addon_not_found");
+      log.d("METALBACKEND", "build_hint", { cmd: "scripts/build-native-libs-macos.sh" });
       return false;
     } catch (error) {
-      console.debug("[Metal Backend] Error checking availability:", (error as Error).message);
+      log.d("METALBACKEND", "avail_check_err", { err: (error as Error).message });
       return false;
     }
   }
@@ -95,11 +96,10 @@ export class MetalBackend implements VectorBackend {
     this.deviceInfo = metalAddon.getDeviceInfo();
     this.initialized = true;
 
-    console.error("[Metal Backend] Initialized:", {
+    log.i("METALBACKEND", "init", {
       device: this.deviceInfo.deviceName,
-      unifiedMemory: this.deviceInfo.unifiedMemory,
-      maxBuffer: `${Math.round(this.deviceInfo.maxBufferLength / (1024 * 1024 * 1024))} GB`,
-      maxThreadgroupMemory: `${Math.round(this.deviceInfo.maxThreadgroupMemory / 1024)} KB`,
+      unified: this.deviceInfo.unifiedMemory,
+      maxBufGB: Math.round(this.deviceInfo.maxBufferLength / (1024 * 1024 * 1024)),
     });
   }
 
@@ -175,6 +175,6 @@ export class MetalBackend implements VectorBackend {
 
   async close(): Promise<void> {
     this.initialized = false;
-    console.error("[Metal Backend] Closed");
+    log.i("METALBACKEND", "closed");
   }
 }

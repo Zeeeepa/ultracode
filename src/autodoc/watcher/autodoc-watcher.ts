@@ -14,8 +14,8 @@
 
 import path from "node:path";
 import { type KnowledgeEntry, knowledgeBus } from "../../core/knowledge-bus.js";
+import { log } from "../../logging/index.js";
 import { fileExists, readdir, readText, setFileChangeHook, writeFile } from "../../utils/file-ops.js";
-import { logger } from "../../utils/logger.js";
 import type { ModuleInfo } from "../generator/doc-generator.js";
 import { updateAutodocContent } from "./autodoc-updater.js";
 import { extractExportsFromFile, getModuleForFile } from "./module-resolver.js";
@@ -87,12 +87,12 @@ export class AutoDocWatcher {
    */
   start(): void {
     if (!this.config.enabled) {
-      logger.info("AUTODOC_WATCHER", "AutoDoc watcher disabled");
+      log.i("AUTODOCWATCH", "watcher_disabled");
       return;
     }
 
     if (this.subscriptionId) {
-      logger.warn("AUTODOC_WATCHER", "Watcher already started");
+      log.w("AUTODOCWATCH", "already_started");
       return;
     }
 
@@ -114,9 +114,9 @@ export class AutoDocWatcher {
       }
     });
 
-    logger.info("AUTODOC_WATCHER", "AutoDoc watcher started", {
-      rootDir: this.config.rootDir,
-      debounceMs: this.config.debounceMs,
+    log.i("AUTODOCWATCH", "watcher_started", {
+      root_dir: this.config.rootDir,
+      debounce_ms: this.config.debounceMs,
     });
   }
 
@@ -146,7 +146,7 @@ export class AutoDocWatcher {
     this.moduleCacheControllers.clear();
     this.moduleCache.clear();
 
-    logger.info("AUTODOC_WATCHER", "AutoDoc watcher stopped");
+    log.i("AUTODOCWATCH", "watcher_stopped");
   }
 
   /**
@@ -256,10 +256,10 @@ export class AutoDocWatcher {
       }
     })();
 
-    logger.debug("AUTODOC_WATCHER", "Scheduled update", {
-      modulePath,
-      changedFiles: changeCount,
-      delayMs: finalDelay,
+    log.d("AUTODOCWATCH", "update_scheduled", {
+      module_path: modulePath,
+      changed_files: changeCount,
+      delay_ms: finalDelay,
     });
   }
 
@@ -286,16 +286,16 @@ export class AutoDocWatcher {
     this.isProcessing = true;
 
     try {
-      logger.info("AUTODOC_WATCHER", "Processing AUTODOC update", {
-        modulePath,
-        changedFiles: pending.changedFiles.size,
+      log.i("AUTODOCWATCH", "processing_update", {
+        module_path: modulePath,
+        changed_files: pending.changedFiles.size,
       });
 
       const autodocPath = path.join(modulePath, MODULE_DOC_FILENAME);
       const autodocExists = await fileExists(autodocPath);
 
       if (!autodocExists) {
-        logger.debug("AUTODOC_WATCHER", "No AUTODOC.md found, skipping", { modulePath });
+        log.d("AUTODOCWATCH", "autodoc_not_found", { module_path: modulePath });
         return;
       }
 
@@ -314,9 +314,9 @@ export class AutoDocWatcher {
       if (updatedContent !== currentContent) {
         await writeFile(autodocPath, updatedContent);
 
-        logger.info("AUTODOC_WATCHER", "AUTODOC.md updated", {
-          modulePath,
-          changedFiles: pending.changedFiles.size,
+        log.i("AUTODOCWATCH", "autodoc_updated", {
+          module_path: modulePath,
+          changed_files: pending.changedFiles.size,
         });
 
         // Publish event
@@ -331,8 +331,8 @@ export class AutoDocWatcher {
         );
       }
     } catch (error) {
-      logger.error("AUTODOC_WATCHER", "Failed to update AUTODOC.md", {
-        modulePath,
+      log.e("AUTODOCWATCH", "update_failed", {
+        module_path: modulePath,
         error: String(error),
       });
     } finally {
@@ -350,7 +350,7 @@ export class AutoDocWatcher {
       return;
     }
 
-    logger.info("AUTODOC_WATCHER", "Full AUTODOC update after indexing");
+    log.i("AUTODOCWATCH", "full_update_start");
 
     // This would trigger a full regeneration
     // For now, just log - full regeneration is done via autodoc_generate tool

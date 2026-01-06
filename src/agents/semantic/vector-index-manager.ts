@@ -5,12 +5,12 @@
  * Extracted from SemanticAgent for better modularity.
  */
 
+import { log } from "../../logging/index.js";
 import type { CodeAnalyzer } from "../../semantic/code-analyzer.js";
 import type { EmbeddingGenerator } from "../../semantic/embedding-generator.js";
 import type { VectorStore } from "../../semantic/vector-store.js";
 import { getGraphStorage } from "../../storage/graph-storage-factory.js";
 import type { SemanticAnalysis } from "../../types/semantic.js";
-import { logger } from "../../utils/logger.js";
 
 export interface HotspotItem {
   entityId?: string;
@@ -44,7 +44,7 @@ export class VectorIndexManager {
    */
   async dropVectorIndex(): Promise<void> {
     if (!this.vectorStore) return;
-    logger.debug("VectorIndexManager", "Dropping vector index for bulk mode");
+    log.d("VECTORINDEX", "drop_for_bulk");
     await this.vectorStore.dropVectorIndex();
   }
 
@@ -57,9 +57,10 @@ export class VectorIndexManager {
     if (!this.vectorStore) {
       return { strategy: "none", usedFaiss: false, timeMs: 0 };
     }
-    logger.debug("VectorIndexManager", "Rebuilding vector index (adaptive)");
+    log.d("VECTORINDEX", "rebuild_start");
     const result = await this.vectorStore.adaptiveRebuildIndex();
-    logger.warn("VectorIndexManager", `[REBUILD] ${result.strategy}`, {
+    log.i("VECTORINDEX", "rebuild_done", {
+      strategy: result.strategy,
       usedFaiss: result.usedFaiss,
       ms: result.timeMs.toFixed(0),
     });

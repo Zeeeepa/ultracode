@@ -7,8 +7,8 @@
 
 import type { InStatement, ResultSet } from "@libsql/client";
 import type { LRUCache } from "lru-cache";
+import { log } from "../../logging/index.js";
 import type { SimilarityResult, VectorEmbedding } from "../../types/semantic.js";
-import { logger } from "../../utils/logger.js";
 import type {
   ClientGetter,
   ContextGetter,
@@ -132,7 +132,7 @@ export class VectorOperations {
         await client.batch(batch, "write");
         return batch.length;
       } catch (error) {
-        logger.error("EMBEDDING_INSERT", `Batch ${index} failed`, { error: (error as Error).message });
+        log.e("VECTOROPS", `Batch ${index} failed`, { error: (error as Error).message });
         throw error;
       }
     });
@@ -173,19 +173,19 @@ export class VectorOperations {
     const dims = this.ctx.getEffectiveDimensions();
     const partialIndexName = `idx_emb_${dims}_${projectHash.substring(0, 8)}`;
     const start = Date.now();
-    logger.trace("LIBSQL_INDEX", `▶ dropVectorIndex START`, { indexName: partialIndexName, projectHash, dims });
+    log.t("LIBSQLINDEX", `▶ dropVectorIndex START`, { indexName: partialIndexName, projectHash, dims });
 
     try {
       await client.execute(`DROP INDEX IF EXISTS ${partialIndexName}`);
-      logger.trace("LIBSQL_INDEX", `◀ dropVectorIndex END`, { indexName: partialIndexName, ms: Date.now() - start });
-      logger.info("LIBSQL_INDEX", `Dropped project vector index`, {
+      log.t("LIBSQLINDEX", `◀ dropVectorIndex END`, { indexName: partialIndexName, ms: Date.now() - start });
+      log.i("LIBSQLINDEX", `Dropped project vector index`, {
         indexName: partialIndexName,
         projectHash,
         dims,
         ms: Date.now() - start,
       });
     } catch (error) {
-      logger.warn("LIBSQL_INDEX", `Failed to drop project vector index`, {
+      log.w("LIBSQLINDEX", `Failed to drop project vector index`, {
         indexName: partialIndexName,
         error: (error as Error).message,
       });
@@ -204,7 +204,7 @@ export class VectorOperations {
     const colName = this.ctx.getEmbeddingColumnName();
     const indexName = `idx_emb_${dims}_${projectHash.substring(0, 8)}`;
     const start = Date.now();
-    logger.warn("LIBSQL_INDEX", `[REBUILD] START`, { indexName, projectHash, dims });
+    log.w("LIBSQLINDEX", `[REBUILD] START`, { indexName, projectHash, dims });
 
     const indexParams = [
       `'metric=${this.ctx.config.metric}'`,
@@ -221,10 +221,10 @@ export class VectorOperations {
         WHERE project_hash = '${projectHash}' AND dim_size = ${dims}
       `);
       const elapsed = Date.now() - start;
-      logger.warn("LIBSQL_INDEX", `[REBUILD] END`, { indexName, dims, ms: elapsed });
-      logger.info("LIBSQL_INDEX", `Rebuilt project vector index`, { indexName, projectHash, dims, ms: elapsed });
+      log.w("LIBSQLINDEX", `[REBUILD] END`, { indexName, dims, ms: elapsed });
+      log.i("LIBSQLINDEX", `Rebuilt project vector index`, { indexName, projectHash, dims, ms: elapsed });
     } catch (error) {
-      logger.warn("LIBSQL_INDEX", `Failed to rebuild project vector index`, {
+      log.w("LIBSQLINDEX", `Failed to rebuild project vector index`, {
         indexName,
         error: (error as Error).message,
       });
@@ -240,7 +240,7 @@ export class VectorOperations {
     if (embeddings.length === 0) return;
 
     const start = Date.now();
-    logger.info("LIBSQL_BULK", `Starting bulk insert`, { count: embeddings.length });
+    log.i("LIBSQLBULK", `Starting bulk insert`, { count: embeddings.length });
 
     await this.dropVectorIndex();
 
@@ -272,7 +272,7 @@ export class VectorOperations {
     for (let i = 0; i < statements.length; i += batchSize) {
       const batch = statements.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
-      logger.trace("LIBSQL_BULK", `  batch ${batchNum}/${totalBatches}`, { size: batch.length });
+      log.t("LIBSQLBULK", `  batch ${batchNum}/${totalBatches}`, { size: batch.length });
       await client.batch(batch, "write");
     }
 
@@ -283,7 +283,7 @@ export class VectorOperations {
 
     await this.rebuildVectorIndex();
     this.invalidateSearchCache();
-    logger.info("LIBSQL_BULK", `Bulk insert complete`, { count: embeddings.length, ms: Date.now() - start });
+    log.i("LIBSQLBULK", `Bulk insert complete`, { count: embeddings.length, ms: Date.now() - start });
   }
 
   /**
@@ -471,12 +471,12 @@ export class VectorOperations {
     if (!client) throw new Error("Client not initialized");
 
     const { projectHash, branchName } = this.ctx.getContext();
-    logger.trace("LIBSQL", "[getEmbeddingCount] Executing SQL...", { projectHash, branchName });
+    log.t("LIBSQL", "[getEmbeddingCount] Executing SQL...", { projectHash, branchName });
     const result = await client.execute({
       sql: "SELECT COUNT(*) as cnt FROM embeddings WHERE project_hash = ? AND branch_name = ?",
       args: [projectHash, branchName],
     });
-    logger.trace("LIBSQL", "[getEmbeddingCount] SQL done", { rowCount: result.rows.length });
+    log.t("LIBSQL", "[getEmbeddingCount] SQL done", { rowCount: result.rows.length });
 
     return (result.rows[0]?.["cnt"] as number) || 0;
   }
@@ -491,7 +491,7 @@ export class VectorOperations {
 
     const { projectHash, branchName } = this.ctx.getContext();
     if (ids.length > 0 && ids.length <= 100) {
-      logger.trace("LIBSQL", `getExistingEmbeddingIds context`, { projectHash, branchName, idsCount: ids.length });
+      log.t("LIBSQL", `getExistingEmbeddingIds context`, { projectHash, branchName, idsCount: ids.length });
     }
     const existingIds = new Set<string>();
 
@@ -526,7 +526,7 @@ export class VectorOperations {
         });
 
         if (i === 0 && batch.length > 0) {
-          logger.trace("LIBSQL", `getExistingEmbeddingIds SQL result`, {
+          log.t("LIBSQL", `getExistingEmbeddingIds SQL result`, {
             queriedIds: batch.slice(0, 3),
             foundCount: result.rows.length,
             foundIds: result.rows.slice(0, 3).map((r) => r["id"]),

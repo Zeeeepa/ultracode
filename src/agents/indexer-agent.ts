@@ -20,6 +20,7 @@ import { BranchManager } from "../core/branch-manager.js";
 import { createFileWatcher, type FileChangeEvent, type FileWatcher } from "../core/file-watcher.js";
 import { GitWatcher } from "../core/git-watcher.js";
 import { knowledgeBus } from "../core/knowledge-bus.js";
+import { log } from "../logging/index.js";
 import { getDataDir } from "../shared/storage-paths.js";
 import { BatchOperationsLibSQL } from "../storage/batch-operations-libsql.js";
 import { getCacheManager, QueryCacheManager } from "../storage/cache-manager.js";
@@ -38,7 +39,6 @@ import type {
   Relationship,
 } from "../types/storage.js";
 import { flattenParsedEntities, parsedEntityToEntity, type RelationType } from "../types/storage.js";
-import { logger } from "../utils/logger.js";
 import { BaseAgent } from "./base.js";
 import { buildEntityNameMap, resolveByNameAndLine } from "./indexer/entity-resolution.js";
 import { processExternalRelationships } from "./indexer/external-placeholder.js";
@@ -135,7 +135,7 @@ export class IndexerAgent extends BaseAgent {
 
   constructor() {
     super(AgentType.INDEXER, getIndexerConfig());
-    console.error(`[IndexerAgent] Created with ID: ${this.id}`);
+    log.i("INDEXER", "created", { id: this.id });
   }
 
   /**
@@ -143,18 +143,18 @@ export class IndexerAgent extends BaseAgent {
    */
   protected async onInitialize(): Promise<void> {
     const startTime = Date.now();
-    logger.trace("AGENT", `[IndexerAgent] ▶ onInitialize() START`);
-    console.error(`[${this.id}] Initializing Indexer Agent...`);
+    log.t("INDEXER", `[IndexerAgent] ▶ onInitialize() START`);
+    log.i("INDEXER", "init_start");
 
     // Initialize xxHash for stable ID generation
-    logger.trace("AGENT", `[IndexerAgent] ▶ initXXHash`);
+    log.t("INDEXER", `[IndexerAgent] ▶ initXXHash`);
     await initXXHash();
-    logger.trace("AGENT", `[IndexerAgent] ◀ initXXHash (${Date.now() - startTime}ms)`);
+    log.t("INDEXER", `[IndexerAgent] ◀ initXXHash (${Date.now() - startTime}ms)`);
 
     // Always initialize branch-aware indexing (git detection happens per-repository)
     const appConfig = getConfig();
     {
-      console.error(`[${this.id}] Initializing branch-aware indexing`);
+      log.d("INDEXER", "branch_aware_init");
 
       // Use centralized storage if no explicit dataDir configured
       const dataDir = appConfig.indexing.dataDir || getDataDir();
@@ -171,7 +171,7 @@ export class IndexerAgent extends BaseAgent {
 
       // Initialize GitWatcher if Git integration is enabled
       if (appConfig.git?.enabled && appConfig.git.watchBranchChanges) {
-        console.error(`[${this.id}] Git watching is enabled`);
+        log.i("INDEXER", "git_watch_enabled");
 
         this.gitWatcher = new GitWatcher({
           enabled: true,
@@ -205,21 +205,21 @@ export class IndexerAgent extends BaseAgent {
 
     // CRITICAL FIX: Use singleton GraphStorage instance (libsql unified)
     // This ensures IndexerAgent and MCP tools use the same storage instance
-    logger.trace("AGENT", `[IndexerAgent] ▶ getGraphStorage`);
+    log.t("INDEXER", `[IndexerAgent] ▶ getGraphStorage`);
     const gsStart = Date.now();
     this.graphStorage = await getGraphStorage();
-    logger.trace("AGENT", `[IndexerAgent] ◀ getGraphStorage (${Date.now() - gsStart}ms)`);
+    log.t("INDEXER", `[IndexerAgent] ◀ getGraphStorage (${Date.now() - gsStart}ms)`);
     // Ensure graph storage is fully initialized (re-prepare statements after SQLite reset)
     if (typeof (this.graphStorage as any).initialize === "function") {
-      logger.trace("AGENT", `[IndexerAgent] ▶ graphStorage.initialize`);
+      log.t("INDEXER", `[IndexerAgent] ▶ graphStorage.initialize`);
       await (this.graphStorage as any).initialize();
-      logger.trace("AGENT", `[IndexerAgent] ◀ graphStorage.initialize (${Date.now() - gsStart}ms)`);
+      log.t("INDEXER", `[IndexerAgent] ◀ graphStorage.initialize (${Date.now() - gsStart}ms)`);
     }
 
     const config = getIndexerConfig();
 
     // v4: Use LibSQL BatchOperations instead of better-sqlite3
-    logger.trace("AGENT", `[IndexerAgent] ▶ BatchOperationsLibSQL.initialize`);
+    log.t("INDEXER", `[IndexerAgent] ▶ BatchOperationsLibSQL.initialize`);
     const batchStart = Date.now();
     const adapter = getLibSQLAdapter();
     if (!adapter) {
@@ -229,7 +229,7 @@ export class IndexerAgent extends BaseAgent {
     }
     this.batchOps = new BatchOperationsLibSQL(adapter, config.batchSize);
     await this.batchOps.initialize();
-    logger.trace("AGENT", `[IndexerAgent] ◀ BatchOperationsLibSQL.initialize (${Date.now() - batchStart}ms)`);
+    log.t("INDEXER", `[IndexerAgent] ◀ BatchOperationsLibSQL.initialize (${Date.now() - batchStart}ms)`);
     this.cacheManager = getCacheManager({
       maxSize: config.cacheSize,
       defaultTTL: config.cacheTTL,
@@ -239,7 +239,7 @@ export class IndexerAgent extends BaseAgent {
     this.subscribeToParseEvents();
 
     this.ready = true;
-    console.error(`[${this.id}] Indexer Agent initialized successfully`);
+    log.i("INDEXER", "init_done");
   }
 
   /**
@@ -247,26 +247,22 @@ export class IndexerAgent extends BaseAgent {
    * v3: Must be called before indexing to ensure correct project_hash.
    */
   setProjectContext(projectPath: string, branchName?: string): void {
-    console.error(`[${this.id}] setProjectContext called with: ${projectPath}`);
+    log.i("INDEXER", "set_project_ctx", { path: projectPath });
 
     // Set context on GraphStorage
     if (this.graphStorage && typeof this.graphStorage.setProject === "function") {
       this.graphStorage.setProject(projectPath, branchName);
-      console.error(
-        `[${this.id}] GraphStorage context set for project: ${projectPath}, branch: ${branchName || "main"}`,
-      );
+      log.d("INDEXER", "gs_ctx_set", { path: projectPath, branch: branchName || "main" });
     } else {
-      console.error(`[${this.id}] WARNING: Cannot set GraphStorage context - not ready`);
+      log.w("INDEXER", "gs_ctx_not_ready");
     }
 
     // v3: Set context on BatchOperations too!
     if (this.batchOps && typeof this.batchOps.setProject === "function") {
       this.batchOps.setProject(projectPath, branchName);
-      console.error(
-        `[${this.id}] BatchOperations context set for project: ${projectPath}, branch: ${branchName || "main"}`,
-      );
+      log.d("INDEXER", "batch_ctx_set", { path: projectPath, branch: branchName || "main" });
     } else {
-      console.error(`[${this.id}] WARNING: Cannot set BatchOperations context - not ready`);
+      log.w("INDEXER", "batch_ctx_not_ready");
     }
   }
 
@@ -291,7 +287,7 @@ export class IndexerAgent extends BaseAgent {
     // });
     // this.subscriptionIds.push(parseBatchId);
 
-    console.error(`[${this.id}] Parse event subscriptions DISABLED (DevAgent calls directly)`);
+    log.d("INDEXER", "parse_subs_disabled");
   }
 
   // NOTE: handleParseComplete and handleParseBatchComplete are removed because
@@ -348,15 +344,16 @@ export class IndexerAgent extends BaseAgent {
     // This is critical for NgRx effects and other class members to be stored as separate entities
     const flatEntities = flattenParsedEntities(entities);
     const childrenExtracted = flatEntities.length - entities.length;
-    console.error(
-      `[${this.id}] Indexing ${entities.length} entities (${flatEntities.length} after flatten, ${childrenExtracted} children) from ${filePath}`,
-    );
+    log.d("INDEXER", "indexing", {
+      entities: entities.length,
+      flat: flatEntities.length,
+      children: childrenExtracted,
+      file: filePath,
+    });
     if (childrenExtracted > 0) {
       // Log some sample children for debugging
       const sampleChildren = flatEntities.slice(entities.length, entities.length + 3);
-      console.error(
-        `[${this.id}] Sample children: ${sampleChildren.map((c) => `${c.name} (${c.type}, filePath=${c.filePath ? "yes" : "NO"}, location=${c.location ? "yes" : "NO"})`).join(", ")}`,
-      );
+      log.t("INDEXER", "sample_children", { sample: sampleChildren.map((c) => c.name).join(",") });
     }
 
     // Validate parsed entities and convert to storage entities
@@ -383,9 +380,7 @@ export class IndexerAgent extends BaseAgent {
             if (!(parsed as any).type) reasons.push("no type");
             if (!(parsed as any).location) reasons.push("no location");
           }
-          console.error(
-            `[${this.id}] Rejected entity: ${(parsed as any)?.name || "unknown"} - reasons: ${reasons.join(", ")}`,
-          );
+          log.t("INDEXER", "rejected_entity", { name: (parsed as any)?.name, reasons: reasons.join(",") });
           throw new Error("Invalid entity");
         }
 
@@ -414,17 +409,16 @@ export class IndexerAgent extends BaseAgent {
 
     // Insert entities in batch
     const entityResult = await this.batchOps.insertEntities(storageEntities, (processed, total) => {
-      console.error(`[${this.id}] Progress: ${processed}/${total} entities`);
+      log.t("INDEXER", "entity_progress", { processed, total });
     });
 
-    console.error(
-      `[${this.id}] DEBUG: Entity insert result: processed=${entityResult.processed}, failed=${entityResult.failed}, errors=${entityResult.errors.length}`,
-    );
+    log.d("INDEXER", "entity_insert_done", {
+      processed: entityResult.processed,
+      failed: entityResult.failed,
+      errors: entityResult.errors.length,
+    });
     if (entityResult.failed > 0) {
-      console.error(
-        `[${this.id}] DEBUG: First 3 entity errors:`,
-        entityResult.errors.slice(0, 3).map((e) => e.error),
-      );
+      log.w("INDEXER", "entity_errors", { errs: entityResult.errors.slice(0, 3).map((e) => e.error) });
     }
 
     // OPTIMIZATION: Publish entities for embedding IMMEDIATELY after entity insertion
@@ -435,7 +429,7 @@ export class IndexerAgent extends BaseAgent {
         filePath: filePath,
       }));
       knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
-      logger.debug("IndexerAgent", `Published semantic:new_entities EARLY`, {
+      log.d("INDEXER", `Published semantic:new_entities EARLY`, {
         count: entitiesWithPath.length,
         file: filePath,
       });
@@ -448,25 +442,18 @@ export class IndexerAgent extends BaseAgent {
     if (providedRelationships && providedRelationships.length > 0) {
       const byName = buildEntityNameMap(storageEntities);
 
-      console.error(
-        `[${this.id}] DEBUG: storageEntities names: ${Array.from(byName.keys()).slice(0, 10).join(", ")}...`,
-      );
+      log.t("INDEXER", "entity_names_sample", { sample: Array.from(byName.keys()).slice(0, 10) });
       const first3 = providedRelationships.slice(0, 3);
-      console.error(
-        `[${this.id}] DEBUG: First 3 raw relationships:`,
-        JSON.stringify(first3.map((r) => ({ from: r.from, to: r.to, type: r.type }))),
-      );
+      log.t("INDEXER", "raw_rels_sample", { sample: first3.map((r) => `${r.from}->${r.to}`) });
       const relLoopStart = Date.now();
-      console.error(`[${this.id}] DEBUG: Processing ${providedRelationships.length} provided relationships`);
+      log.t("INDEXER", "process_rels", { cnt: providedRelationships.length });
       for (const rel of providedRelationships) {
         let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line);
         let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line);
 
         // DEBUG: Log resolution results for first relationship
         if (relationships.length === 0) {
-          console.error(
-            `[${this.id}] DEBUG: First rel resolution: from="${rel.from}" -> fromId="${fromId}", to="${rel.to}" -> toId="${toId}"`,
-          );
+          log.t("INDEXER", "first_rel_resolve", { from: rel.from, fromId, to: rel.to, toId });
         }
 
         // Create external placeholder for unresolved fromId (e.g., decorators)
@@ -490,19 +477,19 @@ export class IndexerAgent extends BaseAgent {
             createdAt: Date.now(),
           } as Relationship);
         } else {
-          console.error(`[${this.id}] SKIPPED relationship: ${rel.from} -> ${rel.to} (fromId=${fromId}, toId=${toId})`);
+          log.t("INDEXER", "rel_skipped", { from: rel.from, to: rel.to, fromId, toId });
         }
       }
       const relLoopMs = Date.now() - relLoopStart;
-      logger.info("PROFILE_INDEXER", "RelationshipLoop", {
+      log.i("INDEXER", "RelationshipLoop", {
         count: providedRelationships.length,
         builtCount: relationships.length,
         ms: relLoopMs,
       });
-      console.error(`[${this.id}] Using ${relationships.length} provided relationships (${relLoopMs}ms)`);
+      log.d("INDEXER", "using_provided_rels", { cnt: relationships.length, ms: relLoopMs });
     } else {
       relationships = await this.buildRelationshipsInternal(validParsed, storageEntities);
-      console.error(`[${this.id}] Built ${relationships.length} relationships automatically`);
+      log.d("INDEXER", "built_auto_rels", { cnt: relationships.length });
     }
 
     // Process external relationships and create placeholder entities
@@ -512,18 +499,12 @@ export class IndexerAgent extends BaseAgent {
       await this.batchOps.insertEntities(externalPlaceholders);
     }
 
-    console.error(`[${this.id}] DEBUG: About to insert ${relationships.length} relationships into DB`);
-    console.error(
-      `[${this.id}] DEBUG: First 3 relationships:`,
-      relationships.slice(0, 3).map((r) => `${r.fromId} -> ${r.toId} (${r.type})`),
-    );
+    log.t("INDEXER", "insert_rels_start", { cnt: relationships.length });
 
     const insertRelStart = Date.now();
-    const relResult = await this.batchOps.insertRelationships(relationships, (processed, total) => {
-      console.error(`[${this.id}] Progress: ${processed}/${total} relationships`);
-    });
+    const relResult = await this.batchOps.insertRelationships(relationships);
     const insertRelMs = Date.now() - insertRelStart;
-    logger.info("PROFILE_INDEXER", "InsertRelationships", {
+    log.i("INDEXER", "InsertRelationships", {
       count: relationships.length,
       processed: relResult.processed,
       ms: insertRelMs,
@@ -550,7 +531,7 @@ export class IndexerAgent extends BaseAgent {
     this.indexingStats.lastIndexTime = indexTime;
 
     // Publish indexing complete event
-    console.error(`[IndexerAgent] Publishing index:complete event`);
+    log.t("INDEXER", "pub_index_complete");
     knowledgeBus.publish(
       "index:complete",
       {
@@ -561,14 +542,12 @@ export class IndexerAgent extends BaseAgent {
       },
       this.id,
     );
-    console.error(`[IndexerAgent] Published index:complete event`);
+    log.t("INDEXER", "index_complete_pubbed");
 
     // NOTE: semantic:new_entities is now published EARLY (after entity insertion, before relationships)
     // This allows embedding generation to run in parallel with relationship insertion
 
-    console.error(
-      `[${this.id}] Indexed ${entityResult.processed} entities and ${relResult.processed} relationships in ${indexTime}ms`,
-    );
+    log.i("INDEXER", "indexed_done", { entities: entityResult.processed, rels: relResult.processed, ms: indexTime });
 
     const failed = entityResult.failed + relResult.failed + preErrors.length;
     const errors = [...entityResult.errors, ...relResult.errors, ...preErrors];
@@ -659,7 +638,7 @@ export class IndexerAgent extends BaseAgent {
     // Auto-flush if threshold reached
     if (this.pendingFilesCount >= this.BATCH_FLUSH_THRESHOLD) {
       this.flushPendingBatch().catch((err) => {
-        logger.warn("IndexerAgent", "Auto-flush failed", { error: (err as Error).message });
+        log.w("INDEXER", "Auto-flush failed", { error: (err as Error).message });
       });
     }
   }
@@ -715,7 +694,7 @@ export class IndexerAgent extends BaseAgent {
       this.indexingStats.relationshipsCreated += relResult.processed;
       this.indexingStats.filesProcessed += filesCount;
 
-      logger.info("IndexerAgent", "Batch flush completed", {
+      log.i("INDEXER", "Batch flush completed", {
         entities: entityResult.processed,
         relationships: relResult.processed,
         files: filesCount,
@@ -748,7 +727,7 @@ export class IndexerAgent extends BaseAgent {
    * Perform incremental update for changed entities
    */
   async incrementalUpdate(changes: EntityChange[]): Promise<BatchResult> {
-    console.error(`[${this.id}] Processing ${changes.length} incremental changes`);
+    log.d("INDEXER", "incr_update", { cnt: changes.length });
 
     const toAdd: Entity[] = [];
     const toUpdate: Array<{ id: string; changes: Partial<Entity> }> = [];
@@ -856,12 +835,12 @@ export class IndexerAgent extends BaseAgent {
     const cacheKey = QueryCacheManager.createKey(query);
     const cached = this.cacheManager.get<GraphQueryResult>(cacheKey);
     if (cached) {
-      console.error(`[${this.id}] Cache hit for graph query`);
+      log.t("INDEXER", "cache_hit_query");
       return cached;
     }
 
     // Execute query
-    console.error(`[${this.id}] Executing graph query`);
+    log.t("INDEXER", "exec_query");
     const result = await this.graphStorage.executeQuery(query);
 
     // Cache result
@@ -878,12 +857,12 @@ export class IndexerAgent extends BaseAgent {
     const cacheKey = QueryCacheManager.createKey({ entityId, depth });
     const cached = this.cacheManager.get<GraphQueryResult>(cacheKey);
     if (cached) {
-      console.error(`[${this.id}] Cache hit for subgraph query`);
+      log.t("INDEXER", "cache_hit_subgraph");
       return cached;
     }
 
     // Execute query
-    console.error(`[${this.id}] Getting subgraph for ${entityId} with depth ${depth}`);
+    log.t("INDEXER", "get_subgraph", { entityId, depth });
     const result = await this.graphStorage.getSubgraph(entityId, depth);
 
     // Cache result
@@ -896,7 +875,7 @@ export class IndexerAgent extends BaseAgent {
    * Handle incoming messages
    */
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    console.error(`[${this.id}] Received message: ${message.type} from ${message.from}`);
+    log.d("INDEXER", "recv_msg", { type: message.type, from: message.from });
 
     switch (message.type) {
       case "index:request": {
@@ -937,7 +916,7 @@ export class IndexerAgent extends BaseAgent {
       }
 
       default:
-        console.warn(`[${this.id}] Unknown message type: ${message.type}`);
+        log.w("INDEXER", "unknown_msg_type", { type: message.type });
     }
   }
 
@@ -998,7 +977,7 @@ export class IndexerAgent extends BaseAgent {
     // Start GitWatcher for branch/commit monitoring
     if (this.gitWatcher && this.branchManager) {
       this.gitWatcher.startWatching(path);
-      logger.info("IndexerAgent", "Started GitWatcher", { repository: path });
+      log.i("INDEXER", "Started GitWatcher", { repository: path });
     }
 
     // Start FileWatcher for efficient file change detection
@@ -1046,17 +1025,17 @@ export class IndexerAgent extends BaseAgent {
       // Handle file changes - trigger incremental reindexing
       this.fileWatcher.on("change", (events: FileChangeEvent[], bulkMode: boolean) => {
         this.handleFileWatcherChanges(events, bulkMode).catch((err) => {
-          logger.error("IndexerAgent", "FileWatcher change handler error", { error: (err as Error).message });
+          log.e("INDEXER", "FileWatcher change handler error", { error: (err as Error).message });
         });
       });
 
       this.fileWatcher.on("error", (err: Error) => {
-        logger.error("IndexerAgent", "FileWatcher error", { error: err.message });
+        log.e("INDEXER", "FileWatcher error", { error: err.message });
       });
 
-      logger.info("IndexerAgent", "Started FileWatcher", { repository: path });
+      log.i("INDEXER", "Started FileWatcher", { repository: path });
     } catch (err) {
-      logger.warn("IndexerAgent", "Failed to start FileWatcher, using GitWatcher only", {
+      log.w("INDEXER", "Failed to start FileWatcher, using GitWatcher only", {
         error: (err as Error).message,
       });
     }
@@ -1073,7 +1052,7 @@ export class IndexerAgent extends BaseAgent {
 
     const deletedFiles = events.filter((e) => e.type === "unlink").map((e) => e.path);
 
-    logger.debug("IndexerAgent", "FileWatcher detected changes", {
+    log.d("INDEXER", "FileWatcher detected changes", {
       changed: changedFiles.length,
       deleted: deletedFiles.length,
       bulkMode,
@@ -1087,7 +1066,7 @@ export class IndexerAgent extends BaseAgent {
     // Handle deleted files - log for now (entities cleaned up on next full reindex)
     // TODO: Add deleteEntitiesForFile method to GraphStorage for immediate cleanup
     if (deletedFiles.length > 0) {
-      logger.debug("IndexerAgent", "Detected deleted files (cleaned on reindex)", {
+      log.d("INDEXER", "Detected deleted files (cleaned on reindex)", {
         count: deletedFiles.length,
         files: deletedFiles.slice(0, 5),
       });
@@ -1106,16 +1085,16 @@ export class IndexerAgent extends BaseAgent {
    * Shutdown the indexer agent
    */
   protected async onShutdown(): Promise<void> {
-    logger.info("IndexerAgent", "Shutting down...");
+    log.i("INDEXER", "Shutting down...");
 
     // Stop FileWatcher
     if (this.fileWatcher) {
       try {
         await this.fileWatcher.stop();
         this.fileWatcher = null;
-        logger.debug("IndexerAgent", "FileWatcher stopped");
+        log.d("INDEXER", "FileWatcher stopped");
       } catch (err) {
-        logger.warn("IndexerAgent", "Error stopping FileWatcher", { error: (err as Error).message });
+        log.w("INDEXER", "Error stopping FileWatcher", { error: (err as Error).message });
       }
     }
 
@@ -1136,7 +1115,7 @@ export class IndexerAgent extends BaseAgent {
       try {
         await this.graphStorage.analyze();
       } catch (e) {
-        console.warn(`[${this.id}] Analyze on shutdown skipped: ${(e as Error).message}`);
+        log.w("INDEXER", "shutdown_analyze_skip", { err: (e as Error).message });
       }
     }
 
@@ -1145,8 +1124,7 @@ export class IndexerAgent extends BaseAgent {
       this.cacheManager?.clear();
     } catch {}
 
-    console.error(`[${this.id}] Indexer Agent shutdown complete`);
-    console.error(`[${this.id}] Final stats:`, this.indexingStats);
+    log.i("INDEXER", "shutdown_done", this.indexingStats);
   }
 
   /**
@@ -1167,7 +1145,7 @@ export class IndexerAgent extends BaseAgent {
    * Perform maintenance operations
    */
   async performMaintenance(): Promise<void> {
-    console.error(`[${this.id}] Performing maintenance...`);
+    log.i("INDEXER", "maint_start");
 
     // Vacuum database
     await this.graphStorage.vacuum();
@@ -1182,6 +1160,6 @@ export class IndexerAgent extends BaseAgent {
     const avgTime = this.indexingStats.totalIndexTime / Math.max(1, this.indexingStats.filesProcessed);
     this.batchOps.optimizeBatchSize(avgTime);
 
-    console.error(`[${this.id}] Maintenance complete`);
+    log.i("INDEXER", "maint_done");
   }
 }

@@ -4,6 +4,7 @@
  * Context managers, exception handling, design patterns, Python idioms, circular dependencies.
  */
 
+import { log } from "../../logging/index.js";
 import type { ASTNode, PatternAnalysis, PythonClassInfo } from "../../types/parser.js";
 import { findNodesByType } from "../base-parser-utils.js";
 import type { AnalysisContext } from "./types.js";
@@ -25,7 +26,7 @@ export class Layer4PatternAnalyzer {
    * Execute Layer 4 analysis - pattern recognition
    */
   async executeAnalysis(rootNode: ASTNode, context: AnalysisContext): Promise<PatternAnalysis> {
-    console.error("[PythonAnalyzer] Executing Layer 4: Pattern Recognition");
+    log.d("PYPATTERNS", "layer4_start");
     const layer4StartTime = Date.now();
 
     const patterns: PatternAnalysis = {
@@ -56,7 +57,7 @@ export class Layer4PatternAnalyzer {
       patterns.pythonIdioms.length +
       patterns.circularDependencies.length;
 
-    console.error(`[PythonAnalyzer] Layer 4 completed in ${context.metrics.patternRecognition.timeMs}ms`);
+    log.d("PYPATTERNS", "layer4_done", { dur: context.metrics.patternRecognition.timeMs });
     return patterns;
   }
 

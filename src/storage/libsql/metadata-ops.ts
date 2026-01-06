@@ -5,6 +5,7 @@
  * incremental tracking, branch listing, stats, and clear operations.
  */
 
+import { log } from "../../logging/index.js";
 import type { FileInfo } from "../../types/storage.js";
 import type { ClientGetter, ContextGetter } from "./types.js";
 
@@ -372,7 +373,7 @@ export class MetadataOperations {
       "write",
     );
 
-    console.error(`[LibSQLGraphAdapter] Cleared data for ${projectHash}/${branchName}`);
+    log.i("METADATAOPS", "data_cleared", { ctx: `${projectHash}/${branchName}` });
   }
 
   /**
@@ -394,6 +395,6 @@ export class MetadataOperations {
       "write",
     );
 
-    console.error(`[LibSQLGraphAdapter] Cleared ALL data`);
+    log.i("METADATAOPS", "all_data_cleared");
   }
 }

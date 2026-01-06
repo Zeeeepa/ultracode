@@ -17,8 +17,8 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import { getDataDir } from "../shared/storage-paths.js";
-import { logger } from "../utils/logger.js";
 
 // =============================================================================
 // CONFIGURATION
@@ -68,15 +68,15 @@ export function initVectorDumpDir(clean = false): string {
   if (clean && existsSync(dumpDir)) {
     try {
       rmSync(dumpDir, { recursive: true, force: true });
-      logger.debug("VECTOR_DUMP", "Cleaned dump directory");
+      log.d("DUMP", "Cleaned dump directory");
     } catch (e) {
-      logger.warn("VECTOR_DUMP", `Could not clean dump dir: ${e}`);
+      log.w("DUMP", `Could not clean dump dir: ${e}`);
     }
   }
 
   if (!existsSync(dumpDir)) {
     mkdirSync(dumpDir, { recursive: true });
-    logger.debug("VECTOR_DUMP", `Created dump directory: ${dumpDir}`);
+    log.d("DUMP", `Created dump directory: ${dumpDir}`);
   }
 
   return dumpDir;
@@ -243,11 +243,11 @@ export function readAllVectorDumps(dimensions: number): {
       const entries = decodeBatch(data, dimensions);
       allEntries.push(...entries);
     } catch (error) {
-      logger.warn("VECTOR_DUMP", `Failed to decode ${file}: ${(error as Error).message}`);
+      log.w("DUMP", `Failed to decode ${file}: ${(error as Error).message}`);
     }
   }
 
-  logger.info("VECTOR_DUMP", "Read all dumps", {
+  log.i("DUMP", "Read all dumps", {
     files: files.length,
     vectors: allEntries.length,
     sizeMB: (totalBytes / 1024 / 1024).toFixed(2),
@@ -322,9 +322,9 @@ export function cleanupVectorDump(): void {
   if (existsSync(dumpDir)) {
     try {
       rmSync(dumpDir, { recursive: true, force: true });
-      logger.debug("VECTOR_DUMP", "Cleaned up dump directory");
+      log.d("DUMP", "Cleaned up dump directory");
     } catch (e) {
-      logger.warn("VECTOR_DUMP", `Failed to cleanup: ${e}`);
+      log.w("DUMP", `Failed to cleanup: ${e}`);
     }
   }
 }
@@ -390,11 +390,11 @@ export function readWorkerVectorDumps(
       const entries = decodeBatch(data, dimensions);
       allEntries.push(...entries);
     } catch (error) {
-      logger.warn("VECTOR_DUMP", `Failed to decode ${file}: ${(error as Error).message}`);
+      log.w("DUMP", `Failed to decode ${file}: ${(error as Error).message}`);
     }
   }
 
-  logger.debug("VECTOR_DUMP", `Read worker-${workerId} dumps`, {
+  log.d("DUMP", `Read worker-${workerId} dumps`, {
     files: files.length,
     vectors: allEntries.length,
     sizeMB: (totalBytes / 1024 / 1024).toFixed(2),
@@ -428,11 +428,11 @@ export function cleanupWorkerDumps(workerId: string): number {
     try {
       rmSync(join(dumpDir, file));
     } catch (e) {
-      logger.warn("VECTOR_DUMP", `Failed to delete ${file}: ${e}`);
+      log.w("DUMP", `Failed to delete ${file}: ${e}`);
     }
   }
 
-  logger.debug("VECTOR_DUMP", `Cleaned up worker-${workerId} dumps: ${files.length} files`);
+  log.d("DUMP", `Cleaned up worker-${workerId} dumps: ${files.length} files`);
   return files.length;
 }
 

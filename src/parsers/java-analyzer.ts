@@ -25,6 +25,7 @@
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
+import { log } from "../logging/index.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
@@ -80,9 +81,9 @@ export class JavaAnalyzer {
       this.extractEntities(rootNode, filePath, entities, relationships);
     } catch (error) {
       if (error instanceof CircuitBreakerError) {
-        console.warn(`[JavaAnalyzer] Circuit breaker triggered for ${filePath}: ${error.message}`);
+        log.w("JAVAANALYZER", "circuit_break", { file: filePath, err: error.message });
       } else {
-        console.error(`[JavaAnalyzer] Error analyzing ${filePath}:`, error);
+        log.e("JAVAANALYZER", "analyze_err", { file: filePath, err: String(error) });
       }
       // Return partial results on error
     }

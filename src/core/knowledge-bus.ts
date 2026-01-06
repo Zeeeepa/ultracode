@@ -4,6 +4,7 @@
  */
 
 import { EventEmitter } from "node:events";
+import { log } from "../logging/index.js";
 import type { AgentMessage } from "../types/agent.js";
 
 // Event-driven architecture: lazy cleanup on access, no polling loops
@@ -74,7 +75,7 @@ export class KnowledgeBus extends EventEmitter {
 
     // Notify subscribers (fire-and-forget but log errors)
     this.notifySubscribers(entry).catch((error) => {
-      console.error(`[KnowledgeBus] Error notifying subscribers for topic ${topic}:`, error);
+      log.e("KNOWLEDGEBUS", "notify_fail", { topic, err: String(error) });
     });
 
     this.emit("knowledge:published", entry);
@@ -233,10 +234,10 @@ export class KnowledgeBus extends EventEmitter {
 
     // Debug logging for semantic events
     if (entry.topic === "semantic:new_entities") {
-      console.error(`[KnowledgeBus] Topic "${entry.topic}" has ${exactSubs.length} exact subscribers`);
-      console.error(`[KnowledgeBus] All subscription keys: ${Array.from(this.subscriptions.keys()).join(", ")}`);
+      log.d("KNOWLEDGEBUS", "semantic_event", { topic: entry.topic, subs: exactSubs.length });
+      log.d("KNOWLEDGEBUS", "sub_keys", { keys: Array.from(this.subscriptions.keys()).join(",") });
       for (const sub of exactSubs) {
-        console.error(`[KnowledgeBus] - Subscriber: ${sub.agentId}, id: ${sub.id}`);
+        log.d("KNOWLEDGEBUS", "subscriber", { agent: sub.agentId, id: sub.id });
       }
     }
 
@@ -258,7 +259,7 @@ export class KnowledgeBus extends EventEmitter {
     try {
       await subscription.handler(entry);
     } catch (error) {
-      console.error(`Error in subscription handler for agent ${subscription.agentId}:`, error);
+      log.e("KNOWLEDGEBUS", "handler_error", { agent: subscription.agentId, err: String(error) });
       this.emit("subscription:error", { subscription, error });
     }
   }

@@ -6,6 +6,7 @@
  */
 
 import xxhash from "xxhash-wasm";
+import { log } from "../logging/index.js";
 import { DEFAULT_BRANCH, getProjectHash } from "../shared/storage-paths.js";
 import { type BatchResult, type Entity, type Relationship, RelationType } from "../types/storage.js";
 import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.js";
@@ -40,7 +41,7 @@ export class BatchOperationsLibSQL {
   }
 
   setProjectContext(context: ProjectContext): void {
-    console.error(`[BatchOperationsLibSQL] Context set: ${context.projectHash}/${context.branchName}`);
+    log.i("BATCHOPS", "context_set", { ctx: `${context.projectHash}/${context.branchName}` });
     this.currentContext = context;
     this.adapter.setProjectContext(context);
   }
@@ -150,9 +151,7 @@ export class BatchOperationsLibSQL {
     let totalProcessed = 0;
 
     const { projectHash, branchName } = this.currentContext;
-    console.error(
-      `[BatchOperationsLibSQL] insertEntities: context=${projectHash}/${branchName}, count=${entities.length}`,
-    );
+    log.i("BATCHOPS", "insert_entities", { ctx: `${projectHash}/${branchName}`, count: entities.length });
 
     // Deduplicate
     const seen = new Set<string>();
@@ -200,7 +199,7 @@ export class BatchOperationsLibSQL {
           await yieldToEventLoop();
         }
       } catch (error) {
-        console.error(`[BatchOperationsLibSQL] Batch error:`, error);
+        log.e("BATCHOPS", "batch_error", { err: String(error) });
         for (const entity of batch) {
           errors.push({
             item: entity,
@@ -302,9 +301,12 @@ export class BatchOperationsLibSQL {
     const reverseRels = this.generateReverseRelationships(relationships);
     const allRelationships = [...relationships, ...reverseRels];
 
-    console.error(
-      `[BatchOperationsLibSQL] insertRelationships: context=${projectHash}/${branchName}, original=${relationships.length}, reverse=${reverseRels.length}, total=${allRelationships.length}`,
-    );
+    log.i("BATCHOPS", "insert_relationships", {
+      ctx: `${projectHash}/${branchName}`,
+      original: relationships.length,
+      reverse: reverseRels.length,
+      total: allRelationships.length,
+    });
 
     // Deduplicate
     const seen = new Set<string>();
@@ -352,7 +354,7 @@ export class BatchOperationsLibSQL {
           await yieldToEventLoop();
         }
       } catch (error) {
-        console.error(`[BatchOperationsLibSQL] Relationship batch error:`, error);
+        log.e("BATCHOPS", "rel_batch_error", { err: String(error) });
         for (const rel of batch) {
           errors.push({
             item: rel,

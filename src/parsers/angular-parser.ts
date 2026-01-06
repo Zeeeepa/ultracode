@@ -12,6 +12,7 @@
  */
 
 import ts from "typescript";
+import { log } from "../logging/index.js";
 import type { ParsedEntity } from "../types/parser.js";
 
 // =============================================================================
@@ -510,10 +511,10 @@ export async function loadAngularCompiler(): Promise<boolean> {
   try {
     // @ts-expect-error - optional dependency, may not be installed
     angularCompilerModule = await import("@angular/compiler");
-    console.error("[AngularParser] @angular/compiler loaded successfully");
+    log.i("ANGULARPARSER", "compiler_loaded");
     return true;
   } catch {
-    console.error("[AngularParser] @angular/compiler not available, using regex-based parsing");
+    log.d("ANGULARPARSER", "no_compiler");
     return false;
   }
 }
@@ -606,12 +607,12 @@ export async function parseTemplateWithCompiler(template: string, filePath: stri
 
     // Parse errors
     if (result.errors?.length > 0) {
-      console.error(`[AngularParser] Template parse errors in ${filePath}:`, result.errors);
+      log.w("ANGULARPARSER", "tpl_errs", { file: filePath, cnt: result.errors.length });
     }
 
     return info;
   } catch (error) {
-    console.error("[AngularParser] Template parse error, falling back to regex:", error);
+    log.w("ANGULARPARSER", "tpl_fail", { err: String(error) });
     return parseTemplate(template);
   }
 }

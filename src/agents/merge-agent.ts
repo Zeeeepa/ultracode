@@ -9,6 +9,7 @@
  */
 
 import type { BranchManager } from "../core/branch-manager.js";
+import { log } from "../logging/index.js";
 import { AIConflictResolver, type AIConflictResolverConfig } from "../merge/engine/ai-conflict-resolver.js";
 import { ThreeWayMerger, type ThreeWayMergerConfig } from "../merge/engine/three-way-merger.js";
 import { GitIntegration } from "../merge/integration/git-integration.js";
@@ -106,7 +107,7 @@ export class MergeAgent extends BaseAgent {
   }
 
   protected async processTask(task: AgentTask): Promise<unknown> {
-    console.error(`[MergeAgent ${this.id}] Processing task ${task.id} of type ${task.type}`);
+    log.d("MERGEAGENT", "proc_task", { id: task.id, type: task.type });
 
     const payload = task.payload as Record<string, unknown>;
 
@@ -133,7 +134,7 @@ export class MergeAgent extends BaseAgent {
   }
 
   protected async handleMessage(message: AgentMessage): Promise<void> {
-    console.error(`[MergeAgent ${this.id}] Received message from ${message.from}: ${message.type}`);
+    log.d("MERGEAGENT", "recv_msg", { from: message.from, type: message.type });
     // Handle inter-agent messages if needed
   }
 
@@ -142,7 +143,7 @@ export class MergeAgent extends BaseAgent {
   // =============================================================================
 
   protected async onInitialize(): Promise<void> {
-    console.error("[MergeAgent] Initializing...");
+    log.i("MERGEAGENT", "init_start");
 
     // Use provided gitIntegration or create new one
     this.gitIntegration =
@@ -177,11 +178,11 @@ export class MergeAgent extends BaseAgent {
     // It will be initialized lazily when AI suggestions are requested
     this.aiResolver = null;
 
-    console.error("[MergeAgent] Initialized successfully");
+    log.i("MERGEAGENT", "init_done");
   }
 
   protected async onShutdown(): Promise<void> {
-    console.error("[MergeAgent] Shutting down...");
+    log.i("MERGEAGENT", "shutdown_start");
 
     // Cleanup git integration
     if (this.gitIntegration) {
@@ -192,7 +193,7 @@ export class MergeAgent extends BaseAgent {
     this.gitIntegration = null;
     this.aiResolver = null;
 
-    console.error("[MergeAgent] Shutdown complete");
+    log.i("MERGEAGENT", "shutdown_done");
   }
 
   // =============================================================================
@@ -232,7 +233,7 @@ export class MergeAgent extends BaseAgent {
 
     try {
       // Perform 3-way merge analysis
-      console.error(`[MergeAgent] Starting semantic merge: ${options.branchA} <- ${options.branchB}`);
+      log.i("MERGEAGENT", "merge_start", { from: options.branchA, to: options.branchB });
       const mergeResult = await this.threeWayMerger.performMerge(options.branchA, options.branchB);
 
       // Generate AI suggestions if requested and resolver is available
@@ -271,7 +272,7 @@ export class MergeAgent extends BaseAgent {
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error("[MergeAgent] Merge failed:", errorMsg);
+      log.e("MERGEAGENT", "merge_fail", { err: errorMsg });
 
       return {
         success: false,
@@ -347,7 +348,7 @@ export class MergeAgent extends BaseAgent {
         ...(resolution.mergedCode ? [`Suggested code:\n${resolution.mergedCode}`] : []),
       ];
     } catch (error) {
-      console.error("[MergeAgent] Failed to get AI suggestions:", error);
+      log.e("MERGEAGENT", "ai_suggest_fail", { err: String(error) });
       return [];
     }
   }
@@ -366,7 +367,7 @@ export class MergeAgent extends BaseAgent {
   private async generateAISuggestions(conflicts: SemanticConflict[]): Promise<void> {
     if (!this.aiResolver) return;
 
-    console.error(`[MergeAgent] Generating AI suggestions for ${conflicts.length} conflicts...`);
+    log.d("MERGEAGENT", "gen_ai_suggest", { cnt: conflicts.length });
 
     for (const conflict of conflicts) {
       try {
@@ -375,7 +376,7 @@ export class MergeAgent extends BaseAgent {
         (conflict as any).aiSuggestions = [resolution.explanation];
         (conflict as any).aiConfidence = resolution.confidence;
       } catch (error) {
-        console.warn(`[MergeAgent] Failed to generate AI suggestion for conflict: ${error}`);
+        log.w("MERGEAGENT", "ai_conflict_fail", { err: String(error) });
       }
     }
   }
@@ -415,7 +416,7 @@ export class MergeAgent extends BaseAgent {
       }
     }
 
-    console.error(`[MergeAgent] Applied ${applied.length} merge actions`);
+    log.i("MERGEAGENT", "actions_applied", { cnt: applied.length });
     return applied;
   }
 

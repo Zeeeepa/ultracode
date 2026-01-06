@@ -14,6 +14,7 @@
 
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import { existsSync, mkdirSync, readJSONSync, writeFileSync } from "./file-ops.js";
 
 const APP_NAME = "UltraScriptTools";
@@ -188,7 +189,7 @@ export function loadSemanticConfig(): SemanticConfig | null {
   try {
     return readJSONSync<SemanticConfig>(configPath);
   } catch (error) {
-    console.error(`[Config] Failed to load semantic config: ${error}`);
+    log.i("CONFIGPATH", `[Config] Failed to load semantic config: ${error}`);
     return null;
   }
 }
@@ -203,7 +204,7 @@ export function saveSemanticConfig(config: SemanticConfig): void {
   try {
     writeFileSync(configPath, JSON.stringify(config, null, 2));
   } catch (error) {
-    console.error(`[Config] Failed to save semantic config: ${error}`);
+    log.i("CONFIGPATH", `[Config] Failed to save semantic config: ${error}`);
     throw error;
   }
 }
@@ -303,7 +304,8 @@ export function getVectorDimensions(): number {
     if (selectedModel && models && models.length > 0) {
       const modelConfig = models.find((m) => m.id === selectedModel);
       if (modelConfig) {
-        console.error(
+        log.i(
+          "CONFIGPATH",
           `[Config] Using vector dimensions from semantic-config (${platform}/${selectedModel}): ${modelConfig.vector_size}`,
         );
         return modelConfig.vector_size;
@@ -321,7 +323,7 @@ export function getVectorDimensions(): number {
       // Try direct lookup
       const dims = MODEL_DIMENSIONS[modelName];
       if (dims) {
-        console.error(`[Config] Using vector dimensions from YAML model '${modelName}': ${dims}`);
+        log.i("CONFIGPATH", `[Config] Using vector dimensions from YAML model '${modelName}': ${dims}`);
         return dims;
       }
 
@@ -330,18 +332,21 @@ export function getVectorDimensions(): number {
       if (shortName) {
         const shortDims = MODEL_DIMENSIONS[shortName];
         if (shortDims) {
-          console.error(`[Config] Using vector dimensions from YAML model '${shortName}': ${shortDims}`);
+          log.i("CONFIGPATH", `[Config] Using vector dimensions from YAML model '${shortName}': ${shortDims}`);
           return shortDims;
         }
       }
 
-      console.error(`[Config] Model '${modelName}' not in dimensions table, using default: ${DEFAULT_DIMENSIONS}`);
+      log.i(
+        "CONFIGPATH",
+        `[Config] Model '${modelName}' not in dimensions table, using default: ${DEFAULT_DIMENSIONS}`,
+      );
     }
   } catch (_e) {
     // yaml-config not available, continue with default
   }
 
-  console.error(`[Config] No model config found, using default dimensions: ${DEFAULT_DIMENSIONS}`);
+  log.i("CONFIGPATH", `[Config] No model config found, using default dimensions: ${DEFAULT_DIMENSIONS}`);
   return DEFAULT_DIMENSIONS;
 }
 

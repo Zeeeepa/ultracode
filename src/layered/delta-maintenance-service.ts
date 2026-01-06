@@ -19,6 +19,7 @@
 
 import type { BranchManager } from "../core/branch-manager.js";
 import type { ILayeredIndex } from "../core/layered-index.js";
+import { log } from "../logging/index.js";
 import type { LayeredCacheManager } from "./layered-cache-manager.js";
 import type { VectorCacheManager } from "./vector-cache-manager.js";
 
@@ -139,12 +140,11 @@ export class DeltaMaintenanceService {
     };
 
     if (this.config.debug) {
-      console.error(
-        `[DeltaMaintenanceService] Initialized with ` +
-          `compactionThreshold=${this.config.compactionThreshold}, ` +
-          `orphanedMaxAge=${this.config.orphanedDeltaMaxAgeDays}d, ` +
-          `interval=${this.config.maintenanceIntervalMs}ms`,
-      );
+      log.d("DELTAMAINT", "init", {
+        threshold: this.config.compactionThreshold,
+        maxAge: this.config.orphanedDeltaMaxAgeDays,
+        interval: this.config.maintenanceIntervalMs,
+      });
     }
   }
 
@@ -210,7 +210,7 @@ export class DeltaMaintenanceService {
   async runMaintenance(): Promise<void> {
     if (this.isRunning) {
       if (this.config.debug) {
-        console.error("[DeltaMaintenanceService] Maintenance already running, skipping");
+        log.d("DELTAMAINT", "skip_running");
       }
       return;
     }
@@ -219,7 +219,7 @@ export class DeltaMaintenanceService {
     const startTime = Date.now();
 
     try {
-      console.error("[DeltaMaintenanceService] Starting maintenance cycle...");
+      log.d("DELTAMAINT", "cycle_start");
 
       // 1. Compact large deltas
       await this.compactLargeDeltas();
@@ -238,9 +238,9 @@ export class DeltaMaintenanceService {
       this.stats.lastRunTime = Date.now();
       this.stats.lastRunDurationMs = Date.now() - startTime;
 
-      console.error(`[DeltaMaintenanceService] Maintenance cycle completed in ${this.stats.lastRunDurationMs}ms`);
+      log.d("DELTAMAINT", "cycle_done", { dur: this.stats.lastRunDurationMs });
     } catch (error) {
-      console.error("[DeltaMaintenanceService] Maintenance cycle failed:", error);
+      log.e("DELTAMAINT", "cycle_fail", { err: String(error) });
     } finally {
       this.isRunning = false;
     }
@@ -258,7 +258,7 @@ export class DeltaMaintenanceService {
       const branches = await this.layeredIndex.getCachedBranches();
 
       if (this.config.debug) {
-        console.error(`[DeltaMaintenanceService] Checking ${branches.length} branches for compaction`);
+        log.d("DELTAMAINT", "check_compact", { branches: branches.length });
       }
 
       for (const branch of branches) {
@@ -271,10 +271,11 @@ export class DeltaMaintenanceService {
 
           // Check if compaction needed
           if (delta.totalChanges > this.config.compactionThreshold) {
-            console.error(
-              `[DeltaMaintenanceService] Branch ${branch} has ${delta.totalChanges} changes, ` +
-                `exceeds threshold ${this.config.compactionThreshold} - compacting`,
-            );
+            log.d("DELTAMAINT", "compact_needed", {
+              branch,
+              changes: delta.totalChanges,
+              threshold: this.config.compactionThreshold,
+            });
 
             const result = await this.compactBranchDelta(branch);
 
@@ -284,11 +285,11 @@ export class DeltaMaintenanceService {
             }
           }
         } catch (error) {
-          console.error(`[DeltaMaintenanceService] Failed to compact branch ${branch}:`, error);
+          log.e("DELTAMAINT", "compact_branch_err", { branch, err: String(error) });
         }
       }
     } catch (error) {
-      console.error("[DeltaMaintenanceService] Failed to compact large deltas:", error);
+      log.e("DELTAMAINT", "compact_fail", { err: String(error) });
     }
   }
 
@@ -330,15 +331,16 @@ export class DeltaMaintenanceService {
 
       result.success = true;
 
-      console.error(
-        `[DeltaMaintenanceService] Compacted ${branch}: ` +
-          `${result.changesBefore} → ${result.changesAfter} changes, ` +
-          `freed ~${(result.memoryFreed / 1024).toFixed(2)} KB`,
-      );
+      log.d("DELTAMAINT", "compacted", {
+        branch,
+        before: result.changesBefore,
+        after: result.changesAfter,
+        freedKB: (result.memoryFreed / 1024).toFixed(2),
+      });
 
       return result;
     } catch (error) {
-      console.error(`[DeltaMaintenanceService] Failed to compact ${branch}:`, error);
+      log.e("DELTAMAINT", "compact_err", { branch, err: String(error) });
       return result;
     }
   }
@@ -352,7 +354,7 @@ export class DeltaMaintenanceService {
 
       if (!this.branchManager) {
         if (this.config.debug) {
-          console.error("[DeltaMaintenanceService] No branch manager, skipping orphaned cleanup");
+          log.d("DELTAMAINT", "skip_orphan_clean");
         }
         return;
       }
@@ -362,10 +364,10 @@ export class DeltaMaintenanceService {
       // TODO: Add getAllBranches() to BranchManager
 
       if (this.config.debug) {
-        console.error(`[DeltaMaintenanceService] Checking ${cachedBranches.length} cached branches for orphans`);
+        log.d("DELTAMAINT", "check_orphans", { branches: cachedBranches.length });
       }
     } catch (error) {
-      console.error("[DeltaMaintenanceService] Failed to cleanup orphaned deltas:", error);
+      log.e("DELTAMAINT", "orphan_clean_err", { err: String(error) });
     }
   }
 
@@ -390,10 +392,10 @@ export class DeltaMaintenanceService {
 
       if (deletedCount > 0) {
         this.stats.deltasDeleted += deletedCount;
-        console.error(`[DeltaMaintenanceService] Deleted ${deletedCount} old deltas`);
+        log.d("DELTAMAINT", "deleted_old", { cnt: deletedCount });
       }
     } catch (error) {
-      console.error("[DeltaMaintenanceService] Failed to delete old deltas:", error);
+      log.e("DELTAMAINT", "delete_old_err", { err: String(error) });
     }
   }
 
@@ -410,7 +412,7 @@ export class DeltaMaintenanceService {
         this.vectorCacheManager.compact();
       }
     } catch (error) {
-      console.error("[DeltaMaintenanceService] Failed to compact databases:", error);
+      log.e("DELTAMAINT", "db_compact_err", { err: String(error) });
     }
   }
 
@@ -422,7 +424,7 @@ export class DeltaMaintenanceService {
    * Force compaction of all deltas
    */
   async forceCompactAll(): Promise<void> {
-    console.error("[DeltaMaintenanceService] Force compacting all deltas...");
+    log.d("DELTAMAINT", "force_compact_start");
 
     const branches = await this.layeredIndex.getCachedBranches();
 
@@ -430,16 +432,16 @@ export class DeltaMaintenanceService {
       await this.compactBranchDelta(branch);
     }
 
-    console.error("[DeltaMaintenanceService] Force compaction complete");
+    log.d("DELTAMAINT", "force_compact_done");
   }
 
   /**
    * Force cleanup of all orphaned deltas
    */
   async forceCleanupOrphaned(): Promise<void> {
-    console.error("[DeltaMaintenanceService] Force cleanup of orphaned deltas...");
+    log.d("DELTAMAINT", "force_cleanup_start");
     await this.cleanupOrphanedDeltas();
-    console.error("[DeltaMaintenanceService] Force cleanup complete");
+    log.d("DELTAMAINT", "force_cleanup_done");
   }
 
   // =========================================================================

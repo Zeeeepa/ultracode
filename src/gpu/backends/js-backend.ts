@@ -7,6 +7,7 @@
  * Performance: ~10ms per 10K vectors (384 dim)
  */
 
+import { log } from "../../logging/index.js";
 import { cosineSimilarity as cosineSimilarityOptimized } from "../../utils/simd-vector-ops.js";
 import type { BackendCapabilities, VectorBackend } from "./base.js";
 
@@ -20,7 +21,7 @@ export class JSBackend implements VectorBackend {
   }
 
   async initialize(): Promise<void> {
-    console.error("[JS Backend] Using pure JavaScript with loop unrolling optimization");
+    log.i("JSBACKEND", "init", { opt: "loop_unrolling" });
   }
 
   getCapabilities(): BackendCapabilities {

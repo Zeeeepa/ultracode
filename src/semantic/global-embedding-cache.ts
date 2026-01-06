@@ -19,9 +19,9 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import { getDataDir } from "../utils/config-paths.js";
 import { hashText } from "../utils/fast-hash.js";
-import { logger } from "../utils/logger.js";
 import { type GlobalCacheEntry, type GlobalCacheMetadata, getAllGlobalEntries } from "./global-cache/index.js";
 
 // Re-export types and data for backwards compatibility
@@ -88,16 +88,16 @@ export class GlobalEmbeddingCache {
         // Check if cache is compatible
         if (this.metadata.model === model && this.metadata.dimension === dimension) {
           await this.loadCache();
-          logger.debug("GlobalCache", "Loaded pre-computed embeddings", { count: this.cache.size });
+          log.d("GLOBALCACHE", "Loaded pre-computed embeddings", { count: this.cache.size });
         } else {
-          logger.debug("GlobalCache", "Model mismatch, will regenerate", {
+          log.d("GLOBALCACHE", "Model mismatch, will regenerate", {
             cached: this.metadata.model,
             current: model,
           });
           this.metadata = null;
         }
       } catch (e) {
-        logger.warn("GlobalCache", "Failed to load metadata", { error: (e as Error).message });
+        log.w("GLOBALCACHE", "Failed to load metadata", { error: (e as Error).message });
       }
     }
 
@@ -146,7 +146,7 @@ export class GlobalEmbeddingCache {
         this.cache.set(hashes[i]!, new Float32Array(floatArray));
       }
     } catch (e) {
-      logger.warn("GlobalCache", "Failed to load cache", { error: (e as Error).message });
+      log.w("GLOBALCACHE", "Failed to load cache", { error: (e as Error).message });
     }
   }
 
@@ -186,7 +186,7 @@ export class GlobalEmbeddingCache {
     }
     writeFileSync(embeddingsPath, buffer);
 
-    logger.debug("GlobalCache", "Saved embeddings to disk", { count: this.cache.size });
+    log.d("GLOBALCACHE", "Saved embeddings to disk", { count: this.cache.size });
   }
 
   /**

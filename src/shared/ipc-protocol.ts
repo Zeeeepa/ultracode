@@ -7,6 +7,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
+import { log } from "../logging/index.js";
 
 /**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
@@ -141,7 +142,7 @@ export class MessageDecoder {
         const message = JSON.parse(payload.toString("utf-8")) as IPCMessage;
         messages.push(message);
       } catch (error) {
-        console.error("[IPC] Failed to parse message:", error);
+        log.e("IPC", "parse_fail", { err: String(error) });
       }
     }
 
@@ -319,7 +320,7 @@ export class IPCClient {
           try {
             handler(message.data, message.projectPath);
           } catch (error) {
-            console.error(`[IPC] Event handler error for ${message.event}:`, error);
+            log.e("IPC", "handler_error", { event: message.event, err: String(error) });
           }
         }
       }

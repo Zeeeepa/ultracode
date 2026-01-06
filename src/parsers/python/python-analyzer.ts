@@ -15,6 +15,7 @@
  * - 2024: Refactored to use composition pattern with layer classes
  */
 
+import { log } from "../../logging/index.js";
 import type { ASTNode, ParsedEntity, PatternAnalysis, PythonParserMetrics } from "../../types/parser.js";
 import { Layer1BasicAnalyzer } from "./layer1-basic.js";
 import { Layer2FeatureAnalyzer } from "./layer2-features.js";
@@ -64,7 +65,7 @@ export class PythonAnalyzer {
     patterns: PatternAnalysis;
     metrics: PythonParserMetrics;
   }> {
-    console.error(`[PythonAnalyzer] Starting analysis of ${filePath}`);
+    log.d("PYANALYZER", "start", { file: filePath });
     const analysisStartTime = Date.now();
 
     // Initialize analysis context
@@ -119,7 +120,7 @@ export class PythonAnalyzer {
         patterns.designPatterns.length +
         patterns.pythonIdioms.length;
 
-      console.error(`[PythonAnalyzer] Analysis complete in ${totalTime}ms - ${context.entities.length} entities`);
+      log.i("PYANALYZER", "done", { dur: totalTime, cnt: context.entities.length });
 
       return {
         entities: context.entities,
@@ -128,7 +129,7 @@ export class PythonAnalyzer {
         metrics: context.metrics,
       };
     } catch (error) {
-      console.error(`[PythonAnalyzer] Analysis failed for ${filePath}:`, error);
+      log.e("PYANALYZER", "fail", { file: filePath, err: String(error) });
       throw error;
     }
   }
@@ -176,4 +177,4 @@ export async function analyzePythonFile(
 // INITIALIZATION
 // =============================================================================
 
-console.error("[PythonAnalyzer] Advanced Python Analyzer module loaded - Refactored 4-Layer Architecture");
+log.i("PYANALYZER", "module_loaded");

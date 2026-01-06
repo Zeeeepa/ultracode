@@ -17,6 +17,7 @@
  */
 
 import { arch, platform } from "node:os";
+import { log } from "../logging/index.js";
 import type { VectorBackend } from "./backends/base.js";
 import { JSBackend } from "./backends/js-backend.js";
 import { GPUDetector } from "./detection/gpu-detector.js";
@@ -45,17 +46,17 @@ export class BackendSelector {
    */
   async initialize(): Promise<VectorBackend> {
     if (this.selectedBackend) {
-      console.error(`[BackendSelector] Already initialized: ${this.selectedBackend.name}`);
+      log.d("GPUBACKEND", "already_init", { name: this.selectedBackend.name });
       return this.selectedBackend;
     }
 
-    console.error("[BackendSelector] Detecting GPU capabilities...");
+    log.i("GPUBACKEND", "detecting_gpu");
     const gpuInfo = await GPUDetector.detect();
 
-    console.error("[BackendSelector] System GPU:", {
+    log.i("GPUBACKEND", "gpu_detected", {
       vendor: gpuInfo.vendor,
       model: gpuInfo.model,
-      computeCapability: gpuInfo.computeCapability,
+      cc: gpuInfo.computeCapability,
       cuda: gpuInfo.cudaAvailable,
       webgpu: gpuInfo.webgpuAvailable,
     });
@@ -137,12 +138,12 @@ export class BackendSelector {
     // Try each backend in priority order
     for (const candidate of candidates) {
       try {
-        console.error(`[BackendSelector] Trying ${candidate.name}...`);
+        log.d("GPUBACKEND", "trying_backend", { name: candidate.name });
         const backend = await candidate.factory();
 
         const available = await backend.isAvailable();
         if (!available) {
-          console.error(`[BackendSelector] ${candidate.name} not available`);
+          log.d("GPUBACKEND", "backend_unavail", { name: candidate.name });
           continue;
         }
 
@@ -152,19 +153,19 @@ export class BackendSelector {
         // Select first available (highest priority)
         if (!this.selectedBackend) {
           this.selectedBackend = backend;
-          console.error(`[BackendSelector] ✅ Selected: ${candidate.name} (priority: ${candidate.priority})`);
+          log.i("GPUBACKEND", "backend_selected", { name: candidate.name, priority: candidate.priority });
 
           const caps = backend.getCapabilities();
-          console.error("[BackendSelector] Capabilities:", {
-            maxVectors: caps.maxVectorCount.toLocaleString(),
+          log.i("GPUBACKEND", "capabilities", {
+            maxVec: caps.maxVectorCount,
             maxDim: caps.maxDimension,
-            batching: caps.supportsBatching,
+            batch: caps.supportsBatching,
             async: caps.supportsAsync,
-            memoryMB: caps.memoryMB > 0 ? `${caps.memoryMB} MB` : "CPU",
+            memMB: caps.memoryMB,
           });
         }
       } catch (error) {
-        console.warn(`[BackendSelector] ${candidate.name} initialization failed:`, (error as Error).message);
+        log.w("GPUBACKEND", "backend_init_fail", { name: candidate.name, err: (error as Error).message });
       }
     }
 
@@ -196,7 +197,7 @@ export class BackendSelector {
     }
 
     this.selectedBackend = backend;
-    console.error(`[BackendSelector] Switched to: ${backend.name}`);
+    log.i("GPUBACKEND", "backend_switch", { name: backend.name });
     return backend;
   }
 
@@ -224,7 +225,7 @@ export class BackendSelector {
    * Cleanup all backends
    */
   async close(): Promise<void> {
-    console.error("[BackendSelector] Closing all backends...");
+    log.i("GPUBACKEND", "closing_all");
     for (const backend of this.availableBackends) {
       await backend.close();
     }

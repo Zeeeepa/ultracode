@@ -17,6 +17,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../logging/index.js";
 import type { SQLiteDatabase, SQLiteStatement } from "../storage/sqlite-adapter.js";
 import { isSyncSQLiteAvailable, loadSQLiteModule } from "../storage/sqlite-adapter.js";
 import { VectorDelta } from "./vector-delta.js";
@@ -121,7 +122,7 @@ export class VectorCacheManager {
     // Check if sync SQLite is available (Bun only)
     if (!isSyncSQLiteAvailable()) {
       this.useInMemoryOnly = true;
-      console.error(`[VectorCacheManager] Sync SQLite not available (Node.js), using in-memory only`);
+      log.i("VECCACHE", `[VectorCacheManager] Sync SQLite not available (Node.js), using in-memory only`);
       return;
     }
 
@@ -143,7 +144,7 @@ export class VectorCacheManager {
     this.initializeSchema();
     this.prepareStatements();
 
-    console.error(`[VectorCacheManager] Initialized with database: ${this.dbPath}`);
+    log.i("VECCACHE", `[VectorCacheManager] Initialized with database: ${this.dbPath}`);
   }
 
   // =========================================================================
@@ -182,7 +183,7 @@ export class VectorCacheManager {
         ON vector_deltas(dimension);
     `);
 
-    console.error("[VectorCacheManager] Schema initialized");
+    log.i("VECCACHE", "[VectorCacheManager] Schema initialized");
   }
 
   private prepareStatements(): void {
@@ -223,7 +224,8 @@ export class VectorCacheManager {
     // In-memory mode (Node.js)
     if (this.useInMemoryOnly) {
       this.memoryCache.set(delta.branchName, delta);
-      console.error(
+      log.i(
+        "VECCACHE",
         `[VectorCacheManager] Saved delta in-memory for branch: ${delta.branchName} ` +
           `(${delta.totalChanges} changes)`,
       );
@@ -253,12 +255,13 @@ export class VectorCacheManager {
         delta.getMemoryUsage(),
       );
 
-      console.error(
+      log.i(
+        "VECCACHE",
         `[VectorCacheManager] Saved delta for branch: ${delta.branchName} ` +
           `(${delta.totalChanges} changes, ${(delta.getMemoryUsage() / 1024 / 1024).toFixed(2)} MB)`,
       );
     } catch (error) {
-      console.error(`[VectorCacheManager] Failed to save delta for ${delta.branchName}:`, error);
+      log.e("VECCACHE", "save_delta_fail", { branch: delta.branchName, err: String(error) });
       throw error;
     }
   }
@@ -306,14 +309,15 @@ export class VectorCacheManager {
         }
       }
 
-      console.error(
+      log.i(
+        "VECCACHE",
         `[VectorCacheManager] Loaded delta for branch: ${branchName} ` +
           `(${delta.totalChanges} changes, ${(delta.getMemoryUsage() / 1024 / 1024).toFixed(2)} MB)`,
       );
 
       return delta;
     } catch (error) {
-      console.error(`[VectorCacheManager] Failed to load delta for ${branchName}:`, error);
+      log.e("VECCACHE", "load_delta_fail", { branch: branchName, err: String(error) });
       return null;
     }
   }
@@ -325,7 +329,7 @@ export class VectorCacheManager {
     // In-memory mode (Node.js)
     if (this.useInMemoryOnly) {
       this.memoryCache.delete(branchName);
-      console.error(`[VectorCacheManager] Deleted delta in-memory for branch: ${branchName}`);
+      log.i("VECCACHE", `[VectorCacheManager] Deleted delta in-memory for branch: ${branchName}`);
       return;
     }
 
@@ -336,9 +340,9 @@ export class VectorCacheManager {
 
     try {
       this.deleteStmt.run(branchName);
-      console.error(`[VectorCacheManager] Deleted delta for branch: ${branchName}`);
+      log.i("VECCACHE", `[VectorCacheManager] Deleted delta for branch: ${branchName}`);
     } catch (error) {
-      console.error(`[VectorCacheManager] Failed to delete delta for ${branchName}:`, error);
+      log.e("VECCACHE", "del_delta_fail", { branch: branchName, err: String(error) });
       throw error;
     }
   }
@@ -361,7 +365,7 @@ export class VectorCacheManager {
       const rows = this.listStmt.all() as Array<{ branch_name: string }>;
       return rows.map((row) => row.branch_name);
     } catch (error) {
-      console.error(`[VectorCacheManager] Failed to list branches:`, error);
+      log.e("VECCACHE", "list_branches_fail", { err: String(error) });
       return [];
     }
   }
@@ -430,13 +434,13 @@ export class VectorCacheManager {
   compact(): void {
     if (!this.db) return;
 
-    console.error("[VectorCacheManager] Compacting database...");
+    log.i("VECCACHE", "[VectorCacheManager] Compacting database...");
 
     try {
       this.db.exec("VACUUM");
-      console.error("[VectorCacheManager] Database compacted successfully");
+      log.i("VECCACHE", "[VectorCacheManager] Database compacted successfully");
     } catch (error) {
-      console.error("[VectorCacheManager] Database compaction failed:", error);
+      log.e("VECCACHE", "db_compact_fail", { err: String(error) });
     }
   }
 
@@ -457,11 +461,11 @@ export class VectorCacheManager {
       const result = stmt.run(cutoffTime);
 
       const deletedCount = result.changes;
-      console.error(`[VectorCacheManager] Deleted ${deletedCount} old deltas (older than ${olderThanDays} days)`);
+      log.i("VECCACHE", `[VectorCacheManager] Deleted ${deletedCount} old deltas (older than ${olderThanDays} days)`);
 
       return deletedCount;
     } catch (error) {
-      console.error("[VectorCacheManager] Failed to delete old deltas:", error);
+      log.e("VECCACHE", "del_old_fail", { err: String(error) });
       return 0;
     }
   }
@@ -509,7 +513,7 @@ export class VectorCacheManager {
         lastModified: row.last_modified,
       };
     } catch (error) {
-      console.error(`[VectorCacheManager] Failed to get delta info for ${branchName}:`, error);
+      log.e("VECCACHE", "delta_info_fail", { branch: branchName, err: String(error) });
       return null;
     }
   }
@@ -522,7 +526,7 @@ export class VectorCacheManager {
    * Close database connection
    */
   close(): void {
-    console.error("[VectorCacheManager] Closing database...");
+    log.i("VECCACHE", "[VectorCacheManager] Closing database...");
 
     if (this.db) {
       this.db.close();

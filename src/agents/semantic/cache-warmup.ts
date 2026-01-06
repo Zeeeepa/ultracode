@@ -7,12 +7,12 @@
 
 import { getConfig } from "../../config/yaml-config.js";
 import { knowledgeBus } from "../../core/knowledge-bus.js";
+import { log } from "../../logging/index.js";
 import type { EmbeddingGenerator } from "../../semantic/embedding-generator.js";
 import type { SemanticCache } from "../../semantic/semantic-cache.js";
 import { getGraphStorage } from "../../storage/graph-storage-factory.js";
 import type { SemanticMetrics } from "../../types/semantic.js";
 import { type Entity, EntityType } from "../../types/storage.js";
-import { logger } from "../../utils/logger.js";
 
 // =============================================================================
 // CONTEXT INTERFACE
@@ -226,6 +226,6 @@ export async function warmupSemanticCache(ctx: CacheWarmupContext): Promise<void
       60000,
     );
   } catch (error) {
-    logger.warn("SemanticAgent", "Warmup failed", { error: (error as Error).message });
+    log.w("CACHE", "warmup_failed", { err: (error as Error).message });
   }
 }

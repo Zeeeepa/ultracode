@@ -12,7 +12,7 @@
 import { isAbsolute, join } from "node:path";
 import type { BranchManager } from "../../core/branch-manager.js";
 import { knowledgeBus } from "../../core/knowledge-bus.js";
-import { logger } from "../../utils/logger.js";
+import { log } from "../../logging/index.js";
 
 export interface GitEventContext {
   agentId: string;
@@ -29,7 +29,7 @@ export async function handleUncommittedChanges(files: string[], ctx: GitEventCon
     return;
   }
 
-  console.error(`[${ctx.agentId}] Uncommitted changes detected: ${files.length} files`);
+  log.i("GITWATCHER", "uncommitted_changes", { cnt: files.length });
 
   // Resolve relative paths to absolute
   const absolutePaths = files.map((f) => (isAbsolute(f) ? f : join(ctx.currentRepositoryPath!, f)));
@@ -60,7 +60,7 @@ export async function handleUncommittedChanges(files: string[], ctx: GitEventCon
     ctx.agentId,
   );
 
-  console.error(`[${ctx.agentId}] Published change events for ${absolutePaths.length} files`);
+  log.d("GITWATCHER", "published_changes", { cnt: absolutePaths.length });
 }
 
 /**
@@ -78,7 +78,7 @@ export async function handleDebouncedEmbeddingGeneration(
     return;
   }
 
-  console.error(`[${ctx.agentId}] Debounced embedding generation: ${files.length} files (bulkMode: ${bulkMode})`);
+  log.d("GITWATCHER", "debounced_embed", { cnt: files.length, bulkMode });
 
   // Publish event for SemanticAgent to pick up
   // SemanticAgent will handle the actual embedding generation with bulk mode flag
@@ -94,17 +94,17 @@ export async function handleDebouncedEmbeddingGeneration(
     ctx.agentId,
   );
 
-  console.error(`[${ctx.agentId}] Published embedding generation event: ${files.length} files, bulkMode=${bulkMode}`);
+  log.d("GITWATCHER", "embed_event_pub", { cnt: files.length, bulkMode });
 }
 
 /**
  * Handle branch change event
  */
 export async function handleBranchChange(newBranch: string, oldBranch: string, ctx: GitEventContext): Promise<void> {
-  console.error(`[${ctx.agentId}] Branch changed from ${oldBranch} to ${newBranch}`);
+  log.i("GITWATCHER", "branch_changed", { oldBranch, newBranch });
 
   if (!ctx.branchManager || !ctx.currentRepositoryPath) {
-    console.warn(`[${ctx.agentId}] BranchManager not initialized, skipping branch switch`);
+    log.w("GITWATCHER", "branch_mgr_not_init");
     return;
   }
 
@@ -123,9 +123,9 @@ export async function handleBranchChange(newBranch: string, oldBranch: string, c
       ctx.agentId,
     );
 
-    console.error(`[${ctx.agentId}] Successfully switched to branch: ${newBranch}`);
+    log.i("GITWATCHER", "branch_switched", { newBranch });
   } catch (error) {
-    console.error(`[${ctx.agentId}] Failed to handle branch change:`, error);
+    log.e("GITWATCHER", "branch_change_fail", { err: String(error) });
   }
 }
 
@@ -164,7 +164,7 @@ export function scheduleEmbeddingGeneration(ctx: EmbeddingSchedulerContext, onTr
   ctx.setAbortController(newAbortController);
   const signal = newAbortController.signal;
 
-  logger.debug("IndexerAgent", `Embedding generation scheduled in ${ctx.debouncePeriodMs}ms`);
+  log.d("INDEXER", "embed_scheduled", { ms: ctx.debouncePeriodMs });
 
   // Start async timer
   (async () => {
@@ -188,12 +188,12 @@ export function scheduleEmbeddingGeneration(ctx: EmbeddingSchedulerContext, onTr
  */
 export async function triggerEmbeddingGeneration(ctx: EmbeddingSchedulerContext): Promise<void> {
   if (ctx.pendingGeneration) {
-    logger.debug("IndexerAgent", "Embedding generation already pending, skipping");
+    log.d("INDEXER", "embed_pending_skip");
     return;
   }
 
   ctx.setPendingGeneration(true);
-  logger.info("IndexerAgent", "Triggering batch embedding generation after incremental update");
+  log.i("INDEXER", "embed_batch_trigger");
 
   // Publish event for SemanticAgent
   knowledgeBus.publish(

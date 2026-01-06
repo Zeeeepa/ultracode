@@ -8,7 +8,7 @@
  * Extracted from index.ts for better modularity.
  */
 
-import { logger } from "../utils/logger.js";
+import { log } from "../logging/index.js";
 import { ensureOllamaRunning, getStatusMessage } from "../utils/ollama-checker.js";
 
 export interface StartupCheckConfig {
@@ -26,33 +26,28 @@ export function runOllamaCheck(config: StartupCheckConfig): void {
   if (!config.embeddingEnabled) return;
   if (config.embeddingProvider !== "auto" && config.embeddingProvider !== "ollama") return;
 
-  logger.trace("ASYNC", `[+${Date.now() - config.processStartTime}ms] ▶ Launching async: Ollama check`);
-  console.error("🔍 Ollama check running in background...");
+  log.t("STARTUP", `[+${Date.now() - config.processStartTime}ms] ▶ Launching async: Ollama check`);
+  log.i("STARTUP", "ollama_check_bg");
 
   (async () => {
     try {
       const ollamaStartTime = Date.now();
-      logger.trace("ASYNC", `[+${Date.now() - config.processStartTime}ms] ▶ START: ensureOllamaRunning`);
+      log.t("STARTUP", "ollama_start");
       const ollamaStatus = await ensureOllamaRunning(true);
-      logger.trace(
-        "ASYNC",
-        `[+${Date.now() - config.processStartTime}ms] ◀ END: ensureOllamaRunning (${Date.now() - ollamaStartTime}ms)`,
-      );
+      log.t("STARTUP", "ollama_end", { elapsed: Date.now() - ollamaStartTime });
       const statusMessage = getStatusMessage(ollamaStatus);
-      console.error(statusMessage);
+      log.i("STARTUP", "ollama_status", { msg: statusMessage });
 
       if (!ollamaStatus.isRunning) {
-        console.error(
-          "💡 Tip: Install Ollama from https://ollama.com or run setup-embeddings.cmd/sh for automatic setup",
-        );
+        log.i("STARTUP", "ollama_not_running");
       } else if (!ollamaStatus.hasGranite && ollamaStatus.hasModels) {
-        console.error("💡 Tip: Install granite-embedding with: ollama pull granite-embedding");
+        log.i("STARTUP", "granite_missing");
       }
     } catch (error) {
-      logger.warn("STARTUP", "Ollama check failed, will use auto-detection", {
+      log.w("STARTUP", "Ollama check failed, will use auto-detection", {
         error: (error as Error).message,
       });
-      console.error("⚠️  Ollama check failed, embedding provider will be auto-detected");
+      log.w("STARTUP", "ollama_check_fail");
     }
   })();
 }
@@ -71,16 +66,13 @@ export interface OrphanedEmbeddingsCheckConfig {
 export function runOrphanedEmbeddingsCheck(config: OrphanedEmbeddingsCheckConfig): void {
   if (!config.embeddingEnabled || config.pipeServerMode) return;
 
-  logger.trace("ASYNC", `[+${Date.now() - config.processStartTime}ms] ▶ START: orphaned embeddings check`);
+  log.t("STARTUP", "orphan_emb_start");
 
   (async () => {
     try {
       const checkStartTime = Date.now();
       const semanticAgent = await config.getSemanticAgent();
-      logger.trace(
-        "ASYNC",
-        `[+${Date.now() - config.processStartTime}ms] getSemanticAgent took ${Date.now() - checkStartTime}ms`,
-      );
+      log.t("STARTUP", "semantic_agent_got", { elapsed: Date.now() - checkStartTime });
       if (!semanticAgent) return;
 
       // Check if there are entities without embeddings
@@ -97,45 +89,36 @@ export function runOrphanedEmbeddingsCheck(config: OrphanedEmbeddingsCheckConfig
 
       if (missing > 10) {
         if (semanticAgent.isEmbeddingGenerationInProgress()) {
-          logger.warn("AUTO_RESUME", `[SKIPPED] generation already in progress`, { missing });
+          log.w("STARTUP", `[SKIPPED] generation already in progress`, { missing });
           return;
         }
         if (semanticAgent.wasGenerationRecentlyCompleted(30000)) {
-          logger.warn("AUTO_RESUME", `[SKIPPED] generation recently completed`, { missing });
+          log.w("STARTUP", `[SKIPPED] generation recently completed`, { missing });
           return;
         }
 
-        logger.info("STARTUP", `Found ${missing} entities without embeddings, generating in background`, { missing });
-        logger.trace(
-          "EMBEDDING",
-          `[+${Date.now() - config.processStartTime}ms] ▶ START: generateEmbeddingsFromStorage (${missing} missing)`,
-        );
-        logger.info("STARTUP", "Resuming embedding generation", { missing, entityCount, embeddingCount });
+        log.i("STARTUP", `Found ${missing} entities without embeddings, generating in background`, { missing });
+        log.t("STARTUP", "emb_gen_start", { missing });
+        log.i("STARTUP", "Resuming embedding generation", { missing, entityCount, embeddingCount });
 
         const embGenStartTime = Date.now();
         semanticAgent
           .generateEmbeddingsFromStorage()
           .then((stats: { generated: number; skipped: number }) => {
-            logger.trace(
-              "EMBEDDING",
-              `[+${Date.now() - config.processStartTime}ms] ◀ END: generateEmbeddingsFromStorage (${Date.now() - embGenStartTime}ms)`,
-            );
-            logger.info("STARTUP", `Background embedding complete`, {
+            log.t("STARTUP", "emb_gen_end", { elapsed: Date.now() - embGenStartTime });
+            log.i("STARTUP", `Background embedding complete`, {
               generated: stats.generated,
               skipped: stats.skipped,
             });
           })
           .catch((error: Error) => {
-            logger.error("EMBEDDING", "Background embedding generation failed", { error: error.message });
+            log.e("EMBEDDING", "bg_gen_fail", { err: error.message });
           });
       } else {
-        logger.trace(
-          "EMBEDDING",
-          `[+${Date.now() - config.processStartTime}ms] ◀ END: orphaned embeddings check (no action needed, missing=${missing})`,
-        );
+        log.t("STARTUP", "orphan_emb_skip", { missing });
       }
     } catch (error) {
-      logger.warn("STARTUP", "Background embedding check failed", { error: (error as Error).message });
+      log.w("STARTUP", "bg_emb_check_fail", { err: (error as Error).message });
     }
   })();
 }

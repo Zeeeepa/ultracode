@@ -11,9 +11,9 @@
  * - Create documentation relationships
  */
 
+import { log } from "../../logging/index.js";
 import type { EmbeddingGenerator } from "../../semantic/embedding-generator.js";
 import type { VectorStore } from "../../semantic/vector-store.js";
-import { logger } from "../../utils/logger.js";
 
 // =============================================================================
 // CONTEXT INTERFACE
@@ -48,19 +48,19 @@ export async function processStandaloneComments(
   storage: any,
   ctx: CommentProcessorContext,
 ): Promise<{ entities: number; relationships: number }> {
-  logger.trace("EMBEDDING_GEN", "processStandaloneComments: entering");
+  log.t("COMMENT", "process_start");
 
   // Detailed profiling for comments processing
   const pStart = Date.now();
   const pLog = (phase: string) => {
     const elapsed = Date.now() - pStart;
-    logger.info("PROFILE_COMMENTS", phase, { elapsedMs: elapsed });
+    log.d("COMMENT", phase, { ms: elapsed });
   };
 
   const { CommentExtractor } = await import("../../utils/comment-extractor.js");
   pLog("P1_IMPORT");
 
-  logger.trace("EMBEDDING_GEN", "processStandaloneComments: import done");
+  log.t("COMMENT", "import_done");
 
   // OPTIMIZATION: Collect all entities and relationships first, then batch insert
   const allCommentEntities: any[] = [];
@@ -100,7 +100,7 @@ export async function processStandaloneComments(
   pLog("P3_BUILD_ENTITIES");
 
   if (allCommentEntities.length === 0) {
-    logger.trace("EMBEDDING_GEN", "processStandaloneComments: no comments");
+    log.t("COMMENT", "no_comments");
     return { entities: 0, relationships: 0 };
   }
 
@@ -153,20 +153,14 @@ export async function processStandaloneComments(
     }
     pLog("P7_INSERT_RELATIONSHIPS");
 
-    logger.debug("SemanticAgent", "Indexed comments (batched)", {
-      entities: allCommentEntities.length,
-      relationships: allRelationships.length,
-    });
+    log.d("COMMENT", "indexed_batch", { entities: allCommentEntities.length, rels: allRelationships.length });
   } catch (error) {
-    logger.debug("SemanticAgent", "Comment batch insert failed", { error: (error as Error).message });
+    log.w("COMMENT", "batch_failed", { err: (error as Error).message });
   } finally {
     releaseMutex!();
   }
 
-  logger.trace("EMBEDDING_GEN", "processStandaloneComments: returning", {
-    totalCommentEntities: allCommentEntities.length,
-    totalRelationships: allRelationships.length,
-  });
+  log.t("COMMENT", "process_done", { entities: allCommentEntities.length, rels: allRelationships.length });
 
   return { entities: allCommentEntities.length, relationships: allRelationships.length };
 }
