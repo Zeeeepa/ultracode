@@ -58,10 +58,8 @@ export class VectorStore {
   private debugMode = process.env["VECTOR_STORE_DEBUG"] === "true";
 
   // Project context for multi-project support
-  private currentContext: ProjectContext = {
-    projectHash: "legacy",
-    branchName: DEFAULT_BRANCH,
-  };
+  // MUST be set via setProjectContext() before any operations
+  private currentContext: ProjectContext | null = null;
 
   constructor(config: Partial<VectorStoreConfig> = {}) {
     logger.debug("VectorStore", "v5: Faiss-only backend");
@@ -100,9 +98,18 @@ export class VectorStore {
 
   /**
    * Get current project context
+   * Throws if context not set
    */
   getProjectContext(): ProjectContext {
-    return { ...this.currentContext };
+    const ctx = this.ensureContextSet();
+    return { ...ctx };
+  }
+
+  /**
+   * Check if project context is set
+   */
+  hasProjectContext(): boolean {
+    return this.currentContext !== null;
   }
 
   /**
@@ -174,7 +181,11 @@ export class VectorStore {
       }
 
       this.faissProvider = provider;
-      this.faissProvider.setProjectContext(this.currentContext.projectHash, this.currentContext.branchName);
+
+      // Set context on Faiss if already configured
+      if (this.currentContext) {
+        this.faissProvider.setProjectContext(this.currentContext.projectHash, this.currentContext.branchName);
+      }
 
       logger.info("VectorStore", "Initialized with Faiss backend", {
         dimensions: this.config.dimensions,
@@ -194,6 +205,16 @@ export class VectorStore {
       throw new Error("VectorStore not initialized. Call initialize() first.");
     }
     return this.faissProvider;
+  }
+
+  /**
+   * Ensure project context is set before operations
+   */
+  private ensureContextSet(): ProjectContext {
+    if (!this.currentContext) {
+      throw new Error("VectorStore project context not set. Call setProjectContext() or setProject() before operations.");
+    }
+    return this.currentContext;
   }
 
   /**
@@ -718,7 +739,8 @@ export class VectorStore {
    */
   async listBranches(): Promise<string[]> {
     // Return current branch only
-    return [this.currentContext.branchName];
+    const ctx = this.ensureContextSet();
+    return [ctx.branchName];
   }
 
   /**
@@ -726,8 +748,9 @@ export class VectorStore {
    * v5: Returns only current branch count
    */
   async getCountPerBranch(): Promise<Array<{ branchName: string; count: number }>> {
+    const ctx = this.ensureContextSet();
     const count = await this.count();
-    return [{ branchName: this.currentContext.branchName, count }];
+    return [{ branchName: ctx.branchName, count }];
   }
 
   /**
