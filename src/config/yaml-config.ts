@@ -477,10 +477,7 @@ export class ConfigLoader {
           DEFAULT_CONFIG.indexer?.cacheTTL,
       },
       indexing: {
-        branchAware:
-          yamlConfig.indexing?.branchAware ??
-          (process.env["INDEXING_BRANCH_AWARE"] === "true" ? true : undefined) ??
-          DEFAULT_CONFIG.indexing.branchAware,
+        // branchAware removed - auto-detected via .git directory
         autoSwitchOnBranchChange:
           yamlConfig.indexing?.autoSwitchOnBranchChange ??
           (process.env["INDEXING_AUTO_SWITCH"] === "true" ? true : undefined) ??

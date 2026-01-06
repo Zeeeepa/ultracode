@@ -39,7 +39,7 @@ export async function listBranches(
   currentBranch: string | null;
 }> {
   if (!branchManager) {
-    throw new Error("Branch-aware indexing is not enabled. Set indexing.branchAware: true in config.");
+    throw new Error("Branch manager not available. Git repository not detected or not initialized.");
   }
 
   const currentBranch = branchManager.getCurrentBranch(repoPath);
@@ -79,7 +79,7 @@ export async function switchBranch(
   message: string;
 }> {
   if (!branchManager) {
-    throw new Error("Branch-aware indexing is not enabled. Set indexing.branchAware: true in config.");
+    throw new Error("Branch manager not available. Git repository not detected or not initialized.");
   }
 
   const previousBranch = branchManager.getCurrentBranch(repoPath);
@@ -114,7 +114,7 @@ export async function getBranchStatus(
   databaseExists: boolean;
 }> {
   if (!branchManager) {
-    throw new Error("Branch-aware indexing is not enabled. Set indexing.branchAware: true in config.");
+    throw new Error("Branch manager not available. Git repository not detected or not initialized.");
   }
 
   const currentBranch = branchManager.getCurrentBranch(repoPath);
@@ -161,7 +161,7 @@ export async function cleanupBranches(
   message: string;
 }> {
   if (!branchManager) {
-    throw new Error("Branch-aware indexing is not enabled. Set indexing.branchAware: true in config.");
+    throw new Error("Branch manager not available. Git repository not detected or not initialized.");
   }
 
   const deletedCount = await branchManager.cleanupOldBranches(keep);

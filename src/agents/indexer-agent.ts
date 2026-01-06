@@ -17,6 +17,7 @@ import { nanoid } from "nanoid";
 // p-map removed - was used for handleParseBatchComplete which is now disabled
 import { getConfig } from "../config/yaml-config.js";
 import { BranchManager } from "../core/branch-manager.js";
+import { createFileWatcher, type FileChangeEvent, type FileWatcher } from "../core/file-watcher.js";
 import { GitWatcher } from "../core/git-watcher.js";
 import { knowledgeBus } from "../core/knowledge-bus.js";
 import { getDataDir } from "../shared/storage-paths.js";
@@ -106,6 +107,7 @@ export class IndexerAgent extends BaseAgent {
   private cacheManager!: QueryCacheManager;
   private branchManager: BranchManager | null = null;
   private gitWatcher: GitWatcher | null = null;
+  private fileWatcher: FileWatcher | null = null;
 
   // Debounced embedding generation
   private pendingEmbeddingGeneration = false;
@@ -149,10 +151,10 @@ export class IndexerAgent extends BaseAgent {
     await initXXHash();
     logger.trace("AGENT", `[IndexerAgent] ◀ initXXHash (${Date.now() - startTime}ms)`);
 
-    // Initialize branch-aware indexing if enabled
+    // Always initialize branch-aware indexing (git detection happens per-repository)
     const appConfig = getConfig();
-    if (appConfig.indexing?.branchAware) {
-      console.error(`[${this.id}] Branch-aware indexing is enabled`);
+    {
+      console.error(`[${this.id}] Initializing branch-aware indexing`);
 
       // Use centralized storage if no explicit dataDir configured
       const dataDir = appConfig.indexing.dataDir || getDataDir();
@@ -990,12 +992,113 @@ export class IndexerAgent extends BaseAgent {
   /**
    * Set current repository path and start watching if Git is enabled
    */
-  setRepositoryPath(path: string): void {
+  async setRepositoryPath(path: string): Promise<void> {
     this.currentRepositoryPath = path;
 
+    // Start GitWatcher for branch/commit monitoring
     if (this.gitWatcher && this.branchManager) {
       this.gitWatcher.startWatching(path);
-      console.error(`[${this.id}] Started watching repository: ${path}`);
+      logger.info("IndexerAgent", "Started GitWatcher", { repository: path });
+    }
+
+    // Start FileWatcher for efficient file change detection
+    // Uses glob-watch (fast-glob + fs.watch) with Watchman fallback
+    try {
+      // Stop existing watcher if any
+      if (this.fileWatcher) {
+        await this.fileWatcher.stop();
+        this.fileWatcher = null;
+      }
+
+      const appConfig = getConfig();
+      this.fileWatcher = await createFileWatcher({
+        rootDir: path,
+        include: [
+          "**/*.ts",
+          "**/*.tsx",
+          "**/*.js",
+          "**/*.jsx",
+          "**/*.py",
+          "**/*.go",
+          "**/*.rs",
+          "**/*.java",
+          "**/*.kt",
+          "**/*.cpp",
+          "**/*.c",
+          "**/*.h",
+          "**/*.hpp",
+        ],
+        exclude: [
+          "**/node_modules/**",
+          "**/.git/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/.ultrascript/**",
+          "**/coverage/**",
+          "**/__pycache__/**",
+          "**/venv/**",
+          "**/.venv/**",
+        ],
+        debounceMs: 100,
+        bulkThreshold: appConfig.git?.bulkModeThreshold ?? 1000,
+      });
+
+      // Handle file changes - trigger incremental reindexing
+      this.fileWatcher.on("change", (events: FileChangeEvent[], bulkMode: boolean) => {
+        this.handleFileWatcherChanges(events, bulkMode).catch((err) => {
+          logger.error("IndexerAgent", "FileWatcher change handler error", { error: (err as Error).message });
+        });
+      });
+
+      this.fileWatcher.on("error", (err: Error) => {
+        logger.error("IndexerAgent", "FileWatcher error", { error: err.message });
+      });
+
+      logger.info("IndexerAgent", "Started FileWatcher", { repository: path });
+    } catch (err) {
+      logger.warn("IndexerAgent", "Failed to start FileWatcher, using GitWatcher only", {
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  /**
+   * Handle file changes detected by FileWatcher
+   * Triggers incremental reindexing and debounced embedding generation
+   */
+  private async handleFileWatcherChanges(events: FileChangeEvent[], bulkMode: boolean): Promise<void> {
+    if (events.length === 0) return;
+
+    const changedFiles = events.filter((e) => e.type === "add" || e.type === "change").map((e) => e.path);
+
+    const deletedFiles = events.filter((e) => e.type === "unlink").map((e) => e.path);
+
+    logger.debug("IndexerAgent", "FileWatcher detected changes", {
+      changed: changedFiles.length,
+      deleted: deletedFiles.length,
+      bulkMode,
+    });
+
+    // Handle changed files - trigger incremental reindexing
+    if (changedFiles.length > 0) {
+      await handleUncommittedChangesEvent(changedFiles, this.getGitEventContext());
+    }
+
+    // Handle deleted files - log for now (entities cleaned up on next full reindex)
+    // TODO: Add deleteEntitiesForFile method to GraphStorage for immediate cleanup
+    if (deletedFiles.length > 0) {
+      logger.debug("IndexerAgent", "Detected deleted files (cleaned on reindex)", {
+        count: deletedFiles.length,
+        files: deletedFiles.slice(0, 5),
+      });
+    }
+
+    // Schedule debounced embedding generation
+    if (!bulkMode) {
+      this.doScheduleEmbeddingGeneration();
+    } else {
+      // In bulk mode, trigger embedding generation after all changes processed
+      await handleDebouncedEmbeddingEvent(changedFiles, bulkMode, this.getGitEventContext());
     }
   }
 
@@ -1003,7 +1106,18 @@ export class IndexerAgent extends BaseAgent {
    * Shutdown the indexer agent
    */
   protected async onShutdown(): Promise<void> {
-    console.error(`[${this.id}] Shutting down Indexer Agent...`);
+    logger.info("IndexerAgent", "Shutting down...");
+
+    // Stop FileWatcher
+    if (this.fileWatcher) {
+      try {
+        await this.fileWatcher.stop();
+        this.fileWatcher = null;
+        logger.debug("IndexerAgent", "FileWatcher stopped");
+      } catch (err) {
+        logger.warn("IndexerAgent", "Error stopping FileWatcher", { error: (err as Error).message });
+      }
+    }
 
     // Stop GitWatcher
     if (this.gitWatcher) {

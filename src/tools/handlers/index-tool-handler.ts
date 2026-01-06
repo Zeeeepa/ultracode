@@ -148,16 +148,16 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       }
     }
 
-    // Step 6: Start GitWatcher for incremental updates (if branchAware enabled)
+    // Step 6: Start FileWatcher/GitWatcher for incremental updates
     try {
       const conductor = this.context.getConductor();
       const indexerAgent = conductor.getAgent("indexer") as any;
       if (indexerAgent?.setRepositoryPath) {
-        indexerAgent.setRepositoryPath(targetDir);
-        console.error(`[IndexToolHandler] GitWatcher started for ${targetDir}`);
+        await indexerAgent.setRepositoryPath(targetDir);
+        console.error(`[IndexToolHandler] FileWatcher/GitWatcher started for ${targetDir}`);
       }
     } catch (error) {
-      console.error(`[IndexToolHandler] Failed to start GitWatcher:`, error);
+      console.error(`[IndexToolHandler] Failed to start file watching:`, error);
     }
 
     // Step 7: Log and publish result

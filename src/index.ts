@@ -498,6 +498,12 @@ async function getDoraAgent(): Promise<any> {
   return await getOrCreateAgent(container, cond, AgentType.DORA);
 }
 
+async function getIndexerAgent(): Promise<IndexerAgent> {
+  const cond = getConductor();
+  await cond.initialize();
+  return await getOrCreateAgent(container, cond, AgentType.INDEXER);
+}
+
 // GraphStorage singleton is now managed by graph-storage-factory.ts
 
 // Function to create MCP server with handlers (supports multiple clients in pipe mode)
@@ -681,9 +687,8 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
       getGraphStorage,
       getSQLiteManager: () => null, // Legacy - now using libsql via getGraphStorage()
       getSemanticAgent,
-      getBranchManager: () => {
-        const cond = getConductor();
-        const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as IndexerAgent | undefined;
+      getBranchManager: async () => {
+        const indexerAgent = await getIndexerAgent();
         return indexerAgent?.getBranchManager?.() || null;
       },
       getSnapshotManager: async () => {

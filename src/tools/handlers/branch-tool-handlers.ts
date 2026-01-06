@@ -9,6 +9,7 @@
  * - get_changed_files
  */
 
+import { execSync } from "node:child_process";
 import { z } from "zod";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
@@ -26,7 +27,7 @@ export class ListBranchesToolHandler extends BaseToolHandler<z.infer<typeof List
   }
 
   protected async execute(args: z.infer<typeof ListBranchesSchema>): Promise<ToolResult> {
-    const branchManager = this.context.getBranchManager();
+    const branchManager = await this.context.getBranchManager();
 
     if (!branchManager) {
       return {
@@ -34,22 +35,22 @@ export class ListBranchesToolHandler extends BaseToolHandler<z.infer<typeof List
       };
     }
 
-    const branches = await branchManager.listBranches();
-    const currentBranch = await branchManager.getCurrentBranch();
+    const branches = branchManager.getActiveBranches();
+    const currentBranch = branchManager.getCurrentBranch();
 
     const result: any = {
       currentBranch,
       branches: branches.map((b: any) => ({
         name: b.name,
         isCurrent: b.name === currentBranch,
-        lastIndexed: b.lastIndexed,
+        lastIndexed: b.metadata?.lastIndexedAt || b.lastAccessed,
       })),
     };
 
     if (args.includeStats) {
       result.stats = {
         totalBranches: branches.length,
-        indexedBranches: branches.filter((b: any) => b.lastIndexed).length,
+        indexedBranches: branches.filter((b: any) => b.metadata?.lastIndexedAt).length,
       };
     }
 
@@ -74,7 +75,7 @@ export class SwitchBranchToolHandler extends BaseToolHandler<z.infer<typeof Swit
   }
 
   protected async execute(args: z.infer<typeof SwitchBranchSchema>): Promise<ToolResult> {
-    const branchManager = this.context.getBranchManager();
+    const branchManager = await this.context.getBranchManager();
 
     if (!branchManager) {
       return {
@@ -83,7 +84,8 @@ export class SwitchBranchToolHandler extends BaseToolHandler<z.infer<typeof Swit
     }
 
     try {
-      await branchManager.switchBranch(args.branchName, args.createIfNotExists);
+      // Note: createIfNotExists is not supported by BranchManager - branch DB created on first index
+      await branchManager.switchBranch(args.branchName);
 
       return {
         content: [
@@ -119,7 +121,7 @@ export class GetBranchStatusToolHandler extends BaseToolHandler<z.infer<typeof G
   }
 
   protected async execute(args: z.infer<typeof GetBranchStatusSchema>): Promise<ToolResult> {
-    const branchManager = this.context.getBranchManager();
+    const branchManager = await this.context.getBranchManager();
 
     if (!branchManager) {
       return {
@@ -127,8 +129,10 @@ export class GetBranchStatusToolHandler extends BaseToolHandler<z.infer<typeof G
       };
     }
 
-    const branchName = args.branchName || (await branchManager.getCurrentBranch());
-    const status = await branchManager.getBranchStatus(branchName);
+    const branchName = args.branchName || branchManager.getCurrentBranch();
+    const metadata = branchManager.getBranchMetadata(branchName);
+    const dbPath = branchManager.getBranchDbPath(branchName);
+    const hasDb = branchManager.hasBranchDatabase(branchName);
 
     return {
       content: [
@@ -137,7 +141,17 @@ export class GetBranchStatusToolHandler extends BaseToolHandler<z.infer<typeof G
           text: JSON.stringify(
             {
               branch: branchName,
-              ...status,
+              exists: hasDb,
+              dbPath,
+              metadata: metadata
+                ? {
+                    lastIndexedAt: metadata.lastIndexedAt,
+                    entityCount: metadata.entityCount,
+                    relationshipCount: metadata.relationshipCount,
+                    fileCount: metadata.fileCount,
+                    indexVersion: metadata.indexVersion,
+                  }
+                : null,
             },
             null,
             2,
@@ -164,7 +178,7 @@ export class CleanupBranchesToolHandler extends BaseToolHandler<z.infer<typeof C
   }
 
   protected async execute(args: z.infer<typeof CleanupBranchesSchema>): Promise<ToolResult> {
-    const branchManager = this.context.getBranchManager();
+    const branchManager = await this.context.getBranchManager();
 
     if (!branchManager) {
       return {
@@ -172,27 +186,18 @@ export class CleanupBranchesToolHandler extends BaseToolHandler<z.infer<typeof C
       };
     }
 
-    const branches = await branchManager.listBranches();
-    const currentBranch = await branchManager.getCurrentBranch();
+    const branches = branchManager.getActiveBranches();
+    const currentBranch = branchManager.getCurrentBranch();
 
-    // Filter branches to cleanup
-    let toCleanup = branches.filter((b: any) => b.name !== currentBranch && b.name !== "main" && b.name !== "master");
+    // Calculate what would be cleaned
+    const toCleanup = branches
+      .filter((b: any) => b.name !== currentBranch && b.name !== "main" && b.name !== "master")
+      .slice(args.keepCount);
 
-    // Filter by age if specified
-    if (args.olderThanDays) {
-      const cutoffTime = Date.now() - args.olderThanDays * 24 * 60 * 60 * 1000;
-      toCleanup = toCleanup.filter((b: any) => b.lastIndexed && b.lastIndexed < cutoffTime);
-    }
-
-    // Sort by last indexed (oldest first) and keep only excess
-    toCleanup.sort((a: any, b: any) => (a.lastIndexed || 0) - (b.lastIndexed || 0));
-    const excess = Math.max(0, branches.length - args.keepCount);
-    toCleanup = toCleanup.slice(0, excess);
-
+    let deletedCount = 0;
     if (!args.dryRun) {
-      for (const branch of toCleanup) {
-        await branchManager.deleteBranch(branch.name);
-      }
+      // Use BranchManager's cleanupOldBranches which does LRU eviction
+      deletedCount = await branchManager.cleanupOldBranches(args.keepCount);
     }
 
     return {
@@ -203,7 +208,7 @@ export class CleanupBranchesToolHandler extends BaseToolHandler<z.infer<typeof C
             {
               dryRun: args.dryRun,
               branchesFound: branches.length,
-              branchesToCleanup: toCleanup.length,
+              branchesToCleanup: args.dryRun ? toCleanup.length : deletedCount,
               cleanedBranches: toCleanup.map((b: any) => b.name),
             },
             null,
@@ -220,7 +225,7 @@ export class CleanupBranchesToolHandler extends BaseToolHandler<z.infer<typeof C
 // =============================================================================
 
 const GetChangedFilesSchema = z.object({
-  baseBranch: z.string().optional().default("main"),
+  baseBranch: z.string().optional(),
   targetBranch: z.string().optional(),
   includeUntracked: z.boolean().optional().default(false),
 });
@@ -231,24 +236,65 @@ export class GetChangedFilesToolHandler extends BaseToolHandler<z.infer<typeof G
   }
 
   protected async execute(args: z.infer<typeof GetChangedFilesSchema>): Promise<ToolResult> {
-    const branchManager = this.context.getBranchManager();
-
-    if (!branchManager) {
-      return {
-        content: [{ type: "text", text: JSON.stringify({ error: "Branch manager not available" }) }],
-      };
-    }
-
-    const targetBranch = args.targetBranch || (await branchManager.getCurrentBranch());
-
     try {
-      const changedFiles = await branchManager.getChangedFiles(args.baseBranch, targetBranch);
+      // Get current branch
+      const currentBranch = execSync("git symbolic-ref --short HEAD", { encoding: "utf-8" }).trim();
+
+      // Use current branch as target if not specified
+      const targetBranch = args.targetBranch || currentBranch;
+
+      // Detect default branch if baseBranch not specified
+      let baseBranch = args.baseBranch;
+      if (!baseBranch) {
+        try {
+          // Try to get default branch from remote
+          baseBranch = execSync("git symbolic-ref refs/remotes/origin/HEAD", { encoding: "utf-8" })
+            .trim()
+            .replace("refs/remotes/origin/", "");
+        } catch {
+          // Fallback: check if main or master exists
+          try {
+            execSync("git rev-parse --verify main", { encoding: "utf-8" });
+            baseBranch = "main";
+          } catch {
+            try {
+              execSync("git rev-parse --verify master", { encoding: "utf-8" });
+              baseBranch = "master";
+            } catch {
+              baseBranch = currentBranch; // Last fallback - compare with self (empty diff)
+            }
+          }
+        }
+      }
+
+      // Get changed files using git diff
+      const output = execSync(`git diff --name-status ${baseBranch}...${targetBranch}`, {
+        encoding: "utf-8",
+        cwd: process.cwd(),
+      });
+
+      const changedFiles = output
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => {
+          const [statusCode, ...pathParts] = line.split("\t");
+          const path = pathParts.join("\t");
+          const statusMap: Record<string, string> = {
+            A: "added",
+            M: "modified",
+            D: "deleted",
+            R: "renamed",
+          };
+          const firstChar = statusCode?.[0] ?? "";
+          const status = firstChar ? statusMap[firstChar] || statusCode : "unknown";
+          return { path, status };
+        });
 
       // Categorize changes
-      const added = changedFiles.filter((f: any) => f.status === "added");
-      const modified = changedFiles.filter((f: any) => f.status === "modified");
-      const deleted = changedFiles.filter((f: any) => f.status === "deleted");
-      const renamed = changedFiles.filter((f: any) => f.status === "renamed");
+      const added = changedFiles.filter((f) => f.status === "added");
+      const modified = changedFiles.filter((f) => f.status === "modified");
+      const deleted = changedFiles.filter((f) => f.status === "deleted");
+      const renamed = changedFiles.filter((f) => f.status === "renamed");
 
       return {
         content: [
@@ -256,7 +302,7 @@ export class GetChangedFilesToolHandler extends BaseToolHandler<z.infer<typeof G
             type: "text",
             text: JSON.stringify(
               {
-                baseBranch: args.baseBranch,
+                baseBranch,
                 targetBranch,
                 totalChanges: changedFiles.length,
                 summary: {
