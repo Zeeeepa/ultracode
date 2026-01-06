@@ -77,7 +77,7 @@ export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeo
 
 const AnalyzeHotspotsSchema = z.object({
   projectPath: projectPathParam,
-  type: z.enum(["complexity", "changes", "coupling", "all"]).optional().default("all"),
+  metric: z.enum(["complexity", "changes", "coupling", "all"]).optional().default("complexity"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.hotspots),
 });
@@ -95,19 +95,30 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
     // Get all entities (limited to prevent memory issues)
     const entities = await storage.findEntities({ filters: {}, limit: 5000 });
 
-    // Analyze hotspots based on type
+    // Analyze hotspots based on metric
     const hotspots: any[] = [];
 
     for (const entity of entities) {
-      const score = this.calculateHotspotScore(entity, args.type);
+      const score = this.calculateHotspotScore(entity, args.metric);
       if (score > 0) {
+        // Get metrics or calculate basic ones from location
+        const storedMetrics = entity.metadata?.metrics || {};
+        const linesOfCode =
+          storedMetrics.linesOfCode ||
+          (entity.location?.end?.line && entity.location?.start?.line
+            ? entity.location.end.line - entity.location.start.line + 1
+            : undefined);
+
         hotspots.push({
           id: entity.id,
           name: entity.name,
           type: entity.type,
           filePath: entity.filePath,
-          score,
-          metrics: entity.metadata?.metrics || {},
+          score: Math.round(score * 100) / 100,
+          metrics: {
+            ...storedMetrics,
+            ...(linesOfCode && !storedMetrics.linesOfCode ? { linesOfCode } : {}),
+          },
         });
       }
     }
@@ -124,7 +135,7 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
           type: "text",
           text: JSON.stringify(
             {
-              type: args.type,
+              metric: args.metric,
               hotspotsFound: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
               hotspots: paginatedResult.data,
@@ -137,20 +148,37 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
     };
   }
 
-  private calculateHotspotScore(entity: any, type: string): number {
+  private calculateHotspotScore(entity: any, metric: string): number {
     const metrics = entity.metadata?.metrics || {};
     let score = 0;
 
-    if (type === "complexity" || type === "all") {
-      score += metrics.cyclomaticComplexity || 0;
-      score += (metrics.linesOfCode || 0) / 100;
+    // Calculate lines from location if metrics not available
+    const linesOfCode =
+      metrics.linesOfCode ||
+      (entity.location?.end?.line && entity.location?.start?.line
+        ? entity.location.end.line - entity.location.start.line + 1
+        : 0);
+
+    if (metric === "complexity" || metric === "all") {
+      // Cyclomatic complexity is the primary metric
+      score += (metrics.cyclomaticComplexity || 0) * 2;
+      // Cognitive complexity (harder to understand)
+      score += (metrics.cognitiveComplexity || 0) * 1.5;
+      // Nesting depth (deep nesting is bad)
+      score += (metrics.nestingDepth || 0) * 3;
+      // Lines of code (larger = harder to maintain)
+      score += linesOfCode / 50;
+      // Too many parameters
+      score += (metrics.parameterCount || 0) > 4 ? (metrics.parameterCount - 4) * 2 : 0;
     }
 
-    if (type === "changes" || type === "all") {
+    if (metric === "changes" || metric === "all") {
+      // changeFrequency requires git history analysis (not yet implemented)
       score += (metrics.changeFrequency || 0) * 10;
     }
 
-    if (type === "coupling" || type === "all") {
+    if (metric === "coupling" || metric === "all") {
+      // coupling metrics require dependency analysis (not yet implemented)
       score += metrics.couplingScore || 0;
       score += (metrics.dependencyCount || 0) / 5;
     }

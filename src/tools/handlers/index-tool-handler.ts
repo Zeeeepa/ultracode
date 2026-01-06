@@ -7,19 +7,8 @@
 
 import { z } from "zod";
 import { getIndexingStatus, isIndexing, setIndexingState } from "../../index.js";
-import type { AgentTask } from "../../types/agent.js";
+import { type AgentTask, AgentType } from "../../types/agent.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
 
 const IndexToolSchema = z.object({
   directory: z.string().optional(),
@@ -76,39 +65,70 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
   private async executeIndexing(args: IndexToolArgs, targetDir: string): Promise<ToolResult> {
     const { incremental, excludePatterns, reset, fullScan } = args;
 
-    // Step 1: Optional reset
-    if (reset) {
-      await this.resetGraphStorage(targetDir);
+    // Step 0: Kill existing worker pools before full reindex (prevents conflicts with keepalive workers)
+    if (!incremental) {
+      try {
+        const conductor = this.context.getConductor();
+        const devAgent = conductor.getAgentByType?.(AgentType.DEV) as any;
+        if (devAgent?.parserAgent?.destroyWorkerPools) {
+          console.error(`[IndexToolHandler] Destroying existing worker pools before reindex...`);
+          await devAgent.parserAgent.destroyWorkerPools();
+          console.error(`[IndexToolHandler] Worker pools destroyed`);
+        }
+      } catch (error) {
+        // Ignore - workers may not exist yet
+        this.context.logger.debug(
+          "INDEXING",
+          "Could not destroy worker pools",
+          { error: (error as Error).message },
+          this.context.requestId,
+        );
+      }
     }
 
-    // Step 1.5: v4 - Always set project context for GraphStorage before indexing
+    // Step 1: Set project context for GraphStorage (like auto-indexer)
     const storage = await this.context.getGraphStorage();
     storage.setProject(targetDir);
     this.context.logger.debug("INDEXING", "GraphStorage context set", { targetDir }, this.context.requestId);
 
-    // Step 2: Initialize semantic agent if enabled and ensure correct project context
-    if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
-      // Use ensureSemanticAgentForProject to reinitialize VectorStore for the target directory
-      await this.ensureSemanticAgentForProject(targetDir);
+    // Step 2: Optional reset - clear storage BEFORE indexing starts
+    if (reset) {
+      await storage.clear();
+      this.context.logger.debug("INDEXING", "Graph storage cleared", { targetDir }, this.context.requestId);
     }
 
-    // Step 3: Detect codebase size and adjust patterns
+    // Step 3: Drop vector index for faster bulk inserts (like auto-indexer)
+    // Don't reinitialize VectorStore - just drop index
+    if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1" && !incremental) {
+      try {
+        const semanticAgent = await this.context.getSemanticAgent();
+        await semanticAgent.dropVectorIndex();
+        this.context.logger.debug("INDEXING", "Vector index dropped for bulk insert", {}, this.context.requestId);
+      } catch (error) {
+        // Semantic agent may not be available yet, that's ok
+        this.context.logger.debug(
+          "INDEXING",
+          "Could not drop vector index",
+          { error: (error as Error).message },
+          this.context.requestId,
+        );
+      }
+    }
+
+    // Step 4: Merge patterns (simple, no expensive codebase size detection)
     const enhancedExcludePatterns = await this.getEnhancedExcludePatterns(targetDir, excludePatterns, fullScan);
 
-    // Step 4: Create and process indexing task
+    // Step 5: Create and process indexing task (main work)
     const result = await this.processIndexingTask(targetDir, incremental, enhancedExcludePatterns);
 
-    // Step 5: Generate embeddings for indexed entities (batch mode)
+    // Step 6: Finalize embeddings AFTER indexing completes (like auto-indexer)
     let oversizedWarning: { aiMessage: string | null; oversizedCount: number; maxTokens: number } | null = null;
     let embeddingStats: { generated: number; skipped: number } | null = null;
 
     if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
-      await this.ensureSemanticsReady();
-
-      // Generate embeddings for all entities in storage (batch mode, with deduplication)
       try {
         const semanticAgent = await this.context.getSemanticAgent();
-        console.error(`[IndexToolHandler] Generating embeddings from storage...`);
+        console.error(`[IndexToolHandler] Finalizing embeddings...`);
         embeddingStats = await semanticAgent.generateEmbeddingsFromStorage();
         console.error(
           `[IndexToolHandler] Embeddings: generated=${embeddingStats?.generated ?? 0}, skipped=${embeddingStats?.skipped ?? 0}`,
@@ -124,7 +144,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
           };
         }
       } catch (error) {
-        console.error(`[IndexToolHandler] Failed to generate embeddings:`, error);
+        console.error(`[IndexToolHandler] Failed to finalize embeddings:`, error);
       }
     }
 
@@ -175,156 +195,14 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     };
   }
 
-  private async resetGraphStorage(targetDir: string): Promise<void> {
-    // v4: Set project context before clearing
-    const storage = await this.context.getGraphStorage();
-    storage.setProject(targetDir);
-    this.context.logger.systemEvent("GraphStorage context set for project", { directory: targetDir });
-
-    // Clear graph storage for this project context
-    await storage.clear();
-    this.context.logger.systemEvent("Graph storage cleared before indexing", { directory: targetDir });
-
-    // Clear vector store (embeddings) to ensure fresh semantic search
-    try {
-      // Ensure SemanticAgent uses the correct project's VectorStore before clearing
-      const semanticAgent = await this.ensureSemanticAgentForProject(targetDir);
-      const vectorStore = semanticAgent.getVectorStore?.();
-      if (vectorStore) {
-        await vectorStore.clear();
-        this.context.logger.systemEvent("Vector store cleared before indexing", { directory: targetDir });
-      }
-    } catch (error) {
-      // Semantic agent may not be available yet, that's ok
-      this.context.logger.debug(
-        "INDEXING",
-        "Could not clear vector store (semantic agent not ready)",
-        { error: (error as Error).message },
-        this.context.requestId,
-      );
-    }
-  }
-
   private async getEnhancedExcludePatterns(
-    targetDir: string,
+    _targetDir: string,
     basePatterns: string[],
-    fullScan: boolean,
+    _fullScan: boolean,
   ): Promise<string[]> {
-    const enhancedPatterns = [...basePatterns];
-
-    try {
-      const { numFiles, projectSizeMB } = await this.detectCodebaseSize(targetDir);
-
-      // Adjust resource allocation
-      const resourceManager = (global as any).resourceManager;
-      if (resourceManager) {
-        resourceManager.adjustForCodebaseSize(numFiles, projectSizeMB);
-      }
-
-      // Large codebase detection - log only, no automatic pattern injection
-      // User should explicitly specify excludePatterns if needed
-      if (numFiles > 2000) {
-        this.context.logger.info(
-          "INDEXING",
-          "Large codebase detected. Consider using excludePatterns for faster indexing.",
-          { fileCount: numFiles },
-          this.context.requestId,
-        );
-      }
-
-      // Enable batch processing for large codebases
-      if (!fullScan && numFiles > 2000) {
-        this.context.logger.info(
-          "INDEXING",
-          "Large codebase detected, enabling batch processing",
-          { fileCount: numFiles },
-          this.context.requestId,
-        );
-        enhancedPatterns.push("__batch_processing_enabled__");
-      }
-    } catch (error) {
-      this.context.logger.warn(
-        "INDEXING",
-        "Could not detect codebase size, using default patterns",
-        { error: (error as Error).message },
-        this.context.requestId,
-      );
-    }
-
-    return enhancedPatterns;
-  }
-
-  private async detectCodebaseSize(targetDir: string): Promise<{ numFiles: number; projectSizeMB: number }> {
-    // Cross-platform implementation using Node.js fs instead of Unix commands (find/du/wc)
-    const { glob } = await import("../../utils/glob.js");
-    const { stat } = await import("node:fs/promises");
-
-    // Source file extensions to count
-    const extensions = [
-      "*.js",
-      "*.ts",
-      "*.tsx",
-      "*.jsx",
-      "*.py",
-      "*.java",
-      "*.cpp",
-      "*.c",
-      "*.h",
-      "*.hpp",
-      "*.go",
-      "*.rs",
-      "*.kt",
-      "*.kts",
-      "*.swift",
-      "*.css",
-      "*.scss",
-      "*.sass",
-      "*.less",
-      "*.html",
-      "*.htm",
-      "*.xml",
-      "*.json",
-      "*.yaml",
-      "*.yml",
-    ];
-
-    // Count source files using cross-platform glob
-    const pattern = `**/{${extensions.join(",")}}`;
-    const files = await glob(pattern, {
-      cwd: targetDir,
-      ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**"],
-    });
-    const numFiles = files.length;
-
-    // Estimate project size by sampling (full recursive would be slow)
-    const { join } = await import("node:path");
-    let projectSizeMB = 0;
-    try {
-      // For quick estimate, sample first 100 files
-      const sampleFiles = files.slice(0, 100);
-      let sampleSize = 0;
-      for (const file of sampleFiles) {
-        try {
-          const fileStat = await stat(join(targetDir, file));
-          sampleSize += fileStat.size;
-        } catch {
-          // Ignore inaccessible files
-        }
-      }
-      // Extrapolate to full size
-      projectSizeMB = Math.floor(((sampleSize / Math.max(1, sampleFiles.length)) * numFiles) / (1024 * 1024));
-    } catch {
-      projectSizeMB = 0;
-    }
-
-    this.context.logger.info(
-      "INDEXING",
-      `Detected ${numFiles} source files in codebase`,
-      { directory: targetDir, fileCount: numFiles },
-      this.context.requestId,
-    );
-
-    return { numFiles, projectSizeMB };
+    // Simply return base patterns - no expensive codebase size detection
+    // auto-indexer uses buildAutoIndexExcludePatterns() which is fast
+    return [...basePatterns];
   }
 
   private async processIndexingTask(directory: string, incremental: boolean, excludePatterns: string[]): Promise<any> {
@@ -356,22 +234,6 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       : Math.max(configuredTimeout, INDEX_DEFAULT_TIMEOUT);
 
     return await this.context.withTimeout(conductor.process(task), timeoutMs, "index", this.context.requestId);
-  }
-
-  private async ensureSemanticsReady(): Promise<void> {
-    // Wait for semantic agent to be ready
-    const maxRetries = 5;
-    const retryDelay = 1000;
-
-    for (let i = 0; i < maxRetries; i++) {
-      try {
-        await this.context.getSemanticAgent();
-        break;
-      } catch (error) {
-        if (i === maxRetries - 1) throw error;
-        await sleep(retryDelay);
-      }
-    }
   }
 
   private logIndexingActivity(directory: string, incremental: boolean, excludePatterns: string[], result: any): void {
