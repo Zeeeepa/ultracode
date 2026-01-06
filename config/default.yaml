@@ -170,9 +170,8 @@ indexer:
   cacheTTL: 300000        # 5 minutes (in ms)
 
 # Branch-Aware Indexing Configuration
-# Enables per-branch databases for accurate indexing when switching Git branches
+# Branch-aware mode is auto-enabled when .git directory is detected
 indexing:
-  branchAware: true                 # Enable per-branch databases (RECOMMENDED for Git repositories)
   autoSwitchOnBranchChange: true    # Automatically switch DB when Git branch changes
   maxBranchesPerRepo: 10            # Maximum branches to keep indexed per repository
   maxTotalBranches: 50              # Maximum total branches across all repositories

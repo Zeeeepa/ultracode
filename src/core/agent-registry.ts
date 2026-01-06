@@ -48,7 +48,9 @@ export async function registerAllAgents(
   // IndexerAgent - uses libsql via GraphStorage (no SQLiteManager needed)
   container.registerAgent(AgentType.INDEXER, async (_c) => {
     const { IndexerAgent } = await import("../agents/indexer-agent.js");
-    return new IndexerAgent();
+    const agent = new IndexerAgent();
+    await agent.initialize(); // Initialize to setup BranchManager
+    return agent;
   });
 
   // QueryAgent

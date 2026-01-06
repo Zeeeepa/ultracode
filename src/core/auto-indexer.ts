@@ -359,16 +359,16 @@ export async function performAutoIndex(
         logger.warn("TRACKING", `Failed to update tracking`, { error: (error as Error).message });
       }
 
-      // Start GitWatcher for incremental updates (if branchAware enabled)
+      // Start FileWatcher/GitWatcher for incremental updates
       try {
         const cond = ctx.getConductor();
         const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as any;
         if (indexerAgent?.setRepositoryPath) {
-          indexerAgent.setRepositoryPath(targetDir);
-          console.error(`✅ GitWatcher started for incremental updates`);
+          await indexerAgent.setRepositoryPath(targetDir);
+          console.error(`✅ FileWatcher/GitWatcher started for incremental updates`);
         }
       } catch (error) {
-        console.error(`⚠️  Failed to start GitWatcher:`, (error as Error).message);
+        console.error(`⚠️  Failed to start file watching:`, (error as Error).message);
       }
     } else {
       console.error(`⚠️  Auto-indexing completed with warnings in ${duration}s`);

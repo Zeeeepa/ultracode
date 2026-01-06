@@ -81,7 +81,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     cacheTTL: 300000, // 5 minutes
   },
   indexing: {
-    branchAware: true, // Enabled by default for accurate per-branch indexing
+    // branchAware removed - auto-detected via .git directory
     autoSwitchOnBranchChange: true,
     maxBranchesPerRepo: 10,
     maxTotalBranches: 50,

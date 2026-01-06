@@ -119,7 +119,7 @@ export class GetVersionToolHandler extends BaseToolHandler<z.infer<typeof GetVer
         result.features = {
           semanticSearch: true,
           multiLanguage: true,
-          branchManagement: !!this.context.getBranchManager(),
+          branchManagement: !!(await this.context.getBranchManager()),
           snapshots: !!this.context.getSnapshotManager(),
         };
       }

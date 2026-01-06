@@ -273,7 +273,7 @@ export interface ConductorConfig extends CoordinatorConfig {
 // =============================================================================
 
 export interface IndexingConfig {
-  branchAware?: boolean | undefined;
+  // branchAware removed - auto-detected via .git directory
   autoSwitchOnBranchChange?: boolean | undefined;
   maxBranchesPerRepo?: number;
   maxTotalBranches?: number;

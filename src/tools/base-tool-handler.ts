@@ -27,7 +27,7 @@ export interface ToolContext {
   getGraphStorage: () => Promise<any>; // v4: libsql unified, no params needed
   getSQLiteManager: () => any; // legacy: kept for AutoDoc and BatchOperations
   getSemanticAgent: () => Promise<any>;
-  getBranchManager: () => any;
+  getBranchManager: () => Promise<any>;
   getSnapshotManager: () => any;
   getKnowledgeBus: () => any;
   getServiceContainer?: () => any; // DI Container for services
