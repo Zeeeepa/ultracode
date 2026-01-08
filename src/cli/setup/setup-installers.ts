@@ -22,6 +22,7 @@ import { c } from "./setup-ui.js";
 // Re-export utilities
 export { checkDocker, checkOllama } from "./utils/docker.js";
 
+import { installLlamaCpp } from "./installers/llamacpp-installer.js";
 import { installOllama } from "./installers/ollama-installer.js";
 // Import installers
 import { installOVMSNative } from "./installers/ovms-installer.js";
@@ -52,6 +53,9 @@ export async function installProvider(
   } else if (provider === "ollama") {
     const success = await installOllama(model);
     return { success };
+  } else if (provider === "llamacpp") {
+    const result = await installLlamaCpp(model, gpu, cpu);
+    return result;
   }
 
   return { success: false };

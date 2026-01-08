@@ -93,6 +93,10 @@ async function loadCuda(): Promise<boolean> {
   // Note: Blackwell (CC 12.0) support added to CMakeLists.txt
   // Try loading addon directly - it's compiled for CC 120
 
+  // Create require function for ESM compatibility (native modules need require())
+  const { createRequire } = await import("module");
+  const require = createRequire(import.meta.url);
+
   // Try to load CUDA addon from multiple locations
   const plat = process.platform === "win32" ? "win32" : "linux";
   const possiblePaths = [
@@ -110,9 +114,10 @@ async function loadCuda(): Promise<boolean> {
   for (const addonPath of possiblePaths) {
     try {
       const normalizedPath = addonPath.replace(/^\/([A-Za-z]:)/, "$1");
-      if (!existsSync(normalizedPath)) continue;
+      const exists = existsSync(normalizedPath);
+      log(`CUDA path check: ${normalizedPath} exists=${exists}`);
+      if (!exists) continue;
 
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       cudaAddon = require(normalizedPath);
       const info = cudaAddon!.getDeviceInfo();
       if (info.deviceCount > 0) {
@@ -120,9 +125,11 @@ async function loadCuda(): Promise<boolean> {
         state.cudaAvailable = true;
         state.cudaDeviceInfo = info;
         return true;
+      } else {
+        log(`CUDA loaded but no devices found`);
       }
     } catch (error) {
-      // Try next path
+      log(`CUDA load error at ${addonPath}: ${(error as Error).message}`);
     }
   }
 

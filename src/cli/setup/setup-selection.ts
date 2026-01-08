@@ -35,49 +35,38 @@ export async function selectLanguage(): Promise<"en" | "multi"> {
 export function getProviderRecommendations(cpu: CPUInfo, gpu: GPUInfo): ProviderOption[] {
   const options: ProviderOption[] = [];
 
-  // OVMS (OpenVINO Model Server) — native binary, no Docker required (Windows/Linux)
-  // NOTE: OVMS only supports Intel GPU, not NVIDIA! For NVIDIA use vLLM.
+  // Hardware detection
+  const isNvidiaGPU = gpu.available && /nvidia|geforce|rtx|gtx|quadro/i.test(gpu.name);
   const isIntelGPU = gpu.available && gpu.name.toLowerCase().includes("intel");
+  const isAmdGPU = gpu.available && /amd|radeon|rx\s?\d|vega|navi/.test(gpu.name.toLowerCase());
   const isWindows = process.platform === "win32";
   const isLinux = process.platform === "linux";
-  const speedMap = { optimal: "55K+ tok/s", excellent: "50K tok/s", good: "40K tok/s", basic: "30K tok/s" };
-  const ovmsSpeed = isIntelGPU ? "60K+ tok/s" : speedMap[cpu.openvinoTier as keyof typeof speedMap] || "30K tok/s";
 
-  // OVMS Native - no Docker required (Windows 11 / Linux only)
-  if (isWindows || isLinux) {
-    options.push({
-      id: "ovms-native",
-      name: "OVMS Native (без Docker)",
-      recommended: !gpu.available && (isWindows || isLinux), // Recommend for CPU-only without Docker
-      speed: ovmsSpeed,
-      pros: ["Без Docker", "Простая установка", "INT8 квантизация", "Большие batch size"],
-      cons: isIntelGPU ? ["Intel GPU требует драйвера"] : [],
-      available: true,
-    });
-  }
-
-  // vLLM - for NVIDIA GPU (high performance)
-  const isNvidiaGPU = gpu.available && /nvidia|geforce|rtx|gtx|quadro/i.test(gpu.name);
+  // ══════════════════════════════════════════════════════════════════════
+  // 1. vLLM - NVIDIA GPU champion (measured: 1352 emb/s with e5-small)
+  // ══════════════════════════════════════════════════════════════════════
   if (isNvidiaGPU) {
     options.push({
       id: "vllm",
       name: "vLLM Docker (NVIDIA GPU)",
-      recommended: true,
-      speed: "100K+ tok/s",
-      pros: ["NVIDIA GPU ускорение", "OpenAI API совместимость", "Большие модели", "Tensor parallelism"],
+      recommended: true, // Fastest option for NVIDIA
+      speed: "1352 emb/s", // Measured with e5-small on RTX 5090
+      pros: ["Самый быстрый", "NVIDIA GPU ускорение", "OpenAI API", "Continuous batching"],
       cons: ["Требует Docker", "Требует 8GB+ VRAM"],
       available: true,
     });
   }
 
-  // TEI — if GPU available
+  // ══════════════════════════════════════════════════════════════════════
+  // 2. TEI - GPU runner-up (measured: 1193 emb/s with e5-small)
+  // ══════════════════════════════════════════════════════════════════════
   if (gpu.available) {
     const teiOption: ProviderOption = {
       id: "tei",
       name: gpu.isBlackwell ? "TEI (GPU) — Blackwell edition" : "TEI (GPU)",
-      recommended: !gpu.isBlackwell && gpu.computeCap >= 8.0,
-      speed: "90K tok/s",
-      pros: ["Native batch", "1,786 texts/s", "28ms латентность"],
+      recommended: !isNvidiaGPU && !gpu.isBlackwell && gpu.computeCap >= 8.0, // Recommend if no NVIDIA
+      speed: "1193 emb/s", // Measured with e5-small on RTX 5090
+      pros: ["Native batch", "HuggingFace оптимизация", "Низкая латентность"],
       cons: ["Требует Docker"],
       available: true,
     };
@@ -87,16 +76,36 @@ export function getProviderRecommendations(cpu: CPUInfo, gpu: GPUInfo): Provider
     options.push(teiOption);
   }
 
-  // Ollama — always available
+  // ══════════════════════════════════════════════════════════════════════
+  // 3. llama.cpp - native GGUF (measured: 373 emb/s with e5-small)
+  // ══════════════════════════════════════════════════════════════════════
   options.push({
-    id: "ollama",
-    name: "Ollama (GPU/CPU)",
-    recommended: gpu.isBlackwell, // Recommend for Blackwell since TEI is tricky
-    speed: gpu.available ? "53K tok/s" : "10K tok/s",
-    pros: ["Простая установка", "Поддержка всех GPU", "Без Docker"],
-    cons: ["Нет native batch"],
+    id: "llamacpp",
+    name: "llama.cpp (Native GGUF)",
+    recommended: isAmdGPU, // Recommend for AMD GPUs (Vulkan backend)
+    speed: "373 emb/s", // Measured with e5-small on RTX 5090
+    pros: ["Без Docker", "GGUF модели", "CUDA/Vulkan/CPU", "Низкое потребление VRAM"],
+    cons: ["Медленнее vLLM/TEI", "/v1/embeddings API"],
     available: true,
   });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 4. OVMS Native - OpenVINO (TBD - needs benchmark)
+  // ══════════════════════════════════════════════════════════════════════
+  if (isWindows || isLinux) {
+    const speedMap = { optimal: "TBD", excellent: "TBD", good: "TBD", basic: "TBD" };
+    const ovmsSpeed = isIntelGPU ? "TBD (Intel GPU)" : speedMap[cpu.openvinoTier as keyof typeof speedMap] || "TBD";
+
+    options.push({
+      id: "ovms-native",
+      name: "OVMS Native (без Docker)",
+      recommended: !gpu.available && (isWindows || isLinux), // Recommend for CPU-only without Docker
+      speed: ovmsSpeed, // TODO: benchmark
+      pros: ["Без Docker", "Простая установка", "INT8 квантизация", "Большие batch size"],
+      cons: isIntelGPU ? ["Intel GPU требует драйвера", "Не протестирован"] : ["Не протестирован"],
+      available: true,
+    });
+  }
 
   return options;
 }
@@ -153,7 +162,10 @@ export async function selectModel(
 
   // Filter models by provider and language
   // ovms-native uses models with provider === "ovms", vllm has its own provider
-  const modelProvider = provider.startsWith("ovms") ? "ovms" : provider;
+  let modelProvider = provider;
+  if (provider.startsWith("ovms")) {
+    modelProvider = "ovms";
+  }
   let models = config.models.filter((m) => m.provider === modelProvider);
 
   // Filter out unavailable models (e.g., jina-v3 with Task LoRA)

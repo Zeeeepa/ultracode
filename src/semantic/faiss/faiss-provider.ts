@@ -12,7 +12,7 @@
  * 3. On restart: load index from disk
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { log } from "../../logging/index.js";
 import { getFaissIndexPathByHash, normalizeBranchName } from "../../shared/storage-paths.js";
@@ -195,8 +195,22 @@ class FaissProvider {
         hnswEfSearch: this.config.hnswEfSearch,
       };
 
-      // Try to load existing index
-      const loadPath = existsSync(this.config.persistPath) ? this.config.persistPath : undefined;
+      // Check if existing index has compatible dimensions
+      let loadPath = existsSync(this.config.persistPath) ? this.config.persistPath : undefined;
+
+      if (loadPath) {
+        const savedMeta = this.loadIndexMetadata();
+        if (savedMeta && savedMeta.dimensions !== this.config.dimensions) {
+          log.w("FAISS", "Dimension mismatch - dropping old index", {
+            savedDimensions: savedMeta.dimensions,
+            configDimensions: this.config.dimensions,
+            indexPath: loadPath,
+          });
+          // Delete old index files
+          this.deleteIndexFiles();
+          loadPath = undefined;
+        }
+      }
 
       await this.client.faissInitialize(indexConfig, loadPath);
 
@@ -211,6 +225,7 @@ class FaissProvider {
       const stats = await this.client.faissGetStats();
       log.i("FAISS", "Initialized", {
         indexType: this.config.indexType,
+        dimensions: this.config.dimensions,
         vectors: stats.totalVectors,
         loaded: !!loadPath,
         idSetSize: this.idSet.size,
@@ -417,6 +432,9 @@ class FaissProvider {
       // Save ID set alongside index
       this.saveIdSet();
 
+      // Save index metadata (dimensions, etc.) for dimension compatibility check
+      this.saveIndexMetadata();
+
       const savedCount = this.unsavedCount;
       this.unsavedCount = 0;
       this.lastSaveTime = Date.now();
@@ -499,6 +517,73 @@ class FaissProvider {
     } catch (error) {
       log.w("FAISS", "Failed to load ID set", { error: (error as Error).message });
     }
+  }
+
+  /**
+   * Get index metadata file path
+   */
+  private getMetadataPath(): string {
+    return `${this.config.persistPath}.meta.json`;
+  }
+
+  /**
+   * Save index metadata (dimensions, etc.)
+   */
+  private saveIndexMetadata(): void {
+    if (!this.config.persistPath) return;
+
+    const metaPath = this.getMetadataPath();
+    try {
+      const meta = {
+        dimensions: this.config.dimensions,
+        indexType: this.config.indexType,
+        savedAt: Date.now(),
+      };
+      writeFileSync(metaPath, JSON.stringify(meta), "utf-8");
+      log.d("FAISS", "Index metadata saved", { path: metaPath, dimensions: meta.dimensions });
+    } catch (error) {
+      log.w("FAISS", "Failed to save index metadata", { error: (error as Error).message });
+    }
+  }
+
+  /**
+   * Load index metadata
+   */
+  private loadIndexMetadata(): { dimensions: number; indexType: string } | null {
+    const metaPath = this.getMetadataPath();
+    if (!existsSync(metaPath)) {
+      return null;
+    }
+
+    try {
+      const data = readFileSync(metaPath, "utf-8");
+      return JSON.parse(data) as { dimensions: number; indexType: string };
+    } catch (error) {
+      log.w("FAISS", "Failed to load index metadata", { error: (error as Error).message });
+      return null;
+    }
+  }
+
+  /**
+   * Delete all index files (index, ID set, metadata)
+   */
+  private deleteIndexFiles(): void {
+    const filesToDelete = [this.config.persistPath, this.getIdSetPath(), this.getMetadataPath()];
+
+    for (const filePath of filesToDelete) {
+      if (filePath && existsSync(filePath)) {
+        try {
+          unlinkSync(filePath);
+          log.d("FAISS", "Deleted index file", { path: filePath });
+        } catch (error) {
+          log.w("FAISS", "Failed to delete file", { path: filePath, error: (error as Error).message });
+        }
+      }
+    }
+
+    // Clear in-memory state
+    this.idSet.clear();
+    this.unsavedCount = 0;
   }
 
   /**

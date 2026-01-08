@@ -39,6 +39,7 @@ export const MODEL_MAP: Record<string, string> = {
   "all-MiniLM-L6-v2": "Xenova/all-MiniLM-L6-v2",
   "bge-small-en-v1.5": "Xenova/bge-small-en-v1.5",
   "gte-small": "Xenova/gte-small",
+  "multilingual-e5-small": "Xenova/multilingual-e5-small",
   "multilingual-e5-base": "Xenova/multilingual-e5-base",
   "distiluse-base-multilingual-cased-v2": "Xenova/distiluse-base-multilingual-cased-v2",
   "paraphrase-multilingual-MiniLM-L12-v2": "Xenova/paraphrase-multilingual-MiniLM-L12-v2",

@@ -1,5 +1,4 @@
 export type ProviderKind =
-  | "ollama"
   | "openai"
   | "cloudru"
   | "huggingface"
@@ -7,6 +6,7 @@ export type ProviderKind =
   | "ovms" // Legacy alias for ovms-native
   | "ovms-native" // OVMS native binary (no Docker)
   | "vllm" // vLLM Docker container (NVIDIA GPU)
+  | "llamacpp" // llama.cpp native server (GGUF models)
   | "auto";
 
 export interface ProviderInfo {

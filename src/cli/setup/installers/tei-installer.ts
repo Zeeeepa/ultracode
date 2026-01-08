@@ -110,7 +110,7 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
   mkdirSync(cacheDir, { recursive: true });
   const cacheDirDocker = cacheDir.replace(/\\/g, "/").replace(/^([A-Z]):/, (_, drive) => `/${drive.toLowerCase()}`);
 
-  // Get TEI config from model or use defaults
+  // Get TEI config from model or use defaults (pure defaults - tested fastest)
   const teiConfig = (model as any).tei_config || {};
   const maxBatchTokens = teiConfig.max_batch_tokens || 16384;
   const maxClientBatchSize = teiConfig.max_client_batch_size || 500;
@@ -130,7 +130,7 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
     dockerCmd += ` -e HF_TOKEN="${hfToken}"`;
   }
 
-  // Add TEI arguments
+  // Add TEI arguments (pure defaults - any tuning reduces performance)
   dockerCmd += ` "${imageTag}" --model-id "${model.model_id}"`;
   dockerCmd += ` --max-concurrent-requests 512`;
   dockerCmd += ` --max-batch-tokens ${maxBatchTokens}`;

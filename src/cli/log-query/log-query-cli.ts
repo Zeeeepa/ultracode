@@ -17,10 +17,13 @@
  *   ulog -f                      # Follow log file (tail -f style)
  */
 
+import type { ParsedLogLine } from "../../logging/log-types.js";
 import {
+  collectEmbeddingSessions,
   createStats,
   findLogFiles,
   followLogFile,
+  formatEmbeddingStats,
   formatEntry,
   formatFields,
   formatStats,
@@ -50,6 +53,7 @@ Output:
   -o, --output <format>    Output format: raw, table, json, csv
   -c, --count              Show only count of matching entries
   --stats                  Show statistics
+  --emb                    Show embedding generation statistics
   -f, --follow             Follow log file (tail -f style)
   --no-color               Disable colored output
   --fields <list>          Show only specific fields (comma-separated)
@@ -98,6 +102,32 @@ async function main(): Promise<void> {
         console.log(line);
       });
     }
+    return;
+  }
+
+  // Embedding statistics mode
+  if (output.embeddings) {
+    // Collect all entries and filter for embedding-related events
+    // No filter - collectEmbeddingSessions will handle event filtering
+    const embFilter = {
+      ...filter,
+      limit: 10000, // Higher limit to catch all embedding events
+    };
+
+    const entries: ParsedLogLine[] = [];
+    for await (const entry of processLogFiles(logFiles, embFilter)) {
+      // Filter for embedding-related events
+      if (
+        (entry.event === "emb_summary" && entry.module === "EMBEDDING") ||
+        entry.event === ">>> vectors.written" ||
+        entry.event === "Worker wrote vectors"
+      ) {
+        entries.push(entry);
+      }
+    }
+
+    const sessions = collectEmbeddingSessions(entries);
+    console.log(formatEmbeddingStats(sessions, output.noColor));
     return;
   }
 

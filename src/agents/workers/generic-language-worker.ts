@@ -25,11 +25,11 @@ import {
   getEmbeddingConfig,
   initEmbeddingClient,
   sendCollectedEmbeddings,
+  sendCollectedTexts,
   setEmbeddingConfig,
 } from "./embedding-processor.js";
 // WorkerEmbeddingConfig imported by embedding-processor
 import { detectLanguage } from "./language-detection.js";
-import { setVectorDumpWorkerIdGetter } from "./vector-dump-writer.js";
 import { setWorkerIdGetter, WORKER_ID, workerLog } from "./worker-logging.js";
 
 // Early stderr logging for debugging worker startup (process.stderr.write bypasses console)
@@ -122,7 +122,6 @@ function getWorkerId(): string {
 
 // Configure worker ID getter for extracted modules
 setWorkerIdGetter(getWorkerId);
-setVectorDumpWorkerIdGetter(getWorkerId);
 
 // =============================================================================
 // TYPES
@@ -392,8 +391,14 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
   // Clear prefetch cache
   prefetch.clear();
 
-  // Generate embeddings for all entities (if embedding client is ready)
-  if (getEmbeddingClient() && getEmbeddingConfig()?.enabled) {
+  // Generate embeddings for all entities (if embedding is enabled)
+  // Two modes:
+  // 1. Distributed (default): worker generates embeddings via HTTP and sends binary vectors
+  // 2. Centralized (OVMS): worker sends texts, Main generates embeddings via gRPC
+  const config = getEmbeddingConfig();
+  if (config?.enabled) {
+    const isCentralized = config.centralizedEmbeddings === true;
+
     const embeddingStart = Date.now();
     let embeddingCount = 0;
 
@@ -406,15 +411,21 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
     }
 
     const embeddingTime = Date.now() - embeddingStart;
-    workerLog("INFO", `Embeddings generated`, {
+    workerLog("INFO", isCentralized ? `Texts collected for centralized embedding` : `Embeddings generated`, {
       taskId: task.id,
       embeddingCount,
       embeddingTimeMs: embeddingTime,
+      mode: isCentralized ? "centralized" : "distributed",
     });
 
-    // Send collected embeddings to main process via separate optimized message
-    // This allows main process to route embeddings directly to GPU subprocess
-    sendCollectedEmbeddings({ postWorkerMessage, getWorkerId });
+    // Send to main process
+    if (isCentralized) {
+      // Centralized mode: send texts, Main generates embeddings via gRPC
+      sendCollectedTexts({ postWorkerMessage, getWorkerId });
+    } else {
+      // Distributed mode: send binary vectors
+      sendCollectedEmbeddings({ postWorkerMessage, getWorkerId });
+    }
   }
 
   // Clear file contents to free memory

@@ -27,7 +27,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
   }
 
   protected async execute(args: IndexToolArgs): Promise<ToolResult> {
-    const targetDir = args.directory || this.context.config.directory;
+    const targetDir = args.directory || this.context.config.directory || process.cwd();
 
     // Step 0: Check if indexing is already in progress (prevent concurrent indexing)
     if (isIndexing()) {
@@ -149,6 +149,46 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       log.e("INDEXTOOL", "watcher_fail", { err: String(error) });
     }
 
+    // Step 6b: Log embedding performance summary from parser agent
+    let embeddingPerformance: {
+      totalEmbeddings: number;
+      durationSeconds: number;
+      embeddingsPerSecond: number;
+      workersUsed: number;
+    } | null = null;
+
+    try {
+      const conductor = this.context.getConductor();
+      const devAgent = conductor.getAgentByType?.(AgentType.DEV) as any;
+      const embStats = devAgent?.getEmbeddingStats?.();
+      if (embStats && embStats.total > 0) {
+        log.i("EMBEDDING", "emb_summary", {
+          total: embStats.total,
+          dur: `${(embStats.durationMs / 1000).toFixed(1)}s`,
+          speed: `${embStats.speedPerSec}/s`,
+          workers: embStats.workers,
+          batches: embStats.batches,
+          provider: embStats.provider,
+        });
+        embeddingPerformance = {
+          totalEmbeddings: embStats.total,
+          durationSeconds: Math.round((embStats.durationMs / 1000) * 10) / 10,
+          embeddingsPerSecond: embStats.speedPerSec,
+          workersUsed: embStats.workers,
+        };
+      }
+    } catch {
+      // Non-critical, ignore
+    }
+
+    // Step 6c: Flush LibSQL to disk immediately (synchronous=OFF buffers writes)
+    try {
+      await storage.flush();
+      log.d("INDEXTOOL", "storage_flushed");
+    } catch (e) {
+      log.w("INDEXTOOL", "storage_flush_error", { error: String(e) });
+    }
+
     // Step 7: Log and publish result
     this.logIndexingActivity(targetDir, incremental, excludePatterns, result);
     this.publishToKnowledgeBus(result);
@@ -163,6 +203,11 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     // Add embedding statistics
     if (embeddingStats) {
       response.embeddings = embeddingStats;
+    }
+
+    // Add embedding performance metrics
+    if (embeddingPerformance) {
+      response.embeddingPerformance = embeddingPerformance;
     }
 
     // Add AI-friendly warning about oversized entities

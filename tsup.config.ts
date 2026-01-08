@@ -209,6 +209,35 @@ export default defineConfig([
     dts: false,
   },
 
+  // CLI ulog command - log query utility
+  {
+    entry: {
+      "cli/log-query/log-query-cli": "src/cli/log-query/log-query-cli.ts",
+    },
+    outDir: "dist",
+    sourcemap: !isPackageMode,
+    format: ["esm"],
+    platform: "node",
+    target: "node24",
+    shims: false,
+    splitting: false,
+    minify: isPackageMode,
+    treeshake: true,
+    silent: true,
+
+    esbuildOptions(options) {
+      options.logOverride = {
+        ...options.logOverride,
+        "direct-eval": "silent",
+        "import-is-undefined": "silent",
+      };
+    },
+
+    external: ["@modelcontextprotocol/sdk"],
+
+    dts: false,
+  },
+
   // CLI setup command - used by setup-embeddings scripts
   {
     entry: {

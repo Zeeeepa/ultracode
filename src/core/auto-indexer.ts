@@ -312,6 +312,23 @@ export async function performAutoIndex(
       const entityCount = result?.data?.entityCount ?? result?.data?.entities ?? result?.entities?.length ?? 0;
       log.i("INDEXER", "auto_index_done", { entities: entityCount, dur: Date.now() - startTime, req: requestId });
 
+      // Log embedding performance summary
+      try {
+        const devAgent = cond.getAgentByType?.(AgentType.DEV) as any;
+        const embStats = devAgent?.getEmbeddingStats?.();
+        if (embStats && embStats.total > 0) {
+          log.i("EMBEDDING", "emb_summary", {
+            total: embStats.total,
+            dur: `${(embStats.durationMs / 1000).toFixed(1)}s`,
+            speed: `${embStats.speedPerSec}/s`,
+            workers: embStats.workers,
+            batches: embStats.batches,
+          });
+        }
+      } catch {
+        // Non-critical
+      }
+
       // Finalize embeddings (workers generate, main just loads dump files as fallback)
       if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
         try {
@@ -353,6 +370,15 @@ export async function performAutoIndex(
         }
       } catch (error) {
         log.w("INDEXER", "watcher_fail", { err: (error as Error).message });
+      }
+
+      // Flush LibSQL storage to disk (synchronous=OFF buffers writes)
+      try {
+        const graphStorage = await ctx.getGraphStorage();
+        await graphStorage.flush();
+        log.d("INDEXER", "storage_flushed");
+      } catch (error) {
+        log.w("INDEXER", "storage_flush_fail", { err: (error as Error).message });
       }
     } else {
       log.w("INDEXER", "auto_index_warn", { dur: duration, req: requestId });

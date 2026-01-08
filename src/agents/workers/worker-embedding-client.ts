@@ -4,19 +4,63 @@
  * Simple HTTP-only client for generating embeddings in subprocess workers.
  * No heavy dependencies - only uses native fetch.
  *
- * Supports: TEI, OVMS, Ollama, OpenAI (all HTTP-based)
+ * Supports: TEI, OVMS, Ollama, OpenAI, vLLM, llama.cpp (all HTTP-based)
+ *
+ * Performance:
+ * - Uses HTTP keep-alive via undici dispatcher for connection reuse
+ * - Critical for high-throughput embedding generation in long-running workers
  */
 
 import type { WorkerEmbeddingConfig } from "../../types/semantic.js";
+
+// Configure undici global dispatcher with keep-alive for connection pooling
+// This affects all native fetch() calls in this worker process
+try {
+  const { Agent: UndiciAgent, setGlobalDispatcher } = require("undici");
+  const dispatcher = new UndiciAgent({
+    keepAliveTimeout: 30_000, // 30s idle connection timeout
+    keepAliveMaxTimeout: 120_000, // 2 min max
+    connections: 16, // Max connections per host (match server --parallel)
+    pipelining: 1, // HTTP pipelining (1 = enabled but sequential)
+  });
+  setGlobalDispatcher(dispatcher);
+} catch {
+  // undici not available - native fetch still uses some connection reuse
+}
 
 export class WorkerEmbeddingClient {
   private config: WorkerEmbeddingConfig;
   private baseUrl: string;
   private initialized = false;
+  // OVMS endpoint selection for GPU/CPU load balancing
+  // If workerIndex is set, worker uses dedicated endpoint (no contention)
+  // Otherwise falls back to round-robin (legacy)
+  private endpoints: string[] = [];
+  private endpointIndex = 0;
+  private dedicatedEndpoint: string | null = null;
 
   constructor(config: WorkerEmbeddingConfig) {
     this.config = config;
     this.baseUrl = config.providerOptions?.baseUrl || "";
+    // Load endpoints for OVMS
+    const configEndpoints = config.providerOptions?.endpoints as string[] | undefined;
+    this.endpoints = configEndpoints || [config.modelName];
+
+    // Assign dedicated endpoint based on workerIndex (avoids contention)
+    if (config.workerIndex !== undefined && this.endpoints.length > 0) {
+      this.dedicatedEndpoint = this.endpoints[config.workerIndex % this.endpoints.length]!;
+    }
+
+    // Log endpoint assignment for debugging
+    const workerLog = (globalThis as any).__workerLog;
+    if (workerLog) {
+      workerLog("INFO", "WorkerEmbeddingClient endpoint assignment", {
+        workerIndex: config.workerIndex,
+        endpointsCount: this.endpoints.length,
+        dedicatedEndpoint: this.dedicatedEndpoint,
+        endpoints: this.endpoints.slice(0, 3).join(",") + (this.endpoints.length > 3 ? "..." : ""),
+      });
+    }
   }
 
   async initialize(): Promise<void> {
@@ -51,6 +95,8 @@ export class WorkerEmbeddingClient {
         return this.generateOpenAI(texts);
       case "vllm":
         return this.generateVLLM(texts);
+      case "llamacpp":
+        return this.generateLlamaCpp(texts);
       default:
         throw new Error(`Unsupported provider: ${this.config.provider}`);
     }
@@ -86,15 +132,34 @@ export class WorkerEmbeddingClient {
   }
 
   /**
-   * OVMS (OpenVINO Model Server) - uses OpenAI-compatible API
+   * OVMS (OpenVINO Model Server) - uses /v3/embeddings API
+   * Note: OVMS Native uses MediaPipe graph with /v3/embeddings endpoint (not /v1)
+   *
+   * Endpoint selection strategy:
+   * - If workerIndex is set: uses dedicated endpoint per worker (no contention)
+   * - Otherwise: falls back to round-robin (legacy behavior)
    */
   private async generateOVMS(texts: string[]): Promise<Float32Array[]> {
     const useEmbeddingsApi = this.config.providerOptions?.useEmbeddingsApi ?? true;
 
     if (useEmbeddingsApi) {
-      // OpenAI-compatible embeddings endpoint
-      const url = `${this.baseUrl}/v1/embeddings`;
+      // OVMS /v3/embeddings endpoint (MediaPipe graph)
+      const url = `${this.baseUrl}/v3/embeddings`;
       const timeout = this.config.providerOptions?.timeoutMs || 30000;
+
+      // Endpoint selection: dedicated (workerIndex) or round-robin (legacy)
+      const currentEndpoint = this.dedicatedEndpoint ?? this.endpoints[this.endpointIndex++ % this.endpoints.length]!;
+
+      // Debug log first request per endpoint
+      const workerLog = (globalThis as any).__workerLog;
+      if (workerLog && this.endpointIndex <= 1) {
+        workerLog("DEBUG", "OVMS request", {
+          endpoint: currentEndpoint,
+          workerIndex: this.config.workerIndex,
+          dedicated: !!this.dedicatedEndpoint,
+          batchSize: texts.length,
+        });
+      }
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -104,7 +169,7 @@ export class WorkerEmbeddingClient {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: this.config.modelName,
+            model: currentEndpoint, // Use round-robin endpoint (embeddings-gpu/embeddings-cpu)
             input: texts,
             encoding_format: this.config.providerOptions?.encodingFormat || "float",
           }),
@@ -238,6 +303,44 @@ export class WorkerEmbeddingClient {
       if (!response.ok) {
         const body = await response.text().catch(() => "");
         throw new Error(`vLLM error: ${response.status} ${response.statusText} - ${body.slice(0, 500)}`);
+      }
+
+      const result = (await response.json()) as {
+        data: Array<{ embedding: number[]; index: number }>;
+      };
+
+      // Sort by index to ensure correct order
+      const sorted = [...result.data].sort((a, b) => a.index - b.index);
+      return sorted.map((item) => new Float32Array(item.embedding));
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * llama.cpp - local GGUF model server with OpenAI-compatible API
+   */
+  private async generateLlamaCpp(texts: string[]): Promise<Float32Array[]> {
+    const url = `${this.baseUrl}/v1/embeddings`;
+    const timeout = this.config.providerOptions?.timeoutMs || 30000;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: this.config.modelName,
+          input: texts,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`llama.cpp error: ${response.status} ${response.statusText} - ${body.slice(0, 500)}`);
       }
 
       const result = (await response.json()) as {

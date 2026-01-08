@@ -22,10 +22,14 @@ import { isFileSupported } from "../parsers/language-configs.js";
 import { type EmbeddingAccumulator, getEmbeddingAccumulator } from "../semantic/embedding-accumulator.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { FileChange, ParseResult, ParserOptions, ParserStats, ParserTask } from "../types/parser.js";
-import type { WorkerEmbeddingConfig } from "../types/semantic.js";
+import type { EmbeddingPoolStats, WorkerEmbeddingConfig } from "../types/semantic.js";
 import { BaseAgent } from "./base.js";
 import type { BinaryEmbedding } from "./workers/language-worker-pool.js";
-import { ParsingSubprocessPool, type StreamingResultCallback } from "./workers/parsing-subprocess-pool.js";
+import {
+  type EmbeddingTextItem,
+  ParsingSubprocessPool,
+  type StreamingResultCallback,
+} from "./workers/parsing-subprocess-pool.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -156,7 +160,6 @@ export class ParserAgent extends BaseAgent {
   private keepPoolsAlive: boolean = false; // Kill pools after batch for memory release
   private embeddingConfig: WorkerEmbeddingConfig | null = null; // Embedding config for workers
   private embeddingAccumulator: EmbeddingAccumulator | null = null; // Accumulator for batch FAISS flush
-  private onVectorsWritten: ((workerId: string, count: number, dumpDir: string) => void) | null = null; // Callback for incremental Faiss load
   private streamingMode: boolean = false; // Streaming mode: send results as they become ready
   private onStreamingResult: StreamingResultCallback | null = null; // Callback for streaming results
 
@@ -207,10 +210,99 @@ export class ParserAgent extends BaseAgent {
   }
 
   /**
+   * Get callback for handling embedding texts from workers (centralized mode).
+   * Used by OVMS provider - Main process generates embeddings via gRPC.
+   * Routes texts to EmbeddingGenerator for batch processing.
+   */
+  private getEmbeddingTextsCallback(): (texts: EmbeddingTextItem[]) => void {
+    return (texts: EmbeddingTextItem[]) => {
+      if (!this.embeddingAccumulator) {
+        // Lazy init accumulator on first texts
+        this.embeddingAccumulator = getEmbeddingAccumulator();
+        log.d("PARSER", "Initialized embedding accumulator (centralized mode)");
+      }
+      // Add texts for centralized embedding generation (fire-and-forget, errors logged internally)
+      this.embeddingAccumulator.addTextsForEmbedding(texts);
+    };
+  }
+
+  /**
    * Get the embedding accumulator for external flush/stats access
    */
   getAccumulator(): EmbeddingAccumulator | null {
     return this.embeddingAccumulator;
+  }
+
+  /**
+   * Get aggregated embedding generation stats from all pools.
+   * Combines stats from subprocess pools and accumulator (centralized mode).
+   * Returns null if no embeddings were generated.
+   */
+  getEmbeddingPoolStats(): EmbeddingPoolStats | null {
+    const stats: EmbeddingPoolStats = {
+      total: 0,
+      durationMs: 0,
+      speedPerSec: 0,
+      workers: 0,
+      batches: 0,
+    };
+
+    // Aggregate from all language pools
+    for (const pool of this.languagePools.values()) {
+      const poolStats = pool.getEmbeddingStats();
+      stats.total += poolStats.total;
+      stats.durationMs = Math.max(stats.durationMs, poolStats.durationMs);
+      stats.workers += poolStats.workers;
+      stats.batches += poolStats.batches;
+    }
+
+    // Also check accumulator for centralized mode stats
+    const accStats = this.embeddingAccumulator?.getEmbeddingPoolStats();
+    if (accStats) {
+      // In centralized mode, accumulator has the real totals
+      // Pool stats only count texts received, not embeddings generated
+      stats.durationMs = Math.max(stats.durationMs, accStats.durationMs);
+      stats.provider = accStats.provider;
+    }
+
+    // Calculate overall throughput
+    stats.speedPerSec = stats.durationMs > 0 ? Math.round((stats.total / stats.durationMs) * 1000) : 0;
+
+    return stats.total > 0 ? stats : null;
+  }
+
+  /**
+   * Set the FAISS provider for embedding accumulator.
+   * Must be called before embeddings are generated to enable flushing to FAISS.
+   */
+  setFaissProvider(provider: import("../semantic/faiss/faiss-provider.js").FaissProvider): void {
+    // Initialize accumulator if not already done
+    if (!this.embeddingAccumulator) {
+      this.embeddingAccumulator = getEmbeddingAccumulator();
+    }
+    this.embeddingAccumulator.setFaissProvider(provider);
+    log.i("PARSER", "FAISS provider configured for embedding accumulator");
+  }
+
+  /**
+   * Set the EmbeddingGenerator for centralized embedding mode (OVMS).
+   * When set, workers send texts to Main and this generator produces embeddings.
+   * Must be called before parsing if centralizedEmbeddings is enabled.
+   */
+  async setEmbeddingGenerator(
+    generator: import("../semantic/embedding-generator.js").EmbeddingGenerator,
+  ): Promise<void> {
+    // Initialize accumulator if not already done
+    if (!this.embeddingAccumulator) {
+      this.embeddingAccumulator = getEmbeddingAccumulator();
+    }
+    await this.embeddingAccumulator.setEmbeddingGenerator(generator);
+    // Set provider name for stats logging
+    const providerName = generator.getProvider()?.info?.name;
+    if (providerName) {
+      this.embeddingAccumulator.setProviderName(providerName);
+    }
+    log.i("PARSER", "EmbeddingGenerator configured for centralized embedding mode", { provider: providerName });
   }
 
   /**
@@ -599,7 +691,6 @@ export class ParserAgent extends BaseAgent {
     try {
       // Always use subprocess pools for memory isolation
       log.i("PARSER", `Creating subprocess pool for ${language}`, {
-        hasVectorsWrittenCallback: !!this.onVectorsWritten,
         hasEmbeddingConfig: !!this.embeddingConfig,
       });
 
@@ -607,8 +698,8 @@ export class ParserAgent extends BaseAgent {
         killAfterBatch: !this.keepPoolsAlive, // Kill process after batch for memory release
         memoryLimitMB: 512, // Restart if memory exceeds 512MB
         ...(this.embeddingConfig && { embeddingConfig: this.embeddingConfig }),
-        onEmbeddings: this.getEmbeddingsCallback(), // Binary embeddings callback
-        ...(this.onVectorsWritten && { onVectorsWritten: this.onVectorsWritten }), // Incremental Faiss loading
+        onEmbeddings: this.getEmbeddingsCallback(), // Binary embeddings callback (distributed mode)
+        onEmbeddingTexts: this.getEmbeddingTextsCallback(), // Texts callback (centralized mode for OVMS)
         streamingMode: this.streamingMode, // Streaming results via IPC
         ...(this.onStreamingResult && { onStreamingResult: this.onStreamingResult }), // Streaming callback
       });
@@ -783,22 +874,22 @@ export class ParserAgent extends BaseAgent {
       }
     }
 
+    // Initialize accumulator with correct dimensions and batch size
+    if (config && config.centralizedEmbeddings) {
+      this.embeddingAccumulator = getEmbeddingAccumulator({
+        dimensions: config.dimensions ?? 384,
+        queueBatchSize: config.batchSize ?? 200,
+      });
+      log.i("PARSER", "Accumulator configured for centralized mode", {
+        dimensions: config.dimensions,
+        queueBatchSize: config.batchSize,
+      });
+    }
+
     if (config) {
       log.i("PARSER", `Embedding config set: ${config.provider}/${config.modelName}`);
     } else {
       log.i("PARSER", `Embedding config cleared`);
-    }
-  }
-
-  /**
-   * Set callback for incremental Faiss loading.
-   * Called when a worker writes vectors to dump files.
-   * Enables parallel indexing: Faiss loads vectors as each worker completes.
-   */
-  setVectorsWrittenCallback(callback: ((workerId: string, count: number, dumpDir: string) => void) | null): void {
-    this.onVectorsWritten = callback;
-    if (callback) {
-      log.i("PARSER", `Incremental Faiss loading enabled`);
     }
   }
 
@@ -937,6 +1028,49 @@ export class ParserAgent extends BaseAgent {
     // Cache is per-subprocess worker now
     // Workers manage their own caches
     log.w("PARSER", "importCache() called but cache is per-subprocess worker now");
+  }
+
+  /**
+   * Get aggregated embedding generation statistics across all pools
+   * Returns null if no embeddings were generated
+   */
+  getEmbeddingStats(): EmbeddingPoolStats | null {
+    const stats: EmbeddingPoolStats = {
+      total: 0,
+      durationMs: 0,
+      speedPerSec: 0,
+      workers: 0,
+      batches: 0,
+    };
+
+    for (const pool of this.languagePools.values()) {
+      if (pool instanceof ParsingSubprocessPool) {
+        const poolStats = pool.getEmbeddingStats();
+        stats.total += poolStats.total;
+        stats.durationMs = Math.max(stats.durationMs, poolStats.durationMs);
+        stats.workers += poolStats.workers;
+        stats.batches += poolStats.batches;
+      }
+    }
+
+    // Recalculate speed based on aggregated values
+    if (stats.durationMs > 0) {
+      stats.speedPerSec = Math.round((stats.total / stats.durationMs) * 1000);
+    }
+
+    return stats.total > 0 ? stats : null;
+  }
+
+  /**
+   * Reset embedding statistics across all pools
+   * Call before new indexing session
+   */
+  resetEmbeddingStats(): void {
+    for (const pool of this.languagePools.values()) {
+      if (pool instanceof ParsingSubprocessPool) {
+        pool.resetEmbeddingStats();
+      }
+    }
   }
 
   /**

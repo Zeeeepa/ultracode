@@ -316,10 +316,10 @@ export class LibSQLGraphAdapter {
     }
 
     // Quick probe of each table to detect page corruption
+    // NOTE: embeddings table removed in v5 - FAISS handles vector storage
     const probes = [
       "SELECT id FROM entities LIMIT 1",
       "SELECT id FROM relationships LIMIT 1",
-      "SELECT id FROM embeddings LIMIT 1",
       "SELECT path FROM files LIMIT 1",
     ];
 
@@ -362,27 +362,8 @@ export class LibSQLGraphAdapter {
       throw error; // Re-throw any error during integrity check
     }
 
-    // Probe embeddings table - this catches corruption in the main table
-    try {
-      const countResult = await this.client.execute("SELECT COUNT(*) as cnt FROM embeddings");
-      const count = (countResult.rows[0]?.["cnt"] as number) || 0;
-      log.i("LIBSQLADAPT", "embeddings_count", { count });
-
-      // Also check content column which often triggers corruption
-      if (count > 0) {
-        await this.client.execute("SELECT id, length(content) FROM embeddings LIMIT 1");
-      }
-    } catch (error) {
-      const msg = (error as Error).message || "";
-      if (msg.includes("no such table")) {
-        // Table doesn't exist - OK for fresh DB
-      } else {
-        log.e("LIBSQLADAPT", "embeddings_probe_fail", { err: msg });
-        throw error;
-      }
-    }
-
-    // Probe DiskANN shadow tables - corruption often hides here
+    // NOTE: embeddings table removed in v5 - FAISS handles vector storage
+    // Probe DiskANN shadow tables - corruption often hides here (legacy check)
     try {
       const shadowTables = await this.client.execute(`
         SELECT name FROM sqlite_master
@@ -515,38 +496,8 @@ export class LibSQLGraphAdapter {
         memory_usage INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL
       )`,
-        // Vector embeddings table with multi-dimension F32_BLOB columns
-        // Each project uses one column based on its model's dimensions
-        // Supports 384 (MiniLM, E5-small), 768 (E5-base, Granite), 1024 (BGE-M3, mxbai), 4096 (Qwen3, E5-Mistral)
-        `CREATE TABLE IF NOT EXISTS embeddings (
-        id TEXT NOT NULL,
-        project_hash TEXT NOT NULL DEFAULT 'legacy',
-        branch_name TEXT NOT NULL DEFAULT 'main',
-        content TEXT NOT NULL,
-        dim_size INTEGER NOT NULL DEFAULT 384,
-        embedding_384 F32_BLOB(384),
-        embedding_768 F32_BLOB(768),
-        embedding_1024 F32_BLOB(1024),
-        embedding_4096 F32_BLOB(4096),
-        metadata TEXT,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (id, project_hash, branch_name)
-      )`,
-        // GLOBAL embedding cache by content hash - shared across projects
-        // Multi-dimension columns to cache embeddings from any model
-        `CREATE TABLE IF NOT EXISTS embedding_cache (
-        content_hash TEXT PRIMARY KEY,
-        model TEXT NOT NULL,
-        dim_size INTEGER NOT NULL DEFAULT 384,
-        embedding_384 F32_BLOB(384),
-        embedding_768 F32_BLOB(768),
-        embedding_1024 F32_BLOB(1024),
-        embedding_4096 F32_BLOB(4096),
-        text_preview TEXT,
-        hit_count INTEGER DEFAULT 0,
-        created_at INTEGER NOT NULL,
-        last_used_at INTEGER NOT NULL
-      )`,
+        // NOTE: embeddings table REMOVED in v5 - FAISS is used for all vector operations
+        // See: src/semantic/vector-store.ts (v5: Faiss-only backend)
         // === INDEXES (batched for speed) ===
         // Entity indexes
         `CREATE INDEX IF NOT EXISTS idx_entities_project_branch ON entities(project_hash, branch_name)`,
@@ -559,10 +510,6 @@ export class LibSQLGraphAdapter {
         `CREATE INDEX IF NOT EXISTS idx_relationships_to ON relationships(to_id, project_hash, branch_name)`,
         // Files index
         `CREATE INDEX IF NOT EXISTS idx_files_project_branch ON files(project_hash, branch_name)`,
-        // Embeddings index
-        `CREATE INDEX IF NOT EXISTS idx_embeddings_project_branch ON embeddings(project_hash, branch_name)`,
-        // Embedding cache index for LRU eviction
-        `CREATE INDEX IF NOT EXISTS idx_embedding_cache_lru ON embedding_cache(last_used_at)`,
       ],
       "write",
     );
@@ -873,6 +820,45 @@ export class LibSQLGraphAdapter {
   clear = (): Promise<void> => this.metadataOps.clear();
 
   clearAll = (): Promise<void> => this.metadataOps.clearAll();
+
+  /**
+   * Force flush all pending writes to disk.
+   * With journal_mode=OFF and synchronous=OFF, we need to close/reopen
+   * to ensure OS buffers are flushed.
+   */
+  async flush(): Promise<void> {
+    if (!this.client || !this.dbPath) {
+      log.w("LIBSQLADAPT", "flush_skipped", { hasClient: !!this.client, hasDbPath: !!this.dbPath });
+      return;
+    }
+
+    const startTime = Date.now();
+    log.d("LIBSQLADAPT", "flush_start");
+
+    // Close current connection (flushes all buffers)
+    this.client.close();
+    this.client = null;
+
+    // Reopen with same path
+    const { createClient } = await import("@libsql/client");
+    this.client = createClient({ url: `file:${this.dbPath}` });
+
+    // Re-apply performance PRAGMAs
+    await this.client!.execute("PRAGMA cache_size = -8192");
+    await this.client!.execute("PRAGMA temp_store = MEMORY");
+    await this.client!.execute("PRAGMA mmap_size = 0");
+    await this.client!.execute("PRAGMA journal_mode = OFF");
+    await this.client!.execute("PRAGMA synchronous = OFF");
+
+    // Log file size for diagnostics
+    try {
+      const { statSync } = await import("fs");
+      const stats = statSync(this.dbPath!);
+      log.i("LIBSQLADAPT", "flush_complete", { ms: Date.now() - startTime, sizeBytes: stats.size });
+    } catch {
+      log.i("LIBSQLADAPT", "flush_complete", { ms: Date.now() - startTime, sizeBytes: "unknown" });
+    }
+  }
 
   async close(): Promise<void> {
     if (this.client) {
