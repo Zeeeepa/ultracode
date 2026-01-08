@@ -31,6 +31,8 @@ import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { log } from "../logging/index.js";
 import { CodeAnalyzer } from "../semantic/code-analyzer.js";
+// vector-dump functions now imported inside FaissProvider.loadFromDumpFiles()
+import { getEmbeddingAccumulator } from "../semantic/embedding-accumulator.js";
 import {
   arrayToVector,
   cleanupDump,
@@ -42,7 +44,6 @@ import {
   saveBatch,
   vectorToArray,
 } from "../semantic/embedding-dump.js";
-// vector-dump functions now imported inside FaissProvider.loadFromDumpFiles()
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import {
   expandLargeEntities,
@@ -874,9 +875,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
   /**
    * Finalize embeddings after indexing.
-   * Workers generate embeddings to dump files, this method:
-   * 1. Loads any remaining dump files (fallback for files missed by incremental loading)
-   * 2. Flushes and saves the FAISS index
+   * Workers generate embeddings and send them via IPC to EmbeddingAccumulator.
+   * This method flushes any pending embeddings and saves the FAISS index.
    *
    * @param _bulkMode - Deprecated, kept for API compatibility
    */
@@ -889,31 +889,20 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     this.isGeneratingEmbeddings = true;
     try {
-      // Workers generate embeddings to dump files
-      // PRIMARY: Incremental loading - each worker's dump is loaded immediately when it completes
-      //          (via onVectorsWritten callback → faissProvider.loadWorkerDump)
-      // FALLBACK: loadFromDumpFiles catches any remaining files that weren't loaded incrementally
-      const { buildWorkerEmbeddingConfig } = await import("../config/worker-embedding-config.js");
-      const workerConfig = buildWorkerEmbeddingConfig(false); // Don't clean
-
-      if (workerConfig?.vectorDumpDir) {
-        const faissProvider = this.vectorStore.getFaissProvider();
-        if (faissProvider) {
-          // Fallback: Load any remaining vectors from dump files
-          // With incremental loading, most/all should already be loaded
-          const result = await faissProvider.loadFromDumpFiles(workerConfig.dimensions || 384);
-          if (result.loaded > 0 || result.skipped > 0) {
-            log.i("EMBEDDING", "Faiss loaded remaining dump files (fallback)", result);
-          }
-          // Save Faiss index after loading
-          await this.vectorStore.flushAndSave();
-        }
-        log.i("EMBEDDING", "generateEmbeddingsFromStorage complete - workers generated embeddings", {
-          dumpDir: workerConfig.vectorDumpDir,
-        });
+      // Step 1: Flush any pending embeddings from EmbeddingAccumulator to FAISS
+      // Workers send embeddings to accumulator which batches them for efficiency
+      // This ensures all pending embeddings reach FAISS before saving to disk
+      const accumulator = getEmbeddingAccumulator();
+      const flushedFromAccumulator = await accumulator.flush();
+      if (flushedFromAccumulator > 0) {
+        log.i("EMBEDDING", "Flushed pending from accumulator", { count: flushedFromAccumulator });
       }
 
-      return { generated: 0, skipped: 0 };
+      // Step 2: Flush FAISS internal buffers and save index to disk
+      await this.vectorStore.flushAndSave();
+      log.i("EMBEDDING", "generateEmbeddingsFromStorage complete - embeddings saved to disk");
+
+      return { generated: flushedFromAccumulator, skipped: 0 };
     } catch (error) {
       log.e("EMBEDDING", "generateEmbeddingsFromStorage failed", {
         error: (error as Error).message,
@@ -934,17 +923,15 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       return;
     }
 
-    // SKIP if workers are generating embeddings to dump files
-    // Workers write to .vector-dump/*.bin, main reads them at the end
-    // This prevents duplicate embedding generation
+    // SKIP if workers are generating embeddings via IPC
+    // Workers send embeddings to EmbeddingAccumulator, no need for duplicate generation
     try {
       const { buildWorkerEmbeddingConfig } = await import("../config/worker-embedding-config.js");
-      const workerConfig = buildWorkerEmbeddingConfig(false); // Don't clean
-      if (workerConfig?.vectorDumpDir) {
-        log.d("EMBEDDING", "Skipping - workers generate to dump files", {
+      const workerConfig = buildWorkerEmbeddingConfig();
+      if (workerConfig?.enabled) {
+        log.d("EMBEDDING", "Skipping - workers generate embeddings via IPC", {
           agentId: this.id,
           entities: entities.length,
-          dumpDir: workerConfig.vectorDumpDir,
         });
         return;
       }

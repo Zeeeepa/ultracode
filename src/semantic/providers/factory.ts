@@ -1,10 +1,11 @@
 import { log } from "../../logging/index.js";
 import { makeProviderLogger } from "../../utils/provider-logger.js";
+import { LLAMACPP_EMBEDDING_PORT } from "../llamacpp-server-manager.js";
 import { OVMS_NATIVE_GRPC_PORT, OVMS_NATIVE_REST_PORT } from "../ovms-native-manager.js";
 import type { EmbeddingProvider, ProviderKind } from "./base.js";
 import { CloudRUProvider } from "./cloudru-provider.js";
 import { HuggingFaceProvider } from "./huggingface-provider.js";
-import { OllamaProvider } from "./ollama-provider.js";
+import { LlamaCppProvider } from "./llamacpp-provider.js";
 import { OpenAIProvider } from "./openai-provider.js";
 import { OVMSProvider } from "./ovms-provider.js";
 import { TEIProvider } from "./tei-provider.js";
@@ -12,7 +13,7 @@ import { VLLMProvider } from "./vllm-provider.js";
 
 /**
  * Auto-detect available embedding providers
- * Priority: OVMS Native (8083) > OVMS Docker (8082) > TEI (Docker) > Ollama (local)
+ * Priority: OVMS Native (8083) > llama.cpp (8085) > vLLM (8000) > TEI (8081)
  */
 async function detectAvailableProvider(): Promise<{ provider: ProviderKind; model: string }> {
   // Try OVMS Native first (port 8083)
@@ -27,7 +28,22 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
       return { provider: "ovms-native", model: "multilingual-e5-base" };
     }
   } catch (_error) {
-    log.d("FACTORY", "OVMS Native not available, checking Docker");
+    log.d("FACTORY", "OVMS Native not available, checking llama.cpp");
+  }
+
+  // Try llama.cpp (port 8085)
+  try {
+    const llamacppResponse = await fetch(`http://127.0.0.1:${LLAMACPP_EMBEDDING_PORT}/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(2000),
+    });
+
+    if (llamacppResponse.ok) {
+      log.i("FACTORY", "Auto-detected: llama.cpp (port 8085)");
+      return { provider: "llamacpp", model: "gguf" };
+    }
+  } catch (_error) {
+    log.d("FACTORY", "llama.cpp not available, checking vLLM");
   }
 
   // Try vLLM Docker (port 8000)
@@ -57,72 +73,23 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
       return { provider: "tei", model: "BAAI/bge-m3" };
     }
   } catch (_error) {
-    log.d("FACTORY", "TEI not available, checking Ollama");
-  }
-
-  // Try Ollama with all-minilm (best quality)
-  try {
-    const response = await fetch("http://127.0.0.1:11434/api/tags", {
-      method: "GET",
-      signal: AbortSignal.timeout(2000), // 2s timeout
-    });
-
-    if (response.ok) {
-      const data = (await response.json()) as { models?: Array<{ name?: string | undefined; model?: string }> };
-      const models = data.models || [];
-
-      // Check for all-minilm (best quality)
-      const hasMinilm = models.some((m: any) => m.name?.includes("all-minilm") || m.model?.includes("all-minilm"));
-
-      if (hasMinilm) {
-        log.i("FACTORY", "Auto-detected: Ollama with all-minilm (best quality)");
-        return { provider: "ollama", model: "all-minilm" };
-      }
-
-      // Check for granite-embedding
-      const hasGranite = models.some(
-        (m: any) => m.name?.includes("granite-embedding") || m.model?.includes("granite-embedding"),
-      );
-
-      if (hasGranite) {
-        log.i("FACTORY", "Auto-detected: Ollama with granite-embedding");
-        return { provider: "ollama", model: "granite-embedding:30m" };
-      }
-
-      // Fallback to any embedding model
-      const embeddingModel = models.find((m: any) => m.name?.includes("embed") || m.model?.includes("embed"));
-      if (embeddingModel) {
-        const model = embeddingModel.name ?? embeddingModel.model ?? "all-minilm";
-        log.i("FACTORY", `Auto-detected: Ollama with ${model}`);
-        return { provider: "ollama", model };
-      }
-    }
-  } catch (_error) {
-    log.d("FACTORY", "Ollama not available");
+    log.d("FACTORY", "TEI not available");
   }
 
   // No provider available - throw error
   throw new Error(
-    "No embedding provider available. Please install one of:\n" +
-      "  - OVMS: bun run mcp setup-embedding (select OVMS)\n" +
-      "  - TEI: docker run -d -p 8081:80 ghcr.io/huggingface/text-embeddings-inference:1.8.3 --model-id BAAI/bge-m3\n" +
-      "  - Ollama: ollama pull all-minilm",
+    "No embedding provider available. Please run: bun run mcp setup-embedding\n" +
+      "Supported providers (by speed):\n" +
+      "  - vLLM (1352 emb/s) - NVIDIA GPU, Docker required\n" +
+      "  - TEI (1193 emb/s) - GPU, Docker required\n" +
+      "  - llama.cpp (373 emb/s) - Native GGUF, no Docker\n" +
+      "  - OVMS - Intel optimized, no Docker",
   );
 }
 
 export interface ProviderFactoryOptions {
   provider: ProviderKind;
   modelName: string;
-  ollama?: {
-    baseUrl?: string | undefined;
-    timeoutMs?: number | undefined;
-    concurrency?: number | undefined;
-    headers?: Record<string, string>;
-    autoPull?: boolean;
-    warmupText?: string;
-    checkServer?: boolean;
-    pullTimeoutMs?: number;
-  };
   openai?: {
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
@@ -171,6 +138,23 @@ export interface ProviderFactoryOptions {
     checkServer?: boolean;
     maxBatchSize?: number | undefined;
   };
+  llamacpp?: {
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
+    checkServer?: boolean;
+    maxBatchSize?: number | undefined;
+    contextSize?: number | undefined;
+    nGpuLayers?: number | undefined;
+    /** Auto-start llama-server if not running (default: true) */
+    autoStart?: boolean;
+    /** Number of parallel request slots on server (default: 4) */
+    parallelSlots?: number | undefined;
+    /** Micro-batch size for embedding processing (default: 512) */
+    ubatchSize?: number | undefined;
+    /** Batch size for prompt processing (default: 1024) */
+    batchSize?: number | undefined;
+  };
 }
 
 export async function createProvider(opts: ProviderFactoryOptions): Promise<EmbeddingProvider> {
@@ -186,20 +170,6 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
   }
 
   switch (actualProvider) {
-    case "ollama":
-      return new OllamaProvider({
-        model: actualModel,
-        baseUrl: opts.ollama?.baseUrl,
-        timeoutMs: opts.ollama?.timeoutMs,
-        concurrency: opts.ollama?.concurrency,
-        headers: opts.ollama?.headers,
-        autoPull: opts.ollama?.autoPull,
-        warmupText: opts.ollama?.warmupText,
-        checkServer: opts.ollama?.checkServer,
-        pullTimeoutMs: opts.ollama?.pullTimeoutMs,
-        logger: makeProviderLogger(null, "PROVIDER_OLLAMA"),
-      });
-
     case "openai":
       if (!opts.openai?.apiKey) throw new Error("OpenAI apiKey is required");
       return new OpenAIProvider({
@@ -297,10 +267,37 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
       });
     }
 
+    case "llamacpp": {
+      const llamacppBaseUrl = opts.llamacpp?.baseUrl || `http://127.0.0.1:${LLAMACPP_EMBEDDING_PORT}`;
+      log.i("FACTORY", "Creating llama.cpp provider", {
+        baseUrl: llamacppBaseUrl,
+        model: actualModel,
+        autoStart: opts.llamacpp?.autoStart,
+        parallelSlots: opts.llamacpp?.parallelSlots,
+        ubatchSize: opts.llamacpp?.ubatchSize,
+        batchSize: opts.llamacpp?.batchSize,
+      });
+      return new LlamaCppProvider({
+        model: actualModel,
+        baseUrl: llamacppBaseUrl,
+        timeoutMs: opts.llamacpp?.timeoutMs,
+        concurrency: opts.llamacpp?.concurrency,
+        maxBatchSize: opts.llamacpp?.maxBatchSize,
+        checkServer: opts.llamacpp?.checkServer,
+        contextSize: opts.llamacpp?.contextSize,
+        nGpuLayers: opts.llamacpp?.nGpuLayers,
+        autoStart: opts.llamacpp?.autoStart,
+        parallelSlots: opts.llamacpp?.parallelSlots,
+        ubatchSize: opts.llamacpp?.ubatchSize,
+        batchSize: opts.llamacpp?.batchSize,
+        logger: makeProviderLogger(null, "PROVIDER_LLAMACPP"),
+      });
+    }
+
     default:
       throw new Error(
         `Unknown embedding provider: ${actualProvider}. ` +
-          `Supported providers: ovms, ovms-native, vllm, tei, ollama, openai, cloudru, huggingface`,
+          `Supported providers: vllm, tei, llamacpp, ovms, ovms-native, openai, cloudru, huggingface`,
       );
   }
 }

@@ -288,7 +288,7 @@ export class MetadataOperations {
 
     const { projectHash, branchName } = this.getContext();
 
-    const [entities, relationships, files, embeddings] = await Promise.all([
+    const [entities, relationships, files] = await Promise.all([
       client.execute({
         sql: "SELECT COUNT(*) as cnt FROM entities WHERE project_hash = ? AND branch_name = ?",
         args: [projectHash, branchName],
@@ -301,17 +301,13 @@ export class MetadataOperations {
         sql: "SELECT COUNT(*) as cnt FROM files WHERE project_hash = ? AND branch_name = ?",
         args: [projectHash, branchName],
       }),
-      client.execute({
-        sql: "SELECT COUNT(*) as cnt FROM embeddings WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
-      }),
     ]);
 
     return {
       totalEntities: (entities.rows[0]?.["cnt"] as number) || 0,
       totalRelationships: (relationships.rows[0]?.["cnt"] as number) || 0,
       totalFiles: (files.rows[0]?.["cnt"] as number) || 0,
-      totalEmbeddings: (embeddings.rows[0]?.["cnt"] as number) || 0,
+      totalEmbeddings: 0, // v5: embeddings stored in FAISS, not LibSQL
     };
   }
 
@@ -327,18 +323,17 @@ export class MetadataOperations {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const [entities, relationships, files, embeddings] = await Promise.all([
+    const [entities, relationships, files] = await Promise.all([
       client.execute("SELECT COUNT(*) as cnt FROM entities"),
       client.execute("SELECT COUNT(*) as cnt FROM relationships"),
       client.execute("SELECT COUNT(*) as cnt FROM files"),
-      client.execute("SELECT COUNT(*) as cnt FROM embeddings"),
     ]);
 
     return {
       totalEntities: (entities.rows[0]?.["cnt"] as number) || 0,
       totalRelationships: (relationships.rows[0]?.["cnt"] as number) || 0,
       totalFiles: (files.rows[0]?.["cnt"] as number) || 0,
-      totalEmbeddings: (embeddings.rows[0]?.["cnt"] as number) || 0,
+      totalEmbeddings: 0, // v5: embeddings stored in FAISS, not LibSQL
     };
   }
 
@@ -357,7 +352,7 @@ export class MetadataOperations {
 
     await client.batch(
       [
-        { sql: "DELETE FROM embeddings WHERE project_hash = ? AND branch_name = ?", args: [projectHash, branchName] },
+        // NOTE: embeddings table removed in v5 - FAISS handles vector storage
         {
           sql: "DELETE FROM relationships WHERE project_hash = ? AND branch_name = ?",
           args: [projectHash, branchName],
@@ -385,7 +380,7 @@ export class MetadataOperations {
 
     await client.batch(
       [
-        { sql: "DELETE FROM embeddings", args: [] },
+        // NOTE: embeddings table removed in v5 - FAISS handles vector storage
         { sql: "DELETE FROM relationships", args: [] },
         { sql: "DELETE FROM entities", args: [] },
         { sql: "DELETE FROM files", args: [] },

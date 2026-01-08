@@ -21,10 +21,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
-import type { WorkerEmbeddingConfig } from "../../types/semantic.js";
+import type { EmbeddingPoolStats, WorkerEmbeddingConfig } from "../../types/semantic.js";
 import {
   type BinaryEmbedding,
   type EmbeddingsCallback,
+  type EmbeddingTextItem,
+  type EmbeddingTextsCallback,
   killProcess,
   type ParseRequest,
   type ParseResponse,
@@ -35,17 +37,17 @@ import {
   type SubprocessPoolStats,
   type SubprocessState,
   spawnProcess,
-  type VectorsWrittenCallback,
 } from "./subprocess-pool/index.js";
 
 // Re-export types for backward compatibility
 export type {
   BinaryEmbedding,
   EmbeddingsCallback,
+  EmbeddingTextItem,
+  EmbeddingTextsCallback,
   StreamingResultCallback,
   SubprocessPoolOptions,
   SubprocessPoolStats,
-  VectorsWrittenCallback,
 };
 
 // =============================================================================
@@ -70,7 +72,7 @@ export class ParsingSubprocessPool {
   private readonly maxFilesPerChunk: number;
   private readonly embeddingConfig?: WorkerEmbeddingConfig;
   private readonly onEmbeddings?: EmbeddingsCallback;
-  private readonly onVectorsWritten?: VectorsWrittenCallback;
+  private readonly onEmbeddingTexts?: EmbeddingTextsCallback;
   private readonly onStreamingResult?: StreamingResultCallback;
   private readonly streamingMode: boolean;
 
@@ -80,6 +82,14 @@ export class ParsingSubprocessPool {
 
   // Batch processing mode: don't kill workers while batch is in progress
   private isBatchProcessing = false;
+
+  // Embedding statistics aggregation (across all workers)
+  private embeddingStatsAgg = {
+    startTime: 0,
+    totalVectors: 0,
+    totalBatches: 0,
+    workersUsed: new Set<string>(),
+  };
 
   private isShuttingDown = false;
   private isBun: boolean;
@@ -98,7 +108,7 @@ export class ParsingSubprocessPool {
     this.keepaliveMemoryLimitMB = options.keepaliveMemoryLimitMB || 500; // 500MB for keepalive worker
     this.embeddingConfig = options.embeddingConfig;
     this.onEmbeddings = options.onEmbeddings;
-    this.onVectorsWritten = options.onVectorsWritten;
+    this.onEmbeddingTexts = options.onEmbeddingTexts;
     this.streamingMode = options.streamingMode ?? false;
     this.onStreamingResult = options.onStreamingResult;
 
@@ -196,13 +206,19 @@ export class ParsingSubprocessPool {
       if (this.embeddingConfig && state.process) {
         try {
           const proc = state.process as ChildProcess;
+          // Create worker-specific config with workerIndex for endpoint assignment
+          const workerConfig: WorkerEmbeddingConfig = {
+            ...this.embeddingConfig,
+            workerIndex: workerId, // For dedicated endpoint per worker
+          };
           proc.send({
             type: "init",
-            embeddingConfig: this.embeddingConfig,
+            embeddingConfig: workerConfig,
           });
           log.d("SUBPROCESS", `Sent embedding config to worker ${workerId}, waiting for initialized`, {
             language: this.language,
             provider: this.embeddingConfig.provider,
+            workerIndex: workerId,
           });
           // DON'T resolve yet - wait for "initialized" response
           return;
@@ -252,27 +268,64 @@ export class ParsingSubprocessPool {
     // Handle embeddings.ready (binary embeddings from worker)
     if ((response as any).type === "embeddings.ready") {
       const embeddingsMsg = response as any;
+      const count = embeddingsMsg.count || embeddingsMsg.embeddings?.length || 0;
+
+      // Aggregate embedding statistics
+      if (count > 0) {
+        if (this.embeddingStatsAgg.startTime === 0) {
+          this.embeddingStatsAgg.startTime = Date.now();
+        }
+        this.embeddingStatsAgg.totalVectors += count;
+        this.embeddingStatsAgg.totalBatches += 1;
+        this.embeddingStatsAgg.workersUsed.add(String(workerId));
+      }
+
       if (this.onEmbeddings && embeddingsMsg.embeddings?.length > 0) {
-        log.d("SUBPROCESS", `Received ${embeddingsMsg.count} embeddings from worker ${workerId}`, {
+        log.d("SUBPROCESS", `Received ${count} embeddings from worker ${workerId}`, {
           language: this.language,
-          count: embeddingsMsg.count,
+          count,
         });
         this.onEmbeddings(embeddingsMsg.embeddings);
       }
       return;
     }
 
-    // Handle vectors.written (worker wrote vectors to dump files - trigger incremental Faiss load)
-    if ((response as any).type === "vectors.written") {
-      const msg = response as any;
-      if (this.onVectorsWritten && msg.count > 0) {
-        log.i("SUBPROCESS", `Worker wrote vectors to dump`, {
+    // Handle embeddings.texts (texts for centralized embedding generation via gRPC)
+    // Used by OVMS provider for better throughput
+    if ((response as any).type === "embeddings.texts") {
+      const textsMsg = response as any;
+      const count = textsMsg.count || textsMsg.texts?.length || 0;
+
+      // Debug: check if texts array arrived
+      log.i("SUBPROCESS", "embeddings.texts received", {
+        workerId,
+        count,
+        hasTextsArray: Array.isArray(textsMsg.texts),
+        textsLength: textsMsg.texts?.length ?? 0,
+        keys: Object.keys(textsMsg),
+      });
+
+      // Aggregate embedding statistics (texts will become embeddings in Main)
+      if (count > 0) {
+        if (this.embeddingStatsAgg.startTime === 0) {
+          this.embeddingStatsAgg.startTime = Date.now();
+        }
+        this.embeddingStatsAgg.totalVectors += count;
+        this.embeddingStatsAgg.totalBatches += 1;
+        this.embeddingStatsAgg.workersUsed.add(String(workerId));
+      }
+
+      if (textsMsg.texts?.length > 0) {
+        log.i("SUBPROCESS", `Received ${count} embedding texts from worker ${workerId}`, {
           language: this.language,
-          workerId: msg.workerId,
-          count: msg.count,
-          dumpDir: msg.dumpDir,
+          count,
+          hasCallback: !!this.onEmbeddingTexts,
         });
-        this.onVectorsWritten(msg.workerId, msg.count, msg.dumpDir);
+        if (this.onEmbeddingTexts) {
+          this.onEmbeddingTexts(textsMsg.texts);
+        } else {
+          log.w("SUBPROCESS", "No onEmbeddingTexts callback, texts lost!", { count });
+        }
       }
       return;
     }
@@ -779,6 +832,35 @@ export class ParsingSubprocessPool {
   }
 
   /**
+   * Get embedding generation statistics
+   * Aggregated from all vectors.written messages
+   */
+  getEmbeddingStats(): EmbeddingPoolStats {
+    const dur = this.embeddingStatsAgg.startTime > 0 ? Date.now() - this.embeddingStatsAgg.startTime : 0;
+    const speed = dur > 0 ? Math.round((this.embeddingStatsAgg.totalVectors / dur) * 1000) : 0;
+
+    return {
+      total: this.embeddingStatsAgg.totalVectors,
+      durationMs: dur,
+      speedPerSec: speed,
+      workers: this.embeddingStatsAgg.workersUsed.size,
+      batches: this.embeddingStatsAgg.totalBatches,
+    };
+  }
+
+  /**
+   * Reset embedding statistics (call before new indexing session)
+   */
+  resetEmbeddingStats(): void {
+    this.embeddingStatsAgg = {
+      startTime: 0,
+      totalVectors: 0,
+      totalBatches: 0,
+      workersUsed: new Set<string>(),
+    };
+  }
+
+  /**
    * Shutdown pool
    */
   async shutdown(): Promise<void> {
@@ -1009,9 +1091,14 @@ export class ParsingSubprocessPool {
       if (state.process) {
         try {
           const proc = state.process as ChildProcess;
+          // Create worker-specific config with workerIndex for endpoint assignment
+          const workerConfig: WorkerEmbeddingConfig = {
+            ...config,
+            workerIndex: workerId, // For dedicated endpoint per worker
+          };
           proc.send({
             type: "configure-embeddings",
-            config,
+            config: workerConfig,
           });
         } catch (error) {
           log.w("SUBPROCESS", `Failed to configure embeddings for worker ${workerId}`, {

@@ -639,6 +639,14 @@ export class GraphStorageLibSQL implements GraphStorage {
     log.i("GRAPHSTORAGE", "project_deleted", { path: projectPath });
   }
 
+  /**
+   * Force flush all pending writes to disk.
+   * Use after bulk operations to ensure data is persisted immediately.
+   */
+  async flush(): Promise<void> {
+    await this.adapter.flush();
+  }
+
   // ===========================================================================
   // VECTOR STORE ACCESS
   // ===========================================================================

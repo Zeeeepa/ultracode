@@ -125,6 +125,10 @@ export interface InstallResult {
   endpoints?: string[];
   /** Model directory name (for OVMS config) */
   modelName?: string;
+  /** Detected dimensions from running OVMS (may differ from selected model) */
+  detectedDimensions?: number;
+  /** Detected model ID based on dimensions */
+  detectedModelId?: string;
 }
 
 export interface SelectedLLMModel {

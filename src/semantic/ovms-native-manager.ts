@@ -12,11 +12,11 @@
  */
 
 import { type ChildProcess, exec, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { log } from "../logging/index.js";
-import { getDataDir } from "../utils/config-paths.js";
+import { getDataDir, getLogsDir } from "../utils/config-paths.js";
 
 // Event-driven architecture: health check uses setInterval for Node.js, disabled for Bun
 
@@ -86,6 +86,34 @@ class OVMSNativeManager {
 
   private healthCheckRunning = false;
   private shutdownPromise: Promise<void> | null = null;
+  private ovmsLogFile: string | null = null;
+
+  /**
+   * Get OVMS log file path (creates logs dir if needed)
+   */
+  private getOVMSLogFile(): string {
+    if (this.ovmsLogFile) return this.ovmsLogFile;
+
+    const logsDir = getLogsDir();
+    mkdirSync(logsDir, { recursive: true });
+
+    const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    this.ovmsLogFile = join(logsDir, `ovms-${date}.log`);
+    return this.ovmsLogFile;
+  }
+
+  /**
+   * Write to OVMS log file
+   */
+  private writeOVMSLog(level: "INFO" | "WARN" | "ERROR" | "DEBUG", message: string): void {
+    try {
+      const timestamp = new Date().toISOString();
+      const logLine = `[${timestamp}] [${level}] ${message}\n`;
+      appendFileSync(this.getOVMSLogFile(), logLine);
+    } catch {
+      // Ignore log write errors
+    }
+  }
 
   /**
    * Get OVMS binary path
@@ -332,20 +360,39 @@ class OVMSNativeManager {
       this.state.pid = proc.pid ?? null;
       this.state.startedAt = Date.now();
 
-      // Handle stdout
+      // Write startup marker to OVMS log file
+      const logFile = this.getOVMSLogFile();
+      writeFileSync(
+        logFile,
+        `\n${"=".repeat(80)}\n[${new Date().toISOString()}] OVMS Native starting (PID: ${proc.pid})\n${"=".repeat(80)}\n`,
+        { flag: "a" },
+      );
+      log.i("OVMS", "Log file", { path: logFile });
+
+      // Handle stdout - write full output to file
       proc.stdout?.on("data", (data: Buffer) => {
         const msg = data.toString().trim();
         if (msg) {
-          log.d("OVMS", `stdout: ${msg.slice(0, 200)}`);
+          this.writeOVMSLog("INFO", msg);
+          // Also log summary to main log
+          if (msg.length > 200) {
+            log.d("OVMS", `stdout: ${msg.slice(0, 200)}... (see ovms-*.log)`);
+          } else {
+            log.d("OVMS", `stdout: ${msg}`);
+          }
         }
       });
 
-      // Handle stderr
+      // Handle stderr - write full output to file (OVMS logs to stderr)
       proc.stderr?.on("data", (data: Buffer) => {
         const msg = data.toString().trim();
         if (msg) {
-          // OVMS logs to stderr, filter important messages
-          if (msg.includes("error") || msg.includes("Error") || msg.includes("ERROR")) {
+          // Write full message to file
+          const isError = msg.includes("error") || msg.includes("Error") || msg.includes("ERROR");
+          this.writeOVMSLog(isError ? "ERROR" : "DEBUG", msg);
+
+          // Also log to main log (truncated)
+          if (isError) {
             log.w("OVMS", `stderr: ${msg.slice(0, 300)}`);
           } else {
             log.d("OVMS", `stderr: ${msg.slice(0, 200)}`);

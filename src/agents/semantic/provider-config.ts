@@ -9,7 +9,7 @@ import type { SemanticConfig } from "../../utils/config-paths.js";
 /**
  * Provider kind type
  */
-export type ProviderKind = "auto" | "ollama" | "tei" | "ovms" | "ovms-native" | "vllm";
+export type ProviderKind = "auto" | "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp";
 
 /**
  * Map semantic-config.json platform to provider kind
@@ -28,8 +28,8 @@ export function mapSemanticConfigToProvider(semanticConfig: SemanticConfig | nul
       return "ovms-native";
     case "vllm":
       return "vllm";
-    case "ollama":
-      return "ollama";
+    case "llamacpp":
+      return "llamacpp";
     case "tei":
       return "tei";
     default:
@@ -52,8 +52,8 @@ export function getModelNameFromSemanticConfig(semanticConfig: SemanticConfig | 
       return semanticConfig.embedding?.ovms?.selected_model || "all-MiniLM-L6-v2";
     case "vllm":
       return semanticConfig.embedding?.vllm?.selected_model || "intfloat/multilingual-e5-large-instruct";
-    case "ollama":
-      return semanticConfig.embedding?.ollama?.selected_model || "all-minilm";
+    case "llamacpp":
+      return semanticConfig.embedding?.llamacpp?.selected_model || "multilingual-e5-base";
     case "tei":
       return semanticConfig.embedding?.tei?.selected_model || "BAAI/bge-m3";
     default:
@@ -91,12 +91,17 @@ export function buildWorkerProviderOptions(
         grpcPort: ovmsConfig?.grpcPort,
       };
     }
-    case "ollama": {
-      const ollamaConfig = semanticConfig?.embedding?.ollama as any;
+    case "llamacpp": {
+      const llamacppConfig = semanticConfig?.embedding?.llamacpp as any;
       return {
-        baseUrl: ollamaConfig?.endpoint,
-        timeoutMs: ollamaConfig?.timeoutMs,
-        concurrency: ollamaConfig?.concurrency,
+        baseUrl: llamacppConfig?.endpoint || "http://127.0.0.1:8085",
+        timeoutMs: llamacppConfig?.timeoutMs ?? 30000,
+        // Client concurrency should match server --parallel
+        concurrency: llamacppConfig?.concurrency ?? 4,
+        contextSize: llamacppConfig?.context_size || llamacppConfig?.contextSize || 2048,
+        nGpuLayers: llamacppConfig?.n_gpu_layers ?? llamacppConfig?.nGpuLayers ?? 99,
+        // Performance tuning
+        maxBatchSize: llamacppConfig?.max_batch_size ?? 256,
       };
     }
     default:
@@ -121,13 +126,6 @@ export function buildEmbeddingGeneratorOptions(
     localPath: yamlConfig?.semanticAgent?.modelPath ?? "./models",
     batchSize,
   };
-
-  // Configure ollama from semantic-config.json
-  if (semanticConfig?.embedding?.platform === "ollama" && semanticConfig?.embedding?.ollama) {
-    options["ollama"] = {
-      baseUrl: semanticConfig.embedding.ollama.endpoint,
-    };
-  }
 
   // Configure TEI from semantic-config.json OR YAML config
   const yamlTei = yamlConfig?.mcp?.embedding?.tei;
@@ -162,6 +160,28 @@ export function buildEmbeddingGeneratorOptions(
     };
   }
 
+  // Configure llama.cpp from semantic-config.json
+  if (semanticConfig?.embedding?.platform === "llamacpp") {
+    const llamacppConfig = semanticConfig?.embedding?.llamacpp as any;
+    options["llamacpp"] = {
+      baseUrl: llamacppConfig?.endpoint || "http://127.0.0.1:8085",
+      timeoutMs: llamacppConfig?.timeoutMs ?? 30000,
+      // Client concurrency should match server --parallel for optimal throughput
+      concurrency: llamacppConfig?.concurrency ?? 4,
+      // Client batch size: max texts per HTTP request
+      maxBatchSize: llamacppConfig?.max_batch_size ?? 256,
+      // Context size: tokens per slot * parallel slots (e.g., 512 * 4 = 2048)
+      contextSize: llamacppConfig?.context_size || llamacppConfig?.contextSize || 2048,
+      nGpuLayers: llamacppConfig?.n_gpu_layers ?? llamacppConfig?.nGpuLayers ?? 99,
+      // Auto-start server if not running (default: true)
+      autoStart: llamacppConfig?.auto_start ?? llamacppConfig?.autoStart ?? true,
+      // Server performance tuning
+      parallelSlots: llamacppConfig?.parallel_slots ?? 4,
+      ubatchSize: llamacppConfig?.ubatch_size ?? 1536,
+      batchSize: llamacppConfig?.batch_size ?? 3072,
+    };
+  }
+
   return options;
 }
 
@@ -170,9 +190,8 @@ export function buildEmbeddingGeneratorOptions(
  */
 export function getBatchSizeFromConfig(semanticConfig: SemanticConfig | null, defaultBatchSize: number): number {
   const ovmsBatchSize = semanticConfig?.embedding?.ovms?.batch_size;
-  const ollamaBatchSize = semanticConfig?.embedding?.ollama?.batch_size;
   const teiBatchSize = semanticConfig?.embedding?.tei?.max_batch_tokens;
-  const providerBatchSize = teiBatchSize || ollamaBatchSize || ovmsBatchSize;
+  const providerBatchSize = teiBatchSize || ovmsBatchSize;
 
   if (providerBatchSize && providerBatchSize > 0) {
     return providerBatchSize;

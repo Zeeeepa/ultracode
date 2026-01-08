@@ -46,6 +46,7 @@ export interface OutputOptions {
   follow: boolean;
   noColor: boolean;
   fields: string[];
+  embeddings: boolean;
 }
 
 /**
@@ -130,6 +131,7 @@ export function parseArgs(args: string[]): {
     follow: false,
     noColor: false,
     fields: [],
+    embeddings: false,
   };
 
   const files: string[] = [];
@@ -247,6 +249,11 @@ export function parseArgs(args: string[]): {
 
       case "--stats":
         output.stats = true;
+        break;
+
+      case "--emb":
+      case "--embeddings":
+        output.embeddings = true;
         break;
 
       case "-f":

@@ -3,7 +3,7 @@
  */
 
 import { execSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CPUInfo } from "../../../cpu/cpu-detector.js";
 import { getDataDir } from "../../../utils/config-paths.js";
@@ -70,10 +70,13 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
 
   let ovmsBin = getOvmsBinPath();
 
+  // Track detected dimensions for return value (may be set when reusing existing installation)
+  let detectedDimensions: number | undefined;
+  let detectedModelId: string | undefined;
+
   // Check if already installed
   if (existsSync(ovmsBin)) {
     printOK("OVMS уже установлен");
-
     const action = await prompt("  [1=Использовать, 2=Переустановить, 3=Отмена]: ");
     if (action === "3") return { success: false };
     if (action !== "2") {
@@ -420,5 +423,28 @@ echo "Starting OpenVINO Model Server..."
     }
   }
 
-  return { success: true, endpoints, modelName: modelDirName };
+  // Final check: Always verify actual model dimensions from file (most reliable)
+  // This handles all cases: reuse existing, reinstall, fresh install
+  // Works silently - no output, just sets the correct values
+  const finalModelConfigPath = join(modelsDir, modelDirName, "config.json");
+  if (existsSync(finalModelConfigPath)) {
+    try {
+      const configData = JSON.parse(readFileSync(finalModelConfigPath, "utf-8"));
+      if (configData.hidden_size) {
+        detectedDimensions = configData.hidden_size;
+        // Determine model_id based on dimensions
+        if (configData.hidden_size === 768) {
+          detectedModelId = "multilingual-e5-base";
+        } else if (configData.hidden_size === 384) {
+          detectedModelId = "multilingual-e5-small";
+        } else if (configData.hidden_size === 1024) {
+          detectedModelId = "multilingual-e5-large";
+        }
+      }
+    } catch {
+      /* ignore parse errors */
+    }
+  }
+
+  return { success: true, endpoints, modelName: modelDirName, detectedDimensions, detectedModelId };
 }

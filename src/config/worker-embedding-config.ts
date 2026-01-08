@@ -6,7 +6,6 @@
  */
 
 import { log } from "../logging/index.js";
-import { initVectorDumpDir } from "../semantic/vector-dump.js";
 import type { EmbeddingProviderKind, WorkerEmbeddingConfig } from "../types/semantic.js";
 import { loadSemanticConfig } from "../utils/config-paths.js";
 import { getConfig } from "./yaml-config.js";
@@ -18,7 +17,9 @@ import { getConfig } from "./yaml-config.js";
 const MODEL_DIMENSIONS: Record<string, number> = {
   // E5 models
   "intfloat/multilingual-e5-small": 384,
+  "multilingual-e5-small": 384, // Short name for OVMS
   "intfloat/multilingual-e5-base": 768,
+  "multilingual-e5-base": 768, // Short name for OVMS/llama.cpp
   "intfloat/multilingual-e5-large": 1024,
   "intfloat/multilingual-e5-large-instruct": 1024,
   "intfloat/e5-small-v2": 384,
@@ -68,6 +69,7 @@ const MODEL_CONTEXT_TOKENS: Record<string, number> = {
   // E5 models
   "intfloat/multilingual-e5-small": 512,
   "intfloat/multilingual-e5-base": 512,
+  "multilingual-e5-base": 512, // llama.cpp GGUF model name
   "intfloat/multilingual-e5-large": 512,
   "intfloat/multilingual-e5-large-instruct": 512,
   "intfloat/e5-small-v2": 512,
@@ -117,17 +119,14 @@ function getModelContextTokens(modelName: string, configValue?: number): number 
 /**
  * Build WorkerEmbeddingConfig from YAML config files.
  * Returns null if embeddings are disabled or not configured.
- *
- * @param cleanDumpDir - If true (default), cleans dump directory on start.
- *                       Set to false when just reading config (e.g., in semantic-agent).
  */
 // Cache for buildWorkerEmbeddingConfig to avoid repeated file reads
 let cachedConfig: WorkerEmbeddingConfig | null = null;
 let cacheInitialized = false;
 
-export function buildWorkerEmbeddingConfig(cleanDumpDir = true): WorkerEmbeddingConfig | null {
-  // Return cached config if available (only for read-only calls)
-  if (!cleanDumpDir && cacheInitialized) {
+export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
+  // Return cached config if available
+  if (cacheInitialized) {
     return cachedConfig;
   }
 
@@ -170,38 +169,52 @@ export function buildWorkerEmbeddingConfig(cleanDumpDir = true): WorkerEmbedding
   if (embeddingConfig.tei) {
     providerKind = "tei";
     const teiConfig = embeddingConfig.tei;
-    modelName = teiConfig.model || modelName;
-    batchSize = teiConfig.batchSize || batchSize;
+    modelName = teiConfig.selected_model || teiConfig.model || modelName;
+    batchSize = teiConfig.max_client_batch_size || teiConfig.batchSize || batchSize;
+    // Get vector_size from selected model in models array
+    const selectedModel = teiConfig.models?.find((m: any) => m.id === modelName);
+    if (selectedModel?.vector_size) {
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
     providerOptions = {
       baseUrl: teiConfig.endpoint || teiConfig.baseUrl || "http://127.0.0.1:8081",
       timeoutMs: teiConfig.timeoutMs,
-      concurrency: teiConfig.concurrency,
-      maxBatchSize: teiConfig.max_batch_tokens,
+      concurrency: teiConfig.concurrency, // default 16 in provider, can override here
+      maxBatchSize: teiConfig.max_client_batch_size, // TEI max_client_batch_size (not max_batch_tokens)
     };
-  } else if (embeddingConfig.ovms) {
+  } else if (
+    embeddingConfig.ovms ||
+    embeddingConfig.platform === "ovms" ||
+    embeddingConfig.platform === "ovms-native"
+  ) {
+    // OVMS or OVMS Native provider
     providerKind = "ovms";
-    const ovmsConfig = embeddingConfig.ovms;
-    modelName = ovmsConfig.model || modelName;
-    batchSize = ovmsConfig.batchSize || batchSize;
+    const ovmsConfig = embeddingConfig.ovms || {};
+    const endpoints = ovmsConfig.endpoints || [];
+    // Use HuggingFace model id for tokenizer loading (selected_model), not endpoint name
+    // Endpoints are passed separately in providerOptions for round-robin load balancing
+    const selectedModelId = ovmsConfig.selected_model || ovmsConfig.model || "multilingual-e5-small";
+    modelName = selectedModelId;
+    batchSize = ovmsConfig.batch_size || ovmsConfig.batchSize || batchSize;
+    // Get vector_size from selected model in models array
+    const selectedModel = ovmsConfig.models?.find((m: any) => m.id === selectedModelId);
+    if (selectedModel?.vector_size) {
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
     providerOptions = {
-      baseUrl: ovmsConfig.endpoint,
-      timeoutMs: ovmsConfig.timeoutMs,
-      concurrency: ovmsConfig.concurrency,
+      baseUrl: ovmsConfig.endpoint || "http://127.0.0.1:8083",
+      timeoutMs: ovmsConfig.timeoutMs || 30000,
+      concurrency: ovmsConfig.concurrency || 8,
       useEmbeddingsApi: ovmsConfig.useEmbeddingsApi ?? true,
       encodingFormat: ovmsConfig.encodingFormat ?? "base64",
       protocol: ovmsConfig.protocol,
       grpcPort: ovmsConfig.grpcPort,
+      endpoints: endpoints.length > 0 ? endpoints : undefined, // For round-robin GPU/CPU load balancing
     };
-  } else if (embeddingConfig.ollama) {
-    providerKind = "ollama";
-    const ollamaConfig = embeddingConfig.ollama;
-    modelName = ollamaConfig.model || modelName;
-    batchSize = ollamaConfig.batchSize || batchSize;
-    providerOptions = {
-      baseUrl: ollamaConfig.endpoint || ollamaConfig.baseUrl,
-      timeoutMs: ollamaConfig.timeoutMs,
-      concurrency: ollamaConfig.concurrency,
-    };
+
+    // OVMS uses centralized embedding mode: workers send texts to Main,
+    // Main generates embeddings via gRPC (faster than multiple HTTP clients)
+    // This is set on the result below, not in providerOptions
   } else if (embeddingConfig.openai) {
     providerKind = "openai";
     const openaiConfig = embeddingConfig.openai;
@@ -213,28 +226,42 @@ export function buildWorkerEmbeddingConfig(cleanDumpDir = true): WorkerEmbedding
       timeoutMs: openaiConfig.timeoutMs,
       concurrency: openaiConfig.concurrency,
     };
-  } else if (embeddingConfig.vllm) {
+  } else if (embeddingConfig.vllm || embeddingConfig.platform === "vllm") {
     providerKind = "vllm";
-    const vllmConfig = embeddingConfig.vllm;
+    const vllmConfig = embeddingConfig.vllm || {};
     modelName = vllmConfig.selected_model || vllmConfig.model || "intfloat/multilingual-e5-large-instruct";
     batchSize = vllmConfig.max_batch_size || vllmConfig.batchSize || 100;
+    // Get vector_size from selected model in models array
+    const selectedModel = vllmConfig.models?.find((m: any) => m.id === modelName);
+    if (selectedModel?.vector_size) {
+      // Store in embeddingConfig for later use by getModelDimensions
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
     providerOptions = {
       baseUrl: vllmConfig.endpoint || vllmConfig.baseUrl || "http://127.0.0.1:8000",
       timeoutMs: vllmConfig.timeoutMs || 30000,
       concurrency: vllmConfig.concurrency || 8,
       maxBatchSize: vllmConfig.max_batch_size || 100,
     };
-  } else if (embeddingConfig.platform === "vllm") {
-    // Handle platform-based config (from semantic-config.json)
-    providerKind = "vllm";
-    const vllmConfig = embeddingConfig.vllm || {};
-    modelName = vllmConfig.selected_model || "intfloat/multilingual-e5-large-instruct";
-    batchSize = vllmConfig.max_batch_size || 100;
+  } else if (embeddingConfig.llamacpp || embeddingConfig.platform === "llamacpp") {
+    // llama.cpp provider (local GGUF models)
+    // Optimized for throughput: larger batch size, higher concurrency
+    providerKind = "llamacpp";
+    const llamacppConfig = embeddingConfig.llamacpp || {};
+    modelName = llamacppConfig.selected_model || "multilingual-e5-base";
+    // Larger batch = better GPU utilization, default 256 (up from 100)
+    batchSize = llamacppConfig.batch_size || 256;
+    // Get vector_size from selected model in models array
+    const selectedModel = llamacppConfig.models?.find((m: any) => m.id === modelName);
+    if (selectedModel?.vector_size) {
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
     providerOptions = {
-      baseUrl: vllmConfig.endpoint || "http://127.0.0.1:8000",
-      timeoutMs: 30000,
-      concurrency: 8,
-      maxBatchSize: vllmConfig.max_batch_size || 100,
+      baseUrl: llamacppConfig.endpoint || "http://127.0.0.1:8085",
+      timeoutMs: llamacppConfig.timeoutMs || 60000, // 60s timeout for larger batches
+      concurrency: llamacppConfig.concurrency || 4, // Match server's --parallel 4
+      contextSize: llamacppConfig.context_size || 8192,
+      nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
     };
   } else {
     // No embedding provider configured
@@ -245,12 +272,9 @@ export function buildWorkerEmbeddingConfig(cleanDumpDir = true): WorkerEmbedding
   const configContextTokens = embeddingConfig.context_tokens || embeddingConfig.contextTokens;
   const contextTokens = getModelContextTokens(modelName, configContextTokens);
 
-  // Get dimensions for binary vector dump
+  // Get dimensions for embeddings
   const configDimensions = embeddingConfig.dimensions || embeddingConfig.vector_dimensions;
   const dimensions = getModelDimensions(modelName, configDimensions);
-
-  // Initialize vector dump directory (workers write directly here)
-  const vectorDumpDir = initVectorDumpDir(cleanDumpDir); // Clean only when starting workers
 
   const result: WorkerEmbeddingConfig = {
     enabled: true,
@@ -260,8 +284,10 @@ export function buildWorkerEmbeddingConfig(cleanDumpDir = true): WorkerEmbedding
     contextTokens,
     batchSize,
     dimensions,
-    vectorDumpDir,
     providerOptions,
+    // OVMS uses centralized embedding mode: workers send texts to Main,
+    // Main generates embeddings via gRPC (faster than multiple HTTP clients)
+    centralizedEmbeddings: providerKind === "ovms",
   };
 
   // Log only on first call
@@ -272,7 +298,6 @@ export function buildWorkerEmbeddingConfig(cleanDumpDir = true): WorkerEmbedding
       dims: dimensions,
       contextTokens,
       batchSize,
-      dumpDir: vectorDumpDir,
     });
   }
 

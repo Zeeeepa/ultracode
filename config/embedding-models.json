@@ -6,7 +6,6 @@
       "name": "Разработка (быстрая индексация)",
       "description": "Для локальной разработки. TEI E5-Small — 1,786 texts/s (GPU), OpenVINO — 583 chunks/s (CPU). 94 языка.",
       "ovms": "ovms-multilingual-e5-base",
-      "ollama": "ollama-qwen3-embed-sm",
       "tei": "tei-multilingual-e5-small",
       "vllm": "vllm-multilingual-e5-small"
     },
@@ -14,7 +13,6 @@
       "name": "Production (качество + скорость)",
       "description": "Для production. OpenVINO E5-Base — лучший баланс качества и скорости, 94 языка.",
       "ovms": "ovms-multilingual-e5-base",
-      "ollama": "ollama-mxbai-embed-large",
       "tei": "tei-multilingual-e5-base",
       "vllm": "vllm-multilingual-e5-large"
     },
@@ -23,7 +21,6 @@
       "description": "Для legacy проектов с методами 500+ строк. BGE-M3 — 8K контекст, 100+ языков.",
       "tei": "bge-m3",
       "ovms": "ovms-bge-m3",
-      "ollama": "ollama-bge-m3",
       "vllm": "vllm-bge-m3"
     },
     "multilingual": {
@@ -31,13 +28,11 @@
       "description": "Для проектов с RU/CN/JP комментариями. Nomic v2 MoE — 8K контекст, мультиязычный.",
       "ovms": "ovms-multilingual-e5-base",
       "tei": "tei-paraphrase-multilingual",
-      "ollama": "ollama-nomic-embed-v2",
       "vllm": "vllm-multilingual-e5-large"
     },
     "frontier": {
       "name": "Максимальное качество (4096 dims)",
-      "description": "Для критичных проектов. Qwen3 8B / E5-Mistral 7B — frontier качество, требует 16GB VRAM.",
-      "ollama": "ollama-qwen3-embed-lg",
+      "description": "Для критичных проектов. E5-Mistral 7B — frontier качество, требует 16GB VRAM.",
       "tei": "tei-multilingual-e5-base",
       "ovms": "ovms-multilingual-e5-base",
       "vllm": "vllm-e5-mistral-7b"
@@ -46,8 +41,7 @@
       "name": "GPU-ускоренный (vLLM)",
       "description": "Для NVIDIA GPU. vLLM с OpenAI-совместимым API. Быстрый batching.",
       "vllm": "vllm-multilingual-e5-large",
-      "tei": "tei-multilingual-e5-base",
-      "ollama": "ollama-mxbai-embed-large"
+      "tei": "tei-multilingual-e5-base"
     }
   },
   "providers": {
@@ -87,23 +81,6 @@
         }
       }
     },
-    "ollama": {
-      "name": "Ollama (GPU/CPU)",
-      "description": "Простая локальная установка\n✅ Все GPU включая RTX 50xx\n🥇 all-minilm: лучшее качество (gap 0.601)\n⚠️ Медленнее OpenVINO/TEI",
-      "requires": ["ollama"],
-      "optional": ["nvidia-gpu"],
-      "default_port": 11434,
-      "supports_batch": false,
-      "capabilities": {
-        "embeddings": true,
-        "rerank": false,
-        "score": false,
-        "classify": false,
-        "endpoints": {
-          "embeddings": "/api/embeddings"
-        }
-      }
-    },
     "vllm": {
       "name": "vLLM (NVIDIA GPU Docker)",
       "description": "GPU-ускоренный inference server от vLLM Project\n🚀 OpenAI-совместимый API (/v1/embeddings)\n⚡ Быстрый batching для embedding моделей\n🐳 Требует Docker + NVIDIA Container Toolkit\n✅ RTX 30xx/40xx/50xx, A100, H100",
@@ -124,6 +101,70 @@
           "rerank": "/v1/rerank",
           "score": "/v1/score",
           "classify": "/classify"
+        }
+      }
+    },
+    "llamacpp": {
+      "name": "llama.cpp (Native GGUF)",
+      "description": "Нативный сервер llama.cpp с GGUF моделями\n✅ Без Docker\n🎮 CUDA/Vulkan/CPU\n📦 Компактные квантизованные модели\n⚡ OpenAI-совместимый API (/v1/embeddings)\n🔧 AMD/Intel/NVIDIA GPU через Vulkan\n⚡ Flash Attention + Parallel Slots",
+      "requires": [],
+      "optional": ["nvidia-gpu", "amd-gpu", "vulkan"],
+      "default_port": 8085,
+      "supports_batch": true,
+      "api_format": "openai",
+      "optimizations": {
+        "flash_attn": true,
+        "parallel_slots": 4,
+        "ctx_size": 2048,
+        "batch_size": 1024,
+        "ubatch_size": 512,
+        "mlock": true,
+        "threads": "auto_pcores",
+        "continuous_batching": true,
+        "_note": "ctx_size divided by parallel_slots = tokens per request (2048/4=512)"
+      },
+      "tuning_guide": {
+        "threads": {
+          "description": "Число потоков CPU. ВАЖНО: используйте P-cores (физические), НЕ все логические!",
+          "recommendation": "Intel 12th+: P-cores только (8-core i9 = -t 8, НЕ -t 24)",
+          "auto_detection": "Автоматически определяется через WMIC/sysctl/procfs"
+        },
+        "gpu_layers": {
+          "description": "Число слоёв на GPU. -1 = все, 0 = только CPU",
+          "recommendation": "Начинайте с -ngl 20-30, увеличивайте пока хватает VRAM"
+        },
+        "batch_size": {
+          "description": "Размер batch для prompt processing (--batch-size)",
+          "recommendation": "2048-4096 для embedding. Больше = лучше GPU utilization"
+        },
+        "ubatch_size": {
+          "description": "Micro-batch размер (--ubatch-size). Влияет на throughput",
+          "recommendation": "1024-2048. Увеличение на 25%+ может дать ~25% speedup"
+        },
+        "continuous_batching": {
+          "description": "Позволяет обрабатывать несколько запросов параллельно",
+          "recommendation": "НЕ используйте --no-cont-batching! Это критично для throughput"
+        },
+        "parallel_slots": {
+          "description": "Количество параллельных слотов для concurrent requests",
+          "recommendation": "4-8 для embedding workloads. Используйте с --parallel 4"
+        },
+        "ctx_size_parallel": {
+          "description": "ВАЖНО: ctx-size ДЕЛИТСЯ на parallel! Каждый slot = ctx_size/parallel токенов",
+          "recommendation": "Для 512 токенов на запрос с --parallel 4, нужен --ctx-size 2048"
+        },
+        "expected_performance": {
+          "vs_vllm": "50-67% от vLLM (400-800/s vs 1200/s) при правильной настройке",
+          "bottlenecks": "GGUF dequantization, single-threaded prompt processing"
+        }
+      },
+      "capabilities": {
+        "embeddings": true,
+        "rerank": false,
+        "score": false,
+        "classify": false,
+        "endpoints": {
+          "embeddings": "/v1/embeddings"
         }
       }
     }
@@ -512,200 +553,6 @@
       }
     },
     {
-      "id": "ollama-all-minilm",
-      "provider": "ollama",
-      "name": "All MiniLM L6 v2",
-      "badge": "🥇 BEST QUALITY",
-      "model_id": "all-minilm",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "en",
-      "context_tokens": 512,
-      "dimensions": 384,
-      "size_mb": 45,
-      "vram_mb": 500,
-      "benchmark_toks": 17231,
-      "benchmark_chunks_per_sec": 55,
-      "quality_gap": 0.601,
-      "optimal_batch_size": 1,
-      "use_case": "development",
-      "description": "🥇 BEST QUALITY (gap 0.601). Ollama простая установка."
-    },
-    {
-      "id": "ollama-granite-en",
-      "provider": "ollama",
-      "name": "IBM Granite EN 30M",
-      "badge": "⚡ Fast Ollama",
-      "model_id": "granite-embedding:30m",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "en",
-      "context_tokens": 512,
-      "dimensions": 384,
-      "size_mb": 60,
-      "vram_mb": 300,
-      "benchmark_toks": 17902,
-      "benchmark_chunks_per_sec": 58,
-      "quality_gap": 0.312,
-      "optimal_batch_size": 1,
-      "use_case": "development",
-      "description": "⚡ Fast ModernBERT (58 chunks/s). Компактный 30M."
-    },
-    {
-      "id": "ollama-granite-multilingual",
-      "provider": "ollama",
-      "name": "IBM Granite 278M Multilingual",
-      "badge": "🏆 ModernBERT + 🌍 Multi",
-      "model_id": "granite-embedding:latest",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "multi",
-      "context_tokens": 512,
-      "dimensions": 768,
-      "size_mb": 280,
-      "vram_mb": 500,
-      "benchmark_toks": 18993,
-      "benchmark_chunks_per_sec": 61,
-      "quality_gap": null,
-      "optimal_batch_size": 1,
-      "use_case": "production",
-      "description": "🏆 ModernBERT + 🌍 Multi. Fast (61 chunks/s). Best quality + speed."
-    },
-    {
-      "id": "ollama-snowflake-arctic",
-      "provider": "ollama",
-      "name": "Snowflake Arctic Embed 2 (8K)",
-      "badge": "📄 8K контекст",
-      "model_id": "snowflake-arctic-embed2",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "multi",
-      "context_tokens": 8192,
-      "dimensions": 1024,
-      "size_mb": 600,
-      "vram_mb": 1500,
-      "benchmark_toks": 2179,
-      "benchmark_chunks_per_sec": 4,
-      "quality_gap": 0.426,
-      "optimal_batch_size": 1,
-      "use_case": "large_context",
-      "description": "📄 8K контекст. ⚠️ Медленный (4 chunks/s)."
-    },
-    {
-      "id": "ollama-nomic-embed-v2",
-      "provider": "ollama",
-      "name": "Nomic Embed Text v2 MoE",
-      "badge": "🆕 MoE + 🌍 Multilingual",
-      "model_id": "nomic-embed-text-v2-moe",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "multi",
-      "context_tokens": 8192,
-      "dimensions": 768,
-      "size_mb": 475,
-      "vram_mb": 1200,
-      "benchmark_chunks_per_sec": null,
-      "quality_gap": null,
-      "optimal_batch_size": 1,
-      "use_case": "multilingual",
-      "description": "🆕 NEW! MoE архитектура. 8K контекст. Мультиязычный retrieval."
-    },
-    {
-      "id": "ollama-bge-m3",
-      "provider": "ollama",
-      "name": "BGE M3 (8K, 100+ langs)",
-      "badge": "🏆 BERT + 8K + 🌍",
-      "model_id": "bge-m3",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "multi",
-      "context_tokens": 8192,
-      "dimensions": 1024,
-      "size_mb": 567,
-      "vram_mb": 1500,
-      "benchmark_chunks_per_sec": null,
-      "quality_gap": null,
-      "optimal_batch_size": 1,
-      "use_case": "large_context",
-      "description": "🏆 Top BERT via Ollama! 8K контекст, 100+ языков. Альтернатива TEI без Docker."
-    },
-    {
-      "id": "ollama-mxbai-embed-large",
-      "provider": "ollama",
-      "name": "MixedBread Embed Large",
-      "badge": "🎯 State-of-the-Art",
-      "model_id": "mxbai-embed-large",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "en",
-      "context_tokens": 512,
-      "dimensions": 1024,
-      "size_mb": 335,
-      "vram_mb": 800,
-      "benchmark_chunks_per_sec": null,
-      "quality_gap": null,
-      "optimal_batch_size": 1,
-      "use_case": "production",
-      "description": "🎯 State-of-the-art от mixedbread.ai. Высокое качество retrieval."
-    },
-    {
-      "id": "ollama-qwen3-embed-lg",
-      "provider": "ollama",
-      "name": "Qwen3 Embedding 8B",
-      "badge": "🚀 Frontier BERT",
-      "model_id": "qwen3-embedding:8b",
-      "gpu_architectures": ["ampere-80", "ampere-86", "ada", "hopper", "blackwell"],
-      "gpu_support": true,
-      "language": "multi",
-      "context_tokens": 8192,
-      "dimensions": 4096,
-      "size_mb": 8000,
-      "vram_mb": 16000,
-      "benchmark_chunks_per_sec": null,
-      "quality_gap": null,
-      "optimal_batch_size": 1,
-      "use_case": "frontier",
-      "description": "🚀 Frontier embedding от Qwen3. 8B параметров, максимальное качество. Требует 16GB VRAM."
-    },
-    {
-      "id": "ollama-qwen3-embed-sm",
-      "provider": "ollama",
-      "name": "Qwen3 Embedding 0.6B",
-      "badge": "⚡ Fast Qwen",
-      "model_id": "qwen3-embedding:0.6b",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "multi",
-      "context_tokens": 8192,
-      "dimensions": 1024,
-      "size_mb": 600,
-      "vram_mb": 1500,
-      "benchmark_chunks_per_sec": null,
-      "quality_gap": null,
-      "optimal_batch_size": 1,
-      "use_case": "development",
-      "description": "⚡ Быстрая Qwen3 embedding. 0.6B параметров, 8K контекст."
-    },
-    {
-      "id": "ollama-paraphrase-multi",
-      "provider": "ollama",
-      "name": "Paraphrase Multilingual",
-      "badge": "🌍 50+ языков",
-      "model_id": "paraphrase-multilingual",
-      "gpu_architectures": ["turing", "ampere-80", "ampere-86", "ada", "hopper", "blackwell", "cpu"],
-      "gpu_support": true,
-      "language": "multi",
-      "context_tokens": 512,
-      "dimensions": 768,
-      "size_mb": 278,
-      "vram_mb": 700,
-      "benchmark_chunks_per_sec": null,
-      "quality_gap": null,
-      "optimal_batch_size": 1,
-      "use_case": "multilingual",
-      "description": "🌍 Sentence-BERT для 50+ языков. Кластеризация и семантический поиск."
-    },
-    {
       "id": "vllm-multilingual-e5-large",
       "provider": "vllm",
       "name": "Multilingual E5 Large Instruct",
@@ -845,13 +692,98 @@
         "dtype": "auto",
         "trust_remote_code": true
       }
+    },
+    {
+      "id": "llamacpp-e5-base",
+      "provider": "llamacpp",
+      "name": "Multilingual E5 Base Q8",
+      "badge": "🏆🌍 GGUF Multi + Flash",
+      "model_id": "multilingual-e5-base",
+      "gguf_repo": "yixuan-chia/multilingual-e5-base-gguf",
+      "gguf_file": "multilingual-e5-base-Q8_0.gguf",
+      "gpu_architectures": ["cuda", "vulkan", "cpu"],
+      "gpu_support": true,
+      "language": "multi",
+      "context_tokens": 512,
+      "dimensions": 768,
+      "size_mb": 450,
+      "vram_mb": 600,
+      "benchmark_chunks_per_sec": 400,
+      "benchmark_note": "With --flash-attn --parallel 4 --batch-size 4096",
+      "quality_gap": 0.608,
+      "optimal_batch_size": 128,
+      "use_case": "production",
+      "description": "🏆 E5-Base Q8 GGUF. 🌍 94 языка. Flash Attention + 4 parallel slots. CUDA/Vulkan/CPU."
+    },
+    {
+      "id": "llamacpp-bge-m3",
+      "provider": "llamacpp",
+      "name": "BGE M3 Q8 (8K)",
+      "badge": "📄 8K + 🌍 100+ langs",
+      "model_id": "bge-m3",
+      "gguf_repo": "gpustack/bge-m3-GGUF",
+      "gguf_file": "bge-m3-Q8_0.gguf",
+      "gpu_architectures": ["cuda", "vulkan", "cpu"],
+      "gpu_support": true,
+      "language": "multi",
+      "context_tokens": 8192,
+      "dimensions": 1024,
+      "size_mb": 1100,
+      "vram_mb": 1500,
+      "benchmark_chunks_per_sec": 100,
+      "quality_gap": 0.307,
+      "optimal_batch_size": 16,
+      "use_case": "large_context",
+      "description": "📄 8K контекст + 🌍 100+ языков. BGE-M3 Q8 GGUF. Совместим с bge-m3 базой."
+    },
+    {
+      "id": "llamacpp-nomic-v1.5",
+      "provider": "llamacpp",
+      "name": "Nomic Embed Text v1.5 Q8",
+      "badge": "⚡ Fast GGUF",
+      "model_id": "nomic-embed-text-v1.5",
+      "gguf_repo": "nomic-ai/nomic-embed-text-v1.5-GGUF",
+      "gguf_file": "nomic-embed-text-v1.5.Q8_0.gguf",
+      "gpu_architectures": ["cuda", "vulkan", "cpu"],
+      "gpu_support": true,
+      "language": "en",
+      "context_tokens": 8192,
+      "dimensions": 768,
+      "size_mb": 137,
+      "vram_mb": 300,
+      "benchmark_chunks_per_sec": 300,
+      "quality_gap": null,
+      "optimal_batch_size": 32,
+      "use_case": "development",
+      "description": "⚡ Быстрая и компактная. 8K контекст. Nomic v1.5 Q8 GGUF."
+    },
+    {
+      "id": "llamacpp-bge-base-en",
+      "provider": "llamacpp",
+      "name": "BGE Base EN v1.5 Q8",
+      "badge": "🎯 BGE Quality",
+      "model_id": "bge-base-en-v1.5",
+      "gguf_repo": "CompendiumLabs/bge-base-en-v1.5-gguf",
+      "gguf_file": "bge-base-en-v1.5-q8_0.gguf",
+      "gpu_architectures": ["cuda", "vulkan", "cpu"],
+      "gpu_support": true,
+      "language": "en",
+      "context_tokens": 512,
+      "dimensions": 768,
+      "size_mb": 130,
+      "vram_mb": 250,
+      "benchmark_chunks_per_sec": 250,
+      "quality_gap": null,
+      "optimal_batch_size": 32,
+      "use_case": "production",
+      "description": "🎯 BGE качество (62.17 MTEB). Компактный Q8 GGUF. Только English."
     }
   ],
   "default_models": {
     "ovms": "ovms-multilingual-e5-base",
     "tei": "tei-multilingual-e5-small",
-    "ollama": "ollama-all-minilm",
-    "vllm": "vllm-multilingual-e5-large"
+    "vllm": "vllm-multilingual-e5-large",
+    "llamacpp": "llamacpp-e5-base"
   },
   "_tei_benchmark_note": "TEI E5-small: 1,786 texts/s, 28ms avg batch (50 texts), RTX GPU",
   "recommendations": {
@@ -864,32 +796,24 @@
       "reason": "800 chunks/s — самый быстрый + мультиязычный"
     },
     "best_quality": {
-      "model": "ollama-qwen3-embed-lg",
-      "reason": "🚀 Qwen3 8B — frontier качество. 4096 dims. Требует 16GB VRAM."
-    },
-    "best_quality_ollama": {
-      "model": "ollama-mxbai-embed-large",
-      "reason": "🎯 State-of-the-art от mixedbread.ai. Для Ollama без Docker."
+      "model": "vllm-e5-mistral-7b",
+      "reason": "🚀 E5-Mistral 7B — frontier качество. 4096 dims. Требует 16GB VRAM."
     },
     "english_only": {
       "model": "ovms-minilm-int8",
       "reason": "510 chunks/s, gap 0.601. Если только английский код."
     },
     "long_context_8k": {
-      "model": "ollama-bge-m3",
-      "reason": "🏆 BGE-M3 через Ollama! 8K контекст, 100+ языков, без Docker."
+      "model": "vllm-bge-m3",
+      "reason": "🏆 BGE-M3 через vLLM! 8K контекст, 100+ языков."
     },
     "multilingual": {
-      "model": "ollama-nomic-embed-v2",
-      "reason": "🆕 Nomic v2 MoE — 8K контекст, мультиязычный retrieval."
+      "model": "vllm-multilingual-e5-large",
+      "reason": "🌍 E5-Large — 94 языка, vLLM GPU ускорение."
     },
     "no_gpu": {
       "model": "ovms-multilingual-e5-base",
       "reason": "CPU-only, V3 API, INT8 квантизация"
-    },
-    "ollama_only": {
-      "model": "ollama-bge-m3",
-      "reason": "Лучший выбор для Ollama-only окружений без Docker."
     },
     "nvidia_gpu": {
       "model": "vllm-multilingual-e5-large",
@@ -902,6 +826,14 @@
     "vllm_8k_context": {
       "model": "vllm-bge-m3",
       "reason": "📄 8K контекст + 100+ языков. vLLM GPU inference."
+    },
+    "llamacpp_native": {
+      "model": "llamacpp-e5-base",
+      "reason": "🏆 Нативный GGUF без Docker. 94 языка. CUDA/Vulkan/CPU."
+    },
+    "amd_gpu": {
+      "model": "llamacpp-e5-base",
+      "reason": "🔧 AMD GPU через Vulkan. llama.cpp без Docker."
     }
   }
 }

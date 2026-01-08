@@ -5,20 +5,13 @@
  * - Initialize lightweight HTTP embedding client
  * - Build embedding text for entities
  * - Generate embeddings in batches with concurrency
- * - Collect and send embeddings via IPC or file dump
+ * - Send embeddings via binary IPC transfer to main process
  *
  * Extracted from generic-language-worker.ts for better modularity.
  */
 
 import type { ParsedEntity } from "../../types/parser.js";
 import type { WorkerEmbeddingConfig } from "../../types/semantic.js";
-import {
-  addVectorToDump,
-  flushVectorDump,
-  getVectorDumpDir,
-  getVectorDumpTotalWritten,
-  initVectorDump,
-} from "./vector-dump-writer.js";
 import { workerLog } from "./worker-logging.js";
 
 // =============================================================================
@@ -73,6 +66,17 @@ const generatedEntityIds = new Set<string>();
 /** Collected embeddings for IPC transfer */
 const collectedEmbeddings: CollectedEmbedding[] = [];
 
+/**
+ * Collected texts for centralized embedding generation (OVMS mode).
+ * Workers send texts to Main, Main generates embeddings via gRPC.
+ */
+interface CollectedTextItem {
+  id: string;
+  text: string;
+  metadata?: Record<string, unknown>;
+}
+const collectedTexts: CollectedTextItem[] = [];
+
 // =============================================================================
 // Client Initialization
 // =============================================================================
@@ -99,7 +103,8 @@ export function getEmbeddingClient(): any {
 }
 
 /**
- * Initialize lightweight embedding client with config from main process
+ * Initialize lightweight embedding client with config from main process.
+ * In centralized mode (OVMS), we skip client initialization - texts go to Main.
  */
 export async function initEmbeddingClient(config: WorkerEmbeddingConfig): Promise<void> {
   if (!config.enabled) {
@@ -107,8 +112,13 @@ export async function initEmbeddingClient(config: WorkerEmbeddingConfig): Promis
     return;
   }
 
-  // Initialize vector dump for direct file writing (bypasses IPC)
-  initVectorDump(config);
+  // Centralized mode: don't initialize HTTP client, texts will be sent to Main
+  if (config.centralizedEmbeddings) {
+    workerLog("INFO", "Centralized embedding mode - skipping WorkerEmbeddingClient init", {
+      provider: config.provider,
+    });
+    return;
+  }
 
   if (embeddingClientInitPromise) {
     await embeddingClientInitPromise;
@@ -158,8 +168,9 @@ export function buildEmbeddingText(entity: ParsedEntity, fileContent: string, ma
   parts.push(header);
 
   // Extract code snippet from file content using location
-  // Use ~2.0 chars per token for code (very conservative for safety)
-  const charsPerToken = 2.0;
+  // Use ~1.0 chars per token for code (very conservative for long identifiers)
+  // Code tokens like "generateEmbeddingsForEntities" are 1 token but ~30 chars
+  const charsPerToken = 1.0;
   if (entity.location) {
     try {
       const { start, end } = entity.location;
@@ -194,8 +205,10 @@ export function buildEmbeddingText(entity: ParsedEntity, fileContent: string, ma
 
   // Combine and truncate
   const text = parts.join("\n").trim();
-  // Very conservative truncation: ~2.0 chars per token for code
-  return text.slice(0, Math.floor(maxTokens * 2.0));
+  // Very conservative truncation: ~1.0 chars per token for code
+  // Code has long identifiers (e.g., "generateEmbeddingsForEntities" = 1 token)
+  // Using 1.0 guarantees we stay under model's token limit (512 for e5-small)
+  return text.slice(0, Math.floor(maxTokens * 1.0));
 }
 
 // =============================================================================
@@ -205,6 +218,7 @@ export function buildEmbeddingText(entity: ParsedEntity, fileContent: string, ma
 /**
  * Generate embeddings for entities and collect them for batch transfer
  * For subprocess mode: embeddings are collected and sent separately via embeddings.ready message
+ * For centralized mode (OVMS): texts are collected and sent via embeddings.texts message
  * For backward compatibility: also attaches Base64 encoded embeddings to entities
  */
 export async function generateEmbeddingsForEntities(
@@ -212,14 +226,35 @@ export async function generateEmbeddingsForEntities(
   fileContent: string,
   filePath: string,
 ): Promise<number> {
-  if (!embeddingClient || !embeddingConfig?.enabled) {
+  if (!embeddingConfig?.enabled) {
+    return 0;
+  }
+
+  // Centralized mode: collect texts instead of generating embeddings
+  // Main process will generate embeddings via gRPC (faster for OVMS)
+  if (embeddingConfig.centralizedEmbeddings) {
+    return collectTextsForCentralizedEmbedding(entities, fileContent, filePath);
+  }
+
+  // Distributed mode: generate embeddings in worker
+  if (!embeddingClient) {
     return 0;
   }
 
   // Use contextTokens (model limit) for truncation, fallback to maxTokens
   const contextTokens = embeddingConfig.contextTokens || embeddingConfig.maxTokens || 512;
-  const batchSize = embeddingConfig.batchSize || 32;
-  const concurrency = 3; // Process up to 3 batches in parallel
+  // Use larger batch size for high-throughput providers
+  // - llamacpp: 256 (server ctx-size=2048, parallel=4)
+  // - ovms: 100 (MediaPipe graph handles batching internally)
+  // - default: 32
+  const isLlamaCpp = embeddingConfig.provider === "llamacpp";
+  const isOVMS = embeddingConfig.provider === "ovms";
+  const batchSize = embeddingConfig.batchSize || (isLlamaCpp ? 256 : isOVMS ? 100 : 32);
+  // Concurrency: how many parallel HTTP requests per worker
+  // - llamacpp: 4 (matches --parallel 4 slots)
+  // - ovms: 1 (dedicated endpoint per worker, no internal contention)
+  // - default: 3
+  const concurrency = isLlamaCpp ? 4 : isOVMS ? 1 : 3;
 
   // Filter out low-value entity types before embedding generation
   const filteredEntities = entities.filter((e) => !EMBEDDING_EXCLUDE_ENTITY_TYPES.has(e.type));
@@ -268,7 +303,7 @@ export async function generateEmbeddingsForEntities(
     try {
       const embeddings = await embeddingClient!.generateBatch(texts);
 
-      // Process embeddings - write to file dump or collect for IPC
+      // Process embeddings - collect for IPC transfer
       for (let j = 0; j < batch.length; j++) {
         const et = batch[j]!;
         const embedding = embeddings[j];
@@ -279,33 +314,28 @@ export async function generateEmbeddingsForEntities(
           // Mark as generated for local deduplication
           generatedEntityIds.add(entityId);
 
-          // PRIMARY PATH: Write directly to file dump (bypasses IPC entirely)
-          if (getVectorDumpDir()) {
-            addVectorToDump(entityId, embedding);
-          } else {
-            // FALLBACK: Collect for IPC transfer (legacy path)
-            const vectorBuffer = embedding.buffer.slice(
-              embedding.byteOffset,
-              embedding.byteOffset + embedding.byteLength,
-            ) as ArrayBuffer;
+          // Collect for IPC transfer to main process
+          const vectorBuffer = embedding.buffer.slice(
+            embedding.byteOffset,
+            embedding.byteOffset + embedding.byteLength,
+          ) as ArrayBuffer;
 
-            const rawEntityId = (et.entity as any).id || `${filePath}:${et.entity.type}:${et.entity.name}`;
-            collectedEmbeddings.push({
-              id: entityId,
-              vectorBuffer,
-              content: et.text.slice(0, 500),
-              metadata: {
-                entityId: rawEntityId,
-                entityType: et.entity.type,
-                entityName: et.entity.name,
-                path: filePath,
-                filePath,
-                line: et.entity.location?.start?.line,
-                start: et.entity.location?.start?.index,
-                end: et.entity.location?.end?.index,
-              },
-            });
-          }
+          const rawEntityId = (et.entity as any).id || `${filePath}:${et.entity.type}:${et.entity.name}`;
+          collectedEmbeddings.push({
+            id: entityId,
+            vectorBuffer,
+            content: et.text.slice(0, 500),
+            metadata: {
+              entityId: rawEntityId,
+              entityType: et.entity.type,
+              entityName: et.entity.name,
+              path: filePath,
+              filePath,
+              line: et.entity.location?.start?.line,
+              start: et.entity.location?.start?.index,
+              end: et.entity.location?.end?.index,
+            },
+          });
 
           // Store embedding text for search result display
           et.entity.embeddingText = et.text.slice(0, 200);
@@ -332,37 +362,9 @@ export async function generateEmbeddingsForEntities(
 // =============================================================================
 
 /**
- * Send collected embeddings to main process
- * PRIMARY PATH: If vectorDumpDir is set, just flush remaining buffer and notify
- * FALLBACK: Uses binary IPC transfer for legacy path
+ * Send collected embeddings to main process via binary IPC transfer
  */
 export function sendCollectedEmbeddings(ctx: EmbeddingProcessorContext): void {
-  // PRIMARY PATH: File dump mode - flush and notify
-  const dumpDir = getVectorDumpDir();
-  if (dumpDir) {
-    // Flush any remaining buffered vectors to disk
-    flushVectorDump();
-
-    // Notify main process that vectors were written to files
-    // Main will read files and load into FAISS at end of indexing
-    const totalWritten = getVectorDumpTotalWritten();
-    if (totalWritten > 0) {
-      ctx.postWorkerMessage({
-        type: "vectors.written",
-        count: totalWritten,
-        dumpDir,
-        workerId: ctx.getWorkerId(),
-      });
-
-      workerLog("INFO", `Vectors written to files (no IPC)`, {
-        count: totalWritten,
-        dir: dumpDir,
-      });
-    }
-    return;
-  }
-
-  // FALLBACK: IPC transfer mode (legacy)
   if (collectedEmbeddings.length === 0) {
     return;
   }
@@ -384,4 +386,86 @@ export function sendCollectedEmbeddings(ctx: EmbeddingProcessorContext): void {
   });
 
   collectedEmbeddings.length = 0;
+}
+
+// =============================================================================
+// Centralized Embedding Mode (OVMS via gRPC)
+// =============================================================================
+
+/**
+ * Collect texts for centralized embedding generation.
+ * Used when centralizedEmbeddings is enabled (OVMS mode).
+ * Texts are sent to Main process which generates embeddings via gRPC.
+ */
+function collectTextsForCentralizedEmbedding(entities: ParsedEntity[], fileContent: string, filePath: string): number {
+  if (!embeddingConfig) return 0;
+
+  const contextTokens = embeddingConfig.contextTokens || embeddingConfig.maxTokens || 512;
+
+  // Filter out low-value entity types
+  const filteredEntities = entities.filter((e) => !EMBEDDING_EXCLUDE_ENTITY_TYPES.has(e.type));
+
+  let collectedCount = 0;
+
+  for (const entity of filteredEntities) {
+    // Pre-compute entity ID for deduplication
+    const rawEntityId = (entity as any).id || `${filePath}:${entity.type}:${entity.name}`;
+    const entityId = `ent:${rawEntityId}`;
+
+    // Skip if already processed in this worker session
+    if (generatedEntityIds.has(entityId)) {
+      continue;
+    }
+
+    const text = buildEmbeddingText(entity, fileContent, contextTokens);
+    if (text.length === 0) continue;
+
+    // Mark as processed
+    generatedEntityIds.add(entityId);
+
+    // Collect text for Main process
+    collectedTexts.push({
+      id: entityId,
+      text,
+      metadata: {
+        entityId: rawEntityId,
+        entityType: entity.type,
+        entityName: entity.name,
+        path: filePath,
+        filePath,
+        line: entity.location?.start?.line,
+        start: entity.location?.start?.index,
+        end: entity.location?.end?.index,
+      },
+    });
+
+    // Store embedding text for search result display
+    entity.embeddingText = text.slice(0, 200);
+
+    collectedCount++;
+  }
+
+  return collectedCount;
+}
+
+/**
+ * Send collected texts to main process for centralized embedding generation.
+ * Used when centralizedEmbeddings is enabled (OVMS mode).
+ */
+export function sendCollectedTexts(ctx: EmbeddingProcessorContext): void {
+  if (collectedTexts.length === 0) {
+    return;
+  }
+
+  ctx.postWorkerMessage({
+    type: "embeddings.texts",
+    count: collectedTexts.length,
+    texts: collectedTexts,
+  });
+
+  workerLog("INFO", `Sent texts to main process (centralized mode)`, {
+    count: collectedTexts.length,
+  });
+
+  collectedTexts.length = 0;
 }

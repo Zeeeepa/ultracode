@@ -120,9 +120,23 @@ export interface BinaryEmbedding {
 export type EmbeddingsCallback = (embeddings: BinaryEmbedding[]) => void;
 
 /**
- * Callback for vectors.written event (incremental Faiss loading)
+ * Text item for centralized embedding generation
+ * Workers send texts to Main, Main generates embeddings via gRPC
  */
-export type VectorsWrittenCallback = (workerId: string, count: number, dumpDir: string) => void;
+export interface EmbeddingTextItem {
+  /** Entity ID for the embedding */
+  id: string;
+  /** Text content to embed */
+  text: string;
+  /** Optional metadata */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Callback for receiving embedding texts from workers (centralized mode)
+ * Main process generates embeddings using EmbeddingGenerator with gRPC
+ */
+export type EmbeddingTextsCallback = (texts: EmbeddingTextItem[]) => void;
 
 /**
  * Callback for streaming parse results (called after each file is parsed)
@@ -153,10 +167,14 @@ export interface SubprocessPoolOptions {
   keepaliveMemoryLimitMB?: number;
   /** Embedding configuration for workers. If provided, workers generate embeddings. */
   embeddingConfig?: WorkerEmbeddingConfig;
-  /** Callback for binary embeddings from workers */
+  /** Callback for binary embeddings from workers (distributed mode) */
   onEmbeddings?: EmbeddingsCallback;
-  /** Callback when worker writes vectors to dump files (for incremental Faiss loading) */
-  onVectorsWritten?: VectorsWrittenCallback;
+  /**
+   * Callback for embedding texts from workers (centralized mode).
+   * When set, workers send texts instead of embeddings.
+   * Main process generates embeddings via EmbeddingGenerator (gRPC).
+   */
+  onEmbeddingTexts?: EmbeddingTextsCallback;
   /**
    * Enable streaming mode: workers send results after each file via IPC.
    * Use with onStreamingResult callback to process results as they arrive.

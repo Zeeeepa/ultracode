@@ -129,14 +129,15 @@ export class EmbeddingGenerator {
         log.i("EMBEDDING", `initialize() called, provider=${providerName}`, { tei: this.config.tei });
         const createStart = Date.now();
         this.provider = await createProvider({
-          provider: providerName,
+          provider: providerName as any,
           modelName: this.config.modelName ?? DEFAULT_MODEL,
-          ollama: this.config.ollama,
           openai: this.config.openai,
           cloudru: this.config.cloudru,
           huggingface: this.config.huggingface,
           tei: this.config.tei,
           ovms: this.config.ovms,
+          llamacpp: this.config.llamacpp,
+          vllm: this.config.vllm,
         });
         log.t("EMBEDDING", `[EmbeddingGenerator] ◀ createProvider (${Date.now() - createStart}ms)`);
 

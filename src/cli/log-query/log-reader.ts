@@ -126,10 +126,20 @@ export function formatFields(entry: ParsedLogLine, fields: string[]): string {
  * Get default log directory
  */
 export function getDefaultLogDir(): string {
-  // Use APPDATA on Windows, HOME/.local/share on Linux
-  const appData = process.env["APPDATA"] || process.env["HOME"];
-  if (appData) {
-    return join(appData, "UltraScriptTools", "logs");
+  // Use LOCALAPPDATA on Windows (not APPDATA/Roaming), XDG_DATA_HOME or HOME/.local/share on Linux
+  if (process.platform === "win32") {
+    const localAppData = process.env["LOCALAPPDATA"];
+    if (localAppData) {
+      return join(localAppData, "UltraScriptTools", "logs");
+    }
+  }
+  const xdgData = process.env["XDG_DATA_HOME"];
+  if (xdgData) {
+    return join(xdgData, "UltraScriptTools", "logs");
+  }
+  const home = process.env["HOME"];
+  if (home) {
+    return join(home, ".local", "share", "UltraScriptTools", "logs");
   }
   return join(process.cwd(), "logs");
 }
@@ -251,6 +261,154 @@ export async function followLogFile(
 
   // Keep running
   await new Promise(() => {});
+}
+
+/**
+ * Embedding session data from emb_summary log entries
+ */
+export interface EmbeddingSession {
+  timestamp: Date;
+  total: number;
+  durationMs: number;
+  speedPerSec: number;
+  workers: number;
+  batches: number;
+  provider?: string;
+}
+
+/**
+ * Collect embedding sessions from log entries
+ * Looks for EMBEDDING module with emb_summary event, or aggregates from vectors.written events
+ */
+export function collectEmbeddingSessions(entries: ParsedLogLine[]): EmbeddingSession[] {
+  // First try emb_summary events (new format)
+  const summaryEntries = entries.filter((e) => e.event === "emb_summary" && e.module === "EMBEDDING");
+
+  if (summaryEntries.length > 0) {
+    return summaryEntries
+      .map((e) => {
+        const durRaw = e.kv["dur"];
+        // Log parser already converts "1.9s" to 1900 (ms), so use as-is if number
+        const durationMs = typeof durRaw === "number" ? durRaw : parseFloat(String(durRaw).replace("s", "")) * 1000;
+        return {
+          timestamp: e.timestamp,
+          total: Number(e.kv["total"]) || 0,
+          durationMs: durationMs || 0,
+          speedPerSec: parseInt(String(e.kv["speed"]).replace("/s", "")) || 0,
+          workers: Number(e.kv["workers"]) || 0,
+          batches: Number(e.kv["batches"]) || 0,
+          provider: e.kv["provider"] ? String(e.kv["provider"]) : undefined,
+        };
+      })
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }
+
+  // Fallback: aggregate from vectors.written events (legacy/current format)
+  const vectorEvents = entries.filter((e) => e.event === ">>> vectors.written" || e.event === "Worker wrote vectors");
+
+  if (vectorEvents.length === 0) {
+    return [];
+  }
+
+  // Group by session (events within 60 seconds of each other)
+  const sessions: EmbeddingSession[] = [];
+  let currentSession: { entries: ParsedLogLine[]; workers: Set<string> } | null = null;
+
+  for (const entry of vectorEvents) {
+    if (!currentSession) {
+      currentSession = { entries: [entry], workers: new Set() };
+      const workerId = String(entry.kv["workerid"] || "");
+      if (workerId) currentSession.workers.add(workerId);
+    } else {
+      const lastEntry = currentSession.entries.at(-1)!;
+      const timeDiff = entry.timestamp.getTime() - lastEntry.timestamp.getTime();
+
+      if (timeDiff < 60000) {
+        // Same session (within 60s)
+        currentSession.entries.push(entry);
+        const workerId = String(entry.kv["workerid"] || "");
+        if (workerId) currentSession.workers.add(workerId);
+      } else {
+        // New session - finalize current
+        const first = currentSession.entries[0]!;
+        const last = currentSession.entries.at(-1)!;
+        const durationMs = last.timestamp.getTime() - first.timestamp.getTime() || 1;
+        const total = currentSession.entries.reduce((sum, e) => sum + (Number(e.kv["count"]) || 0), 0);
+
+        sessions.push({
+          timestamp: first.timestamp,
+          total,
+          durationMs,
+          speedPerSec: Math.round((total / durationMs) * 1000),
+          workers: currentSession.workers.size,
+          batches: currentSession.entries.length,
+        });
+
+        currentSession = { entries: [entry], workers: new Set() };
+        const workerId = String(entry.kv["workerid"] || "");
+        if (workerId) currentSession.workers.add(workerId);
+      }
+    }
+  }
+
+  // Finalize last session
+  if (currentSession && currentSession.entries.length > 0) {
+    const first = currentSession.entries[0]!;
+    const last = currentSession.entries.at(-1)!;
+    const durationMs = last.timestamp.getTime() - first.timestamp.getTime() || 1;
+    const total = currentSession.entries.reduce((sum, e) => sum + (Number(e.kv["count"]) || 0), 0);
+
+    sessions.push({
+      timestamp: first.timestamp,
+      total,
+      durationMs,
+      speedPerSec: Math.round((total / durationMs) * 1000),
+      workers: currentSession.workers.size,
+      batches: currentSession.entries.length,
+    });
+  }
+
+  return sessions.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+}
+
+/**
+ * Format embedding statistics for output
+ */
+export function formatEmbeddingStats(sessions: EmbeddingSession[], noColor: boolean): string {
+  const lines: string[] = [];
+  const bold = noColor ? "" : "\x1b[1m";
+  const dim = noColor ? "" : "\x1b[2m";
+  const cyan = noColor ? "" : "\x1b[36m";
+  const reset = noColor ? "" : "\x1b[0m";
+
+  lines.push(`${bold}Embedding Statistics${reset}`);
+  lines.push(`${dim}─────────────────────────────────────${reset}`);
+  lines.push(`Sessions: ${sessions.length}`);
+
+  if (sessions.length === 0) {
+    lines.push("");
+    lines.push(`${dim}No embedding sessions found in logs.${reset}`);
+    lines.push(`${dim}Run indexing first: mcp index${reset}`);
+    return lines.join("\n");
+  }
+
+  for (const [i, session] of sessions.entries()) {
+    lines.push("");
+    const dateStr = session.timestamp.toISOString().slice(0, 19).replace("T", " ");
+    lines.push(`${bold}Session ${i + 1}:${reset} ${dateStr}`);
+    lines.push(`  Total:     ${cyan}${session.total}${reset} embeddings`);
+    lines.push(`  Duration:  ${(session.durationMs / 1000).toFixed(1)}s`);
+    lines.push(`  Speed:     ${cyan}${session.speedPerSec}/s${reset}`);
+    lines.push(`  Workers:   ${session.workers}`);
+    if (session.batches > 0) {
+      lines.push(`  Batches:   ${session.batches}`);
+    }
+    if (session.provider) {
+      lines.push(`  Provider:  ${session.provider}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 /**

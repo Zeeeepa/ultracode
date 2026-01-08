@@ -127,7 +127,10 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
   dockerCmd += ` "${imageTag}" "${model.model_id}"`;
   dockerCmd += ` --max-model-len 512`; // Limit context for embeddings (short texts)
   dockerCmd += ` --dtype auto`; // Auto-select best dtype for GPU
-  dockerCmd += ` --gpu-memory-utilization 0.7`; // Leave headroom for other processes
+  dockerCmd += ` --gpu-memory-utilization 0.8`; // 80% GPU memory (was 0.7)
+  // Embedding throughput optimizations
+  dockerCmd += ` --max-num-batched-tokens 16384`; // Higher for encoder models (default ~2048)
+  dockerCmd += ` --max-num-seqs 256`; // More concurrent sequences for batching
 
   console.error(`[DEBUG] Running: ${dockerCmd}`);
 

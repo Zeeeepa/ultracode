@@ -176,7 +176,16 @@ export interface VectorStoreConfig {
 /**
  * Embedding generator configuration
  */
-export type EmbeddingProviderKind = "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "ovms" | "vllm" | "auto";
+export type EmbeddingProviderKind =
+  | "ollama"
+  | "openai"
+  | "cloudru"
+  | "huggingface"
+  | "tei"
+  | "ovms"
+  | "vllm"
+  | "llamacpp"
+  | "auto";
 
 /**
  * Serializable embedding configuration for subprocess workers.
@@ -198,8 +207,14 @@ export interface WorkerEmbeddingConfig {
   batchSize: number;
   /** Vector dimensions (e.g., 384 for e5-small) */
   dimensions?: number;
-  /** Directory for vector dump files (workers write directly to disk) */
-  vectorDumpDir?: string;
+  /** Worker index for endpoint assignment (0-based) */
+  workerIndex?: number;
+  /**
+   * Centralized embedding mode: workers send texts to Main, Main generates embeddings.
+   * Used by OVMS provider for better throughput via gRPC.
+   * When true, workers don't initialize WorkerEmbeddingClient.
+   */
+  centralizedEmbeddings?: boolean;
   /** Provider-specific options (serializable) */
   providerOptions?: {
     baseUrl?: string | undefined;
@@ -212,7 +227,31 @@ export interface WorkerEmbeddingConfig {
     encodingFormat?: "float" | "base64";
     protocol?: "rest" | "grpc";
     grpcPort?: number;
+    /** Available endpoints for load balancing (e.g., ["embeddings-gpu", "embeddings-cpu"]) */
+    endpoints?: string[];
+    // llama.cpp specific
+    contextSize?: number | undefined;
+    nGpuLayers?: number | undefined;
   };
+}
+
+/**
+ * Embedding generation statistics from subprocess pool.
+ * Aggregated across all workers for summary logging.
+ */
+export interface EmbeddingPoolStats {
+  /** Total embeddings generated */
+  total: number;
+  /** Duration from first embedding to last (ms) */
+  durationMs: number;
+  /** Throughput (embeddings per second) */
+  speedPerSec: number;
+  /** Number of workers that generated embeddings */
+  workers: number;
+  /** Total batch requests to embedding provider */
+  batches: number;
+  /** Embedding provider used */
+  provider?: string;
 }
 
 export interface EmbeddingConfig {
@@ -278,6 +317,18 @@ export interface EmbeddingConfig {
     baseUrl?: string | undefined;
     timeoutMs?: number | undefined;
     concurrency?: number | undefined;
+    maxBatchSize?: number | undefined;
+  };
+  llamacpp?: {
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
+    maxBatchSize?: number | undefined;
+    contextSize?: number | undefined;
+    nGpuLayers?: number | undefined;
+    checkServer?: boolean;
+    /** Auto-start llama-server if not running (default: true) */
+    autoStart?: boolean;
   };
 }
 
@@ -324,4 +375,21 @@ export interface SemanticMetrics {
   avgSearchTime: number;
   cacheHitRate: number;
   vectorsStored: number;
+}
+
+/**
+ * Embedding pool statistics for performance monitoring
+ * Aggregated across all workers in a subprocess pool
+ */
+export interface EmbeddingPoolStats {
+  /** Total number of embeddings generated */
+  total: number;
+  /** Duration from first batch to last batch completion (ms) */
+  durationMs: number;
+  /** Throughput: embeddings per second */
+  speedPerSec: number;
+  /** Number of workers that processed embeddings */
+  workers: number;
+  /** Total number of batch requests to embedding provider */
+  batches: number;
 }

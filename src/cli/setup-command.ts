@@ -46,6 +46,7 @@ import {
   selectModel,
   selectProvider,
 } from "./setup/index.js";
+import { cleanupDockerLlamaServer } from "./setup/utils/docker.js";
 
 // ═══════════════════════════════════════════════════════════════
 // Package Root Detection
@@ -195,7 +196,7 @@ export async function runSetup(args: string[]): Promise<void> {
   const finalConfig: SemanticConfig = {
     enabled: true,
     embedding: {
-      platform: provider as "tei" | "ollama" | "ovms" | "ovms-native" | "vllm",
+      platform: provider as "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp",
       architecture: gpu.architecture,
       ovms: isOVMS
         ? {
@@ -204,16 +205,18 @@ export async function runSetup(args: string[]): Promise<void> {
             // OVMS V3 API handles batching internally, use larger batches
             batch_size: 200,
             ovms_mini_batch: 8, // V3 API mini-batch size for parallel requests
-            selected_model: selectedModel.model_id,
+            // Use detected model from running OVMS if available, otherwise use selected model
+            selected_model: installResult.detectedModelId ?? selectedModel.model_id,
             // OpenVINO target device: NPU, GPU, CPU (auto-detected by setup)
             target_device: targetDevice,
             // Multi-device endpoints for round-robin load balancing (GPU + CPU parallel processing)
             endpoints: installResult.endpoints,
             models: [
               {
-                id: selectedModel.model_id,
+                id: installResult.detectedModelId ?? selectedModel.model_id,
                 languages: [selectedModel.language],
-                vector_size: selectedModel.dimensions,
+                // Use detected dimensions from running OVMS if available
+                vector_size: installResult.detectedDimensions ?? selectedModel.dimensions,
               },
             ],
             // OVMS API mode:
@@ -227,23 +230,9 @@ export async function runSetup(args: string[]): Promise<void> {
         provider === "tei"
           ? {
               endpoint: "http://127.0.0.1:8081",
+              // Pure defaults - any tuning reduces performance on small datasets
               max_batch_tokens: 16384,
               max_client_batch_size: 500,
-              selected_model: selectedModel.model_id,
-              models: [
-                {
-                  id: selectedModel.model_id,
-                  languages: [selectedModel.language],
-                  vector_size: selectedModel.dimensions,
-                },
-              ],
-            }
-          : undefined,
-      ollama:
-        provider === "ollama"
-          ? {
-              endpoint: "http://127.0.0.1:11434",
-              batch_size: selectedModel.optimal_batch_size ?? 1,
               selected_model: selectedModel.model_id,
               models: [
                 {
@@ -260,6 +249,31 @@ export async function runSetup(args: string[]): Promise<void> {
               endpoint: "http://127.0.0.1:8000",
               max_batch_size: 64,
               selected_model: selectedModel.model_id,
+              models: [
+                {
+                  id: selectedModel.model_id,
+                  languages: [selectedModel.language],
+                  vector_size: selectedModel.dimensions,
+                },
+              ],
+            }
+          : undefined,
+      llamacpp:
+        provider === "llamacpp"
+          ? {
+              endpoint: "http://127.0.0.1:8085",
+              selected_model: selectedModel.model_id,
+              // IMPORTANT: ctx-size is divided by parallel slots!
+              // So for 512 tokens per request with parallel=4, need ctx-size = 512 * 4 = 2048
+              context_size: (selectedModel.context_tokens || 512) * 4,
+              // Server performance tuning (can be adjusted in config file)
+              parallel_slots: 4, // --parallel: concurrent request slots
+              ubatch_size: 1536, // --ubatch-size: micro-batch for processing
+              batch_size: 3072, // --batch-size: prompt processing batch
+              // Client tuning
+              max_batch_size: 256, // texts per HTTP request
+              concurrency: 4, // parallel HTTP requests (should match parallel_slots)
+              auto_start: true,
               models: [
                 {
                   id: selectedModel.model_id,
@@ -297,7 +311,7 @@ export async function runSetup(args: string[]): Promise<void> {
           // Update config with LLM settings
           finalConfig.llm = {
             enabled: true,
-            platform: llmProvider as "ollama" | "tgi",
+            platform: llmProvider as "ollama" | "tgi" | "llamacpp",
             ollama:
               llmProvider === "ollama"
                 ? {
@@ -316,12 +330,16 @@ export async function runSetup(args: string[]): Promise<void> {
                   }
                 : undefined,
           };
+
+          // auto_start is already set in llamacpp config above
           saveSemanticConfig(finalConfig);
         }
       }
     } else {
       printWarn("LLM config not found, skipping LLM setup");
     }
+  } else {
+    // LLM disabled - auto_start is already set in llamacpp config
   }
 
   // Summary
@@ -359,10 +377,6 @@ export async function runSetup(args: string[]): Promise<void> {
     console.error(`${c.dim}vLLM Management:${c.reset}`);
     console.error(`${c.dim}  docker logs vllm-server     # View logs${c.reset}`);
     console.error(`${c.dim}  docker restart vllm-server  # Restart${c.reset}`);
-  } else if (provider === "ollama") {
-    console.error(`${c.dim}Ollama Management:${c.reset}`);
-    console.error(`${c.dim}  ollama list                 # List models${c.reset}`);
-    console.error(`${c.dim}  ollama pull <model>         # Download model${c.reset}`);
   }
 
   // LLM management hints
@@ -372,6 +386,10 @@ export async function runSetup(args: string[]): Promise<void> {
     console.error(`${c.dim}  docker logs tgi-llm-server    # View logs${c.reset}`);
     console.error(`${c.dim}  docker restart tgi-llm-server # Restart${c.reset}`);
   }
+
+  // Cleanup: Kill Docker's built-in llama-server if running
+  // (Docker Desktop may auto-start com.docker.llama-server.exe when docker commands are invoked)
+  cleanupDockerLlamaServer();
 
   console.error("");
   console.error(`${c.yellow}Next: Restart your MCP client to enable semantic mode${c.reset}`);

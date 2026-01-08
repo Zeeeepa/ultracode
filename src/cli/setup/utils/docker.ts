@@ -17,6 +17,10 @@ export function checkDocker(): boolean {
       windowsHide: true,
     });
 
+    // Cleanup: docker info may spawn com.docker.llama-server.exe (Docker Model Runner)
+    // Kill it to avoid confusion with our llama-server
+    cleanupDockerLlamaServer();
+
     if (result.status === 0) {
       console.error("[DEBUG] docker info succeeded");
       return true;
@@ -45,6 +49,29 @@ export function checkDocker(): boolean {
   } catch (e: any) {
     console.error(`[DEBUG] checkDocker exception: ${e.message}`);
     return false;
+  }
+}
+
+/**
+ * Kill Docker's built-in llama-server if running.
+ * Docker Desktop may auto-start com.docker.llama-server.exe when docker commands are invoked.
+ * This can cause confusion with our own llama-server for embeddings.
+ *
+ * NOTE: Docker spawns this process asynchronously, so call this at the END of setup,
+ * not immediately after docker commands.
+ */
+export function cleanupDockerLlamaServer(): void {
+  if (process.platform !== "win32") return;
+
+  try {
+    // Kill com.docker.llama-server.exe if running (Docker Model Runner's inference server)
+    spawnSync("taskkill", ["/F", "/IM", "com.docker.llama-server.exe"], {
+      stdio: "pipe",
+      windowsHide: true,
+      timeout: 5000,
+    });
+  } catch {
+    // Ignore errors - process may not be running
   }
 }
 

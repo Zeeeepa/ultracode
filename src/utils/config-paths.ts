@@ -29,6 +29,13 @@ export function getConfigDir(): string {
 }
 
 /**
+ * Get the logs directory for UltraScript Tools
+ */
+export function getLogsDir(): string {
+  return join(getDataDir(), "logs");
+}
+
+/**
  * Get the central data directory for UltraScript Tools
  * (for databases, embeddings, cache, etc.)
  * NOTE: Must match storage-paths.ts getDataDir() for consistency
@@ -103,7 +110,7 @@ export function ensureDataDir(): string {
 export interface SemanticConfig {
   enabled: boolean;
   embedding: {
-    platform: "tei" | "ollama" | "ovms" | "ovms-native" | "vllm";
+    platform: "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp";
     architecture: string;
     ovms?: {
       endpoint: string;
@@ -126,16 +133,7 @@ export interface SemanticConfig {
       endpoint: string;
       max_batch_tokens?: number;
       max_client_batch_size?: number;
-      selected_model: string | null;
-      models?: Array<{
-        id: string;
-        languages: string[];
-        vector_size: number;
-      }>;
-    };
-    ollama?: {
-      endpoint: string;
-      batch_size?: number;
+      concurrency?: number; // Client-side concurrent requests (default 16)
       selected_model: string | null;
       models?: Array<{
         id: string;
@@ -153,6 +151,25 @@ export interface SemanticConfig {
         vector_size: number;
       }>;
     };
+    llamacpp?: {
+      endpoint: string;
+      context_size?: number;
+      n_gpu_layers?: number;
+      // Performance tuning
+      parallel_slots?: number; // Number of parallel request slots (default: 4)
+      ubatch_size?: number; // Micro-batch size (default: 1536)
+      batch_size?: number; // Batch size for prompt processing (default: 3072)
+      // Client settings
+      max_batch_size?: number; // Max texts per HTTP request (default: 256)
+      concurrency?: number; // Parallel HTTP requests (default: 4)
+      auto_start?: boolean; // Auto-start llama-server (default: true)
+      selected_model: string | null;
+      models?: Array<{
+        id: string;
+        languages: string[];
+        vector_size: number;
+      }>;
+    };
   };
   auto_detection?: {
     gpu_architecture: boolean;
@@ -161,7 +178,7 @@ export interface SemanticConfig {
   };
   llm?: {
     enabled: boolean;
-    platform: "ollama" | "tgi";
+    platform: "ollama" | "tgi" | "llamacpp";
     ollama?: {
       endpoint: string;
       model_id: string;
@@ -295,9 +312,9 @@ export function getVectorDimensions(): number {
         selectedModel = config.embedding.tei?.selected_model || null;
         models = config.embedding.tei?.models;
         break;
-      case "ollama":
-        selectedModel = config.embedding.ollama?.selected_model || null;
-        models = config.embedding.ollama?.models;
+      case "llamacpp":
+        selectedModel = config.embedding.llamacpp?.selected_model || null;
+        models = config.embedding.llamacpp?.models;
         break;
     }
 

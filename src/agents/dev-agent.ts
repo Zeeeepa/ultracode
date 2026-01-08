@@ -11,7 +11,6 @@ import { buildWorkerEmbeddingConfig } from "../config/worker-embedding-config.js
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { log } from "../logging/index.js";
-import { getFaissProvider } from "../semantic/faiss/faiss-provider.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
 import { setGlobalProjectContext } from "../storage/graph-storage-factory.js";
 // SQLiteManager removed - using libsql via GraphStorage
@@ -356,31 +355,127 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     if (this.parserAgent) {
       const embeddingConfig = buildWorkerEmbeddingConfig();
       if (embeddingConfig) {
+        // IMPORTANT: Start llama-server BEFORE workers begin generating embeddings
+        // Workers use HTTP client directly, server must be ready first
+        if (embeddingConfig.provider === "llamacpp") {
+          const { llamacppEmbeddingManager } = await import("../semantic/llamacpp-server-manager.js");
+          const { loadSemanticConfig, getDataDir } = await import("../utils/config-paths.js");
+          const { existsSync, readdirSync } = await import("node:fs");
+          const { join } = await import("node:path");
+
+          const semanticConfig = loadSemanticConfig();
+          const llamacppConfig = semanticConfig?.embedding?.llamacpp;
+
+          if (llamacppConfig && !llamacppEmbeddingManager.getState().isRunning) {
+            // Find GGUF model in standard locations
+            const dataDir = getDataDir();
+            const searchPaths = [
+              join(dataDir, "hf-cache", "multilingual-e5-base-Q8_0.gguf"),
+              join(dataDir, "llamacpp", "models", "multilingual-e5-base-Q8_0.gguf"),
+              join(dataDir, "models", "multilingual-e5-base-Q8_0.gguf"),
+            ];
+
+            let modelPath: string | null = null;
+            for (const p of searchPaths) {
+              if (existsSync(p)) {
+                modelPath = p;
+                break;
+              }
+            }
+
+            // Fallback: find any .gguf in hf-cache
+            if (!modelPath) {
+              const hfCache = join(dataDir, "hf-cache");
+              if (existsSync(hfCache)) {
+                try {
+                  const files = readdirSync(hfCache);
+                  const gguf = files.find((f) => f.endsWith(".gguf"));
+                  if (gguf) modelPath = join(hfCache, gguf);
+                } catch {
+                  // Ignore
+                }
+              }
+            }
+
+            if (modelPath) {
+              log.i("DEVAGENT", "Starting llama-server for workers...", { port: 8085, model: modelPath });
+              const started = await llamacppEmbeddingManager.ensureRunning({
+                modelPath,
+                mode: "embedding",
+                port: 8085,
+                contextSize: llamacppConfig.context_size || 512,
+                nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
+              });
+              if (started) {
+                log.i("DEVAGENT", "llama-server ready for workers");
+              } else {
+                log.w("DEVAGENT", "llama-server start failed - embeddings may not work");
+              }
+            }
+          }
+        }
+
         this.parserAgent.setEmbeddingConfig(embeddingConfig);
         log.i("DEVAGENT", "Embedding config passed to parser workers", {
           provider: embeddingConfig.provider,
           model: embeddingConfig.modelName,
         });
 
-        // Set up incremental Faiss loading callback
-        // When a worker completes, Faiss loads its vectors immediately
-        const faissProvider = getFaissProvider();
-        const dimensions = embeddingConfig.dimensions || 384;
-        log.i("DEVAGENT", "Setting up incremental Faiss callback", {
-          dimensions,
-          faissReady: faissProvider.isReady(),
+        // Configure FAISS provider for embedding accumulator
+        // This enables flushing embeddings received via IPC to FAISS
+        const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
+        const { getProjectHash, DEFAULT_BRANCH } = await import("../shared/storage-paths.js");
+        // Initialize if not already done - this ensures provider is ready for embeddings
+        const faissProvider = await initializeFaissProvider({
+          dimensions: embeddingConfig.dimensions || 768,
         });
-        this.parserAgent.setVectorsWrittenCallback((workerId, count, _dumpDir) => {
-          log.i("DEVAGENT", ">>> vectors.written callback TRIGGERED", { workerId, count });
-          faissProvider
-            .loadWorkerDump(workerId, dimensions)
-            .then((result) => {
-              log.i("DEVAGENT", "Faiss loadWorkerDump completed", { workerId, ...result });
-            })
-            .catch((err) => {
-              log.w("DEVAGENT", "Failed to load worker dump", { workerId, error: (err as Error).message });
+        if (faissProvider) {
+          // Set project context for FAISS to enable correct persist path
+          const projectHash = getProjectHash(payload.directory);
+          await faissProvider.setProjectContext(projectHash, DEFAULT_BRANCH);
+          this.parserAgent.setFaissProvider(faissProvider);
+          log.i("DEVAGENT", "FAISS provider configured", { projectHash, dir: payload.directory });
+        } else {
+          log.w("DEVAGENT", "FAISS provider initialization failed - embeddings will not be saved");
+        }
+
+        // For centralized embedding mode (OVMS): create EmbeddingGenerator in Main
+        // Workers send texts, Main generates embeddings via gRPC
+        if (embeddingConfig.centralizedEmbeddings) {
+          try {
+            const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
+            const { buildEmbeddingGeneratorOptions } = await import("../agents/semantic/provider-config.js");
+            const { loadSemanticConfig } = await import("../utils/config-paths.js");
+            const { getConfig } = await import("../config/yaml-config.js");
+
+            // Load configs for EmbeddingGenerator
+            const semanticConfig = loadSemanticConfig();
+            const yamlConfig = getConfig();
+
+            // Build options for EmbeddingGenerator (same as SemanticAgent)
+            // Cast provider to ProviderKind (centralized mode only uses ovms/tei/vllm/llamacpp)
+            const generatorOptions = buildEmbeddingGeneratorOptions(
+              embeddingConfig.provider as import("./semantic/provider-config.js").ProviderKind,
+              embeddingConfig.modelName,
+              embeddingConfig.batchSize,
+              semanticConfig,
+              yamlConfig,
+            );
+
+            const embeddingGenerator = new EmbeddingGenerator(generatorOptions);
+            await embeddingGenerator.initialize();
+
+            await this.parserAgent.setEmbeddingGenerator(embeddingGenerator);
+            log.i("DEVAGENT", "Centralized EmbeddingGenerator configured", {
+              provider: embeddingConfig.provider,
+              model: embeddingConfig.modelName,
             });
-        });
+          } catch (error) {
+            log.e("DEVAGENT", "Failed to initialize centralized EmbeddingGenerator", {
+              error: (error as Error).message,
+            });
+          }
+        }
       }
     }
 
@@ -845,6 +940,30 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     });
     log.flush(); // Force flush to ensure completion message is visible
 
+    // Flush any pending embeddings to FAISS
+    if (this.parserAgent) {
+      const accumulator = this.parserAgent.getAccumulator();
+      if (accumulator) {
+        const pendingCount = accumulator.getPendingCount();
+        if (pendingCount > 0) {
+          log.i("DEVAGENT", "Flushing pending embeddings to FAISS", { pending: pendingCount });
+          try {
+            const flushed = await accumulator.flush();
+            log.i("DEVAGENT", "Embeddings flushed to FAISS", { flushed });
+          } catch (err) {
+            log.e("DEVAGENT", "Failed to flush embeddings", { error: (err as Error).message });
+          }
+        }
+        const stats = accumulator.getStats();
+        log.i("DEVAGENT", "Embedding accumulator stats", {
+          accumulated: stats.accumulated,
+          flushed: stats.flushed,
+          flushCount: stats.flushCount,
+          totalBytes: stats.totalBytes,
+        });
+      }
+    }
+
     if (this.parserAgent) {
       try {
         const memoryBeforeMB = this.parserAgent.getTotalMemoryMB();
@@ -1093,6 +1212,13 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     });
 
     return { entities: totalEntities, files: filesProcessed };
+  }
+
+  /**
+   * Get embedding generation statistics from parser agent
+   */
+  getEmbeddingStats(): import("../types/semantic.js").EmbeddingPoolStats | null {
+    return this.parserAgent?.getEmbeddingPoolStats?.() ?? null;
   }
 
   protected async onShutdown(): Promise<void> {

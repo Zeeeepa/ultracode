@@ -8,12 +8,14 @@
  */
 
 export interface LLMConfig {
-  provider: "ollama" | "tgi" | "openai" | "docker-model-runner";
+  provider: "ollama" | "tgi" | "openai" | "docker-model-runner" | "llamacpp";
   baseUrl: string;
   model: string;
   apiKey?: string | undefined;
   maxTokens?: number | undefined;
   temperature?: number;
+  /** For llamacpp: GPU layers. 0=CPU, 99=full GPU. Auto-detected from VRAM if not set. */
+  nGpuLayers?: number;
 }
 
 export interface LLMResponse {
@@ -457,9 +459,265 @@ export class DockerModelRunnerProvider implements LLMProvider {
 }
 
 /**
+ * llama.cpp LLM Provider (Native GGUF)
+ * Uses OpenAI-compatible API (/v1/chat/completions)
+ *
+ * Priority: Embedding gets GPU, LLM runs on CPU (nGpuLayers: 0)
+ */
+export class LlamaCppLLMProvider implements LLMProvider {
+  readonly name = "llamacpp";
+  private _isAvailable = false;
+  private baseUrl: string;
+  private model: string;
+  private nGpuLayers: number | undefined;
+  private autoStartAttempted = false;
+  private autoStartEnabled: boolean;
+
+  constructor(config: { baseUrl?: string | undefined; model?: string; nGpuLayers?: number; autoStart?: boolean }) {
+    // llama.cpp LLM port (separate from embedding port 8085)
+    this.baseUrl = config.baseUrl || "http://127.0.0.1:8086";
+    this.model = config.model || "gguf";
+    // undefined = auto-detect from VRAM at runtime
+    // 0 = CPU-only, 99 = full GPU
+    this.nGpuLayers = config.nGpuLayers;
+    // autoStart: true = start llama-server if not running (for explicitly selected provider)
+    // autoStart: false = only check if running, don't start (for fallback providers)
+    this.autoStartEnabled = config.autoStart !== false;
+  }
+
+  get isAvailable(): boolean {
+    return this._isAvailable;
+  }
+
+  get selectedModel(): string {
+    return this.model;
+  }
+
+  /**
+   * Find LLM GGUF model path
+   */
+  private findLLMModelPath(): string | null {
+    try {
+      const { existsSync, readdirSync } = require("node:fs");
+      const { join } = require("node:path");
+      const dataDir = process.env["LOCALAPPDATA"]
+        ? join(process.env["LOCALAPPDATA"], "UltraScriptTools")
+        : join(require("node:os").homedir(), ".ultrascript-tools");
+
+      // Search for LLM GGUF models (not embedding models)
+      const searchDirs = [join(dataDir, "hf-cache"), join(dataDir, "llamacpp", "models"), join(dataDir, "models")];
+
+      const llmPatterns = ["qwen", "deepseek", "codestral", "mistral", "llama", "phi"];
+      const embeddingPatterns = ["e5", "minilm", "bge", "nomic", "embed"];
+
+      for (const dir of searchDirs) {
+        if (!existsSync(dir)) continue;
+        try {
+          const files = readdirSync(dir) as string[];
+          for (const file of files) {
+            if (!file.endsWith(".gguf")) continue;
+            const lower = file.toLowerCase();
+            // Skip embedding models
+            if (embeddingPatterns.some((p) => lower.includes(p))) continue;
+            // Prefer LLM models
+            if (llmPatterns.some((p) => lower.includes(p))) {
+              return join(dir, file);
+            }
+          }
+          // Fallback: any non-embedding GGUF
+          for (const file of files) {
+            if (!file.endsWith(".gguf")) continue;
+            const lower = file.toLowerCase();
+            if (!embeddingPatterns.some((p) => lower.includes(p))) {
+              return join(dir, file);
+            }
+          }
+        } catch {
+          // Ignore read errors
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+    return null;
+  }
+
+  async checkHealth(): Promise<boolean> {
+    // Try existing server first
+    try {
+      const response = await fetch(`${this.baseUrl}/health`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (response.ok) {
+        this._isAvailable = true;
+        return true;
+      }
+    } catch {
+      // Server not running
+    }
+
+    // Auto-start if not attempted yet AND autoStart is enabled
+    // autoStart is disabled for fallback providers to prevent unwanted server starts
+    if (!this.autoStartAttempted && this.autoStartEnabled) {
+      this.autoStartAttempted = true;
+      const modelPath = this.findLLMModelPath();
+
+      if (modelPath) {
+        try {
+          // Auto-detect VRAM if nGpuLayers not configured
+          let gpuLayers = this.nGpuLayers;
+          if (gpuLayers === undefined) {
+            const vram = await detectVRAM();
+            gpuLayers = calculateLLMGpuLayers(vram);
+          }
+
+          // Dynamic import to avoid circular dependencies
+          const { llamacppLLMManager, LLAMACPP_LLM_PORT } = await import("../../semantic/llamacpp-server-manager.js");
+
+          const started = await llamacppLLMManager.ensureRunning({
+            modelPath,
+            mode: "llm",
+            port: LLAMACPP_LLM_PORT,
+            contextSize: 8192,
+            nGpuLayers: gpuLayers,
+          });
+
+          if (started) {
+            this._isAvailable = true;
+            return true;
+          }
+        } catch {
+          // Auto-start failed
+        }
+      }
+    }
+
+    this._isAvailable = false;
+    return false;
+  }
+
+  async listModels(): Promise<string[]> {
+    try {
+      const response = await fetch(`${this.baseUrl}/v1/models`);
+      if (!response.ok) return [this.model];
+      const data = (await response.json()) as { data?: { id: string }[] };
+      return (data.data || []).map((m) => m.id);
+    } catch {
+      return [this.model];
+    }
+  }
+
+  async generate(prompt: string, options?: GenerateOptions): Promise<LLMResponse> {
+    const messages: { role: string; content: string }[] = [];
+    if (options?.systemPrompt) {
+      messages.push({ role: "system", content: options.systemPrompt });
+    }
+    messages.push({ role: "user", content: prompt });
+
+    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        max_tokens: options?.maxTokens || 2048,
+        temperature: options?.temperature || 0.3,
+        stop: options?.stopSequences,
+      }),
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
+    });
+
+    if (!response.ok) {
+      throw new Error(`llama.cpp error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens: number; completion_tokens: number };
+    };
+    return {
+      text: data.choices?.[0]?.message?.content || "",
+      usage: data.usage
+        ? {
+            promptTokens: data.usage.prompt_tokens,
+            completionTokens: data.usage.completion_tokens,
+          }
+        : undefined,
+    };
+  }
+}
+
+/**
+ * Detect available VRAM in MB
+ * Returns 0 if detection fails or no GPU
+ */
+async function detectVRAM(): Promise<number> {
+  try {
+    const { execSync } = require("node:child_process");
+
+    // Try nvidia-smi first (NVIDIA GPUs)
+    try {
+      const output = execSync("nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits", {
+        encoding: "utf-8",
+        timeout: 5000,
+        windowsHide: true,
+      }).trim();
+      const vramMB = parseInt(output.split("\n")[0], 10);
+      if (vramMB > 0) return vramMB;
+    } catch {
+      // nvidia-smi not available
+    }
+
+    // Try rocm-smi for AMD GPUs
+    try {
+      const output = execSync("rocm-smi --showmeminfo vram --csv", {
+        encoding: "utf-8",
+        timeout: 5000,
+        windowsHide: true,
+      }).trim();
+      // Parse AMD output (format varies)
+      const match = output.match(/(\d+)\s*MB/i);
+      if (match) return parseInt(match[1], 10);
+    } catch {
+      // rocm-smi not available
+    }
+  } catch {
+    // Detection failed
+  }
+  return 0;
+}
+
+/**
+ * Calculate optimal nGpuLayers for LLM based on available VRAM
+ *
+ * Memory estimates (approximate):
+ * - Embedding model (e5-base Q8 GGUF): ~1-2GB VRAM
+ * - LLM 7B Q4: ~4-5GB VRAM
+ * - LLM 7B Q8: ~7-8GB VRAM
+ * - LLM 14B Q4: ~8-9GB VRAM
+ *
+ * Strategy (after reserving ~2GB for embedding):
+ * - VRAM >= 16GB: Both full GPU (99 layers) - can run 14B+ models
+ * - VRAM >= 10GB: Both on GPU (99 layers) - 7B models comfortably
+ * - VRAM >= 8GB: Both on GPU (99 layers) - 7B Q4 fits
+ * - VRAM >= 6GB: LLM partial GPU (30 layers)
+ * - VRAM < 6GB: LLM on CPU (0 layers)
+ */
+function calculateLLMGpuLayers(vramMB: number): number {
+  if (vramMB >= 8000) return 99; // Full GPU: embedding (~2GB) + LLM 7B Q4 (~5GB) = ~7GB
+  if (vramMB >= 6000) return 30; // Partial GPU for LLM
+  return 0; // CPU-only for LLM (embedding still uses GPU)
+}
+
+/**
  * Load LLM config from semantic-config.json
  */
-async function loadLLMConfig(): Promise<{ provider?: string; model?: string | undefined; endpoint?: string } | null> {
+async function loadLLMConfig(): Promise<{
+  provider?: string;
+  model?: string | undefined;
+  endpoint?: string;
+  nGpuLayers?: number;
+} | null> {
   try {
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
@@ -477,9 +735,11 @@ async function loadLLMConfig(): Promise<{ provider?: string; model?: string | un
         const config = JSON.parse(content);
         if (config.llm) {
           return {
-            provider: config.llm.provider,
+            // Support both "provider" and "platform" field names
+            provider: config.llm.provider || config.llm.platform,
             model: config.llm.model,
             endpoint: config.llm.endpoint,
+            nGpuLayers: config.llm.nGpuLayers, // For high-VRAM systems
           };
         }
       } catch {
@@ -528,6 +788,20 @@ export async function detectLLMProviders(): Promise<{
         model: savedConfig.model,
       }),
     );
+  } else if (savedConfig?.provider === "llamacpp") {
+    // Use configured nGpuLayers, or auto-detect from VRAM
+    let nGpuLayers = savedConfig.nGpuLayers;
+    if (nGpuLayers === undefined) {
+      const vram = await detectVRAM();
+      nGpuLayers = calculateLLMGpuLayers(vram);
+    }
+    providers.push(
+      new LlamaCppLLMProvider({
+        baseUrl: savedConfig.endpoint,
+        model: savedConfig.model,
+        nGpuLayers,
+      }),
+    );
   }
 
   // Add default providers if not already added
@@ -537,6 +811,13 @@ export async function detectLLMProviders(): Promise<{
   }
   if (!providers.some((p) => p.name === "ollama")) {
     providers.push(new OllamaProvider({}));
+  }
+  if (!providers.some((p) => p.name === "llamacpp")) {
+    // Auto-detect VRAM for default LlamaCpp provider
+    // autoStart: false - don't auto-start server for fallback provider
+    const vram = await detectVRAM();
+    const nGpuLayers = calculateLLMGpuLayers(vram);
+    providers.push(new LlamaCppLLMProvider({ nGpuLayers, autoStart: false }));
   }
   if (!providers.some((p) => p.name === "tgi")) {
     providers.push(new TGIProvider({}));
@@ -590,6 +871,12 @@ export function createLLMProvider(config: LLMConfig): LLMProvider {
       return new DockerModelRunnerProvider({
         baseUrl: config.baseUrl,
         model: config.model,
+      });
+    case "llamacpp":
+      return new LlamaCppLLMProvider({
+        baseUrl: config.baseUrl,
+        model: config.model,
+        nGpuLayers: config.nGpuLayers, // Auto-detected if not set
       });
     default:
       throw new Error(`Unknown LLM provider: ${config.provider}`);
