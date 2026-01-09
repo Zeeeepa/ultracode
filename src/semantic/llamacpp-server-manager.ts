@@ -217,8 +217,8 @@ class LlamaCppServerManager {
     port: LLAMACPP_EMBEDDING_PORT,
     // IMPORTANT: ctx-size is divided by parallel slots!
     // With parallel=4, each slot gets contextSize/4 tokens
-    // So for 512 tokens per request, need contextSize = 512 * 4 = 2048
-    contextSize: 2048,
+    // So for 512 tokens per request, need contextSize = 512 * 8 = 4096
+    contextSize: 4096,
     nGpuLayers: 99, // Default: offload all to GPU
     // Optimized based on benchmarks: ubatch=1536 gives +11% vs ubatch=512
     ubatchSize: 1536,
@@ -228,7 +228,7 @@ class LlamaCppServerManager {
     startupTimeoutMs: 120000, // 2 minutes for model loading
     // Performance optimizations (enabled by default)
     flashAttn: true, // Flash Attention for faster KV cache
-    parallelSlots: 4, // 4 concurrent requests
+    parallelSlots: 8, // 4 concurrent requests
     mlock: true, // Lock model in RAM
     noKvOffload: false, // Allow KV cache on GPU
     threads: undefined, // Auto-detect

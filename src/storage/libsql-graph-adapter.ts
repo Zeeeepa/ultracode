@@ -673,6 +673,10 @@ export class LibSQLGraphAdapter {
 
   deleteEntity = (id: string): Promise<void> => this.entityOps.deleteEntity(id);
 
+  getEntityIdsByFilePath = (filePath: string): Promise<string[]> => this.entityOps.getEntityIdsByFilePath(filePath);
+
+  deleteEntitiesByFilePath = (filePath: string): Promise<string[]> => this.entityOps.deleteEntitiesByFilePath(filePath);
+
   getAllEntities = (): Promise<Entity[]> => this.entityOps.getAllEntities();
 
   // ===========================================================================
@@ -705,6 +709,10 @@ export class LibSQLGraphAdapter {
   getFileInfo = (path: string): Promise<FileInfo | null> => this.metadataOps.getFileInfo(path);
 
   getOutdatedFiles = (since: number): Promise<FileInfo[]> => this.metadataOps.getOutdatedFiles(since);
+
+  getAllIndexedFiles = (): Promise<Map<string, number>> => this.metadataOps.getAllIndexedFiles();
+
+  deleteFileInfo = (path: string): Promise<void> => this.metadataOps.deleteFileInfo(path);
 
   // ===========================================================================
   // VECTOR OPERATIONS (delegated to VectorOperations)

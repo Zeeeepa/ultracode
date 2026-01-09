@@ -326,6 +326,16 @@ export interface GraphStorage {
   updateFileInfo(info: FileInfo): Promise<void>;
   getFileInfo(path: string): Promise<FileInfo | null>;
   getOutdatedFiles(since: number): Promise<FileInfo[]>;
+  /** Get all indexed files with their lastIndexed timestamps */
+  getAllIndexedFiles(): Promise<Map<string, number>>;
+  /** Delete file info by path */
+  deleteFileInfo(path: string): Promise<void>;
+
+  // Entity operations by file path (for incremental indexing)
+  /** Get entity IDs by file path (for FAISS cleanup) */
+  getEntityIdsByFilePath(filePath: string): Promise<string[]>;
+  /** Delete all entities for a file path, returns deleted IDs */
+  deleteEntitiesByFilePath(filePath: string): Promise<string[]>;
 
   // Query operations
   executeQuery(query: GraphQuery): Promise<GraphQueryResult>;

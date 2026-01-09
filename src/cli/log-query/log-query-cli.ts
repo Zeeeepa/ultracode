@@ -49,6 +49,10 @@ Filters:
   --pid <pid>              Filter by process ID
   --req <id>               Filter by request ID
 
+Log source:
+  -w, --worker             Read worker log (worker-*.log) instead of main
+  -a, --all                Read both main and worker logs
+
 Output:
   -o, --output <format>    Output format: raw, table, json, csv
   -c, --count              Show only count of matching entries
@@ -87,9 +91,10 @@ async function main(): Promise<void> {
   let logFiles = files;
   if (logFiles.length === 0) {
     const logDir = getDefaultLogDir();
-    logFiles = findLogFiles(logDir);
+    logFiles = findLogFiles(logDir, output.logType);
     if (logFiles.length === 0) {
-      console.error(`No log files found in ${logDir}`);
+      const typeDesc = output.logType === "worker" ? "worker" : output.logType === "all" ? "any" : "main";
+      console.error(`No ${typeDesc} log files found in ${logDir}`);
       process.exit(1);
     }
   }

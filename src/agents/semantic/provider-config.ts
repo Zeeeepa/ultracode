@@ -176,7 +176,7 @@ export function buildEmbeddingGeneratorOptions(
       // Auto-start server if not running (default: true)
       autoStart: llamacppConfig?.auto_start ?? llamacppConfig?.autoStart ?? true,
       // Server performance tuning
-      parallelSlots: llamacppConfig?.parallel_slots ?? 4,
+      parallelSlots: llamacppConfig?.parallel_slots ?? 8,
       ubatchSize: llamacppConfig?.ubatch_size ?? 1536,
       batchSize: llamacppConfig?.batch_size ?? 3072,
     };

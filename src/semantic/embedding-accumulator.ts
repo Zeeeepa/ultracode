@@ -4,11 +4,11 @@
  * Collects binary embeddings from worker pools and flushes them to FAISS
  * in large batches for optimal performance.
  *
- * Centralized Mode (OVMS):
+ * Centralized Mode (OVMS/llamacpp):
  * - Workers send texts via IPC to Main process
  * - Main accumulates texts in a queue
- * - Single sequential loop processes batches to OVMS
- * - One connection, maximum throughput
+ * - Single sequential loop processes batches via single connection
+ * - Optimal GPU batching, maximum throughput
  *
  * Benefits:
  * - Reduced IPC overhead (fewer calls to FAISS worker)
@@ -87,6 +87,11 @@ export class EmbeddingAccumulator {
   private isProcessingQueue = false;
   private queueProcessingPromise: Promise<void> | null = null;
 
+  // Debounce for accumulating texts before processing
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly DEBOUNCE_MS = 50; // Wait 100ms for more texts
+  private static readonly MIN_BATCH_THRESHOLD = 50; // Start immediately if >= 100 texts
+
   // Stats
   private stats: AccumulatorStats = {
     accumulated: 0,
@@ -116,7 +121,7 @@ export class EmbeddingAccumulator {
   }
 
   /**
-   * Set EmbeddingGenerator for centralized embedding mode (OVMS).
+   * Set EmbeddingGenerator for centralized embedding mode (OVMS/llamacpp).
    * When set, starts processing any queued texts.
    */
   async setEmbeddingGenerator(generator: EmbeddingGenerator): Promise<void> {
@@ -178,7 +183,7 @@ export class EmbeddingAccumulator {
   }
 
   /**
-   * Add texts for centralized embedding generation (OVMS mode).
+   * Add texts for centralized embedding generation (OVMS/llamacpp mode).
    * Texts are queued and processed sequentially through a single connection.
    * @param texts - Text items to generate embeddings for
    * @param workerId - Optional worker ID for stats tracking
@@ -201,10 +206,44 @@ export class EmbeddingAccumulator {
       isProcessing: this.isProcessingQueue,
     });
 
-    // Start processing if not already running and generator is ready
+    // Start processing with debounce to accumulate more texts
     if (this.embeddingGenerator && !this.isProcessingQueue) {
-      this.startQueueProcessing();
+      this.scheduleQueueProcessing();
     }
+  }
+
+  /**
+   * Schedule queue processing with debounce.
+   * Waits for more texts to accumulate before starting, unless queue is already large.
+   */
+  private scheduleQueueProcessing(): void {
+    // If already scheduled or processing, skip
+    if (this.debounceTimer || this.isProcessingQueue) return;
+
+    // If queue is large enough, start immediately
+    if (this.textQueue.length >= EmbeddingAccumulator.MIN_BATCH_THRESHOLD) {
+      log.d("ACCUMULATOR", "Queue threshold reached, starting immediately", {
+        queueSize: this.textQueue.length,
+        threshold: EmbeddingAccumulator.MIN_BATCH_THRESHOLD,
+      });
+      this.startQueueProcessing();
+      return;
+    }
+
+    // Otherwise, debounce to accumulate more texts
+    log.d("ACCUMULATOR", "Debouncing queue processing", {
+      queueSize: this.textQueue.length,
+      debounceMs: EmbeddingAccumulator.DEBOUNCE_MS,
+    });
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
+      if (!this.isProcessingQueue && this.textQueue.length > 0) {
+        log.d("ACCUMULATOR", "Debounce complete, starting processing", {
+          queueSize: this.textQueue.length,
+        });
+        this.startQueueProcessing();
+      }
+    }, EmbeddingAccumulator.DEBOUNCE_MS);
   }
 
   /**
@@ -219,9 +258,74 @@ export class EmbeddingAccumulator {
     this.queueProcessingPromise = this.processQueueLoop();
   }
 
+  // Number of parallel batches to send to llama-server (match --parallel)
+  private static readonly PARALLEL_BATCHES = 12;
+
   /**
-   * Sequential queue processing loop.
-   * Processes batches one at a time for optimal throughput.
+   * Process a single batch and return results.
+   * Used for parallel batch processing.
+   */
+  private async processSingleBatch(
+    batch: EmbeddingTextItem[],
+  ): Promise<{ embeddings: VectorEmbedding[]; count: number } | null> {
+    // Filter out texts that already have embeddings in FAISS
+    let filteredBatch = batch;
+    if (this.faissProvider) {
+      const ids = batch.map((t) => t.id);
+      const existingIds = this.faissProvider.getExistingIds(ids);
+      if (existingIds.size > 0) {
+        filteredBatch = batch.filter((t) => !existingIds.has(t.id));
+        if (filteredBatch.length === 0) {
+          return null; // All texts already have embeddings
+        }
+      }
+    }
+
+    // Sort batch by text length DESCENDING (longest first) - better GPU in llama.cpp
+    const sortedBatch = filteredBatch
+      .map((t, idx) => ({ item: t, idx, len: t.text.length }))
+      .sort((a, b) => b.len - a.len);
+
+    // Truncate texts to ~512 tokens (e5 model limit) ≈ 2000 chars
+    const MAX_TEXT_CHARS = 2000;
+    const textStrings = sortedBatch.map((s) =>
+      s.item.text.length > MAX_TEXT_CHARS ? s.item.text.slice(0, MAX_TEXT_CHARS) : s.item.text,
+    );
+
+    // Generate embeddings for sorted batch
+    const embeddings = await this.embeddingGenerator!.generateBatch(textStrings);
+
+    // Restore original order for correct id mapping
+    const reorderedEmbeddings = new Array<Float32Array>(filteredBatch.length);
+    for (let i = 0; i < sortedBatch.length; i++) {
+      reorderedEmbeddings[sortedBatch[i]!.idx] = embeddings[i]!;
+    }
+
+    // Convert to VectorEmbedding format
+    const results: VectorEmbedding[] = [];
+    for (let i = 0; i < filteredBatch.length && i < reorderedEmbeddings.length; i++) {
+      const text = filteredBatch[i]!;
+      const vector = reorderedEmbeddings[i];
+
+      if (!vector || vector.length !== this.config.dimensions) {
+        continue;
+      }
+
+      results.push({
+        id: text.id,
+        vector,
+        content: text.text.slice(0, 500),
+        metadata: text.metadata,
+        createdAt: Date.now(),
+      });
+    }
+
+    return { embeddings: results, count: embeddings.length };
+  }
+
+  /**
+   * Parallel queue processing loop.
+   * Processes multiple batches concurrently to maximize llama-server throughput.
    */
   private async processQueueLoop(): Promise<void> {
     // Set start time on first batch
@@ -232,71 +336,55 @@ export class EmbeddingAccumulator {
     log.i("ACCUMULATOR", "Queue processing started", {
       queueSize: this.textQueue.length,
       batchSize: this.config.queueBatchSize,
+      parallelBatches: EmbeddingAccumulator.PARALLEL_BATCHES,
     });
 
     const loopStart = performance.now();
     let totalProcessed = 0;
 
     try {
-      while (this.textQueue.length > 0) {
-        // Take a batch from the queue
-        const batch = this.textQueue.splice(0, this.config.queueBatchSize);
-        if (batch.length === 0) break;
+      // Track in-flight batch promises
+      const inFlight: Promise<{ embeddings: VectorEmbedding[]; count: number } | null>[] = [];
 
-        const batchStart = performance.now();
+      while (this.textQueue.length > 0 || inFlight.length > 0) {
+        // Launch new batches up to parallel limit
+        while (inFlight.length < EmbeddingAccumulator.PARALLEL_BATCHES && this.textQueue.length > 0) {
+          const batch = this.textQueue.splice(0, this.config.queueBatchSize);
+          if (batch.length === 0) break;
 
-        try {
-          // Generate embeddings for this batch
-          const textStrings = batch.map((t) => t.text);
-          const embeddings = await this.embeddingGenerator!.generateBatch(textStrings);
+          const batchPromise = this.processSingleBatch(batch).catch((error) => {
+            log.e("ACCUMULATOR", "Batch failed", { error: (error as Error).message, count: batch.length });
+            // Re-queue failed batch
+            this.textQueue.unshift(...batch);
+            return null;
+          });
 
-          // Track stats
+          inFlight.push(batchPromise);
+        }
+
+        if (inFlight.length === 0) break;
+
+        // Wait for at least one batch to complete
+        const completed = await Promise.race(inFlight.map((p, idx) => p.then((result) => ({ result, idx }))));
+
+        // Remove completed promise from inFlight
+        inFlight.splice(completed.idx, 1);
+
+        // Process result
+        if (completed.result) {
+          const { embeddings, count } = completed.result;
+
+          // Add to pending
+          this.pending.push(...embeddings);
+
+          // Update stats
           this.embeddingStats.batchCount++;
-          this.embeddingStats.totalGenerated += embeddings.length;
-          totalProcessed += embeddings.length;
-
-          // Convert to VectorEmbedding format
-          for (let i = 0; i < batch.length && i < embeddings.length; i++) {
-            const text = batch[i]!;
-            const vector = embeddings[i];
-
-            if (!vector || vector.length !== this.config.dimensions) {
-              log.w("ACCUMULATOR", "Invalid vector dimensions", {
-                expected: this.config.dimensions,
-                got: vector?.length ?? 0,
-                id: text.id,
-              });
-              continue;
-            }
-
-            this.pending.push({
-              id: text.id,
-              vector,
-              content: text.text.slice(0, 500),
-              metadata: text.metadata,
-              createdAt: Date.now(),
-            });
-
-            this.stats.accumulated++;
-            this.stats.totalBytes += vector.byteLength;
+          this.embeddingStats.totalGenerated += count;
+          totalProcessed += count;
+          this.stats.accumulated += embeddings.length;
+          for (const emb of embeddings) {
+            this.stats.totalBytes += emb.vector.byteLength;
           }
-
-          const batchMs = performance.now() - batchStart;
-          log.d("ACCUMULATOR", "Batch processed", {
-            count: embeddings.length,
-            batchMs: Math.round(batchMs),
-            speed: Math.round(embeddings.length / (batchMs / 1000)),
-            remaining: this.textQueue.length,
-          });
-        } catch (error) {
-          log.e("ACCUMULATOR", "Batch failed, re-queuing", {
-            error: (error as Error).message,
-            count: batch.length,
-          });
-          // Re-queue failed batch at the front
-          this.textQueue.unshift(...batch);
-          // Small delay before retry
-          await new Promise((r) => setTimeout(r, 100));
         }
       }
 
@@ -321,6 +409,16 @@ export class EmbeddingAccumulator {
    * Waits for queue processing to complete first.
    */
   async flush(): Promise<number> {
+    // Cancel debounce timer and start processing immediately if needed
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+      // Start processing if there are queued texts
+      if (this.textQueue.length > 0 && !this.isProcessingQueue) {
+        this.startQueueProcessing();
+      }
+    }
+
     // Wait for queue processing to complete
     if (this.queueProcessingPromise) {
       log.i("ACCUMULATOR", "Waiting for queue processing", {

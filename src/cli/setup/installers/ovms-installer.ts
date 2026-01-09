@@ -21,27 +21,43 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
 
   // Detect hardware
   const hasNPU = cpu.model.toLowerCase().includes("ultra");
+  const cpuModel = cpu.model.toLowerCase();
   const gpuName = gpu.name?.toLowerCase() || "";
   const isIntelGPU = gpu.available && gpuName.includes("intel");
   const isIntelArc = isIntelGPU && /arc|a770|a750|a580|a380|a310/.test(gpuName);
   const isNvidiaGPU = gpu.available && /nvidia|geforce|rtx|gtx|quadro/.test(gpuName);
 
-  // Determine target device
+  // Check if system likely has Intel iGPU (even if NVIDIA is primary)
+  // Intel CPUs (non-F/KF variants) have integrated GPU - OVMS sees it as GPU.0
+  const isIntelCPU = cpuModel.includes("intel") || cpuModel.includes("core");
+  const hasIntelIGPU = isIntelGPU || (isIntelCPU && !cpuModel.includes("-f") && !cpuModel.includes("kf"));
+
+  // Determine target device for model compilation
+  // OpenVINO device names: CPU, GPU.0 (Intel iGPU), GPU.1 (NVIDIA if present), NPU
+  // Note: NPU doesn't support BERT/embedding models well
+  // Note: NVIDIA via OpenVINO is GPU.1 but experimental, prefer Intel GPU.0
   let targetDevice = "CPU";
-  if (hasNPU) {
-    targetDevice = "NPU";
-    printInfo("NPU detected (Intel Core Ultra) - will use NPU acceleration");
-  } else if (isNvidiaGPU) {
-    targetDevice = "NVIDIA";
-    printInfo(`NVIDIA GPU detected (${gpu.name}) - will use NVIDIA acceleration`);
-  } else if (isIntelArc) {
+  if (isIntelArc) {
     targetDevice = "GPU";
     printInfo(`Intel Arc GPU detected (${gpu.name}) - will use GPU acceleration`);
   } else if (isIntelGPU) {
     targetDevice = "GPU";
     printInfo(`Intel integrated GPU detected (${gpu.name}) - will use GPU acceleration`);
+  } else if (isNvidiaGPU && hasIntelIGPU) {
+    // NVIDIA is primary GPU but Intel iGPU exists - compile for GPU (Intel iGPU = GPU.0)
+    // NVIDIA via OpenVINO (GPU.1) is experimental and fails on Blackwell architecture
+    targetDevice = "GPU";
+    printInfo(`NVIDIA GPU detected (${gpu.name}) - will use Intel iGPU (GPU.0) for embeddings`);
+    printInfo("(OpenVINO NVIDIA plugin experimental - Blackwell fails, older GPUs untested)");
+  } else if (isNvidiaGPU) {
+    // Only NVIDIA, no Intel iGPU - must use CPU
+    targetDevice = "CPU";
+    printInfo(`NVIDIA GPU detected (${gpu.name}) - no Intel iGPU, using CPU`);
+  } else if (hasNPU) {
+    targetDevice = "CPU";
+    printInfo("NPU detected but not optimal for embeddings - using CPU");
   } else {
-    printInfo("Using CPU for inference (no GPU/NPU detected)");
+    printInfo("Using CPU for inference (no GPU detected)");
   }
 
   if (!isWindows && !isLinux) {
@@ -166,8 +182,8 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
     return { success: false };
   }
 
-  // Determine model directory name
-  const modelDirName = (model as any).multi_device ? model.model_id : "embeddings";
+  // Determine model directory name - always use model_id for proper multi-device support
+  const modelDirName = model.model_id;
 
   // Check for graph.pbtxt - indicates properly exported model with MediaPipe support
   const graphPath = join(modelsDir, modelDirName, "graph.pbtxt");
@@ -336,8 +352,8 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
             model_config_list: [
               {
                 config: {
-                  name: "embeddings",
-                  base_path: join(modelsDir, model.model_id).replace(/\\/g, "/"),
+                  name: modelDirName,
+                  base_path: join(modelsDir, modelDirName).replace(/\\/g, "/"),
                 },
               },
             ],
@@ -357,7 +373,7 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
   }
 
   // Check tokenizer status
-  const tokenizerXmlPath = join(modelsDir, "embeddings", "openvino_tokenizer.xml");
+  const tokenizerXmlPath = join(modelsDir, modelDirName, "openvino_tokenizer.xml");
   if (!hasTokenizer && existsSync(tokenizerXmlPath)) {
     hasTokenizer = true;
   }
@@ -409,11 +425,12 @@ echo "Starting OpenVINO Model Server..."
   console.error(`  ${c.dim}Ручной запуск: ${startScript}${c.reset}`);
 
   // Create multi-device configuration for GPU + CPU load balancing
-  const hasGPU = isNvidiaGPU || isIntelArc || isIntelGPU;
+  // Note: For NVIDIA systems with Intel iGPU, we use Intel iGPU (GPU.0) for embeddings
+  const hasGPU = hasIntelIGPU || isIntelArc || isIntelGPU;
   let endpoints: string[] = [modelDirName];
 
   if (hasGPU && hasTokenizer) {
-    const createdEndpoints = createMultiDeviceConfig(modelsDir, hasGPU, modelsDir, modelDirName);
+    const createdEndpoints = createMultiDeviceConfig(modelsDir, hasGPU, modelsDir, modelDirName, isNvidiaGPU);
     if (createdEndpoints.length > 1) {
       endpoints = generateEndpointsArray(createdEndpoints);
       printOK(`Multi-device конфигурация: ${createdEndpoints.join(", ")}`);

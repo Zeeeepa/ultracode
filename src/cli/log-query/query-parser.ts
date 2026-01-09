@@ -47,6 +47,7 @@ export interface OutputOptions {
   noColor: boolean;
   fields: string[];
   embeddings: boolean;
+  logType: "main" | "worker" | "all";
 }
 
 /**
@@ -132,6 +133,7 @@ export function parseArgs(args: string[]): {
     noColor: false,
     fields: [],
     embeddings: false,
+    logType: "main",
   };
 
   const files: string[] = [];
@@ -263,6 +265,16 @@ export function parseArgs(args: string[]): {
 
       case "--no-color":
         output.noColor = true;
+        break;
+
+      case "-w":
+      case "--worker":
+        output.logType = "worker";
+        break;
+
+      case "-a":
+      case "--all":
+        output.logType = "all";
         break;
 
       case "--fields": {

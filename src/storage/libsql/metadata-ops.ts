@@ -88,6 +88,54 @@ export class MetadataOperations {
     }));
   }
 
+  /**
+   * Get all indexed files with their lastIndexed timestamps
+   * Used for incremental indexing to compare with file mtime
+   */
+  async getAllIndexedFiles(): Promise<Map<string, number>> {
+    const client = this.getClient();
+    if (!client) throw new Error("Client not initialized");
+
+    const { projectHash, branchName } = this.getContext();
+    const result = await client.execute({
+      sql: `
+        SELECT path, last_indexed FROM files
+        WHERE project_hash = ? AND branch_name = ?
+      `,
+      args: [projectHash, branchName],
+    });
+
+    const fileMap = new Map<string, number>();
+    for (const row of result.rows) {
+      const path = row["path"] as string;
+      const lastIndexed = row["last_indexed"] as number;
+      // Store with forward slashes for consistency
+      fileMap.set(path.replace(/\\/g, "/"), lastIndexed);
+    }
+    return fileMap;
+  }
+
+  /**
+   * Delete file info by path
+   */
+  async deleteFileInfo(path: string): Promise<void> {
+    const client = this.getClient();
+    if (!client) throw new Error("Client not initialized");
+
+    const { projectHash, branchName } = this.getContext();
+    const forwardPath = path.replace(/\\/g, "/");
+    const backPath = path.replace(/\//g, "\\");
+
+    await client.execute({
+      sql: `
+        DELETE FROM files
+        WHERE project_hash = ? AND branch_name = ?
+        AND (path = ? OR path = ?)
+      `,
+      args: [projectHash, branchName, forwardPath, backPath],
+    });
+  }
+
   // ===========================================================================
   // PROJECT METADATA
   // ===========================================================================

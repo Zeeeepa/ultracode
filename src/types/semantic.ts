@@ -203,8 +203,10 @@ export interface WorkerEmbeddingConfig {
   maxTokens: number;
   /** Model's context window size in tokens (e.g., 512 for e5-small) */
   contextTokens: number;
-  /** Batch size for embedding generation */
+  /** Batch size for embedding generation (tokens for llama-server) */
   batchSize: number;
+  /** Queue batch size for centralized mode (texts per HTTP request, default 128) */
+  queueBatchSize?: number;
   /** Vector dimensions (e.g., 384 for e5-small) */
   dimensions?: number;
   /** Worker index for endpoint assignment (0-based) */
@@ -259,6 +261,8 @@ export interface EmbeddingConfig {
   quantized: boolean;
   localPath?: string;
   batchSize: number;
+  /** Queue batch size for centralized mode (texts per HTTP request, default 128) */
+  queueBatchSize?: number;
 
   provider?: EmbeddingProviderKind; // default: 'memory'
   ollama?: {

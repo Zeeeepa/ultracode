@@ -264,15 +264,15 @@ export async function runSetup(args: string[]): Promise<void> {
               endpoint: "http://127.0.0.1:8085",
               selected_model: selectedModel.model_id,
               // IMPORTANT: ctx-size is divided by parallel slots!
-              // So for 512 tokens per request with parallel=4, need ctx-size = 512 * 4 = 2048
-              context_size: (selectedModel.context_tokens || 512) * 4,
-              // Server performance tuning (can be adjusted in config file)
-              parallel_slots: 4, // --parallel: concurrent request slots
+              // So for 512 tokens per request with parallel=8, need ctx-size = 512 * 8 = 4096
+              context_size: (selectedModel.context_tokens || 512) * 8,
+              // Server performance tuning (optimized for throughput)
+              parallel_slots: 8, // --parallel: concurrent request slots
               ubatch_size: 1536, // --ubatch-size: micro-batch for processing
               batch_size: 3072, // --batch-size: prompt processing batch
               // Client tuning
               max_batch_size: 256, // texts per HTTP request
-              concurrency: 4, // parallel HTTP requests (should match parallel_slots)
+              concurrency: 8, // parallel HTTP requests (should match parallel_slots)
               auto_start: true,
               models: [
                 {

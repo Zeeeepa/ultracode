@@ -4,7 +4,7 @@
  * that are delegated by the Conductor orchestrator
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { cpus } from "node:os";
 import { extname } from "node:path";
 import { buildWorkerEmbeddingConfig } from "../config/worker-embedding-config.js";
@@ -12,7 +12,7 @@ import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { log } from "../logging/index.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
-import { setGlobalProjectContext } from "../storage/graph-storage-factory.js";
+import { getGraphStorage, setGlobalProjectContext } from "../storage/graph-storage-factory.js";
 // SQLiteManager removed - using libsql via GraphStorage
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { ParseResult, ParserOptions } from "../types/parser.js";
@@ -316,8 +316,108 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     });
 
     const collectResult = collectFiles(directory, { excludePatterns, agentId: this.id });
-    const allFiles = collectResult.files;
+    let allFiles = collectResult.files;
     log.i("DEVAGENT", "Files collected", { count: allFiles.length });
+
+    // Smart Incremental: filter to only changed/new files
+    const isIncremental = payload.incremental === true;
+    const deletedEntityIds: string[] = [];
+
+    if (isIncremental && allFiles.length > 0) {
+      const storage = await getGraphStorage();
+      const indexedFiles = await storage.getAllIndexedFiles();
+
+      if (indexedFiles.size > 0) {
+        const changedFiles: string[] = [];
+        const newFiles: string[] = [];
+        const deletedFiles: string[] = [];
+
+        // Find changed and new files
+        for (const file of allFiles) {
+          const normalizedPath = file.replace(/\\/g, "/");
+          const lastIndexed = indexedFiles.get(normalizedPath);
+
+          if (lastIndexed === undefined) {
+            // New file
+            newFiles.push(file);
+          } else {
+            // Check if file was modified
+            try {
+              const stats = statSync(file);
+              const mtime = stats.mtimeMs;
+              if (mtime > lastIndexed) {
+                changedFiles.push(file);
+              }
+              // else: file unchanged, skip
+            } catch {
+              // File stat failed, skip
+            }
+          }
+        }
+
+        // Find deleted files (in index but not on disk)
+        const currentFilesSet = new Set(allFiles.map((f) => f.replace(/\\/g, "/")));
+        for (const [indexedPath] of indexedFiles) {
+          if (!currentFilesSet.has(indexedPath)) {
+            deletedFiles.push(indexedPath);
+          }
+        }
+
+        // Delete entities for changed and deleted files (before reindexing)
+        const filesToClean = [...changedFiles, ...deletedFiles];
+        if (filesToClean.length > 0) {
+          log.i("DEVAGENT", "Cleaning entities for changed/deleted files", {
+            changed: changedFiles.length,
+            deleted: deletedFiles.length,
+          });
+
+          for (const file of filesToClean) {
+            try {
+              const ids = await storage.deleteEntitiesByFilePath(file);
+              deletedEntityIds.push(...ids);
+              await storage.deleteFileInfo(file);
+            } catch (error) {
+              log.w("DEVAGENT", "Failed to clean entities for file", {
+                file,
+                error: (error as Error).message,
+              });
+            }
+          }
+
+          log.i("DEVAGENT", "Entities cleaned", {
+            entityCount: deletedEntityIds.length,
+          });
+        }
+
+        // Only process changed and new files
+        allFiles = [...changedFiles, ...newFiles];
+
+        log.i("DEVAGENT", "Smart incremental", {
+          total: collectResult.files.length,
+          changed: changedFiles.length,
+          new: newFiles.length,
+          deleted: deletedFiles.length,
+          toProcess: allFiles.length,
+          entitiesDeleted: deletedEntityIds.length,
+        });
+
+        if (allFiles.length === 0) {
+          log.i("DEVAGENT", "No files changed, skipping indexing");
+          return {
+            filesProcessed: 0,
+            entitiesExtracted: 0,
+            relationshipsCreated: 0,
+            incrementalStats: {
+              changedFiles: 0,
+              newFiles: 0,
+              deletedFiles: deletedFiles.length,
+              skippedFiles: collectResult.files.length,
+              deletedEntities: deletedEntityIds.length,
+            },
+          };
+        }
+      }
+    }
 
     // Separate code files (AST parsing) from data files (heuristic entities)
     const codeFiles: string[] = [];
@@ -435,12 +535,28 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           await faissProvider.setProjectContext(projectHash, DEFAULT_BRANCH);
           this.parserAgent.setFaissProvider(faissProvider);
           log.i("DEVAGENT", "FAISS provider configured", { projectHash, dir: payload.directory });
+
+          // Smart Incremental: remove embeddings for deleted entities
+          if (deletedEntityIds.length > 0) {
+            try {
+              // Convert entity IDs to embedding IDs (prefixed with "ent:")
+              const embeddingIds = deletedEntityIds.map((id) => (id.startsWith("ent:") ? id : `ent:${id}`));
+              await faissProvider.remove(embeddingIds);
+              log.i("DEVAGENT", "Removed embeddings for changed/deleted files", {
+                count: embeddingIds.length,
+              });
+            } catch (error) {
+              log.w("DEVAGENT", "Failed to remove embeddings", {
+                error: (error as Error).message,
+              });
+            }
+          }
         } else {
           log.w("DEVAGENT", "FAISS provider initialization failed - embeddings will not be saved");
         }
 
-        // For centralized embedding mode (OVMS): create EmbeddingGenerator in Main
-        // Workers send texts, Main generates embeddings via gRPC
+        // For centralized embedding mode (OVMS/llamacpp): create EmbeddingGenerator in Main
+        // Workers send texts, Main generates embeddings via single connection
         if (embeddingConfig.centralizedEmbeddings) {
           try {
             const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");

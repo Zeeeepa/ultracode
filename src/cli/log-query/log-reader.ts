@@ -146,13 +146,20 @@ export function getDefaultLogDir(): string {
 
 /**
  * Find log files in directory
+ * @param dir - Directory to search
+ * @param type - 'main' for ultrascript logs, 'worker' for worker logs, 'all' for both
  */
-export function findLogFiles(dir: string): string[] {
+export function findLogFiles(dir: string, type: "main" | "worker" | "all" = "main"): string[] {
   if (!existsSync(dir)) return [];
 
   try {
     const files = readdirSync(dir)
-      .filter((f) => f.startsWith("ultrascript-") && f.endsWith(".log"))
+      .filter((f) => {
+        if (!f.endsWith(".log")) return false;
+        if (type === "main") return f.startsWith("ultrascript-");
+        if (type === "worker") return f.startsWith("worker-");
+        return f.startsWith("ultrascript-") || f.startsWith("worker-");
+      })
       .map((f) => join(dir, f))
       .sort((a, b) => {
         const statA = statSync(a);

@@ -67,8 +67,8 @@ const generatedEntityIds = new Set<string>();
 const collectedEmbeddings: CollectedEmbedding[] = [];
 
 /**
- * Collected texts for centralized embedding generation (OVMS mode).
- * Workers send texts to Main, Main generates embeddings via gRPC.
+ * Collected texts for centralized embedding generation (OVMS/llamacpp mode).
+ * Workers send texts to Main, Main generates embeddings via single connection.
  */
 interface CollectedTextItem {
   id: string;
@@ -104,7 +104,7 @@ export function getEmbeddingClient(): any {
 
 /**
  * Initialize lightweight embedding client with config from main process.
- * In centralized mode (OVMS), we skip client initialization - texts go to Main.
+ * In centralized mode (OVMS/llamacpp), we skip client initialization - texts go to Main.
  */
 export async function initEmbeddingClient(config: WorkerEmbeddingConfig): Promise<void> {
   if (!config.enabled) {
@@ -218,7 +218,7 @@ export function buildEmbeddingText(entity: ParsedEntity, fileContent: string, ma
 /**
  * Generate embeddings for entities and collect them for batch transfer
  * For subprocess mode: embeddings are collected and sent separately via embeddings.ready message
- * For centralized mode (OVMS): texts are collected and sent via embeddings.texts message
+ * For centralized mode (OVMS/llamacpp): texts are collected and sent via embeddings.texts message
  * For backward compatibility: also attaches Base64 encoded embeddings to entities
  */
 export async function generateEmbeddingsForEntities(
@@ -231,7 +231,7 @@ export async function generateEmbeddingsForEntities(
   }
 
   // Centralized mode: collect texts instead of generating embeddings
-  // Main process will generate embeddings via gRPC (faster for OVMS)
+  // Main generates embeddings via single connection (optimal batching)
   if (embeddingConfig.centralizedEmbeddings) {
     return collectTextsForCentralizedEmbedding(entities, fileContent, filePath);
   }
@@ -389,13 +389,13 @@ export function sendCollectedEmbeddings(ctx: EmbeddingProcessorContext): void {
 }
 
 // =============================================================================
-// Centralized Embedding Mode (OVMS via gRPC)
+// Centralized Embedding Mode (OVMS/llamacpp)
 // =============================================================================
 
 /**
  * Collect texts for centralized embedding generation.
- * Used when centralizedEmbeddings is enabled (OVMS mode).
- * Texts are sent to Main process which generates embeddings via gRPC.
+ * Used when centralizedEmbeddings is enabled (OVMS/llamacpp mode).
+ * Texts are sent to Main process which generates embeddings via single connection.
  */
 function collectTextsForCentralizedEmbedding(entities: ParsedEntity[], fileContent: string, filePath: string): number {
   if (!embeddingConfig) return 0;
@@ -450,7 +450,7 @@ function collectTextsForCentralizedEmbedding(entities: ParsedEntity[], fileConte
 
 /**
  * Send collected texts to main process for centralized embedding generation.
- * Used when centralizedEmbeddings is enabled (OVMS mode).
+ * Used when centralizedEmbeddings is enabled (OVMS/llamacpp mode).
  */
 export function sendCollectedTexts(ctx: EmbeddingProcessorContext): void {
   if (collectedTexts.length === 0) {

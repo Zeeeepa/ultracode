@@ -394,7 +394,7 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
   // Generate embeddings for all entities (if embedding is enabled)
   // Two modes:
   // 1. Distributed (default): worker generates embeddings via HTTP and sends binary vectors
-  // 2. Centralized (OVMS): worker sends texts, Main generates embeddings via gRPC
+  // 2. Centralized (OVMS/llamacpp): worker sends texts, Main generates embeddings via single connection
   const config = getEmbeddingConfig();
   if (config?.enabled) {
     const isCentralized = config.centralizedEmbeddings === true;

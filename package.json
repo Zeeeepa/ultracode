@@ -106,6 +106,7 @@
     "bench:workers": "node benchmarks/benchmark-workers.js",
     "bun:start": "bun src/index.ts",
     "bun:dist": "bun dist/index.js",
+    "ulog": "node dist/cli/log-query/log-query-cli.js",
     "smoke": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop",
     "smoke:clean": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop --clean",
     "smoke:semantic": "node scripts/smoke-semantic.js /home/er77/_work_fodler/baserow-develop",
