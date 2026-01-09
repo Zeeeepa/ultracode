@@ -309,6 +309,61 @@ export class EntityOperations {
   }
 
   /**
+   * Get entity IDs by file path (for FAISS cleanup)
+   */
+  async getEntityIdsByFilePath(filePath: string): Promise<string[]> {
+    const client = this.getClient();
+    if (!client) throw new Error("Client not initialized");
+
+    const { projectHash, branchName } = this.getContext();
+
+    // Normalize path separators
+    const forwardPath = filePath.replace(/\\/g, "/");
+    const backPath = filePath.replace(/\//g, "\\");
+
+    const result = await client.execute({
+      sql: `
+        SELECT id FROM entities
+        WHERE project_hash = ? AND branch_name = ?
+        AND (file_path = ? OR file_path = ?)
+      `,
+      args: [projectHash, branchName, forwardPath, backPath],
+    });
+
+    return result.rows.map((row) => row["id"] as string);
+  }
+
+  /**
+   * Delete all entities for a file path
+   * Returns the IDs of deleted entities (for FAISS cleanup)
+   */
+  async deleteEntitiesByFilePath(filePath: string): Promise<string[]> {
+    const client = this.getClient();
+    if (!client) throw new Error("Client not initialized");
+
+    // First get IDs for FAISS cleanup
+    const ids = await this.getEntityIdsByFilePath(filePath);
+    if (ids.length === 0) return [];
+
+    const { projectHash, branchName } = this.getContext();
+
+    // Normalize path separators
+    const forwardPath = filePath.replace(/\\/g, "/");
+    const backPath = filePath.replace(/\//g, "\\");
+
+    await client.execute({
+      sql: `
+        DELETE FROM entities
+        WHERE project_hash = ? AND branch_name = ?
+        AND (file_path = ? OR file_path = ?)
+      `,
+      args: [projectHash, branchName, forwardPath, backPath],
+    });
+
+    return ids;
+  }
+
+  /**
    * Get all entities for current project/branch
    */
   async getAllEntities(): Promise<Entity[]> {

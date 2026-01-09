@@ -449,6 +449,26 @@ export class GraphStorageLibSQL implements GraphStorage {
     return await this.adapter.getOutdatedFiles(since);
   }
 
+  async getAllIndexedFiles(): Promise<Map<string, number>> {
+    return await this.adapter.getAllIndexedFiles();
+  }
+
+  async deleteFileInfo(path: string): Promise<void> {
+    await this.adapter.deleteFileInfo(path);
+  }
+
+  // ===========================================================================
+  // ENTITY OPERATIONS BY FILE PATH (for incremental indexing)
+  // ===========================================================================
+
+  async getEntityIdsByFilePath(filePath: string): Promise<string[]> {
+    return await this.adapter.getEntityIdsByFilePath(filePath);
+  }
+
+  async deleteEntitiesByFilePath(filePath: string): Promise<string[]> {
+    return await this.adapter.deleteEntitiesByFilePath(filePath);
+  }
+
   // ===========================================================================
   // QUERY OPERATIONS
   // ===========================================================================

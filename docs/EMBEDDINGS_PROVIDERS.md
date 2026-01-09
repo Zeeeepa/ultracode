@@ -6,11 +6,11 @@
 
 | Provider | Endpoint | Batch | GPU | Docker | Speed | Use Case |
 |----------|----------|-------|-----|--------|-------|----------|
-| **llamacpp** | `/v1/embeddings` | Yes | CUDA/Vulkan/CPU | No | **371/s** | Native GGUF, low VRAM |
+| **llamacpp** | `/v1/embeddings` | Yes | CUDA/Vulkan/CPU | No | **441/s** | Native GGUF, low VRAM |
 | **vllm** | `/v1/embeddings` | Yes | CUDA | Yes | Max throughput |
 | **tei** | `/embed` | Yes | CUDA/CPU | Yes | HuggingFace models |
 | **ollama** | `/api/embeddings` | No | CUDA/CPU | No | Simple setup |
-| **ovms** | `/v3/embeddings` | Yes | CPU/iGPU | Yes/No | **66-72/s** | Intel optimized, centralized |
+| **ovms** | `/v3/embeddings` | Yes | CPU/iGPU | Yes/No | **260-326/s** | Intel optimized, centralized |
 | **openai** | `/v1/embeddings` | Yes | Cloud | No | OpenAI API |
 
 ---
@@ -80,19 +80,69 @@ tokens_per_slot = ctx-size / parallel
 
 | Metric | Value |
 |--------|-------|
+| **Speed** | **441 emb/s** (centralized mode, optimized) |
+| **Embeddings** | 1976 |
+| **Duration** | 4.5s |
+| **Workers** | 6 |
+| **Batches** | 9 |
+| **Model** | multilingual-e5-small Q8 |
+| **Config** | ctx=4096, parallel=8, queueBatchSize=72, PARALLEL_BATCHES=12 |
+
+**Оптимизированные параметры (v3.1+):**
+| Параметр | Значение | Описание |
+|----------|----------|----------|
+| `queueBatchSize` | 72 | Текстов на HTTP запрос (оптимально для parallel=8) |
+| `PARALLEL_BATCHES` | 12 | Параллельных batch запросов в полёте |
+| `parallel_slots` | 8 | llama-server --parallel |
+| `context_size` | 4096 | llama-server --ctx-size |
+| Sort by length | DESC | Длинные тексты первыми (лучше GPU KV cache) |
+
+**Previous benchmark (RTX 5060 Laptop):**
+| Metric | Value |
+|--------|-------|
 | **Speed** | **371 emb/s** |
 | **VRAM Dedicated** | 0.4 GB |
 | **VRAM Shared** | 1.1 GB |
 | **Total GPU Memory** | 1.5 GB |
-| **Model** | multilingual-e5-base Q8 (450MB) |
-| **GPU** | RTX 5060 Laptop |
 | **CPU Threads** | 24 |
 | **Config** | ctx=2048, parallel=4, batch=1024, ubatch=512, batchSize=256 |
+
+### Централизованный режим (v3.1+) ✅ IMPLEMENTED
+
+**Архитектура:** Workers отправляют тексты в Main процесс через IPC, Main генерирует эмбеддинги через единый llama.cpp сервер.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         MAIN PROCESS                                │
+├─────────────────────────────────────────────────────────────────────┤
+│  EmbeddingAccumulator                                               │
+│  ├── Получает тексты от workers через IPC                          │
+│  ├── Параллельные generateBatch() вызовы                           │
+│  ├── Фильтрация уже существующих ID через FAISS                    │
+│  └── Flush в FAISS                                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  LlamaCppProvider (единственный экземпляр)                          │
+│  └── HTTP → llama-server :8085                                     │
+└─────────────────────────────────────────────────────────────────────┘
+         ▲                    ▲                    ▲
+         │ IPC texts          │ IPC texts          │ IPC texts
+┌────────┴───────┐  ┌────────┴───────┐  ┌────────┴───────┐
+│   Worker-0     │  │   Worker-1     │  │   Worker-N     │
+│   (parsing)    │  │   (parsing)    │  │   (parsing)    │
+└────────────────┘  └────────────────┘  └────────────────┘
+```
+
+**Преимущества:**
+- Единственное HTTP соединение к llama-server
+- Оптимальный батчинг в Main процессе
+- Нет contention между воркерами
+- Smart Incremental: пропуск уже существующих embeddings
 
 ### Особенности
 - **Низкое потребление VRAM** - подходит когда GPU занят LLM
 - GGUF dequantization добавляет overhead
 - **vs vLLM**: ~30% throughput (371/s vs ~1200/s)
+- **Централизованный режим** включается автоматически
 
 ---
 
@@ -327,7 +377,7 @@ pooling: "mean"     // or "cls" depending on model
       "target_device": "NPU",
       "endpoints": [
         "embeddings-gpu", "embeddings-gpu", "embeddings-gpu",
-        "embeddings-gpu", "embeddings-gpu", "embeddings-gpu",
+        "embeddings-cpu", "embeddings-cpu", "embeddings-cpu",
         "embeddings-cpu", "embeddings-cpu"
       ],
       "models": [{ "id": "multilingual-e5-base", "vector_size": 768 }],
@@ -337,6 +387,8 @@ pooling: "mean"     // or "cls" depending on model
   }
 }
 ```
+
+**Оптимизированный ratio 3:5 (GPU:CPU)** — iGPU слабее CPU на sustained load.
 
 ### Worker Configuration
 
@@ -394,36 +446,72 @@ pooling: "mean"     // or "cls" depending on model
 
 | Метрика | Значение | Примечание |
 |---------|----------|------------|
-| **Скорость генерации** | **66-72 emb/s** | CPU + iGPU (NPU недоступен) |
-| Эмбеддингов | 2017 | ultrascript-tools-mcp проект |
-| Время генерации | ~30 сек | 13 параллельных batches |
-| FAISS flush | 575ms | 3506/s |
-| Модель | multilingual-e5-base | 768 dims, 512 ctx |
-| Устройство | Intel iGPU + CPU | NPU не поддерживает BERT |
+| **Скорость генерации** | **260-326 emb/s** | e5-small, GPU-compiled, iGPU + CPU |
+| Эмбеддингов | 1923 | ultrascript-tools-mcp проект |
+| Время генерации | ~6-7 сек | 9 параллельных batches |
+| FAISS flush | 136ms | 14781/s |
+| Модель | multilingual-e5-small | 384 dims, 512 ctx |
+| Устройство | Intel iGPU (GPU.0) + CPU | NPU не поддерживает BERT |
 
-**Сравнение моделей:**
+**NVIDIA GPU.1 Status (Blackwell):** ❌ НЕ РАБОТАЕТ
+- OpenVINO NVIDIA plugin не поддерживает MediaPipe embeddings calculator
+- Ошибка: `RET_CHECK failure (embeddings_calculator_ov.cc:272)`
+- Протестировано с CPU-compiled и GPU-compiled моделями - оба варианта fail
+- Старые архитектуры (Ada, Ampere, Turing) не тестировались
+
+**Оптимизированные graph.pbtxt:**
+
+**GPU (iGPU Intel):**
+```protobuf
+plugin_config: '{"NUM_STREAMS": "4", "AUTO_BATCH_TIMEOUT": "50"}'
+target_device: "BATCH:GPU.0(16)"
+```
+
+**CPU:**
+```protobuf
+plugin_config: '{"NUM_STREAMS": "8", "INFERENCE_NUM_THREADS": "0"}'
+target_device: "CPU"
+```
+
+**Тестированные конфигурации:**
+| Ratio GPU:CPU | Скорость | Примечание |
+|---------------|----------|------------|
+| 6:2 | 94/s | Baseline |
+| 5:3 | 105/s | +12% |
+| **3:5** | **120/s** | ✅ Оптимально |
+| 2:6 | 91/s | Слишком много CPU |
+| GPU only | 72/s | iGPU перегружается |
+
+**Сравнение моделей (optimized 3:5 ratio, GPU-compiled):**
 
 | Модель | Dimensions | Скорость | Качество |
 |--------|------------|----------|----------|
-| multilingual-e5-small | 384 | ~80-90 emb/s | Базовое |
-| **multilingual-e5-base** | 768 | **66-72 emb/s** | ✅ Рекомендуется |
-| multilingual-e5-large | 1024 | ~40-50 emb/s | Максимальное |
+| **multilingual-e5-small** | 384 | **260-326 emb/s** | ✅ Рекомендуется для скорости |
+| multilingual-e5-base | 768 | ~120 emb/s | Баланс качество/скорость |
+| multilingual-e5-large | 1024 | ~60-80 emb/s | Максимальное качество |
 
 **Сравнение режимов:**
 
 | Режим | Скорость | Статус |
 |-------|----------|--------|
 | Distributed (workers → HTTP) | ~21 emb/s | ❌ Deprecated |
-| **Centralized (Main → REST)** | **66-72 emb/s** | ✅ Default |
+| Centralized baseline | 66-72 emb/s | Без оптимизации |
+| Centralized optimized (3:5, e5-base) | 120 emb/s | GPU-compiled |
+| **Centralized optimized (3:5, e5-small)** | **260-326 emb/s** | ✅ Default |
 | Main process only | 400-700 emb/s | Для query-time |
 
 ### Конфигурация
 
-Централизованный режим включается автоматически для OVMS:
+Централизованный режим включается автоматически для локальных inference провайдеров:
 ```typescript
 // worker-embedding-config.ts
-centralizedEmbeddings: providerKind === "ovms"
+centralizedEmbeddings: providerKind === "ovms" || providerKind === "llamacpp"
 ```
+
+**Преимущества:**
+- Оптимальный батчинг (контролируется Main процессом)
+- Нет HTTP connection contention
+- Лучшая GPU утилизация для llama.cpp
 
 ### Legacy: Distributed Mode (deprecated)
 

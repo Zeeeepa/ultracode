@@ -285,7 +285,7 @@ export class ParserAgent extends BaseAgent {
   }
 
   /**
-   * Set the EmbeddingGenerator for centralized embedding mode (OVMS).
+   * Set the EmbeddingGenerator for centralized embedding mode (OVMS/llamacpp).
    * When set, workers send texts to Main and this generator produces embeddings.
    * Must be called before parsing if centralizedEmbeddings is enabled.
    */
@@ -878,11 +878,11 @@ export class ParserAgent extends BaseAgent {
     if (config && config.centralizedEmbeddings) {
       this.embeddingAccumulator = getEmbeddingAccumulator({
         dimensions: config.dimensions ?? 384,
-        queueBatchSize: config.batchSize ?? 200,
+        queueBatchSize: config.queueBatchSize ?? 128,
       });
       log.i("PARSER", "Accumulator configured for centralized mode", {
         dimensions: config.dimensions,
-        queueBatchSize: config.batchSize,
+        queueBatchSize: config.queueBatchSize,
       });
     }
 

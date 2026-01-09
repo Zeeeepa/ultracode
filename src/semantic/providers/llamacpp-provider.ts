@@ -87,7 +87,7 @@ export class LlamaCppProvider implements EmbeddingProvider {
     this.nGpuLayers = opts.nGpuLayers ?? 99; // Default: offload all to GPU
     this.autoStart = opts.autoStart !== false; // Default: true
     // Server tuning parameters
-    this.parallelSlots = opts.parallelSlots ?? 4;
+    this.parallelSlots = opts.parallelSlots ?? 8;
     this.ubatchSize = opts.ubatchSize ?? 1536;
     this.batchSize = opts.batchSize ?? 3072;
 

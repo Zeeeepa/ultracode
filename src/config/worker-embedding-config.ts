@@ -259,7 +259,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     providerOptions = {
       baseUrl: llamacppConfig.endpoint || "http://127.0.0.1:8085",
       timeoutMs: llamacppConfig.timeoutMs || 60000, // 60s timeout for larger batches
-      concurrency: llamacppConfig.concurrency || 4, // Match server's --parallel 4
+      concurrency: llamacppConfig.concurrency || 8, // Match server's --parallel 8
       contextSize: llamacppConfig.context_size || 8192,
       nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
     };
@@ -276,6 +276,11 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
   const configDimensions = embeddingConfig.dimensions || embeddingConfig.vector_dimensions;
   const dimensions = getModelDimensions(modelName, configDimensions);
 
+  // Queue batch size for centralized mode (texts per HTTP request)
+  // Rule: batchSize <= --parallel, smaller batches = better GPU utilization
+  // 64 texts * 8 parallel = 512 texts in flight
+  const queueBatchSize = providerKind === "llamacpp" ? 72 : providerKind === "ovms" ? 200 : undefined;
+
   const result: WorkerEmbeddingConfig = {
     enabled: true,
     provider: providerKind,
@@ -283,11 +288,13 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     maxTokens: embeddingConfig.maxTokens || 512,
     contextTokens,
     batchSize,
+    queueBatchSize,
     dimensions,
     providerOptions,
-    // OVMS uses centralized embedding mode: workers send texts to Main,
-    // Main generates embeddings via gRPC (faster than multiple HTTP clients)
-    centralizedEmbeddings: providerKind === "ovms",
+    // Local inference providers (OVMS, llamacpp) use centralized embedding mode:
+    // Workers send texts to Main, Main generates embeddings via single connection
+    // Benefits: optimal batching, no HTTP connection contention, better GPU utilization
+    centralizedEmbeddings: providerKind === "ovms" || providerKind === "llamacpp",
   };
 
   // Log only on first call
@@ -298,6 +305,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
       dims: dimensions,
       contextTokens,
       batchSize,
+      queueBatchSize,
     });
   }
 

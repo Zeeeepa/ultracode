@@ -689,6 +689,23 @@ export class IndexerAgent extends BaseAgent {
       // Insert relationships in one batch
       const relResult = await this.batchOps.insertRelationships(relationshipsToFlush);
 
+      // Update file info for Smart Incremental indexing
+      // Group entities by file path and update file info for each unique file
+      const fileEntityCounts = new Map<string, number>();
+      for (const { filePath, entities } of parsedToFlush) {
+        const current = fileEntityCounts.get(filePath) || 0;
+        fileEntityCounts.set(filePath, current + entities.length);
+      }
+      for (const [filePath, entityCount] of fileEntityCounts) {
+        const fileInfo: FileInfo = {
+          path: filePath,
+          hash: nanoid(8),
+          lastIndexed: Date.now(),
+          entityCount,
+        };
+        await this.graphStorage.updateFileInfo(fileInfo);
+      }
+
       // Update stats
       this.indexingStats.entitiesIndexed += entityResult.processed;
       this.indexingStats.relationshipsCreated += relResult.processed;
@@ -698,6 +715,7 @@ export class IndexerAgent extends BaseAgent {
         entities: entityResult.processed,
         relationships: relResult.processed,
         files: filesCount,
+        filesTracked: fileEntityCounts.size,
         ms: Date.now() - flushStart,
       });
     })();
