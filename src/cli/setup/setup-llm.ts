@@ -4,6 +4,9 @@
  */
 
 import { execSync, spawn, spawnSync } from "node:child_process";
+import * as fsModule from "node:fs";
+import * as osModule from "node:os";
+import * as pathModule from "node:path";
 
 /**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
@@ -81,6 +84,80 @@ function checkDockerModelRunner(): boolean {
   }
 }
 
+/**
+ * Find Claude CLI path and return command to run it
+ * Searches for installed @anthropic-ai/claude-code package
+ */
+function getClaudeCommand(): { cmd: string; args: string[] } | null {
+  // Use imported modules instead of require for ESM compatibility
+  const { existsSync } = fsModule;
+  const { join } = pathModule;
+  const { homedir } = osModule;
+
+  const isBun = typeof (globalThis as any).Bun !== "undefined";
+  const home = homedir();
+
+  // Possible CLI locations (in order of preference)
+  const possiblePaths: string[] = [];
+
+  if (process.platform === "win32") {
+    // Windows paths
+    possiblePaths.push(
+      // Bun global install
+      join(home, ".bun", "install", "global", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      // npm global install
+      join(process.env["APPDATA"] || "", "npm", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      // pnpm global
+      join(home, "AppData", "Local", "pnpm", "global", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+    );
+  } else {
+    // Unix paths
+    possiblePaths.push(
+      // Bun global install
+      join(home, ".bun", "install", "global", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      // npm global install
+      join("/usr", "local", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      join(home, ".npm-global", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      // pnpm global
+      join(home, ".local", "share", "pnpm", "global", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+    );
+  }
+
+  // Find first existing path
+  for (const cliPath of possiblePaths) {
+    if (existsSync(cliPath)) {
+      // Use bun or node depending on runtime
+      const runtime = isBun ? "bun" : "node";
+      return { cmd: runtime, args: [cliPath] };
+    }
+  }
+
+  // Not found
+  return null;
+}
+
+function checkClaudeCode(): boolean {
+  try {
+    const claudeCmd = getClaudeCommand();
+    if (!claudeCmd) {
+      return false;
+    }
+
+    const result = spawnSync(claudeCmd.cmd, [...claudeCmd.args, "--version"], {
+      encoding: "utf-8",
+      timeout: 10000,
+      windowsHide: true,
+      stdio: "pipe",
+      shell: false, // Direct execution, no shell needed
+    });
+
+    // Output is like "2.1.3 (Claude Code)" - case-insensitive check
+    return result.status === 0 && result.stdout?.toLowerCase().includes("claude");
+  } catch {
+    return false;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // LLM Enable Question
 // ═══════════════════════════════════════════════════════════════
@@ -110,13 +187,27 @@ export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<st
 
   const options: ProviderOption[] = [];
 
-  // Docker Model Runner — simplest option if Docker Desktop 4.40+ available
+  // Claude Code CLI — best quality, uses existing auth
+  const hasClaudeCode = checkClaudeCode();
+  if (hasClaudeCode) {
+    options.push({
+      id: "claude-code",
+      name: "Claude Code CLI (использует вашу авторизацию)",
+      recommended: true, // Best quality, no setup needed
+      speed: "~3s/запрос",
+      pros: ["Лучшее качество", "Без настройки", "Поддержка RU/EN"],
+      cons: ["Платный (Haiku ~$0.04/100 модулей)"],
+      available: true,
+    });
+  }
+
+  // Docker Model Runner — simplest local option if Docker Desktop 4.40+ available
   const hasDMR = checkDockerModelRunner();
   if (hasDMR) {
     options.push({
       id: "docker-model-runner",
       name: "Docker Model Runner (Docker Desktop 4.40+)",
-      recommended: true, // Simplest option
+      recommended: !hasClaudeCode, // Recommend if Claude not available
       speed: gpu.available ? "15-30 tok/s" : "5-10 tok/s",
       pros: ["Простейшая настройка", "docker model run", "Авто-GPU"],
       cons: ["Требует Docker Desktop 4.40+"],
@@ -129,7 +220,7 @@ export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<st
     options.push({
       id: "tgi",
       name: "TGI (Text Generation Inference)",
-      recommended: !hasDMR && gpu.computeCap >= 8.0 && gpu.vramMB >= 8000,
+      recommended: !hasClaudeCode && !hasDMR && gpu.computeCap >= 8.0 && gpu.vramMB >= 8000,
       speed: "20-30 tok/s",
       pros: ["Native batch", "Continuous batching", "Best throughput"],
       cons: ["Требует Docker", "Не поддерживает RTX 50xx"],
@@ -142,7 +233,7 @@ export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<st
   options.push({
     id: "ollama",
     name: gpu.isBlackwell ? "Ollama (GPU) — Blackwell работает!" : "Ollama (GPU/CPU)",
-    recommended: !hasDMR && (gpu.isBlackwell || (gpu.available && gpu.vramMB >= 8000)),
+    recommended: !hasClaudeCode && !hasDMR && (gpu.isBlackwell || (gpu.available && gpu.vramMB >= 8000)),
     speed: ollamaSpeed,
     pros: ["Простая установка", "Все GPU (включая RTX 50xx)", "Streaming"],
     cons: gpu.vramMB < 4000 ? ["Мало VRAM, только мелкие модели"] : [],
@@ -209,6 +300,42 @@ export async function selectLLMModel(
 ): Promise<SelectedLLMModel | null> {
   console.error(`${c.yellow}[STEP 5.2] LLM Model Selection${c.reset}`);
   console.error("");
+
+  // Claude Code — fixed model selection (haiku by default)
+  if (provider === "claude-code") {
+    console.error(`  ${c.dim}Claude Code CLI — выбор модели${c.reset}`);
+    console.error("");
+    console.error(`  ${c.bright}1)${c.reset} Haiku ${c.green}[РЕКОМЕНДУЕТСЯ]${c.reset}`);
+    console.error(`     ${c.dim}Быстрый, дешёвый (~$0.04/100 модулей)${c.reset}`);
+    console.error("");
+    console.error(`  ${c.bright}2)${c.reset} Sonnet`);
+    console.error(`     ${c.dim}Баланс качества и скорости (~$0.50/100 модулей)${c.reset}`);
+    console.error("");
+    console.error(`  ${c.bright}3)${c.reset} Opus`);
+    console.error(`     ${c.dim}Максимальное качество (~$2/100 модулей)${c.reset}`);
+    console.error("");
+
+    const choice = await prompt(`  Выбор [1-3, default=1]: `);
+    const modelIdx = parseInt(choice, 10) || 1;
+
+    const models = ["haiku", "sonnet", "opus"];
+    const modelNames = ["Haiku", "Sonnet", "Opus"];
+    const selectedModel = models[Math.min(Math.max(modelIdx - 1, 0), 2)]!;
+    const selectedName = modelNames[Math.min(Math.max(modelIdx - 1, 0), 2)]!;
+
+    console.error("");
+    printInfo(`Выбрана модель: Claude ${selectedName}`);
+    console.error("");
+
+    return {
+      id: selectedModel,
+      model_id: selectedModel,
+      name: `Claude ${selectedName}`,
+      context_tokens: 200000,
+      size_gb: 0, // Cloud model
+      vram_gb: 0,
+    };
+  }
 
   // Get available RAM/VRAM based on provider and hardware
   const availableVRAM = gpu.available ? Math.floor(gpu.vramMB / 1024) : 0;
@@ -367,7 +494,9 @@ export async function installLLMProvider(provider: string, model: SelectedLLMMod
   console.error(`${c.yellow}[STEP 5.3] LLM Installation${c.reset}`);
   console.error("");
 
-  if (provider === "docker-model-runner") {
+  if (provider === "claude-code") {
+    return await installClaudeCode(model);
+  } else if (provider === "docker-model-runner") {
     return await installDMR_LLM(model);
   } else if (provider === "tgi") {
     return await installTGI_LLM(model, gpu);
@@ -376,6 +505,84 @@ export async function installLLMProvider(provider: string, model: SelectedLLMMod
   }
 
   return false;
+}
+
+async function installClaudeCode(model: SelectedLLMModel): Promise<boolean> {
+  printInfo("Claude Code CLI setup...");
+  console.error("");
+
+  // Verify Claude CLI is available
+  if (!checkClaudeCode()) {
+    printError("Claude Code CLI не найден");
+    console.error("");
+    console.error("  Установите Claude Code:");
+    console.error("  npm install -g @anthropic-ai/claude-code");
+    console.error("");
+    console.error("  Или через npx:");
+    console.error("  npx @anthropic-ai/claude-code");
+    return false;
+  }
+
+  printOK("Claude Code CLI доступен");
+  console.error("");
+
+  // Test generation
+  printInfo(`Тестируем модель: ${model.name}`);
+
+  const claudeCmd = getClaudeCommand();
+  if (!claudeCmd) {
+    printError("Claude Code CLI не найден");
+    return false;
+  }
+
+  // --no-session-persistence: don't save test session to history
+  // --mcp-config {"mcpServers":{}} --strict-mcp-config: disable MCP servers (prevents recursive spawning)
+  // --allowedTools Commands: only allow built-in Commands, no file/MCP tools
+  const testArgs = [
+    ...claudeCmd.args,
+    "-p",
+    "--model",
+    model.model_id,
+    "--output-format",
+    "json",
+    "--no-session-persistence",
+    "--mcp-config",
+    '{"mcpServers":{}}',
+    "--strict-mcp-config",
+    "--allowedTools",
+    "Commands",
+    "Say hello in Russian",
+  ];
+  const testResult = spawnSync(claudeCmd.cmd, testArgs, {
+    encoding: "utf-8",
+    timeout: 60000,
+    windowsHide: true,
+    stdio: "pipe",
+    shell: false, // Direct execution
+  });
+
+  if (testResult.status === 0) {
+    try {
+      const result = JSON.parse(testResult.stdout);
+      if (result.result) {
+        printOK("Claude Code работает!");
+        console.error("");
+        console.error(`  ${c.dim}Ответ: ${result.result.slice(0, 100)}${c.reset}`);
+        console.error(`  ${c.dim}Стоимость: $${result.total_cost_usd?.toFixed(4) || "N/A"}${c.reset}`);
+        console.error("");
+        return true;
+      }
+    } catch {
+      // JSON parse failed
+    }
+  }
+
+  printWarn("Тест не прошёл, но Claude Code может работать");
+  console.error("");
+  console.error("  Проверьте авторизацию:");
+  console.error("  claude --version");
+  console.error("");
+  return true; // Still return true - user may fix auth later
 }
 
 async function installDMR_LLM(model: SelectedLLMModel): Promise<boolean> {
@@ -435,10 +642,23 @@ async function installDMR_LLM(model: SelectedLLMModel): Promise<boolean> {
     console.error(`  ${c.green}Использование:${c.reset}`);
     console.error(`  docker model run ${model.model_id} "Your prompt here"`);
     console.error("");
-    console.error(`  ${c.green}API endpoint:${c.reset}`);
+    console.error(`  ${c.yellow}ВАЖНО: Настройте Docker Desktop:${c.reset}`);
+    console.error(`  Docker Desktop → Settings → Features in development`);
+    console.error(`  → ${c.bright}Enable GPU acceleration${c.reset} (для ускорения на GPU)`);
+    console.error(`  → ${c.bright}Enable host-side TCP support${c.reset} (порт 12434, для API)`);
+    console.error("");
+    console.error(`  Или через CLI:`);
+    console.error(`  docker desktop enable model-runner --tcp 12434 --gpu`);
+    console.error("");
+    console.error(`  ${c.green}API endpoint (после включения TCP):${c.reset}`);
     console.error(`  http://localhost:12434/engines/llama.cpp/v1/chat/completions`);
   } else {
     printWarn("Model test failed, but model may still work");
+    console.error("");
+    console.error(`  ${c.yellow}ВАЖНО: Настройте Docker Desktop:${c.reset}`);
+    console.error(`  Docker Desktop → Settings → Features in development`);
+    console.error(`  → ${c.bright}Enable GPU acceleration${c.reset} (для ускорения на GPU)`);
+    console.error(`  → ${c.bright}Enable host-side TCP support${c.reset} (порт 12434, для API)`);
   }
 
   return true;

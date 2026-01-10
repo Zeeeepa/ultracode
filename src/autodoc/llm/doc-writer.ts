@@ -231,7 +231,9 @@ export async function batchGenerateDocs(
   },
 ): Promise<Map<string, string>> {
   const results = new Map<string, string>();
-  const concurrency = options?.concurrency || 2; // Conservative for LLM
+  // Claude Code CLI: sequential (1) to avoid multiple sessions and rate limits
+  // Other LLMs: conservative concurrency (2)
+  const concurrency = options?.concurrency ?? (llm.name === "claude-code" ? 1 : 2);
   const language = options?.language;
   let completed = 0;
 

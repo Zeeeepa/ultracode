@@ -7,8 +7,14 @@
  * - OpenAI API compatible endpoints
  */
 
+import { execSync, spawn as spawnProcess } from "node:child_process";
+import * as fsModule from "node:fs";
+import * as osModule from "node:os";
+import * as pathModule from "node:path";
+import { log } from "../../logging/index.js";
+
 export interface LLMConfig {
-  provider: "ollama" | "tgi" | "openai" | "docker-model-runner" | "llamacpp";
+  provider: "ollama" | "tgi" | "openai" | "docker-model-runner" | "llamacpp" | "claude-code";
   baseUrl: string;
   model: string;
   apiKey?: string | undefined;
@@ -268,13 +274,60 @@ export class OpenAIProvider implements LLMProvider {
 
   async checkHealth(): Promise<boolean> {
     try {
+      log.d("LLM_OPENAI", "health_check", { url: `${this.baseUrl}/models` });
       const response = await fetch(`${this.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
         signal: AbortSignal.timeout(5000),
       });
-      this._isAvailable = response.ok;
-      return this._isAvailable;
-    } catch {
+
+      if (!response.ok) {
+        log.d("LLM_OPENAI", "health_failed", { status: response.status });
+        this._isAvailable = false;
+        return false;
+      }
+
+      // Auto-select model if using default
+      if (this.model === "gpt-3.5-turbo") {
+        try {
+          const data = (await response.clone().json()) as { data?: { id: string }[] };
+          const allModels = (data.data || []).map((m) => m.id);
+
+          // Filter out embedding models - they can't generate text
+          const embeddingPatterns = ["e5", "embed", "minilm", "bge", "nomic", "gte", "instructor"];
+          const llmModels = allModels.filter((m) => {
+            const lower = m.toLowerCase();
+            return !embeddingPatterns.some((p) => lower.includes(p));
+          });
+
+          log.d("LLM_OPENAI", "models_available", {
+            all: allModels.length,
+            llm: llmModels.length,
+            models: llmModels.slice(0, 5),
+          });
+
+          // Only select if we have actual LLM models
+          if (llmModels.length > 0) {
+            this.model = llmModels[0]!;
+            log.i("LLM_OPENAI", "model_auto_selected", { model: this.model });
+          } else if (
+            allModels.length > 0 &&
+            allModels.every((m) => embeddingPatterns.some((p) => m.toLowerCase().includes(p)))
+          ) {
+            // All models are embedding models - this endpoint is not for LLM
+            log.d("LLM_OPENAI", "only_embedding_models", { models: allModels });
+            this._isAvailable = false;
+            return false;
+          }
+        } catch {
+          // If JSON parsing fails, keep default model
+        }
+      }
+
+      this._isAvailable = true;
+      log.d("LLM_OPENAI", "health_ok", { model: this.model });
+      return true;
+    } catch (e) {
+      log.d("LLM_OPENAI", "health_error", { error: String(e) });
       this._isAvailable = false;
       return false;
     }
@@ -300,32 +353,56 @@ export class OpenAIProvider implements LLMProvider {
     }
     messages.push({ role: "user", content: prompt });
 
+    const requestBody = {
+      model: this.model,
+      messages,
+      max_tokens: options?.maxTokens || 2048,
+      temperature: options?.temperature || 0.3,
+      stop: options?.stopSequences,
+    };
+
+    log.d("LLM_OPENAI", "generate_request", { url: this.baseUrl, model: this.model });
+
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({
-        model: this.model,
-        messages,
-        max_tokens: options?.maxTokens || 2048,
-        temperature: options?.temperature || 0.3,
-        stop: options?.stopSequences,
-      }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
     });
 
     if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      log.e("LLM_OPENAI", "generate_error", {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText.slice(0, 200),
+      });
       throw new Error(`OpenAI error: ${response.status} ${response.statusText}`);
     }
 
-    const data = (await response.json()) as {
+    const rawData = await response.text();
+    log.d("LLM_OPENAI", "generate_raw_response", { length: rawData.length, preview: rawData.slice(0, 200) });
+
+    let data: {
       choices?: { message?: { content?: string } }[];
       usage?: { prompt_tokens: number; completion_tokens: number };
     };
+
+    try {
+      data = JSON.parse(rawData);
+    } catch (e) {
+      log.e("LLM_OPENAI", "json_parse_error", { error: String(e), rawPreview: rawData.slice(0, 100) });
+      throw new Error(`OpenAI JSON parse error: ${String(e)}`);
+    }
+
+    const content = data.choices?.[0]?.message?.content || "";
+    log.d("LLM_OPENAI", "generate_parsed", { contentLength: content.length, preview: content.slice(0, 100) });
+
     return {
-      text: data.choices?.[0]?.message?.content || "",
+      text: content,
       usage: data.usage
         ? {
             promptTokens: data.usage.prompt_tokens,
@@ -498,11 +575,12 @@ export class LlamaCppLLMProvider implements LLMProvider {
    */
   private findLLMModelPath(): string | null {
     try {
-      const { existsSync, readdirSync } = require("node:fs");
-      const { join } = require("node:path");
+      const { existsSync, readdirSync } = fsModule;
+      const { join } = pathModule;
+      const { homedir } = osModule;
       const dataDir = process.env["LOCALAPPDATA"]
         ? join(process.env["LOCALAPPDATA"], "UltraScriptTools")
-        : join(require("node:os").homedir(), ".ultrascript-tools");
+        : join(homedir(), ".ultrascript-tools");
 
       // Search for LLM GGUF models (not embedding models)
       const searchDirs = [join(dataDir, "hf-cache"), join(dataDir, "llamacpp", "models"), join(dataDir, "models")];
@@ -648,13 +726,351 @@ export class LlamaCppLLMProvider implements LLMProvider {
 }
 
 /**
+ * Find Claude CLI path and return command to run it
+ * Searches for installed @anthropic-ai/claude-code package
+ */
+function getClaudeCommand(): { cmd: string; args: string[] } | null {
+  // Use imported modules instead of require for ESM compatibility
+  const { existsSync } = fsModule;
+  const { join } = pathModule;
+  const { homedir } = osModule;
+
+  const isBun = typeof (globalThis as any).Bun !== "undefined";
+  const home = homedir();
+
+  // Possible CLI locations (in order of preference)
+  const possiblePaths: string[] = [];
+
+  if (process.platform === "win32") {
+    // Windows paths
+    possiblePaths.push(
+      // Bun global install
+      join(home, ".bun", "install", "global", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      // npm global install
+      join(process.env["APPDATA"] || "", "npm", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      // pnpm global
+      join(home, "AppData", "Local", "pnpm", "global", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+    );
+  } else {
+    // Unix paths
+    possiblePaths.push(
+      // Bun global install
+      join(home, ".bun", "install", "global", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      // npm global install
+      join("/usr", "local", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      join(home, ".npm-global", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+      // pnpm global
+      join(home, ".local", "share", "pnpm", "global", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+    );
+  }
+
+  // Find first existing path
+  for (const cliPath of possiblePaths) {
+    if (existsSync(cliPath)) {
+      // Use bun or node depending on runtime
+      const runtime = isBun ? "bun" : "node";
+      log.d("CLAUDE_CODE", "cli_found", { runtime, path: cliPath });
+      return { cmd: runtime, args: [cliPath] };
+    }
+  }
+
+  // Not found - will be handled by caller
+  log.d("CLAUDE_CODE", "cli_not_found", { searched: possiblePaths.length });
+  return null;
+}
+
+/**
+ * Claude Code CLI Provider
+ * Uses `claude -p` command for text generation via existing Claude Code installation
+ * Auto-detects runtime: Bun → bunx claude, Node → npx claude
+ */
+export class ClaudeCodeProvider implements LLMProvider {
+  readonly name = "claude-code";
+  private _isAvailable = false;
+  private model: string;
+  private claudeCmd: { cmd: string; args: string[] } | null;
+
+  // Accumulated usage statistics (tokens only, no cost tracking for subscription users)
+  private static _totalUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    requests: 0,
+  };
+
+  constructor(config: { model?: string }) {
+    // Default to haiku for speed and cost efficiency
+    this.model = config.model || "haiku";
+    // Find CLI path once at construction
+    this.claudeCmd = getClaudeCommand();
+    if (!this.claudeCmd) {
+      log.w("CLAUDE_CODE", "cli_not_installed", { hint: "Install with: bun add -g @anthropic-ai/claude-code" });
+    }
+  }
+
+  /**
+   * Get accumulated usage statistics and optionally reset
+   */
+  static getUsageStats(reset = false): {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    requests: number;
+  } {
+    const stats = { ...ClaudeCodeProvider._totalUsage };
+    if (reset) {
+      ClaudeCodeProvider._totalUsage = {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        requests: 0,
+      };
+    }
+    return stats;
+  }
+
+  /**
+   * Log accumulated usage statistics
+   */
+  static logUsageStats(): void {
+    const stats = ClaudeCodeProvider._totalUsage;
+    if (stats.requests === 0) return;
+
+    const totalTokens = stats.inputTokens + stats.outputTokens;
+    log.i("CLAUDE_CODE", "usage_summary", {
+      requests: stats.requests,
+      totalTokens,
+      inputTokens: stats.inputTokens,
+      outputTokens: stats.outputTokens,
+      cacheReadTokens: stats.cacheReadTokens,
+      cacheCreationTokens: stats.cacheCreationTokens,
+    });
+  }
+
+  get isAvailable(): boolean {
+    return this._isAvailable;
+  }
+
+  get selectedModel(): string {
+    return this.model;
+  }
+
+  async checkHealth(): Promise<boolean> {
+    // CLI not found during construction
+    if (!this.claudeCmd) {
+      this._isAvailable = false;
+      return false;
+    }
+
+    try {
+      // Check if claude CLI is available by running --version
+      // Output is like "2.1.3 (Claude Code)" - case-insensitive check
+      const result = await this.runClaudeCommand(["--version"], 5000);
+      this._isAvailable = result?.toLowerCase().includes("claude") ?? false;
+      return this._isAvailable;
+    } catch {
+      this._isAvailable = false;
+      return false;
+    }
+  }
+
+  async listModels(): Promise<string[]> {
+    return ["haiku", "sonnet", "opus"];
+  }
+
+  async generate(prompt: string, options?: GenerateOptions): Promise<LLMResponse> {
+    const fullPrompt = options?.systemPrompt ? `${options.systemPrompt}\n\n${prompt}` : prompt;
+
+    const result = await this.runClaudeGenerate(fullPrompt, options?.maxTokens || 1024);
+
+    if (!result) {
+      throw new Error("Claude Code CLI failed to generate response");
+    }
+
+    return {
+      text: result.result,
+      usage: result.usage
+        ? {
+            promptTokens: result.usage.input_tokens || 0,
+            completionTokens: result.usage.output_tokens || 0,
+          }
+        : undefined,
+    };
+  }
+
+  private async runClaudeCommand(args: string[], timeoutMs: number): Promise<string | null> {
+    const claudeCmd = this.claudeCmd;
+    if (!claudeCmd) {
+      return null;
+    }
+
+    return new Promise((resolve) => {
+      // Use runtime-appropriate command: bun cli.js or node cli.js
+      const fullArgs = [...claudeCmd.args, ...args];
+      log.d("CLAUDE_CODE", "run_command", { cmd: claudeCmd.cmd, args: fullArgs });
+
+      const proc = spawnProcess(claudeCmd.cmd, fullArgs, {
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: false, // Direct execution - prevents infinite spawning
+        windowsHide: true,
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
+      proc.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      const timeout = setTimeout(() => {
+        proc.kill();
+        resolve(null);
+      }, timeoutMs);
+
+      proc.on("close", (code: number | null) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          log.d("CLAUDE_CODE", "cli_error", { code, stderr: stderr.slice(0, 200) });
+          resolve(null);
+          return;
+        }
+        resolve(stdout);
+      });
+
+      proc.on("error", () => {
+        clearTimeout(timeout);
+        resolve(null);
+      });
+    });
+  }
+
+  private async runClaudeGenerate(prompt: string, _maxTokens: number): Promise<ClaudeCodeResponse | null> {
+    const claudeCmd = this.claudeCmd;
+    if (!claudeCmd) {
+      log.e("CLAUDE_CODE", "cli_not_available");
+      return null;
+    }
+
+    return new Promise((resolve) => {
+      // --no-session-persistence: don't save sessions to history (avoids clutter)
+      // --mcp-config {"mcpServers":{}} --strict-mcp-config: disable MCP servers (prevents recursive spawning)
+      // --allowedTools Commands: only allow built-in Commands, no file/MCP tools
+      const claudeArgs = [
+        "-p",
+        "--model",
+        this.model,
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "--strict-mcp-config",
+        "--allowedTools",
+        "Commands",
+      ];
+      const fullArgs = [...claudeCmd.args, ...claudeArgs];
+
+      log.d("CLAUDE_CODE", "generate", { cmd: claudeCmd.cmd, args: claudeArgs, model: this.model });
+
+      const proc = spawnProcess(claudeCmd.cmd, fullArgs, {
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: false, // Direct execution - prevents infinite spawning
+        windowsHide: true,
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
+      proc.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      // 2 minute timeout for generation
+      const timeout = setTimeout(() => {
+        proc.kill();
+        log.e("CLAUDE_CODE", "timeout", { model: this.model });
+        resolve(null);
+      }, 120000);
+
+      proc.on("close", (code: number | null) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          log.e("CLAUDE_CODE", "cli_error", { code, stderr: stderr.slice(0, 500) });
+          resolve(null);
+          return;
+        }
+        try {
+          const parsed = JSON.parse(stdout) as ClaudeCodeResponse;
+
+          // Accumulate usage statistics
+          ClaudeCodeProvider._totalUsage.requests++;
+          if (parsed.usage) {
+            ClaudeCodeProvider._totalUsage.inputTokens += parsed.usage.input_tokens || 0;
+            ClaudeCodeProvider._totalUsage.outputTokens += parsed.usage.output_tokens || 0;
+            ClaudeCodeProvider._totalUsage.cacheReadTokens += parsed.usage.cache_read_input_tokens || 0;
+            ClaudeCodeProvider._totalUsage.cacheCreationTokens += parsed.usage.cache_creation_input_tokens || 0;
+          }
+
+          log.d("CLAUDE_CODE", "response", {
+            model: this.model,
+            duration_ms: parsed.duration_ms,
+            cost_usd: parsed.total_cost_usd?.toFixed(4),
+            in_tokens: parsed.usage?.input_tokens,
+            out_tokens: parsed.usage?.output_tokens,
+          });
+          resolve(parsed);
+        } catch (e) {
+          log.e("CLAUDE_CODE", "json_parse_error", { error: String(e), stdout: stdout.slice(0, 200) });
+          resolve(null);
+        }
+      });
+
+      proc.on("error", (err: Error) => {
+        clearTimeout(timeout);
+        log.e("CLAUDE_CODE", "spawn_error", { error: err.message });
+        resolve(null);
+      });
+
+      // Write prompt to stdin and close
+      proc.stdin.write(prompt);
+      proc.stdin.end();
+    });
+  }
+}
+
+interface ClaudeCodeResponse {
+  type: string;
+  subtype: string;
+  is_error: boolean;
+  duration_ms: number;
+  duration_api_ms: number;
+  num_turns: number;
+  result: string;
+  session_id: string;
+  total_cost_usd: number;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+}
+
+/**
  * Detect available VRAM in MB
  * Returns 0 if detection fails or no GPU
  */
 async function detectVRAM(): Promise<number> {
   try {
-    const { execSync } = require("node:child_process");
-
     // Try nvidia-smi first (NVIDIA GPUs)
     try {
       const output = execSync("nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits", {
@@ -662,8 +1078,11 @@ async function detectVRAM(): Promise<number> {
         timeout: 5000,
         windowsHide: true,
       }).trim();
-      const vramMB = parseInt(output.split("\n")[0], 10);
-      if (vramMB > 0) return vramMB;
+      const firstLine = output.split("\n")[0];
+      if (firstLine) {
+        const vramMB = parseInt(firstLine, 10);
+        if (vramMB > 0) return vramMB;
+      }
     } catch {
       // nvidia-smi not available
     }
@@ -677,7 +1096,7 @@ async function detectVRAM(): Promise<number> {
       }).trim();
       // Parse AMD output (format varies)
       const match = output.match(/(\d+)\s*MB/i);
-      if (match) return parseInt(match[1], 10);
+      if (match?.[1]) return parseInt(match[1], 10);
     } catch {
       // rocm-smi not available
     }
@@ -802,38 +1221,54 @@ export async function detectLLMProviders(): Promise<{
         nGpuLayers,
       }),
     );
+  } else if (savedConfig?.provider === "claude-code") {
+    providers.push(
+      new ClaudeCodeProvider({
+        model: savedConfig.model || "haiku",
+      }),
+    );
   }
 
-  // Add default providers if not already added
-  // Docker Model Runner first (simplest if available)
-  if (!providers.some((p) => p.name === "docker-model-runner")) {
-    providers.push(new DockerModelRunnerProvider({}));
-  }
-  if (!providers.some((p) => p.name === "ollama")) {
-    providers.push(new OllamaProvider({}));
-  }
-  if (!providers.some((p) => p.name === "llamacpp")) {
-    // Auto-detect VRAM for default LlamaCpp provider
-    // autoStart: false - don't auto-start server for fallback provider
-    const vram = await detectVRAM();
-    const nGpuLayers = calculateLLMGpuLayers(vram);
-    providers.push(new LlamaCppLLMProvider({ nGpuLayers, autoStart: false }));
-  }
-  if (!providers.some((p) => p.name === "tgi")) {
-    providers.push(new TGIProvider({}));
-  }
-  if (!providers.some((p) => p.name === "openai")) {
-    providers.push(new OpenAIProvider({}));
+  // Only add fallback providers if NO explicit provider configured
+  // If user configured a specific provider, respect that choice (no fallback to avoid conflicts)
+  if (!savedConfig?.provider) {
+    // Docker Model Runner first (simplest if available)
+    if (!providers.some((p) => p.name === "docker-model-runner")) {
+      providers.push(new DockerModelRunnerProvider({}));
+    }
+    if (!providers.some((p) => p.name === "ollama")) {
+      providers.push(new OllamaProvider({}));
+    }
+    if (!providers.some((p) => p.name === "llamacpp")) {
+      // Auto-detect VRAM for default LlamaCpp provider
+      // autoStart: false - don't auto-start server for fallback provider
+      const vram = await detectVRAM();
+      const nGpuLayers = calculateLLMGpuLayers(vram);
+      providers.push(new LlamaCppLLMProvider({ nGpuLayers, autoStart: false }));
+    }
+    if (!providers.some((p) => p.name === "tgi")) {
+      providers.push(new TGIProvider({}));
+    }
+    // Note: OpenAI with default port 8000 may conflict with embedding servers
+    // Only add if no other providers available
+    if (!providers.some((p) => p.name === "openai")) {
+      providers.push(new OpenAIProvider({}));
+    }
   }
 
   const available: LLMProvider[] = [];
 
+  log.d("LLM", "detecting_providers", { count: providers.length });
+
   await Promise.all(
     providers.map(async (provider) => {
       const ok = await provider.checkHealth();
+      log.d("LLM", "provider_check", { provider: provider.name, available: ok });
       if (ok) available.push(provider);
     }),
   );
+
+  log.i("LLM", "providers_detected", { available: available.map((p) => p.name) });
 
   // Prefer configured provider > Docker Model Runner > Ollama > TGI > OpenAI
   let recommended: LLMProvider | null = null;
@@ -844,9 +1279,23 @@ export async function detectLLMProviders(): Promise<{
     recommended =
       available.find((p) => p.name === "docker-model-runner") ||
       available.find((p) => p.name === "ollama") ||
+      available.find((p) => p.name === "llamacpp") ||
       available.find((p) => p.name === "tgi") ||
       available.find((p) => p.name === "openai") ||
       null;
+  }
+
+  if (recommended) {
+    const selectedModel = (recommended as any).selectedModel || (recommended as any).model || "default";
+    log.i("LLM", "provider_selected", { provider: recommended.name, model: selectedModel });
+  } else if (savedConfig?.provider) {
+    // Explicit provider configured but not available
+    log.w("LLM", "configured_provider_unavailable", {
+      provider: savedConfig.provider,
+      hint: "Check if service is running",
+    });
+  } else {
+    log.w("LLM", "no_provider_available");
   }
 
   return { available, recommended };
@@ -877,6 +1326,10 @@ export function createLLMProvider(config: LLMConfig): LLMProvider {
         baseUrl: config.baseUrl,
         model: config.model,
         nGpuLayers: config.nGpuLayers, // Auto-detected if not set
+      });
+    case "claude-code":
+      return new ClaudeCodeProvider({
+        model: config.model || "haiku",
       });
     default:
       throw new Error(`Unknown LLM provider: ${config.provider}`);

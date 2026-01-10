@@ -166,26 +166,23 @@ export async function getModuleFiles(modulePath: string): Promise<string[]> {
   }
 }
 
+/** Entity information extracted from code */
+export interface ExtractedEntity {
+  name: string;
+  type: "function" | "class" | "interface" | "type" | "const" | "enum";
+  exported: boolean;
+  /** Start line (1-indexed) */
+  line: number;
+  /** End line (1-indexed) */
+  endLine: number;
+}
+
 /**
  * Parse a file to extract entity information (functions, classes, etc.)
  * This is a lightweight parser for AUTODOC updates, not full AST parsing.
  */
-export function extractEntitiesFromContent(
-  content: string,
-  _fileName: string,
-): Array<{
-  name: string;
-  type: "function" | "class" | "interface" | "type" | "const" | "enum";
-  exported: boolean;
-  line: number;
-}> {
-  const entities: Array<{
-    name: string;
-    type: "function" | "class" | "interface" | "type" | "const" | "enum";
-    exported: boolean;
-    line: number;
-  }> = [];
-
+export function extractEntitiesFromContent(content: string, _fileName: string): ExtractedEntity[] {
+  const entities: ExtractedEntity[] = [];
   const lines = content.split("\n");
 
   for (let i = 0; i < lines.length; i++) {
@@ -198,35 +195,40 @@ export function extractEntitiesFromContent(
     // Class
     const classMatch = line.match(/(?:export\s+)?(?:abstract\s+)?class\s+(\w+)/);
     if (classMatch?.[1]) {
-      entities.push({ name: classMatch[1], type: "class", exported: isExported, line: lineNum });
+      const endLine = findBlockEnd(lines, i);
+      entities.push({ name: classMatch[1], type: "class", exported: isExported, line: lineNum, endLine });
       continue;
     }
 
     // Interface
     const interfaceMatch = line.match(/(?:export\s+)?interface\s+(\w+)/);
     if (interfaceMatch?.[1]) {
-      entities.push({ name: interfaceMatch[1], type: "interface", exported: isExported, line: lineNum });
+      const endLine = findBlockEnd(lines, i);
+      entities.push({ name: interfaceMatch[1], type: "interface", exported: isExported, line: lineNum, endLine });
       continue;
     }
 
     // Type alias
     const typeMatch = line.match(/(?:export\s+)?type\s+(\w+)\s*[=<]/);
     if (typeMatch?.[1]) {
-      entities.push({ name: typeMatch[1], type: "type", exported: isExported, line: lineNum });
+      const endLine = findTypeEnd(lines, i);
+      entities.push({ name: typeMatch[1], type: "type", exported: isExported, line: lineNum, endLine });
       continue;
     }
 
     // Enum
     const enumMatch = line.match(/(?:export\s+)?enum\s+(\w+)/);
     if (enumMatch?.[1]) {
-      entities.push({ name: enumMatch[1], type: "enum", exported: isExported, line: lineNum });
+      const endLine = findBlockEnd(lines, i);
+      entities.push({ name: enumMatch[1], type: "enum", exported: isExported, line: lineNum, endLine });
       continue;
     }
 
     // Function (including arrow functions assigned to const)
     const funcMatch = line.match(/(?:export\s+)?(?:async\s+)?function\s+(\w+)/);
     if (funcMatch?.[1]) {
-      entities.push({ name: funcMatch[1], type: "function", exported: isExported, line: lineNum });
+      const endLine = findBlockEnd(lines, i);
+      entities.push({ name: funcMatch[1], type: "function", exported: isExported, line: lineNum, endLine });
       continue;
     }
 
@@ -236,16 +238,81 @@ export function extractEntitiesFromContent(
       // Check if it's a function
       const restOfLine = line.slice(line.indexOf(constMatch[1]));
       const isFunction = /=\s*(?:async\s*)?\(|=\s*(?:async\s*)?(?:\w+|\([^)]*\))\s*=>/.test(restOfLine);
+      const endLine = findBlockEnd(lines, i);
       entities.push({
         name: constMatch[1],
         type: isFunction ? "function" : "const",
         exported: isExported,
         line: lineNum,
+        endLine,
       });
     }
   }
 
   return entities;
+}
+
+/**
+ * Find the end of a code block by tracking braces
+ */
+function findBlockEnd(lines: string[], startIndex: number): number {
+  let braceCount = 0;
+  let foundOpen = false;
+
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i]!;
+
+    // Simple brace counting (ignoring strings/comments for speed)
+    for (const char of line) {
+      if (char === "{") {
+        braceCount++;
+        foundOpen = true;
+      } else if (char === "}") {
+        braceCount--;
+        if (foundOpen && braceCount === 0) {
+          return i + 1; // 1-indexed
+        }
+      }
+    }
+  }
+
+  // If no closing brace found, return same line
+  return startIndex + 1;
+}
+
+/**
+ * Find the end of a type alias (ends with semicolon or next declaration)
+ */
+function findTypeEnd(lines: string[], startIndex: number): number {
+  let parenCount = 0;
+  let braceCount = 0;
+  let angleCount = 0;
+
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i]!;
+
+    for (const char of line) {
+      if (char === "(") parenCount++;
+      else if (char === ")") parenCount--;
+      else if (char === "{") braceCount++;
+      else if (char === "}") braceCount--;
+      else if (char === "<") angleCount++;
+      else if (char === ">") angleCount--;
+      else if (char === ";" && parenCount === 0 && braceCount === 0 && angleCount <= 0) {
+        return i + 1; // 1-indexed
+      }
+    }
+
+    // Check if next line starts a new declaration
+    if (i > startIndex) {
+      const nextLine = lines[i + 1]?.trim() || "";
+      if (/^(?:export\s+)?(?:type|interface|class|function|const|enum|async)\s/.test(nextLine)) {
+        return i + 1;
+      }
+    }
+  }
+
+  return startIndex + 1;
 }
 
 /**

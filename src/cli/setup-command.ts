@@ -20,6 +20,7 @@ import {
   ensureConfigDir,
   getConfigDir,
   getDisplayPath,
+  loadSemanticConfig,
   type SemanticConfig,
   saveSemanticConfig,
 } from "../utils/config-paths.js";
@@ -39,6 +40,7 @@ import {
   printError,
   printHardwareInfo,
   printInfo,
+  printOK,
   printWarn,
   selectLanguage,
   selectLLMModel,
@@ -113,6 +115,23 @@ function loadLLMConfig(): LLMConfig | null {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Helper functions
+// ═══════════════════════════════════════════════════════════════
+
+function getDefaultEndpoint(provider: string): string {
+  switch (provider) {
+    case "ollama":
+      return "http://127.0.0.1:11434";
+    case "tgi":
+      return "http://127.0.0.1:8081";
+    case "docker-model-runner":
+      return "http://127.0.0.1:12434";
+    default:
+      return "";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Main Setup
 // ═══════════════════════════════════════════════════════════════
 
@@ -125,6 +144,7 @@ export async function runSetup(args: string[]): Promise<void> {
   // Parse args
   let providerArg: string | undefined;
   let modelArg: string | undefined;
+  let llmOnly = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--provider" && args[i + 1]) {
@@ -133,12 +153,66 @@ export async function runSetup(args: string[]): Promise<void> {
     if (args[i] === "--model" && args[i + 1]) {
       modelArg = args[++i];
     }
+    if (args[i] === "--llm-only" || args[i] === "--llm") {
+      llmOnly = true;
+    }
   }
 
   // Step 0: Detect hardware
   const cpu = CPUDetector.detect();
   const gpu = detectGPU();
   printHardwareInfo(cpu, gpu);
+
+  // If --llm-only, skip embedding setup and go directly to LLM
+  if (llmOnly) {
+    console.error("");
+    printInfo("Пропускаем embedding setup, переходим к LLM...");
+    console.error("");
+
+    const llmConfig = loadLLMConfig();
+    if (!llmConfig) {
+      printWarn("LLM config not found");
+      process.exit(1);
+    }
+
+    const llmProvider = await selectLLMProvider(cpu, gpu);
+    if (!llmProvider) {
+      printWarn("LLM setup cancelled");
+      process.exit(0);
+    }
+
+    const llmModel = await selectLLMModel(llmProvider, llmConfig, gpu);
+    if (!llmModel) {
+      printWarn("LLM model selection cancelled");
+      process.exit(0);
+    }
+
+    const llmSuccess = await installLLMProvider(llmProvider, llmModel, gpu);
+    if (llmSuccess) {
+      printOK("LLM setup completed!");
+    } else {
+      printWarn("LLM setup had issues");
+    }
+
+    // Load existing config and update LLM section
+    const existingConfig = loadSemanticConfig();
+    if (existingConfig) {
+      existingConfig.llm = {
+        enabled: true,
+        platform: llmProvider as any,
+        [llmProvider === "claude-code" ? "claude" : llmProvider]: {
+          endpoint: llmProvider === "claude-code" ? undefined : getDefaultEndpoint(llmProvider),
+          model_id: llmModel.model_id,
+          context_tokens: llmModel.context_tokens,
+        },
+      };
+      saveSemanticConfig(existingConfig);
+      printOK("Config saved to semantic-config.json");
+    } else {
+      printWarn("No existing config found. Run full setup first.");
+    }
+    return;
+  }
 
   // Step 1: Language selection
   const language = await selectLanguage();
@@ -311,7 +385,14 @@ export async function runSetup(args: string[]): Promise<void> {
           // Update config with LLM settings
           finalConfig.llm = {
             enabled: true,
-            platform: llmProvider as "ollama" | "tgi" | "llamacpp",
+            platform: llmProvider as any,
+            claude:
+              llmProvider === "claude-code"
+                ? {
+                    model_id: llmModel.model_id,
+                    context_tokens: llmModel.context_tokens,
+                  }
+                : undefined,
             ollama:
               llmProvider === "ollama"
                 ? {
@@ -327,6 +408,14 @@ export async function runSetup(args: string[]): Promise<void> {
                     model_id: llmModel.model_id,
                     context_tokens: llmModel.context_tokens,
                     container_name: "tgi-llm-server",
+                  }
+                : undefined,
+            docker_model_runner:
+              llmProvider === "docker-model-runner"
+                ? {
+                    endpoint: "http://127.0.0.1:12434",
+                    model_id: llmModel.model_id,
+                    context_tokens: llmModel.context_tokens,
                   }
                 : undefined,
           };
@@ -354,8 +443,16 @@ export async function runSetup(args: string[]): Promise<void> {
   if (finalConfig.llm?.enabled) {
     console.error(`  ${c.bright}LLM (AutoDoc):${c.reset}`);
     console.error(`  ${c.cyan}  Provider:${c.reset}   ${finalConfig.llm.platform}`);
-    const llmModelId = finalConfig.llm.ollama?.model_id || finalConfig.llm.tgi?.model_id;
-    const llmContext = finalConfig.llm.ollama?.context_tokens || finalConfig.llm.tgi?.context_tokens;
+    const llmModelId =
+      finalConfig.llm.claude?.model_id ||
+      finalConfig.llm.ollama?.model_id ||
+      finalConfig.llm.tgi?.model_id ||
+      finalConfig.llm.docker_model_runner?.model_id;
+    const llmContext =
+      finalConfig.llm.claude?.context_tokens ||
+      finalConfig.llm.ollama?.context_tokens ||
+      finalConfig.llm.tgi?.context_tokens ||
+      finalConfig.llm.docker_model_runner?.context_tokens;
     console.error(`  ${c.cyan}  Model:${c.reset}      ${llmModelId}`);
     console.error(
       `  ${c.cyan}  Context:${c.reset}    ${llmContext ? `${Math.round(llmContext / 1024)}K` : "?"} tokens`,

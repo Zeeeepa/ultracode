@@ -17,6 +17,7 @@ export {
   resetAutoDocWatcher,
 } from "./autodoc-watcher.js";
 export {
+  type ExtractedEntity,
   extractEntitiesFromContent,
   extractExportsFromContent,
   extractExportsFromFile,

@@ -216,9 +216,8 @@ export async function writeJSON(path: string, data: unknown, indent: number = 2)
  * @returns true if file exists
  */
 export async function fileExists(path: string): Promise<boolean> {
-  if (features.bunFile && globalThis.Bun) {
-    return globalThis.Bun.file(path).exists();
-  }
+  // Always use fs.stat for both files and directories
+  // Bun.file().exists() only works for files, not directories
   const { stat } = await import("node:fs/promises");
   try {
     await stat(path);
