@@ -7,6 +7,7 @@
  */
 
 import path from "node:path";
+import { log } from "../../logging/index.js";
 import { fileExists, readdir, readText } from "../../utils/file-ops.js";
 import { mapParallel } from "../../utils/parallel.js";
 
@@ -211,6 +212,155 @@ export function generateModuleReadme(module: ModuleInfo): string {
   }
   if (module.files.length > 15) {
     lines.push(`- ... and ${module.files.length - 15} more`);
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/** Extended module info with entities */
+export interface ModuleInfoWithEntities extends ModuleInfo {
+  entities: Array<{
+    file: string;
+    name: string;
+    type: string;
+    exported: boolean;
+    line: number;
+    endLine: number;
+  }>;
+}
+
+/**
+ * Generate README content for a module with entity line ranges
+ * Format: `[→ file.ts:10-25]` for AI-friendly code navigation
+ */
+export async function generateModuleReadmeWithEntities(
+  module: ModuleInfo,
+  extractEntities: (
+    content: string,
+    fileName: string,
+  ) => Array<{
+    name: string;
+    type: string;
+    exported: boolean;
+    line: number;
+    endLine: number;
+  }>,
+  llmDescriptions?: {
+    exportDescs?: Record<string, string>;
+    fileDescs?: Record<string, string>;
+  },
+): Promise<string> {
+  // Debug logging
+  log.i("AUTODOC_GEN", "generate_readme", {
+    module: module.name,
+    hasLlmDescs: !!llmDescriptions,
+    exportDescsCount: llmDescriptions?.exportDescs ? Object.keys(llmDescriptions.exportDescs).length : 0,
+    fileDescsCount: llmDescriptions?.fileDescs ? Object.keys(llmDescriptions.fileDescs).length : 0,
+    moduleDesc: module.description?.slice(0, 50) || "none",
+  });
+
+  const lines: string[] = [];
+
+  // Title
+  const title = module.name
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+  lines.push(`# ${title}`);
+  lines.push("");
+
+  // Last updated timestamp
+  lines.push(`*Last updated: ${new Date().toISOString().split("T")[0]}*`);
+  lines.push("");
+
+  // Description placeholder
+  if (module.description) {
+    lines.push(module.description);
+  } else {
+    lines.push(`Module for ${module.name} functionality.`);
+  }
+  lines.push("");
+
+  // Collect all entities from files
+  const allEntities: Array<{
+    file: string;
+    name: string;
+    type: string;
+    exported: boolean;
+    line: number;
+    endLine: number;
+  }> = [];
+
+  for (const file of module.files) {
+    const filePath = path.join(module.path, file);
+    try {
+      const content = await readText(filePath);
+      const fileEntities = extractEntities(content, file);
+      for (const entity of fileEntities) {
+        allEntities.push({
+          file,
+          ...entity,
+        });
+      }
+    } catch {
+      // Skip files that can't be read
+    }
+  }
+
+  // Exports section with line ranges and descriptions (sorted alphabetically)
+  const exportedEntities = allEntities.filter((e) => e.exported).sort((a, b) => a.name.localeCompare(b.name));
+  const hasExportDescs = llmDescriptions?.exportDescs && Object.keys(llmDescriptions.exportDescs).length > 0;
+
+  if (exportedEntities.length > 0) {
+    lines.push("## Exports");
+    lines.push("");
+
+    if (hasExportDescs) {
+      // Table with Description column - show ALL exports
+      lines.push("| Name | Type | Description | Location |");
+      lines.push("|------|------|-------------|----------|");
+      for (const entity of exportedEntities) {
+        const location =
+          entity.line === entity.endLine
+            ? `${entity.file}:${entity.line}`
+            : `${entity.file}:${entity.line}-${entity.endLine}`;
+        const desc = llmDescriptions!.exportDescs![entity.name] || "";
+        lines.push(`| \`${entity.name}\` | ${entity.type} | ${desc} | [→ ${location}] |`);
+      }
+    } else {
+      // Table without Description column - show ALL exports
+      lines.push("| Name | Type | Location |");
+      lines.push("|------|------|----------|");
+      for (const entity of exportedEntities) {
+        const location =
+          entity.line === entity.endLine
+            ? `${entity.file}:${entity.line}`
+            : `${entity.file}:${entity.line}-${entity.endLine}`;
+        lines.push(`| \`${entity.name}\` | ${entity.type} | [→ ${location}] |`);
+      }
+    }
+    lines.push("");
+  }
+
+  // Files section with descriptions (sorted alphabetically)
+  lines.push("## Files");
+  lines.push("");
+
+  const sortedFiles = [...module.files].sort((a, b) => a.localeCompare(b));
+  for (const file of sortedFiles.slice(0, 15)) {
+    // Prefer LLM description if available
+    const llmDesc = llmDescriptions?.fileDescs?.[file];
+
+    if (llmDesc) {
+      lines.push(`- **${file}** — ${llmDesc}`);
+    } else {
+      // No description available - just show filename
+      lines.push(`- \`${file}\``);
+    }
+  }
+  if (sortedFiles.length > 15) {
+    lines.push(`- ... and ${sortedFiles.length - 15} more files`);
   }
   lines.push("");
 

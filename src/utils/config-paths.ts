@@ -178,7 +178,11 @@ export interface SemanticConfig {
   };
   llm?: {
     enabled: boolean;
-    platform: "ollama" | "tgi" | "llamacpp";
+    platform: "ollama" | "tgi" | "llamacpp" | "claude-code" | "docker-model-runner";
+    claude?: {
+      model_id: string;
+      context_tokens: number;
+    };
     ollama?: {
       endpoint: string;
       model_id: string;
@@ -189,6 +193,11 @@ export interface SemanticConfig {
       model_id: string;
       context_tokens: number;
       container_name: string;
+    };
+    docker_model_runner?: {
+      endpoint: string;
+      model_id: string;
+      context_tokens: number;
     };
   };
 }

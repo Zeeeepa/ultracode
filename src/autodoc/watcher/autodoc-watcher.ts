@@ -12,13 +12,14 @@
  * - Adds/removes exported entities
  */
 
-import path from "node:path";
+import path, { join } from "node:path";
 import { type KnowledgeEntry, knowledgeBus } from "../../core/knowledge-bus.js";
 import { log } from "../../logging/index.js";
 import { fileExists, readdir, readText, setFileChangeHook, writeFile } from "../../utils/file-ops.js";
-import type { ModuleInfo } from "../generator/doc-generator.js";
+import { generateModuleReadmeWithEntities, type ModuleInfo } from "../generator/doc-generator.js";
+import { ClaudeCodeProvider } from "../llm/llm-provider.js";
 import { updateAutodocContent } from "./autodoc-updater.js";
-import { extractExportsFromFile, getModuleForFile } from "./module-resolver.js";
+import { extractEntitiesFromContent, extractExportsFromFile, getModuleForFile } from "./module-resolver.js";
 
 /**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
@@ -69,12 +70,17 @@ export class AutoDocWatcher {
   private isProcessing = false;
   private moduleCache: Map<string, ModuleInfo> = new Map();
   private moduleCacheControllers: Map<string, AbortController> = new Map();
+  /** Cached result of .autodoc folder check */
+  private autodocEnabled: boolean | null = null;
+  private autodocCheckTime = 0;
+  /** Cache TTL for .autodoc check (5 minutes) */
+  private static readonly AUTODOC_CHECK_TTL = 5 * 60 * 1000;
 
   constructor(config: AutoDocWatcherConfig) {
     this.config = {
-      debounceMs: config.debounceMs ?? 45000,
-      minDebounceMs: config.minDebounceMs ?? 30000,
-      maxDebounceMs: config.maxDebounceMs ?? 60000,
+      debounceMs: config.debounceMs ?? 5000,
+      minDebounceMs: config.minDebounceMs ?? 3000,
+      maxDebounceMs: config.maxDebounceMs ?? 15000,
       rootDir: config.rootDir,
       enabled: config.enabled ?? true,
       useLlm: config.useLlm ?? false,
@@ -83,9 +89,39 @@ export class AutoDocWatcher {
   }
 
   /**
+   * Check if .autodoc folder exists (with caching)
+   */
+  private async checkAutodocEnabled(): Promise<boolean> {
+    const now = Date.now();
+    if (this.autodocEnabled !== null && now - this.autodocCheckTime < AutoDocWatcher.AUTODOC_CHECK_TTL) {
+      return this.autodocEnabled;
+    }
+
+    const autodocDir = join(this.config.rootDir, ".autodoc");
+    this.autodocEnabled = await fileExists(autodocDir);
+    this.autodocCheckTime = now;
+
+    log.d("AUTODOCWATCH", "check_autodoc_dir", {
+      rootDir: this.config.rootDir,
+      autodocDir,
+      exists: this.autodocEnabled,
+    });
+
+    return this.autodocEnabled;
+  }
+
+  /**
+   * Invalidate autodoc enabled cache (call after index:completed)
+   */
+  private invalidateAutodocCache(): void {
+    this.autodocEnabled = null;
+    this.autodocCheckTime = 0;
+  }
+
+  /**
    * Start watching for file changes
    */
-  start(): void {
+  async start(): Promise<void> {
     if (!this.config.enabled) {
       log.i("AUTODOCWATCH", "watcher_disabled");
       return;
@@ -96,10 +132,22 @@ export class AutoDocWatcher {
       return;
     }
 
-    // Subscribe to file change events via KnowledgeBus
+    // Check if .autodoc folder exists
+    const autodocEnabled = await this.checkAutodocEnabled();
+    if (!autodocEnabled) {
+      log.i("AUTODOCWATCH", "autodoc_folder_not_found", {
+        root_dir: this.config.rootDir,
+        hint: "Create .autodoc folder or run autodoc_generate to enable automatic documentation",
+      });
+    }
+
+    // Subscribe to indexing events via KnowledgeBus
+    // - index:complete: triggered after each file is indexed (incremental)
+    // - index:completed: triggered after full indexing via tool
+    // - semantic:new_entities: triggered when new entities are discovered
     this.subscriptionId = knowledgeBus.subscribe(
       "autodoc-watcher",
-      /^(file:changed|entity:modified|index:completed)$/,
+      /^(index:complete|index:completed|semantic:new_entities)$/,
       this.handleEvent.bind(this),
     );
 
@@ -117,7 +165,96 @@ export class AutoDocWatcher {
     log.i("AUTODOCWATCH", "watcher_started", {
       root_dir: this.config.rootDir,
       debounce_ms: this.config.debounceMs,
+      autodoc_enabled: autodocEnabled,
     });
+
+    // Scan for modules without AUTODOC.md and create them (deferred to not block startup)
+    if (autodocEnabled) {
+      setTimeout(() => {
+        this.scanAndCreateMissingAutodocs().catch((err) => {
+          log.e("AUTODOCWATCH", "initial_scan_error", { error: String(err) });
+        });
+      }, 5000); // Wait 5 seconds after startup
+    }
+  }
+
+  /**
+   * Scan for modules without AUTODOC.md and create them
+   */
+  private async scanAndCreateMissingAutodocs(): Promise<void> {
+    log.i("AUTODOCWATCH", "scanning_for_missing_autodocs", { root: this.config.rootDir });
+
+    try {
+      const { scanModules } = await import("../generator/doc-generator.js");
+      const modules = await scanModules(this.config.rootDir, {
+        maxDepth: 4,
+        concurrency: 8,
+      });
+
+      let created = 0;
+      for (const mod of modules) {
+        const autodocPath = path.join(mod.path, "AUTODOC.md");
+        const exists = await fileExists(autodocPath);
+
+        if (!exists) {
+          log.i("AUTODOCWATCH", "creating_missing_autodoc", { module: mod.name, path: mod.path });
+
+          // Generate LLM descriptions first (includes export/file descriptions)
+          let llmDescriptions: { exportDescs?: Record<string, string>; fileDescs?: Record<string, string> } | undefined;
+          if (this.config.useLlm) {
+            const { generateModuleDescriptionLLM } = await import("./autodoc-updater.js");
+            const desc = await generateModuleDescriptionLLM(mod, {
+              useLlm: this.config.useLlm,
+              llmConfig: this.config.llmConfig,
+            });
+            if (desc) {
+              mod.description = desc;
+              // Get parsed descriptions from moduleInfo (set by generateModuleDescriptionLLM)
+              llmDescriptions = {
+                exportDescs: (mod as any)._llmExportDescs,
+                fileDescs: (mod as any)._llmFileDescs,
+              };
+            }
+          }
+
+          const content = await generateModuleReadmeWithEntities(mod, extractEntitiesFromContent, llmDescriptions);
+
+          log.i("AUTODOCWATCH", "writing_autodoc", {
+            module: mod.name,
+            path: autodocPath,
+            contentLength: content.length,
+            hasModuleDesc: !!mod.description,
+            hasExportDescs: !!llmDescriptions?.exportDescs && Object.keys(llmDescriptions.exportDescs).length > 0,
+            hasFileDescs: !!llmDescriptions?.fileDescs && Object.keys(llmDescriptions.fileDescs).length > 0,
+            source: "initial_scan",
+          });
+
+          await writeFile(autodocPath, content);
+          created++;
+
+          knowledgeBus.publish(
+            "autodoc:created",
+            {
+              modulePath: mod.path,
+              autodocPath,
+              isNew: true,
+              source: "initial_scan",
+            },
+            "autodoc-watcher",
+          );
+        }
+      }
+
+      if (created > 0) {
+        log.i("AUTODOCWATCH", "initial_scan_created", { count: created, total_modules: modules.length });
+        // Log Claude Code usage stats if used
+        ClaudeCodeProvider.logUsageStats();
+      } else {
+        log.d("AUTODOCWATCH", "initial_scan_all_exist", { total_modules: modules.length });
+      }
+    } catch (error) {
+      log.e("AUTODOCWATCH", "scan_modules_error", { error: String(error) });
+    }
   }
 
   /**
@@ -156,13 +293,30 @@ export class AutoDocWatcher {
     const data = entry.data as any;
 
     switch (entry.topic) {
-      case "file:changed":
-      case "entity:modified":
-        await this.handleFileChange(data.filePath || data.file);
+      case "index:complete":
+        // Single file indexed - update its module's AUTODOC
+        if (data.filePath) {
+          log.d("AUTODOCWATCH", "index_complete_event", { file: data.filePath });
+          await this.handleFileChange(data.filePath);
+        }
+        break;
+
+      case "semantic:new_entities":
+        // New entities discovered - update AUTODOC for affected files
+        if (Array.isArray(data)) {
+          const files = new Set<string>();
+          for (const entity of data) {
+            if (entity.filePath) files.add(entity.filePath);
+          }
+          log.d("AUTODOCWATCH", "new_entities_event", { files: files.size });
+          for (const filePath of files) {
+            await this.handleFileChange(filePath);
+          }
+        }
         break;
 
       case "index:completed":
-        // After full indexing, update all AUTODOC files
+        // Full indexing completed via tool - update all AUTODOC files
         await this.handleIndexCompleted(data);
         break;
     }
@@ -188,8 +342,11 @@ export class AutoDocWatcher {
     // Find which module this file belongs to
     const modulePath = await getModuleForFile(filePath, this.config.rootDir);
     if (!modulePath) {
+      log.d("AUTODOCWATCH", "no_module_found", { file: filePath });
       return;
     }
+
+    log.d("AUTODOCWATCH", "file_change_detected", { file: filePath, module: modulePath });
 
     // Add to pending updates
     const now = Date.now();
@@ -294,8 +451,75 @@ export class AutoDocWatcher {
       const autodocPath = path.join(modulePath, MODULE_DOC_FILENAME);
       const autodocExists = await fileExists(autodocPath);
 
+      // Check if .autodoc folder exists in root (autodoc is enabled)
+      const autodocEnabled = await this.checkAutodocEnabled();
+
       if (!autodocExists) {
-        log.d("AUTODOCWATCH", "autodoc_not_found", { module_path: modulePath });
+        // If .autodoc is enabled, create new AUTODOC.md for new modules
+        if (autodocEnabled) {
+          log.i("AUTODOCWATCH", "creating_new_autodoc", { module_path: modulePath });
+
+          // Get module info to generate initial content with entity line ranges
+          const moduleInfo = await this.getModuleInfo(modulePath);
+
+          // Generate LLM descriptions first (includes export/file descriptions)
+          let llmDescriptions: { exportDescs?: Record<string, string>; fileDescs?: Record<string, string> } | undefined;
+          if (this.config.useLlm) {
+            const { generateModuleDescriptionLLM } = await import("./autodoc-updater.js");
+            const desc = await generateModuleDescriptionLLM(moduleInfo, {
+              useLlm: this.config.useLlm,
+              llmConfig: this.config.llmConfig,
+            });
+            if (desc) {
+              moduleInfo.description = desc;
+              llmDescriptions = {
+                exportDescs: (moduleInfo as any)._llmExportDescs,
+                fileDescs: (moduleInfo as any)._llmFileDescs,
+              };
+            }
+          }
+
+          const initialContent = await generateModuleReadmeWithEntities(
+            moduleInfo,
+            extractEntitiesFromContent,
+            llmDescriptions,
+          );
+
+          log.i("AUTODOCWATCH", "writing_autodoc", {
+            module: moduleInfo.name,
+            path: autodocPath,
+            contentLength: initialContent.length,
+            hasModuleDesc: !!moduleInfo.description,
+            hasExportDescs: !!llmDescriptions?.exportDescs && Object.keys(llmDescriptions.exportDescs).length > 0,
+            hasFileDescs: !!llmDescriptions?.fileDescs && Object.keys(llmDescriptions.fileDescs).length > 0,
+            source: "processUpdate_new",
+          });
+
+          await writeFile(autodocPath, initialContent);
+
+          log.i("AUTODOCWATCH", "autodoc_created", {
+            module_path: modulePath,
+            autodoc_path: autodocPath,
+            usedLlm: this.config.useLlm,
+          });
+
+          // Publish event for new module
+          knowledgeBus.publish(
+            "autodoc:created",
+            {
+              modulePath,
+              autodocPath,
+              isNew: true,
+            },
+            "autodoc-watcher",
+          );
+          return;
+        }
+
+        log.d("AUTODOCWATCH", "autodoc_not_found_disabled", {
+          module_path: modulePath,
+          hint: "Create .autodoc folder to enable auto-generation",
+        });
         return;
       }
 
@@ -344,16 +568,89 @@ export class AutoDocWatcher {
    * Handle index:completed event - update all AUTODOC files
    */
   private async handleIndexCompleted(data: any): Promise<void> {
-    // After full indexing, we might want to update all AUTODOC files
-    // But this is expensive, so we only do it if explicitly requested
-    if (data.updateAutodoc !== true) {
+    // Invalidate autodoc cache after indexing (folder might have been created)
+    this.invalidateAutodocCache();
+
+    const autodocEnabled = await this.checkAutodocEnabled();
+    if (!autodocEnabled) {
+      log.d("AUTODOCWATCH", "index_completed_autodoc_disabled");
       return;
     }
 
-    log.i("AUTODOCWATCH", "full_update_start");
+    log.i("AUTODOCWATCH", "index_completed_scanning", { dir: data.directory || this.config.rootDir });
 
-    // This would trigger a full regeneration
-    // For now, just log - full regeneration is done via autodoc_generate tool
+    // Scan for new modules without AUTODOC.md and create them
+    try {
+      const { scanModules } = await import("../generator/doc-generator.js");
+      const modules = await scanModules(this.config.rootDir, {
+        maxDepth: 4,
+        concurrency: 8,
+      });
+
+      let created = 0;
+      for (const mod of modules) {
+        const autodocPath = path.join(mod.path, MODULE_DOC_FILENAME);
+        const exists = await fileExists(autodocPath);
+
+        if (!exists) {
+          log.i("AUTODOCWATCH", "creating_autodoc_for_new_module", { module: mod.name, useLlm: this.config.useLlm });
+
+          // Generate LLM descriptions first (includes export/file descriptions)
+          let llmDescriptions: { exportDescs?: Record<string, string>; fileDescs?: Record<string, string> } | undefined;
+          if (this.config.useLlm) {
+            const { generateModuleDescriptionLLM } = await import("./autodoc-updater.js");
+            const desc = await generateModuleDescriptionLLM(mod, {
+              useLlm: this.config.useLlm,
+              llmConfig: this.config.llmConfig,
+            });
+            if (desc) {
+              mod.description = desc;
+              // Get parsed descriptions from moduleInfo (set by generateModuleDescriptionLLM)
+              llmDescriptions = {
+                exportDescs: (mod as any)._llmExportDescs,
+                fileDescs: (mod as any)._llmFileDescs,
+              };
+            }
+          }
+
+          const content = await generateModuleReadmeWithEntities(mod, extractEntitiesFromContent, llmDescriptions);
+
+          log.i("AUTODOCWATCH", "writing_autodoc", {
+            module: mod.name,
+            path: autodocPath,
+            contentLength: content.length,
+            hasModuleDesc: !!mod.description,
+            hasExportDescs: !!llmDescriptions?.exportDescs && Object.keys(llmDescriptions.exportDescs).length > 0,
+            hasFileDescs: !!llmDescriptions?.fileDescs && Object.keys(llmDescriptions.fileDescs).length > 0,
+            source: "index_completed",
+          });
+
+          await writeFile(autodocPath, content);
+          created++;
+
+          knowledgeBus.publish(
+            "autodoc:created",
+            {
+              modulePath: mod.path,
+              autodocPath,
+              isNew: true,
+              source: "index_completed",
+            },
+            "autodoc-watcher",
+          );
+        }
+      }
+
+      if (created > 0) {
+        log.i("AUTODOCWATCH", "index_completed_created", { count: created, total_modules: modules.length });
+        // Log Claude Code usage stats if used
+        ClaudeCodeProvider.logUsageStats();
+      } else {
+        log.d("AUTODOCWATCH", "index_completed_all_exist", { total_modules: modules.length });
+      }
+    } catch (error) {
+      log.e("AUTODOCWATCH", "index_completed_error", { error: String(error) });
+    }
   }
 
   /**

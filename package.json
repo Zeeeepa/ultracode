@@ -128,7 +128,7 @@
     "@rollup/rollup-win32-x64-msvc": "^4.55.1",
     "@types/bun": "latest",
     "@types/glob": "^9.0.0",
-    "@types/node": "^25.0.3",
+    "@types/node": "^25.0.5",
     "antlr4ng": "^3.0.16",
     "antlr4ng-cli": "^2.0.0",
     "cmake-js": "^7.4.0",

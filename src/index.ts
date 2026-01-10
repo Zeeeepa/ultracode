@@ -838,18 +838,33 @@ async function main() {
   if (autodocWatcherEnabled) {
     log.t("STARTUP", "autodoc_init", { ms: Date.now() - PROCESS_START_TIME });
     try {
+      // Auto-detect LLM if not explicitly configured
+      let useLlm = config.mcp?.autodoc?.useLlm;
+      if (useLlm === undefined) {
+        try {
+          const { detectLLMProviders } = await import("./autodoc/llm/llm-provider.js");
+          const { recommended } = await detectLLMProviders();
+          useLlm = !!recommended;
+          if (useLlm) {
+            log.i("AUTODOC", "llm_auto_detected", { provider: recommended?.name });
+          }
+        } catch {
+          useLlm = false;
+        }
+      }
+
       const watcherConfig: AutoDocWatcherConfig = {
         rootDir: directory,
         enabled: true,
         debounceMs: config.mcp?.autodoc?.debounceMs ?? 45000,
         minDebounceMs: config.mcp?.autodoc?.minDebounceMs ?? 30000,
         maxDebounceMs: config.mcp?.autodoc?.maxDebounceMs ?? 60000,
-        useLlm: config.mcp?.autodoc?.useLlm ?? false,
+        useLlm,
         llmConfig: config.mcp?.autodoc?.llmConfig,
       };
       const watcher = getAutoDocWatcher(watcherConfig);
       watcher.start();
-      log.i("AUTODOC", "watcher_started", { dir: directory, debounce: watcherConfig.debounceMs ?? 0 });
+      log.i("AUTODOC", "watcher_started", { dir: directory, debounce: watcherConfig.debounceMs ?? 0, useLlm });
     } catch (error) {
       log.w("AUTODOC", "watcher_failed", { err: (error as Error).message });
     }
