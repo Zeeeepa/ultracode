@@ -286,22 +286,27 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
     fileCount: task.files.length,
   });
 
-  // Get analyzer for this language
-  let analyzer: any;
-  try {
-    analyzer = await getAnalyzer(task.language);
-  } catch (error) {
-    return {
-      taskId: task.id,
-      results: [],
-      errors: [{ file: "all", message: (error as Error).message }],
-      stats: {
-        filesProcessed: 0,
-        totalTime: Date.now() - startTime,
-        avgTimePerFile: 0,
-        language: task.language,
-      },
-    };
+  // For universal mode, we get analyzer per-file based on detected language
+  // For specific language, we use one analyzer for all files
+  const isUniversalMode = task.language === "universal";
+  let sharedAnalyzer: any = null;
+
+  if (!isUniversalMode) {
+    try {
+      sharedAnalyzer = await getAnalyzer(task.language);
+    } catch (error) {
+      return {
+        taskId: task.id,
+        results: [],
+        errors: [{ file: "all", message: (error as Error).message }],
+        stats: {
+          filesProcessed: 0,
+          totalTime: Date.now() - startTime,
+          avgTimePerFile: 0,
+          language: task.language,
+        },
+      };
+    }
   }
 
   // Track file contents for embedding generation
@@ -316,9 +321,9 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
 
   for (const file of task.files) {
     try {
-      // Verify language matches
+      // Verify language matches (skip check for universal pool)
       const detectedLang = detectLanguage(file);
-      if (detectedLang !== task.language && detectedLang !== "unknown") {
+      if (task.language !== "universal" && detectedLang !== task.language && detectedLang !== "unknown") {
         errors.push({
           file,
           message: `Language mismatch: expected ${task.language}, got ${detectedLang}`,
@@ -349,6 +354,22 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
       // Parse file with native parser
       const parseStart = Date.now();
       const hash = Date.now().toString(16); // Simple hash for worker
+
+      // Get analyzer: use shared for specific language, or per-file for universal mode
+      let analyzer: any;
+      if (isUniversalMode) {
+        const fileLang = detectLanguage(file);
+        try {
+          analyzer = await getAnalyzer(fileLang);
+        } catch {
+          errors.push({ file, message: `No analyzer for language: ${fileLang}` });
+          prefetch.advance();
+          continue;
+        }
+      } else {
+        analyzer = sharedAnalyzer;
+      }
+
       const result: ParseResult = await analyzer.parse(file, content, hash);
       parseTime += Date.now() - parseStart;
 

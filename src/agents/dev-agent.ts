@@ -1178,25 +1178,32 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     let successCount = 0;
     let errorCount = 0;
 
-    // Process files in small batches to avoid overwhelming the system
-    const batchSize = 5;
-    for (let i = 0; i < supportedFiles.length; i += batchSize) {
-      const batch = supportedFiles.slice(i, i + batchSize);
+    // Process all supported files in one batch for efficiency
+    if (supportedFiles.length > 0) {
+      try {
+        // Parse all files in a single batch
+        const parseResults = await this.parserAgent.parseBatch(supportedFiles, {});
+        log.d("DEVAGENT", "batch_parsed", { files: supportedFiles.length, results: parseResults.length });
 
-      for (const filePath of batch) {
-        try {
-          // Parse file
-          const parseResult = await this.parserAgent.parseFile(filePath, {});
-
+        // Index each result
+        for (const parseResult of parseResults) {
           if (parseResult.entities && parseResult.entities.length > 0) {
-            // Index entities
-            await this.indexerAgent.indexEntities(parseResult.entities, filePath, parseResult.relationships);
-            successCount++;
+            try {
+              await this.indexerAgent.indexEntities(
+                parseResult.entities,
+                parseResult.filePath,
+                parseResult.relationships,
+              );
+              successCount++;
+            } catch (indexError) {
+              log.e("DEVAGENT", "index_fail", { file: parseResult.filePath, err: String(indexError) });
+              errorCount++;
+            }
           }
-        } catch (error) {
-          log.e("DEVAGENT", "reindex_fail", { file: filePath, err: String(error) });
-          errorCount++;
         }
+      } catch (error) {
+        log.e("DEVAGENT", "batch_parse_fail", { files: supportedFiles.length, err: String(error) });
+        errorCount += supportedFiles.length;
       }
     }
 
