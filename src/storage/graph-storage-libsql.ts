@@ -11,6 +11,7 @@
 import { nanoid } from "nanoid";
 import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
+import { detectBaseBranch } from "../semantic/faiss/base-branch-detector.js";
 import { getCurrentGitBranchOrDefault, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
 import {
   type BatchResult,
@@ -42,9 +43,14 @@ const MAX_SUBGRAPH_DEPTH = 5;
 export function createProjectContext(projectPath: string, branchName?: string | null): ProjectContext {
   // Resolve branch: use provided, or detect from git with fallback to "main"
   const resolvedBranch = branchName ?? getCurrentGitBranchOrDefault(projectPath);
+  const normalizedBranch = normalizeBranchName(resolvedBranch);
+  const baseBranch = detectBaseBranch(projectPath);
+
   return {
     projectHash: getProjectHash(projectPath),
-    branchName: normalizeBranchName(resolvedBranch),
+    branchName: normalizedBranch,
+    // Set baseBranch for layered reads if current branch is different from base
+    baseBranch: baseBranch && baseBranch !== normalizedBranch ? baseBranch : undefined,
   };
 }
 

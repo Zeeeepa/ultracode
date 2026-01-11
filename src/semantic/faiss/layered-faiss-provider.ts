@@ -20,7 +20,12 @@ import { getProjectDir, normalizeBranchName } from "../../shared/storage-paths.j
 import type { SimilarityResult, VectorEmbedding } from "../../types/semantic.js";
 import { simdL2Normalize } from "../../utils/simd-vector-ops.js";
 import { getGpuClient, type IGpuClient } from "../gpu/gpu-client.js";
-import { createInitialBaseMetadata, detectBaseBranch, updateBaseMetadata } from "./base-branch-detector.js";
+import {
+  createInitialBaseMetadata,
+  detectBaseBranch,
+  loadBaseMetadata,
+  updateBaseMetadata,
+} from "./base-branch-detector.js";
 import type {
   AddVectorResult,
   DeltaIndexMetadata,
@@ -62,14 +67,15 @@ const DEFAULT_CONFIG: Required<LayeredFaissConfig> = {
 // File paths helpers
 // =============================================================================
 
-function getLayeredPaths(projectDir: string, branchName: string) {
+function getLayeredPaths(projectDir: string, branchName: string, baseBranch?: string | null) {
   const safeBranch = normalizeBranchName(branchName);
+  const safeBase = baseBranch ? normalizeBranchName(baseBranch) : safeBranch;
   return {
-    // Base layer (shared across branches)
-    baseIndex: join(projectDir, "faiss-base.bin"),
-    baseIds: join(projectDir, "faiss-base.bin.ids.json"),
+    // Base layer - uses base branch name (e.g., faiss-dev.bin for base branch "dev")
+    baseIndex: join(projectDir, `faiss-${safeBase}.bin`),
+    baseIds: join(projectDir, `faiss-${safeBase}.bin.ids.json`),
     baseMeta: join(projectDir, "faiss-base.meta.json"),
-    // Delta layer (per branch)
+    // Delta layer (per feature branch)
     deltaIndex: join(projectDir, `faiss-${safeBranch}.delta.bin`),
     deltaIds: join(projectDir, `faiss-${safeBranch}.delta.ids.json`),
     deltaMeta: join(projectDir, `faiss-${safeBranch}.delta.meta.json`),
@@ -173,7 +179,18 @@ export class LayeredFaissProvider {
    */
   private async loadLayers(): Promise<void> {
     const projectDir = getProjectDir(this.projectPath);
-    const paths = getLayeredPaths(projectDir, this.currentBranch!);
+    const paths = getLayeredPaths(projectDir, this.currentBranch!, this.baseBranch);
+
+    log.d("LAYERED_FAISS", "load_layers", {
+      projectDir,
+      projectPath: this.projectPath,
+      currentBranch: this.currentBranch,
+      baseBranch: this.baseBranch,
+      baseIndexPath: paths.baseIndex,
+      baseIndexExists: existsSync(paths.baseIndex),
+      baseIdsPath: paths.baseIds,
+      baseIdsExists: existsSync(paths.baseIds),
+    });
 
     // Always load base layer
     await this.loadBaseLayer(paths);
@@ -285,7 +302,7 @@ export class LayeredFaissProvider {
     // Load new delta layer if switching to feature branch
     if (!this.isOnBaseBranch) {
       const projectDir = getProjectDir(this.projectPath);
-      const paths = getLayeredPaths(projectDir, normalizedBranch);
+      const paths = getLayeredPaths(projectDir, normalizedBranch, this.baseBranch);
       await this.loadDeltaLayer(paths);
     }
 
@@ -518,7 +535,7 @@ export class LayeredFaissProvider {
     if (!this.client || !this.isInitialized) return;
 
     const projectDir = getProjectDir(this.projectPath);
-    const paths = getLayeredPaths(projectDir, this.currentBranch!);
+    const paths = getLayeredPaths(projectDir, this.currentBranch!, this.baseBranch);
 
     try {
       // Ensure directory exists
@@ -533,11 +550,13 @@ export class LayeredFaissProvider {
       // Save ID set
       writeFileSync(paths.baseIds, JSON.stringify([...this.baseIdSet]), "utf-8");
 
-      // Update metadata
-      if (!this.baseBranch) {
-        // First time saving - create base metadata
+      // Update metadata - check if file exists (not just variable)
+      const existingMeta = loadBaseMetadata(this.projectPath);
+      if (!existingMeta) {
+        // First time saving - create base metadata file
         createInitialBaseMetadata(this.projectPath, this.currentBranch!, this.config.dimensions, this.baseIdSet.size);
         this.baseBranch = this.currentBranch;
+        log.i("LAYERED_FAISS", "base_meta_created", { branch: this.currentBranch });
       } else {
         updateBaseMetadata(this.projectPath, this.baseIdSet.size);
       }
@@ -556,7 +575,7 @@ export class LayeredFaissProvider {
     if (!this.isInitialized || this.isOnBaseBranch) return;
 
     const projectDir = getProjectDir(this.projectPath);
-    const paths = getLayeredPaths(projectDir, this.currentBranch!);
+    const paths = getLayeredPaths(projectDir, this.currentBranch!, this.baseBranch);
 
     try {
       // Ensure directory exists

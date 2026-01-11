@@ -1,6 +1,6 @@
 # Libsql
 
-*Last updated: 2026-01-10*
+*Last updated: 2026-01-11*
 
 Адаптер хранилища граф-данных для LibSQL с поддержкой векторных вычислений и кэширования.
 
@@ -12,7 +12,7 @@
 | `CacheOperations` | class | Класс для управления глобальным кэшем встраиваний по хешу | [→ cache-ops.ts:24-160] |
 | `RowToEntityMapper` | type | Тип-делегат преобразования строки БД в сущность | [→ entity-ops.ts:18] |
 | `EntityOperations` | class | Класс для операций CRUD сущностей проекта | [→ entity-ops.ts:24-381] |
-| `MetadataOperations` | class | Класс для операций метаданных файлов и проектов | [→ metadata-ops.ts:16-443] |
+| `MetadataOperations` | class | Класс для операций метаданных файлов и проектов | [→ metadata-ops.ts:16-449] |
 | `RowToRelationshipMapper` | type | Тип-делегат преобразования строки БД в связь | [→ relationship-ops.ts:18] |
 | `RelationshipOperations` | class | Класс для операций CRUD связей между сущностями | [→ relationship-ops.ts:24-205] |
 | `LibSQLGraphConfig` | interface | Интерфейс конфигурации адаптера с параметрами векторов | [→ types.ts:15-28] |
@@ -21,15 +21,15 @@
 | `SupportedDimension` | type | Тип размерности встраивания из списка поддерживаемых | [→ types.ts:45] |
 | `getEmbeddingColumn` | function | Функция получения имени столбца по размерности | [→ types.ts:51-56] |
 | `normalizeToSupportedDimension` | function | Функция нормализации размерности к ближайшей поддерживаемой | [→ types.ts:62-67] |
-| `ProjectContext` | interface | Интерфейс контекста проекта с хешем и веткой | [→ types.ts:73-78] |
-| `DEFAULT_PROJECT_CONTEXT` | const | Контекст по умолчанию для легаси-проектов | [→ types.ts:80-83] |
-| `CACHE_CONFIG` | const | Конфигурация LRU-кэшей встраиваний и поисков | [→ types.ts:89-107] |
-| `DatabaseCorruptionError` | class | Исключение для обнаружения повреждения БД | [→ types.ts:114-125] |
-| `isCorruptionError` | function | Функция проверки типа ошибки повреждения БД | [→ types.ts:130-138] |
-| `ClientGetter` | type | Тип-делегат получения клиента LibSQL или null | [→ types.ts:147] |
-| `ContextGetter` | type | Тип-делегат получения контекста проекта | [→ types.ts:152] |
-| `MetadataEncoder` | type | Функция кодирования метаданных в двоичный формат | [→ types.ts:157] |
-| `MetadataDecoder` | type | Функция декодирования метаданных из двоичного формата | [→ types.ts:162] |
+| `ProjectContext` | interface | Интерфейс контекста проекта с хешем и веткой | [→ types.ts:73-80] |
+| `DEFAULT_PROJECT_CONTEXT` | const | Контекст по умолчанию для легаси-проектов | [→ types.ts:82-85] |
+| `CACHE_CONFIG` | const | Конфигурация LRU-кэшей встраиваний и поисков | [→ types.ts:91-109] |
+| `DatabaseCorruptionError` | class | Исключение для обнаружения повреждения БД | [→ types.ts:116-127] |
+| `isCorruptionError` | function | Функция проверки типа ошибки повреждения БД | [→ types.ts:132-140] |
+| `ClientGetter` | type | Тип-делегат получения клиента LibSQL или null | [→ types.ts:149] |
+| `ContextGetter` | type | Тип-делегат получения контекста проекта | [→ types.ts:154] |
+| `MetadataEncoder` | type | Функция кодирования метаданных в двоичный формат | [→ types.ts:159] |
+| `MetadataDecoder` | type | Функция декодирования метаданных из двоичного формата | [→ types.ts:164] |
 | `VectorOpsContext` | interface | Интерфейс контекста для операций с векторами | [→ vector-ops.ts:29-42] |
 | `VectorOperations` | class | Класс для операций встраиваний поиска и индексирования | [→ vector-ops.ts:48-549] |
 

@@ -305,11 +305,15 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Get vector backend configuration (libsql only)
     const vectorBackend = config.vectorBackend || {};
 
+    // Use layered FAISS index (base + delta) for efficient branch switching
+    const useLayeredIndex = config.mcp?.embedding?.useLayeredIndex ?? true;
+
     this.vectorStore = new VectorStore({
       dbPath: dbPath,
       dimensions: dimensions,
       workingDirectory: workingDir,
       libsql: vectorBackend.libsql,
+      useLayeredIndex,
     });
 
     // Wait for vector store to be fully initialized

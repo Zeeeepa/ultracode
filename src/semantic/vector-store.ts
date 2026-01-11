@@ -65,6 +65,7 @@ export class VectorStore {
   // Project context for multi-project support
   // MUST be set via setProjectContext() before any operations
   private currentContext: ProjectContext | null = null;
+  private currentProjectPath: string | null = null;
 
   constructor(config: Partial<VectorStoreConfig> = {}) {
     this.useLayeredIndex = config.useLayeredIndex ?? false;
@@ -82,14 +83,25 @@ export class VectorStore {
   /**
    * Set the current project context for all subsequent operations
    * v5: Async because FaissProvider may need to save/load indexes on context switch
-   * v6: Also switches branch on LayeredFaissProvider
+   * v6: Also initializes/switches LayeredFaissProvider
    */
   async setProjectContext(context: ProjectContext): Promise<void> {
     this.currentContext = context;
 
     if (this.useLayeredIndex && this.layeredProvider) {
-      // v6: Layered provider handles branch switching with delta/tombstones
-      await this.layeredProvider.switchBranch(context.branchName);
+      // v6: Layered provider - check if initialized
+      const isInitialized = (this.layeredProvider as any).isInitialized;
+      const projectPath = this.currentProjectPath || this.config.workingDirectory || "";
+      if (!isInitialized) {
+        // First time setting context - initialize the provider
+        const success = await this.layeredProvider.initialize(projectPath, context.projectHash, context.branchName);
+        if (!success) {
+          log.e("VECTOR", "Failed to initialize LayeredFaissProvider on context set");
+        }
+      } else {
+        // Already initialized - switch branch
+        await this.layeredProvider.switchBranch(context.branchName);
+      }
     } else if (this.faissProvider) {
       // v5: Set context on FaissProvider (may switch indexes)
       await this.faissProvider.setProjectContext(context.projectHash, context.branchName);
@@ -107,6 +119,7 @@ export class VectorStore {
    * v5: Async because FaissProvider may need to save/load indexes on context switch
    */
   async setProject(projectPath: string, branchName: string): Promise<void> {
+    this.currentProjectPath = projectPath;
     await this.setProjectContext({
       projectHash: getProjectHash(projectPath),
       branchName: normalizeBranchName(branchName),

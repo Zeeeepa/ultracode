@@ -73,6 +73,8 @@ export function normalizeToSupportedDimension(dimensions: number): SupportedDime
 export interface ProjectContext {
   projectHash: string;
   branchName: string;
+  /** Base branch for layered reads (e.g., 'main', 'dev'). If set, read operations include base + current. */
+  baseBranch?: string;
   /** Embedding dimensions for this project (default: from global config) */
   dimensions?: SupportedDimension;
 }
