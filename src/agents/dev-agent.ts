@@ -12,6 +12,7 @@ import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { log } from "../logging/index.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
+import { getCurrentGitBranch } from "../shared/storage-paths.js";
 import { getGraphStorage, setGlobalProjectContext } from "../storage/graph-storage-factory.js";
 // SQLiteManager removed - using libsql via GraphStorage
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
@@ -85,9 +86,10 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       log.i("DEVAGENT", "indexer_ctx", { dir: currentDir });
       this.indexerAgent = new IndexerAgent();
       await this.indexerAgent.initialize();
-      // Set project context on GLOBAL GraphStorage singleton
-      setGlobalProjectContext(currentDir);
-      log.i("DEVAGENT", "global_ctx_set", { dir: currentDir });
+      // Set project context on GLOBAL GraphStorage singleton with current git branch
+      const branch = getCurrentGitBranch(currentDir);
+      setGlobalProjectContext(currentDir, branch);
+      log.i("DEVAGENT", "global_ctx_set", { dir: currentDir, branch });
       log.i("DEVAGENT", "indexer_init_ok");
     } catch (error) {
       log.e("DEVAGENT", "subagent_init_fail", { err: String(error) });
@@ -177,10 +179,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
 
     // v3: Set project context on GLOBAL GraphStorage singleton before indexing
-    setGlobalProjectContext(payload.directory);
+    const indexBranch = getCurrentGitBranch(payload.directory);
+    setGlobalProjectContext(payload.directory, indexBranch);
     // v3: Also set context on IndexerAgent (for BatchOperations)
     this.indexerAgent.setProjectContext(payload.directory);
-    log.d("DEVAGENT", "set_ctx", { dir: payload.directory });
+    log.d("DEVAGENT", "set_ctx", { dir: payload.directory, branch: indexBranch });
 
     const result = {
       status: "started",
