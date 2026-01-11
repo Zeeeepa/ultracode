@@ -27,7 +27,7 @@ export class CreateSnapshotToolHandler extends BaseToolHandler<z.infer<typeof Cr
   }
 
   protected async execute(args: z.infer<typeof CreateSnapshotSchema>): Promise<ToolResult> {
-    const snapshotManager = this.context.getSnapshotManager();
+    const snapshotManager = await this.context.getSnapshotManager();
 
     if (!snapshotManager) {
       return {
@@ -36,11 +36,13 @@ export class CreateSnapshotToolHandler extends BaseToolHandler<z.infer<typeof Cr
     }
 
     try {
-      const snapshot = await snapshotManager.createSnapshot({
-        description: args.description || `Snapshot created at ${new Date().toISOString()}`,
-        entityIds: args.entityIds,
-        filePaths: args.filePaths?.map((p) => this.context.normalizeInputPath(p)),
-      });
+      const description = args.description || `Snapshot created at ${new Date().toISOString()}`;
+      const files = args.filePaths?.map((p) => this.context.normalizeInputPath(p)).filter(Boolean) as
+        | string[]
+        | undefined;
+
+      // VersionManager.createSnapshot returns snapshotId string
+      const snapshotId = await snapshotManager.createSnapshot(description, files);
 
       return {
         content: [
@@ -49,10 +51,9 @@ export class CreateSnapshotToolHandler extends BaseToolHandler<z.infer<typeof Cr
             text: JSON.stringify(
               {
                 success: true,
-                snapshotId: snapshot.id,
-                description: snapshot.description,
-                createdAt: snapshot.createdAt,
-                itemCount: snapshot.items?.length || 0,
+                snapshotId,
+                description,
+                createdAt: new Date().toISOString(),
               },
               null,
               2,
@@ -83,7 +84,7 @@ export class RollbackSnapshotToolHandler extends BaseToolHandler<z.infer<typeof 
   }
 
   protected async execute(args: z.infer<typeof RollbackSnapshotSchema>): Promise<ToolResult> {
-    const snapshotManager = this.context.getSnapshotManager();
+    const snapshotManager = await this.context.getSnapshotManager();
 
     if (!snapshotManager) {
       return {
@@ -92,15 +93,23 @@ export class RollbackSnapshotToolHandler extends BaseToolHandler<z.infer<typeof 
     }
 
     try {
-      let result: any;
+      let targetSnapshotId = args.snapshotId;
 
-      if (args.snapshotId) {
-        // Rollback to specific snapshot
-        result = await snapshotManager.rollback(args.snapshotId);
-      } else {
-        // Undo last N steps
-        result = await snapshotManager.undo(args.steps);
+      // If no snapshotId provided, get the Nth most recent snapshot
+      if (!targetSnapshotId) {
+        const snapshots = await snapshotManager.listSnapshots(args.steps);
+        if (snapshots.length === 0) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ error: "No snapshots available to rollback" }) }],
+          };
+        }
+        // Get the snapshot at position (steps - 1), or the oldest if not enough
+        const targetIndex = Math.min(args.steps - 1, snapshots.length - 1);
+        targetSnapshotId = snapshots[targetIndex].id;
       }
+
+      // VersionManager.rollback returns void
+      await snapshotManager.rollback(targetSnapshotId);
 
       return {
         content: [
@@ -109,9 +118,8 @@ export class RollbackSnapshotToolHandler extends BaseToolHandler<z.infer<typeof 
             text: JSON.stringify(
               {
                 success: true,
-                restoredSnapshot: result.snapshotId,
-                itemsRestored: result.itemsRestored || 0,
-                message: args.snapshotId ? `Rolled back to snapshot ${args.snapshotId}` : `Undid ${args.steps} step(s)`,
+                restoredSnapshot: targetSnapshotId,
+                message: `Rolled back to snapshot ${targetSnapshotId}`,
               },
               null,
               2,
@@ -142,7 +150,7 @@ export class ListSnapshotsToolHandler extends BaseToolHandler<z.infer<typeof Lis
   }
 
   protected async execute(args: z.infer<typeof ListSnapshotsSchema>): Promise<ToolResult> {
-    const snapshotManager = this.context.getSnapshotManager();
+    const snapshotManager = await this.context.getSnapshotManager();
 
     if (!snapshotManager) {
       return {
@@ -162,9 +170,11 @@ export class ListSnapshotsToolHandler extends BaseToolHandler<z.infer<typeof Lis
               snapshots: snapshots.map((s: any) => ({
                 id: s.id,
                 description: s.description,
-                createdAt: s.createdAt,
-                itemCount: s.items?.length || 0,
-                ...(args.includeDetails ? { items: s.items } : {}),
+                timestamp: s.timestamp,
+                createdAt: new Date(s.timestamp).toISOString(),
+                backend: s.backend,
+                filesCount: s.filesCount,
+                sizeBytes: s.sizeBytes,
               })),
             },
             null,
@@ -192,7 +202,7 @@ export class CleanupSnapshotsToolHandler extends BaseToolHandler<z.infer<typeof 
   }
 
   protected async execute(args: z.infer<typeof CleanupSnapshotsSchema>): Promise<ToolResult> {
-    const snapshotManager = this.context.getSnapshotManager();
+    const snapshotManager = await this.context.getSnapshotManager();
 
     if (!snapshotManager) {
       return {
@@ -205,15 +215,15 @@ export class CleanupSnapshotsToolHandler extends BaseToolHandler<z.infer<typeof 
     // Filter snapshots to cleanup
     let toCleanup = [...allSnapshots];
 
-    // Keep the most recent
-    toCleanup.sort((a: any, b: any) => b.createdAt - a.createdAt);
+    // Keep the most recent (listSnapshots already returns sorted by timestamp desc)
+    toCleanup.sort((a: any, b: any) => b.timestamp - a.timestamp);
     const toKeep = toCleanup.slice(0, args.keepCount);
     toCleanup = toCleanup.slice(args.keepCount);
 
     // Filter by age if specified
     if (args.olderThanDays) {
       const cutoffTime = Date.now() - args.olderThanDays * 24 * 60 * 60 * 1000;
-      toCleanup = toCleanup.filter((s: any) => s.createdAt < cutoffTime);
+      toCleanup = toCleanup.filter((s: any) => s.timestamp < cutoffTime);
     }
 
     if (!args.dryRun) {
