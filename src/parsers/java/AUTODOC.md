@@ -1,6 +1,6 @@
 # Java
 
-*Last updated: 2026-01-10*
+*Last updated: 2026-01-11*
 
 Модуль для извлечения метаданных из Java AST с помощью ANTLR парсера.
 
@@ -12,7 +12,7 @@
 | `extractClassModifiers` | function | Получает модификаторы из объявления класса | [→ extraction-helpers.ts:64-66] |
 | `extractInterfaceModifiers` | function | Получает модификаторы из объявления интерфейса | [→ extraction-helpers.ts:71-73] |
 | `extractMethodModifiers` | function | Получает модификаторы из объявления метода | [→ extraction-helpers.ts:78-80] |
-| `extractInterfaceMethodModifiers` | function | Получает модификаторы из метода интерфейса | [→ extraction-helpers.ts:83-87] |
+| `extractInterfaceMethodModifiers` | function | Получает модификаторы из метода интерфейса | [→ extraction-helpers.ts:78-80] |
 | `extractFieldModifiers` | function | Получает модификаторы из объявления поля класса | [→ extraction-helpers.ts:92-94] |
 | `extractConstructorModifiers` | function | Получает модификаторы из конструктора класса | [→ extraction-helpers.ts:99-101] |
 | `extractConstantModifiers` | function | Получает модификаторы из константного поля | [→ extraction-helpers.ts:106-108] |

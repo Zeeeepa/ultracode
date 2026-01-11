@@ -1,6 +1,6 @@
 # Semantic
 
-*Last updated: 2026-01-10*
+*Last updated: 2026-01-11*
 
 Модуль для обработки семантических агентов с функциями кэширования, обработки комментариев и встраивания.
 
@@ -22,14 +22,14 @@
 | `EmbeddingProcessorContext` | interface | [→ embedding-processor.ts:51-74] |
 | `generateEmbeddings` | function | [→ embedding-processor.ts:395-433] |
 | `getBatchSizeFromConfig` | function | [→ provider-config.ts:191-200] |
-| `getModelNameFromSemanticConfig` | function | [→ provider-config.ts:43-62] |
+| `getModelNameFromSemanticConfig` | function | [→ provider-config.ts:48-61] |
 | `HotspotItem` | interface | [→ vector-index-manager.ts:15-27] |
 | `mapSemanticConfigToProvider` | function | [→ provider-config.ts:18-38] |
 | `processPreGeneratedEmbeddings` | function | [→ embedding-processor.ts:236-240] |
 | `processStandaloneComments` | function | [→ comment-processor.ts:45-50] |
 | `ProviderKind` | type | [→ provider-config.ts:12] |
 | `shouldExcludeFromEmbedding` | function | [→ embedding-processor.ts:83-91] |
-| `VectorIndexManager` | class | [→ vector-index-manager.ts:34-204] |
+| `VectorIndexManager` | class | [→ vector-index-manager.ts:29-32] |
 | `warmupSemanticCache` | function | [→ cache-warmup.ts:70-231] |
 
 ## Files
@@ -40,3 +40,4 @@
 - `index.ts`
 - `provider-config.ts`
 - `vector-index-manager.ts`
+

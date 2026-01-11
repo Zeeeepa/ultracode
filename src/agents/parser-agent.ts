@@ -198,9 +198,10 @@ export class ParserAgent extends BaseAgent {
   private getEmbeddingsCallback(): (embeddings: BinaryEmbedding[]) => void {
     return (embeddings: BinaryEmbedding[]) => {
       if (!this.embeddingAccumulator) {
-        // Lazy init accumulator on first embeddings
-        this.embeddingAccumulator = getEmbeddingAccumulator();
-        log.d("PARSER", "Initialized embedding accumulator");
+        // Lazy init accumulator on first embeddings - use dimensions from config
+        const dimensions = this.embeddingConfig?.dimensions ?? 384;
+        this.embeddingAccumulator = getEmbeddingAccumulator({ dimensions });
+        log.d("PARSER", "Initialized embedding accumulator", { dimensions });
       }
       // Add to accumulator (will auto-flush when threshold reached)
       this.embeddingAccumulator.addBinaryEmbeddings(embeddings).catch((err) => {
@@ -219,9 +220,11 @@ export class ParserAgent extends BaseAgent {
   private getEmbeddingTextsCallback(): (texts: EmbeddingTextItem[]) => void {
     return (texts: EmbeddingTextItem[]) => {
       if (!this.embeddingAccumulator) {
-        // Lazy init accumulator on first texts
-        this.embeddingAccumulator = getEmbeddingAccumulator();
-        log.d("PARSER", "Initialized embedding accumulator (centralized mode)");
+        // Lazy init accumulator on first texts - use dimensions from config
+        const dimensions = this.embeddingConfig?.dimensions ?? 384;
+        const queueBatchSize = this.embeddingConfig?.queueBatchSize ?? 128;
+        this.embeddingAccumulator = getEmbeddingAccumulator({ dimensions, queueBatchSize });
+        log.d("PARSER", "Initialized embedding accumulator (centralized mode)", { dimensions, queueBatchSize });
       }
       // Add texts for centralized embedding generation (fire-and-forget, errors logged internally)
       this.embeddingAccumulator.addTextsForEmbedding(texts);
@@ -278,9 +281,11 @@ export class ParserAgent extends BaseAgent {
    * Must be called before embeddings are generated to enable flushing to FAISS.
    */
   setFaissProvider(provider: import("../semantic/faiss/faiss-provider.js").FaissProvider): void {
-    // Initialize accumulator if not already done
+    // Initialize accumulator if not already done - use dimensions from config
     if (!this.embeddingAccumulator) {
-      this.embeddingAccumulator = getEmbeddingAccumulator();
+      const dimensions = this.embeddingConfig?.dimensions ?? 384;
+      const queueBatchSize = this.embeddingConfig?.queueBatchSize ?? 128;
+      this.embeddingAccumulator = getEmbeddingAccumulator({ dimensions, queueBatchSize });
     }
     this.embeddingAccumulator.setFaissProvider(provider);
     log.i("PARSER", "FAISS provider configured for embedding accumulator");
@@ -294,9 +299,11 @@ export class ParserAgent extends BaseAgent {
   async setEmbeddingGenerator(
     generator: import("../semantic/embedding-generator.js").EmbeddingGenerator,
   ): Promise<void> {
-    // Initialize accumulator if not already done
+    // Initialize accumulator if not already done - use dimensions from config
     if (!this.embeddingAccumulator) {
-      this.embeddingAccumulator = getEmbeddingAccumulator();
+      const dimensions = this.embeddingConfig?.dimensions ?? 384;
+      const queueBatchSize = this.embeddingConfig?.queueBatchSize ?? 128;
+      this.embeddingAccumulator = getEmbeddingAccumulator({ dimensions, queueBatchSize });
     }
     await this.embeddingAccumulator.setEmbeddingGenerator(generator);
     // Set provider name for stats logging
@@ -947,6 +954,15 @@ export class ParserAgent extends BaseAgent {
       if (pool instanceof ParsingSubprocessPool) {
         pool.configureEmbeddings(config ?? undefined);
       }
+    }
+
+    // Update universal pool if it exists (for incremental mode)
+    if (this.universalPool && this.universalPool instanceof ParsingSubprocessPool) {
+      this.universalPool.configureEmbeddings(config ?? undefined);
+      log.i("PARSER", "Universal pool embeddings configured", {
+        provider: config?.provider,
+        model: config?.modelName,
+      });
     }
 
     // Initialize accumulator with correct dimensions and batch size

@@ -70,7 +70,7 @@ export class ParsingSubprocessPool {
   private readonly memoryLimitMB: number;
   private readonly killAfterBatch: boolean;
   private readonly maxFilesPerChunk: number;
-  private readonly embeddingConfig?: WorkerEmbeddingConfig;
+  private embeddingConfig?: WorkerEmbeddingConfig;
   private readonly onEmbeddings?: EmbeddingsCallback;
   private readonly onEmbeddingTexts?: EmbeddingTextsCallback;
   private readonly onStreamingResult?: StreamingResultCallback;
@@ -576,7 +576,7 @@ export class ParsingSubprocessPool {
 
       const state = this.workers.get(workerId);
       if (state?.process && !state.busy) {
-        await killProcess(state.process as ChildProcess, `${this.language}-${workerId}`);
+        killProcess(state.process as ChildProcess);
         this.workers.delete(workerId);
         killed++;
       }
@@ -1141,6 +1141,9 @@ export class ParsingSubprocessPool {
    * Workers will start generating embeddings after receiving the config.
    */
   async configureEmbeddings(config?: WorkerEmbeddingConfig): Promise<void> {
+    // Save config for new workers that may be spawned later
+    this.embeddingConfig = config;
+
     if (!config) {
       log.i("SUBPROCESS", `Clearing embedding config for ${this.workers.size} workers`, {
         language: this.language,
