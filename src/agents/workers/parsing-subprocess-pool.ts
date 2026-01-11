@@ -653,15 +653,35 @@ export class ParsingSubprocessPool {
     this.isBatchProcessing = true;
 
     // Dynamic worker scaling based on file count
-    const optimalWorkers = this.getOptimalWorkerCount(files.length);
+    // Keepalive mode with few files = incremental indexing -> 1 worker
+    // Many files (full indexing) = dynamic scaling regardless of mode
     const workersBefore = this.workers.size;
-    await this.ensureWorkers(optimalWorkers);
-    const workersAfter = this.workers.size;
+    let workersAfter = workersBefore;
+
+    const INCREMENTAL_THRESHOLD = 50; // Below this = incremental mode (1 worker)
+    const isIncrementalMode = this.keepaliveMode && files.length < INCREMENTAL_THRESHOLD;
+
+    if (isIncrementalMode) {
+      // Incremental mode: use fixed poolSize (1 worker), no scaling
+      await this.ensureWorkers(this.poolSize);
+      workersAfter = this.workers.size;
+      log.d("SUBPROCESS", `Incremental mode: fixed pool`, {
+        language: this.language,
+        poolSize: this.poolSize,
+        files: files.length,
+      });
+    } else {
+      // Full indexing mode: dynamic scaling based on file count
+      const optimalWorkers = this.getOptimalWorkerCount(files.length);
+      await this.ensureWorkers(optimalWorkers);
+      workersAfter = this.workers.size;
+    }
 
     log.i("SUBPROCESS", `submitTask scaling`, {
       language: this.language,
       files: files.length,
-      optimalWorkers,
+      mode: isIncrementalMode ? "incremental" : "full",
+      targetWorkers: isIncrementalMode ? this.poolSize : this.getOptimalWorkerCount(files.length),
       workersBefore,
       workersAfter,
     });
