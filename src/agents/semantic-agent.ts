@@ -55,7 +55,7 @@ import { HybridSearchEngine } from "../semantic/hybrid-search.js";
 import { SemanticCache } from "../semantic/semantic-cache.js";
 import { VectorStore } from "../semantic/vector-store.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
-import { DEFAULT_BRANCH, getCurrentGitBranch, getGlobalDbPaths, getProjectHash } from "../shared/storage-paths.js";
+import { getCurrentGitBranchOrDefault, getGlobalDbPaths, getProjectHash } from "../shared/storage-paths.js";
 import {
   DatabaseCorruptionError,
   getGraphStorage,
@@ -316,7 +316,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     await this.vectorStore.initialize();
 
     // v3: Set project context for the current working directory
-    const currentBranch = getCurrentGitBranch(workingDir);
+    const currentBranch = getCurrentGitBranchOrDefault(workingDir);
     await this.vectorStore.setProject(workingDir, currentBranch);
     log.i("SEMANTIC", "vectorstore_ready", { project: getProjectHash(workingDir), branch: currentBranch });
 
@@ -512,7 +512,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   async reinitializeForProject(projectPath: string, branchName?: string): Promise<void> {
     const currentContext = this.vectorStore?.getProjectContext?.();
     const newProjectHash = getProjectHash(projectPath);
-    const newBranchName = branchName || DEFAULT_BRANCH;
+    // Use provided branch, or detect from git, or fallback to "main"
+    const newBranchName = branchName || getCurrentGitBranchOrDefault(projectPath);
 
     // Skip if already using this context
     if (currentContext?.projectHash === newProjectHash && currentContext?.branchName === newBranchName) {
@@ -547,23 +548,27 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       return;
     }
 
-    const newBranchName = branchName || DEFAULT_BRANCH;
+    // branchName is required for switchBranch
+    if (!branchName) {
+      log.w("SEMANTIC", "switchBranch called without branchName");
+      return;
+    }
 
     // Skip if already on this branch
-    if (currentContext.branchName === newBranchName) {
+    if (currentContext.branchName === branchName) {
       return;
     }
 
     // Update context with new branch
     await this.vectorStore.setProjectContext({
       projectHash: currentContext.projectHash,
-      branchName: newBranchName,
+      branchName,
     });
 
     // Update metrics for new branch
     this.semanticMetrics.vectorsStored = await this.vectorStore.count();
     log.i("SEMANTIC", "Branch switched", {
-      branch: newBranchName,
+      branch: branchName,
       vectors: this.semanticMetrics.vectorsStored,
     });
   }

@@ -168,6 +168,9 @@ export class ConfigLoader {
       // Two-phase mode for Bun compatibility
       twoPhaseMode: embeddingConfig.twoPhaseMode ?? false,
 
+      // Layered FAISS index (base + delta)
+      useLayeredIndex: embeddingConfig.useLayeredIndex ?? false,
+
       // Provider-specific configurations
       ollama: embeddingConfig.ollama || undefined,
       openai: embeddingConfig.openai || undefined,
@@ -311,6 +314,11 @@ export class ConfigLoader {
             yamlConfig.mcp?.embedding?.twoPhaseMode !== undefined
               ? yamlConfig.mcp?.embedding?.twoPhaseMode
               : process.env["MCP_EMBEDDING_TWO_PHASE"] === "true",
+          // Layered FAISS index (base + delta)
+          useLayeredIndex:
+            yamlConfig.mcp?.embedding?.useLayeredIndex !== undefined
+              ? yamlConfig.mcp?.embedding?.useLayeredIndex
+              : process.env["MCP_FAISS_LAYERED"] === "true",
         },
         server: {
           host: yamlConfig.mcp?.server?.host || process.env["MCP_SERVER_HOST"] || DEFAULT_CONFIG.mcp.server?.host,

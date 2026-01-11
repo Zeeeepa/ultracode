@@ -20,10 +20,11 @@ import { log } from "../logging/index.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
-import { DEFAULT_BRANCH, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
+import { getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
 import type { ProjectContext } from "../storage/libsql-graph-adapter.js";
 import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
 import { type FaissProvider, initializeFaissProvider } from "./faiss/faiss-provider.js";
+import { LayeredFaissProvider } from "./faiss/layered-faiss-provider.js";
 import { getRecommendedStrategy, type StrategyRecommendation } from "./gpu/adaptive-thresholds.js";
 
 // =============================================================================
@@ -51,6 +52,10 @@ export class VectorStore {
   // v5: Faiss is the only backend for vector operations
   private faissProvider: FaissProvider | null = null;
 
+  // v6: Optional layered provider for base + delta architecture
+  private layeredProvider: LayeredFaissProvider | null = null;
+  private useLayeredIndex: boolean;
+
   // Initialization state management
   private isInitialized = false;
   private isInitializing = false;
@@ -62,37 +67,49 @@ export class VectorStore {
   private currentContext: ProjectContext | null = null;
 
   constructor(config: Partial<VectorStoreConfig> = {}) {
-    log.d("VECTOR", "v5: Faiss-only backend");
+    this.useLayeredIndex = config.useLayeredIndex ?? false;
+    log.d("VECTOR", this.useLayeredIndex ? "v6: Layered Faiss backend" : "v5: Faiss-only backend");
 
     this.config = {
       dbPath: config.dbPath || "",
       dimensions: config.dimensions || DEFAULT_CONFIG.dimensions!,
       workingDirectory: config.workingDirectory,
       libsql: config.libsql,
+      useLayeredIndex: this.useLayeredIndex,
     };
   }
 
   /**
    * Set the current project context for all subsequent operations
    * v5: Async because FaissProvider may need to save/load indexes on context switch
+   * v6: Also switches branch on LayeredFaissProvider
    */
   async setProjectContext(context: ProjectContext): Promise<void> {
     this.currentContext = context;
-    // v5: Set context on FaissProvider (may switch indexes)
-    if (this.faissProvider) {
+
+    if (this.useLayeredIndex && this.layeredProvider) {
+      // v6: Layered provider handles branch switching with delta/tombstones
+      await this.layeredProvider.switchBranch(context.branchName);
+    } else if (this.faissProvider) {
+      // v5: Set context on FaissProvider (may switch indexes)
       await this.faissProvider.setProjectContext(context.projectHash, context.branchName);
     }
-    log.d("VECTOR", "Context set", { project: context.projectHash, branch: context.branchName });
+
+    log.d("VECTOR", "Context set", {
+      project: context.projectHash,
+      branch: context.branchName,
+      layered: this.useLayeredIndex,
+    });
   }
 
   /**
    * Set project context from path and branch
    * v5: Async because FaissProvider may need to save/load indexes on context switch
    */
-  async setProject(projectPath: string, branchName?: string): Promise<void> {
+  async setProject(projectPath: string, branchName: string): Promise<void> {
     await this.setProjectContext({
       projectHash: getProjectHash(projectPath),
-      branchName: normalizeBranchName(branchName || DEFAULT_BRANCH),
+      branchName: normalizeBranchName(branchName),
     });
   }
 
@@ -164,33 +181,73 @@ export class VectorStore {
   /**
    * Internal initialization method
    * v5: Initializes FaissProvider as the only backend
+   * v6: Optionally initializes LayeredFaissProvider for base + delta architecture
    */
   private async initializeInternal(): Promise<void> {
     try {
-      // v5: Initialize Faiss provider directly
-      const provider = await initializeFaissProvider({
-        dimensions: this.config.dimensions,
-        indexType: "hnsw",
-        hnswM: 32,
-        hnswEfConstruction: 200,
-        hnswEfSearch: 64,
-      });
+      if (this.useLayeredIndex) {
+        // v6: Initialize layered provider (requires context to be set!)
+        if (!this.currentContext) {
+          // Layered provider needs project context at init time
+          // Fall back to standard provider, context will be set later
+          log.w("VECTOR", "Layered index requires context, deferring initialization");
+          this.layeredProvider = new LayeredFaissProvider({
+            dimensions: this.config.dimensions,
+            indexType: "hnsw",
+            hnswM: 32,
+            hnswEfConstruction: 200,
+            hnswEfSearch: 64,
+          });
+        } else {
+          this.layeredProvider = new LayeredFaissProvider({
+            dimensions: this.config.dimensions,
+            indexType: "hnsw",
+            hnswM: 32,
+            hnswEfConstruction: 200,
+            hnswEfSearch: 64,
+          });
 
-      if (!provider) {
-        throw new Error("Failed to initialize FaissProvider");
+          const success = await this.layeredProvider.initialize(
+            this.config.workingDirectory || "",
+            this.currentContext.projectHash,
+            this.currentContext.branchName,
+          );
+
+          if (!success) {
+            throw new Error("Failed to initialize LayeredFaissProvider");
+          }
+        }
+
+        log.i("VECTOR", "Initialized with Layered Faiss backend", {
+          dimensions: this.config.dimensions,
+          mode: "layered-base-delta",
+        });
+      } else {
+        // v5: Initialize standard Faiss provider
+        const provider = await initializeFaissProvider({
+          dimensions: this.config.dimensions,
+          indexType: "hnsw",
+          hnswM: 32,
+          hnswEfConstruction: 200,
+          hnswEfSearch: 64,
+        });
+
+        if (!provider) {
+          throw new Error("Failed to initialize FaissProvider");
+        }
+
+        this.faissProvider = provider;
+
+        // Set context on Faiss if already configured
+        if (this.currentContext) {
+          this.faissProvider.setProjectContext(this.currentContext.projectHash, this.currentContext.branchName);
+        }
+
+        log.i("VECTOR", "Initialized with Faiss backend", {
+          dimensions: this.config.dimensions,
+          mode: "faiss-hnsw",
+        });
       }
-
-      this.faissProvider = provider;
-
-      // Set context on Faiss if already configured
-      if (this.currentContext) {
-        this.faissProvider.setProjectContext(this.currentContext.projectHash, this.currentContext.branchName);
-      }
-
-      log.i("VECTOR", "Initialized with Faiss backend", {
-        dimensions: this.config.dimensions,
-        mode: "faiss-hnsw",
-      });
     } catch (error) {
       log.e("VECTOR", "Initialization failed", { error: (error as Error).message });
       throw new Error(`Failed to initialize vector store`, { cause: error });
@@ -205,6 +262,31 @@ export class VectorStore {
       throw new Error("VectorStore not initialized. Call initialize() first.");
     }
     return this.faissProvider;
+  }
+
+  /**
+   * Ensure layered provider is initialized with context
+   */
+  private async ensureLayeredProviderInitialized(): Promise<LayeredFaissProvider> {
+    if (!this.layeredProvider) {
+      throw new Error("VectorStore not initialized. Call initialize() first.");
+    }
+
+    // Lazy initialization if context was set after initialization
+    if (this.currentContext) {
+      const success = await this.layeredProvider.initialize(
+        this.config.workingDirectory || "",
+        this.currentContext.projectHash,
+        this.currentContext.branchName,
+      );
+      if (!success) {
+        throw new Error("Failed to initialize LayeredFaissProvider with context");
+      }
+    } else {
+      throw new Error("LayeredFaissProvider requires project context. Call setProjectContext() first.");
+    }
+
+    return this.layeredProvider;
   }
 
   /**
@@ -229,20 +311,33 @@ export class VectorStore {
   /**
    * Insert a single embedding
    * v5: Uses FaissProvider directly
+   * v6: Uses LayeredFaissProvider when enabled
    */
   async insert(embedding: VectorEmbedding): Promise<void> {
-    const provider = this.ensureFaissProvider();
-    await provider.add(embedding);
+    if (this.useLayeredIndex) {
+      const provider = await this.ensureLayeredProviderInitialized();
+      await provider.add(embedding);
+    } else {
+      const provider = this.ensureFaissProvider();
+      await provider.add(embedding);
+    }
   }
 
   /**
    * Batch insert multiple embeddings
    * v5: Uses FaissProvider directly
+   * v6: Uses LayeredFaissProvider when enabled
    */
   async insertBatch(embeddings: VectorEmbedding[]): Promise<void> {
-    const provider = this.ensureFaissProvider();
     const unique = dedupeById(embeddings);
-    await provider.addBatch(unique);
+
+    if (this.useLayeredIndex) {
+      const provider = await this.ensureLayeredProviderInitialized();
+      await provider.addBatch(unique);
+    } else {
+      const provider = this.ensureFaissProvider();
+      await provider.addBatch(unique);
+    }
   }
 
   /**
@@ -255,6 +350,7 @@ export class VectorStore {
 
   /**
    * Adaptive bulk insert - v5: Always uses Faiss HNSW
+   * v6: Uses LayeredFaissProvider when enabled
    * @returns Object with stats about the insert operation
    */
   async adaptiveBulkInsert(embeddings: VectorEmbedding[]): Promise<{
@@ -262,14 +358,23 @@ export class VectorStore {
     insertedCount: number;
     timeMs: number;
   }> {
-    const provider = this.ensureFaissProvider();
     const unique = dedupeById(embeddings);
     const startTime = performance.now();
 
-    await provider.addBatch(unique);
+    if (this.useLayeredIndex) {
+      const provider = await this.ensureLayeredProviderInitialized();
+      await provider.addBatch(unique);
+    } else {
+      const provider = this.ensureFaissProvider();
+      await provider.addBatch(unique);
+    }
 
     const timeMs = performance.now() - startTime;
-    log.i("VECTOR", "Bulk insert via Faiss HNSW", { count: unique.length, ms: timeMs.toFixed(1) });
+    log.i("VECTOR", "Bulk insert via Faiss HNSW", {
+      count: unique.length,
+      ms: timeMs.toFixed(1),
+      layered: this.useLayeredIndex,
+    });
 
     return {
       usedFaiss: true,
@@ -300,14 +405,22 @@ export class VectorStore {
 
   /**
    * Adaptive search - v5: Always uses Faiss HNSW
-   * v6: Enriches results from LibSQL
+   * v6: Uses LayeredFaissProvider when enabled, enriches results from LibSQL
    */
   async adaptiveSearch(
     queryVector: Float32Array,
     limit = 10,
   ): Promise<{ results: SimilarityResult[]; usedFaiss: boolean }> {
-    const provider = this.ensureFaissProvider();
-    const rawResults = await provider.search(queryVector, limit);
+    let rawResults: SimilarityResult[];
+
+    if (this.useLayeredIndex) {
+      const provider = await this.ensureLayeredProviderInitialized();
+      rawResults = await provider.searchForVectorStore(queryVector, limit);
+    } else {
+      const provider = this.ensureFaissProvider();
+      rawResults = await provider.search(queryVector, limit);
+    }
+
     const results = await this.enrichResultsFromLibSQL(rawResults);
     return { results, usedFaiss: true };
   }
@@ -331,15 +444,22 @@ export class VectorStore {
   /**
    * Flush and save Faiss index to disk
    * v5: Saves both Faiss index and content cache
+   * v6: Also saves layered provider state
    */
   async flushAndSave(): Promise<{ flushed: number; saved: boolean }> {
-    const provider = this.ensureFaissProvider();
-
     try {
-      const flushed = await provider.flush();
-      await provider.save();
+      let flushed = 0;
 
-      log.i("VECTOR", "Saved Faiss index to disk", { flushed });
+      if (this.useLayeredIndex && this.layeredProvider) {
+        await this.layeredProvider.save();
+        // Layered provider doesn't have a flush count
+        flushed = 0;
+      } else if (this.faissProvider) {
+        flushed = await this.faissProvider.flush();
+        await this.faissProvider.save();
+      }
+
+      log.i("VECTOR", "Saved Faiss index to disk", { flushed, layered: this.useLayeredIndex });
 
       return { flushed, saved: true };
     } catch (error) {
@@ -350,11 +470,18 @@ export class VectorStore {
 
   /**
    * Search for similar vectors
-   * v6: Uses Faiss HNSW search, enriches results from LibSQL
+   * v6: Uses Faiss HNSW search or LayeredFaissProvider, enriches results from LibSQL
    */
   async search(queryVector: Float32Array, limit = 10): Promise<SimilarityResult[]> {
-    const provider = this.ensureFaissProvider();
-    const rawResults = await provider.search(queryVector, limit);
+    let rawResults: SimilarityResult[];
+
+    if (this.useLayeredIndex) {
+      const provider = await this.ensureLayeredProviderInitialized();
+      rawResults = await provider.searchForVectorStore(queryVector, limit);
+    } else {
+      const provider = this.ensureFaissProvider();
+      rawResults = await provider.search(queryVector, limit);
+    }
 
     // Enrich results with entity data from LibSQL
     return await this.enrichResultsFromLibSQL(rawResults);
@@ -416,6 +543,7 @@ export class VectorStore {
   /**
    * Advanced similarity search with filters and threshold
    * v5: Uses Faiss search with post-filtering
+   * v6: Supports LayeredFaissProvider
    */
   async searchWithFilters(
     queryVector: Float32Array,
@@ -426,12 +554,19 @@ export class VectorStore {
       dateRange?: { start?: number; end?: number };
     } = {},
   ): Promise<SimilarityResult[]> {
-    const provider = this.ensureFaissProvider();
     const { limit = 10, threshold = 0.0, metadataFilter, dateRange } = options;
 
     // Get more results for filtering
     const expandedLimit = metadataFilter || dateRange ? limit * 10 : limit;
-    const results = await provider.search(queryVector, expandedLimit);
+
+    let results: SimilarityResult[];
+    if (this.useLayeredIndex) {
+      const provider = await this.ensureLayeredProviderInitialized();
+      results = await provider.searchForVectorStore(queryVector, expandedLimit);
+    } else {
+      const provider = this.ensureFaissProvider();
+      results = await provider.search(queryVector, expandedLimit);
+    }
 
     // Enrich results with entity data from LibSQL BEFORE filtering
     // This allows filtering by metadata from LibSQL (type, filePath, etc.)
@@ -473,10 +608,18 @@ export class VectorStore {
   /**
    * Get embedding by ID
    * v6: Gets metadata from LibSQL (content not stored in Faiss)
+   * v6: Supports LayeredFaissProvider
    */
   async get(id: string): Promise<VectorEmbedding | null> {
-    const provider = this.ensureFaissProvider();
-    if (!provider.hasId(id)) return null;
+    // Check if ID exists
+    let hasId = false;
+    if (this.useLayeredIndex && this.layeredProvider) {
+      hasId = this.layeredProvider.has(id);
+    } else if (this.faissProvider) {
+      hasId = this.faissProvider.hasId(id);
+    }
+
+    if (!hasId) return null;
 
     // Try to get entity data from LibSQL
     try {
@@ -509,9 +652,20 @@ export class VectorStore {
 
   /**
    * Batch check which IDs already exist
-   * v6: Uses FaissProvider ID set
+   * v6: Uses FaissProvider ID set or LayeredFaissProvider
    */
   async getExistingIds(ids: string[]): Promise<Set<string>> {
+    if (this.useLayeredIndex && this.layeredProvider) {
+      // Check each ID via layered provider's has() method
+      const existing = new Set<string>();
+      for (const id of ids) {
+        if (this.layeredProvider.has(id)) {
+          existing.add(id);
+        }
+      }
+      return existing;
+    }
+
     const provider = this.ensureFaissProvider();
     return provider.getExistingIds(ids);
   }
@@ -519,42 +673,77 @@ export class VectorStore {
   /**
    * Update an existing embedding
    * v6: Remove and re-add (Faiss doesn't support in-place updates)
+   * v6: Supports LayeredFaissProvider
    */
   async update(id: string, vector: Float32Array, metadata?: Record<string, unknown>): Promise<void> {
-    const provider = this.ensureFaissProvider();
+    if (this.useLayeredIndex) {
+      const provider = await this.ensureLayeredProviderInitialized();
 
-    // Check if ID exists
-    if (!provider.hasId(id)) {
-      throw new Error(`Embedding with id=${id} not found`);
+      // Check if ID exists
+      if (!provider.has(id)) {
+        throw new Error(`Embedding with id=${id} not found`);
+      }
+
+      // Remove old embedding
+      await provider.remove(id);
+
+      // Add new embedding
+      await provider.add({
+        id,
+        content: "", // Content stored in LibSQL
+        vector,
+        metadata,
+        createdAt: Date.now(),
+      });
+    } else {
+      const provider = this.ensureFaissProvider();
+
+      // Check if ID exists
+      if (!provider.hasId(id)) {
+        throw new Error(`Embedding with id=${id} not found`);
+      }
+
+      // Remove old embedding
+      await provider.remove([id]);
+
+      // Add new embedding
+      await provider.add({
+        id,
+        content: "", // Content stored in LibSQL
+        vector,
+        metadata,
+        createdAt: Date.now(),
+      });
     }
-
-    // Remove old embedding
-    await provider.remove([id]);
-
-    // Add new embedding
-    await provider.add({
-      id,
-      content: "", // Content stored in LibSQL
-      vector,
-      metadata,
-      createdAt: Date.now(),
-    });
   }
 
   /**
    * Delete an embedding
    * v5: Removes from Faiss
+   * v6: Supports LayeredFaissProvider (uses tombstones on feature branches)
    */
   async delete(id: string): Promise<void> {
-    const provider = this.ensureFaissProvider();
-    await provider.remove([id]);
+    if (this.useLayeredIndex) {
+      const provider = await this.ensureLayeredProviderInitialized();
+      await provider.remove(id);
+    } else {
+      const provider = this.ensureFaissProvider();
+      await provider.remove([id]);
+    }
   }
 
   /**
    * Get total number of embeddings
    * v5: Gets count from Faiss
+   * v6: Supports LayeredFaissProvider
    */
   async count(): Promise<number> {
+    if (this.useLayeredIndex) {
+      const provider = await this.ensureLayeredProviderInitialized();
+      const stats = await provider.getStats();
+      return stats.totalVectors;
+    }
+
     const provider = this.ensureFaissProvider();
     return await provider.getVectorCount();
   }
@@ -579,14 +768,17 @@ export class VectorStore {
   /**
    * Close the vector store
    * v5: Saves Faiss index before closing
+   * v6: Also saves LayeredFaissProvider state
    */
   async close(): Promise<void> {
-    if (this.faissProvider) {
+    if (this.useLayeredIndex && this.layeredProvider) {
+      await this.layeredProvider.save();
+    } else if (this.faissProvider) {
       await this.faissProvider.save();
       // Note: FaissProvider is a singleton, don't close it
     }
     this.isInitialized = false;
-    log.d("VECTOR", "Closed (Faiss index saved)");
+    log.d("VECTOR", "Closed (Faiss index saved)", { layered: this.useLayeredIndex });
   }
 
   /**
@@ -607,8 +799,14 @@ export class VectorStore {
     oldestEntry: number | null;
     newestEntry: number | null;
   }> {
-    const provider = this.ensureFaissProvider();
-    const stats = await provider.getStats();
+    let stats: { totalVectors: number };
+
+    if (this.useLayeredIndex && this.layeredProvider) {
+      stats = await this.layeredProvider.getStats();
+    } else {
+      const provider = this.ensureFaissProvider();
+      stats = await provider.getStats();
+    }
 
     return {
       totalEmbeddings: stats.totalVectors,
@@ -621,11 +819,19 @@ export class VectorStore {
   /**
    * Batch search for multiple query vectors
    * v5: Uses Faiss batch search
-   * v6: Enriches results from LibSQL
+   * v6: Uses LayeredFaissProvider when enabled, enriches results from LibSQL
    */
   async batchSearch(queryVectors: Float32Array[], limit = 10): Promise<SimilarityResult[][]> {
-    const provider = this.ensureFaissProvider();
-    const rawResults = await provider.batchSearch(queryVectors, limit);
+    let rawResults: SimilarityResult[][];
+
+    if (this.useLayeredIndex) {
+      // Layered provider doesn't have batchSearch, use sequential search
+      const provider = await this.ensureLayeredProviderInitialized();
+      rawResults = await Promise.all(queryVectors.map((qv) => provider.searchForVectorStore(qv, limit)));
+    } else {
+      const provider = this.ensureFaissProvider();
+      rawResults = await provider.batchSearch(queryVectors, limit);
+    }
 
     // Enrich all results in parallel
     const enrichedResults = await Promise.all(rawResults.map((results) => this.enrichResultsFromLibSQL(results)));

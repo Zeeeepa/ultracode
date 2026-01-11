@@ -120,7 +120,7 @@ import { getGpuClient, shutdownGpuClient } from "./semantic/gpu/gpu-client.js";
 // OVMS Native lifecycle management
 import { initializeOVMSNative, type OVMSNativeConfig, shutdownOVMSNative } from "./semantic/ovms-native-manager.js";
 // Storage initialization
-import { DEFAULT_BRANCH, getProjectHash, initializeStorageDirs } from "./shared/storage-paths.js";
+import { getCurrentGitBranchOrDefault, getProjectHash, initializeStorageDirs } from "./shared/storage-paths.js";
 import { configureGraphStorage, getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
 import type { ToolContext } from "./tools/base-tool-handler.js";
 // Tool list (extracted to separate file)
@@ -347,8 +347,9 @@ try {
 
 // v3: Set initial project context for GraphStorage
 const initialStorage = await getGraphStorage();
-initialStorage.setProject(directory, DEFAULT_BRANCH);
-log.i("STORAGE", "project_set", { proj: getProjectHash(directory), branch: DEFAULT_BRANCH });
+const initialBranch = getCurrentGitBranchOrDefault(directory);
+initialStorage.setProject(directory, initialBranch);
+log.i("STORAGE", "project_set", { proj: getProjectHash(directory), branch: initialBranch });
 
 // Log MCP server starting
 log.i("SYSTEM", "mcp_starting", {
@@ -1112,8 +1113,9 @@ async function main() {
         // v4: Use libsql unified storage instead of better-sqlite3
         const graphStorage = await getGraphStorage();
         const projectHash = getProjectHash(directory);
-        log.t("INDEXER", "check_index", { dir: directory, hash: projectHash, branch: DEFAULT_BRANCH });
-        graphStorage.setProject(directory, DEFAULT_BRANCH);
+        const currentBranch = getCurrentGitBranchOrDefault(directory);
+        log.t("INDEXER", "check_index", { dir: directory, hash: projectHash, branch: currentBranch });
+        graphStorage.setProject(directory, currentBranch);
         const stats = await graphStorage.getStatistics();
         const entityCount = stats.totalEntities ?? 0;
         log.t("INDEXER", "stats", { entities: entityCount, rels: stats.totalRelationships, files: stats.totalFiles });

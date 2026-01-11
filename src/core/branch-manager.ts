@@ -11,9 +11,9 @@
  */
 
 import { execSync } from "node:child_process";
-import { join, normalize } from "node:path";
-import xxhash from "xxhash-wasm";
+import { join } from "node:path";
 import { log } from "../logging/index.js";
+import { getProjectHash } from "../shared/storage-paths.js";
 import {
   existsSync,
   mkdirSync,
@@ -86,7 +86,6 @@ export class BranchManager {
   private config: BranchManagerConfig;
   private registryPath: string;
   private registry: BranchRegistry;
-  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
   private currentBranch: string | null = null;
   private currentRepoPath: string | null = null;
 
@@ -104,10 +103,10 @@ export class BranchManager {
   }
 
   /**
-   * Initialize xxHash for repository hashing
+   * Initialize the branch manager (no-op, kept for API compatibility)
    */
   async initialize(): Promise<void> {
-    this.xxhashInstance = await xxhash();
+    // Hash is now handled by getProjectHash() from storage-paths.ts
   }
 
   /**
@@ -188,29 +187,11 @@ export class BranchManager {
 
   /**
    * Get repository hash for path isolation
+   * Uses the same hash as storage-paths.ts for consistency
    */
   getRepositoryHash(repoPath: string): string {
-    if (!this.xxhashInstance) {
-      throw new Error("BranchManager not initialized - call initialize() first");
-    }
-
-    try {
-      // Try to get Git remote URL for stable hash
-      const remote = execSync("git remote get-url origin", {
-        cwd: repoPath,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-      }).trim();
-
-      const hash = this.xxhashInstance.h64ToString(remote);
-      return hash.slice(0, 12);
-    } catch {
-      // Fallback to absolute path hash
-      const normalizedPath = normalize(repoPath);
-      const hash = this.xxhashInstance.h64ToString(normalizedPath);
-      return hash.slice(0, 12);
-    }
+    // Use centralized getProjectHash for consistent hashing across the codebase
+    return getProjectHash(repoPath);
   }
 
   /**
@@ -226,25 +207,21 @@ export class BranchManager {
 
   /**
    * Get database path for a specific branch
+   * Returns the unified storage database path (same for all branches)
    */
-  getBranchDbPath(branch: string, repoPath?: string): string {
+  getBranchDbPath(_branch: string, _repoPath?: string): string {
+    // Unified storage: single database for all projects/branches
+    return join(this.config.dataDir, "unified-storage.db");
+  }
+
+  /**
+   * Get FAISS index path for a specific branch
+   */
+  getFaissIndexPath(branch: string, repoPath?: string): string {
     const path = repoPath || this.currentRepoPath || process.cwd();
-
-    if (!this.config.enabled) {
-      // Fallback to single database in projects dir
-      return join(this.getProjectsDir(), "vectors.db");
-    }
-
     const repoHash = this.getRepositoryHash(path);
     const sanitizedBranch = this.sanitizeBranchName(branch);
-    const branchDir = join(this.getProjectsDir(), repoHash, sanitizedBranch);
-
-    // Ensure directory exists
-    if (!existsSync(branchDir)) {
-      mkdirSync(branchDir, { recursive: true });
-    }
-
-    return join(branchDir, "vectors.db");
+    return join(this.getProjectsDir(), repoHash, `faiss-${sanitizedBranch}.bin`);
   }
 
   /**
@@ -289,6 +266,7 @@ export class BranchManager {
 
   /**
    * Get all indexed branches for a repository
+   * Detects branches by FAISS index files (faiss-{branch}.bin)
    */
   getActiveBranches(repoPath?: string): BranchInfo[] {
     const path = repoPath || this.currentRepoPath || process.cwd();
@@ -300,18 +278,24 @@ export class BranchManager {
     }
 
     const branches: BranchInfo[] = [];
-    const branchDirs = readdirSync(repoDir);
+    const files = readdirSync(repoDir);
 
-    for (const branchDir of branchDirs) {
-      const dbPath = join(repoDir, branchDir, "vectors.db");
-      if (!existsSync(dbPath)) continue;
+    // Find FAISS index files: faiss-{branch}.bin
+    const faissPattern = /^faiss-(.+)\.bin$/;
+    for (const file of files) {
+      const match = file.match(faissPattern);
+      if (!match || !match[1]) continue;
 
-      const metadata = this.getBranchMetadata(branchDir, path);
-      const stats = statSync(dbPath);
+      const branchName: string = match[1];
+      const faissPath = join(repoDir, file);
+      const stats = statSync(faissPath);
+
+      // Try to load metadata from branch subdirectory
+      const metadata = this.getBranchMetadata(branchName, path);
 
       branches.push({
-        name: branchDir,
-        dbPath,
+        name: branchName,
+        dbPath: faissPath,
         lastAccessed: metadata?.accessedAt || stats.mtimeMs,
         sizeBytes: stats.size,
         metadata,
@@ -382,11 +366,11 @@ export class BranchManager {
   }
 
   /**
-   * Check if branch database exists
+   * Check if branch has been indexed (FAISS index exists)
    */
   hasBranchDatabase(branch: string, repoPath?: string): boolean {
-    const dbPath = this.getBranchDbPath(branch, repoPath);
-    return existsSync(dbPath);
+    const faissPath = this.getFaissIndexPath(branch, repoPath);
+    return existsSync(faissPath);
   }
 
   // =============================================================================

@@ -22,7 +22,7 @@ import type { Client } from "@libsql/client";
 import * as cbor from "cbor-x";
 import { LRUCache } from "lru-cache";
 import { log } from "../logging/index.js";
-import { DEFAULT_BRANCH, normalizeBranchName } from "../shared/storage-paths.js";
+import { normalizeBranchName } from "../shared/storage-paths.js";
 import type { SimilarityResult, VectorEmbedding } from "../types/semantic.js";
 import type { BatchResult, Entity, EntityType, FileInfo, Relationship, RelationType } from "../types/storage.js";
 import { CacheOperations } from "./libsql/cache-ops.js";
@@ -64,10 +64,10 @@ export class LibSQLGraphAdapter {
   private isInitialized = false;
   private dbPath: string = "";
 
-  // Current project context
+  // Current project context (will be set via setProject before use)
   private currentContext: ProjectContext = {
-    projectHash: "legacy",
-    branchName: DEFAULT_BRANCH,
+    projectHash: "_unset_",
+    branchName: "_unset_",
   };
 
   // Performance caches

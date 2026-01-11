@@ -17,6 +17,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       model: "all-MiniLM-L6-v2",
       provider: "auto",
       enabled: false,
+      useLayeredIndex: true, // Use layered FAISS index (base + delta) for branch switching
     },
     server: {
       host: "localhost",

@@ -7,7 +7,7 @@
 
 import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
-import { DEFAULT_BRANCH, getProjectHash } from "../shared/storage-paths.js";
+import { getCurrentGitBranchOrDefault, getProjectHash } from "../shared/storage-paths.js";
 import { type BatchResult, type Entity, type Relationship, RelationType } from "../types/storage.js";
 import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.js";
 
@@ -31,8 +31,8 @@ export class BatchOperationsLibSQL {
   private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
 
   private currentContext: ProjectContext = {
-    projectHash: "legacy",
-    branchName: DEFAULT_BRANCH,
+    projectHash: "_unset_",
+    branchName: "_unset_",
   };
 
   constructor(adapter: LibSQLGraphAdapter, batchSize = DEFAULT_BATCH_SIZE) {
@@ -46,10 +46,12 @@ export class BatchOperationsLibSQL {
     this.adapter.setProjectContext(context);
   }
 
-  setProject(projectPath: string, branchName?: string): void {
+  setProject(projectPath: string, branchName?: string | null): void {
+    // Resolve branch: use provided, or detect from git with fallback to "main"
+    const resolvedBranch = branchName ?? getCurrentGitBranchOrDefault(projectPath);
     this.setProjectContext({
       projectHash: getProjectHash(projectPath),
-      branchName: branchName || DEFAULT_BRANCH,
+      branchName: resolvedBranch,
     });
   }
 

@@ -6,7 +6,7 @@
  */
 
 import type { Client } from "@libsql/client";
-import { DEFAULT_BRANCH } from "../../shared/storage-paths.js";
+// Note: No DEFAULT_BRANCH import - branch must be explicitly provided
 
 // =============================================================================
 // CONFIGURATION
@@ -78,8 +78,8 @@ export interface ProjectContext {
 }
 
 export const DEFAULT_PROJECT_CONTEXT: ProjectContext = {
-  projectHash: "legacy",
-  branchName: DEFAULT_BRANCH,
+  projectHash: "_unset_",
+  branchName: "_unset_",
 };
 
 // =============================================================================

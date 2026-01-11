@@ -29,6 +29,10 @@ export interface MCPConfig {
     // Improves stability by separating CPU-intensive embedding from DB writes
     twoPhaseMode?: boolean;
 
+    // Use layered FAISS index: base (first branch) + delta (changes only) + tombstones
+    // Reduces disk usage for feature branches by storing only differences from base
+    useLayeredIndex?: boolean;
+
     // Provider-specific configurations
     ollama?: {
       baseUrl?: string | undefined;
@@ -126,6 +130,10 @@ export interface EmbeddingConfigResolved {
   // Two-phase mode: dump embeddings to disk, then insert to DB
   // Improves stability by separating CPU-intensive embedding from DB writes
   twoPhaseMode: boolean;
+
+  // Use layered FAISS index: base (first branch) + delta (changes only) + tombstones
+  // Reduces disk usage for feature branches by storing only differences from base
+  useLayeredIndex: boolean;
 
   // Provider-specific configurations
   ollama?: {
