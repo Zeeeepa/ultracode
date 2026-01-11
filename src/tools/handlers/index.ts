@@ -77,6 +77,7 @@ export {
   GetBusStatsToolHandler,
   GetMetricsToolHandler,
   GetVersionToolHandler,
+  GetWatcherStatusToolHandler,
 } from "./metrics-tool-handlers.js";
 // Semantic tools
 export {

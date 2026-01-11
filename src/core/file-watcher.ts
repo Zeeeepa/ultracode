@@ -45,6 +45,8 @@ export interface FileWatcherConfig {
 // =============================================================================
 
 const isBunRuntime = typeof globalThis.Bun !== "undefined";
+// Check if Bun.watch is actually available (some Bun builds don't have it)
+const hasBunWatch = isBunRuntime && typeof (globalThis as any).Bun?.watch === "function";
 
 // =============================================================================
 // FILE WATCHER
@@ -87,16 +89,16 @@ export class FileWatcher extends EventEmitter {
     if (this.isRunning) return;
     this.isRunning = true;
 
-    const runtime = isBunRuntime ? "Bun.watch" : "fs.watch";
-    log.i("FILEWATCHER", "Starting", { runtime, rootDir: this.config.rootDir });
+    const runtime = hasBunWatch ? "Bun.watch" : "fs.watch";
+    log.i("FILEWATCHER", "Starting", { runtime, rootDir: this.config.rootDir, isBun: isBunRuntime, hasBunWatch });
 
     try {
       // Initial file scan with glob
       const files = await this.scanFiles();
       log.d("FILEWATCHER", "Initial scan complete", { files: files.length });
 
-      // Start watching
-      if (isBunRuntime) {
+      // Start watching - use Bun.watch only if it's actually available
+      if (hasBunWatch) {
         await this.startBunWatcher(files);
       } else {
         await this.startNodeWatcher(files);
@@ -347,7 +349,9 @@ export class FileWatcher extends EventEmitter {
   getStatus() {
     return {
       running: this.isRunning,
-      runtime: isBunRuntime ? "bun" : "node",
+      runtime: hasBunWatch ? "bun" : "node",
+      isBunRuntime,
+      hasBunWatch,
       watchedFiles: this.watchedFiles.size,
       watchedDirs: this.watchers.size,
       pendingChanges: this.pendingChanges.size,

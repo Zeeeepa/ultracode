@@ -213,6 +213,13 @@ export class GitWatcher {
   }
 
   /**
+   * Check if watcher is currently active
+   */
+  isWatching(): boolean {
+    return !this.stopped && (!!this.watcher || this.commitPollRunning || this.uncommittedPollRunning);
+  }
+
+  /**
    * Stop watching the repository
    */
   stopWatching(): void {

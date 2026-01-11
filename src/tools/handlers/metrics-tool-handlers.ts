@@ -297,3 +297,76 @@ export class ClearBusTopicToolHandler extends BaseToolHandler<z.infer<typeof Cle
     }
   }
 }
+
+// =============================================================================
+// GET WATCHER STATUS - Diagnostic tool to check FileWatcher/GitWatcher status
+// =============================================================================
+
+const GetWatcherStatusSchema = z.object({});
+
+export class GetWatcherStatusToolHandler extends BaseToolHandler<z.infer<typeof GetWatcherStatusSchema>> {
+  protected parseArgs(args: unknown) {
+    return GetWatcherStatusSchema.parse(args);
+  }
+
+  protected async execute(_args: z.infer<typeof GetWatcherStatusSchema>): Promise<ToolResult> {
+    try {
+      const { AgentType } = await import("../../types/agent.js");
+      const conductor = this.context.getConductor();
+
+      // Get IndexerAgent to check watcher status
+      const indexerAgent = conductor.getAgentByType?.(AgentType.INDEXER) as any;
+
+      const result: any = {
+        timestamp: new Date().toISOString(),
+        indexerAgentExists: !!indexerAgent,
+        fileWatcher: null as any,
+        gitWatcher: null as any,
+        repositoryPath: null as string | null,
+      };
+
+      if (indexerAgent) {
+        // Check FileWatcher using public method
+        result.fileWatcher = indexerAgent.getFileWatcherStatus?.() ?? { exists: false, reason: "Method not available" };
+
+        // Check GitWatcher
+        const gitWatcher = indexerAgent.getGitWatcher?.();
+        if (gitWatcher) {
+          result.gitWatcher = {
+            exists: true,
+            isWatching: gitWatcher.isWatching?.() ?? false,
+            currentBranch: gitWatcher.getCurrentBranch?.() ?? "unknown",
+          };
+        } else {
+          result.gitWatcher = { exists: false };
+        }
+
+        // Check BranchManager
+        const branchManager = indexerAgent.getBranchManager?.();
+        result.branchManager = { exists: !!branchManager };
+
+        // Check repository path
+        result.repositoryPath = indexerAgent.currentRepositoryPath ?? null;
+
+        // Check indexing stats
+        result.indexingStats = indexerAgent.getIndexingStats?.() ?? {};
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error: (error as Error).message,
+              stack: (error as Error).stack?.split("\n").slice(0, 5),
+            }),
+          },
+        ],
+      };
+    }
+  }
+}
