@@ -118,7 +118,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     ],
   },
   git: {
-    enabled: false, // Disabled by default
+    enabled: true, // Enabled by default for git repositories
     watchBranchChanges: true,
     watchUncommitted: true, // Watch uncommitted file changes
     uncommittedPollIntervalMs: 10000, // Check for uncommitted changes every 10 seconds
