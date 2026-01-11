@@ -1178,6 +1178,13 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     let successCount = 0;
     let errorCount = 0;
 
+    // Configure embeddings for incremental indexing (if not already configured)
+    const embeddingConfig = buildWorkerEmbeddingConfig();
+    if (embeddingConfig && this.parserAgent) {
+      this.parserAgent.setEmbeddingConfig(embeddingConfig);
+      log.d("DEVAGENT", "incr_embedding_config", { provider: embeddingConfig.provider });
+    }
+
     // Process all supported files in one batch for efficiency
     if (supportedFiles.length > 0) {
       try {

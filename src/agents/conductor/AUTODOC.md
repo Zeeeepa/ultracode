@@ -1,6 +1,6 @@
 # Conductor
 
-*Last updated: 2026-01-10*
+*Last updated: 2026-01-11*
 
 Модуль оркестрации задач для управления агентами и анализа сложности.
 
@@ -18,7 +18,7 @@
 | `getConductorAgentDefaults` | function | Функция для получения конфигурации агента проводника. | [→ config.ts:29-32] |
 | `getTaskTypeKey` | function | Определяет тип задачи для выбора шаблона. | [→ method-proposals.ts:106-114] |
 | `initializeMethodProposalTemplates` | function | Инициализирует шаблоны предложений для типов. | [→ method-proposals.ts:119-128] |
-| `isDirectImplementation` | function | Проверяет попытку обхода делегирования задачи. | [→ task-analysis.ts:79-82] |
+| `isDirectImplementation` | function | Проверяет попытку обхода делегирования задачи. | [→ task-analysis.ts:80-80] |
 | `isIndexingTask` | function | Проверяет является ли задача операцией индексирования. | [→ task-analysis.ts:68-74] |
 | `MethodProposal` | interface | Интерфейс предложения метода выполнения. | [→ types.ts:37-46] |
 | `SubTask` | interface | Интерфейс подзадачи с целевым агентом. | [→ types.ts:28-35] |

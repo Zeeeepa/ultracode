@@ -68,7 +68,7 @@ export interface AccumulatorStats {
 
 const DEFAULT_CONFIG: AccumulatorConfig = {
   flushThreshold: 5000, // Flush every 5000 embeddings
-  dimensions: 768,
+  dimensions: 384, // Default for e5-small, MiniLM models (most common)
   queueBatchSize: 200, // Send 200 texts per OVMS request (good for GPU utilization)
 };
 

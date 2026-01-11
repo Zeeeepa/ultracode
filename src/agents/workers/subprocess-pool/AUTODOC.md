@@ -1,6 +1,6 @@
 # Subprocess Pool
 
-*Last updated: 2026-01-10*
+*Last updated: 2026-01-11*
 
 Module for subprocess-pool functionality.
 
@@ -19,9 +19,9 @@ Module for subprocess-pool functionality.
 | `QueuedTask` | interface | [→ types.ts:190-196] |
 | `spawnBunProcess` | function | [→ spawner.ts:46-88] |
 | `SpawnContext` | interface | [→ spawner.ts:14-21] |
-| `spawnNodeProcess` | function | [→ spawner.ts:93-132] |
+| `spawnNodeProcess` | function | [→ spawner.ts:96-104] |
 | `spawnProcess` | function | [→ spawner.ts:137-143] |
-| `StreamingResultCallback` | type | [→ types.ts:144-149] |
+| `StreamingResultCallback` | type | [→ types.ts:139-139] |
 | `SubprocessPoolOptions` | interface | [→ types.ts:154-185] |
 | `SubprocessPoolStats` | interface | [→ types.ts:94-105] |
 | `SubprocessState` | interface | [→ types.ts:30-46] |
@@ -31,3 +31,4 @@ Module for subprocess-pool functionality.
 - `index.ts`
 - `spawner.ts`
 - `types.ts`
+
