@@ -88,8 +88,9 @@ export class GetVersionToolHandler extends BaseToolHandler<z.infer<typeof GetVer
     const { join } = await import("node:path");
 
     try {
-      // Read package.json for version
-      const packagePath = join(this.context.config.directory, "package.json");
+      // Read package.json for version - use resolveProjectPath for directory
+      const projectPath = this.resolveProjectPath({});
+      const packagePath = join(projectPath, "package.json");
       let version = "unknown";
       let name = "ultrascript-tools-mcp";
 

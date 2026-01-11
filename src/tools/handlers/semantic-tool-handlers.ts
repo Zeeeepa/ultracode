@@ -548,7 +548,10 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
   }
 
   protected async execute(args: z.infer<typeof JscpdDetectClonesSchema>): Promise<ToolResult> {
-    const targetDir = args.directory || this.context.config.directory;
+    // Use resolveProjectPath for proper path resolution, ensure non-undefined
+    const targetDir = args.directory
+      ? (this.context.normalizeInputPath(args.directory) ?? this.resolveProjectPath({}))
+      : this.resolveProjectPath({});
 
     try {
       const { InFilesDetector, MemoryStore, Statistic, getDefaultOptions, SimpleTokenizer } = await import(
@@ -557,7 +560,7 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
 
       const options = {
         ...getDefaultOptions(),
-        path: [targetDir],
+        path: [targetDir] as string[],
         minLines: args.minLines,
         minTokens: args.minTokens,
         threshold: args.threshold,

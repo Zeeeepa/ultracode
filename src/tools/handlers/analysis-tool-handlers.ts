@@ -34,14 +34,46 @@ export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeo
   }
 
   protected async execute(args: z.infer<typeof SuggestRefactoringSchema>): Promise<ToolResult> {
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const semanticAgent = await this.context.getSemanticAgent();
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    const allSuggestions = await semanticAgent.suggestRefactoring({
-      entityId: args.entityId,
-      filePath: args.filePath ? this.context.normalizeInputPath(args.filePath) : undefined,
-      type: args.type,
-    });
+    // Get code from entity or file
+    let code: string | undefined;
+    const targetEntityId = args.entityId;
+    let targetFilePath = args.filePath ? this.context.normalizeInputPath(args.filePath) : undefined;
+
+    if (args.entityId) {
+      // Get entity code
+      const entity = await storage.getEntity(args.entityId);
+      if (entity?.code) {
+        code = entity.code;
+      } else if (entity?.filePath) {
+        // Try to read file content
+        targetFilePath = entity.filePath;
+      }
+    }
+
+    if (!code && targetFilePath) {
+      // Read file content
+      try {
+        const { readFile } = await import("node:fs/promises");
+        code = await readFile(targetFilePath, "utf-8");
+      } catch {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: `Cannot read file: ${targetFilePath}` }) }],
+        };
+      }
+    }
+
+    if (!code) {
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: "No code found. Provide entityId or filePath." }) }],
+      };
+    }
+
+    // suggestRefactoring expects a code string
+    const allSuggestions = await semanticAgent.suggestRefactoring(code);
 
     const paginatedResult = paginate(allSuggestions, args.offset, safeLimit);
 
@@ -51,14 +83,16 @@ export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeo
           type: "text",
           text: JSON.stringify(
             {
+              entityId: targetEntityId,
+              filePath: targetFilePath,
               suggestionsFound: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
               suggestions: paginatedResult.data.map((s: any) => ({
                 type: s.type,
                 priority: s.priority,
                 description: s.description,
-                entityId: s.entityId,
-                filePath: s.filePath,
+                entityId: s.entityId || targetEntityId,
+                filePath: s.filePath || targetFilePath,
                 suggestedChange: s.suggestedChange,
               })),
             },
@@ -192,7 +226,7 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
 // =============================================================================
 
 const FindRelatedConceptsSchema = z.object({
-  concept: z.string(),
+  entityId: z.string().describe("Entity ID to find related concepts for"),
   projectPath: projectPathParam,
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
@@ -204,13 +238,24 @@ export class FindRelatedConceptsToolHandler extends BaseToolHandler<z.infer<type
   }
 
   protected async execute(args: z.infer<typeof FindRelatedConceptsSchema>): Promise<ToolResult> {
+    // v3: Ensure correct project context
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const semanticAgent = await this.context.getSemanticAgent();
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    // Fetch more for pagination
-    const allRelated = await semanticAgent.findRelatedConcepts(args.concept, {
-      limit: 500,
-    });
+    // Get entity name from ID to use as concept
+    const entity = await storage.getEntity(args.entityId);
+    if (!entity) {
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: `Entity not found: ${args.entityId}` }) }],
+      };
+    }
+
+    const concept = entity.name;
+
+    // Use semanticSearch to find related concepts
+    const searchResult = await semanticAgent.semanticSearch(concept, 500);
+    const allRelated = searchResult.results || [];
 
     const paginatedResult = paginate(allRelated, args.offset, safeLimit);
 
@@ -220,7 +265,8 @@ export class FindRelatedConceptsToolHandler extends BaseToolHandler<z.infer<type
           type: "text",
           text: JSON.stringify(
             {
-              concept: args.concept,
+              entityId: args.entityId,
+              concept,
               relatedCount: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
               related: paginatedResult.data,
@@ -435,7 +481,10 @@ export class DetectTechnologyStackToolHandler extends BaseToolHandler<z.infer<ty
   }
 
   protected async execute(args: z.infer<typeof DetectTechnologyStackSchema>): Promise<ToolResult> {
-    const targetDir = args.directory || this.context.config.directory;
+    // Use resolveProjectPath for proper path resolution
+    const targetDir = args.directory
+      ? (this.context.normalizeInputPath(args.directory) ?? this.resolveProjectPath({}))
+      : this.resolveProjectPath({ projectPath: args.projectPath });
 
     try {
       const { TechnologyDetector } = await import("../../analysis/technology-detector.js");
