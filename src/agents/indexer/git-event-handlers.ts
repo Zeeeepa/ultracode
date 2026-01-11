@@ -9,6 +9,7 @@
  * Extracted from indexer-agent.ts for better modularity.
  */
 
+import { execSync } from "node:child_process";
 import { isAbsolute, join } from "node:path";
 import type { BranchManager } from "../../core/branch-manager.js";
 import { knowledgeBus } from "../../core/knowledge-bus.js";
@@ -98,6 +99,32 @@ export async function handleDebouncedEmbeddingGeneration(
 }
 
 /**
+ * Get changed files between two branches using git diff
+ */
+function getChangedFilesBetweenBranches(oldBranch: string, newBranch: string, repoPath: string): string[] {
+  try {
+    // Use git diff to get files that differ between branches
+    const output = execSync(`git diff --name-only ${oldBranch}...${newBranch}`, {
+      cwd: repoPath,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
+    });
+
+    const files = output
+      .trim()
+      .split("\n")
+      .filter((f) => f.length > 0)
+      .map((f) => join(repoPath, f));
+
+    return files;
+  } catch (error) {
+    log.w("GITWATCHER", "get_branch_diff_fail", { err: String(error) });
+    return [];
+  }
+}
+
+/**
  * Handle branch change event
  */
 export async function handleBranchChange(newBranch: string, oldBranch: string, ctx: GitEventContext): Promise<void> {
@@ -112,6 +139,11 @@ export async function handleBranchChange(newBranch: string, oldBranch: string, c
     // Switch to new branch database
     await ctx.branchManager.switchBranch(newBranch, ctx.currentRepositoryPath);
 
+    // Get files that changed between branches
+    const changedFiles = getChangedFilesBetweenBranches(oldBranch, newBranch, ctx.currentRepositoryPath);
+
+    log.i("GITWATCHER", "branch_files_diff", { cnt: changedFiles.length, oldBranch, newBranch });
+
     // Emit event for other components
     knowledgeBus.publish(
       "indexer:branch:changed",
@@ -119,9 +151,25 @@ export async function handleBranchChange(newBranch: string, oldBranch: string, c
         oldBranch,
         newBranch,
         repositoryPath: ctx.currentRepositoryPath,
+        changedFiles: changedFiles.length,
       },
       ctx.agentId,
     );
+
+    // Trigger incremental reindexing for changed files
+    if (changedFiles.length > 0) {
+      knowledgeBus.publish(
+        "indexer:files:changed",
+        {
+          files: changedFiles,
+          count: changedFiles.length,
+          repositoryPath: ctx.currentRepositoryPath,
+          source: "git-watcher-branch-switch",
+        },
+        ctx.agentId,
+      );
+      log.i("GITWATCHER", "branch_reindex_triggered", { files: changedFiles.length });
+    }
 
     log.i("GITWATCHER", "branch_switched", { newBranch });
   } catch (error) {
