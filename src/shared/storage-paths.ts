@@ -7,6 +7,7 @@
  * - Linux: ~/.local/share/UltraScriptTools/
  */
 
+import { execSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -214,6 +215,39 @@ export function normalizeBranchName(branchName: string): string {
  * Default branch name when Git info is unavailable
  */
 export const DEFAULT_BRANCH = "main";
+
+/**
+ * Get current Git branch name for a given directory.
+ * Returns DEFAULT_BRANCH if not a git repo or git command fails.
+ */
+export function getCurrentGitBranch(projectPath: string): string {
+  try {
+    const gitDir = join(projectPath, ".git");
+    if (!existsSync(gitDir)) {
+      return DEFAULT_BRANCH;
+    }
+    const branch = execSync("git symbolic-ref --short HEAD", {
+      cwd: projectPath,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
+    }).trim();
+    return branch || DEFAULT_BRANCH;
+  } catch {
+    // Fallback for detached HEAD or other issues
+    try {
+      const ref = execSync("git rev-parse --abbrev-ref HEAD", {
+        cwd: projectPath,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
+      }).trim();
+      return ref === "HEAD" ? DEFAULT_BRANCH : ref;
+    } catch {
+      return DEFAULT_BRANCH;
+    }
+  }
+}
 
 /**
  * Ensure project directory exists
