@@ -248,7 +248,8 @@ export function getToolsList(): ToolDefinition[] {
     },
     {
       name: "get_watcher_status",
-      description: "Get FileWatcher and GitWatcher status for diagnostics. Shows if background workers are running for incremental parsing and embedding generation.",
+      description:
+        "Get FileWatcher and GitWatcher status for diagnostics. Shows if background workers are running for incremental parsing and embedding generation.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
 
