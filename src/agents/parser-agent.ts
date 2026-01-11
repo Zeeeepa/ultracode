@@ -773,6 +773,14 @@ export class ParserAgent extends BaseAgent {
    * In per-language mode: pools are created lazily on-demand for each language.
    */
   private async parseWithWorkers(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
+    // DEBUG: Log pool state to diagnose why universal pool might not be used
+    log.i("PARSER", "parseWithWorkers state", {
+      useUniversalPool: this.useUniversalPool,
+      hasUniversalPool: !!this.universalPool,
+      languagePoolsCount: this.languagePools.size,
+      files: files.length,
+    });
+
     // Universal pool mode: send all files to single pool
     if (this.useUniversalPool && this.universalPool) {
       log.i("PARSER", "Using universal pool", { files: files.length });
