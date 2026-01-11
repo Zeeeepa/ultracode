@@ -55,7 +55,7 @@ import { HybridSearchEngine } from "../semantic/hybrid-search.js";
 import { SemanticCache } from "../semantic/semantic-cache.js";
 import { VectorStore } from "../semantic/vector-store.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
-import { DEFAULT_BRANCH, getGlobalDbPaths, getProjectHash } from "../shared/storage-paths.js";
+import { DEFAULT_BRANCH, getCurrentGitBranch, getGlobalDbPaths, getProjectHash } from "../shared/storage-paths.js";
 import {
   DatabaseCorruptionError,
   getGraphStorage,
@@ -316,8 +316,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     await this.vectorStore.initialize();
 
     // v3: Set project context for the current working directory
-    await this.vectorStore.setProject(workingDir, DEFAULT_BRANCH);
-    log.i("SEMANTIC", "vectorstore_ready", { project: getProjectHash(workingDir), branch: DEFAULT_BRANCH });
+    const currentBranch = getCurrentGitBranch(workingDir);
+    await this.vectorStore.setProject(workingDir, currentBranch);
+    log.i("SEMANTIC", "vectorstore_ready", { project: getProjectHash(workingDir), branch: currentBranch });
 
     this.hybridSearch = new HybridSearchEngine(this.vectorStore, this.embeddingGen);
 
