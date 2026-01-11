@@ -181,16 +181,25 @@ export function getProjectPaths(projectPath: string) {
 /**
  * Get paths for the global unified database
  * All projects share the same database files with project_hash partitioning
+ *
+ * Current architecture (v5+):
+ * - unifiedDbPath: Single libsql database for graph (entities, relationships)
+ * - FAISS indexes: Per-project at projects/{hash}/faiss-{branch}.bin
  */
 export function getGlobalDbPaths() {
   const dataDir = getDataDir();
 
   return {
     dir: dataDir,
-    graphDbPath: join(dataDir, "global-graph.db"),
-    vectorsDbPath: join(dataDir, "global-vectors.db"),
+    /** @deprecated Use unifiedDbPath instead */
+    graphDbPath: join(dataDir, "unified-storage.db"),
+    /** @deprecated FAISS is used for vectors, not SQLite. Use getProjectDir() + faiss-{branch}.bin */
+    vectorsDbPath: join(dataDir, "unified-storage.db"), // Kept for compatibility, points to unified DB
+    /** Unified libsql database for all graph data */
+    unifiedDbPath: join(dataDir, "unified-storage.db"),
     metaPath: join(dataDir, "global-meta.json"),
     cacheDir: getCacheDir(),
+    projectsDir: getProjectsDir(),
   };
 }
 
@@ -212,19 +221,40 @@ export function normalizeBranchName(branchName: string): string {
 }
 
 /**
- * Default branch name when Git info is unavailable
+ * Default branch name - INTERNAL USE ONLY.
+ * Prefer getCurrentGitBranch() which returns null if git unavailable.
+ * @deprecated Use getCurrentGitBranch() and handle null case explicitly
  */
 export const DEFAULT_BRANCH = "main";
 
 /**
- * Get current Git branch name for a given directory.
- * Returns DEFAULT_BRANCH if not a git repo or git command fails.
+ * Common base branch names to check
  */
-export function getCurrentGitBranch(projectPath: string): string {
+const BASE_BRANCH_CANDIDATES = ["main", "master", "dev", "develop", "trunk"];
+
+/**
+ * Check if a branch name is likely a base/main branch
+ */
+export function isBaseBranch(branchName: string | null): boolean {
+  if (!branchName) return false;
+  const normalized = branchName.toLowerCase();
+  return BASE_BRANCH_CANDIDATES.includes(normalized);
+}
+
+/**
+ * Get current Git branch name for a given directory.
+ * Returns null if:
+ * - Directory is not a git repository
+ * - Git command fails
+ * - Detached HEAD with no ref
+ *
+ * Caller MUST handle null case explicitly.
+ */
+export function getCurrentGitBranch(projectPath: string): string | null {
   try {
     const gitDir = join(projectPath, ".git");
     if (!existsSync(gitDir)) {
-      return DEFAULT_BRANCH;
+      return null; // Not a git repo
     }
     const branch = execSync("git symbolic-ref --short HEAD", {
       cwd: projectPath,
@@ -232,7 +262,7 @@ export function getCurrentGitBranch(projectPath: string): string {
       stdio: ["pipe", "pipe", "ignore"],
       windowsHide: true,
     }).trim();
-    return branch || DEFAULT_BRANCH;
+    return branch || null;
   } catch {
     // Fallback for detached HEAD or other issues
     try {
@@ -242,11 +272,30 @@ export function getCurrentGitBranch(projectPath: string): string {
         stdio: ["pipe", "pipe", "ignore"],
         windowsHide: true,
       }).trim();
-      return ref === "HEAD" ? DEFAULT_BRANCH : ref;
+      // "HEAD" means detached without ref - return detached-{hash}
+      if (ref === "HEAD") {
+        const hash = execSync("git rev-parse --short HEAD", {
+          cwd: projectPath,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "ignore"],
+          windowsHide: true,
+        }).trim();
+        return hash ? `detached-${hash}` : null;
+      }
+      return ref || null;
     } catch {
-      return DEFAULT_BRANCH;
+      return null; // Git unavailable or error
     }
   }
+}
+
+/**
+ * Get current Git branch with fallback to DEFAULT_BRANCH.
+ * Use this ONLY when you absolutely need a non-null value.
+ * Prefer getCurrentGitBranch() and handle null explicitly.
+ */
+export function getCurrentGitBranchOrDefault(projectPath: string): string {
+  return getCurrentGitBranch(projectPath) || DEFAULT_BRANCH;
 }
 
 /**
@@ -299,7 +348,7 @@ export function getBranchPaths(projectPath: string, branchName: string) {
  * - Separate FAISS indices per project
  * - Delta indices per branch (for fast branch switching)
  */
-export function getFaissIndexPath(projectPath: string, branchName: string = DEFAULT_BRANCH): string {
+export function getFaissIndexPath(projectPath: string, branchName: string): string {
   const projectDir = getProjectDir(projectPath);
   const safeBranch = normalizeBranchName(branchName);
 
@@ -315,7 +364,7 @@ export function getFaissIndexPath(projectPath: string, branchName: string = DEFA
  * Get FAISS index path using projectHash directly (when projectPath is not available)
  * Structure: projects/{projectHash}/faiss-{branchName}.bin
  */
-export function getFaissIndexPathByHash(projectHash: string, branchName: string = DEFAULT_BRANCH): string {
+export function getFaissIndexPathByHash(projectHash: string, branchName: string): string {
   const projectDir = join(getProjectsDir(), projectHash);
   const safeBranch = normalizeBranchName(branchName);
 
@@ -330,7 +379,7 @@ export function getFaissIndexPathByHash(projectHash: string, branchName: string 
 /**
  * Get FAISS ID mapping path (maps FAISS internal IDs to entity IDs)
  */
-export function getFaissIdMapPath(projectPath: string, branchName: string = DEFAULT_BRANCH): string {
+export function getFaissIdMapPath(projectPath: string, branchName: string): string {
   const projectDir = getProjectDir(projectPath);
   const safeBranch = normalizeBranchName(branchName);
   return join(projectDir, `faiss-${safeBranch}.idmap.json`);
@@ -339,7 +388,7 @@ export function getFaissIdMapPath(projectPath: string, branchName: string = DEFA
 /**
  * Get hot buffer path for delta changes before merge into main index
  */
-export function getFaissHotBufferPath(projectPath: string, branchName: string = DEFAULT_BRANCH): string {
+export function getFaissHotBufferPath(projectPath: string, branchName: string): string {
   const projectDir = getProjectDir(projectPath);
   const safeBranch = normalizeBranchName(branchName);
   return join(projectDir, `faiss-${safeBranch}-hot.bin`);

@@ -164,6 +164,9 @@ export interface VectorStoreConfig {
   walMode?: boolean;
   workingDirectory?: string | undefined;
 
+  // Use layered FAISS index (base + delta + tombstones)
+  useLayeredIndex?: boolean;
+
   // LibSQL DiskANN configuration
   libsql?: {
     metric?: "cosine" | "l2"; // Default: cosine

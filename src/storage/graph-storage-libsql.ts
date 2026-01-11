@@ -11,7 +11,7 @@
 import { nanoid } from "nanoid";
 import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
-import { DEFAULT_BRANCH, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
+import { getCurrentGitBranchOrDefault, getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
 import {
   type BatchResult,
   type Entity,
@@ -39,10 +39,12 @@ const MAX_SUBGRAPH_DEPTH = 5;
 // HELPER FUNCTION
 // =============================================================================
 
-export function createProjectContext(projectPath: string, branchName?: string): ProjectContext {
+export function createProjectContext(projectPath: string, branchName?: string | null): ProjectContext {
+  // Resolve branch: use provided, or detect from git with fallback to "main"
+  const resolvedBranch = branchName ?? getCurrentGitBranchOrDefault(projectPath);
   return {
     projectHash: getProjectHash(projectPath),
-    branchName: normalizeBranchName(branchName || DEFAULT_BRANCH),
+    branchName: normalizeBranchName(resolvedBranch),
   };
 }
 
@@ -79,7 +81,7 @@ export class GraphStorageLibSQL implements GraphStorage {
     this.adapter.setProjectContext(context);
   }
 
-  setProject(projectPath: string, branchName?: string): void {
+  setProject(projectPath: string, branchName?: string | null): void {
     this.adapter.setProjectContext(createProjectContext(projectPath, branchName));
   }
 

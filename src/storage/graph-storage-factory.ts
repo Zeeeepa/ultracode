@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { log } from "../logging/index.js";
-import { getGlobalDbPaths } from "../shared/storage-paths.js";
+import { getCurrentGitBranchOrDefault, getGlobalDbPaths } from "../shared/storage-paths.js";
 import { GraphStorageLibSQL } from "./graph-storage-libsql.js";
 import { DatabaseCorruptionError, LibSQLGraphAdapter, type LibSQLGraphConfig } from "./libsql-graph-adapter.js";
 
@@ -159,11 +159,14 @@ export async function resetGraphStorage(): Promise<void> {
 /**
  * Set project context on the global GraphStorage singleton.
  * Must be called before operations to ensure correct project_hash.
+ * If branchName is null/undefined, detects from git or uses "main" fallback.
  */
-export function setGlobalProjectContext(projectPath: string, branchName?: string): void {
+export function setGlobalProjectContext(projectPath: string, branchName?: string | null): void {
   if (graphStorage) {
-    graphStorage.setProject(projectPath, branchName);
-    log.i("STORAGEFACT", "context_set", { path: projectPath, branch: branchName || "main" });
+    // Resolve branch: use provided, detect from git, or fallback to "main"
+    const resolvedBranch = branchName ?? getCurrentGitBranchOrDefault(projectPath);
+    graphStorage.setProject(projectPath, resolvedBranch);
+    log.i("STORAGEFACT", "context_set", { path: projectPath, branch: resolvedBranch });
   } else {
     log.w("STORAGEFACT", "context_set_fail", { reason: "not initialized" });
   }

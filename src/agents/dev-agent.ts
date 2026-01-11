@@ -527,7 +527,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         // Configure FAISS provider for embedding accumulator
         // This enables flushing embeddings received via IPC to FAISS
         const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
-        const { getProjectHash, getCurrentGitBranch } = await import("../shared/storage-paths.js");
+        const { getProjectHash, getCurrentGitBranchOrDefault } = await import("../shared/storage-paths.js");
         // Initialize if not already done - this ensures provider is ready for embeddings
         const faissProvider = await initializeFaissProvider({
           dimensions: embeddingConfig.dimensions || 384,
@@ -535,7 +535,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         if (faissProvider) {
           // Set project context for FAISS to enable correct persist path
           const projectHash = getProjectHash(payload.directory);
-          const currentBranch = getCurrentGitBranch(payload.directory);
+          const currentBranch = getCurrentGitBranchOrDefault(payload.directory);
           await faissProvider.setProjectContext(projectHash, currentBranch);
           log.d("DEVAGENT", "faiss_branch", { branch: currentBranch });
           this.parserAgent.setFaissProvider(faissProvider);
