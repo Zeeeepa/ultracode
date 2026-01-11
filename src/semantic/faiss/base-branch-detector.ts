@@ -142,6 +142,14 @@ function getRemoteDefaultBranch(projectPath: string): string | null {
  */
 export function detectBaseBranch(projectPath: string): string | null {
   const projectHash = getProjectHash(projectPath);
+  const metaPath = getBaseMetaPath(projectPath);
+
+  log.d("BASE_DETECT", "start", {
+    projectPath,
+    projectHash,
+    metaPath,
+    metaExists: existsSync(metaPath),
+  });
 
   // 1. Check existing base config
   const existingMeta = loadBaseMetadata(projectPath);

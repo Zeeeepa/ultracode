@@ -324,6 +324,7 @@ export class MetadataOperations {
 
   /**
    * Get stats for current project/branch
+   * Uses layered approach: if baseBranch is set and different from current, includes both
    */
   async getStats(): Promise<{
     totalEntities: number;
@@ -334,20 +335,25 @@ export class MetadataOperations {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+    const { projectHash, branchName, baseBranch } = this.getContext();
+
+    // Layered read: include base branch if set and different from current
+    const useLayered = baseBranch && baseBranch !== branchName;
+    const branchFilter = useLayered ? "branch_name IN (?, ?)" : "branch_name = ?";
+    const branchArgs = useLayered ? [baseBranch, branchName] : [branchName];
 
     const [entities, relationships, files] = await Promise.all([
       client.execute({
-        sql: "SELECT COUNT(*) as cnt FROM entities WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
+        sql: `SELECT COUNT(*) as cnt FROM entities WHERE project_hash = ? AND ${branchFilter}`,
+        args: [projectHash, ...branchArgs],
       }),
       client.execute({
-        sql: "SELECT COUNT(*) as cnt FROM relationships WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
+        sql: `SELECT COUNT(*) as cnt FROM relationships WHERE project_hash = ? AND ${branchFilter}`,
+        args: [projectHash, ...branchArgs],
       }),
       client.execute({
-        sql: "SELECT COUNT(*) as cnt FROM files WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
+        sql: `SELECT COUNT(*) as cnt FROM files WHERE project_hash = ? AND ${branchFilter}`,
+        args: [projectHash, ...branchArgs],
       }),
     ]);
 

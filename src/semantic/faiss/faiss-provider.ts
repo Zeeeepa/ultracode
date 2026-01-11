@@ -19,6 +19,8 @@ import { getFaissIndexPathByHash, normalizeBranchName } from "../../shared/stora
 import type { SimilarityResult, VectorEmbedding } from "../../types/semantic.js";
 import { simdL2Normalize } from "../../utils/simd-vector-ops.js";
 import { getGpuClient, type IGpuClient } from "../gpu/gpu-client.js";
+import { getBaseMetaPathByHash } from "./base-branch-detector.js";
+import type { BaseIndexMetadata } from "./layered-types.js";
 import type { FaissIndexConfig, FaissSearchResult } from "./types.js";
 
 // =============================================================================
@@ -528,6 +530,7 @@ class FaissProvider {
 
   /**
    * Save index metadata (dimensions, etc.)
+   * Also creates faiss-base.meta.json on first save to mark base branch
    */
   private saveIndexMetadata(): void {
     if (!this.config.persistPath) return;
@@ -541,8 +544,49 @@ class FaissProvider {
       };
       writeFileSync(metaPath, JSON.stringify(meta), "utf-8");
       log.d("FAISS", "Index metadata saved", { path: metaPath, dimensions: meta.dimensions });
+
+      // Create faiss-base.meta.json if it doesn't exist (first indexing)
+      this.ensureBaseMetadata();
     } catch (error) {
       log.w("FAISS", "Failed to save index metadata", { error: (error as Error).message });
+    }
+  }
+
+  /**
+   * Ensure faiss-base.meta.json exists (create on first indexing)
+   * This marks which branch is the base for layered index support
+   */
+  private ensureBaseMetadata(): void {
+    const baseMetaPath = getBaseMetaPathByHash(this.projectHash);
+
+    if (existsSync(baseMetaPath)) {
+      return; // Already exists
+    }
+
+    try {
+      const baseMeta: BaseIndexMetadata = {
+        baseBranch: this.branchName,
+        vectorCount: this.idSet.size,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        dimensions: this.config.dimensions,
+        indexType: this.config.indexType,
+      };
+
+      // Ensure directory exists
+      const dir = dirname(baseMetaPath);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+
+      writeFileSync(baseMetaPath, JSON.stringify(baseMeta, null, 2), "utf-8");
+      log.i("FAISS", "Base metadata created", {
+        branch: this.branchName,
+        path: baseMetaPath,
+        vectors: this.idSet.size,
+      });
+    } catch (error) {
+      log.w("FAISS", "Failed to create base metadata", { error: (error as Error).message });
     }
   }
 
