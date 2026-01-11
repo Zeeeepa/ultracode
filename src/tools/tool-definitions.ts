@@ -246,6 +246,11 @@ export function getToolsList(): ToolDefinition[] {
       description: "Remove cached knowledge entries for a specific topic",
       inputSchema: zodToJsonSchema(ClearBusTopicSchema),
     },
+    {
+      name: "get_watcher_status",
+      description: "Get FileWatcher and GitWatcher status for diagnostics. Shows if background workers are running for incremental parsing and embedding generation.",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
 
     // ==========================================================================
     // Snapshot & Version Tools

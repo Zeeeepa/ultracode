@@ -116,6 +116,7 @@ export class IndexerAgent extends BaseAgent {
   private currentRepositoryPath: string | null = null;
   private subscriptionIds: string[] = [];
   private ready = false;
+  private lastFileWatcherError: string | null = null;
   private indexingStats = {
     entitiesIndexed: 0,
     relationshipsCreated: 0,
@@ -987,6 +988,20 @@ export class IndexerAgent extends BaseAgent {
   }
 
   /**
+   * Get FileWatcher status for diagnostics
+   */
+  getFileWatcherStatus(): { exists: boolean; status?: any; lastError?: string | null } {
+    if (!this.fileWatcher) {
+      return { exists: false, lastError: this.lastFileWatcherError };
+    }
+    return {
+      exists: true,
+      status: this.fileWatcher.getStatus(),
+      lastError: null,
+    };
+  }
+
+  /**
    * Set current repository path and start watching if Git is enabled
    */
   async setRepositoryPath(path: string): Promise<void> {
@@ -1052,9 +1067,11 @@ export class IndexerAgent extends BaseAgent {
       });
 
       log.i("INDEXER", "Started FileWatcher", { repository: path });
+      this.lastFileWatcherError = null;
     } catch (err) {
+      this.lastFileWatcherError = (err as Error).message;
       log.w("INDEXER", "Failed to start FileWatcher, using GitWatcher only", {
-        error: (err as Error).message,
+        error: this.lastFileWatcherError,
       });
     }
   }

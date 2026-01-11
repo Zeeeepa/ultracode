@@ -1164,6 +1164,32 @@ async function main() {
                 disk: diskFileCount,
                 changes: cumulativeChanges,
               });
+
+              // IMPORTANT: Start watchers and agents even when skipping re-indexing
+              // This ensures incremental parsing and embedding generation works after restart
+              try {
+                // Initialize DevAgent for incremental parsing (subscribes to file:changed events)
+                const devAgent = await getDevAgent();
+                log.i("DEVAGENT", "init_for_incremental", { hasAgent: !!devAgent });
+
+                // Initialize SemanticAgent for embedding generation
+                const semanticAgent = await getSemanticAgent();
+                log.i("SEMANTIC", "init_for_incremental", { hasAgent: !!semanticAgent });
+
+                // Use getIndexerAgent() which creates the agent if it doesn't exist
+                const indexerAgent = await getIndexerAgent();
+                if (indexerAgent?.setRepositoryPath) {
+                  // Set project context before starting watchers
+                  indexerAgent.setProjectContext(directory);
+                  await indexerAgent.setRepositoryPath(directory);
+                  log.i("INDEXER", "watcher_started_existing", { dir: directory });
+                } else {
+                  log.w("INDEXER", "watcher_no_agent", { hasAgent: !!indexerAgent });
+                }
+              } catch (watcherError) {
+                log.w("INDEXER", "watcher_start_fail", { err: (watcherError as Error).message });
+              }
+
               return;
             }
           }

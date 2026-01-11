@@ -57,6 +57,7 @@ import {
   GetMetricsToolHandler,
   GetSemanticMergeInfoToolHandler,
   GetVersionToolHandler,
+  GetWatcherStatusToolHandler,
   // Index
   IndexToolHandler,
   JscpdDetectClonesToolHandler,
@@ -224,6 +225,7 @@ export class ToolRegistry {
     this.register("get_agent_metrics", GetAgentMetricsToolHandler);
     this.register("get_bus_stats", GetBusStatsToolHandler);
     this.register("clear_bus_topic", ClearBusTopicToolHandler);
+    this.register("get_watcher_status", GetWatcherStatusToolHandler);
 
     // ==========================================================================
     // Merge tools
