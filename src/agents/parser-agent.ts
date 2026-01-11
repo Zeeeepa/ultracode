@@ -740,8 +740,10 @@ export class ParserAgent extends BaseAgent {
         hasEmbeddingConfig: !!this.embeddingConfig,
       });
 
+      // Per-language fallback pools should ALWAYS terminate after batch
+      // Only universal pool stays alive for incremental parsing
       const pool: WorkerPool = new ParsingSubprocessPool(language, {
-        killAfterBatch: !this.keepPoolsAlive, // Kill process after batch for memory release
+        killAfterBatch: true, // Always kill per-language pools after batch
         memoryLimitMB: 500, // Restart if memory exceeds 500MB
         ...(this.embeddingConfig && { embeddingConfig: this.embeddingConfig }),
         onEmbeddings: this.getEmbeddingsCallback(), // Binary embeddings callback (distributed mode)
