@@ -154,10 +154,12 @@ type WorkerPool = ParsingSubprocessPool;
 
 export class ParserAgent extends BaseAgent {
   private languagePools: Map<string, WorkerPool> = new Map();
+  private universalPool: WorkerPool | null = null; // Single universal pool for all languages (incremental mode)
+  private useUniversalPool: boolean = true; // Use single pool instead of per-language pools
   private knowledgeBus: EventEmitter | null = null;
   private isProcessing = false;
   private stats: ParserStats;
-  private keepPoolsAlive: boolean = false; // Kill pools after batch for memory release
+  private keepPoolsAlive: boolean = true; // Keep pool alive for incremental parsing (restart on 500MB)
   private embeddingConfig: WorkerEmbeddingConfig | null = null; // Embedding config for workers
   private embeddingAccumulator: EmbeddingAccumulator | null = null; // Accumulator for batch FAISS flush
   private streamingMode: boolean = false; // Streaming mode: send results as they become ready
@@ -332,7 +334,14 @@ export class ParserAgent extends BaseAgent {
   protected async onShutdown(): Promise<void> {
     log.i("PARSER", `Shutting down Parser Agent...`);
 
-    // Optimization 3: Keep worker pools alive for reuse (unless explicitly disabled)
+    // Shutdown universal pool if exists
+    if (this.universalPool) {
+      log.i("PARSER", "Shutting down universal pool...");
+      await this.universalPool.shutdown();
+      this.universalPool = null;
+    }
+
+    // Shutdown per-language pools if not keeping alive
     if (!this.keepPoolsAlive) {
       log.i("PARSER", `Shutting down worker pools...`);
       const shutdownPromises: Promise<void>[] = [];
@@ -344,8 +353,6 @@ export class ParserAgent extends BaseAgent {
     } else {
       log.i("PARSER", `Worker pools kept alive for reuse (${this.languagePools.size} pools active)`);
     }
-
-    // NOTE: Cache clearing removed - caches are per-subprocess worker now
 
     // Unsubscribe from events
     if (this.knowledgeBus) {
@@ -367,12 +374,21 @@ export class ParserAgent extends BaseAgent {
     log.i("PARSER", `Destroying worker pools...`);
 
     const shutdownPromises: Promise<void>[] = [];
+
+    // Destroy universal pool
+    if (this.universalPool) {
+      log.i("PARSER", "Destroying universal pool...");
+      shutdownPromises.push(this.universalPool.shutdown());
+    }
+
+    // Destroy per-language pools
     for (const [language, pool] of this.languagePools) {
       log.i("PARSER", `Shutting down ${language} pool...`);
       shutdownPromises.push(pool.shutdown());
     }
 
     await Promise.all(shutdownPromises);
+    this.universalPool = null;
     this.languagePools.clear();
 
     log.i("PARSER", `All worker pools destroyed`);
@@ -668,9 +684,35 @@ export class ParserAgent extends BaseAgent {
    * This saves ~3-5 seconds of initialization overhead for small projects.
    */
   private async initializeWorkerPool(): Promise<void> {
-    // Subprocess workers are always enabled for memory isolation
-    // Pools are created lazily in getOrCreateLanguagePool()
-    log.i("PARSER", "Subprocess worker pools enabled (lazy initialization mode)");
+    if (this.useUniversalPool) {
+      // Create single universal pool for all languages (incremental mode)
+      try {
+        log.i("PARSER", "Creating universal subprocess pool for incremental parsing");
+
+        this.universalPool = new ParsingSubprocessPool("universal", {
+          poolSize: 1, // Single worker for incremental mode
+          keepaliveMode: true, // Keep worker alive between tasks
+          keepaliveMemoryLimitMB: 500, // Restart worker when memory exceeds 500MB
+          memoryLimitMB: 500, // Memory limit for restart
+          killAfterBatch: false, // Don't kill after batch - keep alive
+          ...(this.embeddingConfig && { embeddingConfig: this.embeddingConfig }),
+          onEmbeddings: this.getEmbeddingsCallback(),
+          onEmbeddingTexts: this.getEmbeddingTextsCallback(),
+          streamingMode: this.streamingMode,
+          ...(this.onStreamingResult && { onStreamingResult: this.onStreamingResult }),
+        });
+
+        await this.universalPool.initialize();
+        const stats = this.universalPool.getStats();
+        log.i("PARSER", "Universal pool ready", { workers: stats.totalWorkers });
+      } catch (error) {
+        log.w("PARSER", "Failed to create universal pool", { error: (error as Error).message });
+        this.universalPool = null;
+        this.useUniversalPool = false; // Fallback to per-language pools
+      }
+    } else {
+      log.i("PARSER", "Subprocess worker pools enabled (lazy initialization mode)");
+    }
   }
 
   /**
@@ -682,21 +724,25 @@ export class ParserAgent extends BaseAgent {
    * - Workers restart automatically when memory exceeds limit
    */
   private async getOrCreateLanguagePool(language: string): Promise<WorkerPool | null> {
+    // Use universal pool if enabled (incremental mode)
+    if (this.useUniversalPool && this.universalPool) {
+      return this.universalPool;
+    }
+
     // Check if pool already exists
     if (this.languagePools.has(language)) {
       return this.languagePools.get(language)!;
     }
 
-    // Create new pool for this language
+    // Create new pool for this language (fallback when universal pool disabled)
     try {
-      // Always use subprocess pools for memory isolation
       log.i("PARSER", `Creating subprocess pool for ${language}`, {
         hasEmbeddingConfig: !!this.embeddingConfig,
       });
 
       const pool: WorkerPool = new ParsingSubprocessPool(language, {
         killAfterBatch: !this.keepPoolsAlive, // Kill process after batch for memory release
-        memoryLimitMB: 512, // Restart if memory exceeds 512MB
+        memoryLimitMB: 500, // Restart if memory exceeds 500MB
         ...(this.embeddingConfig && { embeddingConfig: this.embeddingConfig }),
         onEmbeddings: this.getEmbeddingsCallback(), // Binary embeddings callback (distributed mode)
         onEmbeddingTexts: this.getEmbeddingTextsCallback(), // Texts callback (centralized mode for OVMS)
@@ -721,9 +767,28 @@ export class ParserAgent extends BaseAgent {
    * Parse files using subprocess worker pools
    *
    * All parsing goes through subprocess workers for memory isolation.
-   * Worker pools are created lazily on-demand for each language.
+   * In universal mode: single pool handles all languages.
+   * In per-language mode: pools are created lazily on-demand for each language.
    */
   private async parseWithWorkers(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
+    // Universal pool mode: send all files to single pool
+    if (this.useUniversalPool && this.universalPool) {
+      log.i("PARSER", "Using universal pool", { files: files.length });
+
+      const results = await this.universalPool.submitTask(files, options);
+
+      const stats = this.universalPool.getStats();
+      log.d("PARSER", "Universal pool stats", {
+        activeWorkers: stats.activeWorkers,
+        totalWorkers: stats.totalWorkers,
+        completedTasks: stats.completedTasks,
+        avgProcessingTimeMs: Math.round(stats.avgProcessingTime),
+      });
+
+      return results;
+    }
+
+    // Fallback: per-language pools
     // Step 1: Group files by programming language
     const languageGroups = groupFilesByLanguage(files);
 
