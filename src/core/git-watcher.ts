@@ -169,47 +169,78 @@ export class GitWatcher {
   private uncommittedPollTimer?: ReturnType<typeof setInterval> | undefined;
 
   /**
-   * Start commit polling
-   * Event-driven: uses setInterval for Node.js, disabled for Bun
+   * Start commit and branch polling
+   * Node.js: uses setInterval
+   * Bun: uses async loop with Bun.sleep
+   * Also polls for branch changes as fs.watch() is unreliable on Windows
    */
   private startCommitPollLoop(): void {
     if (this.commitPollRunning) return;
     this.commitPollRunning = true;
 
-    // For Bun: skip polling to avoid CPU spinning
-    if (isBunRuntime()) return;
-
-    // For Node.js: use setInterval
-    this.commitPollTimer = setInterval(() => {
-      if (!this.stopped) {
-        try {
-          this.checkCommitChange();
-        } catch (error) {
-          log.w("GITWATCHER", "commit_poll_err", { err: String(error) });
+    if (isBunRuntime()) {
+      // Bun: use async loop with Bun.sleep
+      (async () => {
+        while (!this.stopped) {
+          await sleep(this.config.pollIntervalMs);
+          if (this.stopped) break;
+          try {
+            this.checkBranchChange();
+            this.checkCommitChange();
+          } catch (error) {
+            log.w("GITWATCHER", "poll_err", { err: String(error) });
+          }
         }
-      }
-    }, this.config.pollIntervalMs);
+        this.commitPollRunning = false;
+      })();
+    } else {
+      // Node.js: use setInterval
+      this.commitPollTimer = setInterval(() => {
+        if (!this.stopped) {
+          try {
+            this.checkBranchChange();
+            this.checkCommitChange();
+          } catch (error) {
+            log.w("GITWATCHER", "poll_err", { err: String(error) });
+          }
+        }
+      }, this.config.pollIntervalMs);
+    }
   }
 
   /**
    * Start uncommitted file polling
-   * Event-driven: uses setInterval for Node.js, disabled for Bun
+   * Node.js: uses setInterval
+   * Bun: uses async loop with Bun.sleep
    */
   private startUncommittedPollLoop(): void {
     if (this.uncommittedPollRunning) return;
     this.uncommittedPollRunning = true;
 
-    // For Bun: skip polling to avoid CPU spinning
-    if (isBunRuntime()) return;
-
-    // For Node.js: use setInterval
-    this.uncommittedPollTimer = setInterval(() => {
-      if (!this.stopped) {
-        this.checkUncommittedChanges().catch((error) => {
-          log.w("GITWATCHER", "uncommitted_poll_err", { err: String(error) });
-        });
-      }
-    }, this.config.uncommittedPollIntervalMs!);
+    if (isBunRuntime()) {
+      // Bun: use async loop with Bun.sleep
+      (async () => {
+        while (!this.stopped) {
+          await sleep(this.config.uncommittedPollIntervalMs!);
+          if (this.stopped) break;
+          try {
+            await this.checkUncommittedChanges();
+          } catch (error) {
+            log.w("GITWATCHER", "uncommitted_poll_err", { err: String(error) });
+          }
+        }
+        this.uncommittedPollRunning = false;
+      })();
+    } else {
+      // Node.js: use setInterval
+      this.uncommittedPollTimer = setInterval(() => {
+        if (!this.stopped) {
+          this.checkUncommittedChanges().catch((error) => {
+            log.w("GITWATCHER", "uncommitted_poll_err", { err: String(error) });
+          });
+        }
+      }, this.config.uncommittedPollIntervalMs!);
+    }
   }
 
   /**

@@ -265,6 +265,13 @@ export class IndexerAgent extends BaseAgent {
     } else {
       log.w("INDEXER", "batch_ctx_not_ready");
     }
+
+    // Start GitWatcher for branch/commit monitoring (if not already watching this path)
+    if (this.gitWatcher && this.currentRepositoryPath !== projectPath) {
+      this.currentRepositoryPath = projectPath;
+      this.gitWatcher.startWatching(projectPath);
+      log.i("INDEXER", "git_watcher_started", { repository: projectPath });
+    }
   }
 
   /**

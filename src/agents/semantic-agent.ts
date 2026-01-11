@@ -807,6 +807,19 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         await this.handleIncrementalEmbeddingGeneration(data.files, data.bulkMode);
       }
     });
+
+    // Subscribe to branch changes to switch FAISS context
+    knowledgeBus.subscribe(this.id, "indexer:branch:changed", async (entry: KnowledgeEntry) => {
+      const data = entry.data as { newBranch: string; oldBranch: string; repositoryPath: string };
+      log.i("SEMANTIC", "branch_change_detected", { from: data.oldBranch, to: data.newBranch });
+      try {
+        // Switch FAISS context to new branch
+        await this.vectorStore.setProject(data.repositoryPath, data.newBranch);
+        log.i("SEMANTIC", "faiss_context_switched", { branch: data.newBranch });
+      } catch (error) {
+        log.e("SEMANTIC", "faiss_context_switch_fail", { err: String(error) });
+      }
+    });
   }
 
   // handleIndexComplete and handleEntityUpdate removed - subscriptions disabled to prevent duplicate processing
