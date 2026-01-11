@@ -548,6 +548,48 @@ export class ParsingSubprocessPool {
   }
 
   /**
+   * Scale down workers to target count after batch completes
+   * Kills excess workers (keeps worker 0 if in keepalive mode)
+   */
+  private async scaleDownWorkers(targetCount: number): Promise<void> {
+    const currentCount = this.workers.size;
+    if (currentCount <= targetCount) {
+      return;
+    }
+
+    log.i("SUBPROCESS", `Scaling down workers`, {
+      language: this.language,
+      current: currentCount,
+      target: targetCount,
+      killing: currentCount - targetCount,
+    });
+
+    // Kill workers from highest ID to lowest, but keep worker 0 in keepalive mode
+    const workerIds = Array.from(this.workers.keys()).sort((a, b) => b - a);
+    let killed = 0;
+
+    for (const workerId of workerIds) {
+      if (this.workers.size <= targetCount) break;
+
+      // In keepalive mode, always keep worker 0 alive
+      if (this.keepaliveMode && workerId === 0) continue;
+
+      const state = this.workers.get(workerId);
+      if (state?.process && !state.busy) {
+        await killProcess(state.process as ChildProcess, `${this.language}-${workerId}`);
+        this.workers.delete(workerId);
+        killed++;
+      }
+    }
+
+    log.i("SUBPROCESS", `Scale down complete`, {
+      language: this.language,
+      killed,
+      remaining: this.workers.size,
+    });
+  }
+
+  /**
    * Streaming load balancer: processes files in batches for low latency.
    *
    * Algorithm (Batched Streaming Greedy):
@@ -723,6 +765,11 @@ export class ParsingSubprocessPool {
     } finally {
       // Mark batch processing complete - workers can now be killed if needed
       this.isBatchProcessing = false;
+
+      // Scale down to 1 worker after full indexing in keepalive mode
+      if (this.keepaliveMode && this.workers.size > 1) {
+        await this.scaleDownWorkers(1);
+      }
     }
   }
 
