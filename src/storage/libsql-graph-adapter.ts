@@ -221,6 +221,16 @@ export class LibSQLGraphAdapter {
       await this.createTables();
       log.t("STORAGE", `[LibSQLGraphAdapter] ◀ createTables (${Date.now() - tablesStart}ms)`);
 
+      // Wire up tombstone delegates for layered branch support
+      this.entityOps.setTombstoneDelegates(
+        (id, type) => this.addTombstone(id, type),
+        (type) => this.getTombstonedIds(type),
+      );
+      this.relationshipOps.setTombstoneDelegates(
+        (id, type) => this.addTombstone(id, type),
+        (type) => this.getTombstonedIds(type),
+      );
+
       this.isInitialized = true;
       log.t("STORAGE", `[LibSQLGraphAdapter] ◀ initialize() END (${Date.now() - startTime}ms)`);
       log.i("LIBSQLADAPT", "init_complete", { path: dbPath });
@@ -496,6 +506,17 @@ export class LibSQLGraphAdapter {
         memory_usage INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL
       )`,
+        // Tombstones table - tracks deleted entities/relationships on feature branches
+        // When on feature branch, DELETE adds tombstone instead of removing from base
+        // Layered reads exclude tombstoned IDs from base branch results
+        `CREATE TABLE IF NOT EXISTS tombstones (
+        entity_id TEXT NOT NULL,
+        project_hash TEXT NOT NULL,
+        branch_name TEXT NOT NULL,
+        entity_type TEXT NOT NULL DEFAULT 'entity',
+        deleted_at INTEGER NOT NULL,
+        PRIMARY KEY (entity_id, project_hash, branch_name, entity_type)
+      )`,
         // NOTE: embeddings table REMOVED in v5 - FAISS is used for all vector operations
         // See: src/semantic/vector-store.ts (v5: Faiss-only backend)
         // === INDEXES (batched for speed) ===
@@ -510,6 +531,8 @@ export class LibSQLGraphAdapter {
         `CREATE INDEX IF NOT EXISTS idx_relationships_to ON relationships(to_id, project_hash, branch_name)`,
         // Files index
         `CREATE INDEX IF NOT EXISTS idx_files_project_branch ON files(project_hash, branch_name)`,
+        // Tombstones index
+        `CREATE INDEX IF NOT EXISTS idx_tombstones_lookup ON tombstones(project_hash, branch_name, entity_type)`,
       ],
       "write",
     );
@@ -828,6 +851,81 @@ export class LibSQLGraphAdapter {
   clear = (): Promise<void> => this.metadataOps.clear();
 
   clearAll = (): Promise<void> => this.metadataOps.clearAll();
+
+  // ===========================================================================
+  // TOMBSTONE OPERATIONS (for layered branch support)
+  // ===========================================================================
+
+  /**
+   * Add a tombstone for an entity/relationship deleted on feature branch.
+   * This prevents the deleted item from appearing in layered reads from base.
+   */
+  async addTombstone(entityId: string, entityType: "entity" | "relationship" = "entity"): Promise<void> {
+    if (!this.client) throw new Error("Client not initialized");
+    const { projectHash, branchName } = this.currentContext;
+
+    await this.client.execute({
+      sql: `INSERT OR REPLACE INTO tombstones (entity_id, project_hash, branch_name, entity_type, deleted_at)
+            VALUES (?, ?, ?, ?, ?)`,
+      args: [entityId, projectHash, branchName, entityType, Date.now()],
+    });
+  }
+
+  /**
+   * Remove a tombstone (when entity is re-added on feature branch).
+   */
+  async removeTombstone(entityId: string, entityType: "entity" | "relationship" = "entity"): Promise<void> {
+    if (!this.client) throw new Error("Client not initialized");
+    const { projectHash, branchName } = this.currentContext;
+
+    await this.client.execute({
+      sql: `DELETE FROM tombstones WHERE entity_id = ? AND project_hash = ? AND branch_name = ? AND entity_type = ?`,
+      args: [entityId, projectHash, branchName, entityType],
+    });
+  }
+
+  /**
+   * Check if an entity is tombstoned on current feature branch.
+   */
+  async isTombstoned(entityId: string, entityType: "entity" | "relationship" = "entity"): Promise<boolean> {
+    if (!this.client) throw new Error("Client not initialized");
+    const { projectHash, branchName } = this.currentContext;
+
+    const result = await this.client.execute({
+      sql: `SELECT 1 FROM tombstones WHERE entity_id = ? AND project_hash = ? AND branch_name = ? AND entity_type = ? LIMIT 1`,
+      args: [entityId, projectHash, branchName, entityType],
+    });
+
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Get all tombstoned entity IDs for current branch (for batch operations).
+   */
+  async getTombstonedIds(entityType: "entity" | "relationship" = "entity"): Promise<Set<string>> {
+    if (!this.client) throw new Error("Client not initialized");
+    const { projectHash, branchName } = this.currentContext;
+
+    const result = await this.client.execute({
+      sql: `SELECT entity_id FROM tombstones WHERE project_hash = ? AND branch_name = ? AND entity_type = ?`,
+      args: [projectHash, branchName, entityType],
+    });
+
+    return new Set(result.rows.map((row) => row["entity_id"] as string));
+  }
+
+  /**
+   * Clear all tombstones for current branch (used when merging to base).
+   */
+  async clearTombstones(): Promise<void> {
+    if (!this.client) throw new Error("Client not initialized");
+    const { projectHash, branchName } = this.currentContext;
+
+    await this.client.execute({
+      sql: `DELETE FROM tombstones WHERE project_hash = ? AND branch_name = ?`,
+      args: [projectHash, branchName],
+    });
+  }
 
   /**
    * Force flush all pending writes to disk.

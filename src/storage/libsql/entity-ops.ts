@@ -3,6 +3,9 @@
  *
  * Handles all Entity CRUD operations: insert, get, find, search, delete.
  * Uses delegates for accessing shared client and context.
+ *
+ * v6: Layered branch support - reads from delta (current branch) + base branch,
+ * with tombstone filtering for deleted entities on feature branches.
  */
 
 import type { BatchResult, Entity, EntityType } from "../../types/storage.js";
@@ -17,16 +20,38 @@ import type { ClientGetter, ContextGetter } from "./types.js";
  */
 export type RowToEntityMapper = (row: unknown) => Entity;
 
+/**
+ * Delegate type for adding tombstone when entity is deleted on feature branch
+ */
+export type TombstoneAdder = (entityId: string, entityType: "entity" | "relationship") => Promise<void>;
+
+/**
+ * Delegate type for getting all tombstoned IDs for current branch
+ */
+export type TombstoneGetter = (entityType: "entity" | "relationship") => Promise<Set<string>>;
+
 // =============================================================================
 // ENTITY OPERATIONS CLASS
 // =============================================================================
 
 export class EntityOperations {
+  private tombstoneAdder?: TombstoneAdder;
+  private tombstoneGetter?: TombstoneGetter;
+
   constructor(
     private getClient: ClientGetter,
     private getContext: ContextGetter,
     private rowToEntity: RowToEntityMapper,
   ) {}
+
+  /**
+   * Set tombstone delegates for layered branch support.
+   * Must be called after adapter initialization.
+   */
+  setTombstoneDelegates(adder: TombstoneAdder, getter: TombstoneGetter): void {
+    this.tombstoneAdder = adder;
+    this.tombstoneGetter = getter;
+  }
 
   /**
    * Insert a single entity
@@ -152,24 +177,104 @@ export class EntityOperations {
   }
 
   /**
-   * Get entity by ID
+   * Get entity by ID (layered: delta → base with tombstone check)
    */
   async getEntity(id: string): Promise<Entity | null> {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+    const { projectHash, branchName, baseBranch } = this.getContext();
+
+    // 1. Check tombstone first (if on feature branch)
+    if (baseBranch && this.tombstoneGetter) {
+      const tombstones = await this.tombstoneGetter("entity");
+      if (tombstones.has(id)) {
+        return null; // Entity was deleted on feature branch
+      }
+    }
+
+    // 2. Try to find in current branch (delta)
     const result = await client.execute({
       sql: `SELECT * FROM entities WHERE id = ? AND project_hash = ? AND branch_name = ?`,
       args: [id, projectHash, branchName],
     });
 
-    if (result.rows.length === 0) return null;
-    return this.rowToEntity(result.rows[0]);
+    if (result.rows.length > 0) {
+      return this.rowToEntity(result.rows[0]);
+    }
+
+    // 3. If on feature branch and not found in delta, check base
+    if (baseBranch) {
+      const baseResult = await client.execute({
+        sql: `SELECT * FROM entities WHERE id = ? AND project_hash = ? AND branch_name = ?`,
+        args: [id, projectHash, baseBranch],
+      });
+
+      if (baseResult.rows.length > 0) {
+        return this.rowToEntity(baseResult.rows[0]);
+      }
+    }
+
+    return null;
   }
 
   /**
-   * Find entities with complex filters
+   * Build filter SQL clause and args
+   */
+  private buildFilterClause(
+    filters:
+      | {
+          entityType?: EntityType | EntityType[];
+          filePath?: string | string[];
+          name?: string | RegExp;
+        }
+      | undefined,
+    args: (string | number)[],
+  ): string {
+    let sql = "";
+
+    if (filters) {
+      if (filters.entityType) {
+        const types = Array.isArray(filters.entityType) ? filters.entityType : [filters.entityType];
+        sql += ` AND type IN (${types.map(() => "?").join(",")})`;
+        args.push(...types);
+      }
+
+      if (filters.filePath) {
+        const paths = Array.isArray(filters.filePath) ? filters.filePath : [filters.filePath];
+        // Normalize paths for cross-platform
+        const normalized: string[] = [];
+        for (const p of paths) {
+          normalized.push(p);
+          if (p.includes("/")) normalized.push(p.replace(/\//g, "\\"));
+          if (p.includes("\\")) normalized.push(p.replace(/\\/g, "/"));
+        }
+        const unique = [...new Set(normalized)];
+        sql += ` AND file_path IN (${unique.map(() => "?").join(",")})`;
+        args.push(...unique);
+      }
+
+      if (filters.name) {
+        if (filters.name instanceof RegExp) {
+          let pattern = filters.name.source;
+          pattern = pattern.replace(/\.\*/g, "%").replace(/\*/g, "%").replace(/\./g, "_");
+          if (!pattern.includes("%") && !pattern.includes("_")) {
+            pattern = `%${pattern}%`;
+          }
+          sql += " AND name LIKE ?";
+          args.push(pattern);
+        } else {
+          sql += " AND name = ?";
+          args.push(filters.name);
+        }
+      }
+    }
+
+    return sql;
+  }
+
+  /**
+   * Find entities with complex filters (layered: delta + base - tombstones)
    */
   async findEntities(query: {
     filters?: {
@@ -183,70 +288,61 @@ export class EntityOperations {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    let sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
-    const args: (string | number)[] = [projectHash, branchName];
+    const { projectHash, branchName, baseBranch } = this.getContext();
+    const limit = Math.min(query.limit || 100, 1000);
+    const offset = query.offset || 0;
 
-    if (query.filters) {
-      if (query.filters.entityType) {
-        const types = Array.isArray(query.filters.entityType) ? query.filters.entityType : [query.filters.entityType];
-        sql += ` AND type IN (${types.map(() => "?").join(",")})`;
-        args.push(...types);
-      }
+    // Simple case: no base branch
+    if (!baseBranch) {
+      const args: (string | number)[] = [projectHash, branchName];
+      let sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+      sql += this.buildFilterClause(query.filters, args);
+      sql += " LIMIT ? OFFSET ?";
+      args.push(limit, offset);
 
-      if (query.filters.filePath) {
-        const paths = Array.isArray(query.filters.filePath) ? query.filters.filePath : [query.filters.filePath];
-        // Normalize paths for cross-platform
-        const normalized: string[] = [];
-        for (const p of paths) {
-          normalized.push(p);
-          if (p.includes("/")) normalized.push(p.replace(/\//g, "\\"));
-          if (p.includes("\\")) normalized.push(p.replace(/\\/g, "/"));
-        }
-        const unique = [...new Set(normalized)];
-        sql += ` AND file_path IN (${unique.map(() => "?").join(",")})`;
-        args.push(...unique);
-      }
-
-      if (query.filters.name) {
-        if (query.filters.name instanceof RegExp) {
-          let pattern = query.filters.name.source;
-          pattern = pattern.replace(/\.\*/g, "%").replace(/\*/g, "%").replace(/\./g, "_");
-          if (!pattern.includes("%") && !pattern.includes("_")) {
-            pattern = `%${pattern}%`;
-          }
-          sql += " AND name LIKE ?";
-          args.push(pattern);
-        } else {
-          sql += " AND name = ?";
-          args.push(query.filters.name);
-        }
-      }
+      const result = await client.execute({ sql, args });
+      return result.rows.map((row) => this.rowToEntity(row));
     }
 
-    const limit = Math.min(query.limit || 100, 1000);
-    sql += " LIMIT ? OFFSET ?";
-    args.push(limit, query.offset || 0);
+    // Layered case: delta + base - tombstones
+    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
 
-    const result = await client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToEntity(row));
+    // Get from delta
+    const deltaArgs: (string | number)[] = [projectHash, branchName];
+    let deltaSql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+    deltaSql += this.buildFilterClause(query.filters, deltaArgs);
+
+    const deltaResult = await client.execute({ sql: deltaSql, args: deltaArgs });
+    const deltaEntities = deltaResult.rows.map((row) => this.rowToEntity(row));
+    const deltaIds = new Set(deltaEntities.map((e) => e.id));
+
+    // Get from base
+    const baseArgs: (string | number)[] = [projectHash, baseBranch];
+    let baseSql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+    baseSql += this.buildFilterClause(query.filters, baseArgs);
+
+    const baseResult = await client.execute({ sql: baseSql, args: baseArgs });
+    const baseEntities = baseResult.rows
+      .map((row) => this.rowToEntity(row))
+      .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
+
+    // Combine and apply limit/offset
+    const combined = [...deltaEntities, ...baseEntities];
+    return combined.slice(offset, offset + limit);
   }
 
   /**
-   * Search entities by name pattern and type
+   * Build search SQL clause and args
    */
-  async searchEntities(options: {
-    namePattern?: string | undefined;
-    types?: EntityType[] | undefined;
-    filePath?: string | undefined;
-    limit?: number;
-  }): Promise<Entity[]> {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
-
-    const { projectHash, branchName } = this.getContext();
-    let sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
-    const args: (string | number)[] = [projectHash, branchName];
+  private buildSearchClause(
+    options: {
+      namePattern?: string;
+      types?: EntityType[];
+      filePath?: string;
+    },
+    args: (string | number)[],
+  ): string {
+    let sql = "";
 
     if (options.namePattern) {
       sql += " AND name LIKE ?";
@@ -263,35 +359,119 @@ export class EntityOperations {
       args.push(options.filePath);
     }
 
-    sql += " LIMIT ?";
-    args.push(options.limit || 100);
-
-    const result = await client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToEntity(row));
+    return sql;
   }
 
   /**
-   * Search entities by directory path (LIKE pattern)
+   * Search entities by name pattern and type (layered: delta + base - tombstones)
+   */
+  async searchEntities(options: {
+    namePattern?: string | undefined;
+    types?: EntityType[] | undefined;
+    filePath?: string | undefined;
+    limit?: number;
+  }): Promise<Entity[]> {
+    const client = this.getClient();
+    if (!client) throw new Error("Client not initialized");
+
+    const { projectHash, branchName, baseBranch } = this.getContext();
+    const limit = options.limit || 100;
+
+    // Simple case: no base branch
+    if (!baseBranch) {
+      const args: (string | number)[] = [projectHash, branchName];
+      let sql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+      sql += this.buildSearchClause(options, args);
+      sql += " LIMIT ?";
+      args.push(limit);
+
+      const result = await client.execute({ sql, args });
+      return result.rows.map((row) => this.rowToEntity(row));
+    }
+
+    // Layered case
+    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
+
+    // Get from delta
+    const deltaArgs: (string | number)[] = [projectHash, branchName];
+    let deltaSql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+    deltaSql += this.buildSearchClause(options, deltaArgs);
+
+    const deltaResult = await client.execute({ sql: deltaSql, args: deltaArgs });
+    const deltaEntities = deltaResult.rows.map((row) => this.rowToEntity(row));
+    const deltaIds = new Set(deltaEntities.map((e) => e.id));
+
+    // Get from base
+    const baseArgs: (string | number)[] = [projectHash, baseBranch];
+    let baseSql = "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?";
+    baseSql += this.buildSearchClause(options, baseArgs);
+
+    const baseResult = await client.execute({ sql: baseSql, args: baseArgs });
+    const baseEntities = baseResult.rows
+      .map((row) => this.rowToEntity(row))
+      .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
+
+    // Combine and limit
+    return [...deltaEntities, ...baseEntities].slice(0, limit);
+  }
+
+  /**
+   * Search entities by directory path (LIKE pattern) (layered: delta + base - tombstones)
    */
   async searchEntitiesInDirectory(directoryPath: string): Promise<Entity[]> {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+    const { projectHash, branchName, baseBranch } = this.getContext();
 
     // Normalize path separators for cross-platform search
     const forwardPath = directoryPath.replace(/\\/g, "/");
     const backPath = directoryPath.replace(/\//g, "\\");
 
-    const sql = `
+    // Simple case: no base branch
+    if (!baseBranch) {
+      const sql = `
+        SELECT * FROM entities
+        WHERE project_hash = ? AND branch_name = ?
+        AND (file_path LIKE ? OR file_path LIKE ?)
+      `;
+      const args = [projectHash, branchName, `${forwardPath}%`, `${backPath}%`];
+
+      const result = await client.execute({ sql, args });
+      return result.rows.map((row) => this.rowToEntity(row));
+    }
+
+    // Layered case
+    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
+
+    // Get from delta
+    const deltaSql = `
       SELECT * FROM entities
       WHERE project_hash = ? AND branch_name = ?
       AND (file_path LIKE ? OR file_path LIKE ?)
     `;
-    const args = [projectHash, branchName, `${forwardPath}%`, `${backPath}%`];
+    const deltaResult = await client.execute({
+      sql: deltaSql,
+      args: [projectHash, branchName, `${forwardPath}%`, `${backPath}%`],
+    });
+    const deltaEntities = deltaResult.rows.map((row) => this.rowToEntity(row));
+    const deltaIds = new Set(deltaEntities.map((e) => e.id));
 
-    const result = await client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToEntity(row));
+    // Get from base
+    const baseSql = `
+      SELECT * FROM entities
+      WHERE project_hash = ? AND branch_name = ?
+      AND (file_path LIKE ? OR file_path LIKE ?)
+    `;
+    const baseResult = await client.execute({
+      sql: baseSql,
+      args: [projectHash, baseBranch, `${forwardPath}%`, `${backPath}%`],
+    });
+    const baseEntities = baseResult.rows
+      .map((row) => this.rowToEntity(row))
+      .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
+
+    return [...deltaEntities, ...baseEntities];
   }
 
   /**
@@ -309,19 +489,37 @@ export class EntityOperations {
   }
 
   /**
-   * Get entity IDs by file path (for FAISS cleanup)
+   * Get entity IDs by file path (for FAISS cleanup) (layered: delta + base - tombstones)
    */
   async getEntityIdsByFilePath(filePath: string): Promise<string[]> {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+    const { projectHash, branchName, baseBranch } = this.getContext();
 
     // Normalize path separators
     const forwardPath = filePath.replace(/\\/g, "/");
     const backPath = filePath.replace(/\//g, "\\");
 
-    const result = await client.execute({
+    // Simple case: no base branch
+    if (!baseBranch) {
+      const result = await client.execute({
+        sql: `
+          SELECT id FROM entities
+          WHERE project_hash = ? AND branch_name = ?
+          AND (file_path = ? OR file_path = ?)
+        `,
+        args: [projectHash, branchName, forwardPath, backPath],
+      });
+
+      return result.rows.map((row) => row["id"] as string);
+    }
+
+    // Layered case
+    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
+
+    // Get from delta
+    const deltaResult = await client.execute({
       sql: `
         SELECT id FROM entities
         WHERE project_hash = ? AND branch_name = ?
@@ -329,8 +527,22 @@ export class EntityOperations {
       `,
       args: [projectHash, branchName, forwardPath, backPath],
     });
+    const deltaIds = new Set(deltaResult.rows.map((row) => row["id"] as string));
 
-    return result.rows.map((row) => row["id"] as string);
+    // Get from base
+    const baseResult = await client.execute({
+      sql: `
+        SELECT id FROM entities
+        WHERE project_hash = ? AND branch_name = ?
+        AND (file_path = ? OR file_path = ?)
+      `,
+      args: [projectHash, baseBranch, forwardPath, backPath],
+    });
+    const baseIds = baseResult.rows
+      .map((row) => row["id"] as string)
+      .filter((id) => !deltaIds.has(id) && !tombstones.has(id));
+
+    return [...deltaIds, ...baseIds];
   }
 
   /**
@@ -364,18 +576,46 @@ export class EntityOperations {
   }
 
   /**
-   * Get all entities for current project/branch
+   * Get all entities for current project/branch (layered: delta + base - tombstones)
    */
   async getAllEntities(): Promise<Entity[]> {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const result = await client.execute({
+    const { projectHash, branchName, baseBranch } = this.getContext();
+
+    // Simple case: no base branch (on base or no layering)
+    if (!baseBranch) {
+      const result = await client.execute({
+        sql: "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?",
+        args: [projectHash, branchName],
+      });
+      return result.rows.map((row) => this.rowToEntity(row));
+    }
+
+    // Layered case: UNION delta + base, excluding tombstones and overrides
+    // 1. Get tombstones for current branch
+    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
+
+    // 2. Get entities from delta (current branch)
+    const deltaResult = await client.execute({
       sql: "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?",
       args: [projectHash, branchName],
     });
+    const deltaEntities = deltaResult.rows.map((row) => this.rowToEntity(row));
+    const deltaIds = new Set(deltaEntities.map((e) => e.id));
 
-    return result.rows.map((row) => this.rowToEntity(row));
+    // 3. Get entities from base, excluding those overridden in delta or tombstoned
+    const baseResult = await client.execute({
+      sql: "SELECT * FROM entities WHERE project_hash = ? AND branch_name = ?",
+      args: [projectHash, baseBranch],
+    });
+
+    const baseEntities = baseResult.rows
+      .map((row) => this.rowToEntity(row))
+      .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
+
+    // 4. Combine: delta first (priority), then filtered base
+    return [...deltaEntities, ...baseEntities];
   }
 }

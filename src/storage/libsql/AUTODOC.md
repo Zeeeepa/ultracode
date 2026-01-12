@@ -1,6 +1,6 @@
 # Libsql
 
-*Last updated: 2026-01-11*
+*Last updated: 2026-01-12*
 
 Адаптер хранилища граф-данных для LibSQL с поддержкой векторных вычислений и кэширования.
 
@@ -10,11 +10,11 @@
 |------|------|-------------|----------|
 | `VectorToStringFn` | type | Функция преобразования Float32Array в SQL-совместимую строку | [→ cache-ops.ts:18] |
 | `CacheOperations` | class | Класс для управления глобальным кэшем встраиваний по хешу | [→ cache-ops.ts:24-160] |
-| `RowToEntityMapper` | type | Тип-делегат преобразования строки БД в сущность | [→ entity-ops.ts:18] |
-| `EntityOperations` | class | Класс для операций CRUD сущностей проекта | [→ entity-ops.ts:24-381] |
+| `RowToEntityMapper` | type | Тип-делегат преобразования строки БД в сущность | [→ entity-ops.ts:21] |
+| `EntityOperations` | class | Класс для операций CRUD сущностей проекта | [→ entity-ops.ts:21-21] |
 | `MetadataOperations` | class | Класс для операций метаданных файлов и проектов | [→ metadata-ops.ts:16-449] |
-| `RowToRelationshipMapper` | type | Тип-делегат преобразования строки БД в связь | [→ relationship-ops.ts:18] |
-| `RelationshipOperations` | class | Класс для операций CRUD связей между сущностями | [→ relationship-ops.ts:24-205] |
+| `RowToRelationshipMapper` | type | Тип-делегат преобразования строки БД в связь | [→ relationship-ops.ts:21] |
+| `RelationshipOperations` | class | Класс для операций CRUD связей между сущностями | [→ relationship-ops.ts:21-21] |
 | `LibSQLGraphConfig` | interface | Интерфейс конфигурации адаптера с параметрами векторов | [→ types.ts:15-28] |
 | `DEFAULT_CONFIG` | const | Конфигурация по умолчанию с оптимизированными параметрами | [→ types.ts:30-37] |
 | `SUPPORTED_DIMENSIONS` | const | Массив поддерживаемых размерностей встраиваний | [→ types.ts:44-56] |
