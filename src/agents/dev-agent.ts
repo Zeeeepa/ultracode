@@ -1252,6 +1252,42 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       } catch (e) {
         log.w("DEVAGENT", "incr_vector_provider_fail", { error: String(e) });
       }
+
+      // Configure EmbeddingGenerator for centralized mode (CRITICAL for incremental indexing)
+      if (embeddingConfig.centralizedEmbeddings) {
+        try {
+          const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
+          const { buildEmbeddingGeneratorOptions } = await import("../agents/semantic/provider-config.js");
+          const { loadSemanticConfig } = await import("../utils/config-paths.js");
+          const { getConfig } = await import("../config/yaml-config.js");
+
+          // Load configs for EmbeddingGenerator
+          const semanticConfig = loadSemanticConfig();
+          const yamlConfig = getConfig();
+
+          // Build options for EmbeddingGenerator
+          const generatorOptions = buildEmbeddingGeneratorOptions(
+            embeddingConfig.provider as import("./semantic/provider-config.js").ProviderKind,
+            embeddingConfig.modelName,
+            embeddingConfig.batchSize,
+            semanticConfig,
+            yamlConfig,
+          );
+
+          const embeddingGenerator = new EmbeddingGenerator(generatorOptions);
+          await embeddingGenerator.initialize();
+
+          await this.parserAgent.setEmbeddingGenerator(embeddingGenerator);
+          log.i("DEVAGENT", "incr_embedding_generator", {
+            provider: embeddingConfig.provider,
+            model: embeddingConfig.modelName,
+          });
+        } catch (error) {
+          log.w("DEVAGENT", "incr_embedding_generator_fail", {
+            error: (error as Error).message,
+          });
+        }
+      }
     }
 
     // Process all supported files in one batch for efficiency

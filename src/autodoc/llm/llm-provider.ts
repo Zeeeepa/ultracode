@@ -916,6 +916,10 @@ export class ClaudeCodeProvider implements LLMProvider {
         stdio: ["pipe", "pipe", "pipe"],
         shell: false, // Direct execution - prevents infinite spawning
         windowsHide: true,
+        env: {
+          ...process.env,
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1", // Disable temp file creation
+        },
       });
 
       let stdout = "";
@@ -982,6 +986,10 @@ export class ClaudeCodeProvider implements LLMProvider {
         stdio: ["pipe", "pipe", "pipe"],
         shell: false, // Direct execution - prevents infinite spawning
         windowsHide: true,
+        env: {
+          ...process.env,
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1", // Disable temp file creation
+        },
       });
 
       let stdout = "";
