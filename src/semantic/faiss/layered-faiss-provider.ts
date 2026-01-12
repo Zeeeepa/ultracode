@@ -468,9 +468,18 @@ export class LayeredFaissProvider {
   }
 
   /**
-   * Remove a vector by ID
+   * Remove vectors by IDs (IVectorProvider interface)
    */
-  async remove(id: string): Promise<RemoveVectorResult> {
+  async remove(ids: string[]): Promise<void> {
+    for (const id of ids) {
+      await this.removeOne(id);
+    }
+  }
+
+  /**
+   * Remove a single vector by ID
+   */
+  private async removeOne(id: string): Promise<RemoveVectorResult> {
     if (!this.isInitialized || !this.client) {
       return { success: false, action: "not_found" };
     }
@@ -510,6 +519,20 @@ export class LayeredFaissProvider {
       return false;
     }
     return this.deltaIdSet.has(id) || this.baseIdSet.has(id);
+  }
+
+  /**
+   * Get existing IDs from a list (considering tombstones)
+   * Required by IVectorProvider interface
+   */
+  getExistingIds(ids: string[]): Set<string> {
+    const existing = new Set<string>();
+    for (const id of ids) {
+      if (this.has(id)) {
+        existing.add(id);
+      }
+    }
+    return existing;
   }
 
   // ===========================================================================

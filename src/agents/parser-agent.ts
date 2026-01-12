@@ -277,18 +277,26 @@ export class ParserAgent extends BaseAgent {
   }
 
   /**
-   * Set the FAISS provider for embedding accumulator.
-   * Must be called before embeddings are generated to enable flushing to FAISS.
+   * Set the vector provider for embedding accumulator.
+   * Works with both FaissProvider and LayeredFaissProvider.
+   * Must be called before embeddings are generated to enable flushing.
    */
-  setFaissProvider(provider: import("../semantic/faiss/faiss-provider.js").FaissProvider): void {
+  setVectorProvider(provider: import("../semantic/faiss/types.js").IVectorProvider): void {
     // Initialize accumulator if not already done - use dimensions from config
     if (!this.embeddingAccumulator) {
       const dimensions = this.embeddingConfig?.dimensions ?? 384;
       const queueBatchSize = this.embeddingConfig?.queueBatchSize ?? 128;
       this.embeddingAccumulator = getEmbeddingAccumulator({ dimensions, queueBatchSize });
     }
-    this.embeddingAccumulator.setFaissProvider(provider);
-    log.i("PARSER", "FAISS provider configured for embedding accumulator");
+    this.embeddingAccumulator.setVectorProvider(provider);
+    log.i("PARSER", "Vector provider configured for embedding accumulator");
+  }
+
+  /**
+   * @deprecated Use setVectorProvider instead
+   */
+  setFaissProvider(provider: import("../semantic/faiss/types.js").IVectorProvider): void {
+    this.setVectorProvider(provider);
   }
 
   /**

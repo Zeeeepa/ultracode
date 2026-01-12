@@ -524,29 +524,62 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           model: embeddingConfig.modelName,
         });
 
-        // Configure FAISS provider for embedding accumulator
-        // This enables flushing embeddings received via IPC to FAISS
-        const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
+        // Configure vector provider for embedding accumulator
+        // v6: Get provider directly from singleton (LayeredFaissProvider or FaissProvider)
         const { getProjectHash, getCurrentGitBranchOrDefault } = await import("../shared/storage-paths.js");
-        // Initialize if not already done - this ensures provider is ready for embeddings
-        const faissProvider = await initializeFaissProvider({
-          dimensions: embeddingConfig.dimensions || 384,
-        });
-        if (faissProvider) {
-          // Set project context for FAISS to enable correct persist path
-          const projectHash = getProjectHash(payload.directory);
-          const currentBranch = getCurrentGitBranchOrDefault(payload.directory);
-          await faissProvider.setProjectContext(projectHash, currentBranch);
-          log.d("DEVAGENT", "faiss_branch", { branch: currentBranch });
-          this.parserAgent.setFaissProvider(faissProvider);
-          log.i("DEVAGENT", "FAISS provider configured", { projectHash, dir: payload.directory });
+        const configLoader = ConfigLoader.getInstance();
+        const embConfig = configLoader.getEmbeddingConfig();
+        const useLayeredIndex = embConfig.useLayeredIndex;
+        const projectHash = getProjectHash(payload.directory);
+        const currentBranch = getCurrentGitBranchOrDefault(payload.directory);
+
+        let vectorProvider: import("../semantic/faiss/types.js").IVectorProvider | null = null;
+
+        try {
+          if (useLayeredIndex) {
+            const { getLayeredFaissProvider } = await import("../semantic/faiss/layered-faiss-provider.js");
+            const provider = getLayeredFaissProvider();
+
+            // Check if initialized, initialize if not
+            if (!(provider as any).isInitialized) {
+              log.d("DEVAGENT", "Initializing LayeredFaissProvider", {
+                dir: payload.directory,
+                projectHash,
+                branch: currentBranch,
+              });
+              await provider.initialize(payload.directory, projectHash, currentBranch);
+            }
+            vectorProvider = provider;
+          } else {
+            const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
+            const provider = await initializeFaissProvider();
+            if (provider) {
+              await provider.setProjectContext(projectHash, currentBranch);
+              vectorProvider = provider;
+            }
+          }
+        } catch (e) {
+          log.w("DEVAGENT", "Failed to get vector provider", { error: String(e) });
+        }
+
+        if (vectorProvider) {
+          log.d("DEVAGENT", "vector_provider_branch", {
+            branch: currentBranch,
+            layered: useLayeredIndex,
+          });
+          this.parserAgent.setVectorProvider(vectorProvider);
+          log.i("DEVAGENT", "Vector provider configured", {
+            projectHash,
+            dir: payload.directory,
+            layered: useLayeredIndex,
+          });
 
           // Smart Incremental: remove embeddings for deleted entities
           if (deletedEntityIds.length > 0) {
             try {
               // Convert entity IDs to embedding IDs (prefixed with "ent:")
               const embeddingIds = deletedEntityIds.map((id) => (id.startsWith("ent:") ? id : `ent:${id}`));
-              await faissProvider.remove(embeddingIds);
+              await vectorProvider.remove(embeddingIds);
               log.i("DEVAGENT", "Removed embeddings for changed/deleted files", {
                 count: embeddingIds.length,
               });
@@ -557,7 +590,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             }
           }
         } else {
-          log.w("DEVAGENT", "FAISS provider initialization failed - embeddings will not be saved");
+          log.w("DEVAGENT", "Vector provider not available - embeddings will not be saved");
         }
 
         // For centralized embedding mode (OVMS/llamacpp): create EmbeddingGenerator in Main
