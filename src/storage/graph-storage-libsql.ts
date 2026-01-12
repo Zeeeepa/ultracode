@@ -88,7 +88,9 @@ export class GraphStorageLibSQL implements GraphStorage {
   }
 
   setProject(projectPath: string, branchName?: string | null): void {
-    this.adapter.setProjectContext(createProjectContext(projectPath, branchName));
+    const ctx = createProjectContext(projectPath, branchName);
+    log.w("STORAGE", "setProject", { branch: ctx.branchName, base: ctx.baseBranch || "none" });
+    this.adapter.setProjectContext(ctx);
   }
 
   getProjectContext(): ProjectContext {

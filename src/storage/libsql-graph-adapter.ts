@@ -610,9 +610,13 @@ export class LibSQLGraphAdapter {
     this.currentContext = {
       projectHash: context.projectHash,
       branchName: normalizeBranchName(context.branchName),
+      baseBranch: context.baseBranch, // For layered reads on feature branches
       dimensions: context.dimensions,
     };
-    // Removed verbose logging - context is set very frequently
+    log.d("LIBSQLADAPT", "setProjectContext", {
+      branch: this.currentContext.branchName,
+      base: context.baseBranch || "none",
+    });
   }
 
   getProjectContext(): ProjectContext {
