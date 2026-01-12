@@ -19,6 +19,7 @@ import type { ParseResult, ParserOptions } from "../../types/parser.js";
 // Extracted modules
 import { clearAnalyzerCache, getAnalyzer, SUPPORTED_WORKER_LANGUAGES } from "./analyzer-loader.js";
 import {
+  clearDeduplicationForFiles,
   clearEmbeddingClient,
   generateEmbeddingsForEntities,
   getEmbeddingClient,
@@ -280,10 +281,15 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
   const results: ParseResult[] = [];
   const errors: Array<{ file: string; message: string }> = [];
 
+  // Clear deduplication cache for files being parsed
+  // This ensures embeddings are regenerated for modified files during incremental indexing
+  const clearedDedup = clearDeduplicationForFiles(task.files);
+
   workerLog("INFO", `Task started`, {
     taskId: task.id,
     language: task.language,
     fileCount: task.files.length,
+    ...(clearedDedup > 0 && { clearedDedup }),
   });
 
   // For universal mode, we get analyzer per-file based on detected language

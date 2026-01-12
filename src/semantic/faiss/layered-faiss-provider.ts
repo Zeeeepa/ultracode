@@ -440,6 +440,12 @@ export class LayeredFaissProvider {
       this.deltaIdSet.add(embedding.id);
       this.deltaUnsavedCount++;
 
+      log.i("LAYERED_FAISS", "add_to_delta", {
+        id: embedding.id.slice(0, 50),
+        branch: this.currentBranch,
+        deltaUnsaved: this.deltaUnsavedCount,
+      });
+
       // Also add to base index (simplified approach - overwrites existing)
       // In full implementation, would use separate delta FAISS index
       await this.client.faissAdd([embedding.id], normalizedVector);
@@ -457,6 +463,12 @@ export class LayeredFaissProvider {
    * Add multiple embeddings in batch
    */
   async addBatch(embeddings: VectorEmbedding[]): Promise<AddVectorResult[]> {
+    log.d("LAYERED_FAISS", "addBatch_called", {
+      count: embeddings.length,
+      branch: this.currentBranch,
+      isOnBase: this.isOnBaseBranch,
+    });
+
     const results: AddVectorResult[] = [];
 
     for (const embedding of embeddings) {
@@ -543,11 +555,22 @@ export class LayeredFaissProvider {
    * Save all layers
    */
   async save(): Promise<void> {
+    log.i("LAYERED_FAISS", "save_called", {
+      branch: this.currentBranch,
+      isOnBase: this.isOnBaseBranch,
+      baseUnsaved: this.baseUnsavedCount,
+      deltaUnsaved: this.deltaUnsavedCount,
+    });
     if (this.baseUnsavedCount > 0) {
       await this.saveBase();
     }
     if (this.deltaUnsavedCount > 0) {
       await this.saveDelta();
+    } else if (!this.isOnBaseBranch) {
+      log.w("LAYERED_FAISS", "delta_not_saved_zero_unsaved", {
+        branch: this.currentBranch,
+        deltaIdSetSize: this.deltaIdSet.size,
+      });
     }
   }
 
@@ -595,7 +618,7 @@ export class LayeredFaissProvider {
    * Save delta layer
    */
   private async saveDelta(): Promise<void> {
-    if (!this.isInitialized || this.isOnBaseBranch) return;
+    if (!this.isInitialized || this.isOnBaseBranch || !this.client) return;
 
     const projectDir = getProjectDir(this.projectPath);
     const paths = getLayeredPaths(projectDir, this.currentBranch!, this.baseBranch);
@@ -606,6 +629,10 @@ export class LayeredFaissProvider {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }
+
+      // Save FAISS index (delta vectors are added to the same index in simplified approach)
+      // This is critical - without this, vectors added on feature branch are lost!
+      await this.client.faissSave(paths.deltaIndex || paths.baseIndex);
 
       // Save delta IDs
       writeFileSync(paths.deltaIds, JSON.stringify([...this.deltaIdSet]), "utf-8");

@@ -24,7 +24,7 @@ import { getProjectHash, normalizeBranchName } from "../shared/storage-paths.js"
 import type { ProjectContext } from "../storage/libsql-graph-adapter.js";
 import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
 import { type FaissProvider, initializeFaissProvider } from "./faiss/faiss-provider.js";
-import { LayeredFaissProvider } from "./faiss/layered-faiss-provider.js";
+import { getLayeredFaissProvider, type LayeredFaissProvider } from "./faiss/layered-faiss-provider.js";
 import { getRecommendedStrategy, type StrategyRecommendation } from "./gpu/adaptive-thresholds.js";
 
 // =============================================================================
@@ -199,39 +199,29 @@ export class VectorStore {
   private async initializeInternal(): Promise<void> {
     try {
       if (this.useLayeredIndex) {
-        // v6: Initialize layered provider (requires context to be set!)
-        if (!this.currentContext) {
-          // Layered provider needs project context at init time
-          // Fall back to standard provider, context will be set later
-          log.w("VECTOR", "Layered index requires context, deferring initialization");
-          this.layeredProvider = new LayeredFaissProvider({
-            dimensions: this.config.dimensions,
-            indexType: "hnsw",
-            hnswM: 32,
-            hnswEfConstruction: 200,
-            hnswEfSearch: 64,
-          });
-        } else {
-          this.layeredProvider = new LayeredFaissProvider({
-            dimensions: this.config.dimensions,
-            indexType: "hnsw",
-            hnswM: 32,
-            hnswEfConstruction: 200,
-            hnswEfSearch: 64,
-          });
+        // v6: Use singleton layered provider to ensure consistency across components
+        // DevAgent/ParserAgent and SemanticAgent/VectorStore must use the same instance
+        this.layeredProvider = getLayeredFaissProvider();
 
-          const success = await this.layeredProvider.initialize(
-            this.config.workingDirectory || "",
-            this.currentContext.projectHash,
-            this.currentContext.branchName,
-          );
+        if (this.currentContext) {
+          // Initialize with context if available
+          const isInit = (this.layeredProvider as any).isInitialized;
+          if (!isInit) {
+            const success = await this.layeredProvider.initialize(
+              this.config.workingDirectory || "",
+              this.currentContext.projectHash,
+              this.currentContext.branchName,
+            );
 
-          if (!success) {
-            throw new Error("Failed to initialize LayeredFaissProvider");
+            if (!success) {
+              throw new Error("Failed to initialize LayeredFaissProvider");
+            }
           }
+        } else {
+          log.w("VECTOR", "Layered index requires context, deferring initialization");
         }
 
-        log.i("VECTOR", "Initialized with Layered Faiss backend", {
+        log.i("VECTOR", "Initialized with Layered Faiss backend (singleton)", {
           dimensions: this.config.dimensions,
           mode: "layered-base-delta",
         });

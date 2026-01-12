@@ -118,6 +118,9 @@ export class EmbeddingAccumulator {
    */
   setVectorProvider(provider: IVectorProvider): void {
     this.vectorProvider = provider;
+    log.i("ACCUMULATOR", "vectorProvider_set", {
+      type: provider.constructor.name,
+    });
   }
 
   /**
@@ -463,6 +466,10 @@ export class EmbeddingAccumulator {
 
     try {
       // Batch add to FAISS
+      log.i("ACCUMULATOR", "flush_to_provider", {
+        type: this.vectorProvider.constructor.name,
+        count,
+      });
       await this.vectorProvider.addBatch(this.pending);
 
       const elapsed = performance.now() - startTime;

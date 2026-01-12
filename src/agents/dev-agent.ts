@@ -1239,14 +1239,14 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             await provider.initialize(currentDir, projectHash, currentBranch);
           }
           this.parserAgent.setVectorProvider(provider);
-          log.d("DEVAGENT", "incr_vector_provider", { branch: currentBranch, layered: true });
+          log.i("DEVAGENT", "incr_vector_provider", { branch: currentBranch, layered: true });
         } else {
           const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
           const provider = await initializeFaissProvider();
           if (provider) {
             await provider.setProjectContext(projectHash, currentBranch);
             this.parserAgent.setVectorProvider(provider);
-            log.d("DEVAGENT", "incr_vector_provider", { branch: currentBranch, layered: false });
+            log.i("DEVAGENT", "incr_vector_provider", { branch: currentBranch, layered: false });
           }
         }
       } catch (e) {
@@ -1254,6 +1254,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       }
 
       // Configure EmbeddingGenerator for centralized mode (CRITICAL for incremental indexing)
+      log.d("DEVAGENT", "incr_embedding_config", {
+        provider: embeddingConfig.provider,
+        centralized: embeddingConfig.centralizedEmbeddings,
+        batchSize: embeddingConfig.batchSize,
+      });
       if (embeddingConfig.centralizedEmbeddings) {
         try {
           const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
@@ -1335,6 +1340,42 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
     const elapsed = Date.now() - startTime;
     log.i("DEVAGENT", "incr_reindex_done", { success: successCount, errors: errorCount, ms: elapsed });
+
+    // Flush any pending embeddings to FAISS
+    if (this.parserAgent) {
+      const accumulator = this.parserAgent.getAccumulator();
+      if (accumulator) {
+        const pendingCount = accumulator.getPendingCount();
+        if (pendingCount > 0) {
+          log.i("DEVAGENT", "Flushing incremental embeddings to FAISS", { pending: pendingCount });
+          try {
+            const flushed = await accumulator.flush();
+            log.i("DEVAGENT", "Incremental embeddings flushed", { flushed });
+          } catch (err) {
+            log.e("DEVAGENT", "Failed to flush incremental embeddings", { error: (err as Error).message });
+          }
+        }
+        // Also need to save the index to disk
+        try {
+          const configLoader = ConfigLoader.getInstance();
+          const embConfig = configLoader.getEmbeddingConfig();
+          const useLayeredIndex = embConfig.useLayeredIndex;
+
+          if (useLayeredIndex) {
+            const { getLayeredFaissProvider } = await import("../semantic/faiss/layered-faiss-provider.js");
+            const provider = getLayeredFaissProvider();
+            if ((provider as any).isInitialized) {
+              await provider.save();
+              log.i("DEVAGENT", "Saved layered FAISS index after incremental");
+            }
+          }
+        } catch (saveErr) {
+          log.w("DEVAGENT", "Failed to save FAISS index after incremental", {
+            error: (saveErr as Error).message,
+          });
+        }
+      }
+    }
 
     // INCREMENTAL: Kill workers only if memory > 500MB (keep alive for next changes)
     if (this.parserAgent) {
