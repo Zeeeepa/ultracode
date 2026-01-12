@@ -3,6 +3,9 @@
  *
  * Handles all Relationship CRUD operations: insert, get, find, delete.
  * Uses delegates for accessing shared client and context.
+ *
+ * v6: Layered branch support - reads from delta (current branch) + base branch,
+ * with tombstone filtering for deleted relationships on feature branches.
  */
 
 import type { BatchResult, Relationship, RelationType } from "../../types/storage.js";
@@ -17,16 +20,38 @@ import type { ClientGetter, ContextGetter } from "./types.js";
  */
 export type RowToRelationshipMapper = (row: unknown) => Relationship;
 
+/**
+ * Delegate type for adding tombstone when relationship is deleted on feature branch
+ */
+export type TombstoneAdder = (entityId: string, entityType: "entity" | "relationship") => Promise<void>;
+
+/**
+ * Delegate type for getting all tombstoned IDs for current branch
+ */
+export type TombstoneGetter = (entityType: "entity" | "relationship") => Promise<Set<string>>;
+
 // =============================================================================
 // RELATIONSHIP OPERATIONS CLASS
 // =============================================================================
 
 export class RelationshipOperations {
+  private tombstoneAdder?: TombstoneAdder;
+  private tombstoneGetter?: TombstoneGetter;
+
   constructor(
     private getClient: ClientGetter,
     private getContext: ContextGetter,
     private rowToRelationship: RowToRelationshipMapper,
   ) {}
+
+  /**
+   * Set tombstone delegates for layered branch support.
+   * Must be called after adapter initialization.
+   */
+  setTombstoneDelegates(adder: TombstoneAdder, getter: TombstoneGetter): void {
+    this.tombstoneAdder = adder;
+    this.tombstoneGetter = getter;
+  }
 
   /**
    * Insert a single relationship
@@ -136,30 +161,80 @@ export class RelationshipOperations {
   }
 
   /**
-   * Get all relationships for an entity (as source or target)
+   * Get all relationships for an entity (as source or target) (layered: delta + base - tombstones)
    */
   async getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]> {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    let sql = `
+    const { projectHash, branchName, baseBranch } = this.getContext();
+
+    // Simple case: no base branch
+    if (!baseBranch) {
+      let sql = `
+        SELECT * FROM relationships
+        WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
+      `;
+      const args: (string | number)[] = [projectHash, branchName, entityId, entityId];
+
+      if (type) {
+        sql += " AND type = ?";
+        args.push(type);
+      }
+
+      const result = await client.execute({ sql, args });
+      return result.rows.map((row) => this.rowToRelationship(row));
+    }
+
+    // Layered case
+    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("relationship") : new Set<string>();
+
+    // Get from delta
+    let deltaSql = `
       SELECT * FROM relationships
       WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
     `;
-    const args: (string | number)[] = [projectHash, branchName, entityId, entityId];
-
+    const deltaArgs: (string | number)[] = [projectHash, branchName, entityId, entityId];
     if (type) {
-      sql += " AND type = ?";
-      args.push(type);
+      deltaSql += " AND type = ?";
+      deltaArgs.push(type);
     }
 
-    const result = await client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToRelationship(row));
+    const deltaResult = await client.execute({ sql: deltaSql, args: deltaArgs });
+    const deltaRels = deltaResult.rows.map((row) => this.rowToRelationship(row));
+    const deltaIds = new Set(deltaRels.map((r) => r.id));
+
+    // Get from base
+    let baseSql = `
+      SELECT * FROM relationships
+      WHERE project_hash = ? AND branch_name = ? AND (from_id = ? OR to_id = ?)
+    `;
+    const baseArgs: (string | number)[] = [projectHash, baseBranch, entityId, entityId];
+    if (type) {
+      baseSql += " AND type = ?";
+      baseArgs.push(type);
+    }
+
+    const baseResult = await client.execute({ sql: baseSql, args: baseArgs });
+    const baseRels = baseResult.rows
+      .map((row) => this.rowToRelationship(row))
+      .filter((r) => !deltaIds.has(r.id) && !tombstones.has(r.id));
+
+    return [...deltaRels, ...baseRels];
   }
 
   /**
-   * Find relationships with complex filters
+   * Build filter clause for relationship type
+   */
+  private buildTypeFilter(types: RelationType | RelationType[] | undefined, args: (string | number)[]): string {
+    if (!types) return "";
+    const typeArray = Array.isArray(types) ? types : [types];
+    args.push(...typeArray);
+    return ` AND type IN (${typeArray.map(() => "?").join(",")})`;
+  }
+
+  /**
+   * Find relationships with complex filters (layered: delta + base - tombstones)
    */
   async findRelationships(query: {
     filters?: { relationshipType?: RelationType | RelationType[] };
@@ -169,24 +244,47 @@ export class RelationshipOperations {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    let sql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
-    const args: (string | number)[] = [projectHash, branchName];
+    const { projectHash, branchName, baseBranch } = this.getContext();
+    const limit = Math.min(query.limit || 100, 1000);
+    const offset = query.offset || 0;
 
-    if (query.filters?.relationshipType) {
-      const types = Array.isArray(query.filters.relationshipType)
-        ? query.filters.relationshipType
-        : [query.filters.relationshipType];
-      sql += ` AND type IN (${types.map(() => "?").join(",")})`;
-      args.push(...types);
+    // Simple case: no base branch
+    if (!baseBranch) {
+      const args: (string | number)[] = [projectHash, branchName];
+      let sql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
+      sql += this.buildTypeFilter(query.filters?.relationshipType, args);
+      sql += " LIMIT ? OFFSET ?";
+      args.push(limit, offset);
+
+      const result = await client.execute({ sql, args });
+      return result.rows.map((row) => this.rowToRelationship(row));
     }
 
-    const limit = Math.min(query.limit || 100, 1000);
-    sql += " LIMIT ? OFFSET ?";
-    args.push(limit, query.offset || 0);
+    // Layered case
+    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("relationship") : new Set<string>();
 
-    const result = await client.execute({ sql, args });
-    return result.rows.map((row) => this.rowToRelationship(row));
+    // Get from delta
+    const deltaArgs: (string | number)[] = [projectHash, branchName];
+    let deltaSql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
+    deltaSql += this.buildTypeFilter(query.filters?.relationshipType, deltaArgs);
+
+    const deltaResult = await client.execute({ sql: deltaSql, args: deltaArgs });
+    const deltaRels = deltaResult.rows.map((row) => this.rowToRelationship(row));
+    const deltaIds = new Set(deltaRels.map((r) => r.id));
+
+    // Get from base
+    const baseArgs: (string | number)[] = [projectHash, baseBranch];
+    let baseSql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
+    baseSql += this.buildTypeFilter(query.filters?.relationshipType, baseArgs);
+
+    const baseResult = await client.execute({ sql: baseSql, args: baseArgs });
+    const baseRels = baseResult.rows
+      .map((row) => this.rowToRelationship(row))
+      .filter((r) => !deltaIds.has(r.id) && !tombstones.has(r.id));
+
+    // Combine and apply limit/offset
+    const combined = [...deltaRels, ...baseRels];
+    return combined.slice(offset, offset + limit);
   }
 
   /**
