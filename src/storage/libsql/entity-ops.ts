@@ -8,6 +8,7 @@
  * with tombstone filtering for deleted entities on feature branches.
  */
 
+import { log } from "../../logging/index.js";
 import type { BatchResult, Entity, EntityType } from "../../types/storage.js";
 import type { ClientGetter, ContextGetter } from "./types.js";
 
@@ -184,6 +185,7 @@ export class EntityOperations {
     if (!client) throw new Error("Client not initialized");
 
     const { projectHash, branchName, baseBranch } = this.getContext();
+    log.w("ENTITY_OPS", "getEntity", { branch: branchName, base: baseBranch || "none" });
 
     // 1. Check tombstone first (if on feature branch)
     if (baseBranch && this.tombstoneGetter) {
@@ -289,6 +291,7 @@ export class EntityOperations {
     if (!client) throw new Error("Client not initialized");
 
     const { projectHash, branchName, baseBranch } = this.getContext();
+    log.w("ENTITY_OPS", "findEntities", { branch: branchName, base: baseBranch || "none" });
     const limit = Math.min(query.limit || 100, 1000);
     const offset = query.offset || 0;
 
@@ -475,13 +478,21 @@ export class EntityOperations {
   }
 
   /**
-   * Delete entity by ID
+   * Delete entity by ID.
+   * On feature branches with baseBranch set, adds tombstone instead of deleting.
    */
   async deleteEntity(id: string): Promise<void> {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+    const { projectHash, branchName, baseBranch } = this.getContext();
+
+    // On feature branch: add tombstone to hide entity from base
+    if (baseBranch && this.tombstoneAdder) {
+      await this.tombstoneAdder(id, "entity");
+    }
+
+    // Always delete from current branch (delta or base)
     await client.execute({
       sql: "DELETE FROM entities WHERE id = ? AND project_hash = ? AND branch_name = ?",
       args: [id, projectHash, branchName],
