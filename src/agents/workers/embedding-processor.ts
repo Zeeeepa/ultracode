@@ -96,6 +96,42 @@ export function setEmbeddingConfig(config: WorkerEmbeddingConfig): void {
 }
 
 /**
+ * Clear deduplication cache for specified files.
+ * Used during incremental indexing to force re-generation of embeddings
+ * for modified files.
+ */
+export function clearDeduplicationForFiles(filePaths: string[]): number {
+  if (filePaths.length === 0 || generatedEntityIds.size === 0) {
+    return 0;
+  }
+
+  let clearedCount = 0;
+  const pathsSet = new Set(filePaths);
+
+  // Entity IDs have format: ent:{filePath}:{type}:{name}
+  // We need to remove all IDs that contain any of the given file paths
+  for (const entityId of generatedEntityIds) {
+    // Extract file path from entity ID (after "ent:" prefix)
+    const idWithoutPrefix = entityId.startsWith("ent:") ? entityId.slice(4) : entityId;
+
+    // Check if any of the target file paths matches the start of the ID
+    for (const targetPath of pathsSet) {
+      if (idWithoutPrefix.startsWith(targetPath)) {
+        generatedEntityIds.delete(entityId);
+        clearedCount++;
+        break;
+      }
+    }
+  }
+
+  if (clearedCount > 0) {
+    workerLog("DEBUG", `Cleared deduplication cache for ${clearedCount} entities from ${filePaths.length} files`);
+  }
+
+  return clearedCount;
+}
+
+/**
  * Get embedding client
  */
 export function getEmbeddingClient(): any {
