@@ -316,6 +316,9 @@ export interface GraphStorage {
   getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]>;
   findRelationships(query: GraphQuery): Promise<Relationship[]>;
 
+  /** Get ALL relationships efficiently (single query, no batching) */
+  getAllRelationships(): Promise<Relationship[]>;
+
   // NEW: Alias for convenience (used by Chaos Analysis)
   getRelationships(sourceId: string, type?: RelationType): Promise<Relationship[]>;
 

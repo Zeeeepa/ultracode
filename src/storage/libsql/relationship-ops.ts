@@ -328,4 +328,54 @@ export class RelationshipOperations {
       args: [id, projectHash, branchName],
     });
   }
+
+
+  /**
+   * Get ALL relationships efficiently in a single query.
+   * Layered: returns delta + base - tombstones using CTE.
+   */
+  async getAllRelationships(): Promise<Relationship[]> {
+    const client = this.getClient();
+    if (!client) throw new Error("Client not initialized");
+
+    const { projectHash, branchName, baseBranch } = this.getContext();
+
+    // Simple case: no base branch - single query
+    if (!baseBranch) {
+      const result = await client.execute({
+        sql: "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?",
+        args: [projectHash, branchName],
+      });
+      return result.rows.map((row) => this.rowToRelationship(row));
+    }
+
+    // Layered case: single CTE query for delta + base - tombstones
+    const sql = `
+      WITH
+        delta AS (
+          SELECT * FROM relationships
+          WHERE project_hash = ?1 AND branch_name = ?2
+        ),
+        tombstone_ids AS (
+          SELECT entity_id FROM tombstones
+          WHERE project_hash = ?1 AND branch_name = ?2 AND entity_type = 'relationship'
+        ),
+        base_filtered AS (
+          SELECT * FROM relationships
+          WHERE project_hash = ?1 AND branch_name = ?3
+            AND id NOT IN (SELECT id FROM delta)
+            AND id NOT IN (SELECT entity_id FROM tombstone_ids)
+        )
+      SELECT * FROM delta
+      UNION ALL
+      SELECT * FROM base_filtered
+    `;
+
+    const result = await client.execute({
+      sql,
+      args: [projectHash, branchName, baseBranch],
+    });
+
+    return result.rows.map((row) => this.rowToRelationship(row));
+  }
 }

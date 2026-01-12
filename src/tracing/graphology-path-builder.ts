@@ -247,37 +247,12 @@ export class GraphologyPathBuilder {
 
   /**
    * Get all relationships from storage.
-   * Fetches in batches to work around query limits.
+   * Uses optimized single-query method.
    */
   private async getAllRelationships(): Promise<Relationship[]> {
-    const allRelationships: Relationship[] = [];
-    const batchSize = 1000;
-    let offset = 0;
-    let hasMore = true;
-    let batchNum = 0;
-
-    while (hasMore) {
-      const batch = await this.storage.findRelationships({
-        type: "relationship",
-        limit: batchSize,
-        offset,
-      });
-
-      batchNum++;
-      log.d("GRAPHPATH", "rel_batch", {
-        batch: batchNum,
-        count: batch.length,
-        offset,
-        total: allRelationships.length + batch.length,
-      });
-
-      allRelationships.push(...batch);
-      offset += batchSize;
-      hasMore = batch.length === batchSize;
-    }
-
-    log.d("GRAPHPATH", "rels_total", { count: allRelationships.length });
-    return allRelationships;
+    const relationships = await this.storage.getAllRelationships();
+    log.d("GRAPHPATH", "rels_total", { count: relationships.length });
+    return relationships;
   }
 
   /**
