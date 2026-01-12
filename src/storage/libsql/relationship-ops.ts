@@ -234,7 +234,18 @@ export class RelationshipOperations {
   }
 
   /**
+   * Build type filter for CTE (static SQL, no parameter mutation)
+   */
+  private buildTypeFilterForCTE(types: RelationType | RelationType[] | undefined): string {
+    if (!types) return "";
+    const typeArray = Array.isArray(types) ? types : [types];
+    const quoted = typeArray.map((t) => `'${t}'`).join(",");
+    return `AND type IN (${quoted})`;
+  }
+
+  /**
    * Find relationships with complex filters (layered: delta + base - tombstones)
+   * Uses CTE for efficient layered queries with proper LIMIT/OFFSET at SQL level
    */
   async findRelationships(query: {
     filters?: { relationshipType?: RelationType | RelationType[] };
@@ -260,31 +271,40 @@ export class RelationshipOperations {
       return result.rows.map((row) => this.rowToRelationship(row));
     }
 
-    // Layered case
-    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("relationship") : new Set<string>();
+    // Layered case: use CTE for efficient query with SQL-level LIMIT/OFFSET
+    const typeFilter = this.buildTypeFilterForCTE(query.filters?.relationshipType);
 
-    // Get from delta
-    const deltaArgs: (string | number)[] = [projectHash, branchName];
-    let deltaSql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
-    deltaSql += this.buildTypeFilter(query.filters?.relationshipType, deltaArgs);
+    const sql = `
+      WITH
+        delta AS (
+          SELECT * FROM relationships
+          WHERE project_hash = ?1 AND branch_name = ?2 ${typeFilter}
+        ),
+        tombstone_ids AS (
+          SELECT entity_id FROM tombstones
+          WHERE project_hash = ?1 AND branch_name = ?2 AND entity_type = 'relationship'
+        ),
+        base_filtered AS (
+          SELECT * FROM relationships
+          WHERE project_hash = ?1 AND branch_name = ?3 ${typeFilter}
+            AND id NOT IN (SELECT id FROM delta)
+            AND id NOT IN (SELECT entity_id FROM tombstone_ids)
+        ),
+        layered AS (
+          SELECT * FROM delta
+          UNION ALL
+          SELECT * FROM base_filtered
+        )
+      SELECT * FROM layered
+      LIMIT ?4 OFFSET ?5
+    `;
 
-    const deltaResult = await client.execute({ sql: deltaSql, args: deltaArgs });
-    const deltaRels = deltaResult.rows.map((row) => this.rowToRelationship(row));
-    const deltaIds = new Set(deltaRels.map((r) => r.id));
+    const result = await client.execute({
+      sql,
+      args: [projectHash, branchName, baseBranch, limit, offset],
+    });
 
-    // Get from base
-    const baseArgs: (string | number)[] = [projectHash, baseBranch];
-    let baseSql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
-    baseSql += this.buildTypeFilter(query.filters?.relationshipType, baseArgs);
-
-    const baseResult = await client.execute({ sql: baseSql, args: baseArgs });
-    const baseRels = baseResult.rows
-      .map((row) => this.rowToRelationship(row))
-      .filter((r) => !deltaIds.has(r.id) && !tombstones.has(r.id));
-
-    // Combine and apply limit/offset
-    const combined = [...deltaRels, ...baseRels];
-    return combined.slice(offset, offset + limit);
+    return result.rows.map((row) => this.rowToRelationship(row));
   }
 
   /**
