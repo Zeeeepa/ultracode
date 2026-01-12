@@ -1221,6 +1221,37 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     if (embeddingConfig && this.parserAgent) {
       this.parserAgent.setEmbeddingConfig(embeddingConfig);
       log.d("DEVAGENT", "incr_embedding_config", { provider: embeddingConfig.provider });
+
+      // Configure vector provider for incremental indexing
+      const configLoader = ConfigLoader.getInstance();
+      const embConfig = configLoader.getEmbeddingConfig();
+      const useLayeredIndex = embConfig.useLayeredIndex;
+      const currentDir = getCurrentIndexingDirectory() || process.cwd();
+      const { getProjectHash, getCurrentGitBranchOrDefault } = await import("../shared/storage-paths.js");
+      const projectHash = getProjectHash(currentDir);
+      const currentBranch = getCurrentGitBranchOrDefault(currentDir);
+
+      try {
+        if (useLayeredIndex) {
+          const { getLayeredFaissProvider } = await import("../semantic/faiss/layered-faiss-provider.js");
+          const provider = getLayeredFaissProvider();
+          if (!(provider as any).isInitialized) {
+            await provider.initialize(currentDir, projectHash, currentBranch);
+          }
+          this.parserAgent.setVectorProvider(provider);
+          log.d("DEVAGENT", "incr_vector_provider", { branch: currentBranch, layered: true });
+        } else {
+          const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
+          const provider = await initializeFaissProvider();
+          if (provider) {
+            await provider.setProjectContext(projectHash, currentBranch);
+            this.parserAgent.setVectorProvider(provider);
+            log.d("DEVAGENT", "incr_vector_provider", { branch: currentBranch, layered: false });
+          }
+        }
+      } catch (e) {
+        log.w("DEVAGENT", "incr_vector_provider_fail", { error: String(e) });
+      }
     }
 
     // Process all supported files in one batch for efficiency
