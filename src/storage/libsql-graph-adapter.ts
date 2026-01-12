@@ -727,6 +727,8 @@ export class LibSQLGraphAdapter {
 
   deleteRelationship = (id: string): Promise<void> => this.relationshipOps.deleteRelationship(id);
 
+  getAllRelationships = (): Promise<Relationship[]> => this.relationshipOps.getAllRelationships();
+
   // ===========================================================================
   // FILE/METADATA OPERATIONS (delegated to MetadataOperations)
   // ===========================================================================
