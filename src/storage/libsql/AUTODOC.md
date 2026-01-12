@@ -10,8 +10,8 @@
 |------|------|-------------|----------|
 | `VectorToStringFn` | type | Функция преобразования Float32Array в SQL-совместимую строку | [→ cache-ops.ts:18] |
 | `CacheOperations` | class | Класс для управления глобальным кэшем встраиваний по хешу | [→ cache-ops.ts:24-160] |
-| `RowToEntityMapper` | type | Тип-делегат преобразования строки БД в сущность | [→ entity-ops.ts:21] |
-| `EntityOperations` | class | Класс для операций CRUD сущностей проекта | [→ entity-ops.ts:21-21] |
+| `RowToEntityMapper` | type | Тип-делегат преобразования строки БД в сущность | [→ entity-ops.ts:22] |
+| `EntityOperations` | class | Класс для операций CRUD сущностей проекта | [→ entity-ops.ts:22-22] |
 | `MetadataOperations` | class | Класс для операций метаданных файлов и проектов | [→ metadata-ops.ts:16-449] |
 | `RowToRelationshipMapper` | type | Тип-делегат преобразования строки БД в связь | [→ relationship-ops.ts:21] |
 | `RelationshipOperations` | class | Класс для операций CRUD связей между сущностями | [→ relationship-ops.ts:21-21] |

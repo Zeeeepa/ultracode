@@ -288,13 +288,21 @@ export class RelationshipOperations {
   }
 
   /**
-   * Delete relationship by ID
+   * Delete relationship by ID.
+   * On feature branches with baseBranch set, adds tombstone instead of deleting.
    */
   async deleteRelationship(id: string): Promise<void> {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+    const { projectHash, branchName, baseBranch } = this.getContext();
+
+    // On feature branch: add tombstone to hide relationship from base
+    if (baseBranch && this.tombstoneAdder) {
+      await this.tombstoneAdder(id, "relationship");
+    }
+
+    // Always delete from current branch (delta or base)
     await client.execute({
       sql: "DELETE FROM relationships WHERE id = ? AND project_hash = ? AND branch_name = ?",
       args: [id, projectHash, branchName],
