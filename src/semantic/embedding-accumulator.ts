@@ -20,7 +20,7 @@
 import { log } from "../logging/index.js";
 import type { EmbeddingPoolStats, VectorEmbedding } from "../types/semantic.js";
 import type { EmbeddingGenerator } from "./embedding-generator.js";
-import type { FaissProvider } from "./faiss/faiss-provider.js";
+import type { IVectorProvider } from "./faiss/types.js";
 
 // =============================================================================
 // Types
@@ -74,7 +74,7 @@ const DEFAULT_CONFIG: AccumulatorConfig = {
 
 export class EmbeddingAccumulator {
   private config: AccumulatorConfig;
-  private faissProvider: FaissProvider | null = null;
+  private vectorProvider: IVectorProvider | null = null;
   private embeddingGenerator: EmbeddingGenerator | null = null;
 
   // Accumulated embeddings (ready for FAISS)
@@ -114,10 +114,17 @@ export class EmbeddingAccumulator {
   }
 
   /**
-   * Set FAISS provider for flushing
+   * Set vector provider for flushing (works with both FaissProvider and LayeredFaissProvider)
    */
-  setFaissProvider(provider: FaissProvider): void {
-    this.faissProvider = provider;
+  setVectorProvider(provider: IVectorProvider): void {
+    this.vectorProvider = provider;
+  }
+
+  /**
+   * @deprecated Use setVectorProvider instead
+   */
+  setFaissProvider(provider: IVectorProvider): void {
+    this.setVectorProvider(provider);
   }
 
   /**
@@ -147,7 +154,7 @@ export class EmbeddingAccumulator {
 
     log.d("ACCUMULATOR", "addBinaryEmbeddings", {
       count: embeddings.length,
-      hasFaissProvider: !!this.faissProvider,
+      hasFaissProvider: !!this.vectorProvider,
     });
 
     // Convert binary to VectorEmbedding format
@@ -270,9 +277,9 @@ export class EmbeddingAccumulator {
   ): Promise<{ embeddings: VectorEmbedding[]; count: number } | null> {
     // Filter out texts that already have embeddings in FAISS
     let filteredBatch = batch;
-    if (this.faissProvider) {
+    if (this.vectorProvider) {
       const ids = batch.map((t) => t.id);
-      const existingIds = this.faissProvider.getExistingIds(ids);
+      const existingIds = this.vectorProvider.getExistingIds(ids);
       if (existingIds.size > 0) {
         filteredBatch = batch.filter((t) => !existingIds.has(t.id));
         if (filteredBatch.length === 0) {
@@ -437,7 +444,7 @@ export class EmbeddingAccumulator {
 
     log.d("ACCUMULATOR", "flush() called", {
       pending: this.pending.length,
-      hasFaissProvider: !!this.faissProvider,
+      hasFaissProvider: !!this.vectorProvider,
       accumulated: this.stats.accumulated,
       flushed: this.stats.flushed,
     });
@@ -446,7 +453,7 @@ export class EmbeddingAccumulator {
       return 0;
     }
 
-    if (!this.faissProvider) {
+    if (!this.vectorProvider) {
       log.w("ACCUMULATOR", "No FAISS provider set, cannot flush");
       return 0;
     }
@@ -456,7 +463,7 @@ export class EmbeddingAccumulator {
 
     try {
       // Batch add to FAISS
-      await this.faissProvider.addBatch(this.pending);
+      await this.vectorProvider.addBatch(this.pending);
 
       const elapsed = performance.now() - startTime;
       this.stats.flushed += count;

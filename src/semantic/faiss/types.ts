@@ -11,6 +11,27 @@
 
 export type FaissIndexType = "flat" | "hnsw" | "ivf" | "ivfpq";
 
+// =============================================================================
+// Common Provider Interface (used by EmbeddingAccumulator)
+// =============================================================================
+
+import type { VectorEmbedding } from "../../types/semantic.js";
+
+/**
+ * Common interface for FAISS providers (FaissProvider and LayeredFaissProvider).
+ * Used by EmbeddingAccumulator to add embeddings regardless of which provider is active.
+ */
+export interface IVectorProvider {
+  /** Add a batch of embeddings to the index */
+  addBatch(embeddings: VectorEmbedding[]): Promise<unknown>;
+  /** Check which IDs already exist in the index */
+  getExistingIds(ids: string[]): Set<string>;
+  /** Remove vectors by ID */
+  remove(ids: string[]): Promise<unknown>;
+  /** Save the index to disk */
+  save(): Promise<void>;
+}
+
 export interface FaissIndexConfig {
   /** Vector dimensions (must match embedding model) */
   dimensions: number;

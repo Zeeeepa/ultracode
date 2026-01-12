@@ -698,7 +698,7 @@ export class VectorStore {
       }
 
       // Remove old embedding
-      await provider.remove(id);
+      await provider.remove([id]);
 
       // Add new embedding
       await provider.add({
@@ -738,7 +738,7 @@ export class VectorStore {
   async delete(id: string): Promise<void> {
     if (this.useLayeredIndex) {
       const provider = await this.ensureLayeredProviderInitialized();
-      await provider.remove(id);
+      await provider.remove([id]);
     } else {
       const provider = this.ensureFaissProvider();
       await provider.remove([id]);
@@ -796,10 +796,28 @@ export class VectorStore {
 
   /**
    * Get the underlying FAISS provider for direct access
-   * Used by EmbeddingAccumulator for batch flush operations
+   * @deprecated Use getActiveProvider() instead
    */
   getFaissProvider(): FaissProvider | null {
     return this.faissProvider;
+  }
+
+  /**
+   * Get the active vector provider (FaissProvider or LayeredFaissProvider).
+   * Used by EmbeddingAccumulator for batch flush operations.
+   */
+  getActiveProvider(): import("./faiss/types.js").IVectorProvider | null {
+    if (this.useLayeredIndex && this.layeredProvider) {
+      return this.layeredProvider;
+    }
+    return this.faissProvider;
+  }
+
+  /**
+   * Check if layered index mode is enabled
+   */
+  isLayeredMode(): boolean {
+    return this.useLayeredIndex;
   }
 
   /**
