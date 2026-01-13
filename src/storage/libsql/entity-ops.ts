@@ -358,8 +358,11 @@ export class EntityOperations {
     }
 
     if (options.filePath) {
-      sql += " AND file_path = ?";
-      args.push(options.filePath);
+      // Support partial path matching (e.g., "src/index.ts" matches "D:\...\src\index.ts")
+      // Handle both / and \ path separators
+      const normalizedPath = options.filePath.replace(/\\/g, "/");
+      sql += " AND (file_path LIKE ? OR file_path LIKE ?)";
+      args.push(`%${normalizedPath}`, `%${normalizedPath.replace(/\//g, "\\")}`);
     }
 
     return sql;

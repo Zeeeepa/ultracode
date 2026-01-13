@@ -635,15 +635,37 @@ export class PathBuilder {
   /**
    * Find entity by name using semantic search
    * Decomposed query for 512-token models
+   *
+   * @param name - Entity name to search for
+   * @param type - Optional entity type filter
+   * @param filePath - Optional file path filter (partial match supported)
    */
-  async findEntityByName(name: string, type?: string): Promise<Entity | null> {
-    // Try exact match first
+  async findEntityByName(name: string, type?: string, filePath?: string): Promise<Entity | null> {
+    // If filePath provided, search with higher limit and filter at SQL level
     const entities = await this.storage.searchEntities({
       namePattern: name,
       types: type ? [type as any] : undefined,
+      filePath: filePath, // Pass to SQL for efficient filtering
+      limit: filePath ? 1000 : 100, // Higher limit when filtering by file
     });
 
     if (entities.length > 0) {
+      // If filePath provided, do additional in-memory filtering for partial matches
+      if (filePath) {
+        // Normalize path for comparison (handle both / and \)
+        const normalizedFilter = filePath.replace(/\\/g, "/").toLowerCase();
+        const fileMatches = entities.filter((e) => {
+          const entityPath = (e.filePath || "").replace(/\\/g, "/").toLowerCase();
+          return entityPath.includes(normalizedFilter) || entityPath.endsWith(normalizedFilter);
+        });
+
+        if (fileMatches.length > 0) {
+          // Return best match from file-filtered results
+          const exact = fileMatches.find((e) => e.name === name);
+          return exact || fileMatches[0]!;
+        }
+      }
+
       // Return best match (exact name match preferred)
       const exact = entities.find((e) => e.name === name);
       return exact || entities[0]!;
