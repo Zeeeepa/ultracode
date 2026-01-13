@@ -107,9 +107,18 @@ async function main() {
   npuAttMask.fill(0n, seqLen);
   const npuTokType = new BigInt64Array(staticLen).fill(0n);
 
-  npuInfer.setTensor(npuCompiled.inputs[0], new ov.Tensor(ov.element.i64, [1, staticLen], npuInputIds));
-  npuInfer.setTensor(npuCompiled.inputs[1], new ov.Tensor(ov.element.i64, [1, staticLen], npuAttMask));
-  npuInfer.setTensor(npuCompiled.inputs[2], new ov.Tensor(ov.element.i64, [1, staticLen], npuTokType));
+  npuInfer.setTensor(
+    npuCompiled.inputs[0],
+    new ov.Tensor(ov.element.i64, [1, staticLen], npuInputIds),
+  );
+  npuInfer.setTensor(
+    npuCompiled.inputs[1],
+    new ov.Tensor(ov.element.i64, [1, staticLen], npuAttMask),
+  );
+  npuInfer.setTensor(
+    npuCompiled.inputs[2],
+    new ov.Tensor(ov.element.i64, [1, staticLen], npuTokType),
+  );
 
   console.log("Running NPU inference...");
   const t2 = Date.now();

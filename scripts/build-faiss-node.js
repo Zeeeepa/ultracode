@@ -241,7 +241,9 @@ async function installCMake() {
   await downloadFile(CONFIG.cmakeUrl, installerPath);
 
   log("Running CMake installer (silent)...");
-  exec(`msiexec /i "${installerPath}" /quiet /norestart ADD_CMAKE_TO_PATH=System`, { silent: true });
+  exec(`msiexec /i "${installerPath}" /quiet /norestart ADD_CMAKE_TO_PATH=System`, {
+    silent: true,
+  });
 
   log("Waiting for installation to complete...");
   await sleep(30000);

@@ -49,9 +49,8 @@ async function testDevice(core, model, device, seqLen) {
     console.log(`  Valid output: ${valid}`);
 
     return { avg, min, valid };
-
   } catch (e) {
-    console.log(`  ✗ Error: ${e.message.split('\n')[0]}`);
+    console.log(`  ✗ Error: ${e.message.split("\n")[0]}`);
     return null;
   }
 }
@@ -64,7 +63,13 @@ async function main() {
   console.log("Devices:", devices);
 
   // Test INT8 OpenVINO model on CPU and GPUs
-  const modelPath = path.join(__dirname, "..", "models", "all-MiniLM-L6-v2-openvino-int8", "openvino_model_qint8_quantized.xml");
+  const modelPath = path.join(
+    __dirname,
+    "..",
+    "models",
+    "all-MiniLM-L6-v2-openvino-int8",
+    "openvino_model_qint8_quantized.xml",
+  );
   console.log("\nModel: MiniLM INT8 (OpenVINO)");
   console.log(`Path: ${modelPath}`);
 

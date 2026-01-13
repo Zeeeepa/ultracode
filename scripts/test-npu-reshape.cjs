@@ -12,7 +12,7 @@ async function main() {
   console.log("Devices:", devices);
 
   const modelPath = "D:\\github\\ultrascript-tools-mcp\\models\\all-MiniLM-L6-v2\\model.onnx";
-  const STATIC_SEQ_LEN = 64;  // Fixed sequence length for NPU
+  const STATIC_SEQ_LEN = 64; // Fixed sequence length for NPU
 
   // Test data
   const inputIds = new BigInt64Array(STATIC_SEQ_LEN);
@@ -60,9 +60,9 @@ async function main() {
   try {
     // Use partial shape specification
     npuModel.reshape({
-      "input_ids": [1, STATIC_SEQ_LEN],
-      "attention_mask": [1, STATIC_SEQ_LEN],
-      "token_type_ids": [1, STATIC_SEQ_LEN]
+      input_ids: [1, STATIC_SEQ_LEN],
+      attention_mask: [1, STATIC_SEQ_LEN],
+      token_type_ids: [1, STATIC_SEQ_LEN],
     });
     console.log("Model reshaped successfully");
   } catch (e) {
@@ -71,7 +71,11 @@ async function main() {
     // Try alternative reshape syntax
     console.log("Trying alternative reshape...");
     try {
-      npuModel.reshape([[1, STATIC_SEQ_LEN], [1, STATIC_SEQ_LEN], [1, STATIC_SEQ_LEN]]);
+      npuModel.reshape([
+        [1, STATIC_SEQ_LEN],
+        [1, STATIC_SEQ_LEN],
+        [1, STATIC_SEQ_LEN],
+      ]);
       console.log("Alternative reshape succeeded");
     } catch (e2) {
       console.log("Alternative reshape also failed:", e2.message);
@@ -121,7 +125,7 @@ async function main() {
   console.log("\n=== Done! ===");
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error("Error:", e);
   process.exit(1);
 });

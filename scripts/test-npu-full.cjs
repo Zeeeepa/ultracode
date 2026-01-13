@@ -24,23 +24,23 @@ async function main() {
   console.log(`CPU compiled in ${Date.now() - t0}ms`);
 
   // Show inputs
-  console.log("Inputs:", cpuModel.inputs.map(i => `${i.anyName}[${i.shape}]`).join(", "));
-  console.log("Outputs:", cpuModel.outputs.map(o => `${o.anyName}[${o.shape}]`).join(", "));
+  console.log("Inputs:", cpuModel.inputs.map((i) => `${i.anyName}[${i.shape}]`).join(", "));
+  console.log("Outputs:", cpuModel.outputs.map((o) => `${o.anyName}[${o.shape}]`).join(", "));
 
   const cpuInfer = cpuModel.createInferRequest();
 
   // Test data
   const seqLen = 16;
   const inputIds = new BigInt64Array(seqLen);
-  inputIds[0] = 101n;  // [CLS]
+  inputIds[0] = 101n; // [CLS]
   inputIds[1] = 7592n; // hello
   inputIds[2] = 1010n; // ,
   inputIds[3] = 2088n; // world
-  inputIds[4] = 102n;  // [SEP]
+  inputIds[4] = 102n; // [SEP]
   // rest is padding (0)
 
   const attMask = new BigInt64Array(seqLen);
-  attMask.fill(1n, 0, 5);  // first 5 tokens are real
+  attMask.fill(1n, 0, 5); // first 5 tokens are real
   // rest is 0 (padding)
 
   const tokType = new BigInt64Array(seqLen).fill(0n);
@@ -62,7 +62,9 @@ async function main() {
     cpuTimes.push(Date.now() - t0);
   }
   const cpuAvg = cpuTimes.reduce((a, b) => a + b) / cpuTimes.length;
-  console.log(`  Avg: ${cpuAvg.toFixed(2)}ms, Min: ${Math.min(...cpuTimes)}ms, Max: ${Math.max(...cpuTimes)}ms`);
+  console.log(
+    `  Avg: ${cpuAvg.toFixed(2)}ms, Min: ${Math.min(...cpuTimes)}ms, Max: ${Math.max(...cpuTimes)}ms`,
+  );
 
   // Get output
   const cpuOut = cpuInfer.getOutputTensor(0);
@@ -85,7 +87,10 @@ async function main() {
   }
 
   const cpuEmbed = meanPool(cpuData, seqLen, hiddenDim, 5);
-  console.log("CPU embedding (first 5 values):", Array.from(cpuEmbed.slice(0, 5)).map(v => v.toFixed(4)));
+  console.log(
+    "CPU embedding (first 5 values):",
+    Array.from(cpuEmbed.slice(0, 5)).map((v) => v.toFixed(4)),
+  );
 
   // === NPU Test ===
   if (!devices.includes("NPU")) {
@@ -112,7 +117,7 @@ async function main() {
     console.log("Retrying with NETWORK_INPUT_STATIC_SHAPES...");
     try {
       npuCompiled = await core.compileModel(npuModel, "NPU", {
-        "NPU_COMPILATION_MODE": "DefaultCompilation",
+        NPU_COMPILATION_MODE: "DefaultCompilation",
       });
       console.log(`NPU compiled in ${Date.now() - t0}ms`);
     } catch (e2) {
@@ -147,7 +152,9 @@ async function main() {
     npuTimes.push(Date.now() - t0);
   }
   const npuAvg = npuTimes.reduce((a, b) => a + b) / npuTimes.length;
-  console.log(`  Avg: ${npuAvg.toFixed(2)}ms, Min: ${Math.min(...npuTimes)}ms, Max: ${Math.max(...npuTimes)}ms`);
+  console.log(
+    `  Avg: ${npuAvg.toFixed(2)}ms, Min: ${Math.min(...npuTimes)}ms, Max: ${Math.max(...npuTimes)}ms`,
+  );
 
   // Get output
   const npuOut = npuInfer.getOutputTensor(0);
@@ -155,7 +162,10 @@ async function main() {
   const npuData = new Float32Array(npuOut.data);
 
   const npuEmbed = meanPool(npuData, seqLen, hiddenDim, 5);
-  console.log("NPU embedding (first 5 values):", Array.from(npuEmbed.slice(0, 5)).map(v => v.toFixed(4)));
+  console.log(
+    "NPU embedding (first 5 values):",
+    Array.from(npuEmbed.slice(0, 5)).map((v) => v.toFixed(4)),
+  );
 
   // Compare embeddings
   let diff = 0;
@@ -168,7 +178,7 @@ async function main() {
   console.log("\n=== Test Complete! ===");
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error("Error:", e.message);
   console.error(e.stack);
   process.exit(1);

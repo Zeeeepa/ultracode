@@ -11,7 +11,13 @@ async function main() {
   const core = new ov.Core();
   console.log("Devices:", core.getAvailableDevices());
 
-  const modelPath = path.join(__dirname, "..", "models", "bge-small-en-v1.5-int8", "model_int8.onnx");
+  const modelPath = path.join(
+    __dirname,
+    "..",
+    "models",
+    "bge-small-en-v1.5-int8",
+    "model_int8.onnx",
+  );
   console.log("Model:", modelPath);
 
   try {
@@ -56,8 +62,11 @@ async function main() {
     const output = infer.getOutputTensor(0);
     const data = new Float32Array(output.data);
     console.log(`Output: ${data.length} values`);
-    console.log(`First 3: [${Array.from(data.slice(0, 3)).map(v => v.toFixed(4)).join(", ")}]`);
-
+    console.log(
+      `First 3: [${Array.from(data.slice(0, 3))
+        .map((v) => v.toFixed(4))
+        .join(", ")}]`,
+    );
   } catch (e) {
     console.log(`\n✗ Error: ${e.message}`);
     if (e.message.includes("Select") || e.message.includes("masked_fill")) {

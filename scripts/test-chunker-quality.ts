@@ -13,14 +13,19 @@ async function main() {
   const lines = indexTs.split("\n");
 
   // Extract executeToolCall
-  const startLine = lines.findIndex(l => l.includes("async function executeToolCall"));
-  let braceCount = 0, foundStart = false, endLine = startLine;
+  const startLine = lines.findIndex((l) => l.includes("async function executeToolCall"));
+  let braceCount = 0,
+    foundStart = false,
+    endLine = startLine;
   for (let i = startLine; i < lines.length; i++) {
     const line = lines[i] ?? "";
     braceCount += (line.match(/{/g) || []).length;
     braceCount -= (line.match(/}/g) || []).length;
     if (braceCount > 0) foundStart = true;
-    if (foundStart && braceCount === 0) { endLine = i; break; }
+    if (foundStart && braceCount === 0) {
+      endLine = i;
+      break;
+    }
   }
   const functionCode = lines.slice(startLine, endLine + 1).join("\n");
 
@@ -35,7 +40,7 @@ async function main() {
 
   // 1. Check header preservation
   console.log("=== 1. Сохранение header в каждом чанке ===");
-  const allHaveHeader = chunks.every(c => c.content.includes(header));
+  const allHaveHeader = chunks.every((c) => c.content.includes(header));
   console.log(`Все чанки имеют header: ${allHaveHeader ? "✅ Да" : "❌ Нет"}`);
 
   // 2. Check overlap between consecutive chunks
@@ -49,7 +54,9 @@ async function main() {
     const hasOverlap = curr.startLine <= prev.endLine;
     const overlapLines = hasOverlap ? prev.endLine - curr.startLine + 1 : 0;
 
-    console.log(`  Чанк ${i-1} → ${i}: строки ${prev.startLine}-${prev.endLine} → ${curr.startLine}-${curr.endLine}`);
+    console.log(
+      `  Чанк ${i - 1} → ${i}: строки ${prev.startLine}-${prev.endLine} → ${curr.startLine}-${curr.endLine}`,
+    );
     console.log(`    Overlap: ${overlapLines} строк ${hasOverlap ? "✅" : "⚠️ нет overlap"}`);
 
     if (!hasOverlap) overlapIssues++;
@@ -65,20 +72,26 @@ async function main() {
     const startLineContent = codeLines[chunk.startLine]?.trim() ?? "";
 
     // Good boundaries: empty lines, closing braces, comments
-    const goodEnd = endLineContent === "" ||
-                    endLineContent === "}" ||
-                    endLineContent.startsWith("//") ||
-                    endLineContent.endsWith(";") ||
-                    endLineContent === "break;";
+    const goodEnd =
+      endLineContent === "" ||
+      endLineContent === "}" ||
+      endLineContent.startsWith("//") ||
+      endLineContent.endsWith(";") ||
+      endLineContent === "break;";
 
-    const goodStart = startLineContent === "" ||
-                      startLineContent.startsWith("//") ||
-                      startLineContent.startsWith("case ") ||
-                      startLineContent.startsWith("default:");
+    const goodStart =
+      startLineContent === "" ||
+      startLineContent.startsWith("//") ||
+      startLineContent.startsWith("case ") ||
+      startLineContent.startsWith("default:");
 
     console.log(`  Чанк ${i}:`);
-    console.log(`    Начало (${chunk.startLine}): "${startLineContent.slice(0, 50)}..." ${goodStart ? "✅" : "⚠️"}`);
-    console.log(`    Конец (${chunk.endLine}): "${endLineContent.slice(0, 50)}..." ${goodEnd ? "✅" : "⚠️"}`);
+    console.log(
+      `    Начало (${chunk.startLine}): "${startLineContent.slice(0, 50)}..." ${goodStart ? "✅" : "⚠️"}`,
+    );
+    console.log(
+      `    Конец (${chunk.endLine}): "${endLineContent.slice(0, 50)}..." ${goodEnd ? "✅" : "⚠️"}`,
+    );
   }
 
   // 4. Check for mid-statement cuts
@@ -90,11 +103,12 @@ async function main() {
     const lastLine = content.split("\n").pop()?.trim() ?? "";
 
     // Bad: ends with opening brace, comma, operator
-    const badEnding = lastLine.endsWith("{") ||
-                      lastLine.endsWith(",") ||
-                      lastLine.endsWith("(") ||
-                      lastLine.endsWith("&&") ||
-                      lastLine.endsWith("||");
+    const badEnding =
+      lastLine.endsWith("{") ||
+      lastLine.endsWith(",") ||
+      lastLine.endsWith("(") ||
+      lastLine.endsWith("&&") ||
+      lastLine.endsWith("||");
 
     if (badEnding) {
       midStatementCuts++;
@@ -111,11 +125,15 @@ async function main() {
 
   for (let i = 0; i < 3; i++) {
     const chunk = chunks[i]!;
-    console.log(`\n--- Чанк ${i} (${chunk.tokenCount} токенов, строки ${chunk.startLine}-${chunk.endLine}) ---`);
+    console.log(
+      `\n--- Чанк ${i} (${chunk.tokenCount} токенов, строки ${chunk.startLine}-${chunk.endLine}) ---`,
+    );
 
     // Show first and last 5 lines of actual code (without header)
     const contentLines = chunk.content.split("\n");
-    const codeStart = contentLines.findIndex(l => !l.startsWith("executeToolCall") && !l.startsWith("// ..."));
+    const codeStart = contentLines.findIndex(
+      (l) => !l.startsWith("executeToolCall") && !l.startsWith("// ..."),
+    );
 
     console.log("Начало:");
     for (let j = codeStart; j < Math.min(codeStart + 4, contentLines.length); j++) {
@@ -139,13 +157,13 @@ async function main() {
   const chunkCases = new Set<string>();
   for (const chunk of chunks) {
     const cases = chunk.content.match(/case ["'][\w-]+["']:/g) || [];
-    cases.forEach(c => chunkCases.add(c));
+    cases.forEach((c) => chunkCases.add(c));
   }
 
   console.log(`  Оригинал: ${originalCases.length} case statements`);
   console.log(`  В чанках: ${chunkCases.size} уникальных case statements`);
 
-  const missingCases = originalCases.filter(c => !chunkCases.has(c));
+  const missingCases = originalCases.filter((c) => !chunkCases.has(c));
   if (missingCases.length === 0) {
     console.log("  ✅ Все case statements сохранены!");
   } else {

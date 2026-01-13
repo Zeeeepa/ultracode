@@ -14,7 +14,17 @@
  */
 
 import { execSync, spawn, spawnSync } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, renameSync, unlinkSync, chmodSync, readdirSync, statSync, rmSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+  chmodSync,
+  readdirSync,
+  statSync,
+  rmSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
@@ -52,7 +62,8 @@ function printError(msg: string): void {
  */
 function getOVMSDir(): string {
   if (process.platform === "win32") {
-    const localAppData = process.env.LOCALAPPDATA || join(process.env.USERPROFILE || "", "AppData", "Local");
+    const localAppData =
+      process.env.LOCALAPPDATA || join(process.env.USERPROFILE || "", "AppData", "Local");
     return join(localAppData, "UltraScriptTools", "ovms");
   } else {
     const home = process.env.HOME || "/tmp";
@@ -65,7 +76,8 @@ function getOVMSDir(): string {
  */
 function getModelsDir(): string {
   if (process.platform === "win32") {
-    const localAppData = process.env.LOCALAPPDATA || join(process.env.USERPROFILE || "", "AppData", "Local");
+    const localAppData =
+      process.env.LOCALAPPDATA || join(process.env.USERPROFILE || "", "AppData", "Local");
     return join(localAppData, "UltraScriptTools", "models");
   } else {
     const home = process.env.HOME || "/tmp";
@@ -90,7 +102,9 @@ function getDownloadUrl(): { url: string; filename: string } {
     // Weekly build for Linux with Python support (NPU/GPU)
     let ubuntuVersion = "24";
     try {
-      const osRelease = execSync("cat /etc/os-release 2>/dev/null || echo ''", { encoding: "utf-8" });
+      const osRelease = execSync("cat /etc/os-release 2>/dev/null || echo ''", {
+        encoding: "utf-8",
+      });
       if (osRelease.includes("22.04") || osRelease.includes("jammy")) {
         ubuntuVersion = "22";
       }
@@ -179,11 +193,15 @@ async function extractArchive(archivePath: string, destDir: string): Promise<voi
       const winDest = destDir.replace(/\//g, "\\");
 
       // Use spawnSync with args array to avoid path escaping issues
-      const result = spawnSync("powershell", [
-        "-NoProfile",
-        "-Command",
-        `Expand-Archive -Path '${winArchive}' -DestinationPath '${winDest}' -Force`
-      ], { stdio: "pipe", windowsHide: true });
+      const result = spawnSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          `Expand-Archive -Path '${winArchive}' -DestinationPath '${winDest}' -Force`,
+        ],
+        { stdio: "pipe", windowsHide: true },
+      );
 
       if (result.status !== 0) {
         const stderr = result.stderr?.toString() || "";
@@ -207,13 +225,10 @@ async function extractArchive(archivePath: string, destDir: string): Promise<voi
  * Create OVMS startup script/batch file
  */
 function createStartupScript(ovmsDir: string, modelsDir: string, port: number = 8083): string {
-  const scriptPath = process.platform === "win32"
-    ? join(ovmsDir, "start-ovms.bat")
-    : join(ovmsDir, "start-ovms.sh");
+  const scriptPath =
+    process.platform === "win32" ? join(ovmsDir, "start-ovms.bat") : join(ovmsDir, "start-ovms.sh");
 
-  const ovmsBin = process.platform === "win32"
-    ? join(ovmsDir, "ovms.exe")
-    : join(ovmsDir, "ovms");
+  const ovmsBin = process.platform === "win32" ? join(ovmsDir, "ovms.exe") : join(ovmsDir, "ovms");
 
   // Convert paths for the script
   const modelsPathArg = modelsDir.replace(/\\/g, "/");
@@ -295,9 +310,7 @@ WantedBy=multi-user.target
  * Check if OVMS is already installed
  */
 function checkExistingInstallation(ovmsDir: string): boolean {
-  const ovmsBin = process.platform === "win32"
-    ? join(ovmsDir, "ovms.exe")
-    : join(ovmsDir, "ovms");
+  const ovmsBin = process.platform === "win32" ? join(ovmsDir, "ovms.exe") : join(ovmsDir, "ovms");
 
   return existsSync(ovmsBin);
 }
@@ -397,7 +410,9 @@ async function main(): Promise<void> {
         // Cross-device move, use copy instead
         printInfo("Cross-drive detected, copying files...");
         if (process.platform === "win32") {
-          const result = spawnSync("xcopy", [sourceDir, ovmsDir, "/E", "/I", "/H", "/Y"], { stdio: "pipe" });
+          const result = spawnSync("xcopy", [sourceDir, ovmsDir, "/E", "/I", "/H", "/Y"], {
+            stdio: "pipe",
+          });
           if (result.status !== 0) {
             throw new Error(`xcopy failed: ${result.stderr?.toString()}`);
           }
@@ -441,9 +456,7 @@ async function main(): Promise<void> {
   console.log(`${c.green}${c.bright}========================================${c.reset}`);
   console.log("");
 
-  const ovmsBin = process.platform === "win32"
-    ? join(ovmsDir, "ovms.exe")
-    : join(ovmsDir, "ovms");
+  const ovmsBin = process.platform === "win32" ? join(ovmsDir, "ovms.exe") : join(ovmsDir, "ovms");
 
   printInfo(`OVMS binary: ${ovmsBin}`);
   printInfo(`Startup script: ${startScript}`);

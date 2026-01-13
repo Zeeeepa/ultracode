@@ -17,16 +17,19 @@ docker run -d --name ovms -p 8082:8082 \
 ToMe (Token Merging) дает 1.5-2x ускорение с потерей точности <1%.
 
 **Windows:**
+
 ```cmd
 scripts\setup-tome-tools.cmd
 ```
 
 **Linux:**
+
 ```bash
 ./scripts/setup-tome-tools.sh
 ```
 
 После установки:
+
 ```bash
 python convert_tome_model.py --model intfloat/multilingual-e5-base --output ./models
 ```
@@ -40,6 +43,7 @@ python convert_tome_model.py --model intfloat/multilingual-e5-base --output ./mo
 ```
 
 Требования:
+
 - GCC/Clang
 - CMake
 - vcpkg (скачается автоматически)
@@ -77,7 +81,7 @@ Linux:   ~/.local/share/ultrascript-tools/
 ## ToMe Параметры
 
 | Ratio | Speedup | Accuracy Loss |
-|-------|---------|---------------|
+| ----- | ------- | ------------- |
 | 0.0   | 1.0x    | 0%            |
 | 0.3   | ~1.4x   | <0.5%         |
 | 0.5   | ~2.0x   | <1%           |
@@ -106,19 +110,20 @@ Linux:   ~/.local/share/ultrascript-tools/
 ```
 
 Или запустите:
+
 ```bash
 npx ultrascript-tools setup
 ```
 
 ## Рекомендуемые модели
 
-| Модель | Размер | Языки | Dimensions |
-|--------|--------|-------|------------|
-| multilingual-e5-base | 278M | 100+ | 768 |
-| multilingual-e5-small | 118M | 100+ | 384 |
-| all-MiniLM-L6-v2 | 23M | EN | 384 |
-| bge-m3 | 567M | 100+ | 1024 |
-| bge-small-en-v1.5 | 33M | EN | 384 |
+| Модель                | Размер | Языки | Dimensions |
+| --------------------- | ------ | ----- | ---------- |
+| multilingual-e5-base  | 278M   | 100+  | 768        |
+| multilingual-e5-small | 118M   | 100+  | 384        |
+| all-MiniLM-L6-v2      | 23M    | EN    | 384        |
+| bge-m3                | 567M   | 100+  | 1024       |
+| bge-small-en-v1.5     | 33M    | EN    | 384        |
 
 ## Устранение проблем
 
@@ -135,5 +140,6 @@ OVMS требует VS2019 toolset. Установите VS2019 Build Tools ил
 ### OpenVINO не найден
 
 Скрипты автоматически скачают OpenVINO 2025.4.0. Если это не работает, скачайте вручную:
+
 - Windows: https://storage.openvinotoolkit.org/repositories/openvino/packages/2025.4/windows/
 - Linux: https://storage.openvinotoolkit.org/repositories/openvino/packages/2025.4/linux/

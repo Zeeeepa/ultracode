@@ -3,7 +3,12 @@
  */
 
 import { readFileSync } from "fs";
-import { chunkCode, needsChunking, estimateTokens, getChunkSettings } from "../src/semantic/smart-chunker.js";
+import {
+  chunkCode,
+  needsChunking,
+  estimateTokens,
+  getChunkSettings,
+} from "../src/semantic/smart-chunker.js";
 
 async function main() {
   console.log("=== Тест Smart Chunker ===\n");
@@ -13,7 +18,7 @@ async function main() {
 
   // Extract executeToolCall function (line ~1760 to end of function)
   const lines = indexTs.split("\n");
-  const startLine = lines.findIndex(l => l.includes("async function executeToolCall"));
+  const startLine = lines.findIndex((l) => l.includes("async function executeToolCall"));
 
   if (startLine === -1) {
     console.log("executeToolCall not found");
@@ -60,14 +65,16 @@ async function main() {
     console.log("\nПервые 5 чанков:");
     for (const chunk of chunks.slice(0, 5)) {
       const preview = chunk.content.slice(0, 80).replace(/\n/g, "\\n");
-      console.log(`  ${chunk.id.padEnd(30)} ${chunk.tokenCount} токенов, строки ${chunk.startLine}-${chunk.endLine}`);
+      console.log(
+        `  ${chunk.id.padEnd(30)} ${chunk.tokenCount} токенов, строки ${chunk.startLine}-${chunk.endLine}`,
+      );
       console.log(`    "${preview}..."`);
     }
 
     console.log(`\n... и ещё ${Math.max(0, chunks.length - 5)} чанков`);
 
     // Verify all chunks are under limit
-    const overLimit = chunks.filter(c => c.tokenCount > 512);
+    const overLimit = chunks.filter((c) => c.tokenCount > 512);
     console.log(`\nЧанков > 512 токенов: ${overLimit.length}`);
     if (overLimit.length > 0) {
       for (const c of overLimit.slice(0, 3)) {
@@ -90,7 +97,7 @@ async function main() {
       console.log(`  ${chunk.id.padEnd(35)} ${chunk.tokenCount} токенов`);
     }
 
-    const overLimit = chunks.filter(c => c.tokenCount > 8192);
+    const overLimit = chunks.filter((c) => c.tokenCount > 8192);
     console.log(`\nЧанков > 8192 токенов: ${overLimit.length}`);
   }
 

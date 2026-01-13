@@ -149,7 +149,6 @@ async function analyzeIndexedFiles() {
       const isInSrc = String(row.file_path).startsWith("src/") ? "✅" : "⚠️ ";
       console.log(`  ${isInSrc} ${String(row.file_path).padEnd(50)} ${row.entity_count} entities`);
     }
-
   } catch (error: any) {
     console.error("❌ Error analyzing database:", error.message);
   } finally {

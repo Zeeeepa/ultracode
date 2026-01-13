@@ -33,7 +33,7 @@ async function main() {
   console.log("\n=== Success! ===");
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error("Error:", e.message);
   process.exit(1);
 });

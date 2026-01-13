@@ -61,10 +61,7 @@ const allTests = new Set([...nodeMap.keys(), ...bunMap.keys()]);
 
 // Print comparison table
 console.log(
-  "Test".padEnd(35) +
-    "Node.js".padStart(12) +
-    "Bun".padStart(12) +
-    "Speedup".padStart(12)
+  "Test".padEnd(35) + "Node.js".padStart(12) + "Bun".padStart(12) + "Speedup".padStart(12),
 );
 console.log("-".repeat(71));
 
@@ -97,7 +94,7 @@ for (const test of allTests) {
     test.padEnd(35) +
       `${nodeMs.toFixed(3)}ms`.padStart(12) +
       `${bunMs.toFixed(3)}ms`.padStart(12) +
-      speedupStr.padStart(16)
+      speedupStr.padStart(16),
   );
 }
 
@@ -111,7 +108,7 @@ console.log(`   Tests compared: ${comparisons}`);
 console.log(`   Total Node.js time: ${totalNodeTime.toFixed(3)}ms`);
 console.log(`   Total Bun time: ${totalBunTime.toFixed(3)}ms`);
 console.log(
-  `   Overall speedup: ${overallSpeedup >= 1 ? "🚀" : "🐢"} ${overallSpeedup.toFixed(2)}x ${overallSpeedup >= 1 ? "faster" : "slower"}`
+  `   Overall speedup: ${overallSpeedup >= 1 ? "🚀" : "🐢"} ${overallSpeedup.toFixed(2)}x ${overallSpeedup >= 1 ? "faster" : "slower"}`,
 );
 
 // Category breakdown
@@ -121,14 +118,14 @@ console.log("📂 BY CATEGORY:");
 const categories = {
   "File Read": ["readText", "readJSON"],
   "File Write": ["writeFile"],
-  "Directory": ["readdir", "stat", "fileExists"],
-  "Glob": ["glob", "findSourceFiles"],
-  "Shell": ["exec"],
-  "Metrics": ["countSourceFiles", "getCodebaseMetrics"],
-  "Startup": ["startup"],
-  "SQLite": ["sqlite"],
-  "Crypto": ["hash"],
-  "Fetch": ["fetch"],
+  Directory: ["readdir", "stat", "fileExists"],
+  Glob: ["glob", "findSourceFiles"],
+  Shell: ["exec"],
+  Metrics: ["countSourceFiles", "getCodebaseMetrics"],
+  Startup: ["startup"],
+  SQLite: ["sqlite"],
+  Crypto: ["hash"],
+  Fetch: ["fetch"],
 };
 
 for (const [category, keywords] of Object.entries(categories)) {
@@ -152,7 +149,7 @@ for (const [category, keywords] of Object.entries(categories)) {
     const speedup = catNodeTime / catBunTime;
     const emoji = speedup >= 1 ? "🚀" : "🐢";
     console.log(
-      `   ${category.padEnd(15)} ${emoji} ${speedup.toFixed(2)}x ${speedup >= 1 ? "faster" : "slower"} (${count} tests)`
+      `   ${category.padEnd(15)} ${emoji} ${speedup.toFixed(2)}x ${speedup >= 1 ? "faster" : "slower"} (${count} tests)`,
     );
   }
 }

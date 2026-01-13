@@ -29,7 +29,11 @@ async function main() {
   console.log(`Text: "${text1.slice(0, 50)}..."`);
   console.log(`Dimension: ${emb1.length}`);
   console.log(`Time: ${t1 - t0}ms`);
-  console.log(`First 5 values: [${Array.from(emb1.slice(0, 5)).map(v => v.toFixed(4)).join(", ")}]`);
+  console.log(
+    `First 5 values: [${Array.from(emb1.slice(0, 5))
+      .map((v) => v.toFixed(4))
+      .join(", ")}]`,
+  );
 
   // Test batch embedding
   console.log("\n--- Batch Embedding Test (10 texts) ---");
@@ -53,7 +57,7 @@ async function main() {
   console.log(`Batch size: ${texts.length}`);
   console.log(`Total time: ${t3 - t2}ms`);
   console.log(`Per text: ${((t3 - t2) / texts.length).toFixed(2)}ms`);
-  console.log(`All dimensions correct: ${embeddings.every(e => e.length === 384)}`);
+  console.log(`All dimensions correct: ${embeddings.every((e) => e.length === 384)}`);
 
   // Test similarity
   console.log("\n--- Similarity Test ---");
@@ -64,7 +68,9 @@ async function main() {
   const [embA, embB, embC] = await provider.embedBatch([codeA, codeB, codeC]);
 
   const cosineSim = (a: Float32Array, b: Float32Array) => {
-    let dot = 0, normA = 0, normB = 0;
+    let dot = 0,
+      normA = 0,
+      normB = 0;
     for (let i = 0; i < a.length; i++) {
       dot += a[i] * b[i];
       normA += a[i] * a[i];
@@ -80,7 +86,9 @@ async function main() {
 
   // Test larger batch
   console.log("\n--- Large Batch Test (50 texts) ---");
-  const largeTexts = Array(50).fill(0).map((_, i) => `function test${i}() { return ${i}; }`);
+  const largeTexts = Array(50)
+    .fill(0)
+    .map((_, i) => `function test${i}() { return ${i}; }`);
   const t4 = Date.now();
   const largeEmbeddings = await provider.embedBatch(largeTexts);
   const t5 = Date.now();

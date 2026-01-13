@@ -7,11 +7,13 @@ This directory contains setup scripts for UltraScript Tools MCP.
 **One unified script for all embedding providers:**
 
 ### Linux/macOS
+
 ```bash
 ./setup-embeddings.sh
 ```
 
 ### Windows
+
 ```cmd
 setup-embeddings.cmd
 ```
@@ -25,11 +27,11 @@ setup-embeddings.cmd
 
 ### Supported Providers
 
-| Provider | Description | Requirements |
-|----------|-------------|--------------|
-| **TEI** | HuggingFace Text Embeddings Inference<br>✅ 8192 tokens context<br>🚀 GPU acceleration<br>⚡ 5-10x faster on GPU | Docker Desktop |
-| **Ollama** | Simple local inference<br>✅ Easy installation<br>🎮 Auto-detects GPU<br>📦 Smaller downloads | Ollama binary |
-| **Memory** | Hash-based embeddings<br>⚠️ No ML (deterministic)<br>⚡ Instant, no compute | None |
+| Provider   | Description                                                                                                      | Requirements   |
+| ---------- | ---------------------------------------------------------------------------------------------------------------- | -------------- |
+| **TEI**    | HuggingFace Text Embeddings Inference<br>✅ 8192 tokens context<br>🚀 GPU acceleration<br>⚡ 5-10x faster on GPU | Docker Desktop |
+| **Ollama** | Simple local inference<br>✅ Easy installation<br>🎮 Auto-detects GPU<br>📦 Smaller downloads                    | Ollama binary  |
+| **Memory** | Hash-based embeddings<br>⚠️ No ML (deterministic)<br>⚡ Instant, no compute                                      | None           |
 
 ### Usage Examples
 
@@ -44,6 +46,7 @@ setup-embeddings.cmd
 ```
 
 You will be prompted to:
+
 1. Choose provider (TEI, Ollama, or Memory)
 2. Select model from available list
 3. Choose GPU/CPU mode (for TEI)
@@ -93,6 +96,7 @@ Models are defined in `config/embedding-models.json`. To add a new model, simply
 ```
 
 **Current models include:**
+
 - IBM Granite (125M, 278M, 30M) - 8192 tokens, English
 - BGE (Small, Base, Large, M3) - 512-8192 tokens
 - E5 (Small, Base, Large) - 512 tokens
@@ -104,6 +108,7 @@ Models are defined in `config/embedding-models.json`. To add a new model, simply
 ### GPU Support
 
 The script automatically:
+
 1. Detects NVIDIA GPU (via `nvidia-smi`)
 2. Checks Compute Capability (requires 8.0+ for RTX 30xx/40xx)
 3. Installs NVIDIA Container Toolkit if needed (Linux/WSL2)
@@ -112,20 +117,24 @@ The script automatically:
 ### Troubleshooting
 
 #### Docker not found
+
 - **macOS**: Install [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/)
 - **Windows**: Install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
 - **Linux**: Follow [Docker Engine installation](https://docs.docker.com/engine/install/)
 
 #### GPU not detected
+
 - Ensure NVIDIA drivers are installed
 - Run `nvidia-smi` to verify GPU
 - For WSL2: Enable GPU support in Docker Desktop settings
 
 #### Port already in use
+
 - Use `--port <number>` to specify a different port
 - Check if TEI container is already running: `docker ps`
 
 #### Model download fails
+
 - Check internet connection
 - Verify HuggingFace model ID in config
 - Try a different model
@@ -133,6 +142,7 @@ The script automatically:
 ### Legacy Scripts (Deprecated)
 
 The following scripts are deprecated and will be removed:
+
 - ~~`setup-tei.sh`~~ → Use `setup-embeddings.sh --provider tei`
 - ~~`setup-tei.cmd`~~ → Use `setup-embeddings.cmd --provider tei`
 - ~~`setup-embeddings-interactive.cmd`~~ → Use `setup-embeddings.cmd`
@@ -140,6 +150,7 @@ The following scripts are deprecated and will be removed:
 ## Contributing
 
 To add a new embedding model:
+
 1. Edit `config/embedding-models.json`
 2. Add model metadata (id, name, provider, specs)
 3. The script will automatically detect and display it

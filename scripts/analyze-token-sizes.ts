@@ -240,7 +240,7 @@ export class UserService implements IUserService {
       pages: Math.ceil(total / limit)
     };
   }
-}`
+}`,
   };
 
   console.log("=== Анализ размеров токенов для типичного кода ===\n");
@@ -253,7 +253,9 @@ export class UserService implements IUserService {
     const fits512 = tokens <= 512 ? "✅" : "❌";
     const fits8k = tokens <= 8192 ? "✅" : "✅";
 
-    console.log(`${name.padEnd(40)}${String(lines).padStart(4)}  ${String(tokens).padStart(6)}   ${fits512}   ${fits8k}`);
+    console.log(
+      `${name.padEnd(40)}${String(lines).padStart(4)}  ${String(tokens).padStart(6)}   ${fits512}   ${fits8k}`,
+    );
   }
 
   console.log("\n=== Выводы ===");

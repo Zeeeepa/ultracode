@@ -41,7 +41,9 @@ async function main() {
   const embeddings = await provider.embedBatch(texts);
 
   const cosineSim = (a: Float32Array, b: Float32Array) => {
-    let dot = 0, normA = 0, normB = 0;
+    let dot = 0,
+      normA = 0,
+      normB = 0;
     for (let i = 0; i < a.length; i++) {
       dot += a[i] * b[i];
       normA += a[i] * a[i];
@@ -54,13 +56,15 @@ async function main() {
   const labels = ["EN code", "RU desc", "ZH desc", "JA desc", "DE desc", "SQL"];
 
   console.log("Similarity matrix (%):\n");
-  console.log("        " + labels.map(l => l.padStart(8)).join(""));
+  console.log("        " + labels.map((l) => l.padStart(8)).join(""));
 
   for (let i = 0; i < texts.length; i++) {
-    const row = labels.map((_, j) => {
-      const sim = cosineSim(embeddings[i], embeddings[j]) * 100;
-      return sim.toFixed(1).padStart(8);
-    }).join("");
+    const row = labels
+      .map((_, j) => {
+        const sim = cosineSim(embeddings[i], embeddings[j]) * 100;
+        return sim.toFixed(1).padStart(8);
+      })
+      .join("");
     console.log(`${labels[i].padEnd(8)}${row}`);
   }
 

@@ -50,12 +50,15 @@ async function testDevice(core, model, device, seqLen) {
     const output = infer.getOutputTensor(0);
     const data = new Float32Array(output.data);
     console.log(`  Output: ${data.length} values`);
-    console.log(`  First 3: [${Array.from(data.slice(0, 3)).map(v => v.toFixed(4)).join(", ")}]`);
+    console.log(
+      `  First 3: [${Array.from(data.slice(0, 3))
+        .map((v) => v.toFixed(4))
+        .join(", ")}]`,
+    );
 
     return avg;
-
   } catch (e) {
-    console.log(`  ✗ Error: ${e.message.split('\n')[0]}`);
+    console.log(`  ✗ Error: ${e.message.split("\n")[0]}`);
     return null;
   }
 }
@@ -101,12 +104,7 @@ async function main() {
     const results = {};
 
     // Test devices
-    const devicesToTest = [
-      "CPU",
-      "GPU.0",
-      "HETERO:NPU,CPU",
-      "HETERO:GPU.0,CPU",
-    ];
+    const devicesToTest = ["CPU", "GPU.0", "HETERO:NPU,CPU", "HETERO:GPU.0,CPU"];
 
     for (const device of devicesToTest) {
       // Check if base device is available

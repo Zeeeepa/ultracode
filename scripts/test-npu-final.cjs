@@ -14,12 +14,12 @@ async function main() {
   const modelPath = "D:\\github\\ultrascript-tools-mcp\\models\\all-MiniLM-L6-v2\\model.onnx";
 
   // Test data
-  const seqLen = 32;  // Larger for more realistic test
+  const seqLen = 32; // Larger for more realistic test
   const inputIds = new BigInt64Array(seqLen);
-  inputIds.set([101n, 7592n, 1010n, 2088n, 999n, 2023n, 2003n, 1037n, 3231n, 102n]);  // "hello, world! this is a test"
+  inputIds.set([101n, 7592n, 1010n, 2088n, 999n, 2023n, 2003n, 1037n, 3231n, 102n]); // "hello, world! this is a test"
 
   const attMask = new BigInt64Array(seqLen);
-  attMask.fill(1n, 0, 10);  // first 10 tokens are real
+  attMask.fill(1n, 0, 10); // first 10 tokens are real
 
   const tokType = new BigInt64Array(seqLen).fill(0n);
 
@@ -44,7 +44,9 @@ async function main() {
     cpuTimes.push(Date.now() - t);
   }
   const cpuAvg = cpuTimes.reduce((a, b) => a + b) / cpuTimes.length;
-  console.log(`CPU: Avg ${cpuAvg.toFixed(2)}ms, Min ${Math.min(...cpuTimes)}ms, Max ${Math.max(...cpuTimes)}ms`);
+  console.log(
+    `CPU: Avg ${cpuAvg.toFixed(2)}ms, Min ${Math.min(...cpuTimes)}ms, Max ${Math.max(...cpuTimes)}ms`,
+  );
 
   // Get output for comparison
   const cpuOut = cpuInfer.getOutputTensor(0);
@@ -96,7 +98,9 @@ async function main() {
     npuTimes.push(Date.now() - t);
   }
   const npuAvg = npuTimes.reduce((a, b) => a + b) / npuTimes.length;
-  console.log(`NPU: Avg ${npuAvg.toFixed(2)}ms, Min ${Math.min(...npuTimes)}ms, Max ${Math.max(...npuTimes)}ms`);
+  console.log(
+    `NPU: Avg ${npuAvg.toFixed(2)}ms, Min ${Math.min(...npuTimes)}ms, Max ${Math.max(...npuTimes)}ms`,
+  );
 
   // Compare outputs
   const npuOut = npuInfer.getOutputTensor(0);
@@ -123,7 +127,7 @@ async function main() {
   console.log("\n=== Done! ===");
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error("Error:", e);
   process.exit(1);
 });

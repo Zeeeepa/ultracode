@@ -6,7 +6,11 @@
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join, extname, relative } from "path";
 import ts from "typescript";
-import { expandLargeEntities, estimateEntityTokens, getExpansionStats } from "../src/semantic/entity-expander.js";
+import {
+  expandLargeEntities,
+  estimateEntityTokens,
+  getExpansionStats,
+} from "../src/semantic/entity-expander.js";
 import type { ParsedEntity } from "../src/types/parser.js";
 
 // Simple TypeScript parser that extracts entities with children
@@ -173,14 +177,18 @@ async function main() {
     console.log(`  Нуждаются в expansion: ${stats.needsExpansion}`);
     console.log(`  Children для expansion: ${stats.childrenCount}`);
     if (stats.largestEntity) {
-      console.log(`  Самая большая: ${stats.largestEntity.name} (${stats.largestEntity.tokens} токенов)`);
+      console.log(
+        `  Самая большая: ${stats.largestEntity.name} (${stats.largestEntity.tokens} токенов)`,
+      );
     }
 
     const expanded = expandLargeEntities(allEntities, { maxTokens });
 
     console.log(`\nСтатистика ПОСЛЕ expansion:`);
     console.log(`  Всего сущностей: ${expanded.length}`);
-    console.log(`  Изменение: ${allEntities.length} → ${expanded.length} (+${expanded.length - allEntities.length})`);
+    console.log(
+      `  Изменение: ${allEntities.length} → ${expanded.length} (+${expanded.length - allEntities.length})`,
+    );
 
     // Count by size ranges
     const ranges = [
@@ -196,22 +204,28 @@ async function main() {
 
     console.log("\nРаспределение по токенам (после expansion):");
     for (const { min, max, label } of ranges) {
-      const count = expanded.filter(e => {
+      const count = expanded.filter((e) => {
         const tokens = estimateEntityTokens(e);
         return tokens >= min && tokens < max;
       }).length;
       const pct = ((count / expanded.length) * 100).toFixed(1);
-      const bar = "█".repeat(Math.ceil(count / expanded.length * 40));
-      console.log(`  ${label.padEnd(10)} ${String(count).padStart(5)} (${pct.padStart(5)}%) ${bar}`);
+      const bar = "█".repeat(Math.ceil((count / expanded.length) * 40));
+      console.log(
+        `  ${label.padEnd(10)} ${String(count).padStart(5)} (${pct.padStart(5)}%) ${bar}`,
+      );
     }
 
     // Count entities still over limit
-    const overLimit = expanded.filter(e => estimateEntityTokens(e) > maxTokens);
-    const over8K = expanded.filter(e => estimateEntityTokens(e) > 8192);
+    const overLimit = expanded.filter((e) => estimateEntityTokens(e) > maxTokens);
+    const over8K = expanded.filter((e) => estimateEntityTokens(e) > 8192);
 
     console.log(`\nСущности превышающие лимит:`);
-    console.log(`  > ${maxTokens} токенов: ${overLimit.length} (${((overLimit.length / expanded.length) * 100).toFixed(1)}%)`);
-    console.log(`  > 8192 токенов: ${over8K.length} (${((over8K.length / expanded.length) * 100).toFixed(1)}%)`);
+    console.log(
+      `  > ${maxTokens} токенов: ${overLimit.length} (${((overLimit.length / expanded.length) * 100).toFixed(1)}%)`,
+    );
+    console.log(
+      `  > 8192 токенов: ${over8K.length} (${((over8K.length / expanded.length) * 100).toFixed(1)}%)`,
+    );
 
     if (overLimit.length > 0 && overLimit.length <= 10) {
       console.log("\nСущности превышающие лимит:");
@@ -224,7 +238,9 @@ async function main() {
     // Sample of expanded entities
     if (maxTokens === 512) {
       console.log("\nПример expanded сущностей (первые 15):");
-      const sample = expanded.filter(e => e.name.includes(".") || e.name.includes("(header)")).slice(0, 15);
+      const sample = expanded
+        .filter((e) => e.name.includes(".") || e.name.includes("(header)"))
+        .slice(0, 15);
       for (const e of sample) {
         const tokens = estimateEntityTokens(e);
         const status = tokens <= maxTokens ? "✅" : "⚠️";
@@ -241,8 +257,8 @@ async function main() {
   const expanded512 = expandLargeEntities(allEntities, { maxTokens: 512 });
   const expanded8K = expandLargeEntities(allEntities, { maxTokens: 8192 });
 
-  const over512after = expanded512.filter(e => estimateEntityTokens(e) > 512).length;
-  const over8Kafter = expanded8K.filter(e => estimateEntityTokens(e) > 8192).length;
+  const over512after = expanded512.filter((e) => estimateEntityTokens(e) > 512).length;
+  const over8Kafter = expanded8K.filter((e) => estimateEntityTokens(e) > 8192).length;
 
   console.log(`\nС maxTokens=512:`);
   console.log(`  До expansion: ${allEntities.length} сущностей`);

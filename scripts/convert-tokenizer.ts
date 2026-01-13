@@ -219,7 +219,10 @@ function generateDockerCommand(outputDir: string, port: number = 8080): string {
 // Main Conversion Function
 // =============================================================================
 
-async function convertTokenizer(modelId: string, outputDir: string = "./converted-model"): Promise<boolean> {
+async function convertTokenizer(
+  modelId: string,
+  outputDir: string = "./converted-model",
+): Promise<boolean> {
   console.log("🔄 Converting tokenizer for TEI compatibility");
   console.log(`   Model: ${modelId}`);
   console.log(`   Output: ${outputDir}`);

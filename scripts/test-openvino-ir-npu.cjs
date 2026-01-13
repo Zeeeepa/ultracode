@@ -19,7 +19,13 @@ async function main() {
   const modelsToTest = [
     {
       name: "INT8 Quantized",
-      path: path.join(__dirname, "..", "models", "all-MiniLM-L6-v2-openvino-int8", "openvino_model_qint8_quantized.xml"),
+      path: path.join(
+        __dirname,
+        "..",
+        "models",
+        "all-MiniLM-L6-v2-openvino-int8",
+        "openvino_model_qint8_quantized.xml",
+      ),
     },
   ];
 
@@ -83,13 +89,15 @@ async function main() {
           const output = infer.getOutputTensor(0);
           const data = new Float32Array(output.data);
           console.log(`  Output: ${data.length} values`);
-          console.log(`  First 3: [${Array.from(data.slice(0, 3)).map(v => v.toFixed(4)).join(", ")}]`);
-
+          console.log(
+            `  First 3: [${Array.from(data.slice(0, 3))
+              .map((v) => v.toFixed(4))
+              .join(", ")}]`,
+          );
         } catch (e) {
           console.log(`  ✗ Error: ${e.message}`);
         }
       }
-
     } catch (e) {
       console.log(`Error loading model: ${e.message}`);
     }

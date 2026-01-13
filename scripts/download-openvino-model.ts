@@ -22,28 +22,19 @@ const MODELS: Record<string, ModelConfig> = {
     name: "all-MiniLM-L6-v2-openvino",
     repo: "sentence-transformers/all-MiniLM-L6-v2",
     subdir: "openvino",
-    files: [
-      "openvino_model.xml",
-      "openvino_model.bin",
-    ],
+    files: ["openvino_model.xml", "openvino_model.bin"],
   },
   "all-MiniLM-L6-v2-ov-int8": {
     name: "all-MiniLM-L6-v2-openvino-int8",
     repo: "sentence-transformers/all-MiniLM-L6-v2",
     subdir: "openvino",
-    files: [
-      "openvino_model_qint8_quantized.xml",
-      "openvino_model_qint8_quantized.bin",
-    ],
+    files: ["openvino_model_qint8_quantized.xml", "openvino_model_qint8_quantized.bin"],
   },
   // Alternative from llmware (may have different optimizations)
   "llmware-minilm-ov": {
     name: "llmware-all-mini-lm-l6-v2-ov",
     repo: "llmware/all-mini-lm-l6-v2-ov",
-    files: [
-      "openvino_model.xml",
-      "openvino_model.bin",
-    ],
+    files: ["openvino_model.xml", "openvino_model.bin"],
   },
   // BGE - ONNX format (OpenVINO can load ONNX directly)
   "bge-small-en-v1.5": {

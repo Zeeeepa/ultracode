@@ -10,7 +10,9 @@ async function main() {
   const core = new ov.Core();
   console.log("Devices:", core.getAvailableDevices());
 
-  const model = await core.readModel("D:\\github\\ultrascript-tools-mcp\\models\\all-MiniLM-L6-v2\\model.onnx");
+  const model = await core.readModel(
+    "D:\\github\\ultrascript-tools-mcp\\models\\all-MiniLM-L6-v2\\model.onnx",
+  );
   console.log("Model loaded");
 
   const compiled = await core.compileModel(model, "CPU");
@@ -65,7 +67,10 @@ async function main() {
 
   const data = new Float32Array(out.data);
   console.log("Output size:", data.length);
-  console.log("First 5 values:", Array.from(data.slice(0, 5)).map(v => v.toFixed(4)));
+  console.log(
+    "First 5 values:",
+    Array.from(data.slice(0, 5)).map((v) => v.toFixed(4)),
+  );
 
   // Benchmark
   console.log("\nBenchmark (10 iterations):");
@@ -75,12 +80,12 @@ async function main() {
     infer.infer();
     times.push(Date.now() - t);
   }
-  console.log(`  Avg: ${(times.reduce((a,b) => a+b) / times.length).toFixed(1)}ms`);
+  console.log(`  Avg: ${(times.reduce((a, b) => a + b) / times.length).toFixed(1)}ms`);
 
   console.log("\n=== Success! ===");
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error("Error:", e);
   process.exit(1);
 });

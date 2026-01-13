@@ -52,7 +52,7 @@ function meanPooling(
   attentionMask: BigInt64Array,
   batchSize: number,
   seqLength: number,
-  hiddenDim: number
+  hiddenDim: number,
 ): Float32Array {
   const result = new Float32Array(batchSize * hiddenDim);
 
@@ -133,11 +133,11 @@ async function testInference(device: string) {
   const outputs = model.outputs;
   console.log(
     "   Inputs:",
-    inputs.map((i: any) => `${i.anyName}[${i.shape}]`)
+    inputs.map((i: any) => `${i.anyName}[${i.shape}]`),
   );
   console.log(
     "   Outputs:",
-    outputs.map((o: any) => `${o.anyName}[${o.shape}]`)
+    outputs.map((o: any) => `${o.anyName}[${o.shape}]`),
   );
 
   // For NPU: need static shapes
@@ -148,7 +148,11 @@ async function testInference(device: string) {
       // Check if model has dynamic shapes
       const inputShape = inputs[0].shape;
       if (inputShape.some((d: number) => d === -1)) {
-        model.reshape({ input_ids: [1, MAX_SEQ_LEN], attention_mask: [1, MAX_SEQ_LEN], token_type_ids: [1, MAX_SEQ_LEN] });
+        model.reshape({
+          input_ids: [1, MAX_SEQ_LEN],
+          attention_mask: [1, MAX_SEQ_LEN],
+          token_type_ids: [1, MAX_SEQ_LEN],
+        });
         console.log("   ✓ Model reshaped for NPU");
       }
     } catch (e: any) {
@@ -206,7 +210,11 @@ async function testInference(device: string) {
 
     // Create OpenVINO tensors
     const inputIdsTensor = new ov.Tensor(ov.element.i64, [1, inputIds.length], inputIds);
-    const attentionMaskTensor = new ov.Tensor(ov.element.i64, [1, attentionMask.length], attentionMask);
+    const attentionMaskTensor = new ov.Tensor(
+      ov.element.i64,
+      [1, attentionMask.length],
+      attentionMask,
+    );
 
     // Set inputs
     inferRequest.setInputTensor("input_ids", inputIdsTensor);
@@ -215,7 +223,11 @@ async function testInference(device: string) {
     // Check if token_type_ids is needed
     try {
       const tokenTypeIds = new BigInt64Array(inputIds.length).fill(0n);
-      const tokenTypeIdsTensor = new ov.Tensor(ov.element.i64, [1, tokenTypeIds.length], tokenTypeIds);
+      const tokenTypeIdsTensor = new ov.Tensor(
+        ov.element.i64,
+        [1, tokenTypeIds.length],
+        tokenTypeIds,
+      );
       inferRequest.setInputTensor("token_type_ids", tokenTypeIdsTensor);
     } catch (_e) {
       // token_type_ids not required
@@ -239,7 +251,9 @@ async function testInference(device: string) {
     embeddings.push(normalizedEmbedding);
 
     const inferTime = Date.now() - startInfer;
-    console.log(`   "${sentence.slice(0, 30)}..." → ${inferTime}ms (dim: ${normalizedEmbedding.length})`);
+    console.log(
+      `   "${sentence.slice(0, 30)}..." → ${inferTime}ms (dim: ${normalizedEmbedding.length})`,
+    );
   }
 
   // 6. Test similarity

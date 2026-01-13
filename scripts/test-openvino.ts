@@ -50,10 +50,9 @@ async function testTransformers() {
     // Try loading a small tokenizer
     try {
       env.allowRemoteModels = true;
-      const tokenizer = await AutoTokenizer.from_pretrained(
-        "Xenova/bert-base-uncased",
-        { progress_callback: (p: any) => process.stdout.write(".") }
-      );
+      const tokenizer = await AutoTokenizer.from_pretrained("Xenova/bert-base-uncased", {
+        progress_callback: (p: any) => process.stdout.write("."),
+      });
       console.log("\n   ✓ Tokenizer loaded");
 
       console.log("\n3. Testing tokenization...");

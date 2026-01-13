@@ -64,7 +64,10 @@ async function main() {
     }
     embedding[h] = sum / 5;
   }
-  console.log("Embedding (first 5):", Array.from(embedding.slice(0, 5)).map(v => v.toFixed(4)));
+  console.log(
+    "Embedding (first 5):",
+    Array.from(embedding.slice(0, 5)).map((v) => v.toFixed(4)),
+  );
 
   // Benchmark CPU
   console.log("\nCPU Benchmark:");
@@ -74,7 +77,7 @@ async function main() {
     cpuInfer.infer();
     cpuTimes.push(Date.now() - t0);
   }
-  console.log(`  Avg: ${(cpuTimes.reduce((a,b) => a+b) / cpuTimes.length).toFixed(1)}ms`);
+  console.log(`  Avg: ${(cpuTimes.reduce((a, b) => a + b) / cpuTimes.length).toFixed(1)}ms`);
 
   // === NPU ===
   if (!devices.includes("NPU")) {
@@ -122,16 +125,16 @@ async function main() {
     npuInfer.infer();
     npuTimes.push(Date.now() - t0);
   }
-  console.log(`  Avg: ${(npuTimes.reduce((a,b) => a+b) / npuTimes.length).toFixed(1)}ms`);
+  console.log(`  Avg: ${(npuTimes.reduce((a, b) => a + b) / npuTimes.length).toFixed(1)}ms`);
 
-  const cpuAvg = cpuTimes.reduce((a,b) => a+b) / cpuTimes.length;
-  const npuAvg = npuTimes.reduce((a,b) => a+b) / npuTimes.length;
+  const cpuAvg = cpuTimes.reduce((a, b) => a + b) / cpuTimes.length;
+  const npuAvg = npuTimes.reduce((a, b) => a + b) / npuTimes.length;
   console.log(`\nSpeedup: ${(cpuAvg / npuAvg).toFixed(2)}x`);
 
   console.log("\n=== Done! ===");
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error("Error:", e);
   process.exit(1);
 });

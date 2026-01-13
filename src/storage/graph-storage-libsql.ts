@@ -402,6 +402,10 @@ export class GraphStorageLibSQL implements GraphStorage {
     });
   }
 
+  async getAllRelationships(): Promise<Relationship[]> {
+    return await this.adapter.getAllRelationships();
+  }
+
   async getRelationships(sourceId: string, type?: RelationType): Promise<Relationship[]> {
     return this.getRelationshipsForEntity(sourceId, type);
   }

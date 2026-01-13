@@ -42,7 +42,6 @@ async function testModel(name, modelPath) {
 
     const output = infer.getOutputTensor(0);
     console.log(`Output: ${new Float32Array(output.data).length} values`);
-
   } catch (e) {
     console.log(`✗ Error: ${e.message}`);
     // Show key part of error
@@ -61,9 +60,24 @@ async function main() {
   console.log("Devices:", core.getAvailableDevices());
 
   const models = [
-    ["MiniLM INT8 (OpenVINO)", path.join(__dirname, "..", "models", "all-MiniLM-L6-v2-openvino-int8", "openvino_model_qint8_quantized.xml")],
-    ["BGE-small INT8 (ONNX)", path.join(__dirname, "..", "models", "bge-small-en-v1.5-int8", "model_int8.onnx")],
-    ["GTE-small INT8 (ONNX)", path.join(__dirname, "..", "models", "gte-small-int8", "model_int8.onnx")],
+    [
+      "MiniLM INT8 (OpenVINO)",
+      path.join(
+        __dirname,
+        "..",
+        "models",
+        "all-MiniLM-L6-v2-openvino-int8",
+        "openvino_model_qint8_quantized.xml",
+      ),
+    ],
+    [
+      "BGE-small INT8 (ONNX)",
+      path.join(__dirname, "..", "models", "bge-small-en-v1.5-int8", "model_int8.onnx"),
+    ],
+    [
+      "GTE-small INT8 (ONNX)",
+      path.join(__dirname, "..", "models", "gte-small-int8", "model_int8.onnx"),
+    ],
   ];
 
   for (const [name, modelPath] of models) {
