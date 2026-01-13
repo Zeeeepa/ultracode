@@ -274,6 +274,11 @@ export async function generateEmbeddingsForEntities(
 
   // Distributed mode: generate embeddings in worker
   if (!embeddingClient) {
+    workerLog("WARN", "generateEmbeddingsFr: embeddingClient is NULL, skipping", {
+      provider: embeddingConfig.provider,
+      enabled: embeddingConfig.enabled,
+      centralizedEmbeddings: embeddingConfig.centralizedEmbeddings,
+    });
     return 0;
   }
 
@@ -332,6 +337,13 @@ export async function generateEmbeddingsForEntities(
 
   let generatedCount = 0;
 
+  workerLog("INFO", "generateEmbeddingsFr: starting batch processing", {
+    entities: entityTexts.length,
+    batches: batches.length,
+    batchSize,
+    provider: embeddingConfig.provider,
+  });
+
   // Process batches in waves of 'concurrency' size
   // Each wave runs in parallel, then we start next wave
   const processBatch = async (batch: typeof entityTexts, idx: number): Promise<void> => {
@@ -389,6 +401,11 @@ export async function generateEmbeddingsForEntities(
     const wave = batches.slice(i, i + concurrency);
     await Promise.all(wave.map((batch, j) => processBatch(batch, i + j)));
   }
+
+  workerLog("INFO", "generateEmbeddingsFr: batch processing complete", {
+    generatedCount,
+    collectedEmbeddingsTotal: collectedEmbeddings.length,
+  });
 
   return generatedCount;
 }

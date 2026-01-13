@@ -1043,9 +1043,20 @@ export class ParserAgent extends BaseAgent {
     log.i("PARSER", "Enabling keepalive mode for incremental processing", {
       poolCount: this.languagePools.size,
       pools: Array.from(this.languagePools.keys()),
+      hasUniversalPool: !!this.universalPool,
     });
 
-    // Enable keepalive mode on TypeScript pool only (most common changes)
+    // UNIVERSAL POOL: Enable keepalive mode and keep one worker
+    if (this.universalPool && this.useUniversalPool) {
+      log.i("PARSER", "Enabling keepalive on universal pool");
+      this.universalPool.setKeepaliveMode(true);
+      await this.universalPool.ensureKeepaliveWorker();
+      log.i("PARSER", "Universal pool keepalive enabled", {
+        activeWorkers: this.universalPool.getActiveWorkerCount(),
+      });
+    }
+
+    // PER-LANGUAGE POOLS: Enable keepalive mode on TypeScript pool only (most common changes)
     // Kill ALL workers from other pools to free memory
     const killedPools: string[] = [];
     const tsPool = this.languagePools.get("typescript");
@@ -1074,14 +1085,14 @@ export class ParserAgent extends BaseAgent {
       });
     }
 
-    // Spawn keepalive worker only for TypeScript
+    // Spawn keepalive worker only for TypeScript (if per-language mode)
     if (tsPool instanceof ParsingSubprocessPool) {
       log.i("PARSER", "Spawning TypeScript keepalive worker...");
       await tsPool.ensureKeepaliveWorker();
       log.i("PARSER", "TypeScript keepalive worker spawned", {
         activeWorkers: tsPool.getActiveWorkerCount(),
       });
-    } else {
+    } else if (!this.useUniversalPool) {
       log.w("PARSER", "No TypeScript pool found for keepalive");
     }
 

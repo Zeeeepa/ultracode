@@ -281,11 +281,19 @@ export class ParsingSubprocessPool {
       }
 
       if (this.onEmbeddings && embeddingsMsg.embeddings?.length > 0) {
-        log.d("SUBPROCESS", `Received ${count} embeddings from worker ${workerId}`, {
+        log.i("SUBPROCESS", `Received embeddings.ready from worker`, {
+          workerId,
           language: this.language,
           count,
+          hasCallback: !!this.onEmbeddings,
         });
         this.onEmbeddings(embeddingsMsg.embeddings);
+      } else {
+        log.w("SUBPROCESS", `embeddings.ready: NOT calling callback`, {
+          workerId,
+          hasCallback: !!this.onEmbeddings,
+          embeddingsLength: embeddingsMsg.embeddings?.length,
+        });
       }
       return;
     }
