@@ -454,6 +454,8 @@ async function handleNamedPipeRequest(packet: Buffer): Promise<Buffer> {
     const { header, vectors } = parsePacket(packet);
     const request = header as unknown as GpuWorkerRequest;
 
+    log(`[NamedPipe] Received: type=${request.type}, packetLen=${packet.length}, vectorsLen=${vectors?.length ?? 0}`);
+
     // If vectors are present, inject them into request
     if (vectors && vectors.length > 0) {
       if (request.type === "faiss.add") {
@@ -566,8 +568,14 @@ async function main(): Promise<void> {
   rl.on("line", async (line) => {
     if (!line.trim()) return;
 
+    log(`[stdin] Line received: len=${line.length}, preview=${line.slice(0, 100)}`);
+
     try {
       const request = JSON.parse(line) as GpuWorkerRequest;
+      const vec = (request as any).vector;
+      log(
+        `[stdin] Parsed: type=${request.type}, keys=${Object.keys(request).join(",")}, hasVector=${!!vec}, vectorLen=${vec?.length ?? "N/A"}`,
+      );
       await handleRequest(request);
     } catch (error) {
       sendError(`Failed to parse request: ${(error as Error).message}`);

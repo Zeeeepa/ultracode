@@ -505,7 +505,7 @@ export function handleFaissSearch(request: { vector: number[]; k: number }, ctx:
 
   // Debug: log request structure
   log(
-    `[search] request keys: ${Object.keys(request).join(", ")}, vector type: ${typeof vector}, isArray: ${Array.isArray(vector)}`,
+    `[search] request keys: ${Object.keys(request).join(", ")}, vector type: ${typeof vector}, isArray: ${Array.isArray(vector)}, vectorLen: ${vector?.length ?? "N/A"}`,
   );
 
   if (!vector || !Array.isArray(vector)) {

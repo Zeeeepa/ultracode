@@ -330,11 +330,21 @@ export class LayeredFaissProvider {
    */
   async search(queryVector: Float32Array, limit: number): Promise<LayeredSearchResult[]> {
     if (!this.isInitialized || !this.client) {
+      log.w("LAYERED_FAISS", "search called but not initialized", {
+        isInit: this.isInitialized,
+        hasClient: !!this.client,
+      });
       return [];
     }
 
     // Normalize query vector
     const normalizedQuery = simdL2Normalize(queryVector);
+    log.d("LAYERED_FAISS", "search", {
+      inputLen: queryVector.length,
+      normalizedLen: normalizedQuery.length,
+      limit,
+      normalizedSample: Array.from(normalizedQuery.slice(0, 3)),
+    });
     const searchLimit = Math.min(limit * 2, 200); // Over-fetch for filtering
 
     const results: LayeredSearchResult[] = [];
@@ -348,6 +358,11 @@ export class LayeredFaissProvider {
     }
 
     // 2. Search base index
+    log.d("LAYERED_FAISS", "calling faissSearch", {
+      vectorLen: normalizedQuery.length,
+      vectorType: normalizedQuery.constructor.name,
+      searchLimit,
+    });
     const baseResults = await this.client.faissSearch(normalizedQuery, searchLimit);
 
     for (const result of baseResults) {
