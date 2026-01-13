@@ -140,6 +140,11 @@ export function handleEmbeddingsSearch(request: EmbeddingsSearchRequest, ctx: Em
   const { vector, k, includeContent = true } = request;
   const startTime = performance.now();
 
+  if (!vector || !Array.isArray(vector)) {
+    sendError("Invalid or missing vector in search request");
+    return;
+  }
+
   if (vector.length !== state.faissDimensions) {
     sendError(`Vector dimension mismatch: expected ${state.faissDimensions}, got ${vector.length}`);
     return;

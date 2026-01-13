@@ -503,6 +503,16 @@ export function handleFaissSearch(request: { vector: number[]; k: number }, ctx:
   const { vector, k } = request;
   const startTime = performance.now();
 
+  // Debug: log request structure
+  log(
+    `[search] request keys: ${Object.keys(request).join(", ")}, vector type: ${typeof vector}, isArray: ${Array.isArray(vector)}`,
+  );
+
+  if (!vector || !Array.isArray(vector)) {
+    sendError(`Invalid or missing vector in search request. Keys: ${Object.keys(request).join(", ")}`);
+    return;
+  }
+
   if (vector.length !== state.faissDimensions) {
     sendError(`Vector dimension mismatch: expected ${state.faissDimensions}, got ${vector.length}`);
     return;

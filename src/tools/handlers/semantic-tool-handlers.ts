@@ -15,6 +15,7 @@ import { log } from "../../logging/index.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
+import { DetectCodeClonesSchema } from "../schemas/semantic-schemas.js";
 
 // =============================================================================
 // SEMANTIC SEARCH
@@ -474,14 +475,7 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
 // DETECT CODE CLONES
 // =============================================================================
 
-const DetectCodeClonesSchema = z.object({
-  projectPath: projectPathParam,
-  minSimilarity: z.number().optional().default(0.85),
-  minLines: z.number().optional().default(5),
-  entityTypes: z.array(z.string()).optional(),
-  offset: z.number().optional().default(0),
-  limit: z.number().optional().default(SAFE_LIMITS.clones),
-});
+// Uses DetectCodeClonesSchema from schemas/semantic-schemas.ts (imported at top)
 
 export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof DetectCodeClonesSchema>> {
   protected parseArgs(args: unknown) {
@@ -489,42 +483,79 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
   }
 
   protected async execute(args: z.infer<typeof DetectCodeClonesSchema>): Promise<ToolResult> {
-    // Ensure SemanticAgent uses the correct project's VectorStore
-    const resolvedPath = this.resolveProjectPath(args);
-    const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
-    const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
+    try {
+      const semanticAgent = await this.ensureSemanticAgentForProject();
+      const minSimilarity = args.minSimilarity ?? 0.8;
 
-    // Fetch more groups for pagination (pass threshold as number)
-    const allClones = await semanticAgent.detectClones(args.minSimilarity);
+      // Fetch clone groups (pass threshold as number)
+      const allClones = await semanticAgent.detectClones(minSimilarity);
 
-    const paginatedResult = paginate(allClones, args.offset, safeLimit);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
+      // Handle case when detectClones returns undefined/null or empty array
+      if (!allClones || !Array.isArray(allClones)) {
+        return {
+          content: [
             {
-              groupsFound: paginatedResult.data.length,
-              pagination: paginatedResult.pagination,
-              clones: paginatedResult.data.map((group: any) => ({
-                similarity: group.avgSimilarity,
-                cloneType: group.cloneType,
-                members: group.members.map((m: any) => ({
-                  id: m.id,
-                  name: m.name,
-                  filePath: m.path,
-                  startLine: m.startLine,
-                  endLine: m.endLine,
-                })),
-              })),
+              type: "text",
+              text: JSON.stringify(
+                {
+                  groupsFound: 0,
+                  clones: [],
+                  warning: "Clone detection unavailable - vector store may not be initialized",
+                },
+                null,
+                2,
+              ),
             },
-            null,
-            2,
-          ),
-        },
-      ],
-    };
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                groupsFound: allClones.length,
+                scope: args.scope ?? "all",
+                minSimilarity,
+                clones: allClones.map((group: any) => ({
+                  similarity: group.avgSimilarity,
+                  cloneType: group.cloneType,
+                  members: (group.members || []).map((m: any) => ({
+                    id: m.id,
+                    name: m.name,
+                    filePath: m.path,
+                    startLine: m.startLine,
+                    endLine: m.endLine,
+                  })),
+                })),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    } catch (error) {
+      log.e("CLONES", "detectClones failed", { error: (error as Error).message, stack: (error as Error).stack });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                groupsFound: 0,
+                clones: [],
+                error: (error as Error).message,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
   }
 }
 
