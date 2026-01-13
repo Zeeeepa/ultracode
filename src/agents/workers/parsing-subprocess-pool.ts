@@ -347,6 +347,16 @@ export class ParsingSubprocessPool {
     }
 
     if (response.type === "result") {
+      // DEBUG: Log what we received from worker
+      log.i("SUBPROCESS", "result_received", {
+        workerId,
+        language: this.language,
+        hasResults: !!response.results,
+        resultsLength: response.results?.length ?? 0,
+        hasPendingResolve: !!state.pendingResolve,
+        statsFilesProcessed: response.stats?.filesProcessed ?? 0,
+      });
+
       // Update stats
       state.tasksProcessed++;
       if (response.stats) {
