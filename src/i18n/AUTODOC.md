@@ -8,10 +8,10 @@
 
 | Name | Type | Description | Location |
 |------|------|-------------|----------|
-| `detectSystemLocale` | function | Определяет язык системы с поддержкой переопределения через CLI. | [→ locale-detector.ts:98-135] |
-| `getLanguageDisplayName` | function | Возвращает отображаемое имя языка для пользовательского интерфейса. | [→ locale-detector.ts:140-146] |
+| `detectSystemLocale` | function | Определяет язык системы с поддержкой переопределения через CLI. | [→ locale-detector.ts:94-131] |
+| `getLanguageDisplayName` | function | Возвращает отображаемое имя языка для пользовательского интерфейса. | [→ locale-detector.ts:136-142] |
 | `isValidLanguage` | function | Функция-предикат для проверки валидности строки как языка. | [→ types.ts:30-32] |
-| `LocaleConfig` | interface | Интерфейс результата определения локали с источником и параметрами. | [→ types.ts:13-25] |
+| `LocaleConfig` | interface | Интерфейс результата определения локали с источником и параметрами. | [→ types.ts:8-8] |
 | `SUPPORTED_LANGUAGES` | const | Массив констант всех поддерживаемых языков пользователем. | [→ types.ts:8-8] |
 | `UILanguage` | type | Тип для поддерживаемых языков интерфейса (en, ru). | [→ types.ts:8] |
 
