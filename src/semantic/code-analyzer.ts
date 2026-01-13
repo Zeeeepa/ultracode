@@ -313,53 +313,48 @@ export class CodeAnalyzer {
     }
     await Promise.all(searchPromises);
 
-    // Get vectors for sampled entities (needed for similarity search)
-    const sampleVectors: Array<{ id: string; vector: Float32Array }> = [];
-    const vectorPromises = Array.from(sampleIds).map(async (id) => {
-      const entity = await this.vectorStore.get(id);
-      if (entity) {
-        sampleVectors.push({ id, vector: entity.vector });
-        // Update cache with vector
-        const cached = entityCache.get(id);
-        if (cached) {
-          cached.vector = entity.vector;
-        }
-      }
-    });
-    await Promise.all(vectorPromises);
-
-    // Find similar pairs using Union-Find
+    // Find similar pairs using random search clustering
+    // Since VectorStore.get() returns empty vectors (Faiss HNSW doesn't support reconstruct),
+    // we use results from random searches to find clusters of similar entities.
+    // Entities appearing in the same search result with high similarity are likely related.
     const processedPairs = new Set<string>();
-    const similarityMap = new Map<string, number>(); // Track actual similarities
+    const similarityMap = new Map<string, number>();
 
-    for (const sample of sampleVectors) {
-      const similar = await this.vectorStore.search(sample.vector, 50);
+    // Use random vector searches to find clusters
+    const clusterSearches = Math.min(10, Math.ceil(maxSamples / 10));
+    for (let i = 0; i < clusterSearches; i++) {
+      const randomVector = new Float32Array(384).map(() => Math.random() - 0.5);
+      const results = await this.vectorStore.search(randomVector, 30);
 
-      for (const match of similar) {
-        // Skip self-matches
-        if (match.id === sample.id) continue;
+      // Results with similar similarity scores to the random vector are likely similar to each other
+      // Group results by similarity buckets and union them
+      const highSimilarityResults = results.filter((r) => r.similarity >= minSimilarity);
 
-        // Only process if similarity meets threshold
-        if (match.similarity < minSimilarity) continue;
-
-        // Create unique pair key (sorted to avoid duplicates)
-        const pairKey = [sample.id, match.id].sort().join("|");
-        if (processedPairs.has(pairKey)) continue;
-        processedPairs.add(pairKey);
-
-        // Track similarity for averaging
-        similarityMap.set(pairKey, match.similarity);
-
-        // Cache match entity data
-        if (!entityCache.has(match.id)) {
-          entityCache.set(match.id, {
-            content: match.content,
-            metadata: match.metadata,
-          });
+      for (let j = 0; j < highSimilarityResults.length; j++) {
+        const r1 = highSimilarityResults[j]!;
+        // Cache entity data
+        if (!entityCache.has(r1.id)) {
+          entityCache.set(r1.id, { content: r1.content, metadata: r1.metadata });
         }
 
-        // Union the pair using Union-Find (O(α(n)) instead of O(groups))
-        union(sample.id, match.id);
+        for (let k = j + 1; k < highSimilarityResults.length; k++) {
+          const r2 = highSimilarityResults[k]!;
+          // If both have high similarity to same random vector, they might be similar
+          // Use geometric mean of their similarities as estimate
+          const estimatedSimilarity = Math.sqrt(r1.similarity * r2.similarity);
+          if (estimatedSimilarity < minSimilarity) continue;
+
+          const pairKey = [r1.id, r2.id].sort().join("|");
+          if (processedPairs.has(pairKey)) continue;
+          processedPairs.add(pairKey);
+
+          similarityMap.set(pairKey, estimatedSimilarity);
+          union(r1.id, r2.id);
+
+          if (!entityCache.has(r2.id)) {
+            entityCache.set(r2.id, { content: r2.content, metadata: r2.metadata });
+          }
+        }
       }
     }
 

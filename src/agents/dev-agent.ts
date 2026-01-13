@@ -1207,11 +1207,15 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
 
     if (supportedFiles.length === 0 && otherFiles.length === 0) {
-      log.d("DEVAGENT", "no_files_to_reindex");
+      log.i("DEVAGENT", "no_files_to_reindex");
       return;
     }
 
-    log.d("DEVAGENT", "reindex_breakdown", { supported: supportedFiles.length, heuristic: otherFiles.length });
+    log.i("DEVAGENT", "reindex_breakdown", {
+      supported: supportedFiles.length,
+      heuristic: otherFiles.length,
+      supportedSample: supportedFiles.slice(0, 3).map((f) => f.split(/[\\/]/).pop()),
+    });
 
     let successCount = 0;
     let errorCount = 0;
@@ -1299,8 +1303,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     if (supportedFiles.length > 0) {
       try {
         // Parse all files in a single batch
+        log.i("DEVAGENT", "incr_parseBatch_start", { files: supportedFiles.length });
         const parseResults = await this.parserAgent.parseBatch(supportedFiles, {});
-        log.d("DEVAGENT", "batch_parsed", { files: supportedFiles.length, results: parseResults.length });
+        log.i("DEVAGENT", "incr_parseBatch_done", { files: supportedFiles.length, results: parseResults.length });
 
         // Index each result
         for (const parseResult of parseResults) {

@@ -1,6 +1,6 @@
 # Schemas
 
-*Last updated: 2026-01-11*
+*Last updated: 2026-01-13*
 
 Модуль содержит схемы валидации Zod для всех инструментов MCP.
 
@@ -53,11 +53,11 @@
 | `DetectCodeClonesSchema` | const | Валидация обнаружения семантически похожих блоков кода | [→ semantic-schemas.ts:29-32] |
 | `FindRelatedConceptsSchema` | const | Валидация поиска связанных с сущностью концепций | [→ semantic-schemas.ts:29-32] |
 | `CrossLanguageSearchSchema` | const | Валидация поиска кода в нескольких языках программирования | [→ semantic-schemas.ts:29-32] |
-| `PatternSearchSchema` | const | Валидация поиска по регулярным выражениям и шаблонам | [→ semantic-schemas.ts:34-37] |
+| `PatternSearchSchema` | const | Валидация поиска по регулярным выражениям и шаблонам | [→ semantic-schemas.ts:29-32] |
 | `CreateSnapshotSchema` | const | Валидация создания снимка состояния кода в момент времени | [→ snapshot-schemas.ts:8-11] |
 | `RollbackSnapshotSchema` | const | Валидация отката кода к предыдущему снимку состояния | [→ snapshot-schemas.ts:8-11] |
 | `ListSnapshotsSchema` | const | Валидация получения списка доступных снимков состояния | [→ snapshot-schemas.ts:8-11] |
-| `CleanupSnapshotsSchema` | const | Валидация удаления старых снимков состояния проекта | [→ snapshot-schemas.ts:13-15] |
+| `CleanupSnapshotsSchema` | const | Валидация удаления старых снимков состояния проекта | [→ snapshot-schemas.ts:8-11] |
 | `ValidateFileSchema` | const | Валидация проверки синтаксиса одного файла программы | [→ validation-schemas.ts:8-11] |
 | `ValidateDirectorySchema` | const | Валидация проверки синтаксиса файлов в директории | [→ validation-schemas.ts:8-11] |
 | `DetectTechnologyStackSchema` | const | Валидация определения используемых технологий в коде | [→ validation-schemas.ts:19-21] |

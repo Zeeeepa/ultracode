@@ -155,9 +155,10 @@ export class EmbeddingAccumulator {
   async addBinaryEmbeddings(embeddings: BinaryEmbedding[]): Promise<void> {
     if (embeddings.length === 0) return;
 
-    log.d("ACCUMULATOR", "addBinaryEmbeddings", {
+    log.i("ACCUMULATOR", "addBinaryEmbeddings", {
       count: embeddings.length,
       hasFaissProvider: !!this.vectorProvider,
+      pendingBefore: this.pending.length,
     });
 
     // Convert binary to VectorEmbedding format
@@ -185,6 +186,12 @@ export class EmbeddingAccumulator {
       this.stats.accumulated++;
       this.stats.totalBytes += emb.vectorBuffer.byteLength;
     }
+
+    log.i("ACCUMULATOR", "addBinaryEmbeddings_done", {
+      pendingAfter: this.pending.length,
+      threshold: this.config.flushThreshold,
+      willFlush: this.pending.length >= this.config.flushThreshold,
+    });
 
     // Check if we should flush
     if (this.pending.length >= this.config.flushThreshold) {
@@ -445,7 +452,7 @@ export class EmbeddingAccumulator {
       await this.processQueueLoop();
     }
 
-    log.d("ACCUMULATOR", "flush() called", {
+    log.i("ACCUMULATOR", "flush() called", {
       pending: this.pending.length,
       hasFaissProvider: !!this.vectorProvider,
       accumulated: this.stats.accumulated,
