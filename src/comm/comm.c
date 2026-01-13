@@ -46,7 +46,7 @@
 // GetExitCodeProcess - not in standard Cosmopolitan headers
 bool32 GetExitCodeProcess(int64_t hProcess, uint32_t *lpExitCode);
 
-#define VERSION "2.1.0"
+#define VERSION "2.2.0"
 #define APP_NAME "UltraScript.Comm"
 #define BUFFER_SIZE 8192
 #define PIPE_NAME "\\\\.\\pipe\\UltraScript_Core"
@@ -171,7 +171,7 @@ static const char* find_runtime(char *bun_path, size_t bun_path_size) {
 }
 
 // ============================================================================
-// Windows - STDIO mode (spawn child, proxy stdin/stdout)
+// Windows - STDIO mode (single-instance via Named Pipe IPC)
 // ============================================================================
 
 static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
@@ -179,7 +179,9 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
     char core_path[1100];
     char cmd_line[4096];
     char16_t cmd_line_w[4096];
+    char16_t pipe_name_w[256];
     char bun_path[512];
+    int we_started_server = 0;  // Track if we started the server
 
     win_get_exe_dir(exe_path, sizeof(exe_path));
     snprintf(core_path, sizeof(core_path), "%s\\index.js", exe_path);
@@ -188,203 +190,90 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
         return 1;  // No core found
     }
 
-    const char *runtime_exe = find_runtime(bun_path, sizeof(bun_path));
-
-    // Build command line (NO --pipe flag - stdio mode)
-    snprintf(cmd_line, sizeof(cmd_line), "\"%s\" \"%s\"", runtime_exe, core_path);
-
-    // Append forwarded arguments (skip --stdio)
-    for (int i = 1; i < argc; i++) {
-        if (i == mode_arg_idx) continue;  // Skip --stdio
-        strcat(cmd_line, " \"");
-        strcat(cmd_line, argv[i]);
-        strcat(cmd_line, "\"");
-    }
-
-    ascii_to_utf16(cmd_line, cmd_line_w, sizeof(cmd_line_w) / sizeof(cmd_line_w[0]));
-
-    // Create pipes for stdin/stdout
-    struct NtSecurityAttributes sa = {0};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = true;
-
-    int64_t child_stdin_read, child_stdin_write;
-    int64_t child_stdout_read, child_stdout_write;
-
-    if (!CreatePipe(&child_stdin_read, &child_stdin_write, &sa, 0)) {
-        return 1;
-    }
-    if (!CreatePipe(&child_stdout_read, &child_stdout_write, &sa, 0)) {
-        CloseHandle(child_stdin_read);
-        CloseHandle(child_stdin_write);
-        return 1;
-    }
-
-    // Don't inherit our end of the pipes
-    SetHandleInformation(child_stdin_write, kNtHandleFlagInherit, 0);
-    SetHandleInformation(child_stdout_read, kNtHandleFlagInherit, 0);
-
-    struct NtStartupInfo si = {0};
-    struct NtProcessInformation pi = {0};
-
-    si.cb = sizeof(si);
-    si.dwFlags = kNtStartfUsestdhandles | kNtStartfUseshowwindow;
-    si.wShowWindow = 0;  // SW_HIDE
-    si.hStdInput = child_stdin_read;
-    si.hStdOutput = child_stdout_write;
-    si.hStdError = GetStdHandle(kNtStdErrorHandle);  // Pass through stderr
-
-    bool32 ok = CreateProcess(
-        NULL,
-        cmd_line_w,
-        NULL,
-        NULL,
-        true,  // Inherit handles
-        kNtCreateNoWindow,
-        NULL,
-        NULL,
-        &si,
-        &pi
-    );
-
-    // Close child's end of pipes (we keep our end)
-    CloseHandle(child_stdin_read);
-    CloseHandle(child_stdout_write);
-
-    if (!ok) {
-        CloseHandle(child_stdin_write);
-        CloseHandle(child_stdout_read);
-        return 1;
-    }
-
-    // Proxy loop: stdin -> child, child -> stdout
-    char buf[BUFFER_SIZE];
-    int64_t our_stdin = GetStdHandle(kNtStdInputHandle);
-    int64_t our_stdout = GetStdHandle(kNtStdOutputHandle);
-    uint32_t bytes_read, bytes_written, bytes_avail;
-
-    while (g_running) {
-        // Check if child has output -> forward to stdout
-        if (PeekNamedPipe(child_stdout_read, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
-            if (ReadFile(child_stdout_read, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
-                WriteFile(our_stdout, buf, bytes_read, &bytes_written, NULL);
-            }
-        }
-
-        // Check if we have stdin -> forward to child
-        if (PeekNamedPipe(our_stdin, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
-            if (ReadFile(our_stdin, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
-                WriteFile(child_stdin_write, buf, bytes_read, &bytes_written, NULL);
-            }
-        }
-
-        // Check if child exited
-        uint32_t exit_code;
-        if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != 259) {  // STILL_ACTIVE = 259
-            break;
-        }
-
-        Sleep(10);  // 10ms sleep - balance between responsiveness and CPU/IO usage
-    }
-
-    // Cleanup
-    CloseHandle(child_stdin_write);
-    CloseHandle(child_stdout_read);
-
-    // Terminate child if still running
-    TerminateProcess(pi.hProcess, 0);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-
-    return 0;
-}
-
-// ============================================================================
-// Windows - PIPE mode (Named Pipe IPC, faster but requires --pipe on server)
-// ============================================================================
-
-static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
-    char exe_path[1024];
-    char core_path[1100];
-    char cmd_line[4096];
-    char16_t cmd_line_w[4096];
-    char16_t pipe_name_w[256];
-    char bun_path[512];
-
-    win_get_exe_dir(exe_path, sizeof(exe_path));
-    snprintf(core_path, sizeof(core_path), "%s\\index.js", exe_path);
-
-    if (access(core_path, F_OK) != 0) {
-        return 1;
-    }
-
-    const char *runtime_exe = find_runtime(bun_path, sizeof(bun_path));
-
-    // Build command line WITH --pipe flag
-    snprintf(cmd_line, sizeof(cmd_line), "\"%s\" \"%s\" --pipe", runtime_exe, core_path);
-
-    // Append forwarded arguments (skip --pipe from our args)
-    for (int i = 1; i < argc; i++) {
-        if (i == mode_arg_idx) continue;  // Skip --pipe
-        strcat(cmd_line, " \"");
-        strcat(cmd_line, argv[i]);
-        strcat(cmd_line, "\"");
-    }
-
-    ascii_to_utf16(cmd_line, cmd_line_w, sizeof(cmd_line_w) / sizeof(cmd_line_w[0]));
     ascii_to_utf16(PIPE_NAME, pipe_name_w, sizeof(pipe_name_w) / sizeof(pipe_name_w[0]));
 
-    // Start MCP server as background process
-    struct NtStartupInfo si = {0};
-    struct NtProcessInformation pi = {0};
-
-    si.cb = sizeof(si);
-    si.dwFlags = kNtStartfUsestdhandles | kNtStartfUseshowwindow;
-    si.wShowWindow = 0;  // SW_HIDE
-    si.hStdInput = GetStdHandle(kNtStdInputHandle);
-    si.hStdOutput = GetStdHandle(kNtStdErrorHandle);  // Server output to stderr
-    si.hStdError = GetStdHandle(kNtStdErrorHandle);
-
-    bool32 ok = CreateProcess(
+    // STEP 1: Try to connect to existing Named Pipe first
+    int64_t pipe_handle = CreateFile(
+        pipe_name_w,
+        kNtGenericRead | kNtGenericWrite,
+        0,
         NULL,
-        cmd_line_w,
-        NULL,
-        NULL,
-        true,
-        kNtCreateNoWindow,
-        NULL,
-        NULL,
-        &si,
-        &pi
+        kNtOpenExisting,
+        0,
+        0
     );
 
-    if (!ok) {
-        return 1;
-    }
+    struct NtProcessInformation pi = {0};
 
-    CloseHandle(pi.hThread);
+    // STEP 2: If pipe doesn't exist, start the server
+    if (pipe_handle == -1) {
+        we_started_server = 1;
 
-    // Wait for Named Pipe to be available
-    int64_t pipe_handle = -1;
-    for (int retry = 0; retry < 100 && g_running; retry++) {
-        pipe_handle = CreateFile(
-            pipe_name_w,
-            kNtGenericRead | kNtGenericWrite,
-            0,
+        const char *runtime_exe = find_runtime(bun_path, sizeof(bun_path));
+
+        // Build command line WITH --pipe flag for single-instance
+        snprintf(cmd_line, sizeof(cmd_line), "\"%s\" \"%s\" --pipe", runtime_exe, core_path);
+
+        // Append forwarded arguments (skip --stdio)
+        for (int i = 1; i < argc; i++) {
+            if (i == mode_arg_idx) continue;  // Skip --stdio
+            strcat(cmd_line, " \"");
+            strcat(cmd_line, argv[i]);
+            strcat(cmd_line, "\"");
+        }
+
+        ascii_to_utf16(cmd_line, cmd_line_w, sizeof(cmd_line_w) / sizeof(cmd_line_w[0]));
+
+        // Start MCP server as background process
+        struct NtStartupInfo si = {0};
+
+        si.cb = sizeof(si);
+        si.dwFlags = kNtStartfUsestdhandles | kNtStartfUseshowwindow;
+        si.wShowWindow = 0;  // SW_HIDE
+        si.hStdInput = GetStdHandle(kNtStdInputHandle);
+        si.hStdOutput = GetStdHandle(kNtStdErrorHandle);  // Server output to stderr
+        si.hStdError = GetStdHandle(kNtStdErrorHandle);
+
+        bool32 ok = CreateProcess(
             NULL,
-            kNtOpenExisting,
-            0,
-            0
+            cmd_line_w,
+            NULL,
+            NULL,
+            true,
+            kNtCreateNoWindow,
+            NULL,
+            NULL,
+            &si,
+            &pi
         );
 
-        if (pipe_handle != -1) break;
-        Sleep(100);
-    }
+        if (!ok) {
+            return 1;
+        }
 
-    if (pipe_handle == -1) {
-        TerminateProcess(pi.hProcess, 0);
-        CloseHandle(pi.hProcess);
-        return 1;
+        CloseHandle(pi.hThread);
+
+        // Wait for Named Pipe to be available
+        for (int retry = 0; retry < 100 && g_running; retry++) {
+            pipe_handle = CreateFile(
+                pipe_name_w,
+                kNtGenericRead | kNtGenericWrite,
+                0,
+                NULL,
+                kNtOpenExisting,
+                0,
+                0
+            );
+
+            if (pipe_handle != -1) break;
+            Sleep(100);
+        }
+
+        if (pipe_handle == -1) {
+            TerminateProcess(pi.hProcess, 0);
+            CloseHandle(pi.hProcess);
+            return 1;
+        }
     }
 
     // Proxy loop: stdin <-> Named Pipe <-> stdout
@@ -408,10 +297,12 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
             }
         }
 
-        // Check if server exited
-        uint32_t exit_code;
-        if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != 259) {
-            break;
+        // Check if server exited (only if we started it)
+        if (we_started_server) {
+            uint32_t exit_code;
+            if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != 259) {
+                break;
+            }
         }
 
         Sleep(10);  // 10ms sleep - balance between responsiveness and CPU/IO usage
@@ -419,8 +310,162 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
 
     // Cleanup
     CloseHandle(pipe_handle);
-    TerminateProcess(pi.hProcess, 0);
-    CloseHandle(pi.hProcess);
+
+    // Only terminate server if we started it
+    if (we_started_server) {
+        TerminateProcess(pi.hProcess, 0);
+        CloseHandle(pi.hProcess);
+    }
+
+    return 0;
+}
+
+// ============================================================================
+// Windows - PIPE mode (Named Pipe IPC, faster but requires --pipe on server)
+// ============================================================================
+
+static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
+    char exe_path[1024];
+    char core_path[1100];
+    char cmd_line[4096];
+    char16_t cmd_line_w[4096];
+    char16_t pipe_name_w[256];
+    char bun_path[512];
+    int we_started_server = 0;  // Track if we started the server
+
+    win_get_exe_dir(exe_path, sizeof(exe_path));
+    snprintf(core_path, sizeof(core_path), "%s\\index.js", exe_path);
+
+    if (access(core_path, F_OK) != 0) {
+        return 1;
+    }
+
+    ascii_to_utf16(PIPE_NAME, pipe_name_w, sizeof(pipe_name_w) / sizeof(pipe_name_w[0]));
+
+    // STEP 1: Try to connect to existing Named Pipe first
+    int64_t pipe_handle = CreateFile(
+        pipe_name_w,
+        kNtGenericRead | kNtGenericWrite,
+        0,
+        NULL,
+        kNtOpenExisting,
+        0,
+        0
+    );
+
+    struct NtProcessInformation pi = {0};
+
+    // STEP 2: If pipe doesn't exist, start the server
+    if (pipe_handle == -1) {
+        we_started_server = 1;
+
+        const char *runtime_exe = find_runtime(bun_path, sizeof(bun_path));
+
+        // Build command line WITH --pipe flag
+        snprintf(cmd_line, sizeof(cmd_line), "\"%s\" \"%s\" --pipe", runtime_exe, core_path);
+
+        // Append forwarded arguments (skip --pipe from our args)
+        for (int i = 1; i < argc; i++) {
+            if (i == mode_arg_idx) continue;  // Skip --pipe
+            strcat(cmd_line, " \"");
+            strcat(cmd_line, argv[i]);
+            strcat(cmd_line, "\"");
+        }
+
+        ascii_to_utf16(cmd_line, cmd_line_w, sizeof(cmd_line_w) / sizeof(cmd_line_w[0]));
+
+        // Start MCP server as background process
+        struct NtStartupInfo si = {0};
+
+        si.cb = sizeof(si);
+        si.dwFlags = kNtStartfUsestdhandles | kNtStartfUseshowwindow;
+        si.wShowWindow = 0;  // SW_HIDE
+        si.hStdInput = GetStdHandle(kNtStdInputHandle);
+        si.hStdOutput = GetStdHandle(kNtStdErrorHandle);  // Server output to stderr
+        si.hStdError = GetStdHandle(kNtStdErrorHandle);
+
+        bool32 ok = CreateProcess(
+            NULL,
+            cmd_line_w,
+            NULL,
+            NULL,
+            true,
+            kNtCreateNoWindow,
+            NULL,
+            NULL,
+            &si,
+            &pi
+        );
+
+        if (!ok) {
+            return 1;
+        }
+
+        CloseHandle(pi.hThread);
+
+        // Wait for Named Pipe to be available
+        for (int retry = 0; retry < 100 && g_running; retry++) {
+            pipe_handle = CreateFile(
+                pipe_name_w,
+                kNtGenericRead | kNtGenericWrite,
+                0,
+                NULL,
+                kNtOpenExisting,
+                0,
+                0
+            );
+
+            if (pipe_handle != -1) break;
+            Sleep(100);
+        }
+
+        if (pipe_handle == -1) {
+            TerminateProcess(pi.hProcess, 0);
+            CloseHandle(pi.hProcess);
+            return 1;
+        }
+    }
+
+    // Proxy loop: stdin <-> Named Pipe <-> stdout
+    char buf[BUFFER_SIZE];
+    int64_t our_stdin = GetStdHandle(kNtStdInputHandle);
+    int64_t our_stdout = GetStdHandle(kNtStdOutputHandle);
+    uint32_t bytes_read, bytes_written, bytes_avail;
+
+    while (g_running) {
+        // Check Named Pipe for output -> forward to stdout
+        if (PeekNamedPipe(pipe_handle, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
+            if (ReadFile(pipe_handle, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                WriteFile(our_stdout, buf, bytes_read, &bytes_written, NULL);
+            }
+        }
+
+        // Check stdin -> forward to Named Pipe
+        if (PeekNamedPipe(our_stdin, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
+            if (ReadFile(our_stdin, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                WriteFile(pipe_handle, buf, bytes_read, &bytes_written, NULL);
+            }
+        }
+
+        // Check if server exited (only if we started it)
+        if (we_started_server) {
+            uint32_t exit_code;
+            if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != 259) {
+                break;
+            }
+        }
+
+        Sleep(10);  // 10ms sleep - balance between responsiveness and CPU/IO usage
+    }
+
+    // Cleanup
+    CloseHandle(pipe_handle);
+
+    // Only terminate server if we started it
+    if (we_started_server) {
+        TerminateProcess(pi.hProcess, 0);
+        CloseHandle(pi.hProcess);
+    }
 
     return 0;
 }
