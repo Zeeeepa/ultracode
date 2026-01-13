@@ -727,6 +727,10 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   }
 
   async detectClones(minSimilarity = 0.65): Promise<CloneGroup[]> {
+    if (!this.codeAnalyzer) {
+      log.w("SEMANTIC", "detectClones called before codeAnalyzer initialized");
+      return [];
+    }
     return this.codeAnalyzer.detectClones(minSimilarity);
   }
 

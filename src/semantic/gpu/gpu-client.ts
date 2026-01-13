@@ -508,10 +508,12 @@ class GpuSubprocessClient implements IGpuClient {
 
     // Use Named Pipe for binary IPC if available
     if (this.useNamedPipe && this.namedPipeClient?.isConnected) {
+      log.d("GPU", "Using Named Pipe", { type: request.type });
       return this.sendNamedPipeRequest(request);
     }
 
     // Fallback to stdin/stdout JSON
+    log.d("GPU", "Using stdin/stdout JSON", { type: request.type, hasVector: !!(request as any).vector });
     const requestId = ++this.requestId;
     const abortController = new AbortController();
 
@@ -642,6 +644,7 @@ class GpuSubprocessClient implements IGpuClient {
 
   async faissSearch(vector: Float32Array | number[], k: number): Promise<FaissSearchResult[]> {
     const vectorArray = vector instanceof Float32Array ? Array.from(vector) : vector;
+    log.d("GPU", "faissSearch", { vectorLen: vectorArray?.length, k, isArray: Array.isArray(vectorArray) });
     const response = await this.sendRequest({ type: "faiss.search", vector: vectorArray, k });
     if (!response.success) throw new Error((response as any).error);
     return (response as FaissSearchResponse).results;
