@@ -162,9 +162,11 @@ export default defineConfig([
 
     // Mark fs as external to avoid "unused import" warnings from tree-shaking
     // Some dependencies import from "fs", others from "node:fs" - need both
+    // TypeScript compiler must be external - uses dynamic require("fs") internally
     external: [
       "fs",
       "node:fs",
+      "typescript", // Must be external - uses require("fs") internally which fails in ESM bundle
       "@modelcontextprotocol/sdk",
       "sharp",
       "onnxruntime-node",

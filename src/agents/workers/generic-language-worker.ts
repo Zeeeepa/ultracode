@@ -367,8 +367,10 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
         const fileLang = detectLanguage(file);
         try {
           analyzer = await getAnalyzer(fileLang);
-        } catch {
-          errors.push({ file, message: `No analyzer for language: ${fileLang}` });
+        } catch (err) {
+          const errMsg = (err as Error).message;
+          workerLog("ERROR", `getAnalyzer failed: ${file}`, { language: fileLang, error: errMsg });
+          errors.push({ file, message: `No analyzer for language: ${fileLang}: ${errMsg}` });
           prefetch.advance();
           continue;
         }
@@ -407,9 +409,12 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
         workerLog("WARN", `Slow parse: ${file} took ${fileDuration}ms`);
       }
     } catch (error) {
+      const errMsg = (error as Error).message;
+      const errStack = (error as Error).stack?.split("\n").slice(0, 3).join(" ");
+      workerLog("ERROR", `Parse failed: ${file}`, { error: errMsg, stack: errStack });
       errors.push({
         file,
-        message: (error as Error).message,
+        message: errMsg,
       });
       prefetch.advance(); // Continue prefetching even on error
     }

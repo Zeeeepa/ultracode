@@ -78,9 +78,14 @@ export async function getAnalyzer(language: string): Promise<any> {
       case "typescript":
       case "javascript": {
         // Use UnifiedParser for TS/JS (TypeScript Compiler API)
+        const { workerLog } = await import("./worker-logging.js");
+        workerLog("INFO", `Loading UnifiedParser for ${language}`);
         const { UnifiedParser } = await import("../../parsers/unified-parser.js");
+        workerLog("INFO", `UnifiedParser imported, creating instance`);
         analyzer = new UnifiedParser();
+        workerLog("INFO", `Calling initialize()`);
         await analyzer.initialize();
+        workerLog("INFO", `UnifiedParser initialized OK`);
         break;
       }
 
@@ -105,6 +110,12 @@ export async function getAnalyzer(language: string): Promise<any> {
     analyzerCache.set(language, analyzer);
     return analyzer;
   } catch (error) {
+    const { workerLog } = await import("./worker-logging.js");
+    const err = error as Error;
+    workerLog("ERROR", `Failed to load analyzer for ${language}`, {
+      error: err.message,
+      stack: err.stack?.split("\n").slice(0, 5).join(" "),
+    });
     throw new Error(`Failed to load analyzer for ${language}`, { cause: error });
   }
 }
