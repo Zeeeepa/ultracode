@@ -6,6 +6,7 @@
 
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { t, ta, ti } from "../i18n/index.js";
 import { printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
 import { sleep } from "./runtime.js";
 
@@ -16,7 +17,7 @@ export async function checkNvidiaContainerToolkit(): Promise<boolean> {
   const isWindows = process.platform === "win32";
 
   // Test if nvidia-docker works
-  printInfo("Проверка NVIDIA Container Toolkit...");
+  printInfo(t("nvidia.checking"));
 
   const testResult = spawnSync(
     "docker",
@@ -30,11 +31,11 @@ export async function checkNvidiaContainerToolkit(): Promise<boolean> {
   );
 
   if (testResult.status === 0) {
-    printOK("NVIDIA Container Toolkit работает");
+    printOK(t("nvidia.toolkit_works"));
     return true;
   }
 
-  printWarn("NVIDIA Container Toolkit не настроен");
+  printWarn(t("nvidia.toolkit_not_configured"));
 
   if (isWindows) {
     // On Windows, Docker Desktop handles GPU passthrough via WSL2
@@ -52,36 +53,37 @@ export async function checkNvidiaContainerToolkit(): Promise<boolean> {
         const majorVersion = parseInt(driverVersion.split(".")[0] || "0", 10);
 
         if (majorVersion >= 525) {
-          printOK(`NVIDIA драйвер ${driverVersion} (✓ поддерживает WSL2 GPU)`);
+          printOK(ti("nvidia.driver_ok", { version: driverVersion }));
         } else {
-          printError(`NVIDIA драйвер ${driverVersion} слишком старый. Требуется 525+`);
+          printError(ti("nvidia.driver_old", { version: driverVersion }));
           console.error("");
-          console.error("  Обновите драйвер NVIDIA:");
-          console.error("  https://www.nvidia.com/download/index.aspx");
+          console.error(`  ${t("nvidia.driver_update_hint")}`);
+          console.error(`  ${t("nvidia.driver_update_url")}`);
           return false;
         }
       }
     } catch {
-      printError("nvidia-smi не найден. Установите NVIDIA драйвер.");
+      printError(t("nvidia.driver_not_found"));
       return false;
     }
 
     // Check Docker Desktop WSL2 backend
-    printInfo("Проверка Docker Desktop WSL2 backend...");
+    printInfo(t("nvidia.wsl_check"));
     console.error("");
-    console.error("  Для GPU в Docker Desktop нужно:");
-    console.error('  1. Docker Desktop → Settings → General → "Use the WSL 2 based engine" ✓');
-    console.error("  2. Docker Desktop → Settings → Resources → WSL Integration → Enable");
+    const wslReqs = ta("nvidia.wsl_requirements");
+    for (let i = 0; i < wslReqs.length; i++) {
+      console.error(`  ${i + 1}. ${wslReqs[i]}`);
+    }
     console.error("");
 
-    const answer = await prompt("  Docker Desktop настроен для WSL2? [y/N]: ");
+    const answer = await prompt(`  ${t("nvidia.wsl_configured")} `);
     if (answer.toLowerCase() !== "y") {
-      printInfo("Откройте Docker Desktop → Settings и настройте WSL2 backend");
+      printInfo(t("nvidia.wsl_configure_hint"));
       return false;
     }
 
     // Restart Docker Desktop to apply GPU settings
-    printInfo("Перезапуск Docker Desktop для применения GPU настроек...");
+    printInfo(t("nvidia.docker_restarting"));
     try {
       spawnSync(
         "powershell",
@@ -98,11 +100,11 @@ export async function checkNvidiaContainerToolkit(): Promise<boolean> {
       if (existsSync(dockerPath)) {
         const proc = spawn(dockerPath, [], { detached: true, stdio: "ignore", windowsHide: true });
         proc.unref();
-        printInfo("Docker Desktop запускается...");
+        printInfo(t("nvidia.docker_starting"));
         await sleep(10000); // Wait for Docker to start
       }
     } catch {
-      printWarn("Не удалось перезапустить Docker Desktop. Перезапустите вручную.");
+      printWarn(t("nvidia.docker_restart_failed"));
     }
 
     // Test again
@@ -118,20 +120,20 @@ export async function checkNvidiaContainerToolkit(): Promise<boolean> {
     );
 
     if (retestResult.status === 0) {
-      printOK("NVIDIA Container Toolkit теперь работает!");
+      printOK(t("nvidia.toolkit_now_works"));
       return true;
     }
 
-    printError("GPU всё ещё недоступен в Docker");
+    printError(t("nvidia.gpu_still_unavailable"));
     console.error("");
-    console.error("  Попробуйте:");
-    console.error("  1. Перезагрузить компьютер");
-    console.error("  2. Обновить NVIDIA драйвер до последней версии");
-    console.error("  3. Переустановить Docker Desktop");
+    const hints = ta("nvidia.troubleshoot_hints");
+    for (let i = 0; i < hints.length; i++) {
+      console.error(`  ${i + 1}. ${hints[i]}`);
+    }
     return false;
   } else {
     // Linux: Install NVIDIA Container Toolkit
-    printInfo("Установка NVIDIA Container Toolkit...");
+    printInfo(t("nvidia.installing"));
 
     try {
       execSync(
@@ -148,7 +150,7 @@ export async function checkNvidiaContainerToolkit(): Promise<boolean> {
       execSync(`sudo nvidia-ctk runtime configure --runtime=docker`, { stdio: "pipe" });
       execSync(`sudo systemctl restart docker`, { stdio: "pipe" });
 
-      printOK("NVIDIA Container Toolkit установлен");
+      printOK(t("nvidia.installed"));
 
       // Test again
       await sleep(3000);
@@ -163,11 +165,11 @@ export async function checkNvidiaContainerToolkit(): Promise<boolean> {
       );
 
       if (retestResult.status === 0) {
-        printOK("GPU доступен в Docker!");
+        printOK(t("nvidia.gpu_available"));
         return true;
       }
     } catch (e: any) {
-      printError(`Ошибка установки: ${e.message}`);
+      printError(ti("nvidia.install_error", { error: e.message }));
     }
 
     return false;

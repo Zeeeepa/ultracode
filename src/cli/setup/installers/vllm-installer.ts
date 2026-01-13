@@ -6,29 +6,30 @@ import { execSync, spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getDataDir } from "../../../utils/config-paths.js";
+import { t, ti } from "../i18n/index.js";
 import type { EmbeddingModel, GPUInfo } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
 import { checkDocker, checkNvidiaContainerToolkit, sleep } from "../utils/index.js";
 
 export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<boolean> {
-  printInfo("vLLM Docker setup (NVIDIA GPU)...");
+  printInfo(t("vllm.setup"));
   console.error("");
 
   if (!gpu.available || !/nvidia|geforce|rtx|gtx|quadro/i.test(gpu.name)) {
-    printError("vLLM требует NVIDIA GPU");
-    printInfo("Используйте OVMS Native или TEI для CPU/Intel GPU");
+    printError(t("vllm.nvidia_required"));
+    printInfo(t("vllm.use_alternative"));
     return false;
   }
 
   if (!checkDocker()) {
-    printError("Docker не установлен или не запущен");
+    printError(t("install.docker_required"));
     console.error("");
-    console.error("  Установите Docker Desktop:");
-    console.error("  https://www.docker.com/products/docker-desktop");
+    console.error(`  ${t("install.docker_install_hint")}`);
+    console.error(`  ${t("install.docker_install_url")}`);
     return false;
   }
 
-  printOK("Docker доступен");
+  printOK(t("install.docker_available"));
 
   // Check NVIDIA Container Toolkit
   const nvidiaReady = await checkNvidiaContainerToolkit();
@@ -48,18 +49,20 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
     });
 
     if (existing.stdout.trim() === containerName) {
-      printWarn(`Container '${containerName}' already exists`);
-      const action = await prompt("  [1=Restart, 2=Remove & reinstall, 3=Cancel]: ");
+      printWarn(ti("install.container_exists", { name: containerName }));
+      const action = await prompt(
+        `  [1=${t("install.container_action_restart")}, 2=${t("install.container_action_reinstall")}, 3=${t("install.container_action_cancel")}]: `,
+      );
 
       if (action === "1") {
         spawnSync("docker", ["restart", containerName], { stdio: "inherit", windowsHide: true });
-        printOK("Container restarted");
+        printOK(t("install.container_restarted"));
         return true;
       }
       if (action === "2") {
         spawnSync("docker", ["stop", containerName], { stdio: "pipe", windowsHide: true });
         spawnSync("docker", ["rm", containerName], { stdio: "pipe", windowsHide: true });
-        printOK("Container removed");
+        printOK(t("install.container_removed"));
       } else {
         return false;
       }
@@ -78,10 +81,10 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
   }
 
   if (imageExists) {
-    printOK(`Image already exists: ${imageTag}`);
+    printOK(ti("install.image_exists", { tag: imageTag }));
   } else {
-    printInfo(`Pulling image: ${imageTag}`);
-    console.error("  This may take several minutes (image is ~8GB)...");
+    printInfo(ti("install.pulling_image", { tag: imageTag }));
+    console.error(`  ${t("vllm.image_size_hint")}`);
 
     try {
       const pullOutput = execSync(`docker pull "${imageTag}"`, {
@@ -90,10 +93,10 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
         windowsHide: true,
       });
       if (pullOutput) console.error(pullOutput.trim());
-      printOK("vLLM image downloaded");
+      printOK(t("vllm.image_downloaded"));
     } catch (e: any) {
       console.error(`[DEBUG] Pull failed: ${e.message}`);
-      printError("Failed to pull Docker image. Check network/VPN settings.");
+      printError(t("install.pull_failed"));
       return false;
     }
   }
@@ -107,14 +110,14 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
   // Get HuggingFace token
   const hfToken = process.env["HF_TOKEN"] || process.env["HUGGING_FACE_HUB_TOKEN"] || process.env["HF_API_TOKEN"];
   if (hfToken) {
-    printOK("HuggingFace токен найден");
+    printOK(t("vllm.hf_token_found"));
   } else {
-    printWarn("HF_TOKEN не найден — загрузка моделей может быть ограничена");
+    printWarn(t("vllm.hf_token_missing"));
   }
 
   // Create container with vLLM
-  printInfo(`Creating vLLM container with model: ${model.model_id}`);
-  console.error(`${c.dim}  vLLM использует OpenAI-compatible API на /v1/embeddings${c.reset}`);
+  printInfo(ti("vllm.creating_container", { model: model.model_id }));
+  console.error(`${c.dim}  ${t("vllm.openai_api_hint")}${c.reset}`);
 
   let dockerCmd = `docker run -d --name ${containerName} -p ${port}:8000 --gpus all --restart unless-stopped`;
   dockerCmd += ` -v "${cacheDirDocker}:/root/.cache/huggingface"`;
@@ -143,15 +146,20 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
     if (runOutput) console.error(`Container ID: ${runOutput.trim().slice(0, 12)}`);
   } catch (e: any) {
     console.error(`[DEBUG] Docker run failed: ${e.message}`);
-    printError("Failed to create container");
+    printError(
+      ti("install.container_created", { name: containerName }).replace(
+        ti("install.container_created", { name: "" }),
+        "Failed to create container",
+      ),
+    );
     return false;
   }
 
-  printOK("Container created");
+  printOK(ti("install.container_created", { name: containerName }));
   console.error(`${c.dim}  Cache: ${cacheDir}${c.reset}`);
 
   // Wait for health (vLLM takes time to load model)
-  printInfo("Waiting for vLLM to initialize (model download may take several minutes)...");
+  printInfo(t("vllm.waiting_init"));
 
   const maxWaitSeconds = 300; // 5 minutes
   const checkIntervalMs = 3000;
@@ -166,7 +174,7 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
       });
       if (response.ok) {
         console.error("");
-        printOK("vLLM server is ready!");
+        printOK(t("vllm.server_ready"));
         console.error("");
         console.error(`  ${c.cyan}API:${c.reset} http://127.0.0.1:${port}/v1/embeddings`);
         console.error(`  ${c.cyan}Model:${c.reset} ${model.model_id}`);
@@ -185,7 +193,7 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
   }
 
   console.error("");
-  printWarn("Health check timed out. Check: docker logs vllm-server");
-  printInfo("Model may still be downloading. Wait and check: curl http://127.0.0.1:8000/health");
+  printWarn(ti("install.health_timeout", { container: containerName }));
+  printInfo(t("vllm.health_timeout_hint"));
   return true;
 }

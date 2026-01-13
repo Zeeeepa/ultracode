@@ -4,6 +4,12 @@
 
 import { createInterface } from "node:readline";
 
+// Clear screen
+export function clearScreen(): void {
+  // Clear screen and move cursor to top-left
+  process.stdout.write("\x1b[2J\x1b[H");
+}
+
 // Colors (avoiding bold \x1b[1m which shows as red on some Windows terminals)
 export const c = {
   reset: "\x1b[0m",
@@ -20,9 +26,18 @@ export const c = {
 
 export function printBanner(): void {
   console.error("");
-  console.error(`${c.cyan}${c.bright}╔═══════════════════════════════════════════════════════════════╗${c.reset}`);
-  console.error(`${c.cyan}${c.bright}║     UltraScript Tools MCP - Semantic Embedding Setup v2       ║${c.reset}`);
-  console.error(`${c.cyan}${c.bright}╚═══════════════════════════════════════════════════════════════╝${c.reset}`);
+  console.error(`${c.cyan}        ██  ██${c.reset}`);
+  console.error(`${c.cyan}        ██  ██  ██    ██████ █████▄  ▄████▄${c.reset}`);
+  console.error(`${c.cyan}        ██  ██  ██      ██   ██▄▄██▄ ██▄▄██${c.reset}`);
+  console.error(`${c.cyan}        ██  ██  ██      ██   ██   ██ ██  ██${c.reset}`);
+  console.error(`${c.cyan}        ██  ██  ██████  ██   ██   ██ ██  ██${c.reset}`);
+  console.error(`${c.cyan}        ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄${c.reset}`);
+  console.error(`${c.cyan}                         ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██${c.reset}`);
+  console.error(`${c.cyan}                         ▄▄██▀ ▀████ ██ ██ ██ ██     ██${c.reset}`);
+  console.error("");
+  console.error(`${c.bright}     ╔═════════════════════════════════════════════════════╗${c.reset}`);
+  console.error(`${c.bright}     ║              SEMANTIC EMBEDDING SETUP               ║${c.reset}`);
+  console.error(`${c.bright}     ╚═════════════════════════════════════════════════════╝${c.reset}`);
   console.error("");
 }
 

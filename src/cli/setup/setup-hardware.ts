@@ -4,6 +4,7 @@
 
 import { spawnSync } from "node:child_process";
 import type { CPUInfo } from "../../cpu/cpu-detector.js";
+import { t } from "./i18n/index.js";
 import type { GPUInfo } from "./setup-types.js";
 import { c } from "./setup-ui.js";
 
@@ -55,18 +56,18 @@ export function detectGPU(): GPUInfo {
 }
 
 export function printHardwareInfo(cpu: CPUInfo, gpu: GPUInfo): void {
-  console.error(`${c.dim}Hardware Detection${c.reset}`);
+  console.error(`${c.dim}${t("hardware.title")}${c.reset}`);
   console.error("");
 
   // CPU Info - simple user-friendly message
   const cpuMessage =
     {
-      optimal: "Максимальная производительность для CPU инференса (AVX-512)",
-      excellent: "Отличная производительность для CPU инференса (AVX2)",
-      good: "Хорошая производительность для CPU инференса",
-      basic: "Базовая производительность, рекомендуется GPU",
-      unsupported: "Слабый CPU, рекомендуется GPU",
-    }[cpu.openvinoTier] || "Неизвестно";
+      optimal: t("hardware.cpu_optimal"),
+      excellent: t("hardware.cpu_excellent"),
+      good: t("hardware.cpu_good"),
+      basic: t("hardware.cpu_basic"),
+      unsupported: t("hardware.cpu_weak"),
+    }[cpu.openvinoTier] || t("hardware.cpu_unknown");
 
   console.error(`${c.dim}  CPU: ${cpu.model}${c.reset}`);
   console.error(`${c.dim}       ${cpuMessage}${c.reset}`);
@@ -77,9 +78,9 @@ export function printHardwareInfo(cpu: CPUInfo, gpu: GPUInfo): void {
     const archName = gpu.architecture.charAt(0).toUpperCase() + gpu.architecture.slice(1);
     const vramGB = (gpu.vramMB / 1024).toFixed(0);
     console.error(`${c.dim}  GPU: ${gpu.name} (${archName}, ${vramGB}GB VRAM)${c.reset}`);
-    console.error(`${c.dim}       Можно использовать GPU embedding/LLM модели через Ollama и TEI (docker)${c.reset}`);
+    console.error(`${c.dim}       ${t("hardware.gpu_hint")}${c.reset}`);
   } else {
-    console.error(`${c.dim}  GPU: Не обнаружен${c.reset}`);
+    console.error(`${c.dim}  GPU: ${t("hardware.gpu_not_detected")}${c.reset}`);
   }
   console.error("");
 }

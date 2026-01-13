@@ -6,6 +6,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getDataDir } from "../../../utils/config-paths.js";
+import { t, ti } from "../i18n/index.js";
 import type { EmbeddingModel, GPUInfo } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
 import { checkDocker, sleep } from "../utils/index.js";
@@ -18,33 +19,33 @@ function getHFToken(): string | undefined {
 }
 
 export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<boolean> {
-  printInfo("TEI setup...");
+  printInfo(t("tei.setup"));
   console.error("");
 
   if (!checkDocker()) {
-    printError("Docker не установлен или не запущен");
+    printError(t("install.docker_required"));
     console.error("");
-    console.error("  Установите Docker Desktop:");
-    console.error("  https://www.docker.com/products/docker-desktop");
+    console.error(`  ${t("install.docker_install_hint")}`);
+    console.error(`  ${t("install.docker_install_url")}`);
     return false;
   }
 
-  printOK("Docker доступен");
+  printOK(t("install.docker_available"));
 
   // Check for HuggingFace token
   const hfToken = getHFToken();
   if (hfToken) {
-    printOK("HuggingFace токен найден");
+    printOK(t("vllm.hf_token_found"));
   } else {
-    printWarn("HF_TOKEN не найден — загрузка моделей может быть ограничена");
-    console.error(`${c.dim}  Установите: $env:HF_TOKEN = "hf_xxx" или export HF_TOKEN=hf_xxx${c.reset}`);
+    printWarn(t("vllm.hf_token_missing"));
+    console.error(`${c.dim}  ${t("tei.hf_token_set_hint")}${c.reset}`);
   }
 
   // Select image based on GPU
   let imageTag: string;
   if (gpu.isBlackwell) {
     imageTag = "hotchpotch/tei-blackwell-testing:latest";
-    printWarn("Blackwell GPU detected — using special image");
+    printWarn(t("tei.blackwell_detected"));
   } else if (gpu.available) {
     imageTag = model.image_gpu || "ghcr.io/huggingface/text-embeddings-inference:1.8.3";
   } else {
@@ -62,18 +63,20 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
     });
 
     if (existing.stdout.trim() === containerName) {
-      printWarn(`Container '${containerName}' already exists`);
-      const action = await prompt("  [1=Restart, 2=Remove & reinstall, 3=Cancel]: ");
+      printWarn(ti("install.container_exists", { name: containerName }));
+      const action = await prompt(
+        `  [1=${t("install.container_action_restart")}, 2=${t("install.container_action_reinstall")}, 3=${t("install.container_action_cancel")}]: `,
+      );
 
       if (action === "1") {
         spawnSync("docker", ["restart", containerName], { stdio: "inherit", windowsHide: true });
-        printOK("Container restarted");
+        printOK(t("install.container_restarted"));
         return true;
       }
       if (action === "2") {
         spawnSync("docker", ["stop", containerName], { stdio: "pipe", windowsHide: true });
         spawnSync("docker", ["rm", containerName], { stdio: "pipe", windowsHide: true });
-        printOK("Container removed");
+        printOK(t("install.container_removed"));
       } else {
         return false;
       }
@@ -83,8 +86,8 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
   }
 
   // Pull image
-  printInfo(`Pulling image: ${imageTag}`);
-  console.error("  This may take a few minutes...");
+  printInfo(ti("install.pulling_image", { tag: imageTag }));
+  console.error(`  ${t("tei.pull_time_hint")}`);
 
   try {
     const pullOutput = execSync(`docker pull "${imageTag}"`, {
@@ -95,15 +98,15 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
     if (pullOutput) console.error(pullOutput.trim());
   } catch (e: any) {
     console.error(`[DEBUG] Pull failed: ${e.message}`);
-    printError("Failed to pull Docker image");
+    printError(t("install.pull_failed"));
     return false;
   }
 
-  printOK("Image downloaded");
+  printOK(t("install.model_downloaded"));
   console.error("");
 
   // Create container
-  printInfo(`Creating container with model: ${model.model_id}`);
+  printInfo(ti("vllm.creating_container", { model: model.model_id }));
 
   // Setup cache directory for model persistence
   const cacheDir = join(getDataDir(), "hf-cache");
@@ -151,15 +154,17 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
     return false;
   }
 
-  printOK("Container created");
+  printOK(ti("install.container_created", { name: containerName }));
   console.error(`${c.dim}  Cache: ${cacheDir}${c.reset}`);
-  console.error(`${c.dim}  Batch: ${maxClientBatchSize} texts, ${maxBatchTokens} tokens${c.reset}`);
+  console.error(
+    `${c.dim}  ${ti("tei.batch_config", { texts: String(maxClientBatchSize), tokens: String(maxBatchTokens) })}${c.reset}`,
+  );
   if (hfToken) {
-    console.error(`${c.dim}  HF_TOKEN: ****${hfToken.slice(-4)}${c.reset}`);
+    console.error(`${c.dim}  ${ti("tei.hf_token_partial", { suffix: hfToken.slice(-4) })}${c.reset}`);
   }
 
   // Wait for health (up to 5 minutes for large model downloads like BGE-M3)
-  printInfo("Waiting for TEI to initialize (model download may take several minutes)...");
+  printInfo(t("tei.waiting_init"));
 
   const maxWaitSeconds = 300; // 5 minutes
   const checkIntervalMs = 3000;
@@ -174,7 +179,7 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
       });
       if (health.status === 0) {
         console.error("");
-        printOK("TEI server is ready!");
+        printOK(t("tei.server_ready"));
         return true;
       }
     } catch {
@@ -190,7 +195,7 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
   }
 
   console.error("");
-  printWarn("Health check timed out. Check: docker logs tei-server");
-  printInfo("Model may still be downloading. Wait and check: curl http://127.0.0.1:8081/health");
+  printWarn(ti("install.health_timeout", { container: containerName }));
+  printInfo(t("vllm.health_timeout_hint").replace("8000", "8081"));
   return true;
 }

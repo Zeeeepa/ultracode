@@ -10,6 +10,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, unlinkSyn
 import { dirname, join } from "node:path";
 import type { CPUInfo } from "../../../cpu/cpu-detector.js";
 import { getDataDir } from "../../../utils/config-paths.js";
+import { t, ti } from "../i18n/index.js";
 import type { EmbeddingModel, GPUInfo, InstallResult } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
 import { sleep } from "../utils/index.js";
@@ -45,7 +46,7 @@ async function getLatestVersion(): Promise<string> {
 
   // Fallback to known working version
   cachedVersion = "b4969";
-  printWarn(`Could not fetch latest version, using fallback: ${cachedVersion}`);
+  printWarn(ti("llamacpp.fallback_version", { version: cachedVersion }));
   return cachedVersion;
 }
 
@@ -158,7 +159,7 @@ async function getDownloadUrl(backend: Backend): Promise<{ url: string; filename
     } else if (isMac) {
       pattern = /llama-.*-bin-macos-.*\.zip$/i;
     } else {
-      printError(`Unsupported platform: ${process.platform}`);
+      printError(ti("llamacpp.unsupported_platform", { platform: process.platform }));
       return null;
     }
 
@@ -259,16 +260,16 @@ async function downloadFile(url: string, destPath: string): Promise<boolean> {
 
     const totalSize = parseInt(response.headers.get("content-length") || "0", 10);
     if (totalSize > 0) {
-      printInfo(`Size: ${(totalSize / 1024 / 1024).toFixed(1)} MB`);
+      printInfo(ti("llamacpp.size_mb", { size: (totalSize / 1024 / 1024).toFixed(1) }));
     }
 
     const buffer = await response.arrayBuffer();
     writeFileSync(destPath, Buffer.from(buffer));
 
-    printOK("Downloaded");
+    printOK(t("ovms.downloaded"));
     return true;
   } catch (error: any) {
-    printError(`Download failed: ${error.message}`);
+    printError(ti("ovms.download_error", { error: error.message }));
     return false;
   }
 }
@@ -280,15 +281,15 @@ async function downloadGGUFModel(modelId: string, filename: string, destDir: str
   const destPath = join(destDir, filename);
 
   if (existsSync(destPath)) {
-    printOK(`Model already exists: ${filename}`);
+    printOK(ti("llamacpp.model_exists", { file: filename }));
     return destPath;
   }
 
   // HuggingFace URL format: https://huggingface.co/{repo}/resolve/main/{filename}
   const url = `https://huggingface.co/${modelId}/resolve/main/${filename}`;
 
-  printInfo(`Downloading GGUF model: ${modelId}/${filename}`);
-  printInfo("This may take several minutes...");
+  printInfo(ti("llamacpp.downloading_gguf", { repo: modelId, file: filename }));
+  printInfo(t("llamacpp.download_time_hint"));
 
   try {
     const response = await fetch(url, {
@@ -304,15 +305,15 @@ async function downloadGGUFModel(modelId: string, filename: string, destDir: str
     }
 
     const totalSize = parseInt(response.headers.get("content-length") || "0", 10);
-    printInfo(`Size: ${(totalSize / 1024 / 1024).toFixed(1)} MB`);
+    printInfo(ti("llamacpp.size_mb", { size: (totalSize / 1024 / 1024).toFixed(1) }));
 
     const buffer = await response.arrayBuffer();
     writeFileSync(destPath, Buffer.from(buffer));
 
-    printOK(`Model downloaded: ${filename}`);
+    printOK(ti("llamacpp.model_downloaded", { file: filename }));
     return destPath;
   } catch (error: any) {
-    printError(`Model download failed: ${error.message}`);
+    printError(ti("llamacpp.model_download_failed", { error: error.message }));
     return null;
   }
 }
@@ -324,7 +325,7 @@ function extractArchive(archivePath: string, destDir: string): boolean {
   const isWindows = process.platform === "win32";
 
   try {
-    printInfo("Extracting...");
+    printInfo(t("ovms.extracting"));
 
     if (archivePath.endsWith(".zip")) {
       if (isWindows) {
@@ -341,10 +342,10 @@ function extractArchive(archivePath: string, destDir: string): boolean {
       throw new Error(`Unknown archive format: ${archivePath}`);
     }
 
-    printOK("Extracted");
+    printOK(t("ovms.extracted"));
     return true;
   } catch (error: any) {
-    printError(`Extraction failed: ${error.message}`);
+    printError(ti("ovms.convert_error", { error: error.message }));
     return false;
   }
 }
@@ -395,7 +396,7 @@ function findServerBinary(dir: string): string | null {
  * Main installation function
  */
 export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: CPUInfo): Promise<InstallResult> {
-  printInfo("llama.cpp Native setup...");
+  printInfo(t("llamacpp.setup"));
   console.error("");
 
   const isWindows = process.platform === "win32";
@@ -403,18 +404,18 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
   const isMac = process.platform === "darwin";
 
   if (!isWindows && !isLinux && !isMac) {
-    printError(`Platform ${process.platform} is not supported`);
+    printError(ti("llamacpp.unsupported_platform", { platform: process.platform }));
     return { success: false };
   }
 
   // Detect best backend
   const backend = detectBackend(gpu, cpu);
   const backendNames: Record<Backend, string> = {
-    cuda: "NVIDIA CUDA 13.1",
-    vulkan: "Vulkan (cross-platform GPU)",
-    cpu: "CPU only",
+    cuda: t("llamacpp.cuda_backend"),
+    vulkan: t("llamacpp.vulkan_backend"),
+    cpu: t("llamacpp.cpu_backend"),
   };
-  printInfo(`Detected backend: ${backendNames[backend]}`);
+  printInfo(ti("llamacpp.detected_backend", { backend: backendNames[backend] }));
 
   // Get installation directories
   const dataDir = getDataDir();
@@ -430,14 +431,16 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
 
   // Check if already installed
   if (existsSync(binaryPath)) {
-    printOK("llama-server already installed");
+    printOK(t("llamacpp.already_installed"));
 
-    const action = await prompt("  [1=Use existing, 2=Reinstall, 3=Cancel]: ");
+    const action = await prompt(
+      `  [1=${t("llamacpp.action_use")}, 2=${t("llamacpp.action_reinstall")}, 3=${t("llamacpp.action_cancel")}]: `,
+    );
     if (action === "3") return { success: false };
     if (action !== "2") {
-      printInfo("Proceeding with existing installation...");
+      printInfo(t("llamacpp.proceeding_existing"));
     } else {
-      printInfo("Reinstalling llama-server...");
+      printInfo(t("llamacpp.reinstalling"));
       try {
         unlinkSync(binaryPath);
       } catch {
@@ -450,7 +453,7 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
   if (!existsSync(binaryPath)) {
     const downloadInfo = await getDownloadUrl(backend);
     if (!downloadInfo) {
-      printError("Could not determine download URL");
+      printError(t("llamacpp.no_download_url"));
       return { success: false };
     }
 
@@ -474,7 +477,7 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
     // Find and move binary + all required DLLs
     const foundBinary = findServerBinary(extractDir);
     if (!foundBinary) {
-      printError("llama-server binary not found in archive");
+      printError(t("llamacpp.binary_not_found"));
       return { success: false };
     }
 
@@ -489,7 +492,7 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
       try {
         const files = readdirSync(sourceDir) as string[];
         const dllFiles = files.filter((f: string) => f.endsWith(".dll") || f.endsWith(".so") || f.endsWith(".dylib"));
-        printInfo(`Copying ${dllFiles.length} library files...`);
+        printInfo(ti("llamacpp.copying_libs", { count: String(dllFiles.length) }));
         for (const dll of dllFiles) {
           const src = join(sourceDir, dll);
           const dst = join(binDir, dll);
@@ -502,9 +505,9 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
             }
           }
         }
-        printOK(`Copied ${dllFiles.length} DLL files`);
+        printOK(ti("llamacpp.copied_dlls", { count: String(dllFiles.length) }));
       } catch (e: any) {
-        printWarn(`Could not copy DLLs: ${e.message}`);
+        printWarn(ti("llamacpp.copy_dlls_failed", { error: e.message }));
       }
     }
 
@@ -524,11 +527,11 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
       /* ignore cleanup errors */
     }
 
-    printOK(`llama-server installed: ${binaryPath}`);
+    printOK(ti("llamacpp.installed", { path: binaryPath }));
 
     // For CUDA backend, download cudart DLLs (required for GPU acceleration)
     if (backend === "cuda" && isWindows) {
-      printInfo("Downloading CUDA 13.1 runtime libraries...");
+      printInfo(t("llamacpp.downloading_cuda"));
       const cudartInfo = getCudartDownloadUrl();
       if (cudartInfo) {
         const cudartArchivePath = join(llamacppDir, cudartInfo.filename);
@@ -554,9 +557,9 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
                   }
                 }
               }
-              printOK("CUDA 13.1 runtime libraries installed");
+              printOK(t("llamacpp.cuda_installed"));
             } catch (e: any) {
-              printWarn(`Could not copy cudart DLLs: ${e.message}`);
+              printWarn(ti("llamacpp.cuda_copy_failed", { error: e.message }));
             }
           }
           // Cleanup cudart temp
@@ -567,14 +570,14 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
             /* ignore */
           }
         } else {
-          printWarn("Could not download CUDA runtime DLLs - GPU may not work");
+          printWarn(t("llamacpp.cuda_download_failed"));
         }
       }
     }
   }
 
   // Download GGUF model
-  printInfo(`Preparing model: ${model.model_id}`);
+  printInfo(ti("llamacpp.preparing_model", { model: model.model_id }));
 
   // Parse GGUF model info from model config
   // Expected format in config: "gpustack/bge-m3-GGUF" with gguf_file: "bge-m3-Q8_0.gguf"
@@ -582,7 +585,7 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
   const ggufFile = (model as any).gguf_file || `${model.model_id}.gguf`;
 
   if (!ggufRepo) {
-    printError("No GGUF repository specified in model config");
+    printError(t("llamacpp.no_gguf_repo"));
     return { success: false };
   }
 
@@ -607,7 +610,7 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
   writeFileSync(configPath, JSON.stringify(config, null, 2));
 
   // Test server startup
-  printInfo("Testing server startup (model loading may take 30-90s)...");
+  printInfo(t("llamacpp.testing_startup"));
 
   const testProc = spawn(binaryPath, ["--model", modelPath, "--port", "8099", "--host", "127.0.0.1", "--embedding"], {
     detached: false,
@@ -625,7 +628,9 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
     // Progress indicator
     dotCount++;
     const elapsed = Math.round((Date.now() - startTime) / 1000);
-    process.stderr.write(`\r  Loading model... ${elapsed}s ${".".repeat((dotCount % 4) + 1).padEnd(4)}`);
+    process.stderr.write(
+      `\r  ${ti("llamacpp.loading_model", { elapsed: String(elapsed) })} ${".".repeat((dotCount % 4) + 1).padEnd(4)}`,
+    );
 
     try {
       const response = await fetch("http://127.0.0.1:8099/health", {
@@ -658,26 +663,26 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
   }
 
   if (testSuccess) {
-    printOK("Server test passed!");
+    printOK(t("llamacpp.test_passed"));
   } else {
-    printWarn("Server test timed out (may still work)");
+    printWarn(t("llamacpp.test_timeout"));
   }
 
   // Summary
   console.error("");
-  console.error(`${c.green}llama.cpp installed!${c.reset}`);
+  console.error(`${c.green}${t("llamacpp.setup_complete")}${c.reset}`);
   console.error("");
   console.error(`  ${c.cyan}Binary:${c.reset} ${binaryPath}`);
   console.error(`  ${c.cyan}Model:${c.reset} ${modelPath}`);
   console.error(`  ${c.cyan}Backend:${c.reset} ${backendNames[backend]}`);
   console.error(`  ${c.cyan}Embedding API:${c.reset} http://127.0.0.1:8085/v1/embeddings`);
   console.error("");
-  console.error(`  ${c.dim}Server will start automatically when MCP needs embeddings${c.reset}`);
+  console.error(`  ${c.dim}${t("llamacpp.auto_start_hint")}${c.reset}`);
   console.error("");
 
   // Manual start command
   const startCmd = `"${binaryPath}" --model "${modelPath}" --port 8085 --host 127.0.0.1 --embedding --ctx-size ${config.contextSize} --n-gpu-layers ${config.nGpuLayers}`;
-  console.error(`  ${c.dim}Manual start: ${startCmd}${c.reset}`);
+  console.error(`  ${c.dim}${ti("llamacpp.manual_start", { cmd: startCmd })}${c.reset}`);
 
   return {
     success: true,

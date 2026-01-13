@@ -20,9 +20,10 @@ async function sleep(ms: number): Promise<void> {
 }
 
 import type { CPUInfo } from "../../cpu/cpu-detector.js";
+import { t, ta, ti } from "./i18n/index.js";
 import { checkDocker, checkOllama } from "./setup-installers.js";
 import type { GPUInfo, LLMConfig, ProviderOption, SelectedLLMModel } from "./setup-types.js";
-import { c, printError, printInfo, printOK, printWarn, prompt } from "./setup-ui.js";
+import { c, clearScreen, printError, printInfo, printOK, printWarn, prompt } from "./setup-ui.js";
 
 // ═══════════════════════════════════════════════════════════════
 // Docker Model Runner Check
@@ -163,17 +164,20 @@ function checkClaudeCode(): boolean {
 // ═══════════════════════════════════════════════════════════════
 
 export async function askEnableLLM(): Promise<boolean> {
-  console.error(`${c.yellow}[STEP 5] LLM для генерации документации (AutoDoc)${c.reset}`);
+  clearScreen();
   console.error("");
-  console.error(`  ${c.white}Хотите настроить LLM для автогенерации документации?${c.reset}`);
-  console.error(`  ${c.dim}LLM модели генерируют docstrings, README, архитектурные описания.${c.reset}`);
+  console.error(`  ${c.bright}${t("llm.title")}${c.reset}`);
   console.error("");
-  console.error(`  ${c.bright}1)${c.reset} Да, настроить LLM`);
-  console.error(`  ${c.bright}2)${c.reset} Нет, пропустить`);
+  console.error("");
+  console.error(`  ${c.white}${t("llm.enable_question")}${c.reset}`);
+  console.error(`  ${c.dim}${t("llm.enable_hint")}${c.reset}`);
+  console.error("");
+  console.error(`  ${c.bright}1)${c.reset} ${t("llm.option_yes")}`);
+  console.error(`  ${c.bright}2)${c.reset} ${t("llm.option_no")}`);
   console.error("");
 
-  const choice = await prompt("  Выбор [1-2, default=2]: ");
-  console.error("");
+  const choice = await prompt(`  ${ti("common.prompt_choice", { max: 2, def: 2 })} `);
+  clearScreen();
   return choice === "1";
 }
 
@@ -182,7 +186,10 @@ export async function askEnableLLM(): Promise<boolean> {
 // ═══════════════════════════════════════════════════════════════
 
 export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<string | null> {
-  console.error(`${c.yellow}[STEP 5.1] LLM Provider Selection${c.reset}`);
+  clearScreen();
+  console.error("");
+  console.error(`  ${c.bright}${t("llm.provider_title")}${c.reset}`);
+  console.error("");
   console.error("");
 
   const options: ProviderOption[] = [];
@@ -192,11 +199,11 @@ export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<st
   if (hasClaudeCode) {
     options.push({
       id: "claude-code",
-      name: "Claude Code CLI (использует вашу авторизацию)",
+      name: t("llm.claude.name"),
       recommended: true, // Best quality, no setup needed
-      speed: "~3s/запрос",
-      pros: ["Лучшее качество", "Без настройки", "Поддержка RU/EN"],
-      cons: ["Платный (Haiku ~$0.04/100 модулей)"],
+      speed: "~3s/req",
+      pros: ta("llm.claude.pros"),
+      cons: ta("llm.claude.cons"),
       available: true,
     });
   }
@@ -206,11 +213,11 @@ export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<st
   if (hasDMR) {
     options.push({
       id: "docker-model-runner",
-      name: "Docker Model Runner (Docker Desktop 4.40+)",
+      name: t("llm.dmr.name"),
       recommended: !hasClaudeCode, // Recommend if Claude not available
       speed: gpu.available ? "15-30 tok/s" : "5-10 tok/s",
-      pros: ["Простейшая настройка", "docker model run", "Авто-GPU"],
-      cons: ["Требует Docker Desktop 4.40+"],
+      pros: ta("llm.dmr.pros"),
+      cons: ta("llm.dmr.cons"),
       available: true,
     });
   }
@@ -219,11 +226,11 @@ export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<st
   if (gpu.available && !gpu.isBlackwell && gpu.vramMB >= 4000) {
     options.push({
       id: "tgi",
-      name: "TGI (Text Generation Inference)",
+      name: t("llm.tgi.name"),
       recommended: !hasClaudeCode && !hasDMR && gpu.computeCap >= 8.0 && gpu.vramMB >= 8000,
       speed: "20-30 tok/s",
-      pros: ["Native batch", "Continuous batching", "Best throughput"],
-      cons: ["Требует Docker", "Не поддерживает RTX 50xx"],
+      pros: ta("llm.tgi.pros"),
+      cons: ta("llm.tgi.cons"),
       available: true,
     });
   }
@@ -232,28 +239,28 @@ export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<st
   const ollamaSpeed = gpu.available ? `${Math.round(gpu.vramMB / 400)} tok/s` : "10 tok/s";
   options.push({
     id: "ollama",
-    name: gpu.isBlackwell ? "Ollama (GPU) — Blackwell работает!" : "Ollama (GPU/CPU)",
+    name: gpu.isBlackwell ? t("llm.ollama_blackwell") : t("llm.ollama.name"),
     recommended: !hasClaudeCode && !hasDMR && (gpu.isBlackwell || (gpu.available && gpu.vramMB >= 8000)),
     speed: ollamaSpeed,
-    pros: ["Простая установка", "Все GPU (включая RTX 50xx)", "Streaming"],
-    cons: gpu.vramMB < 4000 ? ["Мало VRAM, только мелкие модели"] : [],
+    pros: ta("llm.ollama.pros"),
+    cons: ta("llm.ollama.cons"),
     available: true,
   });
 
   // Skip option
   options.push({
     id: "skip",
-    name: "Пропустить настройку LLM",
+    name: t("llm.skip.name"),
     recommended: false,
     speed: "-",
-    pros: ["Можно настроить позже"],
-    cons: [],
+    pros: ta("llm.skip.pros"),
+    cons: ta("llm.skip.cons"),
     available: true,
   });
 
   for (let i = 0; i < options.length; i++) {
     const opt = options[i]!;
-    const recBadge = opt.recommended ? ` ${c.green}[РЕКОМЕНДУЕТСЯ]${c.reset}` : "";
+    const recBadge = opt.recommended ? ` ${c.green}${t("provider.recommended")}${c.reset}` : "";
     console.error(`  ${c.bright}${i + 1})${c.reset} ${opt.name}${recBadge}`);
     if (opt.speed !== "-") {
       console.error(`     ${c.cyan}⚡ ~${opt.speed}${c.reset}`);
@@ -268,7 +275,7 @@ export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<st
   const defaultIdx = options.findIndex((o) => o.recommended);
   const defaultChoice = defaultIdx >= 0 ? defaultIdx + 1 : 1;
 
-  const choice = await prompt(`  Выбор [1-${options.length}, default=${defaultChoice}]: `);
+  const choice = await prompt(`  ${ti("common.prompt_choice", { max: options.length, def: defaultChoice })} `);
   const idx = (parseInt(choice, 10) || defaultChoice) - 1;
 
   if (idx < 0 || idx >= options.length) {
@@ -277,13 +284,14 @@ export async function selectLLMProvider(_cpu: CPUInfo, gpu: GPUInfo): Promise<st
 
   const selected = options[idx]!;
   if (selected.id === "skip") {
-    printInfo("LLM настройка пропущена");
+    clearScreen();
+    printInfo(t("llm.skipped"));
     console.error("");
     return null;
   }
 
-  console.error("");
-  printInfo(`Выбран LLM провайдер: ${selected.name}`);
+  clearScreen();
+  printInfo(ti("llm.selected_provider", { name: selected.name }));
   console.error("");
 
   return selected.id;
@@ -298,24 +306,29 @@ export async function selectLLMModel(
   config: LLMConfig,
   gpu: GPUInfo,
 ): Promise<SelectedLLMModel | null> {
-  console.error(`${c.yellow}[STEP 5.2] LLM Model Selection${c.reset}`);
+  clearScreen();
+  console.error("");
+  console.error(`  ${c.bright}${t("llm.model_title")}${c.reset}`);
+  console.error("");
   console.error("");
 
   // Claude Code — fixed model selection (haiku by default)
   if (provider === "claude-code") {
-    console.error(`  ${c.dim}Claude Code CLI — выбор модели${c.reset}`);
+    console.error(`  ${c.dim}Claude Code CLI — ${t("llm.model_title")}${c.reset}`);
     console.error("");
-    console.error(`  ${c.bright}1)${c.reset} Haiku ${c.green}[РЕКОМЕНДУЕТСЯ]${c.reset}`);
-    console.error(`     ${c.dim}Быстрый, дешёвый (~$0.04/100 модулей)${c.reset}`);
+    console.error(
+      `  ${c.bright}1)${c.reset} ${t("llmModels.claude_haiku")} ${c.green}${t("model.recommended")}${c.reset}`,
+    );
+    console.error(`     ${c.dim}${t("llmModels.claude_haiku_hint")}${c.reset}`);
     console.error("");
-    console.error(`  ${c.bright}2)${c.reset} Sonnet`);
-    console.error(`     ${c.dim}Баланс качества и скорости (~$0.50/100 модулей)${c.reset}`);
+    console.error(`  ${c.bright}2)${c.reset} ${t("llmModels.claude_sonnet")}`);
+    console.error(`     ${c.dim}${t("llmModels.claude_sonnet_hint")}${c.reset}`);
     console.error("");
-    console.error(`  ${c.bright}3)${c.reset} Opus`);
-    console.error(`     ${c.dim}Максимальное качество (~$2/100 модулей)${c.reset}`);
+    console.error(`  ${c.bright}3)${c.reset} ${t("llmModels.claude_opus")}`);
+    console.error(`     ${c.dim}${t("llmModels.claude_opus_hint")}${c.reset}`);
     console.error("");
 
-    const choice = await prompt(`  Выбор [1-3, default=1]: `);
+    const choice = await prompt(`  ${ti("common.prompt_choice", { max: 3, def: 1 })} `);
     const modelIdx = parseInt(choice, 10) || 1;
 
     const models = ["haiku", "sonnet", "opus"];
@@ -323,8 +336,8 @@ export async function selectLLMModel(
     const selectedModel = models[Math.min(Math.max(modelIdx - 1, 0), 2)]!;
     const selectedName = modelNames[Math.min(Math.max(modelIdx - 1, 0), 2)]!;
 
-    console.error("");
-    printInfo(`Выбрана модель: Claude ${selectedName}`);
+    clearScreen();
+    printInfo(ti("llm.selected_model", { name: `Claude ${selectedName}` }));
     console.error("");
 
     return {
@@ -342,27 +355,27 @@ export async function selectLLMModel(
 
   if (provider === "docker-model-runner") {
     // Docker Model Runner models
-    console.error(`  ${c.dim}Docker Model Runner — 4 лучших модели для документации${c.reset}`);
+    console.error(`  ${c.dim}${t("llmModels.dmr_subtitle")}${c.reset}`);
     console.error("");
 
     let idx = 0;
     for (const model of DMR_MODELS) {
       idx++;
-      const recBadge = idx === 1 ? ` ${c.green}[РЕКОМЕНДУЕТСЯ]${c.reset}` : "";
+      const recBadge = idx === 1 ? ` ${c.green}${t("model.recommended")}${c.reset}` : "";
       console.error(`  ${c.bright}${idx})${c.reset} ${model.name} ${model.badge}${recBadge}`);
       console.error(`     ${c.dim}${model.size_gb}GB | ${Math.round(model.context_tokens / 1024)}K context${c.reset}`);
       console.error(`     ${c.dim}${model.description}${c.reset}`);
       console.error("");
     }
 
-    const choice = await prompt(`  Выбор [1-${DMR_MODELS.length}, default=1]: `);
+    const choice = await prompt(`  ${ti("common.prompt_choice", { max: DMR_MODELS.length, def: 1 })} `);
     const modelIdx = (parseInt(choice, 10) || 1) - 1;
 
     if (modelIdx < 0 || modelIdx >= DMR_MODELS.length) return null;
 
     const selected = DMR_MODELS[modelIdx]!;
-    console.error("");
-    printInfo(`Выбрана модель: ${selected.name}`);
+    clearScreen();
+    printInfo(ti("llm.selected_model", { name: selected.name }));
     console.error("");
 
     return {
@@ -377,13 +390,13 @@ export async function selectLLMModel(
 
   if (provider === "tgi") {
     // TGI models from tgi_models array
-    console.error(`  ${c.dim}Доступно: ${availableVRAM}GB VRAM${c.reset}`);
+    console.error(`  ${c.dim}${ti("llmModels.tgi_vram_available", { vram: availableVRAM })}${c.reset}`);
     console.error("");
 
     const tgiModels = config.tgi_models.filter((m) => m.vram_gb <= availableVRAM + 1);
 
     if (tgiModels.length === 0) {
-      printWarn("Нет TGI моделей для вашего объёма VRAM");
+      printWarn(t("llmModels.tgi_no_models"));
       return null;
     }
 
@@ -395,7 +408,7 @@ export async function selectLLMModel(
 
     for (const model of displayModels) {
       idx++;
-      const recBadge = idx === 1 ? ` ${c.green}[РЕКОМЕНДУЕТСЯ]${c.reset}` : "";
+      const recBadge = idx === 1 ? ` ${c.green}${t("model.recommended")}${c.reset}` : "";
       const badge = model.badge ? ` ${model.badge}` : "";
       console.error(`  ${c.bright}${idx})${c.reset} ${model.name}${badge}${recBadge}`);
       console.error(
@@ -405,14 +418,14 @@ export async function selectLLMModel(
       console.error("");
     }
 
-    const choice = await prompt(`  Выбор [1-${displayModels.length}, default=1]: `);
+    const choice = await prompt(`  ${ti("common.prompt_choice", { max: displayModels.length, def: 1 })} `);
     const modelIdx = (parseInt(choice, 10) || 1) - 1;
 
     if (modelIdx < 0 || modelIdx >= displayModels.length) return null;
 
     const selected = displayModels[modelIdx]!;
-    console.error("");
-    printInfo(`Выбрана TGI модель: ${selected.name}`);
+    clearScreen();
+    printInfo(ti("llm.selected_model", { name: `TGI ${selected.name}` }));
     console.error("");
 
     return {
@@ -427,8 +440,10 @@ export async function selectLLMModel(
 
   if (provider === "ollama") {
     // Ollama models from ollama_models array
-    const resourceInfo = gpu.available ? `${availableVRAM}GB VRAM` : "CPU only";
-    console.error(`  ${c.dim}Доступно: ${resourceInfo}${c.reset}`);
+    const resourceInfo = gpu.available
+      ? ti("llmModels.ollama_vram_available", { vram: availableVRAM })
+      : t("llmModels.ollama_cpu_only");
+    console.error(`  ${c.dim}${resourceInfo}${c.reset}`);
     console.error("");
 
     let ollamaModels = config.ollama_models;
@@ -439,7 +454,7 @@ export async function selectLLMModel(
     }
 
     if (ollamaModels.length === 0) {
-      printWarn("Нет Ollama моделей для вашего оборудования");
+      printWarn(t("llmModels.ollama_no_models"));
       return null;
     }
 
@@ -451,7 +466,7 @@ export async function selectLLMModel(
 
     for (const model of displayModels) {
       idx++;
-      const recBadge = idx === 1 ? ` ${c.green}[РЕКОМЕНДУЕТСЯ]${c.reset}` : "";
+      const recBadge = idx === 1 ? ` ${c.green}${t("model.recommended")}${c.reset}` : "";
       const speedInfo = model.tokens_per_sec_gpu ? ` | ${model.tokens_per_sec_gpu} tok/s` : "";
       console.error(`  ${c.bright}${idx})${c.reset} ${model.name}${recBadge}`);
       console.error(
@@ -463,14 +478,14 @@ export async function selectLLMModel(
       console.error("");
     }
 
-    const choice = await prompt(`  Выбор [1-${displayModels.length}, default=1]: `);
+    const choice = await prompt(`  ${ti("common.prompt_choice", { max: displayModels.length, def: 1 })} `);
     const modelIdx = (parseInt(choice, 10) || 1) - 1;
 
     if (modelIdx < 0 || modelIdx >= displayModels.length) return null;
 
     const selected = displayModels[modelIdx]!;
-    console.error("");
-    printInfo(`Выбрана Ollama модель: ${selected.name}`);
+    clearScreen();
+    printInfo(ti("llm.selected_model", { name: `Ollama ${selected.name}` }));
     console.error("");
 
     return {
@@ -491,9 +506,6 @@ export async function selectLLMModel(
 // ═══════════════════════════════════════════════════════════════
 
 export async function installLLMProvider(provider: string, model: SelectedLLMModel, gpu: GPUInfo): Promise<boolean> {
-  console.error(`${c.yellow}[STEP 5.3] LLM Installation${c.reset}`);
-  console.error("");
-
   if (provider === "claude-code") {
     return await installClaudeCode(model);
   } else if (provider === "docker-model-runner") {
@@ -508,30 +520,26 @@ export async function installLLMProvider(provider: string, model: SelectedLLMMod
 }
 
 async function installClaudeCode(model: SelectedLLMModel): Promise<boolean> {
-  printInfo("Claude Code CLI setup...");
+  printInfo(t("install.claude_setup"));
   console.error("");
 
   // Verify Claude CLI is available
   if (!checkClaudeCode()) {
-    printError("Claude Code CLI не найден");
+    printError(t("install.claude_not_found"));
     console.error("");
-    console.error("  Установите Claude Code:");
-    console.error("  npm install -g @anthropic-ai/claude-code");
-    console.error("");
-    console.error("  Или через npx:");
-    console.error("  npx @anthropic-ai/claude-code");
+    console.error(`  ${t("install.claude_install_hint")}`);
     return false;
   }
 
-  printOK("Claude Code CLI доступен");
+  printOK(t("install.claude_available"));
   console.error("");
 
   // Test generation
-  printInfo(`Тестируем модель: ${model.name}`);
+  printInfo(ti("install.claude_testing", { name: model.name }));
 
   const claudeCmd = getClaudeCommand();
   if (!claudeCmd) {
-    printError("Claude Code CLI не найден");
+    printError(t("install.claude_not_found"));
     return false;
   }
 
@@ -565,10 +573,12 @@ async function installClaudeCode(model: SelectedLLMModel): Promise<boolean> {
     try {
       const result = JSON.parse(testResult.stdout);
       if (result.result) {
-        printOK("Claude Code работает!");
+        printOK(t("install.claude_works"));
         console.error("");
-        console.error(`  ${c.dim}Ответ: ${result.result.slice(0, 100)}${c.reset}`);
-        console.error(`  ${c.dim}Стоимость: $${result.total_cost_usd?.toFixed(4) || "N/A"}${c.reset}`);
+        console.error(`  ${c.dim}${ti("install.claude_response", { text: result.result.slice(0, 100) })}${c.reset}`);
+        console.error(
+          `  ${c.dim}${ti("install.claude_cost", { cost: result.total_cost_usd?.toFixed(4) || "N/A" })}${c.reset}`,
+        );
         console.error("");
         return true;
       }
@@ -577,36 +587,34 @@ async function installClaudeCode(model: SelectedLLMModel): Promise<boolean> {
     }
   }
 
-  printWarn("Тест не прошёл, но Claude Code может работать");
+  printWarn(t("install.claude_test_failed"));
   console.error("");
-  console.error("  Проверьте авторизацию:");
-  console.error("  claude --version");
+  console.error(`  ${t("install.claude_check_auth")}`);
   console.error("");
   return true; // Still return true - user may fix auth later
 }
 
 async function installDMR_LLM(model: SelectedLLMModel): Promise<boolean> {
-  printInfo("Docker Model Runner LLM setup...");
+  printInfo(t("install.dmr_setup"));
   console.error("");
 
   // Check Docker Model Runner availability
   if (!checkDockerModelRunner()) {
-    printError("Docker Model Runner не доступен");
+    printError(t("install.dmr_not_available"));
     console.error("");
-    console.error("  Требуется Docker Desktop 4.40+");
-    console.error("  https://www.docker.com/products/docker-desktop");
+    console.error(`  ${t("install.dmr_requires")}`);
+    console.error(`  ${t("install.docker_install_url")}`);
     console.error("");
-    console.error("  После установки включите Model Runner:");
-    console.error("  Docker Desktop → Settings → Features in development → Docker Model Runner");
+    console.error(`  ${t("install.dmr_enable_hint")}`);
     return false;
   }
 
-  printOK("Docker Model Runner доступен");
+  printOK(t("install.dmr_available"));
   console.error("");
 
   // Pull model
-  printInfo(`Downloading model: ${model.model_id}`);
-  console.error(`  Size: ~${model.size_gb}GB, this may take several minutes...`);
+  printInfo(ti("install.model_downloading", { model: model.model_id }));
+  console.error(`  ${ti("install.model_size_hint", { size: model.size_gb })}`);
   console.error("");
 
   const pullResult = spawnSync("docker", ["model", "pull", model.model_id], {
@@ -616,18 +624,17 @@ async function installDMR_LLM(model: SelectedLLMModel): Promise<boolean> {
   });
 
   if (pullResult.status !== 0) {
-    printError("Failed to download model");
+    printError(t("install.model_failed"));
     console.error("");
-    console.error("  Попробуйте вручную:");
     console.error(`  docker model pull ${model.model_id}`);
     return false;
   }
 
-  printOK("Model downloaded!");
+  printOK(t("install.model_downloaded"));
   console.error("");
 
   // Test the model
-  printInfo("Testing model...");
+  printInfo(t("install.dmr_testing"));
 
   const testResult = spawnSync("docker", ["model", "run", model.model_id, "Hello"], {
     encoding: "utf-8",
@@ -637,28 +644,25 @@ async function installDMR_LLM(model: SelectedLLMModel): Promise<boolean> {
   });
 
   if (testResult.status === 0) {
-    printOK("Model works correctly!");
+    printOK(t("install.dmr_works"));
     console.error("");
-    console.error(`  ${c.green}Использование:${c.reset}`);
-    console.error(`  docker model run ${model.model_id} "Your prompt here"`);
+    console.error(`  ${c.green}${ti("install.dmr_usage", { model: model.model_id })}${c.reset}`);
     console.error("");
-    console.error(`  ${c.yellow}ВАЖНО: Настройте Docker Desktop:${c.reset}`);
+    console.error(`  ${c.yellow}${t("install.dmr_important")}${c.reset}`);
     console.error(`  Docker Desktop → Settings → Features in development`);
-    console.error(`  → ${c.bright}Enable GPU acceleration${c.reset} (для ускорения на GPU)`);
-    console.error(`  → ${c.bright}Enable host-side TCP support${c.reset} (порт 12434, для API)`);
+    console.error(`  → ${c.bright}${t("install.dmr_enable_gpu")}${c.reset}`);
+    console.error(`  → ${c.bright}${t("install.dmr_enable_tcp")}${c.reset}`);
     console.error("");
-    console.error(`  Или через CLI:`);
-    console.error(`  docker desktop enable model-runner --tcp 12434 --gpu`);
+    console.error(`  ${t("install.dmr_cli_hint")}`);
     console.error("");
-    console.error(`  ${c.green}API endpoint (после включения TCP):${c.reset}`);
-    console.error(`  http://localhost:12434/engines/llama.cpp/v1/chat/completions`);
+    console.error(`  ${c.green}${t("install.dmr_api_endpoint")}${c.reset}`);
   } else {
-    printWarn("Model test failed, but model may still work");
+    printWarn(t("install.dmr_test_failed"));
     console.error("");
-    console.error(`  ${c.yellow}ВАЖНО: Настройте Docker Desktop:${c.reset}`);
+    console.error(`  ${c.yellow}${t("install.dmr_important")}${c.reset}`);
     console.error(`  Docker Desktop → Settings → Features in development`);
-    console.error(`  → ${c.bright}Enable GPU acceleration${c.reset} (для ускорения на GPU)`);
-    console.error(`  → ${c.bright}Enable host-side TCP support${c.reset} (порт 12434, для API)`);
+    console.error(`  → ${c.bright}${t("install.dmr_enable_gpu")}${c.reset}`);
+    console.error(`  → ${c.bright}${t("install.dmr_enable_tcp")}${c.reset}`);
   }
 
   return true;
@@ -669,14 +673,14 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
   console.error("");
 
   if (!checkDocker()) {
-    printError("Docker не установлен или не запущен");
+    printError(t("install.docker_required"));
     console.error("");
-    console.error("  Установите Docker Desktop:");
-    console.error("  https://www.docker.com/products/docker-desktop");
+    console.error(`  ${t("install.docker_install_hint")}`);
+    console.error(`  ${t("install.docker_install_url")}`);
     return false;
   }
 
-  printOK("Docker доступен");
+  printOK(t("install.docker_available"));
 
   const imageTag = "ghcr.io/huggingface/text-generation-inference:3.3.4";
   const containerName = "tgi-llm-server";
@@ -690,18 +694,20 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
     });
 
     if (existing.stdout.trim() === containerName) {
-      printWarn(`Container '${containerName}' already exists`);
-      const action = await prompt("  [1=Restart, 2=Remove & reinstall, 3=Cancel]: ");
+      printWarn(ti("install.container_exists", { name: containerName }));
+      const action = await prompt(
+        `  [1=${t("install.container_action_restart")}, 2=${t("install.container_action_reinstall")}, 3=${t("install.container_action_cancel")}]: `,
+      );
 
       if (action === "1") {
         spawnSync("docker", ["restart", containerName], { stdio: "inherit", windowsHide: true });
-        printOK("Container restarted");
+        printOK(t("install.container_restarted"));
         return true;
       }
       if (action === "2") {
         spawnSync("docker", ["stop", containerName], { stdio: "pipe", windowsHide: true });
         spawnSync("docker", ["rm", containerName], { stdio: "pipe", windowsHide: true });
-        printOK("Container removed");
+        printOK(t("install.container_removed"));
       } else {
         return false;
       }
@@ -711,8 +717,8 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
   }
 
   // Pull image
-  printInfo(`Pulling TGI image: ${imageTag}`);
-  console.error("  This may take 5-10 minutes...");
+  printInfo(ti("install.pulling_image", { tag: imageTag }));
+  console.error(`  ${t("install.pull_progress")}`);
 
   try {
     execSync(`docker pull ${imageTag}`, {
@@ -722,11 +728,11 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
     });
   } catch (e: any) {
     console.error(`[DEBUG] TGI pull failed: ${e.message}`);
-    printError("Failed to pull Docker image");
+    printError(t("install.pull_failed"));
     return false;
   }
 
-  printOK("Image downloaded");
+  printOK(ti("install.image_exists", { tag: imageTag }));
   console.error("");
 
   // Create container
@@ -744,10 +750,10 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
     return false;
   }
 
-  printOK("TGI container created");
+  printOK(ti("install.container_created", { name: "TGI" }));
 
   // Wait for health
-  printInfo("Waiting for TGI to initialize (may take 2-5 min for model download)...");
+  printInfo(ti("install.health_waiting", { name: "TGI" }));
 
   for (let i = 0; i < 60; i++) {
     await sleep(5000);
@@ -758,8 +764,8 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
       });
       if (health.status === 0) {
         console.error("");
-        printOK("TGI LLM server is ready!");
-        printInfo(`Endpoint: http://127.0.0.1:${port}`);
+        printOK(ti("install.server_ready", { name: "TGI LLM" }));
+        printInfo(ti("install.server_endpoint", { url: `http://127.0.0.1:${port}` }));
         return true;
       }
     } catch {
@@ -769,7 +775,7 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
   }
 
   console.error("");
-  printWarn("Health check timed out. Check: docker logs tgi-llm-server");
+  printWarn(ti("install.health_timeout", { container: containerName }));
   return true;
 }
 
@@ -778,13 +784,13 @@ async function installOllamaLLM(model: SelectedLLMModel): Promise<boolean> {
   console.error("");
 
   if (!checkOllama()) {
-    printWarn("Ollama не установлен");
+    printWarn(t("install.ollama_not_found"));
     console.error("");
-    console.error("  Установите Ollama:");
-    console.error("  https://ollama.ai/download");
+    console.error(`  ${t("install.ollama_install_hint")}`);
+    console.error(`  ${t("install.ollama_install_url")}`);
     console.error("");
 
-    const open = await prompt("  Открыть страницу загрузки? [y/N]: ");
+    const open = await prompt(`  ${t("install.ollama_open_download")} `);
     if (open.toLowerCase() === "y") {
       const cmd = process.platform === "win32" ? "start" : process.platform === "darwin" ? "open" : "xdg-open";
       spawnSync(cmd, ["https://ollama.ai/download"], { shell: true, stdio: "pipe", windowsHide: true });
@@ -792,13 +798,13 @@ async function installOllamaLLM(model: SelectedLLMModel): Promise<boolean> {
     return false;
   }
 
-  printOK("Ollama установлен");
+  printOK(t("install.ollama_available"));
 
   // Check if service running
   try {
     const check = spawnSync("curl", ["-sf", "http://127.0.0.1:11434/"], { timeout: 5000, windowsHide: true });
     if (check.status !== 0) {
-      printInfo("Starting Ollama service...");
+      printInfo(t("install.ollama_service_starting"));
       const proc = spawn("ollama", ["serve"], { detached: true, stdio: "ignore", windowsHide: true });
       proc.unref();
       await sleep(3000);
@@ -807,12 +813,12 @@ async function installOllamaLLM(model: SelectedLLMModel): Promise<boolean> {
     /* continue */
   }
 
-  printOK("Ollama service running");
+  printOK(t("install.ollama_service_running"));
   console.error("");
 
   // Pull model
-  printInfo(`Downloading LLM model: ${model.model_id}`);
-  console.error(`  Size: ~${model.size_gb}GB, this may take several minutes...`);
+  printInfo(ti("install.model_downloading", { model: model.model_id }));
+  console.error(`  ${ti("install.model_size_hint", { size: model.size_gb })}`);
   console.error("");
 
   const pullResult = spawnSync("ollama", ["pull", model.model_id], {
@@ -821,10 +827,10 @@ async function installOllamaLLM(model: SelectedLLMModel): Promise<boolean> {
     windowsHide: true,
   });
   if (pullResult.status !== 0) {
-    printError("Failed to download model");
+    printError(t("install.model_failed"));
     return false;
   }
 
-  printOK("LLM model downloaded!");
+  printOK(t("install.model_downloaded"));
   return true;
 }

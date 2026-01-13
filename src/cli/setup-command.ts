@@ -16,6 +16,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CPUDetector } from "../cpu/cpu-detector.js";
+import { detectSystemLocale } from "../i18n/index.js";
 import {
   ensureConfigDir,
   getConfigDir,
@@ -24,6 +25,7 @@ import {
   type SemanticConfig,
   saveSemanticConfig,
 } from "../utils/config-paths.js";
+import { setSetupLanguage } from "./setup/i18n/index.js";
 
 // Import from setup modules
 import {
@@ -144,6 +146,7 @@ export async function runSetup(args: string[]): Promise<void> {
   // Parse args
   let providerArg: string | undefined;
   let modelArg: string | undefined;
+  let langArg: string | undefined;
   let llmOnly = false;
 
   for (let i = 0; i < args.length; i++) {
@@ -153,10 +156,17 @@ export async function runSetup(args: string[]): Promise<void> {
     if (args[i] === "--model" && args[i + 1]) {
       modelArg = args[++i];
     }
+    if ((args[i] === "--lang" || args[i] === "-l") && args[i + 1]) {
+      langArg = args[++i];
+    }
     if (args[i] === "--llm-only" || args[i] === "--llm") {
       llmOnly = true;
     }
   }
+
+  // Initialize UI language (auto-detect from system or use CLI override)
+  const localeConfig = detectSystemLocale(langArg);
+  setSetupLanguage(localeConfig.language);
 
   // Step 0: Detect hardware
   const cpu = CPUDetector.detect();
