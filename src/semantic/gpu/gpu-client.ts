@@ -508,19 +508,25 @@ class GpuSubprocessClient implements IGpuClient {
 
     // Use Named Pipe for binary IPC if available
     if (this.useNamedPipe && this.namedPipeClient?.isConnected) {
-      log.d("GPU", "Using Named Pipe", { type: request.type });
+      log.i("GPU", "Using Named Pipe", { type: request.type });
       return this.sendNamedPipeRequest(request);
     }
 
     // Fallback to stdin/stdout JSON
-    log.d("GPU", "Using stdin/stdout JSON", { type: request.type, hasVector: !!(request as any).vector });
+    const jsonStr = JSON.stringify(request);
+    log.i("GPU", "Using stdin/stdout JSON", {
+      type: request.type,
+      hasVector: !!(request as any).vector,
+      vectorLen: (request as any).vector?.length,
+      jsonLen: jsonStr.length,
+    });
     const requestId = ++this.requestId;
     const abortController = new AbortController();
 
     // Response promise - resolved when worker responds
     const responsePromise = new Promise<GpuWorkerResponse>((resolve, reject) => {
       this.pendingRequests.set(requestId, { resolve, reject, abortController });
-      this.worker!.stdin!.write(`${JSON.stringify(request)}\n`);
+      this.worker!.stdin!.write(`${jsonStr}\n`);
     });
 
     // Timeout promise - uses Bun-compatible async sleep instead of setTimeout
@@ -567,10 +573,19 @@ class GpuSubprocessClient implements IGpuClient {
       const v = (request as any).vectors;
       vectors = v instanceof Float32Array ? v : new Float32Array(v);
       delete (headerData as any).vectors;
-    } else if (request.type === "faiss.search" && (request as any).vector) {
+    } else if (request.type === "faiss.search") {
       const v = (request as any).vector;
-      vectors = v instanceof Float32Array ? v : new Float32Array(v);
-      delete (headerData as any).vector;
+      log.i("GPU", "sendNamedPipe faiss.search", {
+        vectorExists: !!v,
+        vectorType: typeof v,
+        isArray: Array.isArray(v),
+        vectorLen: v?.length,
+      });
+      if (v) {
+        vectors = v instanceof Float32Array ? v : new Float32Array(v);
+        delete (headerData as any).vector;
+        log.i("GPU", "sendNamedPipe vectors created", { len: vectors.length });
+      }
     } else if (request.type === "faiss.batchSearch" && (request as any).vectors) {
       const v = (request as any).vectors;
       vectors = v instanceof Float32Array ? v : new Float32Array(v);
@@ -644,8 +659,18 @@ class GpuSubprocessClient implements IGpuClient {
 
   async faissSearch(vector: Float32Array | number[], k: number): Promise<FaissSearchResult[]> {
     const vectorArray = vector instanceof Float32Array ? Array.from(vector) : vector;
-    log.d("GPU", "faissSearch", { vectorLen: vectorArray?.length, k, isArray: Array.isArray(vectorArray) });
-    const response = await this.sendRequest({ type: "faiss.search", vector: vectorArray, k });
+    log.i("GPU", "faissSearch input", {
+      vectorLen: vectorArray?.length,
+      k,
+      isArray: Array.isArray(vectorArray),
+    });
+    const request = { type: "faiss.search" as const, vector: vectorArray, k };
+    log.i("GPU", "faissSearch request", {
+      hasVector: !!request.vector,
+      vectorLen: request.vector?.length,
+      keys: Object.keys(request),
+    });
+    const response = await this.sendRequest(request as any);
     if (!response.success) throw new Error((response as any).error);
     return (response as FaissSearchResponse).results;
   }
