@@ -312,9 +312,15 @@ async function main() {
   }
 
   // Print results
-  console.log("\n\n╔════════════════════════════════════════════════════════════════════════════════╗");
-  console.log("║                              BENCHMARK RESULTS                                  ║");
-  console.log("╚════════════════════════════════════════════════════════════════════════════════╝\n");
+  console.log(
+    "\n\n╔════════════════════════════════════════════════════════════════════════════════╗",
+  );
+  console.log(
+    "║                              BENCHMARK RESULTS                                  ║",
+  );
+  console.log(
+    "╚════════════════════════════════════════════════════════════════════════════════╝\n",
+  );
 
   // Group by batch size
   const grouped = new Map<number, BenchmarkResult[]>();
@@ -350,19 +356,25 @@ async function main() {
   console.log("═══════════════════════════════════════════════════════════════\n");
 
   // Find best for each category
-  const batch100 = results.filter(r => r.batchSize === 100);
-  const batch200 = results.filter(r => r.batchSize === 200);
+  const batch100 = results.filter((r) => r.batchSize === 100);
+  const batch200 = results.filter((r) => r.batchSize === 200);
 
   if (batch100.length > 0) {
-    const fastest100 = batch100.reduce((a, b) => a.perTextMs < b.perTextMs ? a : b);
-    const best8k = batch100.filter(r => r.contextTokens >= 8000).sort((a, b) => a.perTextMs - b.perTextMs)[0];
+    const fastest100 = batch100.reduce((a, b) => (a.perTextMs < b.perTextMs ? a : b));
+    const best8k = batch100
+      .filter((r) => r.contextTokens >= 8000)
+      .sort((a, b) => a.perTextMs - b.perTextMs)[0];
 
     console.log(`🏆 Fastest (batch 100):     ${fastest100.provider} - ${fastest100.model}`);
-    console.log(`   ${fastest100.perTextMs.toFixed(1)}ms/text, ${fastest100.contextTokens} tokens context\n`);
+    console.log(
+      `   ${fastest100.perTextMs.toFixed(1)}ms/text, ${fastest100.contextTokens} tokens context\n`,
+    );
 
     if (best8k) {
       console.log(`📄 Best 8K context:         ${best8k.provider} - ${best8k.model}`);
-      console.log(`   ${best8k.perTextMs.toFixed(1)}ms/text, ${best8k.contextTokens} tokens context\n`);
+      console.log(
+        `   ${best8k.perTextMs.toFixed(1)}ms/text, ${best8k.contextTokens} tokens context\n`,
+      );
     }
   }
 

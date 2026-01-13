@@ -2,7 +2,11 @@
  * Test entity expander on real project data
  */
 
-import { expandLargeEntities, getExpansionStats, estimateEntityTokens } from "../src/semantic/entity-expander.js";
+import {
+  expandLargeEntities,
+  getExpansionStats,
+  estimateEntityTokens,
+} from "../src/semantic/entity-expander.js";
 import type { ParsedEntity } from "../src/types/parser.js";
 
 // Simulated large class entity (like VectorStore)
@@ -20,34 +24,49 @@ const largeClass: ParsedEntity = {
       name: "constructor",
       type: "method",
       filePath: "src/semantic/vector-store.ts",
-      location: { start: { line: 100, column: 2, index: 4000 }, end: { line: 130, column: 3, index: 5500 } },
+      location: {
+        start: { line: 100, column: 2, index: 4000 },
+        end: { line: 130, column: 3, index: 5500 },
+      },
     },
     {
       name: "initialize",
       type: "method",
       filePath: "src/semantic/vector-store.ts",
-      location: { start: { line: 135, column: 2, index: 5600 }, end: { line: 200, column: 3, index: 8000 } },
+      location: {
+        start: { line: 135, column: 2, index: 5600 },
+        end: { line: 200, column: 3, index: 8000 },
+      },
       modifiers: ["async"],
     },
     {
       name: "search",
       type: "method",
       filePath: "src/semantic/vector-store.ts",
-      location: { start: { line: 250, column: 2, index: 10000 }, end: { line: 300, column: 3, index: 12000 } },
+      location: {
+        start: { line: 250, column: 2, index: 10000 },
+        end: { line: 300, column: 3, index: 12000 },
+      },
       modifiers: ["async"],
     },
     {
       name: "insertBatch",
       type: "method",
       filePath: "src/semantic/vector-store.ts",
-      location: { start: { line: 350, column: 2, index: 14000 }, end: { line: 400, column: 3, index: 16000 } },
+      location: {
+        start: { line: 350, column: 2, index: 14000 },
+        end: { line: 400, column: 3, index: 16000 },
+      },
       modifiers: ["async"],
     },
     {
       name: "close",
       type: "method",
       filePath: "src/semantic/vector-store.ts",
-      location: { start: { line: 1300, column: 2, index: 45000 }, end: { line: 1318, column: 3, index: 46800 } },
+      location: {
+        start: { line: 1300, column: 2, index: 45000 },
+        end: { line: 1318, column: 3, index: 46800 },
+      },
       modifiers: ["async"],
     },
   ],
@@ -80,19 +99,28 @@ const largeInterface: ParsedEntity = {
       name: "search",
       type: "method",
       filePath: "src/types/semantic.ts",
-      location: { start: { line: 55, column: 2, index: 1600 }, end: { line: 60, column: 3, index: 1800 } },
+      location: {
+        start: { line: 55, column: 2, index: 1600 },
+        end: { line: 60, column: 3, index: 1800 },
+      },
     },
     {
       name: "findSimilar",
       type: "method",
       filePath: "src/types/semantic.ts",
-      location: { start: { line: 65, column: 2, index: 1900 }, end: { line: 70, column: 3, index: 2100 } },
+      location: {
+        start: { line: 65, column: 2, index: 1900 },
+        end: { line: 70, column: 3, index: 2100 },
+      },
     },
     {
       name: "detectClones",
       type: "method",
       filePath: "src/types/semantic.ts",
-      location: { start: { line: 75, column: 2, index: 2200 }, end: { line: 80, column: 3, index: 2400 } },
+      location: {
+        start: { line: 75, column: 2, index: 2200 },
+        end: { line: 80, column: 3, index: 2400 },
+      },
     },
   ],
 };

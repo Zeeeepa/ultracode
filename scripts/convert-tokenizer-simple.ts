@@ -25,7 +25,7 @@ const HUGGINGFACE_BASE = "https://huggingface.co";
 // Required files for TEI
 const REQUIRED_FILES = [
   "config.json",
-  "tokenizer.json",       // CRITICAL - TEI requires this!
+  "tokenizer.json", // CRITICAL - TEI requires this!
   "tokenizer_config.json",
   "vocab.txt",
   "vocab.json",
@@ -59,7 +59,11 @@ function ensureDir(dirPath: string): void {
 /**
  * Download file from HuggingFace Hub
  */
-async function downloadFile(modelId: string, filename: string, outputPath: string): Promise<boolean> {
+async function downloadFile(
+  modelId: string,
+  filename: string,
+  outputPath: string,
+): Promise<boolean> {
   const url = `${HUGGINGFACE_BASE}/${modelId}/resolve/main/${filename}`;
 
   try {
@@ -281,7 +285,9 @@ async function main() {
     console.log("Usage: bun scripts/convert-tokenizer-simple.ts <model-id> [output-dir]");
     console.log();
     console.log("Examples:");
-    console.log("  bun scripts/convert-tokenizer-simple.ts ibm-granite/granite-embedding-30m-english");
+    console.log(
+      "  bun scripts/convert-tokenizer-simple.ts ibm-granite/granite-embedding-30m-english",
+    );
     console.log("  bun scripts/convert-tokenizer-simple.ts BAAI/bge-small-en-v1.5 ./my-model");
     console.log();
     console.log("Downloads model from HuggingFace and ensures tokenizer.json exists.");

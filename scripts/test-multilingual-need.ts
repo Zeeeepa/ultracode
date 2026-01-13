@@ -76,7 +76,9 @@ class HttpController {
   ];
 
   const cosineSim = (a: Float32Array, b: Float32Array) => {
-    let dot = 0, normA = 0, normB = 0;
+    let dot = 0,
+      normA = 0,
+      normB = 0;
     for (let i = 0; i < a.length; i++) {
       dot += a[i] * b[i];
       normA += a[i] * a[i];
@@ -115,20 +117,24 @@ class HttpController {
     const engCorrect = bestEnglish.idx === expectedIdx;
     const multiCorrect = bestMulti.idx === expectedIdx;
 
-    const winner = engCorrect && !multiCorrect ? "MiniLM"
-                 : !engCorrect && multiCorrect ? "Multi"
-                 : engCorrect && multiCorrect ? "TIE"
-                 : "BOTH WRONG";
+    const winner =
+      engCorrect && !multiCorrect
+        ? "MiniLM"
+        : !engCorrect && multiCorrect
+          ? "Multi"
+          : engCorrect && multiCorrect
+            ? "TIE"
+            : "BOTH WRONG";
 
     const engMark = engCorrect ? "✓" : "✗";
     const multiMark = multiCorrect ? "✓" : "✗";
 
     console.log(
       query.slice(0, 38).padEnd(40) +
-      `${expectedIdx}`.padEnd(10) +
-      `${engMark} (${(bestEnglish.sim * 100).toFixed(0)}%)`.padEnd(8) +
-      `${multiMark} (${(bestMulti.sim * 100).toFixed(0)}%)`.padEnd(10) +
-      winner
+        `${expectedIdx}`.padEnd(10) +
+        `${engMark} (${(bestEnglish.sim * 100).toFixed(0)}%)`.padEnd(8) +
+        `${multiMark} (${(bestMulti.sim * 100).toFixed(0)}%)`.padEnd(10) +
+        winner,
     );
   }
 

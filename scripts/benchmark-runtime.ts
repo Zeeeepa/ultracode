@@ -52,7 +52,7 @@ interface BenchmarkResult {
 async function benchmark(
   name: string,
   fn: () => Promise<void>,
-  iterations: number = 100
+  iterations: number = 100,
 ): Promise<BenchmarkResult> {
   const times: number[] = [];
 
@@ -102,9 +102,9 @@ async function setupTestData(): Promise<void> {
 
   // Create test files of various sizes
   const sizes = [
-    { name: "small", size: 1024 },           // 1KB
-    { name: "medium", size: 100 * 1024 },    // 100KB
-    { name: "large", size: 1024 * 1024 },    // 1MB
+    { name: "small", size: 1024 }, // 1KB
+    { name: "medium", size: 100 * 1024 }, // 100KB
+    { name: "large", size: 1024 * 1024 }, // 1MB
   ];
 
   for (const { name, size } of sizes) {
@@ -160,33 +160,49 @@ async function runFileReadBenchmarks(): Promise<BenchmarkResult[]> {
   // Small file read
   const smallFile = join(testDir, "small.txt");
   results.push(
-    await benchmark("readText (1KB)", async () => {
-      await readText(smallFile);
-    }, 500)
+    await benchmark(
+      "readText (1KB)",
+      async () => {
+        await readText(smallFile);
+      },
+      500,
+    ),
   );
 
   // Medium file read
   const mediumFile = join(testDir, "medium.txt");
   results.push(
-    await benchmark("readText (100KB)", async () => {
-      await readText(mediumFile);
-    }, 200)
+    await benchmark(
+      "readText (100KB)",
+      async () => {
+        await readText(mediumFile);
+      },
+      200,
+    ),
   );
 
   // Large file read
   const largeFile = join(testDir, "large.txt");
   results.push(
-    await benchmark("readText (1MB)", async () => {
-      await readText(largeFile);
-    }, 50)
+    await benchmark(
+      "readText (1MB)",
+      async () => {
+        await readText(largeFile);
+      },
+      50,
+    ),
   );
 
   // JSON read
   const jsonFile = join(testDir, "test.json");
   results.push(
-    await benchmark("readJSON", async () => {
-      await readJSON(jsonFile);
-    }, 200)
+    await benchmark(
+      "readJSON",
+      async () => {
+        await readJSON(jsonFile);
+      },
+      200,
+    ),
   );
 
   return results;
@@ -201,78 +217,110 @@ async function runFileWriteBenchmarks(): Promise<BenchmarkResult[]> {
   const largeContent = "x".repeat(1024 * 1024);
 
   results.push(
-    await benchmark("writeFile (1KB)", async () => {
-      await writeFile(join(testDir, "write-small.txt"), smallContent);
-    }, 200)
+    await benchmark(
+      "writeFile (1KB)",
+      async () => {
+        await writeFile(join(testDir, "write-small.txt"), smallContent);
+      },
+      200,
+    ),
   );
 
   results.push(
-    await benchmark("writeFile (100KB)", async () => {
-      await writeFile(join(testDir, "write-medium.txt"), mediumContent);
-    }, 100)
+    await benchmark(
+      "writeFile (100KB)",
+      async () => {
+        await writeFile(join(testDir, "write-medium.txt"), mediumContent);
+      },
+      100,
+    ),
   );
 
   results.push(
-    await benchmark("writeFile (1MB)", async () => {
-      await writeFile(join(testDir, "write-large.txt"), largeContent);
-    }, 20)
+    await benchmark(
+      "writeFile (1MB)",
+      async () => {
+        await writeFile(join(testDir, "write-large.txt"), largeContent);
+      },
+      20,
+    ),
   );
 
   // Test Bun.FileSink for incremental writes (Bun only)
   if (runtime.isBun && globalThis.Bun) {
     // FileSink for 100KB - chunked writes (with proper sync)
     results.push(
-      await benchmark("FileSink (100KB, chunked)", async () => {
-        const path = join(testDir, "filesink-medium.txt");
-        const file = globalThis.Bun!.file(path);
-        const writer = file.writer({ highWaterMark: 64 * 1024 }); // 64KB buffer
-        const chunk = "x".repeat(10 * 1024); // 10KB chunks
-        for (let i = 0; i < 10; i++) {
-          writer.write(chunk);
-        }
-        await writer.flush();
-        await writer.end();
-      }, 100)
+      await benchmark(
+        "FileSink (100KB, chunked)",
+        async () => {
+          const path = join(testDir, "filesink-medium.txt");
+          const file = globalThis.Bun!.file(path);
+          const writer = file.writer({ highWaterMark: 64 * 1024 }); // 64KB buffer
+          const chunk = "x".repeat(10 * 1024); // 10KB chunks
+          for (let i = 0; i < 10; i++) {
+            writer.write(chunk);
+          }
+          await writer.flush();
+          await writer.end();
+        },
+        100,
+      ),
     );
 
     // FileSink for 1MB - chunked writes
     results.push(
-      await benchmark("FileSink (1MB, chunked)", async () => {
-        const path = join(testDir, "filesink-large.txt");
-        const file = globalThis.Bun!.file(path);
-        const writer = file.writer({ highWaterMark: 256 * 1024 }); // 256KB buffer
-        const chunk = "x".repeat(64 * 1024); // 64KB chunks
-        for (let i = 0; i < 16; i++) {
-          writer.write(chunk);
-        }
-        await writer.flush();
-        await writer.end();
-      }, 20)
+      await benchmark(
+        "FileSink (1MB, chunked)",
+        async () => {
+          const path = join(testDir, "filesink-large.txt");
+          const file = globalThis.Bun!.file(path);
+          const writer = file.writer({ highWaterMark: 256 * 1024 }); // 256KB buffer
+          const chunk = "x".repeat(64 * 1024); // 64KB chunks
+          for (let i = 0; i < 16; i++) {
+            writer.write(chunk);
+          }
+          await writer.flush();
+          await writer.end();
+        },
+        20,
+      ),
     );
 
     // FileSink for 1MB - single write (compare with Bun.write)
     results.push(
-      await benchmark("FileSink (1MB, single write)", async () => {
-        const path = join(testDir, "filesink-large-single.txt");
-        const file = globalThis.Bun!.file(path);
-        const writer = file.writer({ highWaterMark: 1024 * 1024 }); // 1MB buffer
-        writer.write(largeContent);
-        await writer.flush();
-        await writer.end();
-      }, 20)
+      await benchmark(
+        "FileSink (1MB, single write)",
+        async () => {
+          const path = join(testDir, "filesink-large-single.txt");
+          const file = globalThis.Bun!.file(path);
+          const writer = file.writer({ highWaterMark: 1024 * 1024 }); // 1MB buffer
+          writer.write(largeContent);
+          await writer.flush();
+          await writer.end();
+        },
+        20,
+      ),
     );
 
     // Direct Bun.write for comparison
     results.push(
-      await benchmark("Bun.write (100KB)", async () => {
-        await globalThis.Bun!.write(join(testDir, "bunwrite-medium.txt"), mediumContent);
-      }, 100)
+      await benchmark(
+        "Bun.write (100KB)",
+        async () => {
+          await globalThis.Bun!.write(join(testDir, "bunwrite-medium.txt"), mediumContent);
+        },
+        100,
+      ),
     );
 
     results.push(
-      await benchmark("Bun.write (1MB)", async () => {
-        await globalThis.Bun!.write(join(testDir, "bunwrite-large.txt"), largeContent);
-      }, 20)
+      await benchmark(
+        "Bun.write (1MB)",
+        async () => {
+          await globalThis.Bun!.write(join(testDir, "bunwrite-large.txt"), largeContent);
+        },
+        20,
+      ),
     );
   }
 
@@ -284,27 +332,43 @@ async function runDirectoryBenchmarks(): Promise<BenchmarkResult[]> {
   const results: BenchmarkResult[] = [];
 
   results.push(
-    await benchmark("readdir", async () => {
-      await readdir(testDir);
-    }, 500)
+    await benchmark(
+      "readdir",
+      async () => {
+        await readdir(testDir);
+      },
+      500,
+    ),
   );
 
   results.push(
-    await benchmark("readdir (withFileTypes)", async () => {
-      await readdir(testDir, { withFileTypes: true });
-    }, 500)
+    await benchmark(
+      "readdir (withFileTypes)",
+      async () => {
+        await readdir(testDir, { withFileTypes: true });
+      },
+      500,
+    ),
   );
 
   results.push(
-    await benchmark("stat", async () => {
-      await stat(join(testDir, "small.txt"));
-    }, 500)
+    await benchmark(
+      "stat",
+      async () => {
+        await stat(join(testDir, "small.txt"));
+      },
+      500,
+    ),
   );
 
   results.push(
-    await benchmark("fileExists", async () => {
-      await fileExists(join(testDir, "small.txt"));
-    }, 500)
+    await benchmark(
+      "fileExists",
+      async () => {
+        await fileExists(join(testDir, "small.txt"));
+      },
+      500,
+    ),
   );
 
   return results;
@@ -315,24 +379,36 @@ async function runGlobBenchmarks(): Promise<BenchmarkResult[]> {
   const results: BenchmarkResult[] = [];
 
   results.push(
-    await benchmark("glob (**/*.ts)", async () => {
-      await glob("**/*.ts", { cwd: testDir });
-    }, 100)
+    await benchmark(
+      "glob (**/*.ts)",
+      async () => {
+        await glob("**/*.ts", { cwd: testDir });
+      },
+      100,
+    ),
   );
 
   results.push(
-    await benchmark("glob (**/*)", async () => {
-      await glob("**/*", { cwd: testDir });
-    }, 50)
+    await benchmark(
+      "glob (**/*)",
+      async () => {
+        await glob("**/*", { cwd: testDir });
+      },
+      50,
+    ),
   );
 
   // Test on actual codebase
   const srcDir = join(process.cwd(), "src");
   if (await fileExists(srcDir)) {
     results.push(
-      await benchmark("findSourceFiles (src/)", async () => {
-        await findSourceFiles(srcDir);
-      }, 20)
+      await benchmark(
+        "findSourceFiles (src/)",
+        async () => {
+          await findSourceFiles(srcDir);
+        },
+        20,
+      ),
     );
   }
 
@@ -344,15 +420,23 @@ async function runShellBenchmarks(): Promise<BenchmarkResult[]> {
   const results: BenchmarkResult[] = [];
 
   results.push(
-    await benchmark("exec (echo)", async () => {
-      await exec("echo test", { cwd: testDir });
-    }, 100)
+    await benchmark(
+      "exec (echo)",
+      async () => {
+        await exec("echo test", { cwd: testDir });
+      },
+      100,
+    ),
   );
 
   results.push(
-    await benchmark("exec (git --version)", async () => {
-      await exec("git --version", { cwd: process.cwd() });
-    }, 50)
+    await benchmark(
+      "exec (git --version)",
+      async () => {
+        await exec("git --version", { cwd: process.cwd() });
+      },
+      50,
+    ),
   );
 
   return results;
@@ -363,15 +447,23 @@ async function runCodebaseMetricsBenchmarks(): Promise<BenchmarkResult[]> {
   const results: BenchmarkResult[] = [];
 
   results.push(
-    await benchmark("countSourceFiles (testDir)", async () => {
-      await countSourceFiles(testDir);
-    }, 50)
+    await benchmark(
+      "countSourceFiles (testDir)",
+      async () => {
+        await countSourceFiles(testDir);
+      },
+      50,
+    ),
   );
 
   results.push(
-    await benchmark("getCodebaseMetrics (testDir)", async () => {
-      await getCodebaseMetrics(testDir);
-    }, 50)
+    await benchmark(
+      "getCodebaseMetrics (testDir)",
+      async () => {
+        await getCodebaseMetrics(testDir);
+      },
+      50,
+    ),
   );
 
   return results;
@@ -388,9 +480,13 @@ async function runStartupBenchmarks(): Promise<BenchmarkResult[]> {
   // Measure Node.js startup (always available)
   const nodeCmd = process.platform === "win32" ? "node" : "node";
   results.push(
-    await benchmark("startup (node)", async () => {
-      await exec(`${nodeCmd} "${testScript}"`, { cwd: testDir });
-    }, 20)
+    await benchmark(
+      "startup (node)",
+      async () => {
+        await exec(`${nodeCmd} "${testScript}"`, { cwd: testDir });
+      },
+      20,
+    ),
   );
 
   // Measure Bun startup if available
@@ -398,9 +494,13 @@ async function runStartupBenchmarks(): Promise<BenchmarkResult[]> {
     const bunCheck = await exec("bun --version", { cwd: testDir });
     if (bunCheck.success) {
       results.push(
-        await benchmark("startup (bun)", async () => {
-          await exec(`bun "${testScript}"`, { cwd: testDir });
-        }, 20)
+        await benchmark(
+          "startup (bun)",
+          async () => {
+            await exec(`bun "${testScript}"`, { cwd: testDir });
+          },
+          20,
+        ),
       );
     }
   } catch {
@@ -429,11 +529,15 @@ async function runSQLiteBenchmarks(): Promise<BenchmarkResult[]> {
     // Insert benchmark
     const insertStmt = db.prepare("INSERT INTO items (name, value) VALUES (?, ?)");
     results.push(
-      await benchmark("sqlite insert (bun:sqlite)", async () => {
-        for (let i = 0; i < 100; i++) {
-          insertStmt.run(`item-${i}`, Math.random());
-        }
-      }, 20)
+      await benchmark(
+        "sqlite insert (bun:sqlite)",
+        async () => {
+          for (let i = 0; i < 100; i++) {
+            insertStmt.run(`item-${i}`, Math.random());
+          }
+        },
+        20,
+      ),
     );
 
     // Pre-populate for select
@@ -445,20 +549,28 @@ async function runSQLiteBenchmarks(): Promise<BenchmarkResult[]> {
     // Select benchmark
     const selectStmt = db.prepare("SELECT * FROM items WHERE value > ?");
     results.push(
-      await benchmark("sqlite select (bun:sqlite)", async () => {
-        selectStmt.all(0.5);
-      }, 100)
+      await benchmark(
+        "sqlite select (bun:sqlite)",
+        async () => {
+          selectStmt.all(0.5);
+        },
+        100,
+      ),
     );
 
     // Transaction benchmark
     results.push(
-      await benchmark("sqlite transaction (bun:sqlite)", async () => {
-        db.transaction(() => {
-          for (let i = 0; i < 50; i++) {
-            insertStmt.run(`tx-item-${i}`, Math.random());
-          }
-        })();
-      }, 20)
+      await benchmark(
+        "sqlite transaction (bun:sqlite)",
+        async () => {
+          db.transaction(() => {
+            for (let i = 0; i < 50; i++) {
+              insertStmt.run(`tx-item-${i}`, Math.random());
+            }
+          })();
+        },
+        20,
+      ),
     );
 
     db.close();
@@ -475,11 +587,15 @@ async function runSQLiteBenchmarks(): Promise<BenchmarkResult[]> {
       // Insert benchmark
       const insertStmt = db.prepare("INSERT INTO items (name, value) VALUES (?, ?)");
       results.push(
-        await benchmark("sqlite insert (better-sqlite3)", async () => {
-          for (let i = 0; i < 100; i++) {
-            insertStmt.run(`item-${i}`, Math.random());
-          }
-        }, 20)
+        await benchmark(
+          "sqlite insert (better-sqlite3)",
+          async () => {
+            for (let i = 0; i < 100; i++) {
+              insertStmt.run(`item-${i}`, Math.random());
+            }
+          },
+          20,
+        ),
       );
 
       // Pre-populate for select
@@ -491,9 +607,13 @@ async function runSQLiteBenchmarks(): Promise<BenchmarkResult[]> {
       // Select benchmark
       const selectStmt = db.prepare("SELECT * FROM items WHERE value > ?");
       results.push(
-        await benchmark("sqlite select (better-sqlite3)", async () => {
-          selectStmt.all(0.5);
-        }, 100)
+        await benchmark(
+          "sqlite select (better-sqlite3)",
+          async () => {
+            selectStmt.all(0.5);
+          },
+          100,
+        ),
       );
 
       // Transaction benchmark
@@ -503,9 +623,13 @@ async function runSQLiteBenchmarks(): Promise<BenchmarkResult[]> {
         }
       });
       results.push(
-        await benchmark("sqlite transaction (better-sqlite3)", async () => {
-          txInsert();
-        }, 20)
+        await benchmark(
+          "sqlite transaction (better-sqlite3)",
+          async () => {
+            txInsert();
+          },
+          20,
+        ),
       );
 
       db.close();
@@ -527,19 +651,27 @@ async function runCryptoBenchmarks(): Promise<BenchmarkResult[]> {
   const { createHash } = await import("node:crypto");
 
   results.push(
-    await benchmark("hash SHA-256 (node:crypto)", async () => {
-      createHash("sha256").update(testData).digest("hex");
-    }, 500)
+    await benchmark(
+      "hash SHA-256 (node:crypto)",
+      async () => {
+        createHash("sha256").update(testData).digest("hex");
+      },
+      500,
+    ),
   );
 
   // Bun's native hash if available
   if (runtime.isBun && globalThis.Bun) {
     results.push(
-      await benchmark("hash SHA-256 (Bun.CryptoHasher)", async () => {
-        const hasher = new globalThis.Bun!.CryptoHasher("sha256");
-        hasher.update(testData);
-        hasher.digest("hex");
-      }, 500)
+      await benchmark(
+        "hash SHA-256 (Bun.CryptoHasher)",
+        async () => {
+          const hasher = new globalThis.Bun!.CryptoHasher("sha256");
+          hasher.update(testData);
+          hasher.digest("hex");
+        },
+        500,
+      ),
     );
   }
 
@@ -572,10 +704,14 @@ async function runFetchBenchmarks(): Promise<BenchmarkResult[]> {
     }
 
     results.push(
-      await benchmark("fetch (JSON response)", async () => {
-        const res = await fetch(url);
-        await res.json();
-      }, 100)
+      await benchmark(
+        "fetch (JSON response)",
+        async () => {
+          const res = await fetch(url);
+          await res.json();
+        },
+        100,
+      ),
     );
   } finally {
     server.close();
@@ -606,16 +742,16 @@ async function main(): Promise<void> {
   const allResults: BenchmarkResult[] = [];
 
   try {
-    allResults.push(...await runFileReadBenchmarks());
-    allResults.push(...await runFileWriteBenchmarks());
-    allResults.push(...await runDirectoryBenchmarks());
-    allResults.push(...await runGlobBenchmarks());
-    allResults.push(...await runShellBenchmarks());
-    allResults.push(...await runCodebaseMetricsBenchmarks());
-    allResults.push(...await runStartupBenchmarks());
-    allResults.push(...await runSQLiteBenchmarks());
-    allResults.push(...await runCryptoBenchmarks());
-    allResults.push(...await runFetchBenchmarks());
+    allResults.push(...(await runFileReadBenchmarks()));
+    allResults.push(...(await runFileWriteBenchmarks()));
+    allResults.push(...(await runDirectoryBenchmarks()));
+    allResults.push(...(await runGlobBenchmarks()));
+    allResults.push(...(await runShellBenchmarks()));
+    allResults.push(...(await runCodebaseMetricsBenchmarks()));
+    allResults.push(...(await runStartupBenchmarks()));
+    allResults.push(...(await runSQLiteBenchmarks()));
+    allResults.push(...(await runCryptoBenchmarks()));
+    allResults.push(...(await runFetchBenchmarks()));
   } finally {
     await cleanupTestData();
   }

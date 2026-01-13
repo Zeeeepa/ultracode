@@ -119,8 +119,11 @@ async function main() {
           const data = new Float32Array(output.data);
           console.log(`  Output shape: ${output.shape}`);
           console.log(`  Output values: ${data.length}`);
-          console.log(`  First 3: [${Array.from(data.slice(0, 3)).map(v => v.toFixed(4)).join(", ")}]`);
-
+          console.log(
+            `  First 3: [${Array.from(data.slice(0, 3))
+              .map((v) => v.toFixed(4))
+              .join(", ")}]`,
+          );
         } catch (e) {
           console.log(`  ✗ Error: ${e.message}`);
           if (e.message.includes("Select") || e.message.includes("masked_fill")) {
@@ -138,7 +141,6 @@ async function main() {
           console.log(`  ${device}: ${data.avg.toFixed(2)}ms (${speedup}x vs CPU)`);
         }
       }
-
     } catch (e) {
       console.log(`Error loading model: ${e.message}`);
     }

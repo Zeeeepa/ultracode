@@ -35,7 +35,7 @@ async function main() {
     cpuInfer.infer();
     cpuTimes.push(Date.now() - t);
   }
-  console.log(`CPU: Avg ${(cpuTimes.reduce((a,b) => a+b) / 50).toFixed(2)}ms`);
+  console.log(`CPU: Avg ${(cpuTimes.reduce((a, b) => a + b) / 50).toFixed(2)}ms`);
 
   // === GPU.0 ===
   console.log("\n--- GPU.0 ---");
@@ -56,7 +56,7 @@ async function main() {
     gpuInfer.infer();
     gpuTimes.push(Date.now() - t);
   }
-  console.log(`GPU.0: Avg ${(gpuTimes.reduce((a,b) => a+b) / 50).toFixed(2)}ms`);
+  console.log(`GPU.0: Avg ${(gpuTimes.reduce((a, b) => a + b) / 50).toFixed(2)}ms`);
 
   // === GPU.1 ===
   console.log("\n--- GPU.1 ---");
@@ -77,22 +77,22 @@ async function main() {
     gpu1Infer.infer();
     gpu1Times.push(Date.now() - t);
   }
-  console.log(`GPU.1: Avg ${(gpu1Times.reduce((a,b) => a+b) / 50).toFixed(2)}ms`);
+  console.log(`GPU.1: Avg ${(gpu1Times.reduce((a, b) => a + b) / 50).toFixed(2)}ms`);
 
   // Summary
-  const cpuAvg = cpuTimes.reduce((a,b) => a+b) / 50;
-  const gpuAvg = gpuTimes.reduce((a,b) => a+b) / 50;
-  const gpu1Avg = gpu1Times.reduce((a,b) => a+b) / 50;
+  const cpuAvg = cpuTimes.reduce((a, b) => a + b) / 50;
+  const gpuAvg = gpuTimes.reduce((a, b) => a + b) / 50;
+  const gpu1Avg = gpu1Times.reduce((a, b) => a + b) / 50;
 
   console.log("\n=== Summary ===");
   console.log(`CPU:   ${cpuAvg.toFixed(2)}ms`);
-  console.log(`GPU.0: ${gpuAvg.toFixed(2)}ms (${(cpuAvg/gpuAvg).toFixed(2)}x)`);
-  console.log(`GPU.1: ${gpu1Avg.toFixed(2)}ms (${(cpuAvg/gpu1Avg).toFixed(2)}x)`);
+  console.log(`GPU.0: ${gpuAvg.toFixed(2)}ms (${(cpuAvg / gpuAvg).toFixed(2)}x)`);
+  console.log(`GPU.1: ${gpu1Avg.toFixed(2)}ms (${(cpuAvg / gpu1Avg).toFixed(2)}x)`);
 
   console.log("\n=== Done! ===");
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error("Error:", e);
   process.exit(1);
 });

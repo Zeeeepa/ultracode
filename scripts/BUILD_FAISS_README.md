@@ -30,6 +30,7 @@ Windows build requires **BLAS/LAPACK** libraries. **This is NOT auto-installed**
    - MKL provides optimized BLAS/LAPACK for Intel CPUs
 
 2. **OpenBLAS via vcpkg**
+
    ```powershell
    git clone https://github.com/Microsoft/vcpkg.git
    cd vcpkg
@@ -90,6 +91,7 @@ pwsh scripts/build-faiss-docker.ps1
 ```
 
 This will:
+
 1. Launch Docker container with `node:24-slim` image
 2. Install BLAS/LAPACK dependencies (libopenblas)
 3. Clone faiss-node repository
@@ -97,12 +99,14 @@ This will:
 5. Copy to `external-libs/faiss-linux-x64/faiss-node.node`
 
 **Advantages:**
+
 - ✅ Clean isolated environment
 - ✅ No WSL network issues
 - ✅ Works on Windows, Linux, macOS
 - ✅ Reproducible builds for CI/CD
 
 Clean build:
+
 ```powershell
 npm run build:faiss:docker:clean
 ```
@@ -115,6 +119,7 @@ npm run build:faiss:wsl
 ```
 
 This will:
+
 1. Launch WSL automatically
 2. Install BLAS/LAPACK dependencies
 3. Clone faiss-node repository
@@ -124,6 +129,7 @@ This will:
 **Note:** May have network issues with `apt-get update` in WSL.
 
 Clean build:
+
 ```powershell
 npm run build:faiss:wsl:clean
 ```
@@ -184,6 +190,7 @@ npm install ultrascript-tools-mcp
 ```
 
 The postinstall script will:
+
 - Detect platform (Windows/Linux)
 - Copy prebuilt binary from `external-libs/`
 - No compilation needed!
@@ -195,11 +202,13 @@ The postinstall script will:
 **Problem**: Windows build requires BLAS/LAPACK libraries which are not easily installable on Windows.
 
 **Solution**: Use WSL instead for Linux builds:
+
 ```powershell
 npm run build:faiss:wsl
 ```
 
 **Why Windows is hard**: FAISS requires BLAS/LAPACK (linear algebra libraries). On Windows, you would need to:
+
 - Install Intel MKL (very large download)
 - Or compile OpenBLAS from source (complex)
 - Or use vcpkg (time-consuming)
@@ -254,9 +263,9 @@ For GitHub Actions:
 
 ## Version Compatibility
 
-| Node Version | ABI Version | Status |
-|--------------|-------------|--------|
-| Node 24      | v137        | ✅ Built by this script |
+| Node Version | ABI Version | Status                    |
+| ------------ | ----------- | ------------------------- |
+| Node 24      | v137        | ✅ Built by this script   |
 | Node 22      | v127        | ⚠️ Use official prebuilds |
 | Node 20      | v115        | ⚠️ Use official prebuilds |
 

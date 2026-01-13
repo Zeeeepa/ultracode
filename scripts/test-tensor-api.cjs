@@ -46,12 +46,16 @@ async function main() {
   // Load model and check expected input types
   console.log("\n--- Model Input Types ---");
   const core = new ov.Core();
-  const model = await core.readModel("D:\\github\\ultrascript-tools-mcp\\models\\all-MiniLM-L6-v2\\model.onnx");
+  const model = await core.readModel(
+    "D:\\github\\ultrascript-tools-mcp\\models\\all-MiniLM-L6-v2\\model.onnx",
+  );
   const compiled = await core.compileModel(model, "CPU");
 
   for (let i = 0; i < compiled.inputs.length; i++) {
     const input = compiled.inputs[i];
-    console.log(`Input ${i}: ${input.anyName}, element type: ${input.elementType}, shape: ${input.shape}`);
+    console.log(
+      `Input ${i}: ${input.anyName}, element type: ${input.elementType}, shape: ${input.shape}`,
+    );
   }
 
   console.log("\n=== Done ===");

@@ -21,12 +21,16 @@ async function main() {
   // 3. Inspect model shapes
   console.log("\n3. Model inputs:");
   for (const input of model.inputs) {
-    console.log(`   - ${input.anyName}: shape=${JSON.stringify(input.shape)}, type=${input.elementType}`);
+    console.log(
+      `   - ${input.anyName}: shape=${JSON.stringify(input.shape)}, type=${input.elementType}`,
+    );
   }
 
   console.log("\n   Model outputs:");
   for (const output of model.outputs) {
-    console.log(`   - ${output.anyName}: shape=${JSON.stringify(output.shape)}, type=${output.elementType}`);
+    console.log(
+      `   - ${output.anyName}: shape=${JSON.stringify(output.shape)}, type=${output.elementType}`,
+    );
   }
 
   // 4. Check for dynamic shapes
@@ -89,11 +93,11 @@ async function main() {
       // Set timeout for NPU compilation
       const compilePromise = core.compileModel(npuModel, "NPU");
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("NPU compilation timeout (60s)")), 60000)
+        setTimeout(() => reject(new Error("NPU compilation timeout (60s)")), 60000),
       );
 
       try {
-        const compiledNpu = await Promise.race([compilePromise, timeoutPromise]) as any;
+        const compiledNpu = (await Promise.race([compilePromise, timeoutPromise])) as any;
         console.log(`   ✓ NPU compiled in ${Date.now() - npuStart}ms`);
 
         // Test NPU inference
@@ -102,9 +106,18 @@ async function main() {
         const npuAttentionMask = new BigInt64Array(staticSeqLen).fill(1n);
         const npuTokenTypeIds = new BigInt64Array(staticSeqLen).fill(0n);
 
-        npuInferRequest.setInputTensor("input_ids", new ov.Tensor(ov.element.i64, [1, staticSeqLen], npuInputIds));
-        npuInferRequest.setInputTensor("attention_mask", new ov.Tensor(ov.element.i64, [1, staticSeqLen], npuAttentionMask));
-        npuInferRequest.setInputTensor("token_type_ids", new ov.Tensor(ov.element.i64, [1, staticSeqLen], npuTokenTypeIds));
+        npuInferRequest.setInputTensor(
+          "input_ids",
+          new ov.Tensor(ov.element.i64, [1, staticSeqLen], npuInputIds),
+        );
+        npuInferRequest.setInputTensor(
+          "attention_mask",
+          new ov.Tensor(ov.element.i64, [1, staticSeqLen], npuAttentionMask),
+        );
+        npuInferRequest.setInputTensor(
+          "token_type_ids",
+          new ov.Tensor(ov.element.i64, [1, staticSeqLen], npuTokenTypeIds),
+        );
 
         const npuInferStart = Date.now();
         npuInferRequest.infer();
@@ -112,7 +125,6 @@ async function main() {
 
         const npuOutput = npuInferRequest.getOutputTensor();
         console.log(`   Output shape: ${JSON.stringify(npuOutput.shape)}`);
-
       } catch (e: any) {
         console.log(`   ✗ NPU compilation failed: ${e.message}`);
       }

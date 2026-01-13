@@ -75,8 +75,8 @@ async function benchmarkOllama(model: string): Promise<BenchmarkResult> {
         options: {
           num_predict: 512,
           temperature: 0.3,
-        }
-      })
+        },
+      }),
     });
 
     if (!response.ok) {
@@ -91,7 +91,7 @@ async function benchmarkOllama(model: string): Promise<BenchmarkResult> {
       if (done) break;
 
       const chunk = decoder.decode(value);
-      const lines = chunk.split("\n").filter(l => l.trim());
+      const lines = chunk.split("\n").filter((l) => l.trim());
 
       for (const line of lines) {
         try {
@@ -118,7 +118,7 @@ async function benchmarkOllama(model: string): Promise<BenchmarkResult> {
       totalTime,
       tokensGenerated,
       tokensPerSec: tokensGenerated / totalTime,
-      outputChars: output.length
+      outputChars: output.length,
     };
   } catch (error) {
     return {
@@ -130,7 +130,7 @@ async function benchmarkOllama(model: string): Promise<BenchmarkResult> {
       tokensGenerated: 0,
       tokensPerSec: 0,
       outputChars: 0,
-      error: String(error)
+      error: String(error),
     };
   }
 }
@@ -173,7 +173,7 @@ except Exception as e:
   try {
     const result = execSync(`python -c "${script.replace(/"/g, '\\"')}"`, {
       encoding: "utf-8",
-      timeout: 120000
+      timeout: 120000,
     });
 
     if (result.includes("ERROR:")) {
@@ -186,11 +186,13 @@ except Exception as e:
         tokensGenerated: 0,
         tokensPerSec: 0,
         outputChars: 0,
-        error: result.split("ERROR:")[1].trim()
+        error: result.split("ERROR:")[1].trim(),
       };
     }
 
-    const match = result.match(/RESULT:ttft=(\d+\.?\d*),total=(\d+\.?\d*),tokens=(\d+),chars=(\d+)/);
+    const match = result.match(
+      /RESULT:ttft=(\d+\.?\d*),total=(\d+\.?\d*),tokens=(\d+),chars=(\d+)/,
+    );
     if (match) {
       const ttft = parseFloat(match[1]);
       const totalTime = parseFloat(match[2]);
@@ -205,7 +207,7 @@ except Exception as e:
         totalTime,
         tokensGenerated: tokens,
         tokensPerSec: tokens / totalTime,
-        outputChars: chars
+        outputChars: chars,
       };
     }
 
@@ -220,13 +222,13 @@ except Exception as e:
       tokensGenerated: 0,
       tokensPerSec: 0,
       outputChars: 0,
-      error: String(error)
+      error: String(error),
     };
   }
 }
 
 async function runBenchmarks() {
-  console.log("=" .repeat(70));
+  console.log("=".repeat(70));
   console.log("LLM BENCHMARK - Code Documentation Generation");
   console.log("=".repeat(70));
   console.log("Task: Generate documentation for TypeScript class (~50 lines)");
@@ -236,11 +238,7 @@ async function runBenchmarks() {
   const results: BenchmarkResult[] = [];
 
   // Ollama benchmarks
-  const ollamaModels = [
-    "qwen2.5-coder:7b",
-    "phi4-mini",
-    "deepseek-coder:6.7b"
-  ];
+  const ollamaModels = ["qwen2.5-coder:7b", "phi4-mini", "deepseek-coder:6.7b"];
 
   for (const model of ollamaModels) {
     const result = await benchmarkOllama(model);
@@ -270,9 +268,7 @@ async function runBenchmarks() {
   }
 
   // OpenVINO NPU benchmarks (if available)
-  const npuModels = [
-    { id: "OpenVINO/Qwen3-4B-int4-ov", name: "qwen3-4b" },
-  ];
+  const npuModels = [{ id: "OpenVINO/Qwen3-4B-int4-ov", name: "qwen3-4b" }];
 
   for (const model of npuModels) {
     const result = await benchmarkOpenVINO(model.id, "NPU");
@@ -292,15 +288,21 @@ async function runBenchmarks() {
   console.log("| Rank | Model | Provider | Device | Tok/s | TTFT | Total | Status |");
   console.log("|------|-------|----------|--------|-------|------|-------|--------|");
 
-  const successful = results.filter(r => !r.error).sort((a, b) => b.tokensPerSec - a.tokensPerSec);
-  const failed = results.filter(r => r.error);
+  const successful = results
+    .filter((r) => !r.error)
+    .sort((a, b) => b.tokensPerSec - a.tokensPerSec);
+  const failed = results.filter((r) => r.error);
 
   successful.forEach((r, i) => {
-    console.log(`| ${i + 1} | ${r.model} | ${r.provider} | ${r.device} | ${r.tokensPerSec.toFixed(1)} | ${r.ttft.toFixed(2)}s | ${r.totalTime.toFixed(1)}s | ✅ |`);
+    console.log(
+      `| ${i + 1} | ${r.model} | ${r.provider} | ${r.device} | ${r.tokensPerSec.toFixed(1)} | ${r.ttft.toFixed(2)}s | ${r.totalTime.toFixed(1)}s | ✅ |`,
+    );
   });
 
-  failed.forEach(r => {
-    console.log(`| - | ${r.model} | ${r.provider} | ${r.device} | - | - | - | ❌ ${r.error?.substring(0, 30)} |`);
+  failed.forEach((r) => {
+    console.log(
+      `| - | ${r.model} | ${r.provider} | ${r.device} | - | - | - | ❌ ${r.error?.substring(0, 30)} |`,
+    );
   });
 
   console.log("\n✅ Benchmark complete!");

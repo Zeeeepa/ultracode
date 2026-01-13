@@ -107,19 +107,22 @@ async function loadLargeEntities(minTokens: number = 512): Promise<LargeEntity[]
   const db = new Database(dbPath, { readonly: true });
 
   // Query entities with location info
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(`
     SELECT id, name, type, file_path, location, size_bytes
     FROM entities
     WHERE location IS NOT NULL
     ORDER BY size_bytes DESC
     LIMIT 500
-  `).all() as any[];
+  `)
+    .all() as any[];
 
   const entities: LargeEntity[] = [];
 
   for (const row of rows) {
     // Parse location JSON
-    let startLine = 1, endLine = 1;
+    let startLine = 1,
+      endLine = 1;
     try {
       const loc = JSON.parse(row.location || "{}");
       startLine = loc.start?.line || 1;
@@ -159,7 +162,10 @@ async function loadLargeEntities(minTokens: number = 512): Promise<LargeEntity[]
 }
 
 // Prepare chunks for all entities
-function prepareChunks(entities: LargeEntity[], maxTokens: number): { chunks: string[]; entityCount: number; totalTokens: number } {
+function prepareChunks(
+  entities: LargeEntity[],
+  maxTokens: number,
+): { chunks: string[]; entityCount: number; totalTokens: number } {
   const allChunks: string[] = [];
   let totalTokens = 0;
 
@@ -180,7 +186,7 @@ function prepareChunks(entities: LargeEntity[], maxTokens: number): { chunks: st
 async function benchmarkOllama(
   model: string,
   entities: LargeEntity[],
-  maxTokens: number
+  maxTokens: number,
 ): Promise<BenchmarkResult | null> {
   try {
     // Check if model exists
@@ -213,7 +219,7 @@ async function benchmarkOllama(
           });
           const data = await res.json();
           return data.embeddings?.[0] || [];
-        })
+        }),
       );
       embeddings.push(...results);
     }
@@ -243,7 +249,7 @@ async function benchmarkOllama(
 async function benchmarkTEI(
   endpoint: string,
   entities: LargeEntity[],
-  maxTokens: number
+  maxTokens: number,
 ): Promise<BenchmarkResult | null> {
   try {
     // Check health
@@ -309,7 +315,7 @@ async function benchmarkTEI(
 async function benchmarkOpenVINO(
   model: string,
   entities: LargeEntity[],
-  maxTokens: number
+  maxTokens: number,
 ): Promise<BenchmarkResult | null> {
   try {
     const { OpenVINOProvider } = await import("../src/semantic/providers/openvino-provider.js");
@@ -370,7 +376,9 @@ async function main() {
   // Stats
   const totalTokens = entities.reduce((s, e) => s + e.estimatedTokens, 0);
   const avgTokens = Math.round(totalTokens / entities.length);
-  const maxTokensEntity = entities.reduce((a, b) => a.estimatedTokens > b.estimatedTokens ? a : b);
+  const maxTokensEntity = entities.reduce((a, b) =>
+    a.estimatedTokens > b.estimatedTokens ? a : b,
+  );
 
   console.log(`Found ${entities.length} entities exceeding 512 tokens:\n`);
   console.log(`  Average tokens: ${avgTokens}`);
@@ -380,7 +388,9 @@ async function main() {
   // Show top 5 largest
   console.log("Top 5 largest entities:");
   for (const e of entities.slice(0, 5)) {
-    console.log(`  - ${e.type.padEnd(12)} ${e.name.slice(0, 40).padEnd(42)} ${e.lines} lines (~${e.estimatedTokens} tok)`);
+    console.log(
+      `  - ${e.type.padEnd(12)} ${e.name.slice(0, 40).padEnd(42)} ${e.lines} lines (~${e.estimatedTokens} tok)`,
+    );
   }
   console.log("");
 
@@ -441,21 +451,31 @@ async function main() {
   if (ollamaArcticResult) results8K.push(ollamaArcticResult);
 
   // TEI 8K - check if 8K model is running
-  const teiInfo = await fetch(`${TEI_ENDPOINT}/info`).then(r => r.json()).catch(() => null);
+  const teiInfo = await fetch(`${TEI_ENDPOINT}/info`)
+    .then((r) => r.json())
+    .catch(() => null);
   if (teiInfo && teiInfo.max_input_length >= 8000) {
     console.log(`Testing TEI (${teiInfo.model_id}, ${teiInfo.max_input_length} tokens)...`);
     const tei8KResult = await benchmarkTEI(TEI_ENDPOINT, testEntities, 8192);
     if (tei8KResult) results8K.push(tei8KResult);
   } else {
-    console.log(`  [SKIP] TEI is running ${teiInfo?.model_id || 'unknown'} with ${teiInfo?.max_input_length || '?'} tokens (not 8K)`);
+    console.log(
+      `  [SKIP] TEI is running ${teiInfo?.model_id || "unknown"} with ${teiInfo?.max_input_length || "?"} tokens (not 8K)`,
+    );
   }
 
   const results = [...results512, ...results8K];
 
   // Print results
-  console.log("\n\n╔═══════════════════════════════════════════════════════════════════════════════════════════════════════╗");
-  console.log("║                      BENCHMARK RESULTS (Large Entities + Smart Chunker)                                 ║");
-  console.log("╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝\n");
+  console.log(
+    "\n\n╔═══════════════════════════════════════════════════════════════════════════════════════════════════════╗",
+  );
+  console.log(
+    "║                      BENCHMARK RESULTS (Large Entities + Smart Chunker)                                 ║",
+  );
+  console.log(
+    "╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝\n",
+  );
 
   const printTable = (title: string, data: BenchmarkResult[]) => {
     if (data.length === 0) {
@@ -463,8 +483,12 @@ async function main() {
       return;
     }
     console.log(`\n┌─── ${title} ${"─".repeat(80 - title.length)}┐`);
-    console.log("│ Provider         Model                       Entities  Chunks   Total     Per-ent   Tokens/sec  │");
-    console.log("├───────────────────────────────────────────────────────────────────────────────────────────────────┤");
+    console.log(
+      "│ Provider         Model                       Entities  Chunks   Total     Per-ent   Tokens/sec  │",
+    );
+    console.log(
+      "├───────────────────────────────────────────────────────────────────────────────────────────────────┤",
+    );
 
     for (const r of data.sort((a, b) => a.perEntityMs - b.perEntityMs)) {
       const provider = r.provider.padEnd(16);
@@ -474,48 +498,70 @@ async function main() {
       const total = `${r.totalTimeMs}ms`.padStart(9);
       const perEnt = `${r.perEntityMs}ms`.padStart(9);
       const tokSec = String(r.effectiveTokensPerSec).padStart(11);
-      console.log(`│ ${provider} ${model} ${entities}  ${chunks}  ${total}  ${perEnt}  ${tokSec}  │`);
+      console.log(
+        `│ ${provider} ${model} ${entities}  ${chunks}  ${total}  ${perEnt}  ${tokSec}  │`,
+      );
     }
-    console.log("└───────────────────────────────────────────────────────────────────────────────────────────────────┘");
+    console.log(
+      "└───────────────────────────────────────────────────────────────────────────────────────────────────┘",
+    );
   };
 
   printTable("512 TOKEN MODELS (with Smart Chunker)", results512);
   printTable("8K TOKEN MODELS (no chunking needed)", results8K);
 
   // Analysis
-  console.log("\n═══════════════════════════════════════════════════════════════════════════════════════════════════════════");
+  console.log(
+    "\n═══════════════════════════════════════════════════════════════════════════════════════════════════════════",
+  );
   console.log("                                            ANALYSIS");
-  console.log("═══════════════════════════════════════════════════════════════════════════════════════════════════════════\n");
+  console.log(
+    "═══════════════════════════════════════════════════════════════════════════════════════════════════════════\n",
+  );
 
   // 512 analysis
   if (results512.length > 0) {
-    const fastest512 = results512.reduce((a, b) => a.perEntityMs < b.perEntityMs ? a : b);
-    console.log(`🏆 Fastest 512-token:       ${fastest512.provider} (${fastest512.model.slice(0, 25)})`);
-    console.log(`   ${fastest512.perEntityMs}ms per entity, ${fastest512.chunkCount} chunks, ${fastest512.effectiveTokensPerSec} tok/s\n`);
+    const fastest512 = results512.reduce((a, b) => (a.perEntityMs < b.perEntityMs ? a : b));
+    console.log(
+      `🏆 Fastest 512-token:       ${fastest512.provider} (${fastest512.model.slice(0, 25)})`,
+    );
+    console.log(
+      `   ${fastest512.perEntityMs}ms per entity, ${fastest512.chunkCount} chunks, ${fastest512.effectiveTokensPerSec} tok/s\n`,
+    );
   }
 
   // 8K analysis
   if (results8K.length > 0) {
-    const fastest8K = results8K.reduce((a, b) => a.perEntityMs < b.perEntityMs ? a : b);
-    console.log(`🏆 Fastest 8K-token:        ${fastest8K.provider} (${fastest8K.model.slice(0, 25)})`);
-    console.log(`   ${fastest8K.perEntityMs}ms per entity, ${fastest8K.chunkCount} chunks, ${fastest8K.effectiveTokensPerSec} tok/s\n`);
+    const fastest8K = results8K.reduce((a, b) => (a.perEntityMs < b.perEntityMs ? a : b));
+    console.log(
+      `🏆 Fastest 8K-token:        ${fastest8K.provider} (${fastest8K.model.slice(0, 25)})`,
+    );
+    console.log(
+      `   ${fastest8K.perEntityMs}ms per entity, ${fastest8K.chunkCount} chunks, ${fastest8K.effectiveTokensPerSec} tok/s\n`,
+    );
   }
 
   // Head-to-head comparison
   if (results512.length > 0 && results8K.length > 0) {
-    const best512 = results512.reduce((a, b) => a.totalTimeMs < b.totalTimeMs ? a : b);
-    const best8K = results8K.reduce((a, b) => a.totalTimeMs < b.totalTimeMs ? a : b);
+    const best512 = results512.reduce((a, b) => (a.totalTimeMs < b.totalTimeMs ? a : b));
+    const best8K = results8K.reduce((a, b) => (a.totalTimeMs < b.totalTimeMs ? a : b));
 
     console.log("📊 HEAD-TO-HEAD: 512 vs 8K");
-    console.log(`   512 winner: ${best512.provider} - ${best512.totalTimeMs}ms total (${best512.chunkCount} chunks)`);
-    console.log(`   8K winner:  ${best8K.provider} - ${best8K.totalTimeMs}ms total (${best8K.chunkCount} chunks)`);
+    console.log(
+      `   512 winner: ${best512.provider} - ${best512.totalTimeMs}ms total (${best512.chunkCount} chunks)`,
+    );
+    console.log(
+      `   8K winner:  ${best8K.provider} - ${best8K.totalTimeMs}ms total (${best8K.chunkCount} chunks)`,
+    );
 
     const speedup = (best8K.totalTimeMs / best512.totalTimeMs).toFixed(1);
     const chunkRatio = (best512.chunkCount / best8K.chunkCount).toFixed(1);
 
     if (best512.totalTimeMs < best8K.totalTimeMs) {
       console.log(`\n   ✅ 512 + Smart Chunker is ${speedup}x FASTER than 8K!`);
-      console.log(`   📦 But requires ${chunkRatio}x more chunks (${best512.chunkCount} vs ${best8K.chunkCount})`);
+      console.log(
+        `   📦 But requires ${chunkRatio}x more chunks (${best512.chunkCount} vs ${best8K.chunkCount})`,
+      );
     } else {
       console.log(`\n   ✅ 8K is ${(best512.totalTimeMs / best8K.totalTimeMs).toFixed(1)}x FASTER`);
       console.log(`   📦 And uses ${chunkRatio}x fewer chunks`);
@@ -527,7 +573,9 @@ async function main() {
   for (const r of [...results512, ...results8K]) {
     const ratio = (r.chunkCount / r.entityCount).toFixed(1);
     const ctx = r.maxTokens >= 8000 ? "8K" : "512";
-    console.log(`   [${ctx}] ${r.provider.padEnd(16)} ${r.entityCount} ent → ${String(r.chunkCount).padStart(3)} chunks (${ratio}x) | ${r.totalTimeMs}ms | ${r.effectiveTokensPerSec} tok/s`);
+    console.log(
+      `   [${ctx}] ${r.provider.padEnd(16)} ${r.entityCount} ent → ${String(r.chunkCount).padStart(3)} chunks (${ratio}x) | ${r.totalTimeMs}ms | ${r.effectiveTokensPerSec} tok/s`,
+    );
   }
 
   console.log("\n💡 Key Insights:");

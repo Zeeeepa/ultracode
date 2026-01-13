@@ -57,7 +57,7 @@ async function analyzeEntitySizes() {
       name: entity.name || "unnamed",
       type: entity.type,
       tokens,
-      lines
+      lines,
     };
 
     if (tokens <= 128) {
@@ -78,7 +78,7 @@ async function analyzeEntitySizes() {
   }
 
   // Print distribution
-  console.log("=" .repeat(70));
+  console.log("=".repeat(70));
   console.log("ENTITY SIZE DISTRIBUTION (by estimated tokens)");
   console.log("=".repeat(70));
 
@@ -88,7 +88,9 @@ async function analyzeEntitySizes() {
     const count = items.length;
     const pct = ((count / total) * 100).toFixed(1);
     const cumPct = ((cumulative / total) * 100).toFixed(1);
-    console.log(`${label.padEnd(20)} ${count.toString().padStart(5)} (${pct.padStart(5)}%)  | Cumulative: ${cumPct}%`);
+    console.log(
+      `${label.padEnd(20)} ${count.toString().padStart(5)} (${pct.padStart(5)}%)  | Cumulative: ${cumPct}%`,
+    );
   };
 
   let cumulative = sizes.under128.length;
@@ -122,12 +124,24 @@ async function analyzeEntitySizes() {
 
   console.log("\n📊 KEY INSIGHTS FOR EMBEDDING MODEL SELECTION:");
   console.log("=".repeat(70));
-  console.log(`\n✅ Entities fitting in 256 context: ${fit256}/${total} (${((fit256/total)*100).toFixed(1)}%)`);
-  console.log(`⚠️  Entities TRUNCATED with 256 context: ${truncated256} (${((truncated256/total)*100).toFixed(1)}%)`);
-  console.log(`\n✅ Entities fitting in 512 context: ${fit512}/${total} (${((fit512/total)*100).toFixed(1)}%)`);
-  console.log(`⚠️  Entities TRUNCATED with 512 context: ${truncated512} (${((truncated512/total)*100).toFixed(1)}%)`);
-  console.log(`\n✅ Entities fitting in 8192 context: ${fit8192}/${total} (${((fit8192/total)*100).toFixed(1)}%)`);
-  console.log(`⚠️  Entities TRUNCATED with 8192 context: ${sizes.over8192.length} (${((sizes.over8192.length/total)*100).toFixed(1)}%)`);
+  console.log(
+    `\n✅ Entities fitting in 256 context: ${fit256}/${total} (${((fit256 / total) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `⚠️  Entities TRUNCATED with 256 context: ${truncated256} (${((truncated256 / total) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `\n✅ Entities fitting in 512 context: ${fit512}/${total} (${((fit512 / total) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `⚠️  Entities TRUNCATED with 512 context: ${truncated512} (${((truncated512 / total) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `\n✅ Entities fitting in 8192 context: ${fit8192}/${total} (${((fit8192 / total) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `⚠️  Entities TRUNCATED with 8192 context: ${sizes.over8192.length} (${((sizes.over8192.length / total) * 100).toFixed(1)}%)`,
+  );
 
   // Show largest entities
   if (sizes.over8192.length > 0) {
@@ -136,7 +150,7 @@ async function analyzeEntitySizes() {
       .sort((a, b) => b.tokens - a.tokens)
       .slice(0, 10)
       .forEach((e, i) => {
-        console.log(`  ${i+1}. ${e.type}: ${e.name} (${e.lines} lines → ${e.tokens} tokens)`);
+        console.log(`  ${i + 1}. ${e.type}: ${e.name} (${e.lines} lines → ${e.tokens} tokens)`);
       });
   }
 
@@ -146,17 +160,23 @@ async function analyzeEntitySizes() {
       .sort((a, b) => b.tokens - a.tokens)
       .slice(0, 20)
       .forEach((e, i) => {
-        console.log(`  ${i+1}. ${e.type}: ${e.name} (${e.lines} lines → ${e.tokens} tokens)`);
+        console.log(`  ${i + 1}. ${e.type}: ${e.name} (${e.lines} lines → ${e.tokens} tokens)`);
       });
   }
 
   if (truncated256 > 0) {
     console.log("\n🟠 ENTITIES TRUNCATED AT 256 (>25 lines) - sample:");
-    [...sizes.under512, ...sizes.under1024, ...sizes.under2048, ...sizes.under8192, ...sizes.over8192]
+    [
+      ...sizes.under512,
+      ...sizes.under1024,
+      ...sizes.under2048,
+      ...sizes.under8192,
+      ...sizes.over8192,
+    ]
       .sort((a, b) => b.tokens - a.tokens)
       .slice(0, 10)
       .forEach((e, i) => {
-        console.log(`  ${i+1}. ${e.type}: ${e.name} (${e.lines} lines → ${e.tokens} tokens)`);
+        console.log(`  ${i + 1}. ${e.type}: ${e.name} (${e.lines} lines → ${e.tokens} tokens)`);
       });
   }
 
@@ -168,18 +188,26 @@ async function analyzeEntitySizes() {
   const expandableTypes = ["class", "interface", "struct", "trait", "impl_block"];
   const methodTypes = ["function", "async_function", "method", "arrow_function"];
 
-  const allEntities = [...sizes.under128, ...sizes.under256, ...sizes.under512, ...sizes.under1024, ...sizes.under2048, ...sizes.under8192, ...sizes.over8192];
+  const allEntities = [
+    ...sizes.under128,
+    ...sizes.under256,
+    ...sizes.under512,
+    ...sizes.under1024,
+    ...sizes.under2048,
+    ...sizes.under8192,
+    ...sizes.over8192,
+  ];
 
   // Count classes that would be expanded (>512 tokens with EntityExpander default)
-  const largeClasses = allEntities.filter(e =>
-    expandableTypes.includes(e.type) && e.tokens > 512 * 0.8 // 80% threshold
+  const largeClasses = allEntities.filter(
+    (e) => expandableTypes.includes(e.type) && e.tokens > 512 * 0.8, // 80% threshold
   );
 
   // Count methods/functions
-  const methods = allEntities.filter(e => methodTypes.includes(e.type));
-  const methodsOver128 = methods.filter(e => e.tokens > 128);
-  const methodsOver256 = methods.filter(e => e.tokens > 256);
-  const methodsOver512 = methods.filter(e => e.tokens > 512);
+  const methods = allEntities.filter((e) => methodTypes.includes(e.type));
+  const methodsOver128 = methods.filter((e) => e.tokens > 128);
+  const methodsOver256 = methods.filter((e) => e.tokens > 256);
+  const methodsOver512 = methods.filter((e) => e.tokens > 512);
 
   console.log(`\n📦 Classes/Interfaces that would be EXPANDED: ${largeClasses.length}`);
   console.log(`   (split into header + individual methods)`);
@@ -187,14 +215,26 @@ async function analyzeEntitySizes() {
   console.log(`\n🔧 Functions/Methods (individual units for embedding):`);
   console.log(`   Total: ${methods.length}`);
   console.log(`\n   Context 128:`);
-  console.log(`     Fitting: ${methods.length - methodsOver128.length} (${((1 - methodsOver128.length/methods.length)*100).toFixed(1)}%)`);
-  console.log(`     Truncated: ${methodsOver128.length} (${((methodsOver128.length/methods.length)*100).toFixed(1)}%)`);
+  console.log(
+    `     Fitting: ${methods.length - methodsOver128.length} (${((1 - methodsOver128.length / methods.length) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `     Truncated: ${methodsOver128.length} (${((methodsOver128.length / methods.length) * 100).toFixed(1)}%)`,
+  );
   console.log(`\n   Context 256:`);
-  console.log(`     Fitting: ${methods.length - methodsOver256.length} (${((1 - methodsOver256.length/methods.length)*100).toFixed(1)}%)`);
-  console.log(`     Truncated: ${methodsOver256.length} (${((methodsOver256.length/methods.length)*100).toFixed(1)}%)`);
+  console.log(
+    `     Fitting: ${methods.length - methodsOver256.length} (${((1 - methodsOver256.length / methods.length) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `     Truncated: ${methodsOver256.length} (${((methodsOver256.length / methods.length) * 100).toFixed(1)}%)`,
+  );
   console.log(`\n   Context 512:`);
-  console.log(`     Fitting: ${methods.length - methodsOver512.length} (${((1 - methodsOver512.length/methods.length)*100).toFixed(1)}%)`);
-  console.log(`     Truncated: ${methodsOver512.length} (${((methodsOver512.length/methods.length)*100).toFixed(1)}%)`);
+  console.log(
+    `     Fitting: ${methods.length - methodsOver512.length} (${((1 - methodsOver512.length / methods.length) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `     Truncated: ${methodsOver512.length} (${((methodsOver512.length / methods.length) * 100).toFixed(1)}%)`,
+  );
 
   if (methodsOver128.length > 0) {
     console.log(`\n   🟠 Large methods (>128 tokens / >12 lines) sample:`);
@@ -202,7 +242,7 @@ async function analyzeEntitySizes() {
       .sort((a, b) => b.tokens - a.tokens)
       .slice(0, 15)
       .forEach((e, i) => {
-        console.log(`     ${i+1}. ${e.name} (${e.lines} lines → ${e.tokens} tokens)`);
+        console.log(`     ${i + 1}. ${e.name} (${e.lines} lines → ${e.tokens} tokens)`);
       });
   }
 
@@ -215,9 +255,9 @@ async function analyzeEntitySizes() {
   const methodTruncRate256 = methodsOver256.length / methods.length;
   const methodTruncRate512 = methodsOver512.length / methods.length;
 
-  console.log(`\n   Context 128: ${(methodTruncRate128*100).toFixed(1)}% methods truncated`);
-  console.log(`   Context 256: ${(methodTruncRate256*100).toFixed(1)}% methods truncated`);
-  console.log(`   Context 512: ${(methodTruncRate512*100).toFixed(1)}% methods truncated`);
+  console.log(`\n   Context 128: ${(methodTruncRate128 * 100).toFixed(1)}% methods truncated`);
+  console.log(`   Context 256: ${(methodTruncRate256 * 100).toFixed(1)}% methods truncated`);
+  console.log(`   Context 512: ${(methodTruncRate512 * 100).toFixed(1)}% methods truncated`);
 
   if (methodTruncRate128 <= 0.02) {
     console.log("\n✅ 128 context is SUFFICIENT - less than 2% truncation.");
