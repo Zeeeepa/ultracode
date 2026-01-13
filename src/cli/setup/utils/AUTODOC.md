@@ -1,6 +1,6 @@
 # Utils
 
-*Last updated: 2026-01-10*
+*Last updated: 2026-01-13*
 
 Утилиты для проверки и управления Docker, Ollama, GPU и конфигурации устройств.
 
@@ -14,7 +14,7 @@
 | `USE_NVIDIA_GPU_1` | const | Флаг для включения поддержки NVIDIA GPU вместо Intel iGPU | [→ multi-device.ts:39-193] |
 | `createMultiDeviceConfig` | function | Создаёт конфигурацию для параллельного вывода GPU и CPU | [→ multi-device.ts:52-193] |
 | `generateEndpointsArray` | function | Генерирует массив точек доступа для устройств | [→ multi-device.ts:199-212] |
-| `checkNvidiaContainerToolkit` | function | Проверяет и настраивает NVIDIA Container Toolkit для Docker GPU | [→ nvidia-toolkit.ts:15-175] |
+| `checkNvidiaContainerToolkit` | function | Проверяет и настраивает NVIDIA Container Toolkit для Docker GPU | [→ nvidia-toolkit.ts:16-177] |
 | `sleep` | function | Асинхронная функция паузы совместимая с Bun и Node.js | [→ runtime.ts:10-16] |
 
 ## Files

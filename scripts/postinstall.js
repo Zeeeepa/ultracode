@@ -107,6 +107,28 @@ async function askYesNo(question) {
   });
 }
 
+async function askSkip(question) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    // Check if stdin is a TTY (interactive terminal)
+    if (!process.stdin.isTTY) {
+      rl.close();
+      resolve(false); // Don't skip - run by default in non-TTY
+      return;
+    }
+
+    rl.question(`${question} [Y/n]: `, (answer) => {
+      rl.close();
+      const skip = answer.toLowerCase() === "n" || answer.toLowerCase() === "no" || answer.toLowerCase() === "s";
+      resolve(skip);
+    });
+  });
+}
+
 async function buildMetalBackend() {
   printInfo("Building Metal backend for Apple Silicon...");
   console.log();
@@ -243,8 +265,65 @@ async function main() {
     `${colors.bright}Available tools:${colors.reset} index, query, semantic_search, modify_code, ...`,
   ]);
 
+  // Run setup wizard
+  await runSetupWizard();
+
   console.log(`${colors.green}${colors.bright}Ready to use! 🚀${colors.reset}`);
   console.log();
+}
+
+async function runSetupWizard() {
+  // Skip if not interactive
+  if (!process.stdin.isTTY) {
+    printInfo("Non-interactive mode - skipping setup wizard");
+    printInfo("Run setup manually: npx ultrascript-setup");
+    return;
+  }
+
+  const shouldSkip = await askSkip("Run setup wizard to configure semantic search?");
+
+  if (shouldSkip) {
+    printInfo("Skipping setup. Run later with: npx ultrascript-setup");
+    return;
+  }
+
+  console.log();
+  printInfo("Starting setup wizard...");
+  console.log();
+
+  // Determine setup script path
+  const setupScript =
+    platform() === "win32" ? join(projectRoot, "scripts", "setup.cmd") : join(projectRoot, "scripts", "setup.sh");
+
+  if (!existsSync(setupScript)) {
+    // Fallback to running setup-command.js directly
+    const setupJs = join(projectRoot, "dist", "cli", "setup-command.js");
+    if (existsSync(setupJs)) {
+      const result = spawnSync("node", [setupJs], {
+        cwd: projectRoot,
+        stdio: "inherit",
+      });
+      if (result.status !== 0) {
+        printError("Setup wizard failed");
+      }
+    } else {
+      printError("Setup script not found");
+    }
+    return;
+  }
+
+  // Run platform-specific setup script
+  if (platform() === "win32") {
+    spawnSync("cmd", ["/c", setupScript], {
+      cwd: projectRoot,
+      stdio: "inherit",
+    });
+  } else {
+    spawnSync("bash", [setupScript], {
+      cwd: projectRoot,
+      stdio: "inherit",
+    });
+  }
 }
 
 main().catch((error) => {

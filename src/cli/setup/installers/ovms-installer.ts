@@ -7,12 +7,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CPUInfo } from "../../../cpu/cpu-detector.js";
 import { getDataDir } from "../../../utils/config-paths.js";
+import { t, ti } from "../i18n/index.js";
 import type { EmbeddingModel, GPUInfo, InstallResult } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
 import { createMultiDeviceConfig, generateEndpointsArray } from "../utils/index.js";
 
 export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu: GPUInfo): Promise<InstallResult> {
-  printInfo("OVMS Native setup (без Docker)...");
+  printInfo(t("ovms.setup"));
   console.error("");
 
   const OVMS_VERSION = "2025.4";
@@ -39,30 +40,30 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
   let targetDevice = "CPU";
   if (isIntelArc) {
     targetDevice = "GPU";
-    printInfo(`Intel Arc GPU detected (${gpu.name}) - will use GPU acceleration`);
+    printInfo(ti("ovms.intel_arc_detected", { gpu: gpu.name }));
   } else if (isIntelGPU) {
     targetDevice = "GPU";
-    printInfo(`Intel integrated GPU detected (${gpu.name}) - will use GPU acceleration`);
+    printInfo(ti("ovms.intel_igpu_detected", { gpu: gpu.name }));
   } else if (isNvidiaGPU && hasIntelIGPU) {
     // NVIDIA is primary GPU but Intel iGPU exists - compile for GPU (Intel iGPU = GPU.0)
     // NVIDIA via OpenVINO (GPU.1) is experimental and fails on Blackwell architecture
     targetDevice = "GPU";
-    printInfo(`NVIDIA GPU detected (${gpu.name}) - will use Intel iGPU (GPU.0) for embeddings`);
-    printInfo("(OpenVINO NVIDIA plugin experimental - Blackwell fails, older GPUs untested)");
+    printInfo(ti("ovms.nvidia_with_igpu", { gpu: gpu.name }));
+    printInfo(t("ovms.nvidia_igpu_note"));
   } else if (isNvidiaGPU) {
     // Only NVIDIA, no Intel iGPU - must use CPU
     targetDevice = "CPU";
-    printInfo(`NVIDIA GPU detected (${gpu.name}) - no Intel iGPU, using CPU`);
+    printInfo(ti("ovms.nvidia_no_igpu", { gpu: gpu.name }));
   } else if (hasNPU) {
     targetDevice = "CPU";
-    printInfo("NPU detected but not optimal for embeddings - using CPU");
+    printInfo(t("ovms.npu_detected"));
   } else {
-    printInfo("Using CPU for inference (no GPU detected)");
+    printInfo(t("ovms.cpu_fallback"));
   }
 
   if (!isWindows && !isLinux) {
-    printError("OVMS Native поддерживается только на Windows и Linux");
-    printInfo("Используйте OVMS Docker или Ollama");
+    printError(t("ovms.platform_not_supported"));
+    printInfo(t("ovms.use_alternative"));
     return { success: false };
   }
 
@@ -92,19 +93,21 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
 
   // Check if already installed
   if (existsSync(ovmsBin)) {
-    printOK("OVMS уже установлен");
-    const action = await prompt("  [1=Использовать, 2=Переустановить, 3=Отмена]: ");
+    printOK(t("ovms.already_installed"));
+    const action = await prompt(
+      `  [1=${t("ovms.action_use")}, 2=${t("ovms.action_reinstall")}, 3=${t("ovms.action_cancel")}]: `,
+    );
     if (action === "3") return { success: false };
     if (action !== "2") {
-      printInfo("Настройка модели...");
+      printInfo(t("ovms.configuring_model"));
     } else {
-      printInfo("Переустановка OVMS...");
+      printInfo(t("ovms.action_reinstall") + "...");
     }
   }
 
   // Download OVMS binary if needed
   if (!existsSync(ovmsBin)) {
-    printInfo(`Скачивание OVMS ${OVMS_VERSION}...`);
+    printInfo(ti("ovms.downloading", { version: OVMS_VERSION, platform: isWindows ? "Windows" : "Linux" }));
 
     let downloadUrl: string;
     let archiveName: string;
@@ -140,13 +143,13 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
       }
 
       const totalSize = parseInt(response.headers.get("content-length") || "0", 10);
-      printInfo(`Размер: ${(totalSize / 1024 / 1024).toFixed(1)} MB`);
+      printInfo(ti("ovms.size_mb", { size: (totalSize / 1024 / 1024).toFixed(1) }));
 
       const buffer = await response.arrayBuffer();
       writeFileSync(archivePath, Buffer.from(buffer));
-      printOK("Скачано");
+      printOK(t("ovms.downloaded"));
 
-      printInfo("Распаковка...");
+      printInfo(t("ovms.extracting"));
 
       if (isWindows) {
         execSync(`powershell -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${ovmsDir}' -Force"`, {
@@ -166,19 +169,19 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
       }
 
       ovmsBin = getOvmsBinPath();
-      printOK("OVMS установлен");
+      printOK(t("ovms.installed"));
     } catch (error: any) {
-      printError(`Ошибка загрузки: ${error.message}`);
+      printError(ti("ovms.download_error", { error: error.message }));
       return { success: false };
     }
   }
 
   // Download and prepare embedding model
-  printInfo(`Подготовка модели: ${model.model_id}`);
+  printInfo(ti("ovms.preparing_model", { model: model.model_id }));
 
   const hfModel = model.hf_model;
   if (!hfModel) {
-    printError("Нет HuggingFace модели в конфигурации");
+    printError(t("ovms.no_hf_model"));
     return { success: false };
   }
 
@@ -191,7 +194,7 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
   let hasTokenizer = false;
 
   if (modelExported) {
-    printOK("Модель уже экспортирована с MediaPipe поддержкой");
+    printOK(t("ovms.model_exported_mediapipe"));
     hasTokenizer = true;
   } else {
     // Strategy 1: Use OVMS export_model.py (best - creates proper MediaPipe graph)
@@ -202,8 +205,8 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
     const exportModelPy = exportModelPaths.find((p) => existsSync(p));
 
     if (exportModelPy) {
-      printInfo("Экспорт модели через OVMS export_model.py (создаст MediaPipe граф)...");
-      printInfo(`Источник: ${hfModel}`);
+      printInfo(t("ovms.exporting_via_ovms"));
+      printInfo(ti("ovms.source", { source: hfModel }));
 
       const weightFormat = model.weight_format || "int8";
 
@@ -228,7 +231,7 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
           "--overwrite_models",
         ];
 
-        printInfo("Это займёт 3-10 минут (загрузка и конвертация модели)...");
+        printInfo(t("ovms.export_time_hint"));
 
         const exitCode = await new Promise<number>((resolve, reject) => {
           const proc = spawn("python", exportArgs, {
@@ -241,7 +244,7 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
         });
 
         if (exitCode === 0 && existsSync(graphPath)) {
-          printOK("Модель экспортирована с MediaPipe поддержкой");
+          printOK(t("ovms.export_success"));
           modelExported = true;
           hasTokenizer = true;
 
@@ -265,20 +268,20 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
               ],
             };
             writeFileSync(ovmsConfigPath, JSON.stringify(ovmsConfig, null, 2));
-            printOK(`OVMS config.json создан: ${ovmsConfigPath}`);
+            printOK(ti("ovms.ovms_config_created", { path: ovmsConfigPath }));
           }
         } else {
-          printWarn(`export_model.py завершился с кодом ${exitCode}`);
+          printWarn(ti("ovms.export_exit_code", { code: String(exitCode) }));
         }
       } catch (error: any) {
-        printWarn(`Ошибка export_model.py: ${error.message}`);
+        printWarn(ti("ovms.export_error", { error: error.message }));
       }
     }
 
     // Strategy 2: Convert using Docker + optimum-cli (fallback - no MediaPipe)
     if (!modelExported) {
-      printWarn("export_model.py не найден, используем Docker конвертацию");
-      printInfo("Примечание: /v3/embeddings API будет недоступен, только /v2/infer");
+      printWarn(t("ovms.docker_fallback"));
+      printInfo(t("ovms.no_mediapipe_note"));
 
       let hasDocker = false;
       try {
@@ -289,8 +292,8 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
       }
 
       if (!hasDocker) {
-        printError("Для конвертации модели нужен Docker или OVMS репозиторий (C:\\opt\\model_server)");
-        printInfo("Соберите OVMS из исходников: scripts\\setup-ovms-nvidia.cmd");
+        printError(t("ovms.need_docker_or_ovms"));
+        printInfo(t("ovms.build_ovms_hint"));
         return { success: false };
       }
 
@@ -299,8 +302,8 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
 
       const irXmlPath = join(modelDir, "openvino_model.xml");
 
-      printInfo(`Конвертация модели через Docker: ${hfModel}`);
-      printInfo("Это займёт 3-10 минут...");
+      printInfo(ti("ovms.docker_converting", { model: hfModel }));
+      printInfo(t("ovms.convert_time_hint"));
 
       const modelDirDocker = modelDir.replace(/\\/g, "/");
       const pythonImage = "python:3.11-slim";
@@ -315,12 +318,12 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
         }
 
         if (!pythonImageExists) {
-          printInfo(`Скачивание ${pythonImage}...`);
+          printInfo(ti("ovms.downloading_image", { image: pythonImage }));
           execSync(`docker pull "${pythonImage}"`, { stdio: "inherit", timeout: 300000, windowsHide: true });
         }
 
         const weightFormat = model.weight_format || "int8";
-        printInfo(`Конвертация с ${weightFormat.toUpperCase()} квантизацией...`);
+        printInfo(ti("ovms.convert_quantization", { format: weightFormat.toUpperCase() }));
 
         const dockerArgs = [
           "run",
@@ -344,7 +347,7 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
         if (exitCode !== 0) throw new Error(`Docker exited with code ${exitCode}`);
 
         if (existsSync(irXmlPath)) {
-          printOK("Модель сконвертирована (без MediaPipe)");
+          printOK(t("ovms.model_converted_no_mediapipe"));
           modelExported = true;
 
           // Create simple OVMS config for this model
@@ -361,13 +364,13 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
           writeFileSync(join(modelsDir, "config.json"), JSON.stringify(ovmsConfig, null, 2));
         }
       } catch (error: any) {
-        printError(`Ошибка конвертации: ${error.message}`);
+        printError(ti("ovms.convert_error", { error: error.message }));
         return { success: false };
       }
     }
 
     if (!modelExported) {
-      printError("Не удалось экспортировать модель");
+      printError(t("ovms.export_failed"));
       return { success: false };
     }
   }
@@ -379,9 +382,9 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
   }
 
   if (hasTokenizer) {
-    printOK("/v3/embeddings API доступен (server-side tokenization)");
+    printOK(t("ovms.v3_api_available"));
   } else {
-    printInfo("/v2/models/embeddings/infer API (client-side tokenization)");
+    printInfo(t("ovms.v2_api_only"));
   }
 
   // Create startup script
@@ -404,25 +407,27 @@ echo "Starting OpenVINO Model Server..."
     execSync(`chmod +x "${startScript}"`, { stdio: "pipe" });
   }
 
-  printOK(`Создан скрипт запуска: ${startScript}`);
+  printOK(ti("ovms.startup_script_created", { path: startScript }));
 
   // Summary
   console.error("");
-  console.error(`${c.green}OVMS Native установлен!${c.reset}`);
+  console.error(`${c.green}${t("ovms.setup_complete_full")}${c.reset}`);
   console.error("");
-  console.error(`  ${c.cyan}REST API:${c.reset} http://127.0.0.1:8083`);
-  console.error(`  ${c.cyan}gRPC:${c.reset} 127.0.0.1:9001`);
-  console.error(`  ${c.cyan}Target:${c.reset} ${targetDevice}`);
+  console.error(`  ${c.cyan}${t("ovms.rest_api")}:${c.reset} http://127.0.0.1:8083`);
+  console.error(`  ${c.cyan}${t("ovms.grpc")}:${c.reset} 127.0.0.1:9001`);
+  console.error(`  ${c.cyan}${t("ovms.target")}:${c.reset} ${targetDevice}`);
   if (hasTokenizer) {
-    console.error(`  ${c.cyan}API:${c.reset} ${c.green}/v3/embeddings${c.reset} (server-side tokenization)`);
+    console.error(
+      `  ${c.cyan}${t("ovms.api")}:${c.reset} ${c.green}/v3/embeddings${c.reset} (server-side tokenization)`,
+    );
   } else {
-    console.error(`  ${c.cyan}API:${c.reset} /v2/models/embeddings/infer (client-side tokenization)`);
+    console.error(`  ${c.cyan}${t("ovms.api")}:${c.reset} /v2/models/embeddings/infer (client-side tokenization)`);
   }
   console.error("");
-  console.error(`  ${c.dim}OVMS будет запущен автоматически при старте MCP${c.reset}`);
-  console.error(`  ${c.dim}и остановлен при отключении всех клиентов.${c.reset}`);
+  console.error(`  ${c.dim}${t("ovms.auto_start_hint")}${c.reset}`);
+  console.error(`  ${c.dim}${t("ovms.auto_stop_hint")}${c.reset}`);
   console.error("");
-  console.error(`  ${c.dim}Ручной запуск: ${startScript}${c.reset}`);
+  console.error(`  ${c.dim}${ti("ovms.manual_start", { path: startScript })}${c.reset}`);
 
   // Create multi-device configuration for GPU + CPU load balancing
   // Note: For NVIDIA systems with Intel iGPU, we use Intel iGPU (GPU.0) for embeddings
@@ -433,10 +438,12 @@ echo "Starting OpenVINO Model Server..."
     const createdEndpoints = createMultiDeviceConfig(modelsDir, hasGPU, modelsDir, modelDirName, isNvidiaGPU);
     if (createdEndpoints.length > 1) {
       endpoints = generateEndpointsArray(createdEndpoints);
-      printOK(`Multi-device конфигурация: ${createdEndpoints.join(", ")}`);
+      printOK(ti("ovms.multi_device_config", { devices: createdEndpoints.join(", ") }));
       const gpuCount = endpoints.filter((e) => e.includes("gpu")).length;
       const cpuCount = endpoints.filter((e) => e.includes("cpu")).length;
-      printInfo(`Round-robin распределение: ${endpoints.length} слотов (${gpuCount} GPU, ${cpuCount} CPU)`);
+      printInfo(
+        ti("ovms.round_robin_hint", { slots: String(endpoints.length), gpu: String(gpuCount), cpu: String(cpuCount) }),
+      );
     }
   }
 

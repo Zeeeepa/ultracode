@@ -47,7 +47,9 @@ echo.
 REM Check if node_modules exists, install with Bun if not
 if not exist "node_modules\" (
     echo node_modules not found, installing dependencies with Bun...
+    set "ULTRASCRIPT_SKIP_POSTINSTALL=1"
     bun install
+    set "ULTRASCRIPT_SKIP_POSTINSTALL="
     echo.
 )
 
