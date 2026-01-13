@@ -307,6 +307,7 @@ export interface GraphStorage {
     namePattern?: string | undefined;
     types?: EntityType[] | undefined;
     filePath?: string;
+    limit?: number;
   }): Promise<Entity[]>;
 
   // Relationship operations

@@ -486,28 +486,69 @@ export class TraceEngine {
   /**
    * Resolve entity by name or semantic search query.
    * Uses decomposed queries for 512-token efficiency.
+   *
+   * Supports file-qualified format: "filePath:entityName"
+   * Examples:
+   *   - "main" - finds first entity named "main"
+   *   - "src/index.ts:main" - finds "main" in src/index.ts
+   *   - "index.ts:main" - finds "main" in any file ending with index.ts
    */
   private async resolveEntity(nameOrQuery: string): Promise<Entity | null> {
+    // Parse file:name format (supports both / and \)
+    // Match pattern: anything with path separator followed by .ts/.js/.py etc, then :name
+    const fileQualifiedMatch = nameOrQuery.match(/^(.+?\.(?:ts|js|tsx|jsx|py|go|rs|java|c|cpp|h|hpp)):(.+)$/i);
+    let name = nameOrQuery;
+    let filePath: string | undefined;
+
+    if (fileQualifiedMatch) {
+      filePath = fileQualifiedMatch[1];
+      name = fileQualifiedMatch[2]!;
+    }
+
     // 1. Try exact name match first (fastest)
-    const exactMatch = await this.pathBuilder.findEntityByName(nameOrQuery);
+    const exactMatch = await this.pathBuilder.findEntityByName(name, undefined, filePath);
     if (exactMatch) return exactMatch;
 
     // 2. Try partial name match
     const entities = await this.storage.searchEntities({
-      namePattern: nameOrQuery,
+      namePattern: name,
     });
     if (entities.length > 0) {
+      // If filePath filter provided, apply it
+      if (filePath) {
+        const normalizedFilter = filePath.replace(/\\/g, "/").toLowerCase();
+        const filtered = entities.filter((e) => {
+          const entityPath = (e.filePath || "").replace(/\\/g, "/").toLowerCase();
+          return entityPath.includes(normalizedFilter) || entityPath.endsWith(normalizedFilter);
+        });
+        if (filtered.length > 0) {
+          return filtered[0]!;
+        }
+      }
       return entities[0]!;
     }
 
     // 3. Use semantic search if available (decomposed query)
     if (this.semanticSearch) {
       try {
-        const results = await this.semanticSearch.search(nameOrQuery, {
-          limit: 1,
+        const results = await this.semanticSearch.search(name, {
+          limit: filePath ? 10 : 1, // Get more results if we need to filter by file
           minSimilarity: 0.6,
         });
         if (results.length > 0) {
+          // Filter by filePath if provided
+          if (filePath) {
+            const normalizedFilter = filePath.replace(/\\/g, "/").toLowerCase();
+            for (const result of results) {
+              const entity = await this.storage.getEntity(result.entityId);
+              if (entity) {
+                const entityPath = (entity.filePath || "").replace(/\\/g, "/").toLowerCase();
+                if (entityPath.includes(normalizedFilter) || entityPath.endsWith(normalizedFilter)) {
+                  return entity;
+                }
+              }
+            }
+          }
           return this.storage.getEntity(results[0]!.entityId);
         }
       } catch {
