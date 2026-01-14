@@ -22,6 +22,7 @@ import { join } from "node:path";
 import type { z } from "zod";
 import { executeGenerateDocs } from "../../autodoc/generator/generate-handler-utils.js";
 import { log } from "../../logging/index.js";
+import type { SimilarityResult } from "../../types/semantic.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import {
   AutoDocChangelogSchema,
@@ -141,37 +142,93 @@ export class AutoDocSaveToolHandler extends BaseToolHandler<z.infer<typeof AutoD
 
     // Generate embeddings for semantic search (if SemanticAgent available)
     let embeddingsGenerated = 0;
+    let debugInfo: any = { savedDocsCount: savedDocs.length };
+
     if (savedDocs.length > 0) {
       try {
+        log.i("AUTODOCTOOL", "embeddings_start", { docsCount: savedDocs.length });
+        debugInfo.step = "getSemanticAgent";
         const semanticAgent = await this.context.getSemanticAgent();
-        const container = this.context.getServiceContainer?.();
-        const vectorStore = container?.getGlobalVectorStore?.();
+        debugInfo.hasAgent = !!semanticAgent;
+        debugInfo.agentType = typeof semanticAgent;
+        log.i("AUTODOCTOOL", "embeddings_agent", { hasAgent: !!semanticAgent, agentType: typeof semanticAgent });
+
+        // Get VectorStore directly from SemanticAgent (more reliable)
+        debugInfo.step = "getVectorStore";
+        const vectorStore = semanticAgent?.getVectorStore?.();
+        debugInfo.hasStore = !!vectorStore;
+        debugInfo.hasGetVectorStoreFn = typeof semanticAgent?.getVectorStore;
+        log.i("AUTODOCTOOL", "embeddings_store", {
+          hasStore: !!vectorStore,
+          storeType: typeof vectorStore,
+          hasGetVectorStore: typeof semanticAgent?.getVectorStore
+        });
 
         if (semanticAgent && vectorStore) {
+          debugInfo.step = "processing";
+          debugInfo.agentAndStoreOk = true;
+          log.i("AUTODOCTOOL", "embeddings_processing", { count: savedDocs.length });
+
+          // Get existing IDs to check for duplicates
+          const docIds = savedDocs.map((d: any) => d.id);
+          const existingIds = await vectorStore.getExistingIds(docIds);
+          log.i("AUTODOCTOOL", "embeddings_existing_check", { total: docIds.length, existing: existingIds.size });
+
           for (const doc of savedDocs) {
             const textToEmbed = `${doc.title}\n\n${doc.content}`;
             const embedding = await semanticAgent.generateEmbedding(textToEmbed);
 
             if (embedding) {
-              await vectorStore.insert({
+              const exists = existingIds.has(doc.id);
+              log.i("AUTODOCTOOL", exists ? "updating_embedding" : "inserting_embedding", {
                 id: doc.id,
-                content: textToEmbed.slice(0, 1000),
-                vector: embedding,
-                metadata: {
-                  type: "autodoc",
-                  docType: doc.type,
-                  filePath: doc.filePath,
-                  section: doc.section,
-                  title: doc.title,
-                },
-                createdAt: Date.now(),
+                vectorDim: embedding.length,
+                contentLen: textToEmbed.length
               });
+
+              const metadata = {
+                type: "autodoc",
+                docType: doc.type,
+                filePath: doc.filePath,
+                section: doc.section,
+                title: doc.title,
+              };
+
+              if (exists) {
+                // Update existing embedding to avoid duplicates
+                await vectorStore.update(doc.id, embedding, metadata);
+              } else {
+                // Insert new embedding
+                await vectorStore.insert({
+                  id: doc.id,
+                  content: textToEmbed.slice(0, 1000),
+                  vector: embedding,
+                  metadata,
+                  createdAt: Date.now(),
+                });
+              }
+
               embeddingsGenerated++;
+              log.d("AUTODOCTOOL", "embedding_saved", { id: doc.id, operation: exists ? "update" : "insert" });
             }
           }
+          log.i("AUTODOCTOOL", "embeddings_done", { generated: embeddingsGenerated });
+
+          // Flush and save embeddings to disk
+          if (embeddingsGenerated > 0) {
+            log.i("AUTODOCTOOL", "flushing_embeddings");
+            await vectorStore.flushAndSave();
+            log.i("AUTODOCTOOL", "embeddings_flushed");
+          }
+        } else {
+          debugInfo.skipped = true;
+          debugInfo.reason = `agent=${!!semanticAgent}, store=${!!vectorStore}`;
+          log.w("AUTODOCTOOL", "embeddings_skipped", { hasAgent: !!semanticAgent, hasStore: !!vectorStore });
         }
       } catch (error) {
-        log.w("AUTODOCTOOL", "embedding_failed", { error: (error as Error).message });
+        debugInfo.error = (error as Error).message;
+        debugInfo.stack = (error as Error).stack;
+        log.e("AUTODOCTOOL", "embedding_failed", { error: (error as Error).message, stack: (error as Error).stack });
       }
     }
 
@@ -185,6 +242,7 @@ export class AutoDocSaveToolHandler extends BaseToolHandler<z.infer<typeof AutoD
               message: `Saved ${savedDocs.length} sections`,
               fileWritten,
               embeddingsGenerated,
+              debug: debugInfo,
               docs: savedDocs.map((d: any) => ({
                 id: d.id,
                 title: d.title,
@@ -312,16 +370,26 @@ export class AutoDocSearchToolHandler extends BaseToolHandler<z.infer<typeof Aut
     if (args.mode === "semantic" || args.mode === "hybrid") {
       try {
         const semanticAgent = await this.context.getSemanticAgent();
-        const container = this.context.getServiceContainer?.();
-        const vectorStore = container?.getGlobalVectorStore?.();
+        // Get VectorStore directly from SemanticAgent (more reliable)
+        const vectorStore = semanticAgent?.getVectorStore?.();
 
         if (semanticAgent && vectorStore) {
           const queryEmbedding = await semanticAgent.generateEmbedding(args.query);
+          log.i("AUTODOCTOOL", "search_embedding_generated", { hasEmbedding: !!queryEmbedding, dim: queryEmbedding?.length });
 
           if (queryEmbedding) {
-            const semanticResults = await vectorStore.search(queryEmbedding, args.limit);
+            // Use searchWithFilters to only search AutoDoc documents (metadata.type = "autodoc")
+            const semanticResults: SimilarityResult[] = await vectorStore.searchWithFilters(queryEmbedding, {
+              limit: args.limit,
+              metadataFilter: { type: "autodoc" }
+            });
+            log.i("AUTODOCTOOL", "search_results", {
+              count: semanticResults.length,
+              ids: semanticResults.map((r) => r.id).slice(0, 5)
+            });
 
             for (const result of semanticResults) {
+              log.d("AUTODOCTOOL", "search_result_check", { id: result.id, startsWithDoc: result.id.startsWith("doc::") });
               if (result.id.startsWith("doc::")) {
                 const doc = await adm.getDocument(result.id);
                 if (doc && !searchResults.some((r) => r.id === doc.id)) {

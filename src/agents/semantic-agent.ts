@@ -1941,6 +1941,17 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   }
 
   /**
+   * Generate embedding for a single text
+   * Used by AutoDoc and other components that need embeddings for custom content
+   */
+  async generateEmbedding(text: string): Promise<Float32Array | null> {
+    if (!this.embeddingGen) {
+      return null;
+    }
+    return this.embeddingGen.generateEmbedding(text);
+  }
+
+  /**
    * Get the embedding provider for extended capabilities (rerank, score, etc.)
    */
   getEmbeddingProvider() {

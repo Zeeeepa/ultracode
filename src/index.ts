@@ -111,6 +111,8 @@ import {
   setIndexingState,
 } from "./core/indexing-state.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
+// Make knowledgeBus available globally for tool handlers
+(global as any).knowledgeBus = knowledgeBus;
 import { PipeServer } from "./core/pipe-transport.js";
 import { resourceManager } from "./core/resource-manager.js";
 // LayeredIndexManager for branch-aware indexing
@@ -866,6 +868,21 @@ async function main() {
       const watcher = getAutoDocWatcher(watcherConfig);
       watcher.start();
       log.i("AUTODOC", "watcher_started", { dir: directory, debounce: watcherConfig.debounceMs ?? 0, useLlm });
+
+      // Background init: trigger AutoDocManager initialization and sync
+      // This runs async to not block server startup
+      setTimeout(() => {
+        getOrInitServiceContainer()
+          .getAutoDocManager()
+          .then((adm) => {
+            if (adm) {
+              log.i("AUTODOC", "manager_initialized", { enabled: !!adm.getConfig()?.enabled });
+            }
+          })
+          .catch(() => {
+            // Ignore - non-critical background operation
+          });
+      }, 2000); // Delay 2s to let server start first
     } catch (error) {
       log.w("AUTODOC", "watcher_failed", { err: (error as Error).message });
     }

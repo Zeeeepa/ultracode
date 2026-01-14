@@ -73,6 +73,12 @@ export class KnowledgeBus extends EventEmitter {
       entries.shift(); // Remove oldest
     }
 
+    // Debug logging for index:completed event
+    if (topic === "index:completed") {
+      const subs = this.subscriptions.get(topic) || [];
+      log.i("KNOWLEDGEBUS", "index_completed_publish", { source, subsCount: subs.length });
+    }
+
     // Notify subscribers (fire-and-forget but log errors)
     this.notifySubscribers(entry).catch((error) => {
       log.e("KNOWLEDGEBUS", "notify_fail", { topic, err: String(error) });

@@ -27,7 +27,9 @@ const HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
  * Parse a markdown document into structured sections
  */
 export function parseMarkdown(content: string, filePath: string): ParsedDocument {
-  const lines = content.split("\n");
+  // Normalize line endings (CRLF -> LF, CR -> LF)
+  const normalizedContent = content.replace(/\r\n?/g, "\n");
+  const lines = normalizedContent.split("\n");
   const sections: ParsedSection[] = [];
   const allRefs: ParsedReference[] = [];
   const errors: string[] = [];
@@ -181,7 +183,8 @@ export function findSectionByTitle(sections: ParsedSection[], title: string): Pa
  * Update a section's content in the original markdown
  */
 export function updateSectionContent(originalContent: string, sectionTitle: string, newContent: string): string {
-  const lines = originalContent.split("\n");
+  const normalizedContent = originalContent.replace(/\r\n?/g, "\n");
+  const lines = normalizedContent.split("\n");
   const result: string[] = [];
 
   let inTargetSection = false;
@@ -238,7 +241,8 @@ export function insertSectionAfter(
   newContent: string,
   level = 2,
 ): string {
-  const lines = originalContent.split("\n");
+  const normalizedContent = originalContent.replace(/\r\n?/g, "\n");
+  const lines = normalizedContent.split("\n");
   const result: string[] = [];
 
   let foundSection = false;
@@ -342,7 +346,8 @@ function slugify(text: string): string {
  * Extract document title from markdown
  */
 export function extractTitle(content: string): string | null {
-  const lines = content.split("\n");
+  const normalizedContent = content.replace(/\r\n?/g, "\n");
+  const lines = normalizedContent.split("\n");
 
   for (const line of lines) {
     const match = line.match(HEADING_REGEX);

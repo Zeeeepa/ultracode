@@ -10,6 +10,7 @@ import type { AgentTask } from "../types/agent.js";
 import { AgentType } from "../types/agent.js";
 import { createRequestId } from "../utils/logger.js";
 import { setIndexingState } from "./indexing-state.js";
+import { knowledgeBus } from "./knowledge-bus.js";
 
 /**
  * Base exclude patterns for source file counting and indexing
@@ -380,6 +381,19 @@ export async function performAutoIndex(
       } catch (error) {
         log.w("INDEXER", "storage_flush_fail", { err: (error as Error).message });
       }
+
+      // Publish index:completed event for subscribers (e.g., AutoDoc embeddings)
+      knowledgeBus.publish(
+        "index:completed",
+        {
+          directory: targetDir,
+          incremental,
+          entityCount,
+          duration: Date.now() - startTime,
+        },
+        "auto-indexer",
+      );
+      log.d("INDEXER", "index_completed_event_published");
     } else {
       log.w("INDEXER", "auto_index_warn", { dur: duration, req: requestId });
     }
