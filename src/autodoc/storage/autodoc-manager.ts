@@ -10,6 +10,7 @@
  * - GraphStorage: src/storage/graph-storage.ts
  */
 
+import type { ProjectContext } from "../../storage/libsql/types.js";
 import type { GraphStorage } from "../../types/storage.js";
 import { mapParallel } from "../../utils/parallel.js";
 import { flattenSections, parseMarkdown } from "../parser/md-parser.js";
@@ -71,6 +72,14 @@ export class AutoDocManager {
    */
   setGraphStorage(graphStorage: GraphStorage): void {
     this.graphStorage = graphStorage;
+  }
+
+  /**
+   * Set project context for branch isolation
+   */
+  setProjectContext(context: ProjectContext): void {
+    this.docStorage.setProjectContext(context);
+    this.refStorage.setProjectContext(context);
   }
 
   /**
