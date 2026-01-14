@@ -11,6 +11,7 @@
 
 import { z } from "zod";
 import { log } from "../../logging/index.js";
+import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
@@ -69,9 +70,10 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
         if (vectorStore) {
           await vectorStore.clear();
         }
-      } catch (error) {
+      } catch (error: unknown) {
         // Semantic agent may not be available, that's ok for clean_index
-        log.w("CLEANINDEX", "sem_reinit_fail", { err: (error as Error).message });
+        const err = toError(error);
+        log.w("CLEANINDEX", "sem_reinit_fail", { err: err.message, stack: err.stack });
       }
     }
 

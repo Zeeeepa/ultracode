@@ -23,6 +23,7 @@ import type { z } from "zod";
 import { executeGenerateDocs } from "../../autodoc/generator/generate-handler-utils.js";
 import { log } from "../../logging/index.js";
 import type { SimilarityResult } from "../../types/semantic.js";
+import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import {
   AutoDocChangelogSchema,
@@ -142,8 +143,9 @@ export class AutoDocSaveToolHandler extends BaseToolHandler<z.infer<typeof AutoD
       const { writeDocumentToDisk } = await import("../../autodoc/sync/file-sync.js");
       await writeDocumentToDisk(normalizedPath, args.content);
       fileWritten = true;
-    } catch (error) {
-      log.w("AUTODOCTOOL", "file_write_failed", { error: (error as Error).message, path: normalizedPath });
+    } catch (error: unknown) {
+      const err = toError(error);
+      log.w("AUTODOCTOOL", "file_write_failed", { error: err.message, path: normalizedPath, stack: err.stack });
     }
 
     // Generate embeddings for semantic search (if SemanticAgent available)
@@ -231,10 +233,11 @@ export class AutoDocSaveToolHandler extends BaseToolHandler<z.infer<typeof AutoD
           debugInfo.reason = `agent=${!!semanticAgent}, store=${!!vectorStore}`;
           log.w("AUTODOCTOOL", "embeddings_skipped", { hasAgent: !!semanticAgent, hasStore: !!vectorStore });
         }
-      } catch (error) {
-        debugInfo.error = (error as Error).message;
-        debugInfo.stack = (error as Error).stack;
-        log.e("AUTODOCTOOL", "embedding_failed", { error: (error as Error).message, stack: (error as Error).stack });
+      } catch (error: unknown) {
+        const err = toError(error);
+        debugInfo.error = err.message;
+        debugInfo.stack = err.stack;
+        log.e("AUTODOCTOOL", "embedding_failed", { error: err.message, stack: err.stack });
       }
     }
 
@@ -419,8 +422,9 @@ export class AutoDocSearchToolHandler extends BaseToolHandler<z.infer<typeof Aut
             }
           }
         }
-      } catch (error) {
-        log.w("AUTODOCTOOL", "semantic_search_err", { error: (error as Error).message });
+      } catch (error: unknown) {
+        const err = toError(error);
+        log.w("AUTODOCTOOL", "semantic_search_err", { error: err.message, stack: err.stack });
       }
     }
 

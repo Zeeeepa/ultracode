@@ -12,6 +12,7 @@
 
 import { z } from "zod";
 import { log } from "../../logging/index.js";
+import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
@@ -537,8 +538,9 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
           },
         ],
       };
-    } catch (error) {
-      log.e("CLONES", "detectClones failed", { error: (error as Error).message, stack: (error as Error).stack });
+    } catch (error: unknown) {
+      const err = toError(error);
+      log.e("CLONES", "detectClones failed", { error: err.message, stack: err.stack });
       return {
         content: [
           {
@@ -547,7 +549,7 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
               {
                 groupsFound: 0,
                 clones: [],
-                error: (error as Error).message,
+                error: err.message,
               },
               null,
               2,
@@ -638,12 +640,13 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify({ error: (error as Error).message }),
+            text: JSON.stringify({ error: err.message }),
           },
         ],
       };

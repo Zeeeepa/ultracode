@@ -10,6 +10,7 @@
  */
 
 import { z } from "zod";
+import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
 // =============================================================================
@@ -128,9 +129,10 @@ export class GetVersionToolHandler extends BaseToolHandler<z.infer<typeof GetVer
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -290,9 +292,10 @@ export class ClearBusTopicToolHandler extends BaseToolHandler<z.infer<typeof Cle
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -355,14 +358,15 @@ export class GetWatcherStatusToolHandler extends BaseToolHandler<z.infer<typeof 
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
-              error: (error as Error).message,
-              stack: (error as Error).stack?.split("\n").slice(0, 5),
+              error: err.message,
+              stack: err.stack?.split("\n").slice(0, 5),
             }),
           },
         ],

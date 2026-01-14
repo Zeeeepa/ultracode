@@ -10,6 +10,7 @@ import { getIndexingStatus, isIndexing, setIndexingState } from "../../index.js"
 import { log } from "../../logging/index.js";
 import { type AgentTask, AgentType } from "../../types/agent.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import { toError } from "../../utils/error-handling.js";
 
 const IndexToolSchema = z.object({
   directory: z.string().optional(),
@@ -76,9 +77,10 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
           await devAgent.parserAgent.destroyWorkerPools();
           log.d("INDEXTOOL", "pools_destroyed");
         }
-      } catch (error) {
+      } catch (error: unknown) {
         // Ignore - workers may not exist yet
-        log.d("INDEXTOOL", "destroy_pools_skip", { err: (error as Error).message });
+        const err = toError(error);
+        log.d("INDEXTOOL", "destroy_pools_skip", { err: err.message });
       }
     }
 
@@ -100,9 +102,10 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
         const semanticAgent = await this.context.getSemanticAgent();
         await semanticAgent.dropVectorIndex();
         log.d("INDEXTOOL", "vector_idx_dropped");
-      } catch (error) {
+      } catch (error: unknown) {
         // Semantic agent may not be available yet, that's ok
-        log.d("INDEXTOOL", "vector_idx_skip", { err: (error as Error).message });
+        const err = toError(error);
+        log.d("INDEXTOOL", "vector_idx_skip", { err: err.message });
       }
     }
 
@@ -132,8 +135,9 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
             maxTokens: warning.maxTokens,
           };
         }
-      } catch (error) {
-        log.e("INDEXTOOL", "embed_fail", { err: String(error) });
+      } catch (error: unknown) {
+        const err = toError(error);
+        log.e("INDEXTOOL", "embed_fail", { err: err.message, stack: err.stack });
       }
     }
 
@@ -145,8 +149,9 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
         await indexerAgent.setRepositoryPath(targetDir);
         log.i("INDEXTOOL", "watcher_start", { dir: targetDir });
       }
-    } catch (error) {
-      log.e("INDEXTOOL", "watcher_fail", { err: String(error) });
+    } catch (error: unknown) {
+      const err = toError(error);
+      log.e("INDEXTOOL", "watcher_fail", { err: err.message, stack: err.stack });
     }
 
     // Step 6b: Log embedding performance summary from parser agent
@@ -185,8 +190,9 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     try {
       await storage.flush();
       log.d("INDEXTOOL", "storage_flushed");
-    } catch (e) {
-      log.w("INDEXTOOL", "storage_flush_error", { error: String(e) });
+    } catch (error: unknown) {
+      const err = toError(error);
+      log.w("INDEXTOOL", "storage_flush_error", { error: err.message, stack: err.stack });
     }
 
     // Step 7: Log and publish result

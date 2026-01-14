@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
@@ -65,9 +66,10 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -277,9 +279,10 @@ export class ValidateDirectoryToolHandler extends BaseToolHandler<z.infer<typeof
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }

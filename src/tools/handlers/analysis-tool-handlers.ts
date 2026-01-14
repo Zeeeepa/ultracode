@@ -11,6 +11,7 @@
  */
 
 import { z } from "zod";
+import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
@@ -512,9 +513,10 @@ export class DetectTechnologyStackToolHandler extends BaseToolHandler<z.infer<ty
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
