@@ -16,6 +16,7 @@
  *  - 2026-01-01: v5 - Faiss-only backend, removed libSQL embeddings
  */
 
+import { RefTargetType } from "../autodoc/types.js";
 import { log } from "../logging/index.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -26,7 +27,6 @@ import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../ty
 import { type FaissProvider, initializeFaissProvider } from "./faiss/faiss-provider.js";
 import { getLayeredFaissProvider, type LayeredFaissProvider } from "./faiss/layered-faiss-provider.js";
 import { getRecommendedStrategy, type StrategyRecommendation } from "./gpu/adaptive-thresholds.js";
-import { RefTargetType } from "../autodoc/types.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -322,7 +322,7 @@ export class VectorStore {
       id: embedding.id,
       vectorDim: embedding.vector.length,
       contentLen: embedding.content.length,
-      metadataType: embedding.metadata?.['type'] as string
+      metadataType: embedding.metadata?.["type"] as string,
     });
 
     if (this.useLayeredIndex) {
@@ -498,7 +498,7 @@ export class VectorStore {
 
     log.i("VECTOR", "search_raw_results", {
       count: rawResults.length,
-      ids: rawResults.map((r) => r.id).slice(0, 10)
+      ids: rawResults.map((r) => r.id).slice(0, 10),
     });
 
     // Enrich results with entity data from LibSQL
@@ -507,7 +507,7 @@ export class VectorStore {
     log.i("VECTOR", "search_enriched_results", {
       beforeCount: rawResults.length,
       afterCount: enriched.length,
-      filtered: rawResults.length - enriched.length
+      filtered: rawResults.length - enriched.length,
     });
 
     return enriched;
@@ -530,7 +530,7 @@ export class VectorStore {
       log.d("VECTOR", "enrich_split", {
         total: results.length,
         entities: entityResults.length,
-        docs: docResults.length
+        docs: docResults.length,
       });
 
       // Extract entity IDs from result IDs (format: "ent:{entityId}")
@@ -619,19 +619,19 @@ export class VectorStore {
 
       if (enrichedDocs.length > 0 && adm) {
         try {
-          log.d("VECTOR", "autodoc_enrichment_start", {
-            docCount: enrichedDocs.length
+          log.i("VECTOR", "autodoc_enrichment_start", {
+            docCount: enrichedDocs.length,
           });
 
           // Helper: определить вес refType
           const getRefTypeWeight = (refType: string): number => {
             const weights: Record<string, number> = {
-              'describes': 1.0,   // главная описываемая сущность
-              'depends': 0.9,     // зависимость
-              'uses': 0.8,        // использует
-              'participates': 0.7,// участвует в сценарии
-              'example': 0.6,     // упомянут в примере
-              'test': 0.5         // упомянут в тестах
+              describes: 1.0, // главная описываемая сущность
+              depends: 0.9, // зависимость
+              uses: 0.8, // использует
+              participates: 0.7, // участвует в сценарии
+              example: 0.6, // упомянут в примере
+              test: 0.5, // упомянут в тестах
             };
             return weights[refType] || 0.8;
           };
@@ -639,10 +639,10 @@ export class VectorStore {
           // Helper: определить вес секции по заголовку
           const getSectionWeight = (sectionTitle: string): number => {
             const lower = sectionTitle.toLowerCase();
-            if (lower.includes('overview') || lower.includes('architecture')) return 1.0;
-            if (lower.includes('implement') || lower.includes('usage')) return 0.9;
-            if (lower.includes('example')) return 0.7;
-            if (lower.includes('test')) return 0.6;
+            if (lower.includes("overview") || lower.includes("architecture")) return 1.0;
+            if (lower.includes("implement") || lower.includes("usage")) return 0.9;
+            if (lower.includes("example")) return 0.7;
+            if (lower.includes("test")) return 0.6;
             return 0.85; // default для неизвестных секций
           };
 
@@ -665,24 +665,29 @@ export class VectorStore {
             // Получить все references из документа
             const refs = await adm.getReferences(doc.filePath);
             const entityRefs = refs.filter(
-              (ref: any) => ref.targetType === RefTargetType.ENTITY &&
-                     ref.valid &&
-                     ref.targetEntityId
+              (ref: any) => ref.targetType === RefTargetType.ENTITY && ref.valid && ref.targetId,
             );
+
+            log.i("VECTOR", "autodoc_refs_from_doc", {
+              docId: docResult.id,
+              totalRefs: refs.length,
+              entityRefs: entityRefs.length,
+              sampleTargetIds: entityRefs.slice(0, 3).map((r: any) => r.targetId)
+            });
 
             // Подсчитать частоту упоминаний каждого entityId
             const mentionCounts = new Map<string, number>();
             for (const ref of entityRefs) {
-              const id = ref.targetEntityId!;
+              const id = ref.targetId!;
               mentionCounts.set(id, (mentionCounts.get(id) || 0) + 1);
             }
 
             // Сохранить первое упоминание каждого entity
             for (const ref of entityRefs) {
-              const entityId = ref.targetEntityId!;
+              const entityId = ref.targetId!;
               if (!entityRefsFromDocs.has(entityId)) {
                 // Парсим section title (doc.section может быть null)
-                const sectionTitle = doc.section || 'Overview';
+                const sectionTitle = doc.section || "Overview";
 
                 entityRefsFromDocs.set(entityId, {
                   docId: docResult.id,
@@ -690,39 +695,36 @@ export class VectorStore {
                   docTitle: doc.title,
                   refType: ref.refType,
                   sectionTitle,
-                  mentions: mentionCounts.get(entityId) || 1
+                  mentions: mentionCounts.get(entityId) || 1,
                 });
               }
             }
           }
 
-          log.d("VECTOR", "autodoc_refs_collected", {
-            uniqueEntities: entityRefsFromDocs.size
+          log.i("VECTOR", "autodoc_refs_collected", {
+            uniqueEntities: entityRefsFromDocs.size,
           });
 
           // 2. Дедупликация с уже найденными entities
           const existingEntityIds = new Set<string>();
           for (const r of enrichedEntities) {
-            const entityId = r.metadata?.['entityId'];
-            if (entityId && typeof entityId === 'string') {
+            const entityId = r.metadata?.["entityId"];
+            if (entityId && typeof entityId === "string") {
               existingEntityIds.add(entityId);
             }
           }
 
-          const newEntityIds = Array.from(entityRefsFromDocs.keys())
-            .filter(id => !existingEntityIds.has(id));
+          const newEntityIds = Array.from(entityRefsFromDocs.keys()).filter((id) => !existingEntityIds.has(id));
 
-          log.d("VECTOR", "autodoc_deduplication", {
+          log.i("VECTOR", "autodoc_deduplication", {
             totalRefs: entityRefsFromDocs.size,
             existing: existingEntityIds.size,
-            new: newEntityIds.length
+            new: newEntityIds.length,
           });
 
           // 3. Batch fetch новых entities
           if (newEntityIds.length > 0) {
-            const newEntities = await Promise.all(
-              newEntityIds.map(id => storage.getEntity(id))
-            );
+            const newEntities = await Promise.all(newEntityIds.map((id) => storage.getEntity(id)));
 
             // 4. Создать enriched results для новых entities
             for (let i = 0; i < newEntityIds.length; i++) {
@@ -737,8 +739,7 @@ export class VectorStore {
               const sectionWeight = getSectionWeight(refInfo.sectionTitle);
               const frequencyBoost = Math.min(1.0 + (refInfo.mentions - 1) * 0.05, 1.2);
 
-              const derivedSimilarity =
-                refInfo.docSimilarity * refTypeWeight * sectionWeight * frequencyBoost;
+              const derivedSimilarity = refInfo.docSimilarity * refTypeWeight * sectionWeight * frequencyBoost;
 
               log.d("VECTOR", "autodoc_entity_score", {
                 entityId,
@@ -749,7 +750,7 @@ export class VectorStore {
                 secWeight: sectionWeight,
                 mentions: refInfo.mentions,
                 freqBoost: frequencyBoost,
-                finalSim: derivedSimilarity
+                finalSim: derivedSimilarity,
               });
 
               autodocDerivedResults.push({
@@ -768,18 +769,18 @@ export class VectorStore {
                   // AutoDoc enrichment markers (internal only, не для пользователя)
                   foundVia: "autodoc",
                   sourceDoc: refInfo.docId,
-                  sourceDocTitle: refInfo.docTitle
-                }
+                  sourceDocTitle: refInfo.docTitle,
+                },
               });
             }
 
             log.d("VECTOR", "autodoc_enrichment_complete", {
-              added: autodocDerivedResults.length
+              added: autodocDerivedResults.length,
             });
           }
         } catch (error) {
           log.w("VECTOR", "AutoDoc enrichment failed", {
-            error: (error as Error).message
+            error: (error as Error).message,
           });
           // Non-fatal - continue without AutoDoc enrichment
         }
@@ -793,7 +794,7 @@ export class VectorStore {
         enrichedEntities: enrichedEntities.length,
         enrichedDocs: enrichedDocs.length,
         autodocDerived: autodocDerivedResults.length,
-        total: combined.length
+        total: combined.length,
       });
 
       return combined;
@@ -833,12 +834,12 @@ export class VectorStore {
 
     log.d("VECTOR", "search_raw_results", {
       count: results.length,
-      sample: results.slice(0, 3).map(r => ({
+      sample: results.slice(0, 3).map((r) => ({
         id: r.id,
         similarity: r.similarity,
         hasMetadata: !!r.metadata,
-        metadataType: r.metadata?.['type']
-      }))
+        metadataType: r.metadata?.["type"],
+      })),
     });
 
     // Enrich results with entity data from LibSQL BEFORE filtering
@@ -858,11 +859,11 @@ export class VectorStore {
       log.d("VECTOR", "before_metadata_filter", {
         count: filtered.length,
         filter: metadataFilter,
-        sample: filtered.slice(0, 3).map(r => ({
+        sample: filtered.slice(0, 3).map((r) => ({
           id: r.id,
           hasMetadata: !!r.metadata,
-          metadata: r.metadata
-        }))
+          metadata: r.metadata,
+        })),
       });
 
       filtered = filtered.filter((r) => {
@@ -875,7 +876,7 @@ export class VectorStore {
 
       log.d("VECTOR", "after_metadata_filter", {
         count: filtered.length,
-        kept: filtered.slice(0, 3).map(r => ({ id: r.id, metadata: r.metadata }))
+        kept: filtered.slice(0, 3).map((r) => ({ id: r.id, metadata: r.metadata })),
       });
     }
 
