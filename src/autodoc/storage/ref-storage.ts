@@ -15,6 +15,8 @@
 import type { Client, InStatement } from "@libsql/client";
 import { createClient } from "@libsql/client";
 import { nanoid } from "nanoid";
+import type { ProjectContext } from "../../storage/libsql/types.js";
+import { DEFAULT_PROJECT_CONTEXT } from "../../storage/libsql/types.js";
 import type { CommentRef, Reference, RefSourceType, RefTargetType, RefType } from "../types.js";
 
 // =============================================================================
@@ -31,9 +33,24 @@ export class RefStorage {
   private client: Client | null = null;
   private dbPath: string;
   private initialized = false;
+  private currentContext: ProjectContext = DEFAULT_PROJECT_CONTEXT;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
+  }
+
+  /**
+   * Set project context for branch isolation
+   */
+  setProjectContext(context: ProjectContext): void {
+    this.currentContext = context;
+  }
+
+  /**
+   * Get current project context
+   */
+  getProjectContext(): ProjectContext {
+    return this.currentContext;
   }
 
   /**
@@ -84,7 +101,9 @@ export class RefStorage {
         target_entity_id TEXT,
         target_file_path TEXT,
         target_line_start INTEGER,
-        target_line_end INTEGER
+        target_line_end INTEGER,
+        project_hash TEXT NOT NULL DEFAULT 'legacy',
+        branch_name TEXT NOT NULL DEFAULT 'main'
       )
     `);
 
@@ -96,6 +115,7 @@ export class RefStorage {
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_target_file ON doc_references(target_file_path)`);
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_valid ON doc_references(valid)`);
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_type ON doc_references(ref_type)`);
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_ref_branch ON doc_references(project_hash, branch_name)`);
 
     // comment_refs table
     await this.client.execute(`
@@ -110,7 +130,9 @@ export class RefStorage {
         entity_refs TEXT DEFAULT '[]',
         flow_tags TEXT DEFAULT '[]',
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        project_hash TEXT NOT NULL DEFAULT 'legacy',
+        branch_name TEXT NOT NULL DEFAULT 'main'
       )
     `);
 
@@ -119,6 +141,60 @@ export class RefStorage {
     await this.client.execute(
       `CREATE INDEX IF NOT EXISTS idx_comment_lines ON comment_refs(file_path, line_start, line_end)`,
     );
+    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_comment_branch ON comment_refs(project_hash, branch_name)`);
+
+    await this.migrateExistingRefs();
+  }
+
+  /**
+   * Migrate existing references to include project_hash and branch_name
+   */
+  private async migrateExistingRefs(): Promise<void> {
+    if (!this.client) return;
+
+    try {
+      // Check doc_references table
+      const refTableInfo = await this.client.execute(`PRAGMA table_info(doc_references)`);
+      const refHasProjectHash = refTableInfo.rows.some((row: any) => row.name === "project_hash");
+      const refHasBranchName = refTableInfo.rows.some((row: any) => row.name === "branch_name");
+
+      if (!refHasProjectHash || !refHasBranchName) {
+        if (!refHasProjectHash) {
+          await this.client.execute(`ALTER TABLE doc_references ADD COLUMN project_hash TEXT NOT NULL DEFAULT 'legacy'`);
+        }
+        if (!refHasBranchName) {
+          await this.client.execute(`ALTER TABLE doc_references ADD COLUMN branch_name TEXT NOT NULL DEFAULT 'main'`);
+        }
+
+        await this.client.execute(`
+          UPDATE doc_references
+          SET project_hash = 'legacy', branch_name = 'main'
+          WHERE project_hash IS NULL OR branch_name IS NULL
+        `);
+      }
+
+      // Check comment_refs table
+      const commentTableInfo = await this.client.execute(`PRAGMA table_info(comment_refs)`);
+      const commentHasProjectHash = commentTableInfo.rows.some((row: any) => row.name === "project_hash");
+      const commentHasBranchName = commentTableInfo.rows.some((row: any) => row.name === "branch_name");
+
+      if (!commentHasProjectHash || !commentHasBranchName) {
+        if (!commentHasProjectHash) {
+          await this.client.execute(`ALTER TABLE comment_refs ADD COLUMN project_hash TEXT NOT NULL DEFAULT 'legacy'`);
+        }
+        if (!commentHasBranchName) {
+          await this.client.execute(`ALTER TABLE comment_refs ADD COLUMN branch_name TEXT NOT NULL DEFAULT 'main'`);
+        }
+
+        await this.client.execute(`
+          UPDATE comment_refs
+          SET project_hash = 'legacy', branch_name = 'main'
+          WHERE project_hash IS NULL OR branch_name IS NULL
+        `);
+      }
+    } catch (error) {
+      // Migration failed - okay during first initialization
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -146,8 +222,9 @@ export class RefStorage {
               id, source_type, source_file_path, source_line_start, source_line_end,
               source_char_start, source_char_end, target_type, target_id, ref_type,
               ref_syntax, valid, validation_error, created_at, updated_at,
-              target_entity_id, target_file_path, target_line_start, target_line_end
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              target_entity_id, target_file_path, target_line_start, target_line_end,
+              project_hash, branch_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         entity.id,
         entity.sourceType,
@@ -168,6 +245,8 @@ export class RefStorage {
         entity.targetFilePath ?? null,
         entity.targetLineStart ?? null,
         entity.targetLineEnd ?? null,
+        this.currentContext.projectHash,
+        this.currentContext.branchName,
       ],
     });
 
@@ -244,28 +323,89 @@ export class RefStorage {
   }
 
   /**
-   * Get all references from a source file
+   * Get all references from a source file (with branch layers support)
    */
   async getRefsBySource(filePath: string): Promise<Reference[]> {
     this.ensureReady();
 
+    // If no baseBranch, simple query
+    if (!this.currentContext.baseBranch) {
+      const result = await this.client!.execute({
+        sql: `SELECT * FROM doc_references WHERE source_file_path = ? AND project_hash = ? AND branch_name = ? ORDER BY source_line_start`,
+        args: [filePath, this.currentContext.projectHash, this.currentContext.branchName],
+      });
+
+      return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
+    }
+
+    // With baseBranch: use CTE to combine current + base with deduplication
     const result = await this.client!.execute({
-      sql: `SELECT * FROM doc_references WHERE source_file_path = ? ORDER BY source_line_start`,
-      args: [filePath],
+      sql: `
+        WITH combined AS (
+          SELECT *, 1 as priority FROM doc_references
+          WHERE source_file_path = ? AND project_hash = ? AND branch_name = ?
+          UNION ALL
+          SELECT *, 2 as priority FROM doc_references
+          WHERE source_file_path = ? AND project_hash = ? AND branch_name = ?
+        )
+        SELECT * FROM (
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY priority) as rn
+          FROM combined
+        ) WHERE rn = 1
+        ORDER BY source_line_start
+      `,
+      args: [
+        filePath,
+        this.currentContext.projectHash,
+        this.currentContext.branchName,
+        filePath,
+        this.currentContext.projectHash,
+        this.currentContext.baseBranch,
+      ],
     });
 
     return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
   }
 
   /**
-   * Get all references to a target
+   * Get all references to a target (with branch layers support)
    */
   async getRefsByTarget(targetId: string): Promise<Reference[]> {
     this.ensureReady();
 
+    // If no baseBranch, simple query
+    if (!this.currentContext.baseBranch) {
+      const result = await this.client!.execute({
+        sql: `SELECT * FROM doc_references WHERE target_id = ? AND project_hash = ? AND branch_name = ?`,
+        args: [targetId, this.currentContext.projectHash, this.currentContext.branchName],
+      });
+
+      return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
+    }
+
+    // With baseBranch: use CTE to combine current + base with deduplication
     const result = await this.client!.execute({
-      sql: `SELECT * FROM doc_references WHERE target_id = ?`,
-      args: [targetId],
+      sql: `
+        WITH combined AS (
+          SELECT *, 1 as priority FROM doc_references
+          WHERE target_id = ? AND project_hash = ? AND branch_name = ?
+          UNION ALL
+          SELECT *, 2 as priority FROM doc_references
+          WHERE target_id = ? AND project_hash = ? AND branch_name = ?
+        )
+        SELECT * FROM (
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY priority) as rn
+          FROM combined
+        ) WHERE rn = 1
+      `,
+      args: [
+        targetId,
+        this.currentContext.projectHash,
+        this.currentContext.branchName,
+        targetId,
+        this.currentContext.projectHash,
+        this.currentContext.baseBranch,
+      ],
     });
 
     return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
@@ -287,14 +427,44 @@ export class RefStorage {
   }
 
   /**
-   * Get all broken (invalid) references
+   * Get all broken (invalid) references (with branch layers support)
    */
   async getBrokenRefs(): Promise<Reference[]> {
     this.ensureReady();
 
-    const result = await this.client!.execute(
-      `SELECT * FROM doc_references WHERE valid = 0 ORDER BY source_file_path, source_line_start`,
-    );
+    // If no baseBranch, simple query
+    if (!this.currentContext.baseBranch) {
+      const result = await this.client!.execute({
+        sql: `SELECT * FROM doc_references WHERE valid = 0 AND project_hash = ? AND branch_name = ? ORDER BY source_file_path, source_line_start`,
+        args: [this.currentContext.projectHash, this.currentContext.branchName],
+      });
+
+      return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
+    }
+
+    // With baseBranch: use CTE to combine current + base with deduplication
+    const result = await this.client!.execute({
+      sql: `
+        WITH combined AS (
+          SELECT *, 1 as priority FROM doc_references
+          WHERE valid = 0 AND project_hash = ? AND branch_name = ?
+          UNION ALL
+          SELECT *, 2 as priority FROM doc_references
+          WHERE valid = 0 AND project_hash = ? AND branch_name = ?
+        )
+        SELECT * FROM (
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY priority) as rn
+          FROM combined
+        ) WHERE rn = 1
+        ORDER BY source_file_path, source_line_start
+      `,
+      args: [
+        this.currentContext.projectHash,
+        this.currentContext.branchName,
+        this.currentContext.projectHash,
+        this.currentContext.baseBranch,
+      ],
+    });
 
     return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
   }
@@ -388,8 +558,9 @@ export class RefStorage {
                 id, source_type, source_file_path, source_line_start, source_line_end,
                 source_char_start, source_char_end, target_type, target_id, ref_type,
                 ref_syntax, valid, validation_error, created_at, updated_at,
-                target_entity_id, target_file_path, target_line_start, target_line_end
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                target_entity_id, target_file_path, target_line_start, target_line_end,
+                project_hash, branch_name
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           entity.id,
           entity.sourceType,
@@ -410,6 +581,8 @@ export class RefStorage {
           entity.targetFilePath ?? null,
           entity.targetLineStart ?? null,
           entity.targetLineEnd ?? null,
+          this.currentContext.projectHash,
+          this.currentContext.branchName,
         ],
       };
     });
@@ -419,21 +592,61 @@ export class RefStorage {
   }
 
   /**
-   * Get all references with optional pagination
+   * Get all references with optional pagination (with branch layers support)
    */
   async getAllRefs(options: { limit?: number; offset?: number; validOnly?: boolean } = {}): Promise<Reference[]> {
     this.ensureReady();
 
     const { limit, offset, validOnly } = options;
-    let sql = "SELECT * FROM doc_references";
-    const args: (number | string)[] = [];
 
-    if (validOnly !== undefined) {
-      sql += ` WHERE valid = ?`;
-      args.push(validOnly ? 1 : 0);
+    // If no baseBranch, simple query
+    if (!this.currentContext.baseBranch) {
+      let sql = `SELECT * FROM doc_references WHERE project_hash = ? AND branch_name = ?`;
+      const args: (number | string)[] = [this.currentContext.projectHash, this.currentContext.branchName];
+
+      if (validOnly !== undefined) {
+        sql += ` AND valid = ?`;
+        args.push(validOnly ? 1 : 0);
+      }
+
+      sql += " ORDER BY source_file_path, source_line_start";
+
+      if (limit !== undefined) {
+        sql += ` LIMIT ?`;
+        args.push(limit);
+        if (offset !== undefined) {
+          sql += ` OFFSET ?`;
+          args.push(offset);
+        }
+      }
+
+      const result = await this.client!.execute({ sql, args });
+      return result.rows.map((row) => this.rowToReference(row as unknown as RefRow));
     }
 
-    sql += " ORDER BY source_file_path, source_line_start";
+    // With baseBranch: use CTE to combine current + base with deduplication
+    const validFilter = validOnly !== undefined ? `AND valid = ${validOnly ? 1 : 0}` : "";
+
+    let sql = `
+      WITH combined AS (
+        SELECT *, 1 as priority FROM doc_references
+        WHERE project_hash = ? AND branch_name = ? ${validFilter}
+        UNION ALL
+        SELECT *, 2 as priority FROM doc_references
+        WHERE project_hash = ? AND branch_name = ? ${validFilter}
+      )
+      SELECT * FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY priority) as rn
+        FROM combined
+      ) WHERE rn = 1
+      ORDER BY source_file_path, source_line_start
+    `;
+    const args: (number | string)[] = [
+      this.currentContext.projectHash,
+      this.currentContext.branchName,
+      this.currentContext.projectHash,
+      this.currentContext.baseBranch,
+    ];
 
     if (limit !== undefined) {
       sql += ` LIMIT ?`;
@@ -496,8 +709,9 @@ export class RefStorage {
     await this.client!.execute({
       sql: `INSERT INTO comment_refs (
               id, file_path, line_start, line_end, content, parent_entity_id,
-              doc_refs, entity_refs, flow_tags, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              doc_refs, entity_refs, flow_tags, created_at, updated_at,
+              project_hash, branch_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         entity.id,
         entity.filePath,
@@ -510,6 +724,8 @@ export class RefStorage {
         JSON.stringify(entity.flowTags),
         entity.createdAt,
         entity.updatedAt,
+        this.currentContext.projectHash,
+        this.currentContext.branchName,
       ],
     });
 
