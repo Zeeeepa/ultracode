@@ -9,6 +9,7 @@
  */
 
 import { z } from "zod";
+import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
 // =============================================================================
@@ -61,9 +62,10 @@ export class CreateSnapshotToolHandler extends BaseToolHandler<z.infer<typeof Cr
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -127,9 +129,10 @@ export class RollbackSnapshotToolHandler extends BaseToolHandler<z.infer<typeof 
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }

@@ -13,6 +13,7 @@ import type { MergeAgent } from "../../agents/merge-agent.js";
 import { getOrCreateAgent } from "../../core/agent-registry.js";
 import { getGlobalContainer } from "../../core/di-container.js";
 import { AgentType } from "../../types/agent.js";
+import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
 // =============================================================================
@@ -106,9 +107,10 @@ export class SemanticMergeToolHandler extends BaseToolHandler<z.infer<typeof Sem
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -185,9 +187,10 @@ export class AnalyzeMergeConflictsToolHandler extends BaseToolHandler<z.infer<ty
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -257,9 +260,10 @@ export class GetMergeSuggestionsToolHandler extends BaseToolHandler<z.infer<type
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }

@@ -28,6 +28,7 @@ import {
   reindexFiles,
   setupSemanticSearch,
 } from "./file-tool-utils.js";
+import { toError } from "../../utils/error-handling.js";
 
 // =============================================================================
 // MODIFY ENTITY CODE
@@ -137,9 +138,10 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -178,8 +180,9 @@ export class CopyFileToolHandler extends BaseToolHandler<z.infer<typeof CopyFile
         destination: destinationPath,
         indexed: true,
       });
-    } catch (error) {
-      return buildErrorResponse(error as Error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      return buildErrorResponse(err);
     }
   }
 }
@@ -231,8 +234,9 @@ export class RenameFileToolHandler extends BaseToolHandler<z.infer<typeof Rename
         entitiesMoved: oldEntities.length,
         importsUpdated: args.updateImports,
       });
-    } catch (error) {
-      return buildErrorResponse(error as Error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      return buildErrorResponse(err);
     }
   }
 }
@@ -344,9 +348,10 @@ export class SplitFileToolHandler extends BaseToolHandler<z.infer<typeof SplitFi
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -421,8 +426,9 @@ export class SynthesizeFilesToolHandler extends BaseToolHandler<z.infer<typeof S
         outputPath,
         indexed: true,
       });
-    } catch (error) {
-      return buildErrorResponse(error as Error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      return buildErrorResponse(err);
     }
   }
 }
@@ -503,9 +509,10 @@ export class CreateFileToolHandler extends BaseToolHandler<z.infer<typeof Create
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -639,9 +646,10 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
@@ -790,9 +798,10 @@ export class AddMemberToolHandler extends BaseToolHandler<z.infer<typeof AddMemb
           },
         ],
       };
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = toError(error);
       return {
-        content: [{ type: "text", text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: "text", text: JSON.stringify({ error: err.message }) }],
       };
     }
   }
