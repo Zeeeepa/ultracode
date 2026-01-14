@@ -130,8 +130,11 @@ function parseReference(
     return null;
   }
 
+  // Remove arrow prefix if present (from [→ text](target) syntax)
+  const cleanText = text.replace(/^→\s*/, "");
+
   // Check for entity reference
-  const entityMatch = text.match(PATTERNS.ENTITY_REF);
+  const entityMatch = cleanText.match(PATTERNS.ENTITY_REF);
   if (entityMatch?.[1]) {
     return {
       text,
@@ -192,7 +195,7 @@ function parseReference(
 
   // Default: treat as file/entity reference
   // Check if text looks like a code reference (contains file extension or colons)
-  if (text.includes(".") || text.includes(":")) {
+  if (cleanText.includes(".") || cleanText.includes(":")) {
     // Could be a code file reference
     return {
       text,

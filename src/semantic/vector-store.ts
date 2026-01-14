@@ -667,8 +667,22 @@ export class VectorStore {
 
             // Получить все references из документа
             const refs = await adm.getReferences(doc.filePath);
+
+            // Verbose logging для диагностики
+            log.i("VECTOR", "autodoc_all_refs", {
+              docId: docResult.id,
+              totalRefs: refs.length,
+              refTypes: refs.map((r: any) => r.targetType),
+              refTargetIds: refs.map((r: any) => r.targetId),
+              refValid: refs.map((r: any) => r.valid),
+            });
+
+            // TEMPORARY: также принимаем LINE_RANGE пока парсер не исправлен
             const entityRefs = refs.filter(
-              (ref: any) => ref.targetType === RefTargetType.ENTITY && ref.valid && ref.targetId,
+              (ref: any) =>
+                (ref.targetType === RefTargetType.ENTITY || ref.targetType === RefTargetType.LINE_RANGE) &&
+                ref.valid &&
+                ref.targetId,
             );
 
             log.i("VECTOR", "autodoc_refs_from_doc", {
@@ -725,18 +739,42 @@ export class VectorStore {
             new: newEntityIds.length,
           });
 
-          // 3. Batch fetch новых entities
+          // 3. Resolve entity names to full entityIds
           if (newEntityIds.length > 0) {
-            const newEntities = await Promise.all(newEntityIds.map((id) => storage.getEntity(id)));
+            log.i("VECTOR", "autodoc_resolving_names", {
+              names: newEntityIds,
+            });
 
-            // 4. Создать enriched results для новых entities
-            for (let i = 0; i < newEntityIds.length; i++) {
-              const entity = newEntities[i];
-              if (!entity) continue;
+            const resolvedEntities: Array<{ name: string; entity: any; refInfo: EntityRefInfo }> = [];
 
-              const entityId = newEntityIds[i]!;
-              const refInfo = entityRefsFromDocs.get(entityId)!;
+            // Get all entities from storage for name matching
+            const allEntities = await storage.getAllEntities();
+            log.i("VECTOR", "autodoc_total_entities", { count: allEntities.length });
 
+            for (const entityName of newEntityIds) {
+              // Find entities matching this name
+              const matchingEntities = allEntities.filter((e) => e.name === entityName);
+
+              log.i("VECTOR", "autodoc_name_match", {
+                name: entityName,
+                matches: matchingEntities.length,
+              });
+
+              if (matchingEntities.length > 0) {
+                // If multiple matches, prefer the first one (could be enhanced with file path matching)
+                const entity = matchingEntities[0];
+                const refInfo = entityRefsFromDocs.get(entityName)!;
+                resolvedEntities.push({ name: entityName, entity, refInfo });
+              }
+            }
+
+            log.i("VECTOR", "autodoc_resolved", {
+              total: newEntityIds.length,
+              resolved: resolvedEntities.length,
+            });
+
+            // 4. Создать enriched results для resolved entities
+            for (const { name: entityName, entity, refInfo } of resolvedEntities) {
               // Вычислить динамический similarity на основе комбинации факторов
               const refTypeWeight = getRefTypeWeight(refInfo.refType);
               const sectionWeight = getSectionWeight(refInfo.sectionTitle);
@@ -745,7 +783,8 @@ export class VectorStore {
               const derivedSimilarity = refInfo.docSimilarity * refTypeWeight * sectionWeight * frequencyBoost;
 
               log.d("VECTOR", "autodoc_entity_score", {
-                entityId,
+                entityId: entity.id,
+                entityName,
                 docSim: refInfo.docSimilarity,
                 refType: refInfo.refType,
                 refWeight: refTypeWeight,
@@ -757,11 +796,11 @@ export class VectorStore {
               });
 
               autodocDerivedResults.push({
-                id: `ent:${entityId}`,
+                id: `ent:${entity.id}`,
                 content: entity.name || "",
                 similarity: derivedSimilarity,
                 metadata: {
-                  entityId,
+                  entityId: entity.id,
                   type: entity.type,
                   filePath: entity.filePath,
                   name: entity.name,
