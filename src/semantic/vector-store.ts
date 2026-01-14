@@ -584,6 +584,9 @@ export class VectorStore {
           const autodocDbPath = join(dirname(paths.graphDbPath), "autodoc.db");
           adm = getAutoDocManager(autodocDbPath);
 
+          // Initialize AutoDoc manager (creates tables if needed)
+          await adm.initialize(storage);
+
           for (const r of docResults) {
             const doc = await adm.getDocument(r.id);
             if (doc) {
@@ -672,7 +675,7 @@ export class VectorStore {
               docId: docResult.id,
               totalRefs: refs.length,
               entityRefs: entityRefs.length,
-              sampleTargetIds: entityRefs.slice(0, 3).map((r: any) => r.targetId)
+              sampleTargetIds: entityRefs.slice(0, 3).map((r: any) => r.targetId),
             });
 
             // Подсчитать частоту упоминаний каждого entityId
