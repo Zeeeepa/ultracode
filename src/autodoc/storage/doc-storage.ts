@@ -108,9 +108,6 @@ export class DocStorage {
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_doc_updated ON doc_entities(updated_at)`);
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_doc_branch ON doc_entities(project_hash, branch_name)`);
 
-    // Migrate existing data if needed
-    await this.migrateExistingDocs();
-
     // doc_changelog table
     await this.client.execute(`
       CREATE TABLE IF NOT EXISTS doc_changelog (
@@ -146,40 +143,6 @@ export class DocStorage {
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_todo_priority ON doc_todos(priority)`);
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_todo_completed ON doc_todos(completed)`);
     await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_todo_file ON doc_todos(file_path)`);
-  }
-
-  /**
-   * Migrate existing documents to have project_hash and branch_name
-   */
-  private async migrateExistingDocs(): Promise<void> {
-    if (!this.client) return;
-
-    try {
-      // Check if migration is needed by looking for columns
-      const tableInfo = await this.client.execute(`PRAGMA table_info(doc_entities)`);
-      const hasProjectHash = tableInfo.rows.some((row: any) => row.name === 'project_hash');
-      const hasBranchName = tableInfo.rows.some((row: any) => row.name === 'branch_name');
-
-      if (!hasProjectHash || !hasBranchName) {
-        // Add columns if they don't exist
-        if (!hasProjectHash) {
-          await this.client.execute(`ALTER TABLE doc_entities ADD COLUMN project_hash TEXT NOT NULL DEFAULT 'legacy'`);
-        }
-        if (!hasBranchName) {
-          await this.client.execute(`ALTER TABLE doc_entities ADD COLUMN branch_name TEXT NOT NULL DEFAULT 'main'`);
-        }
-
-        // Update existing rows to have default values
-        await this.client.execute(`
-          UPDATE doc_entities
-          SET project_hash = 'legacy', branch_name = 'main'
-          WHERE project_hash IS NULL OR branch_name IS NULL
-        `);
-      }
-    } catch (error) {
-      // Migration failed - table probably doesn't exist yet or columns already exist
-      // This is okay during first initialization
-    }
   }
 
   // ---------------------------------------------------------------------------
