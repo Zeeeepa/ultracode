@@ -47,7 +47,13 @@ async function getAutoDocManagerFromContext(context: any): Promise<any | null> {
   if (!container) {
     return null;
   }
-  return container.getAutoDocManager();
+  const adm = await container.getAutoDocManager();
+  if (adm && !adm.isInitialized()) {
+    // Initialize AutoDoc manager (creates tables if needed)
+    const graphStorage = await container.getGraphStorage?.();
+    await adm.initialize(graphStorage);
+  }
+  return adm;
 }
 
 function autodocNotEnabledResult(): ToolResult {
