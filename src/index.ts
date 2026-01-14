@@ -111,8 +111,10 @@ import {
   setIndexingState,
 } from "./core/indexing-state.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
+
 // Make knowledgeBus available globally for tool handlers
 (global as any).knowledgeBus = knowledgeBus;
+
 import { PipeServer } from "./core/pipe-transport.js";
 import { resourceManager } from "./core/resource-manager.js";
 // LayeredIndexManager for branch-aware indexing

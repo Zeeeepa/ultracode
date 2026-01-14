@@ -220,7 +220,6 @@ export class ServiceContainer {
           errors: srcResult.errors.length,
         });
       }
-
     } catch (err) {
       log.w("AUTODOC", "sync_failed", { error: (err as Error).message });
     }
@@ -291,7 +290,11 @@ export class ServiceContainer {
     }
 
     if (!semanticAgent || !vectorStore) {
-      log.d("AUTODOC", "embeddings_skipped", { reason: "Missing semanticAgent or vectorStore", hasAgent: !!semanticAgent, hasStore: !!vectorStore });
+      log.d("AUTODOC", "embeddings_skipped", {
+        reason: "Missing semanticAgent or vectorStore",
+        hasAgent: !!semanticAgent,
+        hasStore: !!vectorStore,
+      });
       return;
     }
 

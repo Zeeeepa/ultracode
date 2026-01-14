@@ -142,7 +142,7 @@ export class AutoDocSaveToolHandler extends BaseToolHandler<z.infer<typeof AutoD
 
     // Generate embeddings for semantic search (if SemanticAgent available)
     let embeddingsGenerated = 0;
-    let debugInfo: any = { savedDocsCount: savedDocs.length };
+    const debugInfo: any = { savedDocsCount: savedDocs.length };
 
     if (savedDocs.length > 0) {
       try {
@@ -161,7 +161,7 @@ export class AutoDocSaveToolHandler extends BaseToolHandler<z.infer<typeof AutoD
         log.i("AUTODOCTOOL", "embeddings_store", {
           hasStore: !!vectorStore,
           storeType: typeof vectorStore,
-          hasGetVectorStore: typeof semanticAgent?.getVectorStore
+          hasGetVectorStore: typeof semanticAgent?.getVectorStore,
         });
 
         if (semanticAgent && vectorStore) {
@@ -183,7 +183,7 @@ export class AutoDocSaveToolHandler extends BaseToolHandler<z.infer<typeof AutoD
               log.i("AUTODOCTOOL", exists ? "updating_embedding" : "inserting_embedding", {
                 id: doc.id,
                 vectorDim: embedding.length,
-                contentLen: textToEmbed.length
+                contentLen: textToEmbed.length,
               });
 
               const metadata = {
@@ -375,21 +375,27 @@ export class AutoDocSearchToolHandler extends BaseToolHandler<z.infer<typeof Aut
 
         if (semanticAgent && vectorStore) {
           const queryEmbedding = await semanticAgent.generateEmbedding(args.query);
-          log.i("AUTODOCTOOL", "search_embedding_generated", { hasEmbedding: !!queryEmbedding, dim: queryEmbedding?.length });
+          log.i("AUTODOCTOOL", "search_embedding_generated", {
+            hasEmbedding: !!queryEmbedding,
+            dim: queryEmbedding?.length,
+          });
 
           if (queryEmbedding) {
             // Use searchWithFilters to only search AutoDoc documents (metadata.type = "autodoc")
             const semanticResults: SimilarityResult[] = await vectorStore.searchWithFilters(queryEmbedding, {
               limit: args.limit,
-              metadataFilter: { type: "autodoc" }
+              metadataFilter: { type: "autodoc" },
             });
             log.i("AUTODOCTOOL", "search_results", {
               count: semanticResults.length,
-              ids: semanticResults.map((r) => r.id).slice(0, 5)
+              ids: semanticResults.map((r) => r.id).slice(0, 5),
             });
 
             for (const result of semanticResults) {
-              log.d("AUTODOCTOOL", "search_result_check", { id: result.id, startsWithDoc: result.id.startsWith("doc::") });
+              log.d("AUTODOCTOOL", "search_result_check", {
+                id: result.id,
+                startsWithDoc: result.id.startsWith("doc::"),
+              });
               if (result.id.startsWith("doc::")) {
                 const doc = await adm.getDocument(result.id);
                 if (doc && !searchResults.some((r) => r.id === doc.id)) {
