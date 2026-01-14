@@ -25,6 +25,7 @@ import type { CodeValidator } from "../validation/code-validator.js";
 import { CodeValidator as CodeValidatorClass } from "../validation/code-validator.js";
 import type { VersionManager } from "../versioning/version-manager.js";
 import { VersionManager as VersionManagerClass } from "../versioning/version-manager.js";
+import { knowledgeBus } from "./knowledge-bus.js";
 
 /**
  * Configuration for ServiceContainer
@@ -54,6 +55,10 @@ export class ServiceContainer {
   private _technologyDetector: TechnologyDetector | null = null;
   private _patternSearch: PatternSearch | null = null;
   private _autoDocManager: AutoDocManager | null = null;
+
+  // AutoDoc embeddings state
+  private _autodocEmbeddingsGenerated = false;
+  private _autodocEmbeddingsSubscriptionId: string | null = null;
 
   constructor(config: ServiceContainerConfig) {
     this.config = config;
@@ -158,8 +163,201 @@ export class ServiceContainer {
       this._autoDocManager = getAutoDocManagerFactory(autodocDbPath);
       const graphStorage = await this.getGraphStorage();
       await this._autoDocManager.initialize(graphStorage);
+
+      // Auto-configure if not already configured
+      if (!this._autoDocManager.getConfig()) {
+        const autodocDir = join(this.config.directory, ".autodoc");
+        this._autoDocManager.setConfig({
+          enabled: true,
+          language: "en",
+          docsDir: autodocDir,
+        });
+
+        // Background sync: index .autodoc files into database
+        this.runAutoDocSync(this._autoDocManager, autodocDir).catch(() => {
+          // Ignore sync errors - non-critical background operation
+        });
+      }
     }
     return this._autoDocManager;
+  }
+
+  /** Run background sync of .autodoc folder and AUTODOC.md files to database */
+  private async runAutoDocSync(adm: AutoDocManager, autodocDir: string): Promise<void> {
+    const { log } = await import("../logging/index.js");
+
+    // Subscribe to index:completed FIRST (before sync) to not miss the event
+    this.subscribeToIndexCompleted(adm, log);
+
+    try {
+      const { syncDiskToDb } = await import("../autodoc/sync/file-sync.js");
+
+      // 1. Sync .autodoc folder (architecture, flow, glossary, etc.)
+      const autodocResult = await syncDiskToDb(
+        autodocDir,
+        (filePath) => adm.getDocumentsByFile(filePath),
+        (filePath, content) => adm.saveDocument(filePath, content),
+        4,
+      );
+      log.i("AUTODOC", "sync_autodoc_folder", {
+        added: autodocResult.added.length,
+        updated: autodocResult.updated.length,
+        errors: autodocResult.errors.length,
+      });
+
+      // 2. Sync AUTODOC.md files from modules (src/**/AUTODOC.md)
+      const srcDir = join(this.config.directory, "src");
+      if (existsSync(srcDir)) {
+        const srcResult = await syncDiskToDb(
+          srcDir,
+          (filePath) => adm.getDocumentsByFile(filePath),
+          (filePath, content) => adm.saveDocument(filePath, content),
+          4,
+        );
+        log.i("AUTODOC", "sync_src_modules", {
+          added: srcResult.added.length,
+          updated: srcResult.updated.length,
+          errors: srcResult.errors.length,
+        });
+      }
+
+    } catch (err) {
+      log.w("AUTODOC", "sync_failed", { error: (err as Error).message });
+    }
+  }
+
+  /** Subscribe to index:completed event to trigger embeddings generation */
+  private subscribeToIndexCompleted(adm: AutoDocManager, log: any): void {
+    // Already generated or subscribed - skip
+    if (this._autodocEmbeddingsGenerated || this._autodocEmbeddingsSubscriptionId) {
+      return;
+    }
+
+    const generateEmbeddings = async () => {
+      if (this._autodocEmbeddingsGenerated) {
+        return;
+      }
+
+      log.i("AUTODOC", "embeddings_triggered_by_event", { event: "index:completed" });
+
+      try {
+        await this.generateAutoDocEmbeddings(adm);
+        this._autodocEmbeddingsGenerated = true;
+
+        // Unsubscribe after successful generation
+        if (this._autodocEmbeddingsSubscriptionId) {
+          knowledgeBus.unsubscribe(this._autodocEmbeddingsSubscriptionId);
+          this._autodocEmbeddingsSubscriptionId = null;
+        }
+      } catch (err) {
+        log.w("AUTODOC", "embeddings_failed", { error: (err as Error).message });
+      }
+    };
+
+    this._autodocEmbeddingsSubscriptionId = knowledgeBus.subscribe(
+      "autodoc-embeddings",
+      "index:completed",
+      generateEmbeddings,
+    );
+
+    log.d("AUTODOC", "embeddings_subscribed", { event: "index:completed" });
+
+    // Fallback: check if index already completed (event was missed)
+    // Query knowledge bus for recent index:completed events
+    const recentEvents = knowledgeBus.query("index:completed");
+    if (recentEvents.length > 0) {
+      log.i("AUTODOC", "embeddings_fallback", { reason: "index_already_completed", events: recentEvents.length });
+      generateEmbeddings().catch((err) => {
+        log.w("AUTODOC", "embeddings_fallback_failed", { error: (err as Error).message });
+      });
+    }
+  }
+
+  /** Generate embeddings for all autodoc documents */
+  private async generateAutoDocEmbeddings(adm: AutoDocManager): Promise<void> {
+    const { log } = await import("../logging/index.js");
+
+    // Get semantic agent and vector store
+    let semanticAgent: any;
+    let vectorStore: any;
+
+    try {
+      semanticAgent = await this.getSemanticAgent();
+      // Get VectorStore directly from SemanticAgent (more reliable than config.getGlobalVectorStore)
+      vectorStore = semanticAgent?.getVectorStore?.();
+    } catch (err) {
+      log.w("AUTODOC", "embeddings_skipped", { reason: "SemanticAgent not available", error: (err as Error).message });
+      return;
+    }
+
+    if (!semanticAgent || !vectorStore) {
+      log.d("AUTODOC", "embeddings_skipped", { reason: "Missing semanticAgent or vectorStore", hasAgent: !!semanticAgent, hasStore: !!vectorStore });
+      return;
+    }
+
+    // Get all documents
+    const allDocs = await adm.getAllDocuments();
+    if (allDocs.length === 0) {
+      return;
+    }
+
+    log.i("AUTODOC", "embeddings_start", { totalDocs: allDocs.length });
+
+    let generated = 0;
+    let skipped = 0;
+
+    // Process in batches to avoid overwhelming the system
+    const BATCH_SIZE = 20;
+    for (let i = 0; i < allDocs.length; i += BATCH_SIZE) {
+      const batch = allDocs.slice(i, i + BATCH_SIZE);
+
+      for (const doc of batch) {
+        try {
+          // Skip docs with empty content
+          if (!doc.content || doc.content.length < 10) {
+            skipped++;
+            continue;
+          }
+
+          const textToEmbed = `${doc.title}\n\n${doc.content}`;
+          const embedding = await semanticAgent.generateEmbedding(textToEmbed);
+
+          if (embedding) {
+            await vectorStore.insert({
+              id: doc.id,
+              content: textToEmbed.slice(0, 1000),
+              vector: embedding,
+              metadata: {
+                type: "autodoc",
+                docType: doc.type,
+                filePath: doc.filePath,
+                section: doc.section,
+                title: doc.title,
+              },
+              createdAt: Date.now(),
+            });
+            generated++;
+          }
+        } catch {
+          // Skip individual doc errors
+          skipped++;
+        }
+      }
+
+      // Small delay between batches
+      if (i + BATCH_SIZE < allDocs.length) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+
+    log.i("AUTODOC", "embeddings_complete", { generated, skipped, total: allDocs.length });
+
+    // Flush and save to disk
+    if (generated > 0) {
+      log.i("AUTODOC", "flushing_to_disk");
+      await vectorStore.flushAndSave();
+      log.i("AUTODOC", "embeddings_saved_to_disk");
+    }
   }
 
   /** Get semantic agent (delegated) */
@@ -172,6 +370,13 @@ export class ServiceContainer {
 
   /** Reset all cached services */
   reset(): void {
+    // Unsubscribe from embeddings event if subscribed
+    if (this._autodocEmbeddingsSubscriptionId) {
+      knowledgeBus.unsubscribe(this._autodocEmbeddingsSubscriptionId);
+      this._autodocEmbeddingsSubscriptionId = null;
+    }
+    this._autodocEmbeddingsGenerated = false;
+
     this._versionManager = null;
     this._codeModifier = null;
     this._fileOperations = null;

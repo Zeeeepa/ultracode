@@ -26,6 +26,7 @@ import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../ty
 import { type FaissProvider, initializeFaissProvider } from "./faiss/faiss-provider.js";
 import { getLayeredFaissProvider, type LayeredFaissProvider } from "./faiss/layered-faiss-provider.js";
 import { getRecommendedStrategy, type StrategyRecommendation } from "./gpu/adaptive-thresholds.js";
+import { RefTargetType } from "../autodoc/types.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -317,6 +318,13 @@ export class VectorStore {
    * v6: Uses LayeredFaissProvider when enabled
    */
   async insert(embedding: VectorEmbedding): Promise<void> {
+    log.i("VECTOR", "insert_embedding", {
+      id: embedding.id,
+      vectorDim: embedding.vector.length,
+      contentLen: embedding.content.length,
+      metadataType: embedding.metadata?.['type'] as string
+    });
+
     if (this.useLayeredIndex) {
       const provider = await this.ensureLayeredProviderInitialized();
       await provider.add(embedding);
@@ -324,6 +332,8 @@ export class VectorStore {
       const provider = this.ensureFaissProvider();
       await provider.add(embedding);
     }
+
+    log.d("VECTOR", "insert_complete", { id: embedding.id });
   }
 
   /**
@@ -486,8 +496,21 @@ export class VectorStore {
       rawResults = await provider.search(queryVector, limit);
     }
 
+    log.i("VECTOR", "search_raw_results", {
+      count: rawResults.length,
+      ids: rawResults.map((r) => r.id).slice(0, 10)
+    });
+
     // Enrich results with entity data from LibSQL
-    return await this.enrichResultsFromLibSQL(rawResults);
+    const enriched = await this.enrichResultsFromLibSQL(rawResults);
+
+    log.i("VECTOR", "search_enriched_results", {
+      beforeCount: rawResults.length,
+      afterCount: enriched.length,
+      filtered: rawResults.length - enriched.length
+    });
+
+    return enriched;
   }
 
   /**
@@ -500,8 +523,18 @@ export class VectorStore {
       const { getGraphStorage } = await import("../storage/graph-storage-factory.js");
       const storage = await getGraphStorage();
 
+      // Separate entities from non-entities (e.g., AutoDoc documents with doc:: prefix)
+      const entityResults = results.filter((r) => !r.id.startsWith("doc::"));
+      const docResults = results.filter((r) => r.id.startsWith("doc::"));
+
+      log.d("VECTOR", "enrich_split", {
+        total: results.length,
+        entities: entityResults.length,
+        docs: docResults.length
+      });
+
       // Extract entity IDs from result IDs (format: "ent:{entityId}")
-      const entityIds = results.map((r) => (r.id.startsWith("ent:") ? r.id.slice(4) : r.id));
+      const entityIds = entityResults.map((r) => (r.id.startsWith("ent:") ? r.id.slice(4) : r.id));
 
       // Batch fetch entities from LibSQL (parallel getEntity calls)
       const entities = await Promise.all(entityIds.map((id) => storage.getEntity(id)));
@@ -513,8 +546,8 @@ export class VectorStore {
         }
       }
 
-      // Enrich results
-      return results.map((r) => {
+      // Enrich entity results
+      const enrichedEntities = entityResults.map((r) => {
         const entityId = r.id.startsWith("ent:") ? r.id.slice(4) : r.id;
         const entity = entityMap.get(entityId);
         if (entity) {
@@ -537,6 +570,233 @@ export class VectorStore {
         }
         return r;
       });
+
+      // Enrich AutoDoc document results with metadata from AutoDoc database
+      const enrichedDocs: SimilarityResult[] = [];
+      let adm: any = null; // Store adm for phase 2
+      if (docResults.length > 0) {
+        try {
+          const { getAutoDocManager } = await import("../autodoc/storage/autodoc-manager.js");
+          const { getGlobalDbPaths } = await import("../shared/storage-paths.js");
+          const { dirname, join } = await import("node:path");
+
+          const paths = getGlobalDbPaths();
+          const autodocDbPath = join(dirname(paths.graphDbPath), "autodoc.db");
+          adm = getAutoDocManager(autodocDbPath);
+
+          for (const r of docResults) {
+            const doc = await adm.getDocument(r.id);
+            if (doc) {
+              enrichedDocs.push({
+                ...r,
+                content: doc.title,
+                metadata: {
+                  ...r.metadata,
+                  type: "autodoc",
+                  docType: doc.type,
+                  filePath: doc.filePath,
+                  section: doc.section,
+                  title: doc.title,
+                },
+              });
+            } else {
+              enrichedDocs.push(r); // Keep original if doc not found
+            }
+          }
+
+          log.d("VECTOR", "enrich_autodoc", {
+            total: docResults.length,
+            enriched: enrichedDocs.length,
+          });
+        } catch (error) {
+          log.w("VECTOR", "Failed to enrich AutoDoc results", { error: (error as Error).message });
+          enrichedDocs.push(...docResults); // Keep originals on error
+        }
+      }
+
+      // PHASE 2: AutoDoc-driven entity enrichment
+      const autodocDerivedResults: SimilarityResult[] = [];
+
+      if (enrichedDocs.length > 0 && adm) {
+        try {
+          log.d("VECTOR", "autodoc_enrichment_start", {
+            docCount: enrichedDocs.length
+          });
+
+          // Helper: определить вес refType
+          const getRefTypeWeight = (refType: string): number => {
+            const weights: Record<string, number> = {
+              'describes': 1.0,   // главная описываемая сущность
+              'depends': 0.9,     // зависимость
+              'uses': 0.8,        // использует
+              'participates': 0.7,// участвует в сценарии
+              'example': 0.6,     // упомянут в примере
+              'test': 0.5         // упомянут в тестах
+            };
+            return weights[refType] || 0.8;
+          };
+
+          // Helper: определить вес секции по заголовку
+          const getSectionWeight = (sectionTitle: string): number => {
+            const lower = sectionTitle.toLowerCase();
+            if (lower.includes('overview') || lower.includes('architecture')) return 1.0;
+            if (lower.includes('implement') || lower.includes('usage')) return 0.9;
+            if (lower.includes('example')) return 0.7;
+            if (lower.includes('test')) return 0.6;
+            return 0.85; // default для неизвестных секций
+          };
+
+          // 1. Собрать entity references из всех найденных AutoDoc документов
+          interface EntityRefInfo {
+            docId: string;
+            docSimilarity: number;
+            docTitle: string;
+            refType: string;
+            sectionTitle: string;
+            mentions: number;
+          }
+
+          const entityRefsFromDocs = new Map<string, EntityRefInfo>();
+
+          for (const docResult of enrichedDocs) {
+            const doc = await adm.getDocument(docResult.id);
+            if (!doc) continue;
+
+            // Получить все references из документа
+            const refs = await adm.getReferences(doc.filePath);
+            const entityRefs = refs.filter(
+              (ref: any) => ref.targetType === RefTargetType.ENTITY &&
+                     ref.valid &&
+                     ref.targetEntityId
+            );
+
+            // Подсчитать частоту упоминаний каждого entityId
+            const mentionCounts = new Map<string, number>();
+            for (const ref of entityRefs) {
+              const id = ref.targetEntityId!;
+              mentionCounts.set(id, (mentionCounts.get(id) || 0) + 1);
+            }
+
+            // Сохранить первое упоминание каждого entity
+            for (const ref of entityRefs) {
+              const entityId = ref.targetEntityId!;
+              if (!entityRefsFromDocs.has(entityId)) {
+                // Парсим section title (doc.section может быть null)
+                const sectionTitle = doc.section || 'Overview';
+
+                entityRefsFromDocs.set(entityId, {
+                  docId: docResult.id,
+                  docSimilarity: docResult.similarity || 0,
+                  docTitle: doc.title,
+                  refType: ref.refType,
+                  sectionTitle,
+                  mentions: mentionCounts.get(entityId) || 1
+                });
+              }
+            }
+          }
+
+          log.d("VECTOR", "autodoc_refs_collected", {
+            uniqueEntities: entityRefsFromDocs.size
+          });
+
+          // 2. Дедупликация с уже найденными entities
+          const existingEntityIds = new Set<string>();
+          for (const r of enrichedEntities) {
+            const entityId = r.metadata?.['entityId'];
+            if (entityId && typeof entityId === 'string') {
+              existingEntityIds.add(entityId);
+            }
+          }
+
+          const newEntityIds = Array.from(entityRefsFromDocs.keys())
+            .filter(id => !existingEntityIds.has(id));
+
+          log.d("VECTOR", "autodoc_deduplication", {
+            totalRefs: entityRefsFromDocs.size,
+            existing: existingEntityIds.size,
+            new: newEntityIds.length
+          });
+
+          // 3. Batch fetch новых entities
+          if (newEntityIds.length > 0) {
+            const newEntities = await Promise.all(
+              newEntityIds.map(id => storage.getEntity(id))
+            );
+
+            // 4. Создать enriched results для новых entities
+            for (let i = 0; i < newEntityIds.length; i++) {
+              const entity = newEntities[i];
+              if (!entity) continue;
+
+              const entityId = newEntityIds[i]!;
+              const refInfo = entityRefsFromDocs.get(entityId)!;
+
+              // Вычислить динамический similarity на основе комбинации факторов
+              const refTypeWeight = getRefTypeWeight(refInfo.refType);
+              const sectionWeight = getSectionWeight(refInfo.sectionTitle);
+              const frequencyBoost = Math.min(1.0 + (refInfo.mentions - 1) * 0.05, 1.2);
+
+              const derivedSimilarity =
+                refInfo.docSimilarity * refTypeWeight * sectionWeight * frequencyBoost;
+
+              log.d("VECTOR", "autodoc_entity_score", {
+                entityId,
+                docSim: refInfo.docSimilarity,
+                refType: refInfo.refType,
+                refWeight: refTypeWeight,
+                section: refInfo.sectionTitle,
+                secWeight: sectionWeight,
+                mentions: refInfo.mentions,
+                freqBoost: frequencyBoost,
+                finalSim: derivedSimilarity
+              });
+
+              autodocDerivedResults.push({
+                id: `ent:${entityId}`,
+                content: entity.name || "",
+                similarity: derivedSimilarity,
+                metadata: {
+                  entityId,
+                  type: entity.type,
+                  filePath: entity.filePath,
+                  name: entity.name,
+                  startLine: entity.location?.start?.line,
+                  endLine: entity.location?.end?.line,
+                  startColumn: entity.location?.start?.column,
+                  endColumn: entity.location?.end?.column,
+                  // AutoDoc enrichment markers (internal only, не для пользователя)
+                  foundVia: "autodoc",
+                  sourceDoc: refInfo.docId,
+                  sourceDocTitle: refInfo.docTitle
+                }
+              });
+            }
+
+            log.d("VECTOR", "autodoc_enrichment_complete", {
+              added: autodocDerivedResults.length
+            });
+          }
+        } catch (error) {
+          log.w("VECTOR", "AutoDoc enrichment failed", {
+            error: (error as Error).message
+          });
+          // Non-fatal - continue without AutoDoc enrichment
+        }
+      }
+
+      // Combine и sort по similarity
+      const combined = [...enrichedEntities, ...enrichedDocs, ...autodocDerivedResults];
+      combined.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+
+      log.d("VECTOR", "enrich_complete", {
+        enrichedEntities: enrichedEntities.length,
+        enrichedDocs: enrichedDocs.length,
+        autodocDerived: autodocDerivedResults.length,
+        total: combined.length
+      });
+
+      return combined;
     } catch (error) {
       log.w("VECTOR", "Failed to enrich results from LibSQL", { error: (error as Error).message });
       return results;
@@ -571,6 +831,16 @@ export class VectorStore {
       results = await provider.search(queryVector, expandedLimit);
     }
 
+    log.d("VECTOR", "search_raw_results", {
+      count: results.length,
+      sample: results.slice(0, 3).map(r => ({
+        id: r.id,
+        similarity: r.similarity,
+        hasMetadata: !!r.metadata,
+        metadataType: r.metadata?.['type']
+      }))
+    });
+
     // Enrich results with entity data from LibSQL BEFORE filtering
     // This allows filtering by metadata from LibSQL (type, filePath, etc.)
     const enriched = await this.enrichResultsFromLibSQL(results);
@@ -585,12 +855,27 @@ export class VectorStore {
 
     // Filter by metadata
     if (metadataFilter) {
+      log.d("VECTOR", "before_metadata_filter", {
+        count: filtered.length,
+        filter: metadataFilter,
+        sample: filtered.slice(0, 3).map(r => ({
+          id: r.id,
+          hasMetadata: !!r.metadata,
+          metadata: r.metadata
+        }))
+      });
+
       filtered = filtered.filter((r) => {
         if (!r.metadata) return false;
         for (const [k, v] of Object.entries(metadataFilter)) {
           if (r.metadata[k] !== v) return false;
         }
         return true;
+      });
+
+      log.d("VECTOR", "after_metadata_filter", {
+        count: filtered.length,
+        kept: filtered.slice(0, 3).map(r => ({ id: r.id, metadata: r.metadata }))
       });
     }
 
