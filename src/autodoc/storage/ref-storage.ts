@@ -141,60 +141,9 @@ export class RefStorage {
     await this.client.execute(
       `CREATE INDEX IF NOT EXISTS idx_comment_lines ON comment_refs(file_path, line_start, line_end)`,
     );
-    await this.client.execute(`CREATE INDEX IF NOT EXISTS idx_comment_branch ON comment_refs(project_hash, branch_name)`);
-
-    await this.migrateExistingRefs();
-  }
-
-  /**
-   * Migrate existing references to include project_hash and branch_name
-   */
-  private async migrateExistingRefs(): Promise<void> {
-    if (!this.client) return;
-
-    try {
-      // Check doc_references table
-      const refTableInfo = await this.client.execute(`PRAGMA table_info(doc_references)`);
-      const refHasProjectHash = refTableInfo.rows.some((row: any) => row.name === "project_hash");
-      const refHasBranchName = refTableInfo.rows.some((row: any) => row.name === "branch_name");
-
-      if (!refHasProjectHash || !refHasBranchName) {
-        if (!refHasProjectHash) {
-          await this.client.execute(`ALTER TABLE doc_references ADD COLUMN project_hash TEXT NOT NULL DEFAULT 'legacy'`);
-        }
-        if (!refHasBranchName) {
-          await this.client.execute(`ALTER TABLE doc_references ADD COLUMN branch_name TEXT NOT NULL DEFAULT 'main'`);
-        }
-
-        await this.client.execute(`
-          UPDATE doc_references
-          SET project_hash = 'legacy', branch_name = 'main'
-          WHERE project_hash IS NULL OR branch_name IS NULL
-        `);
-      }
-
-      // Check comment_refs table
-      const commentTableInfo = await this.client.execute(`PRAGMA table_info(comment_refs)`);
-      const commentHasProjectHash = commentTableInfo.rows.some((row: any) => row.name === "project_hash");
-      const commentHasBranchName = commentTableInfo.rows.some((row: any) => row.name === "branch_name");
-
-      if (!commentHasProjectHash || !commentHasBranchName) {
-        if (!commentHasProjectHash) {
-          await this.client.execute(`ALTER TABLE comment_refs ADD COLUMN project_hash TEXT NOT NULL DEFAULT 'legacy'`);
-        }
-        if (!commentHasBranchName) {
-          await this.client.execute(`ALTER TABLE comment_refs ADD COLUMN branch_name TEXT NOT NULL DEFAULT 'main'`);
-        }
-
-        await this.client.execute(`
-          UPDATE comment_refs
-          SET project_hash = 'legacy', branch_name = 'main'
-          WHERE project_hash IS NULL OR branch_name IS NULL
-        `);
-      }
-    } catch (error) {
-      // Migration failed - okay during first initialization
-    }
+    await this.client.execute(
+      `CREATE INDEX IF NOT EXISTS idx_comment_branch ON comment_refs(project_hash, branch_name)`,
+    );
   }
 
   // ---------------------------------------------------------------------------

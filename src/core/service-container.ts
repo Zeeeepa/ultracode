@@ -164,6 +164,10 @@ export class ServiceContainer {
       const graphStorage = await this.getGraphStorage();
       await this._autoDocManager.initialize(graphStorage);
 
+      // Sync project context with graph storage
+      const currentContext = graphStorage.getProjectContext();
+      this._autoDocManager.setProjectContext(currentContext);
+
       // Auto-configure if not already configured
       if (!this._autoDocManager.getConfig()) {
         const autodocDir = join(this.config.directory, ".autodoc");
