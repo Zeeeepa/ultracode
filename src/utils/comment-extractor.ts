@@ -13,7 +13,7 @@
  */
 
 import type { ParsedEntity } from "../types/parser.js";
-import type { Entity, Relationship } from "../types/storage.js";
+import type { Entity, EntityType, Relationship, RelationType } from "../types/storage.js";
 import { hashText } from "./fast-hash.js";
 
 // =============================================================================
@@ -152,7 +152,7 @@ export class CommentExtractor {
       }
 
       if (entityComments.length > 0) {
-        const entityId = (entity as any).id || CommentExtractor.generateEntityId(entity);
+        const entityId = entity.id || CommentExtractor.generateEntityId(entity);
         entityComments.forEach((c) => {
           c.associatedEntityId = entityId;
         });
@@ -191,7 +191,7 @@ export class CommentExtractor {
       const entity: Entity = {
         id,
         name: `Comment at line ${comment.location.start.line}`,
-        type: "comment" as any,
+        type: "comment" as EntityType,
         filePath,
         location: comment.location,
         metadata: {
@@ -236,7 +236,7 @@ export class CommentExtractor {
           id: `${commentId}->${entity.id}`,
           fromId: commentId,
           toId: entity.id,
-          type: "documents" as any,
+          type: "documents" as RelationType,
           metadata: {
             isLeading: comment.isLeading,
             isInline: comment.isInline,

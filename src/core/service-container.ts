@@ -36,9 +36,9 @@ export interface ServiceContainerConfig {
   /** Function to get ConductorOrchestrator */
   getConductor: () => ConductorOrchestrator;
   /** Function to get global vector store */
-  getGlobalVectorStore: () => any;
+  getGlobalVectorStore: () => unknown;
   /** Function to get semantic agent */
-  getSemanticAgentFn?: () => Promise<any>;
+  getSemanticAgentFn?: () => Promise<unknown>;
 }
 
 /**
@@ -80,7 +80,7 @@ export class ServiceContainer {
   }
 
   /** Get global vector store */
-  getGlobalVectorStore(): any {
+  getGlobalVectorStore(): unknown {
     return this.config.getGlobalVectorStore();
   }
 
@@ -97,7 +97,7 @@ export class ServiceContainer {
   async getCodeModifier(): Promise<CodeModifier> {
     if (!this._codeModifier) {
       const storage = await this.getGraphStorage();
-      const vectorStore = this.getGlobalVectorStore();
+      const vectorStore = this.getGlobalVectorStore() as any;
       this._codeModifier = new CodeModifierClass(storage, vectorStore, this.config.directory);
       await this._codeModifier.initialize();
     }
@@ -108,7 +108,7 @@ export class ServiceContainer {
   async getFileOperations(): Promise<FileOperations> {
     if (!this._fileOperations) {
       const storage = await this.getGraphStorage();
-      const vectorStore = this.getGlobalVectorStore();
+      const vectorStore = this.getGlobalVectorStore() as any;
       const previewManager = new PreviewManager(storage, vectorStore);
       await previewManager.initialize();
       this._fileOperations = new FileOperationsClass(storage, vectorStore, previewManager);
@@ -137,7 +137,7 @@ export class ServiceContainer {
   async getPatternSearch(): Promise<PatternSearch> {
     if (!this._patternSearch) {
       const storage = await this.getGraphStorage();
-      const vectorStore = this.getGlobalVectorStore();
+      const vectorStore = this.getGlobalVectorStore() as any;
       const techDetector = await this.getTechnologyDetector();
       this._patternSearch = new PatternSearchClass(storage, vectorStore, techDetector);
       await this._patternSearch.initialize();
@@ -230,18 +230,25 @@ export class ServiceContainer {
   }
 
   /** Subscribe to index:completed event to trigger embeddings generation */
-  private subscribeToIndexCompleted(adm: AutoDocManager, log: any): void {
+  private subscribeToIndexCompleted(adm: AutoDocManager, log: unknown): void {
     // Already generated or subscribed - skip
     if (this._autodocEmbeddingsGenerated || this._autodocEmbeddingsSubscriptionId) {
       return;
     }
+
+    // Type assertion for logger (passed from caller, always valid)
+    const logger = log as {
+      i: (tag: string, msg: string, data?: unknown) => void;
+      w: (tag: string, msg: string, data?: unknown) => void;
+      d: (tag: string, msg: string, data?: unknown) => void;
+    };
 
     const generateEmbeddings = async () => {
       if (this._autodocEmbeddingsGenerated) {
         return;
       }
 
-      log.i("AUTODOC", "embeddings_triggered_by_event", { event: "index:completed" });
+      logger.i("AUTODOC", "embeddings_triggered_by_event", { event: "index:completed" });
 
       try {
         await this.generateAutoDocEmbeddings(adm);
@@ -253,7 +260,7 @@ export class ServiceContainer {
           this._autodocEmbeddingsSubscriptionId = null;
         }
       } catch (err) {
-        log.w("AUTODOC", "embeddings_failed", { error: (err as Error).message });
+        logger.w("AUTODOC", "embeddings_failed", { error: (err as Error).message });
       }
     };
 
@@ -263,15 +270,15 @@ export class ServiceContainer {
       generateEmbeddings,
     );
 
-    log.d("AUTODOC", "embeddings_subscribed", { event: "index:completed" });
+    logger.d("AUTODOC", "embeddings_subscribed", { event: "index:completed" });
 
     // Fallback: check if index already completed (event was missed)
     // Query knowledge bus for recent index:completed events
     const recentEvents = knowledgeBus.query("index:completed");
     if (recentEvents.length > 0) {
-      log.i("AUTODOC", "embeddings_fallback", { reason: "index_already_completed", events: recentEvents.length });
+      logger.i("AUTODOC", "embeddings_fallback", { reason: "index_already_completed", events: recentEvents.length });
       generateEmbeddings().catch((err) => {
-        log.w("AUTODOC", "embeddings_fallback_failed", { error: (err as Error).message });
+        logger.w("AUTODOC", "embeddings_fallback_failed", { error: (err as Error).message });
       });
     }
   }
@@ -281,13 +288,15 @@ export class ServiceContainer {
     const { log } = await import("../logging/index.js");
 
     // Get semantic agent and vector store
-    let semanticAgent: any;
-    let vectorStore: any;
+    let semanticAgent: unknown;
+    let vectorStore: unknown;
 
     try {
       semanticAgent = await this.getSemanticAgent();
       // Get VectorStore directly from SemanticAgent (more reliable than config.getGlobalVectorStore)
-      vectorStore = semanticAgent?.getVectorStore?.();
+      // Type assertion needed for optional chaining on unknown
+      const agent = semanticAgent as { getVectorStore?: () => unknown } | undefined;
+      vectorStore = agent?.getVectorStore?.();
     } catch (err) {
       log.w("AUTODOC", "embeddings_skipped", { reason: "SemanticAgent not available", error: (err as Error).message });
       return;
@@ -301,6 +310,17 @@ export class ServiceContainer {
       });
       return;
     }
+
+    // Type assertions for method calls (validated by null checks above)
+    const agent = semanticAgent as { generateEmbedding: (text: string) => Promise<Float32Array | null> };
+    const store = vectorStore as {
+      insert: (data: {
+        id: string;
+        content: string;
+        vector: Float32Array;
+        metadata: Record<string, unknown>;
+      }) => Promise<void>;
+    };
 
     // Get all documents
     const allDocs = await adm.getAllDocuments();
@@ -327,10 +347,10 @@ export class ServiceContainer {
           }
 
           const textToEmbed = `${doc.title}\n\n${doc.content}`;
-          const embedding = await semanticAgent.generateEmbedding(textToEmbed);
+          const embedding = await agent.generateEmbedding(textToEmbed);
 
           if (embedding) {
-            await vectorStore.insert({
+            await store.insert({
               id: doc.id,
               content: textToEmbed.slice(0, 1000),
               vector: embedding,
@@ -340,8 +360,8 @@ export class ServiceContainer {
                 filePath: doc.filePath,
                 section: doc.section,
                 title: doc.title,
+                createdAt: Date.now(),
               },
-              createdAt: Date.now(),
             });
             generated++;
           }
@@ -362,7 +382,10 @@ export class ServiceContainer {
     // Flush and save to disk
     if (generated > 0) {
       log.i("AUTODOC", "flushing_to_disk");
-      await vectorStore.flushAndSave();
+      const storeWithFlush = vectorStore as { flushAndSave?: () => Promise<void> };
+      if (typeof storeWithFlush.flushAndSave === "function") {
+        await storeWithFlush.flushAndSave();
+      }
       log.i("AUTODOC", "embeddings_saved_to_disk");
     }
   }

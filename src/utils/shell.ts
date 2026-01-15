@@ -22,6 +22,29 @@ import { runtime } from "./runtime.js";
 // TYPES
 // =============================================================================
 
+/**
+ * Bun.spawn options interface
+ */
+interface BunSpawnOptions {
+  cwd?: string;
+  env?: Record<string, string>;
+  stdout?: "pipe" | "inherit" | "ignore";
+  stderr?: "pipe" | "inherit" | "ignore";
+  stdin?: "pipe" | "inherit" | "ignore";
+  windowsHide?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Node.js ExecException interface
+ */
+interface NodeExecException extends Error {
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
+  code?: number;
+  status?: number;
+}
+
 export interface ShellResult {
   /** Standard output */
   stdout: string;
@@ -81,8 +104,6 @@ async function execBun(
   options: { cwd: string; env?: Record<string, string>; timeout?: number | undefined; quiet?: boolean },
 ): Promise<ShellResult> {
   try {
-    const Bun = globalThis.Bun!;
-
     // On Windows, use cmd.exe to execute the command
     // On Unix, use sh -c
     const isWindows = process.platform === "win32";
@@ -90,9 +111,18 @@ async function execBun(
     const shellArgs = isWindows ? ["/c", command] : ["-c", command];
 
     // Bun.spawn options - windowsHide is supported in Bun 1.0+
-    const spawnOptions: any = {
+    // Filter out undefined values from process.env to satisfy Record<string, string> type
+    const filteredEnv = options.env
+      ? Object.fromEntries(
+          Object.entries({ ...process.env, ...options.env }).filter(([_, v]) => v !== undefined) as Array<
+            [string, string]
+          >,
+        )
+      : undefined;
+
+    const spawnOptions: BunSpawnOptions = {
       cwd: options.cwd,
-      env: options.env ? { ...process.env, ...options.env } : undefined,
+      env: filteredEnv,
       stdout: "pipe",
       stderr: "pipe",
     };
@@ -102,7 +132,16 @@ async function execBun(
       spawnOptions.windowsHide = true;
     }
 
-    const proc = Bun.spawn([shell, ...shellArgs], spawnOptions);
+    // Use bracket notation for Bun.spawn to satisfy index signature type checking
+    const bunSpawn = (globalThis as any)["Bun"]["spawn"] as (
+      args: string[],
+      options: BunSpawnOptions,
+    ) => {
+      stdout: ReadableStream;
+      stderr: ReadableStream;
+      exited: Promise<number>;
+    };
+    const proc = bunSpawn([shell, ...shellArgs], spawnOptions);
 
     // Read output
     const [stdoutBuffer, stderrBuffer] = await Promise.all([
@@ -121,10 +160,11 @@ async function execBun(
       exitCode,
       success: exitCode === 0,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error instanceof Error ? error : new Error(String(error));
     return {
       stdout: "",
-      stderr: error.message || String(error),
+      stderr: err.message,
       exitCode: 1,
       success: false,
     };
@@ -158,11 +198,12 @@ async function execNode(
       exitCode: 0,
       success: true,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as NodeExecException;
     return {
-      stdout: error.stdout?.trim() || "",
-      stderr: error.stderr?.trim() || error.message || "",
-      exitCode: error.code ?? 1,
+      stdout: err.stdout?.toString().trim() || "",
+      stderr: err.stderr?.toString().trim() || err.message || "",
+      exitCode: err.code ?? 1,
       success: false,
     };
   }
@@ -204,11 +245,12 @@ export function execSync(command: string, options: ShellOptions = {}): ShellResu
       exitCode: 0,
       success: true,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as NodeExecException;
     return {
-      stdout: error.stdout?.toString().trim() || "",
-      stderr: error.stderr?.toString().trim() || error.message || "",
-      exitCode: error.status ?? 1,
+      stdout: err.stdout?.toString().trim() || "",
+      stderr: err.stderr?.toString().trim() || err.message || "",
+      exitCode: err.status ?? 1,
       success: false,
     };
   }

@@ -8,6 +8,18 @@ import type { AgentTask } from "../../types/agent.js";
 import type { ConductorConfig, TaskComplexityAnalysis } from "./types.js";
 
 /**
+ * Task payload interface for complexity analysis
+ */
+interface TaskPayload {
+  fileCount?: number;
+  requiresResearch?: boolean;
+  requiresTesting?: boolean;
+  directImplementation?: boolean;
+  bypassDelegation?: boolean;
+  [key: string]: unknown;
+}
+
+/**
  * Analyze task complexity and determine delegation strategy.
  */
 export function analyzeTaskComplexity(task: AgentTask, config: ConductorConfig): TaskComplexityAnalysis {
@@ -26,9 +38,9 @@ export function analyzeTaskComplexity(task: AgentTask, config: ConductorConfig):
   }
 
   if (task.payload && typeof task.payload === "object") {
-    const payload = task.payload as any;
+    const payload = task.payload as TaskPayload;
 
-    if (payload.fileCount > 10) {
+    if (payload.fileCount && payload.fileCount > 10) {
       score += 2;
       factors.push(`Large scope: ${payload.fileCount} files`);
     }
@@ -77,6 +89,9 @@ export function isIndexingTask(task: AgentTask): boolean {
  * Check if task is trying to bypass delegation.
  */
 export function isDirectImplementation(task: AgentTask): boolean {
-  const payload = task.payload as any;
-  return payload?.directImplementation === true || payload?.bypassDelegation === true || task.type === "direct";
+  if (!task.payload || typeof task.payload !== "object") {
+    return task.type === "direct";
+  }
+  const payload = task.payload as TaskPayload;
+  return payload.directImplementation === true || payload.bypassDelegation === true || task.type === "direct";
 }

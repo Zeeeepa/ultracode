@@ -20,6 +20,78 @@ import { existsSync, readTextSync } from "../utils/file-ops.js";
 
 import { DEFAULT_CONFIG } from "./config-defaults.js";
 
+// =============================================================================
+// TYPE-SAFE ENV PARSING HELPERS
+// =============================================================================
+
+/**
+ * Parse embedding provider from string
+ */
+function parseEmbeddingProvider(
+  value: string | undefined,
+): "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "ovms" | "auto" | undefined {
+  if (!value) return undefined;
+  const providers = ["ollama", "openai", "cloudru", "huggingface", "tei", "ovms", "auto"];
+  return providers.includes(value)
+    ? (value as "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "ovms" | "auto")
+    : undefined;
+}
+
+/**
+ * Parse database journal mode from string
+ */
+function parseDatabaseMode(value: string | undefined): "WAL" | "DELETE" | "TRUNCATE" | undefined {
+  if (!value) return undefined;
+  const modes = ["WAL", "DELETE", "TRUNCATE"];
+  return modes.includes(value) ? (value as "WAL" | "DELETE" | "TRUNCATE") : undefined;
+}
+
+/**
+ * Parse database synchronous level from string
+ */
+function parseSynchronousLevel(value: string | undefined): "OFF" | "NORMAL" | "FULL" | undefined {
+  if (!value) return undefined;
+  const levels = ["OFF", "NORMAL", "FULL"];
+  return levels.includes(value) ? (value as "OFF" | "NORMAL" | "FULL") : undefined;
+}
+
+/**
+ * Parse database temp store from string
+ */
+function parseTempStore(value: string | undefined): "DEFAULT" | "FILE" | "MEMORY" | undefined {
+  if (!value) return undefined;
+  const stores = ["DEFAULT", "FILE", "MEMORY"];
+  return stores.includes(value) ? (value as "DEFAULT" | "FILE" | "MEMORY") : undefined;
+}
+
+/**
+ * Parse logging level from string
+ */
+function parseLogLevel(value: string | undefined): "debug" | "info" | "warn" | "error" | undefined {
+  if (!value) return undefined;
+  const levels = ["debug", "info", "warn", "error"];
+  return levels.includes(value) ? (value as "debug" | "info" | "warn" | "error") : undefined;
+}
+
+/**
+ * Parse logging format from string
+ */
+function parseLogFormat(value: string | undefined): "json" | "text" | undefined {
+  if (!value) return undefined;
+  return value === "json" || value === "text" ? value : undefined;
+}
+
+/**
+ * Parse load balancing strategy from string
+ */
+function parseLoadBalancingStrategy(
+  value: string | undefined,
+): "round-robin" | "least-loaded" | "priority" | undefined {
+  if (!value) return undefined;
+  const strategies = ["round-robin", "least-loaded", "priority"];
+  return strategies.includes(value) ? (value as "round-robin" | "least-loaded" | "priority") : undefined;
+}
+
 // Re-export types for backward compatibility
 export type {
   AgentResourceConstraints,
@@ -152,7 +224,7 @@ export class ConfigLoader {
     const embeddingConfig = this.config.mcp.embedding || {};
     return {
       model: embeddingConfig.model || "all-MiniLM-L6-v2",
-      provider: (embeddingConfig.provider as any) || "auto",
+      provider: parseEmbeddingProvider(embeddingConfig.provider) || "auto",
       apiKey: embeddingConfig.apiKey || "",
       enabled: embeddingConfig.enabled || false,
 
@@ -250,16 +322,11 @@ export class ConfigLoader {
             yamlConfig.mcp?.embedding?.model ||
             process.env["MCP_EMBEDDING_MODEL"] ||
             DEFAULT_CONFIG.mcp.embedding?.model,
-          provider: (yamlConfig.mcp?.embedding?.provider ||
-            process.env["MCP_EMBEDDING_PROVIDER"] ||
-            DEFAULT_CONFIG.mcp.embedding?.provider) as
-            | "ollama"
-            | "openai"
-            | "cloudru"
-            | "huggingface"
-            | "tei"
-            | "ovms"
-            | "auto",
+          provider:
+            parseEmbeddingProvider(yamlConfig.mcp?.embedding?.provider) ||
+            parseEmbeddingProvider(process.env["MCP_EMBEDDING_PROVIDER"]) ||
+            DEFAULT_CONFIG.mcp.embedding?.provider ||
+            "auto",
           apiKey:
             yamlConfig.mcp?.embedding?.apiKey ||
             process.env["MCP_EMBEDDING_API_KEY"] ||
@@ -363,7 +430,9 @@ export class ConfigLoader {
       database: {
         path: yamlConfig.database?.path || process.env["DATABASE_PATH"] || DEFAULT_CONFIG.database?.path,
         mode:
-          (yamlConfig.database?.mode as any) || (process.env["DATABASE_MODE"] as any) || DEFAULT_CONFIG.database?.mode,
+          parseDatabaseMode(yamlConfig.database?.mode) ||
+          parseDatabaseMode(process.env["DATABASE_MODE"]) ||
+          DEFAULT_CONFIG.database?.mode,
         cacheSize:
           yamlConfig.database?.cacheSize ||
           Number(process.env["DATABASE_CACHE_SIZE"]) ||
@@ -373,18 +442,23 @@ export class ConfigLoader {
           Number(process.env["DATABASE_MMAP_SIZE"]) ||
           DEFAULT_CONFIG.database?.mmapSize,
         synchronous:
-          (yamlConfig.database?.synchronous as any) ||
-          (process.env["DATABASE_SYNCHRONOUS"] as any) ||
+          parseSynchronousLevel(yamlConfig.database?.synchronous) ||
+          parseSynchronousLevel(process.env["DATABASE_SYNCHRONOUS"]) ||
           DEFAULT_CONFIG.database?.synchronous,
         tempStore:
-          (yamlConfig.database?.tempStore as any) ||
-          (process.env["DATABASE_TEMP_STORE"] as any) ||
+          parseTempStore(yamlConfig.database?.tempStore) ||
+          parseTempStore(process.env["DATABASE_TEMP_STORE"]) ||
           DEFAULT_CONFIG.database?.tempStore,
       },
       logging: {
-        level: (yamlConfig.logging?.level as any) || (process.env["LOG_LEVEL"] as any) || DEFAULT_CONFIG.logging?.level,
+        level:
+          parseLogLevel(yamlConfig.logging?.level) ||
+          parseLogLevel(process.env["LOG_LEVEL"]) ||
+          DEFAULT_CONFIG.logging?.level,
         format:
-          (yamlConfig.logging?.format as any) || (process.env["LOG_FORMAT"] as any) || DEFAULT_CONFIG.logging?.format,
+          parseLogFormat(yamlConfig.logging?.format) ||
+          parseLogFormat(process.env["LOG_FORMAT"]) ||
+          DEFAULT_CONFIG.logging?.format,
         outputFile: yamlConfig.logging?.outputFile || process.env["LOG_FILE"] || DEFAULT_CONFIG.logging?.outputFile,
         maxFileSize:
           yamlConfig.logging?.maxFileSize || process.env["LOG_MAX_FILE_SIZE"] || DEFAULT_CONFIG.logging?.maxFileSize,
@@ -636,8 +710,8 @@ export class ConfigLoader {
           Number(process.env["COORDINATOR_TASK_QUEUE_LIMIT"]) ||
           DEFAULT_CONFIG.coordinator.taskQueueLimit,
         loadBalancingStrategy:
-          (yamlConfig.coordinator?.loadBalancingStrategy as any) ||
-          (process.env["COORDINATOR_LOAD_BALANCING_STRATEGY"] as any) ||
+          parseLoadBalancingStrategy(yamlConfig.coordinator?.loadBalancingStrategy) ||
+          parseLoadBalancingStrategy(process.env["COORDINATOR_LOAD_BALANCING_STRATEGY"]) ||
           DEFAULT_CONFIG.coordinator.loadBalancingStrategy,
         resourceConstraints: {
           maxMemoryMB:
@@ -678,8 +752,8 @@ export class ConfigLoader {
           Number(process.env["CONDUCTOR_TASK_QUEUE_LIMIT"]) ||
           DEFAULT_CONFIG.conductor.taskQueueLimit,
         loadBalancingStrategy:
-          (yamlConfig.conductor?.loadBalancingStrategy as any) ||
-          (process.env["CONDUCTOR_LOAD_BALANCING_STRATEGY"] as any) ||
+          parseLoadBalancingStrategy(yamlConfig.conductor?.loadBalancingStrategy) ||
+          parseLoadBalancingStrategy(process.env["CONDUCTOR_LOAD_BALANCING_STRATEGY"]) ||
           DEFAULT_CONFIG.conductor.loadBalancingStrategy,
         resourceConstraints: {
           maxMemoryMB:

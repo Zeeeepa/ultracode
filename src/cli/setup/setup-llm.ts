@@ -8,12 +8,20 @@ import * as fsModule from "node:fs";
 import * as osModule from "node:os";
 import * as pathModule from "node:path";
 
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * Bun runtime interface (defined in runtime-detection.ts)
+ */
+
 /**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
  */
 async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
+  if (typeof globalThis.Bun?.sleep === "function") {
+    await globalThis.Bun.sleep(ms);
   } else {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -95,7 +103,7 @@ function getClaudeCommand(): { cmd: string; args: string[] } | null {
   const { join } = pathModule;
   const { homedir } = osModule;
 
-  const isBun = typeof (globalThis as any).Bun !== "undefined";
+  const isBun = typeof globalThis.Bun !== "undefined";
   const home = homedir();
 
   // Possible CLI locations (in order of preference)
@@ -726,8 +734,9 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
       timeout: 900000,
       windowsHide: true,
     });
-  } catch (e: any) {
-    console.error(`[DEBUG] TGI pull failed: ${e.message}`);
+  } catch (e: unknown) {
+    const error = e instanceof Error ? e : new Error(String(e));
+    console.error(`[DEBUG] TGI pull failed: ${error.message}`);
     printError(t("install.pull_failed"));
     return false;
   }
@@ -744,8 +753,9 @@ async function installTGI_LLM(model: SelectedLLMModel, _gpu: GPUInfo): Promise<b
 
   try {
     execSync(tgiCmd, { stdio: "inherit", windowsHide: true });
-  } catch (e: any) {
-    console.error(`[DEBUG] TGI docker run failed: ${e.message}`);
+  } catch (e: unknown) {
+    const error = e instanceof Error ? e : new Error(String(e));
+    console.error(`[DEBUG] TGI docker run failed: ${error.message}`);
     printError("Failed to create container");
     return false;
   }

@@ -18,6 +18,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import type { FaissIndex } from "faiss-napi";
+
 import {
   type CUDAAddon,
   type CudaHandlerContext,
@@ -38,6 +40,7 @@ import {
 // Import handlers from extracted modules
 import {
   type FaissHandlerContext,
+  type FaissNapiModule,
   handleFaissAdd,
   handleFaissBatchSearch,
   handleFaissInit,
@@ -53,6 +56,7 @@ import {
 import { createPacket, NamedPipeServer, parsePacket } from "./named-pipe-transport.js";
 
 import type {
+  ContentCacheEntry,
   GpuErrorResponse,
   GpuStatsResponse,
   GpuWorkerRequest,
@@ -64,8 +68,8 @@ import type {
 // Dynamic Imports (handle missing dependencies)
 // =============================================================================
 
-// faiss-napi type alias (optional dependency)
-type FaissModule = typeof import("faiss-napi");
+// faiss-napi module (optional dependency)
+type FaissModule = FaissNapiModule;
 
 let faiss: FaissModule | null = null;
 let cudaAddon: CUDAAddon | null = null;
@@ -173,7 +177,19 @@ const state: GpuWorkerState = {
 };
 
 // Faiss index instance
-let faissIndex: any = null;
+let faissIndex: FaissIndex | null = null;
+
+// =============================================================================
+// Global Response Capture (for Named Pipe binary IPC)
+// =============================================================================
+
+/**
+ * Global interface for Named Pipe response capturing
+ * Used by handleNamedPipeRequest to capture responses synchronously
+ */
+interface GlobalWithCapture {
+  _captureResponse?: (response: GpuWorkerResponse) => void;
+}
 
 // =============================================================================
 // Response Helpers
@@ -181,8 +197,9 @@ let faissIndex: any = null;
 
 function sendResponse(response: GpuWorkerResponse): void {
   // Check if we're capturing response for Named Pipe
-  if ((global as any)._captureResponse) {
-    (global as any)._captureResponse(response);
+  const globalWithCapture = global as unknown as GlobalWithCapture;
+  if (globalWithCapture._captureResponse) {
+    globalWithCapture._captureResponse(response);
     return;
   }
   process.stdout.write(`${JSON.stringify(response)}\n`);
@@ -212,7 +229,7 @@ function saveContentCache(): void {
   if (!contentCachePath || state.contentCache.size === 0) return;
 
   try {
-    const data: Record<string, any> = {};
+    const data: Record<string, ContentCacheEntry> = {};
     for (const [id, entry] of state.contentCache) {
       data[id] = entry;
     }
@@ -228,10 +245,10 @@ function loadContentCache(): void {
   if (!contentCachePath || !existsSync(contentCachePath)) return;
 
   try {
-    const data = JSON.parse(readFileSync(contentCachePath, "utf-8"));
+    const data = JSON.parse(readFileSync(contentCachePath, "utf-8")) as Record<string, ContentCacheEntry>;
     state.contentCache.clear();
     for (const [id, entry] of Object.entries(data)) {
-      state.contentCache.set(id, entry as any);
+      state.contentCache.set(id, entry);
     }
     log(`Loaded content cache: ${state.contentCache.size} entries`);
   } catch (error) {
@@ -252,7 +269,7 @@ function getFaissContext(): FaissHandlerContext {
     logError,
     sendResponse,
     sendError,
-    setFaissIndex: (index: any) => {
+    setFaissIndex: (index: FaissIndex | null) => {
       faissIndex = index;
     },
     setContentCachePath,
@@ -446,57 +463,102 @@ async function handleRequest(request: GpuWorkerRequest): Promise<void> {
 let namedPipeServer: NamedPipeServer | null = null;
 
 /**
+ * Header metadata for binary packet reconstruction
+ */
+interface BinaryPacketHeader {
+  dimensions?: number;
+  queryCount?: number;
+  items?: Array<{ id: string; content?: string; metadata?: Record<string, unknown> }>;
+}
+
+/**
+ * Reconstruct request with vectors from binary packet
+ */
+function reconstructRequestWithVectors(
+  request: GpuWorkerRequest,
+  header: BinaryPacketHeader,
+  vectors: Float32Array,
+): GpuWorkerRequest {
+  // Create mutable copy for reconstruction
+  const reconstructed = { ...request } as Record<string, unknown>;
+
+  switch (request.type) {
+    case "faiss.add":
+      reconstructed["vectors"] = Array.from(vectors);
+      break;
+
+    case "faiss.search":
+      reconstructed["vector"] = Array.from(vectors);
+      break;
+
+    case "faiss.batchSearch":
+      reconstructed["vectors"] = Array.from(vectors);
+      break;
+
+    case "faiss.train":
+      reconstructed["vectors"] = Array.from(vectors);
+      break;
+
+    case "cuda.cosine": {
+      const dim = (header.dimensions as number | undefined) ?? vectors.length / 2;
+      reconstructed["a"] = Array.from(vectors.subarray(0, dim));
+      reconstructed["b"] = Array.from(vectors.subarray(dim));
+      break;
+    }
+
+    case "cuda.batchCosine": {
+      const dim = (header.dimensions as number | undefined) ?? 0;
+      const queryCount = (header.queryCount as number | undefined) ?? 1;
+      reconstructed["query"] = Array.from(vectors.subarray(0, dim));
+      const database: number[][] = [];
+      for (let i = 1; i < queryCount + (vectors.length - dim) / dim; i++) {
+        database.push(Array.from(vectors.subarray(i * dim, (i + 1) * dim)));
+      }
+      reconstructed["database"] = database;
+      break;
+    }
+
+    case "embeddings.addBatch": {
+      const dim = (header.dimensions as number | undefined) ?? 0;
+      const items = (header["items"] as Array<{ vector?: number[] }>) ?? [];
+      for (let i = 0; i < items.length; i++) {
+        items[i]!.vector = Array.from(vectors.subarray(i * dim, (i + 1) * dim));
+      }
+      reconstructed["items"] = items;
+      break;
+    }
+
+    case "embeddings.search":
+      reconstructed["vector"] = Array.from(vectors);
+      break;
+  }
+
+  return reconstructed as unknown as GpuWorkerRequest;
+}
+
+/**
  * Handle Named Pipe binary request
  * Converts binary packet to JSON request, processes, and returns binary response
  */
 async function handleNamedPipeRequest(packet: Buffer): Promise<Buffer> {
   try {
     const { header, vectors } = parsePacket(packet);
-    const request = header as unknown as GpuWorkerRequest;
+    let request = header as unknown as GpuWorkerRequest;
 
     log(`[NamedPipe] Received: type=${request.type}, packetLen=${packet.length}, vectorsLen=${vectors?.length ?? 0}`);
 
-    // If vectors are present, inject them into request
+    // If vectors are present, reconstruct request with typed vectors
     if (vectors && vectors.length > 0) {
-      if (request.type === "faiss.add") {
-        (request as any).vectors = Array.from(vectors);
-      } else if (request.type === "faiss.search") {
-        (request as any).vector = Array.from(vectors);
-      } else if (request.type === "faiss.batchSearch") {
-        (request as any).vectors = Array.from(vectors);
-      } else if (request.type === "faiss.train") {
-        (request as any).vectors = Array.from(vectors);
-      } else if (request.type === "cuda.cosine") {
-        const dim = (header as any).dimensions || vectors.length / 2;
-        (request as any).a = Array.from(vectors.subarray(0, dim));
-        (request as any).b = Array.from(vectors.subarray(dim));
-      } else if (request.type === "cuda.batchCosine") {
-        const dim = (header as any).dimensions;
-        const queryCount = (header as any).queryCount || 1;
-        (request as any).query = Array.from(vectors.subarray(0, dim));
-        const database: number[][] = [];
-        for (let i = 1; i < queryCount + (vectors.length - dim) / dim; i++) {
-          database.push(Array.from(vectors.subarray(i * dim, (i + 1) * dim)));
-        }
-        (request as any).database = database;
-      } else if (request.type === "embeddings.addBatch") {
-        // Reconstruct items from binary vectors
-        const dim = (header as any).dimensions;
-        const items = (header as any).items || [];
-        for (let i = 0; i < items.length; i++) {
-          items[i].vector = Array.from(vectors.subarray(i * dim, (i + 1) * dim));
-        }
-        (request as any).items = items;
-      } else if (request.type === "embeddings.search") {
-        (request as any).vector = Array.from(vectors);
-      }
+      const headerMetadata = header as unknown as BinaryPacketHeader;
+      request = reconstructRequestWithVectors(request, headerMetadata, vectors);
     }
 
     // Capture response by temporarily replacing sendResponse
     let capturedResponse: GpuWorkerResponse | null = null;
 
     // Override sendResponse to capture the response
-    (global as any)._captureResponse = (response: GpuWorkerResponse) => {
+    const globalWithCapture = global as unknown as GlobalWithCapture;
+    globalWithCapture._captureResponse = (response: GpuWorkerResponse) => {
       capturedResponse = response;
     };
 
@@ -504,16 +566,19 @@ async function handleNamedPipeRequest(packet: Buffer): Promise<Buffer> {
     await handleRequest(request);
 
     // Restore and get response
-    delete (global as any)._captureResponse;
+    delete globalWithCapture._captureResponse;
 
     if (capturedResponse) {
       // Check if response contains vectors (for future optimization)
-      const response = capturedResponse as any;
-      if (response.vectors && Array.isArray(response.vectors)) {
+      type ResponseWithVectors = GpuWorkerResponse & {
+        vectors?: number[][];
+      };
+      const responseWithVectors = capturedResponse as ResponseWithVectors;
+      if (responseWithVectors.vectors && Array.isArray(responseWithVectors.vectors)) {
         // Return binary response with vectors
-        const vectorData = new Float32Array(response.vectors.flat());
-        delete response.vectors;
-        return createPacket(response, vectorData);
+        const vectorData = new Float32Array(responseWithVectors.vectors.flat());
+        delete responseWithVectors.vectors;
+        return createPacket(capturedResponse, vectorData);
       }
       return createPacket(capturedResponse);
     }
@@ -572,7 +637,9 @@ async function main(): Promise<void> {
 
     try {
       const request = JSON.parse(line) as GpuWorkerRequest;
-      const vec = (request as any).vector;
+      // Debug logging: check if request has vector field
+      const requestWithVector = request as Partial<{ vector?: number[] } & { vectors?: number[] } & GpuWorkerRequest>;
+      const vec = requestWithVector.vector ?? requestWithVector.vectors;
       log(
         `[stdin] Parsed: type=${request.type}, keys=${Object.keys(request).join(",")}, hasVector=${!!vec}, vectorLen=${vec?.length ?? "N/A"}`,
       );

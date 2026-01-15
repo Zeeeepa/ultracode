@@ -7,17 +7,7 @@
 
 import { spawn } from "node:child_process";
 import { log } from "../logging/index.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+import { sleep } from "./runtime-detection.js";
 
 const OLLAMA_API_URL = "http://127.0.0.1:11434/api/tags";
 const OLLAMA_STARTUP_WAIT = 5000; // 5s wait after starting Ollama

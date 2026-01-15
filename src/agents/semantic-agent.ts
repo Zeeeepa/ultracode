@@ -76,6 +76,7 @@ import {
   type SimilarCode,
   type VectorEmbedding,
 } from "../types/semantic.js";
+import type { GraphStorage } from "../types/storage.js";
 import { CircuitBreaker } from "../utils/circuit-breaker.js";
 import { loadSemanticConfig } from "../utils/config-paths.js";
 import { hashText } from "../utils/fast-hash.js";
@@ -83,12 +84,14 @@ import { hashText } from "../utils/fast-hash.js";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { BaseAgent } from "./base.js";
+import type { QueryAgent } from "./query-agent.js";
 import { type ResourceAdjustmentCapable, ResourceAdjustmentMixin } from "./resource-adjustment-mixin.js";
 import { warmupSemanticCache as warmupSemanticCacheExtracted } from "./semantic/cache-warmup.js";
 import { processStandaloneComments as processStandaloneCommentsExtracted } from "./semantic/comment-processor.js";
 // Extracted modules
 import {
   EMBEDDING_EXCLUDE_PATTERNS,
+  type EmbeddingProcessorContext,
   processPreGeneratedEmbeddings,
   shouldExcludeFromEmbedding,
 } from "./semantic/embedding-processor.js";
@@ -98,7 +101,7 @@ import {
   getModelNameFromSemanticConfig,
   mapSemanticConfigToProvider,
 } from "./semantic/provider-config.js";
-import { VectorIndexManager } from "./semantic/vector-index-manager.js";
+import { type HotspotInput, VectorIndexManager } from "./semantic/vector-index-manager.js";
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -132,6 +135,8 @@ interface SemanticTaskPayload {
   languages?: string[];
   limit?: number;
 }
+
+// HotspotInput type imported from vector-index-manager.ts
 
 // =============================================================================
 // 5. CORE BUSINESS LOGIC
@@ -167,6 +172,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   // Mutex for OpenVINO - prevents concurrent native calls that crash Bun
   private embeddingMutex: Promise<void> = Promise.resolve();
 
+  // Model name for embeddings (stored separately for type safety)
+  private embeddingModelName = "all-MiniLM-L6-v2";
+
   // Two-phase mode: dump embeddings to disk, then insert to DB
   // Workaround for Bun crash with concurrent OpenVINO + LibSQL native modules
   private twoPhaseMode = false;
@@ -180,6 +188,13 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    */
   getLastOversizedWarning(): OversizedEntitiesWarning | null {
     return this.lastOversizedWarning;
+  }
+
+  /**
+   * Get current embedding model name
+   */
+  get modelName(): string {
+    return this.embeddingModelName;
   }
 
   /**
@@ -226,19 +241,6 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     this.embeddingBatchSize = this.defaultBatchSize;
   }
 
-  /**
-   * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
-   */
-  private async sleep(ms: number): Promise<void> {
-    if (typeof (globalThis as any).Bun?.sleep === "function") {
-      // Bun: use Bun.sleep which works correctly
-      await (globalThis as any).Bun.sleep(ms);
-    } else {
-      // Node.js: setTimeout
-      await new Promise((resolve) => setTimeout(resolve, ms));
-    }
-  }
-
   private async setupComponents(): Promise<void> {
     const startTime = Date.now();
     const config = getConfig();
@@ -259,12 +261,13 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Determine provider: semantic-config.json takes priority, then YAML config, then auto-detection
     const yamlProvider = config.mcp?.embedding?.provider;
     const jsonProvider = mapSemanticConfigToProvider(semanticConfig);
-    const provider = jsonProvider !== "auto" ? jsonProvider : (yamlProvider as any) || "auto";
+    const provider = jsonProvider !== "auto" ? jsonProvider : (yamlProvider ?? "auto");
 
     // Determine model name
     const yamlModel = config.mcp?.embedding?.model;
     const jsonModel = getModelNameFromSemanticConfig(semanticConfig);
     const modelName = jsonModel !== "all-MiniLM-L6-v2" ? jsonModel : yamlModel || "all-MiniLM-L6-v2";
+    this.embeddingModelName = modelName; // Store for type-safe access
 
     const providerSource =
       jsonProvider !== "auto" ? "semantic-config.json" : yamlProvider ? "YAML config" : "auto-detect";
@@ -328,7 +331,14 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     this.codeAnalyzer = new CodeAnalyzer(this.vectorStore, this.embeddingGen, this.cache);
     this.vectorIndexManager = new VectorIndexManager(this.vectorStore, this.codeAnalyzer, this.embeddingGen);
-    (this as any)["embeddingGen.generateBatch"] = (texts: any) => this.embeddingGen.generateBatch(texts);
+  }
+
+  /**
+   * Public method for batch embedding generation
+   * Exposed for external use (backward compatibility)
+   */
+  public async "embeddingGen.generateBatch"(texts: string[]): Promise<Float32Array[]> {
+    return this.embeddingGen.generateBatch(texts);
   }
 
   /**
@@ -403,7 +413,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     while (Date.now() - start < timeoutMs) {
       if (this.embeddingReady) return true;
       // Real sleep without busy-wait
-      await this.sleep(100);
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     return this.embeddingReady;
@@ -707,7 +717,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       async () => {
         const result = await this.hybridSearch.semanticSearch(query, limit);
         // Cache the result
-        this.cache.set(cacheKey, result as any, 600000); // 10 minutes TTL
+        this.cache.set(cacheKey, result, 600000); // 10 minutes TTL
         return result;
       },
       () =>
@@ -760,7 +770,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    * Delegated to VectorIndexManager for better modularity.
    */
   async analyzeHotspots(
-    hotspots: any[],
+    hotspots: HotspotInput[],
     metric: string,
   ): Promise<{
     metric: string;
@@ -988,8 +998,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     let filteredCount = 0;
 
     for (const entity of expandedEntities) {
-      const e = entity as any;
-      const filePath = e.filePath || "";
+      const filePath = entity.filePath || "";
 
       // Use extracted helper for exclude pattern check
       if (shouldExcludeFromEmbedding(filePath)) {
@@ -998,7 +1007,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       }
 
       // Partition by pre-generated status
-      if (e.embeddingBase64) {
+      if (entity.embeddingBase64) {
         preGeneratedEntities.push(entity);
       } else {
         needGenerationEntities.push(entity);
@@ -1026,13 +1035,13 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         needGeneration: needGenerationEntities.length,
       });
 
-      const modelName = (this as any).embeddingGen?.modelName || "default";
-      const preGenCtx = {
+      const modelName = this.modelName;
+      const preGenCtx: Pick<EmbeddingProcessorContext, "vectorStore" | "onMetricsUpdate"> = {
         vectorStore: this.vectorStore,
         onMetricsUpdate: (count: number) => {
           this.semanticMetrics.embeddingsGenerated += count;
         },
-      } as any;
+      };
 
       const { processed, failed } = await processPreGeneratedEmbeddings(preGeneratedEntities, preGenCtx, modelName);
       needGenerationEntities.push(...failed);
@@ -1060,7 +1069,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     // Filter out entities that already have embeddings (optimization for incremental indexing)
     // Use batch check instead of individual get() calls - much faster for large batches
-    const modelName = (this as any).embeddingGen?.modelName || "default";
+    const modelName = this.modelName;
 
     // Import file reader early for content hash computation
     const { readTextSync } = await import("../utils/file-ops.js");
@@ -1073,11 +1082,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Use ONLY: filePath + type + name (collisions are OK - embeddings will be similar anyway)
     const entityIdMap = new Map<string, ParsedEntity>();
     for (const entity of embeddingEntities) {
-      const e: any = entity;
-
-      const stableId = e.id
-        ? `ent:${e.id}`
-        : `doc:${hashText(`${e.filePath ?? ""}|${e.type}|${e.name ?? "anon"}|${modelName}`).slice(0, 24)}`;
+      const stableId = entity.id
+        ? `ent:${entity.id}`
+        : `doc:${hashText(`${entity.filePath ?? ""}|${entity.type}|${entity.name ?? "anon"}|${modelName}`).slice(0, 24)}`;
       entityIdMap.set(stableId, entity);
     }
 
@@ -1132,12 +1139,11 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Group entities by file for efficient comment extraction
     const entitiesByFile = new Map<string, ParsedEntity[]>();
     for (const entity of filteredEntities) {
-      const e: any = entity;
-      if (e.filePath && !e.filePath.startsWith("external://") && !e.filePath.includes("://")) {
-        if (!entitiesByFile.has(e.filePath)) {
-          entitiesByFile.set(e.filePath, []);
+      if (entity.filePath && !entity.filePath.startsWith("external://") && !entity.filePath.includes("://")) {
+        if (!entitiesByFile.has(entity.filePath)) {
+          entitiesByFile.set(entity.filePath, []);
         }
-        entitiesByFile.get(e.filePath)!.push(entity);
+        entitiesByFile.get(entity.filePath)!.push(entity);
       }
     }
 
@@ -1502,17 +1508,20 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
       // MEMORY OPTIMIZATION: Only fetch entity data for entities that need it
       const entityDataMap = new Map();
-      const entitiesToFetch = filteredEntities.filter((e: any) => e.id && !e.filePath && !e.path);
+      const entitiesToFetch = filteredEntities.filter((e) => e.id && !e.filePath && !e.path);
       if (entitiesToFetch.length > 0 && entitiesToFetch.length < 100) {
         // Parallel fetch with concurrency limit (trade memory for speed)
-        const ids = entitiesToFetch.map((e: any) => e.id);
+        const ids = entitiesToFetch.map((e) => e.id).filter((id): id is string => id !== undefined);
         const CONCURRENCY = 20; // Balance between parallelism and DB pressure
 
         for (let i = 0; i < ids.length; i += CONCURRENCY) {
           const batch = ids.slice(i, i + CONCURRENCY);
           const results = await Promise.all(batch.map((id) => storage.getEntity(id)));
           for (let j = 0; j < batch.length; j++) {
-            entityDataMap.set(batch[j], results[j]);
+            const result = results[j];
+            if (result !== null) {
+              entityDataMap.set(batch[j], result);
+            }
           }
         }
       }
@@ -1728,7 +1737,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
       // Small delay between batches to prevent event loop blocking
       if (i + FLUSH_BATCH_SIZE < vectorEmbeddings.length) {
-        await this.sleep(1);
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
     }
 
@@ -1778,7 +1787,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   private async processStandaloneComments(
     commentsByFile: Map<string, any>,
     associationsByFile: Map<string, Map<string, any[]>>,
-    storage: any,
+    storage: GraphStorage,
   ): Promise<void> {
     await processStandaloneCommentsExtracted(commentsByFile, associationsByFile, storage, {
       embeddingGen: this.embeddingGen,
@@ -1800,7 +1809,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   private async initializeGlobalCache(): Promise<void> {
     try {
       const dimension = this.embeddingDim;
-      const modelName = (this.embeddingGen as any).config?.modelName ?? "unknown";
+      const modelName = this.modelName;
 
       this.globalCache = GlobalEmbeddingCache.getInstance();
       await this.globalCache.initialize(modelName, dimension);
@@ -1882,7 +1891,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     if (this.embeddingBatchSize !== newBatchSize) {
       this.embeddingBatchSize = newBatchSize;
       const generator = this.embeddingGen as EmbeddingGenerator | undefined;
-      if (generator && typeof (generator as any).setBatchSize === "function") {
+      if (generator && "setBatchSize" in generator && typeof generator.setBatchSize === "function") {
         generator.setBatchSize(newBatchSize);
       }
     }
@@ -1961,7 +1970,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   /**
    * Set query agent for hybrid search
    */
-  setQueryAgent(queryAgent: any): void {
+  setQueryAgent(queryAgent: QueryAgent): void {
     this.hybridSearch.setQueryAgent(queryAgent);
   }
 

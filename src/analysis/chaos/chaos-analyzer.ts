@@ -119,7 +119,34 @@ export class ChaosAnalyzer {
         raceAnalysis,
         refactoringPlan: {
           stateIdentifier: pattern.identifier,
-          currentMetrics: {} as any,
+          currentMetrics: {
+            stateIdentifier: pattern.identifier,
+            coupling: {
+              score: Math.min(100, files.size * 15),
+              affectedComponents: pattern.operations.length,
+              sharedStateCount: pattern.relatedIdentifiers.length,
+              bidirectionalBindings: 0,
+            },
+            defensive: {
+              nullChecks: pattern.operations.filter((op) => op.isDefensive).length,
+              typeGuards: 0,
+              defaultValues: 0,
+              tryCatch: 0,
+              localCopies: 0,
+            },
+            mutationSpread: {
+              totalMutations: raceAnalysis.writers,
+              filesWithMutations: mutationFiles.size,
+              componentsWithMutations: raceAnalysis.mutations.length,
+              averageMutationsPerComponent: mutationFiles.size > 0 ? raceAnalysis.writers / mutationFiles.size : 0,
+            },
+            divergenceRisk,
+            complexity: {
+              cyclomaticComplexity: 0,
+              cognitiveComplexity: 0,
+            },
+            score: chaosScore,
+          },
           strategy,
           reasoning: this.generateReasoning(strategy, raceAnalysis),
           steps: [],

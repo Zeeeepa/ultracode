@@ -5,6 +5,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { toError } from "../../../utils/error-handling.js";
 import { c } from "../setup-ui.js";
 
 export function checkDocker(): boolean {
@@ -46,8 +47,9 @@ export function checkDocker(): boolean {
     }
 
     return false;
-  } catch (e: any) {
-    console.error(`[DEBUG] checkDocker exception: ${e.message}`);
+  } catch (error: unknown) {
+    const err = toError(error);
+    console.error(`[DEBUG] checkDocker exception: ${err.message}`);
     return false;
   }
 }

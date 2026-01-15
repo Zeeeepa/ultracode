@@ -32,6 +32,26 @@ import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 // TYPES
 // =============================================================================
 
+interface AntlrToken {
+  line?: number;
+  column?: number;
+  start?: number;
+  stop?: number;
+  text?: string;
+}
+
+interface AntlrParserRuleContext {
+  start?: AntlrToken;
+  _start?: AntlrToken;
+  stop?: AntlrToken;
+  _stop?: AntlrToken;
+  getText?: () => string;
+}
+
+interface ParserWithErrorListeners {
+  removeErrorListeners?: () => void;
+}
+
 interface ParserContext {
   filePath: string;
   modulePath: string[];
@@ -71,7 +91,7 @@ export class RustAntlrParser {
       const parser = new RustParser(tokenStream);
 
       // Disable error output for cleaner processing
-      (parser as any).removeErrorListeners?.();
+      (parser as unknown as ParserWithErrorListeners).removeErrorListeners?.();
 
       // Parse the file
       const tree = parser.crate();
@@ -797,9 +817,10 @@ function processStatic(staticItem: StaticItemContext, ctx: ParserContext, isPubl
 // HELPER FUNCTIONS
 // =============================================================================
 
-function getLocation(ctx: any): LocationInfo {
-  const start = ctx.start || ctx._start || { line: 1, column: 0, start: 0 };
-  const stop = ctx.stop || ctx._stop || start;
+function getLocation(ctx: unknown): LocationInfo {
+  const contextObj = ctx as AntlrParserRuleContext;
+  const start = contextObj.start || contextObj._start || { line: 1, column: 0, start: 0 };
+  const stop = contextObj.stop || contextObj._stop || start;
 
   return {
     start: {
@@ -815,11 +836,12 @@ function getLocation(ctx: any): LocationInfo {
   };
 }
 
-function extractCalls(bodyCtx: any): string[] {
+function extractCalls(bodyCtx: unknown): string[] {
   if (!bodyCtx) return [];
 
+  const body = bodyCtx as AntlrParserRuleContext;
   const calls: string[] = [];
-  const text = bodyCtx.getText() || "";
+  const text = body.getText?.() || "";
 
   // Simple regex extraction for function calls
   const callRe = /(\w+(?:::\w+)*)\s*[!]?\s*\(/g;

@@ -31,6 +31,53 @@ import { log } from "../logging/index.js";
 import { features, runtime } from "./runtime.js";
 
 // =============================================================================
+// BUN API TYPINGS
+// =============================================================================
+
+/**
+ * Bun FileSink writer interface
+ */
+interface BunFileSinkWriter {
+  write(chunk: string | Uint8Array | ArrayBuffer): void;
+  end(): Promise<void>;
+  flush(): Promise<void>;
+}
+
+/**
+ * Bun.file() API interface
+ */
+interface BunFile {
+  text(): Promise<string>;
+  json<T = unknown>(): Promise<T>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  bytes(): Promise<Uint8Array>;
+  exists(): Promise<boolean>;
+  stream(): ReadableStream<Uint8Array>;
+  writer(options?: { highWaterMark?: number }): BunFileSinkWriter;
+  slice(start?: number, end?: number): BunFile;
+  size: number;
+  type: string;
+}
+
+/**
+ * Bun runtime API
+ */
+interface BunRuntime {
+  file(path: string): BunFile;
+  write(path: string, data: string | Uint8Array | ArrayBuffer | Blob | BunFile): Promise<number>;
+  sleep?(ms: number): Promise<void>;
+  [key: string]: unknown;
+}
+
+/**
+ * Global with Bun runtime
+ */
+declare global {
+  // eslint-disable-next-line no-var
+  var Bun: BunRuntime | undefined;
+}
+
+// =============================================================================
 // FILE CHANGE NOTIFICATION HOOK
 // =============================================================================
 
@@ -373,7 +420,8 @@ export async function readdir(
   options?: { withFileTypes?: boolean; recursive?: boolean },
 ): Promise<string[] | Dirent[]> {
   const { readdir: fsReaddir } = await import("node:fs/promises");
-  return fsReaddir(path, options as any);
+  // Type assertion needed for complex Node.js readdir overloads
+  return (await fsReaddir(path, options as never)) as string[] | Dirent[];
 }
 
 /**

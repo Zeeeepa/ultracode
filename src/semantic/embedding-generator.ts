@@ -32,7 +32,7 @@ import { CACHE_CONSTANTS } from "../config/constants.js";
 import { log } from "../logging/index.js";
 import type { EmbeddingConfig } from "../types/semantic.js";
 import { hashText } from "../utils/fast-hash.js";
-import type { EmbeddingProvider } from "./providers/base.js";
+import type { EmbeddingProvider, ProviderKind } from "./providers/base.js";
 import { createProvider } from "./providers/factory.js";
 
 // =============================================================================
@@ -124,12 +124,12 @@ export class EmbeddingGenerator {
 
     this.initPromise = (async () => {
       try {
-        const providerName = this.config.provider ?? "auto";
+        const providerName: ProviderKind = (this.config.provider as ProviderKind | undefined) ?? "auto";
         log.t("EMBEDDING", `[EmbeddingGenerator] ▶ createProvider(${providerName})`);
         log.i("EMBEDDING", `initialize() called, provider=${providerName}`, { tei: this.config.tei });
         const createStart = Date.now();
         this.provider = await createProvider({
-          provider: providerName as any,
+          provider: providerName,
           modelName: this.config.modelName ?? DEFAULT_MODEL,
           openai: this.config.openai,
           cloudru: this.config.cloudru,

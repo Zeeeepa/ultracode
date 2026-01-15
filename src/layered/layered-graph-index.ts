@@ -25,6 +25,44 @@ import { GitDeltaComputer } from "./git-delta-computer.js";
 import { LayeredCacheManager } from "./layered-cache-manager.js";
 
 // =============================================================================
+// TYPE EXTENSIONS
+// =============================================================================
+
+/**
+ * GraphStorage with optional extension methods
+ */
+interface GraphStorageWithExtensions extends GraphStorage {
+  getEntityCount?(): number;
+  upsertEntities?(entities: Entity[]): Promise<void>;
+}
+
+/**
+ * Parsed entity from IncrementalParser
+ */
+interface ParsedEntity {
+  name: string;
+  type: string;
+  location: {
+    start: { line: number; column?: number };
+    end: { line: number; column?: number };
+  };
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/**
+ * Graph query object for entity search
+ */
+interface GraphQuery {
+  filters: {
+    entityType?: string;
+    name?: RegExp;
+    filePath?: string;
+  };
+  limit: number;
+}
+
+// =============================================================================
 // LAYERED GRAPH INDEX CLASS
 // =============================================================================
 
@@ -112,8 +150,9 @@ export class LayeredGraphIndex implements ILayeredIndex {
 
   getTotalEntities(): number {
     // Use GraphStorage count if available
-    if (typeof (this.baseIndex as any).getEntityCount === "function") {
-      return (this.baseIndex as any).getEntityCount();
+    const ext = this.baseIndex as GraphStorageWithExtensions;
+    if (typeof ext.getEntityCount === "function") {
+      return ext.getEntityCount();
     }
     return 0;
   }
@@ -374,8 +413,9 @@ export class LayeredGraphIndex implements ILayeredIndex {
       } else {
         // Layer 0: Base index (main branch)
         // Use GraphStorage upsert if available, otherwise use existing methods
-        if (typeof (this.baseIndex as any).upsertEntities === "function") {
-          await (this.baseIndex as any).upsertEntities(entities);
+        const ext = this.baseIndex as GraphStorageWithExtensions;
+        if (typeof ext.upsertEntities === "function") {
+          await ext.upsertEntities(entities);
         } else {
           // Fallback: delete old entities and add new ones
           for (const entity of entities) {
@@ -508,7 +548,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
       // - Entity name (exact or partial)
       // - Entity type
 
-      const query: any = {
+      const query: GraphQuery = {
         filters: {},
         limit: 1000, // Large limit for base query (will be filtered by deltas)
       };
@@ -533,7 +573,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
         query.filters.name = new RegExp(`.*${pattern}.*`, "i");
       }
 
-      return await this.baseIndex.findEntities(query);
+      return await this.baseIndex.findEntities(query as any);
     } catch (error) {
       log.e("LAYEREDIDX", "base_query_fail", { err: String(error) });
       return [];
@@ -612,7 +652,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
       const parseResult = await parser.parseFile(fullPath, content);
 
       // Convert ParsedEntity to Entity format
-      return this.convertParsedEntitiesToEntities(parseResult.entities, filePath);
+      return this.convertParsedEntitiesToEntities(parseResult.entities as any, filePath);
     } catch (error) {
       log.e("LAYEREDIDX", "extract_fail", { err: String(error), filePath });
       return [];
@@ -622,7 +662,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
   /**
    * Convert ParsedEntity to Entity format
    */
-  private convertParsedEntitiesToEntities(parsedEntities: any[], filePath: string): Entity[] {
+  private convertParsedEntitiesToEntities(parsedEntities: ParsedEntity[], filePath: string): Entity[] {
     const entities: Entity[] = [];
     const now = Date.now();
 
@@ -646,7 +686,7 @@ export class LayeredGraphIndex implements ILayeredIndex {
           name: parsed.name,
           type: parsed.type as any,
           filePath,
-          location: parsed.location,
+          location: parsed.location as any,
           metadata: parsed.metadata || {},
           hash,
           createdAt: now,
@@ -766,12 +806,12 @@ export class LayeredGraphIndex implements ILayeredIndex {
   private async getEntitiesByFilePath(filePath: string): Promise<Entity[]> {
     try {
       // Query all entities from base index and filter by file path
-      const query: any = {
+      const query: GraphQuery = {
         filters: { filePath },
         limit: 10000,
       };
 
-      return await this.baseIndex.findEntities(query);
+      return await this.baseIndex.findEntities(query as any);
     } catch (error) {
       log.e("LAYEREDIDX", "path_query_fail", { err: String(error), filePath });
       return [];

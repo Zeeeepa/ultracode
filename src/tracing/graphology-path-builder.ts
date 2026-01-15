@@ -148,7 +148,13 @@ export class GraphologyPathBuilder {
     this.graph.clear();
 
     // Debug: log current project context
-    const projectContext = (this.storage as any).getProjectContext?.();
+    const projectContext =
+      typeof this.storage === "object" &&
+      this.storage !== null &&
+      "getProjectContext" in this.storage &&
+      typeof (this.storage as { getProjectContext?: () => unknown }).getProjectContext === "function"
+        ? (this.storage as { getProjectContext: () => unknown }).getProjectContext()
+        : undefined;
     log.d("GRAPHPATH", "loading_graph", { ctx: JSON.stringify(projectContext) });
 
     // Two queries instead of thousands

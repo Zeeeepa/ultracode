@@ -76,10 +76,10 @@ export interface ProviderCapabilities {
 }
 
 export interface ProviderLogger {
-  debug(msg: string, data?: any, requestId?: string): void;
-  info(msg: string, data?: any, requestId?: string): void;
-  warn(msg: string, data?: any, requestId?: string): void;
-  error(msg: string, data?: any, requestId?: string | undefined, err?: Error): void;
+  debug(msg: string, data?: unknown, requestId?: string): void;
+  info(msg: string, data?: unknown, requestId?: string): void;
+  warn(msg: string, data?: unknown, requestId?: string): void;
+  error(msg: string, data?: unknown, requestId?: string | undefined, err?: Error): void;
 }
 
 export interface EmbeddingProvider {

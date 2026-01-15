@@ -59,6 +59,47 @@ export interface LayeredIndexManagerConfig {
   debug?: boolean;
 }
 
+/**
+ * Maintenance service statistics
+ */
+export interface MaintenanceStats {
+  compactionsRun?: number;
+  orphansDeleted?: number;
+  lastRunTime?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Update queue status
+ */
+export interface QueueStatus {
+  pendingUpdates?: number;
+  processingBatch?: boolean;
+  lastProcessTime?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Cache manager statistics
+ */
+export interface CacheManagerStats {
+  cacheHits?: number;
+  cacheMisses?: number;
+  totalSize?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Status report for layered index system
+ */
+export interface StatusReport {
+  index: IndexStatus;
+  cacheManager: CacheManagerStats;
+  vectorCacheManager?: CacheManagerStats;
+  maintenance?: MaintenanceStats;
+  [key: string]: unknown;
+}
+
 export interface IndexStatus {
   /** Is initialized */
   initialized: boolean;
@@ -73,10 +114,10 @@ export interface IndexStatus {
   totalEntities: number;
 
   /** Maintenance stats */
-  maintenance: any;
+  maintenance: MaintenanceStats | null;
 
   /** Queue status */
-  queue: any;
+  queue: QueueStatus;
 }
 
 // =============================================================================
@@ -179,15 +220,17 @@ export class LayeredIndexManager {
 
     // Inject dependencies into layered index
     // Note: This is a workaround - ideally would use dependency injection
-    (this.layeredIndex as any).gitDeltaComputer = this.gitDeltaComputer;
-    (this.layeredIndex as any).cacheManager = this.cacheManager;
+    const indexWithDeps: any = this.layeredIndex;
+    indexWithDeps.gitDeltaComputer = this.gitDeltaComputer;
+    indexWithDeps.cacheManager = this.cacheManager;
 
     // Initialize vector store if vector deltas enabled
     if (this.layeredConfig.enableVectorDeltas) {
       this.layeredVectorStore = new LayeredVectorStore(this.baseVectorStore, this.layeredConfig);
 
       // Inject vector cache manager
-      (this.layeredVectorStore as any).cacheManager = this.vectorCacheManager;
+      const vectorStoreWithCache: any = this.layeredVectorStore;
+      vectorStoreWithCache.cacheManager = this.vectorCacheManager;
     }
 
     // Initialize file watching integration
@@ -344,7 +387,7 @@ export class LayeredIndexManager {
       currentBranch: this.fileIntegration?.getCurrentBranch() || null,
       cachedBranches: await this.getCachedBranches(),
       totalEntities: this.layeredIndex.getTotalEntities(),
-      maintenance: this.maintenanceService?.getStats() || null,
+      maintenance: (this.maintenanceService?.getStats() || null) as MaintenanceStats | null,
       queue: this.updateQueue.getStatus(),
     };
 
@@ -354,8 +397,8 @@ export class LayeredIndexManager {
   /**
    * Get comprehensive status report
    */
-  async getStatusReport(): Promise<any> {
-    const report: any = {
+  async getStatusReport(): Promise<StatusReport> {
+    const report: StatusReport = {
       index: await this.getStatus(),
       cacheManager: this.cacheManager.getStatistics(),
     };
@@ -365,7 +408,7 @@ export class LayeredIndexManager {
     }
 
     if (this.maintenanceService) {
-      report.maintenance = await this.maintenanceService.getStatusReport();
+      report.maintenance = (await this.maintenanceService.getStatusReport()) as unknown as MaintenanceStats;
     }
 
     return report;

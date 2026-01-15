@@ -894,7 +894,12 @@ export class KotlinNativeParser {
   /**
    * Parse with incremental support (just calls regular parse)
    */
-  async parseIncremental(filePath: string, content: string, contentHash: string, _edits: any[]): Promise<ParseResult> {
+  async parseIncremental(
+    filePath: string,
+    content: string,
+    contentHash: string,
+    _edits: unknown[],
+  ): Promise<ParseResult> {
     return this.parse(filePath, content, contentHash);
   }
 

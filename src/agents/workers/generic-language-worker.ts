@@ -16,6 +16,7 @@
 
 import { readFile } from "node:fs/promises";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
+import type { WorkerEmbeddingConfig } from "../../types/semantic.js";
 // Extracted modules
 import { clearAnalyzerCache, getAnalyzer, SUPPORTED_WORKER_LANGUAGES } from "./analyzer-loader.js";
 import {
@@ -32,6 +33,60 @@ import {
 // WorkerEmbeddingConfig imported by embedding-processor
 import { detectLanguage } from "./language-detection.js";
 import { setWorkerIdGetter, WORKER_ID, workerLog } from "./worker-logging.js";
+
+// =============================================================================
+// WORKER MESSAGE TYPES
+// =============================================================================
+
+interface WorkerMessageBase {
+  type: string;
+  id?: string;
+}
+
+interface InitMessage extends WorkerMessageBase {
+  type: "init";
+  embeddingConfig?: unknown;
+}
+
+interface ConfigureEmbeddingsMessage extends WorkerMessageBase {
+  type: "configure-embeddings";
+  config: unknown;
+}
+
+interface ShutdownMessage extends WorkerMessageBase {
+  type: "shutdown";
+}
+
+interface PingMessage extends WorkerMessageBase {
+  type: "ping";
+  id: string;
+}
+
+interface ParseMessage extends WorkerMessageBase {
+  type: "parse";
+  id: string;
+  files: string[];
+  language: string;
+  options: ParserOptions;
+  streamingMode?: boolean;
+}
+
+interface TaskMessage extends WorkerMessageBase {
+  type: "task";
+  payload: WorkerTask;
+}
+
+type WorkerIncomingMessage =
+  | InitMessage
+  | ConfigureEmbeddingsMessage
+  | ShutdownMessage
+  | PingMessage
+  | ParseMessage
+  | TaskMessage;
+
+interface Analyzer {
+  parse(file: string, content: string, hash: string): Promise<ParseResult>;
+}
 
 // Early stderr logging for debugging worker startup (process.stderr.write bypasses console)
 process.stderr.write(`[WORKER:${WORKER_ID}] Starting worker process, pid=${process.pid}\n`);
@@ -52,11 +107,30 @@ process.on("unhandledRejection", (reason) => {
 // RUNTIME-AWARE WORKER COMMUNICATION
 // =============================================================================
 
+/**
+ * Promise rejection event type (not available in Node.js/Bun typings)
+ */
+interface WorkerPromiseRejectionEvent {
+  reason: unknown;
+  promise: Promise<unknown>;
+}
+
+/**
+ * Worker event types for addEventListener
+ * Supports message, error, and unhandledrejection events with proper typing
+ */
+interface WorkerEventMap {
+  message: { data: WorkerIncomingMessage };
+  error: ErrorEvent;
+  unhandledrejection: WorkerPromiseRejectionEvent;
+}
+
 // Web Worker global scope type (for Bun Web Workers)
 declare const self:
   | {
       postMessage: (message: unknown) => void;
-      addEventListener: (type: string, listener: (event: any) => void) => void;
+      addEventListener<K extends keyof WorkerEventMap>(type: K, listener: (event: WorkerEventMap[K]) => void): void;
+      addEventListener(type: string, listener: (event: unknown) => void): void;
       close?: () => void;
       name?: string | undefined;
     }
@@ -71,7 +145,7 @@ const isNodeWorker = !isSubprocess && !isBunWorker;
 
 // Node.js worker_threads (dynamic import handled at module load)
 let parentPort: import("node:worker_threads").MessagePort | null = null;
-let workerData: any = null;
+let workerData: { workerId?: string } | null = null;
 
 // Initialize worker_threads for Node.js (async IIFE)
 const initPromise = (async () => {
@@ -88,7 +162,7 @@ const initPromise = (async () => {
 
 // Unified message posting (supports all 3 modes)
 // transferList: ArrayBuffers to transfer (zero-copy) instead of clone
-function postWorkerMessage(message: any, transferList?: ArrayBuffer[]): void {
+function postWorkerMessage(message: unknown, transferList?: ArrayBuffer[]): void {
   if (isSubprocess) {
     // Subprocess mode: V8 native IPC via process.send()
     // Note: process.send() doesn't support transferList, but uses structured clone
@@ -96,7 +170,8 @@ function postWorkerMessage(message: any, transferList?: ArrayBuffer[]): void {
   } else if (isBunWorker && self) {
     // Bun Web Worker: supports transferList for zero-copy transfer
     if (transferList && transferList.length > 0) {
-      (self as any).postMessage(message, transferList);
+      // Bun Web Worker API supports transferList as second parameter
+      (self.postMessage as (message: unknown, transfer?: ArrayBuffer[]) => void)(message, transferList);
     } else {
       self.postMessage(message);
     }
@@ -295,7 +370,7 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
   // For universal mode, we get analyzer per-file based on detected language
   // For specific language, we use one analyzer for all files
   const isUniversalMode = task.language === "universal";
-  let sharedAnalyzer: any = null;
+  let sharedAnalyzer: Analyzer | null = null;
 
   if (!isUniversalMode) {
     try {
@@ -362,7 +437,7 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
       const hash = Date.now().toString(16); // Simple hash for worker
 
       // Get analyzer: use shared for specific language, or per-file for universal mode
-      let analyzer: any;
+      let analyzer: Analyzer;
       if (isUniversalMode) {
         const fileLang = detectLanguage(file);
         try {
@@ -375,6 +450,12 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
           continue;
         }
       } else {
+        // In non-universal mode, sharedAnalyzer must be initialized
+        if (!sharedAnalyzer) {
+          errors.push({ file, message: "Shared analyzer not initialized" });
+          prefetch.advance();
+          continue;
+        }
         analyzer = sharedAnalyzer;
       }
 
@@ -495,13 +576,14 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
 // MESSAGE HANDLER (Runtime-aware: Node.js worker_threads + Bun Web Worker)
 // =============================================================================
 
-async function handleMessage(message: any): Promise<void> {
+async function handleMessage(message: WorkerIncomingMessage): Promise<void> {
   try {
     if (message.type === "init") {
       // Initialize embedding client if config provided
       if (message.embeddingConfig) {
-        setEmbeddingConfig(message.embeddingConfig);
-        await initEmbeddingClient(message.embeddingConfig);
+        const config = message.embeddingConfig as WorkerEmbeddingConfig;
+        setEmbeddingConfig(config);
+        await initEmbeddingClient(config);
       }
 
       postWorkerMessage({
@@ -515,8 +597,9 @@ async function handleMessage(message: any): Promise<void> {
 
     // Configure embeddings after init (for late configuration)
     if (message.type === "configure-embeddings") {
-      setEmbeddingConfig(message.config);
-      await initEmbeddingClient(message.config);
+      const config = message.config as WorkerEmbeddingConfig;
+      setEmbeddingConfig(config);
+      await initEmbeddingClient(config);
       postWorkerMessage({
         type: "embeddings-configured",
         enabled: getEmbeddingClient() !== null,
@@ -583,9 +666,12 @@ async function handleMessage(message: any): Promise<void> {
       });
     }
   } catch (error) {
+    const taskId =
+      message.type === "task" ? (message.payload as WorkerTask).id : message.type === "parse" ? message.id : undefined;
+
     postWorkerMessage({
       type: "error",
-      taskId: message.payload?.id || message.id,
+      taskId,
       error: (error as Error).message,
       stack: (error as Error).stack,
     });
@@ -596,7 +682,7 @@ async function handleMessage(message: any): Promise<void> {
 // Priority: Subprocess > Bun Web Worker > Node.js worker_threads
 if (isSubprocess) {
   // Subprocess mode: V8 native IPC via process.on('message')
-  process.on("message", async (message: any) => {
+  process.on("message", async (message: WorkerIncomingMessage) => {
     await handleMessage(message);
   });
 
@@ -615,7 +701,7 @@ if (isSubprocess) {
   });
 } else if (isBunWorker && self) {
   // Bun Web Worker API
-  self.addEventListener("message", (event: { data: any }) => {
+  self.addEventListener("message", (event: { data: WorkerIncomingMessage }) => {
     handleMessage(event.data);
   });
 
@@ -664,15 +750,15 @@ if (isSubprocess) {
     process.exit(1);
   });
 } else if (isBunWorker && self) {
-  // Bun Web Worker error handling
-  self.addEventListener("error", (event: { message?: string }) => {
+  // Bun Web Worker error handling with properly typed events
+  self.addEventListener("error", (event: ErrorEvent) => {
     postWorkerMessage({
       type: "error",
       error: `Uncaught error in bun-worker: ${event.message}`,
     });
   });
 
-  self.addEventListener("unhandledrejection", (event: { reason: unknown }) => {
+  self.addEventListener("unhandledrejection", (event: WorkerPromiseRejectionEvent) => {
     postWorkerMessage({
       type: "error",
       error: `Unhandled rejection in bun-worker: ${event.reason}`,

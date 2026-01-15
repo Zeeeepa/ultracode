@@ -27,6 +27,14 @@ export interface UpdateOptions {
   };
 }
 
+/**
+ * Extended ModuleInfo with LLM-generated descriptions
+ */
+interface ModuleInfoWithLLM extends ModuleInfo {
+  _llmExportDescs?: Record<string, string>;
+  _llmFileDescs?: Record<string, string>;
+}
+
 interface ParsedAutodoc {
   title: string;
   description: string;
@@ -653,8 +661,9 @@ ${exportsList
 
     // Store all descriptions
     if (Object.keys(allExportDescs).length > 0 || Object.keys(allFileDescs).length > 0) {
-      (moduleInfo as any)._llmExportDescs = allExportDescs;
-      (moduleInfo as any)._llmFileDescs = allFileDescs;
+      const moduleInfoExt = moduleInfo as ModuleInfoWithLLM;
+      moduleInfoExt._llmExportDescs = allExportDescs;
+      moduleInfoExt._llmFileDescs = allFileDescs;
       log.i("AUTODOC_LLM", "all_descriptions_stored", {
         module: moduleInfo.name,
         exports: Object.keys(allExportDescs).length,

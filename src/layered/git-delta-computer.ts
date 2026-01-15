@@ -16,7 +16,8 @@ import { join } from "node:path";
 import type { BranchManager } from "../core/branch-manager.js";
 import { log } from "../logging/index.js";
 import type { GitDiffResult, GitFileChange } from "../types/layered.js";
-import type { Entity, GraphStorage } from "../types/storage.js";
+import type { ParsedEntity } from "../types/parser.js";
+import type { Entity, EntityType, GraphStorage } from "../types/storage.js";
 import { hashText } from "../utils/fast-hash.js";
 import { BranchDelta } from "./branch-delta.js";
 
@@ -338,7 +339,7 @@ export class GitDeltaComputer {
    * @param filePath - File path
    * @returns Converted entities
    */
-  private convertParsedEntitiesToEntities(parsedEntities: any[], filePath: string): Entity[] {
+  private convertParsedEntitiesToEntities(parsedEntities: ParsedEntity[], filePath: string): Entity[] {
     const entities: Entity[] = [];
     const now = Date.now();
 
@@ -350,11 +351,11 @@ export class GitDeltaComputer {
         const entity: Entity = {
           id,
           name: parsed.name,
-          type: parsed.type as any, // EntityType mapping handled by parser
+          type: parsed.type as EntityType, // Type assertion: parser types compatible with EntityType
           filePath,
           location: parsed.location,
           metadata: parsed.metadata || {},
-          hash: parsed.hash || this.generateEntityHash(parsed),
+          hash: this.generateEntityHash(parsed),
           createdAt: now,
           updatedAt: now,
         };
@@ -371,7 +372,7 @@ export class GitDeltaComputer {
   /**
    * Generate stable entity ID (xxHash-based)
    */
-  private generateEntityId(parsed: any, filePath: string): string {
+  private generateEntityId(parsed: ParsedEntity, filePath: string): string {
     const content = `${filePath}:${parsed.type}:${parsed.name}:${parsed.location.start.line}`;
     return hashText(content).slice(0, 16);
   }
@@ -379,7 +380,7 @@ export class GitDeltaComputer {
   /**
    * Generate entity hash for change detection
    */
-  private generateEntityHash(parsed: any): string {
+  private generateEntityHash(parsed: ParsedEntity): string {
     const content = JSON.stringify({
       name: parsed.name,
       type: parsed.type,

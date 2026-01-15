@@ -19,6 +19,17 @@ import { workerLog } from "./worker-logging.js";
 // =============================================================================
 
 /**
+ * Extended ParsedEntity with optional documentation field
+ */
+interface ParsedEntityExtended extends ParsedEntity {
+  documentation?: {
+    description?: string;
+    params?: Array<{ name: string; type?: string; description?: string }>;
+    returns?: { type?: string; description?: string };
+  };
+}
+
+/**
  * Collected embeddings for batch transfer to main process
  * Uses ArrayBuffer for binary transfer (zero-copy via transferList)
  */
@@ -29,8 +40,35 @@ export interface CollectedEmbedding {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Worker message for embeddings ready
+ */
+interface EmbeddingsReadyMessage {
+  type: "embeddings.ready";
+  count: number;
+  embeddings: CollectedEmbedding[];
+}
+
+/**
+ * Worker message for collected texts (centralized mode)
+ */
+interface EmbeddingsTextsMessage {
+  type: "embeddings.texts";
+  count: number;
+  texts: Array<{
+    id: string;
+    text: string;
+    metadata?: Record<string, unknown>;
+  }>;
+}
+
+/**
+ * Union type for worker messages
+ */
+type WorkerMessage = EmbeddingsReadyMessage | EmbeddingsTextsMessage;
+
 export interface EmbeddingProcessorContext {
-  postWorkerMessage: (message: any, transferList?: ArrayBuffer[]) => void;
+  postWorkerMessage: (message: WorkerMessage, transferList?: ArrayBuffer[]) => void;
   getWorkerId: () => string;
 }
 
@@ -134,7 +172,7 @@ export function clearDeduplicationForFiles(filePaths: string[]): number {
 /**
  * Get embedding client
  */
-export function getEmbeddingClient(): any {
+export function getEmbeddingClient(): import("./worker-embedding-client.js").WorkerEmbeddingClient | null {
   return embeddingClient;
 }
 
@@ -230,8 +268,9 @@ export function buildEmbeddingText(entity: ParsedEntity, fileContent: string, ma
   }
 
   // Add documentation if available
-  if ((entity as any).documentation?.description) {
-    parts.push(`description: ${(entity as any).documentation.description}`);
+  const extendedEntity = entity as ParsedEntityExtended;
+  if (extendedEntity.documentation?.description) {
+    parts.push(`description: ${extendedEntity.documentation.description}`);
   }
 
   // Add return type
@@ -306,7 +345,7 @@ export async function generateEmbeddingsForEntities(
 
   for (const entity of filteredEntities) {
     // Pre-compute entity ID for deduplication
-    const rawEntityId = (entity as any).id || `${filePath}:${entity.type}:${entity.name}`;
+    const rawEntityId = entity.id || `${filePath}:${entity.type}:${entity.name}`;
     const entityId = `ent:${rawEntityId}`;
 
     // Skip if already generated in this worker session
@@ -368,7 +407,7 @@ export async function generateEmbeddingsForEntities(
             embedding.byteOffset + embedding.byteLength,
           ) as ArrayBuffer;
 
-          const rawEntityId = (et.entity as any).id || `${filePath}:${et.entity.type}:${et.entity.name}`;
+          const rawEntityId = et.entity.id || `${filePath}:${et.entity.type}:${et.entity.name}`;
           collectedEmbeddings.push({
             id: entityId,
             vectorBuffer,
@@ -462,7 +501,7 @@ function collectTextsForCentralizedEmbedding(entities: ParsedEntity[], fileConte
 
   for (const entity of filteredEntities) {
     // Pre-compute entity ID for deduplication
-    const rawEntityId = (entity as any).id || `${filePath}:${entity.type}:${entity.name}`;
+    const rawEntityId = entity.id || `${filePath}:${entity.type}:${entity.name}`;
     const entityId = `ent:${rawEntityId}`;
 
     // Skip if already processed in this worker session

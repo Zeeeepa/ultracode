@@ -4,6 +4,7 @@
  * Docker and Native container management for OVMS provider.
  */
 
+import { toError } from "../../utils/error-handling.js";
 import type { ProviderLogger } from "./base.js";
 import { sleep } from "./ovms-utils.js";
 
@@ -80,12 +81,13 @@ export async function ensureContainerRunning(config: ContainerConfig): Promise<v
     }
 
     throw new Error("OVMS container started but did not become ready within 30 seconds");
-  } catch (error: any) {
-    log?.warn("Failed to auto-start OVMS", { error: error.message, isNative });
+  } catch (error: unknown) {
+    const err = toError(error);
+    log?.warn("Failed to auto-start OVMS", { error: err.message, isNative });
     if (isNative) {
-      throw new Error(`OVMS Native not available: ${error.message}`);
+      throw new Error(`OVMS Native not available: ${err.message}`);
     }
-    throw new Error(`OVMS auto-start failed: ${error.message}\nPlease start manually: docker start ovms-embedding`);
+    throw new Error(`OVMS auto-start failed: ${err.message}\nPlease start manually: docker start ovms-embedding`);
   }
 }
 
@@ -110,9 +112,10 @@ export async function waitForReady(baseUrl: string, maxWaitMs: number, log?: Pro
         log?.info("OVMS is ready", { waitedSeconds: elapsed });
         return;
       }
-    } catch (e: any) {
-      if (!e.message?.includes("ECONNREFUSED")) {
-        log?.debug("OVMS health check error", { error: e.message });
+    } catch (error: unknown) {
+      const err = toError(error);
+      if (!err.message.includes("ECONNREFUSED")) {
+        log?.debug("OVMS health check error", { error: err.message });
       }
     }
 

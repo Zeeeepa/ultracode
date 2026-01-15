@@ -373,8 +373,8 @@ export class MergeAgent extends BaseAgent {
       try {
         const aiAnalysis = await this.aiResolver.analyzeConflict(conflict);
         const resolution = this.aiResolver.createResolution(aiAnalysis);
-        (conflict as any).aiSuggestions = [resolution.explanation];
-        (conflict as any).aiConfidence = resolution.confidence;
+        conflict.aiSuggestions = [resolution.explanation];
+        conflict.aiConfidence = resolution.confidence;
       } catch (error) {
         log.w("MERGEAGENT", "ai_conflict_fail", { err: String(error) });
       }

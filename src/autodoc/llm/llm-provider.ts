@@ -12,6 +12,7 @@ import * as fsModule from "node:fs";
 import * as osModule from "node:os";
 import * as pathModule from "node:path";
 import { log } from "../../logging/index.js";
+import { isBunRuntime } from "../../utils/runtime-detection.js";
 
 export interface LLMConfig {
   provider: "ollama" | "tgi" | "openai" | "docker-model-runner" | "llamacpp" | "claude-code";
@@ -35,6 +36,7 @@ export interface LLMResponse {
 export interface LLMProvider {
   readonly name: string;
   readonly isAvailable: boolean;
+  readonly selectedModel?: string | undefined; // Currently active model
 
   generate(prompt: string, options?: GenerateOptions): Promise<LLMResponse>;
   checkHealth(): Promise<boolean>;
@@ -735,7 +737,7 @@ function getClaudeCommand(): { cmd: string; args: string[] } | null {
   const { join } = pathModule;
   const { homedir } = osModule;
 
-  const isBun = typeof (globalThis as any).Bun !== "undefined";
+  const isBun = isBunRuntime();
   const home = homedir();
 
   // Possible CLI locations (in order of preference)
@@ -1294,7 +1296,7 @@ export async function detectLLMProviders(): Promise<{
   }
 
   if (recommended) {
-    const selectedModel = (recommended as any).selectedModel || (recommended as any).model || "default";
+    const selectedModel = recommended.selectedModel || "default";
     log.i("LLM", "provider_selected", { provider: recommended.name, model: selectedModel });
   } else if (savedConfig?.provider) {
     // Explicit provider configured but not available

@@ -16,6 +16,7 @@ import type {
   CudaEuclideanResponse,
   CudaInfoResponse,
   CudaNormalizeResponse,
+  GpuWorkerResponse,
   GpuWorkerState,
 } from "./types.js";
 
@@ -39,7 +40,7 @@ export interface CUDAAddon {
 export interface CudaHandlerContext {
   cudaAddon: CUDAAddon | null;
   state: GpuWorkerState;
-  sendResponse: (response: any) => void;
+  sendResponse: (response: GpuWorkerResponse) => void;
   sendError: (error: string, requestId?: string) => void;
 }
 

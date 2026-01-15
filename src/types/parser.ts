@@ -120,7 +120,8 @@ export interface ParsedEntity {
     | "ngrx_effect"
     | "ngrx_action"
     | "ngrx_reducer"
-    | "ngrx_selector";
+    | "ngrx_selector"
+    | "file";
 
   /** File path containing this entity */
   filePath?: string | undefined; // Optional for backward compatibility
@@ -634,6 +635,10 @@ export interface EntityRelationship {
     | "listens_to_action" // Effect → Action (ofType)
     | "handles_action" // Reducer → Action (on)
     | "selects_state" // Component → Selector
+    | "defines_class"
+    | "defines_function"
+    | "has_method"
+    | "depends_on"
     | "modifies_state" // Reducer → State slice
     | "depends_on"; // General dependency
 

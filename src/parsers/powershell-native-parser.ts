@@ -16,6 +16,28 @@ import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
+// TYPES
+// =============================================================================
+
+interface PowerShellError {
+  message?: string;
+  location?: {
+    line: number;
+    column: number;
+  };
+}
+
+interface RawPowerShellEntity {
+  name: string;
+  type: string;
+  line?: number;
+  column?: number;
+  parameters?: Array<{ name: string; type?: string }>;
+  returnType?: string;
+  [key: string]: unknown;
+}
+
+// =============================================================================
 // POWERSHELL AST SCRIPT
 // =============================================================================
 
@@ -319,7 +341,7 @@ export class PowerShellNativeParser {
           const result = JSON.parse(stdout);
           // Normalize the result
           const entities = this.normalizeEntities(result.entities || [], filePath);
-          const errors = (result.errors || []).map((e: any) => ({
+          const errors = (result.errors || []).map((e: PowerShellError) => ({
             message: e.message || String(e),
             location: e.location,
           }));
@@ -339,32 +361,41 @@ export class PowerShellNativeParser {
   /**
    * Normalize entities from PowerShell output
    */
-  private normalizeEntities(rawEntities: any[], filePath: string): ParsedEntity[] {
+  private normalizeEntities(rawEntities: RawPowerShellEntity[], filePath: string): ParsedEntity[] {
     const entities: ParsedEntity[] = [];
 
     for (const raw of rawEntities) {
       if (!raw || !raw.name) continue;
 
+      const location = raw["location"] as
+        | {
+            start: { line: number; column: number; index: number };
+            end: { line: number; column: number; index: number };
+          }
+        | undefined;
+
       const entity: ParsedEntity = {
         name: raw.name,
-        type: raw.type || "unknown",
+        type: (raw.type || "unknown") as ParsedEntity["type"],
         filePath,
-        location: raw.location || {
+        location: location || {
           start: { line: 1, column: 0, index: 0 },
           end: { line: 1, column: 1, index: 1 },
         },
       };
 
-      if (raw.modifiers && raw.modifiers.length > 0) {
-        entity.modifiers = raw.modifiers;
+      const modifiers = raw["modifiers"] as string[] | undefined;
+      if (modifiers && modifiers.length > 0) {
+        entity.modifiers = modifiers;
       }
 
       if (raw.parameters && raw.parameters.length > 0) {
         entity.parameters = raw.parameters;
       }
 
-      if (raw.children && raw.children.length > 0) {
-        entity.children = this.normalizeEntities(raw.children, filePath);
+      const children = raw["children"] as RawPowerShellEntity[] | undefined;
+      if (children && children.length > 0) {
+        entity.children = this.normalizeEntities(children, filePath);
       }
 
       entities.push(entity);

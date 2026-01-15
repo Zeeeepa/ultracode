@@ -23,6 +23,31 @@ import { features } from "./runtime.js";
 // TYPES
 // =============================================================================
 
+/**
+ * Type definition for Bun.Glob constructor
+ */
+interface BunGlobConstructor {
+  new (pattern: string): BunGlobInstance;
+}
+
+/**
+ * Type definition for Bun.Glob instance
+ */
+interface BunGlobInstance {
+  scan(options: { cwd: string; onlyFiles?: boolean; dot?: boolean }): AsyncIterableIterator<string>;
+  match(path: string): boolean;
+}
+
+/**
+ * Extended globalThis with typed Bun.Glob
+ */
+type GlobalWithBunGlob = typeof globalThis & {
+  Bun?: {
+    Glob: BunGlobConstructor;
+    [key: string]: unknown;
+  };
+};
+
 export interface GlobOptions {
   /** Base directory for search (default: current working directory) */
   cwd?: string;
@@ -91,7 +116,8 @@ export async function glob(pattern: string, options: GlobOptions = {}): Promise<
 
   const allIgnore = [...DEFAULT_IGNORE_PATTERNS, ...ignore];
 
-  if (features.bunGlob && globalThis.Bun?.Glob) {
+  const global = globalThis as GlobalWithBunGlob;
+  if (features.bunGlob && global.Bun?.Glob) {
     return globBun(pattern, { cwd, onlyFiles, onlyDirectories, ignore: allIgnore, absolute, dot });
   }
 
@@ -112,7 +138,8 @@ async function globBun(
     dot: boolean;
   },
 ): Promise<string[]> {
-  const BunGlob = globalThis.Bun!.Glob;
+  const global = globalThis as GlobalWithBunGlob;
+  const BunGlob = global.Bun!.Glob;
   const globInstance = new BunGlob(pattern);
   const results: string[] = [];
 
@@ -212,8 +239,10 @@ async function globNode(
  * @returns true if path matches pattern
  */
 export function match(pattern: string, path: string): boolean {
-  if (features.bunGlob && globalThis.Bun?.Glob) {
-    const globInstance = new globalThis.Bun.Glob(pattern);
+  const global = globalThis as GlobalWithBunGlob;
+  if (features.bunGlob && global.Bun?.Glob) {
+    const BunGlob = global.Bun.Glob;
+    const globInstance = new BunGlob(pattern);
     return globInstance.match(path);
   }
 
@@ -278,8 +307,9 @@ export async function* scan(pattern: string, options: ScanOptions = {}): AsyncGe
 
   const allIgnore = [...DEFAULT_IGNORE_PATTERNS, ...ignore];
 
-  if (features.bunGlob && globalThis.Bun?.Glob) {
-    const BunGlob = globalThis.Bun.Glob;
+  const global = globalThis as GlobalWithBunGlob;
+  if (features.bunGlob && global.Bun?.Glob) {
+    const BunGlob = global.Bun.Glob;
     const globInstance = new BunGlob(pattern);
     const ignoreMatchers = allIgnore.map((p) => new BunGlob(p));
 

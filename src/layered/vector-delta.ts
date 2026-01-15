@@ -306,27 +306,47 @@ export class VectorDelta implements IVectorDelta {
   /**
    * Deserialize from JSON-compatible object
    */
-  static fromJSON(data: any): VectorDelta {
-    const delta = new VectorDelta(data.branchName, data.baseCommitSha);
-    delta.lastModified = data.lastModified;
+  static fromJSON(data: unknown): VectorDelta {
+    // Type guard for JSON data
+    if (
+      typeof data !== "object" ||
+      data === null ||
+      !("branchName" in data) ||
+      !("baseCommitSha" in data) ||
+      !("lastModified" in data)
+    ) {
+      throw new Error("Invalid VectorDelta JSON data");
+    }
+
+    const jsonData = data as {
+      branchName: string;
+      baseCommitSha: string;
+      lastModified: number;
+      added?: Array<[string, number[]]>;
+      modified?: Array<[string, number[]]>;
+      deleted?: string[];
+    };
+
+    const delta = new VectorDelta(jsonData.branchName, jsonData.baseCommitSha);
+    delta.lastModified = jsonData.lastModified;
 
     // Deserialize added vectors
-    if (data.added) {
-      for (const [id, vectorArray] of data.added) {
+    if (jsonData.added) {
+      for (const [id, vectorArray] of jsonData.added) {
         delta.addedEmbeddings.set(id, new Float32Array(vectorArray));
       }
     }
 
     // Deserialize modified vectors
-    if (data.modified) {
-      for (const [id, vectorArray] of data.modified) {
+    if (jsonData.modified) {
+      for (const [id, vectorArray] of jsonData.modified) {
         delta.modifiedEmbeddings.set(id, new Float32Array(vectorArray));
       }
     }
 
     // Deserialize deleted
-    if (data.deleted) {
-      delta.deletedEmbeddingIds = new Set(data.deleted);
+    if (jsonData.deleted) {
+      delta.deletedEmbeddingIds = new Set(jsonData.deleted);
     }
 
     return delta;

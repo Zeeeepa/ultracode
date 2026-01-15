@@ -3,9 +3,83 @@ import { getOrCreateAgent } from "../../core/agent-registry.js";
 import type { BranchManager } from "../../core/branch-manager.js";
 import { getGlobalContainer } from "../../core/di-container.js";
 import { log } from "../../logging/index.js";
+import type { Agent } from "../../types/agent.js";
 import { AgentType } from "../../types/agent.js";
 import type { GitIntegration } from "../integration/git-integration.js";
+import type { CodeUnit, CodeUnitType } from "../models/code-unit.js";
 import type { VersionedIndex } from "../models/versioned-index.js";
+
+// =============================================================================
+// TYPE EXTENSIONS FOR INTERNAL APIS
+// =============================================================================
+
+/**
+ * Task params for DevAgent indexing
+ */
+interface IndexCodebaseParams {
+  directory: string;
+  incremental: boolean;
+  fullScan: boolean;
+  excludePatterns: string[];
+  reset: boolean;
+}
+
+/**
+ * Result from DevAgent indexing
+ */
+interface DevAgentIndexResult {
+  entities?: DevAgentEntity[];
+  [key: string]: unknown;
+}
+
+/**
+ * DevAgent with execute method
+ */
+interface DevAgentWithExecute extends Agent {
+  execute?(params: { task: string; params: IndexCodebaseParams }): Promise<DevAgentIndexResult>;
+}
+
+/**
+ * Entity from DevAgent
+ */
+interface DevAgentEntity {
+  id: string;
+  type: string;
+  filePath?: string;
+  name?: string;
+  fullyQualifiedName?: string;
+  startLine?: number;
+  endLine?: number;
+  content?: string;
+  structuralHash?: string;
+  signature?: string;
+  language?: string;
+  parentId?: string;
+  childIds?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * ConductorOrchestrator with GraphStorage accessor
+ */
+interface ConductorWithStorage extends ConductorOrchestrator {
+  getGraphStorage?(): GraphStorage | null;
+}
+
+/**
+ * GraphStorage interface
+ */
+interface GraphStorage {
+  getAllEntities?(): Promise<DevAgentEntity[]>;
+  [key: string]: unknown;
+}
+
+/**
+ * VersionedIndex with temporary cache flag
+ */
+interface VersionedIndexWithCache extends VersionedIndex {
+  _fromCache?: boolean;
+}
 
 /**
  * Multi-Version Indexer - Parallel indexing for 3-way merge
@@ -177,12 +251,16 @@ export class MultiVersionIndexer {
   /**
    * Run actual indexing using DevAgent
    */
-  private async runIndexing(devAgent: any, branch: string, options: IndexingOptions): Promise<VersionedIndex> {
-    // Get current repo path from git integration
-    const repoPath = (this.gitIntegration as any).config.repoPath as string;
+  private async runIndexing(
+    devAgent: DevAgentWithExecute,
+    branch: string,
+    options: IndexingOptions,
+  ): Promise<VersionedIndex> {
+    // Get current repo path from git integration using public getter
+    const repoPath = this.gitIntegration.repoPath;
 
     // Use DevAgent to perform indexing
-    const result = await (devAgent as any).execute?.({
+    const result = await devAgent.execute?.({
       task: "index_codebase",
       params: {
         directory: repoPath,
@@ -227,7 +305,7 @@ export class MultiVersionIndexer {
   /**
    * Convert entity from DevAgent to CodeUnit
    */
-  private entityToCodeUnit(entity: any): import("../models/code-unit.js").CodeUnit {
+  private entityToCodeUnit(entity: DevAgentEntity): CodeUnit {
     const { ContentNormalizer } = require("./content-normalizer.js");
     const normalizer = new ContentNormalizer();
 
@@ -256,9 +334,9 @@ export class MultiVersionIndexer {
   /**
    * Map entity type string to CodeUnitType
    */
-  private mapEntityType(type: string): import("../models/code-unit.js").CodeUnitType {
+  private mapEntityType(type: string): CodeUnitType {
     const { CodeUnitType } = require("../models/code-unit.js");
-    const typeMap: Record<string, any> = {
+    const typeMap: Record<string, CodeUnitType> = {
       file: CodeUnitType.File,
       module: CodeUnitType.Module,
       class: CodeUnitType.Class,
@@ -273,7 +351,7 @@ export class MultiVersionIndexer {
   /**
    * Add a CodeUnit to the index with all hash indexes
    */
-  private addUnitToIndex(index: VersionedIndex, unit: import("../models/code-unit.js").CodeUnit): void {
+  private addUnitToIndex(index: VersionedIndex, unit: CodeUnit): void {
     // Add to main units map
     index.units.set(unit.id, unit);
 
@@ -316,7 +394,7 @@ export class MultiVersionIndexer {
   private async populateIndexFromStorage(index: VersionedIndex): Promise<void> {
     try {
       // Get GraphStorage from conductor
-      const storage = (this.conductor as any).getGraphStorage?.();
+      const storage = (this.conductor as ConductorWithStorage).getGraphStorage?.();
       if (!storage) {
         log.w("MULTIVIDX", "[MultiVersionIndexer] GraphStorage not available for fallback");
         return;
@@ -389,7 +467,7 @@ export class MultiVersionIndexer {
       index.stats.totalUnits = metadata.entityCount;
 
       // Mark as cache hit
-      (index as any)._fromCache = true;
+      (index as VersionedIndexWithCache)._fromCache = true;
 
       return index;
     } catch (error) {
@@ -403,7 +481,8 @@ export class MultiVersionIndexer {
    */
   private async saveCachedIndex(branch: string, index: VersionedIndex): Promise<void> {
     try {
-      const repoPath = (this.gitIntegration as any).config.repoPath as string;
+      // Use public getter for repoPath
+      const repoPath = this.gitIntegration.repoPath;
       const commitHash = this.gitIntegration.getCommitHash(branch);
       const repoHash = this.branchManager.getRepositoryHash(repoPath);
 
@@ -431,6 +510,6 @@ export class MultiVersionIndexer {
    * Check if index was loaded from cache
    */
   private wasCacheHit(index: VersionedIndex): boolean {
-    return (index as any)._fromCache === true;
+    return (index as VersionedIndexWithCache)._fromCache === true;
   }
 }

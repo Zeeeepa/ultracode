@@ -178,8 +178,18 @@ node {
   const configPath = join(modelsDir, "config.json");
   const pathPrefix = isWindows ? modelsPath.replace(/\\/g, "/") : modelsPath;
 
-  const ovmsConfig = {
-    model_config_list: [] as any[],
+  interface OVMSEndpoint {
+    name: string;
+    base_path: string;
+  }
+
+  interface OVMSConfig {
+    model_config_list: OVMSEndpoint[];
+    mediapipe_config_list: OVMSEndpoint[];
+  }
+
+  const ovmsConfig: OVMSConfig = {
+    model_config_list: [],
     mediapipe_config_list: endpoints.map((name) => ({
       name,
       base_path: `${pathPrefix}/${name}`,

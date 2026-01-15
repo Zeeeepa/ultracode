@@ -48,7 +48,11 @@ export function detectRuntime(): Runtime {
   }
 
   // Method 4: Check if Bun global functions exist
-  if (typeof (globalThis as any).Bun?.version === "string") {
+  if (
+    typeof globalThis.Bun !== "undefined" &&
+    "version" in globalThis.Bun &&
+    typeof globalThis.Bun["version"] === "string"
+  ) {
     cachedRuntime = "bun";
     console.error(`[Runtime] Detected: bun (via Bun.version)`);
     return "bun";
@@ -133,8 +137,8 @@ export function acquireLock(): boolean {
     // Try to create lock file exclusively
     writeFileSync(lockPath, String(process.pid), { flag: "wx" });
     return true;
-  } catch (error: any) {
-    if (error.code === "EEXIST") {
+  } catch (error: unknown) {
+    if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
       // Lock file exists, check if process is alive
       try {
         const pid = Number.parseInt(readFileSync(lockPath, "utf-8").trim(), 10);

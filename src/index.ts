@@ -12,6 +12,29 @@
  *  - 2025-09-14: Enhanced by Dev-Agent - TASK-002: Added 8 new semantic MCP tools
  */
 
+// =============================================================================
+// TYPE DEFINITIONS FOR GLOBAL EXTENSIONS (must be before first use)
+// =============================================================================
+
+/**
+ * Global extensions (minimal - Bun types already provided by @types/bun)
+ */
+declare global {
+  // eslint-disable-next-line no-var
+  var env: Record<string, string> | undefined;
+}
+
+/**
+ * Type alias for global with knowledge bus
+ */
+type GlobalWithKnowledgeBus = typeof global & {
+  knowledgeBus?: unknown;
+};
+
+// =============================================================================
+// EARLY INITIALIZATION
+// =============================================================================
+
 // CRITICAL: Check for --pipe flag BEFORE any imports (to prevent JSON-RPC corruption)
 // Set env variable early so imported modules can check it
 if (process.argv.includes("--pipe")) {
@@ -22,7 +45,7 @@ if (process.argv.includes("--pipe")) {
 // In Bun with native modules, even console function calls can cause crashes
 // Make console completely no-op in quiet mode (when running as MCP server)
 (() => {
-  const isBun = typeof (globalThis as any).Bun !== "undefined";
+  const isBun = typeof globalThis.Bun !== "undefined";
   const quietMode = process.env["MCP_QUIET_MODE"] === "true";
 
   // CRITICAL: In Bun+quiet mode, use absolute minimal no-op functions
@@ -60,7 +83,7 @@ function createSafeEnvironment() {
   };
 
   // Make env globally available for embedding models
-  (globalThis as any).env = safeEnv;
+  globalThis.env = safeEnv;
   return safeEnv;
 }
 
@@ -113,7 +136,7 @@ import {
 import { knowledgeBus } from "./core/knowledge-bus.js";
 
 // Make knowledgeBus available globally for tool handlers
-(global as any).knowledgeBus = knowledgeBus;
+(global as GlobalWithKnowledgeBus).knowledgeBus = knowledgeBus;
 
 import { PipeServer } from "./core/pipe-transport.js";
 import { resourceManager } from "./core/resource-manager.js";
@@ -156,6 +179,7 @@ import {
   writeToLogFile,
 } from "./core/startup-utils.js";
 import { log } from "./logging/index.js";
+import type { Agent } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
 import { getVectorDimensions, loadSemanticConfig } from "./utils/config-paths.js";
@@ -425,7 +449,7 @@ function getConductor(): ConductorOrchestrator {
 
 // Global VectorStore instance (lazy-loaded from SemanticAgent)
 // Used by code modification components (CodeModifier, FileOperations, PatternSearch)
-const globalVectorStore: any = null;
+const globalVectorStore: unknown | null = null;
 
 // ============================================================================
 // PHASE 8: Service Container initialization
@@ -450,7 +474,7 @@ function getOrInitServiceContainer(): ServiceContainer {
 const layeredIndexManager: LayeredIndexManager | null = null;
 
 // VARIANT-C: Unified agent getter using DI Container
-async function getSemanticAgent(): Promise<any> {
+async function getSemanticAgent(): Promise<Agent> {
   const currentDir = getCurrentIndexingDirectory();
   log.t("AGENT", "get_semantic", { dir: currentDir ?? "none" });
 
@@ -459,27 +483,28 @@ async function getSemanticAgent(): Promise<any> {
   const agent = await getOrCreateAgent(container, cond, AgentType.SEMANTIC);
 
   // v3: Ensure agent's VectorStore has correct project context
-  if (agent && typeof agent.reinitializeForProject === "function" && currentDir) {
-    const vectorStore = agent.getVectorStore?.();
+  const semanticAgent = agent as any;
+  if (agent && typeof semanticAgent.reinitializeForProject === "function" && currentDir) {
+    const vectorStore = semanticAgent.getVectorStore?.();
     const currentContext = vectorStore?.getProjectContext?.();
     const expectedProjectHash = getProjectHash(currentDir);
 
     if (currentContext?.projectHash !== expectedProjectHash) {
       log.w("AGENT", "project_mismatch", { cur: currentContext?.projectHash, exp: expectedProjectHash });
-      await agent.reinitializeForProject(currentDir);
+      await semanticAgent.reinitializeForProject(currentDir);
     }
   }
 
   return agent;
 }
 
-async function getDevAgent(): Promise<any> {
+async function getDevAgent(): Promise<Agent> {
   const cond = getConductor();
   await cond.initialize();
   return await getOrCreateAgent(container, cond, AgentType.DEV);
 }
 
-async function getDoraAgent(): Promise<any> {
+async function getDoraAgent(): Promise<Agent> {
   const cond = getConductor();
   await cond.initialize();
   return await getOrCreateAgent(container, cond, AgentType.DORA);
@@ -488,7 +513,7 @@ async function getDoraAgent(): Promise<any> {
 async function getIndexerAgent(): Promise<IndexerAgent> {
   const cond = getConductor();
   await cond.initialize();
-  return await getOrCreateAgent(container, cond, AgentType.INDEXER);
+  return (await getOrCreateAgent(container, cond, AgentType.INDEXER)) as unknown as IndexerAgent;
 }
 
 // GraphStorage singleton is now managed by graph-storage-factory.ts
@@ -672,10 +697,10 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
       getConductor,
       getGraphStorage,
       getSQLiteManager: () => null, // Legacy - now using libsql via getGraphStorage()
-      getSemanticAgent,
+      getSemanticAgent: getSemanticAgent as () => Promise<any>,
       getBranchManager: async () => {
         const indexerAgent = await getIndexerAgent();
-        return indexerAgent?.getBranchManager?.() || null;
+        return (indexerAgent?.getBranchManager?.() || null) as any;
       },
       getSnapshotManager: async () => {
         const container = getOrInitServiceContainer();
@@ -766,7 +791,7 @@ async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
       }
     })();
 
-    const { name, arguments: args } = (callRequest as any).params;
+    const { name, arguments: args } = callRequest.params;
     const parsedObj = parsed as Record<string, unknown>;
     const responseIdValue = parsedObj?.["id"];
     const responseId =
@@ -1058,7 +1083,8 @@ async function main() {
       };
 
       // Connect server to client transport (server.connect() calls transport.start() internally)
-      await clientServer.connect(clientTransport as any);
+      // Note: MCP SDK Server.connect() expects a specific transport type, cast required
+      await clientServer.connect(clientTransport as unknown as Parameters<typeof clientServer.connect>[0]);
 
       log.i("PIPE", "client_ready", { client: clientId, active: activeClients });
     });
@@ -1072,7 +1098,8 @@ async function main() {
     transportType = "stdio";
 
     const connectStartTime = Date.now();
-    await server.connect(transport as any);
+    // Note: MCP SDK Server.connect() expects a specific transport type, cast required
+    await server.connect(transport as unknown as Parameters<typeof server.connect>[0]);
     log.t("STARTUP", "stdio_connected", { ms: Date.now() - PROCESS_START_TIME, dur: Date.now() - connectStartTime });
     log.i("MCP", "server_ready", { dir: directory, transport: transportType, tools: getToolsList().length });
   }

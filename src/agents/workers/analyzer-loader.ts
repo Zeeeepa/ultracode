@@ -7,23 +7,25 @@
  * Extracted from generic-language-worker.ts for better modularity.
  */
 
+import type { BaseParser } from "../../parsers/base-parser.js";
+
 // =============================================================================
 // Analyzer Cache
 // =============================================================================
 
-const analyzerCache: Map<string, any> = new Map();
+const analyzerCache: Map<string, BaseParser> = new Map();
 
 /**
  * Get or create analyzer for specific language
  */
-export async function getAnalyzer(language: string): Promise<any> {
+export async function getAnalyzer(language: string): Promise<BaseParser> {
   if (analyzerCache.has(language)) {
-    return analyzerCache.get(language);
+    return analyzerCache.get(language)!;
   }
 
   try {
     // Dynamically import language-specific analyzer
-    let analyzer: any;
+    let analyzer: BaseParser;
 
     switch (language) {
       case "python": {
@@ -93,12 +95,35 @@ export async function getAnalyzer(language: string): Promise<any> {
         // Simple JSON parser - just returns empty entities (JSON doesn't have code entities)
         // JSON files are indexed for search but don't have AST entities
         analyzer = {
+          initialize: async () => {},
+          supportsFile: () => true,
           parse: async (filePath: string, _content: string, hash: string) => ({
             entities: [],
             filePath,
-            hash,
+            contentHash: hash,
             language: "json",
+            timestamp: Date.now(),
+            parseTimeMs: 0,
           }),
+          parseIncremental: async (filePath: string, _content: string, hash: string) => ({
+            entities: [],
+            filePath,
+            contentHash: hash,
+            language: "json",
+            timestamp: Date.now(),
+            parseTimeMs: 0,
+          }),
+          getStats: () => ({
+            filesParsed: 0,
+            cacheHits: 0,
+            cacheMisses: 0,
+            avgParseTimeMs: 0,
+            totalParseTimeMs: 0,
+            throughput: 0,
+            cacheMemoryMB: 0,
+            errorCount: 0,
+          }),
+          clearCache: () => {},
         };
         break;
       }

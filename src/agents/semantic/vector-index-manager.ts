@@ -11,6 +11,7 @@ import type { EmbeddingGenerator } from "../../semantic/embedding-generator.js";
 import type { VectorStore } from "../../semantic/vector-store.js";
 import { getGraphStorage } from "../../storage/graph-storage-factory.js";
 import type { SemanticAnalysis } from "../../types/semantic.js";
+import type { Entity } from "../../types/storage.js";
 
 export interface HotspotItem {
   entityId?: string;
@@ -30,6 +31,11 @@ export interface AnalyzeHotspotsResult {
   metric: string;
   items: HotspotItem[];
 }
+
+/**
+ * Input hotspot can be either an Entity or an object containing an entity field
+ */
+export type HotspotInput = Entity | { entity: Entity; [key: string]: unknown };
 
 export class VectorIndexManager {
   constructor(
@@ -72,7 +78,7 @@ export class VectorIndexManager {
    * semantic summaries and complexity indicators.
    * Uses parallel processing for optimal performance.
    */
-  async analyzeHotspots(hotspots: any[], metric: string): Promise<AnalyzeHotspotsResult> {
+  async analyzeHotspots(hotspots: HotspotInput[], metric: string): Promise<AnalyzeHotspotsResult> {
     const { readByteRange, readLineRange, readText } = await import("../../utils/file-ops.js");
     const storage = await getGraphStorage();
 
@@ -82,10 +88,15 @@ export class VectorIndexManager {
     }
 
     // PHASE 1: Parallel entity fetch - batch all storage.getEntity calls
-    const entityIds = hotspotList.map((h) => ((h.entity || h) as any).id).filter((id): id is string => !!id);
+    const entityIds = hotspotList
+      .map((h) => {
+        const entity = "entity" in h ? h.entity : h;
+        return entity.id;
+      })
+      .filter((id): id is string => !!id);
 
     const BATCH_SIZE = 20;
-    const storedEntitiesMap = new Map<string, any>();
+    const storedEntitiesMap = new Map<string, Entity>();
 
     for (let i = 0; i < entityIds.length; i += BATCH_SIZE) {
       const batch = entityIds.slice(i, i + BATCH_SIZE);
@@ -105,8 +116,8 @@ export class VectorIndexManager {
 
     // PHASE 2: Parallel code extraction
     const codeExtractionPromises = hotspotList.map(async (h) => {
-      const entity = (h.entity || h) as any;
-      const filePath = entity.filePath || entity.path;
+      const entity = "entity" in h ? h.entity : h;
+      const filePath = entity.filePath;
       let code = "";
       let snippetInfo: { startLine?: number; endLine?: number; length?: number } | undefined;
 
@@ -182,15 +193,18 @@ export class VectorIndexManager {
     }
 
     // Build final items array
-    const items: HotspotItem[] = itemsWithPendingSemantic.map((item) => ({
-      entityId: item.entity.id,
-      filePath: item.entity.filePath || item.entity.path,
-      name: item.entity.name,
-      language: item.entity.language,
-      structuralScore: item.entity.score || item.entity.complexity || undefined,
-      semantic: item.semantic,
-      snippet: item.snippetInfo,
-    }));
+    const items: HotspotItem[] = itemsWithPendingSemantic.map((item) => {
+      const entity = item.entity as Entity & { path?: string; score?: number; complexity?: number };
+      return {
+        entityId: entity.id,
+        filePath: entity.filePath || entity.path,
+        name: entity.name,
+        language: entity.language,
+        structuralScore: entity.score || entity.complexity || undefined,
+        semantic: item.semantic,
+        snippet: item.snippetInfo,
+      };
+    });
 
     // Sort by combined score if available
     items.sort((a, b) => {

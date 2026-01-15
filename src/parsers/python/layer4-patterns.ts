@@ -12,6 +12,57 @@ import { CycleDetector } from "./utils/cycle-detector.js";
 import { convertPosition, withPerformanceMonitoring } from "./utils/helpers.js";
 
 // =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * Location in source code
+ */
+interface Location {
+  start: { line: number; column: number; index: number };
+  end: { line: number; column: number; index: number };
+}
+
+/**
+ * Context manager pattern (with statement)
+ */
+interface ContextManagerPattern {
+  type: "context_manager";
+  location: Location;
+  expression: string;
+  isAsync: boolean;
+}
+
+/**
+ * Exception handling pattern (try/except/finally)
+ */
+interface ExceptionHandlingPattern {
+  type: "exception_handling";
+  location: Location;
+  hasExcept: boolean;
+  hasFinally: boolean;
+  hasElse: boolean;
+  exceptCount: number;
+}
+
+/**
+ * Design pattern detection result
+ */
+interface DesignPattern {
+  type: "singleton" | "factory";
+  className: string;
+  confidence: number;
+}
+
+/**
+ * Python idiom (comprehensions, generators)
+ */
+interface PythonIdiom {
+  type: "list_comprehension" | "dict_comprehension" | "set_comprehension" | "generator_expression";
+  location: Location;
+}
+
+// =============================================================================
 // LAYER 4 ANALYZER CLASS
 // =============================================================================
 
@@ -40,10 +91,14 @@ export class Layer4PatternAnalyzer {
     await withPerformanceMonitoring(
       "Layer4Analysis",
       () => {
-        patterns.contextManagers = this.analyzeContextManagers(rootNode);
-        patterns.exceptionHandling = this.analyzeExceptionHandling(rootNode);
-        patterns.designPatterns = this.detectDesignPatterns(context);
-        patterns.pythonIdioms = this.identifyPythonIdioms(rootNode);
+        patterns.contextManagers = this.analyzeContextManagers(
+          rootNode,
+        ) as unknown as PatternAnalysis["contextManagers"];
+        patterns.exceptionHandling = this.analyzeExceptionHandling(
+          rootNode,
+        ) as unknown as PatternAnalysis["exceptionHandling"];
+        patterns.designPatterns = this.detectDesignPatterns(context) as unknown as PatternAnalysis["designPatterns"];
+        patterns.pythonIdioms = this.identifyPythonIdioms(rootNode) as unknown as PatternAnalysis["pythonIdioms"];
         patterns.circularDependencies = this.cycleDetector.detectCircularDependencies(context);
       },
       context.metrics,
@@ -64,12 +119,12 @@ export class Layer4PatternAnalyzer {
   /**
    * Analyze context manager usage (with statements)
    */
-  private analyzeContextManagers(rootNode: ASTNode): any[] {
+  private analyzeContextManagers(rootNode: ASTNode): ContextManagerPattern[] {
     const withNodes = findNodesByType(rootNode, ["with_statement"]);
-    const contextManagers = [];
+    const contextManagers: ContextManagerPattern[] = [];
 
     for (const withNode of withNodes) {
-      const contextManager = {
+      const contextManager: ContextManagerPattern = {
         type: "context_manager",
         location: convertPosition(withNode),
         expression: withNode.text.substring(0, 100),
@@ -84,16 +139,16 @@ export class Layer4PatternAnalyzer {
   /**
    * Analyze exception handling patterns
    */
-  private analyzeExceptionHandling(rootNode: ASTNode): any[] {
+  private analyzeExceptionHandling(rootNode: ASTNode): ExceptionHandlingPattern[] {
     const tryNodes = findNodesByType(rootNode, ["try_statement"]);
-    const exceptionHandling = [];
+    const exceptionHandling: ExceptionHandlingPattern[] = [];
 
     for (const tryNode of tryNodes) {
       const exceptNodes = findNodesByType(tryNode, ["except_clause"]);
       const finallyNodes = findNodesByType(tryNode, ["finally_clause"]);
       const elseNodes = findNodesByType(tryNode, ["else_clause"]);
 
-      const pattern = {
+      const pattern: ExceptionHandlingPattern = {
         type: "exception_handling",
         location: convertPosition(tryNode),
         hasExcept: exceptNodes.length > 0,
@@ -110,8 +165,8 @@ export class Layer4PatternAnalyzer {
   /**
    * Detect common design patterns
    */
-  private detectDesignPatterns(context: AnalysisContext): any[] {
-    const patterns = [];
+  private detectDesignPatterns(context: AnalysisContext): DesignPattern[] {
+    const patterns: DesignPattern[] = [];
 
     for (const [className, classInfo] of context.classes.entries()) {
       if (this.isSingletonPattern(classInfo)) {
@@ -137,8 +192,8 @@ export class Layer4PatternAnalyzer {
   /**
    * Identify Python idioms (comprehensions, etc.)
    */
-  private identifyPythonIdioms(rootNode: ASTNode): any[] {
-    const idioms = [];
+  private identifyPythonIdioms(rootNode: ASTNode): PythonIdiom[] {
+    const idioms: PythonIdiom[] = [];
 
     const listCompNodes = findNodesByType(rootNode, ["list_comprehension"]);
     for (const node of listCompNodes) {

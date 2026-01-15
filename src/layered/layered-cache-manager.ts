@@ -22,6 +22,28 @@ import { isSyncSQLiteAvailable, loadSQLiteModule } from "../storage/sqlite-adapt
 import { BranchDelta } from "./branch-delta.js";
 
 // =============================================================================
+// SQLITE ROW TYPES
+// =============================================================================
+
+interface BranchDeltaRow {
+  branch_name: string;
+  base_commit_sha: string;
+  last_modified: number;
+  entity_added: string;
+  entity_modified: string;
+  entity_deleted: string;
+  relationship_added: string;
+  relationship_modified: string;
+  relationship_deleted: string;
+  total_changes: number;
+}
+
+interface StatsRow {
+  total_branches: number;
+  total_changes: number;
+}
+
+// =============================================================================
 // LAYERED CACHE MANAGER CLASS
 // =============================================================================
 
@@ -200,7 +222,7 @@ export class LayeredCacheManager {
     }
 
     try {
-      const row = this.selectStmt.get(branchName) as any;
+      const row = this.selectStmt.get<BranchDeltaRow>(branchName);
 
       if (!row) {
         return null;
@@ -297,7 +319,7 @@ export class LayeredCacheManager {
   /**
    * Deserialize branch delta from database row
    */
-  private deserializeDelta(row: any): BranchDelta {
+  private deserializeDelta(row: BranchDeltaRow): BranchDelta {
     const delta = new BranchDelta(row.branch_name, row.base_commit_sha);
     delta.lastModified = row.last_modified;
 
@@ -357,7 +379,7 @@ export class LayeredCacheManager {
       FROM branch_deltas
     `);
 
-    const row = stmt.get() as any;
+    const row = stmt.get<StatsRow>();
 
     // Get database file size
     let databaseSize = 0;

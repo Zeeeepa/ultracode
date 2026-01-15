@@ -61,15 +61,129 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 `;
 
 // WebGPU types (compatible with both webgpu package and browser)
+
+/**
+ * WebGPU Buffer
+ */
+interface WebGPUBuffer {
+  destroy(): void;
+  mapAsync(mode: number): Promise<void>;
+  getMappedRange(): ArrayBuffer;
+  unmap(): void;
+}
+
+/**
+ * WebGPU Shader Module
+ */
+interface WebGPUShaderModule {
+  label?: string;
+}
+
+/**
+ * WebGPU Compute Pipeline
+ */
+interface WebGPUComputePipeline {
+  label?: string;
+  getBindGroupLayout(index: number): WebGPUBindGroupLayout;
+}
+
+/**
+ * WebGPU Bind Group Layout
+ */
+interface WebGPUBindGroupLayout {
+  label?: string;
+}
+
+/**
+ * WebGPU Bind Group
+ */
+interface WebGPUBindGroup {
+  label?: string;
+}
+
+/**
+ * WebGPU Compute Pass
+ */
+interface WebGPUComputePass {
+  setPipeline(pipeline: WebGPUComputePipeline): void;
+  setBindGroup(index: number, bindGroup: WebGPUBindGroup): void;
+  dispatchWorkgroups(workgroupCountX: number, workgroupCountY?: number, workgroupCountZ?: number): void;
+  end(): void;
+}
+
+/**
+ * WebGPU Command Buffer
+ */
+interface WebGPUCommandBuffer {
+  label?: string;
+}
+
+/**
+ * WebGPU Command Encoder
+ */
+interface WebGPUCommandEncoder {
+  beginComputePass(): WebGPUComputePass;
+  finish(): WebGPUCommandBuffer;
+}
+
+/**
+ * WebGPU Buffer Descriptor
+ */
+interface WebGPUBufferDescriptor {
+  label?: string;
+  size: number;
+  usage: number;
+  mappedAtCreation?: boolean;
+}
+
+/**
+ * WebGPU Shader Module Descriptor
+ */
+interface WebGPUShaderModuleDescriptor {
+  label?: string;
+  code: string;
+}
+
+/**
+ * WebGPU Compute Pipeline Descriptor
+ */
+interface WebGPUComputePipelineDescriptor {
+  label?: string;
+  layout: string | WebGPUBindGroupLayout;
+  compute: {
+    module: WebGPUShaderModule;
+    entryPoint: string;
+  };
+}
+
+/**
+ * WebGPU Bind Group Entry
+ */
+interface WebGPUBindGroupEntry {
+  binding: number;
+  resource: {
+    buffer: WebGPUBuffer;
+  };
+}
+
+/**
+ * WebGPU Bind Group Descriptor
+ */
+interface WebGPUBindGroupDescriptor {
+  label?: string;
+  layout: WebGPUBindGroupLayout;
+  entries: WebGPUBindGroupEntry[];
+}
+
 interface WebGPUDevice {
-  createBuffer(descriptor: any): any;
-  createShaderModule(descriptor: any): any;
-  createComputePipeline(descriptor: any): any;
-  createBindGroup(descriptor: any): any;
-  createCommandEncoder(): any;
+  createBuffer(descriptor: WebGPUBufferDescriptor): WebGPUBuffer;
+  createShaderModule(descriptor: WebGPUShaderModuleDescriptor): WebGPUShaderModule;
+  createComputePipeline(descriptor: WebGPUComputePipelineDescriptor): WebGPUComputePipeline;
+  createBindGroup(descriptor: WebGPUBindGroupDescriptor): WebGPUBindGroup;
+  createCommandEncoder(): WebGPUCommandEncoder;
   queue: {
-    submit(commandBuffers: any[]): void;
-    writeBuffer(buffer: any, offset: number, data: ArrayBuffer): void;
+    submit(commandBuffers: WebGPUCommandBuffer[]): void;
+    writeBuffer(buffer: WebGPUBuffer, offset: number, data: ArrayBuffer): void;
   };
   destroy(): void;
 }
@@ -82,6 +196,13 @@ interface WebGPUAdapter {
   };
 }
 
+/**
+ * WebGPU global instance
+ */
+interface WebGPUGlobal {
+  requestAdapter(): Promise<WebGPUAdapter>;
+}
+
 export class WebGPUBackend implements VectorBackend {
   readonly name = "WebGPU Compute";
   readonly type = "webgpu" as const;
@@ -89,8 +210,8 @@ export class WebGPUBackend implements VectorBackend {
 
   private device: WebGPUDevice | null = null;
   private adapter: WebGPUAdapter | null = null;
-  private pipeline: any = null;
-  private bindGroupLayout: any = null;
+  private pipeline: WebGPUComputePipeline | null = null;
+  private bindGroupLayout: WebGPUBindGroupLayout | null = null;
 
   constructor(private gpuInfo: GPUInfo) {}
 
@@ -108,17 +229,19 @@ export class WebGPUBackend implements VectorBackend {
   private async getAdapter(): Promise<WebGPUAdapter | null> {
     try {
       // Try Node.js WebGPU
-      const webgpu = await import("webgpu");
-      // webgpu package exports GPU instance directly
-      const gpu = (webgpu as any).GPU ? (webgpu as any).GPU : webgpu;
+      const webgpu = (await import("webgpu")) as { GPU?: WebGPUGlobal; requestAdapter?: () => Promise<WebGPUAdapter> };
+      // webgpu package exports GPU instance directly or has requestAdapter method
+      const gpu: WebGPUGlobal = webgpu.GPU || (webgpu as unknown as WebGPUGlobal);
       const adapter = await gpu.requestAdapter();
-      return adapter as WebGPUAdapter;
+      return adapter;
     } catch {
       // Try browser native WebGPU
       if (typeof navigator !== "undefined" && "gpu" in navigator) {
-        const gpu = (navigator as any).gpu;
-        const adapter = await gpu.requestAdapter();
-        return adapter as WebGPUAdapter;
+        const gpu = (navigator as unknown as { gpu?: WebGPUGlobal }).gpu;
+        if (gpu) {
+          const adapter = await gpu.requestAdapter();
+          return adapter;
+        }
       }
       return null;
     }
@@ -175,7 +298,7 @@ export class WebGPUBackend implements VectorBackend {
   }
 
   async batchCosineSimilarity(query: Float32Array, database: Float32Array[]): Promise<Float32Array> {
-    if (!this.device || !this.pipeline) {
+    if (!this.device || !this.pipeline || !this.bindGroupLayout) {
       throw new Error("WebGPU backend not initialized");
     }
 

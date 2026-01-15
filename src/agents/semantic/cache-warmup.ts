@@ -45,7 +45,14 @@ export function buildWarmupText(entity: Partial<Entity>): string | null {
   if (entity.type) parts.push(`type: ${entity.type}`);
   if (entity.name) parts.push(`name: ${entity.name}`);
   if (entity.filePath) parts.push(`file: ${entity.filePath}`);
-  if ((entity as any).language) parts.push(`language: ${(entity as any).language}`);
+  if (
+    entity.metadata &&
+    typeof entity.metadata === "object" &&
+    "language" in entity.metadata &&
+    typeof entity.metadata.language === "string"
+  ) {
+    parts.push(`language: ${entity.metadata.language}`);
+  }
   if (entity.metadata) {
     try {
       const metadata = JSON.stringify(entity.metadata).slice(0, 512);
@@ -83,7 +90,7 @@ export async function warmupSemanticCache(ctx: CacheWarmupContext): Promise<void
     if (warmupTopic) {
       const entries = knowledgeBus.query(warmupTopic, warmupLimit);
       for (const entry of entries) {
-        const data = entry.data as any;
+        const data: unknown = entry.data;
         let id: string | undefined;
         let candidate: Partial<Entity> | undefined;
 
@@ -91,13 +98,14 @@ export async function warmupSemanticCache(ctx: CacheWarmupContext): Promise<void
           id = data;
           candidate = { id, name: data };
         } else if (data && typeof data === "object") {
-          id = data.id ?? data.entityId ?? data.name;
+          const objData = data as Record<string, unknown>;
+          id = (objData["id"] ?? objData["entityId"] ?? objData["name"]) as string | undefined;
           candidate = {
             id,
-            name: data.name,
-            type: data.type,
-            filePath: data.filePath ?? data.path,
-            metadata: data.metadata,
+            name: objData["name"] as string | undefined,
+            type: objData["type"] as EntityType | undefined,
+            filePath: (objData["filePath"] ?? objData["path"]) as string | undefined,
+            metadata: objData["metadata"] as Record<string, unknown> | undefined,
           };
         }
 

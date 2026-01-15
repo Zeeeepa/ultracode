@@ -1,10 +1,92 @@
+import { toError } from "../../utils/error-handling.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
 import { ensureContainerRunning, waitForReady } from "./ovms-container.js";
 import { OVMSGrpcClient } from "./ovms-grpc-client.js";
 import { GPU_WARMUP_TEXTS, getTokenizerModel, normalizeVector, sleep } from "./ovms-utils.js";
 
+/**
+ * Basic typing for @xenova/transformers tokenizer
+ */
+interface TokenizerOutput {
+  input_ids:
+    | {
+        data: BigInt64Array | number[];
+        dims?: number[];
+        shape?: number[];
+      }
+    | number[][];
+  attention_mask?:
+    | {
+        data: BigInt64Array | number[];
+        dims?: number[];
+        shape?: number[];
+      }
+    | number[][];
+  token_type_ids?:
+    | {
+        data: BigInt64Array | number[];
+        dims?: number[];
+        shape?: number[];
+      }
+    | number[][];
+}
+
+interface TokenizerOptions {
+  padding?: boolean;
+  truncation?: boolean;
+  max_length?: number;
+  return_tensor?: boolean;
+}
+
+interface Tokenizer {
+  (text: string | string[], options?: TokenizerOptions): Promise<TokenizerOutput>;
+  from_pretrained?: (model: string, options?: { progress_callback?: unknown }) => Promise<Tokenizer>;
+}
+
+interface TokenizerConstructor {
+  from_pretrained: (model: string, options?: { progress_callback?: unknown }) => Promise<Tokenizer>;
+}
+
 // Will be loaded dynamically
-let TokenizerClass: any = null;
+let TokenizerClass: TokenizerConstructor | null = null;
+
+/**
+ * OVMS API response types
+ */
+interface OVMSModelInfo {
+  inputs?: Array<{ name: string; shape: number[]; datatype: string }>;
+  outputs?: Array<{ name: string; shape: number[]; datatype: string }>;
+}
+
+interface OVMSInferRequest {
+  inputs: Array<{
+    name: string;
+    shape: number[];
+    datatype: string;
+    data: number[];
+  }>;
+}
+
+interface OVMSInferResponse {
+  outputs: Array<{
+    name: string;
+    shape: number[];
+    datatype: string;
+    data: number[];
+  }>;
+}
+
+interface OVMSEmbeddingData {
+  embedding: number[];
+  index: number;
+  object: string;
+}
+
+interface OVMSEmbeddingResponse {
+  data: OVMSEmbeddingData[];
+  model: string;
+  object: string;
+}
 
 export interface OVMSOptions {
   model: string;
@@ -63,7 +145,7 @@ export class OVMSProvider implements EmbeddingProvider {
   private grpcPort: number;
   private grpcClient: OVMSGrpcClient | null = null;
   private log?: ProviderLogger | undefined;
-  private tokenizer: any = null;
+  private tokenizer: Tokenizer | null = null;
   private isNative: boolean;
   private endpoints: string[];
   private endpointIndex: number = 0;
@@ -124,13 +206,18 @@ export class OVMSProvider implements EmbeddingProvider {
       try {
         const transformers = await import("@xenova/transformers");
         // Access AutoTokenizer from module (works with both ESM and CJS)
-        TokenizerClass = (transformers as any).AutoTokenizer || (transformers as any).default?.AutoTokenizer;
+        const transformersExt = transformers as {
+          AutoTokenizer?: TokenizerConstructor;
+          default?: { AutoTokenizer?: TokenizerConstructor };
+        };
+        TokenizerClass = transformersExt.AutoTokenizer || transformersExt.default?.AutoTokenizer || null;
         if (!TokenizerClass) {
           throw new Error("AutoTokenizer not found in @xenova/transformers");
         }
         this.log?.info("Loaded @xenova/transformers");
-      } catch (e: any) {
-        throw new Error(`Failed to load tokenizer library: ${e.message}`);
+      } catch (error: unknown) {
+        const err = toError(error);
+        throw new Error(`Failed to load tokenizer library: ${err.message}`);
       }
     }
 
@@ -146,8 +233,9 @@ export class OVMSProvider implements EmbeddingProvider {
       const elapsed = Date.now() - startTime;
 
       this.log?.info("Tokenizer loaded", { elapsedMs: elapsed });
-    } catch (e: any) {
-      throw new Error(`Failed to load tokenizer for ${this.modelId}: ${e.message}`);
+    } catch (error: unknown) {
+      const err = toError(error);
+      throw new Error(`Failed to load tokenizer for ${this.modelId}: ${err.message}`);
     }
 
     if (this.checkServer) {
@@ -168,11 +256,12 @@ export class OVMSProvider implements EmbeddingProvider {
         signal: AbortSignal.timeout(5000),
       });
       if (infoRes.ok) {
-        const modelInfo = (await infoRes.json()) as { inputs?: any[]; outputs?: any[] };
+        const modelInfo = (await infoRes.json()) as OVMSModelInfo;
         this.log?.debug("OVMS model info", { model: this.modelName, info: modelInfo });
       }
-    } catch (e: any) {
-      this.log?.warn("Failed to get model info", { error: e.message });
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.warn("Failed to get model info", { error: err.message });
     }
 
     // Initialize gRPC client if protocol is grpc
@@ -195,9 +284,10 @@ export class OVMSProvider implements EmbeddingProvider {
         // Check server ready via gRPC
         const ready = await this.grpcClient.isServerReady();
         this.log?.info("gRPC server ready", { ready });
-      } catch (e: any) {
-        this.log?.error("gRPC client initialization failed", { error: e.message });
-        throw new Error(`gRPC client failed: ${e.message}`);
+      } catch (error: unknown) {
+        const err = toError(error);
+        this.log?.error("gRPC client initialization failed", { error: err.message });
+        throw new Error(`gRPC client failed: ${err.message}`);
       }
     }
 
@@ -211,8 +301,9 @@ export class OVMSProvider implements EmbeddingProvider {
         this.info.dimension = vec.length;
         this.log?.info("initialized", { dimension: this.info.dimension, attempt });
         break;
-      } catch (e: any) {
-        const isModelLoading = e.message?.includes("not loaded") || e.message?.includes("Mediapipe");
+      } catch (error: unknown) {
+        const err = toError(error);
+        const isModelLoading = err.message.includes("not loaded") || err.message.includes("Mediapipe");
 
         if (isModelLoading && attempt < maxRetries) {
           this.log?.info("warmup retry", {
@@ -225,16 +316,16 @@ export class OVMSProvider implements EmbeddingProvider {
           continue;
         }
 
-        this.log?.error("warmup failed", { error: e.message, isNative: this.isNative, attempt }, undefined, e);
+        this.log?.error("warmup failed", { error: err.message, isNative: this.isNative, attempt }, undefined, err);
         if (this.isNative) {
           throw new Error(
-            `OVMS warmup failed after ${attempt} attempts: ${e.message}\n` +
+            `OVMS warmup failed after ${attempt} attempts: ${err.message}\n` +
               `OVMS Native should be auto-started by MCP server.\n` +
               `Check logs or run: setup-embedding`,
           );
         }
         throw new Error(
-          `OVMS warmup failed: ${e.message}\n` +
+          `OVMS warmup failed: ${err.message}\n` +
             `Make sure OVMS Docker container is running:\n` +
             `docker start ovms-embedding`,
         );
@@ -275,9 +366,10 @@ export class OVMSProvider implements EmbeddingProvider {
         textsProcessed: warmupTexts.length,
         endpoints: this.endpoints.length,
       });
-    } catch (e: any) {
+    } catch (error: unknown) {
+      const err = toError(error);
       // Don't fail initialization on warmup error, just log it
-      this.log?.warn("GPU warmup failed (non-fatal)", { error: e.message });
+      this.log?.warn("GPU warmup failed (non-fatal)", { error: err.message });
     }
   }
 
@@ -307,14 +399,15 @@ export class OVMSProvider implements EmbeddingProvider {
       }
       // Fallback to /v2/infer API with tokenization
       return await this.embedBatchV2(texts, opts);
-    } catch (error: any) {
-      this.log?.error("embedBatch failed", { error: error.message }, opts?.requestId, error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("embedBatch failed", { error: err.message }, opts?.requestId, err);
 
-      if (error.message?.includes("ECONNREFUSED")) {
+      if (err.message.includes("ECONNREFUSED")) {
         throw new Error(`OVMS server not reachable at ${this.baseUrl}. Is Docker container running?`);
       }
 
-      throw new Error(`OVMS embedBatch error: ${error.message}`);
+      throw new Error(`OVMS embedBatch error: ${err.message}`);
     }
   }
 
@@ -383,7 +476,7 @@ export class OVMSProvider implements EmbeddingProvider {
           throw new Error(`OVMS HTTP ${res.status}: ${errorBody}`);
         }
 
-        const json = (await res.json()) as any;
+        const json = (await res.json()) as OVMSEmbeddingResponse;
         const callMs = Date.now() - callStart;
         this.log?.debug("OVMS v3 batch done", {
           batch: config.batchIndex + 1,
@@ -398,7 +491,7 @@ export class OVMSProvider implements EmbeddingProvider {
         }
 
         // Sort by index to ensure correct order
-        const sortedData = [...json.data].sort((a: any, b: any) => a.index - b.index);
+        const sortedData = [...json.data].sort((a, b) => a.index - b.index);
         const embeddings: Float32Array[] = [];
 
         for (const item of sortedData) {
@@ -509,6 +602,9 @@ export class OVMSProvider implements EmbeddingProvider {
     // Tokenize ALL texts at once
     this.log?.debug("Tokenizing all texts", { count: paddedTexts.length });
     const tokenizeStart = Date.now();
+    if (!this.tokenizer) {
+      throw new Error("Tokenizer not initialized");
+    }
     const encoded = await this.tokenizer(paddedTexts, {
       padding: true,
       truncation: true,
@@ -526,12 +622,21 @@ export class OVMSProvider implements EmbeddingProvider {
     let tokenTypeIds2D: number[][] | null = null;
     let seqLen: number;
 
-    if (inputIdsRaw.dims || inputIdsRaw.shape) {
+    // Type guard for tensor data
+    const isTensorData = (
+      data: unknown,
+    ): data is { data: BigInt64Array | number[]; dims?: number[]; shape?: number[] } =>
+      typeof data === "object" && data !== null && "data" in data;
+
+    if (isTensorData(inputIdsRaw) && (inputIdsRaw.dims || inputIdsRaw.shape)) {
       const shape = inputIdsRaw.dims || inputIdsRaw.shape;
-      const totalTexts = shape[0];
-      seqLen = shape[1];
-      const inputIdsFlat = Array.from(inputIdsRaw.data || inputIdsRaw).map(Number);
-      const attentionMaskFlat = Array.from(attentionMaskRaw.data || attentionMaskRaw).map(Number);
+      const totalTexts = shape![0]!;
+      seqLen = shape![1]!;
+      const inputIdsFlat = Array.from(inputIdsRaw.data as ArrayLike<number>).map(Number);
+      const attentionMaskFlat =
+        isTensorData(attentionMaskRaw) && attentionMaskRaw.data
+          ? Array.from(attentionMaskRaw.data as ArrayLike<number>).map(Number)
+          : [];
 
       inputIds2D = [];
       attentionMask2D = [];
@@ -540,19 +645,19 @@ export class OVMSProvider implements EmbeddingProvider {
         attentionMask2D.push(attentionMaskFlat.slice(i * seqLen, (i + 1) * seqLen));
       }
 
-      if (tokenTypeIdsRaw) {
-        const tokenTypeIdsFlat = Array.from(tokenTypeIdsRaw.data || tokenTypeIdsRaw).map(Number);
+      if (tokenTypeIdsRaw && isTensorData(tokenTypeIdsRaw)) {
+        const tokenTypeIdsFlat = Array.from(tokenTypeIdsRaw.data as ArrayLike<number>).map(Number);
         tokenTypeIds2D = [];
         for (let i = 0; i < totalTexts; i++) {
           tokenTypeIds2D.push(tokenTypeIdsFlat.slice(i * seqLen, (i + 1) * seqLen));
         }
       }
     } else {
-      inputIds2D = inputIdsRaw;
-      attentionMask2D = attentionMaskRaw;
+      inputIds2D = inputIdsRaw as number[][];
+      attentionMask2D = (attentionMaskRaw as number[][]) || [];
       seqLen = inputIds2D[0]?.length || 0;
       if (tokenTypeIdsRaw) {
-        tokenTypeIds2D = tokenTypeIdsRaw;
+        tokenTypeIds2D = tokenTypeIdsRaw as number[][];
       }
     }
 
@@ -568,7 +673,7 @@ export class OVMSProvider implements EmbeddingProvider {
       start: number;
       end: number;
       miniBatchSize: number;
-      inferRequest: any;
+      inferRequest: OVMSInferRequest;
     }
 
     const batchConfigs: BatchConfig[] = [];
@@ -577,7 +682,7 @@ export class OVMSProvider implements EmbeddingProvider {
       const end = Math.min(start + this.miniBatchSize, inputIds2D.length);
       const miniBatchSize = end - start;
 
-      const inferRequest: any = {
+      const inferRequest: OVMSInferRequest = {
         inputs: [
           {
             name: "input_ids",
@@ -625,7 +730,7 @@ export class OVMSProvider implements EmbeddingProvider {
         throw new Error(`OVMS HTTP ${res.status}: ${errorBody}`);
       }
 
-      const json = (await res.json()) as any;
+      const json = (await res.json()) as OVMSInferResponse;
       const callMs = Date.now() - callStart;
       this.log?.debug("OVMS v2 batch", { batch: config.batchIndex + 1, numMiniBatches, callMs });
 
@@ -634,7 +739,8 @@ export class OVMSProvider implements EmbeddingProvider {
       }
 
       // Find embeddings output
-      let outputMeta: any = null;
+      type OutputMeta = { name: string; shape: number[]; datatype: string; data: number[] };
+      let outputMeta: OutputMeta | null = null;
       let outputShape: number[] | undefined;
 
       for (const output of json.outputs) {
@@ -658,7 +764,7 @@ export class OVMSProvider implements EmbeddingProvider {
       }
 
       if (!outputMeta || !outputShape || !outputMeta.data) {
-        throw new Error(`OVMS no valid output. Available: ${json.outputs.map((o: any) => o.name).join(", ")}`);
+        throw new Error(`OVMS no valid output. Available: ${json.outputs.map((o) => o.name).join(", ")}`);
       }
 
       const outputData: number[] = outputMeta.data;
@@ -750,6 +856,9 @@ export class OVMSProvider implements EmbeddingProvider {
     this.log?.debug("gRPC: Tokenizing texts", { count: texts.length });
     const tokenizeStart = Date.now();
 
+    if (!this.tokenizer) {
+      throw new Error("Tokenizer not initialized");
+    }
     const encoded = await this.tokenizer(texts, {
       padding: true,
       truncation: true,
@@ -766,12 +875,21 @@ export class OVMSProvider implements EmbeddingProvider {
     let attentionMask2D: number[][];
     let tokenTypeIds2D: number[][] | null = null;
 
-    if (inputIdsRaw.dims || inputIdsRaw.shape) {
+    // Type guard for tensor data
+    const isTensorData = (
+      data: unknown,
+    ): data is { data: BigInt64Array | number[]; dims?: number[]; shape?: number[] } =>
+      typeof data === "object" && data !== null && "data" in data;
+
+    if (isTensorData(inputIdsRaw) && (inputIdsRaw.dims || inputIdsRaw.shape)) {
       const shape = inputIdsRaw.dims || inputIdsRaw.shape;
-      const totalTexts = shape[0];
-      const seqLen = shape[1];
-      const inputIdsFlat = Array.from(inputIdsRaw.data || inputIdsRaw).map(Number);
-      const attentionMaskFlat = Array.from(attentionMaskRaw.data || attentionMaskRaw).map(Number);
+      const totalTexts = shape![0]!;
+      const seqLen = shape![1]!;
+      const inputIdsFlat = Array.from(inputIdsRaw.data as ArrayLike<number>).map(Number);
+      const attentionMaskFlat =
+        isTensorData(attentionMaskRaw) && attentionMaskRaw.data
+          ? Array.from(attentionMaskRaw.data as ArrayLike<number>).map(Number)
+          : [];
 
       inputIds2D = [];
       attentionMask2D = [];
@@ -780,18 +898,18 @@ export class OVMSProvider implements EmbeddingProvider {
         attentionMask2D.push(attentionMaskFlat.slice(i * seqLen, (i + 1) * seqLen));
       }
 
-      if (tokenTypeIdsRaw) {
-        const tokenTypeIdsFlat = Array.from(tokenTypeIdsRaw.data || tokenTypeIdsRaw).map(Number);
+      if (tokenTypeIdsRaw && isTensorData(tokenTypeIdsRaw)) {
+        const tokenTypeIdsFlat = Array.from(tokenTypeIdsRaw.data as ArrayLike<number>).map(Number);
         tokenTypeIds2D = [];
         for (let i = 0; i < totalTexts; i++) {
           tokenTypeIds2D.push(tokenTypeIdsFlat.slice(i * seqLen, (i + 1) * seqLen));
         }
       }
     } else {
-      inputIds2D = inputIdsRaw;
-      attentionMask2D = attentionMaskRaw;
+      inputIds2D = inputIdsRaw as number[][];
+      attentionMask2D = (attentionMaskRaw as number[][]) || [];
       if (tokenTypeIdsRaw) {
-        tokenTypeIds2D = tokenTypeIdsRaw;
+        tokenTypeIds2D = tokenTypeIdsRaw as number[][];
       }
     }
 
@@ -844,9 +962,10 @@ export class OVMSProvider implements EmbeddingProvider {
         });
 
         return { batchIndex: config.batchIndex, embeddings };
-      } catch (error: any) {
-        this.log?.error("gRPC batch failed", { batch: config.batchIndex + 1, error: error.message });
-        throw error;
+      } catch (error: unknown) {
+        const err = toError(error);
+        this.log?.error("gRPC batch failed", { batch: config.batchIndex + 1, error: err.message });
+        throw err;
       }
     };
 

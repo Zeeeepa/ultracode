@@ -13,7 +13,7 @@ import { knowledgeBus } from "./knowledge-bus.js";
 
 /** Check if running in Bun */
 function isBunRuntime(): boolean {
-  return typeof (globalThis as any).Bun !== "undefined";
+  return typeof globalThis.Bun !== "undefined";
 }
 
 export interface ResourceSnapshot {

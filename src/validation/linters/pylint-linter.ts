@@ -53,9 +53,9 @@ export class PylintLinter implements Linter {
     } catch (error) {
       // Pylint may exit with non-zero status if there are errors
       // Try to parse output anyway
-      if (error instanceof Error && "stdout" in error) {
+      if (error instanceof Error && "stdout" in error && typeof (error as { stdout?: unknown }).stdout === "string") {
         try {
-          const stdout = (error as any).stdout;
+          const stdout = (error as { stdout: string }).stdout;
           const results = JSON.parse(stdout);
           const problems: ValidationProblem[] = [];
 

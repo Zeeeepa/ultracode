@@ -16,7 +16,7 @@ import { getCurrentGitBranch } from "../shared/storage-paths.js";
 import { getGraphStorage, setGlobalProjectContext } from "../storage/graph-storage-factory.js";
 // SQLiteManager removed - using libsql via GraphStorage
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
-import type { ParseResult, ParserOptions } from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity, ParseResult, ParserOptions } from "../types/parser.js";
 import { hashText } from "../utils/fast-hash.js";
 import { BaseAgent } from "./base.js";
 import { createHeuristicEntities } from "./dev/heuristic-parser.js";
@@ -39,6 +39,47 @@ function getDevAgentConfig() {
     memoryLimit: config.devAgent?.memoryLimit ?? 256,
     priority: config.devAgent?.priority ?? 7,
   };
+}
+
+// =============================================================================
+// PAYLOAD TYPES FOR TASK HANDLERS
+// =============================================================================
+
+interface IndexTaskPayload {
+  directory: string;
+  incremental?: boolean;
+  excludePatterns?: string[];
+  batchMode?: boolean;
+}
+
+interface ImplementationTaskPayload {
+  description: string;
+}
+
+interface RefactorTaskPayload {
+  target: string;
+}
+
+interface IndexingResult {
+  filesProcessed: number;
+  entitiesExtracted: number;
+  relationshipsCreated: number;
+  codeFiles?: number;
+  dataFiles?: number;
+  deletedEntityIds?: string[];
+  totalFiles?: number;
+  incrementalStats?: {
+    changedFiles: number;
+    newFiles: number;
+    deletedFiles: number;
+    skippedFiles: number;
+    deletedEntities: number;
+  };
+}
+
+interface IndexingTaskResult {
+  entitiesIndexed?: number;
+  relationshipsCreated?: number;
 }
 
 export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
@@ -171,7 +212,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   }
 
   private async handleIndexTask(task: AgentTask): Promise<unknown> {
-    const payload = task.payload as any;
+    const payload = task.payload as IndexTaskPayload;
     log.i("DEVAGENT", "index_start", { dir: payload.directory });
 
     if (!this.indexerAgent) {
@@ -213,7 +254,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   }
 
   private async handleImplementationTask(task: AgentTask): Promise<unknown> {
-    const payload = task.payload as any;
+    const payload = task.payload as ImplementationTaskPayload;
     log.i("DEVAGENT", "impl_start", { desc: payload.description || "task" });
 
     // Implementation tasks would involve code generation, modifications, etc.
@@ -231,7 +272,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   }
 
   private async handleRefactorTask(task: AgentTask): Promise<unknown> {
-    const payload = task.payload as any;
+    const payload = task.payload as RefactorTaskPayload;
     log.i("DEVAGENT", "refactor_start", { target: payload.target || "code" });
 
     return {
@@ -308,7 +349,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     };
   }
 
-  private async performRealIndexing(payload: any): Promise<any> {
+  private async performRealIndexing(payload: IndexTaskPayload): Promise<IndexingResult> {
     const directory = payload.directory;
     const excludePatterns = payload.excludePatterns || [];
 
@@ -541,7 +582,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             const provider = getLayeredFaissProvider();
 
             // Check if initialized, initialize if not
-            if (!(provider as any).isInitialized) {
+            // Note: isInitialized is private, so we just try to initialize
+            if ("initialize" in provider && typeof provider.initialize === "function") {
               log.d("DEVAGENT", "Initializing LayeredFaissProvider", {
                 dir: payload.directory,
                 projectHash,
@@ -681,7 +723,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             createdAt: Date.now(),
           };
 
-          const results = (await this.parserAgent.process(parseTask)) as any[]; // ParseResult[]
+          const results = (await this.parserAgent.process(parseTask)) as ParseResult[];
 
           // DEBUG: Log parse results count
           log.i("DEVAGENT", "Parser batch completed", {
@@ -716,7 +758,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             total: totalEntityCount,
           });
 
-          const byFile = new Map<string, { entities: any[]; relationships: any[] }>();
+          const byFile = new Map<string, { entities: ParsedEntity[]; relationships: EntityRelationship[] }>();
 
           for (const res of results || []) {
             const fp = res?.filePath;
@@ -790,7 +832,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
           // OPTIMIZATION 2: Process files with yields INSIDE the loop, not just between chunks
           // This allows vectors.written callbacks to process between individual file indexings
-          let pendingPromises: Promise<{ result: any; error: any }>[] = [];
+          let pendingPromises: Promise<{ result: IndexingTaskResult | null; error: Error | null }>[] = [];
           let pendingCount = 0;
 
           for (const [file, group] of fileEntries) {
@@ -809,10 +851,10 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             const promise = (async () => {
               try {
                 const indexResult = await this.indexerAgent?.enqueue(indexTask);
-                return { result: indexResult as any, error: null };
+                return { result: indexResult as IndexingTaskResult | null, error: null };
               } catch (err) {
                 log.w("DEVAGENT", "index_file_fail", { file, err: (err as Error).message });
-                return { result: null, error: err };
+                return { result: null, error: err as Error };
               }
             })();
 
@@ -856,8 +898,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           //   global.gc?.();
           // }
         } else {
-          const entities: any[] = [];
-          const relationships: any[] = [];
+          const entities: ParsedEntity[] = [];
+          const relationships: EntityRelationship[] = [];
 
           for (const file of batch) {
             const extWithDot = extname(file).toLowerCase();
@@ -890,7 +932,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               name: fileName,
               type: "file",
               filePath: file,
-              location: { start: { line: 1, column: 0 }, end: { line: 1, column: 0 } },
+              location: { start: { line: 1, column: 0, index: 0 }, end: { line: 1, column: 0, index: 0 } },
               metadata: {
                 language: ext,
                 path: file,
@@ -910,7 +952,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               name: fileNameNoExt,
               type: "module",
               filePath: file,
-              location: { start: { line: 1, column: 0 }, end: { line: 100, column: 0 } },
+              location: { start: { line: 1, column: 0, index: 0 }, end: { line: 100, column: 0, index: 0 } },
               metadata: { language: ext, moduleType: "file" },
             });
 
@@ -920,7 +962,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 name: fileNameNoExt,
                 type: "class",
                 filePath: file,
-                location: { start: { line: 5, column: 0 }, end: { line: 50, column: 0 } },
+                location: { start: { line: 5, column: 0, index: 0 }, end: { line: 50, column: 0, index: 0 } },
                 metadata: { language: "python", visibility: "public" },
               });
             }
@@ -931,7 +973,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 name: fileNameNoExt,
                 type: "class",
                 filePath: file,
-                location: { start: { line: 5, column: 0 }, end: { line: 50, column: 0 } },
+                location: { start: { line: 5, column: 0, index: 0 }, end: { line: 50, column: 0, index: 0 } },
                 metadata: { language: ext, visibility: "public" },
               });
             }
@@ -942,7 +984,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 name: `export_default`,
                 type: "function",
                 filePath: file,
-                location: { start: { line: 10, column: 0 }, end: { line: 30, column: 0 } },
+                location: { start: { line: 10, column: 0, index: 0 }, end: { line: 30, column: 0, index: 0 } },
                 metadata: { language: ext, exported: true },
               });
             }
@@ -957,7 +999,6 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                   from: entity.name,
                   to: moduleEntity.name,
                   type: "contains",
-                  filePath: entity.filePath,
                 });
               }
             }
@@ -973,7 +1014,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                   from: entity.name,
                   to: rel.name,
                   type: rel.type === "class" ? "defines_class" : "defines_function",
-                  filePath: entity.filePath,
+                  sourceFile: entity.filePath,
                 });
               }
             }
@@ -983,22 +1024,23 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             if (entity.type === "class") {
               const funcs = entities.filter((e) => e.type === "function" && e.filePath === entity.filePath);
               for (const f of funcs) {
-                relationships.push({ from: entity.name, to: f.name, type: "has_method", filePath: entity.filePath });
+                relationships.push({ from: entity.name, to: f.name, type: "has_method", sourceFile: entity.filePath });
               }
             }
           }
 
-          const byFile = new Map<string, { entities: any[]; relationships: any[] }>();
+          const byFile = new Map<string, { entities: ParsedEntity[]; relationships: EntityRelationship[] }>();
           for (const e of entities) {
+            if (!e.filePath) continue;
             const slot = byFile.get(e.filePath) ?? { entities: [], relationships: [] };
             slot.entities.push(e);
             byFile.set(e.filePath, slot);
           }
           for (const r of relationships) {
-            const fp = r.filePath || null;
+            const fp = r.sourceFile || null;
             if (!fp) continue;
             const slot = byFile.get(fp) ?? { entities: [], relationships: [] };
-            slot.relationships.push({ from: r.from, to: r.to, type: r.type, targetFile: r.filePath });
+            slot.relationships.push({ from: r.from, to: r.to, type: r.type, targetFile: r.targetFile });
             byFile.set(fp, slot);
           }
 
@@ -1013,7 +1055,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             };
             try {
               const indexResult = await this.indexerAgent?.process(indexTask);
-              const indexed = indexResult as any;
+              const indexed = indexResult as IndexingTaskResult | undefined;
               if (indexed) {
                 totalEntities += indexed.entitiesIndexed || 0;
                 totalRelationships += indexed.relationshipsCreated || 0;
@@ -1143,7 +1185,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         // Fallback: kill all workers
         try {
           await this.parserAgent.shutdown();
-          this.parserAgent = null as any;
+          this.parserAgent = null;
         } catch {
           // ignore
         }
@@ -1239,7 +1281,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         if (useLayeredIndex) {
           const { getLayeredFaissProvider } = await import("../semantic/faiss/layered-faiss-provider.js");
           const provider = getLayeredFaissProvider();
-          if (!(provider as any).isInitialized) {
+          // Note: isInitialized is private, try to initialize unconditionally
+          if ("initialize" in provider && typeof provider.initialize === "function") {
             await provider.initialize(currentDir, projectHash, currentBranch);
           }
           this.parserAgent.setVectorProvider(provider);
@@ -1369,7 +1412,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           if (useLayeredIndex) {
             const { getLayeredFaissProvider } = await import("../semantic/faiss/layered-faiss-provider.js");
             const provider = getLayeredFaissProvider();
-            if ((provider as any).isInitialized) {
+            // Note: isInitialized is private, try to save unconditionally
+            if ("save" in provider && typeof provider.save === "function") {
               await provider.save();
               log.i("DEVAGENT", "Saved layered FAISS index after incremental");
             }
@@ -1387,7 +1431,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       try {
         const killed = await this.parserAgent.killIfMemoryHigh(500);
         if (killed) {
-          this.parserAgent = null as any;
+          this.parserAgent = null;
           log.i("DEVAGENT", "Parser workers killed (memory > 500MB after incremental)");
         }
       } catch (err) {

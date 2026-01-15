@@ -13,6 +13,8 @@
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
+import type { FaissIndex } from "faiss-napi";
+
 import type {
   FaissAddResponse,
   FaissBatchSearchResponse,
@@ -24,6 +26,7 @@ import type {
   FaissSearchResponse,
   FaissStatsResponse,
   FaissTrainResponse,
+  GpuWorkerResponse,
   GpuWorkerState,
 } from "./types.js";
 
@@ -31,15 +34,26 @@ import type {
 // Types
 // =============================================================================
 
+/**
+ * Faiss module interface (from faiss-napi)
+ */
+export interface FaissNapiModule {
+  Index: {
+    fromFactory(dimensions: number, factoryString: string, metricType?: string): FaissIndex;
+    fromBuffer(buffer: Buffer): FaissIndex;
+    read(path: string): FaissIndex;
+  };
+}
+
 export interface FaissHandlerContext {
-  faiss: any;
-  faissIndex: any;
+  faiss: FaissNapiModule | null;
+  faissIndex: FaissIndex | null;
   state: GpuWorkerState;
   log: (message: string) => void;
   logError: (message: string) => void;
-  sendResponse: (response: any) => void;
+  sendResponse: (response: GpuWorkerResponse) => void;
   sendError: (error: string, requestId?: string) => void;
-  setFaissIndex: (index: any) => void;
+  setFaissIndex: (index: FaissIndex | null) => void;
   setContentCachePath: (path: string) => void;
   loadContentCache: () => void;
   saveContentCache: () => void;
@@ -143,7 +157,7 @@ export async function handleFaissInit(
       state.faissIndexType = config.indexType;
       state.faissDimensions = config.dimensions;
       state.faissTotalVectors = loadedIndex.ntotal;
-      state.faissIsTrained = loadedIndex.isTrained ?? true;
+      state.faissIsTrained = (loadedIndex as { isTrained?: boolean }).isTrained ?? true;
 
       // Load ID maps if available
       const idMapPath = `${loadPath}.idmap.json`;
@@ -217,7 +231,7 @@ export function handleFaissAdd(request: { ids: string[]; vectors: number[] }, ct
 
   try {
     // faiss-napi expects number[], not Float32Array (IsArray check fails for TypedArray)
-    const vectorArray = Array.isArray(vectors) ? vectors : Array.from(vectors);
+    const vectorArray = (Array.isArray(vectors) ? vectors : Array.from(vectors)) as number[];
     faissIndex.add(vectorArray);
 
     const startId = state.faissTotalVectors;
@@ -520,7 +534,7 @@ export function handleFaissSearch(request: { vector: number[]; k: number }, ctx:
 
   try {
     // faiss-napi expects number[], not Float32Array
-    const queryArray = Array.isArray(vector) ? vector : Array.from(vector);
+    const queryArray = (Array.isArray(vector) ? vector : Array.from(vector)) as number[];
 
     // HNSW doesn't support deletion - orphaned vectors exist in index
     // Request more results to compensate for orphans that will be filtered
@@ -600,7 +614,7 @@ export function handleFaissBatchSearch(
 
   try {
     // faiss-napi expects number[], not Float32Array
-    const queryArray = Array.isArray(vectors) ? vectors : Array.from(vectors);
+    const queryArray = (Array.isArray(vectors) ? vectors : Array.from(vectors)) as number[];
     const actualK = Math.min(k, state.faissTotalVectors);
 
     if (actualK === 0) {
@@ -746,7 +760,7 @@ export function handleFaissLoad(request: { path: string }, ctx: FaissHandlerCont
     }
 
     state.faissInitialized = true;
-    state.faissIsTrained = loadedIndex.isTrained ?? true;
+    state.faissIsTrained = (loadedIndex as { isTrained?: boolean }).isTrained ?? true;
 
     // Load content cache
     setContentCachePath(path);
@@ -789,7 +803,11 @@ export function handleFaissTrain(request: { vectors: number[]; nVectors: number 
 
   try {
     // faiss-napi expects number[], not Float32Array
-    const trainingArray = Array.isArray(vectors) ? vectors : Array.from(vectors);
+    const trainingArray = (Array.isArray(vectors) ? vectors : Array.from(vectors)) as number[];
+    if (!faissIndex.train) {
+      sendError("Index does not support training");
+      return;
+    }
     faissIndex.train(trainingArray);
     state.faissIsTrained = true;
 

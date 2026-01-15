@@ -210,7 +210,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "reset_graph",
       description: "Clear all graph data (entities, relationships, files)",
-      inputSchema: zodToJsonSchema(z.object({})) as any,
+      inputSchema: zodToJsonSchema(z.object({})),
     },
     {
       name: "get_graph_health",
@@ -224,12 +224,12 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "get_metrics",
       description: "Get system metrics and agent performance statistics",
-      inputSchema: zodToJsonSchema(z.object({})) as any,
+      inputSchema: zodToJsonSchema(z.object({})),
     },
     {
       name: "get_version",
       description: "Get MCP server version information and runtime details",
-      inputSchema: zodToJsonSchema(z.object({})) as any,
+      inputSchema: zodToJsonSchema(z.object({})),
     },
     {
       name: "get_agent_metrics",

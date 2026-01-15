@@ -26,9 +26,13 @@ import type { VectorCacheManager } from "./vector-cache-manager.js";
 // Event-driven architecture: maintenance triggered on-demand or on shutdown
 // No polling loops - call runMaintenance() when needed
 
+/**
+ * Global with Bun runtime (defined in runtime-detection.ts)
+ */
+
 /** Check if running in Bun */
 function isBunRuntime(): boolean {
-  return typeof (globalThis as any).Bun !== "undefined";
+  return typeof globalThis.Bun !== "undefined";
 }
 
 // =============================================================================
@@ -90,6 +94,25 @@ export interface CompactionResult {
 
   /** Compaction successful */
   success: boolean;
+}
+
+/**
+ * Cache statistics interface
+ */
+export interface CacheStatistics {
+  hits?: number;
+  misses?: number;
+  size?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Status report interface
+ */
+export interface StatusReport {
+  maintenance: MaintenanceStats;
+  entityCache?: CacheStatistics;
+  vectorCache?: CacheStatistics;
 }
 
 // =============================================================================
@@ -472,23 +495,19 @@ export class DeltaMaintenanceService {
   /**
    * Get comprehensive status report
    */
-  async getStatusReport(): Promise<{
-    maintenance: MaintenanceStats;
-    entityCache?: any;
-    vectorCache?: any;
-  }> {
-    const report: any = {
+  async getStatusReport(): Promise<StatusReport> {
+    const report: StatusReport = {
       maintenance: this.getStats(),
     };
 
     // Entity cache stats
     if (this.cacheManager) {
-      report.entityCache = this.cacheManager.getStatistics();
+      report.entityCache = this.cacheManager.getStatistics() as CacheStatistics;
     }
 
     // Vector cache stats
     if (this.vectorCacheManager) {
-      report.vectorCache = this.vectorCacheManager.getStatistics();
+      report.vectorCache = this.vectorCacheManager.getStatistics() as CacheStatistics;
     }
 
     return report;

@@ -6,6 +6,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getDataDir } from "../../../utils/config-paths.js";
+import { toError } from "../../../utils/error-handling.js";
 import { t, ti } from "../i18n/index.js";
 import type { EmbeddingModel, GPUInfo } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
@@ -96,8 +97,9 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
       windowsHide: true,
     });
     if (pullOutput) console.error(pullOutput.trim());
-  } catch (e: any) {
-    console.error(`[DEBUG] Pull failed: ${e.message}`);
+  } catch (e: unknown) {
+    const err = toError(e);
+    console.error(`[DEBUG] Pull failed: ${err.message}`);
     printError(t("install.pull_failed"));
     return false;
   }
@@ -114,7 +116,10 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
   const cacheDirDocker = cacheDir.replace(/\\/g, "/").replace(/^([A-Z]):/, (_, drive) => `/${drive.toLowerCase()}`);
 
   // Get TEI config from model or use defaults (pure defaults - tested fastest)
-  const teiConfig = (model as any).tei_config || {};
+  const modelExtended = model as EmbeddingModel & {
+    tei_config?: { max_batch_tokens?: number; max_client_batch_size?: number };
+  };
+  const teiConfig = modelExtended.tei_config || {};
   const maxBatchTokens = teiConfig.max_batch_tokens || 16384;
   const maxClientBatchSize = teiConfig.max_client_batch_size || 500;
 
@@ -148,8 +153,9 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
       env: { ...process.env, MSYS_NO_PATHCONV: "1" },
     });
     if (runOutput) console.error(`Container ID: ${runOutput.trim().slice(0, 12)}`);
-  } catch (e: any) {
-    console.error(`[DEBUG] Docker run failed: ${e.message}`);
+  } catch (e: unknown) {
+    const err = toError(e);
+    console.error(`[DEBUG] Docker run failed: ${err.message}`);
     printError("Failed to create container");
     return false;
   }

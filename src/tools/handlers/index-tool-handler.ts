@@ -8,9 +8,78 @@
 import { z } from "zod";
 import { getIndexingStatus, isIndexing, setIndexingState } from "../../index.js";
 import { log } from "../../logging/index.js";
-import { type AgentTask, AgentType } from "../../types/agent.js";
-import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import { type Agent, type AgentTask, AgentType } from "../../types/agent.js";
 import { toError } from "../../utils/error-handling.js";
+import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+
+// =============================================================================
+// Type Interfaces
+// =============================================================================
+
+/**
+ * DevAgent with parser agent property
+ */
+interface DevAgentWithParser extends Agent {
+  parserAgent?: {
+    destroyWorkerPools?: () => Promise<void>;
+  };
+  getEmbeddingStats?: () => {
+    total: number;
+    durationMs: number;
+    speedPerSec: number;
+    workers: number;
+    batches: number;
+    provider: string;
+  } | null;
+}
+
+/**
+ * IndexerAgent with repository path setter
+ */
+interface IndexerAgentWithRepository extends Agent {
+  setRepositoryPath?: (path: string) => Promise<void>;
+}
+
+/**
+ * GlobalThis with knowledgeBus
+ */
+interface GlobalWithKnowledgeBus {
+  knowledgeBus?: {
+    publish: (topic: string, data: unknown, source: string) => void;
+  };
+}
+
+/**
+ * Index tool response structure
+ */
+interface IndexToolResponse {
+  success: boolean;
+  message: string;
+  result: IndexingResult;
+  embeddings?: {
+    generated: number;
+    skipped: number;
+  };
+  embeddingPerformance?: {
+    totalEmbeddings: number;
+    durationSeconds: number;
+    embeddingsPerSecond: number;
+    workersUsed: number;
+  };
+  warning?: string;
+  oversizedEntities?: {
+    count: number;
+    maxTokens: number;
+  };
+}
+
+/**
+ * Indexing result structure
+ */
+interface IndexingResult {
+  entities?: unknown[];
+  [key: string]: unknown;
+}
 
 const IndexToolSchema = z.object({
   directory: z.string().optional(),
@@ -28,7 +97,8 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
   }
 
   protected async execute(args: IndexToolArgs): Promise<ToolResult> {
-    const targetDir = args.directory || this.context.config.directory || process.cwd();
+    const config = this.context.config as { directory?: string };
+    const targetDir = args.directory || config.directory || process.cwd();
 
     // Step 0: Check if indexing is already in progress (prevent concurrent indexing)
     if (isIndexing()) {
@@ -71,7 +141,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     if (!incremental) {
       try {
         const conductor = this.context.getConductor();
-        const devAgent = conductor.getAgentByType?.(AgentType.DEV) as any;
+        const devAgent = conductor.getAgentByType?.(AgentType.DEV) as DevAgentWithParser | undefined;
         if (devAgent?.parserAgent?.destroyWorkerPools) {
           log.d("INDEXTOOL", "destroy_pools");
           await devAgent.parserAgent.destroyWorkerPools();
@@ -144,7 +214,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     // Step 6: Start FileWatcher/GitWatcher for incremental updates
     try {
       const conductor = this.context.getConductor();
-      const indexerAgent = conductor.getAgent("indexer") as any;
+      const indexerAgent = conductor.getAgent("indexer") as IndexerAgentWithRepository | undefined;
       if (indexerAgent?.setRepositoryPath) {
         await indexerAgent.setRepositoryPath(targetDir);
         log.i("INDEXTOOL", "watcher_start", { dir: targetDir });
@@ -164,7 +234,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
 
     try {
       const conductor = this.context.getConductor();
-      const devAgent = conductor.getAgentByType?.(AgentType.DEV) as any;
+      const devAgent = conductor.getAgentByType?.(AgentType.DEV) as DevAgentWithParser | undefined;
       const embStats = devAgent?.getEmbeddingStats?.();
       if (embStats && embStats.total > 0) {
         log.i("EMBEDDING", "emb_summary", {
@@ -188,8 +258,11 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
 
     // Step 6c: Flush LibSQL to disk immediately (synchronous=OFF buffers writes)
     try {
-      await storage.flush();
-      log.d("INDEXTOOL", "storage_flushed");
+      const storageWithFlush = storage as { flush?: () => Promise<void> };
+      if (typeof storageWithFlush.flush === "function") {
+        await storageWithFlush.flush();
+        log.d("INDEXTOOL", "storage_flushed");
+      }
     } catch (error: unknown) {
       const err = toError(error);
       log.w("INDEXTOOL", "storage_flush_error", { error: err.message, stack: err.stack });
@@ -200,7 +273,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     this.publishToKnowledgeBus(result);
 
     // Build response with optional AI warning
-    const response: any = {
+    const response: IndexToolResponse = {
       success: true,
       message: "Indexing completed",
       result,
@@ -245,7 +318,11 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     return [...basePatterns];
   }
 
-  private async processIndexingTask(directory: string, incremental: boolean, excludePatterns: string[]): Promise<any> {
+  private async processIndexingTask(
+    directory: string,
+    incremental: boolean,
+    excludePatterns: string[],
+  ): Promise<IndexingResult> {
     const task: AgentTask = {
       id: `index-${Date.now()}`,
       type: "index",
@@ -265,18 +342,29 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     // Indexing can take significant time for large codebases (e.g., 90+ seconds for 350 files)
     // Use a longer default timeout (5 minutes) to allow completion without early termination
     const INDEX_DEFAULT_TIMEOUT = 300000; // 5 minutes
+    const mcpConfig = this.context.config as {
+      mcp?: { agents?: { defaultTimeout?: number }; server?: { timeout?: number } };
+    };
     const configuredTimeout =
-      this.context.config.mcp.agents?.defaultTimeout ||
-      this.context.config.mcp.server?.timeout ||
-      INDEX_DEFAULT_TIMEOUT;
+      mcpConfig.mcp?.agents?.defaultTimeout || mcpConfig.mcp?.server?.timeout || INDEX_DEFAULT_TIMEOUT;
     const timeoutMs = isDebugMode
       ? Math.max(configuredTimeout, 300000)
       : Math.max(configuredTimeout, INDEX_DEFAULT_TIMEOUT);
 
-    return await this.context.withTimeout(conductor.process(task), timeoutMs, "index", this.context.requestId);
+    return (await this.context.withTimeout(
+      conductor.process(task),
+      timeoutMs,
+      "index",
+      this.context.requestId,
+    )) as IndexingResult;
   }
 
-  private logIndexingActivity(directory: string, incremental: boolean, excludePatterns: string[], result: any): void {
+  private logIndexingActivity(
+    directory: string,
+    incremental: boolean,
+    excludePatterns: string[],
+    result: IndexingResult,
+  ): void {
     const entitiesFound = Array.isArray(result?.entities) ? result.entities.length : 0;
     log.i("INDEXTOOL", "index_complete", {
       dir: directory,
@@ -286,8 +374,9 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     });
   }
 
-  private publishToKnowledgeBus(result: any): void {
-    const knowledgeBus = (global as any).knowledgeBus;
+  private publishToKnowledgeBus(result: IndexingResult): void {
+    const globalWithKB = global as unknown as GlobalWithKnowledgeBus;
+    const knowledgeBus = globalWithKB.knowledgeBus;
     if (knowledgeBus) {
       knowledgeBus.publish("index:completed", result, "mcp-server");
     }

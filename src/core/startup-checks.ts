@@ -78,9 +78,8 @@ export function runOrphanedEmbeddingsCheck(config: OrphanedEmbeddingsCheckConfig
       // Check if there are entities without embeddings
       const { getGraphStorage } = await import("../storage/graph-storage-factory.js");
       const storage = await getGraphStorage();
-      const allEntities = await storage.findEntities({ type: "entity", limit: 1 });
-      const entityCount =
-        allEntities.length > 0 ? (await storage.findEntities({ type: "entity", limit: 100000 })).length : 0;
+      const allEntities = await storage.findEntities({ limit: 1 });
+      const entityCount = allEntities.length > 0 ? (await storage.findEntities({ limit: 100000 })).length : 0;
 
       if (entityCount === 0) return;
 

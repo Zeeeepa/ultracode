@@ -12,11 +12,93 @@
 
 import { z } from "zod";
 import { log } from "../../logging/index.js";
+import type { EntityType } from "../../types/storage.js";
 import { toError } from "../../utils/error-handling.js";
+import type { IClone } from "../../vendor/jscpd/index.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 import { DetectCodeClonesSchema } from "../schemas/semantic-schemas.js";
+
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * Metadata for semantic search results
+ */
+interface SemanticResultMetadata {
+  name?: string;
+  entityType?: string;
+  type?: string;
+  filePath?: string;
+  path?: string;
+  content?: string;
+  startLine?: number;
+  endLine?: number;
+  language?: string;
+  entityId?: string;
+  // Complexity metrics
+  cyclomatic?: number;
+  cognitive?: number;
+  linesOfCode?: number;
+  nestingDepth?: number;
+  // Control flow
+  hasBranches?: boolean;
+  hasLoops?: boolean;
+  hasExceptions?: boolean;
+  hasAwaits?: boolean;
+  branchCount?: number;
+  loopCount?: number;
+  returnCount?: number;
+  // Calls
+  callCount?: number;
+  hasAsyncCalls?: boolean;
+  // Documentation
+  hasDocumentation?: boolean;
+  hasParams?: boolean;
+  hasExamples?: boolean;
+  isDeprecated?: boolean;
+  // Types
+  returnType?: string;
+  paramCount?: number;
+}
+
+/**
+ * Semantic search result
+ */
+interface SemanticSearchResult {
+  id: string;
+  name?: string;
+  type?: string;
+  similarity: number;
+  reranked?: boolean;
+  filePath?: string;
+  content?: string;
+  metadata?: SemanticResultMetadata;
+  isExpanded?: boolean;
+  relationshipType?: string;
+}
+
+/**
+ * Clone group member
+ */
+interface CloneMember {
+  id: string;
+  name: string;
+  path: string;
+  startLine?: number;
+  endLine?: number;
+}
+
+/**
+ * Clone detection group
+ */
+interface CloneGroup {
+  avgSimilarity: number;
+  cloneType: string;
+  members?: CloneMember[];
+}
 
 // =============================================================================
 // SEMANTIC SEARCH
@@ -120,7 +202,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
           const toRerank = allResults.slice(0, topK);
 
           // Prepare documents for reranking
-          const documents = toRerank.map((r: any, idx: number) => ({
+          const documents = toRerank.map((r: SemanticSearchResult, idx: number) => ({
             text: r.content || r.metadata?.content || r.name || "",
             id: r.id || String(idx),
           }));
@@ -143,11 +225,14 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
 
           // Re-sort by new scores
           allResults = [...toRerank, ...allResults.slice(topK)];
-          allResults.sort((a: any, b: any) => (b.similarity || 0) - (a.similarity || 0));
+          allResults.sort(
+            (a: SemanticSearchResult, b: SemanticSearchResult) => (b.similarity || 0) - (a.similarity || 0),
+          );
 
           rerankStats = { reranked: true, provider: provider.info?.name || "unknown" };
-        } catch (e: any) {
-          log.w("SEMSEARCH", "rerank_fail", { err: e.message });
+        } catch (error: unknown) {
+          const err = toError(error);
+          log.w("SEMSEARCH", "rerank_fail", { err: err.message });
           // Continue with embedding-only results
         }
       }
@@ -166,7 +251,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
       args.minCallCount !== undefined;
 
     if (hasFilters) {
-      filteredResults = allResults.filter((r: any) => {
+      filteredResults = allResults.filter((r: SemanticSearchResult) => {
         const meta = r.metadata || {};
 
         // Complexity filters
@@ -212,7 +297,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
               pagination: paginatedResult.pagination,
               ...(rerankStats.reranked ? { rerank: rerankStats } : {}),
               ...(expansionStats.expanded ? { expansion: expansionStats } : {}),
-              results: paginatedResult.data.map((r: any) => {
+              results: (paginatedResult.data as SemanticSearchResult[]).map((r) => {
                 const meta = r.metadata || {};
                 return {
                   id: r.id,
@@ -292,13 +377,13 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
    * Expand search results with graph neighbors (callers, dependencies, inheritors)
    */
   private async expandWithGraphNeighbors(
-    results: any[],
+    results: SemanticSearchResult[],
     depth: number,
     minSimilarity: number,
-  ): Promise<{ results: any[]; neighborsAdded: number }> {
+  ): Promise<{ results: SemanticSearchResult[]; neighborsAdded: number }> {
     const storage = await this.context.getGraphStorage();
     const seen = new Set<string>(results.map((r) => r.id));
-    const neighbors: any[] = [];
+    const neighbors: SemanticSearchResult[] = [];
 
     // Process each result to find neighbors
     for (const result of results.slice(0, 20)) {
@@ -317,7 +402,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
             limit: 1,
           });
           if (found.length > 0) {
-            entityId = found[0].id;
+            entityId = found[0]?.id;
           }
         } catch {
           // Ignore lookup failures
@@ -351,7 +436,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
             type: relatedEntity.type,
             similarity: neighborSimilarity,
             filePath: relatedEntity.filePath,
-            content: relatedEntity.metadata?.content,
+            content: relatedEntity.metadata?.["content"] as string | undefined,
             isExpanded: true,
             relationshipType: rel.type,
             metadata: { entityId: relatedId },
@@ -388,7 +473,7 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
                   type: hop2Entity.type,
                   similarity: hop2Similarity,
                   filePath: hop2Entity.filePath,
-                  content: hop2Entity.metadata?.content,
+                  content: hop2Entity.metadata?.["content"] as string | undefined,
                   isExpanded: true,
                   relationshipType: `${rel.type} (2-hop)`,
                   metadata: { entityId: hop2Id },
@@ -452,14 +537,14 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
             {
               count: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
-              results: paginatedResult.data.map((r: any) => ({
+              results: (paginatedResult.data as SemanticSearchResult[]).map((r) => ({
                 id: r.id,
                 name: r.name,
                 type: r.type,
                 similarity: r.similarity,
-                filePath: r.path,
-                startLine: r.startLine,
-                endLine: r.endLine,
+                filePath: r.filePath || r.metadata?.path,
+                startLine: r.metadata?.startLine,
+                endLine: r.metadata?.endLine,
                 ...(args.includeContent && r.content ? { content: r.content } : {}),
               })),
             },
@@ -520,10 +605,10 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
                 groupsFound: allClones.length,
                 scope: args.scope ?? "all",
                 minSimilarity,
-                clones: allClones.map((group: any) => ({
+                clones: allClones.map((group: CloneGroup) => ({
                   similarity: group.avgSimilarity,
                   cloneType: group.cloneType,
-                  members: (group.members || []).map((m: any) => ({
+                  members: (group.members || []).map((m: CloneMember) => ({
                     id: m.id,
                     name: m.name,
                     filePath: m.path,
@@ -602,11 +687,13 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
       };
 
       const tokenizer = new SimpleTokenizer();
-      const store = new MemoryStore() as any;
+      // Note: MemoryStore type from jscpd is not exported, using direct instantiation
+      const store = new MemoryStore();
       const statistic = new Statistic();
-      const inFilesDetector = new InFilesDetector(tokenizer, store, options, [statistic]);
+      // Type assertion needed for vendor code compatibility
+      const inFilesDetector = new InFilesDetector(tokenizer, store as never, options, [statistic]);
 
-      const clones = await inFilesDetector.detectFromOptions(options);
+      const clones: IClone[] = await inFilesDetector.detectFromOptions(options);
       const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
       const paginatedResult = paginate(clones, args.offset, safeLimit);
 
@@ -619,7 +706,7 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
                 duplicatesFound: paginatedResult.data.length,
                 pagination: paginatedResult.pagination,
                 statistics: statistic.getStatistic(),
-                duplicates: paginatedResult.data.map((c: any) => ({
+                duplicates: paginatedResult.data.map((c) => ({
                   format: c.format,
                   foundDate: c.foundDate,
                   duplicationA: {
@@ -707,13 +794,13 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
               languages,
               count: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
-              results: paginatedResult.data.map((r: any) => ({
+              results: (paginatedResult.data as SemanticSearchResult[]).map((r) => ({
                 id: r.id,
                 name: r.name,
-                language: r.language,
-                filePath: r.path,
-                startLine: r.startLine,
-                endLine: r.endLine,
+                language: r.metadata?.language,
+                filePath: r.filePath || r.metadata?.path,
+                startLine: r.metadata?.startLine,
+                endLine: r.metadata?.endLine,
                 similarity: r.similarity,
                 ...(args.includeContent && r.content ? { content: r.content } : {}),
               })),
@@ -769,7 +856,7 @@ export class PatternSearchToolHandler extends BaseToolHandler<z.infer<typeof Pat
     const allResults = await patternSearch.search({
       pattern: args.pattern,
       mode: args.mode,
-      scope: { entityTypes: args.entityTypes as any },
+      scope: { entityTypes: args.entityTypes as EntityType[] | undefined },
       limit: 500,
     });
 

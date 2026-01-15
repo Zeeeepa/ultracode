@@ -307,7 +307,7 @@ export class MultiPassOrchestrator {
       language: this.detectLanguage(quick.filePath),
       entities: quick.entities.map((e) => ({
         name: e.name,
-        type: e.type as any,
+        type: e.type as "class" | "interface" | "function" | "type" | "variable",
         filePath: quick.filePath,
         location: {
           start: { line: e.startLine, column: 0, index: e.startLine },
@@ -332,7 +332,7 @@ export class MultiPassOrchestrator {
 
     const { TypeScriptParser } = await import("../typescript-parser.js");
     this.tsParser = new TypeScriptParser() as TypeScriptParser;
-    await (this.tsParser as any).initialize?.();
+    // TypeScriptParser has no initialize method, ready immediately
     return this.tsParser;
   }
 

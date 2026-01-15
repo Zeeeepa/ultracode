@@ -9,19 +9,14 @@
  */
 
 // Type definitions matching bun:sqlite API
-export interface BunSQLiteDatabase {
-  prepare(sql: string): BunSQLiteStatement;
-  exec(sql: string): void;
-  close(): void;
-  readonly inTransaction: boolean;
-  transaction<T>(fn: (...args: any[]) => T): (...args: any[]) => T;
-}
 
-export interface BunSQLiteStatement {
-  run(...params: any[]): BunSQLiteRunResult;
-  get(...params: any[]): any;
-  all(...params: any[]): any[];
-  finalize(): void;
+/**
+ * Options for creating Bun SQLite database
+ */
+export interface BunSQLiteOptions {
+  readonly?: boolean;
+  create?: boolean;
+  readwrite?: boolean;
 }
 
 export interface BunSQLiteRunResult {
@@ -30,17 +25,44 @@ export interface BunSQLiteRunResult {
 }
 
 /**
+ * Generic Bun SQLite statement with type-safe query results
+ * @template T - Default row type for this statement
+ */
+export interface BunSQLiteStatement<T = unknown> {
+  run(...params: unknown[]): BunSQLiteRunResult;
+  get<R = T>(...params: unknown[]): R | undefined;
+  all<R = T>(...params: unknown[]): R[];
+  finalize(): void;
+}
+
+/**
+ * Bun SQLite database interface
+ */
+export interface BunSQLiteDatabase {
+  prepare<T = unknown>(sql: string): BunSQLiteStatement<T>;
+  exec(sql: string): void;
+  close(): void;
+  readonly inTransaction: boolean;
+  transaction<T>(fn: (...args: unknown[]) => T): (...args: unknown[]) => T;
+}
+
+/**
  * Check if running in Bun runtime
  */
 export function isBunRuntime(): boolean {
-  return typeof (process.versions as any).bun !== "undefined";
+  return (
+    typeof process !== "undefined" &&
+    typeof process.versions === "object" &&
+    process.versions !== null &&
+    "bun" in process.versions
+  );
 }
 
 /**
  * Load bun:sqlite Database class
  * @throws Error if not running in Bun
  */
-export function loadBunSQLite(): new (path: string, options?: any) => BunSQLiteDatabase {
+export function loadBunSQLite(): new (path: string, options?: BunSQLiteOptions) => BunSQLiteDatabase {
   if (!isBunRuntime()) {
     throw new Error("[BunSQLiteAdapter] This module requires Bun runtime. " + "Please run with: bun run <script>");
   }
@@ -48,14 +70,14 @@ export function loadBunSQLite(): new (path: string, options?: any) => BunSQLiteD
   const { Database } = require("bun:sqlite");
   return Database as new (
     path: string,
-    options?: any | undefined,
+    options?: BunSQLiteOptions,
   ) => BunSQLiteDatabase;
 }
 
 /**
  * Create a new Bun SQLite database connection
  */
-export function createBunDatabase(path: string, options?: { readonly?: boolean }): BunSQLiteDatabase {
+export function createBunDatabase(path: string, options?: BunSQLiteOptions): BunSQLiteDatabase {
   const Database = loadBunSQLite();
   return new Database(path, options);
 }

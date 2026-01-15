@@ -244,11 +244,55 @@ export class RelationshipOperations {
   }
 
   /**
+   * Build fromId filter for direct SQL
+   */
+  private buildFromIdFilter(fromIds: string | string[] | undefined, args: (string | number)[]): string {
+    if (!fromIds) return "";
+    const idArray = Array.isArray(fromIds) ? fromIds : [fromIds];
+    args.push(...idArray);
+    return ` AND from_id IN (${idArray.map(() => "?").join(",")})`;
+  }
+
+  /**
+   * Build fromId filter for CTE (static SQL)
+   */
+  private buildFromIdFilterForCTE(fromIds: string | string[] | undefined): string {
+    if (!fromIds) return "";
+    const idArray = Array.isArray(fromIds) ? fromIds : [fromIds];
+    const quoted = idArray.map((id) => `'${id}'`).join(",");
+    return `AND from_id IN (${quoted})`;
+  }
+
+  /**
+   * Build toId filter for direct SQL
+   */
+  private buildToIdFilter(toIds: string | string[] | undefined, args: (string | number)[]): string {
+    if (!toIds) return "";
+    const idArray = Array.isArray(toIds) ? toIds : [toIds];
+    args.push(...idArray);
+    return ` AND to_id IN (${idArray.map(() => "?").join(",")})`;
+  }
+
+  /**
+   * Build toId filter for CTE (static SQL)
+   */
+  private buildToIdFilterForCTE(toIds: string | string[] | undefined): string {
+    if (!toIds) return "";
+    const idArray = Array.isArray(toIds) ? toIds : [toIds];
+    const quoted = idArray.map((id) => `'${id}'`).join(",");
+    return `AND to_id IN (${quoted})`;
+  }
+
+  /**
    * Find relationships with complex filters (layered: delta + base - tombstones)
    * Uses CTE for efficient layered queries with proper LIMIT/OFFSET at SQL level
    */
   async findRelationships(query: {
-    filters?: { relationshipType?: RelationType | RelationType[] };
+    filters?: {
+      relationshipType?: RelationType | RelationType[];
+      fromId?: string | string[];
+      toId?: string | string[];
+    };
     limit?: number;
     offset?: number;
   }): Promise<Relationship[]> {
@@ -264,6 +308,8 @@ export class RelationshipOperations {
       const args: (string | number)[] = [projectHash, branchName];
       let sql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
       sql += this.buildTypeFilter(query.filters?.relationshipType, args);
+      sql += this.buildFromIdFilter(query.filters?.fromId, args);
+      sql += this.buildToIdFilter(query.filters?.toId, args);
       sql += " LIMIT ? OFFSET ?";
       args.push(limit, offset);
 
@@ -273,12 +319,15 @@ export class RelationshipOperations {
 
     // Layered case: use CTE for efficient query with SQL-level LIMIT/OFFSET
     const typeFilter = this.buildTypeFilterForCTE(query.filters?.relationshipType);
+    const fromIdFilter = this.buildFromIdFilterForCTE(query.filters?.fromId);
+    const toIdFilter = this.buildToIdFilterForCTE(query.filters?.toId);
+    const combinedFilters = `${typeFilter} ${fromIdFilter} ${toIdFilter}`;
 
     const sql = `
       WITH
         delta AS (
           SELECT * FROM relationships
-          WHERE project_hash = ?1 AND branch_name = ?2 ${typeFilter}
+          WHERE project_hash = ?1 AND branch_name = ?2 ${combinedFilters}
         ),
         tombstone_ids AS (
           SELECT entity_id FROM tombstones
@@ -286,7 +335,7 @@ export class RelationshipOperations {
         ),
         base_filtered AS (
           SELECT * FROM relationships
-          WHERE project_hash = ?1 AND branch_name = ?3 ${typeFilter}
+          WHERE project_hash = ?1 AND branch_name = ?3 ${combinedFilters}
             AND id NOT IN (SELECT id FROM delta)
             AND id NOT IN (SELECT entity_id FROM tombstone_ids)
         ),
@@ -328,7 +377,6 @@ export class RelationshipOperations {
       args: [id, projectHash, branchName],
     });
   }
-
 
   /**
    * Get ALL relationships efficiently in a single query.

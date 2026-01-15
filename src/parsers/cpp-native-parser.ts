@@ -19,6 +19,23 @@ import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
+// CLANG AST TYPES
+// =============================================================================
+
+interface ClangLocation {
+  line?: number;
+  col?: number;
+}
+
+interface ClangASTNode {
+  kind?: string;
+  name?: string;
+  loc?: ClangLocation;
+  inner?: ClangASTNode[];
+  [key: string]: unknown;
+}
+
+// =============================================================================
 // C/C++ PARSER CLASS
 // =============================================================================
 
@@ -231,10 +248,10 @@ export class CppNativeParser {
   /**
    * Extract entities from clang AST JSON
    */
-  private extractEntitiesFromClangAST(ast: any, filePath: string): ParsedEntity[] {
+  private extractEntitiesFromClangAST(ast: ClangASTNode, filePath: string): ParsedEntity[] {
     const entities: ParsedEntity[] = [];
 
-    const processNode = (node: any) => {
+    const processNode = (node: ClangASTNode): void => {
       if (!node || typeof node !== "object") return;
 
       const kind = node.kind;

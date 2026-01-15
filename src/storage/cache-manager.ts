@@ -197,9 +197,10 @@ export class QueryCacheManager implements CacheManager {
 
     if (typeof value === "object") {
       let size = 24; // Object overhead
-      for (const key in value) {
-        if (Object.hasOwn(value, key)) {
-          size += key.length * 2 + this.estimateSize((value as any)[key]);
+      const record = value as Record<string, unknown>;
+      for (const key in record) {
+        if (Object.hasOwn(record, key)) {
+          size += key.length * 2 + this.estimateSize(record[key]);
         }
       }
       return size;
@@ -269,11 +270,11 @@ export interface CacheConfig {
  * Decorator to add caching to a method
  */
 export function Cacheable(ttl?: number) {
-  return (_target: any, propertyKey: string, descriptor: PropertyDescriptor) => {
-    const originalMethod = descriptor.value;
+  return (_target: object, propertyKey: string, descriptor: PropertyDescriptor) => {
+    const originalMethod = descriptor.value as (...args: unknown[]) => Promise<unknown>;
     const cacheManager = new QueryCacheManager();
 
-    descriptor.value = async function (...args: any[]) {
+    descriptor.value = async function (this: unknown, ...args: unknown[]): Promise<unknown> {
       // Create cache key from arguments
       const key = QueryCacheManager.createKey({ method: propertyKey, args });
 

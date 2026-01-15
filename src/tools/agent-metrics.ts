@@ -3,6 +3,38 @@ import type { KnowledgeBus } from "../core/knowledge-bus.js";
 import type { ResourceManager } from "../core/resource-manager.js";
 import type { Agent, AgentMetrics, AgentStatus, AgentType, ResourceConstraints } from "../types/agent.js";
 
+/**
+ * Extended interface for Agent with optional runtime methods
+ */
+interface AgentWithMetrics extends Agent {
+  currentTask?: {
+    type: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Performance metrics from Conductor
+ */
+interface ConductorPerformanceMetrics {
+  totalTasks?: number;
+  avgProcessingTime?: number;
+  overheadReduction?: number;
+  cacheHitRate?: number;
+}
+
+/**
+ * Extended interface for ConductorOrchestrator with internal state
+ * Note: Accessing private properties via type assertion (runtime hack)
+ */
+interface ConductorInternalAccess {
+  agents: Map<string, Agent>;
+  getPerformanceMetrics?(): ConductorPerformanceMetrics;
+  pendingTasks?: Map<string, unknown> | Set<unknown>;
+  approvalRequired?: Map<string, unknown> | Set<unknown>;
+  directImplementationAttempts?: number;
+}
+
 interface AgentSummary {
   id: string;
   type: AgentType;
@@ -51,18 +83,7 @@ export interface AgentMetricsSnapshot {
 }
 
 function normalizeAgent(agent: Agent): AgentSummary {
-  const metrics = (agent as any).getMetrics
-    ? (agent as any).getMetrics()
-    : ({
-        agentId: agent.id,
-        tasksProcessed: 0,
-        tasksSucceeded: 0,
-        tasksFailed: 0,
-        averageProcessingTime: 0,
-        currentMemoryMB: agent.getMemoryUsage(),
-        currentCpuPercent: agent.getCpuUsage(),
-        lastActivity: Date.now(),
-      } as AgentMetrics);
+  const metrics = agent.getMetrics();
   return {
     id: agent.id,
     type: agent.type,
@@ -76,7 +97,7 @@ function normalizeAgent(agent: Agent): AgentSummary {
       priority: agent.capabilities.priority,
     },
     metrics,
-    currentTaskType: (agent as any).currentTask?.type,
+    currentTaskType: (agent as AgentWithMetrics).currentTask?.type,
     lastActivity: metrics.lastActivity,
   };
 }
@@ -88,12 +109,12 @@ export async function collectAgentMetrics(options: {
 }): Promise<AgentMetricsSnapshot> {
   const { conductor, resourceManager, knowledgeBus } = options;
 
-  const agentCollection =
-    (conductor as any).agents instanceof Map ? (conductor as any).agents.values() : ([] as Agent[]);
+  const conductorInternal = conductor as unknown as ConductorInternalAccess;
+  const agentCollection = conductorInternal.agents instanceof Map ? conductorInternal.agents.values() : ([] as Agent[]);
   const agentMap: Agent[] = Array.from(agentCollection);
   const conductorMetrics =
-    typeof (conductor as any).getPerformanceMetrics === "function"
-      ? (conductor as any).getPerformanceMetrics()
+    typeof conductorInternal.getPerformanceMetrics === "function"
+      ? conductorInternal.getPerformanceMetrics()
       : {
           totalTasks: 0,
           avgProcessingTime: 0,
@@ -121,9 +142,9 @@ export async function collectAgentMetrics(options: {
       averageProcessingTime: conductorMetrics.avgProcessingTime ?? 0,
       overheadReduction: conductorMetrics.overheadReduction ?? 0,
       cacheHitRate: conductorMetrics.cacheHitRate ?? 0,
-      pendingTasks: (conductor as any).pendingTasks?.size ?? 0,
-      approvalsPending: (conductor as any).approvalRequired?.size ?? 0,
-      directImplementationAttempts: (conductor as any).directImplementationAttempts ?? 0,
+      pendingTasks: conductorInternal.pendingTasks?.size ?? 0,
+      approvalsPending: conductorInternal.approvalRequired?.size ?? 0,
+      directImplementationAttempts: conductorInternal.directImplementationAttempts ?? 0,
     },
     agents: agentMap.map(normalizeAgent),
     resources,

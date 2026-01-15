@@ -16,6 +16,28 @@ import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
 // =============================================================================
+// SHFMT AST TYPES
+// =============================================================================
+
+interface ShfmtPosition {
+  Line?: number;
+  Col?: number;
+  Offset?: number;
+}
+
+interface ShfmtName {
+  Value?: string;
+}
+
+interface ShfmtASTNode {
+  Type?: string;
+  Name?: string | ShfmtName;
+  Pos?: ShfmtPosition;
+  End?: ShfmtPosition;
+  [key: string]: unknown;
+}
+
+// =============================================================================
 // BASH PARSER CLASS
 // =============================================================================
 
@@ -179,16 +201,18 @@ export class BashNativeParser {
   /**
    * Extract entities from shfmt AST
    */
-  private extractEntitiesFromShfmtAST(ast: any, filePath: string): ParsedEntity[] {
+  private extractEntitiesFromShfmtAST(ast: ShfmtASTNode, filePath: string): ParsedEntity[] {
     const entities: ParsedEntity[] = [];
 
-    const processNode = (node: any) => {
+    const processNode = (node: ShfmtASTNode): void => {
       if (!node || typeof node !== "object") return;
 
       // Function definition
       if (node.Type === "FuncDecl" && node.Name) {
+        const name =
+          typeof node.Name === "string" ? node.Name : (node.Name as { Value?: string }).Value || String(node.Name);
         entities.push({
-          name: node.Name.Value || node.Name,
+          name,
           type: "function",
           filePath,
           location: {
@@ -203,10 +227,10 @@ export class BashNativeParser {
         const value = node[key];
         if (Array.isArray(value)) {
           for (const child of value) {
-            processNode(child);
+            processNode(child as ShfmtASTNode);
           }
         } else if (typeof value === "object" && value !== null) {
-          processNode(value);
+          processNode(value as ShfmtASTNode);
         }
       }
     };

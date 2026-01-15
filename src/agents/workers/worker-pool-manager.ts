@@ -11,21 +11,22 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+import { sleep } from "../../utils/runtime-detection.js";
 
 // =============================================================================
 // TYPES
 // =============================================================================
+
+interface WorkerMessage {
+  type: "ready" | "initialized" | "result" | "error";
+  taskId?: string;
+  payload?: {
+    taskId: string;
+    results: ParseResult[];
+    stats: { totalTime: number };
+  };
+  error?: string;
+}
 
 interface WorkerState {
   id: number;
@@ -142,7 +143,7 @@ export class WorkerPoolManager {
         // Wait for ready signal with timeout
         const abortController = new AbortController();
 
-        const readyHandler = (message: any) => {
+        const readyHandler = (message: WorkerMessage) => {
           if (message.type === "ready") {
             abortController.abort();
             this.workers.set(workerId, state);
@@ -239,13 +240,15 @@ export class WorkerPoolManager {
   /**
    * Handle message from worker
    */
-  private handleWorkerMessage(workerId: number, message: any): void {
+  private handleWorkerMessage(workerId: number, message: WorkerMessage): void {
     const state = this.workers.get(workerId);
     if (!state) return;
 
     switch (message.type) {
       case "result": {
         const result = message.payload;
+        if (!result) break;
+
         const task = this.pendingTasks.get(result.taskId);
 
         if (task) {
@@ -277,6 +280,8 @@ export class WorkerPoolManager {
       }
 
       case "error": {
+        if (!message.taskId) break;
+
         const task = this.pendingTasks.get(message.taskId);
         if (task) {
           if (task.abortController) {

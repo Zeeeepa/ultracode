@@ -66,6 +66,14 @@ export class GitIntegration {
   }
 
   /**
+   * Get repository path
+   * Public getter to avoid intersection type issues with private config field
+   */
+  get repoPath(): string {
+    return this.config.repoPath;
+  }
+
+  /**
    * Check if path is a git repository
    */
   isGitRepository(): boolean {

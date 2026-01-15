@@ -10,8 +10,96 @@
  */
 
 import { z } from "zod";
+import type { AgentMetrics } from "../../types/agent.js";
 import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * System metrics
+ */
+interface SystemMetrics {
+  memory: {
+    heapUsed: number;
+    heapTotal: number;
+    external: number;
+    rss: number;
+    unit: string;
+  };
+  uptime: number;
+  nodeVersion: string;
+}
+
+/**
+ * Overall metrics result
+ */
+interface MetricsResult {
+  timestamp: string;
+  system?: SystemMetrics;
+  graph?: unknown;
+  agents?: Record<string, AgentMetrics>;
+}
+
+/**
+ * Version information
+ */
+interface VersionResult {
+  name: string;
+  version: string;
+  details?: {
+    nodeVersion: string;
+    platform: string;
+    arch: string;
+    pid: number;
+    cwd: string;
+  };
+  features?: {
+    semanticSearch: boolean;
+    multiLanguage: boolean;
+    branchManagement: boolean;
+    snapshots: boolean;
+  };
+}
+
+/**
+ * Bus statistics result
+ */
+interface BusStatsResult {
+  totalTopics: number;
+  totalMessages: number;
+  topics: Record<string, unknown>;
+  recentMessages?: unknown[];
+}
+
+/**
+ * Watcher status for FileWatcher/GitWatcher
+ */
+interface WatcherStatusResult {
+  timestamp: string;
+  indexerAgentExists: boolean;
+  fileWatcher: { exists: boolean; reason?: string } | null;
+  gitWatcher: { exists: boolean; isWatching?: boolean; currentBranch?: string } | null;
+  repositoryPath: string | null;
+  branchManager?: { exists: boolean };
+  indexingStats?: Record<string, unknown>;
+}
+
+/**
+ * IndexerAgent interface for type safety
+ */
+interface IndexerAgent {
+  getFileWatcherStatus?: () => { exists: boolean; reason?: string };
+  getGitWatcher?: () => {
+    isWatching?: () => boolean;
+    getCurrentBranch?: () => string;
+  } | null;
+  getBranchManager?: () => unknown | null;
+  currentRepositoryPath?: string;
+  getIndexingStats?: () => Record<string, unknown>;
+}
 
 // =============================================================================
 // GET METRICS
@@ -29,7 +117,7 @@ export class GetMetricsToolHandler extends BaseToolHandler<z.infer<typeof GetMet
   }
 
   protected async execute(args: z.infer<typeof GetMetricsSchema>): Promise<ToolResult> {
-    const metrics: any = {
+    const metrics: MetricsResult = {
       timestamp: new Date().toISOString(),
     };
 
@@ -62,7 +150,7 @@ export class GetMetricsToolHandler extends BaseToolHandler<z.infer<typeof GetMet
 
     if (args.includeAgents) {
       const conductor = this.context.getConductor();
-      metrics.agents = conductor.getAgentMetrics?.() || {};
+      metrics.agents = conductor.getAllAgentMetrics();
     }
 
     return {
@@ -103,7 +191,7 @@ export class GetVersionToolHandler extends BaseToolHandler<z.infer<typeof GetVer
         // Use defaults
       }
 
-      const result: any = {
+      const result: VersionResult = {
         name,
         version,
       };
@@ -155,20 +243,23 @@ export class GetAgentMetricsToolHandler extends BaseToolHandler<z.infer<typeof G
   protected async execute(args: z.infer<typeof GetAgentMetricsSchema>): Promise<ToolResult> {
     const conductor = this.context.getConductor();
 
-    const allMetrics = conductor.getAgentMetrics?.() || {};
+    const allMetrics = conductor.getAllAgentMetrics();
 
-    let metrics: any;
+    let metrics: Record<string, AgentMetrics> | AgentMetrics | { error: string };
     if (args.agentType) {
-      metrics = allMetrics[args.agentType] || { error: `Agent '${args.agentType}' not found` };
+      const agentMetrics = allMetrics[args.agentType];
+      metrics = agentMetrics ?? { error: `Agent '${args.agentType}' not found` };
     } else {
       metrics = allMetrics;
     }
 
-    // Add summary
+    // Add summary - consider agent active if it had activity in last 5 minutes
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+    const metricsArray = Object.values(allMetrics);
     const summary = {
       totalAgents: Object.keys(allMetrics).length,
-      activeAgents: Object.values(allMetrics).filter((m: any) => m.status === "active").length,
-      totalTasksProcessed: Object.values(allMetrics).reduce((sum: number, m: any) => sum + (m.tasksProcessed || 0), 0),
+      activeAgents: metricsArray.filter((m) => m.lastActivity > fiveMinutesAgo).length,
+      totalTasksProcessed: metricsArray.reduce((sum, m) => sum + m.tasksProcessed, 0),
     };
 
     return {
@@ -213,23 +304,29 @@ export class GetBusStatsToolHandler extends BaseToolHandler<z.infer<typeof GetBu
       };
     }
 
-    const stats = bus.getStats?.() || {};
+    const stats = bus.getStats?.() || { topicCount: 0, entryCount: 0, subscriptionCount: 0, messageQueueSize: 0 };
 
-    const result: any = {
-      totalTopics: Object.keys(stats.topics || {}).length,
-      totalMessages: stats.totalMessages || 0,
-      topics: {},
+    const result: BusStatsResult = {
+      totalTopics: stats.topicCount,
+      totalMessages: stats.entryCount,
+      topics: {
+        summary: {
+          topicCount: stats.topicCount,
+          entryCount: stats.entryCount,
+          subscriptionCount: stats.subscriptionCount,
+          messageQueueSize: stats.messageQueueSize,
+        },
+      },
     };
 
     if (args.topic) {
-      result.topics[args.topic] = stats.topics?.[args.topic] || { error: "Topic not found" };
-    } else {
-      result.topics = stats.topics || {};
+      // Individual topic stats would require additional API
+      result.topics[args.topic] = { info: "Topic-specific stats not available in current API" };
     }
 
     // Add recent messages if requested
     if (args.includeMessages && bus.getRecentMessages) {
-      const messages = await bus.getRecentMessages(args.topic, args.messageLimit);
+      const messages = await bus.getRecentMessages();
       result.recentMessages = messages;
     }
 
@@ -278,7 +375,7 @@ export class ClearBusTopicToolHandler extends BaseToolHandler<z.infer<typeof Cle
     }
 
     try {
-      const cleared = await bus.clearTopic?.(args.topic);
+      await bus.clearTopic?.(args.topic);
 
       return {
         content: [
@@ -287,7 +384,7 @@ export class ClearBusTopicToolHandler extends BaseToolHandler<z.infer<typeof Cle
             text: JSON.stringify({
               success: true,
               topic: args.topic,
-              messagesCleared: cleared || 0,
+              message: "Topic cleared successfully",
             }),
           },
         ],
@@ -318,14 +415,14 @@ export class GetWatcherStatusToolHandler extends BaseToolHandler<z.infer<typeof 
       const conductor = this.context.getConductor();
 
       // Get IndexerAgent to check watcher status
-      const indexerAgent = conductor.getAgentByType?.(AgentType.INDEXER) as any;
+      const indexerAgent = conductor.getAgentByType?.(AgentType.INDEXER) as IndexerAgent | undefined;
 
-      const result: any = {
+      const result: WatcherStatusResult = {
         timestamp: new Date().toISOString(),
         indexerAgentExists: !!indexerAgent,
-        fileWatcher: null as any,
-        gitWatcher: null as any,
-        repositoryPath: null as string | null,
+        fileWatcher: null,
+        gitWatcher: null,
+        repositoryPath: null,
       };
 
       if (indexerAgent) {

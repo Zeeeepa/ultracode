@@ -13,7 +13,7 @@
 
 import { extname, join } from "node:path";
 import { log } from "../logging/index.js";
-import type { ParseResult, SupportedLanguage } from "../types/parser.js";
+import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { existsSync } from "../utils/file-ops.js";
 import type { BaseParser, ParserStats } from "./base-parser.js";
 
@@ -459,8 +459,14 @@ export class UnifiedParser implements BaseParser {
 
   /**
    * Parse with incremental support
+   * @param edits - AST edit operations (format depends on underlying parser)
    */
-  async parseIncremental(filePath: string, content: string, contentHash: string, edits: any[]): Promise<ParseResult> {
+  async parseIncremental(
+    filePath: string,
+    content: string,
+    contentHash: string,
+    edits: unknown[],
+  ): Promise<ParseResult> {
     const ext = extname(filePath).toLowerCase();
 
     if (TYPESCRIPT_EXTENSIONS.has(ext)) {
@@ -517,7 +523,7 @@ export class UnifiedParser implements BaseParser {
    */
   private fallbackParse(filePath: string, content: string, contentHash: string, startTime: number): ParseResult {
     const language = this.getLanguage(filePath);
-    const entities: any[] = [];
+    const entities: ParsedEntity[] = [];
 
     // Very basic regex extraction
     // Python
@@ -527,7 +533,7 @@ export class UnifiedParser implements BaseParser {
       let match: RegExpExecArray | null;
       while ((match = classRe.exec(content))) {
         entities.push({
-          name: match[1],
+          name: match[1]!,
           type: "class",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
@@ -538,7 +544,7 @@ export class UnifiedParser implements BaseParser {
       const funcRe = /^(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/gm;
       while ((match = funcRe.exec(content))) {
         entities.push({
-          name: match[1],
+          name: match[1]!,
           type: "function",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
@@ -553,7 +559,7 @@ export class UnifiedParser implements BaseParser {
       let match: RegExpExecArray | null;
       while ((match = classRe.exec(content))) {
         entities.push({
-          name: match[1],
+          name: match[1]!,
           type: "class",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
@@ -564,7 +570,7 @@ export class UnifiedParser implements BaseParser {
       const ifaceRe = /(?:public|private|protected)?\s*interface\s+([A-Za-z_]\w*)/gm;
       while ((match = ifaceRe.exec(content))) {
         entities.push({
-          name: match[1],
+          name: match[1]!,
           type: "interface",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
@@ -579,7 +585,7 @@ export class UnifiedParser implements BaseParser {
       let match: RegExpExecArray | null;
       while ((match = funcRe.exec(content))) {
         entities.push({
-          name: match[1],
+          name: match[1]!,
           type: "function",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
@@ -590,8 +596,8 @@ export class UnifiedParser implements BaseParser {
       const typeRe = /^type\s+([A-Za-z_]\w*)\s+(struct|interface)/gm;
       while ((match = typeRe.exec(content))) {
         entities.push({
-          name: match[1],
-          type: match[2] === "interface" ? "interface" : "class",
+          name: match[1]!,
+          type: match[2]! === "interface" ? "interface" : "class",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
         });
@@ -605,7 +611,7 @@ export class UnifiedParser implements BaseParser {
       let match: RegExpExecArray | null;
       while ((match = funcRe.exec(content))) {
         entities.push({
-          name: match[1],
+          name: match[1]!,
           type: "function",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
@@ -616,7 +622,7 @@ export class UnifiedParser implements BaseParser {
       const structRe = /(?:pub\s+)?struct\s+([A-Za-z_]\w*)/gm;
       while ((match = structRe.exec(content))) {
         entities.push({
-          name: match[1],
+          name: match[1]!,
           type: "struct",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
@@ -627,7 +633,7 @@ export class UnifiedParser implements BaseParser {
       const traitRe = /(?:pub\s+)?trait\s+([A-Za-z_]\w*)/gm;
       while ((match = traitRe.exec(content))) {
         entities.push({
-          name: match[1],
+          name: match[1]!,
           type: "trait",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
@@ -638,7 +644,7 @@ export class UnifiedParser implements BaseParser {
       const implRe = /impl(?:<[^>]+>)?\s+(?:([A-Za-z_]\w*)\s+for\s+)?([A-Za-z_]\w*)/gm;
       while ((match = implRe.exec(content))) {
         entities.push({
-          name: match[2],
+          name: match[2]!,
           type: "impl_block",
           filePath,
           location: this.getLocationFromIndex(content, match.index),

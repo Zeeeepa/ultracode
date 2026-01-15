@@ -21,6 +21,14 @@ import type { ParsedEntity } from "../../types/parser.js";
 import type { SemanticMetrics, VectorEmbedding } from "../../types/semantic.js";
 import { hashText } from "../../utils/fast-hash.js";
 
+/**
+ * ParsedEntity with pre-generated embedding from worker
+ */
+interface ParsedEntityWithEmbedding extends ParsedEntity {
+  embeddingBase64?: string;
+  embeddingText?: string;
+}
+
 // =============================================================================
 // CONSTANTS
 // =============================================================================
@@ -93,7 +101,7 @@ export function shouldExcludeFromEmbedding(filePath: string): boolean {
 /**
  * Build enhanced text for embedding from entity data
  */
-export function buildEmbeddingText(entity: any, code: string): string {
+export function buildEmbeddingText(entity: ParsedEntity, code: string): string {
   const header = `${entity.name ?? ""} ${entity.type ?? ""} ${entity.signature ?? ""}`.trim();
   let enhancedText = header;
 
@@ -108,8 +116,9 @@ export function buildEmbeddingText(entity: any, code: string): string {
     const callsToProcess = entity.calls.length > 20 ? entity.calls.slice(0, 20) : entity.calls;
     for (let i = 0; i < callsToProcess.length; i++) {
       const c = callsToProcess[i];
+      if (!c) continue;
       if (i > 0) callStr += ", ";
-      callStr += c.target ? `${c.target}.${c.name}` : c.name;
+      callStr += c.target ? `${c.target}.${c.name || ""}` : c.name || "";
     }
     enhancedText += `\ncalls: ${callStr}`;
   }
@@ -167,7 +176,7 @@ export function buildEmbeddingText(entity: any, code: string): string {
 /**
  * Build vector embedding metadata from entity
  */
-export function buildVectorMetadata(entity: any, modelName: string): Record<string, unknown> {
+export function buildVectorMetadata(entity: ParsedEntity, modelName: string): Record<string, unknown> {
   const metadata: Record<string, unknown> = {
     path: entity.filePath ?? entity.path ?? "",
     type: entity.type,
@@ -190,7 +199,7 @@ export function buildVectorMetadata(entity: any, modelName: string): Record<stri
   // Add call count (enables "find functions with many calls" queries)
   if (entity.calls?.length) {
     metadata["callCount"] = entity.calls.length;
-    metadata["hasAsyncCalls"] = entity.calls.some((c: any) => c.isAwait);
+    metadata["hasAsyncCalls"] = entity.calls.some((c) => c.isAwait);
   }
 
   // Add control flow flags (enables filtering)
@@ -235,17 +244,17 @@ export function buildVectorMetadata(entity: any, modelName: string): Record<stri
  */
 export async function processPreGeneratedEmbeddings(
   entities: ParsedEntity[],
-  ctx: EmbeddingProcessorContext,
+  ctx: Pick<EmbeddingProcessorContext, "vectorStore" | "onMetricsUpdate">,
   modelName: string,
 ): Promise<{ processed: number; failed: ParsedEntity[] }> {
   const failedEntities: ParsedEntity[] = [];
   const vectorEmbeddings: VectorEmbedding[] = [];
 
   for (const entity of entities) {
-    const e: any = entity;
+    const e = entity as ParsedEntityWithEmbedding;
     try {
       // Decode base64 to Float32Array
-      const binaryData = Buffer.from(e.embeddingBase64, "base64");
+      const binaryData = Buffer.from(e.embeddingBase64!, "base64");
       const vector = new Float32Array(binaryData.buffer, binaryData.byteOffset, binaryData.length / 4);
 
       // Build stable ID

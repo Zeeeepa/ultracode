@@ -15,18 +15,8 @@
 import { EventEmitter } from "node:events";
 import { cpus } from "node:os";
 import { log } from "../logging/index.js";
+import { sleep } from "../utils/runtime-detection.js";
 import { detectRuntime, type Runtime } from "./runtime-detect.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
 
 // =============================================================================
 // Types
@@ -307,11 +297,13 @@ export class AdaptiveWorkerPool extends EventEmitter {
 
     if (this.runtime === "bun") {
       // Bun: Use Web Worker API with smol mode
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      worker = new (Worker as any)(this.options.scriptPath, {
-        type: "module",
-        smol: this.options.smolMode, // Bun-specific option
-      }) as BunWorker;
+      worker = new (Worker as unknown as new (path: string, options?: { type?: string; smol?: boolean }) => BunWorker)(
+        this.options.scriptPath,
+        {
+          type: "module",
+          smol: this.options.smolMode, // Bun-specific option
+        },
+      );
 
       log.i("ADAPTWORK", `[AdaptiveWorkerPool] Created Bun worker (smol=${this.options.smolMode})`);
     } else {

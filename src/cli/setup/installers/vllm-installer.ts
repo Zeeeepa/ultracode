@@ -6,6 +6,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getDataDir } from "../../../utils/config-paths.js";
+import { toError } from "../../../utils/error-handling.js";
 import { t, ti } from "../i18n/index.js";
 import type { EmbeddingModel, GPUInfo } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
@@ -94,8 +95,9 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
       });
       if (pullOutput) console.error(pullOutput.trim());
       printOK(t("vllm.image_downloaded"));
-    } catch (e: any) {
-      console.error(`[DEBUG] Pull failed: ${e.message}`);
+    } catch (e: unknown) {
+      const err = toError(e);
+      console.error(`[DEBUG] Pull failed: ${err.message}`);
       printError(t("install.pull_failed"));
       return false;
     }
@@ -144,8 +146,9 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
       env: { ...process.env, MSYS_NO_PATHCONV: "1" },
     });
     if (runOutput) console.error(`Container ID: ${runOutput.trim().slice(0, 12)}`);
-  } catch (e: any) {
-    console.error(`[DEBUG] Docker run failed: ${e.message}`);
+  } catch (e: unknown) {
+    const err = toError(e);
+    console.error(`[DEBUG] Docker run failed: ${err.message}`);
     printError(
       ti("install.container_created", { name: containerName }).replace(
         ti("install.container_created", { name: "" }),

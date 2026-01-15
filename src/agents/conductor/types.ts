@@ -31,7 +31,7 @@ export interface SubTask {
   targetAgent: "dev-agent" | "dora";
   dependencies: string[];
   priority: number;
-  payload?: any;
+  payload?: { type?: string; [key: string]: unknown };
 }
 
 export interface MethodProposal {

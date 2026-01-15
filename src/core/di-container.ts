@@ -34,7 +34,7 @@ export enum ServiceLifetime {
 /**
  * Service descriptor with factory and metadata
  */
-export interface ServiceDescriptor<T = any> {
+export interface ServiceDescriptor<T = unknown> {
   /** Unique service name/identifier */
   name: string;
   /** Factory function to create instances */
@@ -56,7 +56,7 @@ export interface AgentFactoryConfig {
   /** Agent capabilities */
   capabilities: AgentCapabilities;
   /** Optional configuration override */
-  config?: any;
+  config?: unknown;
 }
 
 /**
@@ -346,8 +346,10 @@ export class DIContainer {
   /**
    * Check if object implements Disposable interface
    */
-  private isDisposable(obj: any): obj is Disposable {
-    return obj && typeof obj.dispose === "function";
+  private isDisposable(obj: unknown): obj is Disposable {
+    return (
+      obj !== null && typeof obj === "object" && "dispose" in obj && typeof (obj as Disposable).dispose === "function"
+    );
   }
 
   /**
@@ -384,8 +386,8 @@ export class DIContainer {
  * Create agent factory function with configuration injection
  */
 export function createAgentFactory<T extends Agent>(
-  agentClass: new (...args: any[]) => T,
-  configFactory?: (container: DIContainer) => any | Promise<any>,
+  agentClass: new (...args: unknown[]) => T,
+  configFactory?: (container: DIContainer) => unknown | Promise<unknown>,
 ): (container: DIContainer) => Promise<T> {
   return async (container: DIContainer) => {
     // Resolve configuration if factory provided
@@ -406,7 +408,7 @@ export function createAgentFactory<T extends Agent>(
  */
 export function resolveAgentCapabilities(config: AppConfig, agentType: AgentType): AgentCapabilities {
   // Map agent type to config section
-  const agentConfigMap: Record<string, any> = {
+  const agentConfigMap: Record<string, unknown> = {
     dev: config.devAgent,
     parser: config.parser.agent, // Parser has .agent section
     indexer: config.indexer, // Direct config (AgentRuntimeConfig-like)
@@ -416,7 +418,11 @@ export function resolveAgentCapabilities(config: AppConfig, agentType: AgentType
     coordinator: config.conductor,
   };
 
-  const agentConfig = agentConfigMap[agentType] || {};
+  const agentConfig = (agentConfigMap[agentType] || {}) as {
+    maxConcurrency?: number;
+    memoryLimit?: number;
+    priority?: number;
+  };
 
   return {
     maxConcurrency: agentConfig.maxConcurrency || config.mcp.agents?.maxConcurrent || 5,

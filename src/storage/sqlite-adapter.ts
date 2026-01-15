@@ -12,35 +12,16 @@
 import { log } from "../logging/index.js";
 
 // Type definitions for both APIs
-export interface SQLiteDatabase {
-  prepare(sql: string): SQLiteStatement;
-  exec(sql: string): void;
-  pragma(pragma: string, options?: { simple?: boolean }): any;
-  close(): void;
-  readonly inTransaction: boolean;
-  transaction<T>(fn: (...args: any[]) => T): (...args: any[]) => T;
 
-  // Additional properties from better-sqlite3
-  readonly memory: boolean;
-  readonly readonly: boolean;
-  readonly name: string;
-  readonly open: boolean;
-  function(name: string, fn: (...args: any[]) => any): this;
-  function(name: string, options: any, fn: (...args: any[]) => any): this;
-  aggregate(name: string, options: any): this;
-  table(name: string, options?: any): any;
-  backup(destination: string, options?: any): Promise<any>;
-  serialize(options?: any): Buffer;
-  loadExtension(path: string, entryPoint?: string): this;
-  defaultSafeIntegers(toggleState?: boolean): this;
-  unsafeMode(unsafe?: boolean): this;
-}
-
-export interface SQLiteStatement {
-  run(...params: any[]): SQLiteRunResult;
-  get(...params: any[]): any;
-  all(...params: any[]): any[];
-  iterate(...params: any[]): IterableIterator<any>;
+/**
+ * Generic SQLite statement with type-safe query results
+ * @template T - Default row type for this statement
+ */
+export interface SQLiteStatement<T = unknown> {
+  run(...params: unknown[]): SQLiteRunResult;
+  get<R = T>(...params: unknown[]): R | undefined;
+  all<R = T>(...params: unknown[]): R[];
+  iterate<R = T>(...params: unknown[]): IterableIterator<R>;
   readonly source: string;
 }
 
@@ -49,13 +30,71 @@ export interface SQLiteRunResult {
   lastInsertRowid: number | bigint;
 }
 
-export type SQLiteDatabaseConstructor = new (path: string, options?: any) => SQLiteDatabase;
+/**
+ * Type-safe SQLite database interface
+ * Supports both bun:sqlite and better-sqlite3 APIs
+ */
+export interface SQLiteDatabase {
+  prepare<T = unknown>(sql: string): SQLiteStatement<T>;
+  exec(sql: string): void;
+  pragma<R = unknown>(pragma: string, options?: { simple?: boolean }): R;
+  close(): void;
+  readonly inTransaction: boolean;
+  transaction<T>(fn: (...args: unknown[]) => T): (...args: unknown[]) => T;
+
+  // Additional properties from better-sqlite3
+  readonly memory: boolean;
+  readonly readonly: boolean;
+  readonly name: string;
+  readonly open: boolean;
+  function(name: string, fn: (...args: unknown[]) => unknown): this;
+  function(name: string, options: Record<string, unknown>, fn: (...args: unknown[]) => unknown): this;
+  aggregate(name: string, options: Record<string, unknown>): this;
+  table(name: string, options?: Record<string, unknown>): unknown;
+  backup(destination: string, options?: Record<string, unknown>): Promise<unknown>;
+  serialize(options?: Record<string, unknown>): Buffer;
+  loadExtension(path: string, entryPoint?: string): this;
+  defaultSafeIntegers(toggleState?: boolean): this;
+  unsafeMode(unsafe?: boolean): this;
+}
+
+export interface SQLiteDatabaseOptions {
+  readonly?: boolean;
+  fileMustExist?: boolean;
+  timeout?: number;
+  verbose?: (message?: unknown, ...additionalArgs: unknown[]) => void;
+}
+
+export type SQLiteDatabaseConstructor = new (path: string, options?: SQLiteDatabaseOptions) => SQLiteDatabase;
+
+/**
+ * Bun's native SQLite interface (from bun:sqlite)
+ */
+interface BunSQLiteDatabase {
+  prepare(sql: string): BunSQLiteStatement;
+  exec(sql: string): void;
+  close(): void;
+  transaction<T>(fn: (...args: unknown[]) => T): (...args: unknown[]) => T;
+  loadExtension(path: string): void;
+}
+
+interface BunSQLiteStatement {
+  run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+  values(...params: unknown[]): IterableIterator<unknown>;
+}
 
 /**
  * Detect runtime environment
  */
 export function isBunRuntime(): boolean {
-  return typeof (process.versions as any).bun !== "undefined";
+  return (
+    typeof process !== "undefined" &&
+    typeof process.versions === "object" &&
+    process.versions !== null &&
+    "bun" in process.versions
+  );
 }
 
 /**
@@ -101,31 +140,35 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
     }
 
     // Wrap Bun Database to match better-sqlite3 API
-    return class BunDatabaseAdapter {
-      private db: any;
+    return class BunDatabaseAdapter implements SQLiteDatabase {
+      private db: BunSQLiteDatabase;
       private _path: string;
       private _readonly: boolean;
       private _open: boolean;
 
-      constructor(path: string, options?: { readonly?: boolean; verbose?: any; timeout?: number }) {
+      constructor(path: string, options?: SQLiteDatabaseOptions) {
         this._path = path;
         this._readonly = options?.readonly || false;
         this._open = true;
 
         // Bun SQLite options
-        const bunOptions: any = {
+        interface BunOptions {
+          readonly: boolean;
+          create: boolean;
+        }
+        const bunOptions: BunOptions = {
           readonly: this._readonly,
           create: !this._readonly,
         };
 
-        this.db = new Database(path, bunOptions);
+        this.db = new Database(path, bunOptions) as BunSQLiteDatabase;
 
         // Apply verbose logging if needed
         if (options?.verbose) {
           // Bun doesn't have built-in verbose, we can wrap prepare
           const originalPrepare = this.db.prepare.bind(this.db);
-          this.db.prepare = (sql: string) => {
-            options.verbose(sql);
+          this.db.prepare = (sql: string): BunSQLiteStatement => {
+            options.verbose?.(sql);
             return originalPrepare(sql);
           };
         }
@@ -148,12 +191,12 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
         return this._open;
       }
 
-      prepare(sql: string): SQLiteStatement {
+      prepare<T = unknown>(sql: string): SQLiteStatement<T> {
         const stmt = this.db.prepare(sql);
 
         // Wrap Bun statement to match better-sqlite3 API
         return {
-          run: (...params: any[]) => {
+          run: (...params: unknown[]): SQLiteRunResult => {
             const result = stmt.run(...params);
             // Bun returns { changes, lastInsertRowid } - compatible!
             return {
@@ -161,13 +204,13 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
               lastInsertRowid: result.lastInsertRowid || 0,
             };
           },
-          get: (...params: any[]) => stmt.get(...params),
-          all: (...params: any[]) => stmt.all(...params),
-          iterate: function* (...params: any[]) {
+          get: <R = T>(...params: unknown[]): R | undefined => stmt.get(...params) as R | undefined,
+          all: <R = T>(...params: unknown[]): R[] => stmt.all(...params) as R[],
+          iterate: function* <R = T>(...params: unknown[]): IterableIterator<R> {
             // Bun's iterate returns iterator directly
             const iter = stmt.values(...params);
             for (const row of iter) {
-              yield row;
+              yield row as R;
             }
           },
           source: sql,
@@ -178,16 +221,16 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
         this.db.exec(sql);
       }
 
-      pragma(pragma: string, options?: { simple?: boolean }): any {
+      pragma<R = unknown>(pragma: string, options?: { simple?: boolean }): R {
         // Bun SQLite doesn't have pragma method, use prepare
         const sql = `PRAGMA ${pragma}`;
         if (options?.simple) {
           const stmt = this.db.prepare(sql);
           const result = stmt.get();
-          return result ? Object.values(result)[0] : undefined;
+          return (result ? Object.values(result as Record<string, unknown>)[0] : undefined) as R;
         }
         const stmt = this.db.prepare(sql);
-        return stmt.all();
+        return stmt.all() as R;
       }
 
       close(): void {
@@ -198,44 +241,48 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
       get inTransaction(): boolean {
         // Bun doesn't expose inTransaction, check via pragma
         try {
-          const result = this.pragma("query_only", { simple: true });
+          const result = this.pragma<number>("query_only", { simple: true });
           return result === 0; // If query_only is 0, we might be in transaction
         } catch {
           return false;
         }
       }
 
-      transaction<T>(fn: (...args: any[]) => T): (...args: any[]) => T {
+      transaction<T>(fn: (...args: unknown[]) => T): (...args: unknown[]) => T {
         // Bun has transaction method
         return this.db.transaction(fn);
       }
 
       // Additional methods from better-sqlite3
       // Note: Some methods are stubs for Bun compatibility
-      function(..._args: any[]): this {
+      function(
+        _name: string,
+        _fnOrOptions: ((...args: unknown[]) => unknown) | Record<string, unknown>,
+        _fn?: (...args: unknown[]) => unknown,
+      ): this {
         // Support both function(name, fn) and function(name, options, fn) signatures
         // Bun may not support custom functions, but we provide the interface
         log.w("SQLITEADAPT", "custom_fn_unsupported", { runtime: "bun" });
         return this;
       }
 
-      aggregate(_name: string, _options: any): this {
+      aggregate(_name: string, _options: Record<string, unknown>): this {
         // Bun may not support aggregate functions
         log.w("SQLITEADAPT", "aggregate_unsupported", { runtime: "bun" });
         return this;
       }
 
-      table(_name: string, _options?: any): any {
+      table(_name: string, _options?: Record<string, unknown>): unknown {
         // Bun doesn't have built-in table function
         throw new Error("[BunDatabaseAdapter] table() not implemented for Bun runtime");
       }
 
-      async backup(_destination: string, _options?: any): Promise<any> {
+      async backup(_destination: string, _options?: Record<string, unknown>): Promise<unknown> {
         // Bun doesn't have built-in backup, would need file copy
         throw new Error("[BunDatabaseAdapter] backup() not implemented for Bun runtime");
       }
 
-      serialize(_options?: any): Buffer {
+      serialize(_options?: Record<string, unknown>): Buffer {
         // Bun doesn't have built-in serialize
         throw new Error("[BunDatabaseAdapter] serialize() not implemented for Bun runtime");
       }
@@ -261,7 +308,7 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
         // Bun doesn't have unsafe mode concept
         return this;
       }
-    } as any;
+    } as SQLiteDatabaseConstructor;
   } catch (error) {
     throw new Error(`Failed to load bun:sqlite`, { cause: error });
   }

@@ -11,10 +11,87 @@
  */
 
 import { z } from "zod";
+import type { TechnologyStack } from "../../analysis/technology-detector.js";
+import type { RefactoringSuggestion } from "../../types/semantic.js";
 import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
+
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * Refactoring suggestion output format for API response
+ */
+interface RefactoringSuggestionOutput {
+  type: string;
+  impact: string;
+  confidence: number;
+  description: string;
+  entityId?: string;
+  filePath?: string;
+  suggestedCode?: string;
+}
+
+/**
+ * Code hotspot with metrics
+ */
+interface Hotspot {
+  id: string;
+  name: string;
+  type: string;
+  filePath?: string;
+  score: number;
+  metrics: HotspotMetrics;
+}
+
+/**
+ * Hotspot metrics
+ */
+interface HotspotMetrics {
+  linesOfCode?: number;
+  cyclomaticComplexity?: number;
+  cognitiveComplexity?: number;
+  nestingDepth?: number;
+  parameterCount?: number;
+  changeFrequency?: number;
+  couplingScore?: number;
+  dependencyCount?: number;
+}
+
+/**
+ * Parsed entity from GraphStorage
+ */
+interface ParsedEntity {
+  id: string;
+  name: string;
+  type: string;
+  filePath?: string;
+  code?: string;
+  location?: {
+    start?: { line?: number };
+    end?: { line?: number };
+  };
+  metadata?: {
+    metrics?: HotspotMetrics;
+    isStateful?: boolean;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * State chaos analysis result
+ */
+interface StateAnalysis {
+  totalStateEntities: number;
+  statePatterns: string[];
+  chaosScore: number;
+  recommendations: string[];
+}
+
+// TechnologyStack imported from technology-detector.ts
 
 // =============================================================================
 // SUGGEST REFACTORING
@@ -45,12 +122,9 @@ export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeo
     let targetFilePath = args.filePath ? this.context.normalizeInputPath(args.filePath) : undefined;
 
     if (args.entityId) {
-      // Get entity code
+      // Get entity to find its file path
       const entity = await storage.getEntity(args.entityId);
-      if (entity?.code) {
-        code = entity.code;
-      } else if (entity?.filePath) {
-        // Try to read file content
+      if (entity?.filePath) {
         targetFilePath = entity.filePath;
       }
     }
@@ -88,14 +162,17 @@ export class SuggestRefactoringToolHandler extends BaseToolHandler<z.infer<typeo
               filePath: targetFilePath,
               suggestionsFound: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
-              suggestions: paginatedResult.data.map((s: any) => ({
-                type: s.type,
-                priority: s.priority,
-                description: s.description,
-                entityId: s.entityId || targetEntityId,
-                filePath: s.filePath || targetFilePath,
-                suggestedChange: s.suggestedChange,
-              })),
+              suggestions: paginatedResult.data.map(
+                (s: RefactoringSuggestion): RefactoringSuggestionOutput => ({
+                  type: s.type,
+                  impact: s.impact,
+                  confidence: s.confidence,
+                  description: s.description,
+                  entityId: targetEntityId,
+                  filePath: targetFilePath,
+                  suggestedCode: s.code,
+                }),
+              ),
             },
             null,
             2,
@@ -131,15 +208,16 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
     const entities = await storage.findEntities({ filters: {}, limit: 5000 });
 
     // Analyze hotspots based on metric
-    const hotspots: any[] = [];
+    const hotspots: Hotspot[] = [];
 
     for (const entity of entities) {
       const score = this.calculateHotspotScore(entity, args.metric);
       if (score > 0) {
         // Get metrics or calculate basic ones from location
-        const storedMetrics = entity.metadata?.metrics || {};
-        const linesOfCode =
-          storedMetrics.linesOfCode ||
+        const storedMetrics = (entity.metadata?.["metrics"] ?? {}) as Partial<HotspotMetrics>;
+        const storedLinesOfCode = storedMetrics.linesOfCode;
+        const linesOfCode: number | undefined =
+          storedLinesOfCode ??
           (entity.location?.end?.line && entity.location?.start?.line
             ? entity.location.end.line - entity.location.start.line + 1
             : undefined);
@@ -152,7 +230,7 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
           score: Math.round(score * 100) / 100,
           metrics: {
             ...storedMetrics,
-            ...(linesOfCode && !storedMetrics.linesOfCode ? { linesOfCode } : {}),
+            ...(linesOfCode !== undefined && storedLinesOfCode === undefined ? { linesOfCode } : {}),
           },
         });
       }
@@ -183,7 +261,7 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
     };
   }
 
-  private calculateHotspotScore(entity: any, metric: string): number {
+  private calculateHotspotScore(entity: ParsedEntity, metric: string): number {
     const metrics = entity.metadata?.metrics || {};
     let score = 0;
 
@@ -204,7 +282,8 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
       // Lines of code (larger = harder to maintain)
       score += linesOfCode / 50;
       // Too many parameters
-      score += (metrics.parameterCount || 0) > 4 ? (metrics.parameterCount - 4) * 2 : 0;
+      const paramCount = metrics.parameterCount || 0;
+      score += paramCount > 4 ? (paramCount - 4) * 2 : 0;
     }
 
     if (metric === "changes" || metric === "all") {
@@ -307,7 +386,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
 
     // Analyze state management patterns
     const stateEntities = entities.filter(
-      (e: any) =>
+      (e: ParsedEntity) =>
         e.name.toLowerCase().includes("state") ||
         e.name.toLowerCase().includes("store") ||
         e.name.toLowerCase().includes("context") ||
@@ -334,7 +413,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
     };
   }
 
-  private detectStatePatterns(entities: any[]): string[] {
+  private detectStatePatterns(entities: ParsedEntity[]): string[] {
     const patterns: string[] = [];
     const names = entities.map((e) => e.name.toLowerCase());
 
@@ -348,7 +427,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
     return patterns.length > 0 ? patterns : ["Custom/Unknown"];
   }
 
-  private calculateChaosScore(entities: any[]): number {
+  private calculateChaosScore(entities: ParsedEntity[]): number {
     // Higher score = more chaos
     let score = 0;
     score += entities.length > 20 ? 30 : entities.length;
@@ -356,7 +435,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
     return Math.min(100, score);
   }
 
-  private generateRecommendations(entities: any[]): string[] {
+  private generateRecommendations(entities: ParsedEntity[]): string[] {
     const recs: string[] = [];
     if (entities.length > 20) {
       recs.push("Consider consolidating state management");
@@ -367,7 +446,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
     return recs;
   }
 
-  private formatSummary(analysis: any): string {
+  private formatSummary(analysis: StateAnalysis): string {
     return `State Analysis Summary:
 - Total state entities: ${analysis.totalStateEntities}
 - Patterns detected: ${analysis.statePatterns.join(", ")}
@@ -375,7 +454,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
 - Recommendations: ${analysis.recommendations.length}`;
   }
 
-  private formatDetailed(analysis: any): string {
+  private formatDetailed(analysis: StateAnalysis): string {
     return `${this.formatSummary(analysis)}
 
 Recommendations:
@@ -412,7 +491,7 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
         filters: { filePath: normalizedPath },
         limit: 1,
       });
-      if (entities.length > 0) {
+      if (entities.length > 0 && entities[0]) {
         entityId = entities[0].id;
       }
     }
@@ -491,7 +570,7 @@ export class DetectTechnologyStackToolHandler extends BaseToolHandler<z.infer<ty
       const { TechnologyDetector } = await import("../../analysis/technology-detector.js");
       const graphStorage = await this.context.getGraphStorage();
       const detector = new TechnologyDetector(graphStorage, targetDir);
-      const stack = await detector.detectStack();
+      const stack: TechnologyStack = await detector.detectStack();
 
       return {
         content: [
@@ -503,9 +582,8 @@ export class DetectTechnologyStackToolHandler extends BaseToolHandler<z.infer<ty
                 languages: stack.languages,
                 frameworks: stack.frameworks,
                 buildTools: stack.buildTools,
-                // Include additional properties if available
-                ...((stack as any).packageManagers && { packageManagers: (stack as any).packageManagers }),
-                ...((stack as any).testingFrameworks && { testingFrameworks: (stack as any).testingFrameworks }),
+                dependencies: stack.dependencies,
+                confidence: stack.confidence,
               },
               null,
               2,

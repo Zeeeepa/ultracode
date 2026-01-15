@@ -6,11 +6,43 @@
  */
 
 import { log } from "../logging/index.js";
-import type { AgentTask } from "../types/agent.js";
+import type { Agent, AgentTask } from "../types/agent.js";
 import { AgentType } from "../types/agent.js";
 import { createRequestId } from "../utils/logger.js";
 import { setIndexingState } from "./indexing-state.js";
 import { knowledgeBus } from "./knowledge-bus.js";
+
+/**
+ * Task processing result structure
+ */
+interface TaskProcessingResult {
+  success?: boolean;
+  data?: {
+    entityCount?: number;
+    entities?: unknown[];
+  };
+  entities?: unknown[];
+}
+
+/**
+ * Agent with embedding stats (DevAgent)
+ */
+interface AgentWithEmbeddingStats extends Agent {
+  getEmbeddingStats?: () => {
+    total: number;
+    durationMs: number;
+    speedPerSec: number;
+    workers: number;
+    batches: number;
+  } | null;
+}
+
+/**
+ * Agent with repository path setter (IndexerAgent)
+ */
+interface AgentWithRepositoryPath extends Agent {
+  setRepositoryPath?: (path: string) => Promise<void>;
+}
 
 /**
  * Base exclude patterns for source file counting and indexing
@@ -305,7 +337,7 @@ export async function performAutoIndex(
     // Run indexing via conductor
     const cond = ctx.getConductor();
     await cond.initialize();
-    const result = (await cond.process(task)) as { success?: boolean; data?: any; entities?: any[] };
+    const result = (await cond.process(task)) as TaskProcessingResult;
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
@@ -315,7 +347,7 @@ export async function performAutoIndex(
 
       // Log embedding performance summary
       try {
-        const devAgent = cond.getAgentByType?.(AgentType.DEV) as any;
+        const devAgent = cond.getAgentByType?.(AgentType.DEV) as AgentWithEmbeddingStats | undefined;
         const embStats = devAgent?.getEmbeddingStats?.();
         if (embStats && embStats.total > 0) {
           log.i("EMBEDDING", "emb_summary", {
@@ -364,7 +396,7 @@ export async function performAutoIndex(
       // Start FileWatcher/GitWatcher for incremental updates
       try {
         const cond = ctx.getConductor();
-        const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as any;
+        const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as AgentWithRepositoryPath | undefined;
         if (indexerAgent?.setRepositoryPath) {
           await indexerAgent.setRepositoryPath(targetDir);
           log.i("INDEXER", "watcher_started", { dir: targetDir });

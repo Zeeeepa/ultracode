@@ -29,7 +29,7 @@ export class OutputFormatter {
   /**
    * Format trace flow result as text
    */
-  formatTraceFlowAsText(result: TraceFlowResult & { _debug?: any }): string {
+  formatTraceFlowAsText(result: TraceFlowResult & { _debug?: unknown }): string {
     const lines: string[] = [];
 
     lines.push(`═══ Trace Flow: ${result.from} → ${result.to} ═══`);
@@ -38,14 +38,16 @@ export class OutputFormatter {
     if (result.paths.length === 0) {
       lines.push("❌ No paths found between these points.");
       // Add debug info if available
-      if (result._debug) {
+      if (result._debug && typeof result._debug === "object") {
+        const debug = result._debug as Record<string, unknown>;
         lines.push("");
         lines.push("--- Debug Info ---");
-        lines.push(`Source: ${result._debug.sourceEntityName} (${result._debug.sourceEntityId})`);
-        lines.push(`Target: ${result._debug.targetEntityName} (${result._debug.targetEntityId})`);
-        lines.push(`Graph: ${result._debug.graphStats?.nodes} nodes, ${result._debug.graphStats?.edges} edges`);
-        lines.push(`Linear trace: ${result._debug.linearTraceSummary}`);
-        lines.push(`Nodes visited: ${result._debug.nodesVisited}`);
+        lines.push(`Source: ${debug["sourceEntityName"]} (${debug["sourceEntityId"]})`);
+        lines.push(`Target: ${debug["targetEntityName"]} (${debug["targetEntityId"]})`);
+        const graphStats = debug["graphStats"] as { nodes?: number; edges?: number } | undefined;
+        lines.push(`Graph: ${graphStats?.nodes} nodes, ${graphStats?.edges} edges`);
+        lines.push(`Linear trace: ${debug["linearTraceSummary"]}`);
+        lines.push(`Nodes visited: ${debug["nodesVisited"]}`);
       }
       return lines.join("\n");
     }

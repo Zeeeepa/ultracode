@@ -508,13 +508,16 @@ export function logMemoryProfile(label: string): void {
  * Returns true if GC was triggered.
  */
 export function forceGC(): boolean {
-  if (typeof (globalThis as any).gc === "function") {
-    (globalThis as any).gc();
+  // Node.js --expose-gc
+  const globalWithGC = globalThis as { gc?: () => void };
+  if (typeof globalWithGC.gc === "function") {
+    globalWithGC.gc();
     return true;
   }
-  // Bun has Bun.gc()
-  if (typeof (globalThis as any).Bun?.gc === "function") {
-    (globalThis as any).Bun.gc(true); // true = sync
+  // Bun.gc()
+  const globalWithBun = globalThis as { Bun?: { gc?: (force?: boolean) => void } };
+  if (globalWithBun.Bun && typeof globalWithBun.Bun.gc === "function") {
+    globalWithBun.Bun.gc(true); // true = sync
     return true;
   }
   return false;

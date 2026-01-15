@@ -252,7 +252,10 @@ export class CodeAnalyzer {
     log.d("ANALYZER", "Analyzing code fragments for clones", { maxSamples, minSimilarity });
 
     // Cache for entity metadata to avoid redundant get() calls
-    const entityCache = new Map<string, { content: string; metadata: any; vector?: Float32Array }>();
+    const entityCache = new Map<
+      string,
+      { content: string; metadata?: Record<string, unknown>; vector?: Float32Array }
+    >();
 
     // Union-Find data structure for O(α(n)) group merging
     const parent = new Map<string, string>();

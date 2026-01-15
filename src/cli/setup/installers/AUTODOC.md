@@ -1,6 +1,6 @@
 # Installers
 
-*Last updated: 2026-01-13*
+*Last updated: 2026-01-15*
 
 Модуль инсталляторов для различных поставщиков моделей встраивания
 
@@ -8,11 +8,11 @@
 
 | Name | Type | Description | Location |
 |------|------|-------------|----------|
-| `installLlamaCpp` | function | Скачивает и устанавливает бинарный файл llama-server с моделями | [→ llamacpp-installer.ts:402-409] |
+| `installLlamaCpp` | function | Скачивает и устанавливает бинарный файл llama-server с моделями | [→ llamacpp-installer.ts:411-418] |
 | `installOllama` | function | Проверяет установку и запускает сервис Ollama для встраивания | [→ ollama-installer.ts:11-65] |
-| `installOVMSNative` | function | Устанавливает OpenVINO Model Server с поддержкой нескольких устройств | [→ ovms-installer.ts:15-474] |
-| `installTEI` | function | Развёртывает контейнер с Text Embeddings Inference и моделями | [→ tei-installer.ts:17-19] |
-| `installVLLM` | function | Создаёт контейнер vLLM с поддержкой OpenAI-совместимого API | [→ vllm-installer.ts:14-199] |
+| `installOVMSNative` | function | Устанавливает OpenVINO Model Server с поддержкой нескольких устройств | [→ ovms-installer.ts:16-478] |
+| `installTEI` | function | Развёртывает контейнер с Text Embeddings Inference и моделями | [→ tei-installer.ts:18-20] |
+| `installVLLM` | function | Создаёт контейнер vLLM с поддержкой OpenAI-совместимого API | [→ vllm-installer.ts:15-202] |
 
 ## Files
 

@@ -6,6 +6,7 @@
 
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { toError } from "../../../utils/error-handling.js";
 import { t, ta, ti } from "../i18n/index.js";
 import { printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
 import { sleep } from "./runtime.js";
@@ -168,8 +169,9 @@ export async function checkNvidiaContainerToolkit(): Promise<boolean> {
         printOK(t("nvidia.gpu_available"));
         return true;
       }
-    } catch (e: any) {
-      printError(ti("nvidia.install_error", { error: e.message }));
+    } catch (error: unknown) {
+      const err = toError(error);
+      printError(ti("nvidia.install_error", { error: err.message }));
     }
 
     return false;

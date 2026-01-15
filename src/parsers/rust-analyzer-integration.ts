@@ -18,12 +18,46 @@ import { dirname, join } from "node:path";
 import { log } from "../logging/index.js";
 import type { ParsedEntity } from "../types/parser.js";
 
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * LSP document symbol from rust-analyzer
+ */
+interface LSPDocumentSymbol {
+  name: string;
+  kind: number;
+  range?: {
+    start: { line: number; character: number };
+    end: { line: number; character: number };
+  };
+  location?: {
+    range: {
+      start: { line: number; character: number };
+      end: { line: number; character: number };
+    };
+  };
+  detail?: string;
+  children?: LSPDocumentSymbol[];
+}
+
+/**
+ * Extended ParsedEntity with rust-analyzer info
+ */
+interface ParsedEntityWithRAInfo extends ParsedEntity {
+  rustAnalyzerInfo?: {
+    kind: string;
+    detail: string;
+  };
+}
+
 /**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
  */
 async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
+  if (typeof globalThis.Bun?.sleep === "function") {
+    await globalThis.Bun.sleep(ms);
   } else {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -405,17 +439,22 @@ export async function getDocumentSymbols(filePath: string): Promise<RustSymbolIn
   try {
     const result = (await sendRequest("textDocument/documentSymbol", {
       textDocument: { uri },
-    })) as any[];
+    })) as LSPDocumentSymbol[];
 
     if (!result) return [];
 
     const symbols: RustSymbolInfo[] = [];
 
-    function processSymbol(sym: any): void {
+    function processSymbol(sym: LSPDocumentSymbol): void {
+      const range = sym.range ||
+        sym.location?.range || {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 0 },
+        };
       symbols.push({
         name: sym.name,
         kind: getSymbolKindName(sym.kind),
-        range: sym.range || sym.location?.range,
+        range,
         detail: sym.detail,
       });
 
@@ -523,7 +562,7 @@ export async function enhanceWithRustAnalyzer(
       if (lineSymbols) {
         for (const sym of lineSymbols) {
           if (sym.name === entity.name && sym.detail) {
-            (entity as any).rustAnalyzerInfo = {
+            (entity as ParsedEntityWithRAInfo).rustAnalyzerInfo = {
               kind: sym.kind,
               detail: sym.detail,
             };

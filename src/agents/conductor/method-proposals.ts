@@ -104,8 +104,14 @@ export function createMethodProposalTemplate(taskType: string): MethodProposal[]
  * Get task type key for template lookup.
  */
 export function getTaskTypeKey(task: AgentTask): string {
-  const payload = task.payload as any;
-  if (payload?.requiresResearch) return "analysis";
+  const payload = task.payload;
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "requiresResearch" in payload &&
+    (payload as { requiresResearch: unknown }).requiresResearch
+  )
+    return "analysis";
   if (task.type.includes("refactor")) return "refactor";
   if (task.type.includes("implement")) return "implementation";
   if (task.type.includes("optimize")) return "optimization";

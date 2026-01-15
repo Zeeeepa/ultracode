@@ -20,6 +20,40 @@ import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult } from "../types/parser.js";
 
 // =============================================================================
+// JSONC PARSING (for tsconfig.json with comments)
+// =============================================================================
+
+/** Bun runtime with JSONC support (Bun 1.3.6+) */
+interface BunWithJsonc {
+  JSONC?: {
+    parse(content: string): unknown;
+  };
+}
+
+/**
+ * Parse JSONC (JSON with Comments) - used for tsconfig.json, jsconfig.json
+ * Uses Bun.JSONC if available (Bun 1.3.6+), otherwise strips comments manually
+ */
+function parseJsonc(content: string): unknown {
+  // Use Bun.JSONC if available (faster, handles edge cases better)
+  const bun = (globalThis as { Bun?: BunWithJsonc }).Bun;
+  if (bun?.JSONC?.parse) {
+    return bun.JSONC.parse(content);
+  }
+
+  // Fallback: strip comments manually for Node.js compatibility
+  const stripped = content
+    // Remove single-line comments (// ...)
+    .replace(/\/\/[^\n\r]*/g, "")
+    // Remove multi-line comments (/* ... */)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    // Remove trailing commas before } or ]
+    .replace(/,(\s*[}\]])/g, "$1");
+
+  return JSON.parse(stripped);
+}
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -41,6 +75,22 @@ interface JsonParseResult {
 }
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+/**
+ * TypeScript config structure (tsconfig.json, jsconfig.json)
+ * Properly typed for noUncheckedIndexedAccess compliance
+ */
+interface TsConfigJson {
+  extends?: string;
+  compilerOptions?: {
+    paths?: Record<string, string[]>;
+    [key: string]: unknown;
+  };
+  include?: string[];
+  exclude?: string[];
+  files?: string[];
+  references?: Array<{ path: string }>;
+}
 
 // =============================================================================
 // JSON PARSER CLASS
@@ -538,7 +588,8 @@ export class JsonParser {
     const errors: Array<{ message: string; location?: { line: number; column: number } }> = [];
 
     try {
-      const json = JSON.parse(content);
+      // Use JSONC parser - tsconfig.json supports comments and trailing commas
+      const json = parseJsonc(content) as TsConfigJson;
       const lines = content.split("\n");
 
       // Main config entity
@@ -549,7 +600,7 @@ export class JsonParser {
         location: { start: { line: 1, column: 0, index: 0 }, end: { line: 1, column: 1, index: 1 } },
         metadata: {
           extends: json.extends,
-          compilerOptions: json.compilerOptions ? this.normalizeObject(json.compilerOptions) : undefined,
+          compilerOptions: json.compilerOptions ? this.normalizeObject(json.compilerOptions as JsonValue) : undefined,
         },
       });
 
@@ -564,29 +615,37 @@ export class JsonParser {
       }
 
       // Path mappings
-      if (json.compilerOptions?.paths) {
-        const sortedPaths = Object.keys(json.compilerOptions.paths).sort();
+      const paths = json.compilerOptions?.paths;
+      if (paths) {
+        const sortedPaths = Object.keys(paths).sort();
 
         for (const alias of sortedPaths) {
-          const targets = json.compilerOptions.paths[alias];
-
-          entities.push({
-            name: alias,
-            type: "type",
-            filePath,
-            location: this.findKeyLocation(lines, `"${alias}"`, 0),
-            metadata: {
-              pathAlias: true,
-              targets: Array.isArray(targets) ? targets : [targets],
-            },
-          });
+          const targets = paths[alias];
+          if (targets) {
+            entities.push({
+              name: alias,
+              type: "type",
+              filePath,
+              location: this.findKeyLocation(lines, `"${alias}"`, 0),
+              metadata: {
+                pathAlias: true,
+                targets,
+              },
+            });
+          }
         }
       }
 
-      // Include/exclude patterns
-      for (const patternType of ["include", "exclude", "files"]) {
-        if (json[patternType] && Array.isArray(json[patternType])) {
-          for (const pattern of json[patternType].sort()) {
+      // Include/exclude/files patterns - process each typed array explicitly
+      const patternArrays: Array<{ patterns: string[] | undefined; patternType: string }> = [
+        { patterns: json.include, patternType: "include" },
+        { patterns: json.exclude, patternType: "exclude" },
+        { patterns: json.files, patternType: "files" },
+      ];
+
+      for (const { patterns, patternType } of patternArrays) {
+        if (patterns) {
+          for (const pattern of [...patterns].sort()) {
             entities.push({
               name: pattern,
               type: "constant",
@@ -599,32 +658,31 @@ export class JsonParser {
       }
 
       // References (project references)
-      if (json.references && Array.isArray(json.references)) {
+      if (json.references) {
         for (const ref of json.references) {
-          if (ref.path) {
-            entities.push({
-              name: ref.path,
-              type: "import",
-              filePath,
-              location: this.findKeyLocation(lines, `"${ref.path}"`, 0),
-              importData: {
-                source: ref.path,
-                specifiers: [{ local: ref.path }],
-              },
-              metadata: { projectReference: true },
-            });
+          entities.push({
+            name: ref.path,
+            type: "import",
+            filePath,
+            location: this.findKeyLocation(lines, `"${ref.path}"`, 0),
+            importData: {
+              source: ref.path,
+              specifiers: [{ local: ref.path }],
+            },
+            metadata: { projectReference: true },
+          });
 
-            relationships.push({
-              from: `${filePath}:module:${basename(filePath)}`,
-              to: `external:${ref.path}`,
-              type: "references",
-              metadata: { context: "project reference" },
-            });
-          }
+          relationships.push({
+            from: `${filePath}:module:${basename(filePath)}`,
+            to: `external:${ref.path}`,
+            type: "references",
+            metadata: { context: "project reference" },
+          });
         }
       }
-    } catch (e) {
-      errors.push({ message: `tsconfig.json parse error: ${(e as Error).message}` });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push({ message: `tsconfig.json parse error: ${message}` });
     }
 
     return { entities, relationships, errors };

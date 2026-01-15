@@ -46,7 +46,8 @@ export interface FileWatcherConfig {
 
 const isBunRuntime = typeof globalThis.Bun !== "undefined";
 // Check if Bun.watch is actually available (some Bun builds don't have it)
-const hasBunWatch = isBunRuntime && typeof (globalThis as any).Bun?.watch === "function";
+const hasBunWatch =
+  isBunRuntime && typeof globalThis.Bun !== "undefined" && typeof globalThis.Bun["watch"] === "function";
 
 // =============================================================================
 // FILE WATCHER

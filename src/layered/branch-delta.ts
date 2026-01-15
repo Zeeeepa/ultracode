@@ -271,22 +271,52 @@ export class BranchDelta implements IBranchDelta {
   /**
    * Deserialize delta from JSON-compatible object
    */
-  static fromJSON(data: any): BranchDelta {
-    const delta = new BranchDelta(data.branchName, data.baseCommitSha);
-    delta.lastModified = data.lastModified;
+  static fromJSON(data: unknown): BranchDelta {
+    // Type guard for JSON data
+    if (
+      typeof data !== "object" ||
+      data === null ||
+      !("branchName" in data) ||
+      !("baseCommitSha" in data) ||
+      !("lastModified" in data)
+    ) {
+      throw new Error("Invalid BranchDelta JSON data");
+    }
+
+    const jsonData = data as {
+      branchName: string;
+      baseCommitSha: string;
+      lastModified: number;
+      entityDelta?: {
+        added?: Array<[string, unknown]>;
+        modified?: Array<[string, unknown]>;
+        deleted?: string[];
+      };
+      relationshipDelta?: {
+        added?: Array<[string, unknown]>;
+        modified?: Array<[string, unknown]>;
+        deleted?: string[];
+      };
+    };
+
+    const delta = new BranchDelta(jsonData.branchName, jsonData.baseCommitSha);
+    delta.lastModified = jsonData.lastModified;
 
     // Deserialize entity delta
-    if (data.entityDelta) {
-      delta.entityDelta.added = new Map(data.entityDelta.added || []);
-      delta.entityDelta.modified = new Map(data.entityDelta.modified || []);
-      delta.entityDelta.deleted = new Set(data.entityDelta.deleted || []);
+    if (jsonData.entityDelta) {
+      delta.entityDelta.added = new Map(jsonData.entityDelta.added || []) as Map<string, Entity>;
+      delta.entityDelta.modified = new Map(jsonData.entityDelta.modified || []) as Map<string, Entity>;
+      delta.entityDelta.deleted = new Set(jsonData.entityDelta.deleted || []);
     }
 
     // Deserialize relationship delta
-    if (data.relationshipDelta) {
-      delta.relationshipDelta.added = new Map(data.relationshipDelta.added || []);
-      delta.relationshipDelta.modified = new Map(data.relationshipDelta.modified || []);
-      delta.relationshipDelta.deleted = new Set(data.relationshipDelta.deleted || []);
+    if (jsonData.relationshipDelta) {
+      delta.relationshipDelta.added = new Map(jsonData.relationshipDelta.added || []) as Map<string, Relationship>;
+      delta.relationshipDelta.modified = new Map(jsonData.relationshipDelta.modified || []) as Map<
+        string,
+        Relationship
+      >;
+      delta.relationshipDelta.deleted = new Set(jsonData.relationshipDelta.deleted || []);
     }
 
     return delta;

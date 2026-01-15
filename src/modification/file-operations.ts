@@ -18,9 +18,10 @@
  */
 
 import { dirname, extname, join } from "node:path";
+import { nanoid } from "nanoid";
 import { log } from "../logging/index.js";
 import type { VectorStore } from "../semantic/vector-store.js";
-import type { Entity, GraphStorage } from "../types/storage.js";
+import { type Entity, EntityType, type GraphStorage } from "../types/storage.js";
 import { mkdir, readdir, readText, rm, stat, writeFile } from "../utils/file-ops.js";
 import { streamCopyFile } from "../utils/stream-helpers.js";
 import type { DiffPreview, PreviewManager } from "./preview-manager.js";
@@ -392,7 +393,6 @@ export class FileOperations {
 
   private async updateFilePathInGraph(oldPath: string, newPath: string): Promise<number> {
     const entities = await this.graphStorage.findEntities({
-      type: "entity",
       filters: { filePath: oldPath },
     });
 
@@ -405,14 +405,13 @@ export class FileOperations {
 
   private async duplicateEntitiesInGraph(source: string, target: string): Promise<number> {
     const entities = await this.graphStorage.findEntities({
-      type: "entity",
       filters: { filePath: source },
     });
 
     for (const entity of entities) {
-      const newEntity: any = {
+      const newEntity: Entity = {
         ...entity,
-        id: undefined, // Will be generated
+        id: nanoid(), // Generate new ID for duplicate
         filePath: target,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -429,7 +428,6 @@ export class FileOperations {
 
     for (const file of files) {
       const entities = await this.graphStorage.findEntities({
-        type: "entity",
         filters: { filePath: file },
       });
 
@@ -487,8 +485,7 @@ export class FileOperations {
 
   private async findImporters(targetPath: string): Promise<Entity[]> {
     const allEntities = await this.graphStorage.findEntities({
-      type: "entity",
-      filters: { entityType: "import" as any },
+      filters: { entityType: EntityType.IMPORT },
     });
 
     return allEntities.filter((entity) => entity.metadata.importData?.source === targetPath);

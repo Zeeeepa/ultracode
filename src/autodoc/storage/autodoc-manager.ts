@@ -11,7 +11,7 @@
  */
 
 import type { ProjectContext } from "../../storage/libsql/types.js";
-import type { GraphStorage } from "../../types/storage.js";
+import type { GraphStorage, Relationship } from "../../types/storage.js";
 import { mapParallel } from "../../utils/parallel.js";
 import { flattenSections, parseMarkdown } from "../parser/md-parser.js";
 import type {
@@ -24,7 +24,7 @@ import type {
   OutdatedDoc,
   Reference,
 } from "../types.js";
-import { RefSourceType, RefTargetType, RefType } from "../types.js";
+import { type ChangeType, RefSourceType, RefTargetType, RefType } from "../types.js";
 import { DocStorage } from "./doc-storage.js";
 import { RefStorage } from "./ref-storage.js";
 
@@ -38,6 +38,13 @@ const OUTDATED_THRESHOLD = 0.7;
 // =============================================================================
 // 2. AUTODOC MANAGER CLASS
 // =============================================================================
+
+/**
+ * Extension interface for GraphStorage with optional getIncomingRelationships method
+ */
+interface GraphStorageWithIncoming extends GraphStorage {
+  getIncomingRelationships?: (entityId: string) => Promise<Relationship[]>;
+}
 
 export class AutoDocManager {
   private docStorage: DocStorage;
@@ -328,12 +335,13 @@ export class AutoDocManager {
       let callerRels: Array<{ fromId: string; line?: number }> = [];
 
       // Try to use getIncomingRelationships if available (more efficient)
-      if (typeof (this.graphStorage as any).getIncomingRelationships === "function") {
-        const incomingRels = await (this.graphStorage as any).getIncomingRelationships(entityId);
+      const storageExt = this.graphStorage as GraphStorageWithIncoming;
+      if (typeof storageExt.getIncomingRelationships === "function") {
+        const incomingRels = await storageExt.getIncomingRelationships(entityId);
         callerRels = incomingRels
-          .filter((rel: any) => rel.type === "calls" || rel.type === "references")
+          .filter((rel) => rel.type === "calls" || rel.type === "references")
           .slice(0, maxCallers)
-          .map((rel: any) => ({ fromId: rel.fromId, line: rel.metadata?.line }));
+          .map((rel) => ({ fromId: rel.fromId, line: rel.metadata?.line }));
       } else {
         // Fallback: Get relationships for target entity directly
         const rels = await this.graphStorage.getRelationshipsForEntity(entityId);
@@ -519,7 +527,7 @@ export class AutoDocManager {
   /**
    * Handle code entity modification
    */
-  async onEntityModified(entityId: string, changeType: "added" | "modified" | "deleted"): Promise<void> {
+  async onEntityModified(entityId: string, changeType: ChangeType): Promise<void> {
     // Find all docs that reference this entity
     const refs = await this.refStorage.getRefsByTarget(entityId);
 
@@ -537,7 +545,7 @@ export class AutoDocManager {
       changes: [
         {
           entityId,
-          changeType: changeType as any,
+          changeType,
           summary: `Entity was ${changeType}`,
         },
       ],

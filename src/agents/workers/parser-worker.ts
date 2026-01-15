@@ -30,6 +30,8 @@ interface WorkerResult {
   };
 }
 
+type WorkerMessage = { type: "init" } | { type: "shutdown" } | { type: "task"; payload: WorkerTask };
+
 // =============================================================================
 // WORKER INITIALIZATION
 // =============================================================================
@@ -108,7 +110,7 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
 // =============================================================================
 
 if (parentPort) {
-  parentPort.on("message", async (message: any) => {
+  parentPort.on("message", async (message: WorkerMessage) => {
     try {
       if (message.type === "init") {
         await initializeParser();
@@ -124,7 +126,7 @@ if (parentPort) {
       }
 
       if (message.type === "task") {
-        const task = message.payload as WorkerTask;
+        const task = message.payload;
         const result = await processTask(task);
 
         if (parentPort) {
@@ -138,7 +140,7 @@ if (parentPort) {
       if (parentPort) {
         parentPort.postMessage({
           type: "error",
-          taskId: message.payload?.id,
+          taskId: message.type === "task" ? message.payload.id : undefined,
           error: (error as Error).message,
           stack: (error as Error).stack,
         });

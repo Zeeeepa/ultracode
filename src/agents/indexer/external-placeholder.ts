@@ -72,7 +72,7 @@ export function createExternalPlaceholder(
       start: { line: 0, column: 0, index: 0 },
       end: { line: 0, column: 0, index: 0 },
     },
-    metadata: { isExternal: true, source, symbol } as any,
+    metadata: { isExternal: true, source, symbol },
     hash: `external:${source}:${symbol}`,
   };
 

@@ -99,8 +99,22 @@ interface GRPCInferenceService {
   ) => void;
   ModelInfer: (
     request: ModelInferRequest,
+    options: { deadline: Date },
     callback: (error: grpc.ServiceError | null, response: ModelInferResponse) => void,
   ) => void;
+  getChannel: () => grpc.Channel;
+  close: () => void;
+}
+
+// Proto package structure
+interface GrpcProtoPackage {
+  inference: {
+    GRPCInferenceService: new (
+      address: string,
+      credentials: grpc.ChannelCredentials,
+      options?: grpc.ChannelOptions,
+    ) => unknown;
+  };
 }
 
 export interface OVMSGrpcClientOptions {
@@ -114,7 +128,7 @@ export interface OVMSGrpcClientOptions {
 export class OVMSGrpcClient {
   private client: GRPCInferenceService | null = null;
   private options: OVMSGrpcClientOptions;
-  private grpcObject: any = null;
+  private grpcObject: GrpcProtoPackage | null = null;
 
   constructor(options: OVMSGrpcClientOptions) {
     this.options = {
@@ -130,7 +144,7 @@ export class OVMSGrpcClient {
   async initialize(): Promise<void> {
     // Load proto file
     const packageDefinition = await protoLoader.load(PROTO_PATH, PROTO_OPTIONS);
-    this.grpcObject = grpc.loadPackageDefinition(packageDefinition);
+    this.grpcObject = grpc.loadPackageDefinition(packageDefinition) as unknown as GrpcProtoPackage;
 
     const address = `${this.options.host}:${this.options.port}`;
 
@@ -163,7 +177,7 @@ export class OVMSGrpcClient {
   private waitForReady(): Promise<void> {
     return new Promise((resolve, reject) => {
       const deadline = Date.now() + 10000; // 10 sec timeout
-      const channel = (this.client as any).getChannel() as grpc.Channel;
+      const channel = this.client!.getChannel();
 
       channel.watchConnectivityState(channel.getConnectivityState(true), new Date(deadline), (error?: Error) => {
         if (error) {
@@ -274,23 +288,19 @@ export class OVMSGrpcClient {
       };
 
       // Make the gRPC call with deadline
-      (this.client as any).ModelInfer(
-        request,
-        callOptions,
-        (error: grpc.ServiceError | null, response: ModelInferResponse) => {
-          if (error) {
-            reject(new Error(`gRPC inference failed: ${error.message} (code: ${error.code})`));
-            return;
-          }
+      this.client!.ModelInfer(request, callOptions, (error: grpc.ServiceError | null, response: ModelInferResponse) => {
+        if (error) {
+          reject(new Error(`gRPC inference failed: ${error.message} (code: ${error.code})`));
+          return;
+        }
 
-          try {
-            const embeddings = this.parseInferenceOutput(response, batchSize, seqLen, attentionMask);
-            resolve(embeddings);
-          } catch (parseError) {
-            reject(parseError);
-          }
-        },
-      );
+        try {
+          const embeddings = this.parseInferenceOutput(response, batchSize, seqLen, attentionMask);
+          resolve(embeddings);
+        } catch (parseError) {
+          reject(parseError);
+        }
+      });
     });
   }
 
@@ -407,7 +417,7 @@ export class OVMSGrpcClient {
    */
   close(): void {
     if (this.client) {
-      (this.client as any).close();
+      this.client.close();
       this.client = null;
     }
   }

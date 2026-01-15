@@ -19,15 +19,15 @@ import { log } from "../logging/index.js";
 
 /** Check if running in Bun */
 function isBunRuntime(): boolean {
-  return typeof (globalThis as any).Bun !== "undefined";
+  return typeof globalThis.Bun !== "undefined";
 }
 
 /**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
  */
 async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
+  if (typeof globalThis.Bun !== "undefined" && typeof globalThis.Bun.sleep === "function") {
+    await globalThis.Bun.sleep(ms);
   } else {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }

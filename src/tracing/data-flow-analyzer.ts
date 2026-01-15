@@ -335,7 +335,14 @@ export class DataFlowAnalyzer {
     // Check parameters
     if (
       Array.isArray(meta["parameters"]) &&
-      meta["parameters"].some((p: any) => p.name.toLowerCase().includes(dataVar.toLowerCase()))
+      meta["parameters"].some(
+        (p: unknown) =>
+          p !== null &&
+          typeof p === "object" &&
+          "name" in p &&
+          typeof (p as { name: unknown }).name === "string" &&
+          (p as { name: string }).name.toLowerCase().includes(dataVar.toLowerCase()),
+      )
     ) {
       return true;
     }

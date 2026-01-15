@@ -11,10 +11,11 @@
 
 import { z } from "zod";
 import { log } from "../../logging/index.js";
+import type { Entity, EntityType, Relationship } from "../../types/storage.js";
 import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
-import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
+import { MAX_PAGE_SIZE, type PaginatedResult, paginate, SAFE_LIMITS } from "../response-limits.js";
 
 // =============================================================================
 // RESET GRAPH
@@ -55,7 +56,7 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
   }
 
   protected async execute(args: z.infer<typeof CleanIndexSchema>): Promise<ToolResult> {
-    const targetDir = args.directory || this.context.config.directory;
+    const targetDir = args.directory || (this.context.config as { directory?: string }).directory;
 
     // v3: Ensure correct project context for GraphStorage queries
     const storage = await this.ensureGraphStorageForProject(targetDir);
@@ -126,16 +127,19 @@ export class GetGraphToolHandler extends BaseToolHandler<z.infer<typeof GetGraph
 
     // Fetch all entities (up to 5000 for pagination accuracy)
     const allEntities = await storage.findEntities({
-      filters: args.entityTypes ? { entityType: args.entityTypes } : {},
+      filters: args.entityTypes ? { entityType: args.entityTypes as EntityType[] } : {},
       limit: 5000,
     });
 
     const paginatedEntities = paginate(allEntities, args.offset, safeLimit);
 
-    let paginatedRelationships: any = { data: [], pagination: { offset: 0, limit: 0, total: 0, hasMore: false } };
+    let paginatedRelationships: PaginatedResult<Relationship> = {
+      data: [],
+      pagination: { offset: 0, limit: 0, total: 0, hasMore: false },
+    };
 
     if (args.includeRelationships && paginatedEntities.data.length > 0) {
-      const entityIds = paginatedEntities.data.map((e: any) => e.id);
+      const entityIds = (paginatedEntities.data as Entity[]).map((e: Entity) => e.id);
       const allRelationships = await storage.findRelationships({
         filters: { fromId: entityIds },
         limit: 5000,
@@ -215,11 +219,11 @@ export class GetGraphHealthToolHandler extends BaseToolHandler<z.infer<typeof Ge
     const health = {
       status: "healthy",
       database: {
-        path: sqliteManager?.getDatabasePath?.() || "unknown",
+        path: (sqliteManager as { getDatabasePath?: () => string })?.getDatabasePath?.() || "unknown",
         entities: stats.totalEntities || 0,
         relationships: stats.totalRelationships || 0,
+        files: stats.totalFiles || 0,
       },
-      lastIndexed: stats.lastIndexed || null,
     };
 
     return {

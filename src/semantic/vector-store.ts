@@ -16,7 +16,7 @@
  *  - 2026-01-01: v5 - Faiss-only backend, removed libSQL embeddings
  */
 
-import { RefTargetType } from "../autodoc/types.js";
+import { type Reference, RefTargetType } from "../autodoc/types.js";
 import { log } from "../logging/index.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
@@ -24,6 +24,7 @@ import { log } from "../logging/index.js";
 import { getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
 import type { ProjectContext } from "../storage/libsql-graph-adapter.js";
 import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
+import type { Entity } from "../types/storage.js";
 import { type FaissProvider, initializeFaissProvider } from "./faiss/faiss-provider.js";
 import { getLayeredFaissProvider, type LayeredFaissProvider } from "./faiss/layered-faiss-provider.js";
 import { getRecommendedStrategy, type StrategyRecommendation } from "./gpu/adaptive-thresholds.js";
@@ -91,7 +92,7 @@ export class VectorStore {
 
     if (this.useLayeredIndex && this.layeredProvider) {
       // v6: Layered provider - check if initialized
-      const isInitialized = (this.layeredProvider as any).isInitialized;
+      const isInitialized = this.layeredProvider.initialized;
       const projectPath = this.currentProjectPath || this.config.workingDirectory || "";
       if (!isInitialized) {
         // First time setting context - initialize the provider
@@ -206,7 +207,7 @@ export class VectorStore {
 
         if (this.currentContext) {
           // Initialize with context if available
-          const isInit = (this.layeredProvider as any).isInitialized;
+          const isInit = this.layeredProvider.initialized;
           if (!isInit) {
             const success = await this.layeredProvider.initialize(
               this.config.workingDirectory || "",
@@ -573,7 +574,8 @@ export class VectorStore {
 
       // Enrich AutoDoc document results with metadata from AutoDoc database
       const enrichedDocs: SimilarityResult[] = [];
-      let adm: any = null; // Store adm for phase 2
+      let adm: Awaited<ReturnType<typeof import("../autodoc/storage/autodoc-manager.js")["getAutoDocManager"]>> | null =
+        null; // Store adm for phase 2
       if (docResults.length > 0) {
         try {
           const { getAutoDocManager } = await import("../autodoc/storage/autodoc-manager.js");
@@ -672,14 +674,14 @@ export class VectorStore {
             log.i("VECTOR", "autodoc_all_refs", {
               docId: docResult.id,
               totalRefs: refs.length,
-              refTypes: refs.map((r: any) => r.targetType),
-              refTargetIds: refs.map((r: any) => r.targetId),
-              refValid: refs.map((r: any) => r.valid),
+              refTypes: refs.map((r: Reference) => r.targetType),
+              refTargetIds: refs.map((r: Reference) => r.targetId),
+              refValid: refs.map((r: Reference) => r.valid),
             });
 
             // TEMPORARY: также принимаем LINE_RANGE пока парсер не исправлен
             const entityRefs = refs.filter(
-              (ref: any) =>
+              (ref: Reference) =>
                 (ref.targetType === RefTargetType.ENTITY || ref.targetType === RefTargetType.LINE_RANGE) &&
                 ref.valid &&
                 ref.targetId,
@@ -689,7 +691,7 @@ export class VectorStore {
               docId: docResult.id,
               totalRefs: refs.length,
               entityRefs: entityRefs.length,
-              sampleTargetIds: entityRefs.slice(0, 3).map((r: any) => r.targetId),
+              sampleTargetIds: entityRefs.slice(0, 3).map((r: Reference) => r.targetId),
             });
 
             // Подсчитать частоту упоминаний каждого entityId
@@ -745,7 +747,7 @@ export class VectorStore {
               names: newEntityIds,
             });
 
-            const resolvedEntities: Array<{ name: string; entity: any; refInfo: EntityRefInfo }> = [];
+            const resolvedEntities: Array<{ name: string; entity: Entity; refInfo: EntityRefInfo }> = [];
 
             // Get all entities from storage for name matching
             const allEntities = await storage.getAllEntities();
@@ -762,7 +764,7 @@ export class VectorStore {
 
               if (matchingEntities.length > 0) {
                 // If multiple matches, prefer the first one (could be enhanced with file path matching)
-                const entity = matchingEntities[0];
+                const entity = matchingEntities[0]!; // Safe: length > 0 checked above
                 const refInfo = entityRefsFromDocs.get(entityName)!;
                 resolvedEntities.push({ name: entityName, entity, refInfo });
               }
@@ -1205,7 +1207,11 @@ export class VectorStore {
     extensionVersion?: string;
     optimizedOperations: boolean;
     backend: "faiss";
-    backendInfo?: any;
+    backendInfo?: {
+      type: string;
+      persistent: boolean;
+      note: string;
+    };
   } {
     return {
       hasExtension: true,

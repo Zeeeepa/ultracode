@@ -8,25 +8,11 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../logging/index.js";
-import { detectRuntime } from "../shared/runtime-detect.js";
 import { getLogsDir } from "../shared/storage-paths.js";
+import { sleep } from "../utils/runtime-detection.js";
 
-// =============================================================================
-// RUNTIME-AWARE SLEEP
-// =============================================================================
-
-const currentRuntime = detectRuntime();
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-export async function sleep(ms: number): Promise<void> {
-  if (currentRuntime === "bun" && typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+// Re-export sleep for convenience
+export { sleep };
 
 // =============================================================================
 // TIMESTAMP UTILITIES

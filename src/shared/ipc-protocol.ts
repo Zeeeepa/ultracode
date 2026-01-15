@@ -8,17 +8,7 @@
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 import { log } from "../logging/index.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+import { sleep } from "../utils/runtime-detection.js";
 
 // =============================================================================
 // Types
