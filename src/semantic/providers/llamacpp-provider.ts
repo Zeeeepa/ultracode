@@ -1,19 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getDataDir } from "../../utils/config-paths.js";
+import { toError } from "../../utils/error-handling.js";
+import { sleep } from "../../utils/runtime.js";
 import { LLAMACPP_EMBEDDING_PORT, llamacppEmbeddingManager } from "../llamacpp-server-manager.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
 
 export interface LlamaCppOptions {
   model: string;
@@ -149,10 +140,11 @@ export class LlamaCppProvider implements EmbeddingProvider {
       const vec = await this.embed("warmup text");
       this.info.dimension = vec.length;
       this.log?.info("initialized", { dimension: this.info.dimension });
-    } catch (e: any) {
-      this.log?.error("warmup failed", { error: e.message }, undefined, e);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("warmup failed", { error: err.message }, undefined, err);
       throw new Error(
-        `llama.cpp warmup failed: ${e.message}\n` +
+        `llama.cpp warmup failed: ${err.message}\n` +
           `Make sure llama-server is running:\n` +
           `llama-server --model model.gguf --port 8085 --embedding`,
       );
@@ -190,10 +182,11 @@ export class LlamaCppProvider implements EmbeddingProvider {
           });
           lastError = status;
         }
-      } catch (e: any) {
-        if (!e.message?.includes("ECONNREFUSED") && e.message !== lastError) {
-          this.log?.debug("llama-server health check error", { error: e.message });
-          lastError = e.message;
+      } catch (error: unknown) {
+        const err = toError(error);
+        if (!err.message?.includes("ECONNREFUSED") && err.message !== lastError) {
+          this.log?.debug("llama-server health check error", { error: err.message });
+          lastError = err.message;
         }
       }
 
@@ -284,14 +277,15 @@ export class LlamaCppProvider implements EmbeddingProvider {
       const arr = new Float32Array(json.data[0].embedding);
       this.info.dimension = this.info.dimension ?? arr.length;
       return arr;
-    } catch (error: any) {
-      this.log?.error("embed failed", { error: error.message }, opts?.requestId, error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("embed failed", { error: err.message }, opts?.requestId, err);
 
-      if (error.message?.includes("ECONNREFUSED")) {
+      if (err.message?.includes("ECONNREFUSED")) {
         throw new Error(`llama-server not reachable at ${this.baseUrl}. Is the server running?`);
       }
 
-      throw new Error(`llama.cpp embed error: ${error.message}`);
+      throw new Error(`llama.cpp embed error: ${err.message}`);
     }
   }
 
@@ -380,14 +374,15 @@ export class LlamaCppProvider implements EmbeddingProvider {
       });
 
       return embeddings;
-    } catch (error: any) {
-      this.log?.error("embedBatch failed", { error: error.message }, opts?.requestId, error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("embedBatch failed", { error: err.message }, opts?.requestId, err);
 
-      if (error.message?.includes("ECONNREFUSED")) {
+      if (err.message?.includes("ECONNREFUSED")) {
         throw new Error(`llama-server not reachable at ${this.baseUrl}. Is the server running?`);
       }
 
-      throw new Error(`llama.cpp embedBatch error: ${error.message}`);
+      throw new Error(`llama.cpp embedBatch error: ${err.message}`);
     }
   }
 

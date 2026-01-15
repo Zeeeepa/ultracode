@@ -50,7 +50,7 @@ export function setWorkerIdGetter(getter: () => string): void {
 /**
  * Write log entry to worker log file
  */
-export function workerLog(level: string, message: string, data?: any): void {
+export function workerLog(level: string, message: string, data?: unknown): void {
   const now = new Date();
   const offsetMin = -now.getTimezoneOffset();
   const sign = offsetMin >= 0 ? "+" : "-";

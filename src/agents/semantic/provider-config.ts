@@ -4,12 +4,106 @@
  * Maps semantic-config.json settings to embedding provider configuration.
  */
 
+import type { EmbeddingConfig } from "../../types/semantic.js";
 import type { SemanticConfig } from "../../utils/config-paths.js";
 
 /**
  * Provider kind type
  */
-export type ProviderKind = "auto" | "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp";
+export type ProviderKind =
+  | "auto"
+  | "tei"
+  | "ovms"
+  | "ovms-native"
+  | "vllm"
+  | "llamacpp"
+  | "ollama"
+  | "openai"
+  | "cloudru"
+  | "huggingface";
+
+/**
+ * Extended OVMS configuration with runtime fields
+ */
+interface OvmsConfigExtended {
+  endpoint?: string;
+  batch_size?: number;
+  ovms_mini_batch?: number;
+  selected_model?: string | null;
+  target_device?: string;
+  endpoints?: string[];
+  useEmbeddingsApi?: boolean;
+  encodingFormat?: "float" | "base64";
+  protocol?: string;
+  grpcPort?: number;
+  timeoutMs?: number;
+  concurrency?: number;
+}
+
+/**
+ * Extended llama.cpp configuration with runtime fields
+ */
+interface LlamacppConfigExtended {
+  endpoint?: string;
+  context_size?: number;
+  contextSize?: number;
+  n_gpu_layers?: number;
+  nGpuLayers?: number;
+  parallel_slots?: number;
+  ubatch_size?: number;
+  batch_size?: number;
+  max_batch_size?: number;
+  timeoutMs?: number;
+  concurrency?: number;
+  auto_start?: boolean;
+  autoStart?: boolean;
+  selected_model?: string | null;
+}
+
+/**
+ * Extended TEI configuration
+ */
+interface TeiConfigExtended {
+  endpoint?: string;
+  baseUrl?: string;
+  max_batch_tokens?: number;
+  max_client_batch_size?: number;
+  concurrency?: number;
+  timeoutMs?: number;
+  checkServer?: boolean;
+}
+
+/**
+ * YAML configuration structure
+ */
+interface YamlConfig {
+  semanticAgent?: {
+    modelPath?: string;
+  };
+  mcp?: {
+    embedding?: {
+      tei?: TeiConfigExtended;
+    };
+  };
+}
+
+/**
+ * Worker provider options
+ */
+interface WorkerProviderOptions {
+  baseUrl?: string;
+  timeoutMs?: number;
+  concurrency?: number;
+  maxBatchSize?: number;
+  useEmbeddingsApi?: boolean;
+  encodingFormat?: "float" | "base64";
+  protocol?: string;
+  grpcPort?: number;
+  contextSize?: number;
+  nGpuLayers?: number;
+}
+
+// EmbeddingGeneratorOptions removed - use EmbeddingConfig from types/semantic.ts instead
 
 /**
  * Map semantic-config.json platform to provider kind
@@ -67,11 +161,13 @@ export function getModelNameFromSemanticConfig(semanticConfig: SemanticConfig | 
 export function buildWorkerProviderOptions(
   providerKind: string,
   semanticConfig: SemanticConfig | null,
-  yamlConfig: any,
-): Record<string, any> | undefined {
+  yamlConfig: YamlConfig | null,
+): WorkerProviderOptions | undefined {
   switch (providerKind) {
     case "tei": {
-      const teiConfig = semanticConfig?.embedding?.tei || yamlConfig?.mcp?.embedding?.tei;
+      const teiConfig = (semanticConfig?.embedding?.tei || yamlConfig?.mcp?.embedding?.tei) as
+        | TeiConfigExtended
+        | undefined;
       return {
         baseUrl: teiConfig?.endpoint || teiConfig?.baseUrl || "http://127.0.0.1:8081",
         timeoutMs: teiConfig?.timeoutMs,
@@ -80,7 +176,7 @@ export function buildWorkerProviderOptions(
       };
     }
     case "ovms": {
-      const ovmsConfig = semanticConfig?.embedding?.ovms as any;
+      const ovmsConfig = semanticConfig?.embedding?.ovms as OvmsConfigExtended | undefined;
       return {
         baseUrl: ovmsConfig?.endpoint,
         timeoutMs: ovmsConfig?.timeoutMs,
@@ -92,7 +188,7 @@ export function buildWorkerProviderOptions(
       };
     }
     case "llamacpp": {
-      const llamacppConfig = semanticConfig?.embedding?.llamacpp as any;
+      const llamacppConfig = semanticConfig?.embedding?.llamacpp as LlamacppConfigExtended | undefined;
       return {
         baseUrl: llamacppConfig?.endpoint || "http://127.0.0.1:8085",
         timeoutMs: llamacppConfig?.timeoutMs ?? 30000,
@@ -117,10 +213,10 @@ export function buildEmbeddingGeneratorOptions(
   modelName: string,
   batchSize: number,
   semanticConfig: SemanticConfig | null,
-  yamlConfig: any,
-): Record<string, any> {
-  const options: Record<string, any> = {
-    provider,
+  yamlConfig: YamlConfig | null,
+): Partial<EmbeddingConfig> {
+  const options: Partial<EmbeddingConfig> = {
+    provider: provider as EmbeddingConfig["provider"],
     modelName,
     quantized: true,
     localPath: yamlConfig?.semanticAgent?.modelPath ?? "./models",
@@ -129,9 +225,9 @@ export function buildEmbeddingGeneratorOptions(
 
   // Configure TEI from semantic-config.json OR YAML config
   const yamlTei = yamlConfig?.mcp?.embedding?.tei;
-  const jsonTei = semanticConfig?.embedding?.tei;
+  const jsonTei = semanticConfig?.embedding?.tei as TeiConfigExtended | undefined;
   if (provider === "tei") {
-    options["tei"] = {
+    options.tei = {
       baseUrl: jsonTei?.endpoint || yamlTei?.baseUrl || "http://127.0.0.1:8081",
       timeoutMs: yamlTei?.timeoutMs,
       concurrency: yamlTei?.concurrency,
@@ -144,26 +240,27 @@ export function buildEmbeddingGeneratorOptions(
     (semanticConfig?.embedding?.platform === "ovms" || semanticConfig?.embedding?.platform === "ovms-native") &&
     semanticConfig?.embedding?.ovms
   ) {
-    options["ovms"] = {
-      baseUrl: semanticConfig.embedding.ovms.endpoint,
-      miniBatchSize: (semanticConfig.embedding.ovms as any).ovms_mini_batch ?? 8,
-      useEmbeddingsApi: (semanticConfig.embedding.ovms as any).useEmbeddingsApi ?? true,
-      encodingFormat: (semanticConfig.embedding.ovms as any).encodingFormat ?? "base64",
-      endpoints: (semanticConfig.embedding.ovms as any).endpoints,
+    const ovmsConfig = semanticConfig.embedding.ovms as OvmsConfigExtended;
+    options.ovms = {
+      baseUrl: ovmsConfig.endpoint,
+      miniBatchSize: ovmsConfig.ovms_mini_batch ?? 8,
+      useEmbeddingsApi: ovmsConfig.useEmbeddingsApi ?? true,
+      encodingFormat: ovmsConfig.encodingFormat ?? "base64",
+      endpoints: ovmsConfig.endpoints,
     };
   }
 
   // Configure vLLM from semantic-config.json
   if (semanticConfig?.embedding?.platform === "vllm" && semanticConfig?.embedding?.vllm) {
-    options["vllm"] = {
+    options.vllm = {
       baseUrl: semanticConfig.embedding.vllm.endpoint,
     };
   }
 
   // Configure llama.cpp from semantic-config.json
   if (semanticConfig?.embedding?.platform === "llamacpp") {
-    const llamacppConfig = semanticConfig?.embedding?.llamacpp as any;
-    options["llamacpp"] = {
+    const llamacppConfig = semanticConfig?.embedding?.llamacpp as LlamacppConfigExtended | undefined;
+    options.llamacpp = {
       baseUrl: llamacppConfig?.endpoint || "http://127.0.0.1:8085",
       timeoutMs: llamacppConfig?.timeoutMs ?? 30000,
       // Client concurrency should match server --parallel for optimal throughput
@@ -175,10 +272,6 @@ export function buildEmbeddingGeneratorOptions(
       nGpuLayers: llamacppConfig?.n_gpu_layers ?? llamacppConfig?.nGpuLayers ?? 99,
       // Auto-start server if not running (default: true)
       autoStart: llamacppConfig?.auto_start ?? llamacppConfig?.autoStart ?? true,
-      // Server performance tuning
-      parallelSlots: llamacppConfig?.parallel_slots ?? 8,
-      ubatchSize: llamacppConfig?.ubatch_size ?? 1536,
-      batchSize: llamacppConfig?.batch_size ?? 3072,
     };
   }
 

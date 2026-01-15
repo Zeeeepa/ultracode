@@ -16,11 +16,21 @@ import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 
 /**
+ * Bun global interface for runtime detection
+ */
+interface BunGlobal {
+  Bun?: {
+    sleep?: (ms: number) => Promise<void>;
+  };
+}
+
+/**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
  */
 async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
+  const bunGlobal = globalThis as BunGlobal;
+  if (bunGlobal.Bun?.sleep && typeof bunGlobal.Bun.sleep === "function") {
+    await bunGlobal.Bun.sleep(ms);
   } else {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -53,6 +63,47 @@ interface PendingTask {
   reject: (error: Error) => void;
   abortController?: AbortController | undefined;
 }
+
+/**
+ * Worker ready message
+ */
+interface WorkerReadyMessage {
+  type: "ready";
+  workerId?: string;
+}
+
+/**
+ * Worker result message
+ */
+interface WorkerResultMessage {
+  type: "result";
+  id: string;
+  taskId?: string; // Backward compatibility
+  results: ParseResult[];
+  stats?: {
+    totalTime: number;
+    filesProcessed: number;
+    layer1Time?: number;
+    layer2Time?: number;
+    layer3Time?: number;
+    layer4Time?: number;
+  };
+}
+
+/**
+ * Worker error message
+ */
+interface WorkerErrorMessage {
+  type: "error";
+  taskId?: string;
+  id?: string;
+  error: string;
+}
+
+/**
+ * Union type for worker messages
+ */
+type WorkerMessage = WorkerReadyMessage | WorkerResultMessage | WorkerErrorMessage;
 
 interface PythonPoolStats {
   totalWorkers: number;
@@ -160,7 +211,7 @@ export class PythonWorkerPool {
         // Wait for ready signal with timeout
         const abortController = new AbortController();
 
-        const readyHandler = (message: any) => {
+        const readyHandler = (message: WorkerMessage) => {
           if (message.type === "ready") {
             abortController.abort();
             this.workers.set(workerId, state);
@@ -282,27 +333,29 @@ export class PythonWorkerPool {
   /**
    * Handle worker message
    */
-  private handleWorkerMessage(workerId: number, message: any): void {
+  private handleWorkerMessage(workerId: number, message: WorkerMessage): void {
     const state = this.workers.get(workerId);
     if (!state) return;
 
     if (message.type === "result") {
-      this.handleTaskComplete(workerId, message.payload);
+      this.handleTaskComplete(workerId, message);
     } else if (message.type === "error") {
-      this.handleTaskError(message.taskId, new Error(message.error));
-    } else if (message.type === "initialized") {
-      log.d("PYTHONPOOL", "worker_init", { id: workerId, layers: message.layers });
+      const taskId = message.taskId || message.id;
+      if (taskId) {
+        this.handleTaskError(taskId, new Error(message.error));
+      }
     }
   }
 
   /**
    * Handle task completion
    */
-  private handleTaskComplete(workerId: number, result: any): void {
+  private handleTaskComplete(workerId: number, result: WorkerResultMessage): void {
     const state = this.workers.get(workerId);
     if (!state) return;
 
-    const task = this.pendingTasks.get(result.taskId);
+    const taskId = result.taskId || result.id;
+    const task = this.pendingTasks.get(taskId);
     if (!task) return;
 
     // Abort timeout
@@ -313,10 +366,10 @@ export class PythonWorkerPool {
     // Update worker state
     state.busy = false;
     state.tasksProcessed++;
-    state.totalProcessingTime += result.stats.totalTime;
-
-    // Track layer timings
     if (result.stats) {
+      state.totalProcessingTime += result.stats.totalTime;
+
+      // Track layer timings
       state.layerTimings.layer1 += result.stats.layer1Time || 0;
       state.layerTimings.layer2 += result.stats.layer2Time || 0;
       state.layerTimings.layer3 += result.stats.layer3Time || 0;
@@ -325,11 +378,13 @@ export class PythonWorkerPool {
 
     // Update pool stats
     this.completedTasks++;
-    this.totalProcessingTime += result.stats.totalTime;
+    if (result.stats) {
+      this.totalProcessingTime += result.stats.totalTime;
+    }
 
     // Resolve task
     task.resolve(result.results);
-    this.pendingTasks.delete(result.taskId);
+    this.pendingTasks.delete(taskId);
 
     // Process next task from queue
     this.processNextTask(workerId);

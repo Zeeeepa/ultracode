@@ -7,8 +7,88 @@
 
 import { log } from "../logging/index.js";
 import type { EmbeddingProviderKind, WorkerEmbeddingConfig } from "../types/semantic.js";
-import { loadSemanticConfig } from "../utils/config-paths.js";
+import { loadSemanticConfig, type SemanticConfig } from "../utils/config-paths.js";
 import { getConfig } from "./yaml-config.js";
+
+/**
+ * Model configuration entry in provider configs
+ */
+interface ModelEntry {
+  id: string;
+  vector_size?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Combined embedding configuration type from semantic-config.json and yaml-config
+ * Includes all possible properties from both sources
+ */
+interface CombinedEmbeddingConfig {
+  platform?: "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp" | string;
+  architecture?: string;
+  // Provider-specific configs
+  tei?: {
+    endpoint?: string;
+    baseUrl?: string;
+    selected_model?: string;
+    model?: string;
+    max_client_batch_size?: number;
+    batchSize?: number;
+    timeoutMs?: number;
+    concurrency?: number;
+    models?: ModelEntry[];
+  };
+  ovms?: {
+    endpoint?: string;
+    selected_model?: string;
+    model?: string;
+    batch_size?: number;
+    batchSize?: number;
+    endpoints?: string[];
+    useEmbeddingsApi?: boolean;
+    encodingFormat?: "float" | "base64";
+    protocol?: "rest" | "grpc";
+    grpcPort?: number;
+    timeoutMs?: number;
+    concurrency?: number;
+    models?: ModelEntry[];
+  };
+  openai?: {
+    model?: string;
+    batchSize?: number;
+    baseUrl?: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    concurrency?: number;
+  };
+  vllm?: {
+    endpoint?: string;
+    baseUrl?: string;
+    selected_model?: string;
+    model?: string;
+    max_batch_size?: number;
+    batchSize?: number;
+    timeoutMs?: number;
+    concurrency?: number;
+    models?: ModelEntry[];
+  };
+  llamacpp?: {
+    endpoint?: string;
+    selected_model?: string;
+    batch_size?: number;
+    context_size?: number;
+    n_gpu_layers?: number;
+    timeoutMs?: number;
+    concurrency?: number;
+    models?: ModelEntry[];
+  };
+  // Common properties (may come from yaml-config)
+  vector_dimensions?: number;
+  dimensions?: number;
+  context_tokens?: number;
+  contextTokens?: number;
+  maxTokens?: number;
+}
 
 /**
  * Model vector dimensions.
@@ -133,7 +213,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
   const config = getConfig();
 
   // Try to get semantic-config
-  let semanticConfig: any = null;
+  let semanticConfig: SemanticConfig | null = null;
   try {
     semanticConfig = loadSemanticConfig();
   } catch {
@@ -141,7 +221,8 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
   }
 
   // Determine provider from config
-  const embeddingConfig = semanticConfig?.embedding || config.mcp?.embedding;
+  // Use type assertion because we need properties from both semantic-config and yaml-config
+  const embeddingConfig = (semanticConfig?.embedding || config.mcp?.embedding) as CombinedEmbeddingConfig | undefined;
 
   // Debug logging (only on first call)
   if (!cacheInitialized) {
@@ -172,7 +253,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     modelName = teiConfig.selected_model || teiConfig.model || modelName;
     batchSize = teiConfig.max_client_batch_size || teiConfig.batchSize || batchSize;
     // Get vector_size from selected model in models array
-    const selectedModel = teiConfig.models?.find((m: any) => m.id === modelName);
+    const selectedModel = teiConfig.models?.find((m: ModelEntry) => m.id === modelName);
     if (selectedModel?.vector_size) {
       embeddingConfig.vector_dimensions = selectedModel.vector_size;
     }
@@ -197,7 +278,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     modelName = selectedModelId;
     batchSize = ovmsConfig.batch_size || ovmsConfig.batchSize || batchSize;
     // Get vector_size from selected model in models array
-    const selectedModel = ovmsConfig.models?.find((m: any) => m.id === selectedModelId);
+    const selectedModel = ovmsConfig.models?.find((m: ModelEntry) => m.id === selectedModelId);
     if (selectedModel?.vector_size) {
       embeddingConfig.vector_dimensions = selectedModel.vector_size;
     }
@@ -232,7 +313,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     modelName = vllmConfig.selected_model || vllmConfig.model || "intfloat/multilingual-e5-large-instruct";
     batchSize = vllmConfig.max_batch_size || vllmConfig.batchSize || 100;
     // Get vector_size from selected model in models array
-    const selectedModel = vllmConfig.models?.find((m: any) => m.id === modelName);
+    const selectedModel = vllmConfig.models?.find((m: ModelEntry) => m.id === modelName);
     if (selectedModel?.vector_size) {
       // Store in embeddingConfig for later use by getModelDimensions
       embeddingConfig.vector_dimensions = selectedModel.vector_size;
@@ -252,7 +333,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     // Larger batch = better GPU utilization, default 256 (up from 100)
     batchSize = llamacppConfig.batch_size || 256;
     // Get vector_size from selected model in models array
-    const selectedModel = llamacppConfig.models?.find((m: any) => m.id === modelName);
+    const selectedModel = llamacppConfig.models?.find((m: ModelEntry) => m.id === modelName);
     if (selectedModel?.vector_size) {
       embeddingConfig.vector_dimensions = selectedModel.vector_size;
     }

@@ -1,3 +1,5 @@
+import { toError } from "../../utils/error-handling.js";
+import { sleep } from "../../utils/runtime.js";
 import type {
   EmbeddingProvider,
   EmbedOptions,
@@ -10,17 +12,6 @@ import type {
   ScoreOptions,
   ScoreResult,
 } from "./base.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
 
 export interface VLLMOptions {
   model: string;
@@ -93,10 +84,11 @@ export class VLLMProvider implements EmbeddingProvider {
       const vec = await this.embed("warmup text");
       this.info.dimension = vec.length;
       this.log?.info("initialized", { dimension: this.info.dimension });
-    } catch (e: any) {
-      this.log?.error("warmup failed", { error: e.message }, undefined, e);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("warmup failed", { error: err.message });
       throw new Error(
-        `vLLM warmup failed: ${e.message}\n` +
+        `vLLM warmup failed: ${err.message}\n` +
           `Make sure vLLM Docker container is running:\n` +
           `docker run -d --name vllm-server -p 8000:8000 --gpus all \\\n` +
           `  -v ~/.cache/huggingface:/root/.cache/huggingface \\\n` +
@@ -159,9 +151,10 @@ export class VLLMProvider implements EmbeddingProvider {
       }
 
       throw new Error("vLLM container started but did not become ready within 30 seconds");
-    } catch (error: any) {
-      this.log?.warn("Failed to auto-start vLLM container", { error: error.message });
-      throw new Error(`vLLM auto-start failed: ${error.message}\nPlease start manually: docker start vllm-server`);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.warn("Failed to auto-start vLLM container", { error: err.message });
+      throw new Error(`vLLM auto-start failed: ${err.message}\nPlease start manually: docker start vllm-server`);
     }
   }
 
@@ -193,9 +186,10 @@ export class VLLMProvider implements EmbeddingProvider {
           this.log?.debug("vLLM not ready yet", { status, elapsed: Math.round((Date.now() - startTime) / 1000) });
           lastStatus = status;
         }
-      } catch (e: any) {
-        if (!e.message?.includes("ECONNREFUSED")) {
-          this.log?.debug("vLLM health check error", { error: e.message });
+      } catch (error: unknown) {
+        const err = toError(error);
+        if (!err.message?.includes("ECONNREFUSED")) {
+          this.log?.debug("vLLM health check error", { error: err.message });
         }
       }
 
@@ -244,14 +238,15 @@ export class VLLMProvider implements EmbeddingProvider {
       const arr = new Float32Array(json.data[0].embedding);
       this.info.dimension = this.info.dimension ?? arr.length;
       return arr;
-    } catch (error: any) {
-      this.log?.error("embed failed", { error: error.message }, opts?.requestId, error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("embed failed", { error: err.message }, opts?.requestId, err);
 
-      if (error.message?.includes("ECONNREFUSED")) {
+      if (err.message?.includes("ECONNREFUSED")) {
         throw new Error(`vLLM server not reachable at ${this.baseUrl}. Is Docker container running?`);
       }
 
-      throw new Error(`vLLM embed error: ${error.message}`);
+      throw new Error(`vLLM embed error: ${err.message}`);
     }
   }
 
@@ -339,14 +334,15 @@ export class VLLMProvider implements EmbeddingProvider {
       });
 
       return embeddings;
-    } catch (error: any) {
-      this.log?.error("embedBatch failed", { error: error.message }, opts?.requestId, error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("embedBatch failed", { error: err.message }, opts?.requestId, err);
 
-      if (error.message?.includes("ECONNREFUSED")) {
+      if (err.message?.includes("ECONNREFUSED")) {
         throw new Error(`vLLM server not reachable at ${this.baseUrl}. Is Docker container running?`);
       }
 
-      throw new Error(`vLLM embedBatch error: ${error.message}`);
+      throw new Error(`vLLM embedBatch error: ${err.message}`);
     }
   }
 
@@ -411,9 +407,10 @@ export class VLLMProvider implements EmbeddingProvider {
 
       this.log?.debug("rerank() complete", { resultCount: results.length }, opts?.requestId);
       return results;
-    } catch (error: any) {
-      this.log?.error("rerank failed", { error: error.message }, opts?.requestId, error);
-      throw new Error(`vLLM rerank error: ${error.message}`);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("rerank failed", { error: err.message }, opts?.requestId, err);
+      throw new Error(`vLLM rerank error: ${err.message}`);
     }
   }
 
@@ -458,9 +455,10 @@ export class VLLMProvider implements EmbeddingProvider {
 
       this.log?.debug("scoreBatch() complete", { resultCount: results.length }, opts?.requestId);
       return results;
-    } catch (error: any) {
-      this.log?.error("scoreBatch failed", { error: error.message }, opts?.requestId, error);
-      throw new Error(`vLLM score error: ${error.message}`);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("scoreBatch failed", { error: err.message }, opts?.requestId, err);
+      throw new Error(`vLLM score error: ${err.message}`);
     }
   }
 }

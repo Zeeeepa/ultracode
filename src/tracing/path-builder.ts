@@ -11,7 +11,7 @@
  */
 
 import type { Entity, GraphStorage, Relationship } from "../types/storage.js";
-import { RelationType } from "../types/storage.js";
+import { type EntityType, RelationType } from "../types/storage.js";
 // Extracted modules
 import {
   findIncomingNgRxRelationships,
@@ -644,7 +644,7 @@ export class PathBuilder {
     // If filePath provided, search with higher limit and filter at SQL level
     const entities = await this.storage.searchEntities({
       namePattern: name,
-      types: type ? [type as any] : undefined,
+      types: type ? [type as EntityType] : undefined,
       filePath: filePath, // Pass to SQL for efficient filtering
       limit: filePath ? 1000 : 100, // Higher limit when filtering by file
     });

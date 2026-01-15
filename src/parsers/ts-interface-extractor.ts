@@ -89,7 +89,7 @@ export function extractInterfaceDeclaration(node: ts.InterfaceDeclaration, ctx: 
         filePath,
         location: getLocation(sourceFile, member),
         modifiers: member.questionToken ? ["optional"] : [],
-        parameters: getParameters(member as any, sourceFile),
+        parameters: getParameters(member as unknown as ts.FunctionLikeDeclaration, sourceFile),
         returnType: member.type ? member.type.getText(sourceFile) : undefined,
         documentation: methodDoc,
         typeReferences: methodTypeRefs,

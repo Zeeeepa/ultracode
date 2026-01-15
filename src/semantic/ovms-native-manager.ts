@@ -17,24 +17,10 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { log } from "../logging/index.js";
 import { getDataDir, getLogsDir } from "../utils/config-paths.js";
+import { toError } from "../utils/error-handling.js";
+import { isBunRuntime, sleep } from "../utils/runtime.js";
 
 // Event-driven architecture: health check uses setInterval for Node.js, disabled for Bun
-
-/** Check if running in Bun */
-function isBunRuntime(): boolean {
-  return typeof (globalThis as any).Bun !== "undefined";
-}
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
 
 const execAsync = promisify(exec);
 
@@ -432,9 +418,10 @@ class OVMSNativeManager {
         await this.stop();
         return false;
       }
-    } catch (error: any) {
-      this.state.lastError = error.message;
-      log.e("OVMS", "Failed to start", { error: error.message });
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.state.lastError = err.message;
+      log.e("OVMS", "Failed to start", { error: err.message });
       return false;
     }
   }
@@ -551,11 +538,12 @@ class OVMSNativeManager {
       // /T = terminate child processes, /F = force
       await execAsync(`taskkill /T /F /PID ${pid}`, { timeout: 5000 });
       log.d("OVMS", "Process tree killed via taskkill", { pid });
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Process might already be dead
+      const err = toError(error);
       log.d("OVMS", "taskkill returned error (process may already be dead)", {
         pid,
-        error: error.message,
+        error: err.message,
       });
     }
   }
@@ -610,8 +598,9 @@ class OVMSNativeManager {
         if (!response.ok) {
           log.w("OVMS", "Health check failed", { status: response.status });
         }
-      } catch (error: any) {
-        log.w("OVMS", "Health check error", { error: error.message });
+      } catch (error: unknown) {
+        const err = toError(error);
+        log.w("OVMS", "Health check error", { error: err.message });
       }
     };
 

@@ -51,6 +51,62 @@ export type {
 };
 
 // =============================================================================
+// EXTENDED WORKER RESPONSE TYPES
+// =============================================================================
+
+/**
+ * Worker initialized response (with embeddings configured)
+ */
+interface InitializedResponse {
+  type: "initialized";
+  embeddingEnabled?: boolean;
+}
+
+/**
+ * Embeddings ready response (binary embeddings from worker)
+ */
+interface EmbeddingsReadyResponse {
+  type: "embeddings.ready";
+  count?: number;
+  embeddings?: BinaryEmbedding[];
+}
+
+/**
+ * Embedding texts response (for centralized generation)
+ */
+interface EmbeddingTextsResponse {
+  type: "embeddings.texts";
+  count?: number;
+  texts?: EmbeddingTextItem[];
+}
+
+/**
+ * Extended parse response type with embedding messages
+ */
+type ExtendedParseResponse = ParseResponse | InitializedResponse | EmbeddingsReadyResponse | EmbeddingTextsResponse;
+
+/**
+ * Type guard for initialized response
+ */
+function isInitializedResponse(response: ExtendedParseResponse): response is InitializedResponse {
+  return response.type === "initialized";
+}
+
+/**
+ * Type guard for embeddings ready response
+ */
+function isEmbeddingsReadyResponse(response: ExtendedParseResponse): response is EmbeddingsReadyResponse {
+  return response.type === "embeddings.ready";
+}
+
+/**
+ * Type guard for embedding texts response
+ */
+function isEmbeddingTextsResponse(response: ExtendedParseResponse): response is EmbeddingTextsResponse {
+  return response.type === "embeddings.texts";
+}
+
+// =============================================================================
 // PARSING SUBPROCESS POOL
 // =============================================================================
 
@@ -196,7 +252,7 @@ export class ParsingSubprocessPool {
   /**
    * Handle response from subprocess
    */
-  private handleResponse(workerId: number, response: ParseResponse): void {
+  private handleResponse(workerId: number, response: ExtendedParseResponse): void {
     const state = this.workers.get(workerId);
     if (!state) return;
 
@@ -240,10 +296,10 @@ export class ParsingSubprocessPool {
     }
 
     // Handle initialized response (embeddings configured) - NOW we're ready
-    if ((response as any).type === "initialized") {
+    if (isInitializedResponse(response)) {
       log.d("SUBPROCESS", `Worker ${workerId} initialized with embeddings`, {
         language: this.language,
-        embeddingEnabled: (response as any).embeddingEnabled,
+        embeddingEnabled: response.embeddingEnabled,
       });
       // NOW resolve the ready promise - worker is fully initialized
       if (state.readyResolve) {
@@ -266,9 +322,8 @@ export class ParsingSubprocessPool {
     }
 
     // Handle embeddings.ready (binary embeddings from worker)
-    if ((response as any).type === "embeddings.ready") {
-      const embeddingsMsg = response as any;
-      const count = embeddingsMsg.count || embeddingsMsg.embeddings?.length || 0;
+    if (isEmbeddingsReadyResponse(response)) {
+      const count = response.count || response.embeddings?.length || 0;
 
       // Aggregate embedding statistics
       if (count > 0) {
@@ -280,19 +335,19 @@ export class ParsingSubprocessPool {
         this.embeddingStatsAgg.workersUsed.add(String(workerId));
       }
 
-      if (this.onEmbeddings && embeddingsMsg.embeddings?.length > 0) {
+      if (this.onEmbeddings && response.embeddings && response.embeddings.length > 0) {
         log.i("SUBPROCESS", `Received embeddings.ready from worker`, {
           workerId,
           language: this.language,
           count,
           hasCallback: !!this.onEmbeddings,
         });
-        this.onEmbeddings(embeddingsMsg.embeddings);
+        this.onEmbeddings(response.embeddings);
       } else {
         log.w("SUBPROCESS", `embeddings.ready: NOT calling callback`, {
           workerId,
           hasCallback: !!this.onEmbeddings,
-          embeddingsLength: embeddingsMsg.embeddings?.length,
+          embeddingsLength: response.embeddings?.length,
         });
       }
       return;
@@ -300,17 +355,16 @@ export class ParsingSubprocessPool {
 
     // Handle embeddings.texts (texts for centralized embedding generation via gRPC)
     // Used by OVMS provider for better throughput
-    if ((response as any).type === "embeddings.texts") {
-      const textsMsg = response as any;
-      const count = textsMsg.count || textsMsg.texts?.length || 0;
+    if (isEmbeddingTextsResponse(response)) {
+      const count = response.count || response.texts?.length || 0;
 
       // Debug: check if texts array arrived
       log.i("SUBPROCESS", "embeddings.texts received", {
         workerId,
         count,
-        hasTextsArray: Array.isArray(textsMsg.texts),
-        textsLength: textsMsg.texts?.length ?? 0,
-        keys: Object.keys(textsMsg),
+        hasTextsArray: Array.isArray(response.texts),
+        textsLength: response.texts?.length ?? 0,
+        keys: Object.keys(response),
       });
 
       // Aggregate embedding statistics (texts will become embeddings in Main)
@@ -323,14 +377,14 @@ export class ParsingSubprocessPool {
         this.embeddingStatsAgg.workersUsed.add(String(workerId));
       }
 
-      if (textsMsg.texts?.length > 0) {
+      if (response.texts && response.texts.length > 0) {
         log.i("SUBPROCESS", `Received ${count} embedding texts from worker ${workerId}`, {
           language: this.language,
           count,
           hasCallback: !!this.onEmbeddingTexts,
         });
         if (this.onEmbeddingTexts) {
-          this.onEmbeddingTexts(textsMsg.texts);
+          this.onEmbeddingTexts(response.texts);
         } else {
           log.w("SUBPROCESS", "No onEmbeddingTexts callback, texts lost!", { count });
         }

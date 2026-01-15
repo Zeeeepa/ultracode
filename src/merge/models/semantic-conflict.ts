@@ -48,6 +48,10 @@ export interface SemanticConflict {
   // Resolution info
   autoResolvable: boolean; // Можно ли автоматически разрешить
   suggestedResolution?: Resolution; // Предложенное решение
+
+  // AI-assisted resolution
+  aiSuggestions?: string[]; // AI-generated suggestions
+  aiConfidence?: number; // Confidence score from AI (0.0-1.0)
 }
 
 /**

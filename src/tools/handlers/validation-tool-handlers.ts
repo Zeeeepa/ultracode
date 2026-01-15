@@ -12,6 +12,65 @@ import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
 // =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * Single validation issue from linter/validator
+ */
+interface ValidationIssue {
+  line?: number;
+  column?: number;
+  message: string;
+  rule?: string;
+  severity: "error" | "warning";
+}
+
+/**
+ * Result from a single validator run
+ */
+interface ValidationResult {
+  validator: string;
+  errors: number;
+  warnings: number;
+  issues: ValidationIssue[];
+}
+
+/**
+ * Complete file validation result
+ */
+interface FileValidationResult {
+  file: string;
+  validators: string[];
+  totalErrors: number;
+  totalWarnings: number;
+  isValid: boolean;
+  results: ValidationResult[];
+}
+
+/**
+ * Parsed file from eslint/pylint JSON output
+ */
+interface ParsedValidatorFile {
+  messages?: Array<{
+    line?: number;
+    column?: number;
+    message?: string;
+    ruleId?: string;
+    symbol?: string;
+    severity?: number;
+  }>;
+}
+
+/**
+ * Error with stdout/stderr from exec
+ */
+interface ExecError extends Error {
+  stdout?: string;
+  stderr?: string;
+}
+
+// =============================================================================
 // VALIDATE FILE
 // =============================================================================
 
@@ -33,7 +92,7 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
     const filePath = this.context.normalizeInputPath(args.filePath) || args.filePath;
     const ext = extname(filePath).toLowerCase();
 
-    const results: any[] = [];
+    const results: ValidationResult[] = [];
 
     try {
       // Determine validators based on file extension
@@ -88,11 +147,7 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
     return map[ext] || [];
   }
 
-  private async runValidator(
-    validator: string,
-    filePath: string,
-    fixable: boolean,
-  ): Promise<{ validator: string; errors: number; warnings: number; issues: any[] }> {
+  private async runValidator(validator: string, filePath: string, fixable: boolean): Promise<ValidationResult> {
     const { exec } = await import("../../utils/shell.js");
     const { dirname } = await import("node:path");
 
@@ -120,7 +175,7 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
           command = `go vet "${filePath}" 2>&1`;
           break;
         default:
-          return { validator, errors: 0, warnings: 0, issues: [{ message: "Unknown validator" }] };
+          return { validator, errors: 0, warnings: 0, issues: [{ message: "Unknown validator", severity: "error" }] };
       }
 
       const result = await exec(command, { cwd, timeout: 60000 });
@@ -128,38 +183,41 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
 
       return {
         validator,
-        errors: issues.filter((i: any) => i.severity === "error").length,
-        warnings: issues.filter((i: any) => i.severity === "warning").length,
+        errors: issues.filter((i: ValidationIssue) => i.severity === "error").length,
+        warnings: issues.filter((i: ValidationIssue) => i.severity === "warning").length,
         issues,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Many validators exit with non-zero on issues
-      const output = error.stdout || error.stderr || error.message;
+      const execError = error as ExecError;
+      const output = execError.stdout || execError.stderr || execError.message;
       const issues = this.parseValidatorOutput(validator, output);
 
       return {
         validator,
-        errors: issues.filter((i: any) => i.severity === "error").length || 1,
-        warnings: issues.filter((i: any) => i.severity === "warning").length,
+        errors: issues.filter((i: ValidationIssue) => i.severity === "error").length || 1,
+        warnings: issues.filter((i: ValidationIssue) => i.severity === "warning").length,
         issues: issues.length > 0 ? issues : [{ message: output, severity: "error" }],
       };
     }
   }
 
-  private parseValidatorOutput(validator: string, output: string): any[] {
+  private parseValidatorOutput(validator: string, output: string): ValidationIssue[] {
     try {
       if (validator === "eslint" || validator === "pylint") {
         // Try JSON parse
         const parsed = JSON.parse(output);
         if (Array.isArray(parsed)) {
-          return parsed.flatMap((file: any) =>
-            (file.messages || []).map((m: any) => ({
-              line: m.line,
-              column: m.column,
-              message: m.message,
-              rule: m.ruleId || m.symbol,
-              severity: m.severity === 2 ? "error" : "warning",
-            })),
+          return parsed.flatMap((file: ParsedValidatorFile) =>
+            (file.messages || []).map(
+              (m): ValidationIssue => ({
+                line: m.line,
+                column: m.column,
+                message: m.message || "Unknown error",
+                rule: m.ruleId || m.symbol,
+                severity: m.severity === 2 ? "error" : "warning",
+              }),
+            ),
           );
         }
       }
@@ -168,7 +226,7 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
     }
 
     // Simple line-based parsing
-    const issues: any[] = [];
+    const issues: ValidationIssue[] = [];
     const lines = output.split("\n");
 
     for (const line of lines) {
@@ -204,7 +262,8 @@ export class ValidateDirectoryToolHandler extends BaseToolHandler<z.infer<typeof
   protected async execute(args: z.infer<typeof ValidateDirectorySchema>): Promise<ToolResult> {
     const { glob } = await import("../../utils/glob.js");
 
-    const directory = args.directory || this.context.config.directory;
+    const config = this.context.config as { directory?: string };
+    const directory = args.directory || config.directory;
     const extensions = args.extensions || [".ts", ".tsx", ".js", ".jsx", ".py"];
 
     try {
@@ -222,7 +281,7 @@ export class ValidateDirectoryToolHandler extends BaseToolHandler<z.infer<typeof
 
       // Validate files
       const validateHandler = new ValidateFileToolHandler(this.context);
-      const results: any[] = [];
+      const results: FileValidationResult[] = [];
 
       if (args.parallel) {
         const promises = files.map(async (file) => {
@@ -267,7 +326,7 @@ export class ValidateDirectoryToolHandler extends BaseToolHandler<z.infer<typeof
                   passed: files.length - invalidFiles.length,
                   failed: invalidFiles.length,
                 },
-                invalidFiles: invalidFiles.slice(0, 20).map((f: any) => ({
+                invalidFiles: invalidFiles.slice(0, 20).map((f: FileValidationResult) => ({
                   file: f.file,
                   errors: f.totalErrors,
                   warnings: f.totalWarnings,

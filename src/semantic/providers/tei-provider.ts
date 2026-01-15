@@ -1,3 +1,5 @@
+import { toError } from "../../utils/error-handling.js";
+import { sleep } from "../../utils/runtime.js";
 import type {
   EmbeddingProvider,
   EmbedOptions,
@@ -8,17 +10,6 @@ import type {
   RerankOptions,
   RerankResult,
 } from "./base.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
 
 export interface TEIOptions {
   model: string;
@@ -114,10 +105,11 @@ export class TEIProvider implements EmbeddingProvider {
       const vec = await this.embed("warmup text");
       this.info.dimension = vec.length;
       this.log?.info("initialized", { dimension: this.info.dimension, maxTokens: this.info.maxTokens });
-    } catch (e: any) {
-      this.log?.error("warmup failed", { error: e.message }, undefined, e);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("warmup failed", { error: err.message }, undefined, err);
       throw new Error(
-        `TEI warmup failed: ${e.message}\n` +
+        `TEI warmup failed: ${err.message}\n` +
           `Make sure TEI Docker container is running:\n` +
           `docker run -d --name tei-server -p 8081:80 \\\n` +
           `  ghcr.io/huggingface/text-embeddings-inference:latest \\\n` +
@@ -183,9 +175,10 @@ export class TEIProvider implements EmbeddingProvider {
       }
 
       throw new Error("TEI container started but did not become ready within 30 seconds");
-    } catch (error: any) {
-      this.log?.warn("Failed to auto-start TEI container", { error: error.message });
-      throw new Error(`TEI auto-start failed: ${error.message}\nPlease start manually: docker start tei-server`);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.warn("Failed to auto-start TEI container", { error: err.message });
+      throw new Error(`TEI auto-start failed: ${err.message}\nPlease start manually: docker start tei-server`);
     }
   }
 
@@ -219,10 +212,11 @@ export class TEIProvider implements EmbeddingProvider {
           this.log?.debug("TEI not ready yet", { status, elapsed: Math.round((Date.now() - startTime) / 1000) });
           lastStatus = status;
         }
-      } catch (e: any) {
+      } catch (error: unknown) {
         // Connection refused means server not ready yet
-        if (!e.message?.includes("ECONNREFUSED")) {
-          this.log?.debug("TEI health check error", { error: e.message });
+        const err = toError(error);
+        if (!err.message.includes("ECONNREFUSED")) {
+          this.log?.debug("TEI health check error", { error: err.message });
         }
       }
 
@@ -257,15 +251,15 @@ export class TEIProvider implements EmbeddingProvider {
         throw new Error(`TEI HTTP ${res.status}: ${body}`);
       }
 
-      const json: any = await res.json();
+      const json: unknown = await res.json();
 
       // TEI returns array of embeddings: [[embedding1], [embedding2], ...]
       // For single input, we get [[embedding]]
       let embedding: number[];
       if (Array.isArray(json) && Array.isArray(json[0])) {
-        embedding = json[0];
+        embedding = json[0] as number[];
       } else if (Array.isArray(json)) {
-        embedding = json;
+        embedding = json as number[];
       } else {
         throw new Error("TEI invalid response format");
       }
@@ -273,14 +267,15 @@ export class TEIProvider implements EmbeddingProvider {
       const arr = new Float32Array(embedding);
       this.info.dimension = this.info.dimension ?? arr.length;
       return arr;
-    } catch (error: any) {
-      this.log?.error("embed failed", { error: error.message }, opts?.requestId, error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("embed failed", { error: err.message }, opts?.requestId, err);
 
-      if (error.message?.includes("ECONNREFUSED")) {
+      if (err.message.includes("ECONNREFUSED")) {
         throw new Error(`TEI server not reachable at ${this.baseUrl}. Is Docker container running?`);
       }
 
-      throw new Error(`TEI embed error: ${error.message}`);
+      throw new Error(`TEI embed error: ${err.message}`);
     }
   }
 
@@ -357,28 +352,29 @@ export class TEIProvider implements EmbeddingProvider {
         throw new Error(`TEI HTTP ${res.status}: ${body}`);
       }
 
-      const json: any = await res.json();
+      const json: unknown = await res.json();
 
       // TEI returns array of embeddings: [[emb1], [emb2], ...]
       if (!Array.isArray(json)) {
         throw new Error("TEI invalid batch response format");
       }
 
-      const embeddings = json.map((emb: number[]) => {
-        const arr = new Float32Array(emb);
+      const embeddings = json.map((emb: unknown) => {
+        const arr = new Float32Array(emb as number[]);
         this.info.dimension = this.info.dimension ?? arr.length;
         return arr;
       });
 
       return embeddings;
-    } catch (error: any) {
-      this.log?.error("embedBatch failed", { error: error.message }, opts?.requestId, error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("embedBatch failed", { error: err.message }, opts?.requestId, err);
 
-      if (error.message?.includes("ECONNREFUSED")) {
+      if (err.message.includes("ECONNREFUSED")) {
         throw new Error(`TEI server not reachable at ${this.baseUrl}. Is Docker container running?`);
       }
 
-      throw new Error(`TEI embedBatch error: ${error.message}`);
+      throw new Error(`TEI embedBatch error: ${err.message}`);
     }
   }
 
@@ -445,14 +441,15 @@ export class TEIProvider implements EmbeddingProvider {
 
       this.log?.debug("rerank() complete", { resultCount: results.length }, opts?.requestId);
       return results;
-    } catch (error: any) {
-      this.log?.error("rerank failed", { error: error.message }, opts?.requestId, error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("rerank failed", { error: err.message }, opts?.requestId, err);
 
-      if (error.message?.includes("ECONNREFUSED")) {
+      if (err.message.includes("ECONNREFUSED")) {
         throw new Error(`TEI server not reachable at ${this.baseUrl}. Is Docker container running?`);
       }
 
-      throw new Error(`TEI rerank error: ${error.message}`);
+      throw new Error(`TEI rerank error: ${err.message}`);
     }
   }
 }

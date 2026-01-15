@@ -15,18 +15,13 @@ import { getGraphStorage } from "../storage/graph-storage-factory.js";
 import type { GraphStorageLibSQL } from "../storage/graph-storage-libsql.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { Change, Cycle, Hotspot, Path, RippleEffect } from "../types/query.js";
-import type { Entity, EntityType, Relationship, RelationType } from "../types/storage.js";
+import type { Entity, EntityType, GraphQuery, Relationship, RelationType } from "../types/storage.js";
 
 // Simplified local types for QueryAgent
 interface EntityFilter {
   name?: string | RegExp;
   type?: EntityType | EntityType[] | undefined;
   filePath?: string | string[];
-}
-
-interface GraphQuery {
-  type: string;
-  params?: Record<string, unknown>;
 }
 
 interface SimpleGraph {
@@ -225,12 +220,12 @@ export class QueryAgent extends BaseAgent {
     return results;
   }
 
-  async getGraph(query: { type: string; params?: Record<string, unknown> }): Promise<SimpleGraph> {
+  async getGraph(query: GraphQuery): Promise<SimpleGraph> {
     if (!this.storage) {
       return { entities: [], relationships: [] };
     }
 
-    const result = await this.storage.executeQuery(query as any);
+    const result = await this.storage.executeQuery(query);
     return {
       entities: result.entities,
       relationships: result.relationships,

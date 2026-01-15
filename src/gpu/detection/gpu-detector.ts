@@ -35,6 +35,40 @@ const WEBGPU_UNSAFE_MIN_CC = 12.0;
  */
 const WEBGPU_UNSTABLE_ARCHITECTURES = ["blackwell", "rtx 50", "rtx50"];
 
+// =============================================================================
+// WEBGPU TYPE DEFINITIONS
+// =============================================================================
+
+interface GPUAdapterInfo {
+  vendor?: string;
+  device?: string;
+  description?: string;
+}
+
+interface GPUAdapter {
+  requestAdapterInfo?: () => Promise<GPUAdapterInfo>;
+  vendor?: string;
+  name?: string;
+  description?: string;
+  limits?: {
+    maxBufferSize?: number;
+    [key: string]: unknown;
+  };
+}
+
+interface GPU {
+  requestAdapter: (options?: unknown) => Promise<GPUAdapter | null>;
+}
+
+interface WebGPUModule {
+  GPU?: GPU;
+  requestAdapter?: (options?: unknown) => Promise<GPUAdapter | null>;
+}
+
+type NavigatorWithGPU = Navigator & {
+  gpu?: GPU;
+};
+
 export interface GPUInfo {
   vendor: "nvidia" | "amd" | "intel" | "unknown";
   model: string;
@@ -221,23 +255,25 @@ export class GPUDetector {
     memoryMB: number;
   } | null> {
     try {
-      let gpu: unknown;
+      let gpu: GPU | undefined;
 
       // Try Node.js WebGPU (webgpu package - Dawn/wgpu bindings)
       try {
-        const webgpu = await import("webgpu");
+        const webgpu = (await import("webgpu")) as WebGPUModule;
         // webgpu package exports GPU instance directly
-        gpu = (webgpu as any).GPU ? (webgpu as any).GPU : webgpu;
+        gpu = webgpu.GPU ? webgpu.GPU : (webgpu as unknown as GPU);
       } catch {
         // Try browser native WebGPU
         if (typeof navigator !== "undefined" && "gpu" in navigator) {
-          gpu = (navigator as any).gpu;
+          gpu = (navigator as NavigatorWithGPU).gpu;
         } else {
           return null;
         }
       }
 
-      const adapter = await (gpu as any).requestAdapter();
+      if (!gpu) return null;
+
+      const adapter = await gpu.requestAdapter();
       if (!adapter) return null;
 
       // Get adapter info

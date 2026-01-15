@@ -11,11 +11,14 @@ import { CharStream, CommonTokenStream } from "antlr4ng";
 import { Java20Lexer } from "../generated/java/Java20Lexer.js";
 import {
   type AnnotationInterfaceDeclarationContext,
+  type ClassMemberDeclarationContext,
+  type ConstantDeclarationContext,
   type ConstructorDeclarationContext,
   type EnumConstantContext,
   type EnumDeclarationContext,
   type FieldDeclarationContext,
   type ImportDeclarationContext,
+  type InterfaceMemberDeclarationContext,
   type InterfaceMethodDeclarationContext,
   Java20Parser,
   type MethodDeclarationContext,
@@ -324,7 +327,7 @@ function processNormalClassDeclaration(classDecl: NormalClassDeclarationContext,
   ctx.currentClass = prevClass;
 }
 
-function processClassMemberDeclaration(memberDecl: any, ctx: ParserContext): void {
+function processClassMemberDeclaration(memberDecl: ClassMemberDeclarationContext, ctx: ParserContext): void {
   const fieldDecl = memberDecl.fieldDeclaration?.();
   if (fieldDecl) {
     processFieldDeclaration(fieldDecl, ctx);
@@ -424,7 +427,7 @@ function processNormalInterfaceDeclaration(interfaceDecl: NormalInterfaceDeclara
   ctx.currentClass = prevClass;
 }
 
-function processInterfaceMemberDeclaration(memberDecl: any, ctx: ParserContext): void {
+function processInterfaceMemberDeclaration(memberDecl: InterfaceMemberDeclarationContext, ctx: ParserContext): void {
   const constantDecl = memberDecl.constantDeclaration?.();
   if (constantDecl) {
     processConstantDeclaration(constantDecl, ctx);
@@ -892,7 +895,7 @@ function processFieldDeclaration(fieldDecl: FieldDeclarationContext, ctx: Parser
   }
 }
 
-function processConstantDeclaration(constantDecl: any, ctx: ParserContext): void {
+function processConstantDeclaration(constantDecl: ConstantDeclarationContext, ctx: ParserContext): void {
   const modifiers = extractConstantModifiers(constantDecl.constantModifier?.());
 
   // Extract type

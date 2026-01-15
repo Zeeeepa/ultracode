@@ -14,6 +14,8 @@
 import { log } from "../../logging/index.js";
 import type { EmbeddingGenerator } from "../../semantic/embedding-generator.js";
 import type { VectorStore } from "../../semantic/vector-store.js";
+import type { Entity, GraphStorage, Relationship } from "../../types/storage.js";
+import type { CommentBlock, CommentExtractionResult } from "../../utils/comment-extractor.js";
 
 // =============================================================================
 // CONTEXT INTERFACE
@@ -43,9 +45,9 @@ export interface CommentProcessorContext {
  * @param ctx - Comment processor context
  */
 export async function processStandaloneComments(
-  commentsByFile: Map<string, any>,
-  associationsByFile: Map<string, Map<string, any[]>>,
-  storage: any,
+  commentsByFile: Map<string, CommentExtractionResult>,
+  associationsByFile: Map<string, Map<string, CommentBlock[]>>,
+  storage: GraphStorage,
   ctx: CommentProcessorContext,
 ): Promise<{ entities: number; relationships: number }> {
   log.t("COMMENT", "process_start");
@@ -63,13 +65,13 @@ export async function processStandaloneComments(
   log.t("COMMENT", "import_done");
 
   // OPTIMIZATION: Collect all entities and relationships first, then batch insert
-  const allCommentEntities: any[] = [];
-  const allRelationships: any[] = [];
+  const allCommentEntities: Entity[] = [];
+  const allRelationships: Relationship[] = [];
   const filePathsToQuery = Array.from(commentsByFile.keys());
 
   // Phase 1: Parallel fetch all file entities (instead of sequential per-file)
   const FETCH_CONCURRENCY = 20;
-  const fileEntitiesMap = new Map<string, any[]>();
+  const fileEntitiesMap = new Map<string, Entity[]>();
 
   for (let i = 0; i < filePathsToQuery.length; i += FETCH_CONCURRENCY) {
     const batch = filePathsToQuery.slice(i, i + FETCH_CONCURRENCY);
@@ -123,7 +125,7 @@ export async function processStandaloneComments(
     pLog("P4_INSERT_ENTITIES");
 
     // Phase 4: Generate embeddings in one big batch
-    const commentTexts = allCommentEntities.map((c) => (c.metadata?.content as string) || "");
+    const commentTexts = allCommentEntities.map((c) => (c.metadata?.["content"] as string) || "");
     const commentEmbeddings = await ctx.embeddingGen.generateBatch(commentTexts);
     pLog("P5_GENERATE_EMBEDDINGS");
 
@@ -138,7 +140,7 @@ export async function processStandaloneComments(
         name: entity.name,
         entityId: entity.id,
         isComment: true,
-        commentType: entity.metadata?.commentType,
+        commentType: entity.metadata?.["commentType"],
       },
       createdAt: Date.now(),
     }));

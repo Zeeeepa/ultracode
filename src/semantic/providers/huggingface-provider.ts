@@ -1,4 +1,12 @@
+import { toError } from "../../utils/error-handling.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
+
+/**
+ * Basic typing for @huggingface/inference client
+ */
+interface HfInferenceClient {
+  featureExtraction(params: { model: string; inputs: string }): Promise<number[] | number[][]>;
+}
 
 export interface HuggingFaceOptions {
   model: string;
@@ -18,7 +26,7 @@ export class HuggingFaceProvider implements EmbeddingProvider {
   private concurrency: number;
   private warmupText: string;
   private log?: ProviderLogger | undefined;
-  private client: any; // InferenceClient from @huggingface/inference
+  private client: HfInferenceClient | null = null;
 
   constructor(opts: HuggingFaceOptions) {
     this.log = opts.logger;
@@ -47,12 +55,13 @@ export class HuggingFaceProvider implements EmbeddingProvider {
     try {
       // Динамическая загрузка @huggingface/inference
       const { HfInference } = await import("@huggingface/inference");
-      this.client = new HfInference(this.apiKey);
-    } catch (error: any) {
+      this.client = new HfInference(this.apiKey) as HfInferenceClient;
+    } catch (error: unknown) {
+      const err = toError(error);
       const errorMessage =
-        `Failed to load @huggingface/inference: ${error.message}\n` +
+        `Failed to load @huggingface/inference: ${err.message}\n` +
         `To use Hugging Face embeddings, install: npm install @huggingface/inference`;
-      this.log?.error("initialize failed", { error: errorMessage }, undefined, error);
+      this.log?.error("initialize failed", { error: errorMessage }, undefined, err);
       throw new Error(errorMessage);
     }
 
@@ -61,9 +70,10 @@ export class HuggingFaceProvider implements EmbeddingProvider {
       const vec = await this.embed(this.warmupText);
       this.info.dimension = vec.length;
       this.log?.info("initialized", { dimension: this.info.dimension });
-    } catch (e: any) {
-      this.log?.error("warmup failed", { error: e.message }, undefined, e);
-      throw new Error(`HuggingFace warmup failed: ${e.message}`);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("warmup failed", { error: err.message }, undefined, err);
+      throw new Error(`HuggingFace warmup failed: ${err.message}`);
     }
   }
 
@@ -90,7 +100,11 @@ export class HuggingFaceProvider implements EmbeddingProvider {
       let embedding: number[];
       if (Array.isArray(result)) {
         // Если вернулся массив массивов (batch), берем первый
-        embedding = Array.isArray(result[0]) ? result[0] : result;
+        if (Array.isArray(result[0])) {
+          embedding = result[0]!; // Safe: checked above
+        } else {
+          embedding = result as number[];
+        }
       } else {
         throw new Error("Unexpected featureExtraction response format");
       }
@@ -98,21 +112,22 @@ export class HuggingFaceProvider implements EmbeddingProvider {
       const arr = new Float32Array(embedding);
       this.info.dimension = this.info.dimension ?? arr.length;
       return arr;
-    } catch (error: any) {
-      this.log?.error("embed failed", { error: error.message }, opts?.requestId, error);
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.log?.error("embed failed", { error: err.message }, opts?.requestId, err);
 
       // Проверяем специфичные ошибки HF API
-      if (error.message?.includes("rate limit")) {
+      if (err.message.includes("rate limit")) {
         throw new Error(`HuggingFace rate limit exceeded. Consider using a paid API key or retry later.`);
       }
-      if (error.message?.includes("model") && error.message?.includes("not found")) {
+      if (err.message.includes("model") && err.message.includes("not found")) {
         throw new Error(`HuggingFace model "${this.info.model}" not found. Check model name.`);
       }
-      if (error.message?.includes("authorization")) {
+      if (err.message.includes("authorization")) {
         throw new Error(`HuggingFace API key is invalid or missing.`);
       }
 
-      throw new Error(`HuggingFace embed error: ${error.message}`);
+      throw new Error(`HuggingFace embed error: ${err.message}`);
     }
   }
 

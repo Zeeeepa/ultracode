@@ -1,4 +1,13 @@
+import { toError } from "../../utils/error-handling.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
+
+/**
+ * Ollama API response type
+ */
+interface OllamaEmbeddingResponse {
+  embedding: number[];
+  model?: string;
+}
 
 export interface OllamaOptions {
   model: string;
@@ -66,8 +75,9 @@ export class OllamaProvider implements EmbeddingProvider {
       const vec = await this.embed(this.opts.warmupText);
       this.info.dimension = vec.length;
       this.log?.info("initialized", { dimension: this.info.dimension });
-    } catch (e: any) {
-      if (this.opts.autoPull && this.isModelMissingError(e)) {
+    } catch (error: unknown) {
+      const err = toError(error);
+      if (this.opts.autoPull && this.isModelMissingError(err)) {
         this.log?.info("model not found, pulling", { model: this.info.model });
         await this.pullModel();
         const vec = await this.embed(this.opts.warmupText);
@@ -75,8 +85,8 @@ export class OllamaProvider implements EmbeddingProvider {
         this.log?.info("initialized after pull", { dimension: this.info.dimension });
         return;
       }
-      this.log?.error("initialize failed", { error: e.message }, undefined, e);
-      throw e;
+      this.log?.error("initialize failed", { error: err.message }, undefined, err);
+      throw err;
     }
   }
 
@@ -84,8 +94,8 @@ export class OllamaProvider implements EmbeddingProvider {
     return this.info.dimension;
   }
 
-  private isModelMissingError(e: unknown): boolean {
-    const msg = (e as any)?.message?.toLowerCase?.() ?? String(e).toLowerCase();
+  private isModelMissingError(err: Error): boolean {
+    const msg = err.message.toLowerCase();
     return (
       msg.includes("model not found") ||
       msg.includes("no such model") ||
@@ -155,7 +165,7 @@ export class OllamaProvider implements EmbeddingProvider {
       throw new Error(`Ollama HTTP ${res.status}: ${body}`);
     }
 
-    const json: any = await res.json();
+    const json = (await res.json()) as OllamaEmbeddingResponse;
     if (!json || !Array.isArray(json.embedding)) {
       throw new Error("Ollama invalid response: missing embedding array");
     }

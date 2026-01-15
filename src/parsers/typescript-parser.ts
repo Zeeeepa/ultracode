@@ -247,7 +247,8 @@ export class TypeScriptParser {
       const errors: Array<{ message: string; location?: { line: number; column: number } }> = [];
 
       // Get syntax errors from the source file (using internal API)
-      const syntaxDiagnostics = (sourceFile as any).parseDiagnostics as ts.Diagnostic[] | undefined;
+      type SourceFileWithDiagnostics = ts.SourceFile & { parseDiagnostics?: ts.Diagnostic[] };
+      const syntaxDiagnostics = (sourceFile as SourceFileWithDiagnostics).parseDiagnostics;
       if (syntaxDiagnostics) {
         for (const diag of syntaxDiagnostics) {
           const message = ts.flattenDiagnosticMessageText(diag.messageText, "\n");
@@ -304,7 +305,12 @@ export class TypeScriptParser {
   /**
    * Parse with incremental support (uses same logic - TS API handles this internally)
    */
-  async parseIncremental(filePath: string, content: string, contentHash: string, _edits: any[]): Promise<ParseResult> {
+  async parseIncremental(
+    filePath: string,
+    content: string,
+    contentHash: string,
+    _edits: unknown[],
+  ): Promise<ParseResult> {
     // TypeScript's createSourceFile is already very fast
     // For true incremental, we'd need ts.createLanguageService
     return this.parse(filePath, content, contentHash);

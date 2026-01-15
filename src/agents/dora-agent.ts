@@ -10,6 +10,30 @@ import { log } from "../logging/index.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import { BaseAgent } from "./base.js";
 
+// Payload interfaces for different task types
+interface ResearchTaskPayload {
+  description?: string;
+  targetAgent?: string;
+  taskId?: string;
+  priority?: number;
+  [k: string]: unknown;
+}
+
+interface ExplorationTaskPayload {
+  target?: string;
+  [k: string]: unknown;
+}
+
+interface DocumentationTaskPayload {
+  target?: string;
+  [k: string]: unknown;
+}
+
+interface PatternDiscoveryTaskPayload {
+  scope?: string;
+  [k: string]: unknown;
+}
+
 function getDoraAgentConfig() {
   const config = getConfig();
   return {
@@ -93,7 +117,7 @@ export class DoraAgent extends BaseAgent {
   }
 
   private async handleResearchTask(task: AgentTask): Promise<unknown> {
-    const payload = task.payload as any;
+    const payload = task.payload as ResearchTaskPayload;
     log.d("DORAAGENT", "researching", { id: this.id, desc: payload.description || "best practices" });
 
     // Simulate research process
@@ -123,7 +147,7 @@ export class DoraAgent extends BaseAgent {
   }
 
   private async handleExplorationTask(task: AgentTask): Promise<unknown> {
-    const payload = task.payload as any;
+    const payload = task.payload as ExplorationTaskPayload;
     log.d("DORAAGENT", "exploring", { id: this.id, target: payload.target || "patterns" });
 
     return {
@@ -147,7 +171,7 @@ export class DoraAgent extends BaseAgent {
   }
 
   private async handleDocumentationTask(task: AgentTask): Promise<unknown> {
-    const payload = task.payload as any;
+    const payload = task.payload as DocumentationTaskPayload;
     log.d("DORAAGENT", "documenting", { id: this.id, target: payload.target || "implementation" });
 
     return {
@@ -175,7 +199,7 @@ export class DoraAgent extends BaseAgent {
   }
 
   private async handlePatternDiscoveryTask(task: AgentTask): Promise<unknown> {
-    const payload = task.payload as any;
+    const payload = task.payload as PatternDiscoveryTaskPayload;
     log.d("DORAAGENT", "pattern_disc", { id: this.id, scope: payload.scope || "codebase" });
 
     return {

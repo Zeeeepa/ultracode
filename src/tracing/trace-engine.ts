@@ -905,8 +905,9 @@ export class TraceEngine {
    * Get entity signature for display
    */
   private getEntitySignature(entity: Entity): string {
+    type Parameter = NonNullable<Entity["metadata"]["parameters"]>[number];
     const params = entity.metadata.parameters || [];
-    const paramStr = params.map((p: any) => `${p.name}: ${p.type || "any"}`).join(", ");
+    const paramStr = params.map((p: Parameter) => `${p.name}: ${p.type || "any"}`).join(", ");
     const returnType = entity.metadata.returnType || "void";
     return `${entity.name}(${paramStr}): ${returnType}`;
   }

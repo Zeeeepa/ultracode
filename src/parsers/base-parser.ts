@@ -43,7 +43,7 @@ export interface BaseParser {
   /**
    * Parse with incremental support
    */
-  parseIncremental(filePath: string, content: string, contentHash: string, edits: any[]): Promise<ParseResult>;
+  parseIncremental(filePath: string, content: string, contentHash: string, edits: unknown[]): Promise<ParseResult>;
 
   /**
    * Get parser statistics

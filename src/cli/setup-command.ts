@@ -25,6 +25,10 @@ import {
   type SemanticConfig,
   saveSemanticConfig,
 } from "../utils/config-paths.js";
+
+// Type alias for LLM platform
+type LLMPlatform = NonNullable<SemanticConfig["llm"]>["platform"];
+
 import { setSetupLanguage } from "./setup/i18n/index.js";
 
 // Import from setup modules
@@ -209,7 +213,7 @@ export async function runSetup(args: string[]): Promise<void> {
     if (existingConfig) {
       existingConfig.llm = {
         enabled: true,
-        platform: llmProvider as any,
+        platform: llmProvider as LLMPlatform,
         [llmProvider === "claude-code" ? "claude" : llmProvider]: {
           endpoint: llmProvider === "claude-code" ? undefined : getDefaultEndpoint(llmProvider),
           model_id: llmModel.model_id,
@@ -306,8 +310,8 @@ export async function runSetup(args: string[]): Promise<void> {
             // OVMS API mode:
             // - V3 /v3/embeddings OpenAI-compatible API - for pre-converted models with pooling layer
             // - V2 /v2/models/{model}/infer - tokenization + pooling on client (fallback)
-            useEmbeddingsApi: (selectedModel as any).v3_api === true, // Use V3 if model supports it
-            encodingFormat: (selectedModel as any).v3_api === true ? "base64" : "float", // base64 for V3, float for V2
+            useEmbeddingsApi: selectedModel.v3_api === true, // Use V3 if model supports it
+            encodingFormat: selectedModel.v3_api === true ? "base64" : "float", // base64 for V3, float for V2
           }
         : undefined,
       tei:
@@ -395,7 +399,7 @@ export async function runSetup(args: string[]): Promise<void> {
           // Update config with LLM settings
           finalConfig.llm = {
             enabled: true,
-            platform: llmProvider as any,
+            platform: llmProvider as LLMPlatform,
             claude:
               llmProvider === "claude-code"
                 ? {

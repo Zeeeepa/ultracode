@@ -157,7 +157,33 @@ export interface FileInfo {
 }
 
 /**
- * Graph query parameters
+ * Entity query parameters (used by findEntities)
+ */
+export interface EntityQuery {
+  filters?: {
+    entityType?: EntityType | EntityType[];
+    filePath?: string | string[];
+    name?: string | RegExp;
+  };
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Relationship query parameters (used by findRelationships)
+ */
+export interface RelationshipQuery {
+  filters?: {
+    relationshipType?: RelationType | RelationType[];
+    fromId?: string | string[];
+    toId?: string | string[];
+  };
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Graph query parameters (for executeQuery and subgraph operations)
  */
 export interface GraphQuery {
   type: "entity" | "relationship" | "subgraph";
@@ -299,7 +325,7 @@ export interface GraphStorage {
   updateEntity(id: string, updates: Partial<Entity>): Promise<void>;
   deleteEntity(id: string): Promise<void>;
   getEntity(id: string): Promise<Entity | null>;
-  findEntities(query: GraphQuery): Promise<Entity[]>;
+  findEntities(query: EntityQuery): Promise<Entity[]>;
 
   // NEW: Enhanced entity queries for Chaos Analysis and advanced tools
   getAllEntities(): Promise<Entity[]>;
@@ -315,7 +341,7 @@ export interface GraphStorage {
   insertRelationships(relationships: Relationship[]): Promise<BatchResult>;
   deleteRelationship(id: string): Promise<void>;
   getRelationshipsForEntity(entityId: string, type?: RelationType): Promise<Relationship[]>;
-  findRelationships(query: GraphQuery): Promise<Relationship[]>;
+  findRelationships(query: RelationshipQuery): Promise<Relationship[]>;
 
   /** Get ALL relationships efficiently (single query, no batching) */
   getAllRelationships(): Promise<Relationship[]>;

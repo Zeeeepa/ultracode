@@ -1,6 +1,31 @@
 import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } from "./base.js";
 import { HttpEngine } from "./http-engine.js";
 
+/**
+ * OpenAI embeddings API response types
+ */
+interface OpenAIEmbeddingData {
+  embedding: number[];
+  index: number;
+  object: string;
+}
+
+interface OpenAIEmbeddingResponse {
+  data: OpenAIEmbeddingData[];
+  model: string;
+  object: string;
+  usage?: {
+    prompt_tokens: number;
+    total_tokens: number;
+  };
+}
+
+interface OpenAIRequestBody {
+  model: string;
+  input: string | string[];
+  dimensions?: number;
+}
+
 export interface OpenAIOptions {
   baseUrl?: string | undefined;
   apiKey: string;
@@ -50,24 +75,26 @@ export class OpenAIProvider implements EmbeddingProvider {
     return this.info.dimension;
   }
 
-  private buildBody = (input: string | string[]) => {
-    const body: any = { model: this.info.model, input };
+  private buildBody = (input: string | string[]): OpenAIRequestBody => {
+    const body: OpenAIRequestBody = { model: this.info.model, input };
     if (this.opts.dimensions) body.dimensions = this.opts.dimensions;
     return body;
   };
 
-  private parseSingle = (json: any): Float32Array => {
-    if (!json || !Array.isArray(json.data) || !Array.isArray(json.data[0]?.embedding)) {
+  private parseSingle = (json: unknown): Float32Array => {
+    const response = json as OpenAIEmbeddingResponse;
+    if (!response || !Array.isArray(response.data) || !Array.isArray(response.data[0]?.embedding)) {
       throw new Error("OpenAI invalid embedding response");
     }
-    const arr = new Float32Array(json.data[0].embedding);
+    const arr = new Float32Array(response.data[0].embedding);
     this.info.dimension = this.info.dimension ?? arr.length;
     return arr;
   };
 
-  private parseBatch = (json: any): Float32Array[] => {
-    if (!json || !Array.isArray(json.data)) throw new Error("OpenAI invalid batch response");
-    const out = json.data.map((d: any) => new Float32Array(d.embedding));
+  private parseBatch = (json: unknown): Float32Array[] => {
+    const response = json as OpenAIEmbeddingResponse;
+    if (!response || !Array.isArray(response.data)) throw new Error("OpenAI invalid batch response");
+    const out = response.data.map((d) => new Float32Array(d.embedding));
     if (!this.info.dimension && out[0]) this.info.dimension = out[0].length;
     return out;
   };
@@ -75,7 +102,7 @@ export class OpenAIProvider implements EmbeddingProvider {
   async embed(text: string, opts?: EmbedOptions): Promise<Float32Array> {
     this.log?.debug("embed()", { len: text?.length }, opts?.requestId);
     return this.engine.callSingle(
-      { path: "/v1/embeddings", buildBody: this.buildBody },
+      { path: "/v1/embeddings", buildBody: this.buildBody as (input: unknown) => unknown },
       text,
       (j) => this.parseSingle(j),
       { signal: opts?.signal },
@@ -93,24 +120,29 @@ export class OpenAIProvider implements EmbeddingProvider {
       }
       const parts = await Promise.all(
         chunks.map((c) =>
-          this.engine.callSingle({ path: "/v1/embeddings", buildBody: this.buildBody }, c, (j) => this.parseBatch(j), {
-            signal: opts?.signal,
-          }),
+          this.engine.callSingle(
+            { path: "/v1/embeddings", buildBody: this.buildBody as (input: unknown) => unknown },
+            c,
+            (j) => this.parseBatch(j),
+            {
+              signal: opts?.signal,
+            },
+          ),
         ),
       );
-      return parts.flat();
+      return parts.flat() as Float32Array[];
     }
 
     try {
       return await this.engine.callSingle(
-        { path: "/v1/embeddings", buildBody: this.buildBody },
+        { path: "/v1/embeddings", buildBody: this.buildBody as (input: unknown) => unknown },
         texts,
         (j) => this.parseBatch(j),
         { signal: opts?.signal },
       );
     } catch {
       return this.engine.callBatch(
-        { path: "/v1/embeddings", buildBody: this.buildBody },
+        { path: "/v1/embeddings", buildBody: this.buildBody as (input: unknown) => unknown },
         texts,
         (j) => this.parseSingle(j),
         { signal: opts?.signal },

@@ -23,6 +23,17 @@ if (!process.argv.includes("--pipe")) {
   process.argv.splice(2, 0, "--pipe");
 }
 
+// Type extension for global scope
+declare global {
+  var __originalConsole: {
+    error: typeof console.error;
+    warn: typeof console.warn;
+    log: typeof console.log;
+    info: typeof console.info;
+    debug: typeof console.debug;
+  };
+}
+
 // Step 3: Override console methods globally BEFORE any imports
 const originalConsole = {
   error: console.error.bind(console),
@@ -40,7 +51,7 @@ console.info = () => {};
 console.debug = () => {};
 
 // Store original console for emergency use
-(globalThis as any).__originalConsole = originalConsole;
+globalThis.__originalConsole = originalConsole;
 
 // Step 4: Now import the main module (after console is suppressed)
 // Use import.meta.url to resolve path relative to this file, not cwd

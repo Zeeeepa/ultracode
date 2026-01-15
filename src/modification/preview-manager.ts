@@ -141,16 +141,35 @@ export class PreviewManager {
   /**
    * Preview file operation
    */
-  async previewFileOperation(operation: "copy" | "rename" | "split" | "synthesize", params: any): Promise<DiffPreview> {
+  async previewFileOperation(
+    operation: "copy" | "rename" | "split" | "synthesize",
+    params:
+      | { source: string; target: string }
+      | { oldPath: string; newPath: string }
+      | { filePath: string; entityIds: string[] }
+      | { files: string[]; targetPath: string },
+  ): Promise<DiffPreview> {
     switch (operation) {
       case "copy":
-        return this.previewCopy(params.source, params.target);
+        return this.previewCopy(
+          (params as { source: string; target: string }).source,
+          (params as { source: string; target: string }).target,
+        );
       case "rename":
-        return this.previewRename(params.oldPath, params.newPath);
+        return this.previewRename(
+          (params as { oldPath: string; newPath: string }).oldPath,
+          (params as { oldPath: string; newPath: string }).newPath,
+        );
       case "split":
-        return this.previewSplit(params.filePath, params.entityIds);
+        return this.previewSplit(
+          (params as { filePath: string; entityIds: string[] }).filePath,
+          (params as { filePath: string; entityIds: string[] }).entityIds,
+        );
       case "synthesize":
-        return this.previewSynthesize(params.files, params.targetPath);
+        return this.previewSynthesize(
+          (params as { files: string[]; targetPath: string }).files,
+          (params as { files: string[]; targetPath: string }).targetPath,
+        );
       default:
         throw new Error(`Unknown operation: ${operation}`);
     }

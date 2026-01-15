@@ -881,7 +881,7 @@ export class ParserAgent extends BaseAgent {
   /**
    * Handle file change events from knowledge bus
    */
-  private handleFileChange(event: any): void {
+  private handleFileChange(event: { change: FileChange }): void {
     if (this.isProcessing) return;
 
     const change: FileChange = event.change;
@@ -1123,7 +1123,7 @@ export class ParserAgent extends BaseAgent {
    * Export cache for persistence
    * @deprecated Cache is per-subprocess worker now, not exportable from main process
    */
-  exportCache(): any[] {
+  exportCache(): unknown[] {
     // Cache is per-subprocess worker now
     // Workers manage their own caches and release on process exit
     log.w("PARSER", "exportCache() called but cache is per-subprocess worker now");
@@ -1134,7 +1134,7 @@ export class ParserAgent extends BaseAgent {
    * Import cache for warm restart
    * @deprecated Cache is per-subprocess worker now, not importable to main process
    */
-  async importCache(_cacheData: any[]): Promise<void> {
+  async importCache(_cacheData: unknown[]): Promise<void> {
     // Cache is per-subprocess worker now
     // Workers manage their own caches
     log.w("PARSER", "importCache() called but cache is per-subprocess worker now");

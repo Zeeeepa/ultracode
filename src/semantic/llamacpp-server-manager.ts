@@ -22,22 +22,8 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { log } from "../logging/index.js";
 import { getDataDir } from "../utils/config-paths.js";
-
-/** Check if running in Bun */
-function isBunRuntime(): boolean {
-  return typeof (globalThis as any).Bun !== "undefined";
-}
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+import { toError } from "../utils/error-handling.js";
+import { isBunRuntime, sleep } from "../utils/runtime.js";
 
 const execAsync = promisify(exec);
 
@@ -150,8 +136,9 @@ async function detectOptimalThreads(): Promise<number> {
     cachedPCoresCount = estimated;
     log.w("LLAMACPP", "Using estimated P-cores (logical/2)", { logical, estimated });
     return estimated;
-  } catch (error: any) {
-    log.w("LLAMACPP", "Failed to detect P-cores, using default", { error: error.message });
+  } catch (error: unknown) {
+    const err = toError(error);
+    log.w("LLAMACPP", "Failed to detect P-cores, using default", { error: err.message });
     cachedPCoresCount = 4;
     return 4;
   }
@@ -601,9 +588,10 @@ class LlamaCppServerManager {
         this.state.isStarting = false;
         return false;
       }
-    } catch (error: any) {
-      this.state.lastError = error.message;
-      log.e("LLAMACPP", "Failed to start", { error: error.message });
+    } catch (error: unknown) {
+      const err = toError(error);
+      this.state.lastError = err.message;
+      log.e("LLAMACPP", "Failed to start", { error: err.message });
       this.state.isStarting = false;
       return false;
     }
@@ -712,7 +700,7 @@ class LlamaCppServerManager {
     try {
       await execAsync(`taskkill /F /PID ${pid}`, { timeout: 5000 });
       log.d("LLAMACPP", "Process killed via taskkill", { pid });
-    } catch (error: any) {
+    } catch (error: unknown) {
       log.d("LLAMACPP", "taskkill error (process may already be dead)", { pid });
     }
   }
@@ -752,8 +740,9 @@ class LlamaCppServerManager {
         if (!response.ok) {
           log.w("LLAMACPP", "Health check failed", { status: response.status });
         }
-      } catch (error: any) {
-        log.w("LLAMACPP", "Health check error", { error: error.message });
+      } catch (error: unknown) {
+        const err = toError(error);
+        log.w("LLAMACPP", "Health check error", { error: err.message });
       }
     };
 

@@ -5,8 +5,11 @@
  * Uses configuration to determine capabilities and dependencies.
  */
 
+import type { ConductorOrchestrator } from "../agents/conductor-orchestrator.js";
 import { log } from "../logging/index.js";
+import type { Agent } from "../types/agent.js";
 import { AgentType } from "../types/agent.js";
+import type { BranchManager } from "./branch-manager.js";
 import type { DIContainer } from "./di-container.js";
 
 // =============================================================================
@@ -65,7 +68,7 @@ export async function registerAllAgents(
     const { MergeAgent } = await import("../agents/merge-agent.js");
     // Try to resolve config from container, fallback to defaults
     let repoPath = process.cwd();
-    let branchManager: any;
+    let branchManager: BranchManager | undefined;
     try {
       const config = await _c.resolve<{ directory?: string }>("Config");
       if (config?.directory) {
@@ -75,7 +78,7 @@ export async function registerAllAgents(
       // Config not registered, use defaults
     }
     try {
-      branchManager = await _c.resolve("BranchManager");
+      branchManager = await _c.resolve<BranchManager>("BranchManager");
     } catch {
       // BranchManager not registered
     }
@@ -97,7 +100,7 @@ export async function registerAllAgents(
  */
 export async function registerAgentWithConductor(
   container: DIContainer,
-  conductor: any,
+  conductor: ConductorOrchestrator,
   agentType: AgentType,
 ): Promise<void> {
   // Check if agent already registered in conductor
@@ -118,11 +121,15 @@ export async function registerAgentWithConductor(
 /**
  * Get or create agent through DI container
  */
-export async function getOrCreateAgent(container: DIContainer, conductor: any, agentType: AgentType): Promise<any> {
+export async function getOrCreateAgent(
+  container: DIContainer,
+  conductor: ConductorOrchestrator,
+  agentType: AgentType,
+): Promise<Agent> {
   // Check if agent exists in conductor
   const existing = conductor.getAgentsByType(agentType);
   if (existing.length > 0) {
-    return existing[0];
+    return existing[0] as Agent;
   }
 
   // Check if agent is registered in container

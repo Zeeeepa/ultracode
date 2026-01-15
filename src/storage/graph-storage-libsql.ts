@@ -16,12 +16,14 @@ import { getCurrentGitBranchOrDefault, getProjectHash, normalizeBranchName } fro
 import {
   type BatchResult,
   type Entity,
+  type EntityQuery,
   type EntityType,
   type FileInfo,
   type GraphQuery,
   type GraphQueryResult,
   type GraphStorage,
   type Relationship,
+  type RelationshipQuery,
   RelationType,
   type StorageMetrics,
 } from "../types/storage.js";
@@ -190,7 +192,7 @@ export class GraphStorageLibSQL implements GraphStorage {
     }
   }
 
-  async findEntities(query: GraphQuery): Promise<Entity[]> {
+  async findEntities(query: EntityQuery): Promise<Entity[]> {
     return await this.adapter.findEntities({
       filters: query.filters,
       limit: Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT),
@@ -198,7 +200,7 @@ export class GraphStorageLibSQL implements GraphStorage {
     });
   }
 
-  async findEntitiesInBranch(query: GraphQuery, targetBranch: string): Promise<Entity[]> {
+  async findEntitiesInBranch(query: EntityQuery, targetBranch: string): Promise<Entity[]> {
     const currentContext = this.adapter.getProjectContext();
     this.adapter.setProjectContext({
       projectHash: currentContext.projectHash,
@@ -394,7 +396,7 @@ export class GraphStorageLibSQL implements GraphStorage {
     return await this.adapter.getRelationshipsForEntity(entityId, type);
   }
 
-  async findRelationships(query: GraphQuery): Promise<Relationship[]> {
+  async findRelationships(query: RelationshipQuery): Promise<Relationship[]> {
     return await this.adapter.findRelationships({
       filters: query.filters,
       limit: Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT),
@@ -749,12 +751,12 @@ export class GraphStorageLibSQL implements GraphStorage {
         score = 1;
     }
 
-    if (entity.metadata?.parameters?.length) {
-      score += Math.min((entity.metadata.parameters as any[]).length * 0.5, 3);
+    if (entity.metadata?.parameters && Array.isArray(entity.metadata.parameters)) {
+      score += Math.min(entity.metadata.parameters.length * 0.5, 3);
     }
 
-    if (entity.metadata?.modifiers?.length) {
-      score += Math.min((entity.metadata.modifiers as any[]).length * 0.3, 2);
+    if (entity.metadata?.modifiers && Array.isArray(entity.metadata.modifiers)) {
+      score += Math.min(entity.metadata.modifiers.length * 0.3, 2);
     }
 
     return Math.round(score);

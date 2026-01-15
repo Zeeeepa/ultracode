@@ -72,6 +72,7 @@ export interface Agent {
   getMemoryUsage(): number;
   getCpuUsage(): number;
   getTaskQueue(): AgentTask[];
+  getMetrics(): AgentMetrics;
 }
 
 export interface AgentPool {

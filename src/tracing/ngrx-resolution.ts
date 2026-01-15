@@ -5,7 +5,7 @@
  * Includes reducer-selector connections and phantom entity resolution.
  */
 
-import type { GraphStorage, Relationship } from "../types/storage.js";
+import type { EntityType, GraphStorage, Relationship } from "../types/storage.js";
 import { RelationType } from "../types/storage.js";
 
 /**
@@ -80,14 +80,12 @@ export async function findReducerToSelectorConnections(storage: GraphStorage): P
 
   // Find all reducers and selectors
   const reducers = await storage.findEntities({
-    type: "entity",
-    filters: { entityType: ["ngrx_reducer"] as any },
+    filters: { entityType: ["ngrx_reducer" as EntityType] },
     limit: 500,
   });
 
   const selectors = await storage.findEntities({
-    type: "entity",
-    filters: { entityType: ["ngrx_selector"] as any },
+    filters: { entityType: ["ngrx_selector" as EntityType] },
     limit: 500,
   });
 
@@ -190,7 +188,7 @@ export async function findIncomingNgRxRelationships(
   storage: GraphStorage,
   entityName: string,
 ): Promise<Relationship[]> {
-  const types = Array.from(NGRX_RELATIONSHIP_TYPES) as any[];
+  const types = Array.from(NGRX_RELATIONSHIP_TYPES);
   return storage.findIncomingRelationshipsByName(entityName, types);
 }
 

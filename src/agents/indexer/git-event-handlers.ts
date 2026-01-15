@@ -14,6 +14,7 @@ import { isAbsolute, join } from "node:path";
 import type { BranchManager } from "../../core/branch-manager.js";
 import { knowledgeBus } from "../../core/knowledge-bus.js";
 import { log } from "../../logging/index.js";
+import { sleep } from "../../utils/runtime-detection.js";
 
 export interface GitEventContext {
   agentId: string;
@@ -190,11 +191,7 @@ export interface EmbeddingSchedulerContext {
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
  */
 export async function runtimeSleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
+  await sleep(ms);
 }
 
 /**

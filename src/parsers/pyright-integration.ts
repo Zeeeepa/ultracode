@@ -15,21 +15,18 @@
 import { spawn } from "node:child_process";
 import { log } from "../logging/index.js";
 import type { ParsedEntity } from "../types/parser.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+import { sleep } from "../utils/runtime-detection.js";
 
 // =============================================================================
 // TYPES
 // =============================================================================
+
+/**
+ * ParsedEntity with optional Python type information
+ */
+interface ParsedEntityWithTypeInfo extends ParsedEntity {
+  typeInfo?: PythonTypeInfo;
+}
 
 /**
  * Pyright diagnostic from JSON output
@@ -286,9 +283,9 @@ export async function enhanceWithPyrightTypes(entities: ParsedEntity[], filePath
     }
 
     if (entityDiagnostics.length > 0) {
-      (entity as any).typeInfo = {
+      (entity as ParsedEntityWithTypeInfo).typeInfo = {
         diagnostics: entityDiagnostics,
-      } as PythonTypeInfo;
+      };
     }
   }
 }

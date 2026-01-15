@@ -17,7 +17,7 @@
  * Call this BEFORE any other imports.
  */
 export function setupConsoleOverride(): void {
-  const isBun = typeof (globalThis as any).Bun !== "undefined";
+  const isBun = typeof globalThis.Bun !== "undefined";
   const quietMode = process.env["MCP_QUIET_MODE"] === "true";
 
   // CRITICAL: In Bun+quiet mode, use absolute minimal no-op functions
@@ -75,7 +75,7 @@ export function createSafeEnvironment(): Record<string, string | undefined> {
   };
 
   // Make env globally available for embedding models
-  (globalThis as any).env = safeEnv;
+  globalThis.env = safeEnv;
   return safeEnv;
 }
 

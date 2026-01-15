@@ -282,7 +282,12 @@ export class StateTracker {
       }
 
       // Check parameters
-      if (Array.isArray(meta["parameters"]) && meta["parameters"].some((p: any) => p.name === state)) {
+      if (
+        Array.isArray(meta["parameters"]) &&
+        meta["parameters"].some(
+          (p: unknown) => p !== null && typeof p === "object" && "name" in p && (p as { name: unknown }).name === state,
+        )
+      ) {
         usages.push({
           location: `${entity.filePath}:${entity.location.start.line}`,
           usage: "parameter",

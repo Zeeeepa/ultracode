@@ -11,6 +11,49 @@
  */
 
 // =============================================================================
+// RUNTIME TYPE EXTENSIONS
+// =============================================================================
+
+/**
+ * Deno runtime interface
+ */
+interface DenoRuntime {
+  version?: {
+    deno?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+/**
+ * Extended Bun interface with nanoseconds timer
+ */
+interface BunWithNanoseconds {
+  version?: string;
+  nanoseconds?: () => number;
+  file?: unknown;
+  write?: unknown;
+  Glob?: unknown;
+  password?: unknown;
+  hash?: unknown;
+  gzipSync?: unknown;
+  YAML?: unknown;
+  sleep?: (ms: number) => Promise<void>;
+  randomUUIDv7?: () => string;
+  semver?: unknown;
+  [key: string]: unknown;
+}
+
+/**
+ * GlobalThis with runtime extensions
+ */
+interface GlobalWithRuntimes {
+  Deno?: DenoRuntime;
+  Bun?: BunWithNanoseconds;
+  [key: string]: unknown;
+}
+
+// =============================================================================
 // RUNTIME DETECTION
 // =============================================================================
 
@@ -18,7 +61,7 @@
  * Check if running under Bun runtime
  */
 export function isBunRuntime(): boolean {
-  return typeof globalThis.Bun !== "undefined";
+  return typeof (globalThis as GlobalWithRuntimes).Bun !== "undefined";
 }
 
 /**
@@ -37,7 +80,7 @@ export function isNodeRuntime(): boolean {
  * Check if running under Deno runtime
  */
 export function isDenoRuntime(): boolean {
-  return typeof (globalThis as any).Deno !== "undefined";
+  return typeof (globalThis as GlobalWithRuntimes).Deno !== "undefined";
 }
 
 /**
@@ -70,13 +113,13 @@ export const runtime = {
   /** Runtime version string */
   get version(): string {
     if (isBunRuntime()) {
-      return globalThis.Bun?.version ?? "unknown";
+      return (globalThis as GlobalWithRuntimes).Bun?.version ?? "unknown";
     }
     if (isNodeRuntime()) {
       return process.versions.node;
     }
     if (isDenoRuntime()) {
-      return (globalThis as any).Deno?.version?.deno ?? "unknown";
+      return (globalThis as GlobalWithRuntimes).Deno?.version?.deno ?? "unknown";
     }
     return "unknown";
   },
@@ -106,17 +149,17 @@ export const runtime = {
 export const features = {
   /** Bun.file() API for optimized file operations */
   get bunFile(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.file === "function";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.file === "function";
   },
 
   /** Bun.write() API for optimized file writing */
   get bunWrite(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.write === "function";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.write === "function";
   },
 
   /** Bun.Glob for native glob support */
   get bunGlob(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.Glob === "function";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.Glob === "function";
   },
 
   /** Bun shell ($) for command execution */
@@ -131,37 +174,37 @@ export const features = {
 
   /** Bun.password for password hashing */
   get bunPassword(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.password !== "undefined";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.password !== "undefined";
   },
 
   /** Bun.hash for fast hashing */
   get bunHash(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.hash === "function";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.hash === "function";
   },
 
   /** Bun compression (gzip, deflate) */
   get bunCompression(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.gzipSync === "function";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.gzipSync === "function";
   },
 
   /** Bun.YAML for YAML parsing */
   get bunYaml(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.YAML !== "undefined";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.YAML !== "undefined";
   },
 
   /** Bun.sleep/sleepSync */
   get bunSleep(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.sleep === "function";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.sleep === "function";
   },
 
   /** Bun.randomUUIDv7 for time-sortable UUIDs */
   get bunUuid(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.randomUUIDv7 === "function";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.randomUUIDv7 === "function";
   },
 
   /** Bun.semver for semver comparison */
   get bunSemver(): boolean {
-    return isBunRuntime() && typeof globalThis.Bun?.semver !== "undefined";
+    return isBunRuntime() && typeof (globalThis as GlobalWithRuntimes).Bun?.semver !== "undefined";
   },
 } as const;
 
@@ -231,8 +274,9 @@ export async function importForRuntime<T>(options: {
  * High-resolution timestamp (Bun.nanoseconds or process.hrtime)
  */
 export function hrtime(): bigint {
-  if (runtime.isBun && typeof (globalThis.Bun as any)?.nanoseconds === "function") {
-    return BigInt((globalThis.Bun as any).nanoseconds());
+  const bunExt = (globalThis as GlobalWithRuntimes).Bun as BunWithNanoseconds;
+  if (runtime.isBun && typeof bunExt.nanoseconds === "function") {
+    return BigInt(bunExt.nanoseconds());
   }
   // Node.js fallback
   const [sec, nsec] = process.hrtime();
@@ -244,7 +288,10 @@ export function hrtime(): bigint {
  */
 export async function sleep(ms: number): Promise<void> {
   if (features.bunSleep) {
-    return globalThis.Bun!.sleep(ms);
+    const bunSleep = (globalThis as GlobalWithRuntimes).Bun?.sleep;
+    if (bunSleep) {
+      return bunSleep(ms);
+    }
   }
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -254,7 +301,10 @@ export async function sleep(ms: number): Promise<void> {
  */
 export function randomUUID(): string {
   if (features.bunUuid) {
-    return globalThis.Bun!.randomUUIDv7();
+    const bunRandomUUID = (globalThis as GlobalWithRuntimes).Bun?.randomUUIDv7;
+    if (bunRandomUUID) {
+      return bunRandomUUID();
+    }
   }
   // Node.js crypto.randomUUID
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {

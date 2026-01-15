@@ -8,9 +8,39 @@
  */
 
 import { z } from "zod";
+import type { Entity, EntityType, Relationship } from "../../types/storage.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, type PaginationMeta, paginate, SAFE_LIMITS } from "../response-limits.js";
+
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * Filters for entity queries
+ */
+interface EntityFilters {
+  filePath?: string;
+  entityType?: EntityType[];
+  name?: string;
+}
+
+/**
+ * Query results with entities and relationships
+ */
+interface QueryResults {
+  entities?: Entity[];
+  relationships?: Relationship[];
+}
+
+/**
+ * Pagination mapping for query results
+ */
+interface PaginationMapping {
+  entities?: PaginationMeta;
+  relationships?: PaginationMeta;
+}
 
 // =============================================================================
 // LIST FILE ENTITIES
@@ -34,9 +64,9 @@ export class ListFileEntitiesToolHandler extends BaseToolHandler<z.infer<typeof 
     // v3: Ensure correct project context for GraphStorage queries
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
-    const filters: any = { filePath: normalizedPath };
+    const filters: EntityFilters = { filePath: normalizedPath };
     if (args.entityTypes) {
-      filters.entityType = args.entityTypes;
+      filters.entityType = args.entityTypes as EntityType[];
     }
 
     // Fetch all entities for this file (storage handles its own limit)
@@ -103,7 +133,7 @@ export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<
         filters: { name: args.entityName },
         limit: 1,
       });
-      if (entities.length > 0) {
+      if (entities.length > 0 && entities[0]) {
         entityId = entities[0].id;
       }
     }
@@ -119,14 +149,14 @@ export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<
     // Filter by direction
     let filtered = relationships;
     if (args.direction === "outgoing") {
-      filtered = relationships.filter((r: any) => r.fromId === entityId);
+      filtered = relationships.filter((r: Relationship) => r.fromId === entityId);
     } else if (args.direction === "incoming") {
-      filtered = relationships.filter((r: any) => r.toId === entityId);
+      filtered = relationships.filter((r: Relationship) => r.toId === entityId);
     }
 
     // Filter by type
     if (args.relationshipTypes) {
-      filtered = filtered.filter((r: any) => args.relationshipTypes!.includes(r.type));
+      filtered = filtered.filter((r: Relationship) => args.relationshipTypes!.includes(r.type));
     }
 
     // Apply pagination
@@ -175,8 +205,8 @@ export class QueryToolHandler extends BaseToolHandler<z.infer<typeof QuerySchema
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
-    const results: any = {};
-    const pagination: any = {};
+    const results: QueryResults = {};
+    const pagination: PaginationMapping = {};
 
     if (args.type === "entities" || args.type === "both") {
       // Fetch more than needed for pagination info
@@ -185,7 +215,7 @@ export class QueryToolHandler extends BaseToolHandler<z.infer<typeof QuerySchema
         limit: 1000,
       });
       const paginatedEntities = paginate(allEntities, args.offset, safeLimit);
-      results.entities = paginatedEntities.data;
+      results.entities = paginatedEntities.data as Entity[];
       pagination.entities = paginatedEntities.pagination;
     }
 
@@ -195,7 +225,7 @@ export class QueryToolHandler extends BaseToolHandler<z.infer<typeof QuerySchema
         limit: 1000,
       });
       const paginatedRelationships = paginate(allRelationships, args.offset, safeLimit);
-      results.relationships = paginatedRelationships.data;
+      results.relationships = paginatedRelationships.data as Relationship[];
       pagination.relationships = paginatedRelationships.pagination;
     }
 

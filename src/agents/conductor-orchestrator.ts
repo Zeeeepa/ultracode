@@ -21,6 +21,7 @@ import { log } from "../logging/index.js";
 import {
   type Agent,
   type AgentMessage,
+  type AgentMetrics,
   type AgentPool,
   AgentStatus,
   type AgentTask,
@@ -46,9 +47,14 @@ import { isEventfulAgent } from "./coordinator.js";
 
 // Event-driven architecture: monitoring uses setInterval for Node.js, disabled for Bun
 
+/** Bun global interface */
+interface BunGlobal {
+  Bun?: unknown;
+}
+
 /** Check if running in Bun */
 function isBunRuntime(): boolean {
-  return typeof (globalThis as any).Bun !== "undefined";
+  return typeof (globalThis as BunGlobal).Bun !== "undefined";
 }
 
 export class ConductorOrchestrator extends BaseAgent implements AgentPool {
@@ -259,14 +265,16 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       typeof task.payload === "object" &&
       "excludePatterns" in task.payload
     ) {
-      const payload = task.payload as any;
+      const payload = task.payload as { excludePatterns?: string[]; [key: string]: unknown };
       const isBatchProcessing = payload.excludePatterns?.includes("__batch_processing_enabled__");
 
       if (isBatchProcessing) {
         log.d("CONDUCTOR", "batch_decompose", { task: task.id });
 
         // Remove the batch processing marker before delegating
-        const cleanedPatterns = payload.excludePatterns.filter((p: string) => p !== "__batch_processing_enabled__");
+        const cleanedPatterns = (payload.excludePatterns || []).filter(
+          (p: string) => p !== "__batch_processing_enabled__",
+        );
 
         // Create batch subtasks for large codebase indexing
         subtasks.push({
@@ -464,8 +472,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     log.i("CONDUCTOR", "agent_registered", { agent: agent.id, type: agent.type });
 
     if (isEventfulAgent(agent)) {
-      agent.on("task:completed", this.handleTaskCompleted.bind(this));
-      agent.on("task:failed", this.handleTaskFailed.bind(this));
+      agent.on("task:completed", this.handleTaskCompleted.bind(this) as (...args: unknown[]) => void);
+      agent.on("task:failed", this.handleTaskFailed.bind(this) as (...args: unknown[]) => void);
     }
 
     this.emit("agent:registered", agent.id);
@@ -610,7 +618,8 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       // Skip logging when idle - stale agents are expected
       if (!isIdle) {
         try {
-          const metrics: any = (agent as any).getMetrics ? (agent as any).getMetrics() : undefined;
+          const metrics: { lastActivity?: number } | undefined =
+            "getMetrics" in agent && typeof agent.getMetrics === "function" ? agent.getMetrics() : undefined;
           const last = metrics?.lastActivity ?? Date.now();
           this.agentLastSeen.set(agentId, last);
           if (Date.now() - last > this.AGENT_STALE_MS) {
@@ -670,12 +679,12 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     }
   }
 
-  private handleTaskCompleted(data: any): void {
+  private handleTaskCompleted(data: { task: AgentTask; agentId: string }): void {
     log.d("CONDUCTOR", "task_completed", { task: data.task.id, agent: data.agentId });
     this.emit("task:routed:completed", data);
   }
 
-  private handleTaskFailed(data: any): void {
+  private handleTaskFailed(data: { task: AgentTask; agentId: string; error: unknown }): void {
     log.e("CONDUCTOR", "task_failed", { task: data.task.id, agent: data.agentId, err: String(data.error) });
     this.emit("task:routed:failed", data);
   }
@@ -770,6 +779,29 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
    */
   getPerformanceMetrics(): typeof this.performanceMetrics {
     return { ...this.performanceMetrics };
+  }
+
+  /**
+   * Get pending tasks count
+   * Public getter to avoid intersection type issues with private pendingTasks field
+   */
+  getPendingTasksCount(): number {
+    return this.pendingTasks.size;
+  }
+
+  /**
+   * Get metrics for all registered agents
+   * Returns a map of agent type to agent metrics
+   */
+  getAllAgentMetrics(): Record<string, AgentMetrics> {
+    const result: Record<string, AgentMetrics> = {};
+
+    for (const [, agent] of this.agents) {
+      const metrics = agent.getMetrics();
+      result[agent.type] = metrics;
+    }
+
+    return result;
   }
 
   /**

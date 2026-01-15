@@ -16,19 +16,62 @@ import {
 } from "../types/agent.js";
 import { BaseAgent } from "./base.js";
 
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+/**
+ * Global with Bun runtime (defined in runtime-detection.ts)
+ */
+
+/**
+ * Task completion event data
+ */
+interface TaskCompletedData {
+  task: AgentTask;
+  agentId: string;
+  result?: unknown;
+  [key: string]: unknown;
+}
+
+/**
+ * Task failure event data
+ */
+interface TaskFailedData {
+  task: AgentTask;
+  agentId: string;
+  error: string | Error;
+  [key: string]: unknown;
+}
+
+/**
+ * Event listener type for agent events
+ */
+type EventListener = (...args: unknown[]) => void;
+
+/**
+ * Agent with event emitter capabilities
+ */
+type EventfulAgent = Agent & {
+  on: (event: string, listener: EventListener) => void;
+};
+
+/**
+ * Agent with optional event capabilities (for type checking)
+ */
+interface AgentWithEvents extends Agent {
+  on?: (event: string, listener: EventListener) => void;
+}
+
 // Event-driven architecture: health monitoring uses setInterval for Node.js, disabled for Bun
 
 /** Check if running in Bun */
 function isBunRuntime(): boolean {
-  return typeof (globalThis as any).Bun !== "undefined";
+  return typeof globalThis.Bun !== "undefined";
 }
 
-type EventfulAgent = Agent & {
-  on: (event: string, listener: (...args: any[]) => void) => void;
-};
-
 export function isEventfulAgent(a: Agent): a is EventfulAgent {
-  return typeof (a as any).on === "function";
+  return typeof (a as AgentWithEvents).on === "function";
 }
 
 interface CoordinatorConfig {
@@ -226,8 +269,8 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
     log.i("COORDINATOR", "agent_registered", { id: agent.id, type: agent.type });
 
     if (isEventfulAgent(agent)) {
-      agent.on("task:completed", this.handleTaskCompleted.bind(this));
-      agent.on("task:failed", this.handleTaskFailed.bind(this));
+      agent.on("task:completed", this.handleTaskCompleted.bind(this) as (...args: unknown[]) => void);
+      agent.on("task:failed", this.handleTaskFailed.bind(this) as (...args: unknown[]) => void);
     }
     this.emit("agent:registered", agent.id);
   }
@@ -380,13 +423,14 @@ export class CoordinatorAgent extends BaseAgent implements AgentPool {
     log.d("COORDINATOR", "health_update", { from: message.from });
   }
 
-  private handleTaskCompleted(data: any): void {
+  private handleTaskCompleted(data: TaskCompletedData): void {
     log.d("COORDINATOR", "task_done", { task: data.task.id, agent: data.agentId });
     this.emit("task:routed:completed", data);
   }
 
-  private handleTaskFailed(data: any): void {
-    log.e("COORDINATOR", "task_fail", { task: data.task.id, agent: data.agentId, err: data.error });
+  private handleTaskFailed(data: TaskFailedData): void {
+    const errorMessage = data.error instanceof Error ? data.error.message : String(data.error);
+    log.e("COORDINATOR", "task_fail", { task: data.task.id, agent: data.agentId, err: errorMessage });
     this.emit("task:routed:failed", data);
   }
 }

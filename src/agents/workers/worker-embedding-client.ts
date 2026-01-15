@@ -13,6 +13,35 @@
 
 import type { WorkerEmbeddingConfig } from "../../types/semantic.js";
 
+/**
+ * Worker global scope with logger
+ */
+interface WorkerGlobalThis {
+  __workerLog?: (level: string, message: string, context?: Record<string, unknown>) => void;
+}
+
+/**
+ * OVMS/OpenAI API embedding response item
+ */
+interface EmbeddingResponseItem {
+  embedding: number[] | string; // number[] for float, string for base64
+  index?: number;
+}
+
+/**
+ * OVMS/OpenAI API embedding response
+ */
+interface EmbeddingApiResponse {
+  data: EmbeddingResponseItem[];
+}
+
+/**
+ * Ollama embedding response
+ */
+interface OllamaEmbeddingResponse {
+  embedding: number[];
+}
+
 // Configure undici global dispatcher with keep-alive for connection pooling
 // This affects all native fetch() calls in this worker process
 try {
@@ -52,7 +81,7 @@ export class WorkerEmbeddingClient {
     }
 
     // Log endpoint assignment for debugging
-    const workerLog = (globalThis as any).__workerLog;
+    const workerLog = (globalThis as WorkerGlobalThis).__workerLog;
     if (workerLog) {
       workerLog("INFO", "WorkerEmbeddingClient endpoint assignment", {
         workerIndex: config.workerIndex,
@@ -151,7 +180,7 @@ export class WorkerEmbeddingClient {
       const currentEndpoint = this.dedicatedEndpoint ?? this.endpoints[this.endpointIndex++ % this.endpoints.length]!;
 
       // Debug log first request per endpoint
-      const workerLog = (globalThis as any).__workerLog;
+      const workerLog = (globalThis as WorkerGlobalThis).__workerLog;
       if (workerLog && this.endpointIndex <= 1) {
         workerLog("DEBUG", "OVMS request", {
           endpoint: currentEndpoint,
@@ -179,16 +208,24 @@ export class WorkerEmbeddingClient {
           throw new Error(`OVMS error: ${response.status} ${response.statusText}`);
         }
 
-        const result: any = await response.json();
+        const result = (await response.json()) as EmbeddingApiResponse;
 
         // Handle base64 or float encoding
         if (this.config.providerOptions?.encodingFormat === "base64") {
-          return result.data.map((item: any) => {
+          return result.data.map((item) => {
+            if (typeof item.embedding !== "string") {
+              throw new Error("Expected base64 string encoding");
+            }
             const binaryData = Buffer.from(item.embedding, "base64");
             return new Float32Array(binaryData.buffer, binaryData.byteOffset, binaryData.length / 4);
           });
         } else {
-          return result.data.map((item: any) => new Float32Array(item.embedding));
+          return result.data.map((item) => {
+            if (typeof item.embedding === "string") {
+              throw new Error("Expected float array encoding");
+            }
+            return new Float32Array(item.embedding);
+          });
         }
       } finally {
         clearTimeout(timeoutId);
@@ -228,7 +265,7 @@ export class WorkerEmbeddingClient {
           throw new Error(`Ollama error: ${response.status} ${response.statusText}`);
         }
 
-        const result: any = await response.json();
+        const result = (await response.json()) as OllamaEmbeddingResponse;
         results.push(new Float32Array(result.embedding));
       } finally {
         clearTimeout(timeoutId);
@@ -272,8 +309,13 @@ export class WorkerEmbeddingClient {
         throw new Error(`OpenAI error: ${response.status} ${response.statusText}`);
       }
 
-      const result: any = await response.json();
-      return result.data.map((item: any) => new Float32Array(item.embedding));
+      const result = (await response.json()) as EmbeddingApiResponse;
+      return result.data.map((item) => {
+        if (typeof item.embedding === "string") {
+          throw new Error("Expected float array encoding from OpenAI");
+        }
+        return new Float32Array(item.embedding);
+      });
     } finally {
       clearTimeout(timeoutId);
     }

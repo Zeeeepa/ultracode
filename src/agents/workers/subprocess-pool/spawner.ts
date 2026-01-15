@@ -9,6 +9,17 @@ import { log } from "../../../logging/index.js";
 import type { ParseResponse, SubprocessState } from "./types.js";
 
 /**
+ * Bun process wrapper to match ChildProcess interface
+ */
+interface BunProcessWrapper {
+  stderr: ReadableStream<Uint8Array>;
+  pid: number;
+  kill: () => void;
+  send: (msg: ParseResponse) => void;
+  on: (event: "exit" | "close", handler: (code: number | null) => void) => void;
+}
+
+/**
  * Spawn context containing runtime info and callbacks
  */
 export interface SpawnContext {
@@ -44,7 +55,8 @@ async function logBunStderr(stderr: ReadableStream<Uint8Array>, language: string
  * Spawn Bun subprocess with native IPC
  */
 export async function spawnBunProcess(workerId: number, state: SubprocessState, context: SpawnContext): Promise<void> {
-  const bunProc = Bun.spawn(["bun", context.workerScript], {
+  const global = globalThis as any;
+  const bunProc = global.Bun?.["spawn"](["bun", context.workerScript], {
     stderr: "pipe",
     env: {
       ...process.env,
@@ -58,19 +70,19 @@ export async function spawnBunProcess(workerId: number, state: SubprocessState, 
   });
 
   // Wrap Bun process to match ChildProcess interface
-  const proc = {
+  const proc: BunProcessWrapper = {
     stderr: bunProc.stderr,
     pid: bunProc.pid,
     kill: () => bunProc.kill(),
-    send: (msg: any) => bunProc.send(msg),
-    on: (event: string, handler: any) => {
+    send: (msg: ParseResponse) => bunProc.send(msg),
+    on: (event: "exit" | "close", handler: (code: number | null) => void) => {
       if (event === "exit" || event === "close") {
-        bunProc.exited.then((code) => handler(code));
+        bunProc.exited.then((code: number | null) => handler(code));
       }
     },
-  } as any;
+  };
 
-  state.process = proc;
+  state.process = proc as any;
 
   log.d("SUBPROCESS", "spawned_bun", { workerId, language: context.language, pid: proc.pid });
 
@@ -79,7 +91,7 @@ export async function spawnBunProcess(workerId: number, state: SubprocessState, 
 
   // Handle unexpected exit
   const stateRef = state;
-  bunProc.exited.then((code) => {
+  bunProc.exited.then((code: number | null) => {
     if (!context.isShuttingDown() && !stateRef.intentionalKill) {
       log.w("SUBPROCESS", "unexpected_exit", { workerId, code, language: context.language });
       context.onUnexpectedExit(workerId, code);
@@ -95,13 +107,13 @@ export async function spawnNodeProcess(workerId: number, state: SubprocessState,
 
   const proc = fork(context.workerScript, [], {
     stdio: ["pipe", "pipe", "pipe", "ipc"],
-    serialization: "advanced",
+    serialization: "advanced" as const,
     env: {
       ...process.env,
       PARSING_WORKER_ID: `${context.language}-${workerId}`,
       PARSING_WORKER_LANGUAGE: context.language,
     },
-  } as any);
+  });
 
   proc.unref();
   state.process = proc;

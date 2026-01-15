@@ -19,7 +19,7 @@
  * - Technology Detector: src/analysis/technology-detector.ts
  */
 
-import type { TechnologyDetector } from "../analysis/technology-detector.js";
+import type { TechnologyDetector, TechnologyStack } from "../analysis/technology-detector.js";
 import { log } from "../logging/index.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
 import type { VectorStore } from "../semantic/vector-store.js";
@@ -30,6 +30,12 @@ import { cosineSimilarity } from "../utils/simd-vector-ops.js";
 // =============================================================================
 // TYPES AND INTERFACES
 // =============================================================================
+
+interface EntityFilters {
+  entityType?: EntityType | EntityType[];
+  filePath?: string | string[];
+  name?: RegExp;
+}
 
 export interface PatternSearchQuery {
   pattern: string; // Regex or semantic query
@@ -109,7 +115,7 @@ export class PatternSearch {
   // =============================================================================
 
   private async searchEntities(query: PatternSearchQuery): Promise<PatternSearchResult[]> {
-    const filters: any = {};
+    const filters: EntityFilters = {};
 
     // Apply entity type filter
     if (query.scope?.entityTypes) {
@@ -132,7 +138,6 @@ export class PatternSearch {
     filters.name = new RegExp(query.pattern, "i");
 
     const entities = await this.graphStorage.findEntities({
-      type: "entity",
       filters,
       limit: query.limit || 100,
     });
@@ -375,17 +380,16 @@ export class PatternSearch {
     }
   }
 
-  private async getFilesForFrameworks(frameworks: string[], techStack: any): Promise<string[]> {
+  private async getFilesForFrameworks(frameworks: string[], techStack: TechnologyStack): Promise<string[]> {
     // Get all files that use specified frameworks
     const files: string[] = [];
 
     for (const framework of frameworks) {
-      const frameworkInfo = techStack.frameworks.find((f: any) => f.name === framework);
+      const frameworkInfo = techStack.frameworks.find((f) => f.name === framework);
       if (!frameworkInfo) continue;
 
       // Get files from import analysis
       const imports = await this.graphStorage.findEntities({
-        type: "entity",
         filters: { entityType: "import" as EntityType },
       });
 

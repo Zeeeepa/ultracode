@@ -115,17 +115,13 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
     // Debug: log storage context
-    const projectContext = (storage as any).getProjectContext?.();
+    type StorageWithContext = typeof storage & { getProjectContext?: () => unknown };
+    const projectContext = (storage as StorageWithContext).getProjectContext?.();
     log.d("TRACEFLOW", "storage_ctx", { ctx: JSON.stringify(projectContext) });
 
-    let semanticAgent: Awaited<ReturnType<typeof this.context.getSemanticAgent>> | undefined;
-    try {
-      semanticAgent = await this.context.getSemanticAgent();
-    } catch {
-      // Semantic agent optional
-    }
-
-    this.traceEngine = new TraceEngine(storage, semanticAgent?.getSearchService?.());
+    // SemanticAgent doesn't expose getSearchService() - pass undefined for now
+    // TraceEngine will work without semantic search (optional parameter)
+    this.traceEngine = new TraceEngine(storage, undefined);
 
     const params: TraceFlowParams = {
       from: args.from,
@@ -151,13 +147,14 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
         2,
       );
     } else {
+      type ResultWithDebug = typeof result & { _debug?: unknown };
       output = JSON.stringify(
         {
           success: true,
           ...result,
           formatted: this.formatter.formatTraceFlowAsText(result),
           // Include debug info if present
-          _debug: (result as any)._debug,
+          _debug: (result as ResultWithDebug)._debug,
         },
         null,
         2,
@@ -185,14 +182,10 @@ export class TraceBackwardsToolHandler extends BaseToolHandler<z.infer<typeof Tr
   protected async execute(args: z.infer<typeof TraceBackwardsSchema>): Promise<ToolResult> {
     // v3: Ensure correct project context for GraphStorage queries
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
-    let semanticAgent: Awaited<ReturnType<typeof this.context.getSemanticAgent>> | undefined;
-    try {
-      semanticAgent = await this.context.getSemanticAgent();
-    } catch {
-      // Semantic agent optional
-    }
 
-    this.traceEngine = new TraceEngine(storage, semanticAgent?.getSearchService?.());
+    // SemanticAgent doesn't expose getSearchService() - pass undefined for now
+    // TraceEngine will work without semantic search (optional parameter)
+    this.traceEngine = new TraceEngine(storage, undefined);
 
     const params: TraceBackwardsParams = {
       target: args.target,
@@ -235,14 +228,10 @@ export class TraceDataFlowToolHandler extends BaseToolHandler<z.infer<typeof Tra
   protected async execute(args: z.infer<typeof TraceDataFlowSchema>): Promise<ToolResult> {
     // v3: Ensure correct project context for GraphStorage queries
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
-    let semanticAgent: Awaited<ReturnType<typeof this.context.getSemanticAgent>> | undefined;
-    try {
-      semanticAgent = await this.context.getSemanticAgent();
-    } catch {
-      // Semantic agent optional
-    }
 
-    this.dataFlowAnalyzer = new DataFlowAnalyzer(storage, semanticAgent?.getSearchService?.());
+    // SemanticAgent doesn't expose getSearchService() - pass undefined for now
+    // DataFlowAnalyzer will work without semantic search (optional parameter)
+    this.dataFlowAnalyzer = new DataFlowAnalyzer(storage, undefined);
 
     const params: TraceDataFlowParams = {
       entryPoint: args.entryPoint,

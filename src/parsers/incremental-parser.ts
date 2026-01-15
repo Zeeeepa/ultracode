@@ -17,31 +17,17 @@ import { extname } from "node:path";
 import { LRUCache } from "lru-cache";
 import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
-import { detectRuntime } from "../shared/runtime-detect.js";
-
-/**
- * Runtime-aware sleep for Bun compatibility
- * Uses Bun.sleep for Bun runtime, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (detectRuntime() === "bun" && typeof (globalThis as any).Bun?.sleep === "function") {
-    // Bun: use Bun.sleep which works correctly
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    // Node.js: setTimeout
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
-
 import type {
   CacheEntry,
   FileChange,
+  ParsedEntity,
   ParseResult,
   ParserOptions,
   ParserStats,
   SupportedLanguage,
 } from "../types/parser.js";
 import { readFilesParallel, readText } from "../utils/file-ops.js";
+import { sleep } from "../utils/runtime-detection.js";
 import { MultiPassOrchestrator } from "./multipass/multipass-orchestrator.js";
 import { UnifiedParser } from "./unified-parser.js";
 
@@ -244,7 +230,7 @@ export class IncrementalParser {
           result = {
             ...result,
             language: lang,
-            entities: extracted as any,
+            entities: extracted as unknown as ParsedEntity[],
           };
         }
       }

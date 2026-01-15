@@ -23,6 +23,36 @@ import { isSyncSQLiteAvailable, loadSQLiteModule } from "../storage/sqlite-adapt
 import { VectorDelta } from "./vector-delta.js";
 
 // =============================================================================
+// SQLITE ROW TYPES
+// =============================================================================
+
+interface VectorDeltaRow {
+  branch_name: string;
+  base_commit_sha: string;
+  last_modified: number;
+  vectors_added: Buffer | null;
+  vectors_modified: Buffer | null;
+  vectors_deleted: string | null; // JSON array of deleted embedding IDs
+  total_changes: number;
+  dimension: number;
+  memory_usage: number;
+}
+
+interface StatsRow {
+  total_branches: number;
+  total_changes: number;
+  total_memory_usage: number;
+}
+
+interface BranchStatsRow {
+  branch_name: string;
+  total_changes: number;
+  dimension: number;
+  memory_usage: number;
+  last_modified: number;
+}
+
+// =============================================================================
 // VECTOR SERIALIZATION HELPERS
 // =============================================================================
 
@@ -281,7 +311,7 @@ export class VectorCacheManager {
     }
 
     try {
-      const row = this.selectStmt.get(branchName) as any;
+      const row = this.selectStmt.get<VectorDeltaRow>(branchName);
 
       if (!row) {
         return null;
@@ -408,7 +438,7 @@ export class VectorCacheManager {
       FROM vector_deltas
     `);
 
-    const row = stmt.get() as any;
+    const row = stmt.get<StatsRow>();
 
     // Get database file size
     let databaseSize = 0;
@@ -499,7 +529,7 @@ export class VectorCacheManager {
         WHERE branch_name = ?
       `);
 
-      const row = stmt.get(branchName) as any;
+      const row = stmt.get<BranchStatsRow>(branchName);
 
       if (!row) {
         return null;

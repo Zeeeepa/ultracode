@@ -649,7 +649,7 @@ export class JavaAnalyzer {
       const annotations = this.extractAnnotations(node);
       if (annotations.length > 0) {
         entity.metadata ??= {};
-        (entity.metadata as any).annotations = annotations;
+        entity.metadata["annotations"] = annotations;
       }
 
       entities.push(entity);

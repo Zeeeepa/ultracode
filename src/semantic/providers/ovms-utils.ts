@@ -4,16 +4,12 @@
  * Common utilities for OVMS provider.
  */
 
+import { sleep as runtimeSleep } from "../../utils/runtime.js";
+
 /**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ * Runtime-aware sleep - re-exported from runtime utilities
  */
-export async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+export const sleep = runtimeSleep;
 
 /**
  * L2 normalize a vector in-place

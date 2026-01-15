@@ -17,17 +17,7 @@
 import { EventEmitter } from "node:events";
 import type { ILayeredIndex } from "../core/layered-index.js";
 import { log } from "../logging/index.js";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+import { sleep } from "../utils/runtime-detection.js";
 
 // =============================================================================
 // TYPES

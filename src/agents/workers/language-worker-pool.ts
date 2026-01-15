@@ -33,6 +33,69 @@ type AnyWorker = BunWorker | NodeWorker;
 // TYPES
 // =============================================================================
 
+/**
+ * Bun global interface for runtime detection
+ */
+interface BunGlobal {
+  Bun?: {
+    sleep?: (ms: number) => Promise<void>;
+  };
+}
+
+/**
+ * Worker ready message
+ */
+interface WorkerReadyMessage {
+  type: "ready";
+  workerId?: string;
+}
+
+/**
+ * Worker result message
+ */
+interface WorkerResultMessage {
+  type: "result";
+  id: string;
+  results: ParseResult[];
+}
+
+/**
+ * Worker error message
+ */
+interface WorkerErrorMessage {
+  type: "error";
+  taskId?: string;
+  id?: string;
+  error: string;
+}
+
+/**
+ * Worker embeddings ready message
+ */
+interface WorkerEmbeddingsReadyMessage {
+  type: "embeddings.ready";
+  embeddings?: unknown[];
+  count?: number;
+}
+
+/**
+ * Task result payload
+ */
+interface TaskResultPayload {
+  id: string;
+  taskId?: string; // Backward compatibility
+  results: ParseResult[];
+  stats?: {
+    totalTime: number;
+    filesProcessed: number;
+  };
+}
+
+/**
+ * Union type for worker messages
+ */
+type WorkerMessage = WorkerReadyMessage | WorkerResultMessage | WorkerErrorMessage | WorkerEmbeddingsReadyMessage;
+
 interface WorkerState {
   id: number;
   worker: AnyWorker;
@@ -178,8 +241,9 @@ export class LanguageWorkerPool {
    * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
    */
   private async sleep(ms: number): Promise<void> {
-    if (typeof (globalThis as any).Bun?.sleep === "function") {
-      await (globalThis as any).Bun.sleep(ms);
+    const bunGlobal = globalThis as BunGlobal;
+    if (bunGlobal.Bun?.sleep && typeof bunGlobal.Bun.sleep === "function") {
+      await bunGlobal.Bun.sleep(ms);
     } else {
       await new Promise((resolve) => setTimeout(resolve, ms));
     }
@@ -195,11 +259,16 @@ export class LanguageWorkerPool {
 
     if (this.runtime === "bun") {
       // Bun: Use Web Worker API with smol mode for reduced memory
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      worker = new (Worker as any)(this.workerScript, {
+      // Bun Worker constructor accepts non-standard options
+      interface BunWorkerOptions extends WorkerOptions {
+        smol?: boolean;
+      }
+      type BunWorkerConstructor = new (scriptURL: string | URL, options?: BunWorkerOptions) => BunWorker;
+
+      worker = new (Worker as unknown as BunWorkerConstructor)(this.workerScript, {
         type: "module",
         smol: true, // Bun-specific option for reduced memory footprint
-      }) as BunWorker;
+      });
       log.d("WORKERPOOL", `Created Bun worker ${workerId}`, { language: this.language, smol: true });
     } else {
       // Node.js: Use worker_threads (native, stable)
@@ -230,7 +299,7 @@ export class LanguageWorkerPool {
         const bunWorker = worker as BunWorker;
         bunWorker.addEventListener("message", (event) => {
           const msgEvent = event as { data: unknown };
-          this.handleWorkerMessage(workerId, msgEvent.data);
+          this.handleWorkerMessage(workerId, msgEvent.data as WorkerMessage);
         });
         bunWorker.addEventListener("error", (event) => {
           const errorEvent = event as { message?: string };
@@ -283,19 +352,21 @@ export class LanguageWorkerPool {
       if (this.runtime === "bun") {
         const bunWorker = worker as BunWorker;
         const readyHandler = (event: MessageEvent | ErrorEvent) => {
-          const message = (event as { data?: { type?: string } }).data;
-          if (message?.type === "ready" || message?.type === "initialized") {
-            resolved = true;
-            this.workers.set(workerId, state);
-            bunWorker.removeEventListener("message", readyHandler);
-            resolveReady();
+          if ("data" in event) {
+            const message = event.data as WorkerMessage;
+            if (message.type === "ready") {
+              resolved = true;
+              this.workers.set(workerId, state);
+              bunWorker.removeEventListener("message", readyHandler);
+              resolveReady();
+            }
           }
         };
         bunWorker.addEventListener("message", readyHandler);
       } else {
         const nodeWorker = worker as NodeWorker;
-        const readyHandler = (message: any) => {
-          if (message.type === "ready" || message.type === "initialized") {
+        const readyHandler = (message: WorkerMessage) => {
+          if (message.type === "ready") {
             resolved = true;
             this.workers.set(workerId, state);
             nodeWorker.off("message", readyHandler);
@@ -453,17 +524,22 @@ export class LanguageWorkerPool {
   /**
    * Handle worker message
    */
-  private handleWorkerMessage(workerId: number, message: any): void {
+  private handleWorkerMessage(workerId: number, message: WorkerMessage): void {
     const state = this.workers.get(workerId);
     if (!state) return;
 
     if (message.type === "result") {
-      this.handleTaskComplete(workerId, message.payload);
+      this.handleTaskComplete(workerId, { id: message.id, results: message.results });
     } else if (message.type === "error") {
-      this.handleTaskError(message.taskId, new Error(message.error));
+      const taskId = message.taskId || message.id;
+      if (taskId) {
+        this.handleTaskError(taskId, new Error(message.error));
+      }
     } else if (message.type === "embeddings.ready") {
       // Binary embeddings received from worker via transferList
-      this.handleEmbeddingsReady(message.embeddings, message.count);
+      if (message.embeddings) {
+        this.handleEmbeddingsReady(message.embeddings as unknown as BinaryEmbedding[], message.count ?? 0);
+      }
     }
   }
 
@@ -488,11 +564,11 @@ export class LanguageWorkerPool {
   /**
    * Handle task completion
    */
-  private handleTaskComplete(workerId: number, result: any): void {
+  private handleTaskComplete(workerId: number, result: TaskResultPayload): void {
     const state = this.workers.get(workerId);
     if (!state) return;
 
-    const task = this.pendingTasks.get(result.taskId);
+    const task = this.pendingTasks.get(result.id);
     if (!task) return;
 
     // Cancel timeout check
@@ -501,16 +577,17 @@ export class LanguageWorkerPool {
     // Update worker state
     state.busy = false;
     state.tasksProcessed++;
-    state.totalProcessingTime += result.stats.totalTime;
 
     // Update pool stats
     this.completedTasks++;
-    this.totalProcessingTime += result.stats.totalTime;
-    this.totalFilesProcessed += result.stats.filesProcessed;
+    if (result.stats) {
+      this.totalProcessingTime += result.stats.totalTime;
+      this.totalFilesProcessed += result.stats.filesProcessed;
+    }
 
     // Resolve task
     task.resolve(result.results);
-    this.pendingTasks.delete(result.taskId);
+    this.pendingTasks.delete(result.taskId || result.id);
 
     // Process next task from queue
     this.processNextTask(workerId);

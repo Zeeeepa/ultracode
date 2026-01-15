@@ -192,7 +192,8 @@ export function enhanceWithKotlinDiagnostics(entities: ParsedEntity[], filePath:
     }
 
     if (entityDiagnostics.length > 0) {
-      (entity as any).diagnostics = entityDiagnostics;
+      entity.metadata ??= {};
+      entity.metadata["diagnostics"] = entityDiagnostics;
     }
   }
 }

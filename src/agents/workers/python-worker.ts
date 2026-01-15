@@ -38,11 +38,23 @@ interface WorkerResult {
   };
 }
 
+/**
+ * Worker message types
+ */
+type WorkerMessage = { type: "init" } | { type: "task"; task: WorkerTask } | { type: "shutdown" } | { type: "ping" };
+
+/**
+ * Python analyzer interface (from python-analyzer.ts)
+ */
+interface PythonAnalyzer {
+  parseFile(filePath: string, content: string): Promise<ParseResult>;
+}
+
 // =============================================================================
 // PYTHON-SPECIFIC PARSER INITIALIZATION
 // =============================================================================
 
-let pythonParser: any = null;
+let pythonParser: PythonAnalyzer | null = null;
 let isInitialized = false;
 
 async function initializePythonParser(): Promise<void> {
@@ -53,7 +65,7 @@ async function initializePythonParser(): Promise<void> {
     const { createPythonAnalyzer } = await import("../../parsers/python-analyzer.js");
 
     // Create Python analyzer with default 4-layer configuration
-    pythonParser = createPythonAnalyzer();
+    pythonParser = createPythonAnalyzer() as unknown as PythonAnalyzer;
     isInitialized = true;
 
     if (parentPort) {
@@ -110,16 +122,19 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
 
       // Layer 1: Enhanced Basic Parsing (method classification, type hints, decorators)
       const layer1Start = Date.now();
-      const parseResult = await pythonParser.parseFile(file, content);
+      const parseResult = await pythonParser!.parseFile(file, content);
       const layer1Time = Date.now() - layer1Start;
       totalLayer1 += layer1Time;
 
       // Layers 2-4 are already integrated in PythonAnalyzer.parseFile
       // But we can extract timing from metrics if available
-      if (parseResult.metadata?.layerTiming) {
-        totalLayer2 += parseResult.metadata.layerTiming.layer2 || 0;
-        totalLayer3 += parseResult.metadata.layerTiming.layer3 || 0;
-        totalLayer4 += parseResult.metadata.layerTiming.layer4 || 0;
+      const resultWithMetadata = parseResult as ParseResult & {
+        metadata?: { layerTiming?: { layer2?: number; layer3?: number; layer4?: number } };
+      };
+      if (resultWithMetadata.metadata?.layerTiming) {
+        totalLayer2 += resultWithMetadata.metadata.layerTiming.layer2 || 0;
+        totalLayer3 += resultWithMetadata.metadata.layerTiming.layer3 || 0;
+        totalLayer4 += resultWithMetadata.metadata.layerTiming.layer4 || 0;
       }
 
       results.push(parseResult);
@@ -161,7 +176,7 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
 // =============================================================================
 
 if (parentPort) {
-  parentPort.on("message", async (message: any) => {
+  parentPort.on("message", async (message: WorkerMessage) => {
     try {
       if (message.type === "init") {
         await initializePythonParser();
@@ -175,7 +190,7 @@ if (parentPort) {
       }
 
       if (message.type === "task") {
-        const task = message.payload as WorkerTask;
+        const task = message.task;
         const result = await processTask(task);
 
         if (parentPort) {
@@ -187,9 +202,10 @@ if (parentPort) {
       }
     } catch (error) {
       if (parentPort) {
+        const taskId = message.type === "task" ? message.task.id : undefined;
         parentPort.postMessage({
           type: "error",
-          taskId: message.payload?.id,
+          taskId,
           error: (error as Error).message,
           stack: (error as Error).stack,
         });

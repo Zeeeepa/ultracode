@@ -21,10 +21,51 @@ import type { Statement } from "@oxc-project/types";
 import type { EcmaScriptModule, parseSync as ParseSyncFn } from "oxc-parser";
 import type { ComplexityScore, ExportInfo, ImportInfo, QuickEntity, QuickParseResult } from "./types.js";
 
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
 // OXC module type
 interface OxcModule {
   parseSync: typeof ParseSyncFn;
 }
+
+/**
+ * Extended Statement node with common properties from ESTree
+ */
+type ExtendedStatement = Statement & {
+  type: string;
+  id?: { name: string; value?: string };
+  body?: {
+    body?: ExtendedStatement[];
+  };
+  declaration?: ExtendedStatement;
+  declarations?: Array<{
+    id?: { name: string };
+    init?: { type: string };
+  }>;
+  decorators?: unknown[];
+  typeParameters?: {
+    params?: unknown[];
+  };
+  start?: number;
+  end?: number;
+};
+
+/**
+ * Class node with body members
+ */
+type ClassNode = ExtendedStatement & {
+  body?: {
+    body?: Array<{
+      type: string;
+      key?: { name?: string; value?: string };
+      decorators?: unknown[];
+      start?: number;
+      end?: number;
+    }>;
+  };
+};
 
 // Lazy load OXC
 let oxc: OxcModule | null = null;
@@ -248,7 +289,7 @@ function processNode(
   depth: number,
   onNesting: (depth: number) => void,
 ): void {
-  const n = node as any; // Cast for property access
+  const n = node as ExtendedStatement;
   onNesting(depth);
 
   switch (n.type) {
@@ -270,17 +311,23 @@ function processNode(
     }
 
     case "TSInterfaceDeclaration": {
-      entities.push(createEntity("interface", n.id.name, n, parent, false));
+      if (n.id?.name) {
+        entities.push(createEntity("interface", n.id.name, n, parent, false));
+      }
       break;
     }
 
     case "TSTypeAliasDeclaration": {
-      entities.push(createEntity("type", n.id.name, n, parent, false));
+      if (n.id?.name) {
+        entities.push(createEntity("type", n.id.name, n, parent, false));
+      }
       break;
     }
 
     case "TSEnumDeclaration": {
-      entities.push(createEntity("enum", n.id.name, n, parent, false));
+      if (n.id?.name) {
+        entities.push(createEntity("enum", n.id.name, n, parent, false));
+      }
       break;
     }
 
@@ -290,7 +337,7 @@ function processNode(
         entities.push(createEntity("namespace", name, n, parent, false));
         if (n.body?.body) {
           for (const child of n.body.body) {
-            processNode(child, entities, name, depth + 1, onNesting);
+            processNode(child as Statement, entities, name, depth + 1, onNesting);
           }
         }
       }
@@ -303,9 +350,9 @@ function processNode(
         if (name) {
           const init = decl.init;
           if (init?.type === "ArrowFunctionExpression" || init?.type === "FunctionExpression") {
-            entities.push(createEntity("function", name, decl, parent, false));
+            entities.push(createEntity("function", name, decl as unknown as ExtendedStatement, parent, false));
           } else {
-            entities.push(createEntity("variable", name, decl, parent, false));
+            entities.push(createEntity("variable", name, decl as unknown as ExtendedStatement, parent, false));
           }
         }
       }
@@ -315,7 +362,7 @@ function processNode(
     case "ExportNamedDeclaration":
     case "ExportDefaultDeclaration": {
       if (n.declaration) {
-        processNode(n.declaration, entities, parent, depth, onNesting);
+        processNode(n.declaration as Statement, entities, parent, depth, onNesting);
         // Mark as exported
         const lastEntity = entities[entities.length - 1];
         if (lastEntity) {
@@ -328,7 +375,7 @@ function processNode(
 }
 
 function processClassBody(
-  classNode: any,
+  classNode: ClassNode,
   entities: QuickEntity[],
   className: string,
   depth: number,
@@ -338,16 +385,23 @@ function processClassBody(
 
   const body = classNode.body?.body || [];
   for (const member of body) {
-    if (member.type === "MethodDefinition" || member.type === "PropertyDefinition") {
-      const name = member.key?.name || member.key?.value || "<computed>";
-      const type = member.type === "MethodDefinition" ? "function" : "variable";
+    const m = member as unknown as {
+      type: string;
+      key?: { name?: string; value?: string };
+      start?: number;
+      end?: number;
+      decorators?: unknown[];
+    };
+    if (m.type === "MethodDefinition" || m.type === "PropertyDefinition") {
+      const name = m.key?.name || m.key?.value || "<computed>";
+      const type = m.type === "MethodDefinition" ? "function" : "variable";
       entities.push({
         name: `${className}.${name}`,
         type,
-        startLine: member.start || 0,
-        endLine: member.end || 0,
+        startLine: m.start || 0,
+        endLine: m.end || 0,
         exported: false,
-        decorated: (member.decorators?.length ?? 0) > 0,
+        decorated: (m.decorators?.length ?? 0) > 0,
         parent: className,
       });
     }
@@ -357,7 +411,7 @@ function processClassBody(
 function createEntity(
   type: QuickEntity["type"],
   name: string,
-  node: any,
+  node: ExtendedStatement,
   parent: string | null,
   exported: boolean,
 ): QuickEntity {
@@ -422,20 +476,20 @@ function calculateComplexity(
 }
 
 function hasGenericsInNode(node: Statement): boolean {
-  const n = node as any;
-  if (n.typeParameters?.params?.length > 0) return true;
-  if (n.declaration?.typeParameters?.params?.length > 0) return true;
+  const n = node as ExtendedStatement;
+  if ((n.typeParameters?.params?.length ?? 0) > 0) return true;
+  if ((n.declaration?.typeParameters?.params?.length ?? 0) > 0) return true;
   return false;
 }
 
 function hasDecoratorsInNode(node: Statement): boolean {
-  const n = node as any;
-  if (n.decorators?.length > 0) return true;
-  if (n.declaration?.decorators?.length > 0) return true;
+  const n = node as ExtendedStatement;
+  if ((n.decorators?.length ?? 0) > 0) return true;
+  if ((n.declaration?.decorators?.length ?? 0) > 0) return true;
 
   const body = n.declaration?.body?.body || n.body?.body || [];
   for (const member of body) {
-    if (member.decorators?.length > 0) return true;
+    if ((member.decorators?.length ?? 0) > 0) return true;
   }
 
   return false;

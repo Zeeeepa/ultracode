@@ -11,8 +11,31 @@
 
 import { execSync } from "node:child_process";
 import { z } from "zod";
+import type { BranchInfo } from "../../core/branch-manager.js";
 import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+// BranchInfo and BranchMetadata imported from branch-manager.ts
+
+/**
+ * List branches result
+ */
+interface ListBranchesResult {
+  currentBranch: string | null;
+  branches: Array<{
+    name: string;
+    isCurrent: boolean;
+    lastIndexed?: number;
+  }>;
+  stats?: {
+    totalBranches: number;
+    indexedBranches: number;
+  };
+}
 
 // =============================================================================
 // LIST BRANCHES
@@ -39,9 +62,9 @@ export class ListBranchesToolHandler extends BaseToolHandler<z.infer<typeof List
     const branches = branchManager.getActiveBranches();
     const currentBranch = branchManager.getCurrentBranch();
 
-    const result: any = {
+    const result: ListBranchesResult = {
       currentBranch,
-      branches: branches.map((b: any) => ({
+      branches: branches.map((b: BranchInfo) => ({
         name: b.name,
         isCurrent: b.name === currentBranch,
         lastIndexed: b.metadata?.lastIndexedAt || b.lastAccessed,
@@ -51,7 +74,7 @@ export class ListBranchesToolHandler extends BaseToolHandler<z.infer<typeof List
     if (args.includeStats) {
       result.stats = {
         totalBranches: branches.length,
-        indexedBranches: branches.filter((b: any) => b.metadata?.lastIndexedAt).length,
+        indexedBranches: branches.filter((b: BranchInfo) => b.metadata?.lastIndexedAt).length,
       };
     }
 
@@ -131,7 +154,7 @@ export class GetBranchStatusToolHandler extends BaseToolHandler<z.infer<typeof G
       };
     }
 
-    const branchName = args.branchName || branchManager.getCurrentBranch();
+    const branchName = args.branchName || branchManager.getCurrentBranch() || "main";
     const metadata = branchManager.getBranchMetadata(branchName);
     const dbPath = branchManager.getBranchDbPath(branchName);
     const hasDb = branchManager.hasBranchDatabase(branchName);
@@ -193,7 +216,7 @@ export class CleanupBranchesToolHandler extends BaseToolHandler<z.infer<typeof C
 
     // Calculate what would be cleaned
     const toCleanup = branches
-      .filter((b: any) => b.name !== currentBranch && b.name !== "main" && b.name !== "master")
+      .filter((b: BranchInfo) => b.name !== currentBranch && b.name !== "main" && b.name !== "master")
       .slice(args.keepCount);
 
     let deletedCount = 0;
@@ -211,7 +234,7 @@ export class CleanupBranchesToolHandler extends BaseToolHandler<z.infer<typeof C
               dryRun: args.dryRun,
               branchesFound: branches.length,
               branchesToCleanup: args.dryRun ? toCleanup.length : deletedCount,
-              cleanedBranches: toCleanup.map((b: any) => b.name),
+              cleanedBranches: toCleanup.map((b: BranchInfo) => b.name),
             },
             null,
             2,

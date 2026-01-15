@@ -1,15 +1,5 @@
 import pLimit from "p-limit";
-
-/**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
- */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
+import { sleep } from "../../utils/runtime.js";
 
 export class HttpError extends Error {
   constructor(
@@ -32,11 +22,11 @@ export interface HttpEngineOptions {
   defaultHeaders?: Record<string, string>;
 }
 
-export interface RequestConfig<TBody = any> {
+export interface RequestConfig<TBody = unknown> {
   path: string;
   method?: "GET" | "POST" | "PUT" | "DELETE";
   headers?: Record<string, string>;
-  buildBody?: (input: any) => TBody;
+  buildBody?: (input: unknown) => TBody;
 }
 
 export class HttpEngine {
@@ -89,10 +79,10 @@ export class HttpEngine {
     }
   }
 
-  async callSingle<TParsed = any>(
+  async callSingle<TParsed = unknown>(
     config: RequestConfig,
-    input: any,
-    parser: (json: any) => TParsed,
+    input: unknown,
+    parser: (json: unknown) => TParsed,
     opts?: { signal?: AbortSignal },
   ): Promise<TParsed> {
     return this.limit(async () => {
@@ -113,10 +103,10 @@ export class HttpEngine {
     });
   }
 
-  async callBatch<TParsed = any>(
+  async callBatch<TParsed = unknown>(
     config: RequestConfig,
-    inputs: any[],
-    parseSingle: (json: any) => TParsed,
+    inputs: unknown[],
+    parseSingle: (json: unknown) => TParsed,
     opts?: { signal?: AbortSignal },
   ): Promise<TParsed[]> {
     return Promise.all(inputs.map((input) => this.callSingle(config, input, parseSingle, opts)));

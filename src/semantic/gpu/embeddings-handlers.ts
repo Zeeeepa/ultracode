@@ -11,6 +11,7 @@
  */
 
 import { writeFileSync } from "node:fs";
+import type { FaissIndex } from "faiss-napi";
 
 import type {
   ContentCacheEntry,
@@ -21,6 +22,7 @@ import type {
   EmbeddingsSearchRequest,
   EmbeddingsSearchResponse,
   EmbeddingsStatsResponse,
+  GpuWorkerResponse,
   GpuWorkerState,
 } from "./types.js";
 
@@ -29,12 +31,12 @@ import type {
 // =============================================================================
 
 export interface EmbeddingsHandlerContext {
-  faissIndex: any;
+  faissIndex: FaissIndex | null;
   state: GpuWorkerState;
   contentCachePath: string | null;
   log: (message: string) => void;
   logError: (message: string) => void;
-  sendResponse: (response: any) => void;
+  sendResponse: (response: GpuWorkerResponse) => void;
   sendError: (error: string, requestId?: string) => void;
   saveContentCache: () => void;
 }
@@ -152,7 +154,7 @@ export function handleEmbeddingsSearch(request: EmbeddingsSearchRequest, ctx: Em
 
   try {
     // faiss-napi expects number[], not Float32Array
-    const queryArray = Array.isArray(vector) ? vector : Array.from(vector);
+    const queryArray = Array.isArray(vector) ? (vector as number[]) : Array.from(vector as Float32Array);
     const actualK = Math.min(k, state.faissTotalVectors);
 
     if (actualK === 0) {

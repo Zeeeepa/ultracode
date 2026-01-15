@@ -9,8 +9,14 @@
  * - Automatic response size limiting
  */
 
+import type { ConductorOrchestrator } from "../agents/conductor-orchestrator.js";
+import type { SemanticAgent } from "../agents/semantic-agent.js";
+import type { BranchManager } from "../core/branch-manager.js";
+import type { KnowledgeBus } from "../core/knowledge-bus.js";
 import { log } from "../logging/index.js";
 import { getProjectContext, type ProjectContextManager } from "../shared/project-context.js";
+import type { GraphStorage } from "../types/storage.js";
+import type { VersionManager } from "../versioning/version-manager.js";
 import { MAX_RESPONSE_SIZE_BYTES, truncateResponse } from "./response-limits.js";
 
 export interface ToolResult {
@@ -22,20 +28,20 @@ export interface ToolResult {
 
 export interface ToolContext {
   requestId: string;
-  config: any;
-  getConductor: () => any;
-  getGraphStorage: () => Promise<any>; // v4: libsql unified, no params needed
-  getSQLiteManager: () => any; // legacy: kept for AutoDoc and BatchOperations
-  getSemanticAgent: () => Promise<any>;
-  getBranchManager: () => Promise<any>;
-  getSnapshotManager: () => any;
-  getKnowledgeBus: () => any;
-  getServiceContainer?: () => any; // DI Container for services
+  config: unknown;
+  getConductor: () => ConductorOrchestrator;
+  getGraphStorage: () => Promise<GraphStorage>; // v4: libsql unified, no params needed
+  getSQLiteManager: () => unknown; // legacy: kept for AutoDoc and BatchOperations
+  getSemanticAgent: () => Promise<SemanticAgent>;
+  getBranchManager: () => Promise<BranchManager>;
+  getSnapshotManager: () => Promise<VersionManager>;
+  getKnowledgeBus: () => KnowledgeBus;
+  getServiceContainer?: () => unknown; // DI Container for services
   normalizeInputPath: (path?: string) => string | undefined;
   withTimeout: <T>(promise: Promise<T>, ms: number, operation: string, reqId: string) => Promise<T>;
 }
 
-export abstract class BaseToolHandler<TArgs = any> {
+export abstract class BaseToolHandler<TArgs = unknown> {
   /** Maximum response size in bytes. Override in subclass if needed. */
   protected maxResponseSize: number = MAX_RESPONSE_SIZE_BYTES;
 
@@ -77,7 +83,7 @@ export abstract class BaseToolHandler<TArgs = any> {
    * Get GraphStorage with project context automatically set.
    * v4: Uses libsql unified storage, no SQLiteManager needed.
    */
-  protected async ensureGraphStorageForProject(projectPath?: string): Promise<any> {
+  protected async ensureGraphStorageForProject(projectPath?: string): Promise<GraphStorage> {
     const resolved = getProjectContext().resolveProjectPath(projectPath);
     log.d("BASETOOL", "ensure_storage", { resolved });
     const storage = await this.context.getGraphStorage();

@@ -27,10 +27,11 @@ export async function setupSemanticSearch(
 
     return {
       search: async (query: string, options: { limit: number; minSimilarity: number }) => {
-        const results = await vectorStore.search(query, options.limit);
+        type SearchResult = { entityId: string; similarity: number };
+        const results: SearchResult[] = await vectorStore.search(query, options.limit);
         return results
-          .filter((r: any) => r.similarity >= options.minSimilarity)
-          .map((r: any) => ({ entityId: r.entityId, similarity: r.similarity }));
+          .filter((r: SearchResult) => r.similarity >= options.minSimilarity)
+          .map((r: SearchResult) => ({ entityId: r.entityId, similarity: r.similarity }));
       },
     };
   } catch {

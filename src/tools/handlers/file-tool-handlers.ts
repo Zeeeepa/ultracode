@@ -18,6 +18,9 @@
  */
 
 import { z } from "zod";
+import type { VectorStore } from "../../semantic/vector-store.js";
+import { type Entity, type Relationship, RelationType } from "../../types/storage.js";
+import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { formatImpactForResponse, ImpactAnalyzer } from "../impact-analyzer.js";
@@ -28,7 +31,6 @@ import {
   reindexFiles,
   setupSemanticSearch,
 } from "./file-tool-utils.js";
-import { toError } from "../../utils/error-handling.js";
 
 // =============================================================================
 // MODIFY ENTITY CODE
@@ -54,7 +56,7 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const semanticSearch = await setupSemanticSearch(this.context);
 
-    let vectorStore: any = null;
+    let vectorStore: VectorStore | null = null;
     try {
       const semanticAgent = await this.context.getSemanticAgent();
       vectorStore = semanticAgent.getVectorStore?.();
@@ -62,7 +64,8 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
       // Vector store not available
     }
 
-    const modifier = new CodeModifier(storage, vectorStore, this.context.config.directory);
+    const workingDir = (this.context.config as { directory?: string }).directory || process.cwd();
+    const modifier = new CodeModifier(storage, vectorStore, workingDir);
     const impactAnalyzer = new ImpactAnalyzer(storage, semanticSearch);
 
     // Find entity
@@ -75,9 +78,9 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
       });
 
       if (args.entityName) {
-        const match = entities.find((e: any) => e.name === args.entityName);
+        const match = entities.find((e: Entity) => e.name === args.entityName);
         if (match) entityId = match.id;
-      } else if (entities.length === 1) {
+      } else if (entities.length === 1 && entities[0]) {
         entityId = entities[0].id;
       }
     }
@@ -104,7 +107,7 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
       ]);
 
       // Build response with validation and impact analysis
-      const response: Record<string, any> = {
+      const response: Record<string, unknown> = {
         success: result.success,
         preview: args.preview,
         entityId,
@@ -283,7 +286,7 @@ export class SplitFileToolHandler extends BaseToolHandler<z.infer<typeof SplitFi
             ? ["function", "method"]
             : ["module"];
 
-      const toSplit = entities.filter((e: any) => targetTypes.some((t) => e.type.toLowerCase().includes(t)));
+      const toSplit = entities.filter((e: Entity) => targetTypes.some((t) => e.type.toLowerCase().includes(t)));
 
       if (toSplit.length <= 1) {
         return {
@@ -293,7 +296,7 @@ export class SplitFileToolHandler extends BaseToolHandler<z.infer<typeof SplitFi
               text: JSON.stringify({
                 success: false,
                 message: `Only ${toSplit.length} entity found, nothing to split`,
-                entities: toSplit.map((e: any) => e.name),
+                entities: toSplit.map((e: Entity) => e.name),
               }),
             },
           ],
@@ -301,7 +304,7 @@ export class SplitFileToolHandler extends BaseToolHandler<z.infer<typeof SplitFi
       }
 
       const ext = extname(filePath);
-      const plannedFiles = toSplit.map((e: any) => ({
+      const plannedFiles = toSplit.map((e: Entity) => ({
         name: e.name,
         type: e.type,
         outputPath: join(outputDir, `${e.name}${ext}`),
@@ -468,7 +471,7 @@ export class CreateFileToolHandler extends BaseToolHandler<z.infer<typeof Create
       await reindexFiles(this.context, [filePath], "create-index");
 
       // Build response
-      const response: Record<string, any> = {
+      const response: Record<string, unknown> = {
         success: true,
         path: filePath,
         size: args.content.length,
@@ -487,7 +490,7 @@ export class CreateFileToolHandler extends BaseToolHandler<z.infer<typeof Create
             filters: { filePath },
             limit: 10,
           });
-          const entityNames = newEntities.map((e: any) => e.name);
+          const entityNames = newEntities.map((e: Entity) => e.name);
 
           if (entityNames.length > 0) {
             const impact = await impactAnalyzer.analyzeNewFileImpact(filePath, entityNames);
@@ -541,7 +544,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
     const impactAnalyzer = new ImpactAnalyzer(storage);
 
     // Find entity
-    let entity: any = null;
+    let entity: Entity | null = null;
     if (args.entityId) {
       entity = await storage.getEntity(args.entityId);
     } else if (args.entityName) {
@@ -549,7 +552,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
         filters: { name: args.entityName },
         limit: 1,
       });
-      if (entities.length > 0) entity = entities[0];
+      if (entities.length > 0 && entities[0]) entity = entities[0];
     }
 
     if (!entity) {
@@ -565,7 +568,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
     ]);
 
     const references = relationships.filter(
-      (r: any) => r.type === "references" || r.type === "uses" || r.type === "calls",
+      (r: Relationship) => r.type === RelationType.REFERENCES || r.type === RelationType.CALLS,
     );
 
     // Get unique files that need updating
@@ -583,7 +586,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
     const impactInfo = impactResult ? formatImpactForResponse(impactResult) : null;
 
     if (args.preview) {
-      const response: Record<string, any> = {
+      const response: Record<string, unknown> = {
         preview: true,
         entity: {
           id: entity.id,
@@ -626,7 +629,7 @@ export class RenameSymbolToolHandler extends BaseToolHandler<z.infer<typeof Rena
       await storage.updateEntity(entity.id, { name: args.newName });
       await reindexFiles(this.context, Array.from(filesToUpdate), "rename-reindex");
 
-      const response: Record<string, any> = {
+      const response: Record<string, unknown> = {
         success: true,
         oldName: entity.name,
         newName: args.newName,
@@ -680,7 +683,7 @@ export class AddMemberToolHandler extends BaseToolHandler<z.infer<typeof AddMemb
     const impactAnalyzer = new ImpactAnalyzer(storage);
 
     // Find target entity (class, interface, etc.)
-    let entity: any = null;
+    let entity: Entity | null = null;
     if (args.targetEntityId) {
       entity = await storage.getEntity(args.targetEntityId);
     } else if (args.targetEntityName) {
@@ -688,7 +691,7 @@ export class AddMemberToolHandler extends BaseToolHandler<z.infer<typeof AddMemb
         filters: { name: args.targetEntityName },
         limit: 1,
       });
-      if (entities.length > 0) entity = entities[0];
+      if (entities.length > 0 && entities[0]) entity = entities[0];
     }
 
     if (!entity) {
@@ -771,7 +774,7 @@ export class AddMemberToolHandler extends BaseToolHandler<z.infer<typeof AddMemb
       await reindexFiles(this.context, [entity.filePath], "add-member-index");
 
       // Build response
-      const response: Record<string, any> = {
+      const response: Record<string, unknown> = {
         success: true,
         target: entity.name,
         memberAdded: true,

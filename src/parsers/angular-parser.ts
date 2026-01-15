@@ -125,6 +125,65 @@ export interface PipeUsage {
   line?: number | undefined;
 }
 
+/**
+ * Angular compiler module (dynamically loaded)
+ */
+interface AngularCompilerModule {
+  parseTemplate: (
+    template: string,
+    filePath: string,
+    options?: {
+      preserveWhitespaces?: boolean;
+      preserveLineEndings?: boolean;
+    },
+  ) => AngularTemplateParseResult;
+  [key: string]: unknown;
+}
+
+/**
+ * Angular template parse result from @angular/compiler
+ */
+interface AngularTemplateParseResult {
+  nodes?: AngularASTNode[];
+  errors?: unknown[];
+  [key: string]: unknown;
+}
+
+/**
+ * Angular template AST node
+ */
+interface AngularASTNode {
+  constructor?: { name?: string };
+  name?: string;
+  value?: { source?: string };
+  handler?: { source?: string };
+  sourceSpan?: {
+    start?: { line?: number };
+    end?: { line?: number };
+  };
+  children?: AngularASTNode[];
+  inputs?: AngularASTNode[];
+  outputs?: AngularASTNode[];
+  references?: AngularASTNode[];
+  [key: string]: unknown;
+}
+
+/**
+ * @angular/compiler parseTemplate result
+ */
+interface ParseTemplateResult {
+  nodes?: AngularASTNode[];
+  errors?: Array<{ msg: string }>;
+}
+
+/**
+ * ParsedEntity with Angular metadata
+ */
+interface ParsedEntityWithAngular extends ParsedEntity {
+  angular?: AngularEntityInfo;
+  templateInfo?: AngularTemplateInfo;
+}
+
 // =============================================================================
 // ANGULAR DECORATOR DETECTION
 // =============================================================================
@@ -495,7 +554,7 @@ export function parseTemplate(template: string): AngularTemplateInfo {
 // =============================================================================
 
 // Angular compiler module - loaded dynamically if available
-let angularCompilerModule: any = null;
+let angularCompilerModule: AngularCompilerModule | null = null;
 let compilerLoadAttempted = false;
 
 /**
@@ -537,7 +596,7 @@ export async function parseTemplateWithCompiler(template: string, filePath: stri
     const result = ngParseTemplate(template, filePath, {
       preserveWhitespaces: false,
       preserveLineEndings: false,
-    });
+    }) as ParseTemplateResult;
 
     const info: AngularTemplateInfo = {
       source: template,
@@ -552,7 +611,7 @@ export async function parseTemplateWithCompiler(template: string, filePath: stri
     };
 
     // Walk the template AST
-    function visit(node: any): void {
+    function visit(node: AngularASTNode): void {
       if (!node) return;
 
       // Bound attributes [prop]="expr"
@@ -601,12 +660,14 @@ export async function parseTemplateWithCompiler(template: string, filePath: stri
       }
     }
 
-    for (const node of result.nodes) {
-      visit(node);
+    if (result.nodes) {
+      for (const node of result.nodes) {
+        visit(node);
+      }
     }
 
     // Parse errors
-    if (result.errors?.length > 0) {
+    if (result.errors && result.errors.length > 0) {
       log.w("ANGULARPARSER", "tpl_errs", { file: filePath, cnt: result.errors.length });
     }
 
@@ -636,12 +697,12 @@ export function enhanceWithAngularInfo(entities: ParsedEntity[], sourceFile: ts.
 
         if (entity) {
           // Add Angular-specific metadata
-          (entity as any).angular = angularMeta;
+          (entity as ParsedEntityWithAngular).angular = angularMeta;
 
           // Parse inline template if present
           if (angularMeta.template) {
             const templateInfo = parseTemplate(angularMeta.template);
-            (entity as any).templateInfo = templateInfo;
+            (entity as ParsedEntityWithAngular).templateInfo = templateInfo;
           }
         }
       }

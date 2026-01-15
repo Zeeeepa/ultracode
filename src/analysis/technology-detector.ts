@@ -113,7 +113,6 @@ export class TechnologyDetector {
 
   private async detectLanguages(): Promise<LanguageInfo[]> {
     const entities = await this.graphStorage.findEntities({
-      type: "entity",
       filters: {},
     });
 
@@ -300,7 +299,6 @@ export class TechnologyDetector {
 
     // Query all import entities
     const imports = await this.graphStorage.findEntities({
-      type: "entity",
       filters: { entityType: "import" as EntityType },
     });
 

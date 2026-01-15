@@ -1,6 +1,6 @@
 # Subprocess Pool
 
-*Last updated: 2026-01-11*
+*Last updated: 2026-01-15*
 
 Module for subprocess-pool functionality.
 
@@ -13,14 +13,14 @@ Module for subprocess-pool functionality.
 | `EmbeddingsCallback` | type | [→ types.ts:120] |
 | `EmbeddingTextItem` | interface | [→ types.ts:126-133] |
 | `EmbeddingTextsCallback` | type | [→ types.ts:139] |
-| `killProcess` | function | [→ spawner.ts:148-155] |
+| `killProcess` | function | [→ spawner.ts:159-166] |
 | `ParseRequest` | interface | [→ types.ts:55-62] |
 | `ParseResponse` | interface | [→ types.ts:67-85] |
 | `QueuedTask` | interface | [→ types.ts:190-196] |
-| `spawnBunProcess` | function | [→ spawner.ts:46-88] |
-| `SpawnContext` | interface | [→ spawner.ts:14-21] |
-| `spawnNodeProcess` | function | [→ spawner.ts:96-104] |
-| `spawnProcess` | function | [→ spawner.ts:137-143] |
+| `spawnBunProcess` | function | [→ spawner.ts:57-99] |
+| `SpawnContext` | interface | [→ spawner.ts:25-32] |
+| `spawnNodeProcess` | function | [→ spawner.ts:107-115] |
+| `spawnProcess` | function | [→ spawner.ts:148-154] |
 | `StreamingResultCallback` | type | [→ types.ts:139-139] |
 | `SubprocessPoolOptions` | interface | [→ types.ts:154-185] |
 | `SubprocessPoolStats` | interface | [→ types.ts:94-105] |

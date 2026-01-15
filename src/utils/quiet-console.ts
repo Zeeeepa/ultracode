@@ -8,19 +8,19 @@
 const isQuiet = () => process.env["MCP_QUIET_MODE"] === "true";
 
 export const quietConsole = {
-  error: (...args: any[]) => {
+  error: (...args: unknown[]) => {
     if (!isQuiet()) console.error(...args);
   },
-  warn: (...args: any[]) => {
+  warn: (...args: unknown[]) => {
     if (!isQuiet()) console.warn(...args);
   },
-  log: (...args: any[]) => {
+  log: (...args: unknown[]) => {
     if (!isQuiet()) console.log(...args);
   },
-  info: (...args: any[]) => {
+  info: (...args: unknown[]) => {
     if (!isQuiet()) console.info(...args);
   },
-  debug: (...args: any[]) => {
+  debug: (...args: unknown[]) => {
     if (!isQuiet()) console.debug(...args);
   },
 };

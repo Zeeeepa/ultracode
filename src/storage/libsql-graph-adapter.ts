@@ -24,7 +24,16 @@ import { LRUCache } from "lru-cache";
 import { log } from "../logging/index.js";
 import { normalizeBranchName } from "../shared/storage-paths.js";
 import type { SimilarityResult, VectorEmbedding } from "../types/semantic.js";
-import type { BatchResult, Entity, EntityType, FileInfo, Relationship, RelationType } from "../types/storage.js";
+import type {
+  BatchResult,
+  Entity,
+  EntityQuery,
+  EntityType,
+  FileInfo,
+  Relationship,
+  RelationshipQuery,
+  RelationType,
+} from "../types/storage.js";
 import { CacheOperations } from "./libsql/cache-ops.js";
 import { EntityOperations } from "./libsql/entity-ops.js";
 import { MetadataOperations } from "./libsql/metadata-ops.js";
@@ -57,6 +66,39 @@ export {
 // =============================================================================
 // LIBSQL GRAPH ADAPTER
 // =============================================================================
+
+/**
+ * Database row structure for Entity table (snake_case columns)
+ */
+interface EntityRow {
+  id: string;
+  name: string;
+  type: string;
+  file_path: string;
+  location: string;
+  metadata?: string | null;
+  hash: string;
+  created_at: number;
+  updated_at: number;
+  complexity_score?: number | null;
+  language?: string | null;
+  size_bytes?: number | null;
+  embedding_base64?: string | null;
+  embedding_text?: string | null;
+}
+
+/**
+ * Database row structure for Relationship table (snake_case columns)
+ */
+interface RelationshipRow {
+  id: string;
+  from_id: string;
+  to_id: string;
+  type: string;
+  metadata?: string | null;
+  weight: number;
+  created_at: number;
+}
 
 export class LibSQLGraphAdapter {
   private client: Client | null = null;
@@ -94,8 +136,10 @@ export class LibSQLGraphAdapter {
     const getClient = () => this.client;
     const getContext = () => this.currentContext;
 
-    this.entityOps = new EntityOperations(getClient, getContext, (row) => this.rowToEntity(row));
-    this.relationshipOps = new RelationshipOperations(getClient, getContext, (row) => this.rowToRelationship(row));
+    this.entityOps = new EntityOperations(getClient, getContext, (row) => this.rowToEntity(row as EntityRow));
+    this.relationshipOps = new RelationshipOperations(getClient, getContext, (row) =>
+      this.rowToRelationship(row as RelationshipRow),
+    );
 
     const vectorOpsContext: VectorOpsContext = {
       getClient,
@@ -676,15 +720,7 @@ export class LibSQLGraphAdapter {
   insertEntities = (entities: Entity[]): Promise<BatchResult> => this.entityOps.insertEntities(entities);
   getEntity = (id: string): Promise<Entity | null> => this.entityOps.getEntity(id);
 
-  findEntities(query: {
-    filters?: {
-      entityType?: EntityType | EntityType[];
-      filePath?: string | string[];
-      name?: string | RegExp;
-    };
-    limit?: number;
-    offset?: number;
-  }): Promise<Entity[]> {
+  findEntities(query: EntityQuery): Promise<Entity[]> {
     return this.entityOps.findEntities(query);
   }
 
@@ -719,11 +755,8 @@ export class LibSQLGraphAdapter {
   getRelationshipsForEntity = (entityId: string, type?: RelationType): Promise<Relationship[]> =>
     this.relationshipOps.getRelationshipsForEntity(entityId, type);
 
-  findRelationships = (query: {
-    filters?: { relationshipType?: RelationType | RelationType[] };
-    limit?: number;
-    offset?: number;
-  }): Promise<Relationship[]> => this.relationshipOps.findRelationships(query);
+  findRelationships = (query: RelationshipQuery): Promise<Relationship[]> =>
+    this.relationshipOps.findRelationships(query);
 
   deleteRelationship = (id: string): Promise<void> => this.relationshipOps.deleteRelationship(id);
 
@@ -985,34 +1018,34 @@ export class LibSQLGraphAdapter {
   // HELPER METHODS
   // ===========================================================================
 
-  private rowToEntity(row: any): Entity {
+  private rowToEntity(row: EntityRow): Entity {
     return {
-      id: row.id as string,
-      name: row.name as string,
+      id: row.id,
+      name: row.name,
       type: row.type as EntityType,
-      filePath: row.file_path as string,
-      location: JSON.parse(row.location as string),
-      metadata: row.metadata ? JSON.parse(row.metadata as string) : {},
-      hash: (row.hash as string) || "",
-      createdAt: row.created_at as number,
-      updatedAt: row.updated_at as number,
-      complexityScore: row.complexity_score as number | undefined,
-      language: row.language as string | undefined,
-      sizeBytes: row.size_bytes as number | undefined,
-      embeddingBase64: row.embedding_base64 as string | undefined,
-      embeddingText: row.embedding_text as string | undefined,
+      filePath: row.file_path,
+      location: JSON.parse(row.location),
+      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      hash: row.hash || "",
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      complexityScore: row.complexity_score ?? undefined,
+      language: row.language ?? undefined,
+      sizeBytes: row.size_bytes ?? undefined,
+      embeddingBase64: row.embedding_base64 ?? undefined,
+      embeddingText: row.embedding_text ?? undefined,
     };
   }
 
-  private rowToRelationship(row: any): Relationship {
+  private rowToRelationship(row: RelationshipRow): Relationship {
     return {
-      id: row.id as string,
-      fromId: row.from_id as string,
-      toId: row.to_id as string,
+      id: row.id,
+      fromId: row.from_id,
+      toId: row.to_id,
       type: row.type as RelationType,
-      metadata: row.metadata ? JSON.parse(row.metadata as string) : undefined,
-      weight: row.weight as number,
-      createdAt: row.created_at as number,
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      weight: row.weight,
+      createdAt: row.created_at,
     };
   }
 

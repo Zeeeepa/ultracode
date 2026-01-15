@@ -203,9 +203,15 @@ export class GoAnalyzer {
    * Find all descendants of a given type (safe across implementations)
    */
   private findDescendantsByType(node: ASTNode, type: string): ASTNode[] {
-    if (typeof (node as any).descendantsOfType === "function") {
+    // Type guard for nodes with descendantsOfType method
+    if (
+      typeof node === "object" &&
+      node !== null &&
+      "descendantsOfType" in node &&
+      typeof (node as { descendantsOfType: unknown }).descendantsOfType === "function"
+    ) {
       try {
-        return node.descendantsOfType(type) || [];
+        return (node as { descendantsOfType: (t: string) => ASTNode[] | null }).descendantsOfType(type) || [];
       } catch {}
     }
     const results: ASTNode[] = [];

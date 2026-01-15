@@ -8,10 +8,29 @@
 import type { ConductorOrchestrator } from "../agents/conductor-orchestrator.js";
 import type { LayeredIndexManager } from "../layered/index.js";
 import { log } from "../logging/index.js";
+import type { KVPairs } from "../logging/log-types.js";
 import { shutdownFaissProvider } from "../semantic/faiss/faiss-provider.js";
 import { shutdownGpuClient } from "../semantic/gpu/gpu-client.js";
 import { shutdownOVMSNative } from "../semantic/ovms-native-manager.js";
+import type { Agent } from "../types/agent.js";
 import { resourceManager } from "./resource-manager.js";
+
+interface DiagnosticSnapshot {
+  pid: number;
+  memory: NodeJS.MemoryUsage;
+  uptime: number;
+  conductor?: {
+    pendingTasks?: number;
+    agents: Array<{
+      id: string;
+      type: string;
+      status: string;
+      memMB: number;
+      queue: number;
+      lastActivity?: number;
+    }>;
+  };
+}
 
 // =============================================================================
 // SHUTDOWN STATE
@@ -150,25 +169,28 @@ export function registerSignalHandlers(): void {
 export function registerDebugSignalHandler(): void {
   process.on("SIGUSR1", async () => {
     try {
-      const snapshot: any = {
+      const snapshot: DiagnosticSnapshot = {
         pid: process.pid,
         memory: process.memoryUsage(),
         uptime: process.uptime(),
       };
       if (shutdownContext.conductor) {
         snapshot.conductor = {
-          pendingTasks: (shutdownContext.conductor as any).pendingTasks?.size ?? undefined,
-          agents: Array.from(shutdownContext.conductor.agents.values()).map((a) => ({
-            id: a.id,
-            type: a.type,
-            status: a.status,
-            memMB: a.getMemoryUsage(),
-            queue: a.getTaskQueue().length,
-            lastActivity: (a as any).getMetrics ? (a as any).getMetrics().lastActivity : undefined,
-          })),
+          pendingTasks: shutdownContext.conductor.getPendingTasksCount(),
+          agents: Array.from(shutdownContext.conductor.agents.values()).map((agent: Agent) => {
+            const metrics = agent.getMetrics();
+            return {
+              id: agent.id,
+              type: agent.type,
+              status: agent.status,
+              memMB: agent.getMemoryUsage(),
+              queue: agent.getTaskQueue().length,
+              lastActivity: metrics.lastActivity,
+            };
+          }),
         };
       }
-      log.w("INCIDENT", "SIGUSR1 dump", snapshot);
+      log.w("INCIDENT", "SIGUSR1 dump", snapshot as unknown as KVPairs);
     } catch (err) {
       log.w("INCIDENT", "sigusr1_dump_fail", { err: String(err) });
     }

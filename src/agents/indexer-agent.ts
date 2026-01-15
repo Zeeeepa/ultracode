@@ -211,9 +211,9 @@ export class IndexerAgent extends BaseAgent {
     this.graphStorage = await getGraphStorage();
     log.t("INDEXER", `[IndexerAgent] ◀ getGraphStorage (${Date.now() - gsStart}ms)`);
     // Ensure graph storage is fully initialized (re-prepare statements after SQLite reset)
-    if (typeof (this.graphStorage as any).initialize === "function") {
+    if ("initialize" in this.graphStorage && typeof this.graphStorage.initialize === "function") {
       log.t("INDEXER", `[IndexerAgent] ▶ graphStorage.initialize`);
-      await (this.graphStorage as any).initialize();
+      await this.graphStorage.initialize();
       log.t("INDEXER", `[IndexerAgent] ◀ graphStorage.initialize (${Date.now() - gsStart}ms)`);
     }
 
@@ -372,31 +372,37 @@ export class IndexerAgent extends BaseAgent {
 
     for (const parsed of flatEntities) {
       try {
-        if (
-          !parsed ||
-          typeof parsed !== "object" ||
-          typeof (parsed as any).name !== "string" ||
-          !(parsed as any).type ||
-          !(parsed as any).location
-        ) {
+        // Type narrowing: check if parsed has required ParsedEntity properties
+        const hasValidStructure =
+          parsed &&
+          typeof parsed === "object" &&
+          "name" in parsed &&
+          typeof parsed.name === "string" &&
+          "type" in parsed &&
+          parsed.type &&
+          "location" in parsed &&
+          parsed.location;
+
+        if (!hasValidStructure) {
           // Debug: log why entity was rejected
           const reasons: string[] = [];
           if (!parsed) reasons.push("null/undefined");
           else if (typeof parsed !== "object") reasons.push("not object");
           else {
-            if (typeof (parsed as any).name !== "string") reasons.push("no name");
-            if (!(parsed as any).type) reasons.push("no type");
-            if (!(parsed as any).location) reasons.push("no location");
+            if (!("name" in parsed) || typeof parsed.name !== "string") reasons.push("no name");
+            if (!("type" in parsed) || !parsed.type) reasons.push("no type");
+            if (!("location" in parsed) || !parsed.location) reasons.push("no location");
           }
-          log.t("INDEXER", "rejected_entity", { name: (parsed as any)?.name, reasons: reasons.join(",") });
+          const entityName = parsed && typeof parsed === "object" && "name" in parsed ? parsed.name : undefined;
+          log.t("INDEXER", "rejected_entity", { name: entityName, reasons: reasons.join(",") });
           throw new Error("Invalid entity");
         }
 
         const isImport = parsed?.type === "import" && parsed?.importData?.source;
-        const hasName = typeof (parsed as any).name === "string" && (parsed as any).name.trim().length > 0;
+        const hasName = typeof parsed.name === "string" && parsed.name.trim().length > 0;
 
         const normalizedParsed =
-          !hasName && isImport ? { ...(parsed as any), name: `import:${parsed.importData?.source}` } : parsed;
+          !hasName && isImport ? { ...parsed, name: `import:${parsed.importData?.source}` } : parsed;
 
         // Use entity's filePath if available (for flattened children), otherwise use provided filePath
         const entityFilePath = normalizedParsed.filePath || filePath;
@@ -477,13 +483,13 @@ export class IndexerAgent extends BaseAgent {
 
         if (fromId && toId) {
           relationships.push({
-            id: stableRelationshipId(fromId, toId, rel.type as any),
+            id: stableRelationshipId(fromId, toId, rel.type as RelationType),
             fromId,
             toId,
-            type: rel.type as any,
+            type: rel.type as RelationType,
             metadata: { line: rel.metadata?.line, context: rel.type },
             createdAt: Date.now(),
-          } as Relationship);
+          });
         } else {
           log.t("INDEXER", "rel_skipped", { from: rel.from, to: rel.to, fromId, toId });
         }
@@ -997,7 +1003,7 @@ export class IndexerAgent extends BaseAgent {
   /**
    * Get FileWatcher status for diagnostics
    */
-  getFileWatcherStatus(): { exists: boolean; status?: any; lastError?: string | null } {
+  getFileWatcherStatus(): { exists: boolean; status?: unknown; lastError?: string | null } {
     if (!this.fileWatcher) {
       return { exists: false, lastError: this.lastFileWatcherError };
     }

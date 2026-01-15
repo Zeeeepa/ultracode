@@ -1,6 +1,20 @@
 import type { EmbeddingProvider, EmbedOptions, ProviderInfo, ProviderLogger } from "./base.js";
 import { HttpEngine } from "./http-engine.js";
 
+/**
+ * CloudRU API response types
+ */
+interface CloudRUEmbeddingData {
+  embedding: number[];
+  index?: number;
+}
+
+interface CloudRUResponse {
+  data?: CloudRUEmbeddingData[];
+  embedding?: number[] | number[][];
+  error?: unknown;
+}
+
 export interface CloudRUOptions {
   baseUrl?: string | undefined;
   apiKey?: string | undefined;
@@ -54,29 +68,31 @@ export class CloudRUProvider implements EmbeddingProvider {
 
   private buildBody = (input: string | string[]) => ({ model: this.info.model, input });
 
-  private parseSingle(json: any): Float32Array {
-    if (Array.isArray(json?.data) && Array.isArray(json.data[0]?.embedding)) {
-      const arr = new Float32Array(json.data[0].embedding);
+  private parseSingle(json: unknown): Float32Array {
+    const response = json as CloudRUResponse;
+    if (Array.isArray(response?.data) && Array.isArray(response.data[0]?.embedding)) {
+      const arr = new Float32Array(response.data[0].embedding);
       this.info.dimension = this.info.dimension ?? arr.length;
       return arr;
     }
-    if (Array.isArray(json?.embedding)) {
-      const arr = new Float32Array(json.embedding);
+    if (Array.isArray(response?.embedding)) {
+      const arr = new Float32Array(response.embedding as number[]);
       this.info.dimension = this.info.dimension ?? arr.length;
       return arr;
     }
-    if (json?.error) throw new Error(`CloudRU error: ${JSON.stringify(json.error)}`);
+    if (response?.error) throw new Error(`CloudRU error: ${JSON.stringify(response.error)}`);
     throw new Error(`CloudRU invalid embedding response`);
   }
 
-  private parseBatch(json: any): Float32Array[] {
-    if (Array.isArray(json?.data)) {
-      const out = json.data.map((d: any) => new Float32Array(d.embedding));
+  private parseBatch(json: unknown): Float32Array[] {
+    const response = json as CloudRUResponse;
+    if (Array.isArray(response?.data)) {
+      const out = response.data.map((d) => new Float32Array(d.embedding));
       if (!this.info.dimension && out[0]) this.info.dimension = out[0].length;
       return out;
     }
-    if (Array.isArray(json?.embedding) && Array.isArray(json.embedding[0])) {
-      const out = json.embedding.map((e: any) => new Float32Array(e));
+    if (Array.isArray(response?.embedding) && Array.isArray(response.embedding[0])) {
+      const out = (response.embedding as number[][]).map((e) => new Float32Array(e));
       if (!this.info.dimension && out[0]) this.info.dimension = out[0].length;
       return out;
     }
@@ -86,7 +102,7 @@ export class CloudRUProvider implements EmbeddingProvider {
   async embed(text: string, opts?: EmbedOptions): Promise<Float32Array> {
     this.log?.debug("embed()", { len: text?.length }, opts?.requestId);
     return this.engine.callSingle(
-      { path: "/v1/embeddings", buildBody: this.buildBody },
+      { path: "/v1/embeddings", buildBody: this.buildBody as (input: unknown) => unknown },
       text,
       (j) => this.parseSingle(j),
       { signal: opts?.signal },
@@ -104,24 +120,29 @@ export class CloudRUProvider implements EmbeddingProvider {
       }
       const parts = await Promise.all(
         chunks.map((c) =>
-          this.engine.callSingle({ path: "/v1/embeddings", buildBody: this.buildBody }, c, (j) => this.parseBatch(j), {
-            signal: opts?.signal,
-          }),
+          this.engine.callSingle(
+            { path: "/v1/embeddings", buildBody: this.buildBody as (input: unknown) => unknown },
+            c,
+            (j) => this.parseBatch(j),
+            {
+              signal: opts?.signal,
+            },
+          ),
         ),
       );
-      return parts.flat();
+      return parts.flat() as Float32Array[];
     }
 
     try {
       return await this.engine.callSingle(
-        { path: "/v1/embeddings", buildBody: this.buildBody },
+        { path: "/v1/embeddings", buildBody: this.buildBody as (input: unknown) => unknown },
         texts,
         (j) => this.parseBatch(j),
         { signal: opts?.signal },
       );
     } catch {
       return this.engine.callBatch(
-        { path: "/v1/embeddings", buildBody: this.buildBody },
+        { path: "/v1/embeddings", buildBody: this.buildBody as (input: unknown) => unknown },
         texts,
         (j) => this.parseSingle(j),
         { signal: opts?.signal },

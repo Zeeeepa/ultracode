@@ -10,10 +10,19 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, unlinkSyn
 import { dirname, join } from "node:path";
 import type { CPUInfo } from "../../../cpu/cpu-detector.js";
 import { getDataDir } from "../../../utils/config-paths.js";
+import { toError } from "../../../utils/error-handling.js";
 import { t, ti } from "../i18n/index.js";
 import type { EmbeddingModel, GPUInfo, InstallResult } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
 import { sleep } from "../utils/index.js";
+
+/**
+ * EmbeddingModel with optional GGUF configuration
+ */
+interface EmbeddingModelWithGGUF extends EmbeddingModel {
+  gguf_repo?: string;
+  gguf_file?: string;
+}
 
 // GitHub repo for llama.cpp (moved from ggerganov to ggml-org)
 const LLAMACPP_REPO = "ggml-org/llama.cpp";
@@ -178,8 +187,8 @@ async function getDownloadUrl(backend: Backend): Promise<{ url: string; filename
 
     printWarn(`No matching asset found for ${backend} on ${process.platform}`);
     return getDirectDownloadUrl(backend);
-  } catch (error: any) {
-    printWarn(`Failed to fetch release info: ${error.message}`);
+  } catch (error: unknown) {
+    printWarn(`Failed to fetch release info: ${toError(error).message}`);
     return getDirectDownloadUrl(backend);
   }
 }
@@ -268,8 +277,8 @@ async function downloadFile(url: string, destPath: string): Promise<boolean> {
 
     printOK(t("ovms.downloaded"));
     return true;
-  } catch (error: any) {
-    printError(ti("ovms.download_error", { error: error.message }));
+  } catch (error: unknown) {
+    printError(ti("ovms.download_error", { error: toError(error).message }));
     return false;
   }
 }
@@ -312,8 +321,8 @@ async function downloadGGUFModel(modelId: string, filename: string, destDir: str
 
     printOK(ti("llamacpp.model_downloaded", { file: filename }));
     return destPath;
-  } catch (error: any) {
-    printError(ti("llamacpp.model_download_failed", { error: error.message }));
+  } catch (error: unknown) {
+    printError(ti("llamacpp.model_download_failed", { error: toError(error).message }));
     return null;
   }
 }
@@ -344,8 +353,8 @@ function extractArchive(archivePath: string, destDir: string): boolean {
 
     printOK(t("ovms.extracted"));
     return true;
-  } catch (error: any) {
-    printError(ti("ovms.convert_error", { error: error.message }));
+  } catch (error: unknown) {
+    printError(ti("ovms.convert_error", { error: toError(error).message }));
     return false;
   }
 }
@@ -506,8 +515,8 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
           }
         }
         printOK(ti("llamacpp.copied_dlls", { count: String(dllFiles.length) }));
-      } catch (e: any) {
-        printWarn(ti("llamacpp.copy_dlls_failed", { error: e.message }));
+      } catch (error: unknown) {
+        printWarn(ti("llamacpp.copy_dlls_failed", { error: toError(error).message }));
       }
     }
 
@@ -558,8 +567,8 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
                 }
               }
               printOK(t("llamacpp.cuda_installed"));
-            } catch (e: any) {
-              printWarn(ti("llamacpp.cuda_copy_failed", { error: e.message }));
+            } catch (error: unknown) {
+              printWarn(ti("llamacpp.cuda_copy_failed", { error: toError(error).message }));
             }
           }
           // Cleanup cudart temp
@@ -581,8 +590,9 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
 
   // Parse GGUF model info from model config
   // Expected format in config: "gpustack/bge-m3-GGUF" with gguf_file: "bge-m3-Q8_0.gguf"
-  const ggufRepo = (model as any).gguf_repo || model.hf_model;
-  const ggufFile = (model as any).gguf_file || `${model.model_id}.gguf`;
+  const modelWithGGUF = model as EmbeddingModelWithGGUF;
+  const ggufRepo = modelWithGGUF.gguf_repo || model.hf_model;
+  const ggufFile = modelWithGGUF.gguf_file || `${model.model_id}.gguf`;
 
   if (!ggufRepo) {
     printError(t("llamacpp.no_gguf_repo"));

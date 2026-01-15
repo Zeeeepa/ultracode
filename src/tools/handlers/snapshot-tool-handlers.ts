@@ -10,6 +10,7 @@
 
 import { z } from "zod";
 import { toError } from "../../utils/error-handling.js";
+import type { SnapshotListEntry } from "../../versioning/version-manager.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
 // =============================================================================
@@ -107,7 +108,7 @@ export class RollbackSnapshotToolHandler extends BaseToolHandler<z.infer<typeof 
         }
         // Get the snapshot at position (steps - 1), or the oldest if not enough
         const targetIndex = Math.min(args.steps - 1, snapshots.length - 1);
-        targetSnapshotId = snapshots[targetIndex].id;
+        targetSnapshotId = snapshots[targetIndex]!.id; // Safe: length > 0 checked above
       }
 
       // VersionManager.rollback returns void
@@ -170,7 +171,7 @@ export class ListSnapshotsToolHandler extends BaseToolHandler<z.infer<typeof Lis
           text: JSON.stringify(
             {
               count: snapshots.length,
-              snapshots: snapshots.map((s: any) => ({
+              snapshots: snapshots.map((s: SnapshotListEntry) => ({
                 id: s.id,
                 description: s.description,
                 timestamp: s.timestamp,
@@ -219,14 +220,14 @@ export class CleanupSnapshotsToolHandler extends BaseToolHandler<z.infer<typeof 
     let toCleanup = [...allSnapshots];
 
     // Keep the most recent (listSnapshots already returns sorted by timestamp desc)
-    toCleanup.sort((a: any, b: any) => b.timestamp - a.timestamp);
+    toCleanup.sort((a: SnapshotListEntry, b: SnapshotListEntry) => b.timestamp - a.timestamp);
     const toKeep = toCleanup.slice(0, args.keepCount);
     toCleanup = toCleanup.slice(args.keepCount);
 
     // Filter by age if specified
     if (args.olderThanDays) {
       const cutoffTime = Date.now() - args.olderThanDays * 24 * 60 * 60 * 1000;
-      toCleanup = toCleanup.filter((s: any) => s.timestamp < cutoffTime);
+      toCleanup = toCleanup.filter((s: SnapshotListEntry) => s.timestamp < cutoffTime);
     }
 
     if (!args.dryRun) {
@@ -245,7 +246,7 @@ export class CleanupSnapshotsToolHandler extends BaseToolHandler<z.infer<typeof 
               totalSnapshots: allSnapshots.length,
               snapshotsKept: toKeep.length,
               snapshotsCleaned: toCleanup.length,
-              cleanedIds: toCleanup.map((s: any) => s.id),
+              cleanedIds: toCleanup.map((s: SnapshotListEntry) => s.id),
             },
             null,
             2,

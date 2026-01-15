@@ -20,6 +20,7 @@ import type { SimilarityResult, VectorEmbedding } from "../../types/semantic.js"
 import { simdL2Normalize } from "../../utils/simd-vector-ops.js";
 import { getGpuClient, type IGpuClient } from "../gpu/gpu-client.js";
 import { getBaseMetaPathByHash } from "./base-branch-detector.js";
+import type { IFaissClient } from "./faiss-client.js";
 import type { BaseIndexMetadata } from "./layered-types.js";
 import type { FaissIndexConfig, FaissSearchResult } from "./types.js";
 
@@ -682,16 +683,16 @@ class FaissProvider {
     unsavedCount: number;
     lastSaveTime: number;
     idSetSize: number;
-    faissStats: any;
+    faissStats: Awaited<ReturnType<IFaissClient["getStats"]>> | null;
   }> {
-    const faissStats = this.client ? await this.client.faissGetStats() : null;
+    const faissStats = this.client ? await this.client.getStats() : null;
 
     return {
-      totalVectors: faissStats?.totalVectors ?? 0,
+      totalVectors: (faissStats as { totalVectors?: number })?.totalVectors ?? 0,
       unsavedCount: this.unsavedCount,
       lastSaveTime: this.lastSaveTime,
       idSetSize: this.idSet.size,
-      faissStats,
+      faissStats: faissStats as Awaited<ReturnType<IFaissClient["getStats"]>> | null,
     };
   }
 

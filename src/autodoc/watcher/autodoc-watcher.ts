@@ -16,21 +16,35 @@ import path, { join } from "node:path";
 import { type KnowledgeEntry, knowledgeBus } from "../../core/knowledge-bus.js";
 import { log } from "../../logging/index.js";
 import { fileExists, readdir, readText, setFileChangeHook, writeFile } from "../../utils/file-ops.js";
+import { sleep } from "../../utils/runtime-detection.js";
 import { generateModuleReadmeWithEntities, type ModuleInfo } from "../generator/doc-generator.js";
 import { ClaudeCodeProvider } from "../llm/llm-provider.js";
 import { updateAutodocContent } from "./autodoc-updater.js";
 import { extractEntitiesFromContent, extractExportsFromFile, getModuleForFile } from "./module-resolver.js";
 
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
 /**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ * Event data for index:completed event
  */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
+interface IndexCompletedEventData {
+  directory?: string;
+  [key: string]: unknown;
 }
+
+/**
+ * Module info with LLM-generated descriptions (temporary runtime properties)
+ */
+interface ModuleInfoWithLLM extends ModuleInfo {
+  _llmExportDescs?: Record<string, string>;
+  _llmFileDescs?: Record<string, string>;
+}
+
+// =============================================================================
+// CONFIGURATION
+// =============================================================================
 
 export interface AutoDocWatcherConfig {
   /** Debounce delay in milliseconds (default: 45000 = 45 seconds) */
@@ -211,8 +225,8 @@ export class AutoDocWatcher {
               mod.description = desc;
               // Get parsed descriptions from moduleInfo (set by generateModuleDescriptionLLM)
               llmDescriptions = {
-                exportDescs: (mod as any)._llmExportDescs,
-                fileDescs: (mod as any)._llmFileDescs,
+                exportDescs: (mod as ModuleInfoWithLLM)._llmExportDescs,
+                fileDescs: (mod as ModuleInfoWithLLM)._llmFileDescs,
               };
             }
           }
@@ -290,14 +304,14 @@ export class AutoDocWatcher {
    * Handle incoming events from KnowledgeBus
    */
   private async handleEvent(entry: KnowledgeEntry): Promise<void> {
-    const data = entry.data as any;
+    const data = entry.data;
 
     switch (entry.topic) {
       case "index:complete":
         // Single file indexed - update its module's AUTODOC
-        if (data.filePath) {
-          log.d("AUTODOCWATCH", "index_complete_event", { file: data.filePath });
-          await this.handleFileChange(data.filePath);
+        if (data && typeof data === "object" && "filePath" in data && data.filePath) {
+          log.d("AUTODOCWATCH", "index_complete_event", { file: data.filePath as string });
+          await this.handleFileChange(data.filePath as string);
         }
         break;
 
@@ -306,7 +320,9 @@ export class AutoDocWatcher {
         if (Array.isArray(data)) {
           const files = new Set<string>();
           for (const entity of data) {
-            if (entity.filePath) files.add(entity.filePath);
+            if (entity && typeof entity === "object" && "filePath" in entity && entity.filePath) {
+              files.add(entity.filePath as string);
+            }
           }
           log.d("AUTODOCWATCH", "new_entities_event", { files: files.size });
           for (const filePath of files) {
@@ -317,7 +333,7 @@ export class AutoDocWatcher {
 
       case "index:completed":
         // Full indexing completed via tool - update all AUTODOC files
-        await this.handleIndexCompleted(data);
+        await this.handleIndexCompleted(data as IndexCompletedEventData);
         break;
     }
   }
@@ -473,8 +489,8 @@ export class AutoDocWatcher {
             if (desc) {
               moduleInfo.description = desc;
               llmDescriptions = {
-                exportDescs: (moduleInfo as any)._llmExportDescs,
-                fileDescs: (moduleInfo as any)._llmFileDescs,
+                exportDescs: (moduleInfo as ModuleInfoWithLLM)._llmExportDescs,
+                fileDescs: (moduleInfo as ModuleInfoWithLLM)._llmFileDescs,
               };
             }
           }
@@ -567,7 +583,7 @@ export class AutoDocWatcher {
   /**
    * Handle index:completed event - update all AUTODOC files
    */
-  private async handleIndexCompleted(data: any): Promise<void> {
+  private async handleIndexCompleted(data: IndexCompletedEventData): Promise<void> {
     // Invalidate autodoc cache after indexing (folder might have been created)
     this.invalidateAutodocCache();
 
@@ -607,8 +623,8 @@ export class AutoDocWatcher {
               mod.description = desc;
               // Get parsed descriptions from moduleInfo (set by generateModuleDescriptionLLM)
               llmDescriptions = {
-                exportDescs: (mod as any)._llmExportDescs,
-                fileDescs: (mod as any)._llmFileDescs,
+                exportDescs: (mod as ModuleInfoWithLLM)._llmExportDescs,
+                fileDescs: (mod as ModuleInfoWithLLM)._llmFileDescs,
               };
             }
           }

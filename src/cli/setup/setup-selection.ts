@@ -173,7 +173,8 @@ export async function selectModel(
   let models = config.models.filter((m) => m.provider === modelProvider);
 
   // Filter out unavailable models (e.g., jina-v3 with Task LoRA)
-  models = models.filter((m) => (m as any).available !== false);
+  type ModelWithAvailable = EmbeddingModel & { available?: boolean };
+  models = models.filter((m) => (m as ModelWithAvailable).available !== false);
 
   // Filter by language - code models appear in both modes (code is language-agnostic)
   if (language === "en") {

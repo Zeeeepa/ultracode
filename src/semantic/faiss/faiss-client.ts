@@ -9,6 +9,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../../logging/index.js";
 import { getDataDir } from "../../shared/storage-paths.js";
+import { isBunRuntime } from "../../utils/runtime.js";
 import type {
   FaissAddResponse,
   FaissIndexConfig,
@@ -86,7 +87,7 @@ class FaissNapiClient implements IFaissClient {
   private reverseIdMap = new Map<number, string>();
 
   async start(): Promise<boolean> {
-    const isBun = typeof (globalThis as any).Bun !== "undefined";
+    const isBun = isBunRuntime();
 
     try {
       // Try standard import first (works in unbundled environments)
@@ -487,7 +488,7 @@ let faissClient: IFaissClient | null = null;
  */
 export function getFaissClient(): IFaissClient {
   if (!faissClient) {
-    const isBun = typeof (globalThis as any).Bun !== "undefined";
+    const isBun = isBunRuntime();
     log.i("FAISS", `Initializing client (${isBun ? "Bun" : "Node.js"} runtime)`);
     faissClient = new FaissNapiClient();
   }

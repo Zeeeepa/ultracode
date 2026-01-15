@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CPUInfo } from "../../../cpu/cpu-detector.js";
 import { getDataDir } from "../../../utils/config-paths.js";
+import { toError } from "../../../utils/error-handling.js";
 import { t, ti } from "../i18n/index.js";
 import type { EmbeddingModel, GPUInfo, InstallResult } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
@@ -170,8 +171,9 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
 
       ovmsBin = getOvmsBinPath();
       printOK(t("ovms.installed"));
-    } catch (error: any) {
-      printError(ti("ovms.download_error", { error: error.message }));
+    } catch (error: unknown) {
+      const err = toError(error);
+      printError(ti("ovms.download_error", { error: err.message }));
       return { success: false };
     }
   }
@@ -273,8 +275,9 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
         } else {
           printWarn(ti("ovms.export_exit_code", { code: String(exitCode) }));
         }
-      } catch (error: any) {
-        printWarn(ti("ovms.export_error", { error: error.message }));
+      } catch (error: unknown) {
+        const err = toError(error);
+        printWarn(ti("ovms.export_error", { error: err.message }));
       }
     }
 
@@ -363,8 +366,9 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
           };
           writeFileSync(join(modelsDir, "config.json"), JSON.stringify(ovmsConfig, null, 2));
         }
-      } catch (error: any) {
-        printError(ti("ovms.convert_error", { error: error.message }));
+      } catch (error: unknown) {
+        const err = toError(error);
+        printError(ti("ovms.convert_error", { error: err.message }));
         return { success: false };
       }
     }

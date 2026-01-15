@@ -11,10 +11,22 @@ import { CharStream, CommonTokenStream } from "antlr4ng";
 import { KotlinLexer } from "../generated/kotlin/KotlinLexer.js";
 import {
   type ClassDeclarationContext,
+  type ClassMemberDeclarationContext,
+  type CompanionObjectContext,
   type DeclarationContext,
+  type DelegationSpecifiersContext,
+  type EnumEntryContext,
+  type FunctionBodyContext,
+  type FunctionDeclarationContext,
+  type FunctionValueParametersContext,
   type ImportHeaderContext,
   type KotlinFileContext,
   KotlinParser,
+  type ModifiersContext,
+  type ObjectDeclarationContext,
+  type PropertyDeclarationContext,
+  type SecondaryConstructorContext,
+  type TypeAliasContext,
 } from "../generated/kotlin/KotlinParser.js";
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
@@ -36,6 +48,21 @@ type LocationInfo = {
   start: { line: number; column: number; index: number };
   end: { line: number; column: number; index: number };
 };
+
+// =============================================================================
+// ANTLR CONTEXT TYPES
+// =============================================================================
+
+/**
+ * ANTLR Token interface (for getLocation helper)
+ */
+interface AntlrToken {
+  line?: number;
+  column?: number;
+  start?: number;
+  stop?: number;
+  text?: string;
+}
 
 // =============================================================================
 // MAIN PARSER CLASS
@@ -295,7 +322,7 @@ function processClassDeclaration(classDecl: ClassDeclarationContext | null, ctx:
   ctx.currentClass = prevClass;
 }
 
-function processClassMember(memberDecl: any, ctx: ParserContext): void {
+function processClassMember(memberDecl: ClassMemberDeclarationContext, ctx: ParserContext): void {
   const declaration = memberDecl.declaration();
   if (declaration) {
     const funcDecl = declaration.functionDeclaration();
@@ -334,7 +361,7 @@ function processClassMember(memberDecl: any, ctx: ParserContext): void {
   }
 }
 
-function processEnumEntry(entry: any, ctx: ParserContext): void {
+function processEnumEntry(entry: EnumEntryContext, ctx: ParserContext): void {
   const nameCtx = entry.simpleIdentifier();
   if (!nameCtx) return;
 
@@ -361,7 +388,7 @@ function processEnumEntry(entry: any, ctx: ParserContext): void {
 // OBJECT PROCESSING
 // =============================================================================
 
-function processObjectDeclaration(objectDecl: any, ctx: ParserContext): void {
+function processObjectDeclaration(objectDecl: ObjectDeclarationContext, ctx: ParserContext): void {
   if (!objectDecl) return;
 
   const nameCtx = objectDecl.simpleIdentifier();
@@ -395,7 +422,7 @@ function processObjectDeclaration(objectDecl: any, ctx: ParserContext): void {
   ctx.currentClass = prevClass;
 }
 
-function processCompanionObject(companionObject: any, ctx: ParserContext): void {
+function processCompanionObject(companionObject: CompanionObjectContext, ctx: ParserContext): void {
   const nameCtx = companionObject.simpleIdentifier();
   const objectName = nameCtx?.getText() || "Companion";
 
@@ -436,7 +463,7 @@ function processCompanionObject(companionObject: any, ctx: ParserContext): void 
 // FUNCTION PROCESSING
 // =============================================================================
 
-function processFunctionDeclaration(funcDecl: any, ctx: ParserContext): void {
+function processFunctionDeclaration(funcDecl: FunctionDeclarationContext, ctx: ParserContext): void {
   if (!funcDecl) return;
 
   const nameCtx = funcDecl.simpleIdentifier();
@@ -513,7 +540,7 @@ function processFunctionDeclaration(funcDecl: any, ctx: ParserContext): void {
   }
 }
 
-function processSecondaryConstructor(ctor: any, ctx: ParserContext): void {
+function processSecondaryConstructor(ctor: SecondaryConstructorContext, ctx: ParserContext): void {
   if (!ctx.currentClass) return;
 
   const fullName = `${ctx.currentClass}.constructor`;
@@ -541,7 +568,7 @@ function processSecondaryConstructor(ctor: any, ctx: ParserContext): void {
 // PROPERTY PROCESSING
 // =============================================================================
 
-function processPropertyDeclaration(propDecl: any, ctx: ParserContext): void {
+function processPropertyDeclaration(propDecl: PropertyDeclarationContext, ctx: ParserContext): void {
   if (!propDecl) return;
 
   const modInfo = extractModifiers(propDecl.modifiers());
@@ -616,7 +643,7 @@ function processPropertyDeclaration(propDecl: any, ctx: ParserContext): void {
 // TYPE ALIAS PROCESSING
 // =============================================================================
 
-function processTypeAlias(typeAlias: any, ctx: ParserContext): void {
+function processTypeAlias(typeAlias: TypeAliasContext, ctx: ParserContext): void {
   if (!typeAlias) return;
 
   const nameCtx = typeAlias.simpleIdentifier();
@@ -640,9 +667,11 @@ function processTypeAlias(typeAlias: any, ctx: ParserContext): void {
 // HELPER FUNCTIONS
 // =============================================================================
 
-function getLocation(ctx: any): LocationInfo {
-  const start = ctx.start || ctx._start || { line: 1, column: 0, start: 0 };
-  const stop = ctx.stop || ctx._stop || start;
+function getLocation(ctx: unknown): LocationInfo {
+  // Type-safe extraction of location from ANTLR context
+  const contextObj = ctx as { start?: AntlrToken; stop?: AntlrToken; _start?: AntlrToken; _stop?: AntlrToken };
+  const start = contextObj.start || contextObj._start || { line: 1, column: 0, start: 0 };
+  const stop = contextObj.stop || contextObj._stop || start;
 
   return {
     start: {
@@ -658,7 +687,7 @@ function getLocation(ctx: any): LocationInfo {
   };
 }
 
-function extractModifiers(modifiersCtx: any): {
+function extractModifiers(modifiersCtx: ModifiersContext | null): {
   modifiers: string[];
   annotations: Array<{ name: string; arguments?: string[] }>;
 } {
@@ -723,7 +752,7 @@ function extractModifiers(modifiersCtx: any): {
   return result;
 }
 
-function extractInheritance(delegationCtx: any): {
+function extractInheritance(delegationCtx: DelegationSpecifiersContext | null): {
   baseClasses: string[];
   interfaces: string[];
 } {
@@ -752,7 +781,7 @@ function extractInheritance(delegationCtx: any): {
   return result;
 }
 
-function extractParameters(paramsCtx: any): Array<{
+function extractParameters(paramsCtx: FunctionValueParametersContext | null): Array<{
   name: string;
   type?: string | undefined;
   optional?: boolean;
@@ -780,7 +809,7 @@ function extractParameters(paramsCtx: any): Array<{
   return result;
 }
 
-function extractCalls(bodyCtx: any): string[] {
+function extractCalls(bodyCtx: FunctionBodyContext | null): string[] {
   if (!bodyCtx) return [];
 
   const calls: string[] = [];

@@ -275,9 +275,11 @@ export class CodeModifier {
       const fileContent = await readText(entity.filePath);
       const commentsResult = CommentExtractor.extractComments(fileContent, entity.filePath);
 
+      // Entity from storage is compatible with ParsedEntity structure
+      const parsedEntity = entity as unknown as import("../types/parser.js").ParsedEntity;
       const associations = CommentExtractor.associateCommentsWithEntities(
         commentsResult.comments,
-        [entity as any],
+        [parsedEntity],
         commentsResult.leadingComments,
       );
 

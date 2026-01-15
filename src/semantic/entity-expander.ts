@@ -265,7 +265,7 @@ export function getOversizedEntitiesWarning(
       oversized.push({
         name: entity.name,
         type: entity.type,
-        filePath: (entity as any).filePath || "",
+        filePath: entity.filePath || "",
         estimatedTokens: tokens,
         lines,
         recommendation,

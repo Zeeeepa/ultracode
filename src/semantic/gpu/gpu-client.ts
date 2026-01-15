@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { log } from "../../logging/index.js";
 import { getDataDir } from "../../shared/storage-paths.js";
+import { sleep } from "../../utils/runtime.js";
 import { cosineSimilarity as cpuCosineSimilarity, simdL2Normalize } from "../../utils/simd-vector-ops.js";
 import {
   getRecommendedStrategy,
@@ -21,6 +22,8 @@ import {
   shouldUseCudaNormalize,
 } from "./adaptive-thresholds.js";
 import { createPacket, NamedPipeClient, parsePacket } from "./named-pipe-transport.js";
+import { extractVectorsFromRequest } from "./request-helpers.js";
+import { extractGpuError } from "./type-guards.js";
 import type {
   CudaBatchCosineResponse,
   CudaCosineResponse,
@@ -31,8 +34,11 @@ import type {
   FaissBatchSearchResponse,
   FaissIndexConfig,
   FaissInitResponse,
+  FaissLoadFromDumpResponse,
   FaissLoadResponse,
+  FaissLoadWorkerDumpResponse,
   FaissSaveResponse,
+  FaissSearchRequest,
   FaissSearchResponse,
   FaissSearchResult,
   FaissStatsResponse,
@@ -43,18 +49,19 @@ import type {
 } from "./types.js";
 
 // =============================================================================
-// Runtime Detection
+// Process Interfaces
 // =============================================================================
 
 /**
- * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
+ * Typed wrapper for Bun subprocess to match Node.js ChildProcess interface
  */
-async function sleep(ms: number): Promise<void> {
-  if (typeof (globalThis as any).Bun?.sleep === "function") {
-    await (globalThis as any).Bun.sleep(ms);
-  } else {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
+interface BunProcessWrapper {
+  stdin: NonNullable<ChildProcess["stdin"]>;
+  stdout: NonNullable<ChildProcess["stdout"]>;
+  stderr: NonNullable<ChildProcess["stderr"]>;
+  pid: number;
+  kill: () => void;
+  on: (event: "exit" | "close", handler: (code: number | null) => void) => void;
 }
 
 // =============================================================================
@@ -283,7 +290,8 @@ class GpuSubprocessClient implements IGpuClient {
         }
       } else {
         // On non-Windows with Bun, use Bun.spawn for better performance
-        const proc = Bun.spawn([this.config.nodePath, this.config.workerPath], {
+        const global = globalThis as any;
+        const proc = global.Bun?.["spawn"]([this.config.nodePath, this.config.workerPath], {
           stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe", // Capture stderr for logging
@@ -311,18 +319,19 @@ class GpuSubprocessClient implements IGpuClient {
         // }
 
         // Wrap Bun process to match ChildProcess interface
-        this.worker = {
+        const wrapper: BunProcessWrapper = {
           stdin: proc.stdin,
           stdout: proc.stdout,
           stderr: proc.stderr,
           pid: proc.pid,
           kill: () => proc.kill(),
-          on: (event: string, handler: any) => {
+          on: (event: "exit" | "close", handler: (code: number | null) => void) => {
             if (event === "exit" || event === "close") {
-              proc.exited.then((code) => handler(code));
+              proc.exited.then((code: number | null) => handler(code));
             }
           },
-        } as any;
+        };
+        this.worker = wrapper as unknown as ChildProcess;
       }
 
       this.setupStdoutReader();
@@ -516,8 +525,6 @@ class GpuSubprocessClient implements IGpuClient {
     const jsonStr = JSON.stringify(request);
     log.i("GPU", "Using stdin/stdout JSON", {
       type: request.type,
-      hasVector: !!(request as any).vector,
-      vectorLen: (request as any).vector?.length,
       jsonLen: jsonStr.length,
     });
     const requestId = ++this.requestId;
@@ -566,63 +573,7 @@ class GpuSubprocessClient implements IGpuClient {
     }
 
     // Extract vectors from request if present (for binary transfer)
-    let vectors: Float32Array | undefined;
-    const headerData: Record<string, unknown> = { ...request };
-
-    if (request.type === "faiss.add" && (request as any).vectors) {
-      const v = (request as any).vectors;
-      vectors = v instanceof Float32Array ? v : new Float32Array(v);
-      delete (headerData as any).vectors;
-    } else if (request.type === "faiss.search") {
-      const v = (request as any).vector;
-      log.i("GPU", "sendNamedPipe faiss.search", {
-        vectorExists: !!v,
-        vectorType: typeof v,
-        isArray: Array.isArray(v),
-        vectorLen: v?.length,
-      });
-      if (v) {
-        vectors = v instanceof Float32Array ? v : new Float32Array(v);
-        delete (headerData as any).vector;
-        log.i("GPU", "sendNamedPipe vectors created", { len: vectors.length });
-      }
-    } else if (request.type === "faiss.batchSearch" && (request as any).vectors) {
-      const v = (request as any).vectors;
-      vectors = v instanceof Float32Array ? v : new Float32Array(v);
-      delete (headerData as any).vectors;
-    } else if (request.type === "faiss.train" && (request as any).vectors) {
-      const v = (request as any).vectors;
-      vectors = v instanceof Float32Array ? v : new Float32Array(v);
-      delete (headerData as any).vectors;
-    } else if (request.type === "cuda.cosine") {
-      const a = (request as any).a;
-      const b = (request as any).b;
-      const aArr = a instanceof Float32Array ? a : new Float32Array(a);
-      const bArr = b instanceof Float32Array ? b : new Float32Array(b);
-      vectors = new Float32Array(aArr.length + bArr.length);
-      vectors.set(aArr, 0);
-      vectors.set(bArr, aArr.length);
-      (headerData as any).dimensions = aArr.length;
-      delete (headerData as any).a;
-      delete (headerData as any).b;
-    } else if (request.type === "cuda.batchCosine") {
-      const query = (request as any).query;
-      const database = (request as any).database;
-      const queryArr = query instanceof Float32Array ? query : new Float32Array(query);
-      const dbArrs = database.map((d: any) => (d instanceof Float32Array ? d : new Float32Array(d)));
-      const totalLen = queryArr.length + dbArrs.reduce((sum: number, arr: Float32Array) => sum + arr.length, 0);
-      vectors = new Float32Array(totalLen);
-      vectors.set(queryArr, 0);
-      let offset = queryArr.length;
-      for (const arr of dbArrs) {
-        vectors.set(arr, offset);
-        offset += arr.length;
-      }
-      (headerData as any).dimensions = queryArr.length;
-      (headerData as any).queryCount = 1;
-      delete (headerData as any).query;
-      delete (headerData as any).database;
-    }
+    const { vectors, headerData } = extractVectorsFromRequest(request);
 
     // Create binary packet
     const packet = createPacket(headerData, vectors);
@@ -646,14 +597,14 @@ class GpuSubprocessClient implements IGpuClient {
     }
 
     const response = await this.sendRequest({ type: "faiss.init", config, loadPath });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return response as FaissInitResponse;
   }
 
   async faissAdd(ids: string[], vectors: Float32Array | number[]): Promise<FaissAddResponse> {
     const vectorArray = vectors instanceof Float32Array ? Array.from(vectors) : vectors;
     const response = await this.sendRequest({ type: "faiss.add", ids, vectors: vectorArray });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return response as FaissAddResponse;
   }
 
@@ -664,14 +615,14 @@ class GpuSubprocessClient implements IGpuClient {
       k,
       isArray: Array.isArray(vectorArray),
     });
-    const request = { type: "faiss.search" as const, vector: vectorArray, k };
+    const request: FaissSearchRequest = { type: "faiss.search", vector: vectorArray, k };
     log.i("GPU", "faissSearch request", {
       hasVector: !!request.vector,
       vectorLen: request.vector?.length,
       keys: Object.keys(request),
     });
-    const response = await this.sendRequest(request as any);
-    if (!response.success) throw new Error((response as any).error);
+    const response = await this.sendRequest(request);
+    if (!response.success) throw new Error(extractGpuError(response));
     return (response as FaissSearchResponse).results;
   }
 
@@ -682,38 +633,38 @@ class GpuSubprocessClient implements IGpuClient {
   ): Promise<FaissSearchResult[][]> {
     const vectorArray = vectors instanceof Float32Array ? Array.from(vectors) : vectors;
     const response = await this.sendRequest({ type: "faiss.batchSearch", vectors: vectorArray, nQueries, k });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return (response as FaissBatchSearchResponse).results;
   }
 
   async faissTrain(vectors: Float32Array | number[], nVectors: number): Promise<FaissTrainResponse> {
     const vectorArray = vectors instanceof Float32Array ? Array.from(vectors) : vectors;
     const response = await this.sendRequest({ type: "faiss.train", vectors: vectorArray, nVectors });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return response as FaissTrainResponse;
   }
 
   async faissSave(path?: string): Promise<FaissSaveResponse> {
     const savePath = path || join(getDataDir(), "faiss-index.bin");
     const response = await this.sendRequest({ type: "faiss.save", path: savePath });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return response as FaissSaveResponse;
   }
 
   async faissLoad(path: string): Promise<FaissLoadResponse> {
     const response = await this.sendRequest({ type: "faiss.load", path });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return response as FaissLoadResponse;
   }
 
   async faissRemove(ids: string[]): Promise<void> {
     const response = await this.sendRequest({ type: "faiss.remove", ids });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
   }
 
   async faissGetStats(): Promise<FaissStatsResponse["stats"]> {
     const response = await this.sendRequest({ type: "faiss.stats" });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return (response as FaissStatsResponse).stats;
   }
 
@@ -722,11 +673,12 @@ class GpuSubprocessClient implements IGpuClient {
     dimensions: number,
   ): Promise<{ loaded: number; skipped: number; files: number }> {
     const response = await this.sendRequest({ type: "faiss.loadFromDump", dumpDir, dimensions });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
+    const typedResponse = response as FaissLoadFromDumpResponse;
     return {
-      loaded: (response as any).loaded || 0,
-      skipped: (response as any).skipped || 0,
-      files: (response as any).files || 0,
+      loaded: typedResponse.loaded || 0,
+      skipped: typedResponse.skipped || 0,
+      files: typedResponse.files || 0,
     };
   }
 
@@ -735,12 +687,13 @@ class GpuSubprocessClient implements IGpuClient {
     dimensions: number,
   ): Promise<{ loaded: number; skipped: number; files: number; workerId: string }> {
     const response = await this.sendRequest({ type: "faiss.loadWorkerDump", workerId, dimensions });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
+    const typedResponse = response as FaissLoadWorkerDumpResponse;
     return {
-      loaded: (response as any).loaded || 0,
-      skipped: (response as any).skipped || 0,
-      files: (response as any).files || 0,
-      workerId: (response as any).workerId || workerId,
+      loaded: typedResponse.loaded || 0,
+      skipped: typedResponse.skipped || 0,
+      files: typedResponse.files || 0,
+      workerId: typedResponse.workerId || workerId,
     };
   }
 
@@ -750,7 +703,7 @@ class GpuSubprocessClient implements IGpuClient {
 
   async cudaInfo(): Promise<CudaInfoResponse> {
     const response = await this.sendRequest({ type: "cuda.info" });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return response as CudaInfoResponse;
   }
 
@@ -763,7 +716,7 @@ class GpuSubprocessClient implements IGpuClient {
     const vecB = b instanceof Float32Array ? Array.from(b) : b;
 
     const response = await this.sendRequest({ type: "cuda.cosine", a: vecA, b: vecB });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return (response as CudaCosineResponse).similarity;
   }
 
@@ -775,7 +728,7 @@ class GpuSubprocessClient implements IGpuClient {
     const dbArr = database.map((v) => (v instanceof Float32Array ? Array.from(v) : v));
 
     const response = await this.sendRequest({ type: "cuda.batchCosine", query: queryArr, database: dbArr });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return new Float32Array((response as CudaBatchCosineResponse).similarities);
   }
 
@@ -784,7 +737,7 @@ class GpuSubprocessClient implements IGpuClient {
     const vecB = b instanceof Float32Array ? Array.from(b) : b;
 
     const response = await this.sendRequest({ type: "cuda.euclidean", a: vecA, b: vecB });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return (response as CudaEuclideanResponse).distance;
   }
 
@@ -792,7 +745,7 @@ class GpuSubprocessClient implements IGpuClient {
     const input = vectors.map((v) => (v instanceof Float32Array ? Array.from(v) : v));
 
     const response = await this.sendRequest({ type: "cuda.normalize", vectors: input });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return (response as CudaNormalizeResponse).vectors.map((v) => new Float32Array(v));
   }
 
@@ -868,7 +821,7 @@ class GpuSubprocessClient implements IGpuClient {
 
   async getStats(): Promise<GpuStatsResponse> {
     const response = await this.sendRequest({ type: "stats" });
-    if (!response.success) throw new Error((response as any).error);
+    if (!response.success) throw new Error(extractGpuError(response));
     return response as GpuStatsResponse;
   }
 }
