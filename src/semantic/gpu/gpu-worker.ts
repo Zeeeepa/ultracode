@@ -602,8 +602,9 @@ async function main(): Promise<void> {
   log(`Capabilities: Faiss=${faissLoaded}, CUDA=${cudaLoaded}`);
 
   // Start Named Pipe server for binary IPC (parallel with stdin)
+  // Use worker's own PID for unique pipe name (not parent PID - multiple workers may share same parent)
   const parentPid = process.ppid;
-  const pipeId = parentPid ? `${parentPid}` : `${process.pid}`;
+  const pipeId = `${process.pid}`;
 
   try {
     namedPipeServer = new NamedPipeServer({

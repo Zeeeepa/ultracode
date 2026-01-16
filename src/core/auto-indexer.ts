@@ -331,13 +331,11 @@ export async function performAutoIndex(
     };
 
     // Initialize agents
-    await ctx.getDevAgent();
+    const devAgent = await ctx.getDevAgent();
     await ctx.getDoraAgent();
 
-    // Run indexing via conductor
-    const cond = ctx.getConductor();
-    await cond.initialize();
-    const result = (await cond.process(task)) as TaskProcessingResult;
+    // Run indexing via DevAgent (not Conductor - it doesn't delegate tasks)
+    const result = (await devAgent.process(task)) as TaskProcessingResult;
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
@@ -347,8 +345,8 @@ export async function performAutoIndex(
 
       // Log embedding performance summary
       try {
-        const devAgent = cond.getAgentByType?.(AgentType.DEV) as AgentWithEmbeddingStats | undefined;
-        const embStats = devAgent?.getEmbeddingStats?.();
+        const devAgentWithStats = devAgent as AgentWithEmbeddingStats | undefined;
+        const embStats = devAgentWithStats?.getEmbeddingStats?.();
         if (embStats && embStats.total > 0) {
           log.i("EMBEDDING", "emb_summary", {
             total: embStats.total,

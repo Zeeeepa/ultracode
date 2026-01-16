@@ -46,10 +46,11 @@
 // GetExitCodeProcess - not in standard Cosmopolitan headers
 bool32 GetExitCodeProcess(int64_t hProcess, uint32_t *lpExitCode);
 
-#define VERSION "2.2.0"
+#define VERSION "2.3.0"
 #define APP_NAME "UltraScript.Comm"
 #define BUFFER_SIZE 8192
 #define PIPE_NAME "\\\\.\\pipe\\UltraScript_Core"
+#define INIT_PREFIX "ULTRASCRIPT_CWD:"
 
 // Transport mode
 typedef enum {
@@ -96,6 +97,32 @@ static void convert_unix_to_win_path(char *path) {
     for (char *p = path; *p; p++) {
         if (*p == '/') *p = '\\';
     }
+}
+
+// Send client's current working directory to MCP server (Windows only)
+// This is a pre-MCP handshake that allows the server to know the client's cwd
+static int win_send_init_cwd(int64_t pipe_handle) {
+    char cwd[2048];
+    char init_msg[2200];
+    uint32_t bytes_written;
+
+    // Get current working directory
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        return -1;
+    }
+
+    // Convert to Windows path format
+    convert_unix_to_win_path(cwd);
+
+    // Build init message: ULTRASCRIPT_CWD:/path/to/project\n
+    snprintf(init_msg, sizeof(init_msg), "%s%s\n", INIT_PREFIX, cwd);
+
+    // Send to server
+    if (!WriteFile(pipe_handle, init_msg, strlen(init_msg), &bytes_written, NULL)) {
+        return -1;
+    }
+
+    return 0;
 }
 
 // Parse command line for transport mode
@@ -276,6 +303,9 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
         }
     }
 
+    // Send client's cwd to server (pre-MCP handshake)
+    win_send_init_cwd(pipe_handle);
+
     // Proxy loop: stdin <-> Named Pipe <-> stdout
     char buf[BUFFER_SIZE];
     int64_t our_stdin = GetStdHandle(kNtStdInputHandle);
@@ -311,9 +341,9 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
     // Cleanup
     CloseHandle(pipe_handle);
 
-    // Only terminate server if we started it
+    // Don't terminate server - it supports multiple clients and has graceful shutdown
+    // Server will auto-shutdown when all clients disconnect (idle timeout)
     if (we_started_server) {
-        TerminateProcess(pi.hProcess, 0);
         CloseHandle(pi.hProcess);
     }
 
@@ -426,6 +456,9 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
         }
     }
 
+    // Send client's cwd to server (pre-MCP handshake)
+    win_send_init_cwd(pipe_handle);
+
     // Proxy loop: stdin <-> Named Pipe <-> stdout
     char buf[BUFFER_SIZE];
     int64_t our_stdin = GetStdHandle(kNtStdInputHandle);
@@ -461,9 +494,9 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
     // Cleanup
     CloseHandle(pipe_handle);
 
-    // Only terminate server if we started it
+    // Don't terminate server - it supports multiple clients and has graceful shutdown
+    // Server will auto-shutdown when all clients disconnect (idle timeout)
     if (we_started_server) {
-        TerminateProcess(pi.hProcess, 0);
         CloseHandle(pi.hProcess);
     }
 

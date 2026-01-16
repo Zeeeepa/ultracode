@@ -62,6 +62,11 @@ export interface Transport {
 }
 
 /**
+ * Prefix for init message containing client's working directory
+ */
+export const INIT_MESSAGE_PREFIX = "ULTRASCRIPT_CWD:";
+
+/**
  * Pipe-based transport for a single client connection
  */
 export class PipeClientTransport implements Transport {
@@ -73,6 +78,78 @@ export class PipeClientTransport implements Transport {
   onclose?: () => void;
 
   constructor(private socket: Socket) {}
+
+  /**
+   * Read the init message (ULTRASCRIPT_CWD:path) before MCP handshake.
+   * Must be called BEFORE start() to intercept the init message.
+   * Returns the client's working directory if sent, undefined otherwise.
+   *
+   * @param timeoutMs - Timeout in milliseconds (default 2000)
+   */
+  async readInitMessage(timeoutMs = 2000): Promise<string | undefined> {
+    if (this.started) {
+      throw new Error("readInitMessage must be called before start()");
+    }
+
+    // eslint-disable-next-line no-console
+    console.error(`[pipe-transport] readInitMessage started, timeout=${timeoutMs}ms`);
+
+    return new Promise<string | undefined>((resolve) => {
+      let resolved = false;
+
+      const cleanup = (timer: NodeJS.Timeout) => {
+        clearTimeout(timer);
+        this.socket.removeListener("data", dataHandler);
+      };
+
+      const doResolve = (value: string | undefined, timer: NodeJS.Timeout) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup(timer);
+        resolve(value);
+      };
+
+      // Set up temporary data handler for init message
+      const dataHandler = (chunk: Buffer | string) => {
+        this.readBuffer.append(chunk);
+
+        // Try to read first line
+        const newlineIndex = (this.readBuffer as any).buffer.indexOf("\n");
+        if (newlineIndex === -1) {
+          return; // Wait for more data
+        }
+
+        const firstLine = (this.readBuffer as any).buffer.slice(0, newlineIndex);
+        const remaining = (this.readBuffer as any).buffer.slice(newlineIndex + 1);
+
+        // Check if this is an init message
+        if (firstLine.startsWith(INIT_MESSAGE_PREFIX)) {
+          const clientCwd = firstLine.slice(INIT_MESSAGE_PREFIX.length).trim();
+          // eslint-disable-next-line no-console
+          console.error(`[pipe-transport] Got init message, cwd=${clientCwd}, remaining=${remaining.length} bytes`);
+
+          // Keep remaining data in buffer for MCP protocol
+          (this.readBuffer as any).buffer = remaining;
+
+          doResolve(clientCwd || undefined, timer);
+        } else {
+          // Not an init message - leave data in buffer for MCP
+          // eslint-disable-next-line no-console
+          console.error(`[pipe-transport] First line is not init message: ${firstLine.slice(0, 50)}...`);
+          doResolve(undefined, timer);
+        }
+      };
+
+      this.socket.on("data", dataHandler);
+
+      // Timeout - proceed without init message
+      const timer = setTimeout(() => {
+        // eslint-disable-next-line no-console
+        console.error(`[pipe-transport] readInitMessage timeout after ${timeoutMs}ms`);
+        doResolve(undefined, timer);
+      }, timeoutMs);
+    });
+  }
 
   async start(): Promise<void> {
     if (this.started) {
@@ -93,6 +170,10 @@ export class PipeClientTransport implements Transport {
       this.readBuffer.clear();
       this.onclose?.();
     });
+
+    // Process any data already in buffer from readInitMessage()
+    // This handles case where MCP request arrived with init message
+    this.processReadBuffer();
   }
 
   private processReadBuffer(): void {
