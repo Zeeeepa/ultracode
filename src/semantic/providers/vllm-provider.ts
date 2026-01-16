@@ -1,4 +1,5 @@
 import { toError } from "../../utils/error-handling.js";
+import { stringify } from "../../utils/fast-json.js";
 import { sleep } from "../../utils/runtime.js";
 import type {
   EmbeddingProvider,
@@ -214,7 +215,7 @@ export class VLLMProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: stringify.vllmEmbedding({
           model: this.info.model,
           input: text,
         }),
@@ -303,7 +304,7 @@ export class VLLMProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: stringify.vllmEmbedding({
           model: this.info.model,
           input: texts,
         }),
@@ -372,7 +373,7 @@ export class VLLMProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/v1/rerank`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: stringify.vllmRerank({
           model: this.info.model,
           query,
           documents: documents.map((d) => d.text),
@@ -434,7 +435,7 @@ export class VLLMProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/v1/score`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: stringify.vllmScore({
           model: this.info.model,
           text_1: query,
           text_2: documents,

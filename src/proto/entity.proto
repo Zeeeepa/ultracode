@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package ultrascript;
+
+// Location position (line, column, index)
+message Position {
+  int32 line = 1;
+  int32 column = 2;
+  int32 index = 3;
+}
+
+// Entity location in source file
+message Location {
+  Position start = 1;
+  Position end = 2;
+}
+
+// Parameter definition
+message Parameter {
+  string name = 1;
+  optional string type = 2;
+  optional bool optional = 3;
+  optional string default_value = 4;
+}
+
+// Import specifier
+message ImportSpecifier {
+  string local = 1;
+  optional string imported = 2;
+}
+
+// Import data
+message ImportData {
+  string source = 1;
+  repeated ImportSpecifier specifiers = 2;
+  optional bool is_default = 3;
+  optional bool is_namespace = 4;
+}
+
+// Decorator definition
+message Decorator {
+  string name = 1;
+  repeated string arguments = 2;
+  optional bool is_builtin = 3;
+}
+
+// Entity metadata (flexible structure)
+message EntityMetadata {
+  repeated string modifiers = 1;
+  optional string return_type = 2;
+  repeated Parameter parameters = 3;
+  optional ImportData import_data = 4;
+  optional string signature = 5;
+  optional string language = 6;
+  repeated Decorator decorators = 7;
+  // For arbitrary key-value pairs, use a map
+  map<string, string> extra = 8;
+}
+
+// Core Entity
+message Entity {
+  string id = 1;
+  string name = 2;
+  string type = 3;  // EntityType enum as string
+  string file_path = 4;
+  Location location = 5;
+  EntityMetadata metadata = 6;
+  string hash = 7;
+  int64 created_at = 8;
+  int64 updated_at = 9;
+
+  // Optional fields
+  optional float complexity_score = 10;
+  optional string language = 11;
+  optional int32 size_bytes = 12;
+
+  // Embedding fields
+  optional bytes embedding = 13;  // Base64 decoded to bytes
+  optional string embedding_text = 14;
+}
+
+// Relationship metadata
+message RelationshipMetadata {
+  optional int32 line = 1;
+  optional int32 column = 2;
+  optional string context = 3;
+  map<string, string> extra = 4;
+}
+
+// Relationship between entities
+message Relationship {
+  string id = 1;
+  string from_id = 2;
+  string to_id = 3;
+  string type = 4;  // RelationType enum as string
+  optional RelationshipMetadata metadata = 5;
+  optional float weight = 6;
+  optional int64 created_at = 7;
+}
+
+// Batch containers for efficient storage
+message EntityBatch {
+  repeated Entity entities = 1;
+}
+
+message RelationshipBatch {
+  repeated Relationship relationships = 1;
+}

@@ -495,75 +495,97 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     let totalRelationships = 0;
     let filesProcessed = 0;
 
-    // Configure embedding generation in parser workers (lightweight HTTP client)
+    // Set pool mode based on indexing type:
+    // - Incremental: universal pool (keepalive, fast for small changes)
+    // - Full reindex: per-language pools (memory cleanup after each language)
+    if (this.parserAgent) {
+      const poolMode = isIncremental ? "universal" : "per-language";
+      await this.parserAgent.setPoolMode(poolMode);
+      log.i("DEVAGENT", "Pool mode configured", { mode: poolMode, isIncremental });
+    }
+
+    // Configure embedding generation FIRST (before pre-spawn so workers get the config)
+    let preSpawnPromise: Promise<void> | null = null;
     if (this.parserAgent) {
       const embeddingConfig = buildWorkerEmbeddingConfig();
       if (embeddingConfig) {
-        // IMPORTANT: Start llama-server BEFORE workers begin generating embeddings
-        // Workers use HTTP client directly, server must be ready first
-        if (embeddingConfig.provider === "llamacpp") {
-          const { llamacppEmbeddingManager } = await import("../semantic/llamacpp-server-manager.js");
-          const { loadSemanticConfig, getDataDir } = await import("../utils/config-paths.js");
-          const { existsSync, readdirSync } = await import("node:fs");
-          const { join } = await import("node:path");
-
-          const semanticConfig = loadSemanticConfig();
-          const llamacppConfig = semanticConfig?.embedding?.llamacpp;
-
-          if (llamacppConfig && !llamacppEmbeddingManager.getState().isRunning) {
-            // Find GGUF model in standard locations
-            const dataDir = getDataDir();
-            const searchPaths = [
-              join(dataDir, "hf-cache", "multilingual-e5-base-Q8_0.gguf"),
-              join(dataDir, "llamacpp", "models", "multilingual-e5-base-Q8_0.gguf"),
-              join(dataDir, "models", "multilingual-e5-base-Q8_0.gguf"),
-            ];
-
-            let modelPath: string | null = null;
-            for (const p of searchPaths) {
-              if (existsSync(p)) {
-                modelPath = p;
-                break;
-              }
-            }
-
-            // Fallback: find any .gguf in hf-cache
-            if (!modelPath) {
-              const hfCache = join(dataDir, "hf-cache");
-              if (existsSync(hfCache)) {
-                try {
-                  const files = readdirSync(hfCache);
-                  const gguf = files.find((f) => f.endsWith(".gguf"));
-                  if (gguf) modelPath = join(hfCache, gguf);
-                } catch {
-                  // Ignore
-                }
-              }
-            }
-
-            if (modelPath) {
-              log.i("DEVAGENT", "Starting llama-server for workers...", { port: 8085, model: modelPath });
-              const started = await llamacppEmbeddingManager.ensureRunning({
-                modelPath,
-                mode: "embedding",
-                port: 8085,
-                contextSize: llamacppConfig.context_size || 512,
-                nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
-              });
-              if (started) {
-                log.i("DEVAGENT", "llama-server ready for workers");
-              } else {
-                log.w("DEVAGENT", "llama-server start failed - embeddings may not work");
-              }
-            }
-          }
-        }
-
+        // Set embedding config BEFORE spawning workers so they get it during init
         this.parserAgent.setEmbeddingConfig(embeddingConfig);
-        log.i("DEVAGENT", "Embedding config passed to parser workers", {
+        log.i("DEVAGENT", "Embedding config passed to parser", {
           provider: embeddingConfig.provider,
           model: embeddingConfig.modelName,
         });
+
+        // For llamacpp: start server in background (parallel with worker spawn)
+        let llamacppStartPromise: Promise<void> | null = null;
+        if (embeddingConfig.provider === "llamacpp") {
+          llamacppStartPromise = (async () => {
+            const { llamacppEmbeddingManager } = await import("../semantic/llamacpp-server-manager.js");
+            const { loadSemanticConfig, getDataDir } = await import("../utils/config-paths.js");
+            const { existsSync, readdirSync } = await import("node:fs");
+            const { join } = await import("node:path");
+
+            const semanticConfig = loadSemanticConfig();
+            const llamacppConfig = semanticConfig?.embedding?.llamacpp;
+
+            if (llamacppConfig && !llamacppEmbeddingManager.getState().isRunning) {
+              const dataDir = getDataDir();
+              const searchPaths = [
+                join(dataDir, "hf-cache", "multilingual-e5-base-Q8_0.gguf"),
+                join(dataDir, "llamacpp", "models", "multilingual-e5-base-Q8_0.gguf"),
+                join(dataDir, "models", "multilingual-e5-base-Q8_0.gguf"),
+              ];
+
+              let modelPath: string | null = null;
+              for (const p of searchPaths) {
+                if (existsSync(p)) {
+                  modelPath = p;
+                  break;
+                }
+              }
+
+              if (!modelPath) {
+                const hfCache = join(dataDir, "hf-cache");
+                if (existsSync(hfCache)) {
+                  try {
+                    const files = readdirSync(hfCache);
+                    const gguf = files.find((f) => f.endsWith(".gguf"));
+                    if (gguf) modelPath = join(hfCache, gguf);
+                  } catch {
+                    // Ignore
+                  }
+                }
+              }
+
+              if (modelPath) {
+                log.i("DEVAGENT", "Starting llama-server for workers...", { port: 8085, model: modelPath });
+                const started = await llamacppEmbeddingManager.ensureRunning({
+                  modelPath,
+                  mode: "embedding",
+                  port: 8085,
+                  contextSize: llamacppConfig.context_size || 512,
+                  nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
+                });
+                if (started) {
+                  log.i("DEVAGENT", "llama-server ready for workers");
+                } else {
+                  log.w("DEVAGENT", "llama-server start failed - embeddings may not work");
+                }
+              }
+            }
+          })();
+        }
+
+        // PRE-SPAWN: Start worker pools with embedding config already set
+        // This runs in parallel with llamacpp server start (if applicable)
+        if (!isIncremental && codeFiles.length > 0) {
+          preSpawnPromise = this.parserAgent.preSpawnPools(codeFiles);
+        }
+
+        // Wait for llamacpp server if needed (workers need it before generating embeddings)
+        if (llamacppStartPromise) {
+          await llamacppStartPromise;
+        }
 
         // Configure vector provider for embedding accumulator
         // v6: Get provider directly from singleton (LayeredFaissProvider or FaissProvider)
@@ -694,6 +716,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         this.indexerAgent!.queueForIndexing(result.entities, result.filePath, result.relationships || []);
       });
       log.i("DEVAGENT", "Streaming mode enabled (batch accumulator)");
+    }
+
+    // Wait for pre-spawned workers to be ready before parsing
+    if (preSpawnPromise) {
+      await preSpawnPromise;
     }
 
     // Process CODE files through ParserAgent (AST parsing with worker pools)

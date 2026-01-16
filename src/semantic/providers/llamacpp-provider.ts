@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getDataDir } from "../../utils/config-paths.js";
 import { toError } from "../../utils/error-handling.js";
+import { stringify } from "../../utils/fast-json.js";
 import { sleep } from "../../utils/runtime.js";
 import { LLAMACPP_EMBEDDING_PORT, llamacppEmbeddingManager } from "../llamacpp-server-manager.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
@@ -252,7 +253,7 @@ export class LlamaCppProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: stringify.vllmEmbedding({
           model: this.info.model,
           input: text,
         }),
@@ -342,7 +343,7 @@ export class LlamaCppProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: stringify.vllmEmbedding({
           model: this.info.model,
           input: texts,
         }),

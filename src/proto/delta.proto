@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package ultrascript;
+
+import "entity.proto";
+
+// Entity delta for branch layering
+message EntityDelta {
+  // Map: id -> Entity for added/modified
+  map<string, Entity> added = 1;
+  map<string, Entity> modified = 2;
+  // Set of deleted IDs
+  repeated string deleted = 3;
+}
+
+// Relationship delta for branch layering
+message RelationshipDelta {
+  map<string, Relationship> added = 1;
+  map<string, Relationship> modified = 2;
+  repeated string deleted = 3;
+}
+
+// Full branch delta
+message BranchDelta {
+  string branch_name = 1;
+  string base_commit_sha = 2;
+  EntityDelta entity_delta = 3;
+  RelationshipDelta relationship_delta = 4;
+  int64 last_modified = 5;
+  int32 total_changes = 6;
+}
+
+// Vector delta for embeddings
+message VectorDelta {
+  repeated string added_ids = 1;
+  repeated string modified_ids = 2;
+  repeated string deleted_ids = 3;
+}
+
+// File change tracking
+message FileUpdate {
+  string type = 1;  // added, modified, deleted
+  string path = 2;
+  int64 timestamp = 3;
+}
+
+// Git file change
+message GitFileChange {
+  string path = 1;
+  string status = 2;  // A, M, D, R
+  optional string old_path = 3;
+  optional int32 additions = 4;
+  optional int32 deletions = 5;
+}
+
+// Git diff result
+message GitDiffResult {
+  repeated GitFileChange changed_files = 1;
+  string from_branch = 2;
+  string to_branch = 3;
+  optional string merge_base_sha = 4;
+}

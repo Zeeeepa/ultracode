@@ -162,7 +162,7 @@ export class ParserAgent extends BaseAgent {
   private keepPoolsAlive: boolean = true; // Keep pool alive for incremental parsing (restart on 500MB)
   private embeddingConfig: WorkerEmbeddingConfig | null = null; // Embedding config for workers
   private embeddingAccumulator: EmbeddingAccumulator | null = null; // Accumulator for batch FAISS flush
-  private streamingMode: boolean = false; // Streaming mode: send results as they become ready
+  private streamingMode: boolean = true; // Streaming mode: send results as they become ready (always enabled for performance)
   private onStreamingResult: StreamingResultCallback | null = null; // Callback for streaming results
 
   constructor(knowledgeBus?: EventEmitter) {
@@ -693,40 +693,107 @@ export class ParserAgent extends BaseAgent {
   }
 
   /**
-   * Initialize subprocess worker pools (lazy - enabled but not created yet)
+   * Initialize subprocess worker pools (lazy - pools created on first use)
    *
-   * Optimization: Pools are created on-demand only for languages that are actually used.
-   * This saves ~3-5 seconds of initialization overhead for small projects.
+   * Optimization: Pools are created on-demand when actually needed.
+   * This avoids creating pools that get immediately destroyed when mode changes.
    */
   private async initializeWorkerPool(): Promise<void> {
+    // Don't create pools eagerly - they will be created lazily on first use
+    // This avoids waste when setPoolMode() changes the mode before first parse
+    log.i("PARSER", "Worker pools ready (lazy initialization)", {
+      mode: this.useUniversalPool ? "universal" : "per-language",
+    });
+  }
+
+  /**
+   * Pre-spawn worker pools for known file types.
+   * Call this early (after collectFiles) to start workers in parallel with other initialization.
+   * Returns a Promise that resolves when all pools are spawned and ready.
+   *
+   * This saves ~300-400ms by overlapping worker spawn with embedding/storage init.
+   */
+  async preSpawnPools(files: string[]): Promise<void> {
+    // Skip if using universal pool (incremental mode)
     if (this.useUniversalPool) {
-      // Create single universal pool for all languages (incremental mode)
+      log.d("PARSER", "preSpawnPools skipped (universal pool mode)");
+      return;
+    }
+
+    const startTime = performance.now();
+    const languageGroups = groupFilesByLanguage(files);
+    const languages = Array.from(languageGroups.keys());
+
+    if (languages.length === 0) {
+      return;
+    }
+
+    log.i("PARSER", "preSpawnPools starting", {
+      languages: languages.join(","),
+      fileCounts: languages.map((l) => `${l}:${languageGroups.get(l)?.length ?? 0}`).join(","),
+    });
+
+    // Create all pools in parallel
+    const poolPromises = languages.map(async (language) => {
+      const fileCount = languageGroups.get(language)?.length ?? 0;
       try {
-        log.i("PARSER", "Creating universal subprocess pool for incremental parsing");
-
-        this.universalPool = new ParsingSubprocessPool("universal", {
-          poolSize: 1, // Single worker for incremental mode
-          keepaliveMode: true, // Keep worker alive between tasks
-          keepaliveMemoryLimitMB: 500, // Restart worker when memory exceeds 500MB
-          memoryLimitMB: 500, // Memory limit for restart
-          killAfterBatch: false, // Don't kill after batch - keep alive
-          ...(this.embeddingConfig && { embeddingConfig: this.embeddingConfig }),
-          onEmbeddings: this.getEmbeddingsCallback(),
-          onEmbeddingTexts: this.getEmbeddingTextsCallback(),
-          streamingMode: this.streamingMode,
-          ...(this.onStreamingResult && { onStreamingResult: this.onStreamingResult }),
-        });
-
-        await this.universalPool.initialize();
-        const stats = this.universalPool.getStats();
-        log.i("PARSER", "Universal pool ready", { workers: stats.totalWorkers });
+        const pool = await this.getOrCreateLanguagePool(language);
+        return { language, fileCount, success: !!pool };
       } catch (error) {
-        log.w("PARSER", "Failed to create universal pool", { error: (error as Error).message });
-        this.universalPool = null;
-        this.useUniversalPool = false; // Fallback to per-language pools
+        log.w("PARSER", `preSpawnPools failed for ${language}`, {
+          error: (error as Error).message,
+        });
+        return { language, fileCount, success: false };
       }
-    } else {
-      log.i("PARSER", "Subprocess worker pools enabled (lazy initialization mode)");
+    });
+
+    const results = await Promise.all(poolPromises);
+    const elapsed = Math.round(performance.now() - startTime);
+
+    const successCount = results.filter((r) => r.success).length;
+    log.i("PARSER", "preSpawnPools complete", {
+      elapsed: `${elapsed}ms`,
+      poolsCreated: successCount,
+      poolsFailed: results.length - successCount,
+    });
+  }
+
+  /**
+   * Lazily create universal pool on first use
+   */
+  private async ensureUniversalPool(): Promise<WorkerPool | null> {
+    if (this.universalPool) {
+      return this.universalPool;
+    }
+
+    try {
+      log.i("PARSER", "Creating universal subprocess pool (lazy)");
+
+      this.universalPool = new ParsingSubprocessPool("universal", {
+        poolSize: 1, // Single worker for incremental mode
+        keepaliveMode: true, // Keep worker alive between tasks
+        keepaliveMemoryLimitMB: 500, // Restart worker when memory exceeds 500MB
+        memoryLimitMB: 500, // Memory limit for restart
+        killAfterBatch: false, // Don't kill after batch - keep alive
+        ...(this.embeddingConfig && { embeddingConfig: this.embeddingConfig }),
+        onEmbeddings: this.getEmbeddingsCallback(),
+        onEmbeddingTexts: this.getEmbeddingTextsCallback(),
+        streamingMode: this.streamingMode,
+        // Wrapper callback - always present, delegates to current this.onStreamingResult
+        onStreamingResult: (result, taskId, fileIndex, totalFiles) => {
+          this.onStreamingResult?.(result, taskId, fileIndex, totalFiles);
+        },
+      });
+
+      await this.universalPool.initialize();
+      const stats = this.universalPool.getStats();
+      log.i("PARSER", "Universal pool ready", { workers: stats.totalWorkers });
+      return this.universalPool;
+    } catch (error) {
+      log.w("PARSER", "Failed to create universal pool", { error: (error as Error).message });
+      this.universalPool = null;
+      this.useUniversalPool = false; // Fallback to per-language pools
+      return null;
     }
   }
 
@@ -764,7 +831,10 @@ export class ParserAgent extends BaseAgent {
         onEmbeddings: this.getEmbeddingsCallback(), // Binary embeddings callback (distributed mode)
         onEmbeddingTexts: this.getEmbeddingTextsCallback(), // Texts callback (centralized mode for OVMS)
         streamingMode: this.streamingMode, // Streaming results via IPC
-        ...(this.onStreamingResult && { onStreamingResult: this.onStreamingResult }), // Streaming callback
+        // Wrapper callback - delegates to current this.onStreamingResult
+        onStreamingResult: (result, taskId, fileIndex, totalFiles) => {
+          this.onStreamingResult?.(result, taskId, fileIndex, totalFiles);
+        },
       });
 
       await pool.initialize();
@@ -788,7 +858,7 @@ export class ParserAgent extends BaseAgent {
    * In per-language mode: pools are created lazily on-demand for each language.
    */
   private async parseWithWorkers(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
-    // DEBUG: Log pool state to diagnose why universal pool might not be used
+    // DEBUG: Log pool state
     log.i("PARSER", "parseWithWorkers state", {
       useUniversalPool: this.useUniversalPool,
       hasUniversalPool: !!this.universalPool,
@@ -796,24 +866,28 @@ export class ParserAgent extends BaseAgent {
       files: files.length,
     });
 
-    // Universal pool mode: send all files to single pool
-    if (this.useUniversalPool && this.universalPool) {
-      log.i("PARSER", "Using universal pool", { files: files.length });
+    // Universal pool mode: create lazily and send all files to single pool
+    if (this.useUniversalPool) {
+      const pool = await this.ensureUniversalPool();
+      if (pool) {
+        log.i("PARSER", "Using universal pool", { files: files.length });
 
-      const results = await this.universalPool.submitTask(files, options);
+        const results = await pool.submitTask(files, options);
 
-      const stats = this.universalPool.getStats();
-      log.d("PARSER", "Universal pool stats", {
-        activeWorkers: stats.activeWorkers,
-        totalWorkers: stats.totalWorkers,
-        completedTasks: stats.completedTasks,
-        avgProcessingTimeMs: Math.round(stats.avgProcessingTime),
-      });
+        const stats = pool.getStats();
+        log.d("PARSER", "Universal pool stats", {
+          activeWorkers: stats.activeWorkers,
+          totalWorkers: stats.totalWorkers,
+          completedTasks: stats.completedTasks,
+          avgProcessingTimeMs: Math.round(stats.avgProcessingTime),
+        });
 
-      return results;
+        return results;
+      }
+      // If pool creation failed, fall through to per-language mode
     }
 
-    // Fallback: per-language pools
+    // Per-language pools mode
     // Step 1: Group files by programming language
     const languageGroups = groupFilesByLanguage(files);
 
@@ -1008,6 +1082,48 @@ export class ParserAgent extends BaseAgent {
     } else {
       log.i("PARSER", "Streaming mode disabled");
     }
+  }
+
+  /**
+   * Set pool mode for parsing.
+   *
+   * - 'universal': Single pool handles all languages (good for incremental indexing)
+   * - 'per-language': Separate pool per language, killed after batch (good for full reindex)
+   *
+   * Automatically selected based on indexing type:
+   * - Incremental indexing → universal (keepalive, fast for small changes)
+   * - Full reindex → per-language (memory cleanup after each language batch)
+   *
+   * @param mode Pool mode to use
+   */
+  async setPoolMode(mode: "universal" | "per-language"): Promise<void> {
+    const newUseUniversal = mode === "universal";
+
+    if (this.useUniversalPool === newUseUniversal) {
+      log.d("PARSER", "Pool mode unchanged", { mode });
+      return;
+    }
+
+    log.i("PARSER", "Switching pool mode", { from: this.useUniversalPool ? "universal" : "per-language", to: mode });
+
+    // If switching from universal to per-language, shutdown existing universal pool
+    if (this.useUniversalPool && !newUseUniversal && this.universalPool) {
+      log.d("PARSER", "Shutting down universal pool for per-language mode");
+      await this.universalPool.shutdown();
+      this.universalPool = null;
+    }
+
+    // If switching from per-language to universal, shutdown existing language pools
+    if (!this.useUniversalPool && newUseUniversal && this.languagePools.size > 0) {
+      log.d("PARSER", "Shutting down language pools for universal mode");
+      for (const [lang, pool] of this.languagePools) {
+        await pool.shutdown();
+        log.d("PARSER", `Shut down ${lang} pool`);
+      }
+      this.languagePools.clear();
+    }
+
+    this.useUniversalPool = newUseUniversal;
   }
 
   /**

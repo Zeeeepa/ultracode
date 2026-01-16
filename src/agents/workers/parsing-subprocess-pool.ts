@@ -568,16 +568,20 @@ export class ParsingSubprocessPool {
 
   /**
    * Calculate optimal worker count based on file count
-   * Dynamic scaling: more files → more workers (up to 6)
+   * Dynamic scaling: more files → more workers (up to 8)
+   * Optimized thresholds for faster parallelization
    */
   private getOptimalWorkerCount(fileCount: number): number {
-    const maxWorkers = 6; // Cap at 6 to avoid overwhelming system
+    const maxWorkers = 8; // Increased from 6 to 8 for better parallelization
 
-    if (fileCount < 20) return 1;
-    if (fileCount < 50) return 2;
-    if (fileCount < 100) return 3;
-    if (fileCount < 200) return 4;
-    if (fileCount < 400) return 5;
+    // More aggressive scaling - start parallel earlier
+    if (fileCount < 10) return 1;
+    if (fileCount < 30) return 2;
+    if (fileCount < 60) return 3;
+    if (fileCount < 100) return 4;
+    if (fileCount < 150) return 5;
+    if (fileCount < 250) return 6;
+    if (fileCount < 400) return 7;
     return maxWorkers;
   }
 
@@ -662,19 +666,87 @@ export class ParsingSubprocessPool {
   }
 
   /**
+   * Estimate file parsing complexity based on filename patterns.
+   * Returns a multiplier (0.0 - 1.5) to adjust file size for load balancing.
+   *
+   * Heuristics:
+   * - .d.ts files: type declarations only → 0.3x
+   * - index.ts/js: usually just exports → 0.4x
+   * - test/spec/mock files: simpler structure → 0.6x
+   * - generated/schema files: auto-generated → 0.5x
+   * - config files: simple structure → 0.4x
+   * - Regular source: 1.0x (baseline)
+   */
+  private estimateComplexity(filePath: string): number {
+    const lowerPath = filePath.toLowerCase();
+    const fileName = lowerPath.split(/[/\\]/).pop() || "";
+
+    // Type declaration files - very simple to parse
+    if (fileName.endsWith(".d.ts")) {
+      return 0.3;
+    }
+
+    // Index files - usually just re-exports
+    if (fileName === "index.ts" || fileName === "index.js" || fileName === "index.tsx" || fileName === "index.jsx") {
+      return 0.4;
+    }
+
+    // Config files - simple structure
+    if (
+      fileName.includes("config") ||
+      fileName.includes(".config.") ||
+      fileName === "tsconfig.json" ||
+      fileName === "package.json"
+    ) {
+      return 0.4;
+    }
+
+    // Test/spec/mock files - typically simpler
+    if (
+      fileName.includes(".test.") ||
+      fileName.includes(".spec.") ||
+      fileName.includes(".mock.") ||
+      fileName.includes("__test__") ||
+      fileName.includes("__mock__") ||
+      lowerPath.includes("/test/") ||
+      lowerPath.includes("/tests/") ||
+      lowerPath.includes("/__tests__/")
+    ) {
+      return 0.6;
+    }
+
+    // Generated/schema files - auto-generated, repetitive
+    if (
+      fileName.includes(".generated.") ||
+      fileName.includes(".schema.") ||
+      fileName.includes(".types.") ||
+      lowerPath.includes("/generated/") ||
+      lowerPath.includes("/proto/")
+    ) {
+      return 0.5;
+    }
+
+    // Regular source files - baseline complexity
+    return 1.0;
+  }
+
+  /**
    * Streaming load balancer: processes files in batches for low latency.
    *
-   * Algorithm (Batched Streaming Greedy):
+   * Algorithm (Batched Streaming Greedy with Complexity):
    * 1. Process files in small batches (STAT_BATCH_SIZE)
-   * 2. For each batch: parallel stat → sort by size → greedy assign
+   * 2. For each batch: parallel stat → estimate complexity → sort by weighted size → greedy assign
    * 3. Workers start receiving files after first batch (~30ms)
+   *
+   * Complexity heuristics adjust file "weight" based on filename patterns:
+   * - .d.ts, index.ts, config files: lower weight (faster to parse)
+   * - test/spec files: lower weight (simpler structure)
+   * - Regular source: baseline weight
    *
    * Benefits:
    * - Low latency: parsing starts after first batch, not after all files
-   * - Good balance: greedy considers real-time worker loads
+   * - Better balance: considers both size AND estimated complexity
    * - Fast stat: parallel within each batch
-   *
-   * Trade-off: Slightly less optimal than full sort, but much lower latency.
    */
   private async distributeFilesBySizeAsync(files: string[], workerCount: number): Promise<string[][]> {
     if (workerCount <= 1 || files.length <= workerCount) {
@@ -683,19 +755,19 @@ export class ParsingSubprocessPool {
 
     const STAT_BATCH_SIZE = 30; // stat 30 files at a time (parallel)
     const chunks: string[][] = Array.from({ length: workerCount }, () => []);
-    const chunkSizes: number[] = Array(workerCount).fill(0);
+    const chunkWeights: number[] = Array(workerCount).fill(0); // weighted sizes
 
     const startTime = Date.now();
     let totalStatTime = 0;
     let batchCount = 0;
 
-    // Helper: find worker with minimum load
+    // Helper: find worker with minimum weighted load
     const findMinWorker = (): number => {
       let minIdx = 0;
-      let minSize = chunkSizes[0] ?? 0;
+      let minWeight = chunkWeights[0] ?? 0;
       for (let i = 1; i < workerCount; i++) {
-        if ((chunkSizes[i] ?? 0) < minSize) {
-          minSize = chunkSizes[i] ?? 0;
+        if ((chunkWeights[i] ?? 0) < minWeight) {
+          minWeight = chunkWeights[i] ?? 0;
           minIdx = i;
         }
       }
@@ -709,26 +781,28 @@ export class ParsingSubprocessPool {
 
       // Parallel stat for this batch
       const statStart = Date.now();
-      const sizedBatch = await Promise.all(
+      const weightedBatch = await Promise.all(
         batch.map(async (file) => {
           try {
             const s = await stat(file);
-            return { file, size: s.size };
+            const complexity = this.estimateComplexity(file);
+            const weight = Math.round(s.size * complexity);
+            return { file, size: s.size, complexity, weight };
           } catch {
-            return { file, size: 0 };
+            return { file, size: 0, complexity: 1.0, weight: 0 };
           }
         }),
       );
       totalStatTime += Date.now() - statStart;
 
-      // Sort batch by size descending (local optimization)
-      sizedBatch.sort((a, b) => b.size - a.size);
+      // Sort batch by weighted size descending (local optimization)
+      weightedBatch.sort((a, b) => b.weight - a.weight);
 
-      // Greedy assign: each file goes to worker with current minimum load
-      for (const { file, size } of sizedBatch) {
+      // Greedy assign: each file goes to worker with current minimum weighted load
+      for (const { file, weight } of weightedBatch) {
         const minIdx = findMinWorker();
         chunks[minIdx]!.push(file);
-        chunkSizes[minIdx] = (chunkSizes[minIdx] ?? 0) + size;
+        chunkWeights[minIdx] = (chunkWeights[minIdx] ?? 0) + weight;
       }
     }
 
@@ -736,11 +810,11 @@ export class ParsingSubprocessPool {
 
     // Log distribution stats
     const nonEmptyChunks = chunks.filter((c) => c.length > 0);
-    const totalSize = chunkSizes.reduce((a, b) => a + b, 0);
-    const avgSize = nonEmptyChunks.length > 0 ? totalSize / nonEmptyChunks.length : 0;
-    const maxDeviation = avgSize > 0 ? Math.max(...chunkSizes.map((s) => Math.abs(s - avgSize))) : 0;
+    const totalWeight = chunkWeights.reduce((a, b) => a + b, 0);
+    const avgWeight = nonEmptyChunks.length > 0 ? totalWeight / nonEmptyChunks.length : 0;
+    const maxDeviation = avgWeight > 0 ? Math.max(...chunkWeights.map((w) => Math.abs(w - avgWeight))) : 0;
 
-    log.i("SUBPROCESS", `Streaming file distribution`, {
+    log.i("SUBPROCESS", `Streaming file distribution (complexity-aware)`, {
       language: this.language,
       workers: workerCount,
       files: files.length,
@@ -748,8 +822,8 @@ export class ParsingSubprocessPool {
       batchSize: STAT_BATCH_SIZE,
       chunksUsed: nonEmptyChunks.length,
       fileCounts: nonEmptyChunks.map((c) => c.length).join(","),
-      chunkSizesKB: chunkSizes.map((s) => Math.round(s / 1024)).join(","),
-      balanceDeviation: avgSize > 0 ? `${Math.round((maxDeviation / avgSize) * 100)}%` : "0%",
+      chunkWeightsKB: chunkWeights.map((w) => Math.round(w / 1024)).join(","),
+      balanceDeviation: avgWeight > 0 ? `${Math.round((maxDeviation / avgWeight) * 100)}%` : "0%",
       statTimeMs: totalStatTime,
       totalTimeMs: totalTime,
     });

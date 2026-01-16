@@ -138,6 +138,8 @@ import { knowledgeBus } from "./core/knowledge-bus.js";
 // Make knowledgeBus available globally for tool handlers
 (global as GlobalWithKnowledgeBus).knowledgeBus = knowledgeBus;
 
+// v5: Per-client session isolation for multi-client support
+import { ClientSession, registerSession, unregisterSession } from "./core/client-session.js";
 import { PipeServer } from "./core/pipe-transport.js";
 import { resourceManager } from "./core/resource-manager.js";
 // LayeredIndexManager for branch-aware indexing
@@ -179,6 +181,7 @@ import {
   writeToLogFile,
 } from "./core/startup-utils.js";
 import { log } from "./logging/index.js";
+import { startEmbeddingWarmup } from "./semantic/embedding-warmup.js";
 import type { Agent } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
 import { AgentBusyError } from "./types/errors.js";
@@ -396,6 +399,13 @@ const semanticProvider = semanticConfig?.embedding?.platform;
 const yamlProvider = config.mcp.embedding?.provider;
 const actualProvider = semanticProvider || yamlProvider || "auto";
 
+// EARLY WARMUP: Start embedding provider initialization in background
+// This overlaps with storage init, agent registration, etc. - saves ~500ms
+const embeddingWarmupPromise = startEmbeddingWarmup(semanticConfig, config);
+embeddingWarmupPromise.catch((err) => {
+  log.w("WARMUP", "Background warmup failed (will retry later)", { err: (err as Error).message });
+});
+
 // Start resource monitoring (disabled in pipe mode - Bun compatibility)
 if (!pipeServerMode) {
   resourceManager.startMonitoring();
@@ -518,8 +528,15 @@ async function getIndexerAgent(): Promise<IndexerAgent> {
 
 // GraphStorage singleton is now managed by graph-storage-factory.ts
 
-// Function to create MCP server with handlers (supports multiple clients in pipe mode)
-function createMcpServer(): Server {
+/**
+ * v5: Create MCP server with optional session binding.
+ *
+ * In pipe mode, each client gets its own Server instance with a bound ClientSession.
+ * This provides complete isolation between clients working on different projects.
+ *
+ * @param session - Optional ClientSession for per-client isolation (pipe mode)
+ */
+function createMcpServer(session?: ClientSession): Server {
   const srv = new Server(
     {
       name: versionInfo.name,
@@ -587,15 +604,22 @@ function createMcpServer(): Server {
     return { tools: getToolsList() };
   });
 
-  // Handler for tool execution
+  // v5: Handler for tool execution with session binding
   srv.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const requestId = createRequestId();
     const startTime = Date.now();
 
-    log.i("MCP", "request", { tool: name, req: requestId });
+    // Log with session info for debugging
+    log.i("MCP", "request", {
+      tool: name,
+      req: requestId,
+      sid: session?.sessionId,
+      proj: session?.projectPath,
+    });
 
-    return executeToolCall(name, args, requestId, startTime);
+    // v5: Pass session to executeToolCall for per-client isolation
+    return executeToolCall(name, args, requestId, startTime, session);
   });
 
   return srv;
@@ -631,7 +655,22 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, re
   }
 }
 
-async function executeToolCall(name: string, args: unknown, requestId: string, _startTime: number) {
+/**
+ * v5: Execute tool call with session-aware context.
+ *
+ * @param name - Tool name
+ * @param args - Tool arguments
+ * @param requestId - Request ID for logging
+ * @param _startTime - Start time for metrics
+ * @param session - Optional ClientSession for per-client isolation (pipe mode)
+ */
+async function executeToolCall(
+  name: string,
+  args: unknown,
+  requestId: string,
+  _startTime: number,
+  session?: ClientSession,
+) {
   // Check if indexing is in progress for the CURRENT project only
   // Other projects are NOT blocked (fix for cross-project blocking bug)
   const allowedDuringIndexing = new Set([
@@ -646,9 +685,10 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
     "get_graph_health",
   ]);
 
-  // Get target directory from args (if specified) or use current directory
+  // v5: Get target directory from session (if available), args, or fallback to global
   const argsObj = args as Record<string, unknown>;
-  const targetDir = (argsObj?.["directory"] as string) || directory;
+  const targetDir =
+    session?.resolvePath(argsObj?.["directory"] as string) ?? (argsObj?.["directory"] as string) ?? directory;
 
   // Only block if THIS SPECIFIC project is being indexed
   if (isProjectIndexing(targetDir) && !allowedDuringIndexing.has(name)) {
@@ -691,9 +731,20 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
     // All tools handled by ToolRegistry (O(1) lookup, cleaner architecture)
     // Handlers are in src/tools/handlers/*-tool-handlers.ts
     // ==========================================================================
+
+    // v5: Determine project path from session or fallback to global
+    const projectPath = session?.projectPath ?? targetDir;
+
+    // v5: Mark activity for idle tracking (both session and conductor)
+    session?.markActivity();
+    getConductor().markActivity();
+
     const toolContext: ToolContext = {
       requestId,
       config,
+      // v5: Session-aware context
+      session,
+      projectPath,
       getConductor,
       getGraphStorage,
       getSQLiteManager: () => null, // Legacy - now using libsql via getGraphStorage()
@@ -766,19 +817,8 @@ async function executeToolCall(name: string, args: unknown, requestId: string, _
   }
 }
 
-// Handler for tool execution
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  const requestId = createRequestId();
-  const startTime = Date.now();
-
-  // Mark activity to prevent idle mode during active requests
-  getConductor().markActivity();
-
-  log.i("MCP", "request", { tool: name, req: requestId });
-
-  return executeToolCall(name, args, requestId, startTime);
-});
+// v5: Handler removed - now defined inside createMcpServer() with session binding
+// The global 'server' instance uses createMcpServer() which sets up the handler
 
 async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
   for (const { parsed, raw } of requests) {
@@ -1066,15 +1106,39 @@ async function main() {
       // Cancel any pending shutdown
       cancelShutdown();
 
-      log.i("PIPE", "client_connected", { client: clientId, active: activeClients });
+      // v5: Create isolated session for this client
+      // The session ensures all operations are scoped to this client's project
+      const clientSession = new ClientSession({
+        projectPath: directory, // Initial project from server startup
+        clientId,
+      });
 
-      // Create new MCP Server for this client
-      const clientServer = createMcpServer();
+      // Register session for tracking
+      registerSession(clientSession);
+
+      log.i("PIPE", "client_connected", {
+        client: clientId,
+        active: activeClients,
+        sid: clientSession.sessionId,
+        proj: clientSession.projectPath,
+      });
+
+      // v5: Create MCP Server with session binding
+      // All tool calls through this server will use the client's isolated session
+      const clientServer = createMcpServer(clientSession);
 
       // Handle client disconnect
       clientTransport.onclose = () => {
         activeClients--;
-        log.i("PIPE", "client_disconnected", { client: clientId, active: activeClients });
+
+        // v5: Unregister session on disconnect
+        unregisterSession(clientSession.sessionId);
+
+        log.i("PIPE", "client_disconnected", {
+          client: clientId,
+          active: activeClients,
+          sid: clientSession.sessionId,
+        });
 
         // Schedule shutdown if no more clients
         if (activeClients === 0) {
@@ -1086,7 +1150,11 @@ async function main() {
       // Note: MCP SDK Server.connect() expects a specific transport type, cast required
       await clientServer.connect(clientTransport as unknown as Parameters<typeof clientServer.connect>[0]);
 
-      log.i("PIPE", "client_ready", { client: clientId, active: activeClients });
+      log.i("PIPE", "client_ready", {
+        client: clientId,
+        active: activeClients,
+        sid: clientSession.sessionId,
+      });
     });
 
     transportType = "pipe-multi";
