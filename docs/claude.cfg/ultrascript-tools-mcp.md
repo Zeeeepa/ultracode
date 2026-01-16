@@ -7,7 +7,7 @@ All 50 tools with parameters.
 ## Indexing & Search
 
 ### `index`
-Index codebase for analysis. **Run once before using other tools.**
+Manually trigger codebase indexing. **Indexing is automatic** — use this only for troubleshooting when search results seem incomplete or outdated.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -16,6 +16,8 @@ Index codebase for analysis. **Run once before using other tools.**
 | `reset` | boolean | false | Clear graph before indexing |
 | `excludePatterns` | string[] | node_modules, .git, dist... | Exclude patterns |
 | `fullScan` | boolean | false | Full scan without cache |
+
+> **Note**: If semantic search returns incomplete results, try `index reset=true` to rebuild the graph.
 
 ### `semantic_search`
 **Semantic search by meaning.** Understands natural language. Returns rich metadata including complexity metrics, control flow, calls, and documentation.
@@ -217,6 +219,8 @@ Validate directory.
 ---
 
 ## Code Modification
+
+> ⚡ **Automatic Validation**: All modification tools automatically run linting and error checking. Results (errors/warnings) are returned immediately in the response — no need to manually validate.
 
 ### `modify_code`
 Modify entity code.
@@ -440,10 +444,10 @@ Clear bus topic.
 
 ### Analyze new project
 ```
-1. index directory="/path/to/project"
-2. detect_technology_stack
-3. get_graph_stats
-4. analyze_hotspots metric="complexity" limit=20
+1. detect_technology_stack
+2. get_graph_stats
+3. analyze_hotspots metric="complexity" limit=20
+4. semantic_search query="entry point"
 ```
 
 ### Search and refactor
