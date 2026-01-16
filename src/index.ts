@@ -765,7 +765,8 @@ async function executeToolCall(
     };
 
     if (toolRegistry.has(name)) {
-      const handler = toolRegistry.getHandler(name, toolContext);
+      // getHandler is async to support lazy loading of tool handlers
+      const handler = await toolRegistry.getHandler(name, toolContext);
       return await handler.handle(args);
     }
 
