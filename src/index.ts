@@ -1114,10 +1114,23 @@ async function main() {
       // Cancel any pending shutdown
       cancelShutdown();
 
+      // v5.1: Read init message to get client's working directory (pre-MCP handshake)
+      // comm.c sends ULTRASCRIPT_CWD:/path/to/project\n immediately after connecting
+      let clientProjectPath = directory; // Default to server's directory
+      try {
+        const clientCwd = await clientTransport.readInitMessage(2000);
+        if (clientCwd) {
+          clientProjectPath = normalize(resolve(clientCwd));
+          log.i("PIPE", "client_cwd", { client: clientId, cwd: clientProjectPath });
+        }
+      } catch (err) {
+        log.w("PIPE", "init_msg_fail", { client: clientId, err: (err as Error).message });
+      }
+
       // v5: Create isolated session for this client
       // The session ensures all operations are scoped to this client's project
       const clientSession = new ClientSession({
-        projectPath: directory, // Initial project from server startup
+        projectPath: clientProjectPath, // Use client's cwd if provided, else server default
         clientId,
       });
 
@@ -1163,6 +1176,78 @@ async function main() {
         active: activeClients,
         sid: clientSession.sessionId,
       });
+
+      // v5.1: Trigger auto-indexing for new project if different from server's initial directory
+      if (clientProjectPath !== directory) {
+        setImmediate(async () => {
+          try {
+            const indexingConfig = config.indexing;
+            const shouldAutoIndex = indexingConfig?.autoIndex ?? true;
+
+            if (!shouldAutoIndex) {
+              log.t("INDEXER", "autoindex_disabled_client", { client: clientId });
+              return;
+            }
+
+            // Check if this project is already indexed
+            const graphStorage = await getGraphStorage();
+            const projectHash = getProjectHash(clientProjectPath);
+            const currentBranch = getCurrentGitBranchOrDefault(clientProjectPath);
+            graphStorage.setProject(clientProjectPath, currentBranch);
+            const stats = await graphStorage.getStatistics();
+            const entityCount = stats.totalEntities ?? 0;
+
+            if (entityCount > 0) {
+              log.i("INDEXER", "client_project_indexed", {
+                client: clientId,
+                proj: projectHash,
+                entities: entityCount,
+              });
+              return;
+            }
+
+            // Detect and index the new project
+            const extensions = indexingConfig?.autoIndexExtensions ?? [
+              ".ts",
+              ".tsx",
+              ".js",
+              ".jsx",
+              ".py",
+              ".go",
+              ".rs",
+              ".kt",
+              ".swift",
+              ".c",
+              ".cpp",
+              ".java",
+            ];
+
+            const detection = await detectSupportedProject(clientProjectPath, extensions);
+            if (!detection.supported) {
+              log.i("INDEXER", "client_no_files", { client: clientId, dir: clientProjectPath });
+              return;
+            }
+
+            log.i("INDEXER", "client_autoindex_start", {
+              client: clientId,
+              dir: clientProjectPath,
+              ext: detection.detectedExt,
+            });
+
+            // Set indexing directory for this project
+            setCurrentIndexingDirectory(clientProjectPath);
+
+            await performAutoIndex(clientProjectPath, extensions, createAutoIndexContext(), false);
+
+            log.i("INDEXER", "client_autoindex_done", { client: clientId, dir: clientProjectPath });
+          } catch (error) {
+            log.e("INDEXER", "client_autoindex_fail", {
+              client: clientId,
+              err: (error as Error).message,
+            });
+          }
+        });
+      }
     });
 
     transportType = "pipe-multi";

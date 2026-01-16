@@ -210,10 +210,17 @@ export class LanguageWorkerPool {
     this.onEmbeddings = options.onEmbeddings;
 
     // Resolve worker script path
-    // After bundling, import.meta.url points to chunk file in dist/, not agents/workers/
-    // So we find dist root and use full subpath
+    // After bundling, import.meta.url points to chunk file in dist/chunks/, not agents/workers/
+    // So we find dist root by checking for chunks or agents directory
     const currentDir = dirname(fileURLToPath(import.meta.url));
-    const distRoot = currentDir.includes("agents") ? dirname(dirname(currentDir)) : currentDir;
+    let distRoot = currentDir;
+    if (currentDir.includes("chunks")) {
+      // Bundled: currentDir is dist/chunks, go up one level
+      distRoot = dirname(currentDir);
+    } else if (currentDir.includes("agents")) {
+      // Development or unbundled: currentDir is agents/workers, go up two levels
+      distRoot = dirname(dirname(currentDir));
+    }
     const workerPath = join(distRoot, "agents", "workers", "generic-language-worker.js");
 
     this.workerScript = options.workerScript || workerPath;
