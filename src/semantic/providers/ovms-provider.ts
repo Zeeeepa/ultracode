@@ -1,4 +1,5 @@
 import { toError } from "../../utils/error-handling.js";
+import { stringify } from "../../utils/fast-json.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
 import { ensureContainerRunning, waitForReady } from "./ovms-container.js";
 import { OVMSGrpcClient } from "./ovms-grpc-client.js";
@@ -465,7 +466,7 @@ export class OVMSProvider implements EmbeddingProvider {
             "Content-Type": "application/json",
             Connection: "keep-alive",
           },
-          body: JSON.stringify(requestBody),
+          body: stringify.openaiEmbedding(requestBody),
           signal: AbortSignal.timeout(this.timeoutMs),
           // Enable HTTP keepalive for connection reuse (reduces latency)
           keepalive: true,
@@ -721,7 +722,7 @@ export class OVMSProvider implements EmbeddingProvider {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config.inferRequest),
+        body: stringify.ovmsInfer(config.inferRequest),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
 

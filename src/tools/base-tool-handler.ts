@@ -7,11 +7,15 @@
  * - Consistent error handling
  * - Testability
  * - Automatic response size limiting
+ *
+ * v5: Added ClientSession support for per-client state isolation.
+ * Tools should use context.session.projectPath instead of global singleton.
  */
 
 import type { ConductorOrchestrator } from "../agents/conductor-orchestrator.js";
 import type { SemanticAgent } from "../agents/semantic-agent.js";
 import type { BranchManager } from "../core/branch-manager.js";
+import type { ClientSession } from "../core/client-session.js";
 import type { KnowledgeBus } from "../core/knowledge-bus.js";
 import { log } from "../logging/index.js";
 import { getProjectContext, type ProjectContextManager } from "../shared/project-context.js";
@@ -29,6 +33,21 @@ export interface ToolResult {
 export interface ToolContext {
   requestId: string;
   config: unknown;
+
+  /**
+   * v5: Per-client session with isolated project state.
+   * Use this instead of global ProjectContextManager!
+   *
+   * If undefined (legacy mode), falls back to global singleton.
+   */
+  session?: ClientSession;
+
+  /**
+   * v5: Project path for this request (from session or args).
+   * Guaranteed to be set - use this for all project-scoped operations.
+   */
+  projectPath: string;
+
   getConductor: () => ConductorOrchestrator;
   getGraphStorage: () => Promise<GraphStorage>; // v4: libsql unified, no params needed
   getSQLiteManager: () => unknown; // legacy: kept for AutoDoc and BatchOperations
@@ -48,67 +67,97 @@ export abstract class BaseToolHandler<TArgs = unknown> {
   constructor(protected context: ToolContext) {}
 
   // ==========================================================================
-  // PROJECT CONTEXT HELPERS
+  // PROJECT CONTEXT HELPERS (v5: session-aware)
   // ==========================================================================
 
   /**
-   * Get the ProjectContextManager singleton
+   * Get the ProjectContextManager singleton.
+   * @deprecated Use context.session or context.projectPath instead for isolation.
    */
   protected getProjectContext(): ProjectContextManager {
     return getProjectContext();
   }
 
   /**
-   * Resolve project path from args, falling back to current project
+   * v5: Resolve project path using session-aware logic.
+   *
+   * Priority:
+   * 1. Explicit path from args (if provided)
+   * 2. context.projectPath (set from session or startup)
+   * 3. Fallback to global singleton (legacy mode)
    */
-  protected resolveProjectPath(args: { projectPath?: string }): string {
-    return getProjectContext().resolveProjectPath(args.projectPath);
+  protected resolveProjectPath(args: { projectPath?: string; directory?: string }): string {
+    // Check for explicit path in args
+    if (args.projectPath) {
+      return this.context.session?.resolvePath(args.projectPath) ?? args.projectPath;
+    }
+    if (args.directory) {
+      return this.context.session?.resolvePath(args.directory) ?? args.directory;
+    }
+
+    // Use session's project path if available
+    if (this.context.session) {
+      return this.context.session.projectPath;
+    }
+
+    // Use context.projectPath (always set in v5)
+    if (this.context.projectPath) {
+      return this.context.projectPath;
+    }
+
+    // Legacy fallback
+    return getProjectContext().getCurrentProject();
   }
 
   /**
    * Get storage paths for a project
    */
   protected getProjectStoragePaths(projectPath?: string) {
-    return getProjectContext().getStoragePaths(projectPath);
+    const resolved = this.resolveProjectPath({ projectPath });
+    return getProjectContext().getStoragePaths(resolved);
   }
 
   /**
-   * Check if project is indexed, optionally trigger indexing if not
+   * Check if project is indexed
    */
   protected isProjectIndexed(projectPath?: string): boolean {
-    return getProjectContext().isProjectIndexed(projectPath);
+    const resolved = this.resolveProjectPath({ projectPath });
+    return getProjectContext().isProjectIndexed(resolved);
   }
 
   /**
-   * Get GraphStorage with project context automatically set.
-   * v4: Uses libsql unified storage, no SQLiteManager needed.
+   * v5: Get GraphStorage with project context automatically set.
+   * Uses session-aware project resolution.
    */
   protected async ensureGraphStorageForProject(projectPath?: string): Promise<GraphStorage> {
-    const resolved = getProjectContext().resolveProjectPath(projectPath);
-    log.d("BASETOOL", "ensure_storage", { resolved });
+    const resolved = this.resolveProjectPath({ projectPath });
+    log.d("BASETOOL", "ensure_storage", { resolved, hasSession: !!this.context.session });
+
     const storage = await this.context.getGraphStorage();
     storage.setProject(resolved);
+
     log.d("BASETOOL", "storage_set", { resolved });
     return storage;
   }
 
   /**
-   * Ensure SemanticAgent is initialized for the correct project.
-   * This must be called before using semantic search operations.
-   *
-   * v3: Now uses project context instead of database path switching.
-   * The VectorStore is not recreated - only the project context changes.
+   * v5: Ensure SemanticAgent is initialized for the correct project.
+   * Uses session-aware project resolution.
    */
   protected async ensureSemanticAgentForProject(projectPath?: string): Promise<any> {
-    const resolved = getProjectContext().resolveProjectPath(projectPath);
+    const resolved = this.resolveProjectPath({ projectPath });
     const semanticAgent = await this.context.getSemanticAgent();
 
-    // v3: Log current project context instead of DB path
+    // Log current project context
     const vectorStore = semanticAgent?.getVectorStore?.();
     const currentContext = vectorStore?.getProjectContext?.();
-    log.d("BASETOOL", "semantic_ctx", { resolved, ctx: JSON.stringify(currentContext) });
+    log.d("BASETOOL", "semantic_ctx", {
+      resolved,
+      hasSession: !!this.context.session,
+      ctx: JSON.stringify(currentContext),
+    });
 
-    // v3: reinitializeForProject now just changes context, no VectorStore recreation
+    // reinitializeForProject now just changes context, no VectorStore recreation
     if (semanticAgent && typeof semanticAgent.reinitializeForProject === "function") {
       log.d("BASETOOL", "reinit_proj", { resolved });
       await semanticAgent.reinitializeForProject(resolved);

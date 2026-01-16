@@ -486,23 +486,75 @@ export class LayeredFaissProvider {
   }
 
   /**
-   * Add multiple embeddings in batch
+   * Add multiple embeddings in batch (optimized - single Named Pipe call)
    */
   async addBatch(embeddings: VectorEmbedding[]): Promise<AddVectorResult[]> {
+    if (embeddings.length === 0) {
+      return [];
+    }
+
+    if (!this.isInitialized || !this.client) {
+      return embeddings.map(() => ({ success: false, target: "base" as const, error: "Not initialized" }));
+    }
+
     log.d("LAYERED_FAISS", "addBatch_called", {
       count: embeddings.length,
       branch: this.currentBranch,
       isOnBase: this.isOnBaseBranch,
     });
 
-    const results: AddVectorResult[] = [];
+    const startTime = performance.now();
 
-    for (const embedding of embeddings) {
-      const result = await this.add(embedding);
-      results.push(result);
+    // Collect all IDs and normalize all vectors into one flat array
+    const allIds: string[] = [];
+    const dimensions = this.config.dimensions;
+    const allVectors = new Float32Array(embeddings.length * dimensions);
+
+    for (let i = 0; i < embeddings.length; i++) {
+      const embedding = embeddings[i]!;
+      const normalized = simdL2Normalize(embedding.vector);
+
+      allIds.push(embedding.id);
+      allVectors.set(normalized, i * dimensions);
+
+      // Update tracking sets
+      if (this.isOnBaseBranch) {
+        this.baseIdSet.add(embedding.id);
+      } else {
+        this.tombstones.delete(embedding.id);
+        this.deltaIdSet.add(embedding.id);
+      }
     }
 
-    return results;
+    // Single faissAdd call for all embeddings
+    await this.client.faissAdd(allIds, allVectors);
+
+    // Update counters
+    if (this.isOnBaseBranch) {
+      this.baseUnsavedCount += embeddings.length;
+      // Auto-save check
+      if (this.baseUnsavedCount >= this.config.autoSaveThreshold) {
+        await this.saveBase();
+      }
+    } else {
+      this.deltaUnsavedCount += embeddings.length;
+      // Auto-save check
+      if (this.deltaUnsavedCount >= this.config.autoSaveThreshold) {
+        await this.saveDelta();
+      }
+    }
+
+    const elapsed = performance.now() - startTime;
+    log.i("LAYERED_FAISS", "addBatch_complete", {
+      count: embeddings.length,
+      elapsed: `${elapsed.toFixed(1)}ms`,
+      speed: `${Math.round(embeddings.length / (elapsed / 1000))}/s`,
+      target: this.isOnBaseBranch ? "base" : "delta",
+    });
+
+    // Return success for all
+    const target = this.isOnBaseBranch ? "base" : "delta";
+    return embeddings.map(() => ({ success: true, target: target as "base" | "delta" }));
   }
 
   /**

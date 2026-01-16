@@ -45,6 +45,7 @@ import {
   vectorToArray,
 } from "../semantic/embedding-dump.js";
 import { EmbeddingGenerator } from "../semantic/embedding-generator.js";
+import { getWarmupDimensions, takeWarmupGenerator } from "../semantic/embedding-warmup.js";
 import {
   expandLargeEntities,
   getOversizedEntitiesWarning,
@@ -201,6 +202,15 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    * Get embedding dimensions by generating a test embedding
    */
   private async getEmbeddingDimensions(): Promise<number> {
+    // Try cached dimensions from warmup first (avoids extra embedding call)
+    const warmupDims = getWarmupDimensions();
+    if (warmupDims) {
+      this.embeddingDim = warmupDims;
+      log.i("SEMANTIC", "dims_from_warmup", { dims: warmupDims });
+      return warmupDims;
+    }
+
+    // Fallback: detect dimensions via test embedding
     try {
       const testEmbedding = await this.embeddingGen.generateEmbedding("dimension detection test");
       const dimensions = testEmbedding.length;
@@ -284,15 +294,23 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     this.embeddingBatchSize = getBatchSizeFromConfig(semanticConfig, this.embeddingBatchSize);
     log.d("SEMANTIC", "batch_size", { size: this.embeddingBatchSize });
 
-    // Build embedding generator options from config (provider-config.ts)
-    const embeddingOptions = buildEmbeddingGeneratorOptions(
-      provider,
-      modelName,
-      this.embeddingBatchSize,
-      semanticConfig,
-      config,
-    );
-    this.embeddingGen = new EmbeddingGenerator(embeddingOptions);
+    // Try to use pre-warmed generator from early warmup (saves ~500ms)
+    const preWarmedGenerator = takeWarmupGenerator();
+    if (preWarmedGenerator) {
+      log.i("SEMANTIC", "Using pre-warmed embedding generator");
+      this.embeddingGen = preWarmedGenerator;
+    } else {
+      // Fallback: create new generator (warmup failed or not started)
+      log.d("SEMANTIC", "Creating new embedding generator (no pre-warmed available)");
+      const embeddingOptions = buildEmbeddingGeneratorOptions(
+        provider,
+        modelName,
+        this.embeddingBatchSize,
+        semanticConfig,
+        config,
+      );
+      this.embeddingGen = new EmbeddingGenerator(embeddingOptions);
+    }
 
     // Get dimensions dynamically from actual embedding
     const dimensions = await this.getEmbeddingDimensions();

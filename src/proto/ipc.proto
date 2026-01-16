@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package ultrascript;
+
+// Generic IPC message
+message IPCMessage {
+  string type = 1;
+  string id = 2;
+  bytes payload = 3;  // Nested protobuf or raw data
+  int64 timestamp = 4;
+  optional string error = 5;
+}
+
+// GPU Worker request types
+message EmbeddingRequest {
+  repeated string texts = 1;
+  repeated string ids = 2;
+  optional int32 batch_size = 3;
+}
+
+message FaissAddRequest {
+  repeated string ids = 1;
+  repeated float vectors = 2;  // Flattened [n * dim]
+  int32 dimensions = 3;
+}
+
+message FaissSearchRequest {
+  repeated float query_vector = 1;
+  int32 k = 2;
+  optional string index_path = 3;
+}
+
+message FaissSaveRequest {
+  string index_path = 1;
+}
+
+message FaissLoadRequest {
+  string index_path = 1;
+}
+
+// GPU Worker unified request
+message GpuWorkerRequest {
+  string type = 1;  // embedding, faiss.add, faiss.search, faiss.save, faiss.load
+
+  oneof request {
+    EmbeddingRequest embedding = 2;
+    FaissAddRequest faiss_add = 3;
+    FaissSearchRequest faiss_search = 4;
+    FaissSaveRequest faiss_save = 5;
+    FaissLoadRequest faiss_load = 6;
+  }
+}
+
+// Search result
+message SearchResult {
+  string id = 1;
+  float distance = 2;
+}
+
+// GPU Worker response
+message GpuWorkerResponse {
+  bool success = 1;
+  optional string error = 2;
+  string type = 3;  // Same as request type
+
+  // For embedding response
+  repeated float embeddings = 4;  // Flattened [n_texts * dim]
+  int32 dimensions = 5;
+
+  // For search response
+  repeated SearchResult results = 6;
+
+  // For save/load response
+  optional int32 vector_count = 7;
+}
+
+// Named pipe packet header
+message PacketHeader {
+  int32 payload_size = 1;
+  string content_type = 2;  // "protobuf", "json", "binary"
+  optional string message_id = 3;
+}

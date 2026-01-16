@@ -1,4 +1,5 @@
 import { toError } from "../../utils/error-handling.js";
+import { stringify } from "../../utils/fast-json.js";
 import { sleep } from "../../utils/runtime.js";
 import type {
   EmbeddingProvider,
@@ -242,7 +243,7 @@ export class TEIProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inputs: text }),
+        body: stringify.teiSingle({ inputs: text }),
         // signal removed for crash debugging
       });
 
@@ -343,7 +344,7 @@ export class TEIProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inputs: texts }),
+        body: stringify.teiBatch({ inputs: texts }),
         // signal removed for crash debugging
       });
 
@@ -404,7 +405,7 @@ export class TEIProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/rerank`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: stringify.teiRerank({
           query,
           texts: documents.map((d) => d.text),
           truncate: true,

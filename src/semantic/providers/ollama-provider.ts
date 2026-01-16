@@ -1,4 +1,5 @@
 import { toError } from "../../utils/error-handling.js";
+import { stringify } from "../../utils/fast-json.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
 
 /**
@@ -126,7 +127,7 @@ export class OllamaProvider implements EmbeddingProvider {
       const res = await fetch(`${this.baseUrl}/api/pull`, {
         method: "POST",
         headers: this.headers,
-        body: JSON.stringify({ name: this.info.model }),
+        body: stringify.ollamaPull({ name: this.info.model }),
         signal,
       });
 
@@ -156,7 +157,7 @@ export class OllamaProvider implements EmbeddingProvider {
     const res = await fetch(`${this.baseUrl}/api/embeddings`, {
       method: "POST",
       headers: this.headers,
-      body: JSON.stringify({ model: this.info.model, prompt: text }),
+      body: stringify.ollamaEmbedding({ model: this.info.model, prompt: text }),
       signal: opts?.signal ?? AbortSignal.timeout(this.timeoutMs),
     });
 

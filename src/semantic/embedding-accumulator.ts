@@ -67,7 +67,7 @@ export interface AccumulatorStats {
 // =============================================================================
 
 const DEFAULT_CONFIG: AccumulatorConfig = {
-  flushThreshold: 5000, // Flush every 5000 embeddings
+  flushThreshold: 500, // Async flush every 500 embeddings (was 5000, now incremental)
   dimensions: 384, // Default for e5-small, MiniLM models (most common)
   queueBatchSize: 200, // Send 200 texts per OVMS request (good for GPU utilization)
 };
@@ -87,10 +87,13 @@ export class EmbeddingAccumulator {
   private isProcessingQueue = false;
   private queueProcessingPromise: Promise<void> | null = null;
 
+  // Async flush state - track in-flight flush operation (only 1 concurrent flush to FAISS)
+  private inFlightFlush: Promise<number> | null = null;
+
   // Debounce for accumulating texts before processing
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly DEBOUNCE_MS = 50; // Wait 100ms for more texts
-  private static readonly MIN_BATCH_THRESHOLD = 50; // Start immediately if >= 100 texts
+  private static readonly DEBOUNCE_MS = 50; // Wait 50ms for more texts
+  private static readonly MIN_BATCH_THRESHOLD = 50; // Start immediately if >= 50 texts
 
   // Stats
   private stats: AccumulatorStats = {
@@ -193,10 +196,70 @@ export class EmbeddingAccumulator {
       willFlush: this.pending.length >= this.config.flushThreshold,
     });
 
-    // Check if we should flush
+    // Check if we should start async flush (non-blocking)
     if (this.pending.length >= this.config.flushThreshold) {
-      await this.flush();
+      // Fire-and-forget async flush - don't block the callback
+      this.flushAsync();
     }
+  }
+
+  /**
+   * Async flush - non-blocking, fire-and-forget.
+   * Starts a background flush if none is in progress.
+   * Safe to call frequently - will skip if already flushing.
+   */
+  flushAsync(): void {
+    // Skip if no provider or nothing to flush
+    if (!this.vectorProvider || this.pending.length === 0) {
+      return;
+    }
+
+    // Skip if already flushing (avoid queue buildup)
+    if (this.inFlightFlush) {
+      log.d("ACCUMULATOR", "flushAsync skipped - already in progress", {
+        pending: this.pending.length,
+      });
+      return;
+    }
+
+    // Take current pending and start async flush
+    const toFlush = this.pending;
+    this.pending = []; // Clear immediately so new embeddings go to fresh array
+
+    const count = toFlush.length;
+    log.i("ACCUMULATOR", "flushAsync started", { count });
+
+    const startTime = performance.now();
+
+    this.inFlightFlush = this.vectorProvider
+      .addBatch(toFlush)
+      .then(() => {
+        const elapsed = performance.now() - startTime;
+        this.stats.flushed += count;
+        this.stats.flushCount++;
+
+        log.i("ACCUMULATOR", "flushAsync complete", {
+          count,
+          elapsed: `${elapsed.toFixed(1)}ms`,
+          speed: `${Math.round(count / (elapsed / 1000))}/s`,
+          totalFlushed: this.stats.flushed,
+        });
+
+        return count;
+      })
+      .catch((error) => {
+        log.e("ACCUMULATOR", "flushAsync failed", { error: (error as Error).message });
+        // Put failed embeddings back
+        this.pending.unshift(...toFlush);
+        return 0;
+      })
+      .finally(() => {
+        this.inFlightFlush = null;
+        // Check if more pending accumulated while flushing
+        if (this.pending.length >= this.config.flushThreshold) {
+          this.flushAsync(); // Chain another flush
+        }
+      });
   }
 
   /**
@@ -423,7 +486,7 @@ export class EmbeddingAccumulator {
 
   /**
    * Flush all pending embeddings to FAISS.
-   * Waits for queue processing to complete first.
+   * Waits for any in-flight async flush and queue processing to complete first.
    */
   async flush(): Promise<number> {
     // Cancel debounce timer and start processing immediately if needed
@@ -434,6 +497,14 @@ export class EmbeddingAccumulator {
       if (this.textQueue.length > 0 && !this.isProcessingQueue) {
         this.startQueueProcessing();
       }
+    }
+
+    // Wait for any in-flight async flush to complete first
+    if (this.inFlightFlush) {
+      log.i("ACCUMULATOR", "Waiting for in-flight flush", {
+        pending: this.pending.length,
+      });
+      await this.inFlightFlush;
     }
 
     // Wait for queue processing to complete
@@ -459,6 +530,7 @@ export class EmbeddingAccumulator {
       flushed: this.stats.flushed,
     });
 
+    // If nothing pending (all flushed by async), just return
     if (this.pending.length === 0) {
       return 0;
     }
