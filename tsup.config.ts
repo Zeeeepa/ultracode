@@ -61,6 +61,9 @@ export default defineConfig([
         ...options.loader,
         ".wasm": "file",
       };
+      // Name chunks by content for better caching and debugging
+      // Lazy-loaded handlers will be split into separate chunks
+      options.chunkNames = "chunks/[name]-[hash]";
     },
 
     // Bundle size optimizations

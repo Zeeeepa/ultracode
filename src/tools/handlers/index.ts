@@ -1,8 +1,52 @@
 /**
  * Tool Handlers Index
  *
- * Re-exports all tool handlers for easy registration in ToolRegistry
+ * Re-exports all tool handlers.
+ *
+ * NOTE: This file is kept for backwards compatibility.
+ * The ToolRegistry now imports handlers directly from their group files
+ * to enable lazy loading and code splitting.
+ *
+ * Basic handlers (graph, entity, metrics, index) are loaded immediately.
+ * All other handlers are lazy-loaded on first use via dynamic imports in ToolRegistry.
  */
+
+// ==========================================================================
+// Basic handlers - loaded immediately at startup
+// ==========================================================================
+
+// Entity tools
+export {
+  ListEntityRelationshipsToolHandler,
+  ListFileEntitiesToolHandler,
+  QueryToolHandler,
+} from "./entity-tool-handlers.js";
+
+// Graph tools
+export {
+  CleanIndexToolHandler,
+  GetGraphHealthToolHandler,
+  GetGraphStatsToolHandler,
+  GetGraphToolHandler,
+  ResetGraphToolHandler,
+} from "./graph-tool-handlers.js";
+// Index tool
+export { IndexToolHandler } from "./index-tool-handler.js";
+
+// Metrics tools
+export {
+  ClearBusTopicToolHandler,
+  GetAgentMetricsToolHandler,
+  GetBusStatsToolHandler,
+  GetMetricsToolHandler,
+  GetVersionToolHandler,
+  GetWatcherStatusToolHandler,
+} from "./metrics-tool-handlers.js";
+
+// ==========================================================================
+// Lazy-loaded handlers - exported for backwards compatibility
+// These are loaded dynamically by ToolRegistry on first use
+// ==========================================================================
 
 // Analysis tools
 export {
@@ -27,6 +71,7 @@ export {
   AutoDocSyncToolHandler,
   AutoDocValidateToolHandler,
 } from "./autodoc-tool-handlers.js";
+
 // Branch tools
 export {
   CleanupBranchesToolHandler,
@@ -35,13 +80,6 @@ export {
   ListBranchesToolHandler,
   SwitchBranchToolHandler,
 } from "./branch-tool-handlers.js";
-
-// Entity tools
-export {
-  ListEntityRelationshipsToolHandler,
-  ListFileEntitiesToolHandler,
-  QueryToolHandler,
-} from "./entity-tool-handlers.js";
 // File modification tools
 export {
   AddMemberToolHandler,
@@ -53,16 +91,6 @@ export {
   SplitFileToolHandler,
   SynthesizeFilesToolHandler,
 } from "./file-tool-handlers.js";
-// Graph tools
-export {
-  CleanIndexToolHandler,
-  GetGraphHealthToolHandler,
-  GetGraphStatsToolHandler,
-  GetGraphToolHandler,
-  ResetGraphToolHandler,
-} from "./graph-tool-handlers.js";
-// Index tool
-export { IndexToolHandler } from "./index-tool-handler.js";
 // Merge tools
 export {
   AnalyzeMergeConflictsToolHandler,
@@ -70,15 +98,6 @@ export {
   GetSemanticMergeInfoToolHandler,
   SemanticMergeToolHandler,
 } from "./merge-tool-handlers.js";
-// Metrics tools
-export {
-  ClearBusTopicToolHandler,
-  GetAgentMetricsToolHandler,
-  GetBusStatsToolHandler,
-  GetMetricsToolHandler,
-  GetVersionToolHandler,
-  GetWatcherStatusToolHandler,
-} from "./metrics-tool-handlers.js";
 // Semantic tools
 export {
   CrossLanguageSearchToolHandler,
@@ -95,6 +114,7 @@ export {
   ListSnapshotsToolHandler,
   RollbackSnapshotToolHandler,
 } from "./snapshot-tool-handlers.js";
+
 // Tracing tools
 export {
   AnalyzeStateImpactToolHandler,
