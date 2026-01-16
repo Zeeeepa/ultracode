@@ -111,6 +111,8 @@ import type { IndexerAgent } from "./agents/indexer-agent.js";
 import { type AutoDocWatcherConfig, getAutoDocWatcher } from "./autodoc/index.js";
 // CLI argument parsing
 import { handleSetupCommand, parseArgs, printHelp } from "./cli/args-parser.js";
+// Skills auto-installer for Claude Code
+import { installSkillsIfNeeded } from "./skills-installer.js";
 // TASK-001: Import new YAML configuration system
 import { ConfigLoader, initializeConfig, validateConfig } from "./config/yaml-config.js";
 import { getOrCreateAgent, registerAllAgents } from "./core/agent-registry.js";
@@ -878,6 +880,12 @@ function createAutoIndexContext(): AutoIndexContext {
 async function main() {
   const mainStartTime = Date.now();
   log.t("STARTUP", "main_started", { ms: mainStartTime - PROCESS_START_TIME });
+
+  // Install Claude Code Skills in background (non-blocking)
+  // Skills enable auto-activation when working with TS/JS/Python/etc projects
+  installSkillsIfNeeded().catch((err) => {
+    log.w("SKILLS", "install_failed", { err: (err as Error).message });
+  });
 
   log.i("STARTUP", "server_starting", { dir: directory });
   log.i("STARTUP", "architecture", { type: "multi_agent_literag" });

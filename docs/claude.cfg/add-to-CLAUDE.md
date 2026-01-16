@@ -9,77 +9,49 @@
 | `Grep` for code search | `semantic_search` | Understands meaning, 5-10x faster |
 | `Glob` + read files | `get_members` | AST parsing, finds classes/functions |
 | Manual dependency check | `analyze_code_impact` | Shows what breaks |
-| `Grep` for duplicates | `find_duplicates` | Semantic similarity |
-
-## Before First Use
-
-Run `index` tool once to index the project.
+| `Grep` for duplicates | `detect_code_clones` | Semantic similarity |
 
 ## Quick Tools
 
 - **Search**: `semantic_search`, `pattern_search`, `find_similar_code`
 - **Navigate**: `get_members`, `list_entity_relationships`
-- **Analyze**: `analyze_code_impact`, `find_duplicates`, `analyze_hotspots`
-- **Trace**: `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`
-- **Modify**: `modify_code`, `rename_symbol`, `create_file`, `add_member`
+- **Analyze**: `analyze_code_impact`, `detect_code_clones`, `analyze_hotspots`
+- **Trace**: `trace_flow`, `trace_backwards`, `trace_data_flow`
+- **Modify**: `modify_code`, `rename_symbol`, `create_file`, `add_member` *(auto-validates, returns errors/warnings)*
 
 > For C# use UltrasharpTools MCP (Roslyn-based).
 
----
+## Tracing — When to Use
 
-## Tracing — Статический анализ потока выполнения
+| Question | Tool |
+|----------|------|
+| "How does code get from A to B?" | `trace_flow` |
+| "Why isn't this method called?" | `trace_backwards` |
+| "How does data affect state?" | `trace_data_flow` |
+| "What changes with different values?" | `analyze_state_impact` |
 
-**Когда использовать трассировку:**
+## AutoDoc — If Project Has `.autodoc/`
 
-| Вопрос | Инструмент |
-|--------|------------|
-| "Как код попадает от A к B?" | `trace_flow` |
-| "Почему метод не вызывается?" | `trace_backwards` |
-| "Как данные влияют на состояние?" | `trace_data_flow` |
-| "Что изменится при другом значении?" | `analyze_state_impact` |
-| "Какие условия влияют на сценарий?" | `find_decision_points` |
+**Key features:**
+- 🔗 Code references are **auto-updated** — always accurate line numbers
+- 🧠 Find code by **business meaning**, not keywords — even undocumented code
+- 📝 Module `AUTODOC.md` auto-generated, your additions become **project memory**
+- ⚡ `autodoc_search` — instant search across **code + docs simultaneously**
 
-**Пример:**
-```
-trace_backwards(target: "saveOrder", question: "why_not_called")
-→ Найдёт блокирующие условия, зависимости состояний, диагноз
-```
+1. **Start with `autodoc_search`** — finds code by meaning, not just keywords
+2. **Read `.autodoc/` files** — business context that links to code
 
-> 📖 **Details?** Request MCP prompt `tracing-guide`
+| File | Read when... |
+|------|--------------|
+| `ARCHITECTURE.md` | Need project structure |
+| `FLOW.md` | Need business scenarios |
+| `PROCESSES.md` | Need technical processes |
 
----
+## Skills (Auto-installed)
 
-## AutoDoc — Автоматическая документация
+UltraCode Skills are automatically installed to `~/.claude/skills/`:
+- `ultracode` — main tool reference + workflows
+- `ultracode-trace` — tracing guide
+- `ultracode-autodoc` — autodoc guide
 
-### Если в проекте есть `.autodoc/`
-
-**ВСЕГДА используй AutoDoc для понимания проекта:**
-
-1. **Начни с `autodoc_search`** — семантический поиск по коду + документации
-2. **Читай `.autodoc/` файлы** — там бизнес-контекст, не только код
-
-### Структура `.autodoc/`
-
-| Файл | Читай когда... |
-|------|----------------|
-| `ARCHITECTURE.md` | Нужно понять структуру проекта |
-| `FLOW.md` | Нужно понять бизнес-сценарии (user stories) |
-| `PROCESSES.md` | Нужно понять технические процессы |
-| `DEPENDENCIES.md` | Нужно понять внешние зависимости, API |
-| `DEPLOYMENT.md` | Нужно понять сборку, CI/CD, ENV |
-| `src/*/_index.md` | Нужно понять конкретный модуль |
-| `src/*/*.md` | Нужно понять конкретную сущность |
-
-### После изменения кода
-
-1. `autodoc_get_outdated()` — проверь что нужно обновить
-2. `autodoc_save_section()` — обнови затронутые секции
-
-### Если `.autodoc/` нет
-
-Предложи пользователю: "Хотите включить AutoDoc для этого проекта?"
-→ `autodoc_init({ language: 'ru' })` или `'en'`
-
----
-
-📖 **Need details?** Request MCP prompt `tool-reference`, `workflows`, or `autodoc-guide`.
+Skills auto-activate by description trigger when working with relevant code.

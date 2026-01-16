@@ -58,6 +58,8 @@
     "README.md",
     "LICENSE",
     "prompts/**/*.md",
+    "claude-skills/**/*.md",
+    "claude-skills/manifest.json",
     "dist/parsers/python-ast-cli.py",
     "dist/parsers/go-ast-cli.go"
   ],
