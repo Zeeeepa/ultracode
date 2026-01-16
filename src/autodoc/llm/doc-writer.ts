@@ -17,7 +17,12 @@ function getSystemPrompt(language?: string): string {
 - Определяй назначение по именам файлов (например, "logger.ts" → логирование, "cache-manager.ts" → кэширование)
 - Будь конкретным в описании каждого файла
 - Описания должны быть краткими (1-2 предложения на файл)
-- Используй форматирование кода для имён файлов и экспортов`;
+- Используй форматирование кода для имён файлов и экспортов
+
+КРИТИЧЕСКИ ВАЖНО:
+- Выводи ТОЛЬКО markdown-документацию, БЕЗ вступлений и заключений
+- НЕ пиши фразы типа "Документация готова", "Вот документация", "Для применения..." и т.п.
+- Начинай сразу с заголовка "# ..." и заканчивай последним разделом документации`;
   }
 
   if (language === "zh") {
@@ -29,7 +34,12 @@ Rules:
 - Infer purpose from file names (e.g., "logger.ts" → logging, "cache-manager.ts" → caching)
 - Be specific about what each file likely does based on its name
 - Keep descriptions concise (1-2 sentences per file)
-- Use code formatting for file names and exports`;
+- Use code formatting for file names and exports
+
+CRITICAL:
+- Output ONLY the markdown documentation, NO preamble or closing remarks
+- Do NOT write phrases like "Here is the documentation", "Documentation ready", etc.
+- Start directly with the "# ..." heading and end with the last section`;
   }
 
   return `You are a technical documentation writer for TypeScript/JavaScript projects.
@@ -39,7 +49,12 @@ Rules:
 - Infer purpose from file names (e.g., "logger.ts" → logging, "cache-manager.ts" → caching)
 - Be specific about what each file likely does based on its name
 - Keep descriptions concise (1-2 sentences per file)
-- Use code formatting for file names and exports`;
+- Use code formatting for file names and exports
+
+CRITICAL:
+- Output ONLY the markdown documentation, NO preamble or closing remarks
+- Do NOT write phrases like "Here is the documentation", "Documentation ready", etc.
+- Start directly with the "# ..." heading and end with the last section`;
 }
 
 /**
@@ -203,10 +218,23 @@ Write a complete AUTODOC.md with these sections:
 
 function formatResponse(moduleName: string, text: string): string {
   // Clean up LLM artifacts (DeepSeek tokenizer artifacts, etc.)
-  const cleanText = text
+  let cleanText = text
     .replace(/<｜[^｜]+｜>/g, "") // DeepSeek artifacts like <｜begin▁of▁sentence｜>
     .replace(/<\|[^|]+\|>/g, "") // Alternative format <|...|>
     .replace(/\|>\s*\|/g, "|") // Fix broken table cells
+    .trim();
+
+  // Remove meta-text preamble (before first heading)
+  const firstHeading = cleanText.indexOf("# ");
+  if (firstHeading > 0) {
+    cleanText = cleanText.slice(firstHeading);
+  }
+
+  // Remove meta-text postamble (after last code block or section)
+  // Common patterns: "---\n\nДокументация готова", "Documentation ready for..."
+  cleanText = cleanText
+    .replace(/\n---\n+(?:Документация|Documentation|Для применения|Ready for|This documentation)[\s\S]*$/i, "")
+    .replace(/\n+(?:Документация готова|Documentation (?:ready|complete)|Для применения|Ready for use)[\s\S]*$/i, "")
     .trim();
 
   // Ensure it starts with a proper title

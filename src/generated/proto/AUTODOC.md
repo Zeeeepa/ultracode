@@ -1,35 +1,65 @@
-# Proto
+# proto
 
-*Last updated: 2026-01-16*
+Модуль предоставляет типы и утилиты для работы с прототипом данных, включая загрузку конфигурации, описание сущностей, связей и их изменений. Служит основой для системы анализа и трассировки кода в проекте.
 
-Module for proto functionality.
+## Файлы
 
-## Exports
+| Файл | Описание |
+|------|---------|
+| `index.ts` | Экспортирует основные типы и функции для работы с прототипом данных, включая загрузку конфигурации и определения сущностей |
 
-| Name | Type | Location |
-|------|------|----------|
-| `IBranchDelta` | interface | [→ index.ts:151-158] |
-| `IDecorator` | interface | [→ index.ts:88-92] |
-| `IEntity` | interface | [→ index.ts:105-120] |
-| `IEntityDelta` | interface | [→ index.ts:139-143] |
-| `IEntityMetadata` | interface | [→ index.ts:94-103] |
-| `IGpuWorkerResponse` | interface | [→ index.ts:168-171] |
-| `IImportData` | interface | [→ index.ts:76-79] |
-| `IImportSpecifier` | interface | [→ index.ts:76-79] |
-| `IIPCMessage` | interface | [→ index.ts:160-166] |
-| `ILocation` | interface | [→ index.ts:64-67] |
-| `IPacketHeader` | interface | [→ index.ts:183-187] |
-| `IParameter` | interface | [→ index.ts:64-67] |
-| `IPosition` | interface | [→ index.ts:58-62] |
-| `IRelationship` | interface | [→ index.ts:129-137] |
-| `IRelationshipDelta` | interface | [→ index.ts:145-149] |
-| `IRelationshipMetadata` | interface | [→ index.ts:122-127] |
-| `ISearchResult` | interface | [→ index.ts:168-171] |
-| `loadProtoRoot` | function | [→ index.ts:22-36] |
-| `loadProtoRootSync` | function | [→ index.ts:41-55] |
-| `proto` | const | [→ index.ts:247-343] |
+## Экспорты
 
-## Files
+### Функции
+- `loadProtoRootSync` — синхронная загрузка корневой конфигурации прототипа из файловой системы
 
-- `index.ts`
+### Типы данных
 
+#### Позиционирование и расположение
+- `IPosition` — координаты элемента кода (строка, столбец)
+- `ILocation` — полная локация файла с начальной и конечной позицией
+
+#### Анализ кода
+- `IParameter` — описание параметра функции или метода
+- `IImportSpecifier` — информация об импортированном элементе (имя, псевдоним)
+- `IImportData` — данные об импорте (путь, список спецификаторов)
+- `IDecorator` — описание декоратора с его аргументами
+- `IEntityMetadata` — метаданные сущности (тип, имя, локация, параметры, декораторы)
+- `IEntity` — полное описание сущности кода с её метаданными
+
+#### Связи между сущностями
+- `IRelationshipMetadata` — информация о типе связи между сущностями
+- `IRelationship` — описание связи между двумя сущностями
+
+#### Изменения (дельта)
+- `IEntityDelta` — изменения сущности (добавление, удаление, обновление)
+- `IRelationshipDelta` — изменения связей
+- `IBranchDelta` — накопленные изменения в ветке (сущности и связи)
+
+#### IPC коммуникация
+- `IIPCMessage` — сообщение для межпроцессного взаимодействия
+
+## Использование
+
+```typescript
+import { loadProtoRootSync, IEntity, IRelationship } from 'proto';
+
+// Загрузка конфигурации прототипа
+const protoRoot = loadProtoRootSync();
+
+// Работа с типами для описания сущностей
+const entity: IEntity = {
+  metadata: {
+    type: 'function',
+    name: 'myFunction',
+    location: { /* ... */ }
+  }
+};
+
+// Использование типов для связей
+const relationship: IRelationship = {
+  metadata: { /* ... */ },
+  from: entity,
+  to: entity
+};
+```

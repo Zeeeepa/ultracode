@@ -1,34 +1,55 @@
-# Subprocess Pool
+# subprocess-pool
 
-*Last updated: 2026-01-15*
+Модуль управления пулом подпроцессов для распараллеливания задач парсинга кода и встраивания текстов. Поддерживает как Node.js, так и Bun рантаймы с асинхронной IPC коммуникацией между процессами. Включает инструменты для управления жизненным циклом воркеров, обработки потоковых результатов и отслеживания статистики пула.
 
-Module for subprocess-pool functionality.
+## Файлы
 
-## Exports
+| Файл | Описание |
+|------|---------|
+| `index.ts` | Точка входа модуля с re-экспортом публичного API из `spawner.ts` и `types.ts` |
+| `spawner.ts` | Платформа-специфичные функции создания подпроцессов с поддержкой Bun и Node.js рантаймов |
+| `types.ts` | Определение типов данных, интерфейсов и конфигурационных структур для работы с пулом |
 
-| Name | Type | Location |
-|------|------|----------|
-| `BinaryEmbedding` | interface | [→ types.ts:110-115] |
-| `BunProcess` | interface | [→ types.ts:18-25] |
-| `EmbeddingsCallback` | type | [→ types.ts:120] |
-| `EmbeddingTextItem` | interface | [→ types.ts:126-133] |
-| `EmbeddingTextsCallback` | type | [→ types.ts:139] |
-| `killProcess` | function | [→ spawner.ts:160-167] |
-| `ParseRequest` | interface | [→ types.ts:55-62] |
-| `ParseResponse` | interface | [→ types.ts:67-85] |
-| `QueuedTask` | interface | [→ types.ts:190-196] |
-| `spawnBunProcess` | function | [→ spawner.ts:57-100] |
-| `SpawnContext` | interface | [→ spawner.ts:25-32] |
-| `spawnNodeProcess` | function | [→ spawner.ts:108-116] |
-| `spawnProcess` | function | [→ spawner.ts:149-155] |
-| `StreamingResultCallback` | type | [→ types.ts:139-139] |
-| `SubprocessPoolOptions` | interface | [→ types.ts:154-185] |
-| `SubprocessPoolStats` | interface | [→ types.ts:94-105] |
-| `SubprocessState` | interface | [→ types.ts:30-46] |
+## Типы и интерфейсы
 
-## Files
+### Процессы
+- **`BunProcess`** — интерфейс Bun-процесса с поддержкой IPC (`stdin`, `stdout`, `stderr`, `pid`, `kill()`, `exited`)
+- **`SubprocessState`** — состояние воркера с ID, процессом, статистикой обработки и промис-колбеками
 
-- `index.ts`
-- `spawner.ts`
-- `types.ts`
+### IPC сообщения
+- **`ParseRequest`** — запрос на парсинг с файлами, языком и опциями
+- **`ParseResponse`** — ответ подпроцесса с результатами, ошибками или статусом готовности
 
+### Пул и конфигурация
+- **`SubprocessPoolStats`** — статистика пула (воркеры, активные задачи, ошибки, время обработки)
+- **`SubprocessPoolOptions`** — опции создания пула (размер, таймауты, лимиты, режимы работы)
+- **`QueuedTask`** — задача в очереди с файлами и функциями разрешения/отклонения
+
+### Встраивания (Embeddings)
+- **`BinaryEmbedding`** — двоичное встраивание с вектором и метаданными
+- **`EmbeddingTextItem`** — текстовый элемент для централизованного встраивания
+
+### Callback типы
+- **`EmbeddingsCallback`** — обработчик встраиваний от воркеров
+- **`EmbeddingTextsCallback`** — обработчик текстов для встраивания
+- **`StreamingResultCallback`** — обработчик потоковых результатов парсинга
+
+## Функции
+
+### Создание процессов
+- **`spawnProcess(workerId, state, context)`** — универсальная функция создания подпроцесса на основе рантайма
+- **`spawnBunProcess(workerId, state, context)`** — создание Bun-подпроцесса с оборачиванием для совместимости
+- **`spawnNodeProcess(workerId, state, context)`** — создание Node.js процесса через `fork()` с настройкой IPC
+- **`killProcess(process)`** — безопасное завершение подпроцесса
+
+### Вспомогательные
+- **`SpawnContext`** — контекст для операции создания с параметрами рантайма и обработчиками событий
+
+## Ключевые возможности
+
+- **Кроссплатформенность** — автоматическая поддержка Node.js и Bun рантаймов
+- **Асинхронная IPC** — обмен сообщениями между процессами с типизацией
+- **Потоковые результаты** — поддержка потоковой обработки результатов парсинга
+- **Встраивания** — интеграция с системой встраивания текстов через промис-колбеки
+- **Статистика** — отслеживание метрик использования памяти, времени обработки и количества ошибок
+- **Keepalive режим** — сохранение одного воркера для быстрой инкрементной обработки
