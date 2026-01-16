@@ -111,8 +111,6 @@ import type { IndexerAgent } from "./agents/indexer-agent.js";
 import { type AutoDocWatcherConfig, getAutoDocWatcher } from "./autodoc/index.js";
 // CLI argument parsing
 import { handleSetupCommand, parseArgs, printHelp } from "./cli/args-parser.js";
-// Skills auto-installer for Claude Code
-import { installSkillsIfNeeded } from "./skills-installer.js";
 // TASK-001: Import new YAML configuration system
 import { ConfigLoader, initializeConfig, validateConfig } from "./config/yaml-config.js";
 import { getOrCreateAgent, registerAllAgents } from "./core/agent-registry.js";
@@ -136,6 +134,8 @@ import {
   setIndexingState,
 } from "./core/indexing-state.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
+// Skills auto-installer for Claude Code
+import { installSkillsIfNeeded } from "./skills-installer.js";
 
 // Make knowledgeBus available globally for tool handlers
 (global as GlobalWithKnowledgeBus).knowledgeBus = knowledgeBus;
@@ -630,16 +630,15 @@ function createMcpServer(session?: ClientSession): Server {
 // Create default MCP server for stdio mode
 const server = createMcpServer();
 
-// Helper: enforce operation timeouts per SYSTEM_HANG_RECOVERY_PLAN
+// Helper: enforce operation timeouts
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, requestId: string): Promise<T> {
   let aborted = false;
 
-  // Timeout via polling (no setTimeout for Bun compatibility)
   const timeoutPromise = new Promise<never>((_, reject) => {
     const startTime = Date.now();
     const checkTimeout = async () => {
       while (!aborted && Date.now() - startTime < ms) {
-        await sleep(100); // Real sleep without busy-wait
+        await sleep(100);
       }
       if (!aborted) {
         const err = new Error(`${label} timed out after ${ms}ms`);

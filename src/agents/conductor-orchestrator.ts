@@ -1,20 +1,10 @@
 /**
- * TASK-004B: Conductor Orchestrator Agent - Performance Optimized
- * ADR-004: MCP CodeGraph Systematic Fixing Plan
+ * Conductor Orchestrator Agent
  *
- * MANDATORY DELEGATION VERSION with 40% overhead reduction optimizations
+ * Central coordinator for multi-agent system. Manages agent lifecycle,
+ * health monitoring, and provides agent lookup via getAgentByType().
  *
- * This agent MUST delegate all implementation tasks to specialized agents:
- * - dev-agent: For ALL code implementation tasks
- * - Dora: For research, documentation, and analysis tasks
- *
- * The Conductor NEVER implements directly, only orchestrates.
- * OPTIMIZED: Hierarchical supervision, sparse communication, predictive load balancing
- *
- * ANTI-OVER-ENGINEERING POLICY:
- * - Do NOT over-engineer. You will receive penalty for each attempt to make codebase more complex.
- * - Keep code clear and simple as possible. Prefer straightforward solutions over elaborate architectures.
- * - Task Completion Checklist: At the end of each task, always proceed with checklist: what was required vs what was done, do you follow requirements.
+ * Does NOT process tasks directly - use registered agents instead.
  */
 
 import { log } from "../logging/index.js";
@@ -22,7 +12,6 @@ import {
   type Agent,
   type AgentMessage,
   type AgentMetrics,
-  type AgentPool,
   AgentStatus,
   type AgentTask,
   AgentType,
@@ -30,18 +19,10 @@ import {
 } from "../types/agent.js";
 import { BaseAgent } from "./base.js";
 import {
-  analyzeTaskComplexity as analyzeComplexity,
   type ConductorConfig,
   type ConductorConfigOverrides,
-  generateMethodProposals,
   getConductorAgentDefaults,
-  getTaskTypeKey,
-  initializeMethodProposalTemplates,
   isDirectImplementation,
-  isIndexingTask,
-  type MethodProposal,
-  type SubTask,
-  type TaskComplexityAnalysis,
 } from "./conductor/index.js";
 import { isEventfulAgent } from "./coordinator.js";
 
@@ -57,23 +38,15 @@ function isBunRuntime(): boolean {
   return typeof (globalThis as BunGlobal).Bun !== "undefined";
 }
 
-export class ConductorOrchestrator extends BaseAgent implements AgentPool {
+export class ConductorOrchestrator extends BaseAgent {
   public agents: Map<string, Agent> = new Map();
   private config: ConductorConfig;
-  private roundRobinIndex: Map<AgentType, number> = new Map();
   private pendingTasks: Map<string, AgentTask> = new Map();
-  private taskComplexityCache: Map<string, TaskComplexityAnalysis> = new Map();
-  private methodProposals: Map<string, MethodProposal[]> = new Map();
-  private approvalRequired: Set<string> = new Set();
-
-  // Tracking for delegation enforcement
-  private delegationLog: Map<string, { agent: string; timestamp: number }[]> = new Map();
   private directImplementationAttempts = 0;
 
   // TASK-004B: Performance optimization features
   private agentLoadCache: Map<string, { load: number; timestamp: number }> = new Map();
   private readonly LOAD_CACHE_TTL = 5000; // 5 seconds
-  private methodProposalTemplates: Map<string, MethodProposal[]> = new Map();
   private performanceMetrics = {
     totalTasks: 0,
     avgProcessingTime: 0,
@@ -167,10 +140,9 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       this.performanceTimer = undefined;
     }
 
-    // Log delegation statistics
+    // Log statistics
     log.i("CONDUCTOR", "shutdown_stats", {
       blocked: this.directImplementationAttempts,
-      delegations: this.delegationLog.size,
     });
 
     const shutdownPromises = Array.from(this.agents.values()).map((agent) =>
@@ -180,11 +152,7 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     this.agents.clear();
 
     // Clear all caches
-    this.delegationLog.clear();
-    this.methodProposals.clear();
-    this.approvalRequired.clear();
     this.agentLastSeen.clear();
-    this.taskComplexityCache.clear();
     this.agentLoadCache.clear();
     this.pendingTasks.clear();
   }
@@ -195,249 +163,9 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
   protected async processTask(task: AgentTask): Promise<unknown> {
     log.i("CONDUCTOR", "process_task", { task: task.id, type: task.type });
-
-    // CRITICAL: Enforce delegation
-    if (this.config.mandatoryDelegation) {
-      return this.processThroughDelegation(task);
-    }
-
-    // This path should never be reached with mandatory delegation
-    throw new Error("[CONDUCTOR] Direct implementation is FORBIDDEN. All tasks must be delegated.");
-  }
-
-  private async processThroughDelegation(task: AgentTask): Promise<unknown> {
-    // Step 1: Analyze task complexity
-    const complexity = await this.analyzeTaskComplexity(task);
-    this.taskComplexityCache.set(task.id, complexity);
-
-    log.i("CONDUCTOR", "task_complexity", { score: complexity.score, strategy: complexity.delegationStrategy });
-
-    // Step 2: Generate method proposals if complexity > threshold
-    // Skip approval for automated indexing operations
-    const indexing = isIndexingTask(task);
-
-    if (complexity.requiresApproval && !indexing) {
-      const proposals = await this.generateOptimizedMethodProposals(task, complexity);
-      this.methodProposals.set(task.id, proposals);
-
-      log.i("CONDUCTOR", "approval_required", { proposals: proposals.length, score: complexity.score });
-
-      // Mark for approval and return proposals
-      this.approvalRequired.add(task.id);
-
-      return {
-        status: "approval_required",
-        complexity: complexity.score,
-        proposals,
-        message: `Task complexity ${complexity.score}/10 exceeds threshold. Please review proposals and approve.`,
-      };
-    } else if (complexity.requiresApproval && indexing) {
-      log.i("CONDUCTOR", "approval_bypass", { reason: "indexing", score: complexity.score });
-    }
-
-    // Step 3: Decompose into subtasks
-    const subtasks = complexity.subtasks.length > 0 ? complexity.subtasks : await this.decomposeTask(task, complexity);
-
-    log.d("CONDUCTOR", "decomposed", { subtasks: subtasks.length });
-
-    // Step 4: Delegate subtasks to appropriate agents
-    const results = [];
-    for (const subtask of subtasks) {
-      const result = await this.delegateSubtask(task.id, subtask);
-      results.push(result);
-    }
-
-    // Step 5: Synthesize results
-    return this.synthesizeResults(task, results);
-  }
-
-  private analyzeTaskComplexity(task: AgentTask): TaskComplexityAnalysis {
-    return analyzeComplexity(task, this.config);
-  }
-
-  private async decomposeTask(task: AgentTask, complexity: TaskComplexityAnalysis): Promise<SubTask[]> {
-    const subtasks: SubTask[] = [];
-
-    // Special handling for indexing tasks with batch processing
-    if (
-      task.type === "index" &&
-      task.payload &&
-      typeof task.payload === "object" &&
-      "excludePatterns" in task.payload
-    ) {
-      const payload = task.payload as { excludePatterns?: string[]; [key: string]: unknown };
-      const isBatchProcessing = payload.excludePatterns?.includes("__batch_processing_enabled__");
-
-      if (isBatchProcessing) {
-        log.d("CONDUCTOR", "batch_decompose", { task: task.id });
-
-        // Remove the batch processing marker before delegating
-        const cleanedPatterns = (payload.excludePatterns || []).filter(
-          (p: string) => p !== "__batch_processing_enabled__",
-        );
-
-        // Create batch subtasks for large codebase indexing
-        subtasks.push({
-          id: `${task.id}-batch-1`,
-          description: "Index codebase in batches (Part 1)",
-          targetAgent: "dev-agent",
-          dependencies: [],
-          priority: 8,
-          payload: {
-            type: "index",
-            ...(payload || {}),
-            excludePatterns: cleanedPatterns,
-            batchMode: true,
-            batchNumber: 1,
-          },
-        });
-
-        return subtasks;
-      }
-    }
-
-    // Special handling for index tasks that aren't batch processing
-    if (task.type === "index" && !subtasks.length) {
-      const payloadObj = task.payload && typeof task.payload === "object" ? task.payload : {};
-      subtasks.push({
-        id: `${task.id}-index`,
-        description: "Index codebase",
-        targetAgent: "dev-agent",
-        dependencies: [],
-        priority: 8,
-        payload: {
-          type: "index",
-          ...payloadObj,
-        },
-      });
-      return subtasks;
-    }
-
-    // Always start with research if needed
-    if (complexity.factors.includes("Research required") || complexity.delegationStrategy === "dora") {
-      subtasks.push({
-        id: `${task.id}-research`,
-        description: "Research best practices and patterns",
-        targetAgent: "dora",
-        dependencies: [],
-        priority: 10,
-      });
-    }
-
-    // Add implementation subtasks
-    if (complexity.delegationStrategy !== "dora") {
-      subtasks.push({
-        id: `${task.id}-implement`,
-        description: "Implement core functionality",
-        targetAgent: "dev-agent",
-        dependencies: subtasks.length > 0 ? [`${task.id}-research`] : [],
-        priority: 8,
-      });
-    }
-
-    // Add testing if required
-    if (complexity.factors.includes("Testing required")) {
-      subtasks.push({
-        id: `${task.id}-test`,
-        description: "Write and run tests",
-        targetAgent: "dev-agent",
-        dependencies: [`${task.id}-implement`],
-        priority: 6,
-      });
-    }
-
-    // Add documentation
-    if (complexity.score >= 5) {
-      subtasks.push({
-        id: `${task.id}-document`,
-        description: "Update documentation",
-        targetAgent: "dora",
-        dependencies: [`${task.id}-implement`],
-        priority: 4,
-      });
-    }
-
-    return subtasks;
-  }
-
-  private async delegateSubtask(taskId: string, subtask: SubTask): Promise<unknown> {
-    log.d("CONDUCTOR", "delegate", { subtask: subtask.id, target: subtask.targetAgent });
-
-    // Track delegation
-    if (!this.delegationLog.has(taskId)) {
-      this.delegationLog.set(taskId, []);
-    }
-    this.delegationLog.get(taskId)?.push({
-      agent: subtask.targetAgent,
-      timestamp: Date.now(),
-    });
-
-    // Check if target agent is available
-    const agent = this.getAgentByName(subtask.targetAgent);
-    if (!agent) {
-      log.w("CONDUCTOR", "agent_unavailable", { agent: subtask.targetAgent, subtask: subtask.id });
-
-      // Queue for when agent becomes available
-      this.pendingTasks.set(subtask.id, {
-        id: subtask.id,
-        type: subtask.targetAgent === "dora" ? "research" : subtask.payload?.type || "implementation",
-        priority: subtask.priority,
-        payload: subtask.payload || subtask,
-        createdAt: Date.now(),
-      });
-
-      return {
-        status: "queued",
-        message: `Subtask queued for ${subtask.targetAgent}`,
-      };
-    }
-
-    // Create agent task - preserve task type from payload if present
-    const taskType = subtask.payload?.type || (subtask.targetAgent === "dora" ? "research" : "implementation");
-
-    const agentTask: AgentTask = {
-      id: subtask.id,
-      type: taskType,
-      priority: subtask.priority,
-      payload: subtask.payload || subtask,
-      createdAt: Date.now(),
-    };
-
-    // Process through agent
-    try {
-      const result = await agent.process(agentTask);
-      log.d("CONDUCTOR", "subtask_done", { subtask: subtask.id, agent: subtask.targetAgent });
-      return result;
-    } catch (error) {
-      log.e("CONDUCTOR", "subtask_fail", { subtask: subtask.id, err: String(error) });
-      throw error;
-    }
-  }
-
-  private async synthesizeResults(task: AgentTask, results: unknown[]): Promise<unknown> {
-    log.d("CONDUCTOR", "synthesize", { task: task.id, results: results.length });
-
-    return {
-      taskId: task.id,
-      status: "completed",
-      complexity: this.taskComplexityCache.get(task.id)?.score,
-      delegations: this.delegationLog.get(task.id),
-      results,
-      synthesizedAt: Date.now(),
-    };
-  }
-
-  private getAgentByName(name: "dev-agent" | "dora"): Agent | undefined {
-    // Map agent names to types
-    const nameToType: Record<string, AgentType> = {
-      "dev-agent": AgentType.DEV,
-      dora: AgentType.DORA,
-    };
-
-    const type = nameToType[name];
-    if (!type) return undefined;
-
-    return this.getAvailableAgent(type);
+    // ConductorOrchestrator does not process tasks directly
+    // All processing should go through registered agents via getAgentByType()
+    throw new Error("[CONDUCTOR] Direct task processing is not supported. Use registered agents.");
   }
 
   private initializeDelegationEnforcement(): void {
@@ -462,7 +190,6 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     return isDirectImplementation(task);
   }
 
-  // AgentPool implementation (inherited from original)
   register(agent: Agent): void {
     if (this.agents.size >= this.config.resourceConstraints.maxConcurrentAgents) {
       throw new Error(`Maximum number of agents (${this.config.resourceConstraints.maxConcurrentAgents}) reached`);
@@ -502,65 +229,6 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
    */
   getAgentByType(type: AgentType): Agent | undefined {
     return this.getAgentsByType(type)[0];
-  }
-
-  getAvailableAgent(type: AgentType): Agent | undefined {
-    const agents = this.getAgentsByType(type);
-    // Memory limit check disabled - only check status
-    const availableAgents = agents.filter((agent) => agent.status === AgentStatus.IDLE);
-
-    if (availableAgents.length === 0) return undefined;
-
-    switch (this.config.loadBalancingStrategy) {
-      case "round-robin":
-        return this.selectRoundRobin(type, availableAgents);
-      case "least-loaded":
-        return this.selectLeastLoaded(availableAgents);
-      case "priority":
-        return this.selectByPriority(availableAgents);
-      default:
-        return availableAgents[0];
-    }
-  }
-
-  async broadcast(message: AgentMessage): Promise<void> {
-    const promises = Array.from(this.agents.values()).map((agent) =>
-      agent
-        .receive(message)
-        .catch((err) => log.e("CONDUCTOR", "broadcast_fail", { agent: agent.id, err: String(err) })),
-    );
-    await Promise.all(promises);
-  }
-
-  async route(task: AgentTask): Promise<Agent | undefined> {
-    // CRITICAL: Force delegation through proper channels
-    if (this.config.mandatoryDelegation) {
-      log.w("CONDUCTOR", "route_redirect", { task: task.id });
-      await this.processThroughDelegation(task);
-      return undefined;
-    }
-
-    return undefined;
-  }
-
-  // Private helper methods (inherited)
-  private selectRoundRobin(type: AgentType, agents: Agent[]): Agent {
-    const index = this.roundRobinIndex.get(type) || 0;
-    const selected = agents[index % agents.length]!;
-    this.roundRobinIndex.set(type, index + 1);
-    return selected;
-  }
-
-  private selectLeastLoaded(agents: Agent[]): Agent {
-    return agents.slice(1).reduce((least, agent) => {
-      const leastLoad = least.getTaskQueue().length + least.getMemoryUsage() / 100;
-      const agentLoad = agent.getTaskQueue().length + agent.getMemoryUsage() / 100;
-      return agentLoad < leastLoad ? agent : least;
-    }, agents[0]!);
-  }
-
-  private selectByPriority(agents: Agent[]): Agent {
-    return agents.slice().sort((a, b) => b.capabilities.priority - a.capabilities.priority)[0]!;
   }
 
   /**
@@ -667,9 +335,6 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
       case "health":
         log.t("CONDUCTOR", "msg_health", { from: message.from });
         break;
-      case "broadcast":
-        await this.broadcast(message);
-        break;
       default: {
         const targetAgent = this.agents.get(message.to);
         if (targetAgent) {
@@ -693,9 +358,6 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
 
   private initializePerformanceOptimizations(): void {
     log.t("CONDUCTOR", "perf_init_start", {});
-
-    // Pre-populate method proposal templates
-    this.initializeMethodProposalTemplates();
 
     // Start async performance loop (safe for Bun + OpenVINO)
     this.startPerformanceLoop();
@@ -727,14 +389,6 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     }, this.PERFORMANCE_INTERVAL_MS);
   }
 
-  private initializeMethodProposalTemplates(): void {
-    const templates = initializeMethodProposalTemplates();
-    for (const [key, value] of templates) {
-      this.methodProposalTemplates.set(key, value);
-    }
-    log.t("CONDUCTOR", "templates_cached", { cnt: templates.size });
-  }
-
   private updatePerformanceMetrics(): void {
     const cacheHits = this.agentLoadCache.size;
     const totalRequests = this.performanceMetrics.totalTasks;
@@ -760,16 +414,6 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     for (const [agentId, data] of this.agentLoadCache) {
       if (now - data.timestamp > this.LOAD_CACHE_TTL) {
         this.agentLoadCache.delete(agentId);
-      }
-    }
-
-    // Clean up old task complexity cache entries (keep last 100)
-    if (this.taskComplexityCache.size > 100) {
-      const entries = Array.from(this.taskComplexityCache.entries());
-      const toKeep = entries.slice(-100);
-      this.taskComplexityCache.clear();
-      for (const [key, value] of toKeep) {
-        this.taskComplexityCache.set(key, value);
       }
     }
   }
@@ -802,39 +446,5 @@ export class ConductorOrchestrator extends BaseAgent implements AgentPool {
     }
 
     return result;
-  }
-
-  /**
-   * TASK-004B: Optimized method proposal generation using templates
-   */
-  private async generateOptimizedMethodProposals(
-    task: AgentTask,
-    complexity: TaskComplexityAnalysis,
-  ): Promise<MethodProposal[]> {
-    const startTime = Date.now();
-
-    // Try to use cached template first
-    const taskTypeKey = getTaskTypeKey(task);
-    const template = this.methodProposalTemplates.get(taskTypeKey);
-
-    if (template) {
-      this.performanceMetrics.cacheHitRate++;
-      log.t("CONDUCTOR", "proposal_cache_hit", { key: taskTypeKey });
-      return template.map((proposal) => ({
-        ...proposal,
-        description: proposal.description.replace(taskTypeKey, `${taskTypeKey} for ${task.type}`),
-      }));
-    }
-
-    // Fallback to original method
-    const proposals = generateMethodProposals(task, complexity);
-
-    // Cache the result for future use
-    this.methodProposalTemplates.set(taskTypeKey, proposals);
-
-    const duration = Date.now() - startTime;
-    log.t("CONDUCTOR", "proposal_generated", { key: taskTypeKey, dur: duration });
-
-    return proposals;
   }
 }
