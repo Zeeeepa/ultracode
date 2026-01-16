@@ -11,6 +11,7 @@
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { log } from "../../logging/index.js";
 import { getDataDir } from "../../shared/storage-paths.js";
 import { sleep } from "../../utils/runtime.js";
@@ -220,23 +221,47 @@ class GpuSubprocessClient implements IGpuClient {
   private findWorkerPath(): string {
     const candidates: string[] = [];
 
-    const thisDir = dirname(import.meta.url.replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1"));
-    candidates.push(join(thisDir, "gpu-worker.js"));
-    candidates.push(join(process.cwd(), "dist/semantic/gpu/gpu-worker.js"));
+    // Use fileURLToPath for proper cross-platform path resolution
+    // After bundling, import.meta.url points to chunk file in dist/chunks/, not semantic/gpu/
+    // So we find dist root and use full subpath (same approach as language-worker-pool.ts)
+    const currentDir = dirname(fileURLToPath(import.meta.url));
 
+    // Find dist root by looking for semantic/gpu structure or going up from chunks
+    let distRoot = currentDir;
+    if (currentDir.includes("chunks")) {
+      // Bundled: currentDir is dist/chunks, go up one level
+      distRoot = dirname(currentDir);
+    } else if (currentDir.includes("semantic")) {
+      // Development or unbundled: currentDir is semantic/gpu, go up two levels
+      distRoot = dirname(dirname(currentDir));
+    }
+
+    // Primary candidate: relative to dist root
+    candidates.push(join(distRoot, "semantic", "gpu", "gpu-worker.js"));
+
+    // Fallback: same directory (in case of different bundle structure)
+    candidates.push(join(currentDir, "gpu-worker.js"));
+
+    // Fallback: try npm package resolution
     try {
       const pkgPath = require.resolve("ultrascript-tools-mcp");
       candidates.push(join(dirname(pkgPath), "semantic/gpu/gpu-worker.js"));
     } catch {}
 
+    // Last resort: cwd-based (for development)
+    candidates.push(join(process.cwd(), "dist/semantic/gpu/gpu-worker.js"));
+
     for (const path of candidates) {
-      const normalizedPath = path.replace(/^\/([A-Za-z]:)/, "$1");
-      if (existsSync(normalizedPath)) {
-        return normalizedPath;
+      if (existsSync(path)) {
+        log.d("GPU", "Found worker at", { path });
+        return path;
       }
     }
 
-    return join(process.cwd(), "dist/semantic/gpu/gpu-worker.js");
+    // Return first candidate for error message clarity
+    const fallback = candidates[0] ?? join(process.cwd(), "dist/semantic/gpu/gpu-worker.js");
+    log.w("GPU", "Worker not found, using fallback", { path: fallback, candidates });
+    return fallback;
   }
 
   async start(): Promise<boolean> {
