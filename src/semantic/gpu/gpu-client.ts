@@ -35,9 +35,7 @@ import type {
   FaissBatchSearchResponse,
   FaissIndexConfig,
   FaissInitResponse,
-  FaissLoadFromDumpResponse,
   FaissLoadResponse,
-  FaissLoadWorkerDumpResponse,
   FaissSaveResponse,
   FaissSearchRequest,
   FaissSearchResponse,
@@ -85,11 +83,6 @@ export interface IGpuClient {
   faissLoad(path: string): Promise<FaissLoadResponse>;
   faissRemove(ids: string[]): Promise<void>;
   faissGetStats(): Promise<FaissStatsResponse["stats"]>;
-  faissLoadFromDump(dumpDir: string, dimensions: number): Promise<{ loaded: number; skipped: number; files: number }>;
-  faissLoadWorkerDump(
-    workerId: string,
-    dimensions: number,
-  ): Promise<{ loaded: number; skipped: number; files: number; workerId: string }>;
 
   // CUDA operations (raw - always use CUDA if available)
   cudaInfo(): Promise<CudaInfoResponse>;
@@ -691,35 +684,6 @@ class GpuSubprocessClient implements IGpuClient {
     const response = await this.sendRequest({ type: "faiss.stats" });
     if (!response.success) throw new Error(extractGpuError(response));
     return (response as FaissStatsResponse).stats;
-  }
-
-  async faissLoadFromDump(
-    dumpDir: string,
-    dimensions: number,
-  ): Promise<{ loaded: number; skipped: number; files: number }> {
-    const response = await this.sendRequest({ type: "faiss.loadFromDump", dumpDir, dimensions });
-    if (!response.success) throw new Error(extractGpuError(response));
-    const typedResponse = response as FaissLoadFromDumpResponse;
-    return {
-      loaded: typedResponse.loaded || 0,
-      skipped: typedResponse.skipped || 0,
-      files: typedResponse.files || 0,
-    };
-  }
-
-  async faissLoadWorkerDump(
-    workerId: string,
-    dimensions: number,
-  ): Promise<{ loaded: number; skipped: number; files: number; workerId: string }> {
-    const response = await this.sendRequest({ type: "faiss.loadWorkerDump", workerId, dimensions });
-    if (!response.success) throw new Error(extractGpuError(response));
-    const typedResponse = response as FaissLoadWorkerDumpResponse;
-    return {
-      loaded: typedResponse.loaded || 0,
-      skipped: typedResponse.skipped || 0,
-      files: typedResponse.files || 0,
-      workerId: typedResponse.workerId || workerId,
-    };
   }
 
   // =========================================================================

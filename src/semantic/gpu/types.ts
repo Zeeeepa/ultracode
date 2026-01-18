@@ -92,18 +92,6 @@ export interface FaissStatsRequest {
   type: "faiss.stats";
 }
 
-export interface FaissLoadFromDumpRequest {
-  type: "faiss.loadFromDump";
-  dumpDir: string;
-  dimensions: number;
-}
-
-export interface FaissLoadWorkerDumpRequest {
-  type: "faiss.loadWorkerDump";
-  workerId: string;
-  dimensions: number;
-}
-
 // =============================================================================
 // CUDA Requests
 // =============================================================================
@@ -198,8 +186,6 @@ export type GpuWorkerRequest =
   | FaissLoadRequest
   | FaissTrainRequest
   | FaissStatsRequest
-  | FaissLoadFromDumpRequest
-  | FaissLoadWorkerDumpRequest
   // CUDA operations
   | CudaInfoRequest
   | CudaCosineRequest
@@ -302,27 +288,6 @@ export interface FaissStatsResponse extends GpuSuccessResponse {
     ivfNlist?: number;
     ivfNprobe?: number;
   };
-}
-
-export interface FaissLoadFromDumpResponse extends GpuSuccessResponse {
-  type: "faiss.loadFromDump";
-  loaded: number;
-  skipped: number;
-  files: number;
-  totalVectors?: number;
-  loadTimeMs?: number;
-  message?: string | undefined;
-}
-
-export interface FaissLoadWorkerDumpResponse extends GpuSuccessResponse {
-  type: "faiss.loadWorkerDump";
-  workerId: string;
-  loaded: number;
-  skipped: number;
-  files: number;
-  totalVectors?: number;
-  loadTimeMs?: number;
-  message?: string | undefined;
 }
 
 // CUDA Responses
@@ -436,8 +401,6 @@ export type GpuWorkerResponse =
   | FaissLoadResponse
   | FaissTrainResponse
   | FaissStatsResponse
-  | FaissLoadFromDumpResponse
-  | FaissLoadWorkerDumpResponse
   // CUDA responses
   | CudaInfoResponse
   | CudaCosineResponse
