@@ -10,13 +10,13 @@
 
 | Пакет | Версия | Назначение |
 |-------|--------|------------|
-| `@modelcontextprotocol/sdk` | ^1.24.3 | MCP протокол, JSON-RPC сервер |
-| `better-sqlite3` | ^12.5.0 | SQLite драйвер для хранения графа |
-| `sqlite-vec` | ^0.1.6 | Векторный поиск в SQLite |
-| `vectorlite` | ^0.2.0 | Альтернативный векторный бэкенд |
-| `zod` | ^4.1.13 | Валидация схем, JSON Schema генерация |
+| `@modelcontextprotocol/sdk` | ^1.25.2 | MCP протокол, JSON-RPC сервер |
+| `@libsql/client` | ^0.17.0 | LibSQL/Turso драйвер для хранения графа |
+| `zod` | ^4.3.5 | Валидация схем, JSON Schema генерация |
 | `lru-cache` | ^11.2.4 | LRU кэш для парсеров и эмбеддингов |
 | `nanoid` | ^5.1.6 | Генерация уникальных ID |
+| `graphology` | ^0.26.0 | Граф в памяти, обход и анализ |
+| `graphology-shortest-path` | ^2.1.0 | Поиск кратчайших путей в графе |
 
 ### Семантический слой
 
@@ -77,13 +77,31 @@
 
 ## Optional Dependencies
 
-| Пакет | Версия | Назначение |
-|-------|--------|------------|
-| `@webgpu/node` | npm:null@^2.0.0 | WebGPU для Node.js (заглушка) |
-| `@webgpu/types` | ^0.1.67 | WebGPU TypeScript типы |
-| `webgpu` | ^0.3.8 | WebGPU полифилл |
+| Пакет | Версия | Назначение | Статус |
+|-------|--------|------------|--------|
+| `@webgpu/node` | npm:null@^2.0.0 | WebGPU для Node.js | **Заглушка** — пустой пакет для transformers.js |
+| `@webgpu/types` | ^0.1.69 | WebGPU TypeScript типы | Только типы, не исполняемый код |
+| `webgpu` | ^0.3.8 | Dawn WebGPU runtime | **Рабочий** — используется WebGPUBackend |
+| `faiss-napi` | ^0.10.3 | FAISS векторный индекс | Рабочий, HNSW/IVF индексы |
 
-> **Примечание**: WebGPU зависимости установлены как заглушки для совместимости с transformers.js. Реальная GPU поддержка через CUDA/OpenCL.
+### WebGPU — подробности
+
+**`webgpu-backend.ts`** — полноценный GPU backend с WGSL compute шейдером для косинусного сходства.
+
+Порядок выбора backend'а (`backend-selector.ts`):
+
+| Приоритет | Backend | Условие |
+|-----------|---------|---------|
+| 100 | CUDA Native | NVIDIA + Node.js runtime |
+| 98-100 | CUDA Worker | NVIDIA (через subprocess для Bun) |
+| 95 | Metal | Apple Silicon (macOS ARM64) |
+| **80** | **WebGPU** | **Когда CUDA/Metal недоступны** |
+| 50 | WASM SIMD | CPU fallback |
+| 1 | Pure JS | Всегда доступен |
+
+> **Вывод**: WebGPU — запасной вариант для систем без NVIDIA/Apple Silicon.
+> На практике редко используется: CUDA/Metal имеют более высокий приоритет.
+> Dawn WebGPU также имеет проблемы совместимости с новыми GPU (Blackwell).
 
 ## Системные требования
 
@@ -115,9 +133,8 @@
 ultrascript-tools-mcp
 ├── Core
 │   ├── @modelcontextprotocol/sdk ── JSON-RPC, MCP protocol
-│   ├── better-sqlite3 ───────────── SQLite native binding
-│   │   └── node-gyp (build)
-│   ├── sqlite-vec ───────────────── Vector search extension
+│   ├── @libsql/client ───────────── LibSQL/Turso database
+│   ├── graphology ───────────────── In-memory graph + algorithms
 │   └── zod ──────────────────────── Schema validation
 │
 ├── Semantic (внешние сервера)
@@ -128,13 +145,22 @@ ultrascript-tools-mcp
 │   ├── Ollama ───────────────────── Local LLM
 │   └── @huggingface/inference ───── HF Cloud API
 │
+├── GPU Backends (приоритет)
+│   ├── CUDA Native ──────────────── NVIDIA + Node.js (100)
+│   ├── CUDA Worker ──────────────── NVIDIA + Bun (98-100)
+│   ├── Metal ────────────────────── Apple Silicon (95)
+│   ├── WebGPU (Dawn) ────────────── Universal fallback (80)
+│   ├── WASM SIMD ────────────────── CPU SIMD (50)
+│   └── Pure JS ──────────────────── Always available (1)
+│
 ├── Storage
 │   ├── lru-cache ────────────────── In-memory caching
-│   └── vectorlite ───────────────── Alternative vector backend
+│   └── faiss-napi ───────────────── HNSW/IVF vector index (optional)
 │
 └── Utils
     ├── yaml ─────────────────────── Config parsing
     ├── nanoid ───────────────────── ID generation
+    ├── oxc-parser ───────────────── Fast JS/TS parsing
     └── eslint ───────────────────── JS/TS validation
 ```
 
@@ -146,23 +172,35 @@ ultrascript-tools-mcp
 
 ```json
 {
-  "overrides": {}
+  "overrides": {
+    "boolean": "3.2.0",
+    "sharp": "npm:null@^2.0.0",
+    "onnxruntime-node": "npm:null@^2.0.0"
+  }
 }
 ```
 
-> Overrides используются для фиксации версий транзитивных зависимостей при необходимости.
+| Override | Причина |
+|----------|---------|
+| `boolean@3.2.0` | Deprecated транзитивная зависимость, пакет не поддерживается но работает |
+| `sharp → null` | Не нужен — используется только токенизация из transformers.js |
+| `onnxruntime-node → null` | Заменён на OVMS Docker для инференса |
 
 ### Trusted Dependencies
 
 ```json
 {
   "trustedDependencies": [
-    "better-sqlite3"
+    "cbor-extract",
+    "esbuild",
+    "faiss-napi",
+    "protobufjs",
+    "webgpu"
   ]
 }
 ```
 
-> `better-sqlite3` — имеет postinstall скрипт для сборки нативного модуля.
+> Пакеты с postinstall скриптами для сборки нативных модулей.
 
 ## Обновление зависимостей
 
@@ -184,10 +222,11 @@ npm audit fix
 
 При обновлении следующих пакетов требуется полное тестирование:
 
-1. **better-sqlite3** — нативный модуль, может сломать сборку
+1. **@libsql/client** — драйвер БД, проверить миграции
 2. **@modelcontextprotocol/sdk** — API изменения, проверить MCP совместимость
 3. **zod** — breaking changes в v4, проверить валидацию
-4. **vectorlite** — нативное расширение, проверить HNSW индексы
+4. **faiss-napi** — нативное расширение, проверить HNSW индексы
+5. **oxc-parser** — парсер JS/TS, проверить AST совместимость
 
 ## Связанные документы
 
