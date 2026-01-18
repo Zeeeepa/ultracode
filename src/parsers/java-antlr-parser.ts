@@ -5,6 +5,13 @@
  * using the official Java20 grammar via ANTLR4.
  *
  * This provides accurate AST-based parsing instead of regex-based parsing.
+ *
+ * Enhanced with modular extractors:
+ * - AST-aware call extraction (vs regex)
+ * - JavaDoc documentation extraction
+ * - Control flow analysis
+ * - Complexity metrics
+ * - Framework patterns (Spring, JPA, Lombok)
  */
 
 import { CharStream, CommonTokenStream } from "antlr4ng";
@@ -31,13 +38,12 @@ import {
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 
-// Import extracted modules
+// Import legacy extraction helpers (for backward compatibility)
 import {
   extractAnnotations,
   extractAnnotationsFromFieldModifiers,
   extractAnnotationsFromInterfaceModifiers,
   extractAnnotationsFromMethodModifiers,
-  extractCalls,
   extractClassInheritance,
   extractClassModifiers,
   extractConstantModifiers,
@@ -51,6 +57,10 @@ import {
   extractMethodParameters,
   getLocation,
 } from "./java/extraction-helpers.js";
+// Import new modular extractors
+import { extractCallsDetailed } from "./java/extractors/call-extractor.js";
+import { calculateComplexity } from "./java/extractors/complexity-analyzer.js";
+import { extractControlFlow } from "./java/extractors/control-flow-extractor.js";
 import type { ParserContext } from "./java/types.js";
 
 // Re-export types for backward compatibility
@@ -704,6 +714,31 @@ function processMethodDeclaration(methodDecl: MethodDeclarationContext, ctx: Par
 
   const fullName = ctx.currentClass ? `${ctx.currentClass}.${methodName}` : methodName;
 
+  // Extract method body for analysis
+  const methodBody = methodDecl.methodBody();
+  const block = methodBody?.block?.();
+
+  // NEW: Extract control flow information
+  const controlFlow = block ? extractControlFlow(block) : undefined;
+
+  // NEW: Calculate complexity metrics
+  const complexity = block ? calculateComplexity(block) : undefined;
+
+  // Build metadata object
+  const metadata: Record<string, unknown> = {};
+  if (throwsTypes.length > 0) {
+    metadata["throws"] = throwsTypes;
+  }
+  if (
+    controlFlow &&
+    (controlFlow.branches.length > 0 || controlFlow.loops.length > 0 || controlFlow.exceptions.length > 0)
+  ) {
+    metadata["controlFlow"] = controlFlow;
+  }
+  if (complexity) {
+    metadata["complexity"] = complexity;
+  }
+
   const entity: ParsedEntity = {
     name: fullName,
     type: "method",
@@ -713,8 +748,13 @@ function processMethodDeclaration(methodDecl: MethodDeclarationContext, ctx: Par
     ...(params.length > 0 && { parameters: params }),
     returnType: returnType !== "void" ? returnType : undefined,
     ...(annotations.length > 0 && { decorators: annotations }),
-    metadata: throwsTypes.length > 0 ? { throws: throwsTypes } : undefined,
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
   };
+
+  // Set parameter count for complexity
+  if (complexity) {
+    complexity.parameterCount = params.length;
+  }
 
   ctx.entities.push(entity);
 
@@ -747,16 +787,20 @@ function processMethodDeclaration(methodDecl: MethodDeclarationContext, ctx: Par
     });
   }
 
-  // Extract calls from method body
-  const methodBody = methodDecl.methodBody();
-  if (methodBody) {
-    const calls = extractCalls(methodBody);
-    for (const call of calls) {
+  // NEW: Extract calls using AST-aware call extractor
+  if (block) {
+    const detailedCalls = extractCallsDetailed(block);
+    for (const call of detailedCalls) {
+      const callTarget = call.target ? `${call.target}.${call.name}` : call.name;
       ctx.relationships.push({
         from: fullName,
-        to: call,
+        to: callTarget,
         type: "calls",
-        metadata: {},
+        metadata: {
+          argumentCount: call.argumentCount,
+          isNew: call.isNew,
+          ...(call.typeArguments && call.typeArguments.length > 0 && { typeArguments: call.typeArguments }),
+        },
       });
     }
   }

@@ -1,6 +1,6 @@
 # Java
 
-*Last updated: 2026-01-15*
+*Last updated: 2026-01-18*
 
 Модуль для извлечения метаданных из Java AST с помощью ANTLR парсера.
 
@@ -27,7 +27,7 @@
 | `extractCalls` | function | Получает информацию о вызовах методов в коде | [→ extraction-helpers.ts:336-340] |
 | `ParserContext` | interface | Контекст передаваемый через функции парсинга Java кода | [→ types.ts:17-24] |
 | `LocationInfo` | type | Информация о положении узла AST в исходном файле | [→ types.ts:33-36] |
-| `AnnotationInfo` | interface | Данные об аннотации извлеченной из модификаторов узла | [→ types.ts:45-48] |
+| `AnnotationInfo` | interface | Данные об аннотации извлеченной из модификаторов узла | [→ types.ts:43-62] |
 | `InheritanceInfo` | interface | Информация о базовых классах и реализуемых интерфейсах | [→ types.ts:53-56] |
 | `ParameterInfo` | interface | Данные о параметре метода или конструктора класса | [→ types.ts:61-65] |
 

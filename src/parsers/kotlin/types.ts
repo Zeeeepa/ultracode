@@ -1,8 +1,8 @@
 /**
- * Java ANTLR Parser Types
+ * Kotlin ANTLR Parser Types
  *
- * Type definitions for Java parsing context and extracted information.
- * Provides shared types for all Java parser modules.
+ * Type definitions for Kotlin parsing context and extracted information.
+ * Provides shared types for all Kotlin parser modules.
  */
 
 import type { EntityRelationship, ParsedEntity } from "../../types/parser.js";
@@ -49,16 +49,20 @@ export interface CallInfo {
   target?: string;
   /** Location of the call */
   location: LocationInfo;
-  /** Whether this is a constructor call (new) */
+  /** Whether this is an await/suspend call */
+  isAwait?: boolean;
+  /** Whether this is safe call (?.) */
+  isSafeCall?: boolean;
+  /** Whether this is a constructor call */
   isNew?: boolean;
-  /** Whether this is a static call */
-  isStatic?: boolean;
-  /** Whether this is a super call */
-  isSuper?: boolean;
   /** Number of arguments */
   argumentCount: number;
   /** Type arguments for generic calls */
   typeArguments?: string[];
+  /** Whether this is an extension function call */
+  isExtensionCall?: boolean;
+  /** Receiver type for extension functions */
+  receiverType?: string;
 }
 
 // =============================================================================
@@ -90,7 +94,7 @@ export interface InheritanceInfo {
 // =============================================================================
 
 /**
- * Parameter information for methods/constructors
+ * Parameter information for functions/constructors
  */
 export interface ParameterInfo {
   name: string;
@@ -108,7 +112,7 @@ export interface ParameterInfo {
  * Branch information in control flow
  */
 export interface BranchInfo {
-  type: "if" | "else" | "else-if" | "switch" | "case" | "default" | "ternary";
+  type: "if" | "else" | "else-if" | "when" | "when-entry" | "elvis" | "ternary";
   condition?: string;
   location: LocationInfo;
 }
@@ -117,7 +121,7 @@ export interface BranchInfo {
  * Loop information in control flow
  */
 export interface LoopInfo {
-  type: "for" | "for-each" | "while" | "do-while";
+  type: "for" | "while" | "do-while";
   location: LocationInfo;
 }
 
@@ -136,6 +140,7 @@ export interface ExceptionInfo {
 export interface ReturnInfo {
   location: LocationInfo;
   hasValue: boolean;
+  label?: string; // For labeled returns
 }
 
 /**
@@ -146,27 +151,31 @@ export interface ControlFlowInfo {
   loops: LoopInfo[];
   exceptions: ExceptionInfo[];
   returns: ReturnInfo[];
+  awaits: Array<{
+    location: LocationInfo;
+    expression: string;
+  }>;
 }
 
 // =============================================================================
-// DOCUMENTATION TYPES (JavaDoc)
+// DOCUMENTATION TYPES (KDoc)
 // =============================================================================
 
 /**
- * JavaDoc parameter documentation
+ * KDoc parameter documentation
  */
-export interface JavaDocParam {
+export interface KDocParam {
   name: string;
   type?: string;
   description?: string;
 }
 
 /**
- * Parsed JavaDoc documentation
+ * Parsed KDoc documentation
  */
-export interface JavaDocInfo {
+export interface KDocInfo {
   description?: string;
-  params?: JavaDocParam[];
+  params?: KDocParam[];
   returns?: {
     type?: string;
     description?: string;
@@ -175,11 +184,34 @@ export interface JavaDocInfo {
     type?: string;
     description?: string;
   }>;
+  property?: Array<{
+    name: string;
+    description?: string;
+  }>;
+  receiver?: string;
+  sample?: string[];
   see?: string[];
   since?: string;
   author?: string;
-  version?: string;
   deprecated?: string | boolean;
+  suppress?: string[];
+}
+
+// =============================================================================
+// COROUTINE TYPES
+// =============================================================================
+
+/**
+ * Coroutine-specific information
+ */
+export interface CoroutineInfo {
+  isSuspend: boolean;
+  hasLaunch?: boolean;
+  hasAsync?: boolean;
+  hasFlow?: boolean;
+  hasWithContext?: boolean;
+  dispatcherUsed?: string;
+  scopeType?: "CoroutineScope" | "GlobalScope" | "viewModelScope" | "lifecycleScope" | "other";
 }
 
 // =============================================================================
@@ -187,7 +219,7 @@ export interface JavaDocInfo {
 // =============================================================================
 
 /**
- * Code complexity metrics for a method
+ * Code complexity metrics for a function/method
  */
 export interface ComplexityMetrics {
   cyclomatic: number;
@@ -204,39 +236,21 @@ export interface ComplexityMetrics {
 // =============================================================================
 
 /**
- * Spring annotation information
+ * Android ViewModel pattern info
  */
-export interface SpringAnnotationInfo {
-  type: "controller" | "service" | "repository" | "component" | "configuration" | "bean";
-  path?: string;
-  method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
-  qualifiers?: string[];
+export interface ViewModelInfo {
+  stateFlows: string[];
+  liveData: string[];
+  savedStateHandle?: boolean;
 }
 
 /**
- * JPA entity information
+ * Ktor routing pattern info
  */
-export interface JpaEntityInfo {
-  tableName?: string;
-  relationships: Array<{
-    type: "OneToMany" | "ManyToOne" | "OneToOne" | "ManyToMany";
-    targetEntity?: string;
-    mappedBy?: string;
-  }>;
-  isEntity: boolean;
-}
-
-/**
- * Lombok annotation information
- */
-export interface LombokInfo {
-  hasData?: boolean;
-  hasBuilder?: boolean;
-  hasGetter?: boolean;
-  hasSetter?: boolean;
-  hasSlf4j?: boolean;
-  hasAllArgsConstructor?: boolean;
-  hasNoArgsConstructor?: boolean;
+export interface KtorRouteInfo {
+  method: "get" | "post" | "put" | "delete" | "patch" | "head" | "options";
+  path: string;
+  location: LocationInfo;
 }
 
 // =============================================================================

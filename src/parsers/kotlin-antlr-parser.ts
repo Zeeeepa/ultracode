@@ -5,9 +5,16 @@
  * using the official Kotlin grammar via ANTLR4.
  *
  * This provides accurate AST-based parsing instead of regex-based parsing.
+ *
+ * Enhanced with modular extractors:
+ * - AST-aware call extraction (vs regex)
+ * - KDoc documentation extraction
+ * - Control flow analysis (when, elvis, etc.)
+ * - Complexity metrics
+ * - Framework patterns (Android, Coroutines, Ktor)
  */
 
-import { CharStream, CommonTokenStream } from "antlr4ng";
+import { CharStream, CommonTokenStream, type ParserRuleContext } from "antlr4ng";
 import { KotlinLexer } from "../generated/kotlin/KotlinLexer.js";
 import {
   type ClassDeclarationContext,
@@ -16,7 +23,6 @@ import {
   type DeclarationContext,
   type DelegationSpecifiersContext,
   type EnumEntryContext,
-  type FunctionBodyContext,
   type FunctionDeclarationContext,
   type FunctionValueParametersContext,
   type ImportHeaderContext,
@@ -30,6 +36,11 @@ import {
 } from "../generated/kotlin/KotlinParser.js";
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
+
+// Import new modular extractors
+import { extractCallsDetailed } from "./kotlin/extractors/call-extractor.js";
+import { calculateComplexity } from "./kotlin/extractors/complexity-analyzer.js";
+import { extractControlFlow } from "./kotlin/extractors/control-flow-extractor.js";
 
 // =============================================================================
 // TYPES
@@ -486,8 +497,32 @@ function processFunctionDeclaration(funcDecl: FunctionDeclarationContext, ctx: P
   // Extract parameters
   const params = extractParameters(funcDecl.functionValueParameters());
 
-  // Extract calls from function body
-  const calls = extractCalls(funcDecl.functionBody());
+  // Get function body for analysis
+  const funcBody = funcDecl.functionBody();
+
+  // NEW: Extract control flow information using modular extractor
+  const controlFlow = funcBody ? extractControlFlow(funcBody as ParserRuleContext) : undefined;
+
+  // NEW: Calculate complexity metrics using modular extractor
+  const complexity = funcBody ? calculateComplexity(funcBody as ParserRuleContext) : undefined;
+
+  // Build metadata object
+  const metadata: Record<string, unknown> = {};
+  if (receiverType) {
+    metadata["receiverType"] = receiverType;
+  }
+  if (isSuspend) {
+    metadata["isSuspend"] = true;
+  }
+  if (
+    controlFlow &&
+    (controlFlow.branches.length > 0 || controlFlow.loops.length > 0 || controlFlow.exceptions.length > 0)
+  ) {
+    metadata["controlFlow"] = controlFlow;
+  }
+  if (complexity) {
+    metadata["complexity"] = complexity;
+  }
 
   const entity: ParsedEntity = {
     name: fullName,
@@ -498,7 +533,13 @@ function processFunctionDeclaration(funcDecl: FunctionDeclarationContext, ctx: P
     ...(params.length > 0 && { parameters: params }),
     ...(returnType && { returnType: returnType }),
     ...(modInfo.annotations.length > 0 && { decorators: modInfo.annotations }),
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
   };
+
+  // Set parameter count for complexity
+  if (complexity) {
+    complexity.parameterCount = params.length;
+  }
 
   ctx.entities.push(entity);
 
@@ -530,13 +571,23 @@ function processFunctionDeclaration(funcDecl: FunctionDeclarationContext, ctx: P
     });
   }
 
-  for (const call of calls) {
-    ctx.relationships.push({
-      from: fullName,
-      to: call,
-      type: "calls",
-      metadata: {},
-    });
+  // NEW: Extract calls using AST-aware call extractor
+  if (funcBody) {
+    const detailedCalls = extractCallsDetailed(funcBody as ParserRuleContext);
+    for (const call of detailedCalls) {
+      const callTarget = call.target ? `${call.target}.${call.name}` : call.name;
+      ctx.relationships.push({
+        from: fullName,
+        to: callTarget,
+        type: "calls",
+        metadata: {
+          argumentCount: call.argumentCount,
+          isSafeCall: call.isSafeCall,
+          isExtensionCall: call.isExtensionCall,
+          ...(call.typeArguments && call.typeArguments.length > 0 && { typeArguments: call.typeArguments }),
+        },
+      });
+    }
   }
 }
 
@@ -809,24 +860,5 @@ function extractParameters(paramsCtx: FunctionValueParametersContext | null): Ar
   return result;
 }
 
-function extractCalls(bodyCtx: FunctionBodyContext | null): string[] {
-  if (!bodyCtx) return [];
-
-  const calls: string[] = [];
-  const text = bodyCtx.getText() || "";
-
-  // Simple regex extraction
-  const callRe = /(\w+)\s*\(/g;
-  let match: RegExpExecArray | null;
-
-  const keywords = new Set(["if", "when", "for", "while", "return", "throw", "try", "catch", "else"]);
-
-  while ((match = callRe.exec(text))) {
-    const callName = match[1];
-    if (callName && !keywords.has(callName)) {
-      calls.push(callName);
-    }
-  }
-
-  return Array.from(new Set(calls));
-}
+// NOTE: extractCalls function moved to ./kotlin/extractors/call-extractor.ts
+// Now using AST-aware extraction instead of regex-based approach
