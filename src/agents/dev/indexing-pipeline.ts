@@ -11,7 +11,7 @@ import { statSync } from "node:fs";
 import { log } from "../../logging/index.js";
 import { getGraphStorage } from "../../storage/graph-storage-factory.js";
 import { toError } from "../../utils/error-handling.js";
-import { collectFiles } from "./file-collector.js";
+import { collectFilesAsync } from "./file-collector.js";
 
 // =============================================================================
 // TYPES
@@ -86,7 +86,7 @@ export interface EmbeddingResult {
  * @param options - Параметры индексации
  * @returns Контекст индексации
  */
-export function initializeIndexing(options: IndexingOptions): IndexingContext {
+export async function initializeIndexing(options: IndexingOptions): Promise<IndexingContext> {
   const { directory, excludePatterns = [], incremental = false, agentId } = options;
 
   log.i("DEVAGENT", "Starting indexing", {
@@ -95,8 +95,8 @@ export function initializeIndexing(options: IndexingOptions): IndexingContext {
     samplePatterns: excludePatterns.slice(0, 5),
   });
 
-  // Собрать файлы для индексации
-  const collectResult = collectFiles(directory, { excludePatterns, agentId });
+  // Собрать файлы для индексации (async для использования Bun.Glob)
+  const collectResult = await collectFilesAsync(directory, { excludePatterns, agentId });
   const allFiles = collectResult.files;
 
   log.i("DEVAGENT", "Files collected", { count: allFiles.length });

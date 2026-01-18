@@ -365,8 +365,78 @@ export function collectFiles(directory: string, options: CollectFilesOptions): C
 }
 
 /**
- * Async version of collectFiles using Bun.Glob when available
- * Use this when async API is acceptable for better performance under Bun
+ * Collect files using tiny-glob - fast async glob for Node.js
+ * ~350% faster than node-glob, 2.5KB bundle size
+ */
+async function collectFilesWithTinyGlob(
+  directory: string,
+  excludePatterns: string[],
+): Promise<{ files: string[]; excludedByPattern: number }> {
+  // Dynamic import to avoid bundling issues
+  const glob = (await import("tiny-glob")).default as (
+    pattern: string,
+    options?: { cwd?: string; filesOnly?: boolean; absolute?: boolean },
+  ) => Promise<string[]>;
+
+  const files: string[] = [];
+  let excludedByPattern = 0;
+
+  const startTime = Date.now();
+
+  // tiny-glob returns relative paths by default
+  const allFiles = await glob("**/*", {
+    cwd: directory,
+    filesOnly: true,
+    absolute: true,
+  });
+
+  for (const fullPath of allFiles) {
+    const relativePath = relative(directory, fullPath);
+    const fileName = relativePath.split(/[/\\]/).pop() || relativePath;
+
+    // Skip hidden files/dirs (starting with .)
+    if (relativePath.includes("/.") || relativePath.includes("\\.") || relativePath.startsWith(".")) {
+      continue;
+    }
+
+    // Check default excluded directories
+    const pathParts = relativePath.split(/[/\\]/);
+    let skipByDefault = false;
+    for (const part of pathParts) {
+      if (DEFAULT_EXCLUDED_DIR_NAMES.has(part.toLowerCase())) {
+        skipByDefault = true;
+        break;
+      }
+    }
+    if (skipByDefault) {
+      continue;
+    }
+
+    // Check exclude patterns
+    if (shouldExclude(fullPath, excludePatterns)) {
+      excludedByPattern++;
+      continue;
+    }
+
+    // Check if supported file type
+    if (isSupportedFile(fileName)) {
+      files.push(fullPath);
+    }
+  }
+
+  const elapsed = Date.now() - startTime;
+  log.d("FILESCAN", "tiny_glob_scan", { files: files.length, elapsed: `${elapsed}ms` });
+
+  return { files, excludedByPattern };
+}
+
+/**
+ * Async version of collectFiles using Bun.Glob or tiny-glob
+ * Use this when async API is acceptable for better performance
+ *
+ * Runtime selection:
+ * - Bun: Bun.Glob.scan() (native, 3x faster)
+ * - Node.js: tiny-glob (~350% faster than node-glob)
  */
 export async function collectFilesAsync(directory: string, options: CollectFilesOptions): Promise<CollectFilesResult> {
   const { excludePatterns: baseExcludePatterns } = options;
@@ -381,10 +451,11 @@ export async function collectFilesAsync(directory: string, options: CollectFiles
   let dirsScanned = 0;
   let excludedByPattern = 0;
   let excludedByDefault = 0;
+  let method: "bun_glob" | "tiny_glob" | "node_fs";
 
-  // Use Bun.Glob when available (3x faster)
+  // Use Bun.Glob when available (native, 3x faster)
   if (isBunRuntime() && (globalThis as unknown as BunGlobal).Glob) {
-    log.d("FILESCAN", "using_bun_glob");
+    method = "bun_glob";
     const result = await collectFilesWithBunGlob(directory, excludePatterns);
     files = result.files;
     excludedByPattern = result.excludedByPattern;
@@ -392,12 +463,24 @@ export async function collectFilesAsync(directory: string, options: CollectFiles
     const uniqueDirs = new Set(files.map((f) => relative(directory, f).split(/[/\\]/)[0]));
     dirsScanned = uniqueDirs.size;
   } else {
-    // Fallback to Node.js with withFileTypes
-    const result = collectFilesWithNodeFs(directory, excludePatterns);
-    files = result.files;
-    dirsScanned = result.dirsScanned;
-    excludedByPattern = result.excludedByPattern;
-    excludedByDefault = result.excludedByDefault;
+    // Node.js: use tiny-glob for async performance
+    method = "tiny_glob";
+    try {
+      const result = await collectFilesWithTinyGlob(directory, excludePatterns);
+      files = result.files;
+      excludedByPattern = result.excludedByPattern;
+      // Estimate dirs from file paths
+      const uniqueDirs = new Set(files.map((f) => relative(directory, f).split(/[/\\]/)[0]));
+      dirsScanned = uniqueDirs.size;
+    } catch {
+      // Fallback to Node.js fs if tiny-glob fails
+      method = "node_fs";
+      const result = collectFilesWithNodeFs(directory, excludePatterns);
+      files = result.files;
+      dirsScanned = result.dirsScanned;
+      excludedByPattern = result.excludedByPattern;
+      excludedByDefault = result.excludedByDefault;
+    }
   }
 
   const elapsed = Date.now() - startTime;
@@ -416,7 +499,7 @@ export async function collectFilesAsync(directory: string, options: CollectFiles
     excludedPat: excludedByPattern,
     excludedDef: excludedByDefault,
     elapsed: `${elapsed}ms`,
-    method: isBunRuntime() ? "bun_glob" : "node_fs",
+    method,
   });
 
   return {
