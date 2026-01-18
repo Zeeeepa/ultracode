@@ -6,7 +6,7 @@
  * and is killed after batch completion to release memory back to OS.
  *
  * Architecture (same as faiss-client):
- * - Under Bun: spawns bun subprocess (IPC via stdin/stdout JSON)
+ * - Under Bun: spawns bun subprocess (IPC via V8 native serialization)
  * - Under Node.js: spawns node subprocess
  *
  * Benefits over Web Workers:

@@ -31,7 +31,6 @@ import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { log } from "../logging/index.js";
 import { CodeAnalyzer } from "../semantic/code-analyzer.js";
-// vector-dump functions now imported inside FaissProvider.loadFromDumpFiles()
 import { getEmbeddingAccumulator } from "../semantic/embedding-accumulator.js";
 import {
   arrayToVector,

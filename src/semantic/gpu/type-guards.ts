@@ -24,9 +24,7 @@ import type {
   FaissBatchSearchRequest,
   // Faiss requests
   FaissInitRequest,
-  FaissLoadFromDumpRequest,
   FaissLoadRequest,
-  FaissLoadWorkerDumpRequest,
   FaissRemoveRequest,
   FaissSaveRequest,
   FaissSearchRequest,
@@ -183,20 +181,6 @@ export function isFaissTrainRequest(req: GpuWorkerRequest): req is FaissTrainReq
  */
 export function isFaissStatsRequest(req: GpuWorkerRequest): req is FaissStatsRequest {
   return req.type === "faiss.stats";
-}
-
-/**
- * Type guard для FaissLoadFromDumpRequest
- */
-export function isFaissLoadFromDumpRequest(req: GpuWorkerRequest): req is FaissLoadFromDumpRequest {
-  return req.type === "faiss.loadFromDump";
-}
-
-/**
- * Type guard для FaissLoadWorkerDumpRequest
- */
-export function isFaissLoadWorkerDumpRequest(req: GpuWorkerRequest): req is FaissLoadWorkerDumpRequest {
-  return req.type === "faiss.loadWorkerDump";
 }
 
 // =============================================================================

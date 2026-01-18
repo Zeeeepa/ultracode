@@ -45,8 +45,6 @@ import {
   handleFaissBatchSearch,
   handleFaissInit,
   handleFaissLoad,
-  handleFaissLoadFromDump,
-  handleFaissLoadWorkerDump,
   handleFaissRemove,
   handleFaissSave,
   handleFaissSearch,
@@ -378,12 +376,6 @@ async function handleRequest(request: GpuWorkerRequest): Promise<void> {
         break;
       case "faiss.add":
         handleFaissAdd(request, faissCtx);
-        break;
-      case "faiss.loadFromDump":
-        await handleFaissLoadFromDump(request, faissCtx);
-        break;
-      case "faiss.loadWorkerDump":
-        await handleFaissLoadWorkerDump(request, faissCtx);
         break;
       case "faiss.search":
         handleFaissSearch(request, faissCtx);
