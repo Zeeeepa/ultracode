@@ -184,7 +184,7 @@ scripts/setup-embeddings.cmd
 │                    Provider Selection                            │
 └─────────────────────────────────────────────────────────────────┘
 
-1. OpenVINO (рекомендуется)
+1. OpenVINO
    - Автоматическая установка
    - CPU inference, 474 chunks/s
    - Не требует GPU

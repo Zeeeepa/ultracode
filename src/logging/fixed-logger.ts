@@ -3,7 +3,7 @@
  * Format: YYYYMMDD-HHmmss.mmm L PPPPP HHHHHHHH MODULE_______________ EVENT________________ kv...
  */
 
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { getBuildHash, getPid } from "./build-info.js";
 import { kvError, kvOpEnd, kvOpStart } from "./kv-serializer.js";
@@ -49,6 +49,11 @@ export class FixedLogger {
     if (this.config.flushInterval > 0) {
       this.flushTimer = setInterval(() => this.flush(), this.config.flushInterval);
     }
+
+    // Lazy cleanup of old logs (async, non-blocking)
+    if (this.config.maxTotalSize > 0) {
+      setImmediate(() => this.cleanupOldLogs());
+    }
   }
 
   /**
@@ -85,6 +90,64 @@ export class FixedLogger {
       this.currentFileSize = 0;
     } catch {
       // Ignore rotation errors
+    }
+  }
+
+  /**
+   * Get today's date string (YYYYMMDD)
+   */
+  private getTodayDateStr(): string {
+    const date = new Date();
+    return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  /**
+   * Cleanup old log files to stay under maxTotalSize limit.
+   * Deletes oldest files first, but never deletes today's log.
+   */
+  public cleanupOldLogs(): void {
+    if (!this.config.logDir || this.config.maxTotalSize <= 0) return;
+    if (!existsSync(this.config.logDir)) return;
+
+    try {
+      const todayStr = this.getTodayDateStr();
+      const files = readdirSync(this.config.logDir)
+        .filter((f) => f.startsWith("ultrascript-") && f.endsWith(".log"))
+        .map((f) => {
+          const filePath = join(this.config.logDir, f);
+          try {
+            const stat = statSync(filePath);
+            return { name: f, path: filePath, size: stat.size, mtime: stat.mtimeMs };
+          } catch {
+            return null;
+          }
+        })
+        .filter((f): f is { name: string; path: string; size: number; mtime: number } => f !== null);
+
+      // Calculate total size
+      let totalSize = files.reduce((sum, f) => sum + f.size, 0);
+
+      if (totalSize <= this.config.maxTotalSize) return;
+
+      // Sort by modification time (oldest first)
+      files.sort((a, b) => a.mtime - b.mtime);
+
+      // Delete oldest files until under limit
+      for (const file of files) {
+        if (totalSize <= this.config.maxTotalSize) break;
+
+        // Never delete today's log file
+        if (file.name.includes(todayStr)) continue;
+
+        try {
+          unlinkSync(file.path);
+          totalSize -= file.size;
+        } catch {
+          // Ignore deletion errors
+        }
+      }
+    } catch {
+      // Ignore cleanup errors
     }
   }
 

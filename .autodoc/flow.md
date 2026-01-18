@@ -4,9 +4,16 @@
 
 Документ описывает основные сценарии использования UltraScript Tools MCP и потоки данных между компонентами системы.
 
+**Точки входа:**
+- MCP Server: [src/index.ts](../src/index.ts)
+- Tool Handlers: [📖 Tools AUTODOC](../src/tools/AUTODOC.md)
+- Conductor: [📖 Agents AUTODOC](../src/agents/AUTODOC.md)
+
 ## Основные сценарии (User Stories)
 
 ### 1. Индексация кодовой базы
+
+**Реализация:** [IndexToolHandler](../src/tools/handlers/index-tool-handler.ts) → [IndexerAgent](../src/agents/indexer-agent.ts)
 
 **Сценарий**: Разработчик хочет проиндексировать проект для семантического поиска.
 
@@ -54,6 +61,8 @@
 7. Возвращается статистика индексации
 
 ### 2. Семантический поиск
+
+**Реализация:** [SemanticToolHandlers](../src/tools/handlers/semantic-tool-handlers.ts) → [SemanticAgent](../src/agents/semantic-agent.ts)
 
 **Сценарий**: Разработчик ищет код по смыслу, а не по точному совпадению.
 
@@ -209,6 +218,84 @@
     │      ]                        │                              │
     │    }, ...                     │                              │
     │  ]                            │                              │
+    │<──────────────────────────────│                              │
+```
+
+### 6. Переключение Git-веток
+
+**Реализация:** [BranchToolHandlers](../src/tools/handlers/branch-tool-handlers.ts) → [GraphStorageLibSQL.setProject():92](../src/storage/graph-storage-libsql.ts#L92)
+
+**Сценарий**: Разработчик переключается на feature-ветку и хочет сохранить актуальный индекс.
+
+```
+Пользователь                    MCP Server                     Storage
+    │                               │                              │
+    │  switch_branch(               │                              │
+    │    "feature/auth"             │                              │
+    │  )                            │                              │
+    │──────────────────────────────>│                              │
+    │                               │                              │
+    │                               │   1. Resolve parent branch   │
+    │                               │   ┌─────────────────┐        │
+    │                               │   │ git merge-base  │        │
+    │                               │   │ → find "main"   │        │
+    │                               │   └────────┬────────┘        │
+    │                               │            │                 │
+    │                               │   2. Create layer DB         │
+    │                               │   ┌─────────────────┐        │
+    │                               │   │ feature-auth.db │        │
+    │                               │   │ (inherits main) │        │
+    │                               │   └────────┬────────┘        │
+    │                               │            │                 │
+    │                               │   3. Detect changed files    │
+    │                               │   ┌─────────────────┐        │
+    │                               │   │ git diff main.. │        │
+    │                               │   └────────┬────────┘        │
+    │                               │            │                 │
+    │                               │   4. Incremental index       │
+    │                               │   ┌─────────────────┐        │
+    │                               │   │ Parse changed   │        │
+    │                               │   │ Add tombstones  │        │
+    │                               │   └─────────────────┘        │
+    │                               │                              │
+    │  { branch: "feature/auth",    │                              │
+    │    newEntities: 23,           │                              │
+    │    deletedEntities: 5 }       │                              │
+    │<──────────────────────────────│                              │
+```
+
+### 7. Multi-Project работа
+
+**Сценарий**: Разработчик работает с несколькими проектами одновременно.
+
+```
+Пользователь                    MCP Server                     Storage
+    │                               │                              │
+    │  index(                       │                              │
+    │    directory: "/project-a"    │                              │
+    │  )                            │                              │
+    │──────────────────────────────>│                              │
+    │                               │   setProject("/project-a")   │
+    │                               │   ┌─────────────────┐        │
+    │                               │   │ project-a.db    │        │
+    │                               │   └─────────────────┘        │
+    │                               │                              │
+    │  index(                       │                              │
+    │    directory: "/project-b"    │                              │
+    │  )                            │                              │
+    │──────────────────────────────>│                              │
+    │                               │   setProject("/project-b")   │
+    │                               │   ┌─────────────────┐        │
+    │                               │   │ project-b.db    │        │
+    │                               │   └─────────────────┘        │
+    │                               │                              │
+    │  semantic_search(             │                              │
+    │    query: "auth",             │                              │
+    │    projectPath: "/project-a"  │                              │
+    │  )                            │                              │
+    │──────────────────────────────>│                              │
+    │                               │   Switch to project-a.db     │
+    │                               │   Search in that context     │
     │<──────────────────────────────│                              │
 ```
 

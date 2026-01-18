@@ -117,6 +117,8 @@ export interface FixedLoggerConfig {
   maxFileSize: number;
   /** Max number of rotated files to keep */
   maxFiles: number;
+  /** Max total size of all log files (bytes). Older files deleted to stay under limit. 0 = unlimited */
+  maxTotalSize: number;
   /** Buffer size before flush */
   bufferSize: number;
   /** Buffer flush interval (ms) */
@@ -131,6 +133,7 @@ export const DEFAULT_LOGGER_CONFIG: FixedLoggerConfig = {
   minLevel: "I",
   maxFileSize: 10 * 1024 * 1024, // 10MB
   maxFiles: 20,
+  maxTotalSize: 100 * 1024 * 1024, // 100MB total limit
   bufferSize: 50,
   flushInterval: 500,
   consoleOutput: false,

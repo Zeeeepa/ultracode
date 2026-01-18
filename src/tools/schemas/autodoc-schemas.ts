@@ -67,8 +67,7 @@ export const AutoDocGenerateSchema = z.object({
   useLlm: z
     .boolean()
     .optional()
-    .default(false)
-    .describe("Use LLM to generate meaningful documentation (requires Ollama/TGI/OpenAI)"),
+    .describe("Use LLM to generate meaningful documentation. Auto-detects available LLM if not specified."),
   incremental: z
     .boolean()
     .optional()

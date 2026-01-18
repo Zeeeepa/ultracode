@@ -62,6 +62,7 @@ node dist/index.js /path/to/project '{"jsonrpc":"2.0","id":"index-1","method":"t
 **DI Container** (`src/core/di-container.ts`) предоставляет централизованное управление зависимостями:
 
 **Возможности:**
+
 - ✅ Singleton/Transient service lifetimes
 - ✅ Circular dependency detection
 - ✅ Type-safe agent resolution

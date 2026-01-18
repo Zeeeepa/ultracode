@@ -137,6 +137,7 @@ export function findRepoRoot(targetDir: string): string {
 export async function detectDocLanguage(
   requestedLang: "auto" | "en" | "ru" | "zh",
   getAutoDocManager: () => Promise<AutoDocManager | null>,
+  autodocDir?: string,
 ): Promise<"en" | "ru" | "zh"> {
   if (requestedLang !== "auto") {
     return requestedLang;
@@ -144,8 +145,48 @@ export async function detectDocLanguage(
 
   try {
     const adm = await getAutoDocManager();
-    const lang = adm?.getConfig()?.language || "en";
-    return lang as "en" | "ru" | "zh";
+
+    // 1. Check AutoDocManager config first (only trust non-default explicit values)
+    const configLang = adm?.getConfig()?.language;
+    // Only use configLang if explicitly set to non-English (en is often default, not explicit choice)
+    if (configLang && configLang !== "auto" && configLang !== "en") {
+      return configLang as "en" | "ru" | "zh";
+    }
+
+    // 2. Analyze existing .autodoc files on disk
+    const { readdir, readFile } = await import("node:fs/promises");
+    const { detectLanguageFromText, aggregateLanguageDetection } = await import("../i18n/language-detector.js");
+
+    const targetDir = autodocDir || join(process.cwd(), ".autodoc");
+    try {
+      const files = await readdir(targetDir);
+      const mdFiles = files.filter((f) => f.endsWith(".md")).slice(0, 5);
+
+      const results: ReturnType<typeof detectLanguageFromText>[] = [];
+      for (const file of mdFiles) {
+        try {
+          const content = await readFile(join(targetDir, file), "utf-8");
+          const result = detectLanguageFromText(content);
+          if (result.confidence > 0) {
+            results.push(result);
+          }
+        } catch {
+          // Skip unreadable files
+        }
+      }
+
+      if (results.length > 0) {
+        const aggregated = aggregateLanguageDetection(results);
+        if (aggregated.confidence > 0.3) {
+          log.d("AUTODOCGEN", "language_detected", { lang: aggregated.language, conf: aggregated.confidence });
+          return aggregated.language as "en" | "ru" | "zh";
+        }
+      }
+    } catch {
+      // .autodoc directory doesn't exist yet
+    }
+
+    return "en";
   } catch {
     return "en";
   }
@@ -286,7 +327,7 @@ export async function executeGenerateDocs(
     : join(repoRoot, ".autodoc");
 
   // Detect language
-  const docLanguage = await detectDocLanguage(options.language || "auto", context.getAutoDocManager);
+  const docLanguage = await detectDocLanguage(options.language || "auto", context.getAutoDocManager, targetAutodocDir);
 
   // Ensure .autodoc/ exists with template files
   ensureGeneralDocs(targetAutodocDir);

@@ -840,6 +840,18 @@ export class AutoDocGenerateToolHandler extends BaseToolHandler<z.infer<typeof A
       return autodocNotEnabledResult();
     }
 
+    // Auto-detect LLM if not explicitly specified
+    let useLlm = args.useLlm;
+    if (useLlm === undefined) {
+      try {
+        const { detectLLMProviders } = await import("../../autodoc/llm/llm-provider.js");
+        const { recommended } = await detectLLMProviders();
+        useLlm = !!recommended;
+      } catch {
+        useLlm = false;
+      }
+    }
+
     const result = await executeGenerateDocs(
       {
         rootDir: args.rootDir,
@@ -847,7 +859,7 @@ export class AutoDocGenerateToolHandler extends BaseToolHandler<z.infer<typeof A
         exclude: args.exclude,
         maxDepth: args.maxDepth,
         module: args.module,
-        useLlm: args.useLlm,
+        useLlm,
         preview: args.preview,
         incremental: args.incremental,
         language: args.language,
