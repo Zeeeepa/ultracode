@@ -180,6 +180,28 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
 
     // Ensure SemanticAgent uses the correct project's VectorStore
     const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
+
+    // Check if embedding provider failed to initialize
+    const initError = semanticAgent.getEmbeddingInitError();
+    if (initError) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: false,
+                error: `Embedding provider initialization failed: ${initError.message}`,
+                hint: "Check if the configured embedding provider is available (Docker, Ollama, etc.)",
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+
     // v3: Also ensure GraphStorage context for expandWithGraphNeighbors
     await this.ensureGraphStorageForProject(resolvedPath);
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
@@ -522,6 +544,28 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
     // Ensure SemanticAgent uses the correct project's VectorStore
     const resolvedPath = this.resolveProjectPath(args);
     const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
+
+    // Check if embedding provider failed to initialize
+    const initError = semanticAgent.getEmbeddingInitError();
+    if (initError) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: false,
+                error: `Embedding provider initialization failed: ${initError.message}`,
+                hint: "Check if the configured embedding provider is available (Docker, Ollama, etc.)",
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     // Fetch more for pagination (pass threshold as number, not options object)
@@ -571,6 +615,28 @@ export class DetectCodeClonesToolHandler extends BaseToolHandler<z.infer<typeof 
   protected async execute(args: z.infer<typeof DetectCodeClonesSchema>): Promise<ToolResult> {
     try {
       const semanticAgent = await this.ensureSemanticAgentForProject();
+
+      // Check if embedding provider failed to initialize
+      const initError = semanticAgent.getEmbeddingInitError();
+      if (initError) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: false,
+                  error: `Embedding provider initialization failed: ${initError.message}`,
+                  hint: "Check if the configured embedding provider is available (Docker, Ollama, etc.)",
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
       const minSimilarity = args.minSimilarity ?? 0.8;
 
       // Fetch clone groups (pass threshold as number)
@@ -841,12 +907,34 @@ export class PatternSearchToolHandler extends BaseToolHandler<z.infer<typeof Pat
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     let vectorStore = null;
+    let embeddingError: Error | null = null;
     try {
       // Ensure SemanticAgent uses the correct project's VectorStore
       const semanticAgent = await this.ensureSemanticAgentForProject(resolvedPath);
+      embeddingError = semanticAgent.getEmbeddingInitError();
       vectorStore = semanticAgent.getVectorStore?.();
     } catch {
       // Vector store not available
+    }
+
+    // For semantic/hybrid modes, warn if embedding provider failed
+    if ((args.mode === "semantic" || args.mode === "hybrid") && embeddingError) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: false,
+                error: `Embedding provider initialization failed: ${embeddingError.message}`,
+                hint: "Check if the configured embedding provider is available. Use mode='entity' or 'content' for text-based search.",
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
     }
 
     const patternSearch = new PatternSearch(storage, vectorStore, null);

@@ -153,6 +153,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   // Track if embedding generator is ready (Ollama connected)
   private embeddingReady = false;
   private embeddingReadyPromise: Promise<void> | null = null;
+  private embeddingInitError: Error | null = null;
   private embeddingDim = 384;
   private embeddingBatchSize = AGENT_CONFIG.batchSize;
   private readonly defaultMaxConcurrency: number;
@@ -413,8 +414,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
           log.w("SEMANTIC", "warmup_failed", { err: (err as Error).message });
         });
       } catch (error) {
-        log.e("SEMANTIC", "embedding_init_fail", { err: (error as Error).message });
-        throw error;
+        this.embeddingInitError = error as Error;
+        log.e("SEMANTIC", "embedding_init_fail", { err: this.embeddingInitError.message });
+        // Don't throw - store error for later retrieval by MCP tools
       }
     })();
   }
@@ -442,6 +444,13 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
    */
   isEmbeddingReady(): boolean {
     return this.embeddingReady;
+  }
+
+  /**
+   * Get embedding initialization error if any
+   */
+  getEmbeddingInitError(): Error | null {
+    return this.embeddingInitError;
   }
 
   /**

@@ -13,7 +13,7 @@
 | `setPid` | function | Установить пользовательский идентификатор процесса вручную | [→ build-info.ts:92-94] |
 | `resetBuildInfo` | function | Сбросить кешированные значения информации сборки | [→ build-info.ts:99-102] |
 | `getBuildInfo` | function | Получить объект с хешем и идентификатором процесса | [→ build-info.ts:107] |
-| `FixedLogger` | class | Класс логгера с фиксированными позициями полей | [→ fixed-logger.ts:22-365] |
+| `FixedLogger` | class | Класс логгера с фиксированными позициями полей | [→ fixed-logger.ts:22-370] |
 | `getLogger` | function | Получить глобальный экземпляр логгера приложения | [→ fixed-logger.ts:318-323] |
 | `initLogger` | function | Инициализировать логгер с конфигурацией и параметрами | [→ fixed-logger.ts:328-334] |
 | `setProjectHash` | function | Установить хеш проекта для всех логов приложения | [→ fixed-logger.ts:339-341] |
