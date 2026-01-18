@@ -34,7 +34,16 @@ export interface LineTransformOptions {
 // CONSTANTS
 // =============================================================================
 
-const DEFAULT_HIGH_WATER_MARK = 16 * 1024; // 16KB
+/**
+ * Get optimal highWaterMark based on file size
+ * Larger buffers reduce syscall overhead for big files on modern SSDs
+ */
+export function getOptimalHighWaterMark(fileSize: number): number {
+  if (fileSize < 100 * 1024) return 16 * 1024; // <100KB: 16KB
+  if (fileSize < 1024 * 1024) return 64 * 1024; // <1MB: 64KB
+  if (fileSize < 10 * 1024 * 1024) return 256 * 1024; // <10MB: 256KB
+  return 1024 * 1024; // >=10MB: 1MB
+}
 
 // Promisified pipeline
 const pipelineAsync = promisify(pipeline);
@@ -45,13 +54,22 @@ const pipelineAsync = promisify(pipeline);
 
 /**
  * Copy file using streams (memory-efficient for large files)
+ * Automatically selects optimal buffer size based on file size
  */
 export async function streamCopyFile(
   source: string,
   destination: string,
   options: StreamCopyOptions = {},
 ): Promise<number> {
-  const { encoding = "utf-8", highWaterMark = DEFAULT_HIGH_WATER_MARK, onProgress } = options;
+  const { encoding = "utf-8", onProgress } = options;
+
+  // Get file size to determine optimal buffer
+  const { stat } = await import("node:fs/promises");
+  const stats = await stat(source);
+  const totalBytes = stats.size;
+
+  // Use provided highWaterMark or auto-select based on file size
+  const highWaterMark = options.highWaterMark ?? getOptimalHighWaterMark(totalBytes);
 
   let bytesWritten = 0;
   const readStream = createReadStream(source, { encoding, highWaterMark });
@@ -59,10 +77,6 @@ export async function streamCopyFile(
 
   // Progress tracking
   if (onProgress) {
-    const { stat } = await import("node:fs/promises");
-    const stats = await stat(source);
-    const totalBytes = stats.size;
-
     readStream.on("data", (chunk: Buffer | string) => {
       const chunkSize = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk, encoding);
       bytesWritten += chunkSize;

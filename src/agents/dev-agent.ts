@@ -20,7 +20,7 @@ import type { EntityRelationship, ParsedEntity, ParseResult, ParserOptions } fro
 import { hashText } from "../utils/fast-hash.js";
 import { BaseAgent } from "./base.js";
 import { createHeuristicEntities } from "./dev/heuristic-parser.js";
-import { collectFiles, isCodeExtension, isDataExtension } from "./dev/index.js";
+import { collectFilesAsync, isCodeExtension, isDataExtension } from "./dev/index.js";
 import { IndexerAgent } from "./indexer-agent.js";
 // Temporarily disable ParserAgent due to web-tree-sitter ESM issues
 import { ParserAgent } from "./parser-agent.js";
@@ -359,7 +359,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       samplePatterns: excludePatterns.slice(0, 5),
     });
 
-    const collectResult = collectFiles(directory, { excludePatterns, agentId: this.id });
+    const collectResult = await collectFilesAsync(directory, { excludePatterns, agentId: this.id });
     let allFiles = collectResult.files;
     log.i("DEVAGENT", "Files collected", { count: allFiles.length });
 

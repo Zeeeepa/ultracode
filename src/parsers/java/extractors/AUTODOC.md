@@ -8,8 +8,8 @@
 
 | Name | Type | Location |
 |------|------|----------|
-| `extractCalls` | function | [→ call-extractor.ts:37-46] |
-| `extractCallsSimple` | function | [→ call-extractor.ts:51-57] |
+| `extractCalls` | function | [→ call-extractor.ts:35-44] |
+| `extractCallsSimple` | function | [→ call-extractor.ts:52-53] |
 
 ## Files
 
