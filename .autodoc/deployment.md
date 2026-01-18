@@ -10,8 +10,8 @@
 
 - **Node.js**: ≥24.0.0
 - **Bun**: рекомендуется для разработки
-- **Python**: 3.8+ (для nativeparsers)
-- **C++ Compiler**: для нативных модулей (better-sqlite3)
+- **Python**: 3.8+ (для Python AST парсера)
+- **C++ Compiler**: для опциональных нативных модулей (faiss-napi, CUDA)
 
 ### Команды сборки
 
@@ -147,23 +147,25 @@ FROM node:24-slim
 
 WORKDIR /app
 
-# Установка зависимостей для нативных модулей
+# Установка зависимостей для Python парсера (опционально)
 RUN apt-get update && apt-get install -y \
     python3 \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
-RUN npm ci --production
+RUN npm ci --production --ignore-scripts
 
 COPY dist/ ./dist/
 COPY config/ ./config/
 
-ENV MCP_EMBEDDING_PROVIDER=memory
+ENV MCP_EMBEDDING_PROVIDER=llamacpp
 ENV NODE_ENV=production
 
 CMD ["node", "dist/index.js"]
 ```
+
+> **Примечание**: `--ignore-scripts` пропускает сборку опциональных нативных модулей (faiss-napi, webgpu).
+> Для GPU ускорения используйте внешние сервера (llama.cpp, TEI, OVMS).
 
 ## Настройка эмбеддингов
 
@@ -184,36 +186,52 @@ scripts/setup-embeddings.cmd
 │                    Provider Selection                            │
 └─────────────────────────────────────────────────────────────────┘
 
-1. OpenVINO
-   - Автоматическая установка
-   - CPU inference, 474 chunks/s
-   - Не требует GPU
+1. llama.cpp (рекомендуется)
+   - Native GGUF server
+   - CUDA/Vulkan/CPU
+   - 500-2000+ chunks/s (GPU)
+   - Порт 8085
 
 2. TEI (Text Embeddings Inference)
-   - Требует Docker + NVIDIA GPU
+   - Docker + NVIDIA GPU
    - 1000+ chunks/s
    - Высокое качество
+   - Порт 8081
 
-3. Ollama
+3. OVMS (OpenVINO Model Server)
+   - Docker, Intel iGPU/CPU
+   - 300-500 chunks/s
+   - Порт 8083
+
+4. Ollama
    - Простая установка
    - CPU/GPU
    - 100-300 chunks/s
+   - Порт 11434
 
-4. Memory (fallback)
+5. vLLM
+   - Docker + NVIDIA GPU
+   - Высокая производительность
+   - Порт 8000
+
+6. Memory (fallback)
    - Без ML
    - Hash-based similarity
    - Для тестирования
 ```
 
-### Настройка OpenVINO
+### Настройка llama.cpp (рекомендуется)
 
 ```bash
-# Автоматически при setup-embeddings
-# Скачивает модель в ~/.cache/huggingface/
+# Автоматическая установка
+pwsh scripts/setup-semantic-embedding.ps1
 
-# Ручная настройка
-export MCP_EMBEDDING_PROVIDER=openvino
-export MCP_EMBEDDING_MODEL=openvino-minilm-int8
+# Или ручная настройка
+export MCP_EMBEDDING_PROVIDER=llamacpp
+export LLAMACPP_URL=http://localhost:8085
+
+# Запуск сервера (CUDA)
+./llama-server -m model.gguf --port 8085 --embedding
 ```
 
 ### Настройка TEI
@@ -221,13 +239,24 @@ export MCP_EMBEDDING_MODEL=openvino-minilm-int8
 ```bash
 # Запуск Docker контейнера
 docker run -d --gpus all \
-  -p 8080:80 \
+  -p 8081:80 \
   ghcr.io/huggingface/text-embeddings-inference:latest \
   --model-id sentence-transformers/all-MiniLM-L6-v2
 
 # Конфигурация
 export MCP_EMBEDDING_PROVIDER=tei
-export TEI_ENDPOINT=http://localhost:8080
+export TEI_ENDPOINT=http://localhost:8081
+```
+
+### Настройка OVMS (OpenVINO)
+
+```bash
+# Автоматическая установка
+pwsh scripts/setup-tei.ps1
+
+# Конфигурация
+export MCP_EMBEDDING_PROVIDER=openvino
+export OVMS_ENDPOINT=http://localhost:8083
 ```
 
 ### Настройка Ollama
