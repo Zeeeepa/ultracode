@@ -2,7 +2,7 @@
 
 ## Обзор
 
-Документ описывает все зависимости UltraScript Tools MCP v2.1.0, их назначение и версии.
+Документ описывает все зависимости UltraScript Tools MCP v3.1+, их назначение и версии.
 
 ## Runtime Dependencies
 
@@ -22,10 +22,17 @@
 
 | Пакет | Версия | Назначение |
 |-------|--------|------------|
-| `openvino-node` | ^2025.4.0 | CPU inference для эмбеддингов (OpenVINO) |
-| `@xenova/transformers` | ^2.17.2 | Transformers.js для fallback эмбеддингов |
 | `@huggingface/inference` | ^4.13.4 | HuggingFace API клиент |
-| `xxhash-wasm` | ^1.1.0 | Быстрое хеширование для Memory провайдера |
+
+**Эмбеддинги через внешние сервера:**
+
+- **llama.cpp** — native GGUF server (порт 8085), CUDA/Vulkan/CPU
+- **OVMS** — OpenVINO Model Server (порт 8083), Intel iGPU/CPU
+- **vLLM** — Docker container (порт 8000), NVIDIA GPU
+- **TEI** — Docker container (порт 8081), HuggingFace models
+- **Ollama** — local LLM (порт 11434), простая установка
+
+> См. [EMBEDDINGS_PROVIDERS.md](../docs/EMBEDDINGS_PROVIDERS.md) для детальной документации провайдеров.
 
 ### Утилиты
 
@@ -113,17 +120,17 @@ ultrascript-tools-mcp
 │   ├── sqlite-vec ───────────────── Vector search extension
 │   └── zod ──────────────────────── Schema validation
 │
-├── Semantic
-│   ├── openvino-node ────────────── CPU inference
-│   │   └── (downloads IR models at runtime)
-│   ├── @xenova/transformers ─────── Transformers.js
-│   │   └── onnxruntime-node ─────── ONNX runtime
-│   └── @huggingface/inference ───── HF API
+├── Semantic (внешние сервера)
+│   ├── llama.cpp ────────────────── Native GGUF (CUDA/Vulkan/CPU)
+│   ├── OVMS ─────────────────────── OpenVINO Model Server (Intel)
+│   ├── vLLM ─────────────────────── NVIDIA GPU Docker
+│   ├── TEI ──────────────────────── HuggingFace Docker
+│   ├── Ollama ───────────────────── Local LLM
+│   └── @huggingface/inference ───── HF Cloud API
 │
 ├── Storage
 │   ├── lru-cache ────────────────── In-memory caching
-│   ├── vectorlite ───────────────── Alternative vector backend
-│   └── xxhash-wasm ──────────────── Fast hashing
+│   └── vectorlite ───────────────── Alternative vector backend
 │
 └── Utils
     ├── yaml ─────────────────────── Config parsing
@@ -135,27 +142,27 @@ ultrascript-tools-mcp
 
 ### Overrides
 
+Текущие overrides в package.json:
+
 ```json
 {
-  "overrides": {
-    "boolean": "3.2.0"
-  }
+  "overrides": {}
 }
 ```
 
-> `boolean@3.2.0` — deprecated транзитивная зависимость от onnxruntime-node. Пакет не поддерживается, но работает. Используется только в опциональных ML фичах.
+> Overrides используются для фиксации версий транзитивных зависимостей при необходимости.
 
 ### Trusted Dependencies
 
 ```json
 {
   "trustedDependencies": [
-    "openvino-node"
+    "better-sqlite3"
   ]
 }
 ```
 
-> `openvino-node` — имеет postinstall скрипт для загрузки бинарников OpenVINO.
+> `better-sqlite3` — имеет postinstall скрипт для сборки нативного модуля.
 
 ## Обновление зависимостей
 
@@ -178,9 +185,9 @@ npm audit fix
 При обновлении следующих пакетов требуется полное тестирование:
 
 1. **better-sqlite3** — нативный модуль, может сломать сборку
-2. **openvino-node** — нативный модуль, проверить inference
-3. **@modelcontextprotocol/sdk** — API изменения, проверить MCP совместимость
-4. **zod** — breaking changes в v4, проверить валидацию
+2. **@modelcontextprotocol/sdk** — API изменения, проверить MCP совместимость
+3. **zod** — breaking changes в v4, проверить валидацию
+4. **vectorlite** — нативное расширение, проверить HNSW индексы
 
 ## Связанные документы
 

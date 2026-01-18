@@ -1,6 +1,6 @@
 # Logging
 
-*Last updated: 2026-01-11*
+*Last updated: 2026-01-18*
 
 Система логирования с фиксированными позициями полей для отслеживания сборок и событий приложения.
 
@@ -13,7 +13,7 @@
 | `setPid` | function | Установить пользовательский идентификатор процесса вручную | [→ build-info.ts:92-94] |
 | `resetBuildInfo` | function | Сбросить кешированные значения информации сборки | [→ build-info.ts:99-102] |
 | `getBuildInfo` | function | Получить объект с хешем и идентификатором процесса | [→ build-info.ts:107] |
-| `FixedLogger` | class | Класс логгера с фиксированными позициями полей | [→ fixed-logger.ts:22-307] |
+| `FixedLogger` | class | Класс логгера с фиксированными позициями полей | [→ fixed-logger.ts:22-365] |
 | `getLogger` | function | Получить глобальный экземпляр логгера приложения | [→ fixed-logger.ts:318-323] |
 | `initLogger` | function | Инициализировать логгер с конфигурацией и параметрами | [→ fixed-logger.ts:328-334] |
 | `setProjectHash` | function | Установить хеш проекта для всех логов приложения | [→ fixed-logger.ts:339-341] |
@@ -48,10 +48,10 @@
 | `STANDARD_KEYS` | const | Стандартные ключи для часто используемых значений | [→ log-types.ts:65-65] |
 | `LogEntry` | interface | Структура полной записи лога с всеми полями | [→ log-types.ts:93-102] |
 | `ParsedLogLine` | interface | Распарсенная строка лога из файла с метаданными | [→ log-types.ts:105-108] |
-| `FixedLoggerConfig` | interface | Конфигурация параметров работы логгера | [→ log-types.ts:111-126] |
-| `DEFAULT_LOGGER_CONFIG` | const | Конфигурация по умолчанию для создания логгера | [→ log-types.ts:129-137] |
-| `MODULES` | const | Перечисление доступных имен модулей приложения | [→ log-types.ts:140-160] |
-| `ModuleName` | type | Тип строки с допустимыми именами модулей | [→ log-types.ts:162] |
+| `FixedLoggerConfig` | interface | Конфигурация параметров работы логгера | [→ log-types.ts:111-128] |
+| `DEFAULT_LOGGER_CONFIG` | const | Конфигурация по умолчанию для создания логгера | [→ log-types.ts:131-140] |
+| `MODULES` | const | Перечисление доступных имен модулей приложения | [→ log-types.ts:143-163] |
+| `ModuleName` | type | Тип строки с допустимыми именами модулей | [→ log-types.ts:165] |
 | `LoggerAdapter` | class | Класс адаптера совместимости со старым логгером | [→ logger-adapter.ts:135-275] |
 | `createLoggerAdapter` | function | Функция создания адаптера для старого API логирования | [→ logger-adapter.ts:280-282] |
 

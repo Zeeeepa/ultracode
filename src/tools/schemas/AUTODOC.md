@@ -1,6 +1,6 @@
 # Schemas
 
-*Last updated: 2026-01-13*
+*Last updated: 2026-01-18*
 
 Модуль содержит схемы валидации Zod для всех инструментов MCP.
 
@@ -19,10 +19,10 @@
 | `AutoDocValidateSchema` | const | Валидация проверки ссылок в документации | [→ autodoc-schemas.ts:39-42] |
 | `AutoDocStatusSchema` | const | Валидация запроса статуса автодокументации без параметров | [→ autodoc-schemas.ts:44] |
 | `AutoDocSyncSchema` | const | Валидация синхронизации документов между диском и базой | [→ autodoc-schemas.ts:39-42] |
-| `AutoDocGenerateSchema` | const | Валидация генерации документации с помощью LLM | [→ autodoc-schemas.ts:61-88] |
-| `AutoDocChangelogSchema` | const | Валидация получения истории изменений документации | [→ autodoc-schemas.ts:90-94] |
-| `AutoDocInstallHooksSchema` | const | Валидация установки/удаления git-хуков документации | [→ autodoc-schemas.ts:96-102] |
-| `AutoDocDetectLanguageSchema` | const | Валидация определения языка документации автоматически | [→ autodoc-schemas.ts:104-111] |
+| `AutoDocGenerateSchema` | const | Валидация генерации документации с помощью LLM | [→ autodoc-schemas.ts:61-87] |
+| `AutoDocChangelogSchema` | const | Валидация получения истории изменений документации | [→ autodoc-schemas.ts:89-93] |
+| `AutoDocInstallHooksSchema` | const | Валидация установки/удаления git-хуков документации | [→ autodoc-schemas.ts:95-101] |
+| `AutoDocDetectLanguageSchema` | const | Валидация определения языка документации автоматически | [→ autodoc-schemas.ts:103-110] |
 | `ListEntitiesToolSchema` | const | Валидация получения списка сущностей из файла | [→ entity-schemas.ts:8-11] |
 | `ListRelationshipsToolSchema` | const | Валидация получения связей между сущностями проекта | [→ entity-schemas.ts:8-11] |
 | `QueryToolSchema` | const | Валидация естественного языкового запроса к графу знаний | [→ entity-schemas.ts:26-30] |

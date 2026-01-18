@@ -4,7 +4,14 @@
 
 Документ описывает внутренние технические процессы UltraScript Tools MCP: парсинг, индексацию, генерацию эмбеддингов и управление ресурсами.
 
+**Навигация по коду:**
+- [📖 Storage AUTODOC](../src/storage/AUTODOC.md) — детали хранилища
+- [📖 Agents AUTODOC](../src/agents/AUTODOC.md) — агенты и их методы
+- [📖 Semantic AUTODOC](../src/agents/semantic/AUTODOC.md) — эмбеддинги и поиск
+
 ## 1. Процесс парсинга
+
+**Реализация:** [ParserAgent](../src/agents/parser-agent.ts) | [📖 Parsers AUTODOC](../src/parsers/AUTODOC.md)
 
 ### Нативные парсеры
 
@@ -65,6 +72,12 @@
 | `contains` | A содержит B (файл → класс → метод) |
 
 ## 2. Процесс индексации
+
+**Реализация:** [IndexerAgent](../src/agents/indexer-agent.ts) | [GraphStorageLibSQL](../src/storage/graph-storage-libsql.ts)
+
+**Ключевые методы:**
+- [`insertEntities():123`](../src/storage/graph-storage-libsql.ts#L123) — batch insert сущностей
+- [`insertRelationships():303`](../src/storage/graph-storage-libsql.ts#L303) — batch insert связей
 
 ### Инкрементальная индексация
 
@@ -131,6 +144,13 @@ ResourceManager
 
 ## 3. Процесс генерации эмбеддингов
 
+**Реализация:** [SemanticAgent](../src/agents/semantic-agent.ts) | [📖 Semantic AUTODOC](../src/agents/semantic/AUTODOC.md)
+
+**Ключевые компоненты:**
+- [EmbeddingProcessor](../src/agents/semantic/embedding-processor.ts) — обработка эмбеддингов
+- [VectorIndexManager](../src/agents/semantic/vector-index-manager.ts) — FAISS индексы
+- [SmartChunker](../src/semantic/smart-chunker.ts) — AST-aware разбиение
+
 ### Pipeline эмбеддингов
 
 ```
@@ -151,10 +171,10 @@ Entity Code
 │  EmbeddingGenerator                  │
 │  ┌─────────────────────────────┐    │
 │  │  Provider selection:        │    │
-│  │  - OpenVINO (CPU, fastest)  │    │
+│  │  - OVMS (CPU/GPU, fastest)  │    │
 │  │  - TEI (GPU)                │    │
 │  │  - Ollama (simple)          │    │
-│  │  - Memory (hash fallback)   │    │
+│  │  - Transformers (CPU)       │    │
 │  └─────────────────────────────┘    │
 └─────────────────────┬───────────────┘
                       │
@@ -172,10 +192,11 @@ Entity Code
 
 | Провайдер | Устройство | Скорость | Качество | Установка |
 |-----------|------------|----------|----------|-----------|
-| OpenVINO | CPU | 474 chunks/s | Высокое | Автоматическая |
+| OVMS | CPU/GPU | 1000+ chunks/s | Высокое | Docker |
 | TEI | GPU (NVIDIA) | 1000+ chunks/s | Высокое | Docker |
 | Ollama | CPU/GPU | 100-300 chunks/s | Высокое | Простая |
-| Memory | CPU | Мгновенно | Низкое | Нет зависимостей |
+| Transformers | CPU | 200 chunks/s | Высокое | npm |
+| vLLM | GPU | 500+ chunks/s | Высокое | Docker |
 
 ### Выбор модели эмбеддингов
 
@@ -300,7 +321,87 @@ score = α × vector_score + β × text_score + γ × entity_score
   γ = 0.2  (точное совпадение имени/типа)
 ```
 
-## 6. Процесс модификации кода
+## 6. Процесс Branch Layers
+
+**Реализация:** [📖 Storage AUTODOC](../src/storage/AUTODOC.md)
+
+**Ключевые методы:**
+- [`setProject():92`](../src/storage/graph-storage-libsql.ts#L92) — переключение проекта/ветки
+- [`getEntityFromBranch():180`](../src/storage/graph-storage-libsql.ts#L180) — получение с учётом layers
+- [`findEntitiesInBranch():203`](../src/storage/graph-storage-libsql.ts#L203) — поиск с tombstones
+- [`compareEntitiesBetweenBranches():221`](../src/storage/graph-storage-libsql.ts#L221) — сравнение веток
+
+### Layered Storage для Git-веток
+
+При переключении веток система создаёт слоистое хранилище:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     switch_branch("feature/auth")               │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              1. Resolve parent branch                            │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  git merge-base feature/auth main → common ancestor      │    │
+│  │  Parent layer = main                                     │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              2. Create layer database                            │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  .ultrascript/branches/feature-auth.db                   │    │
+│  │  Tables: entities, relationships, tombstones             │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              3. Incremental index                                │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Changed files → parse → store in layer                  │    │
+│  │  Deleted entities → tombstone markers                    │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Tombstone механизм
+
+```
+Entity в main: { id: "fn_123", name: "processUser" }
+                     │
+                     │ Удалён в feature/auth
+                     ▼
+Tombstone в feature/auth: { entity_id: "fn_123", deleted_at: ... }
+                     │
+                     │ Query с учётом tombstones
+                     ▼
+         ┌─────────────────────────┐
+         │ SELECT * FROM entities  │
+         │ WHERE id NOT IN (       │
+         │   SELECT entity_id      │
+         │   FROM tombstones       │
+         │   WHERE branch = ?      │
+         │ )                       │
+         └─────────────────────────┘
+```
+
+### LRU Cleanup
+
+Старые ветки автоматически удаляются по LRU:
+
+```typescript
+// Конфигурация
+const BRANCH_CONFIG = {
+  maxBranches: 20,      // Максимум веток в кэше
+  cleanupDays: 30,      // Удалять ветки старше N дней
+};
+```
+
+## 7. Процесс модификации кода
 
 ### Безопасное редактирование
 
@@ -341,6 +442,46 @@ modify_code(entityId, newCode)
    │  4. Update graph│
    │  & embeddings   │
    └─────────────────┘
+```
+
+## 8. AutoDoc Enrichment
+
+### Обогащение поиска документацией
+
+Семантический поиск автоматически обогащается документацией из `.autodoc/`:
+
+```
+semantic_search("обработка ошибок")
+              │
+              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              1. Vector search по коду                            │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  FAISS search → top-K entities                          │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              2. AutoDoc lookup                                   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Для каждой entity:                                     │    │
+│  │  - Найти связанные docs по entity_id                    │    │
+│  │  - Извлечь descriptions, examples                       │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              3. Merge results                                    │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  {                                                       │    │
+│  │    entity: { id, name, code },                          │    │
+│  │    documentation: { description, examples },            │    │
+│  │    score: combined_score                                │    │
+│  │  }                                                       │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Связанные документы

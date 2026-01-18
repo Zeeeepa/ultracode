@@ -737,16 +737,31 @@ function getClaudeCommand(): { cmd: string; args: string[] } | null {
   const { join } = pathModule;
   const { homedir } = osModule;
 
-  const isBun = isBunRuntime();
   const home = homedir();
 
-  // Possible CLI locations (in order of preference)
+  // First, try to find claude in PATH (most reliable method)
+  try {
+    const whichCmd = process.platform === "win32" ? "where claude" : "which claude";
+    const result = execSync(whichCmd, { encoding: "utf-8", timeout: 5000 }).trim();
+    const claudePath = result.split("\n")[0]?.trim();
+    if (claudePath) {
+      log.d("CLAUDE_CODE", "cli_found_in_path", { path: claudePath });
+      return { cmd: claudePath, args: [] };
+    }
+  } catch {
+    // claude not in PATH, try fallback locations
+  }
+
+  // Fallback: Check specific installation paths for cli.js
+  const isBun = isBunRuntime();
   const possiblePaths: string[] = [];
 
   if (process.platform === "win32") {
     // Windows paths
     possiblePaths.push(
-      // Bun global install
+      // Bun global install (exe)
+      join(home, ".bun", "bin", "claude.exe"),
+      // Bun global install (cli.js)
       join(home, ".bun", "install", "global", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
       // npm global install
       join(process.env["APPDATA"] || "", "npm", "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
@@ -769,9 +784,13 @@ function getClaudeCommand(): { cmd: string; args: string[] } | null {
   // Find first existing path
   for (const cliPath of possiblePaths) {
     if (existsSync(cliPath)) {
-      // Use bun or node depending on runtime
+      // If it's an exe, run directly; if js, use bun/node
+      if (cliPath.endsWith(".exe")) {
+        log.d("CLAUDE_CODE", "cli_found", { type: "exe", path: cliPath });
+        return { cmd: cliPath, args: [] };
+      }
       const runtime = isBun ? "bun" : "node";
-      log.d("CLAUDE_CODE", "cli_found", { runtime, path: cliPath });
+      log.d("CLAUDE_CODE", "cli_found", { type: "js", runtime, path: cliPath });
       return { cmd: runtime, args: [cliPath] };
     }
   }
@@ -1242,7 +1261,11 @@ export async function detectLLMProviders(): Promise<{
   // Only add fallback providers if NO explicit provider configured
   // If user configured a specific provider, respect that choice (no fallback to avoid conflicts)
   if (!savedConfig?.provider) {
-    // Docker Model Runner first (simplest if available)
+    // Claude Code CLI first (if running inside Claude Code, CLI is always available)
+    if (!providers.some((p) => p.name === "claude-code")) {
+      providers.push(new ClaudeCodeProvider({}));
+    }
+    // Docker Model Runner second (simplest if available)
     if (!providers.some((p) => p.name === "docker-model-runner")) {
       providers.push(new DockerModelRunnerProvider({}));
     }
@@ -1280,13 +1303,14 @@ export async function detectLLMProviders(): Promise<{
 
   log.i("LLM", "providers_detected", { available: available.map((p) => p.name) });
 
-  // Prefer configured provider > Docker Model Runner > Ollama > TGI > OpenAI
+  // Prefer configured provider > Claude Code > Docker Model Runner > Ollama > TGI > OpenAI
   let recommended: LLMProvider | null = null;
   if (savedConfig?.provider) {
     recommended = available.find((p) => p.name === savedConfig.provider) || null;
   }
   if (!recommended) {
     recommended =
+      available.find((p) => p.name === "claude-code") ||
       available.find((p) => p.name === "docker-model-runner") ||
       available.find((p) => p.name === "ollama") ||
       available.find((p) => p.name === "llamacpp") ||

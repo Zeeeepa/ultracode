@@ -16,6 +16,9 @@
 ### Backpressure
 Механизм защиты от перегрузки. При превышении лимитов (память, очередь задач) система замедляет приём новых запросов или отклоняет их.
 
+### Branch Layers
+Слоистое хранилище для Git-веток. Каждая feature-ветка создаёт свой слой поверх родительской, изменения накапливаются без модификации base layer.
+
 ### Batch Operations
 Пакетная обработка — группировка множества операций (INSERT, UPDATE) в одну транзакцию для повышения производительности.
 
@@ -29,6 +32,9 @@
 
 ### Cosine Distance (Косинусное расстояние)
 Метрика сходства векторов, используемая в семантическом поиске. Значения от 0 (идентичны) до 2 (противоположны).
+
+### CTE (Common Table Expression)
+Общее табличное выражение — SQL конструкция для создания временных именованных результатов. Используется в Branch Layers для эффективной агрегации данных из нескольких слоёв.
 
 ## D
 
@@ -79,6 +85,12 @@ Pub/Sub шина для асинхронной коммуникации межд
 ### LiteRAG
 Lightweight Retrieval-Augmented Generation — архитектурный паттерн для семантического поиска без тяжёлых зависимостей.
 
+### Layer (Слой)
+Изолированный уровень данных в Branch Layers. Каждая Git-ветка создаёт свой layer, который наследует данные от родительского.
+
+### LibSQL
+Форк SQLite с дополнительными возможностями (репликация, HTTP API). Используется как основное хранилище с поддержкой branch layers.
+
 ### LRU Cache
 Least Recently Used Cache — кэш с вытеснением наименее используемых элементов.
 
@@ -100,7 +112,7 @@ Intel Open Visual Inference and Neural network Optimization — фреймвор
 ## P
 
 ### Provider (Провайдер)
-Реализация интерфейса для генерации эмбеддингов: OpenVINO, TEI, Ollama, Memory.
+Реализация интерфейса для генерации эмбеддингов: OVMS, TEI, Ollama, Transformers, vLLM.
 
 ## R
 
@@ -132,6 +144,9 @@ Intel Open Visual Inference and Neural network Optimization — фреймвор
 ### TEI (Text Embeddings Inference)
 Сервер HuggingFace для генерации эмбеддингов с поддержкой GPU через Docker.
 
+### Tombstone
+Маркер удаления в Branch Layers. Вместо физического удаления сущности из родительского слоя, в текущем слое создаётся tombstone-запись, указывающая что сущность удалена.
+
 ### Tool Handler
 Обработчик MCP инструмента. Наследуется от `BaseToolHandler`, валидирует параметры через Zod и выполняет логику.
 
@@ -156,6 +171,7 @@ Intel Open Visual Inference and Neural network Optimization — фреймвор
 |--------------|-------------|
 | AST | Abstract Syntax Tree |
 | CPU | Central Processing Unit |
+| CTE | Common Table Expression |
 | DI | Dependency Injection |
 | FQN | Fully Qualified Name |
 | FTS | Full-Text Search |

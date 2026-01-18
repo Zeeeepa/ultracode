@@ -30,9 +30,11 @@
 npx ultrascript-tools-mcp setup
 
 # Или с указанием провайдера
-npx ultrascript-tools-mcp setup --provider ollama   # Легкая установка
-npx ultrascript-tools-mcp setup --provider tei      # Лучшая производительность (Docker)
-npx ultrascript-tools-mcp setup --provider memory   # Без ML (по умолчанию)
+npx ultrascript-tools-mcp setup --provider llamacpp  # Универсальный (CUDA/Vulkan/CPU)
+npx ultrascript-tools-mcp setup --provider ovms      # Intel optimized (iGPU/CPU)
+npx ultrascript-tools-mcp setup --provider vllm      # NVIDIA GPU Production (Docker)
+npx ultrascript-tools-mcp setup --provider tei       # HuggingFace models (Docker)
+npx ultrascript-tools-mcp setup --provider ollama    # Простая установка
 ```
 
 **Что делает мастер настройки:**
@@ -61,19 +63,28 @@ chmod +x setup-embeddings-interactive.sh
 
 **Что предлагает интерактивный скрипт:**
 
-1. **TEI (Text Embeddings Inference)** 🏆 **РЕКОМЕНДУЕТСЯ**
-   - ✅ 8192 токена контекста (16x больше чем Ollama)
-   - ⚡ Оптимизированная производительность
-   - 🐳 Требует Docker Desktop
+1. **llama.cpp** 🏆 **РЕКОМЕНДУЕТСЯ** — Универсальный
+   - ✅ 441 emb/s, CUDA/Vulkan/CPU
+   - ⚡ Native GGUF, низкий VRAM
+   - ❌ Без Docker
+   - 📦 ~100 MB модель
+
+2. **OVMS (OpenVINO Model Server)** ⚡ **Intel optimized**
+   - ✅ 260-326 emb/s на Intel iGPU/CPU
+   - ⚡ MediaPipe graph, batch processing
+   - 🐳 Docker опционален (есть native binary)
+   - 📦 ~300 MB модель
+
+3. **vLLM** 🏆 **NVIDIA GPU Production**
+   - ✅ Максимальный throughput
+   - ⚡ Continuous batching, paged attention
+   - 🐳 Требует Docker + NVIDIA Container Toolkit
    - 📦 ~2 GB (образ + модель)
 
-2. **Ollama** - Альтернатива без Docker
+4. **Ollama** - Альтернатива без Docker
    - ✅ Простая установка
    - ⚠️ 512 токенов контекста
    - 📦 ~200 MB
-
-3. **Memory Provider** - Без установки
-   - ⚠️ Без ML эмбеддингов (детерминированный хеш)
 
 ### Автоматическая установка (только Ollama, legacy)
 
@@ -1026,9 +1037,82 @@ DEBUG=* node dist/index.js .
 
 ## Альтернативные провайдеры
 
-### TEI (локальный Docker, 8192 токена) 🏆
+### llama.cpp 🏆 Универсальный (рекомендуется)
 
-**Рекомендуемый провайдер для локального использования!**
+**Нативный inference сервер для GGUF моделей. CUDA/Vulkan/CPU.**
+
+```yaml
+mcp:
+  embedding:
+    provider: "llamacpp"
+    model: "multilingual-e5-small"
+    enabled: true
+    llamacpp:
+      endpoint: "http://127.0.0.1:8085"
+      batchSize: 256
+      concurrency: 4
+```
+
+**Преимущества:**
+- ✅ 441 emb/s на RTX 5060
+- ⚡ Native GGUF, низкий VRAM (1.5 GB)
+- ❌ Без Docker
+- 🔒 Локально
+
+**Установка:** `llama-server --model <path>.gguf --embedding --port 8085`
+
+### OVMS (OpenVINO Model Server) ⚡ Intel optimized
+
+**Intel-оптимизированный inference на CPU и iGPU.**
+
+```yaml
+mcp:
+  embedding:
+    provider: "ovms-native"
+    model: "multilingual-e5-base"
+    enabled: true
+    ovms:
+      endpoint: "http://127.0.0.1:8083"
+      batch_size: 200
+      target_device: "GPU"  # CPU, GPU, NPU
+```
+
+**Преимущества:**
+- ✅ 260-326 emb/s на Intel iGPU + CPU
+- ⚡ MediaPipe graph, V3 API
+- 🐳 Docker опционален (есть native binary)
+- 🔒 Локально
+
+### vLLM 🏆 NVIDIA GPU Production
+
+**Максимальный throughput на NVIDIA GPU.**
+
+```yaml
+mcp:
+  embedding:
+    provider: "vllm"
+    model: "intfloat/multilingual-e5-base"
+    enabled: true
+    vllm:
+      endpoint: "http://127.0.0.1:8000"
+      batchSize: 64
+      concurrency: 8
+```
+
+**Преимущества:**
+- ✅ Максимальный throughput
+- ⚡ Continuous batching, paged attention
+- 🐳 Требует Docker + NVIDIA Container Toolkit
+
+**Установка:**
+```bash
+docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
+  --model intfloat/multilingual-e5-base --task embed
+```
+
+### TEI (локальный Docker, 8192 токена)
+
+**HuggingFace models с большим контекстом.**
 
 ```yaml
 mcp:
@@ -1040,15 +1124,13 @@ mcp:
       baseUrl: "http://127.0.0.1:8080"
       timeoutMs: 30000
       concurrency: 4
-      checkServer: true  # Auto-start контейнера
+      checkServer: true
 ```
 
 **Преимущества:**
-- ✅ 8192 токена контекста (vs 512 в Ollama)
-- ⚡⚡⚡⚡⚡ Оптимизированная производительность
-- 🔒 Локально (без облачных API)
-- 🚀 Auto-restart контейнера
-- 💾 Требует Docker
+- ✅ 8192 токена контекста
+- ⚡ Оптимизированная производительность
+- 🐳 Требует Docker
 
 **Установка:** `./setup-tei.sh` или `setup-tei.cmd`
 
@@ -1061,7 +1143,7 @@ mcp:
     model: "ibm-granite/granite-embedding-english-r2"
     enabled: true
     huggingface:
-      apiKey: "hf_..."  # https://huggingface.co/settings/tokens
+      apiKey: "hf_..."
 ```
 
 **Преимущества:**
@@ -1104,22 +1186,6 @@ mcp:
     cloudru:
       apiKey: "..."
 ```
-
-### Memory (fallback, без ML)
-
-```yaml
-mcp:
-  embedding:
-    provider: "memory"
-    enabled: false  # Обычно выключен
-```
-
-**Преимущества:**
-- ⚡ Мгновенно
-- 💾 Нет зависимостей
-
-**Недостатки:**
-- ❌ Нет семантики (детерминированный хеш)
 
 ---
 
@@ -1203,27 +1269,29 @@ winget install Ollama.Ollama
 
 | Провайдер | Контекст | Локально | API ключ | Docker | GPU | Скорость | Рекомендация |
 |-----------|----------|----------|----------|--------|-----|----------|--------------|
-| **TEI** | **8192** | ✅ | ❌ | ✅ Требуется | ✅ NVIDIA | ⚡⚡⚡⚡⚡ | 🏆 **Лучший выбор** |
-| OpenVINO | 256-512 | ✅ | ❌ | ❌ | ❌ CPU | ⚡⚡⚡⚡⚡ | ⚡ Без GPU |
+| **llama.cpp** | **512-8192** | ✅ | ❌ | ❌ | ✅ CUDA/Vulkan/CPU | ⚡⚡⚡⚡⚡ | 🏆 **Универсальный** |
+| **vLLM** | **512-8192** | ✅ | ❌ | ✅ Требуется | ✅ NVIDIA | ⚡⚡⚡⚡⚡ | 🏆 **GPU Production** |
+| **OVMS** | 256-512 | ✅ | ❌ | ✅/❌ | ✅ Intel iGPU/CPU | ⚡⚡⚡⚡⚡ | ⚡ Intel optimized |
+| TEI | 8192 | ✅ | ❌ | ✅ Требуется | ✅ NVIDIA | ⚡⚡⚡⚡⚡ | HuggingFace models |
 | Ollama | 512-8192 | ✅ | ❌ | ❌ | ✅ NVIDIA | ⚡⚡⚡⚡ | 🥈 Простая установка |
 | HuggingFace API | 8192 | ❌ Cloud | ✅ Нужен | ❌ | ❌ | ⚡⚡⚡ | 🌐 Без локальных ресурсов |
 | OpenAI API | 8192 | ❌ Cloud | ✅ Платный | ❌ | ❌ | ⚡⚡⚡⚡ | 💰 Production |
-| Memory | N/A | ✅ | ❌ | ❌ | ❌ | ⚡⚡⚡⚡⚡ | 🔙 Fallback |
 
 ### Benchmark English моделей (RTX 5090 + i9)
 
 Тест на 33 сущностях >512 токенов (87K токенов) со Smart Chunker:
 
-#### 512 Token Models (с Smart Chunker, 204 чанка)
+#### Локальные провайдеры (512-8K токенов)
 
-| Провайдер | Модель | Время | tok/s | Рекомендация |
-|-----------|--------|-------|-------|--------------|
-| **Ollama GPU** | all-minilm | **1286ms** | **52,976** | 🏆 Быстрее всех |
-| **OpenVINO CPU** | all-MiniLM-L6-v2 | 1299ms | 54,857 | ⚡ CPU без GPU |
-| OpenVINO CPU | bge-small-en-v1.5 | 3079ms | 22,126 | Качество выше |
-| Ollama GPU | granite-embedding:30m | 3711ms | 18,358 | IBM модель |
+| Провайдер | Модель | Скорость | Рекомендация |
+|-----------|--------|----------|--------------|
+| **llama.cpp** | multilingual-e5-small Q8 | **441 emb/s** | 🏆 Native GGUF, низкий VRAM |
+| **OVMS** | multilingual-e5-small | **260-326 emb/s** | ⚡ Intel CPU/iGPU optimized |
+| **vLLM** | multilingual-e5-base | Max throughput | 🏆 NVIDIA GPU Production |
+| TEI | granite-embedding-english-r2 | 44K tok/s | HuggingFace models |
+| Ollama GPU | all-minilm | 53K tok/s | Простая установка |
 
-#### 8K Token Models (без чанкинга, 33 чанка)
+#### 8K Token Models (без чанкинга)
 
 | Провайдер | Модель | Время | tok/s | Рекомендация |
 |-----------|--------|-------|-------|--------------|
@@ -1233,18 +1301,19 @@ winget install Ollama.Ollama
 
 ### Сравнение моделей
 
-| Модель | Провайдер | Контекст | Размер | Качество | Для кода | Рекомендация |
+| Модель | Провайдеры | Контекст | Размер | Качество | Для кода | Рекомендация |
 |--------|-----------|----------|--------|----------|----------|--------------|
-| **nomic-embed-text-v1.5** | **TEI** | **8192** | **274 MB** | ⭐⭐⭐⭐⭐ | ✅ | 🏆 **Лучший (GPU)** |
-| all-MiniLM-L6-v2 | OpenVINO | 256 | 91 MB | ⭐⭐⭐⭐ | ✅ | ⚡ **Лучший (CPU)** |
+| **multilingual-e5-small** | **llama.cpp, OVMS** | **512** | **~100 MB** | ⭐⭐⭐⭐ | ✅ | 🏆 **Быстрый (441 emb/s)** |
+| **multilingual-e5-base** | **llama.cpp, vLLM, OVMS** | **512** | **~300 MB** | ⭐⭐⭐⭐⭐ | ✅ | 🎯 **Баланс качество/скорость** |
+| nomic-embed-text-v1.5 | TEI | 8192 | 274 MB | ⭐⭐⭐⭐⭐ | ✅ | 🏆 Лучший для 8K контекста |
 | all-minilm | Ollama | 512 | 46 MB | ⭐⭐⭐⭐ | ✅ | 🥈 Простая установка |
-| bge-small-en-v1.5 | OpenVINO | 512 | 134 MB | ⭐⭐⭐⭐⭐ | ✅ | 🎯 Качество + CPU |
 | snowflake-arctic-embed2 | Ollama | 8192 | 600 MB | ⭐⭐⭐⭐⭐ | ✅ | 🥉 8K без Docker |
 | granite-embedding:30m | Ollama | 512 | 47 MB | ⭐⭐⭐⭐ | ✅ | 💾 Легковесная |
 
 **Рекомендации:**
-- 🏆 **Production с GPU:** TEI + `nomic-embed-text-v1.5` — 45K tok/s, 8192 токена, native batch
-- ⚡ **Production без GPU:** OpenVINO + `all-MiniLM-L6-v2` — 55K tok/s на CPU!
+- 🏆 **Production NVIDIA GPU:** vLLM + `multilingual-e5-base` — максимальный throughput, continuous batching
+- 🏆 **Production Intel:** OVMS + `multilingual-e5-small` — 260-326 emb/s, Intel iGPU/CPU optimized
+- ⚡ **Универсальный:** llama.cpp + `multilingual-e5-small` — 441 emb/s, CUDA/Vulkan/CPU
 - 🥈 **Простая установка:** Ollama + `all-minilm` — 53K tok/s, без Docker
 - 🌐 **Без локальных ресурсов:** HuggingFace API — бесплатно, облако
 - 💰 **Enterprise:** OpenAI API — максимальное качество, платно
@@ -1262,6 +1331,7 @@ winget install Ollama.Ollama
 
 ## Changelog
 
+- **2026-01-18:** Обновлены провайдеры — добавлены llama.cpp, OVMS, vLLM; удалён устаревший memory provider
 - **2025-12-07:** Benchmark English моделей (TEI/Ollama/OpenVINO) — обновлены таблицы сравнения
 - **2025-01-13:** Добавлен auto-detect режим
 - **2025-01-13:** Скрипты установки для Windows/Unix
