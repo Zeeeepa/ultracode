@@ -1,0 +1,63 @@
+#!/bin/sh
+
+#
+# Gradle wrapper script - downloads and runs Gradle
+#
+
+# Attempt to set APP_HOME
+# Resolve links: $0 may be a link
+app_path=$0
+while
+    APP_HOME=${app_path%"${app_path##*/}"}
+    [ -h "$app_path" ]
+do
+    ls=$( ls -ld "$app_path" )
+    link=${ls#*' -> '}
+    case $link in
+      /*)   app_path=$link ;;
+      *)    app_path=$APP_HOME$link ;;
+    esac
+done
+
+APP_HOME=$( cd "${APP_HOME:-./}" && pwd -P ) || exit
+
+# Configuration
+GRADLE_VERSION="8.5"
+GRADLE_HOME="$HOME/.gradle/wrapper/dists/gradle-$GRADLE_VERSION"
+GRADLE_ZIP="$APP_HOME/gradle/wrapper/gradle-$GRADLE_VERSION-bin.zip"
+GRADLE_URL="https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip"
+
+# Download Gradle if not present
+if [ ! -d "$GRADLE_HOME" ]; then
+    echo "Downloading Gradle $GRADLE_VERSION..."
+    mkdir -p "$HOME/.gradle/wrapper/dists"
+    mkdir -p "$APP_HOME/gradle/wrapper"
+
+    if command -v curl > /dev/null 2>&1; then
+        curl -fsSL "$GRADLE_URL" -o "$GRADLE_ZIP"
+    elif command -v wget > /dev/null 2>&1; then
+        wget -q "$GRADLE_URL" -O "$GRADLE_ZIP"
+    else
+        echo "Error: curl or wget is required to download Gradle"
+        exit 1
+    fi
+
+    echo "Extracting Gradle..."
+    unzip -q "$GRADLE_ZIP" -d "$HOME/.gradle/wrapper/dists"
+    rm -f "$GRADLE_ZIP"
+fi
+
+# Find the Gradle executable
+GRADLE_BIN="$GRADLE_HOME/bin/gradle"
+if [ ! -f "$GRADLE_BIN" ]; then
+    # Try with directory name from zip
+    GRADLE_BIN="$HOME/.gradle/wrapper/dists/gradle-$GRADLE_VERSION/bin/gradle"
+fi
+
+if [ ! -f "$GRADLE_BIN" ]; then
+    echo "Error: Could not find Gradle executable"
+    exit 1
+fi
+
+# Run Gradle
+exec "$GRADLE_BIN" "$@"
