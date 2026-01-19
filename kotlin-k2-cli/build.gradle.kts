@@ -9,8 +9,8 @@ version = "1.0.0"
 
 repositories {
     mavenCentral()
-    // JetBrains IntelliJ Dependencies - has Analysis API for all Kotlin versions
-    maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies")
+    // JetBrains Kotlin IDE Plugin Dependencies - has Analysis API
+    maven("https://maven.pkg.jetbrains.space/kotlin/p/kotlin/kotlin-ide-plugin-dependencies")
 }
 
 // Kotlin compiler version
