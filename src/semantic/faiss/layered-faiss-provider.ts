@@ -132,10 +132,37 @@ export class LayeredFaissProvider {
 
   /**
    * Initialize the provider for a specific project and branch
+   * v6: CRITICAL FIX - Check if projectHash changed and reinitialize if needed!
+   * Without this, switching projects would continue using the first project's index.
    */
   async initialize(projectPath: string, projectHash: string, branchName: string): Promise<boolean> {
-    if (this.initializePromise) {
+    // v6: Check if we need to switch projects
+    if (this.initializePromise && this.projectHash === projectHash) {
+      // Same project, just return existing promise
       return this.initializePromise;
+    }
+
+    // Different project or first initialization - need to (re)initialize
+    if (this.projectHash && this.projectHash !== projectHash) {
+      log.i("LAYERED_FAISS", "project_switch", {
+        from: this.projectHash,
+        to: projectHash,
+      });
+
+      // v6.1: CRITICAL - Save old project's data BEFORE switching!
+      // Without this, vectors from the old project are lost when we reinitialize
+      if (this.isInitialized) {
+        log.i("LAYERED_FAISS", "saving_before_switch", {
+          project: this.projectHash,
+          baseUnsaved: this.baseUnsavedCount,
+          deltaUnsaved: this.deltaUnsavedCount,
+        });
+        await this.save();
+      }
+
+      // Reset state for new project
+      this.isInitialized = false;
+      this.initializePromise = null;
     }
 
     this.initializePromise = this.initializeInternal(projectPath, projectHash, branchName);
@@ -147,6 +174,14 @@ export class LayeredFaissProvider {
       this.projectPath = projectPath;
       this.projectHash = projectHash;
       this.currentBranch = normalizeBranchName(branchName);
+
+      // v6.2: CRITICAL - Clear ID sets when switching projects!
+      // Without this, IDs from previous project pollute the new project's index
+      this.baseIdSet.clear();
+      this.deltaIdSet.clear();
+      this.tombstones.clear();
+      this.baseUnsavedCount = 0;
+      this.deltaUnsavedCount = 0;
 
       // Ensure project directory exists
       const projectDir = getProjectDir(projectPath);
@@ -225,11 +260,16 @@ export class LayeredFaissProvider {
       hnswEfSearch: this.config.hnswEfSearch,
     };
 
-    const loadPath = existsSync(paths.baseIndex) ? paths.baseIndex : undefined;
+    const baseIndexExists = existsSync(paths.baseIndex);
+    const loadPath = baseIndexExists ? paths.baseIndex : undefined;
+
+    // v6.2: CRITICAL - Always reinitialize FAISS index!
+    // When loadPath is undefined, this creates a fresh empty index.
+    // This is essential when switching projects - we can't reuse the old index.
     await this.client!.faissInitialize(indexConfig, loadPath);
 
-    // Load base ID set
-    if (existsSync(paths.baseIds)) {
+    // Load base ID set (only if index file existed)
+    if (baseIndexExists && existsSync(paths.baseIds)) {
       try {
         const data = readFileSync(paths.baseIds, "utf-8");
         const ids = JSON.parse(data) as string[];
@@ -244,6 +284,7 @@ export class LayeredFaissProvider {
     log.i("LAYERED_FAISS", "base_loaded", {
       vectors: stats.totalVectors,
       ids: this.baseIdSet.size,
+      fromFile: baseIndexExists,
     });
   }
 

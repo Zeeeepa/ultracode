@@ -11,6 +11,7 @@
 
 import { z } from "zod";
 import { log } from "../../logging/index.js";
+import { AgentType } from "../../types/agent.js";
 import type { Entity, EntityType, Relationship } from "../../types/storage.js";
 import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
@@ -78,9 +79,14 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
       }
     }
 
-    // Re-index
+    // Re-index via DevAgent (conductor no longer processes tasks directly)
     const conductor = this.context.getConductor();
     await conductor.initialize();
+
+    const devAgent = conductor.getAgentByType?.(AgentType.DEV);
+    if (!devAgent) {
+      throw new Error("DevAgent not available for indexing");
+    }
 
     const task = {
       id: `clean-index-${Date.now()}`,
@@ -90,7 +96,7 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
       createdAt: Date.now(),
     };
 
-    const result = await conductor.process(task);
+    const result = await devAgent.process(task);
 
     return {
       content: [

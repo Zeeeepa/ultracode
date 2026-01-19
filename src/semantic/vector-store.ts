@@ -91,18 +91,12 @@ export class VectorStore {
     this.currentContext = context;
 
     if (this.useLayeredIndex && this.layeredProvider) {
-      // v6: Layered provider - check if initialized
-      const isInitialized = this.layeredProvider.initialized;
+      // v6.1: Layered provider - always call initialize() which handles project switching
+      // Previously we only called switchBranch() when already initialized, missing project changes
       const projectPath = this.currentProjectPath || this.config.workingDirectory || "";
-      if (!isInitialized) {
-        // First time setting context - initialize the provider
-        const success = await this.layeredProvider.initialize(projectPath, context.projectHash, context.branchName);
-        if (!success) {
-          log.e("VECTOR", "Failed to initialize LayeredFaissProvider on context set");
-        }
-      } else {
-        // Already initialized - switch branch
-        await this.layeredProvider.switchBranch(context.branchName);
+      const success = await this.layeredProvider.initialize(projectPath, context.projectHash, context.branchName);
+      if (!success) {
+        log.e("VECTOR", "Failed to initialize/switch LayeredFaissProvider on context set");
       }
     } else if (this.faissProvider) {
       // v5: Set context on FaissProvider (may switch indexes)

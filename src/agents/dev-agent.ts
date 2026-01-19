@@ -11,7 +11,7 @@ import { buildWorkerEmbeddingConfig } from "../config/worker-embedding-config.js
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { log } from "../logging/index.js";
-import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
+import { getCurrentIndexingDirectory, setCurrentIndexingDirectory } from "../shared/indexing-context.js";
 import { getCurrentGitBranch } from "../shared/storage-paths.js";
 import { getGraphStorage, setGlobalProjectContext } from "../storage/graph-storage-factory.js";
 // SQLiteManager removed - using libsql via GraphStorage
@@ -224,6 +224,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     setGlobalProjectContext(payload.directory, indexBranch);
     // v3: Also set context on IndexerAgent (for BatchOperations)
     this.indexerAgent.setProjectContext(payload.directory);
+    // v6: CRITICAL - Update global ProjectContextManager so getCurrentIndexingDirectory() returns correct path
+    // Without this, code using getCurrentIndexingDirectory() (e.g., vector provider setup) gets wrong project!
+    setCurrentIndexingDirectory(payload.directory);
     log.d("DEVAGENT", "set_ctx", { dir: payload.directory, branch: indexBranch });
 
     const result = {
@@ -879,7 +882,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               try {
                 const indexResult = await this.indexerAgent?.enqueue(indexTask);
                 return { result: indexResult as IndexingTaskResult | null, error: null };
-              } catch (err) {
+              } catch (_err) {
                 log.w("DEVAGENT", "index_file_fail", { file, err: (err as Error).message });
                 return { result: null, error: err as Error };
               }
@@ -1088,7 +1091,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 totalRelationships += indexed.relationshipsCreated || 0;
                 filesProcessed += 1;
               }
-            } catch (err) {
+            } catch (_err) {
               log.w("DEVAGENT", "idx_fail", { file, err: String(err) });
             }
           }
@@ -1173,7 +1176,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           try {
             const flushed = await accumulator.flush();
             log.i("DEVAGENT", "Embeddings flushed to FAISS", { flushed });
-          } catch (err) {
+          } catch (_err) {
             log.e("DEVAGENT", "Failed to flush embeddings", { error: (err as Error).message });
           }
         }
@@ -1205,7 +1208,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         });
         // Force flush to ensure keepalive logs are visible
         log.flush();
-      } catch (err) {
+      } catch (_err) {
         log.w("DEVAGENT", "Failed to enable keepalive mode, falling back to shutdown", {
           error: (err as Error).message,
         });
@@ -1426,7 +1429,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           try {
             const flushed = await accumulator.flush();
             log.i("DEVAGENT", "Incremental embeddings flushed", { flushed });
-          } catch (err) {
+          } catch (_err) {
             log.e("DEVAGENT", "Failed to flush incremental embeddings", { error: (err as Error).message });
           }
         }
@@ -1461,7 +1464,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           this.parserAgent = null;
           log.i("DEVAGENT", "Parser workers killed (memory > 500MB after incremental)");
         }
-      } catch (err) {
+      } catch (_err) {
         // Ignore memory check errors for incremental
       }
     }
