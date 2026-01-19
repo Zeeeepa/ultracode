@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm") version "2.0.21"
-    kotlin("plugin.serialization") version "2.0.21"
+    kotlin("jvm") version "2.1.20-dev-6663"
+    kotlin("plugin.serialization") version "2.1.20-dev-6663"
     application
 }
 
@@ -9,12 +9,11 @@ version = "1.0.0"
 
 repositories {
     mavenCentral()
-    // JetBrains repositories for Analysis API
-    maven("https://redirector.kotlinlang.org/maven/kotlin-ide-plugin-dependencies")
-    maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies")
+    // JetBrains bootstrap repo for dev versions of Analysis API
+    maven("https://packages.jetbrains.team/maven/p/kt/bootstrap")
 }
 
-val kotlinVersion = "2.0.21"
+val kotlinVersion = "2.1.20-dev-6663"
 
 dependencies {
     // Kotlin standard library
@@ -23,11 +22,8 @@ dependencies {
     // Kotlin Compiler for PSI parsing
     implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion")
 
-    // Kotlin Analysis API (K2/FIR) - standalone version from JetBrains repos
-    implementation("org.jetbrains.kotlin:analysis-api-standalone:$kotlinVersion")
-    implementation("org.jetbrains.kotlin:analysis-api-k2:$kotlinVersion")
-    implementation("org.jetbrains.kotlin:analysis-api:$kotlinVersion")
-    implementation("org.jetbrains.kotlin:analysis-api-impl-base:$kotlinVersion")
+    // Kotlin Analysis API (K2/FIR) - dev version from bootstrap repo
+    implementation("org.jetbrains.kotlin:analysis-api-for-ide:$kotlinVersion")
 
     // JSON serialization for stdin/stdout protocol
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
