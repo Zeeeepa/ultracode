@@ -1,5 +1,3 @@
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
 plugins {
     kotlin("jvm") version "2.0.21"
     kotlin("plugin.serialization") version "2.0.21"
@@ -11,7 +9,6 @@ version = "1.0.0"
 
 repositories {
     mavenCentral()
-    maven("https://maven.pkg.jetbrains.space/kotlin/p/kotlin/kotlin-ide-plugin-dependencies")
 }
 
 val kotlinVersion = "2.0.21"
@@ -20,17 +17,8 @@ dependencies {
     // Kotlin standard library
     implementation(kotlin("stdlib"))
 
-    // Kotlin Compiler for PSI parsing
+    // Kotlin Compiler for PSI parsing (includes full AST support)
     implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion")
-
-    // Kotlin Analysis API (K2/FIR)
-    implementation("org.jetbrains.kotlin:analysis-api-standalone-for-ide:$kotlinVersion") {
-        isTransitive = true
-    }
-    implementation("org.jetbrains.kotlin:analysis-api-impl-base:$kotlinVersion")
-    implementation("org.jetbrains.kotlin:high-level-api-fir-for-ide:$kotlinVersion")
-    implementation("org.jetbrains.kotlin:low-level-api-fir-for-ide:$kotlinVersion")
-    implementation("org.jetbrains.kotlin:symbol-light-classes-for-ide:$kotlinVersion")
 
     // JSON serialization for stdin/stdout protocol
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
@@ -44,14 +32,9 @@ application {
     mainClass.set("ultrascript.K2CliKt")
 }
 
-tasks.withType<KotlinCompile> {
-    kotlinOptions {
-        jvmTarget = "11"
-        freeCompilerArgs = listOf(
-            "-Xcontext-receivers",
-            "-opt-in=org.jetbrains.kotlin.analysis.api.KaExperimentalApi",
-            "-opt-in=org.jetbrains.kotlin.analysis.api.KaNonPublicApi"
-        )
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
     }
 }
 
