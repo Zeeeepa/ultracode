@@ -264,7 +264,6 @@ export class KotlinK2Provider {
 
     try {
       const fileStream = createWriteStream(tempPath);
-      // @ts-expect-error - Node 18+ has Readable.fromWeb
       await finished(Readable.fromWeb(response.body as import("stream/web").ReadableStream).pipe(fileStream));
 
       // Rename temp to final
