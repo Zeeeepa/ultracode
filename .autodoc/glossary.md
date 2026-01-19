@@ -106,10 +106,19 @@ Least Recently Used Cache — кэш с вытеснением наименее 
 
 ## O
 
+### onMessage Handler
+Обработчик IPC-сообщений от воркера. Получает `ParseResponse` и сопоставляет результаты с задачами через `pendingTasks: Map<taskId, PendingTask>`.
+
 ### OpenVINO
 Intel Open Visual Inference and Neural network Optimization — фреймворк для CPU inference моделей машинного обучения.
 
 ## P
+
+### ParsingSubprocessPool
+Пул подпроцессов для параллельного парсинга кода. Поддерживает Bun и Node.js рантаймы, IPC коммуникацию через V8 serialization, динамическое масштабирование воркеров.
+
+### PendingTask
+Структура `{resolve, reject}` для хранения колбеков незавершённой задачи парсинга. Хранится в `Map<taskId, PendingTask>` для защиты от race condition при конкурентной обработке чанков.
 
 ### Provider (Провайдер)
 Реализация интерфейса для генерации эмбеддингов: OVMS, TEI, Ollama, Transformers, vLLM.
@@ -135,6 +144,9 @@ Intel Open Visual Inference and Neural network Optimization — фреймвор
 
 ### Snapshot
 Снимок состояния файлов для возможности отката изменений. Хранится в `.ultrasharp/snapshots/` или через git stash.
+
+### SubprocessState
+Состояние воркера в ParsingSubprocessPool: ID, процесс, `pendingTasks: Map<taskId, PendingTask>`, статистика (обработано задач, память, время). Ключевой механизм для корректного сопоставления IPC-ответов с задачами.
 
 ### sqlite-vec
 Расширение SQLite для хранения и поиска векторов с использованием SIMD оптимизаций.
@@ -176,6 +188,7 @@ Intel Open Visual Inference and Neural network Optimization — фреймвор
 | FQN | Fully Qualified Name |
 | FTS | Full-Text Search |
 | GPU | Graphics Processing Unit |
+| IPC | Inter-Process Communication |
 | IR | Intermediate Representation |
 | JSON-RPC | JSON Remote Procedure Call |
 | LLM | Large Language Model |

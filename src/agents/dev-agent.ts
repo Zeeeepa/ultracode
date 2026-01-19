@@ -498,6 +498,15 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     let totalRelationships = 0;
     let filesProcessed = 0;
 
+    // Capture initial indexer stats to calculate delta at the end
+    const initialIndexerStats = this.indexerAgent?.getIndexingStats() ?? {
+      entitiesIndexed: 0,
+      relationshipsCreated: 0,
+      filesProcessed: 0,
+      totalIndexTime: 0,
+      lastIndexTime: 0,
+    };
+
     // Set pool mode based on indexing type:
     // - Incremental: universal pool (keepalive, fast for small changes)
     // - Full reindex: per-language pools (memory cleanup after each language)
@@ -1123,20 +1132,23 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       if (pendingStats.files > 0) {
         log.i("DEVAGENT", "Flushing remaining batch accumulator", pendingStats);
       }
-      const flushResult = await this.indexerAgent.flushPendingBatch();
-      streamingEntities = flushResult.entities;
-      streamingRelationships = flushResult.relationships;
+      await this.indexerAgent.flushPendingBatch();
+
+      // Get delta stats from all streaming flushes (cumulative - initial)
+      const finalStats = this.indexerAgent.getIndexingStats();
+      streamingEntities = finalStats.entitiesIndexed - initialIndexerStats.entitiesIndexed;
+      streamingRelationships = finalStats.relationshipsCreated - initialIndexerStats.relationshipsCreated;
 
       log.i("DEVAGENT", "Streaming mode disabled, code parsing complete", {
         streamedFiles: streamingIndexedFiles.size,
-        flushedEntities: streamingEntities,
-        flushedRelationships: streamingRelationships,
+        deltaEntities: streamingEntities,
+        deltaRelationships: streamingRelationships,
       });
     }
 
-    // Add streaming results to totals
-    totalEntities += streamingEntities;
-    totalRelationships += streamingRelationships;
+    // Use delta streaming stats (this indexing run only)
+    totalEntities = streamingEntities;
+    totalRelationships = streamingRelationships;
     filesProcessed += streamingIndexedFiles.size;
 
     // Process DATA files with heuristic entities (no AST, just file-level indexing)

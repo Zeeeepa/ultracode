@@ -23,9 +23,10 @@
  * When kotlinc is available, provides additional syntax validation and diagnostics.
  */
 
-import { log } from "../logging/index.js";
 import { workerLog } from "../agents/workers/worker-logging.js";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { detectCompatibleJvmForKls, type JvmInfo } from "../utils/jvm-detection.js";
 import {
   enhanceWithKotlinDiagnostics,
   findKotlinc,
@@ -33,12 +34,11 @@ import {
   isKotlincAvailable,
   isKotlinScript,
 } from "./kotlin-compiler-integration.js";
-import { detectCompatibleJvmForKls, type JvmInfo } from "../utils/jvm-detection.js";
 import {
   getKotlinK2Provider,
-  stopKotlinK2Provider,
   K2JavaVersionError,
   type KotlinK2Provider,
+  stopKotlinK2Provider,
 } from "./kotlin-k2-provider.js";
 
 // Lazy-loaded ANTLR parser (loaded on first use to reduce initial bundle size)
@@ -98,7 +98,10 @@ export class KotlinNativeParser {
    */
   async initialize(): Promise<void> {
     log.d("KOTLINPARSER", "init_start");
-    workerLog("INFO", "KOTLINPARSER init_start", { useK2: this.useK2, envAntlr: process.env["ULTRASCRIPT_KOTLIN_ANTLR"] });
+    workerLog("INFO", "KOTLINPARSER init_start", {
+      useK2: this.useK2,
+      envAntlr: process.env["ULTRASCRIPT_KOTLIN_ANTLR"],
+    });
 
     // Try to detect JVM for K2 mode
     if (this.useK2 && !process.env["ULTRASCRIPT_KOTLIN_ANTLR"]) {
@@ -110,7 +113,11 @@ export class KotlinNativeParser {
         if (jvmInfo) {
           this.jvmInfo = jvmInfo;
           log.i("KOTLINPARSER", "jvm_found", { ver: jvmInfo.version, vendor: jvmInfo.vendor });
-          workerLog("INFO", "KOTLINPARSER jvm_found", { ver: jvmInfo.version, vendor: jvmInfo.vendor, path: jvmInfo.javaPath });
+          workerLog("INFO", "KOTLINPARSER jvm_found", {
+            ver: jvmInfo.version,
+            vendor: jvmInfo.vendor,
+            path: jvmInfo.javaPath,
+          });
 
           // Try to start K2 CLI with the compatible Java
           const k2Result = await this.tryStartK2(jvmInfo);
@@ -126,7 +133,10 @@ export class KotlinNativeParser {
         workerLog("ERROR", "KOTLINPARSER jvm_detect_fail", { err: String(jvmError) });
       }
     } else {
-      workerLog("INFO", "KOTLINPARSER skipping JVM detection", { useK2: this.useK2, envAntlr: !!process.env["ULTRASCRIPT_KOTLIN_ANTLR"] });
+      workerLog("INFO", "KOTLINPARSER skipping JVM detection", {
+        useK2: this.useK2,
+        envAntlr: !!process.env["ULTRASCRIPT_KOTLIN_ANTLR"],
+      });
     }
 
     // Try to find kotlinc for diagnostics
@@ -139,7 +149,11 @@ export class KotlinNativeParser {
           kotlinc: true,
           ver: version || "unknown",
         });
-        workerLog("INFO", "KOTLINPARSER init_done", { k2: !!this.k2Provider, kotlinc: true, ver: version || "unknown" });
+        workerLog("INFO", "KOTLINPARSER init_done", {
+          k2: !!this.k2Provider,
+          kotlinc: true,
+          ver: version || "unknown",
+        });
         return;
       }
     }
@@ -279,7 +293,11 @@ export class KotlinNativeParser {
 
           // K2 provides package/import entities, no need to add them manually
 
-          log.d("KOTLINPARSER", "k2_ok", { ent: entities.length, rel: relationships?.length || 0, calls: k2Result.callGraph.length });
+          log.d("KOTLINPARSER", "k2_ok", {
+            ent: entities.length,
+            rel: relationships?.length || 0,
+            calls: k2Result.callGraph.length,
+          });
         } catch (k2Error) {
           log.w("KOTLINPARSER", "k2_fail", { err: String(k2Error) });
 

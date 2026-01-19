@@ -17,7 +17,7 @@ import { EventEmitter } from "node:events";
 import { type FSWatcher, watch as fsWatch } from "node:fs";
 import { stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { glob } from "glob";
+import fg from "fast-glob";
 import { log } from "../logging/index.js";
 
 // =============================================================================
@@ -145,20 +145,35 @@ export class FileWatcher extends EventEmitter {
 
   /**
    * Scan files matching patterns
+   * Uses Bun.Glob when available (faster), otherwise fast-glob
    */
   private async scanFiles(): Promise<string[]> {
     const patterns = this.config.include.map((p) =>
       p.startsWith("/") || p.includes(":") ? p : `${this.config.rootDir}/${p}`,
     );
 
-    const files = await glob(patterns, {
+    // Use Bun.Glob when available (native, faster)
+    // @ts-expect-error - Bun global
+    if (isBunRuntime && globalThis.Bun?.Glob) {
+      const files: string[] = [];
+      for (const pattern of patterns) {
+        // @ts-expect-error - Bun global
+        const glob = new globalThis.Bun.Glob(pattern);
+        for await (const file of glob.scan({ onlyFiles: true, ignore: this.config.exclude })) {
+          files.push(file);
+        }
+      }
+      return files;
+    }
+
+    // Fallback to fast-glob for Node.js
+    const files = await fg(patterns, {
       ignore: this.config.exclude,
-      nodir: true,
+      onlyFiles: true,
       absolute: true,
-      posix: true,
     });
 
-    return files.map((f) => f.replace(/\\/g, "/"));
+    return files;
   }
 
   /**

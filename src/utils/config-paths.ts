@@ -83,6 +83,14 @@ export function getEmbeddingModelsPath(): string {
 }
 
 /**
+ * Get the path to the parser configuration file
+ * Stores cached settings like JVM paths for kotlin-language-server
+ */
+export function getParserConfigPath(): string {
+  return join(getConfigDir(), "parser-config.json");
+}
+
+/**
  * Ensure configuration directory exists
  */
 export function ensureConfigDir(): string {

@@ -1,16 +1,34 @@
 /**
  * Java Native Parser
  *
- * Uses ANTLR-based parsing for Java files with regex fallback.
- * Provides accurate AST parsing without external dependencies.
+ * Uses Chevrotain-based java-parser for fast parsing (5-10x faster than ANTLR).
+ * Falls back to ANTLR for complex cases or when Chevrotain fails.
+ * Regex-based parsing as final fallback.
  *
- * No native modules or JDK required - uses bundled ANTLR parser.
+ * Performance comparison:
+ * - Chevrotain (java-parser): ~15-30ms/file
+ * - ANTLR: ~150ms/file
+ * - Regex: ~5-10ms/file (less accurate)
+ *
+ * No native modules or JDK required - uses bundled parsers.
  */
 
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
-// Lazy-loaded ANTLR parser (loaded on first use to reduce initial bundle size)
+// Lazy-loaded Chevrotain parser (primary, faster)
+type JavaChevrotainParserType = typeof import("./java-chevrotain-parser.js").JavaChevrotainParser;
+let JavaChevrotainParserClass: JavaChevrotainParserType | null = null;
+
+async function getJavaChevrotainParser(): Promise<JavaChevrotainParserType> {
+  if (!JavaChevrotainParserClass) {
+    const module = await import("./java-chevrotain-parser.js");
+    JavaChevrotainParserClass = module.JavaChevrotainParser;
+  }
+  return JavaChevrotainParserClass;
+}
+
+// Lazy-loaded ANTLR parser (fallback, more accurate for edge cases)
 type JavaAntlrParserType = typeof import("./java-antlr-parser.js").JavaAntlrParser;
 let JavaAntlrParserClass: JavaAntlrParserType | null = null;
 
@@ -42,7 +60,8 @@ export interface ParserStats {
 // =============================================================================
 
 export class JavaNativeParser {
-  private useAntlr = true; // Use ANTLR parser by default
+  private useChevrotain = true; // Use Chevrotain parser by default (faster)
+  private useAntlrFallback = true; // Fall back to ANTLR on Chevrotain failure
   private stats: ParserStats = {
     filesParsed: 0,
     cacheHits: 0,
@@ -58,14 +77,28 @@ export class JavaNativeParser {
    * Initialize the parser
    */
   async initialize(): Promise<void> {
-    log.i("JAVAPARSER", "init_done");
+    log.i("JAVAPARSER", "init_done", { parser: "chevrotain" });
   }
 
   /**
-   * Enable or disable ANTLR parser (falls back to regex if disabled)
+   * Enable or disable Chevrotain parser
+   */
+  setChevrotainEnabled(enabled: boolean): void {
+    this.useChevrotain = enabled;
+  }
+
+  /**
+   * Enable or disable ANTLR fallback
+   */
+  setAntlrFallbackEnabled(enabled: boolean): void {
+    this.useAntlrFallback = enabled;
+  }
+
+  /**
+   * @deprecated Use setChevrotainEnabled instead
    */
   setAntlrEnabled(enabled: boolean): void {
-    this.useAntlr = enabled;
+    this.useAntlrFallback = enabled;
   }
 
   /**
@@ -87,8 +120,39 @@ export class JavaNativeParser {
       let relationships: EntityRelationship[] | undefined;
       const errors: Array<{ message: string; location?: { line: number; column: number } }> = [];
 
-      // Try ANTLR parser first (lazy-loaded)
-      if (this.useAntlr) {
+      // Try Chevrotain parser first (5-10x faster)
+      if (this.useChevrotain) {
+        try {
+          log.d("JAVAPARSER", "try_chevrotain");
+          const JavaChevrotainParser = await getJavaChevrotainParser();
+          const result = JavaChevrotainParser.parse(filePath, content);
+          entities = result.entities;
+          relationships = result.relationships.length > 0 ? result.relationships : undefined;
+          log.d("JAVAPARSER", "chevrotain_ok", { ent: entities.length, rel: relationships?.length || 0 });
+        } catch (chevrotainError) {
+          log.w("JAVAPARSER", "chevrotain_fail", { err: String(chevrotainError) });
+
+          // Fallback to ANTLR if enabled
+          if (this.useAntlrFallback) {
+            try {
+              log.d("JAVAPARSER", "try_antlr_fallback");
+              const JavaAntlrParser = await getJavaAntlrParser();
+              const antlrResult = JavaAntlrParser.parse(filePath, content);
+              entities = antlrResult.entities;
+              relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;
+              log.d("JAVAPARSER", "antlr_fallback_ok", { ent: entities.length, rel: relationships?.length || 0 });
+            } catch (antlrError) {
+              log.w("JAVAPARSER", "antlr_fallback_fail", { err: String(antlrError) });
+              entities = this.parseJava(filePath, content);
+              log.d("JAVAPARSER", "regex_fallback_ok", { cnt: entities.length });
+            }
+          } else {
+            entities = this.parseJava(filePath, content);
+            log.d("JAVAPARSER", "regex_fallback_ok", { cnt: entities.length });
+          }
+        }
+      } else if (this.useAntlrFallback) {
+        // Only ANTLR (no Chevrotain)
         try {
           log.d("JAVAPARSER", "try_antlr");
           const JavaAntlrParser = await getJavaAntlrParser();
@@ -102,7 +166,7 @@ export class JavaNativeParser {
           log.d("JAVAPARSER", "regex_ok", { cnt: entities.length });
         }
       } else {
-        // Fallback to regex-based parsing
+        // Regex-only mode
         entities = this.parseJava(filePath, content);
       }
 

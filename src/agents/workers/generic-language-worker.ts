@@ -18,7 +18,7 @@ import { readFile } from "node:fs/promises";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 import type { WorkerEmbeddingConfig } from "../../types/semantic.js";
 // Extracted modules
-import { clearAnalyzerCache, getAnalyzer, SUPPORTED_WORKER_LANGUAGES } from "./analyzer-loader.js";
+import { clearAnalyzerCache, getAnalyzer, SUPPORTED_WORKER_LANGUAGES, warmupAnalyzer } from "./analyzer-loader.js";
 import {
   clearDeduplicationForFiles,
   clearEmbeddingClient,
@@ -699,6 +699,15 @@ if (isSubprocess) {
     pid: process.pid,
     memoryUsage: process.memoryUsage().heapUsed,
   });
+
+  // Pre-warm ANTLR parser for this language (async, non-blocking)
+  // This triggers JIT compilation before real files arrive, improving first-file latency
+  const workerLanguage = process.env["PARSING_WORKER_LANGUAGE"];
+  if (workerLanguage) {
+    warmupAnalyzer(workerLanguage).catch(() => {
+      // Warmup failure is non-fatal, just log in warmupAnalyzer
+    });
+  }
 } else if (isBunWorker && self) {
   // Bun Web Worker API
   self.addEventListener("message", (event: { data: WorkerIncomingMessage }) => {

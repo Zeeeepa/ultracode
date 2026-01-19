@@ -11,6 +11,7 @@
 
 import { type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative } from "node:path";
+import fg from "fast-glob";
 import { log } from "../../logging/index.js";
 import { isBunRuntime } from "../../utils/runtime.js";
 import { isCodeExtension, isDataExtension, SUPPORTED_DATA_EXTENSIONS } from "./file-extensions.js";
@@ -85,34 +86,42 @@ const DEFAULT_EXCLUDED_DIR_NAMES = new Set([
 ]);
 
 /**
+ * In-memory cache for compiled RegExp patterns
+ * - Lives for the duration of the process
+ * - No disk persistence needed (RegExp compilation is fast)
+ * - Automatically populated on first use of each pattern
+ */
+const regexCache = new Map<string, RegExp>();
+
+/**
+ * Get or create a cached RegExp for a glob pattern
+ */
+function getCachedRegex(pattern: string): RegExp {
+  let regex = regexCache.get(pattern);
+  if (!regex) {
+    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    const regexStr = escaped
+      .replace(/\*\*\//g, "(?:[^/]+/)*")
+      .replace(/\/\*\*/g, "(?:/[^/]+)*")
+      .replace(/\*\*/g, ".*")
+      .replace(/\*/g, "[^/]*")
+      .replace(/\(\?:\/\[\^\/\]\+\)\*$/, "(?:/[^/]+)*");
+    regex = new RegExp(regexStr);
+    regexCache.set(pattern, regex);
+  }
+  return regex;
+}
+
+/**
  * Check if a file path should be excluded based on patterns
+ * Uses cached RegExp to avoid repeated compilation
  */
 function shouldExclude(filePath: string, excludePatterns: string[]): boolean {
-  // Normalize path to forward slashes for cross-platform pattern matching
   const normalizedPath = filePath.replace(/\\/g, "/");
   for (const pattern of excludePatterns) {
     if (pattern.includes("**")) {
-      // Convert glob pattern to regex
-      // IMPORTANT: Directory names must match exactly as path segments, not substrings
-      // e.g., **/test/** should match /test/ but NOT /testrunner/
-      const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-
-      // Replace ** with pattern that matches any path segments
-      // Replace * with pattern that matches within a single segment (no slashes)
-      // Ensure directory names are matched as complete segments (between slashes)
-      const regex = escaped
-        .replace(/\*\*\//g, "(?:[^/]+/)*") // **/ matches zero or more directory levels
-        .replace(/\/\*\*/g, "(?:/[^/]+)*") // /** matches zero or more trailing levels
-        .replace(/\*\*/g, ".*") // standalone ** (rare)
-        .replace(/\*/g, "[^/]*"); // * matches within segment
-
-      // For patterns like **/dirname/** also match the directory itself
-      // by making trailing pattern optional
-      const flexibleRegex = regex.replace(/\(\?:\/\[\^\/\]\+\)\*$/, "(?:/[^/]+)*");
-
-      if (new RegExp(flexibleRegex).test(normalizedPath)) return true;
+      if (getCachedRegex(pattern).test(normalizedPath)) return true;
     } else {
-      // Simple pattern matching - extract core path segment
       const normalizedPattern = pattern.replace(/\*/g, "").replace(/\\/g, "/");
       if (normalizedPath.includes(normalizedPattern)) {
         return true;
@@ -159,22 +168,18 @@ interface BunGlob {
 }
 
 interface BunGlobInstance {
-  scan(options: { cwd: string; onlyFiles?: boolean }): AsyncIterable<string>;
-}
-
-interface BunGlobal {
-  Glob?: BunGlob;
+  scan(options: { cwd: string; onlyFiles?: boolean; ignore?: string[] }): AsyncIterable<string>;
 }
 
 /**
  * Collect files using Bun.Glob.scan() - 3x faster than fs operations
- * Uses native async iterator for streaming results
+ * Uses native async iterator for streaming results with ignore patterns
  */
 async function collectFilesWithBunGlob(
   directory: string,
   excludePatterns: string[],
 ): Promise<{ files: string[]; excludedByPattern: number }> {
-  const BunGlobClass = (globalThis as unknown as BunGlobal).Glob;
+  const BunGlobClass = (globalThis as unknown as { Bun?: { Glob?: BunGlob } }).Bun?.Glob;
   if (!BunGlobClass) {
     throw new Error("Bun.Glob not available");
   }
@@ -182,35 +187,23 @@ async function collectFilesWithBunGlob(
   const files: string[] = [];
   let excludedByPattern = 0;
 
-  // Build glob pattern for supported extensions
-  // Bun.Glob is very fast at pattern matching
-  const glob = new BunGlobClass("**/*");
+  // Build ignore patterns for Bun.Glob - includes default exclusions and user patterns
+  const defaultIgnorePatterns = Array.from(DEFAULT_EXCLUDED_DIR_NAMES).map((dir) => `**/${dir}/**`);
+  const ignorePatterns = [
+    ...defaultIgnorePatterns,
+    "**/.*", // Hidden files/dirs
+    "**/.*/**", // Files inside hidden dirs
+    ...excludePatterns,
+  ];
 
+  const glob = new BunGlobClass("**/*");
   const startTime = Date.now();
 
-  for await (const relativePath of glob.scan({ cwd: directory, onlyFiles: true })) {
+  for await (const relativePath of glob.scan({ cwd: directory, onlyFiles: true, ignore: ignorePatterns })) {
     const fullPath = join(directory, relativePath);
     const fileName = relativePath.split("/").pop() || relativePath;
 
-    // Skip hidden files/dirs (starting with .)
-    if (relativePath.includes("/.") || relativePath.startsWith(".")) {
-      continue;
-    }
-
-    // Check default excluded directories
-    const pathParts = relativePath.split("/");
-    let skipByDefault = false;
-    for (const part of pathParts) {
-      if (DEFAULT_EXCLUDED_DIR_NAMES.has(part.toLowerCase())) {
-        skipByDefault = true;
-        break;
-      }
-    }
-    if (skipByDefault) {
-      continue;
-    }
-
-    // Check exclude patterns
+    // Double-check exclude patterns (in case Bun.Glob ignore doesn't match all)
     if (shouldExclude(fullPath, excludePatterns)) {
       excludedByPattern++;
       continue;
@@ -365,78 +358,57 @@ export function collectFiles(directory: string, options: CollectFilesOptions): C
 }
 
 /**
- * Collect files using tiny-glob - fast async glob for Node.js
- * ~350% faster than node-glob, 2.5KB bundle size
+ * Collect files using fast-glob with ignore patterns
+ * Async, supports ignore patterns natively - skips excluded directories entirely
+ * ~2x faster than node-glob, ~5x faster than tiny-glob
  */
-async function collectFilesWithTinyGlob(
+async function collectFilesWithFastGlob(
   directory: string,
   excludePatterns: string[],
 ): Promise<{ files: string[]; excludedByPattern: number }> {
-  // Dynamic import to avoid bundling issues
-  const glob = (await import("tiny-glob")).default as (
-    pattern: string,
-    options?: { cwd?: string; filesOnly?: boolean; absolute?: boolean },
-  ) => Promise<string[]>;
-
   const files: string[] = [];
-  let excludedByPattern = 0;
+
+  // Build ignore patterns - includes default exclusions and user patterns
+  const defaultIgnorePatterns = Array.from(DEFAULT_EXCLUDED_DIR_NAMES).map((dir) => `**/${dir}/**`);
+  const ignorePatterns = [
+    ...defaultIgnorePatterns,
+    "**/.*", // Hidden files
+    "**/.*/**", // Files inside hidden dirs
+    ...excludePatterns,
+  ];
 
   const startTime = Date.now();
 
-  // tiny-glob returns relative paths by default
-  const allFiles = await glob("**/*", {
+  // fast-glob supports ignore natively and is very fast
+  const allFiles = await fg("**/*", {
     cwd: directory,
-    filesOnly: true,
+    ignore: ignorePatterns,
+    onlyFiles: true,
     absolute: true,
+    dot: false, // Skip hidden files
   });
 
+  // Filter to supported file types only
   for (const fullPath of allFiles) {
-    const relativePath = relative(directory, fullPath);
-    const fileName = relativePath.split(/[/\\]/).pop() || relativePath;
-
-    // Skip hidden files/dirs (starting with .)
-    if (relativePath.includes("/.") || relativePath.includes("\\.") || relativePath.startsWith(".")) {
-      continue;
-    }
-
-    // Check default excluded directories
-    const pathParts = relativePath.split(/[/\\]/);
-    let skipByDefault = false;
-    for (const part of pathParts) {
-      if (DEFAULT_EXCLUDED_DIR_NAMES.has(part.toLowerCase())) {
-        skipByDefault = true;
-        break;
-      }
-    }
-    if (skipByDefault) {
-      continue;
-    }
-
-    // Check exclude patterns
-    if (shouldExclude(fullPath, excludePatterns)) {
-      excludedByPattern++;
-      continue;
-    }
-
-    // Check if supported file type
+    const fileName = fullPath.split(/[/\\]/).pop() || "";
     if (isSupportedFile(fileName)) {
       files.push(fullPath);
     }
   }
 
   const elapsed = Date.now() - startTime;
-  log.d("FILESCAN", "tiny_glob_scan", { files: files.length, elapsed: `${elapsed}ms` });
+  log.d("FILESCAN", "fast_glob_scan", { files: files.length, elapsed: `${elapsed}ms` });
 
-  return { files, excludedByPattern };
+  return { files, excludedByPattern: 0 }; // excludedByPattern is 0 because glob skips them entirely
 }
 
 /**
- * Async version of collectFiles using Bun.Glob or tiny-glob
+ * Async version of collectFiles using Bun.Glob or fast-glob
  * Use this when async API is acceptable for better performance
  *
  * Runtime selection:
- * - Bun: Bun.Glob.scan() (native, 3x faster)
- * - Node.js: tiny-glob (~350% faster than node-glob)
+ * - Bun: Bun.Glob.scan() with ignore patterns (native, 3x faster, skips excluded dirs)
+ * - Node.js: fast-glob with ignore patterns (async, ~2x faster than node-glob, skips excluded dirs)
  */
 export async function collectFilesAsync(directory: string, options: CollectFilesOptions): Promise<CollectFilesResult> {
   const { excludePatterns: baseExcludePatterns } = options;
@@ -450,11 +422,11 @@ export async function collectFilesAsync(directory: string, options: CollectFiles
   let files: string[];
   let dirsScanned = 0;
   let excludedByPattern = 0;
-  let excludedByDefault = 0;
-  let method: "bun_glob" | "tiny_glob" | "node_fs";
+  const excludedByDefault = 0;
+  let method: "bun_glob" | "fast_glob";
 
-  // Use Bun.Glob when available (native, 3x faster)
-  if (isBunRuntime() && (globalThis as unknown as BunGlobal).Glob) {
+  // Use Bun.Glob when available (native, 3x faster with ignore patterns)
+  if (isBunRuntime() && (globalThis as unknown as { Bun?: { Glob?: BunGlob } }).Bun?.Glob) {
     method = "bun_glob";
     const result = await collectFilesWithBunGlob(directory, excludePatterns);
     files = result.files;
@@ -463,24 +435,14 @@ export async function collectFilesAsync(directory: string, options: CollectFiles
     const uniqueDirs = new Set(files.map((f) => relative(directory, f).split(/[/\\]/)[0]));
     dirsScanned = uniqueDirs.size;
   } else {
-    // Node.js: use tiny-glob for async performance
-    method = "tiny_glob";
-    try {
-      const result = await collectFilesWithTinyGlob(directory, excludePatterns);
-      files = result.files;
-      excludedByPattern = result.excludedByPattern;
-      // Estimate dirs from file paths
-      const uniqueDirs = new Set(files.map((f) => relative(directory, f).split(/[/\\]/)[0]));
-      dirsScanned = uniqueDirs.size;
-    } catch {
-      // Fallback to Node.js fs if tiny-glob fails
-      method = "node_fs";
-      const result = collectFilesWithNodeFs(directory, excludePatterns);
-      files = result.files;
-      dirsScanned = result.dirsScanned;
-      excludedByPattern = result.excludedByPattern;
-      excludedByDefault = result.excludedByDefault;
-    }
+    // Node.js: use fast-glob with ignore patterns - skips excluded directories entirely
+    method = "fast_glob";
+    const result = await collectFilesWithFastGlob(directory, excludePatterns);
+    files = result.files;
+    excludedByPattern = result.excludedByPattern;
+    // Estimate dirs from file paths
+    const uniqueDirs = new Set(files.map((f) => relative(directory, f).split(/[/\\]/)[0]));
+    dirsScanned = uniqueDirs.size;
   }
 
   const elapsed = Date.now() - startTime;

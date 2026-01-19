@@ -213,8 +213,9 @@ export class ParsingSubprocessPool {
       tasksProcessed: 0,
       totalProcessingTime: 0,
       memoryUsage: 0,
-      pendingResolve: null,
-      pendingReject: null,
+      pendingTasks: new Map(), // Map<taskId, {resolve, reject}> for concurrent task handling
+      pendingResolve: null, // Legacy, kept for compatibility
+      pendingReject: null, // Legacy, kept for compatibility
       readyResolve: null,
       readyReject: null,
       pendingPingResolve: null,
@@ -410,13 +411,20 @@ export class ParsingSubprocessPool {
     }
 
     if (response.type === "result") {
+      const taskId = response.id;
+
+      // Look up pending task by taskId (fixes race condition with concurrent results)
+      const pendingTask = taskId ? state.pendingTasks.get(taskId) : null;
+
       // DEBUG: Log what we received from worker
       log.i("SUBPROCESS", "result_received", {
         workerId,
         language: this.language,
+        taskId,
         hasResults: !!response.results,
         resultsLength: response.results?.length ?? 0,
-        hasPendingResolve: !!state.pendingResolve,
+        hasPendingTask: !!pendingTask,
+        pendingTasksCount: state.pendingTasks.size,
         statsFilesProcessed: response.stats?.filesProcessed ?? 0,
       });
 
@@ -430,14 +438,22 @@ export class ParsingSubprocessPool {
       }
       this.completedTasks++;
 
-      // Resolve pending promise
-      if (state.pendingResolve && response.results) {
-        state.pendingResolve(response.results);
-        state.pendingResolve = null;
-        state.pendingReject = null;
+      // Resolve pending promise by taskId (no more race condition!)
+      if (pendingTask && response.results) {
+        pendingTask.resolve(response.results);
+        if (taskId) state.pendingTasks.delete(taskId);
+      } else if (!pendingTask && taskId) {
+        // This shouldn't happen - log for debugging
+        log.w("SUBPROCESS", "result_received_no_pending_task", {
+          workerId,
+          taskId,
+          language: this.language,
+          pendingTaskIds: Array.from(state.pendingTasks.keys()),
+        });
       }
 
-      state.busy = false;
+      // Worker is idle only when no pending tasks remain
+      state.busy = state.pendingTasks.size > 0;
 
       // OPTIMIZATION: Don't kill workers during batch processing
       // This prevents 3+ second respawn delays between chunks
@@ -493,12 +509,15 @@ export class ParsingSubprocessPool {
       }
     } else if (response.type === "error") {
       this.failedTasks++;
-      if (state.pendingReject) {
-        state.pendingReject(new Error(response.error || "Unknown error"));
-        state.pendingResolve = null;
-        state.pendingReject = null;
+      const taskId = response.id;
+      const pendingTask = taskId ? state.pendingTasks.get(taskId) : null;
+
+      if (pendingTask) {
+        pendingTask.reject(new Error(response.error || "Unknown error"));
+        if (taskId) state.pendingTasks.delete(taskId);
       }
-      state.busy = false;
+
+      state.busy = state.pendingTasks.size > 0;
       this.processNextTask(workerId);
     }
   }
@@ -512,7 +531,23 @@ export class ParsingSubprocessPool {
 
     log.d("SUBPROCESS", `Killing worker ${workerId} (no respawn - queue empty)`, {
       language: this.language,
+      pendingTasksCount: state.pendingTasks.size,
     });
+
+    // Warn if there are pending tasks (shouldn't happen when queue is empty)
+    if (state.pendingTasks.size > 0) {
+      log.w("SUBPROCESS", "killing_worker_with_pending_tasks", {
+        workerId,
+        language: this.language,
+        pendingTaskIds: Array.from(state.pendingTasks.keys()),
+      });
+      // Reject pending tasks before killing
+      const killError = new Error(`Worker ${workerId} killed with pending tasks`);
+      for (const pendingTask of state.pendingTasks.values()) {
+        pendingTask.reject(killError);
+      }
+      state.pendingTasks.clear();
+    }
 
     state.intentionalKill = true;
     killProcess(state.process);
@@ -559,12 +594,18 @@ export class ParsingSubprocessPool {
       state.readyReject = null;
     }
 
-    // Reject pending task
-    if (state.pendingReject) {
-      state.pendingReject(new Error(`Worker exited with code ${code}`));
-      state.pendingResolve = null;
-      state.pendingReject = null;
+    // Reject ALL pending tasks (fixes orphaned promises on worker crash)
+    const exitError = new Error(`Worker ${workerId} exited with code ${code}`);
+    for (const [taskId, pendingTask] of state.pendingTasks) {
+      log.w("SUBPROCESS", "rejecting_orphaned_task", {
+        workerId,
+        taskId,
+        language: this.language,
+        exitCode: code,
+      });
+      pendingTask.reject(exitError);
     }
+    state.pendingTasks.clear();
 
     state.busy = false;
     state.process = null;
@@ -577,20 +618,23 @@ export class ParsingSubprocessPool {
 
   /**
    * Calculate optimal worker count based on file count
-   * Dynamic scaling: more files → more workers (up to 8)
-   * Optimized thresholds for faster parallelization
+   * Dynamic scaling: more files → more workers (up to max)
+   * When embeddings are enabled, limit workers to avoid overwhelming vLLM/embedding server
    */
   private getOptimalWorkerCount(fileCount: number): number {
-    const maxWorkers = 8; // Increased from 6 to 8 for better parallelization
+    // When embeddings are enabled, limit max workers to prevent vLLM overload
+    // vLLM/TEI servers have connection limits and can throttle under high concurrent load
+    // 6 workers is a good balance between parallelism and server capacity
+    const maxWorkers = this.embeddingConfig ? 6 : 8;
 
-    // More aggressive scaling - start parallel earlier
+    // Scaling thresholds - adjusted for embedding-limited mode
     if (fileCount < 10) return 1;
     if (fileCount < 30) return 2;
-    if (fileCount < 60) return 3;
-    if (fileCount < 100) return 4;
-    if (fileCount < 150) return 5;
-    if (fileCount < 250) return 6;
-    if (fileCount < 400) return 7;
+    if (fileCount < 60) return Math.min(3, maxWorkers);
+    if (fileCount < 100) return Math.min(4, maxWorkers);
+    if (fileCount < 150) return Math.min(5, maxWorkers);
+    if (fileCount < 250) return Math.min(6, maxWorkers);
+    if (fileCount < 400) return Math.min(7, maxWorkers);
     return maxWorkers;
   }
 
@@ -660,7 +704,8 @@ export class ParsingSubprocessPool {
       if (this.keepaliveMode && workerId === 0) continue;
 
       const state = this.workers.get(workerId);
-      if (state?.process && !state.busy) {
+      // Only kill idle workers (no pending tasks)
+      if (state?.process && state.pendingTasks.size === 0) {
         killProcess(state.process as ChildProcess);
         this.workers.delete(workerId);
         killed++;
@@ -995,8 +1040,8 @@ export class ParsingSubprocessPool {
     if (!state || !state.process) return;
 
     state.busy = true;
-    state.pendingResolve = task.resolve;
-    state.pendingReject = task.reject;
+    // Store task in pendingTasks Map by taskId (fixes race condition)
+    state.pendingTasks.set(task.id, { resolve: task.resolve, reject: task.reject });
 
     const request: ParseRequest = {
       type: "parse",
@@ -1014,6 +1059,7 @@ export class ParsingSubprocessPool {
     log.t("SUBPROCESS", `[${this.language}] Worker ${workerId} processing files`, {
       taskId: task.id,
       fileCount: task.files.length,
+      pendingTasksCount: state.pendingTasks.size,
     });
   }
 

@@ -243,6 +243,7 @@ WHERE e.id NOT IN (SELECT entity_id FROM tombstones WHERE branch_id = ?)
 | Многоагентная архитектура | Разделение ответственности, параллельная обработка |
 | Pub/Sub через KnowledgeBus | Слабая связанность агентов, масштабируемость |
 | OVMS/TEI для эмбеддингов | Высокопроизводительный inference, 1000+ chunks/s |
+| Subprocess pool с Map-tracking | Защита от race condition при IPC, поддержка Bun/Node.js |
 
 ## Связанные документы
 
