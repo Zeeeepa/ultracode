@@ -882,7 +882,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               try {
                 const indexResult = await this.indexerAgent?.enqueue(indexTask);
                 return { result: indexResult as IndexingTaskResult | null, error: null };
-              } catch (_err) {
+              } catch (err) {
                 log.w("DEVAGENT", "index_file_fail", { file, err: (err as Error).message });
                 return { result: null, error: err as Error };
               }
@@ -1091,7 +1091,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 totalRelationships += indexed.relationshipsCreated || 0;
                 filesProcessed += 1;
               }
-            } catch (_err) {
+            } catch (err) {
               log.w("DEVAGENT", "idx_fail", { file, err: String(err) });
             }
           }
@@ -1176,7 +1176,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           try {
             const flushed = await accumulator.flush();
             log.i("DEVAGENT", "Embeddings flushed to FAISS", { flushed });
-          } catch (_err) {
+          } catch (err) {
             log.e("DEVAGENT", "Failed to flush embeddings", { error: (err as Error).message });
           }
         }
@@ -1208,7 +1208,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         });
         // Force flush to ensure keepalive logs are visible
         log.flush();
-      } catch (_err) {
+      } catch (err) {
         log.w("DEVAGENT", "Failed to enable keepalive mode, falling back to shutdown", {
           error: (err as Error).message,
         });
@@ -1429,7 +1429,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           try {
             const flushed = await accumulator.flush();
             log.i("DEVAGENT", "Incremental embeddings flushed", { flushed });
-          } catch (_err) {
+          } catch (err) {
             log.e("DEVAGENT", "Failed to flush incremental embeddings", { error: (err as Error).message });
           }
         }
