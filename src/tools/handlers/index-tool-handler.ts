@@ -192,6 +192,23 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
       try {
         const semanticAgent = await this.context.getSemanticAgent();
+
+        // Step 6a: Check if workers generated embeddings (HTTP providers only)
+        // If not, use fallback: generate via transformers.js in main process
+        const { buildWorkerEmbeddingConfig } = await import("../../config/worker-embedding-config.js");
+        const workerConfig = buildWorkerEmbeddingConfig();
+
+        if (!workerConfig?.enabled && result.entities && Array.isArray(result.entities)) {
+          // Fallback: workers didn't generate embeddings, use transformers.js
+          log.i("INDEXTOOL", "fallback_embed_start", {
+            entities: result.entities.length,
+            reason: "no_http_provider",
+          });
+          await semanticAgent.handleNewEntities(result.entities as import("../../types/parser.js").ParsedEntity[]);
+          log.i("INDEXTOOL", "fallback_embed_done", { entities: result.entities.length });
+        }
+
+        // Finalize: flush accumulator and save FAISS index
         log.d("INDEXTOOL", "finalize_embed");
         embeddingStats = await semanticAgent.generateEmbeddingsFromStorage();
         log.i("INDEXTOOL", "embed_done", { gen: embeddingStats?.generated ?? 0, skip: embeddingStats?.skipped ?? 0 });
