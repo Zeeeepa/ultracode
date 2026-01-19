@@ -33,9 +33,9 @@ const K2_CLI_VERSION = "1.0.0";
 const K2_JAR_NAME = `kotlin-k2-cli-${K2_CLI_VERSION}-all.jar`;
 
 // GitHub release URL for auto-download
-const K2_RELEASES_API = "https://api.github.com/repos/RainbowScientist5/ultrascript-tools-mcp/releases";
+const K2_RELEASES_API = "https://api.github.com/repos/faxenoff/ultrascript-tools-mcp/releases";
 const K2_DOWNLOAD_URL_TEMPLATE =
-  "https://github.com/RainbowScientist5/ultrascript-tools-mcp/releases/download/k2-cli-v{VERSION}/kotlin-k2-cli-{VERSION}-all.jar";
+  "https://github.com/faxenoff/ultrascript-tools-mcp/releases/download/k2-cli-v{VERSION}/kotlin-k2-cli-{VERSION}-all.jar";
 
 // =============================================================================
 // TYPES
