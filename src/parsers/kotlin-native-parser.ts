@@ -1,17 +1,30 @@
 /**
  * Kotlin Native Parser
  *
- * Uses ANTLR-based parsing for accurate AST analysis with regex fallback.
- * ANTLR parser provides:
- * - All entity types (classes, functions, properties, etc.)
- * - All relationship types (imports, inherits, implements, calls, etc.)
+ * Uses Kotlin K2 Analysis API (via kotlin-k2-cli) for fast parsing when JVM is available.
+ * Falls back to ANTLR-based parsing when JVM is not found.
+ * Regex fallback as final option.
+ *
+ * Performance comparison:
+ * - K2 API (kotlin-k2-cli): ~30-50ms/file (after warmup, 5-8s startup vs 20-35s KLS)
+ * - ANTLR: ~150ms/file
+ * - Regex: ~5-10ms/file (less accurate)
+ *
+ * Advantages of K2 over KLS:
+ * - Faster startup (5-8s vs 20-35s)
+ * - Direct API access (no LSP JSON-RPC overhead)
+ * - Call graph extraction
+ * - Better type resolution
+ *
+ * Requirements for K2 mode:
+ * - JDK 11+ installed
+ * - kotlin-k2-cli fat JAR (built from kotlin-k2-cli/ project)
  *
  * When kotlinc is available, provides additional syntax validation and diagnostics.
- *
- * No native modules required - uses subprocess for kotlinc integration.
  */
 
 import { log } from "../logging/index.js";
+import { workerLog } from "../agents/workers/worker-logging.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import {
   enhanceWithKotlinDiagnostics,
@@ -20,6 +33,13 @@ import {
   isKotlincAvailable,
   isKotlinScript,
 } from "./kotlin-compiler-integration.js";
+import { detectCompatibleJvmForKls, type JvmInfo } from "../utils/jvm-detection.js";
+import {
+  getKotlinK2Provider,
+  stopKotlinK2Provider,
+  K2JavaVersionError,
+  type KotlinK2Provider,
+} from "./kotlin-k2-provider.js";
 
 // Lazy-loaded ANTLR parser (loaded on first use to reduce initial bundle size)
 type KotlinAntlrParserType = typeof import("./kotlin-antlr-parser.js").KotlinAntlrParser;
@@ -67,23 +87,65 @@ export class KotlinNativeParser {
   private kotlincEnabled = true; // Try to use kotlinc by default
   private useKotlincDiagnostics = true; // Enhance with kotlinc diagnostics
 
+  // K2 API integration (replaces LSP)
+  private useK2 = true; // Use kotlin-k2-cli when JVM available
+  private k2Provider: KotlinK2Provider | null = null;
+  private jvmInfo: JvmInfo | null = null;
+  private useAntlrFallback = true; // Fall back to ANTLR on K2 failure
+
   /**
    * Initialize the parser
    */
   async initialize(): Promise<void> {
     log.d("KOTLINPARSER", "init_start");
+    workerLog("INFO", "KOTLINPARSER init_start", { useK2: this.useK2, envAntlr: process.env["ULTRASCRIPT_KOTLIN_ANTLR"] });
 
-    // Try to find kotlinc
+    // Try to detect JVM for K2 mode
+    if (this.useK2 && !process.env["ULTRASCRIPT_KOTLIN_ANTLR"]) {
+      try {
+        workerLog("INFO", "KOTLINPARSER detecting compatible JVM for K2...");
+        // Uses cached JVM path if available, otherwise scans and caches result
+        const jvmInfo = await detectCompatibleJvmForKls();
+
+        if (jvmInfo) {
+          this.jvmInfo = jvmInfo;
+          log.i("KOTLINPARSER", "jvm_found", { ver: jvmInfo.version, vendor: jvmInfo.vendor });
+          workerLog("INFO", "KOTLINPARSER jvm_found", { ver: jvmInfo.version, vendor: jvmInfo.vendor, path: jvmInfo.javaPath });
+
+          // Try to start K2 CLI with the compatible Java
+          const k2Result = await this.tryStartK2(jvmInfo);
+          if (!k2Result.success) {
+            workerLog("WARN", "KOTLINPARSER K2 start failed", { ver: jvmInfo.version });
+          }
+        } else {
+          log.i("KOTLINPARSER", "no_compatible_jvm");
+          workerLog("INFO", "KOTLINPARSER no_compatible_jvm", { need: "11+" });
+        }
+      } catch (jvmError) {
+        log.w("KOTLINPARSER", "jvm_detect_fail", { err: String(jvmError) });
+        workerLog("ERROR", "KOTLINPARSER jvm_detect_fail", { err: String(jvmError) });
+      }
+    } else {
+      workerLog("INFO", "KOTLINPARSER skipping JVM detection", { useK2: this.useK2, envAntlr: !!process.env["ULTRASCRIPT_KOTLIN_ANTLR"] });
+    }
+
+    // Try to find kotlinc for diagnostics
     if (this.kotlincEnabled) {
       const kotlinc = await findKotlinc();
       if (kotlinc) {
         const version = getKotlinVersion();
-        log.i("KOTLINPARSER", "init_done", { kotlinc: true, ver: version || "unknown" });
+        log.i("KOTLINPARSER", "init_done", {
+          k2: !!this.k2Provider,
+          kotlinc: true,
+          ver: version || "unknown",
+        });
+        workerLog("INFO", "KOTLINPARSER init_done", { k2: !!this.k2Provider, kotlinc: true, ver: version || "unknown" });
         return;
       }
     }
 
-    log.i("KOTLINPARSER", "init_done", { kotlinc: false });
+    log.i("KOTLINPARSER", "init_done", { k2: !!this.k2Provider, kotlinc: false });
+    workerLog("INFO", "KOTLINPARSER init_done", { k2: !!this.k2Provider, kotlinc: false });
   }
 
   /**
@@ -98,6 +160,87 @@ export class KotlinNativeParser {
    */
   setKotlincDiagnosticsEnabled(enabled: boolean): void {
     this.useKotlincDiagnostics = enabled;
+  }
+
+  /**
+   * Enable or disable K2 mode
+   */
+  setK2Enabled(enabled: boolean): void {
+    this.useK2 = enabled;
+  }
+
+  /**
+   * @deprecated Use setK2Enabled instead
+   */
+  setLspEnabled(enabled: boolean): void {
+    this.useK2 = enabled;
+  }
+
+  /**
+   * Enable or disable ANTLR fallback
+   */
+  setAntlrFallbackEnabled(enabled: boolean): void {
+    this.useAntlrFallback = enabled;
+  }
+
+  /**
+   * Check if K2 is available and ready
+   */
+  isK2Ready(): boolean {
+    return this.k2Provider?.isReady() ?? false;
+  }
+
+  /**
+   * @deprecated Use isK2Ready instead
+   */
+  isLspReady(): boolean {
+    return this.isK2Ready();
+  }
+
+  /**
+   * Get JVM info if available
+   */
+  getJvmInfo(): JvmInfo | null {
+    return this.jvmInfo;
+  }
+
+  /**
+   * Shutdown K2 provider
+   */
+  async shutdown(): Promise<void> {
+    if (this.k2Provider) {
+      await stopKotlinK2Provider();
+      this.k2Provider = null;
+    }
+  }
+
+  /**
+   * Try to start K2 CLI with a specific JVM.
+   * Returns success status and whether it was a version compatibility error.
+   */
+  private async tryStartK2(jvmInfo: JvmInfo): Promise<{ success: boolean; versionError: boolean }> {
+    try {
+      // Clear any previous instance to allow trying with different Java
+      await stopKotlinK2Provider();
+
+      workerLog("INFO", "KOTLINPARSER starting K2 provider...", { javaVer: jvmInfo.version });
+      this.k2Provider = await getKotlinK2Provider(jvmInfo.javaPath);
+      log.i("KOTLINPARSER", "k2_ready", { javaVer: jvmInfo.version });
+      workerLog("INFO", "KOTLINPARSER k2_ready", { javaVer: jvmInfo.version });
+      return { success: true, versionError: false };
+    } catch (k2Error) {
+      log.w("KOTLINPARSER", "k2_start_fail", { err: String(k2Error), javaVer: jvmInfo.version });
+      workerLog("WARN", "KOTLINPARSER k2_start_fail", { err: String(k2Error), javaVer: jvmInfo.version });
+      this.k2Provider = null;
+
+      // Check if this was a Java version compatibility error
+      if (k2Error instanceof K2JavaVersionError) {
+        workerLog("INFO", "KOTLINPARSER K2 version error detected", { ver: k2Error.javaVersion });
+        return { success: false, versionError: true };
+      }
+
+      return { success: false, versionError: false };
+    }
   }
 
   /**
@@ -116,7 +259,7 @@ export class KotlinNativeParser {
   }
 
   /**
-   * Parse a Kotlin file using ANTLR parser (with regex fallback)
+   * Parse a Kotlin file using K2 API (with ANTLR/regex fallback)
    */
   async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
     const startTime = Date.now();
@@ -126,19 +269,38 @@ export class KotlinNativeParser {
       let entities: ParsedEntity[];
       let relationships: EntityRelationship[] | undefined;
 
-      // Try ANTLR parser first (accurate AST-based parsing, lazy-loaded)
-      try {
-        log.d("KOTLINPARSER", "try_antlr");
-        const KotlinAntlrParser = await getKotlinAntlrParser();
-        const antlrResult = KotlinAntlrParser.parse(filePath, content);
+      // Try K2 first (fastest when available, replaces LSP)
+      if (this.k2Provider?.isReady()) {
+        try {
+          log.d("KOTLINPARSER", "try_k2");
+          const k2Result = await this.k2Provider.parse(filePath, content);
+          entities = k2Result.entities;
+          relationships = k2Result.relationships.length > 0 ? k2Result.relationships : undefined;
+
+          // K2 provides package/import entities, no need to add them manually
+
+          log.d("KOTLINPARSER", "k2_ok", { ent: entities.length, rel: relationships?.length || 0, calls: k2Result.callGraph.length });
+        } catch (k2Error) {
+          log.w("KOTLINPARSER", "k2_fail", { err: String(k2Error) });
+
+          // Fallback to ANTLR
+          if (this.useAntlrFallback) {
+            const fallbackResult = await this.parseWithAntlr(filePath, content);
+            entities = fallbackResult.entities;
+            relationships = fallbackResult.relationships;
+          } else {
+            entities = this.parseKotlinRegex(filePath, content);
+            log.d("KOTLINPARSER", "regex_fallback_ok", { cnt: entities.length });
+          }
+        }
+      } else if (this.useAntlrFallback) {
+        // No K2, use ANTLR
+        const antlrResult = await this.parseWithAntlr(filePath, content);
         entities = antlrResult.entities;
-        relationships = antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined;
-        log.d("KOTLINPARSER", "antlr_ok", { ent: entities.length, rel: relationships?.length || 0 });
-      } catch (antlrError) {
-        // Fallback to regex-based parsing
-        log.w("KOTLINPARSER", "antlr_fail", { err: String(antlrError) });
+        relationships = antlrResult.relationships;
+      } else {
+        // Regex-only mode
         entities = this.parseKotlinRegex(filePath, content);
-        log.d("KOTLINPARSER", "regex_ok", { cnt: entities.length });
       }
 
       // Enhance with kotlinc diagnostics if available
@@ -183,6 +345,33 @@ export class KotlinNativeParser {
           },
         ],
       };
+    }
+  }
+
+  /**
+   * Parse with ANTLR (internal helper)
+   */
+  private async parseWithAntlr(
+    filePath: string,
+    content: string,
+  ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] | undefined }> {
+    try {
+      log.d("KOTLINPARSER", "try_antlr");
+      const KotlinAntlrParser = await getKotlinAntlrParser();
+      const antlrResult = KotlinAntlrParser.parse(filePath, content);
+      log.d("KOTLINPARSER", "antlr_ok", {
+        ent: antlrResult.entities.length,
+        rel: antlrResult.relationships.length,
+      });
+      return {
+        entities: antlrResult.entities,
+        relationships: antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined,
+      };
+    } catch (antlrError) {
+      log.w("KOTLINPARSER", "antlr_fail", { err: String(antlrError) });
+      const entities = this.parseKotlinRegex(filePath, content);
+      log.d("KOTLINPARSER", "regex_ok", { cnt: entities.length });
+      return { entities, relationships: undefined };
     }
   }
 
