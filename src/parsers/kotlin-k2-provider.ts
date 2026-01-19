@@ -533,6 +533,7 @@ export class KotlinK2Provider {
       const result: ParsedEntity = {
         name: entity.name,
         type: this.mapEntityType(entity.type),
+        language: "kotlin",
         filePath,
         location: entity.location,
       };
