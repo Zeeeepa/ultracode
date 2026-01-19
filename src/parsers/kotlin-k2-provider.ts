@@ -126,6 +126,7 @@ export class KotlinK2Provider {
 
   /**
    * Get or download kotlin-k2-cli JAR
+   * Uses file-based locking to prevent multiple workers from downloading simultaneously
    */
   private async getK2JarPath(): Promise<string> {
     if (this.k2JarPath) return this.k2JarPath;
@@ -133,6 +134,7 @@ export class KotlinK2Provider {
     const targetDir = join(getDataDir(), "kotlin-k2");
     const jarPath = join(targetDir, K2_JAR_NAME);
     const versionFile = join(targetDir, "version.txt");
+    const lockFile = join(targetDir, "downloading.lock");
 
     mkdirSync(targetDir, { recursive: true });
 
@@ -152,6 +154,17 @@ export class KotlinK2Provider {
       }
     }
 
+    // Check if another worker is downloading - wait for it
+    if (existsSync(lockFile)) {
+      workerLog("INFO", "KOTLINK2 waiting_for_download", { lockFile });
+      await this.waitForDownload(jarPath, lockFile);
+      if (existsSync(jarPath)) {
+        this.k2JarPath = jarPath;
+        workerLog("INFO", "KOTLINK2 download_completed_by_other", { path: jarPath });
+        return jarPath;
+      }
+    }
+
     // Check if JAR exists in project build directory (local development)
     const projectJarPath = join(process.cwd(), "kotlin-k2-cli", "build", "libs", K2_JAR_NAME);
     if (existsSync(projectJarPath)) {
@@ -165,7 +178,24 @@ export class KotlinK2Provider {
       return jarPath;
     }
 
-    // Try to download from GitHub Releases
+    // Try to acquire lock and download
+    try {
+      // Create lock file (atomic operation)
+      const { openSync, closeSync } = await import("node:fs");
+      const fd = openSync(lockFile, "wx"); // fails if exists
+      closeSync(fd);
+    } catch {
+      // Lock exists, another worker started downloading - wait
+      workerLog("INFO", "KOTLINK2 lock_exists_waiting", { lockFile });
+      await this.waitForDownload(jarPath, lockFile);
+      if (existsSync(jarPath)) {
+        this.k2JarPath = jarPath;
+        return jarPath;
+      }
+      throw new Error("Download by another worker failed");
+    }
+
+    // We have the lock - download
     try {
       log.i("KOTLINK2", "downloading_jar", { ver: K2_CLI_VERSION });
       workerLog("INFO", "KOTLINK2 downloading_jar", { ver: K2_CLI_VERSION });
@@ -185,7 +215,37 @@ export class KotlinK2Provider {
           `2. Download manually from GitHub Releases\n` +
           `Expected path: ${jarPath}`,
       );
+    } finally {
+      // Remove lock file
+      try {
+        unlinkSync(lockFile);
+      } catch {
+        // Ignore
+      }
     }
+  }
+
+  /**
+   * Wait for another worker to complete download
+   */
+  private async waitForDownload(jarPath: string, lockFile: string, timeoutMs = 120000): Promise<void> {
+    const startTime = Date.now();
+    const pollInterval = 500;
+
+    while (Date.now() - startTime < timeoutMs) {
+      // Check if JAR appeared
+      if (existsSync(jarPath)) {
+        return;
+      }
+      // Check if lock was released (download failed)
+      if (!existsSync(lockFile)) {
+        return;
+      }
+      // Wait and retry
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    workerLog("WARN", "KOTLINK2 wait_timeout", { elapsed: Date.now() - startTime });
   }
 
   /**
