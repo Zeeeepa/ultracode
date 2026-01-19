@@ -338,6 +338,12 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     const conductor = this.context.getConductor();
     await conductor.initialize();
 
+    // Get DevAgent to process the index task (conductor no longer processes tasks directly)
+    const devAgent = conductor.getAgentByType?.(AgentType.DEV);
+    if (!devAgent) {
+      throw new Error("DevAgent not available for indexing");
+    }
+
     const isDebugMode = process.env["MCP_DEBUG"] === "1";
     // Indexing can take significant time for large codebases (e.g., 90+ seconds for 350 files)
     // Use a longer default timeout (5 minutes) to allow completion without early termination
@@ -352,7 +358,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       : Math.max(configuredTimeout, INDEX_DEFAULT_TIMEOUT);
 
     return (await this.context.withTimeout(
-      conductor.process(task),
+      devAgent.process(task),
       timeoutMs,
       "index",
       this.context.requestId,

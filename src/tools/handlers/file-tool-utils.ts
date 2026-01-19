@@ -4,6 +4,7 @@
  * Common utilities for file modification tool handlers.
  */
 
+import { AgentType } from "../../types/agent.js";
 import type { ImpactAnalyzer } from "../impact-analyzer.js";
 
 /**
@@ -47,7 +48,7 @@ export interface ConductorContext {
 }
 
 /**
- * Re-index files using conductor.
+ * Re-index files using DevAgent (conductor no longer processes tasks directly).
  * Creates an index task with specified priority.
  */
 export async function reindexFiles(
@@ -57,7 +58,11 @@ export async function reindexFiles(
   priority = 5,
 ): Promise<void> {
   const conductor = context.getConductor();
-  await conductor.process({
+  const devAgent = conductor.getAgentByType?.(AgentType.DEV);
+  if (!devAgent) {
+    throw new Error("DevAgent not available for reindexing");
+  }
+  await devAgent.process({
     id: `${taskPrefix}-${Date.now()}`,
     type: "index",
     priority,

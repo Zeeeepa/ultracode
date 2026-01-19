@@ -747,7 +747,14 @@ async function executeToolCall(
       session,
       projectPath,
       getConductor,
-      getGraphStorage,
+      // v6: CRITICAL FIX - Set project context when returning storage!
+      // Without this, queries would use the last-set project context (wrong project).
+      getGraphStorage: async () => {
+        const storage = await getGraphStorage();
+        const branch = getCurrentGitBranchOrDefault(projectPath);
+        storage.setProject(projectPath, branch);
+        return storage;
+      },
       getSQLiteManager: () => null, // Legacy - now using libsql via getGraphStorage()
       getSemanticAgent: getSemanticAgent as () => Promise<any>,
       getBranchManager: async () => {

@@ -1,6 +1,6 @@
 # Extractors
 
-*Last updated: 2026-01-18*
+*Last updated: 2026-01-19*
 
 Извлекает вызовы методов и конструкторов из Java AST с поддержкой различных типов вызовов.
 
@@ -17,4 +17,5 @@
 - `complexity-analyzer.ts`
 - `control-flow-extractor.ts`
 - `doc-extractor.ts`
+- `unified-extractor.ts`
 

@@ -127,6 +127,12 @@ export function createFaissIndex(config: FaissIndexConfig, ctx: FaissHandlerCont
     ctx.setFaissIndex(newIndex);
     log(`Created Faiss index: ${factoryString}, metric=${metricType}`);
 
+    // v6.2: CRITICAL - Clear ID maps when creating new index!
+    // Without this, IDs from previous project pollute the new index
+    state.faissIdMap.clear();
+    state.faissReverseIdMap.clear();
+    state.faissTotalVectors = 0;
+
     state.faissIndexType = indexType;
     state.faissDimensions = dimensions;
     state.faissInitialized = true;
