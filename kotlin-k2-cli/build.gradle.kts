@@ -23,11 +23,11 @@ dependencies {
     // Kotlin Compiler for PSI parsing
     implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion")
 
-    // Kotlin Analysis API (K2/FIR) - from JetBrains repos
-    implementation("org.jetbrains.kotlin:analysis-api-k2-for-ide:$kotlinVersion")
-    implementation("org.jetbrains.kotlin:analysis-api-for-ide:$kotlinVersion")
-    implementation("org.jetbrains.kotlin:low-level-api-fir-for-ide:$kotlinVersion")
-    implementation("org.jetbrains.kotlin:symbol-light-classes-for-ide:$kotlinVersion")
+    // Kotlin Analysis API (K2/FIR) - standalone version from JetBrains repos
+    implementation("org.jetbrains.kotlin:analysis-api-standalone:$kotlinVersion")
+    implementation("org.jetbrains.kotlin:analysis-api-k2:$kotlinVersion")
+    implementation("org.jetbrains.kotlin:analysis-api:$kotlinVersion")
+    implementation("org.jetbrains.kotlin:analysis-api-impl-base:$kotlinVersion")
 
     // JSON serialization for stdin/stdout protocol
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
