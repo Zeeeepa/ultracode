@@ -9,26 +9,17 @@ version = "1.0.0"
 
 repositories {
     mavenCentral()
-    // JetBrains repositories for Analysis API and its transitive dependencies
-    maven("https://maven.pkg.jetbrains.space/kotlin/p/kotlin/kotlin-ide-plugin-dependencies")
-    maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies")
-    maven("https://www.jetbrains.com/intellij-repository/releases")
 }
 
-// Kotlin compiler version
 val kotlinVersion = "2.0.21"
-// Analysis API version (from intellij-dependencies repo)
-val analysisApiVersion = "2.0.21-release-482"
 
 dependencies {
     // Kotlin standard library
     implementation(kotlin("stdlib"))
 
-    // Kotlin Compiler for PSI parsing
+    // Kotlin Compiler for PSI parsing (includes full AST support)
+    // PSI provides: classes, functions, properties, inheritance, imports, call graph
     implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:$kotlinVersion")
-
-    // Kotlin Analysis API (K2/FIR) - from intellij-dependencies repo
-    implementation("org.jetbrains.kotlin:analysis-api-standalone-for-ide:$analysisApiVersion")
 
     // JSON serialization for stdin/stdout protocol
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
