@@ -193,19 +193,15 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
       try {
         const semanticAgent = await this.context.getSemanticAgent();
 
-        // Step 6a: Check if workers generated embeddings (HTTP providers only)
-        // If not, use fallback: generate via transformers.js in main process
+        // Check if embedding provider is configured
         const { buildWorkerEmbeddingConfig } = await import("../../config/worker-embedding-config.js");
         const workerConfig = buildWorkerEmbeddingConfig();
 
-        if (!workerConfig?.enabled && result.entities && Array.isArray(result.entities)) {
-          // Fallback: workers didn't generate embeddings, use transformers.js
-          log.i("INDEXTOOL", "fallback_embed_start", {
-            entities: result.entities.length,
-            reason: "no_http_provider",
+        if (!workerConfig?.enabled) {
+          log.w("INDEXTOOL", "no_embedding_provider", {
+            message: "Embeddings not generated - no provider configured",
+            hint: "Configure TEI, OVMS, vLLM, or llamacpp in semantic-config.json",
           });
-          await semanticAgent.handleNewEntities(result.entities as import("../../types/parser.js").ParsedEntity[]);
-          log.i("INDEXTOOL", "fallback_embed_done", { entities: result.entities.length });
         }
 
         // Finalize: flush accumulator and save FAISS index

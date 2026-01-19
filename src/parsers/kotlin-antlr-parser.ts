@@ -287,6 +287,7 @@ function processClassDeclaration(classDecl: ClassDeclarationContext | null, ctx:
   const entity: ParsedEntity = {
     name: className,
     type: entityType,
+    language: "kotlin",
     filePath: ctx.filePath,
     location,
     ...(modInfo.modifiers.length > 0 && { modifiers: modInfo.modifiers }),
@@ -554,6 +555,7 @@ function processFunctionDeclaration(funcDecl: FunctionDeclarationContext, ctx: P
   const entity: ParsedEntity = {
     name: fullName,
     type: ctx.currentClass ? "method" : isSuspend ? "async_function" : "function",
+    language: "kotlin",
     filePath: ctx.filePath,
     location,
     ...(modInfo.modifiers.length > 0 && { modifiers: modInfo.modifiers }),
