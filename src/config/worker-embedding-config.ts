@@ -311,7 +311,8 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     providerKind = "vllm";
     const vllmConfig = embeddingConfig.vllm || {};
     modelName = vllmConfig.selected_model || vllmConfig.model || "intfloat/multilingual-e5-large-instruct";
-    batchSize = vllmConfig.max_batch_size || vllmConfig.batchSize || 100;
+    // Larger batch = better GPU utilization, default 200 (server supports 256 via --max-num-seqs)
+    batchSize = vllmConfig.max_batch_size || vllmConfig.batchSize || 200;
     // Get vector_size from selected model in models array
     const selectedModel = vllmConfig.models?.find((m: ModelEntry) => m.id === modelName);
     if (selectedModel?.vector_size) {
@@ -321,8 +322,9 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     providerOptions = {
       baseUrl: vllmConfig.endpoint || vllmConfig.baseUrl || "http://127.0.0.1:8000",
       timeoutMs: vllmConfig.timeoutMs || 30000,
-      concurrency: vllmConfig.concurrency || 8,
-      maxBatchSize: vllmConfig.max_batch_size || 100,
+      // Higher concurrency for embedding workloads (server handles batching internally)
+      concurrency: vllmConfig.concurrency || 12,
+      maxBatchSize: vllmConfig.max_batch_size || 200,
     };
   } else if (embeddingConfig.llamacpp || embeddingConfig.platform === "llamacpp") {
     // llama.cpp provider (local GGUF models)

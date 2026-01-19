@@ -25,6 +25,14 @@ export interface BunProcess {
 }
 
 /**
+ * Pending task with resolve/reject callbacks
+ */
+export interface PendingTask {
+  resolve: (results: ParseResult[]) => void;
+  reject: (error: Error) => void;
+}
+
+/**
  * State of a subprocess worker
  */
 export interface SubprocessState {
@@ -34,6 +42,10 @@ export interface SubprocessState {
   tasksProcessed: number;
   totalProcessingTime: number;
   memoryUsage: number;
+  // Map of taskId -> {resolve, reject} for concurrent task handling
+  // Fixes race condition when multiple results arrive close together
+  pendingTasks: Map<string, PendingTask>;
+  // Legacy fields (kept for backward compatibility, will be removed)
   pendingResolve: ((results: ParseResult[]) => void) | null;
   pendingReject: ((error: Error) => void) | null;
   // For ready signal

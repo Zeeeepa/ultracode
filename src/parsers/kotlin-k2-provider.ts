@@ -14,16 +14,16 @@
  * - kotlin-k2-cli fat JAR (auto-downloaded if missing)
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { type ChildProcess, spawn } from "node:child_process";
+import { createWriteStream, existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
-import { log } from "../logging/index.js";
 import { workerLog } from "../agents/workers/worker-logging.js";
-import { getDataDir } from "../utils/config-paths.js";
+import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
+import { getDataDir } from "../utils/config-paths.js";
 
 // =============================================================================
 // CONSTANTS
@@ -34,7 +34,8 @@ const K2_JAR_NAME = `kotlin-k2-cli-${K2_CLI_VERSION}-all.jar`;
 
 // GitHub release URL for auto-download
 const K2_RELEASES_API = "https://api.github.com/repos/RainbowScientist5/ultrascript-tools-mcp/releases";
-const K2_DOWNLOAD_URL_TEMPLATE = "https://github.com/RainbowScientist5/ultrascript-tools-mcp/releases/download/k2-cli-v{VERSION}/kotlin-k2-cli-{VERSION}-all.jar";
+const K2_DOWNLOAD_URL_TEMPLATE =
+  "https://github.com/RainbowScientist5/ultrascript-tools-mcp/releases/download/k2-cli-v{VERSION}/kotlin-k2-cli-{VERSION}-all.jar";
 
 // =============================================================================
 // TYPES
@@ -191,8 +192,7 @@ export class KotlinK2Provider {
    * Download K2 CLI JAR from GitHub Releases
    */
   private async downloadK2Jar(jarPath: string, versionFile: string): Promise<void> {
-    const downloadUrl = K2_DOWNLOAD_URL_TEMPLATE
-      .replace(/{VERSION}/g, K2_CLI_VERSION);
+    const downloadUrl = K2_DOWNLOAD_URL_TEMPLATE.replace(/{VERSION}/g, K2_CLI_VERSION);
 
     log.d("KOTLINK2", "download_start", { url: downloadUrl });
     workerLog("INFO", "KOTLINK2 download_start", { url: downloadUrl });
@@ -264,7 +264,7 @@ export class KotlinK2Provider {
 
     try {
       const fileStream = createWriteStream(tempPath);
-      // @ts-ignore - Node 18+ has Readable.fromWeb
+      // @ts-expect-error - Node 18+ has Readable.fromWeb
       await finished(Readable.fromWeb(response.body as import("stream/web").ReadableStream).pipe(fileStream));
 
       // Rename temp to final
@@ -315,18 +315,10 @@ export class KotlinK2Provider {
     const jvmOpts = "-Xms256m -Xmx1g -XX:TieredStopAtLevel=1 -XX:+UseParallelGC";
 
     const spawnStartTime = Date.now();
-    this.process = spawn(
-      this.javaPath,
-      [
-        ...jvmOpts.split(" "),
-        "-jar",
-        jarPath,
-      ],
-      {
-        stdio: ["pipe", "pipe", "pipe"],
-        env,
-      },
-    );
+    this.process = spawn(this.javaPath, [...jvmOpts.split(" "), "-jar", jarPath], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+    });
 
     const spawnTime = Date.now() - spawnStartTime;
     workerLog("INFO", "KOTLINK2 process_spawned", { pid: this.process.pid, spawnMs: spawnTime });

@@ -17,9 +17,9 @@ import { exec, execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { log } from "../logging/index.js";
 import { workerLog } from "../agents/workers/worker-logging.js";
-import { getParserConfigPath, ensureConfigDir } from "./config-paths.js";
+import { log } from "../logging/index.js";
+import { ensureConfigDir, getParserConfigPath } from "./config-paths.js";
 
 const execAsync = promisify(exec);
 
@@ -39,7 +39,7 @@ export interface JvmInfo {
 // DETECTION
 // =============================================================================
 
-let cachedJvmInfo: JvmInfo | null | undefined = undefined;
+let cachedJvmInfo: JvmInfo | null | undefined;
 
 /**
  * Detect JVM installation on the system.
@@ -64,7 +64,9 @@ export async function detectJvm(): Promise<JvmInfo | null> {
     workerLog("DEBUG", "JVMDETECT JAVA_HOME executable", { path: javaPath });
     if (javaPath) {
       const info = await getJvmInfo(javaPath);
-      workerLog("DEBUG", "JVMDETECT JAVA_HOME info", { info: info ? { ver: info.version, major: info.majorVersion } : null });
+      workerLog("DEBUG", "JVMDETECT JAVA_HOME info", {
+        info: info ? { ver: info.version, major: info.majorVersion } : null,
+      });
       if (info) {
         log.i("JVMDETECT", "found_java_home", { path: javaPath, ver: info.version });
         workerLog("INFO", "JVMDETECT found_java_home", { path: javaPath, ver: info.version, major: info.majorVersion });
@@ -652,8 +654,4 @@ function parseMajorVersion(version: string): number {
 // EXPORTS
 // =============================================================================
 
-export {
-  detectJvm as findJava,
-  detectJvmSync as findJavaSync,
-  getJavaExecutable,
-};
+export { detectJvm as findJava, detectJvmSync as findJavaSync, getJavaExecutable };
