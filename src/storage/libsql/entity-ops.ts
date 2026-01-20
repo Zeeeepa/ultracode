@@ -104,6 +104,16 @@ export class EntityOperations {
     const errors: Array<{ item: unknown; error: string }> = [];
     const { projectHash, branchName } = this.getContext();
     const now = Date.now();
+    // DEBUG: Log insert context with language info
+    const withLang = entities.filter((e) => e.language).length;
+    const kotlinCount = entities.filter((e) => e.language === "kotlin").length;
+    const sample = entities.slice(0, 3).map((e) => ({ n: e.name, l: e.language, f: e.filePath?.slice(-30) }));
+    log.w("ENTITY_OPS", "insertEntities", {
+      total: entities.length,
+      withLang,
+      kotlinCount,
+      sample: JSON.stringify(sample),
+    });
 
     // Deduplicate by ID
     const seen = new Set<string>();
@@ -291,7 +301,7 @@ export class EntityOperations {
     if (!client) throw new Error("Client not initialized");
 
     const { projectHash, branchName, baseBranch } = this.getContext();
-    log.w("ENTITY_OPS", "findEntities", { branch: branchName, base: baseBranch || "none" });
+    log.w("ENTITY_OPS", "findEntities", { hash: projectHash, branch: branchName, base: baseBranch || "none" });
     const limit = Math.min(query.limit || 100, 1000);
     const offset = query.offset || 0;
 
@@ -304,6 +314,10 @@ export class EntityOperations {
       args.push(limit, offset);
 
       const result = await client.execute({ sql, args });
+      // DEBUG: Check raw language values from DB
+      const withLang = result.rows.filter((r) => r["language"]).length;
+      const sample = result.rows.slice(0, 3).map((r) => ({ n: r["name"], l: r["language"] }));
+      log.w("ENTITY_OPS", "findEntities_raw", { total: result.rows.length, withLang, sample: JSON.stringify(sample) });
       return result.rows.map((row) => this.rowToEntity(row));
     }
 
@@ -316,6 +330,9 @@ export class EntityOperations {
     deltaSql += this.buildFilterClause(query.filters, deltaArgs);
 
     const deltaResult = await client.execute({ sql: deltaSql, args: deltaArgs });
+    // DEBUG: Check delta raw
+    const deltaWithLang = deltaResult.rows.filter((r) => r["language"]).length;
+    log.w("ENTITY_OPS", "findEntities_layered", { delta: deltaResult.rows.length, deltaWithLang, branch: branchName });
     const deltaEntities = deltaResult.rows.map((row) => this.rowToEntity(row));
     const deltaIds = new Set(deltaEntities.map((e) => e.id));
 
@@ -325,13 +342,24 @@ export class EntityOperations {
     baseSql += this.buildFilterClause(query.filters, baseArgs);
 
     const baseResult = await client.execute({ sql: baseSql, args: baseArgs });
+    // DEBUG: Check base raw
+    log.w("ENTITY_OPS", "findEntities_base", { base: baseResult.rows.length, baseBranch });
     const baseEntities = baseResult.rows
       .map((row) => this.rowToEntity(row))
       .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
 
     // Combine and apply limit/offset
     const combined = [...deltaEntities, ...baseEntities];
-    return combined.slice(offset, offset + limit);
+    const result = combined.slice(offset, offset + limit);
+    // DEBUG: Check returned entities
+    const retWithLang = result.filter((e) => e.language).length;
+    const retSample = result.slice(0, 3).map((e) => ({ n: e.name, l: e.language }));
+    log.w("ENTITY_OPS", "findEntities_result", {
+      total: result.length,
+      withLang: retWithLang,
+      sample: JSON.stringify(retSample),
+    });
+    return result;
   }
 
   /**
@@ -631,5 +659,92 @@ export class EntityOperations {
 
     // 4. Combine: delta first (priority), then filtered base
     return [...deltaEntities, ...baseEntities];
+  }
+
+  /**
+   * Count entities by language (efficient SQL aggregation for TechnologyDetector).
+   * Excludes external placeholder entities (file_path starting with 'external://').
+   * Returns map of language -> { count, fileCount }
+   */
+  async countByLanguage(): Promise<Map<string, { count: number; fileCount: number }>> {
+    const client = this.getClient();
+    if (!client) throw new Error("Client not initialized");
+
+    const { projectHash, branchName, baseBranch } = this.getContext();
+
+    // Simple case: no base branch
+    if (!baseBranch) {
+      const result = await client.execute({
+        sql: `
+          SELECT
+            COALESCE(language, 'unknown') as lang,
+            COUNT(*) as cnt,
+            COUNT(DISTINCT file_path) as file_cnt
+          FROM entities
+          WHERE project_hash = ? AND branch_name = ?
+            AND file_path NOT LIKE 'external://%'
+          GROUP BY COALESCE(language, 'unknown')
+        `,
+        args: [projectHash, branchName],
+      });
+
+      const counts = new Map<string, { count: number; fileCount: number }>();
+      for (const row of result.rows) {
+        const lang = row["lang"] as string;
+        counts.set(lang, {
+          count: Number(row["cnt"]),
+          fileCount: Number(row["file_cnt"]),
+        });
+      }
+      return counts;
+    }
+
+    // Layered case: get from delta + base, excluding tombstones
+    const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
+
+    // Get all entities (need to filter by tombstones in memory)
+    const deltaResult = await client.execute({
+      sql: `SELECT id, language, file_path FROM entities WHERE project_hash = ? AND branch_name = ? AND file_path NOT LIKE 'external://%'`,
+      args: [projectHash, branchName],
+    });
+    const deltaEntities = deltaResult.rows.map((row) => ({
+      id: row["id"] as string,
+      language: row["language"] as string | null,
+      filePath: row["file_path"] as string,
+    }));
+    const deltaIds = new Set(deltaEntities.map((e) => e.id));
+
+    const baseResult = await client.execute({
+      sql: `SELECT id, language, file_path FROM entities WHERE project_hash = ? AND branch_name = ? AND file_path NOT LIKE 'external://%'`,
+      args: [projectHash, baseBranch],
+    });
+    const baseEntities = baseResult.rows
+      .map((row) => ({
+        id: row["id"] as string,
+        language: row["language"] as string | null,
+        filePath: row["file_path"] as string,
+      }))
+      .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
+
+    // Combine and aggregate
+    const allEntities = [...deltaEntities, ...baseEntities];
+    const counts = new Map<string, { count: number; files: Set<string> }>();
+
+    for (const e of allEntities) {
+      const lang = e.language || "unknown";
+      if (!counts.has(lang)) {
+        counts.set(lang, { count: 0, files: new Set() });
+      }
+      const entry = counts.get(lang)!;
+      entry.count++;
+      entry.files.add(e.filePath);
+    }
+
+    // Convert to result format
+    const result = new Map<string, { count: number; fileCount: number }>();
+    for (const [lang, data] of counts) {
+      result.set(lang, { count: data.count, fileCount: data.files.size });
+    }
+    return result;
   }
 }

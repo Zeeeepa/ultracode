@@ -569,6 +569,8 @@ export class DetectTechnologyStackToolHandler extends BaseToolHandler<z.infer<ty
     try {
       const { TechnologyDetector } = await import("../../analysis/technology-detector.js");
       const graphStorage = await this.context.getGraphStorage();
+      // CRITICAL: Set project context to target directory before querying
+      graphStorage.setProject(targetDir);
       const detector = new TechnologyDetector(graphStorage, targetDir);
       const stack: TechnologyStack = await detector.detectStack();
 

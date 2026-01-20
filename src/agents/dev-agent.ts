@@ -971,6 +971,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               name: fileName,
               type: "file",
               filePath: file,
+              language: ext, // Top-level language for TechnologyDetector
               location: { start: { line: 1, column: 0, index: 0 }, end: { line: 1, column: 0, index: 0 } },
               metadata: {
                 language: ext,
@@ -991,6 +992,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               name: fileNameNoExt,
               type: "module",
               filePath: file,
+              language: ext, // Top-level language for TechnologyDetector
               location: { start: { line: 1, column: 0, index: 0 }, end: { line: 100, column: 0, index: 0 } },
               metadata: { language: ext, moduleType: "file" },
             });
@@ -1001,6 +1003,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 name: fileNameNoExt,
                 type: "class",
                 filePath: file,
+                language: "python",
                 location: { start: { line: 5, column: 0, index: 0 }, end: { line: 50, column: 0, index: 0 } },
                 metadata: { language: "python", visibility: "public" },
               });
@@ -1012,6 +1015,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 name: fileNameNoExt,
                 type: "class",
                 filePath: file,
+                language: ext === "java" ? "java" : "kotlin",
                 location: { start: { line: 5, column: 0, index: 0 }, end: { line: 50, column: 0, index: 0 } },
                 metadata: { language: ext, visibility: "public" },
               });
@@ -1023,6 +1027,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 name: `export_default`,
                 type: "function",
                 filePath: file,
+                language: ext === "ts" ? "typescript" : "javascript",
                 location: { start: { line: 10, column: 0, index: 0 }, end: { line: 30, column: 0, index: 0 } },
                 metadata: { language: ext, exported: true },
               });

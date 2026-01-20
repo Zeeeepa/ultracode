@@ -495,8 +495,8 @@ export class TraceEngine {
    */
   private async resolveEntity(nameOrQuery: string): Promise<Entity | null> {
     // Parse file:name format (supports both / and \)
-    // Match pattern: anything with path separator followed by .ts/.js/.py etc, then :name
-    const fileQualifiedMatch = nameOrQuery.match(/^(.+?\.(?:ts|js|tsx|jsx|py|go|rs|java|c|cpp|h|hpp)):(.+)$/i);
+    // Match pattern: anything with path separator followed by .ts/.js/.py/.kt etc, then :name
+    const fileQualifiedMatch = nameOrQuery.match(/^(.+?\.(?:ts|js|tsx|jsx|py|go|rs|java|kt|kts|c|cpp|h|hpp)):(.+)$/i);
     let name = nameOrQuery;
     let filePath: string | undefined;
 
@@ -506,10 +506,57 @@ export class TraceEngine {
     }
 
     // 1. Try exact name match first (fastest)
+    // But skip import stubs - prefer real code entities
     const exactMatch = await this.pathBuilder.findEntityByName(name, undefined, filePath);
-    if (exactMatch) return exactMatch;
+    if (exactMatch && exactMatch.type !== "import" && !exactMatch.id.startsWith("external:")) {
+      return exactMatch;
+    }
 
-    // 2. Try partial name match
+    // 2. Try suffix match for partial names (e.g., "methodName" -> "ClassName.methodName")
+    if (!name.includes(".")) {
+      const suffixPattern = `.${name}`;
+      const allEntities = await this.storage.searchEntities({});
+
+      // Filter to suffix matches, excluding external/import stubs
+      const REAL_CODE_TYPES = new Set(["method", "function", "async_function", "class", "interface", "property"]);
+      const suffixMatches = allEntities.filter((e) => {
+        if (!e.name.endsWith(suffixPattern)) return false;
+        // Exclude external placeholders and imports
+        if (e.id.startsWith("external:")) return false;
+        if (e.filePath?.includes("external://")) return false;
+        if (e.type === "import") return false;
+        return true;
+      });
+
+      // Prioritize real code entities over other types
+      const prioritized = suffixMatches.sort((a, b) => {
+        const aReal = REAL_CODE_TYPES.has(a.type) ? 0 : 1;
+        const bReal = REAL_CODE_TYPES.has(b.type) ? 0 : 1;
+        return aReal - bReal;
+      });
+
+      if (prioritized.length === 1) {
+        return prioritized[0]!;
+      } else if (prioritized.length > 1 && filePath) {
+        // Multiple matches - filter by file
+        const normalizedFilter = filePath.replace(/\\/g, "/").toLowerCase();
+        const filtered = prioritized.filter((e) => {
+          const entityPath = (e.filePath || "").replace(/\\/g, "/").toLowerCase();
+          return entityPath.includes(normalizedFilter) || entityPath.endsWith(normalizedFilter);
+        });
+        if (filtered.length > 0) return filtered[0]!;
+      } else if (prioritized.length > 1) {
+        // Multiple matches, no file filter - return first real code entity
+        log.d("TRACEENGINE", "multiple_suffix_matches", {
+          name,
+          count: prioritized.length,
+          first: prioritized[0]?.name,
+        });
+        return prioritized[0]!;
+      }
+    }
+
+    // 3. Try partial name match
     const entities = await this.storage.searchEntities({
       namePattern: name,
     });

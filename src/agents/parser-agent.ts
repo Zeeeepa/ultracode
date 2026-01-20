@@ -870,7 +870,15 @@ export class ParserAgent extends BaseAgent {
     if (this.useUniversalPool) {
       const pool = await this.ensureUniversalPool();
       if (pool) {
-        log.i("PARSER", "Using universal pool", { files: files.length });
+        // DEBUG: Log Kotlin files count
+        const ktFiles = files.filter((f) => f.toLowerCase().endsWith(".kt") || f.toLowerCase().endsWith(".kts"));
+        log.i("PARSER", "Using universal pool", { files: files.length, kotlinFiles: ktFiles.length });
+        if (ktFiles.length > 0) {
+          log.i("PARSER", "[KOTLIN_DEBUG] Sending Kotlin files to universal pool", {
+            count: ktFiles.length,
+            sample: ktFiles.slice(0, 3),
+          });
+        }
 
         const results = await pool.submitTask(files, options);
 
@@ -1048,7 +1056,7 @@ export class ParserAgent extends BaseAgent {
     }
 
     // Initialize accumulator with correct dimensions and batch size
-    if (config && config.centralizedEmbeddings) {
+    if (config?.centralizedEmbeddings) {
       this.embeddingAccumulator = getEmbeddingAccumulator({
         dimensions: config.dimensions ?? 384,
         queueBatchSize: config.queueBatchSize ?? 128,

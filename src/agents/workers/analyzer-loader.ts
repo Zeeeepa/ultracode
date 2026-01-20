@@ -97,7 +97,7 @@ async function createAnalyzer(language: string): Promise<BaseParser> {
 
     case "kotlin": {
       const { workerLog } = await import("./worker-logging.js");
-      workerLog("INFO", `Loading KotlinNativeParser`);
+      workerLog("INFO", `[KOTLIN_DEBUG] Loading KotlinNativeParser (case kotlin reached)`);
       const { KotlinNativeParser } = await import("../../parsers/kotlin-native-parser.js");
       analyzer = new KotlinNativeParser();
       workerLog("INFO", `Calling initialize() for Kotlin LSP detection`);

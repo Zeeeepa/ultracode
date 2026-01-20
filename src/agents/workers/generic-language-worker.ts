@@ -404,6 +404,10 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
     try {
       // Verify language matches (skip check for universal pool)
       const detectedLang = detectLanguage(file);
+      // DEBUG: Log every file received by worker
+      if (detectedLang === "kotlin") {
+        workerLog("INFO", `[KOTLIN_DEBUG] Processing Kotlin file`, { file, detectedLang });
+      }
       if (task.language !== "universal" && detectedLang !== task.language && detectedLang !== "unknown") {
         errors.push({
           file,
@@ -461,6 +465,22 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
 
       const result: ParseResult = await analyzer.parse(file, content, hash);
       parseTime += Date.now() - parseStart;
+
+      // Add language field to all entities that don't have it
+      // This ensures all parsers (not just Kotlin) produce entities with language
+      if (result.entities && detectedLang !== "unknown") {
+        const addLangRecursive = (entities: typeof result.entities): void => {
+          for (const entity of entities!) {
+            if (!entity.language) {
+              entity.language = detectedLang;
+            }
+            if (entity.children) {
+              addLangRecursive(entity.children);
+            }
+          }
+        };
+        addLangRecursive(result.entities);
+      }
 
       // Log parse result for every file (debugging totalEntities: 0 issue)
       workerLog("DEBUG", `Parsed file`, {

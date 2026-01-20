@@ -742,6 +742,8 @@ export class LibSQLGraphAdapter {
 
   getAllEntities = (): Promise<Entity[]> => this.entityOps.getAllEntities();
 
+  countByLanguage = (): Promise<Map<string, { count: number; fileCount: number }>> => this.entityOps.countByLanguage();
+
   // ===========================================================================
   // RELATIONSHIP OPERATIONS (delegated to RelationshipOperations)
   // ===========================================================================
@@ -997,7 +999,7 @@ export class LibSQLGraphAdapter {
 
     // Log file size for diagnostics
     try {
-      const { statSync } = await import("fs");
+      const { statSync } = await import("node:fs");
       const stats = statSync(this.dbPath!);
       log.i("LIBSQLADAPT", "flush_complete", { ms: Date.now() - startTime, sizeBytes: stats.size });
     } catch {
@@ -1018,7 +1020,18 @@ export class LibSQLGraphAdapter {
   // HELPER METHODS
   // ===========================================================================
 
+  private _langDebugDone = false;
   private rowToEntity(row: EntityRow): Entity {
+    // DEBUG: Check raw row structure once
+    const rawRow = row as unknown as Record<string, unknown>;
+    if (!this._langDebugDone && rawRow["language"]) {
+      log.w("ADAPTER", "rowToEntity_debug", {
+        hasLang: "language" in row,
+        langVal: row.language,
+        rawLang: String(rawRow["language"]),
+      });
+      this._langDebugDone = true;
+    }
     return {
       id: row.id,
       name: row.name,

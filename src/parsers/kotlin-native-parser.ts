@@ -288,7 +288,8 @@ export class KotlinNativeParser {
         try {
           log.d("KOTLINPARSER", "try_k2");
           const k2Result = await this.k2Provider.parse(filePath, content);
-          entities = k2Result.entities;
+          // Add language field to all entities (K2 CLI doesn't provide it)
+          entities = this.addLanguageToEntities(k2Result.entities);
 
           // Merge relationships from K2: general relationships + call graph
           const allRelationships: EntityRelationship[] = [...k2Result.relationships];
@@ -309,10 +310,13 @@ export class KotlinNativeParser {
 
           // K2 provides package/import entities, no need to add them manually
 
-          log.d("KOTLINPARSER", "k2_ok", {
+          // Log parse results with call graph sample
+          const callsSample = k2Result.callGraph.slice(0, 3).map((c) => `${c.from}->${c.to}`);
+          log.i("KOTLINPARSER", "k2_ok", {
             ent: entities.length,
             rel: relationships?.length || 0,
             calls: k2Result.callGraph.length,
+            sample: callsSample.length > 0 ? callsSample : undefined,
           });
         } catch (k2Error) {
           log.w("KOTLINPARSER", "k2_fail", { err: String(k2Error) });
@@ -398,7 +402,8 @@ export class KotlinNativeParser {
         rel: antlrResult.relationships.length,
       });
       return {
-        entities: antlrResult.entities,
+        // Add language field to all entities (ANTLR doesn't provide it)
+        entities: this.addLanguageToEntities(antlrResult.entities),
         relationships: antlrResult.relationships.length > 0 ? antlrResult.relationships : undefined,
       };
     } catch (antlrError) {
@@ -407,6 +412,18 @@ export class KotlinNativeParser {
       log.d("KOTLINPARSER", "regex_ok", { cnt: entities.length });
       return { entities, relationships: undefined };
     }
+  }
+
+  /**
+   * Add language: "kotlin" to all entities recursively (including children)
+   */
+  private addLanguageToEntities(entities: ParsedEntity[]): ParsedEntity[] {
+    const addLang = (e: ParsedEntity): ParsedEntity => ({
+      ...e,
+      language: "kotlin",
+      children: e.children ? e.children.map(addLang) : undefined,
+    });
+    return entities.map(addLang);
   }
 
   /**
@@ -421,6 +438,7 @@ export class KotlinNativeParser {
       entities.push({
         name: packageMatch[1],
         type: "module",
+        language: "kotlin",
         filePath,
         location: this.getLocationFromIndex(content, packageMatch.index),
       });
@@ -437,6 +455,7 @@ export class KotlinNativeParser {
       entities.push({
         name: source,
         type: "import",
+        language: "kotlin",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         importData: {
@@ -492,6 +511,7 @@ export class KotlinNativeParser {
       const entity: ParsedEntity = {
         name,
         type: entityType,
+        language: "kotlin",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         ...(modifiers.length > 0 && { modifiers: modifiers }),
@@ -526,6 +546,7 @@ export class KotlinNativeParser {
       entities.push({
         name: receiver ? `${receiver}.${name}` : name,
         type: isSuspend ? "async_function" : "function",
+        language: "kotlin",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         ...(modifiers.length > 0 && { modifiers: modifiers }),
@@ -551,6 +572,7 @@ export class KotlinNativeParser {
       entities.push({
         name: receiver ? `${receiver}.${name}` : name,
         type: isConst ? "constant" : "property",
+        language: "kotlin",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         modifiers: [...modifiers, kind].filter(Boolean),
@@ -567,6 +589,7 @@ export class KotlinNativeParser {
       entities.push({
         name: aliasName,
         type: "type",
+        language: "kotlin",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         metadata: { aliasedType: aliasedType.trim() },
@@ -880,6 +903,7 @@ export class KotlinNativeParser {
       const member: ParsedEntity = {
         name: receiver ? `${receiver}.${name}` : name,
         type: isSuspend ? "async_function" : "method",
+        language: "kotlin",
         filePath,
         location: this.getLocationFromIndex(bodyContent, match.index, baseOffset),
         ...(modifiers.length > 0 && { modifiers: modifiers }),
@@ -913,6 +937,7 @@ export class KotlinNativeParser {
       const member: ParsedEntity = {
         name,
         type: isConst ? "constant" : "property",
+        language: "kotlin",
         filePath,
         location: this.getLocationFromIndex(bodyContent, match.index, baseOffset),
         modifiers: [...modifiers, kind].filter(Boolean),
