@@ -78,18 +78,14 @@ export interface EmbeddingProcessorContext {
 
 /**
  * Entity types excluded from embedding generation.
- * Low-value (import/export) or duplicates (method/property already in class embedding)
+ * Low-value types that don't provide semantic value for code search.
+ *
+ * Note: method/async_function/property are NOT excluded because:
+ * - Kotlin uses async_function for suspend fun (should be searchable)
+ * - method is used for standalone methods in Java/Kotlin/Go
+ * - Large classes get truncated, so methods need separate embeddings
  */
-const EMBEDDING_EXCLUDE_ENTITY_TYPES = new Set([
-  "import",
-  "export",
-  "module",
-  "constant",
-  "variable",
-  "method",
-  "property",
-  "async_function",
-]);
+const EMBEDDING_EXCLUDE_ENTITY_TYPES = new Set(["import", "export", "module", "variable"]);
 
 /** Lightweight embedding client instance */
 let embeddingClient: import("./worker-embedding-client.js").WorkerEmbeddingClient | null = null;
