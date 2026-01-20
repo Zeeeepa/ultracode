@@ -29,13 +29,109 @@ import { getDataDir } from "../utils/config-paths.js";
 // CONSTANTS
 // =============================================================================
 
+// Fallback K2 CLI version (used when no local JAR and API unavailable)
 const K2_CLI_VERSION = "1.1.0";
-const K2_JAR_NAME = `kotlin-k2-cli-${K2_CLI_VERSION}-all.jar`;
 
-// GitHub release URL for auto-download
+// GitHub releases API for version checking
 const K2_RELEASES_API = "https://api.github.com/repos/faxenoff/ultrascript-tools-mcp/releases";
-const K2_DOWNLOAD_URL_TEMPLATE =
-  "https://github.com/faxenoff/ultrascript-tools-mcp/releases/download/k2-cli-v{VERSION}/kotlin-k2-cli-{VERSION}-all.jar";
+
+// Cache for latest version check (avoid repeated API calls)
+let latestVersionCache: { version: string; url: string; checkedAt: number } | null = null;
+const VERSION_CHECK_INTERVAL_MS = 3600000; // 1 hour
+
+// Flag to prevent multiple background updates
+let backgroundUpdateInProgress = false;
+
+// =============================================================================
+// VERSION CHECKING
+// =============================================================================
+
+interface ReleaseAsset {
+  name: string;
+  browser_download_url: string;
+}
+
+interface ReleaseInfo {
+  tag_name: string;
+  assets: ReleaseAsset[];
+}
+
+/**
+ * Parse version from tag (e.g., "k2-cli-v1.1.0" → "1.1.0")
+ */
+function parseVersionFromTag(tag: string): string | null {
+  const match = tag.match(/k2-cli-v(\d+\.\d+\.\d+)/);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Compare semantic versions. Returns:
+ *  1 if a > b
+ *  0 if a == b
+ * -1 if a < b
+ */
+function compareVersions(a: string, b: string): number {
+  const partsA = a.split(".").map(Number);
+  const partsB = b.split(".").map(Number);
+
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const numA = partsA[i] ?? 0;
+    const numB = partsB[i] ?? 0;
+    if (numA > numB) return 1;
+    if (numA < numB) return -1;
+  }
+  return 0;
+}
+
+/**
+ * Check GitHub releases for latest K2 CLI version
+ * Returns null if check fails or no releases found
+ */
+async function checkLatestVersion(): Promise<{ version: string; url: string } | null> {
+  // Use cache if recent
+  if (latestVersionCache && Date.now() - latestVersionCache.checkedAt < VERSION_CHECK_INTERVAL_MS) {
+    return { version: latestVersionCache.version, url: latestVersionCache.url };
+  }
+
+  try {
+    const response = await fetch(K2_RELEASES_API, {
+      headers: {
+        "User-Agent": "ultrascript-tools-mcp",
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+
+    if (!response.ok) {
+      log.d("KOTLINK2", "releases_api_error", { status: response.status });
+      return null;
+    }
+
+    const releases = (await response.json()) as ReleaseInfo[];
+
+    // Find latest k2-cli release
+    for (const release of releases) {
+      const version = parseVersionFromTag(release.tag_name);
+      if (!version) continue;
+
+      const jarAsset = release.assets.find((a) => a.name.endsWith("-all.jar") && a.name.includes("kotlin-k2-cli"));
+      if (jarAsset) {
+        latestVersionCache = {
+          version,
+          url: jarAsset.browser_download_url,
+          checkedAt: Date.now(),
+        };
+        log.d("KOTLINK2", "found_latest_release", { version, tag: release.tag_name });
+        return { version, url: jarAsset.browser_download_url };
+      }
+    }
+
+    log.d("KOTLINK2", "no_k2_releases_found");
+    return null;
+  } catch (err) {
+    log.d("KOTLINK2", "version_check_failed", { err: String(err) });
+    return null;
+  }
+}
 
 // =============================================================================
 // TYPES
@@ -127,96 +223,105 @@ export class KotlinK2Provider {
   /**
    * Get or download kotlin-k2-cli JAR
    * Uses file-based locking to prevent multiple workers from downloading simultaneously
+   *
+   * Version check logic:
+   * - If local JAR exists → use immediately, check for updates in background
+   * - If no local JAR → download latest from GitHub releases
    */
   private async getK2JarPath(): Promise<string> {
     if (this.k2JarPath) return this.k2JarPath;
 
     const targetDir = join(getDataDir(), "kotlin-k2");
-    const jarPath = join(targetDir, K2_JAR_NAME);
-    const versionFile = join(targetDir, "version.txt");
     const lockFile = join(targetDir, "downloading.lock");
 
     mkdirSync(targetDir, { recursive: true });
 
-    // Check if JAR exists with correct version
-    if (existsSync(jarPath) && existsSync(versionFile)) {
-      try {
-        const { readFileSync } = await import("node:fs");
-        const cachedVersion = readFileSync(versionFile, "utf-8").trim();
-        if (cachedVersion === K2_CLI_VERSION) {
-          this.k2JarPath = jarPath;
-          log.d("KOTLINK2", "found_jar", { path: jarPath, ver: K2_CLI_VERSION });
-          workerLog("INFO", "KOTLINK2 found_jar", { path: jarPath, ver: K2_CLI_VERSION });
-          return jarPath;
-        }
-      } catch {
-        // Version file read error, will re-download
-      }
+    // Check if any JAR exists locally (regardless of version)
+    const localJar = await this.findLocalJar(targetDir);
+
+    if (localJar) {
+      // Use local JAR immediately
+      this.k2JarPath = localJar.path;
+      log.d("KOTLINK2", "found_local_jar", { path: localJar.path, ver: localJar.version });
+      workerLog("INFO", "KOTLINK2 found_local_jar", { path: localJar.path, ver: localJar.version });
+
+      // Check for updates in background (non-blocking)
+      this.checkForUpdatesInBackground(targetDir, localJar.version);
+
+      return localJar.path;
     }
 
-    // Check if another worker is downloading - wait for it
+    // No local JAR found - need to download
+    // First check if another worker is already downloading
     if (existsSync(lockFile)) {
       workerLog("INFO", "KOTLINK2 waiting_for_download", { lockFile });
-      await this.waitForDownload(jarPath, lockFile);
-      if (existsSync(jarPath)) {
-        this.k2JarPath = jarPath;
-        workerLog("INFO", "KOTLINK2 download_completed_by_other", { path: jarPath });
-        return jarPath;
+      await this.waitForDownloadAny(targetDir, lockFile);
+      const downloaded = await this.findLocalJar(targetDir);
+      if (downloaded) {
+        this.k2JarPath = downloaded.path;
+        workerLog("INFO", "KOTLINK2 download_completed_by_other", { path: downloaded.path });
+        return downloaded.path;
       }
     }
 
     // Check if JAR exists in project build directory (local development)
-    const projectJarPath = join(process.cwd(), "kotlin-k2-cli", "build", "libs", K2_JAR_NAME);
-    if (existsSync(projectJarPath)) {
-      // Copy to data dir for future use
+    const projectJar = await this.findProjectBuildJar();
+    if (projectJar) {
+      const jarPath = join(targetDir, `kotlin-k2-cli-${projectJar.version}-all.jar`);
+      const versionFile = join(targetDir, "version.txt");
       const { copyFileSync } = await import("node:fs");
-      copyFileSync(projectJarPath, jarPath);
-      writeFileSync(versionFile, K2_CLI_VERSION, "utf-8");
+      copyFileSync(projectJar.path, jarPath);
+      writeFileSync(versionFile, projectJar.version, "utf-8");
       this.k2JarPath = jarPath;
-      log.d("KOTLINK2", "copied_jar", { from: projectJarPath, to: jarPath });
+      log.d("KOTLINK2", "copied_jar", { from: projectJar.path, to: jarPath });
       workerLog("INFO", "KOTLINK2 copied_jar", { path: jarPath });
       return jarPath;
     }
 
     // Try to acquire lock and download
     try {
-      // Create lock file (atomic operation)
       const { openSync, closeSync } = await import("node:fs");
-      const fd = openSync(lockFile, "wx"); // fails if exists
+      const fd = openSync(lockFile, "wx");
       closeSync(fd);
     } catch {
-      // Lock exists, another worker started downloading - wait
       workerLog("INFO", "KOTLINK2 lock_exists_waiting", { lockFile });
-      await this.waitForDownload(jarPath, lockFile);
-      if (existsSync(jarPath)) {
-        this.k2JarPath = jarPath;
-        return jarPath;
+      await this.waitForDownloadAny(targetDir, lockFile);
+      const downloaded = await this.findLocalJar(targetDir);
+      if (downloaded) {
+        this.k2JarPath = downloaded.path;
+        return downloaded.path;
       }
       throw new Error("Download by another worker failed");
     }
 
-    // We have the lock - download
+    // We have the lock - download latest version
     try {
-      log.i("KOTLINK2", "downloading_jar", { ver: K2_CLI_VERSION });
-      workerLog("INFO", "KOTLINK2 downloading_jar", { ver: K2_CLI_VERSION });
-      await this.downloadK2Jar(jarPath, versionFile);
+      const latest = await checkLatestVersion();
+      if (!latest) {
+        throw new Error("Cannot determine latest K2 CLI version from GitHub releases");
+      }
+
+      const jarPath = join(targetDir, `kotlin-k2-cli-${latest.version}-all.jar`);
+      const versionFile = join(targetDir, "version.txt");
+
+      log.i("KOTLINK2", "downloading_jar", { ver: latest.version });
+      workerLog("INFO", "KOTLINK2 downloading_jar", { ver: latest.version, url: latest.url });
+      await this.downloadFromUrl(latest.url, jarPath, versionFile, latest.version);
       this.k2JarPath = jarPath;
       return jarPath;
     } catch (downloadError) {
       log.w("KOTLINK2", "download_failed", { err: String(downloadError) });
       workerLog("WARN", "KOTLINK2 download_failed", { err: String(downloadError) });
 
-      // Provide helpful error message
       throw new Error(
         `K2 CLI JAR not found and download failed.\n` +
           `Error: ${downloadError}\n\n` +
           `Options:\n` +
-          `1. Build locally: cd kotlin-k2-cli && gradle fatJar\n` +
+          `1. Build locally: cd kotlin-k2-cli && ./gradlew fatJar\n` +
           `2. Download manually from GitHub Releases\n` +
-          `Expected path: ${jarPath}`,
+          `Expected directory: ${targetDir}`,
       );
     } finally {
-      // Remove lock file
       try {
         unlinkSync(lockFile);
       } catch {
@@ -226,15 +331,119 @@ export class KotlinK2Provider {
   }
 
   /**
-   * Wait for another worker to complete download
+   * Find any K2 CLI JAR in the target directory
    */
-  private async waitForDownload(jarPath: string, lockFile: string, timeoutMs = 120000): Promise<void> {
+  private async findLocalJar(targetDir: string): Promise<{ path: string; version: string } | null> {
+    const versionFile = join(targetDir, "version.txt");
+
+    // First try to read version from version.txt
+    if (existsSync(versionFile)) {
+      try {
+        const { readFileSync } = await import("node:fs");
+        const version = readFileSync(versionFile, "utf-8").trim();
+        const jarPath = join(targetDir, `kotlin-k2-cli-${version}-all.jar`);
+        if (existsSync(jarPath)) {
+          return { path: jarPath, version };
+        }
+      } catch {
+        // Fall through to scan directory
+      }
+    }
+
+    // Scan directory for any JAR
+    try {
+      const { readdirSync } = await import("node:fs");
+      const files = readdirSync(targetDir);
+      for (const file of files) {
+        const match = file.match(/^kotlin-k2-cli-(\d+\.\d+\.\d+)-all\.jar$/);
+        if (match?.[1]) {
+          return { path: join(targetDir, file), version: match[1] };
+        }
+      }
+    } catch {
+      // Directory doesn't exist or can't be read
+    }
+
+    return null;
+  }
+
+  /**
+   * Find JAR in project build directory (local development)
+   */
+  private async findProjectBuildJar(): Promise<{ path: string; version: string } | null> {
+    try {
+      const { readdirSync } = await import("node:fs");
+      const libsDir = join(process.cwd(), "kotlin-k2-cli", "build", "libs");
+      if (!existsSync(libsDir)) return null;
+
+      const files = readdirSync(libsDir);
+      for (const file of files) {
+        const match = file.match(/^kotlin-k2-cli-(\d+\.\d+\.\d+)-all\.jar$/);
+        if (match?.[1]) {
+          return { path: join(libsDir, file), version: match[1] };
+        }
+      }
+    } catch {
+      // Directory doesn't exist
+    }
+    return null;
+  }
+
+  /**
+   * Check for updates in background (non-blocking)
+   */
+  private checkForUpdatesInBackground(targetDir: string, currentVersion: string): void {
+    if (backgroundUpdateInProgress) return;
+
+    backgroundUpdateInProgress = true;
+
+    // Run in background, don't await
+    (async () => {
+      try {
+        const latest = await checkLatestVersion();
+        if (!latest) {
+          log.d("KOTLINK2", "no_updates_available");
+          return;
+        }
+
+        if (compareVersions(latest.version, currentVersion) > 0) {
+          log.i("KOTLINK2", "new_version_available", { current: currentVersion, latest: latest.version });
+          workerLog("INFO", "KOTLINK2 new_version_available", { current: currentVersion, latest: latest.version });
+
+          // Download in background
+          const jarPath = join(targetDir, `kotlin-k2-cli-${latest.version}-all.jar`);
+          const versionFile = join(targetDir, "version.txt");
+
+          if (!existsSync(jarPath)) {
+            log.i("KOTLINK2", "background_download_start", { ver: latest.version });
+            await this.downloadFromUrl(latest.url, jarPath, versionFile, latest.version);
+            log.i("KOTLINK2", "background_download_done", { ver: latest.version });
+            workerLog("INFO", "KOTLINK2 background_download_done. Restart to use new version.", {
+              ver: latest.version,
+            });
+          }
+        } else {
+          log.d("KOTLINK2", "version_is_current", { current: currentVersion });
+        }
+      } catch (err) {
+        log.d("KOTLINK2", "background_update_failed", { err: String(err) });
+      } finally {
+        backgroundUpdateInProgress = false;
+      }
+    })();
+  }
+
+  /**
+   * Wait for another worker to complete download (any JAR version)
+   */
+  private async waitForDownloadAny(targetDir: string, lockFile: string, timeoutMs = 120000): Promise<void> {
     const startTime = Date.now();
     const pollInterval = 500;
 
     while (Date.now() - startTime < timeoutMs) {
-      // Check if JAR appeared
-      if (existsSync(jarPath)) {
+      // Check if any JAR appeared
+      const jar = await this.findLocalJar(targetDir);
+      if (jar) {
         return;
       }
       // Check if lock was released (download failed)
@@ -249,69 +458,9 @@ export class KotlinK2Provider {
   }
 
   /**
-   * Download K2 CLI JAR from GitHub Releases
-   */
-  private async downloadK2Jar(jarPath: string, versionFile: string): Promise<void> {
-    const downloadUrl = K2_DOWNLOAD_URL_TEMPLATE.replace(/{VERSION}/g, K2_CLI_VERSION);
-
-    log.d("KOTLINK2", "download_start", { url: downloadUrl });
-    workerLog("INFO", "KOTLINK2 download_start", { url: downloadUrl });
-
-    const response = await fetch(downloadUrl, {
-      headers: { "User-Agent": "ultrascript-tools-mcp" },
-    });
-
-    if (!response.ok) {
-      // Try to find latest release if specific version not found
-      if (response.status === 404) {
-        const latestUrl = await this.findLatestK2Release();
-        if (latestUrl) {
-          return this.downloadFromUrl(latestUrl, jarPath, versionFile);
-        }
-      }
-      throw new Error(`Download failed: ${response.status} ${response.statusText}`);
-    }
-
-    await this.downloadFromUrl(downloadUrl, jarPath, versionFile);
-  }
-
-  /**
-   * Find latest K2 CLI release from GitHub API
-   */
-  private async findLatestK2Release(): Promise<string | null> {
-    try {
-      const response = await fetch(K2_RELEASES_API, {
-        headers: { "User-Agent": "ultrascript-tools-mcp" },
-      });
-
-      if (!response.ok) return null;
-
-      const releases = (await response.json()) as Array<{
-        tag_name: string;
-        assets: Array<{ name: string; browser_download_url: string }>;
-      }>;
-
-      // Find first release with k2-cli tag
-      for (const release of releases) {
-        if (release.tag_name.startsWith("k2-cli-v")) {
-          const jarAsset = release.assets.find((a) => a.name.endsWith("-all.jar"));
-          if (jarAsset) {
-            log.d("KOTLINK2", "found_release", { tag: release.tag_name });
-            return jarAsset.browser_download_url;
-          }
-        }
-      }
-    } catch (err) {
-      log.w("KOTLINK2", "releases_api_fail", { err: String(err) });
-    }
-
-    return null;
-  }
-
-  /**
    * Download file from URL to path
    */
-  private async downloadFromUrl(url: string, jarPath: string, versionFile: string): Promise<void> {
+  private async downloadFromUrl(url: string, jarPath: string, versionFile: string, version?: string): Promise<void> {
     const response = await fetch(url, {
       headers: { "User-Agent": "ultrascript-tools-mcp" },
     });
@@ -331,10 +480,11 @@ export class KotlinK2Provider {
       renameSync(tempPath, jarPath);
 
       // Save version
-      writeFileSync(versionFile, K2_CLI_VERSION, "utf-8");
+      const versionToSave = version ?? K2_CLI_VERSION;
+      writeFileSync(versionFile, versionToSave, "utf-8");
 
-      log.i("KOTLINK2", "download_done", { path: jarPath });
-      workerLog("INFO", "KOTLINK2 download_done", { path: jarPath });
+      log.i("KOTLINK2", "download_done", { path: jarPath, ver: versionToSave });
+      workerLog("INFO", "KOTLINK2 download_done", { path: jarPath, ver: versionToSave });
     } finally {
       // Cleanup temp file on error
       if (existsSync(tempPath)) {
