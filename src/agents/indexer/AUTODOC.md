@@ -1,6 +1,6 @@
 # Indexer
 
-*Last updated: 2026-01-18*
+*Last updated: 2026-01-20*
 
 Модуль индексирования сущностей, отношений и обработки событий Git для анализа кода
 
@@ -19,7 +19,7 @@
 | `initXXHash` | function | [→ stable-id.ts:27-31] |
 | `parseExternalId` | function | [→ external-placeholder.ts:19] |
 | `processExternalRelationships` | function | [→ external-placeholder.ts:102] |
-| `resolveByNameAndLine` | function | [→ entity-resolution.ts:35-52] |
+| `resolveByNameAndLine` | function | [→ entity-resolution.ts:39-70] |
 | `runtimeSleep` | function | [→ git-event-handlers.ts:193-195] |
 | `scheduleEmbeddingGeneration` | function | [→ git-event-handlers.ts:201-228] |
 | `stableEntityId` | function | [→ stable-id.ts:52-61] |
