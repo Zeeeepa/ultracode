@@ -29,7 +29,7 @@ import { getDataDir } from "../utils/config-paths.js";
 // CONSTANTS
 // =============================================================================
 
-const K2_CLI_VERSION = "1.0.0";
+const K2_CLI_VERSION = "1.1.0";
 const K2_JAR_NAME = `kotlin-k2-cli-${K2_CLI_VERSION}-all.jar`;
 
 // GitHub release URL for auto-download
