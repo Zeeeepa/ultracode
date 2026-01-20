@@ -4,6 +4,10 @@ on:
   push:
     paths:
       - 'kotlin-k2-cli/**'
+      - '.github/workflows/build-k2-cli.yml'
+    branches:
+      - main
+      - dev
     tags:
       - 'k2-cli-v*'
   workflow_dispatch:
