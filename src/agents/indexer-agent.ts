@@ -352,6 +352,18 @@ export class IndexerAgent extends BaseAgent {
     // This is critical for NgRx effects and other class members to be stored as separate entities
     const flatEntities = flattenParsedEntities(entities);
     const childrenExtracted = flatEntities.length - entities.length;
+
+    // DEBUG: Check language field in entities
+    const withLang = flatEntities.filter((e) => e.language).length;
+    const langSample = flatEntities.filter((e) => e.language).slice(0, 2);
+    const noLangSample = flatEntities.filter((e) => !e.language).slice(0, 2);
+    log.i("INDEXER", "lang_check", {
+      total: flatEntities.length,
+      withLang,
+      langSample: langSample.map((e) => ({ n: e.name, l: e.language })),
+      noLangSample: noLangSample.map((e) => ({ n: e.name, t: e.type })),
+    });
+
     log.d("INDEXER", "indexing", {
       entities: entities.length,
       flat: flatEntities.length,
@@ -461,9 +473,31 @@ export class IndexerAgent extends BaseAgent {
       log.t("INDEXER", "raw_rels_sample", { sample: first3.map((r) => `${r.from}->${r.to}`) });
       const relLoopStart = Date.now();
       log.t("INDEXER", "process_rels", { cnt: providedRelationships.length });
+
+      // DEBUG: Track calls resolution stats
+      let callsTotal = 0;
+      let callsFromResolved = 0;
+      let callsToResolved = 0;
+      const callsSample: Array<{ from: string; to: string; fromId: string; toId: string }> = [];
+
       for (const rel of providedRelationships) {
         let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line);
         let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line);
+
+        // DEBUG: Track calls relationship resolution
+        if (rel.type === "calls") {
+          callsTotal++;
+          if (fromId) callsFromResolved++;
+          if (toId) callsToResolved++;
+          if (callsSample.length < 3) {
+            callsSample.push({
+              from: rel.from,
+              to: rel.to,
+              fromId: fromId || `EXT:${rel.from}`,
+              toId: toId || `EXT:${rel.to}`,
+            });
+          }
+        }
 
         // DEBUG: Log resolution results for first relationship
         if (relationships.length === 0) {
@@ -494,6 +528,24 @@ export class IndexerAgent extends BaseAgent {
           log.t("INDEXER", "rel_skipped", { from: rel.from, to: rel.to, fromId, toId });
         }
       }
+
+      // DEBUG: Log calls resolution stats
+      if (callsTotal > 0) {
+        log.i("INDEXER", "calls_resolution_stats", {
+          total: callsTotal,
+          fromResolved: callsFromResolved,
+          toResolved: callsToResolved,
+          fromPct: Math.round((callsFromResolved / callsTotal) * 100),
+          toPct: Math.round((callsToResolved / callsTotal) * 100),
+        });
+        if (callsSample.length > 0) {
+          log.i("INDEXER", "calls_sample", { sample: callsSample });
+        }
+        // Log entity names sample to compare
+        const entityNamesSample = Array.from(byName.keys()).slice(0, 5);
+        log.i("INDEXER", "entity_names_in_map", { sample: entityNamesSample, total: byName.size });
+      }
+
       const relLoopMs = Date.now() - relLoopStart;
       log.i("INDEXER", "RelationshipLoop", {
         count: providedRelationships.length,

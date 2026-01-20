@@ -336,6 +336,9 @@ export interface GraphStorage {
     limit?: number;
   }): Promise<Entity[]>;
 
+  /** Count entities grouped by language (efficient SQL aggregation for TechnologyDetector) */
+  countByLanguage(): Promise<Map<string, { count: number; fileCount: number }>>;
+
   // Relationship operations
   insertRelationship(relationship: Relationship): Promise<void>;
   insertRelationships(relationships: Relationship[]): Promise<BatchResult>;
@@ -508,12 +511,20 @@ export function flattenParsedEntities(entities: ParsedEntity[]): ParsedEntity[] 
     if (entity.children && entity.children.length > 0) {
       for (const child of entity.children) {
         childrenCount++;
-        // Qualify child name with parent for uniqueness (e.g., "ClassName.methodName")
-        // Inherit filePath from parent if child doesn't have one
+
+        // Determine qualified name for child
+        // Some parsers (like K2) already qualify child names, so avoid double-qualifying
+        const parentPrefix = parentName || entity.name;
+        const expectedPrefix = `${parentPrefix}.`;
+        const alreadyQualified = child.name.startsWith(expectedPrefix);
+        const qualifiedName = alreadyQualified ? child.name : `${parentPrefix}.${child.name}`;
+
+        // Inherit filePath and language from parent if child doesn't have them
         const qualifiedChild: ParsedEntity = {
           ...child,
-          name: parentName ? `${parentName}.${child.name}` : `${entity.name}.${child.name}`,
+          name: qualifiedName,
           filePath: child.filePath || parentFilePath || entity.filePath,
+          language: child.language || entity.language,
         };
         flatten(qualifiedChild, qualifiedChild.name, qualifiedChild.filePath);
       }

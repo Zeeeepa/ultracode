@@ -83,7 +83,7 @@ export class TechnologyDetector {
     const buildTools = await this.detectBuildTools();
     const dependencies = await this.detectDependencies();
 
-    const confidence = this.calculateConfidence(frameworks);
+    const confidence = this.calculateConfidence(languages, frameworks, buildTools);
 
     return {
       languages,
@@ -112,33 +112,43 @@ export class TechnologyDetector {
   // =============================================================================
 
   private async detectLanguages(): Promise<LanguageInfo[]> {
-    const entities = await this.graphStorage.findEntities({
-      filters: {},
+    // Use efficient SQL aggregation instead of loading all entities
+    const languageCounts = await this.graphStorage.countByLanguage();
+
+    // DEBUG: Log aggregation results
+    const entries = Array.from(languageCounts.entries());
+    log.i("TECHDETECT", "language_counts", {
+      languages: entries.map(([lang, data]) => ({
+        lang,
+        count: data.count,
+        files: data.fileCount,
+      })),
     });
 
-    const languageCounts = new Map<string, number>();
-    const fileCounts = new Map<string, Set<string>>();
-
-    for (const entity of entities) {
-      const lang = entity.language || "unknown";
-      languageCounts.set(lang, (languageCounts.get(lang) || 0) + 1);
-
-      if (!fileCounts.has(lang)) {
-        fileCounts.set(lang, new Set());
+    // Calculate total (excluding "unknown")
+    let totalEntities = 0;
+    for (const [lang, data] of languageCounts) {
+      if (lang !== "unknown") {
+        totalEntities += data.count;
       }
-      fileCounts.get(lang)!.add(entity.filePath);
     }
 
-    const totalEntities = entities.length;
+    // If no entities with language, use all entities as denominator
+    if (totalEntities === 0) {
+      for (const [, data] of languageCounts) {
+        totalEntities += data.count;
+      }
+    }
+
     const languages: LanguageInfo[] = [];
 
-    for (const [name, count] of languageCounts.entries()) {
+    for (const [name, data] of languageCounts) {
       if (name === "unknown") continue;
 
       languages.push({
         name,
-        percentage: (count / totalEntities) * 100,
-        fileCount: fileCounts.get(name)!.size,
+        percentage: totalEntities > 0 ? (data.count / totalEntities) * 100 : 0,
+        fileCount: data.fileCount,
       });
     }
 
@@ -433,7 +443,7 @@ export class TechnologyDetector {
   private async detectBuildTools(): Promise<BuildToolInfo[]> {
     const buildTools: BuildToolInfo[] = [];
 
-    // Check for common build tool config files
+    // Check for common build tool config files (JS/TS)
     const configFiles = [
       { name: "webpack", files: ["webpack.config.js", "webpack.config.ts"] },
       { name: "vite", files: ["vite.config.js", "vite.config.ts"] },
@@ -457,6 +467,31 @@ export class TechnologyDetector {
       }
     }
 
+    // Check for Gradle (Kotlin/Java/Android projects)
+    const gradleFiles = [
+      "build.gradle",
+      "build.gradle.kts",
+      "settings.gradle",
+      "settings.gradle.kts",
+      "app/build.gradle",
+      "app/build.gradle.kts",
+    ];
+    const foundGradle: string[] = [];
+    for (const file of gradleFiles) {
+      const path = join(this.workingDirectory, file);
+      if (existsSync(path)) {
+        foundGradle.push(file);
+      }
+    }
+    if (foundGradle.length > 0) {
+      buildTools.push({ name: "Gradle", configFiles: foundGradle });
+    }
+
+    // Check for Maven (Java projects)
+    if (existsSync(join(this.workingDirectory, "pom.xml"))) {
+      buildTools.push({ name: "Maven", configFiles: ["pom.xml"] });
+    }
+
     return buildTools;
   }
 
@@ -466,43 +501,106 @@ export class TechnologyDetector {
 
   private async detectDependencies(): Promise<DependencyInfo[]> {
     const dependencies: DependencyInfo[] = [];
-    const packageJsonPath = join(this.workingDirectory, "package.json");
 
-    if (!existsSync(packageJsonPath)) {
-      return dependencies;
+    // Try package.json (Node.js projects)
+    const packageJsonPath = join(this.workingDirectory, "package.json");
+    if (existsSync(packageJsonPath)) {
+      try {
+        const packageJson = JSON.parse(await readFile(packageJsonPath, "utf-8"));
+
+        // Production dependencies
+        if (packageJson.dependencies) {
+          for (const [name, version] of Object.entries(packageJson.dependencies)) {
+            dependencies.push({ name, version: version as string, type: "prod" });
+          }
+        }
+
+        // Dev dependencies
+        if (packageJson.devDependencies) {
+          for (const [name, version] of Object.entries(packageJson.devDependencies)) {
+            dependencies.push({ name, version: version as string, type: "dev" });
+          }
+        }
+      } catch (error) {
+        log.w("TECHDETECT", "packagejson_parse_fail", { err: String(error) });
+      }
     }
 
-    try {
-      const packageJson = JSON.parse(await readFile(packageJsonPath, "utf-8"));
+    // Try Gradle files (Kotlin/Java/Android projects)
+    const gradlePaths = [
+      join(this.workingDirectory, "app", "build.gradle.kts"),
+      join(this.workingDirectory, "app", "build.gradle"),
+      join(this.workingDirectory, "build.gradle.kts"),
+      join(this.workingDirectory, "build.gradle"),
+    ];
 
-      // Production dependencies
-      if (packageJson.dependencies) {
-        for (const [name, version] of Object.entries(packageJson.dependencies)) {
-          dependencies.push({ name, version: version as string, type: "prod" });
+    for (const gradlePath of gradlePaths) {
+      if (existsSync(gradlePath)) {
+        try {
+          const content = await readFile(gradlePath, "utf-8");
+          dependencies.push(...this.parseGradleDependencies(content));
+        } catch (error) {
+          log.w("TECHDETECT", "gradle_deps_parse_fail", { path: gradlePath, err: String(error) });
         }
       }
-
-      // Dev dependencies
-      if (packageJson.devDependencies) {
-        for (const [name, version] of Object.entries(packageJson.devDependencies)) {
-          dependencies.push({ name, version: version as string, type: "dev" });
-        }
-      }
-    } catch (error) {
-      log.w("TECHDETECT", "deps_parse_fail", { err: String(error) });
     }
 
     return dependencies;
+  }
+
+  private parseGradleDependencies(content: string): DependencyInfo[] {
+    const deps: DependencyInfo[] = [];
+    const seen = new Set<string>();
+
+    // Match Kotlin DSL: implementation("group:artifact:version")
+    // Match Groovy DSL: implementation "group:artifact:version" or implementation 'group:artifact:version'
+    const patterns = [
+      /(?:implementation|api|compileOnly|runtimeOnly|testImplementation|androidTestImplementation)\s*\(\s*["']([^"':]+):([^"':]+):([^"']+)["']\s*\)/g,
+      /(?:implementation|api|compileOnly|runtimeOnly|testImplementation|androidTestImplementation)\s+["']([^"':]+):([^"':]+):([^"']+)["']/g,
+    ];
+
+    for (const pattern of patterns) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(content)) !== null) {
+        const [, group, artifact, version] = match;
+        if (!group || !artifact || !version) continue;
+        const name = `${group}:${artifact}`;
+        if (!seen.has(name)) {
+          seen.add(name);
+          const type = match[0].includes("test") ? "dev" : "prod";
+          deps.push({ name, version, type });
+        }
+      }
+    }
+
+    return deps;
   }
 
   // =============================================================================
   // PRIVATE: UTILITIES
   // =============================================================================
 
-  private calculateConfidence(frameworks: FrameworkInfo[]): number {
-    if (frameworks.length === 0) return 0;
-    const avgConfidence = frameworks.reduce((sum, f) => sum + f.confidence, 0) / frameworks.length;
-    return avgConfidence;
+  private calculateConfidence(
+    languages: LanguageInfo[],
+    frameworks: FrameworkInfo[],
+    buildTools: BuildToolInfo[],
+  ): number {
+    // Base confidence from detected languages (0.3 max)
+    const langConfidence = languages.length > 0 ? Math.min(0.3, languages.length * 0.1) : 0;
+
+    // Framework confidence (0.5 max)
+    const frameworkConfidence =
+      frameworks.length > 0
+        ? Math.min(
+            0.5,
+            frameworks.reduce((sum, f) => sum + f.confidence * 0.25, 0),
+          )
+        : 0;
+
+    // Build tools confidence (0.2 max)
+    const buildToolConfidence = buildTools.length > 0 ? Math.min(0.2, buildTools.length * 0.1) : 0;
+
+    return langConfidence + frameworkConfidence + buildToolConfidence;
   }
 
   private initializePatterns(): void {
@@ -594,17 +692,22 @@ export class TechnologyDetector {
       }
     }
 
-    // Check build.gradle or build.gradle.kts
-    const gradlePath = join(this.workingDirectory, "build.gradle");
-    const gradleKtsPath = join(this.workingDirectory, "build.gradle.kts");
-    const gradleFilePath = existsSync(gradleKtsPath) ? gradleKtsPath : existsSync(gradlePath) ? gradlePath : null;
+    // Check build.gradle or build.gradle.kts (root and app/ for Android projects)
+    const gradlePaths = [
+      join(this.workingDirectory, "build.gradle.kts"),
+      join(this.workingDirectory, "build.gradle"),
+      join(this.workingDirectory, "app", "build.gradle.kts"),
+      join(this.workingDirectory, "app", "build.gradle"),
+    ];
 
-    if (gradleFilePath) {
-      try {
-        const gradleContent = await readFile(gradleFilePath, "utf-8");
-        frameworks.push(...this.detectFromGradle(gradleContent));
-      } catch (error) {
-        log.w("TECHDETECT", "gradle_parse_fail", { err: String(error) });
+    for (const gradlePath of gradlePaths) {
+      if (existsSync(gradlePath)) {
+        try {
+          const gradleContent = await readFile(gradlePath, "utf-8");
+          frameworks.push(...this.detectFromGradle(gradleContent));
+        } catch (error) {
+          log.w("TECHDETECT", "gradle_parse_fail", { path: gradlePath, err: String(error) });
+        }
       }
     }
 

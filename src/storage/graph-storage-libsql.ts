@@ -91,7 +91,12 @@ export class GraphStorageLibSQL implements GraphStorage {
 
   setProject(projectPath: string, branchName?: string | null): void {
     const ctx = createProjectContext(projectPath, branchName);
-    log.w("STORAGE", "setProject", { branch: ctx.branchName, base: ctx.baseBranch || "none" });
+    log.w("STORAGE", "setProject", {
+      path: projectPath,
+      hash: ctx.projectHash,
+      branch: ctx.branchName,
+      base: ctx.baseBranch || "none",
+    });
     this.adapter.setProjectContext(ctx);
   }
 
@@ -198,6 +203,14 @@ export class GraphStorageLibSQL implements GraphStorage {
       limit: Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT),
       offset: query.offset || 0,
     });
+  }
+
+  /**
+   * Count entities by language (efficient SQL aggregation for TechnologyDetector).
+   * Excludes external placeholder entities.
+   */
+  async countByLanguage(): Promise<Map<string, { count: number; fileCount: number }>> {
+    return await this.adapter.countByLanguage();
   }
 
   async findEntitiesInBranch(query: EntityQuery, targetBranch: string): Promise<Entity[]> {

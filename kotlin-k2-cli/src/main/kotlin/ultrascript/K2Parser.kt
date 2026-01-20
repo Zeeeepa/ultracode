@@ -102,6 +102,14 @@ class K2Parser {
             processDeclaration(declaration, filePath, content, entities, relationships, callGraph, null)
         }
 
+        // Debug: log call graph extraction
+        if (callGraph.isNotEmpty()) {
+            System.err.println("[K2] Extracted ${callGraph.size} calls from $filePath")
+            callGraph.take(3).forEach { call ->
+                System.err.println("[K2]   ${call.from} -> ${call.to} (line ${call.line})")
+            }
+        }
+
         return ParseResult(
             id = "",
             success = true,
