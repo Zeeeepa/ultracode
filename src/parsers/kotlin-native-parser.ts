@@ -289,7 +289,23 @@ export class KotlinNativeParser {
           log.d("KOTLINPARSER", "try_k2");
           const k2Result = await this.k2Provider.parse(filePath, content);
           entities = k2Result.entities;
-          relationships = k2Result.relationships.length > 0 ? k2Result.relationships : undefined;
+
+          // Merge relationships from K2: general relationships + call graph
+          const allRelationships: EntityRelationship[] = [...k2Result.relationships];
+
+          // Convert callGraph to "calls" relationships for tracing support
+          for (const call of k2Result.callGraph) {
+            if (call.from && call.to) {
+              allRelationships.push({
+                from: call.from,
+                to: call.to,
+                type: "calls",
+                metadata: { line: call.line },
+              });
+            }
+          }
+
+          relationships = allRelationships.length > 0 ? allRelationships : undefined;
 
           // K2 provides package/import entities, no need to add them manually
 
