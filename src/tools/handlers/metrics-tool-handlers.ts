@@ -10,6 +10,7 @@
  */
 
 import { z } from "zod";
+import { log } from "../../logging/index.js";
 import type { AgentMetrics } from "../../types/agent.js";
 import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
@@ -414,8 +415,19 @@ export class GetWatcherStatusToolHandler extends BaseToolHandler<z.infer<typeof 
       const { AgentType } = await import("../../types/agent.js");
       const conductor = this.context.getConductor();
 
-      // Get IndexerAgent to check watcher status
-      const indexerAgent = conductor.getAgentByType?.(AgentType.INDEXER) as IndexerAgent | undefined;
+      // Get IndexerAgent through DevAgent (IndexerAgent is a private member of DevAgent)
+      const devAgent = conductor.getAgentByType?.(AgentType.DEV) as
+        | { getIndexerAgent?: () => IndexerAgent | null }
+        | undefined;
+      log.d("METRICS", "watcher_status_diag", {
+        hasDevAgent: !!devAgent,
+        hasGetIndexerAgent: !!devAgent?.getIndexerAgent,
+      });
+      const indexerAgent = devAgent?.getIndexerAgent?.() ?? undefined;
+      log.d("METRICS", "watcher_status_diag2", {
+        hasIndexerAgent: !!indexerAgent,
+        indexerAgentType: indexerAgent ? typeof indexerAgent : "undefined",
+      });
 
       const result: WatcherStatusResult = {
         timestamp: new Date().toISOString(),

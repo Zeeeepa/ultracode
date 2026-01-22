@@ -227,10 +227,26 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     // Step 6: Start FileWatcher/GitWatcher for incremental updates
     try {
       const conductor = this.context.getConductor();
-      const indexerAgent = conductor.getAgent("indexer") as IndexerAgentWithRepository | undefined;
+      // Get IndexerAgent through DevAgent (IndexerAgent is a private member of DevAgent)
+      const devAgent = conductor.getAgentByType?.(AgentType.DEV) as
+        | { getIndexerAgent?: () => IndexerAgentWithRepository | null }
+        | undefined;
+      log.d("INDEXTOOL", "watcher_diag", {
+        hasDevAgent: !!devAgent,
+        hasGetIndexerAgent: !!devAgent?.getIndexerAgent,
+      });
+      const indexerAgent = devAgent?.getIndexerAgent?.() ?? undefined;
+      log.d("INDEXTOOL", "watcher_diag2", {
+        hasIndexerAgent: !!indexerAgent,
+        hasSetRepoPath: !!indexerAgent?.setRepositoryPath,
+      });
       if (indexerAgent?.setRepositoryPath) {
         await indexerAgent.setRepositoryPath(targetDir);
         log.i("INDEXTOOL", "watcher_start", { dir: targetDir });
+      } else {
+        log.w("INDEXTOOL", "watcher_skip", {
+          reason: !indexerAgent ? "no indexerAgent" : "no setRepositoryPath method",
+        });
       }
     } catch (error: unknown) {
       const err = toError(error);

@@ -392,12 +392,20 @@ export async function performAutoIndex(
       }
 
       // Start FileWatcher/GitWatcher for incremental updates
+      // IndexerAgent is a private member of DevAgent, so we access it through DevAgent.getIndexerAgent()
       try {
         const cond = ctx.getConductor();
-        const indexerAgent = cond.getAgentByType(AgentType.INDEXER) as AgentWithRepositoryPath | undefined;
+        const devAgent = cond.getAgentByType(AgentType.DEV) as
+          | { getIndexerAgent?: () => AgentWithRepositoryPath | null }
+          | undefined;
+        const indexerAgent = devAgent?.getIndexerAgent?.() ?? undefined;
         if (indexerAgent?.setRepositoryPath) {
           await indexerAgent.setRepositoryPath(targetDir);
           log.i("INDEXER", "watcher_started", { dir: targetDir });
+        } else {
+          log.w("INDEXER", "watcher_skip", {
+            reason: !devAgent ? "no DevAgent" : !indexerAgent ? "no IndexerAgent" : "no setRepositoryPath",
+          });
         }
       } catch (error) {
         log.w("INDEXER", "watcher_fail", { err: (error as Error).message });

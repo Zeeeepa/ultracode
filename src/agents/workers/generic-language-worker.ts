@@ -400,7 +400,91 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
   let ioTime = 0;
   let parseTime = 0;
 
-  for (const file of task.files) {
+  // =========================================================================
+  // BATCH MODE: For Python, parse all files in a single Python process
+  // This is much faster than spawning Python per file
+  // =========================================================================
+  if (task.language === "python" && task.files.length > 1) {
+    const { getPythonAnalyzerWithBatch, supportsBatchParsing } = await import("./analyzer-loader.js");
+    if (supportsBatchParsing("python")) {
+      const batchAnalyzer = await getPythonAnalyzerWithBatch();
+      if (batchAnalyzer) {
+        workerLog("INFO", `Using Python batch mode`, { files: task.files.length });
+        const batchStart = Date.now();
+
+        // Read all files first
+        const filesToParse: Array<{ filePath: string; content: string; contentHash: string }> = [];
+        for (const file of task.files) {
+          try {
+            const content = await prefetch.getContent(file);
+            prefetch.advance();
+
+            // Skip generated code
+            const generated = isGeneratedCode(file, content);
+            if (generated.skipped) {
+              workerLog("DEBUG", `Skipping ${generated.type}-generated file`, { file });
+              continue;
+            }
+
+            fileContents.set(file, content);
+            const hash = Date.now().toString(16);
+            filesToParse.push({ filePath: file, content, contentHash: hash });
+          } catch (err) {
+            errors.push({ file, message: (err as Error).message });
+            prefetch.advance();
+          }
+        }
+
+        ioTime = Date.now() - batchStart;
+
+        // Parse all files in one Python process
+        if (filesToParse.length > 0) {
+          const parseStart = Date.now();
+          try {
+            const batchResults = await batchAnalyzer.parseBatch(filesToParse);
+
+            // Add language field to entities
+            for (const result of batchResults) {
+              if (result.entities) {
+                for (const entity of result.entities) {
+                  if (!entity.language) {
+                    entity.language = "python";
+                  }
+                }
+              }
+              results.push(result);
+            }
+
+            parseTime = Date.now() - parseStart;
+            workerLog("INFO", `Python batch parse complete`, {
+              files: batchResults.length,
+              ioMs: ioTime,
+              parseMs: parseTime,
+              avgMs: Math.round(parseTime / batchResults.length),
+            });
+          } catch (err) {
+            workerLog("ERROR", `Python batch parse failed, falling back to sequential`, {
+              error: (err as Error).message,
+            });
+            // Fall through to sequential processing below
+          }
+        }
+
+        // If batch succeeded, skip the per-file loop
+        if (results.length > 0) {
+          prefetch.clear();
+          // Jump to embedding generation (after the for loop)
+          // We use a goto-like pattern by checking results.length
+        }
+      }
+    }
+  }
+
+  // Sequential processing (for non-Python or batch fallback)
+  // Skip if batch mode already processed files
+  const skipSequential = results.length > 0 && task.language === "python";
+
+  for (const file of skipSequential ? [] : task.files) {
     try {
       // Verify language matches (skip check for universal pool)
       const detectedLang = detectLanguage(file);

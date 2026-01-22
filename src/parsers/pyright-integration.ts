@@ -86,6 +86,9 @@ export interface PythonTypeInfo {
 let pyrightPath: string | null = null;
 let pyrightChecked = false;
 
+// Detect Bun runtime for faster Pyright execution
+const isBunRuntime = typeof globalThis.Bun !== "undefined";
+
 /**
  * Check if Pyright is available
  */
@@ -97,14 +100,17 @@ async function findPyright(): Promise<string | null> {
   pyrightChecked = true;
 
   // Try different Pyright commands
-  const commands = ["pyright", "npx pyright"];
+  // Prefer Bun when available (faster startup, same compatibility)
+  const commands = isBunRuntime
+    ? ["bunx pyright", "bun x pyright", "pyright", "npx pyright"]
+    : ["pyright", "npx pyright"];
 
   for (const cmd of commands) {
     try {
       const available = await checkCommand(cmd);
       if (available) {
         pyrightPath = cmd;
-        log.i("PYRIGHT", "found", { cmd });
+        log.i("PYRIGHT", "found", { cmd, runtime: isBunRuntime ? "bun" : "node" });
         return pyrightPath;
       }
     } catch {

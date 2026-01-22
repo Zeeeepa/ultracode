@@ -44,35 +44,38 @@ interface WorkerResult {
 type WorkerMessage = { type: "init" } | { type: "task"; task: WorkerTask } | { type: "shutdown" } | { type: "ping" };
 
 /**
- * Python analyzer interface (from python-analyzer.ts)
+ * Python parser interface (from python-native-parser.ts)
+ * Uses CLI script that supports relationship extraction
  */
-interface PythonAnalyzer {
-  parseFile(filePath: string, content: string): Promise<ParseResult>;
+interface PythonParser {
+  initialize(): Promise<void>;
+  parse(filePath: string, content: string, contentHash: string): Promise<ParseResult>;
 }
 
 // =============================================================================
 // PYTHON-SPECIFIC PARSER INITIALIZATION
 // =============================================================================
 
-let pythonParser: PythonAnalyzer | null = null;
+let pythonParser: PythonParser | null = null;
 let isInitialized = false;
 
 async function initializePythonParser(): Promise<void> {
   if (isInitialized) return;
 
   try {
-    // Dynamic import to avoid loading tree-sitter in main thread
-    const { createPythonAnalyzer } = await import("../../parsers/python-analyzer.js");
+    // Use PythonNativeParser which calls python-ast-cli.py for relationship extraction
+    const { PythonNativeParser } = await import("../../parsers/python-native-parser.js");
 
-    // Create Python analyzer with default 4-layer configuration
-    pythonParser = createPythonAnalyzer() as unknown as PythonAnalyzer;
+    // Create Python parser with CLI script support
+    pythonParser = new PythonNativeParser() as unknown as PythonParser;
+    await pythonParser.initialize();
     isInitialized = true;
 
     if (parentPort) {
       parentPort.postMessage({
         type: "initialized",
         workerId: workerData?.workerId || "python-worker",
-        layers: "1-4 enabled",
+        features: "CLI script with relationships",
       });
     }
   } catch (error) {
@@ -120,14 +123,19 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
       // Read file content
       const content = readFileSync(file, "utf-8");
 
-      // Layer 1: Enhanced Basic Parsing (method classification, type hints, decorators)
+      // Generate simple content hash
+      const contentHash = `${content.length}-${content
+        .slice(0, 100)
+        .split("")
+        .reduce((a, c) => a + c.charCodeAt(0), 0)}`;
+
+      // Parse using PythonNativeParser (with CLI script for relationship extraction)
       const layer1Start = Date.now();
-      const parseResult = await pythonParser!.parseFile(file, content);
+      const parseResult = await pythonParser!.parse(file, content, contentHash);
       const layer1Time = Date.now() - layer1Start;
       totalLayer1 += layer1Time;
 
-      // Layers 2-4 are already integrated in PythonAnalyzer.parseFile
-      // But we can extract timing from metrics if available
+      // Layer timing from PythonNativeParser
       const resultWithMetadata = parseResult as ParseResult & {
         metadata?: { layerTiming?: { layer2?: number; layer3?: number; layer4?: number } };
       };
