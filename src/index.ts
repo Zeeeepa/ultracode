@@ -106,7 +106,6 @@ import {
 import type { z } from "zod";
 // Import our multi-agent components
 import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
-import type { IndexerAgent } from "./agents/indexer-agent.js";
 // AutoDoc: Semantic documentation layer
 import { type AutoDocWatcherConfig, getAutoDocWatcher } from "./autodoc/index.js";
 // CLI argument parsing
@@ -522,11 +521,10 @@ async function getDoraAgent(): Promise<Agent> {
   return await getOrCreateAgent(container, cond, AgentType.DORA);
 }
 
-async function getIndexerAgent(): Promise<IndexerAgent> {
-  const cond = getConductor();
-  await cond.initialize();
-  return (await getOrCreateAgent(container, cond, AgentType.INDEXER)) as unknown as IndexerAgent;
-}
+// NOTE: getIndexerAgent() was REMOVED to avoid duplicate IndexerAgent instances.
+// DevAgent has its own private IndexerAgent, and all tools should use devAgent.getIndexerAgent()
+// to ensure consistency. Using a separate conductor-registered IndexerAgent caused watchers
+// to point to wrong directories.
 
 // GraphStorage singleton is now managed by graph-storage-factory.ts
 
@@ -758,7 +756,12 @@ async function executeToolCall(
       getSQLiteManager: () => null, // Legacy - now using libsql via getGraphStorage()
       getSemanticAgent: getSemanticAgent as () => Promise<any>,
       getBranchManager: async () => {
-        const indexerAgent = await getIndexerAgent();
+        // Use DevAgent's IndexerAgent for consistency with other tools
+        const conductor = getConductor();
+        await conductor.initialize();
+        type DevAgentWithIndexer = { getIndexerAgent?: () => { getBranchManager?: () => unknown } | null };
+        const devAgent = conductor.getAgentByType?.(AgentType.DEV) as DevAgentWithIndexer | undefined;
+        const indexerAgent = devAgent?.getIndexerAgent?.();
         return (indexerAgent?.getBranchManager?.() || null) as any;
       },
       getSnapshotManager: async () => {
@@ -1392,15 +1395,30 @@ async function main() {
                 const semanticAgent = await getSemanticAgent();
                 log.i("SEMANTIC", "init_for_incremental", { hasAgent: !!semanticAgent });
 
-                // Use getIndexerAgent() which creates the agent if it doesn't exist
-                const indexerAgent = await getIndexerAgent();
+                // Use DevAgent's IndexerAgent for watchers (consistent with index tool handler)
+                // NOTE: Do NOT use getIndexerAgent() - that creates a SEPARATE IndexerAgent
+                // registered with conductor, which is different from DevAgent's internal one.
+                // All tools use devAgent.getIndexerAgent(), so we must use the same instance.
+                type DevAgentWithIndexer = {
+                  getIndexerAgent?: () => {
+                    setProjectContext?: (path: string) => void;
+                    setRepositoryPath?: (path: string) => Promise<void>;
+                  } | null;
+                };
+                const devAgentWithIndexer = devAgent as DevAgentWithIndexer;
+                const indexerAgent = devAgentWithIndexer?.getIndexerAgent?.() ?? null;
                 if (indexerAgent?.setRepositoryPath) {
                   // Set project context before starting watchers
-                  indexerAgent.setProjectContext(directory);
+                  if (indexerAgent.setProjectContext) {
+                    indexerAgent.setProjectContext(directory);
+                  }
                   await indexerAgent.setRepositoryPath(directory);
                   log.i("INDEXER", "watcher_started_existing", { dir: directory });
                 } else {
-                  log.w("INDEXER", "watcher_no_agent", { hasAgent: !!indexerAgent });
+                  log.w("INDEXER", "watcher_no_agent", {
+                    hasAgent: !!indexerAgent,
+                    reason: "DevAgent.getIndexerAgent() returned null",
+                  });
                 }
               } catch (watcherError) {
                 log.w("INDEXER", "watcher_start_fail", { err: (watcherError as Error).message });

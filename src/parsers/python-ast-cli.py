@@ -76,6 +76,80 @@ def get_attribute_name(node: ast.Attribute) -> str:
     return ".".join(reversed(parts))
 
 
+def get_call_target(node: ast.expr) -> str | None:
+    """
+    Get target of a method call (obj in obj.method()).
+
+    Args:
+        node: The AST expression representing the call target
+
+    Returns:
+        String representation of the target, or None if not determinable
+    """
+    if isinstance(node, ast.Name):
+        return node.id  # obj.method() -> "obj"
+    elif isinstance(node, ast.Attribute):
+        return get_attribute_name(node)  # a.b.method() -> "a.b"
+    elif isinstance(node, ast.Call):
+        # func().method() -> "func()"
+        try:
+            return ast.unparse(node) if hasattr(ast, "unparse") else None
+        except:
+            return None
+    elif isinstance(node, ast.Subscript):
+        # arr[0].method() -> "arr[0]"
+        try:
+            return ast.unparse(node) if hasattr(ast, "unparse") else None
+        except:
+            return None
+    return None
+
+
+def extract_calls_from_body(body: list[ast.stmt], container_name: str) -> list[dict]:
+    """
+    Extract all function/method calls from a function body.
+
+    Args:
+        body: AST nodes of the function body
+        container_name: Name of the function/method containing the calls
+
+    Returns:
+        List of dictionaries with call information
+    """
+    calls = []
+
+    for node in ast.walk(ast.Module(body=body, type_ignores=[])):
+        if isinstance(node, ast.Call):
+            call_info = {
+                "line": getattr(node, "lineno", 0),
+                "col": getattr(node, "col_offset", 0),
+                "argumentCount": len(node.args) + len(node.keywords),
+            }
+
+            # Simple call: foo()
+            if isinstance(node.func, ast.Name):
+                call_info["name"] = node.func.id
+                call_info["target"] = None
+
+            # Method call: obj.method() or self.method()
+            elif isinstance(node.func, ast.Attribute):
+                call_info["name"] = node.func.attr
+                call_info["target"] = get_call_target(node.func.value)
+
+            # Complex call: func()() or arr[0]()
+            else:
+                try:
+                    call_info["name"] = ast.unparse(node.func) if hasattr(ast, "unparse") else "unknown"
+                    call_info["target"] = None
+                except:
+                    continue
+
+            call_info["container"] = container_name
+            calls.append(call_info)
+
+    return calls
+
+
 def get_function_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[dict]:
     """Extract function parameters."""
     params = []
@@ -315,6 +389,7 @@ def parse_file(file_path: str, content: str) -> dict:
     entities = []
     relationships = []
     errors = []
+    all_calls = []  # Collect all function/method calls
 
     try:
         tree = ast.parse(content, filename=file_path)
@@ -328,14 +403,27 @@ def parse_file(file_path: str, content: str) -> dict:
             "location": {"start": {"line": 1, "column": 0, "index": 0}, "end": {"line": 1, "column": 0, "index": 0}},
         })
 
+        # Helper to collect calls from function body
+        def collect_function_calls(func_node, func_name: str):
+            if func_node.body:
+                calls = extract_calls_from_body(func_node.body, func_name)
+                all_calls.extend(calls)
+
         # Process top-level nodes
         for node in ast.walk(tree):
             if isinstance(node, ast.Module):
                 for item in node.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         entities.append(process_function(item, file_path))
+                        # Extract calls from top-level function
+                        collect_function_calls(item, item.name)
                     elif isinstance(item, ast.ClassDef):
                         entities.extend(process_class(item, file_path))
+                        # Extract calls from class methods
+                        for class_item in item.body:
+                            if isinstance(class_item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                method_name = f"{item.name}.{class_item.name}"
+                                collect_function_calls(class_item, method_name)
                     elif isinstance(item, (ast.Import, ast.ImportFrom)):
                         entities.extend(process_import(item, file_path))
                     elif isinstance(item, ast.Assign):
@@ -363,11 +451,17 @@ def parse_file(file_path: str, content: str) -> dict:
         # Build relationships
         for entity in entities:
             if entity["type"] == "import":
+                # Enhanced import metadata
+                import_data = entity.get("metadata", {}).get("importData", {})
                 relationships.append({
                     "from": file_path,
                     "to": entity["name"],
                     "type": "imports",
-                    "metadata": {},
+                    "metadata": {
+                        "line": entity["location"]["start"]["line"],
+                        "alias": import_data.get("specifiers", [{}])[0].get("local") if import_data.get("specifiers") else None,
+                        "isNamespace": import_data.get("isNamespace", False),
+                    },
                 })
             elif entity["type"] == "class" and "inheritance" in entity:
                 for base in entity["inheritance"].get("baseClasses", []):
@@ -377,7 +471,7 @@ def parse_file(file_path: str, content: str) -> dict:
                         "type": "inherits",
                         "metadata": {},
                     })
-            elif entity["type"] in ("method", "function") and "." in entity["name"]:
+            elif entity["type"] in ("method", "function", "async_function") and "." in entity["name"]:
                 class_name = entity["name"].rsplit(".", 1)[0]
                 relationships.append({
                     "from": class_name,
@@ -385,6 +479,24 @@ def parse_file(file_path: str, content: str) -> dict:
                     "type": "contains",
                     "metadata": {},
                 })
+
+        # Add call relationships
+        for call in all_calls:
+            # Build target name
+            if call.get("target"):
+                target_name = f"{call['target']}.{call['name']}"
+            else:
+                target_name = call["name"]
+
+            relationships.append({
+                "from": call["container"],  # Who calls
+                "to": target_name,           # What is called
+                "type": "calls",
+                "metadata": {
+                    "line": call.get("line", 0),
+                    "argumentCount": call.get("argumentCount", 0),
+                },
+            })
 
     except SyntaxError as e:
         errors.append({
@@ -401,11 +513,49 @@ def parse_file(file_path: str, content: str) -> dict:
     }
 
 
+def parse_batch(files: list[dict]) -> list[dict]:
+    """
+    Parse multiple files in batch mode.
+
+    Args:
+        files: List of {"path": str, "content": str} dictionaries
+
+    Returns:
+        List of parse results, one per file
+    """
+    results = []
+    for file_info in files:
+        file_path = file_info.get("path", "unknown.py")
+        content = file_info.get("content", "")
+        result = parse_file(file_path, content)
+        result["filePath"] = file_path  # Include path in result
+        results.append(result)
+    return results
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python python-ast-cli.py <file_path>", file=sys.stderr)
-        print("       python python-ast-cli.py --stdin", file=sys.stderr)
+        print("       python python-ast-cli.py --stdin <file_path>", file=sys.stderr)
+        print("       python python-ast-cli.py --batch  (reads JSON array from stdin)", file=sys.stderr)
         sys.exit(1)
+
+    # Batch mode: read JSON array of {path, content} from stdin
+    if sys.argv[1] == "--batch":
+        try:
+            input_data = sys.stdin.read()
+            files = json.loads(input_data)
+            if not isinstance(files, list):
+                raise ValueError("Expected JSON array")
+            results = parse_batch(files)
+            print(json.dumps(results, ensure_ascii=False))
+        except json.JSONDecodeError as e:
+            print(json.dumps({"error": f"Invalid JSON: {e}"}), file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(1)
+        return
 
     if sys.argv[1] == "--stdin":
         # Read from stdin

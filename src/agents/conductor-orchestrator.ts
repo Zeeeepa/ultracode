@@ -228,7 +228,15 @@ export class ConductorOrchestrator extends BaseAgent {
    * Use this instead of getAgent(AgentType.X) since agent IDs include random suffixes.
    */
   getAgentByType(type: AgentType): Agent | undefined {
-    return this.getAgentsByType(type)[0];
+    const agents = this.getAgentsByType(type);
+    if (agents.length === 0) {
+      log.d("CONDUCTOR", "agent_not_found", {
+        type,
+        registered: Array.from(this.agents.keys()),
+        types: Array.from(this.agents.values()).map((a) => a.type),
+      });
+    }
+    return agents[0];
   }
 
   /**

@@ -105,6 +105,14 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     this.indexBatchSize = this.defaultBatchSize;
   }
 
+  /**
+   * Get the IndexerAgent instance.
+   * Used by metrics handlers to access watcher status.
+   */
+  getIndexerAgent(): IndexerAgent | null {
+    return this.indexerAgent;
+  }
+
   protected async onInitialize(): Promise<void> {
     try {
       const configLoader = ConfigLoader.getInstance();

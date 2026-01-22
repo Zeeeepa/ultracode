@@ -22,9 +22,27 @@ import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage }
 import { enhanceWithPyrightTypes, findPyright } from "./pyright-integration.js";
 
 // Get the directory of this module to find the CLI script
+// Note: After bundling, code may be in dist/chunks/ while CLI script is in dist/parsers/
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const PYTHON_CLI_SCRIPT_PATH = join(__dirname, "python-ast-cli.py");
+// Try multiple paths for CLI script location:
+// 1. Same directory (development: src/parsers/)
+// 2. dist/chunks -> dist/parsers (bundled in chunks)
+// 3. dist/agents/workers -> dist/parsers (worker thread)
+// 4. From project root (fallback)
+const PYTHON_CLI_SCRIPT_PATHS = [
+  join(__dirname, "python-ast-cli.py"), // Same directory (development)
+  join(__dirname, "..", "parsers", "python-ast-cli.py"), // dist/chunks -> dist/parsers
+  join(__dirname, "..", "..", "parsers", "python-ast-cli.py"), // dist/agents/workers -> dist/parsers
+  join(process.cwd(), "dist", "parsers", "python-ast-cli.py"), // From project root
+];
+const PYTHON_CLI_SCRIPT_PATH = (PYTHON_CLI_SCRIPT_PATHS.find((p) => {
+  try {
+    return existsSync(p);
+  } catch {
+    return false;
+  }
+}) ?? PYTHON_CLI_SCRIPT_PATHS[0]) as string;
 
 // =============================================================================
 // FALLBACK PYTHON AST EXTRACTION SCRIPT (used if CLI file not found)
@@ -385,7 +403,9 @@ export class PythonNativeParser {
   private pythonPath: string = "python";
   private pythonAvailable: boolean | null = null;
   private pyrightAvailable: boolean | null = null;
-  private usePyright: boolean = true; // Enable by default, can be disabled
+  // Pyright DISABLED by default - runs as Node.js process per file which is very expensive
+  // Enable only when running project-wide type analysis, not during indexing
+  private usePyright: boolean = false;
   private useCliScript: boolean = true; // Use external CLI script for better parsing
   private cliScriptAvailable: boolean = false;
   private stats: ParserStats = {
@@ -403,12 +423,20 @@ export class PythonNativeParser {
    * Initialize the parser and check if Python is available
    */
   async initialize(): Promise<void> {
-    log.d("PYTHONPARSER", "check_avail");
+    log.d("PYTHONPARSER", "check_avail", { dirname: __dirname });
+
+    // Log all candidate paths for debugging
+    log.d("PYTHONPARSER", "cli_paths", {
+      paths: PYTHON_CLI_SCRIPT_PATHS,
+      selected: PYTHON_CLI_SCRIPT_PATH,
+    });
 
     // Check for external CLI script
     this.cliScriptAvailable = existsSync(PYTHON_CLI_SCRIPT_PATH);
     if (this.cliScriptAvailable) {
-      log.d("PYTHONPARSER", "cli_found", { path: PYTHON_CLI_SCRIPT_PATH });
+      log.i("PYTHONPARSER", "cli_found", { path: PYTHON_CLI_SCRIPT_PATH });
+    } else {
+      log.w("PYTHONPARSER", "cli_not_found", { path: PYTHON_CLI_SCRIPT_PATH, tried: PYTHON_CLI_SCRIPT_PATHS });
     }
 
     // Try different Python commands
@@ -482,6 +510,18 @@ export class PythonNativeParser {
     try {
       let result: PythonParseResult;
 
+      // Log parse mode for debugging
+      const parseMode = !this.pythonAvailable
+        ? "regex"
+        : this.cliScriptAvailable && this.useCliScript
+          ? "cli"
+          : "inline";
+      log.d("PYTHONPARSER", "parse_mode", {
+        file: filePath.split(/[/\\]/).pop(),
+        mode: parseMode,
+        cliAvail: this.cliScriptAvailable,
+      });
+
       if (this.pythonAvailable) {
         // Use CLI script if available, otherwise use inline script
         if (this.cliScriptAvailable && this.useCliScript) {
@@ -509,6 +549,14 @@ export class PythonNativeParser {
       this.stats.filesParsed++;
       this.stats.totalParseTimeMs += parseTimeMs;
       this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
+
+      // DEBUG: Log parse result with relationships count
+      log.i("PYTHONPARSER", "parse_result", {
+        file: filePath,
+        entities: result.entities.length,
+        relationships: result.relationships.length,
+        relSample: result.relationships.slice(0, 3).map((r) => `${r.from}->${r.to}:${r.type}`),
+      });
 
       return {
         filePath,
@@ -538,6 +586,131 @@ export class PythonNativeParser {
         ],
       };
     }
+  }
+
+  /**
+   * Parse multiple files in batch mode (single Python process)
+   * Much more efficient than parsing files one by one
+   */
+  async parseBatch(files: Array<{ filePath: string; content: string; contentHash: string }>): Promise<ParseResult[]> {
+    if (!this.pythonAvailable || !this.cliScriptAvailable || !this.useCliScript) {
+      // Fall back to sequential parsing
+      log.w("PYTHONPARSER", "batch_fallback", { reason: "CLI not available" });
+      return Promise.all(files.map((f) => this.parse(f.filePath, f.content, f.contentHash)));
+    }
+
+    if (files.length === 0) return [];
+
+    const startTime = Date.now();
+    log.i("PYTHONPARSER", "batch_start", { files: files.length });
+
+    try {
+      const results = await this.parseWithCliBatch(files);
+      const parseTimeMs = Date.now() - startTime;
+
+      log.i("PYTHONPARSER", "batch_done", {
+        files: files.length,
+        ms: parseTimeMs,
+        avgMs: Math.round(parseTimeMs / files.length),
+      });
+
+      // Convert to ParseResult format
+      return results.map((result, index) => {
+        const file = files[index];
+        if (!file) {
+          return {
+            filePath: "unknown",
+            language: "python" as SupportedLanguage,
+            entities: [],
+            contentHash: "",
+            timestamp: Date.now(),
+            parseTimeMs: 0,
+            errors: [{ message: "File info missing" }],
+          };
+        }
+
+        this.stats.filesParsed++;
+
+        return {
+          filePath: file.filePath,
+          language: "python" as SupportedLanguage,
+          entities: result.entities,
+          ...(result.relationships.length > 0 && { relationships: result.relationships }),
+          contentHash: file.contentHash,
+          timestamp: Date.now(),
+          parseTimeMs: Math.round(parseTimeMs / files.length),
+          ...(result.errors.length > 0 && { errors: result.errors }),
+        };
+      });
+    } catch (error) {
+      log.e("PYTHONPARSER", "batch_fail", { err: String(error) });
+      // Fall back to sequential parsing on error
+      return Promise.all(files.map((f) => this.parse(f.filePath, f.content, f.contentHash)));
+    }
+  }
+
+  /**
+   * Parse batch using CLI script (single Python process for all files)
+   */
+  private parseWithCliBatch(files: Array<{ filePath: string; content: string }>): Promise<PythonParseResult[]> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn(this.pythonPath, [PYTHON_CLI_SCRIPT_PATH, "--batch"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      // Send batch as JSON array
+      const batchInput = files.map((f) => ({ path: f.filePath, content: f.content }));
+      proc.stdin.write(JSON.stringify(batchInput));
+      proc.stdin.end();
+
+      proc.on("close", (code: number | null) => {
+        if (code !== 0) {
+          reject(new Error(`Python CLI batch parser failed: ${stderr}`));
+          return;
+        }
+
+        try {
+          const results = JSON.parse(stdout);
+          if (!Array.isArray(results)) {
+            reject(new Error("Expected array from batch parser"));
+            return;
+          }
+
+          // Ensure relationships array exists in each result
+          for (const result of results) {
+            if (!result.relationships) {
+              result.relationships = [];
+            }
+          }
+
+          log.d("PYTHONPARSER", "cli_batch_result", {
+            files: results.length,
+            totalEntities: results.reduce((sum: number, r: PythonParseResult) => sum + r.entities.length, 0),
+            totalRels: results.reduce((sum: number, r: PythonParseResult) => sum + r.relationships.length, 0),
+          });
+
+          resolve(results);
+        } catch (e) {
+          reject(new Error(`Failed to parse Python CLI batch output: ${e}`));
+        }
+      });
+
+      proc.on("error", (err: Error) => {
+        reject(err);
+      });
+    });
   }
 
   /**
@@ -576,6 +749,11 @@ export class PythonNativeParser {
           if (!result.relationships) {
             result.relationships = [];
           }
+          // DEBUG: Log CLI result
+          log.d("PYTHONPARSER", "cli_result", {
+            entities: result.entities?.length ?? 0,
+            relationships: result.relationships?.length ?? 0,
+          });
           resolve(result);
         } catch (e) {
           reject(new Error(`Failed to parse Python CLI output: ${e}`));

@@ -61,8 +61,17 @@ async function createAnalyzer(language: string): Promise<BaseParser> {
 
   switch (language) {
     case "python": {
+      const { workerLog } = await import("./worker-logging.js");
+      workerLog("INFO", `Loading PythonNativeParser`);
       const { PythonNativeParser } = await import("../../parsers/python-native-parser.js");
       analyzer = new PythonNativeParser();
+      workerLog("INFO", `Calling initialize() for Python CLI detection`);
+      await analyzer.initialize();
+      const parserInfo = analyzer as { cliScriptAvailable?: boolean; pythonAvailable?: boolean };
+      workerLog("INFO", `PythonNativeParser initialized`, {
+        cliAvail: parserInfo.cliScriptAvailable,
+        pyAvail: parserInfo.pythonAvailable,
+      });
       break;
     }
 
@@ -269,3 +278,35 @@ export const SUPPORTED_WORKER_LANGUAGES = [
   "javascript",
   "json",
 ] as const;
+
+/**
+ * Check if analyzer supports batch parsing
+ */
+export function supportsBatchParsing(language: string): boolean {
+  return language === "python";
+}
+
+/**
+ * Get Python analyzer with batch support (for optimized multi-file parsing)
+ */
+type BatchParseFunction = (
+  files: Array<{ filePath: string; content: string; contentHash: string }>,
+) => Promise<import("../../types/parser.js").ParseResult[]>;
+
+interface AnalyzerWithBatch {
+  parseBatch: BatchParseFunction;
+}
+
+export async function getPythonAnalyzerWithBatch(): Promise<AnalyzerWithBatch | null> {
+  try {
+    const analyzer = await getAnalyzer("python");
+    // Check if it's PythonNativeParser with parseBatch method
+    const maybeWithBatch = analyzer as unknown as { parseBatch?: unknown };
+    if (analyzer && typeof maybeWithBatch.parseBatch === "function") {
+      return analyzer as unknown as AnalyzerWithBatch;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}

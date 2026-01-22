@@ -653,6 +653,16 @@ export class IndexerAgent extends BaseAgent {
   queueForIndexing(entities: ParsedEntity[], filePath: string, providedRelationships?: EntityRelationship[]): void {
     if (!entities || entities.length === 0) return;
 
+    // DEBUG: Log incoming relationships for Python files
+    if (filePath.endsWith(".py")) {
+      log.i("INDEXER", "queue_py_rels", {
+        file: filePath,
+        entities: entities.length,
+        relationships: providedRelationships?.length ?? 0,
+        relSample: providedRelationships?.slice(0, 3).map((r) => `${r.from}->${r.to}:${r.type}`),
+      });
+    }
+
     // Flatten and convert entities
     const flatEntities = flattenParsedEntities(entities);
     const fileHash = nanoid(8);
@@ -753,6 +763,10 @@ export class IndexerAgent extends BaseAgent {
       }
 
       // Insert relationships in one batch
+      log.i("INDEXER", "flush_rels", {
+        count: relationshipsToFlush.length,
+        sample: relationshipsToFlush.slice(0, 3).map((r) => `${r.fromId}->${r.toId}:${r.type}`),
+      });
       const relResult = await this.batchOps.insertRelationships(relationshipsToFlush);
 
       // Update file info for Smart Incremental indexing
@@ -1080,9 +1094,11 @@ export class IndexerAgent extends BaseAgent {
 
     // Start FileWatcher for efficient file change detection
     // Uses glob-watch (fast-glob + fs.watch) with Watchman fallback
+    log.d("INDEXER", "creating_filewatcher", { path });
     try {
       // Stop existing watcher if any
       if (this.fileWatcher) {
+        log.d("INDEXER", "stopping_old_filewatcher");
         await this.fileWatcher.stop();
         this.fileWatcher = null;
       }
