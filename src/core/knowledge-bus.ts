@@ -6,6 +6,7 @@
 import { EventEmitter } from "node:events";
 import { log } from "../logging/index.js";
 import type { AgentMessage } from "../types/agent.js";
+import { BloomFilter } from "../utils/bloom-filter.js";
 
 // Event-driven architecture: lazy cleanup on access, no polling loops
 
@@ -32,6 +33,15 @@ export class KnowledgeBus extends EventEmitter {
   private maxQueueSize = 1000;
   private maxKnowledgePerTopic = 100;
 
+  // Bloom filter for O(1) topic existence check
+  private topicBloom = new BloomFilter(1024);
+
+  // RegExp cache for O(1) pattern matching instead of compiling on each call
+  private regexCache = new Map<string, RegExp>();
+
+  // Reverse index for O(1) unsubscribe: subscriptionId -> topicKey
+  private subscriptionToTopic = new Map<string, string>();
+
   constructor() {
     super();
     // Event-driven: cleanup happens lazily on query(), not via polling
@@ -44,6 +54,9 @@ export class KnowledgeBus extends EventEmitter {
     this.knowledge.clear();
     this.subscriptions.clear();
     this.messageQueue.length = 0;
+    this.topicBloom.clear();
+    this.regexCache.clear();
+    this.subscriptionToTopic.clear();
     this.removeAllListeners();
   }
 
@@ -59,6 +72,9 @@ export class KnowledgeBus extends EventEmitter {
       timestamp: Date.now(),
       ttl,
     };
+
+    // Add topic to bloom filter for fast existence check
+    this.topicBloom.add(topic);
 
     // Store knowledge
     if (!this.knowledge.has(topic)) {
@@ -106,6 +122,9 @@ export class KnowledgeBus extends EventEmitter {
 
     this.subscriptions.get(topicKey)?.push(subscription);
 
+    // Track subscription location for O(1) unsubscribe
+    this.subscriptionToTopic.set(subscription.id, topicKey);
+
     this.emit("subscription:created", subscription);
 
     return subscription.id;
@@ -113,16 +132,22 @@ export class KnowledgeBus extends EventEmitter {
 
   /**
    * Unsubscribe from knowledge updates
+   * O(1) lookup via reverse index instead of O(n*m) iteration
    */
   unsubscribe(subscriptionId: string): void {
-    for (const [, subs] of this.subscriptions) {
+    const topicKey = this.subscriptionToTopic.get(subscriptionId);
+    if (!topicKey) return;
+
+    const subs = this.subscriptions.get(topicKey);
+    if (subs) {
       const index = subs.findIndex((s) => s.id === subscriptionId);
       if (index !== -1) {
         subs.splice(index, 1);
         this.emit("subscription:removed", subscriptionId);
-        break;
       }
     }
+
+    this.subscriptionToTopic.delete(subscriptionId);
   }
 
   /**
@@ -130,6 +155,13 @@ export class KnowledgeBus extends EventEmitter {
    * Event-driven: lazy cleanup of expired entries on access
    */
   query(topic: string | RegExp, limit = 10): KnowledgeEntry[] {
+    // Fast path: exact string topic that's definitely not in bloom filter
+    if (typeof topic === "string" && !topic.includes("*")) {
+      if (!this.topicBloom.mightContain(topic)) {
+        return []; // Definitely no such topic
+      }
+    }
+
     const results: KnowledgeEntry[] = [];
     const now = Date.now();
 
@@ -220,14 +252,37 @@ export class KnowledgeBus extends EventEmitter {
     };
   }
 
+  /**
+   * Reset bloom filter and rebuild from current topics
+   * Use when too many false positives accumulate (after many deletions)
+   */
+  resetBloomFilter(): void {
+    this.topicBloom.clear();
+    for (const topic of this.knowledge.keys()) {
+      this.topicBloom.add(topic);
+    }
+  }
+
   // Private methods
+
+  /**
+   * Get or create cached RegExp for wildcard pattern
+   * O(1) amortized instead of O(pattern) on every call
+   */
+  private getOrCreateRegex(pattern: string): RegExp {
+    let regex = this.regexCache.get(pattern);
+    if (!regex) {
+      regex = new RegExp(`^${pattern.replace(/\*/g, ".*")}$`);
+      this.regexCache.set(pattern, regex);
+    }
+    return regex;
+  }
 
   private matchesTopic(storedTopic: string, pattern: string | RegExp): boolean {
     if (typeof pattern === "string") {
       // Support wildcards in string patterns
       if (pattern.includes("*")) {
-        const regex = new RegExp(`^${pattern.replace(/\*/g, ".*")}$`);
-        return regex.test(storedTopic);
+        return this.getOrCreateRegex(pattern).test(storedTopic);
       }
       return storedTopic === pattern;
     }

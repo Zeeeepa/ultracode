@@ -3,6 +3,7 @@ export type ProviderKind =
   | "cloudru"
   | "huggingface"
   | "tei"
+  | "ollama" // Ollama local server
   | "ovms" // Legacy alias for ovms-native
   | "ovms-native" // OVMS native binary (no Docker)
   | "vllm" // vLLM Docker container (NVIDIA GPU)

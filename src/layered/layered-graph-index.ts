@@ -181,7 +181,8 @@ export class LayeredGraphIndex implements ILayeredIndex {
       const layer1Start = Date.now();
       const branchDelta = await this.getBranchDelta(branch);
 
-      if (branchDelta) {
+      // Fast path: skip if delta is definitely empty (bloom filter check)
+      if (branchDelta && !branchDelta.isEmpty()) {
         layer1Results = branchDelta.applyToEntities(layer0Results);
       }
 
@@ -233,7 +234,8 @@ export class LayeredGraphIndex implements ILayeredIndex {
     if (branch && !this.isMainBranch(branch)) {
       const branchDelta = await this.getBranchDelta(branch);
 
-      if (branchDelta) {
+      // Fast path: skip if delta is definitely empty (bloom filter check)
+      if (branchDelta && !branchDelta.isEmpty()) {
         layer1Results = branchDelta.applyToRelationships(layer0Results);
       }
     }
@@ -823,6 +825,8 @@ export class LayeredGraphIndex implements ILayeredIndex {
    */
   private applyWorkingDeltaToEntities(workingDelta: WorkingDelta, baseResults: Entity[]): Entity[] {
     const result: Entity[] = [];
+    // O(n) deduplication using Set instead of O(n²) .find() in loop
+    const seenIds = new Set<string>();
 
     // Start with base results (Layer 0 + Layer 1)
     for (const entity of baseResults) {
@@ -835,15 +839,18 @@ export class LayeredGraphIndex implements ILayeredIndex {
       const modified = workingDelta.entityDelta.modified.get(entity.id);
       if (modified) {
         result.push(modified);
+        seenIds.add(modified.id);
       } else {
         result.push(entity);
+        seenIds.add(entity.id);
       }
     }
 
     // Add new entities from working delta
     for (const addedEntity of workingDelta.entityDelta.added.values()) {
-      // Only add if not already present
-      if (!result.find((e) => e.id === addedEntity.id)) {
+      // O(1) lookup instead of O(n) .find()
+      if (!seenIds.has(addedEntity.id)) {
+        seenIds.add(addedEntity.id);
         result.push(addedEntity);
       }
     }
@@ -856,6 +863,8 @@ export class LayeredGraphIndex implements ILayeredIndex {
    */
   private applyWorkingDeltaToRelationships(workingDelta: WorkingDelta, baseResults: Relationship[]): Relationship[] {
     const result: Relationship[] = [];
+    // O(n) deduplication using Set instead of O(n²) .find() in loop
+    const seenIds = new Set<string>();
 
     // Start with base results (Layer 0 + Layer 1)
     for (const rel of baseResults) {
@@ -865,12 +874,14 @@ export class LayeredGraphIndex implements ILayeredIndex {
       }
 
       result.push(rel);
+      seenIds.add(rel.id);
     }
 
     // Add new relationships from working delta
     for (const addedRel of workingDelta.relationshipDelta.added.values()) {
-      // Only add if not already present
-      if (!result.find((r) => r.id === addedRel.id)) {
+      // O(1) lookup instead of O(n) .find()
+      if (!seenIds.has(addedRel.id)) {
+        seenIds.add(addedRel.id);
         result.push(addedRel);
       }
     }

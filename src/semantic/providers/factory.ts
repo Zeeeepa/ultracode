@@ -6,6 +6,7 @@ import type { EmbeddingProvider, ProviderKind } from "./base.js";
 import { CloudRUProvider } from "./cloudru-provider.js";
 import { HuggingFaceProvider } from "./huggingface-provider.js";
 import { LlamaCppProvider } from "./llamacpp-provider.js";
+import { OllamaProvider } from "./ollama-provider.js";
 import { OpenAIProvider } from "./openai-provider.js";
 import { OVMSProvider } from "./ovms-provider.js";
 import { TEIProvider } from "./tei-provider.js";
@@ -119,6 +120,16 @@ export interface ProviderFactoryOptions {
     checkServer?: boolean;
     maxBatchSize?: number | undefined; // Max texts per request (TEI max_client_batch_size)
   };
+  ollama?: {
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
+    headers?: Record<string, string>;
+    autoPull?: boolean;
+    warmupText?: string;
+    checkServer?: boolean;
+    pullTimeoutMs?: number;
+  };
   ovms?: {
     baseUrl?: string | undefined;
     timeoutMs?: number | undefined;
@@ -219,6 +230,21 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         logger: makeProviderLogger(null, "PROVIDER_TEI"),
       });
 
+    case "ollama":
+      log.i("FACTORY", `Creating Ollama provider`, { ollama: opts.ollama });
+      return new OllamaProvider({
+        model: actualModel,
+        baseUrl: opts.ollama?.baseUrl,
+        timeoutMs: opts.ollama?.timeoutMs,
+        concurrency: opts.ollama?.concurrency,
+        headers: opts.ollama?.headers,
+        autoPull: opts.ollama?.autoPull,
+        warmupText: opts.ollama?.warmupText,
+        checkServer: opts.ollama?.checkServer,
+        pullTimeoutMs: opts.ollama?.pullTimeoutMs,
+        logger: makeProviderLogger(null, "PROVIDER_OLLAMA"),
+      });
+
     case "ovms":
     case "ovms-native": {
       // OVMS Native: 8083 (REST), 9001 (gRPC) - managed by ovms-native-manager
@@ -297,7 +323,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
     default:
       throw new Error(
         `Unknown embedding provider: ${actualProvider}. ` +
-          `Supported providers: vllm, tei, llamacpp, ovms, ovms-native, openai, cloudru, huggingface`,
+          `Supported providers: vllm, tei, ollama, llamacpp, ovms, ovms-native, openai, cloudru, huggingface`,
       );
   }
 }

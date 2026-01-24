@@ -242,6 +242,13 @@ export class BranchDelta implements IBranchDelta {
     return this.totalChanges > threshold;
   }
 
+  /**
+   * Check if delta has any changes at all
+   */
+  isEmpty(): boolean {
+    return this.totalChanges === 0;
+  }
+
   // =========================================================================
   // SERIALIZATION
   // =========================================================================

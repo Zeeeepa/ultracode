@@ -198,10 +198,28 @@ export class ResourceManager extends EventEmitter {
 
   /**
    * Get resource usage history
+   * O(log n) binary search instead of O(n) filter (snapshots are sorted by timestamp)
    */
   getHistory(seconds = 60): ResourceSnapshot[] {
     const cutoff = Date.now() - seconds * 1000;
-    return this.snapshots.filter((s) => s.timestamp >= cutoff);
+    const snapshots = this.snapshots;
+
+    // Binary search for first index where timestamp >= cutoff
+    let left = 0;
+    let right = snapshots.length;
+
+    while (left < right) {
+      const mid = (left + right) >>> 1;
+      // Safe access: mid is always < right <= length, and left <= mid
+      if (snapshots[mid]!.timestamp < cutoff) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+
+    // Return slice from found index to end
+    return snapshots.slice(left);
   }
 
   /**

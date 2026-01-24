@@ -281,11 +281,24 @@ export class ClientSession {
 
 const activeSessions = new Map<string, ClientSession>();
 
+// Index for O(k) lookup by project path instead of O(n) filter
+const sessionsByProject = new Map<string, Set<string>>();
+
 /**
  * Register a new session
  */
 export function registerSession(session: ClientSession): void {
   activeSessions.set(session.sessionId, session);
+
+  // Add to project index for O(k) lookup
+  const projectPath = session.projectPath;
+  let projectSessions = sessionsByProject.get(projectPath);
+  if (!projectSessions) {
+    projectSessions = new Set();
+    sessionsByProject.set(projectPath, projectSessions);
+  }
+  projectSessions.add(session.sessionId);
+
   log.i("SESSION", "registered", { sid: session.sessionId, total: activeSessions.size });
 }
 
@@ -293,6 +306,19 @@ export function registerSession(session: ClientSession): void {
  * Unregister a session (on client disconnect)
  */
 export function unregisterSession(sessionId: string): void {
+  const session = activeSessions.get(sessionId);
+
+  // Remove from project index
+  if (session) {
+    const projectSessions = sessionsByProject.get(session.projectPath);
+    if (projectSessions) {
+      projectSessions.delete(sessionId);
+      if (projectSessions.size === 0) {
+        sessionsByProject.delete(session.projectPath);
+      }
+    }
+  }
+
   activeSessions.delete(sessionId);
   log.i("SESSION", "unregistered", { sid: sessionId, total: activeSessions.size });
 }
@@ -313,10 +339,19 @@ export function getActiveSessions(): ClientSession[] {
 
 /**
  * Get sessions for a specific project
+ * O(k) lookup via index instead of O(n) filter
  */
 export function getSessionsForProject(projectPath: string): ClientSession[] {
   const normalized = normalize(resolve(projectPath));
-  return Array.from(activeSessions.values()).filter((s) => s.projectPath === normalized);
+  const sessionIds = sessionsByProject.get(normalized);
+  if (!sessionIds) return [];
+
+  const result: ClientSession[] = [];
+  for (const sessionId of sessionIds) {
+    const session = activeSessions.get(sessionId);
+    if (session) result.push(session);
+  }
+  return result;
 }
 
 // =============================================================================
