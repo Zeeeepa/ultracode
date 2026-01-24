@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { initHasher } from "../../utils/fast-hash.js";
 import { ConflictResolver } from "../engine/conflict-resolver.js";
 import type { ChangeIntent } from "../models/change-intent.js";
 import { ChangeIntentType } from "../models/change-intent.js";
@@ -11,6 +12,11 @@ import {
 } from "../models/semantic-conflict.js";
 
 describe("ConflictResolver", () => {
+  // Initialize xxHash before tests that use hashText
+  beforeAll(async () => {
+    await initHasher();
+  });
+
   const createCodeUnit = (overrides: Partial<CodeUnit> = {}): CodeUnit => ({
     id: "test-id",
     type: CodeUnitType.Function,
