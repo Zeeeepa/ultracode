@@ -1,6 +1,6 @@
 # Schemas
 
-*Last updated: 2026-01-18*
+*Last updated: 2026-01-25*
 
 Модуль содержит схемы валидации Zod для всех инструментов MCP.
 
@@ -26,11 +26,11 @@
 | `ListEntitiesToolSchema` | const | Валидация получения списка сущностей из файла | [→ entity-schemas.ts:8-11] |
 | `ListRelationshipsToolSchema` | const | Валидация получения связей между сущностями проекта | [→ entity-schemas.ts:8-11] |
 | `QueryToolSchema` | const | Валидация естественного языкового запроса к графу знаний | [→ entity-schemas.ts:26-30] |
-| `GetGraphSchema` | const | Валидация получения сущностей из графа с поиском | [→ graph-schemas.ts:8-11] |
-| `GetGraphStatsSchema` | const | Валидация получения статистики графа знаний без параметров | [→ graph-schemas.ts:13] |
-| `GetGraphHealthSchema` | const | Валидация проверки здоровья графа кода | [→ graph-schemas.ts:8-11] |
-| `GetBusStatsSchema` | const | Валидация получения статистики шины знаний без параметров | [→ graph-schemas.ts:21] |
-| `ClearBusTopicSchema` | const | Валидация очистки тематического раздела шины знаний | [→ graph-schemas.ts:21-21] |
+| `GetGraphSchema` | const | Валидация получения сущностей из графа с поиском | [→ graph-schemas.ts:9-13] |
+| `GetGraphStatsSchema` | const | Валидация получения статистики графа знаний без параметров | [→ graph-schemas.ts:15] |
+| `GetGraphHealthSchema` | const | Валидация проверки здоровья графа кода | [→ graph-schemas.ts:9-13] |
+| `GetBusStatsSchema` | const | Валидация получения статистики шины знаний без параметров | [→ graph-schemas.ts:19] |
+| `ClearBusTopicSchema` | const | Валидация очистки тематического раздела шины знаний | [→ graph-schemas.ts:19-24] |
 | `DEFAULT_EXCLUDE_PATTERNS` | const | Стандартные паттерны исключения файлов при индексировании | [→ index-schemas.ts:9-60] |
 | `IndexToolSchema` | const | Валидация параметров индексирования директорий проекта | [→ index-schemas.ts:54-60] |
 | `CleanIndexSchema` | const | Валидация очистки и переиндексирования графа знаний | [→ index-schemas.ts:62-66] |
