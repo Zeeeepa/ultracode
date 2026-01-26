@@ -270,10 +270,6 @@ export async function generateModuleReadmeWithEntities(
   lines.push(`# ${title}`);
   lines.push("");
 
-  // Last updated timestamp
-  lines.push(`*Last updated: ${new Date().toISOString().split("T")[0]}*`);
-  lines.push("");
-
   // Description placeholder
   if (module.description) {
     lines.push(module.description);
