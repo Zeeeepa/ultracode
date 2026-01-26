@@ -121,7 +121,9 @@ export interface ParsedEntity {
     | "ngrx_action"
     | "ngrx_reducer"
     | "ngrx_selector"
-    | "file";
+    | "file"
+    | "actor"
+    | "extension";
 
   /** File path containing this entity */
   filePath?: string | undefined; // Optional for backward compatibility
@@ -225,7 +227,16 @@ export interface ParsedEntity {
 
   /** Relationship data for Layer 3 */
   relationships?: Array<{
-    type: "inherits" | "implements" | "overrides" | "calls" | "imports" | "decorates" | "contains";
+    type:
+      | "inherits"
+      | "implements"
+      | "overrides"
+      | "calls"
+      | "imports"
+      | "decorates"
+      | "contains"
+      | "member_of"
+      | "depends_on";
     target: string;
     targetFile?: string;
     metadata?: Record<string, any>;

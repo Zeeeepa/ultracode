@@ -58,6 +58,7 @@ export enum RelationType {
   REFERENCES = "references",
   CONTAINS = "contains",
   DEPENDS_ON = "depends_on",
+  MEMBER_OF = "member_of", // Method/property belongs to class/struct
   DOCUMENTS = "documents", // Comment documents code entity
 
   // Reverse relationships for bidirectional tracing
@@ -466,6 +467,8 @@ export function parsedEntityToEntity(
     filePath,
     location: parsed.location,
     metadata: {
+      // Merge any existing metadata from parser (e.g., stateReads, stateModifications)
+      ...(parsed.metadata || {}),
       modifiers: parsed.modifiers,
       returnType: parsed.returnType,
       parameters: parsed.parameters,
@@ -473,6 +476,10 @@ export function parsedEntityToEntity(
       signature: parsed.signature,
       language: parsed.language,
       decorators: parsed.decorators,
+      // Call graph data for tracing
+      calls: parsed.calls,
+      // Control flow for branch analysis
+      controlFlow: parsed.controlFlow,
       // Complexity metrics from ts-complexity-analyzer
       metrics: parsed.complexity
         ? {

@@ -158,6 +158,12 @@ export async function buildRelationships(
           case "contains":
             relType = RelationType.CONTAINS;
             break;
+          case "member_of":
+            relType = RelationType.MEMBER_OF;
+            break;
+          case "depends_on":
+            relType = RelationType.DEPENDS_ON;
+            break;
           default:
             relType = RelationType.REFERENCES;
             break;

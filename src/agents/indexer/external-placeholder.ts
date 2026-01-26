@@ -64,15 +64,22 @@ export function createExternalPlaceholder(
 ): string {
   const { source, symbol } = parseExternalId(extId);
 
+  // Determine if source is a file path (contains / or \ or ends with file extension)
+  const isFilePath = source.includes("/") || source.includes("\\") || /\.\w+$/.test(source);
+
+  // Use symbol as the primary name - it already contains qualified name for cross-module calls
+  // Only prefix with source if source is a class/module name (not a file path)
+  const qualifiedName = isFilePath || source === "unknown" ? symbol : `${source}.${symbol}`;
+
   const placeholderBase: Omit<Entity, "id" | "createdAt" | "updatedAt"> = {
-    name: symbol,
+    name: qualifiedName, // Qualified name for cross-module resolution
     type: EntityType.IMPORT,
     filePath: `external://${source}`,
     location: {
       start: { line: 0, column: 0, index: 0 },
       end: { line: 0, column: 0, index: 0 },
     },
-    metadata: { isExternal: true, source, symbol },
+    metadata: { isExternal: true, source, symbol, qualifiedName },
     hash: `external:${source}:${symbol}`,
   };
 
@@ -92,33 +99,157 @@ export function createExternalPlaceholder(
 }
 
 /**
- * Process relationships and replace external IDs with placeholder IDs.
- * Creates placeholder entities for any external references.
+ * Process relationships and replace external IDs with real entity IDs or placeholder IDs.
+ * If lookupEntityByName is provided, tries to resolve external references to existing entities first.
+ * Creates placeholder entities only for unresolved external references.
  *
  * @param relationships - Array of relationships to process
  * @param stableRelationshipIdFn - Function to generate stable relationship IDs
+ * @param lookupEntityByName - Optional async function to lookup existing entities by qualified name
  * @returns Array of placeholder entities that need to be inserted
  */
-export function processExternalRelationships<R extends { fromId: string; toId: string; type: string; id?: string }>(
+export async function processExternalRelationships<
+  R extends { fromId: string; toId: string; type: string; id?: string },
+>(
   relationships: R[],
   stableRelationshipIdFn: (fromId: string, toId: string, type: string) => string,
-): Entity[] {
+  lookupEntityByName?: (qualifiedName: string) => Promise<Entity | undefined>,
+): Promise<Entity[]> {
   const seenExternal = new Map<string, string>();
   const placeholders: Entity[] = [];
 
   for (const rel of relationships) {
     // Handle external fromId (e.g., decorators from imported modules)
     if (typeof rel.fromId === "string" && rel.fromId.startsWith("external:")) {
-      rel.fromId = createExternalPlaceholder(rel.fromId, seenExternal, placeholders);
+      rel.fromId = await resolveOrCreatePlaceholder(rel.fromId, seenExternal, placeholders, lookupEntityByName);
     }
 
     // Handle external toId
     if (typeof rel.toId === "string" && rel.toId.startsWith("external:")) {
-      rel.toId = createExternalPlaceholder(rel.toId, seenExternal, placeholders);
+      rel.toId = await resolveOrCreatePlaceholder(rel.toId, seenExternal, placeholders, lookupEntityByName);
     }
 
     rel.id = stableRelationshipIdFn(rel.fromId, rel.toId, rel.type);
   }
 
   return placeholders;
+}
+
+/**
+ * Try to resolve an external reference to an existing entity, or create a placeholder.
+ */
+async function resolveOrCreatePlaceholder(
+  extId: string,
+  seenExternal: Map<string, string>,
+  placeholders: Entity[],
+  lookupEntityByName?: (qualifiedName: string) => Promise<Entity | undefined>,
+): Promise<string> {
+  // Check if already processed
+  const cached = seenExternal.get(extId);
+  if (cached) return cached;
+
+  const { source, symbol } = parseExternalId(extId);
+
+  // Try to resolve to existing entity first
+  if (lookupEntityByName) {
+    // Strategy 1: symbol already contains qualified name (e.g., "ServerPoster.postMobileConnect")
+    // This is the most common case for cross-module calls
+    const existingBySymbol = await lookupEntityByName(symbol);
+    if (existingBySymbol) {
+      seenExternal.set(extId, existingBySymbol.id);
+      return existingBySymbol.id;
+    }
+
+    // Strategy 2: Try with source prefix if source is not a file path
+    // File paths contain / or \ or end with file extension
+    const isFilePath = source.includes("/") || source.includes("\\") || /\.\w+$/.test(source);
+    if (!isFilePath && source && source !== "unknown") {
+      const qualifiedName = `${source}.${symbol}`;
+      const existingByQualified = await lookupEntityByName(qualifiedName);
+      if (existingByQualified) {
+        seenExternal.set(extId, existingByQualified.id);
+        return existingByQualified.id;
+      }
+    }
+  }
+
+  // No existing entity found - create placeholder
+  return createExternalPlaceholder(extId, seenExternal, placeholders);
+}
+
+/**
+ * Resolve external placeholder entities to real entities after all projects are indexed.
+ * This enables cross-module tracing by linking placeholder references to actual entities.
+ *
+ * @param storage - Graph storage for querying entities and updating relationships
+ * @returns Statistics about resolved placeholders
+ */
+export interface PlaceholderResolutionResult {
+  totalPlaceholders: number;
+  resolved: number;
+  unresolved: string[];
+  relationshipsUpdated: number;
+}
+
+export async function resolveExternalPlaceholders(storage: {
+  getAllEntities: () => Promise<Entity[]>;
+  getRelationships: (options: {
+    toId?: string;
+  }) => Promise<Array<{ id: string; fromId: string; toId: string; type: string }>>;
+  updateRelationship: (id: string, updates: { toId: string }) => Promise<void>;
+  deleteEntity: (id: string) => Promise<void>;
+}): Promise<PlaceholderResolutionResult> {
+  const result: PlaceholderResolutionResult = {
+    totalPlaceholders: 0,
+    resolved: 0,
+    unresolved: [],
+    relationshipsUpdated: 0,
+  };
+
+  // Get all entities
+  const allEntities = await storage.getAllEntities();
+
+  // Separate placeholders and real entities
+  const placeholders = allEntities.filter((e) => e.filePath?.startsWith("external://"));
+  const realEntities = allEntities.filter((e) => !e.filePath?.startsWith("external://"));
+
+  result.totalPlaceholders = placeholders.length;
+
+  if (placeholders.length === 0) {
+    return result;
+  }
+
+  // Build name -> real entity map for fast lookup
+  const realEntityByName = new Map<string, Entity>();
+  for (const entity of realEntities) {
+    // Store by exact name
+    realEntityByName.set(entity.name, entity);
+  }
+
+  // Resolve each placeholder
+  for (const placeholder of placeholders) {
+    const qualifiedName = placeholder.name; // e.g., "ServerPoster.postMobileConnect"
+
+    // Try to find real entity by exact name match
+    const realEntity = realEntityByName.get(qualifiedName);
+
+    if (realEntity) {
+      // Found matching real entity - update relationships pointing to placeholder
+      const relationships = await storage.getRelationships({ toId: placeholder.id });
+
+      for (const rel of relationships) {
+        await storage.updateRelationship(rel.id, { toId: realEntity.id });
+        result.relationshipsUpdated++;
+      }
+
+      // Delete the placeholder entity (no longer needed)
+      await storage.deleteEntity(placeholder.id);
+
+      result.resolved++;
+    } else {
+      result.unresolved.push(qualifiedName);
+    }
+  }
+
+  return result;
 }
