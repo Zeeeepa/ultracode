@@ -79,10 +79,7 @@ export async function updateAutodocContent(
     updatedContent = await updateDescription(updatedContent, moduleInfo, _options);
   }
 
-  // 5. Update timestamp if content changed
-  if (updatedContent !== currentContent) {
-    updatedContent = updateTimestamp(updatedContent);
-  }
+  // Note: Timestamp updates removed - file modification time serves this purpose
 
   return updatedContent;
 }
@@ -411,27 +408,6 @@ async function updateLineReferences(content: string, changedFilePath: string, _m
   });
 
   return updatedContent;
-}
-
-/**
- * Update the last-modified timestamp
- */
-function updateTimestamp(content: string): string {
-  const now = new Date().toISOString().split("T")[0]!; // YYYY-MM-DD
-
-  // Look for existing timestamp patterns
-  const patterns = [/(?:Last updated|Updated|Обновлено):\s*\d{4}-\d{2}-\d{2}/i, /<!-- updated: \d{4}-\d{2}-\d{2} -->/i];
-
-  for (const pattern of patterns) {
-    if (pattern.test(content)) {
-      return content.replace(pattern, (match) => {
-        return match.replace(/\d{4}-\d{2}-\d{2}/, now);
-      });
-    }
-  }
-
-  // If no timestamp found, don't add one (keep clean)
-  return content;
 }
 
 /**

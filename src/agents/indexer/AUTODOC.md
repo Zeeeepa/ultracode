@@ -1,6 +1,6 @@
 # Indexer
 
-*Last updated: 2026-01-25*
+*Last updated: 2026-01-26*
 
 Модуль индексирования сущностей, отношений и обработки событий Git для анализа кода
 
@@ -9,8 +9,8 @@
 | Name | Type | Location |
 |------|------|----------|
 | `buildEntityNameMap` | function | [→ entity-resolution.ts:16-24] |
-| `buildRelationships` | function | [→ relationship-builder.ts:16-184] |
-| `createExternalPlaceholder` | function | [→ external-placeholder.ts:60-92] |
+| `buildRelationships` | function | [→ relationship-builder.ts:16-190] |
+| `createExternalPlaceholder` | function | [→ external-placeholder.ts:60-99] |
 | `EmbeddingSchedulerContext` | interface | [→ git-event-handlers.ts:181-188] |
 | `GitEventContext` | interface | [→ git-event-handlers.ts:19-23] |
 | `handleBranchChange` | function | [→ git-event-handlers.ts:131-179] |
@@ -18,7 +18,7 @@
 | `handleUncommittedChanges` | function | [→ git-event-handlers.ts:29-66] |
 | `initXXHash` | function | [→ stable-id.ts:27-31] |
 | `parseExternalId` | function | [→ external-placeholder.ts:19] |
-| `processExternalRelationships` | function | [→ external-placeholder.ts:102] |
+| `processExternalRelationships` | function | [→ external-placeholder.ts:108-112] |
 | `resolveByNameAndLine` | function | [→ entity-resolution.ts:39-70] |
 | `runtimeSleep` | function | [→ git-event-handlers.ts:193-195] |
 | `scheduleEmbeddingGeneration` | function | [→ git-event-handlers.ts:201-228] |
