@@ -1,6 +1,6 @@
 {
   "name": "ultrascript-tools-mcp",
-  "version": "3.0.0",
+  "version": "3.0.2",
   "description": "MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/Go/Rust/Java/C++/Kotlin",
   "license": "MIT",
   "author": "faxenoff",
