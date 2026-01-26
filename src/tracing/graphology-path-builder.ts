@@ -193,9 +193,29 @@ export class GraphologyPathBuilder {
         const targetName = toId.slice(9).toLowerCase(); // Remove "external:" prefix
         const candidates = nameToIds.get(targetName);
         if (candidates && candidates.length > 0) {
-          // Use first match (could be improved with file proximity heuristics)
-          toId = candidates[0]!;
-          resolvedExternalRefs++;
+          // Use targetClass from metadata to filter candidates (for cross-file calls)
+          const meta = rel.metadata as Record<string, unknown> | undefined;
+          const targetClass = meta?.["targetClass"] as string | undefined;
+          if (targetClass && candidates.length > 1) {
+            // Filter candidates by class name in entity ID
+            // Entity IDs look like: "FilePath:type:ClassName.methodName"
+            const classPattern = `.${targetClass}.`.toLowerCase();
+            const classPattern2 = `:${targetClass}.`.toLowerCase();
+            const filtered = candidates.filter(
+              (id) => id.toLowerCase().includes(classPattern) || id.toLowerCase().includes(classPattern2),
+            );
+            if (filtered.length > 0) {
+              toId = filtered[0]!;
+              resolvedExternalRefs++;
+            } else {
+              // Fallback to first candidate if class filter fails
+              toId = candidates[0]!;
+              resolvedExternalRefs++;
+            }
+          } else {
+            toId = candidates[0]!;
+            resolvedExternalRefs++;
+          }
         }
       }
 

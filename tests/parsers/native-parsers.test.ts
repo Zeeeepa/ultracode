@@ -9,6 +9,7 @@ import { JavaNativeParser } from "../../src/parsers/java-native-parser.js";
 import { KotlinNativeParser } from "../../src/parsers/kotlin-native-parser.js";
 import { PythonNativeParser } from "../../src/parsers/python-native-parser.js";
 import { RustNativeParser } from "../../src/parsers/rust-native-parser.js";
+import { SwiftNativeParser } from "../../src/parsers/swift-native-parser.js";
 import { TypeScriptParser } from "../../src/parsers/typescript-parser.js";
 
 // =============================================================================
@@ -667,6 +668,413 @@ macro_rules! my_macro {
     const macroEntity = result.entities.find((e) => e.name === "my_macro");
     expect(macroEntity).toBeDefined();
     expect(macroEntity?.modifiers).toContain("macro");
+  });
+
+  test("returns stats correctly", () => {
+    const stats = parser.getStats();
+    expect(stats).toHaveProperty("filesParsed");
+    expect(stats).toHaveProperty("avgParseTimeMs");
+  });
+});
+
+// =============================================================================
+// SWIFT PARSER TESTS
+// =============================================================================
+
+describe("SwiftNativeParser", () => {
+  let parser: SwiftNativeParser;
+
+  beforeEach(async () => {
+    parser = new SwiftNativeParser();
+    await parser.initialize();
+  });
+
+  test("supportsFile returns true for .swift files", () => {
+    expect(parser.supportsFile("Test.swift")).toBe(true);
+    expect(parser.supportsFile("test.SWIFT")).toBe(true);
+    expect(parser.supportsFile("path/to/File.swift")).toBe(true);
+  });
+
+  test("supportsFile returns false for non-swift files", () => {
+    expect(parser.supportsFile("test.js")).toBe(false);
+    expect(parser.supportsFile("test.kt")).toBe(false);
+    expect(parser.supportsFile("test.m")).toBe(false);
+  });
+
+  test("parses class declarations", async () => {
+    const content = `
+import Foundation
+
+public class MyClass {
+    private var name: String
+
+    init(name: String) {
+        self.name = name
+    }
+
+    func greet() -> String {
+        return "Hello, \\(name)"
+    }
+}
+    `;
+    const result = await parser.parse("MyClass.swift", content, "hash123");
+
+    expect(result.language).toBe("swift");
+    expect(result.entities.length).toBeGreaterThan(0);
+
+    const classEntity = result.entities.find((e) => e.name === "MyClass" && e.type === "class");
+    expect(classEntity).toBeDefined();
+    expect(classEntity?.modifiers).toContain("public");
+  });
+
+  test("parses struct declarations", async () => {
+    const content = `
+struct User {
+    let id: Int
+    var name: String
+    var email: String?
+}
+    `;
+    const result = await parser.parse("User.swift", content, "hash123");
+
+    const structEntity = result.entities.find((e) => e.name === "User" && e.type === "struct");
+    expect(structEntity).toBeDefined();
+  });
+
+  test("parses protocol declarations", async () => {
+    const content = `
+public protocol Service {
+    func process()
+    func getName() -> String
+}
+    `;
+    const result = await parser.parse("Service.swift", content, "hash123");
+
+    const protocolEntity = result.entities.find((e) => e.name === "Service" && e.type === "protocol");
+    expect(protocolEntity).toBeDefined();
+  });
+
+  test("parses enum declarations", async () => {
+    const content = `
+enum Status: String {
+    case pending
+    case active
+    case inactive
+}
+    `;
+    const result = await parser.parse("Status.swift", content, "hash123");
+
+    const enumEntity = result.entities.find((e) => e.name === "Status" && e.type === "enum");
+    expect(enumEntity).toBeDefined();
+  });
+
+  test("parses function declarations", async () => {
+    const content = `
+func add(a: Int, b: Int) -> Int {
+    return a + b
+}
+
+@MainActor
+func fetchData(url: String) async throws -> String {
+    return try await httpClient.get(url)
+}
+    `;
+    const result = await parser.parse("test.swift", content, "hash123");
+
+    const addFunc = result.entities.find((e) => e.name === "add" && e.type === "function");
+    expect(addFunc).toBeDefined();
+    expect(addFunc?.returnType).toBe("Int");
+
+    const asyncFunc = result.entities.find((e) => e.name === "fetchData");
+    expect(asyncFunc).toBeDefined();
+    expect(asyncFunc?.type).toBe("async_function");
+  });
+
+  test("parses imports", async () => {
+    const content = `
+import Foundation
+import UIKit
+import SwiftUI
+    `;
+    const result = await parser.parse("test.swift", content, "hash123");
+
+    const imports = result.entities.filter((e) => e.type === "import");
+    expect(imports.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("parses extension declarations", async () => {
+    const content = `
+extension String {
+    func isEmail() -> Bool {
+        return self.contains("@")
+    }
+}
+    `;
+    const result = await parser.parse("test.swift", content, "hash123");
+
+    const extEntity = result.entities.find((e) => e.type === "extension" && e.name === "String");
+    expect(extEntity).toBeDefined();
+  });
+
+  test("parses class with inheritance and protocols", async () => {
+    const content = `
+class MyViewController: UIViewController, UITableViewDelegate, UITableViewDataSource {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+    }
+}
+    `;
+    const result = await parser.parse("test.swift", content, "hash123");
+
+    const classEntity = result.entities.find((e) => e.name === "MyViewController" && e.type === "class");
+    expect(classEntity).toBeDefined();
+    // Check for inheritance
+    expect(classEntity?.inheritance).toBeDefined();
+  });
+
+  test("parses properties and computed properties", async () => {
+    const content = `
+class Config {
+    let apiKey: String = "key123"
+    var timeout: Int = 30
+
+    var isValid: Bool {
+        return !apiKey.isEmpty
+    }
+}
+    `;
+    const result = await parser.parse("Config.swift", content, "hash123");
+
+    const classEntity = result.entities.find((e) => e.name === "Config" && e.type === "class");
+    expect(classEntity).toBeDefined();
+
+    // Check for property extraction
+    const properties = result.entities.filter((e) => e.type === "property" || e.type === "field");
+    expect(properties.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("parses actor declarations", async () => {
+    const content = `
+actor DataStore {
+    private var cache: [String: String] = [:]
+
+    func get(key: String) -> String? {
+        return cache[key]
+    }
+}
+    `;
+    const result = await parser.parse("DataStore.swift", content, "hash123");
+
+    const actorEntity = result.entities.find((e) => e.name === "DataStore" && e.type === "actor");
+    expect(actorEntity).toBeDefined();
+  });
+
+  test("parses typealias declarations", async () => {
+    const content = `
+typealias UserId = String
+typealias CompletionHandler = (Bool) -> Void
+    `;
+    const result = await parser.parse("test.swift", content, "hash123");
+
+    const typeEntity = result.entities.find((e) => e.name === "UserId" && e.type === "type");
+    expect(typeEntity).toBeDefined();
+  });
+
+  test("extracts function calls for tracing", async () => {
+    const content = `
+class NetworkService {
+    func fetchUser(id: Int) async throws -> User {
+        let response = await httpClient.get("/users/\\(id)")
+        return try parseResponse(response)
+    }
+
+    func parseResponse(_ data: Data) throws -> User {
+        return try JSONDecoder().decode(User.self, from: data)
+    }
+
+    func loadUserProfile() async {
+        do {
+            let user = try await fetchUser(id: 123)
+            updateUI(with: user)
+        } catch {
+            handleError(error)
+        }
+    }
+}
+    `;
+    const result = await parser.parse("NetworkService.swift", content, "hash123");
+
+    // Check that calls relationships are created
+    const callsRelationships = result.relationships?.filter((r) => r.type === "calls") || [];
+    expect(callsRelationships.length).toBeGreaterThan(0);
+
+    // Check that loadUserProfile calls fetchUser
+    const loadUserProfileCalls = callsRelationships.filter(
+      (r) => r.from.includes("loadUserProfile") && r.metadata?.calledName === "fetchUser",
+    );
+    expect(loadUserProfileCalls.length).toBeGreaterThan(0);
+
+    // Check that function entities have calls property
+    const loadUserProfileFunc = result.entities.find((e) => e.name === "NetworkService.loadUserProfile");
+    expect(loadUserProfileFunc).toBeDefined();
+    expect(loadUserProfileFunc?.calls).toBeDefined();
+    expect(loadUserProfileFunc?.calls?.length).toBeGreaterThan(0);
+  });
+
+  test("extracts singleton pattern calls (ClassName.shared.method)", async () => {
+    const content = `
+class TestLauncher {
+    func startTest() {
+        ServerPoster.shared.postMobileConnect(data: testData)
+        Analytics.instance.trackEvent("test_started")
+        let result = try await NetworkManager.default.fetchData()
+    }
+}
+    `;
+    const result = await parser.parse("TestLauncher.swift", content, "hash123");
+
+    // Check that calls with singleton pattern are extracted
+    const startTestFunc = result.entities.find((e) => e.name === "TestLauncher.startTest");
+    expect(startTestFunc).toBeDefined();
+    expect(startTestFunc?.calls).toBeDefined();
+
+    // Should have calls with proper target class extracted
+    const calls = startTestFunc?.calls || [];
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+
+    // Check ServerPoster.shared.postMobileConnect - target should be ServerPoster
+    const postMobileConnect = calls.find((c) => c.name === "postMobileConnect");
+    expect(postMobileConnect).toBeDefined();
+    expect(postMobileConnect?.target).toBe("ServerPoster");
+
+    // Check Analytics.instance.trackEvent - target should be Analytics
+    const trackEvent = calls.find((c) => c.name === "trackEvent");
+    expect(trackEvent).toBeDefined();
+    expect(trackEvent?.target).toBe("Analytics");
+
+    // Check relationships include cross-module calls with qualified names
+    const callsRelationships = result.relationships?.filter((r) => r.type === "calls") || [];
+
+    // Cross-module calls should use qualified names (ClassName.methodName) - indexer adds external: if needed
+    const serverPosterCall = callsRelationships.find((r) => r.to.includes("postMobileConnect"));
+    expect(serverPosterCall?.to).toBe("ServerPoster.postMobileConnect");
+
+    // Check that multiple singleton calls are captured
+    const analyticsCall = callsRelationships.find((r) => r.to.includes("trackEvent"));
+    expect(analyticsCall?.to).toBe("Analytics.trackEvent");
+  });
+
+  test("extracts SwiftUI state properties", async () => {
+    const content = `
+import SwiftUI
+
+struct ContentView: View {
+    @State private var isLoading: Bool = false
+    @Published var userData: User?
+    @StateObject var viewModel: ViewModel
+    @Binding var selectedItem: Item
+    @EnvironmentObject var settings: AppSettings
+
+    var body: some View {
+        Text("Hello")
+    }
+}
+    `;
+    const result = await parser.parse("ContentView.swift", content, "hash123");
+
+    // Check that state properties are extracted
+    const stateProps = result.entities.filter((e) => e.metadata?.isState === true);
+    expect(stateProps.length).toBeGreaterThanOrEqual(3);
+
+    // Check specific state wrappers
+    const isLoadingState = result.entities.find((e) => e.name === "ContentView.isLoading" && e.metadata?.isState);
+    expect(isLoadingState).toBeDefined();
+    expect(isLoadingState?.metadata?.stateWrapper).toBe("@State");
+
+    const userDataState = result.entities.find((e) => e.name === "ContentView.userData" && e.metadata?.isState);
+    expect(userDataState).toBeDefined();
+    expect(userDataState?.metadata?.stateWrapper).toBe("@Published");
+  });
+
+  test("extracts control flow for trace_flow", async () => {
+    const content = `
+class DataManager {
+    func processData(items: [Item]) async throws {
+        guard !items.isEmpty else { return }
+
+        for item in items {
+            if item.isValid {
+                do {
+                    try await saveItem(item)
+                } catch {
+                    handleError(error)
+                }
+            }
+        }
+
+        while isProcessing {
+            await Task.yield()
+        }
+
+        return
+    }
+}
+    `;
+    const result = await parser.parse("DataManager.swift", content, "hash123");
+
+    const processDataFunc = result.entities.find((e) => e.name === "DataManager.processData");
+    expect(processDataFunc).toBeDefined();
+    expect(processDataFunc?.controlFlow).toBeDefined();
+
+    // Check branches (guard, if)
+    expect(processDataFunc?.controlFlow?.branches?.length).toBeGreaterThanOrEqual(2);
+
+    // Check loops (for, while)
+    expect(processDataFunc?.controlFlow?.loops?.length).toBeGreaterThanOrEqual(2);
+
+    // Check exceptions (do-catch)
+    expect(processDataFunc?.controlFlow?.exceptions?.length).toBeGreaterThanOrEqual(1);
+
+    // Check awaits
+    expect(processDataFunc?.controlFlow?.awaits?.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("extracts data flow for trace_data_flow", async () => {
+    const content = `
+class UserService {
+    var currentUser: User?
+    var isAuthenticated: Bool = false
+
+    func login(credentials: Credentials) {
+        self.isAuthenticated = true
+        self.currentUser = validateCredentials(credentials)
+        let userName = self.currentUser?.name
+        updateUI()
+    }
+
+    func logout() {
+        self.currentUser = nil
+        self.isAuthenticated = false
+    }
+}
+    `;
+    const result = await parser.parse("UserService.swift", content, "hash123");
+
+    const loginFunc = result.entities.find((e) => e.name === "UserService.login");
+    expect(loginFunc).toBeDefined();
+
+    // Check state modifications
+    expect(loginFunc?.metadata?.stateModifications).toBeDefined();
+    expect(loginFunc?.metadata?.stateModifications).toContain("isAuthenticated");
+    expect(loginFunc?.metadata?.stateModifications).toContain("currentUser");
+
+    // Check state reads
+    expect(loginFunc?.metadata?.stateReads).toBeDefined();
+    expect(loginFunc?.metadata?.stateReads).toContain("currentUser");
+
+    // Check relationships for state dependencies (now uses depends_on instead of references)
+    const stateRefs = result.relationships?.filter((r) => r.type === "depends_on" && r.metadata?.isState);
+    expect(stateRefs?.length).toBeGreaterThan(0);
   });
 
   test("returns stats correctly", () => {

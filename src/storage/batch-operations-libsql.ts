@@ -115,6 +115,7 @@ export class BatchOperationsLibSQL {
       [RelationType.EXPORTS]: null,
       [RelationType.CONTAINS]: null,
       [RelationType.DEPENDS_ON]: null,
+      [RelationType.MEMBER_OF]: null,
       [RelationType.DOCUMENTS]: null,
       // NgRx relationships - no auto-reverse for now
       [RelationType.DISPATCHES_ACTION]: null,

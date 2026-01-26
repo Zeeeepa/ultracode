@@ -558,8 +558,27 @@ export class IndexerAgent extends BaseAgent {
       log.d("INDEXER", "built_auto_rels", { cnt: relationships.length });
     }
 
-    // Process external relationships and create placeholder entities
-    const externalPlaceholders = processExternalRelationships(relationships, stableRelationshipId);
+    // Process external relationships - try to resolve to existing entities first, create placeholders for unresolved
+    // Build in-memory map of just-inserted entities for fast lookup
+    const justInsertedByName = new Map<string, Entity>();
+    for (const entity of storageEntities) {
+      justInsertedByName.set(entity.name, entity);
+    }
+
+    const lookupEntityByName = async (qualifiedName: string) => {
+      // First check in-memory (entities just inserted)
+      const inMemory = justInsertedByName.get(qualifiedName);
+      if (inMemory) return inMemory;
+
+      // Then check database (entities from other files)
+      const entities = await this.graphStorage.searchEntities({ namePattern: qualifiedName });
+      return entities.find((e) => e.name === qualifiedName);
+    };
+    const externalPlaceholders = await processExternalRelationships(
+      relationships,
+      stableRelationshipId,
+      lookupEntityByName,
+    );
 
     if (externalPlaceholders.length > 0) {
       await this.batchOps.insertEntities(externalPlaceholders);
@@ -689,9 +708,38 @@ export class IndexerAgent extends BaseAgent {
     // Build relationships
     if (providedRelationships && providedRelationships.length > 0) {
       const byName = buildEntityNameMap(this.pendingStorageEntities);
+
+      // DEBUG: Log cross-module call resolution for Swift
+      if (filePath.endsWith(".swift")) {
+        const callsRels = providedRelationships.filter((r) => r.type === "calls" && r.metadata?.["crossModule"]);
+        if (callsRels.length > 0) {
+          log.w("XMOD", "swift_cross_module", {
+            file: filePath.split(/[/\\]/).pop(),
+            crossModuleCalls: callsRels.length,
+            pendingEntities: this.pendingStorageEntities.length,
+            byNameSize: byName.size,
+            serverPosterKeys: Array.from(byName.keys()).filter((k) => k.includes("ServerPoster")),
+            calls: callsRels.slice(0, 5).map((r) => ({
+              from: r.from,
+              to: r.to,
+              inByName: byName.has(r.to),
+            })),
+          });
+        }
+      }
+
       for (const rel of providedRelationships) {
         let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line);
         let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line);
+
+        // DEBUG: Log resolution result for cross-module calls
+        if (rel.metadata?.["crossModule"]) {
+          log.w("XMOD", "resolution", {
+            to: rel.to,
+            resolved: !!toId,
+            toId: toId || "UNRESOLVED",
+          });
+        }
 
         if (!fromId) fromId = `external:${rel.sourceFile || filePath}:${rel.from}`;
         if (!toId) toId = `external:${rel.targetFile || "unknown"}:${rel.to}`;
@@ -756,8 +804,27 @@ export class IndexerAgent extends BaseAgent {
         knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
       }
 
-      // Process external relationships
-      const externalPlaceholders = processExternalRelationships(relationshipsToFlush, stableRelationshipId);
+      // Process external relationships - try to resolve to existing entities first
+      // Build in-memory map of just-inserted entities for fast lookup
+      const justInsertedByName = new Map<string, Entity>();
+      for (const entity of entitiesToFlush) {
+        justInsertedByName.set(entity.name, entity);
+      }
+
+      const lookupEntityByName = async (qualifiedName: string) => {
+        // First check in-memory (entities just inserted in this batch)
+        const inMemory = justInsertedByName.get(qualifiedName);
+        if (inMemory) return inMemory;
+
+        // Then check database (entities from previous batches/indexing runs)
+        const entities = await this.graphStorage.searchEntities({ namePattern: qualifiedName });
+        return entities.find((e) => e.name === qualifiedName);
+      };
+      const externalPlaceholders = await processExternalRelationships(
+        relationshipsToFlush,
+        stableRelationshipId,
+        lookupEntityByName,
+      );
       if (externalPlaceholders.length > 0) {
         await this.batchOps.insertEntities(externalPlaceholders);
       }

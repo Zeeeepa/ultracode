@@ -61,6 +61,7 @@ export const SUPPORTED_LANGUAGES = [
   "go",
   "c",
   "kotlin",
+  "swift",
   "bash",
   "powershell",
   "typescript",

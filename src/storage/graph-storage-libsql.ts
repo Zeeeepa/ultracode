@@ -371,6 +371,7 @@ export class GraphStorageLibSQL implements GraphStorage {
       [RelationType.EXPORTS]: null,
       [RelationType.CONTAINS]: null,
       [RelationType.DEPENDS_ON]: null,
+      [RelationType.MEMBER_OF]: null,
       [RelationType.DOCUMENTS]: null,
       [RelationType.DISPATCHES_ACTION]: null,
       [RelationType.LISTENS_TO_ACTION]: null,

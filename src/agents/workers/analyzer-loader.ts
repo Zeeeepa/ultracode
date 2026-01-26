@@ -115,6 +115,16 @@ async function createAnalyzer(language: string): Promise<BaseParser> {
       break;
     }
 
+    case "swift": {
+      const { workerLog } = await import("./worker-logging.js");
+      workerLog("INFO", `Loading SwiftNativeParser`);
+      const { SwiftNativeParser } = await import("../../parsers/swift-native-parser.js");
+      analyzer = new SwiftNativeParser();
+      await analyzer.initialize();
+      workerLog("INFO", `SwiftNativeParser initialized`);
+      break;
+    }
+
     case "bash": {
       const { BashNativeParser } = await import("../../parsers/bash-native-parser.js");
       analyzer = new BashNativeParser();
@@ -272,6 +282,7 @@ export const SUPPORTED_WORKER_LANGUAGES = [
   "go",
   "c",
   "kotlin",
+  "swift",
   "bash",
   "powershell",
   "typescript",
