@@ -26,17 +26,17 @@
 | `kvOpStart` | function | Создать пары ключ-значение для начала операции | [→ kv-serializer.ts:205-207] |
 | `kvOpEnd` | function | Создать пары ключ-значение для конца операции | [→ kv-serializer.ts:212-214] |
 | `kvError` | function | Создать пары ключ-значение для ошибки логирования | [→ kv-serializer.ts:219-222] |
-| `formatTimestamp` | function | Форматировать дату в YYYYMMDD-HHmmss.mmm формат | [→ log-formatter.ts:18-27] |
-| `parseTimestamp` | function | Распарсить строку временной метки в объект даты | [→ log-formatter.ts:34-90] |
-| `formatPid` | function | Форматировать идентификатор процесса в пять символов | [→ log-formatter.ts:47-49] |
-| `formatBuildHash` | function | Форматировать хеш сборки в восемь символов | [→ log-formatter.ts:54-56] |
-| `formatProjectHash` | function | Форматировать хеш проекта в восемь символов | [→ log-formatter.ts:61-63] |
+| `formatTimestamp` | function | Форматировать дату в YYYYMMDD-HHmmss.mmm формат | [→ log-formatter.ts:17-17] |
+| `parseTimestamp` | function | Распарсить строку временной метки в объект даты | [→ log-formatter.ts:47-104] |
+| `formatPid` | function | Форматировать идентификатор процесса в пять символов | [→ log-formatter.ts:47-104] |
+| `formatBuildHash` | function | Форматировать хеш сборки в восемь символов | [→ log-formatter.ts:47-104] |
+| `formatProjectHash` | function | Форматировать хеш проекта в восемь символов | [→ log-formatter.ts:60-63] |
 | `formatModule` | function | Форматировать имя модуля в двадцать символов | [→ log-formatter.ts:68-70] |
 | `formatEvent` | function | Форматировать имя события в двадцать символов | [→ log-formatter.ts:75-77] |
-| `formatLogLine` | function | Форматировать объект лога в строку с позициями | [→ log-formatter.ts:94-104] |
-| `parseLogLine` | function | Распарсить строку лога в структурированный объект | [→ log-formatter.ts:109-142] |
-| `formatLogLineColored` | function | Форматировать строку лога с цветовым выделением | [→ log-formatter.ts:148-163] |
-| `extractFields` | function | Извлечь отдельные поля из строки лога | [→ log-formatter.ts:176-213] |
+| `formatLogLine` | function | Форматировать объект лога в строку с позициями | [→ log-formatter.ts:89-91] |
+| `parseLogLine` | function | Распарсить строку лога в структурированный объект | [→ log-formatter.ts:108-118] |
+| `formatLogLineColored` | function | Форматировать строку лога с цветовым выделением | [→ log-formatter.ts:149-158] |
+| `extractFields` | function | Извлечь отдельные поля из строки лога | [→ log-formatter.ts:166-176] |
 | `LogLevelChar` | type | Тип символа уровня логирования (E/W/I/D/T) | [→ log-types.ts:8] |
 | `LOG_LEVEL_VALUES` | const | Числовые значения уровней логирования для фильтрации | [→ log-types.ts:8-8] |
 | `LOG_LEVEL_NAMES` | const | Полные наименования уровней логирования для отображения | [→ log-types.ts:20-26] |

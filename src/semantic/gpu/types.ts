@@ -129,7 +129,8 @@ export interface CudaNormalizeRequest {
 
 export interface EmbeddingItem {
   id: string;
-  vector: number[];
+  /** Vector data - Float32Array preferred for performance, number[] also supported */
+  vector: Float32Array | number[];
   content?: string | undefined;
   metadata?: Record<string, unknown>;
 }

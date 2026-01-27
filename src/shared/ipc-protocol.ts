@@ -92,41 +92,74 @@ export const Events = {
 // Message Encoding/Decoding
 // =============================================================================
 
+// Reusable TextEncoder for UTF-8 encoding
+const textEncoder = new TextEncoder();
+
 /**
  * Encode a message for wire transmission
  * Format: <4-byte length (BE)><JSON payload>
+ * Optimized: single buffer allocation instead of 3
  */
 export function encodeMessage(message: IPCMessage): Buffer {
-  const json = JSON.stringify(message);
-  const payload = Buffer.from(json, "utf-8");
-  const header = Buffer.alloc(4);
-  header.writeUInt32BE(payload.length, 0);
-  return Buffer.concat([header, payload]);
+  const jsonBytes = textEncoder.encode(JSON.stringify(message));
+  const result = Buffer.allocUnsafe(4 + jsonBytes.length);
+  result.writeUInt32BE(jsonBytes.length, 0);
+  result.set(jsonBytes, 4);
+  return result;
 }
 
 /**
  * Message decoder with buffering for partial reads
+ * Optimized: pre-allocated buffer with dynamic growth
+ * Shrinks back to initial size when empty to prevent memory bloat
  */
 export class MessageDecoder {
-  private buffer: Buffer = Buffer.alloc(0);
+  private buffer: Buffer;
+  private length = 0;
+  private readonly initialSize: number;
+
+  constructor(initialSize = 16384) {
+    this.initialSize = initialSize;
+    this.buffer = Buffer.allocUnsafe(initialSize);
+  }
+
+  /** Ensure capacity for additional bytes */
+  private ensureCapacity(needed: number): void {
+    const required = this.length + needed;
+    if (required > this.buffer.length) {
+      const newSize = Math.max(this.buffer.length * 2, required);
+      const newBuffer = Buffer.allocUnsafe(newSize);
+      this.buffer.copy(newBuffer, 0, 0, this.length);
+      this.buffer = newBuffer;
+    }
+  }
+
+  /** Shrink buffer back to initial size if empty and oversized */
+  private shrinkIfEmpty(): void {
+    if (this.length === 0 && this.buffer.length > this.initialSize) {
+      this.buffer = Buffer.allocUnsafe(this.initialSize);
+    }
+  }
 
   /**
    * Add data to buffer and return any complete messages
    */
   decode(chunk: Buffer): IPCMessage[] {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
+    this.ensureCapacity(chunk.length);
+    chunk.copy(this.buffer, this.length);
+    this.length += chunk.length;
+
     const messages: IPCMessage[] = [];
 
-    while (this.buffer.length >= 4) {
-      const length = this.buffer.readUInt32BE(0);
+    while (this.length >= 4) {
+      const msgLength = this.buffer.readUInt32BE(0);
 
-      if (this.buffer.length < 4 + length) {
+      if (this.length < 4 + msgLength) {
         // Not enough data yet
         break;
       }
 
-      const payload = this.buffer.subarray(4, 4 + length);
-      this.buffer = this.buffer.subarray(4 + length);
+      const payload = this.buffer.subarray(4, 4 + msgLength);
 
       try {
         const message = JSON.parse(payload.toString("utf-8")) as IPCMessage;
@@ -134,7 +167,17 @@ export class MessageDecoder {
       } catch (error) {
         log.e("IPC", "parse_fail", { err: String(error) });
       }
+
+      // Shift remaining data to front
+      const consumed = 4 + msgLength;
+      if (consumed < this.length) {
+        this.buffer.copy(this.buffer, 0, consumed, this.length);
+      }
+      this.length -= consumed;
     }
+
+    // Shrink if all data consumed
+    this.shrinkIfEmpty();
 
     return messages;
   }
@@ -143,7 +186,8 @@ export class MessageDecoder {
    * Reset the buffer (e.g., on reconnect)
    */
   reset(): void {
-    this.buffer = Buffer.alloc(0);
+    this.length = 0;
+    this.shrinkIfEmpty();
   }
 }
 
@@ -239,6 +283,9 @@ export class IPCClient {
         this.pendingRequests.delete(id);
       }
       this.decoder.reset();
+
+      // Clear event handlers to prevent memory leak
+      this.eventHandlers.clear();
     });
   }
 

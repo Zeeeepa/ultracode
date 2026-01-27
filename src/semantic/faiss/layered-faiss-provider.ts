@@ -15,9 +15,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { log } from "../../logging/index.js";
+import { log, logMemory } from "../../logging/index.js";
 import { getProjectDir, normalizeBranchName } from "../../shared/storage-paths.js";
 import type { SimilarityResult, VectorEmbedding } from "../../types/semantic.js";
+import { tryGarbageCollect } from "../../utils/runtime-detection.js";
 import { simdL2Normalize } from "../../utils/simd-vector-ops.js";
 import { getGpuClient, type IGpuClient } from "../gpu/gpu-client.js";
 import {
@@ -60,7 +61,7 @@ const DEFAULT_CONFIG: Required<LayeredFaissConfig> = {
   hnswM: 32,
   hnswEfConstruction: 200,
   hnswEfSearch: 64,
-  autoSaveThreshold: 1000,
+  autoSaveThreshold: 50000, // Increased to reduce blocking during indexing
 };
 
 // =============================================================================
@@ -107,6 +108,9 @@ export class LayeredFaissProvider {
   // Change tracking
   private baseUnsavedCount = 0;
   private deltaUnsavedCount = 0;
+
+  /** Maximum delta size before auto-merge to prevent memory leaks */
+  private static readonly MAX_DELTA_SIZE = 5000;
 
   // Initialization mutex
   private initializePromise: Promise<boolean> | null = null;
@@ -591,7 +595,25 @@ export class LayeredFaissProvider {
       elapsed: `${elapsed.toFixed(1)}ms`,
       speed: `${Math.round(embeddings.length / (elapsed / 1000))}/s`,
       target: this.isOnBaseBranch ? "base" : "delta",
+      deltaIdSetSize: this.deltaIdSet.size,
+      tombstonesSize: this.tombstones.size,
     });
+
+    // Auto-merge delta if it grows too large to prevent memory leaks
+    if (!this.isOnBaseBranch && this.deltaIdSet.size > LayeredFaissProvider.MAX_DELTA_SIZE) {
+      log.i("LAYERED_FAISS", "auto_merge_delta", {
+        deltaSize: this.deltaIdSet.size,
+        tombstones: this.tombstones.size,
+        threshold: LayeredFaissProvider.MAX_DELTA_SIZE,
+      });
+      logMemory("LAYERED_FAISS", { deltaSize: this.deltaIdSet.size, tombstones: this.tombstones.size });
+      await this.saveBase();
+
+      // Force GC after merge to reclaim memory
+      if (tryGarbageCollect(true)) {
+        log.d("LAYERED_FAISS", "gc_after_merge");
+      }
+    }
 
     // Return success for all
     const target = this.isOnBaseBranch ? "base" : "delta";

@@ -80,6 +80,7 @@ import type { GraphStorage } from "../types/storage.js";
 import { CircuitBreaker } from "../utils/circuit-breaker.js";
 import { loadSemanticConfig } from "../utils/config-paths.js";
 import { hashText } from "../utils/fast-hash.js";
+import { sleep } from "../utils/runtime-detection.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -431,8 +432,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     while (Date.now() - start < timeoutMs) {
       if (this.embeddingReady) return true;
-      // Real sleep without busy-wait
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Real sleep without busy-wait (Bun compatible)
+      await sleep(100);
     }
 
     return this.embeddingReady;
@@ -1761,9 +1762,9 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         skipped += batch.length;
       }
 
-      // Small delay between batches to prevent event loop blocking
+      // Small delay between batches to prevent event loop blocking (Bun compatible)
       if (i + FLUSH_BATCH_SIZE < vectorEmbeddings.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await sleep(1);
       }
     }
 

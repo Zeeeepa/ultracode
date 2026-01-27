@@ -19,7 +19,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { log } from "../logging/index.js";
+import { log, logMemory } from "../logging/index.js";
 import { getDataDir } from "../utils/config-paths.js";
 import { hashText } from "../utils/fast-hash.js";
 import { type GlobalCacheEntry, type GlobalCacheMetadata, getAllGlobalEntries } from "./global-cache/index.js";
@@ -53,6 +53,9 @@ export class GlobalEmbeddingCache {
   private textToHash: Map<string, string> = new Map();
   private metadata: GlobalCacheMetadata | null = null;
   private initialized = false;
+
+  /** Maximum cache size to prevent memory leaks (~75MB for 384-dim embeddings) */
+  private static readonly MAX_CACHE_SIZE = 50000;
 
   private constructor() {
     this.cacheDir = join(getDataDir(), "global-embeddings");
@@ -145,6 +148,8 @@ export class GlobalEmbeddingCache {
         const floatArray = new Float32Array(buffer.buffer, buffer.byteOffset + start, dimension);
         this.cache.set(hashes[i]!, new Float32Array(floatArray));
       }
+      // Log memory after loading cache
+      logMemory("GLOBALCACHE", { cacheSize: this.cache.size, textToHashSize: this.textToHash.size });
     } catch (e) {
       log.w("GLOBALCACHE", "Failed to load cache", { error: (e as Error).message });
     }
@@ -187,6 +192,9 @@ export class GlobalEmbeddingCache {
     writeFileSync(embeddingsPath, buffer);
 
     log.d("GLOBALCACHE", "Saved embeddings to disk", { count: this.cache.size });
+
+    // Log memory after saving
+    logMemory("GLOBALCACHE", { cacheSize: this.cache.size, textToHashSize: this.textToHash.size });
   }
 
   /**
@@ -215,6 +223,41 @@ export class GlobalEmbeddingCache {
     const hash = hashText(normalized).slice(0, 16);
     this.textToHash.set(normalized, hash);
     this.cache.set(hash, embedding);
+
+    // Evict oldest entries if cache exceeds limit
+    this.evictOldest();
+  }
+
+  /**
+   * Evict oldest entries when cache exceeds MAX_CACHE_SIZE.
+   * Uses FIFO ordering (Map insertion order) for simplicity.
+   */
+  private evictOldest(): void {
+    if (this.cache.size <= GlobalEmbeddingCache.MAX_CACHE_SIZE) {
+      return;
+    }
+
+    const keysToDelete = this.cache.size - GlobalEmbeddingCache.MAX_CACHE_SIZE;
+    const iterator = this.cache.keys();
+    const deletedHashes = new Set<string>();
+
+    for (let i = 0; i < keysToDelete; i++) {
+      const result = iterator.next();
+      if (result.done) break;
+      const key = result.value;
+      this.cache.delete(key);
+      deletedHashes.add(key);
+    }
+
+    // Clean up textToHash for deleted entries
+    if (deletedHashes.size > 0) {
+      for (const [text, hash] of this.textToHash) {
+        if (deletedHashes.has(hash)) {
+          this.textToHash.delete(text);
+        }
+      }
+      log.d("GLOBALCACHE", "evicted_oldest", { evicted: deletedHashes.size, remaining: this.cache.size });
+    }
   }
 
   /**

@@ -19,7 +19,7 @@ import type { ChildProcess } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { log } from "../../logging/index.js";
+import { log, logMemory } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 import type { EmbeddingPoolStats, WorkerEmbeddingConfig } from "../../types/semantic.js";
 import {
@@ -157,11 +157,11 @@ export class ParsingSubprocessPool {
     // Pool size is determined dynamically in initialize() based on file count
     // Default is 1, will be adjusted when we know how many files
     this.poolSize = options.poolSize || 1;
-    this.memoryLimitMB = options.memoryLimitMB || 512; // 512MB default
+    this.memoryLimitMB = options.memoryLimitMB || 1024; // 1GB default
     this.killAfterBatch = options.killAfterBatch ?? true; // Kill after batch by default
     this.maxFilesPerChunk = options.maxFilesPerChunk || 100; // Limit chunk size for memory safety
     this.keepaliveMode = options.keepaliveMode ?? false;
-    this.keepaliveMemoryLimitMB = options.keepaliveMemoryLimitMB || 500; // 500MB for keepalive worker
+    this.keepaliveMemoryLimitMB = options.keepaliveMemoryLimitMB || 1024; // 1GB for keepalive worker
     this.embeddingConfig = options.embeddingConfig;
     this.onEmbeddings = options.onEmbeddings;
     this.onEmbeddingTexts = options.onEmbeddingTexts;
@@ -474,7 +474,7 @@ export class ParsingSubprocessPool {
           const memoryMB = Math.round(state.memoryUsage / 1024 / 1024);
 
           if (isKeepaliveWorker) {
-            // Check keepalive memory limit (default 500MB)
+            // Check keepalive memory limit (default 1GB)
             if (state.memoryUsage > this.keepaliveMemoryLimitMB * 1024 * 1024) {
               log.i("SUBPROCESS", `Keepalive worker memory limit exceeded, restarting`, {
                 language: this.language,
@@ -808,6 +808,7 @@ export class ParsingSubprocessPool {
     }
 
     const STAT_BATCH_SIZE = 30; // stat 30 files at a time (parallel)
+    const MAX_FILES_PER_CHUNK = 90; // Cap max files per worker to prevent bottleneck (6 workers × 90 = 540)
     const chunks: string[][] = Array.from({ length: workerCount }, () => []);
     const chunkWeights: number[] = Array(workerCount).fill(0); // weighted sizes
 
@@ -815,14 +816,28 @@ export class ParsingSubprocessPool {
     let totalStatTime = 0;
     let batchCount = 0;
 
-    // Helper: find worker with minimum weighted load
+    // Helper: find worker with minimum weighted load (respecting MAX_FILES_PER_CHUNK)
     const findMinWorker = (): number => {
       let minIdx = 0;
-      let minWeight = chunkWeights[0] ?? 0;
-      for (let i = 1; i < workerCount; i++) {
-        if ((chunkWeights[i] ?? 0) < minWeight) {
-          minWeight = chunkWeights[i] ?? 0;
+      let minWeight = Infinity;
+      for (let i = 0; i < workerCount; i++) {
+        // Skip workers that reached max files limit
+        if (chunks[i]!.length >= MAX_FILES_PER_CHUNK) continue;
+        const w = chunkWeights[i] ?? 0;
+        if (w < minWeight) {
+          minWeight = w;
           minIdx = i;
+        }
+      }
+      // If all workers at max, fall back to least loaded (overflow mode)
+      if (minWeight === Infinity) {
+        minIdx = 0;
+        minWeight = chunkWeights[0] ?? 0;
+        for (let i = 1; i < workerCount; i++) {
+          if ((chunkWeights[i] ?? 0) < minWeight) {
+            minWeight = chunkWeights[i] ?? 0;
+            minIdx = i;
+          }
         }
       }
       return minIdx;
@@ -965,6 +980,14 @@ export class ParsingSubprocessPool {
     } finally {
       // Mark batch processing complete - workers can now be killed if needed
       this.isBatchProcessing = false;
+
+      // Log memory after batch completion
+      logMemory("SUBPROCESS", {
+        language: this.language,
+        workers: this.workers.size,
+        taskQueue: this.taskQueue.length,
+        workersUsed: this.embeddingStatsAgg.workersUsed.size,
+      });
 
       // Scale down to 1 worker after full indexing in keepalive mode
       if (this.keepaliveMode && this.workers.size > 1) {
@@ -1118,14 +1141,20 @@ export class ParsingSubprocessPool {
 
   /**
    * Reset embedding statistics (call before new indexing session)
+   * Clears workersUsed Set to prevent memory leak from accumulating worker IDs
    */
   resetEmbeddingStats(): void {
+    // Clear existing Set before creating new one (explicit cleanup)
+    this.embeddingStatsAgg.workersUsed.clear();
+
     this.embeddingStatsAgg = {
       startTime: 0,
       totalVectors: 0,
       totalBatches: 0,
       workersUsed: new Set<string>(),
     };
+
+    log.d("SUBPROCESS", "embedding_stats_reset", { language: this.language });
   }
 
   /**
@@ -1313,8 +1342,8 @@ export class ParsingSubprocessPool {
    * Uses real-time ping/pong to get accurate memory from workers.
    * Returns true if workers were killed.
    *
-   * Use case: After indexing, call killIfMemoryHigh(500) to release memory
-   * if workers accumulated more than 500MB.
+   * Use case: After indexing, call killIfMemoryHigh(1024) to release memory
+   * if workers accumulated more than 1GB.
    */
   async killIfMemoryHigh(thresholdMB: number): Promise<boolean> {
     // Get real-time memory via ping/pong

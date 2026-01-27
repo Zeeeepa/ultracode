@@ -589,6 +589,24 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
         });
       }
 
+      // STREAMING EMBEDDINGS: Generate and send embeddings for this file immediately
+      // This allows main process to start FAISS indexing while worker continues parsing
+      const embConfig = getEmbeddingConfig();
+      if (embConfig?.enabled && result.entities && result.entities.length > 0) {
+        const content = fileContents.get(file) || "";
+        await generateEmbeddingsForEntities(result.entities, content, result.filePath);
+
+        // Send embeddings every 5 files or if we have 500+ embeddings accumulated
+        // This balances IPC overhead vs parallelism
+        if (results.length % 5 === 0) {
+          if (embConfig.centralizedEmbeddings) {
+            sendCollectedTexts({ postWorkerMessage, getWorkerId });
+          } else {
+            sendCollectedEmbeddings({ postWorkerMessage, getWorkerId });
+          }
+        }
+      }
+
       // Log slow files for monitoring
       if (fileDuration > 300) {
         workerLog("WARN", `Slow parse: ${file} took ${fileDuration}ms`);
@@ -608,39 +626,15 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
   // Clear prefetch cache
   prefetch.clear();
 
-  // Generate embeddings for all entities (if embedding is enabled)
-  // Two modes:
-  // 1. Distributed (default): worker generates embeddings via HTTP and sends binary vectors
-  // 2. Centralized (OVMS/llamacpp): worker sends texts, Main generates embeddings via single connection
+  // Send any remaining embeddings that weren't sent during streaming
   const config = getEmbeddingConfig();
   if (config?.enabled) {
     const isCentralized = config.centralizedEmbeddings === true;
 
-    const embeddingStart = Date.now();
-    let embeddingCount = 0;
-
-    for (const result of results) {
-      if (result.entities && result.entities.length > 0) {
-        const content = fileContents.get(result.filePath) || "";
-        const count = await generateEmbeddingsForEntities(result.entities, content, result.filePath);
-        embeddingCount += count;
-      }
-    }
-
-    const embeddingTime = Date.now() - embeddingStart;
-    workerLog("INFO", isCentralized ? `Texts collected for centralized embedding` : `Embeddings generated`, {
-      taskId: task.id,
-      embeddingCount,
-      embeddingTimeMs: embeddingTime,
-      mode: isCentralized ? "centralized" : "distributed",
-    });
-
-    // Send to main process
+    // Send remaining collected embeddings/texts
     if (isCentralized) {
-      // Centralized mode: send texts, Main generates embeddings via gRPC
       sendCollectedTexts({ postWorkerMessage, getWorkerId });
     } else {
-      // Distributed mode: send binary vectors
       sendCollectedEmbeddings({ postWorkerMessage, getWorkerId });
     }
   }

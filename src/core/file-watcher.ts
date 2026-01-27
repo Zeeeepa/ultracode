@@ -19,6 +19,7 @@ import { stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import fg from "fast-glob";
 import { log } from "../logging/index.js";
+import { sleep } from "../utils/runtime-detection.js";
 
 // =============================================================================
 // TYPES
@@ -61,7 +62,7 @@ export class FileWatcher extends EventEmitter {
 
   // Debouncing
   private pendingChanges: Map<string, FileChangeEvent> = new Map();
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private debounceAbort: AbortController | null = null;
 
   // Bun watcher (when available)
   private bunWatcher: { stop: () => void } | null = null;
@@ -120,10 +121,10 @@ export class FileWatcher extends EventEmitter {
     if (!this.isRunning) return;
     this.isRunning = false;
 
-    // Clear debounce
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    // Cancel debounce
+    if (this.debounceAbort) {
+      this.debounceAbort.abort();
+      this.debounceAbort = null;
     }
 
     // Stop Bun watcher
@@ -330,22 +331,35 @@ export class FileWatcher extends EventEmitter {
   }
 
   /**
-   * Schedule debounced flush
+   * Schedule debounced flush (Bun-compatible using async sleep)
    */
   private scheduleFlush(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
+    // Abort previous debounce
+    if (this.debounceAbort) {
+      this.debounceAbort.abort();
     }
-    this.debounceTimer = setTimeout(() => this.flush(), this.config.debounceMs);
+
+    // Create new abort controller for this debounce
+    const abortController = new AbortController();
+    this.debounceAbort = abortController;
+
+    // Schedule flush using async sleep pattern
+    (async () => {
+      await sleep(this.config.debounceMs);
+      if (!abortController.signal.aborted) {
+        this.flush();
+      }
+    })();
   }
 
   /**
    * Flush pending changes
    */
   flush(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    // Cancel any pending debounce
+    if (this.debounceAbort) {
+      this.debounceAbort.abort();
+      this.debounceAbort = null;
     }
 
     if (this.pendingChanges.size === 0) return;

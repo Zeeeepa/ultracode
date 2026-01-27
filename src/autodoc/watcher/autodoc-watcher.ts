@@ -184,11 +184,15 @@ export class AutoDocWatcher {
 
     // Scan for modules without AUTODOC.md and create them (deferred to not block startup)
     if (autodocEnabled) {
-      setTimeout(() => {
-        this.scanAndCreateMissingAutodocs().catch((err) => {
+      // Use async sleep pattern for Bun compatibility
+      (async () => {
+        await sleep(5000); // Wait 5 seconds after startup
+        try {
+          await this.scanAndCreateMissingAutodocs();
+        } catch (err) {
           log.e("AUTODOCWATCH", "initial_scan_error", { error: String(err) });
-        });
-      }, 5000); // Wait 5 seconds after startup
+        }
+      })();
     }
   }
 

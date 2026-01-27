@@ -21,6 +21,13 @@ interface BunRuntime {
    * Версия Bun runtime
    */
   version?: string;
+
+  /**
+   * Trigger garbage collection (synchronous)
+   * @param force - If true, forces a full GC
+   * @see https://bun.sh/docs/api/utils#bun-gc
+   */
+  gc(force?: boolean): void;
 }
 
 /**
@@ -153,4 +160,37 @@ export function getBunVersion(): string | undefined {
  */
 export function getRuntimeName(): "bun" | "node" {
   return isBunRuntime() ? "bun" : "node";
+}
+
+/**
+ * Try to trigger garbage collection
+ *
+ * In Bun: uses Bun.gc(true) for forced full GC
+ * In Node.js: no-op (gc requires --expose-gc flag)
+ *
+ * @param force - If true, forces synchronous full GC (Bun only)
+ * @returns true if GC was triggered, false otherwise
+ *
+ * @example
+ * ```typescript
+ * // After heavy operation, try to free memory
+ * tryGarbageCollect(true);
+ * ```
+ */
+export function tryGarbageCollect(force = true): boolean {
+  const global = globalThis as GlobalWithBun;
+
+  if (isBunRuntime() && global.Bun && typeof global.Bun.gc === "function") {
+    global.Bun.gc(force);
+    return true;
+  }
+
+  // Node.js: try global.gc if available (--expose-gc flag)
+  const nodeGlobal = globalThis as typeof globalThis & { gc?: () => void };
+  if (typeof nodeGlobal.gc === "function") {
+    nodeGlobal.gc();
+    return true;
+  }
+
+  return false;
 }

@@ -83,14 +83,29 @@ export function handleEmbeddingsAddBatch(request: EmbeddingsAddBatchRequest, ctx
   }
 
   try {
-    // Prepare vectors for Faiss (number[] required, not Float32Array)
-    const vectorArray: number[] = new Array(items.length * dim);
+    // Prepare vectors for Faiss using Float32Array for fast bulk copy
+    // faiss-napi expects number[], but we use typed array internally for performance
+    const totalSize = items.length * dim;
+    const vectorBuffer = new Float32Array(totalSize);
+
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;
-      for (let j = 0; j < dim; j++) {
-        vectorArray[i * dim + j] = item.vector[j]!;
+      const offset = i * dim;
+      const vec = item.vector;
+
+      // Fast path: use .set() if vector is already Float32Array
+      if (vec instanceof Float32Array) {
+        vectorBuffer.set(vec, offset);
+      } else {
+        // Fallback for number[] input
+        for (let j = 0; j < dim; j++) {
+          vectorBuffer[offset + j] = vec[j]!;
+        }
       }
     }
+
+    // Convert to number[] for faiss-napi (optimized Array.from)
+    const vectorArray = Array.from(vectorBuffer);
 
     // Add to Faiss index
     faissIndex.add(vectorArray);
@@ -117,6 +132,10 @@ export function handleEmbeddingsAddBatch(request: EmbeddingsAddBatchRequest, ctx
 
     const addTimeMs = performance.now() - startTime;
     log(`[embeddings] Added ${items.length} vectors in ${addTimeMs.toFixed(1)}ms (total: ${state.faissTotalVectors})`);
+
+    // Help GC - clear large temporary arrays
+    vectorBuffer.fill(0);
+    vectorArray.length = 0;
 
     const response: EmbeddingsAddBatchResponse = {
       success: true,

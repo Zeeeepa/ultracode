@@ -5,6 +5,7 @@
 
 import { parseKV, serializeKV } from "./kv-serializer.js";
 import {
+  type KVPairs,
   LOG_FIELD_LENGTHS,
   LOG_FIELD_POSITIONS,
   type LogEntry,
@@ -12,17 +13,29 @@ import {
   type ParsedLogLine,
 } from "./log-types.js";
 
+// Pre-computed padding lookup tables for hot path logging optimization
+const PAD2 = Array.from({ length: 100 }, (_, i) => String(i).padStart(2, "0"));
+const PAD3 = Array.from({ length: 1000 }, (_, i) => String(i).padStart(3, "0"));
+const PAD5 = Array.from({ length: 100000 }, (_, i) => String(i).padStart(5, "0"));
+
 /**
  * Format timestamp as YYYYMMDD-HHmmss.mmm (19 chars)
  */
 export function formatTimestamp(date: Date): string {
   const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  const h = String(date.getHours()).padStart(2, "0");
-  const min = String(date.getMinutes()).padStart(2, "0");
-  const s = String(date.getSeconds()).padStart(2, "0");
-  const ms = String(date.getMilliseconds()).padStart(3, "0");
+  const mo = date.getMonth() + 1;
+  const da = date.getDate();
+  const ho = date.getHours();
+  const mi = date.getMinutes();
+  const se = date.getSeconds();
+  const msi = date.getMilliseconds();
+  // Use lookup tables with fallback for Invalid Date (NaN indices)
+  const m = PAD2[mo] ?? String(mo).padStart(2, "0");
+  const d = PAD2[da] ?? String(da).padStart(2, "0");
+  const h = PAD2[ho] ?? String(ho).padStart(2, "0");
+  const min = PAD2[mi] ?? String(mi).padStart(2, "0");
+  const s = PAD2[se] ?? String(se).padStart(2, "0");
+  const ms = PAD3[msi] ?? String(msi).padStart(3, "0");
   return `${y}${m}${d}-${h}${min}${s}.${ms}`;
 }
 
@@ -45,7 +58,8 @@ export function parseTimestamp(str: string): Date {
  * Format PID with padding (5 chars)
  */
 export function formatPid(pid: number): string {
-  return String(pid).slice(-5).padStart(5, "0");
+  const truncated = pid % 100000;
+  return PAD5[truncated]!;
 }
 
 /**
@@ -104,9 +118,69 @@ export function formatLogLine(entry: LogEntry): string {
 }
 
 /**
- * Parse log line to entry
+ * Parse worker log line format: [ISO_TIMESTAMP] [LEVEL] [WORKER:id] message DATA: {...}
+ */
+function parseWorkerLogLine(line: string, lineNumber: number): ParsedLogLine | null {
+  // Worker format: [2026-01-27T10:47:17.558+03:00] [LEVEL] [WORKER:id] message DATA: {...}
+  const workerRegex = /^\[([^\]]+)\] \[(\w+)\] \[WORKER:([^\]]+)\] (.+)$/;
+  const match = line.match(workerRegex);
+  if (!match) return null;
+
+  const [, isoTimestamp, levelStr, workerId, rest] = match;
+
+  // Parse ISO timestamp
+  const timestamp = new Date(isoTimestamp!);
+  if (isNaN(timestamp.getTime())) return null;
+
+  // Map level string to LogLevelChar
+  const levelMap: Record<string, LogLevelChar> = {
+    ERROR: "E",
+    WARN: "W",
+    INFO: "I",
+    DEBUG: "D",
+    TRACE: "T",
+  };
+  const level = levelMap[levelStr!] || "I";
+
+  // Parse message and DATA
+  let message = rest!;
+  let kv: KVPairs = {};
+
+  const dataIdx = message.indexOf(" DATA: ");
+  if (dataIdx !== -1) {
+    const dataStr = message.slice(dataIdx + 7);
+    message = message.slice(0, dataIdx);
+    try {
+      kv = JSON.parse(dataStr) as KVPairs;
+    } catch {
+      kv = { data: dataStr };
+    }
+  }
+
+  return {
+    timestamp,
+    level,
+    pid: 0, // Workers don't have PID in log format
+    buildHash: "worker--",
+    projectHash: workerId!.slice(0, 8).padEnd(8, "-"),
+    module: "WORKER",
+    event: message.slice(0, 20),
+    kv,
+    raw: line,
+    lineNumber,
+  };
+}
+
+/**
+ * Parse log line to entry (auto-detects main vs worker format)
  */
 export function parseLogLine(line: string, lineNumber: number = 0): ParsedLogLine | null {
+  // Detect worker log format: starts with [ISO_TIMESTAMP]
+  if (line.startsWith("[") && line.includes("[WORKER:")) {
+    return parseWorkerLogLine(line, lineNumber);
+  }
+
+  // Main log format requires minimum length
   if (line.length < LOG_FIELD_POSITIONS.KV_START) {
     return null;
   }

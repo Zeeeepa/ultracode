@@ -19,6 +19,7 @@
 
 import { log } from "../logging/index.js";
 import type { EmbeddingPoolStats, VectorEmbedding } from "../types/semantic.js";
+import { sleep } from "../utils/runtime-detection.js";
 import type { EmbeddingGenerator } from "./embedding-generator.js";
 import type { IVectorProvider } from "./faiss/types.js";
 
@@ -91,7 +92,7 @@ export class EmbeddingAccumulator {
   private inFlightFlush: Promise<number> | null = null;
 
   // Debounce for accumulating texts before processing
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private debounceAbort: AbortController | null = null;
   private static readonly DEBOUNCE_MS = 50; // Wait 50ms for more texts
   private static readonly MIN_BATCH_THRESHOLD = 50; // Start immediately if >= 50 texts
 
@@ -245,6 +246,9 @@ export class EmbeddingAccumulator {
           totalFlushed: this.stats.flushed,
         });
 
+        // Help GC by clearing references to large vector data
+        toFlush.length = 0;
+
         return count;
       })
       .catch((error) => {
@@ -293,12 +297,12 @@ export class EmbeddingAccumulator {
   }
 
   /**
-   * Schedule queue processing with debounce.
+   * Schedule queue processing with debounce (Bun-compatible using async sleep).
    * Waits for more texts to accumulate before starting, unless queue is already large.
    */
   private scheduleQueueProcessing(): void {
     // If already scheduled or processing, skip
-    if (this.debounceTimer || this.isProcessingQueue) return;
+    if (this.debounceAbort || this.isProcessingQueue) return;
 
     // If queue is large enough, start immediately
     if (this.textQueue.length >= EmbeddingAccumulator.MIN_BATCH_THRESHOLD) {
@@ -315,15 +319,24 @@ export class EmbeddingAccumulator {
       queueSize: this.textQueue.length,
       debounceMs: EmbeddingAccumulator.DEBOUNCE_MS,
     });
-    this.debounceTimer = setTimeout(() => {
-      this.debounceTimer = null;
-      if (!this.isProcessingQueue && this.textQueue.length > 0) {
-        log.d("ACCUMULATOR", "Debounce complete, starting processing", {
-          queueSize: this.textQueue.length,
-        });
-        this.startQueueProcessing();
+
+    // Create abort controller for this debounce
+    const abortController = new AbortController();
+    this.debounceAbort = abortController;
+
+    // Schedule using async sleep pattern (Bun compatible)
+    (async () => {
+      await sleep(EmbeddingAccumulator.DEBOUNCE_MS);
+      if (!abortController.signal.aborted) {
+        this.debounceAbort = null;
+        if (!this.isProcessingQueue && this.textQueue.length > 0) {
+          log.d("ACCUMULATOR", "Debounce complete, starting processing", {
+            queueSize: this.textQueue.length,
+          });
+          this.startQueueProcessing();
+        }
       }
-    }, EmbeddingAccumulator.DEBOUNCE_MS);
+    })();
   }
 
   /**
@@ -489,10 +502,10 @@ export class EmbeddingAccumulator {
    * Waits for any in-flight async flush and queue processing to complete first.
    */
   async flush(): Promise<number> {
-    // Cancel debounce timer and start processing immediately if needed
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    // Cancel debounce and start processing immediately if needed
+    if (this.debounceAbort) {
+      this.debounceAbort.abort();
+      this.debounceAbort = null;
       // Start processing if there are queued texts
       if (this.textQueue.length > 0 && !this.isProcessingQueue) {
         this.startQueueProcessing();

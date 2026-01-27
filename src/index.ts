@@ -182,6 +182,7 @@ import {
   writeToLogFile,
 } from "./core/startup-utils.js";
 import { log } from "./logging/index.js";
+import { logMemory } from "./logging/memory-logger.js";
 import { startEmbeddingWarmup } from "./semantic/embedding-warmup.js";
 import type { Agent } from "./types/agent.js";
 import { AgentType } from "./types/agent.js";
@@ -189,6 +190,7 @@ import { AgentBusyError } from "./types/errors.js";
 import { getVectorDimensions, loadSemanticConfig } from "./utils/config-paths.js";
 import { initHasher } from "./utils/fast-hash.js";
 import { createRequestId, initNewLogger, setLoggerProject } from "./utils/logger.js";
+import { tryGarbageCollect } from "./utils/runtime-detection.js";
 
 // =============================================================================
 // GLOBAL EXCEPTION HANDLERS - Catch crashes and log them to file
@@ -955,23 +957,37 @@ async function main() {
       log.i("AUTODOC", "watcher_started", { dir: directory, debounce: watcherConfig.debounceMs ?? 0, useLlm });
 
       // Background init: trigger AutoDocManager initialization and sync
-      // This runs async to not block server startup
-      setTimeout(() => {
-        getOrInitServiceContainer()
-          .getAutoDocManager()
-          .then((adm) => {
-            if (adm) {
-              log.i("AUTODOC", "manager_initialized", { enabled: !!adm.getConfig()?.enabled });
-            }
-          })
-          .catch(() => {
-            // Ignore - non-critical background operation
-          });
-      }, 2000); // Delay 2s to let server start first
+      // This runs async to not block server startup (Bun-compatible using async sleep)
+      (async () => {
+        await sleep(2000); // Delay 2s to let server start first
+        try {
+          const adm = await getOrInitServiceContainer().getAutoDocManager();
+          if (adm) {
+            log.i("AUTODOC", "manager_initialized", { enabled: !!adm.getConfig()?.enabled });
+          }
+        } catch {
+          // Ignore - non-critical background operation
+        }
+      })();
     } catch (error) {
       log.w("AUTODOC", "watcher_failed", { err: (error as Error).message });
     }
   }
+
+  // Start periodic GC loop (every 5 minutes) - helps prevent memory fragmentation
+  const GC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  (async () => {
+    await sleep(60_000); // Wait 1 minute after startup before first GC
+    while (true) {
+      await sleep(GC_INTERVAL_MS);
+      const beforeMem = process.memoryUsage();
+      if (tryGarbageCollect(true)) {
+        const afterMem = process.memoryUsage();
+        const freedMB = Math.round((beforeMem.heapUsed - afterMem.heapUsed) / 1024 / 1024);
+        logMemory("MAIN", { event: "periodic_gc", freedMB });
+      }
+    }
+  })();
 
   // Connect transport FIRST for fast readiness
   let transportType: string;
