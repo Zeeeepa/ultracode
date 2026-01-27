@@ -102,75 +102,75 @@ export function shouldExcludeFromEmbedding(filePath: string): boolean {
  * Build enhanced text for embedding from entity data
  */
 export function buildEmbeddingText(entity: ParsedEntity, code: string): string {
+  const parts: string[] = [];
+
+  // Header
   const header = `${entity.name ?? ""} ${entity.type ?? ""} ${entity.signature ?? ""}`.trim();
-  let enhancedText = header;
+  if (header) parts.push(header);
 
   // Add documentation if available (improves semantic search by description)
   if (entity.documentation?.description) {
-    enhancedText += `\ndescription: ${entity.documentation.description}`;
+    parts.push(`description: ${entity.documentation.description}`);
   }
 
   // Add call information (enables "find functions that call X" queries)
   if (entity.calls && entity.calls.length > 0) {
-    let callStr = "";
     const callsToProcess = entity.calls.length > 20 ? entity.calls.slice(0, 20) : entity.calls;
-    for (let i = 0; i < callsToProcess.length; i++) {
-      const c = callsToProcess[i];
+    const callParts: string[] = [];
+    for (const c of callsToProcess) {
       if (!c) continue;
-      if (i > 0) callStr += ", ";
-      callStr += c.target ? `${c.target}.${c.name || ""}` : c.name || "";
+      callParts.push(c.target ? `${c.target}.${c.name || ""}` : c.name || "");
     }
-    enhancedText += `\ncalls: ${callStr}`;
+    if (callParts.length > 0) {
+      parts.push(`calls: ${callParts.join(", ")}`);
+    }
   }
 
   // Add complexity info (enables "find complex functions" queries)
   if (entity.complexity) {
     const cx = entity.complexity;
     if (cx.cyclomatic > 5 || cx.cognitive > 10) {
-      enhancedText += `\ncomplexity: cyclomatic=${cx.cyclomatic} cognitive=${cx.cognitive}`;
+      parts.push(`complexity: cyclomatic=${cx.cyclomatic} cognitive=${cx.cognitive}`);
     }
   }
 
   // Add control flow summary (enables "find functions with try-catch" queries)
   if (entity.controlFlow) {
     const cf = entity.controlFlow;
-    let flowStr = "";
-    if (cf.branches?.length > 0) flowStr += `branches=${cf.branches.length}`;
-    if (cf.loops?.length > 0) flowStr += (flowStr ? ", " : "") + `loops=${cf.loops.length}`;
-    if (cf.exceptions?.length > 0) flowStr += (flowStr ? ", " : "") + `exceptions=${cf.exceptions.length}`;
-    if (cf.awaits?.length > 0) flowStr += (flowStr ? ", " : "") + `awaits=${cf.awaits.length}`;
-    if (flowStr) {
-      enhancedText += `\nflow: ${flowStr}`;
+    const flowParts: string[] = [];
+    if (cf.branches?.length > 0) flowParts.push(`branches=${cf.branches.length}`);
+    if (cf.loops?.length > 0) flowParts.push(`loops=${cf.loops.length}`);
+    if (cf.exceptions?.length > 0) flowParts.push(`exceptions=${cf.exceptions.length}`);
+    if (cf.awaits?.length > 0) flowParts.push(`awaits=${cf.awaits.length}`);
+    if (flowParts.length > 0) {
+      parts.push(`flow: ${flowParts.join(", ")}`);
     }
   }
 
   // Add return type for better type-based search
   if (entity.returnType) {
-    enhancedText += `\nreturns: ${entity.returnType}`;
+    parts.push(`returns: ${entity.returnType}`);
   }
 
   // Add parameter types for signature-based search
   if (entity.parameters && entity.parameters.length > 0) {
-    let paramStr = "";
-    let count = 0;
+    const paramParts: string[] = [];
     for (const p of entity.parameters) {
-      if (p.type && count < 10) {
-        if (count > 0) paramStr += ", ";
-        paramStr += `${p.name}:${p.type}`;
-        count++;
+      if (p.type && paramParts.length < 10) {
+        paramParts.push(`${p.name}:${p.type}`);
       }
     }
-    if (paramStr) {
-      enhancedText += `\nparams: ${paramStr}`;
+    if (paramParts.length > 0) {
+      parts.push(`params: ${paramParts.join(", ")}`);
     }
   }
 
   // Add the code
   if (code) {
-    enhancedText += "\n" + code;
+    parts.push(code);
   }
 
-  return enhancedText.trim();
+  return parts.join("\n").trim();
 }
 
 /**

@@ -18,6 +18,7 @@ import { getGraphStorage, setGlobalProjectContext } from "../storage/graph-stora
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, ParserOptions } from "../types/parser.js";
 import { hashText } from "../utils/fast-hash.js";
+import { tryGarbageCollect } from "../utils/runtime-detection.js";
 import { BaseAgent } from "./base.js";
 import { createHeuristicEntities } from "./dev/heuristic-parser.js";
 import { collectFilesAsync, isCodeExtension, isDataExtension } from "./dev/index.js";
@@ -1247,6 +1248,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       }
     }
 
+    // Force garbage collection after indexing to reclaim memory
+    if (tryGarbageCollect(true)) {
+      log.i("DEVAGENT", "gc_after_index");
+    }
+
     return {
       filesProcessed,
       entitiesExtracted: totalEntities,
@@ -1481,17 +1487,22 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       }
     }
 
-    // INCREMENTAL: Kill workers only if memory > 500MB (keep alive for next changes)
+    // INCREMENTAL: Kill workers only if memory > 1GB (keep alive for next changes)
     if (this.parserAgent) {
       try {
-        const killed = await this.parserAgent.killIfMemoryHigh(500);
+        const killed = await this.parserAgent.killIfMemoryHigh(1024);
         if (killed) {
           this.parserAgent = null;
-          log.i("DEVAGENT", "Parser workers killed (memory > 500MB after incremental)");
+          log.i("DEVAGENT", "Parser workers killed (memory > 1GB after incremental)");
         }
       } catch (_err) {
         // Ignore memory check errors for incremental
       }
+    }
+
+    // Force garbage collection after incremental reindex
+    if (tryGarbageCollect(true)) {
+      log.d("DEVAGENT", "gc_after_incremental");
     }
 
     // Publish completion event (without source to avoid circular loop)

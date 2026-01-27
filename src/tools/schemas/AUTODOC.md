@@ -23,9 +23,9 @@
 | `AutoDocChangelogSchema` | const | Валидация получения истории изменений документации | [→ autodoc-schemas.ts:89-93] |
 | `AutoDocInstallHooksSchema` | const | Валидация установки/удаления git-хуков документации | [→ autodoc-schemas.ts:95-101] |
 | `AutoDocDetectLanguageSchema` | const | Валидация определения языка документации автоматически | [→ autodoc-schemas.ts:103-110] |
-| `ListEntitiesToolSchema` | const | Валидация получения списка сущностей из файла | [→ entity-schemas.ts:8-11] |
-| `ListRelationshipsToolSchema` | const | Валидация получения связей между сущностями проекта | [→ entity-schemas.ts:8-11] |
-| `QueryToolSchema` | const | Валидация естественного языкового запроса к графу знаний | [→ entity-schemas.ts:26-30] |
+| `ListEntitiesToolSchema` | const | Валидация получения списка сущностей из файла | [→ entity-schemas.ts:9-13] |
+| `ListRelationshipsToolSchema` | const | Валидация получения связей между сущностями проекта | [→ entity-schemas.ts:9-13] |
+| `QueryToolSchema` | const | Валидация естественного языкового запроса к графу знаний | [→ entity-schemas.ts:29-34] |
 | `GetGraphSchema` | const | Валидация получения сущностей из графа с поиском | [→ graph-schemas.ts:9-13] |
 | `GetGraphStatsSchema` | const | Валидация получения статистики графа знаний без параметров | [→ graph-schemas.ts:15] |
 | `GetGraphHealthSchema` | const | Валидация проверки здоровья графа кода | [→ graph-schemas.ts:9-13] |

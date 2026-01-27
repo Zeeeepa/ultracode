@@ -722,15 +722,35 @@ export class ParserAgent extends BaseAgent {
 
     const startTime = performance.now();
     const languageGroups = groupFilesByLanguage(files);
-    const languages = Array.from(languageGroups.keys());
+
+    // OPTIMIZATION: Only spawn pools for languages with enough files
+    // Languages with few files (< 10) are skipped - they use slow ANTLR parsers
+    // and their pool spawn time exceeds parsing benefit
+    const MIN_FILES_FOR_POOL = 10;
+    const languages = Array.from(languageGroups.keys()).filter((lang) => {
+      const count = languageGroups.get(lang)?.length ?? 0;
+      return count >= MIN_FILES_FOR_POOL;
+    });
+
+    const skippedLanguages = Array.from(languageGroups.keys()).filter((lang) => {
+      const count = languageGroups.get(lang)?.length ?? 0;
+      return count < MIN_FILES_FOR_POOL;
+    });
 
     if (languages.length === 0) {
+      if (skippedLanguages.length > 0) {
+        log.i("PARSER", "preSpawnPools skipped all languages (below threshold)", {
+          skipped: skippedLanguages.map((l) => `${l}:${languageGroups.get(l)?.length ?? 0}`).join(","),
+          threshold: MIN_FILES_FOR_POOL,
+        });
+      }
       return;
     }
 
     log.i("PARSER", "preSpawnPools starting", {
       languages: languages.join(","),
       fileCounts: languages.map((l) => `${l}:${languageGroups.get(l)?.length ?? 0}`).join(","),
+      skipped: skippedLanguages.length > 0 ? skippedLanguages.join(",") : "none",
     });
 
     // Create all pools in parallel
@@ -899,11 +919,25 @@ export class ParserAgent extends BaseAgent {
     // Step 1: Group files by programming language
     const languageGroups = groupFilesByLanguage(files);
 
+    // OPTIMIZATION: Skip languages with few files (ANTLR parsers like Kotlin are slow to spawn)
+    const MIN_FILES_FOR_POOL = 10;
+    const allLanguages = Array.from(languageGroups.keys());
+    const skippedLowCountLanguages: string[] = [];
+
+    for (const lang of allLanguages) {
+      const count = languageGroups.get(lang)?.length ?? 0;
+      if (count < MIN_FILES_FOR_POOL) {
+        skippedLowCountLanguages.push(`${lang}:${count}`);
+        languageGroups.delete(lang); // Remove from processing
+      }
+    }
+
     log.i("PARSER", "Language distribution", {
       agentId: this.id,
       distribution: Object.fromEntries(
         Array.from(languageGroups.entries()).map(([lang, files]) => [lang, files.length]),
       ),
+      skippedBelowThreshold: skippedLowCountLanguages.length > 0 ? skippedLowCountLanguages.join(",") : "none",
     });
 
     // Step 2: Create all language pools IN PARALLEL (avoid sequential await blocking)

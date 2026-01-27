@@ -60,11 +60,11 @@ export function workerLog(level: string, message: string, data?: unknown): void 
   const timestamp = `${localTime.toISOString().slice(0, -1)}${sign}${hours}:${mins}`;
 
   const id = workerIdGetter();
-  let line = `[${timestamp}] [${level}] [WORKER:${id}] ${message}`;
+  const parts = [`[${timestamp}]`, `[${level}]`, `[WORKER:${id}]`, message];
   if (data) {
-    line += ` DATA: ${JSON.stringify(data)}`;
+    parts.push(`DATA: ${JSON.stringify(data)}`);
   }
-  line += "\n";
+  const line = parts.join(" ") + "\n";
 
   try {
     appendFileSync(WORKER_LOG_FILE, line);

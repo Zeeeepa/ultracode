@@ -93,3 +93,12 @@ export {
   createLoggerAdapter,
   LoggerAdapter,
 } from "./logger-adapter.js";
+// Memory Logger
+export {
+  formatMemoryStats,
+  getMemoryStats,
+  isMemoryHigh,
+  logMemory,
+  logMemoryDelta,
+  type MemoryStats,
+} from "./memory-logger.js";

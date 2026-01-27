@@ -290,7 +290,7 @@ class GpuSubprocessClient implements IGpuClient {
       // Use Node's child_process - works correctly under both Node and Bun
       if (!isBun || isWindows) {
         const { spawn } = await import("node:child_process");
-        this.worker = spawn(this.config.nodePath, [this.config.workerPath], {
+        this.worker = spawn(this.config.nodePath, ["--expose-gc", this.config.workerPath], {
           stdio: ["pipe", "pipe", "pipe"], // Capture stderr for logging
           windowsHide: true,
         });
@@ -309,7 +309,7 @@ class GpuSubprocessClient implements IGpuClient {
       } else {
         // On non-Windows with Bun, use Bun.spawn for better performance
         const global = globalThis as any;
-        const proc = global.Bun?.["spawn"]([this.config.nodePath, this.config.workerPath], {
+        const proc = global.Bun?.["spawn"]([this.config.nodePath, "--expose-gc", this.config.workerPath], {
           stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe", // Capture stderr for logging

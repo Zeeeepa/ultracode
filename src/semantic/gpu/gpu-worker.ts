@@ -425,6 +425,11 @@ async function handleRequest(request: GpuWorkerRequest): Promise<void> {
         break;
       case "embeddings.flush":
         handleEmbeddingsFlush(embCtx);
+        // Try GC after flush to free memory (requires --expose-gc)
+        if (typeof global.gc === "function") {
+          global.gc();
+          log("GC triggered after flush");
+        }
         break;
       case "embeddings.stats":
         handleEmbeddingsStats(embCtx);
@@ -660,6 +665,21 @@ async function main(): Promise<void> {
     namedPipeServer?.stop();
     process.exit(0);
   });
+
+  // Periodic GC every 5 minutes (requires --expose-gc)
+  if (typeof global.gc === "function") {
+    log("GC available, starting periodic GC (5 min interval)");
+    setInterval(
+      () => {
+        const before = process.memoryUsage();
+        global.gc!();
+        const after = process.memoryUsage();
+        const freedMB = Math.round((before.heapUsed - after.heapUsed) / 1024 / 1024);
+        log(`Periodic GC: freed ${freedMB}MB, heap ${Math.round(after.heapUsed / 1024 / 1024)}MB`);
+      },
+      5 * 60 * 1000,
+    );
+  }
 
   // Handle signals
   process.on("SIGTERM", () => {

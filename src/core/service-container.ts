@@ -21,6 +21,7 @@ import type { PatternSearch } from "../search/pattern-search.js";
 import { PatternSearch as PatternSearchClass } from "../search/pattern-search.js";
 import { getGlobalDbPaths } from "../shared/storage-paths.js";
 import { getGraphStorage } from "../storage/graph-storage-factory.js";
+import { sleep } from "../utils/runtime-detection.js";
 import type { CodeValidator } from "../validation/code-validator.js";
 import { CodeValidator as CodeValidatorClass } from "../validation/code-validator.js";
 import type { VersionManager } from "../versioning/version-manager.js";
@@ -371,9 +372,9 @@ export class ServiceContainer {
         }
       }
 
-      // Small delay between batches
+      // Small delay between batches (using sleep for Bun compatibility)
       if (i + BATCH_SIZE < allDocs.length) {
-        await new Promise((r) => setTimeout(r, 100));
+        await sleep(100);
       }
     }
 

@@ -14,6 +14,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
+import { sleep } from "../../utils/runtime-detection.js";
 
 // =============================================================================
 // Constants
@@ -47,6 +48,87 @@ export interface NamedPipeClientOptions {
   onDisconnect?: () => void;
   /** Called on error */
   onError?: (error: Error) => void;
+}
+
+// =============================================================================
+// Server
+// =============================================================================
+
+// =============================================================================
+// Reusable Buffer Helper
+// =============================================================================
+
+/**
+ * Pre-allocated buffer with dynamic growth for efficient chunk accumulation.
+ * Avoids O(n²) Buffer.concat in hot paths.
+ * Shrinks back to initial size when empty to prevent memory bloat.
+ */
+class GrowableBuffer {
+  private buffer: Buffer;
+  private length = 0;
+  private readonly initialSize: number;
+
+  constructor(initialSize = 65536) {
+    this.initialSize = initialSize;
+    this.buffer = Buffer.allocUnsafe(initialSize);
+  }
+
+  /** Ensure capacity for additional bytes */
+  private ensureCapacity(needed: number): void {
+    const required = this.length + needed;
+    if (required > this.buffer.length) {
+      const newSize = Math.max(this.buffer.length * 2, required);
+      const newBuffer = Buffer.allocUnsafe(newSize);
+      this.buffer.copy(newBuffer, 0, 0, this.length);
+      this.buffer = newBuffer;
+    }
+  }
+
+  /** Shrink buffer back to initial size if empty and oversized */
+  private shrinkIfEmpty(): void {
+    if (this.length === 0 && this.buffer.length > this.initialSize) {
+      this.buffer = Buffer.allocUnsafe(this.initialSize);
+    }
+  }
+
+  /** Append chunk to buffer */
+  append(chunk: Buffer): void {
+    this.ensureCapacity(chunk.length);
+    chunk.copy(this.buffer, this.length);
+    this.length += chunk.length;
+  }
+
+  /** Get current data length */
+  get dataLength(): number {
+    return this.length;
+  }
+
+  /** Read UInt32LE at offset */
+  readUInt32LE(offset: number): number {
+    return this.buffer.readUInt32LE(offset);
+  }
+
+  /** Get subarray view (valid until next append) */
+  subarray(start: number, end: number): Buffer {
+    return this.buffer.subarray(start, end);
+  }
+
+  /** Consume bytes from front (shift remaining data) */
+  consume(bytes: number): void {
+    if (bytes >= this.length) {
+      this.length = 0;
+    } else {
+      this.buffer.copy(this.buffer, 0, bytes, this.length);
+      this.length -= bytes;
+    }
+    this.shrinkIfEmpty();
+  }
+
+  /** Reset buffer */
+  reset(): void {
+    this.length = 0;
+    this.shrinkIfEmpty();
+  }
 }
 
 // =============================================================================
@@ -101,35 +183,38 @@ export class NamedPipeServer {
   }
 
   private handleConnection(socket: Socket): void {
-    let buffer = Buffer.alloc(0);
+    const buffer = new GrowableBuffer(65536);
 
     socket.on("data", async (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
+      buffer.append(chunk);
 
       // Process complete packets
-      while (buffer.length >= 4) {
+      while (buffer.dataLength >= 4) {
         const packetLen = buffer.readUInt32LE(0);
 
         // Wait for complete packet
-        if (buffer.length < 4 + packetLen) break;
+        if (buffer.dataLength < 4 + packetLen) break;
 
-        const packet = buffer.subarray(4, 4 + packetLen);
-        buffer = buffer.subarray(4 + packetLen);
+        // Copy packet data before consuming (subarray is invalidated by consume)
+        const packet = Buffer.from(buffer.subarray(4, 4 + packetLen));
+        buffer.consume(4 + packetLen);
 
         try {
           // Process request and send response
           const response = await this.options.onRequest(packet);
 
-          // Send length-prefixed response
-          const respLen = Buffer.allocUnsafe(4);
-          respLen.writeUInt32LE(response.length, 0);
-          socket.write(Buffer.concat([respLen, response]));
+          // Send length-prefixed response (single allocation)
+          const respBuffer = Buffer.allocUnsafe(4 + response.length);
+          respBuffer.writeUInt32LE(response.length, 0);
+          response.copy(respBuffer, 4);
+          socket.write(respBuffer);
         } catch (error) {
           // Send error response
-          const errorResponse = Buffer.from(JSON.stringify({ success: false, error: (error as Error).message }));
-          const respLen = Buffer.allocUnsafe(4);
-          respLen.writeUInt32LE(errorResponse.length, 0);
-          socket.write(Buffer.concat([respLen, errorResponse]));
+          const errorJson = JSON.stringify({ success: false, error: (error as Error).message });
+          const errorBuffer = Buffer.allocUnsafe(4 + errorJson.length);
+          errorBuffer.writeUInt32LE(errorJson.length, 0);
+          errorBuffer.write(errorJson, 4);
+          socket.write(errorBuffer);
         }
       }
     });
@@ -180,7 +265,7 @@ export class NamedPipeClient {
     resolve: (response: Buffer) => void;
     reject: (error: Error) => void;
   } | null = null;
-  private responseBuffer = Buffer.alloc(0);
+  private responseBuffer = new GrowableBuffer(65536);
 
   constructor(options: NamedPipeClientOptions) {
     this.options = {
@@ -241,15 +326,16 @@ export class NamedPipeClient {
   }
 
   private handleData(chunk: Buffer): void {
-    this.responseBuffer = Buffer.concat([this.responseBuffer, chunk]);
+    this.responseBuffer.append(chunk);
 
     // Check if we have a complete response
-    if (this.responseBuffer.length >= 4) {
+    if (this.responseBuffer.dataLength >= 4) {
       const respLen = this.responseBuffer.readUInt32LE(0);
 
-      if (this.responseBuffer.length >= 4 + respLen) {
-        const response = this.responseBuffer.subarray(4, 4 + respLen);
-        this.responseBuffer = this.responseBuffer.subarray(4 + respLen);
+      if (this.responseBuffer.dataLength >= 4 + respLen) {
+        // Copy response data before consuming
+        const response = Buffer.from(this.responseBuffer.subarray(4, 4 + respLen));
+        this.responseBuffer.consume(4 + respLen);
 
         // Resolve pending request
         if (this.pendingRequest) {
@@ -269,29 +355,40 @@ export class NamedPipeClient {
       throw new Error("Another request is pending");
     }
 
-    return new Promise((resolve, reject) => {
-      // Set timeout
-      const timeout = setTimeout(() => {
-        this.pendingRequest = null;
-        reject(new Error("Request timeout"));
-      }, this.options.timeout);
+    const abortController = new AbortController();
 
+    // Response promise
+    const responsePromise = new Promise<Buffer>((resolve, reject) => {
       this.pendingRequest = {
         resolve: (response: Buffer) => {
-          clearTimeout(timeout);
+          abortController.abort();
           resolve(response);
         },
         reject: (error: Error) => {
-          clearTimeout(timeout);
+          abortController.abort();
           reject(error);
         },
       };
 
-      // Send length-prefixed packet
-      const lenBuf = Buffer.allocUnsafe(4);
-      lenBuf.writeUInt32LE(packet.length, 0);
-      this.socket!.write(Buffer.concat([lenBuf, packet]));
+      // Send length-prefixed packet (single allocation)
+      const sendBuffer = Buffer.allocUnsafe(4 + packet.length);
+      sendBuffer.writeUInt32LE(packet.length, 0);
+      packet.copy(sendBuffer, 4);
+      this.socket!.write(sendBuffer);
     });
+
+    // Timeout promise (Bun-compatible using async sleep)
+    const timeoutPromise = (async (): Promise<Buffer> => {
+      await sleep(this.options.timeout ?? 30000);
+      if (abortController.signal.aborted) {
+        // Response already received, return never-resolving promise
+        return new Promise<Buffer>(() => {});
+      }
+      this.pendingRequest = null;
+      throw new Error("Request timeout");
+    })();
+
+    return Promise.race([responsePromise, timeoutPromise]);
   }
 
   disconnect(): void {

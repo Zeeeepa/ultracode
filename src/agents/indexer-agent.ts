@@ -20,7 +20,7 @@ import { BranchManager } from "../core/branch-manager.js";
 import { createFileWatcher, type FileChangeEvent, type FileWatcher } from "../core/file-watcher.js";
 import { GitWatcher } from "../core/git-watcher.js";
 import { knowledgeBus } from "../core/knowledge-bus.js";
-import { log } from "../logging/index.js";
+import { log, logMemory } from "../logging/index.js";
 import { getDataDir } from "../shared/storage-paths.js";
 import { BatchOperationsLibSQL } from "../storage/batch-operations-libsql.js";
 import { getCacheManager, QueryCacheManager } from "../storage/cache-manager.js";
@@ -39,6 +39,7 @@ import type {
   Relationship,
 } from "../types/storage.js";
 import { flattenParsedEntities, parsedEntityToEntity, type RelationType } from "../types/storage.js";
+import { sleep, tryGarbageCollect } from "../utils/runtime-detection.js";
 import { BaseAgent } from "./base.js";
 import { buildEntityNameMap, resolveByNameAndLine } from "./indexer/entity-resolution.js";
 import { processExternalRelationships } from "./indexer/external-placeholder.js";
@@ -133,6 +134,10 @@ export class IndexerAgent extends BaseAgent {
   private pendingParsedEntities: Array<{ entities: ParsedEntity[]; filePath: string }> = [];
   private pendingFilesCount = 0;
   private batchFlushPromise: Promise<void> | null = null;
+
+  // Idle flush timer - flushes pending batch if no activity for 10 seconds
+  private idleFlushAbort: AbortController | null = null;
+  private readonly IDLE_FLUSH_MS = 10_000;
 
   constructor() {
     super(AgentType.INDEXER, getIndexerConfig());
@@ -558,42 +563,37 @@ export class IndexerAgent extends BaseAgent {
       log.d("INDEXER", "built_auto_rels", { cnt: relationships.length });
     }
 
-    // Process external relationships - try to resolve to existing entities first, create placeholders for unresolved
-    // Build in-memory map of just-inserted entities for fast lookup
-    const justInsertedByName = new Map<string, Entity>();
-    for (const entity of storageEntities) {
-      justInsertedByName.set(entity.name, entity);
-    }
-
-    const lookupEntityByName = async (qualifiedName: string) => {
-      // First check in-memory (entities just inserted)
-      const inMemory = justInsertedByName.get(qualifiedName);
-      if (inMemory) return inMemory;
-
-      // Then check database (entities from other files)
-      const entities = await this.graphStorage.searchEntities({ namePattern: qualifiedName });
-      return entities.find((e) => e.name === qualifiedName);
-    };
+    // Process external relationships - create placeholders for unresolved references
+    // NOTE: DB lookup was removed here due to O(N) query overhead causing 77+ second delays
+    // Resolution of placeholders to real entities can be done later via resolveExternalPlaceholders()
     const externalPlaceholders = await processExternalRelationships(
       relationships,
       stableRelationshipId,
-      lookupEntityByName,
+      // No lookupEntityByName - just create placeholders (fast path)
     );
 
     if (externalPlaceholders.length > 0) {
       await this.batchOps.insertEntities(externalPlaceholders);
     }
 
-    log.t("INDEXER", "insert_rels_start", { cnt: relationships.length });
-
-    const insertRelStart = Date.now();
-    const relResult = await this.batchOps.insertRelationships(relationships);
-    const insertRelMs = Date.now() - insertRelStart;
-    log.i("INDEXER", "InsertRelationships", {
-      count: relationships.length,
-      processed: relResult.processed,
-      ms: insertRelMs,
-    });
+    // Skip empty relationship inserts to avoid overhead
+    let relResult: { processed: number; failed: number; errors: Array<{ item: unknown; error: string }> } = {
+      processed: 0,
+      failed: 0,
+      errors: [],
+    };
+    let insertRelMs = 0;
+    if (relationships.length > 0) {
+      log.t("INDEXER", "insert_rels_start", { cnt: relationships.length });
+      const insertRelStart = Date.now();
+      relResult = await this.batchOps.insertRelationships(relationships);
+      insertRelMs = Date.now() - insertRelStart;
+      log.i("INDEXER", "InsertRelationships", {
+        count: relationships.length,
+        processed: relResult.processed,
+        ms: insertRelMs,
+      });
+    }
 
     // Update file info
     const fileInfo: FileInfo = {
@@ -666,11 +666,56 @@ export class IndexerAgent extends BaseAgent {
   // ===========================================================================
 
   /**
+   * Reset idle flush timer - called when new entities are queued.
+   * After IDLE_FLUSH_MS of inactivity, pending batch will be flushed.
+   */
+  private resetIdleFlushTimer(): void {
+    // Abort previous idle timer
+    if (this.idleFlushAbort) {
+      this.idleFlushAbort.abort();
+    }
+
+    // Don't schedule if nothing pending
+    if (this.pendingFilesCount === 0) {
+      return;
+    }
+
+    // Create new abort controller for this timer
+    const abortController = new AbortController();
+    this.idleFlushAbort = abortController;
+
+    // Schedule idle flush using async sleep (Bun compatible)
+    (async () => {
+      await sleep(this.IDLE_FLUSH_MS);
+      if (!abortController.signal.aborted && this.pendingFilesCount > 0) {
+        log.d("INDEXER", "idle_flush", {
+          pending: this.pendingFilesCount,
+          entities: this.pendingStorageEntities.length,
+          relationships: this.pendingRelationships.length,
+        });
+        logMemory("INDEXER", { pendingFiles: this.pendingFilesCount });
+        try {
+          await this.flushPendingBatch();
+          // Force GC after idle flush to reclaim memory
+          if (tryGarbageCollect(true)) {
+            log.d("INDEXER", "gc_after_idle_flush");
+          }
+        } catch (err) {
+          log.w("INDEXER", "Idle flush failed", { error: (err as Error).message });
+        }
+      }
+    })();
+  }
+
+  /**
    * Queue entities for batch indexing (streaming mode optimization)
    * Accumulates data and flushes in batches to reduce DB operations
    */
   queueForIndexing(entities: ParsedEntity[], filePath: string, providedRelationships?: EntityRelationship[]): void {
     if (!entities || entities.length === 0) return;
+
+    // Reset idle flush timer on each queue
+    this.resetIdleFlushTimer();
 
     // DEBUG: Log incoming relationships for Python files
     if (filePath.endsWith(".py")) {
@@ -804,37 +849,27 @@ export class IndexerAgent extends BaseAgent {
         knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
       }
 
-      // Process external relationships - try to resolve to existing entities first
-      // Build in-memory map of just-inserted entities for fast lookup
-      const justInsertedByName = new Map<string, Entity>();
-      for (const entity of entitiesToFlush) {
-        justInsertedByName.set(entity.name, entity);
-      }
-
-      const lookupEntityByName = async (qualifiedName: string) => {
-        // First check in-memory (entities just inserted in this batch)
-        const inMemory = justInsertedByName.get(qualifiedName);
-        if (inMemory) return inMemory;
-
-        // Then check database (entities from previous batches/indexing runs)
-        const entities = await this.graphStorage.searchEntities({ namePattern: qualifiedName });
-        return entities.find((e) => e.name === qualifiedName);
-      };
+      // Process external relationships - create placeholders for unresolved references
+      // NOTE: DB lookup was removed here due to O(N) query overhead causing 77+ second delays
+      // Resolution of placeholders to real entities can be done later via resolveExternalPlaceholders()
       const externalPlaceholders = await processExternalRelationships(
         relationshipsToFlush,
         stableRelationshipId,
-        lookupEntityByName,
+        // No lookupEntityByName - just create placeholders (fast path)
       );
       if (externalPlaceholders.length > 0) {
         await this.batchOps.insertEntities(externalPlaceholders);
       }
 
-      // Insert relationships in one batch
-      log.i("INDEXER", "flush_rels", {
-        count: relationshipsToFlush.length,
-        sample: relationshipsToFlush.slice(0, 3).map((r) => `${r.fromId}->${r.toId}:${r.type}`),
-      });
-      const relResult = await this.batchOps.insertRelationships(relationshipsToFlush);
+      // Insert relationships in one batch (skip if empty)
+      let relResult = { processed: 0 };
+      if (relationshipsToFlush.length > 0) {
+        log.i("INDEXER", "flush_rels", {
+          count: relationshipsToFlush.length,
+          sample: relationshipsToFlush.slice(0, 3).map((r) => `${r.fromId}->${r.toId}:${r.type}`),
+        });
+        relResult = await this.batchOps.insertRelationships(relationshipsToFlush);
+      }
 
       // Update file info for Smart Incremental indexing
       // Group entities by file path and update file info for each unique file
@@ -1269,6 +1304,22 @@ export class IndexerAgent extends BaseAgent {
    */
   protected async onShutdown(): Promise<void> {
     log.i("INDEXER", "Shutting down...");
+
+    // Cancel idle flush timer
+    if (this.idleFlushAbort) {
+      this.idleFlushAbort.abort();
+      this.idleFlushAbort = null;
+    }
+
+    // Flush any remaining pending data
+    if (this.pendingFilesCount > 0) {
+      log.d("INDEXER", "shutdown_flush_pending", { pending: this.pendingFilesCount });
+      try {
+        await this.flushPendingBatch();
+      } catch (err) {
+        log.w("INDEXER", "shutdown_flush_failed", { error: (err as Error).message });
+      }
+    }
 
     // Stop FileWatcher
     if (this.fileWatcher) {
