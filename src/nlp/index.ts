@@ -8,7 +8,7 @@
  * - QueryExpander: Automatic query expansion using cooc + PRF
  */
 
-export * from "./tokenizer.js";
-export * from "./tfidf.js";
 export * from "./cooccurrence-index.js";
 export * from "./query-expander.js";
+export * from "./tfidf.js";
+export * from "./tokenizer.js";

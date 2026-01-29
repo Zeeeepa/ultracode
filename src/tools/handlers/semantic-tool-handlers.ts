@@ -218,7 +218,11 @@ const SemanticSearchSchema = z.object({
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   entityTypes: z.array(z.string()).optional().describe("Filter by entity types (function, class, interface, etc.)"),
   minSimilarity: z.number().optional().default(0.7).describe("Minimum similarity threshold (0.0-1.0)"),
-  includeContent: z.boolean().optional().default(false).describe("Include full source code (startLine to endLine) in results"),
+  includeContent: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Include full source code (startLine to endLine) in results"),
   expandRelated: z
     .boolean()
     .optional()
@@ -666,7 +670,11 @@ const FindSimilarCodeSchema = z.object({
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   minSimilarity: z.number().optional().default(0.7).describe("Minimum similarity threshold (0.0-1.0)"),
-  includeContent: z.boolean().optional().default(false).describe("Include full source code (startLine to endLine) in results"),
+  includeContent: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Include full source code (startLine to endLine) in results"),
 });
 
 export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof FindSimilarCodeSchema>> {
@@ -965,7 +973,11 @@ const CrossLanguageSearchSchema = z.object({
   languages: z.array(z.string()).optional().describe("Languages to search in"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
-  includeContent: z.boolean().optional().default(false).describe("Include full source code (startLine to endLine) in results"),
+  includeContent: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Include full source code (startLine to endLine) in results"),
 });
 
 export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<typeof CrossLanguageSearchSchema>> {

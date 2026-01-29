@@ -10,7 +10,7 @@
  */
 
 import type { CooccurrenceIndex } from "./cooccurrence-index.js";
-import { TfIdfExtractor, type TermScore } from "./tfidf.js";
+import { type TermScore, TfIdfExtractor } from "./tfidf.js";
 import { tokenize } from "./tokenizer.js";
 
 // =============================================================================
@@ -83,10 +83,7 @@ export class QueryExpander {
    * @param topResults - Top results from initial search (for PRF)
    * @returns Expanded query with metadata
    */
-  async expand(
-    query: string,
-    topResults: Array<{ content: string }>,
-  ): Promise<ExpandedQuery> {
+  async expand(query: string, topResults: Array<{ content: string }>): Promise<ExpandedQuery> {
     const { minTermLength, originalWeight, cooccurrenceWeight, prfWeight, maxExpandedTerms } = this.config;
 
     // Step 1: Tokenize original query
@@ -185,15 +182,10 @@ export class QueryExpander {
   /**
    * Extract PRF terms from top search results using TF-IDF.
    */
-  private extractPrfTerms(
-    results: Array<{ content: string }>,
-    excludeTerms: Set<string>,
-  ): TermScore[] {
+  private extractPrfTerms(results: Array<{ content: string }>, excludeTerms: Set<string>): TermScore[] {
     const { maxPrfTerms } = this.config;
 
-    const documents = results
-      .map((r) => r.content)
-      .filter((c) => c && c.length > 0);
+    const documents = results.map((r) => r.content).filter((c) => c && c.length > 0);
 
     if (documents.length === 0) return [];
 

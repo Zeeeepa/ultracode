@@ -329,9 +329,7 @@ export function tokenize(text: string, minLength = 2): string[] {
   }
 
   // Filter: remove stop words and short tokens
-  return tokens
-    .map((t) => t.toLowerCase())
-    .filter((t) => t.length >= minLength && !STOP_WORDS.has(t));
+  return tokens.map((t) => t.toLowerCase()).filter((t) => t.length >= minLength && !STOP_WORDS.has(t));
 }
 
 /**
