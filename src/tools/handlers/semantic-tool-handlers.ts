@@ -10,6 +10,7 @@
  * - pattern_search
  */
 
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { log } from "../../logging/index.js";
 import type { EntityType } from "../../types/storage.js";
@@ -101,6 +102,112 @@ interface CloneGroup {
 }
 
 // =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/** Approximate token limit for content output (chars / 4 ≈ tokens) */
+const CONTENT_TOKEN_LIMIT = 8000;
+const CHARS_PER_TOKEN = 4;
+
+/**
+ * Load source code lines from file
+ * @param filePath - Path to source file
+ * @param startLine - Start line (1-based)
+ * @param endLine - End line (1-based)
+ * @returns Source code string or undefined if failed
+ */
+function loadSourceCode(filePath: string, startLine?: number, endLine?: number): string | undefined {
+  if (!filePath || !startLine || !endLine) return undefined;
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    const lines = content.split("\n");
+    // Lines are 1-based, array is 0-based
+    const start = Math.max(0, startLine - 1);
+    const end = Math.min(lines.length, endLine);
+    return lines.slice(start, end).join("\n");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Estimate token count (chars / 4)
+ */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+interface ResultWithContent {
+  content?: string;
+  [key: string]: unknown;
+}
+
+interface ContentPaginationResult<T> {
+  results: T[];
+  contentPagination?: {
+    includedCount: number;
+    totalCount: number;
+    tokensUsed: number;
+    tokenLimit: number;
+    hasMore: boolean;
+    message?: string;
+  };
+}
+
+/**
+ * Apply token-based pagination to results with content.
+ * Includes content for as many results as fit within token limit.
+ */
+function applyContentPagination<T extends ResultWithContent>(
+  results: T[],
+  includeContent: boolean,
+): ContentPaginationResult<T> {
+  if (!includeContent || results.length === 0) {
+    return { results };
+  }
+
+  let tokensUsed = 0;
+  let includedCount = 0;
+  const paginatedResults: T[] = [];
+
+  for (const result of results) {
+    const content = result.content;
+    if (content) {
+      const contentTokens = estimateTokens(content);
+      if (tokensUsed + contentTokens > CONTENT_TOKEN_LIMIT && includedCount > 0) {
+        // Token limit reached, include result without content
+        paginatedResults.push({ ...result, content: undefined });
+      } else {
+        // Include with content
+        tokensUsed += contentTokens;
+        includedCount++;
+        paginatedResults.push(result);
+      }
+    } else {
+      paginatedResults.push(result);
+    }
+  }
+
+  const hasMore = includedCount < results.filter((r) => r.content).length;
+
+  return {
+    results: paginatedResults,
+    ...(hasMore
+      ? {
+          contentPagination: {
+            includedCount,
+            totalCount: results.length,
+            tokensUsed,
+            tokenLimit: CONTENT_TOKEN_LIMIT,
+            hasMore,
+            message: `Content included for ${includedCount} of ${results.length} results (~${tokensUsed} tokens). Use offset to see more.`,
+          },
+        }
+      : {}),
+  };
+}
+
+// =============================================================================
 // SEMANTIC SEARCH
 // =============================================================================
 
@@ -111,7 +218,7 @@ const SemanticSearchSchema = z.object({
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   entityTypes: z.array(z.string()).optional().describe("Filter by entity types (function, class, interface, etc.)"),
   minSimilarity: z.number().optional().default(0.7).describe("Minimum similarity threshold (0.0-1.0)"),
-  includeContent: z.boolean().optional().default(true).describe("Include full code content with comments in results"),
+  includeContent: z.boolean().optional().default(false).describe("Include full source code (startLine to endLine) in results"),
   expandRelated: z
     .boolean()
     .optional()
@@ -308,6 +415,97 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
 
     const paginatedResult = paginate(expandedResults, args.offset, safeLimit);
 
+    // Extract query expansion info from searchResult (if available)
+    const queryExpansion = searchResult.expandedQuery
+      ? {
+          expandedQuery: searchResult.expandedQuery,
+          ...(searchResult.expansionInfo
+            ? {
+                coocTerms: searchResult.expansionInfo.coocTerms?.length || 0,
+                prfTerms: searchResult.expansionInfo.prfTerms?.length || 0,
+              }
+            : {}),
+        }
+      : null;
+
+    // Build results with optional content loading
+    const mappedResults = (paginatedResult.data as SemanticSearchResult[]).map((r) => {
+      const meta = r.metadata || {};
+      const filePath = r.filePath || meta.filePath || meta.path;
+      const startLine = meta.startLine;
+      const endLine = meta.endLine;
+
+      // Load source code if includeContent is true
+      const content = args.includeContent ? loadSourceCode(filePath as string, startLine, endLine) : undefined;
+
+      return {
+        id: r.id,
+        name: r.name || meta.name,
+        type: r.type || meta.entityType || meta.type,
+        similarity: r.similarity,
+        ...(r.reranked ? { reranked: true } : {}),
+        filePath,
+        startLine,
+        endLine,
+        language: meta.language,
+        // Complexity metrics (if available)
+        ...(meta.cyclomatic
+          ? {
+              complexity: {
+                cyclomatic: meta.cyclomatic,
+                cognitive: meta.cognitive,
+                linesOfCode: meta.linesOfCode,
+                nestingDepth: meta.nestingDepth,
+              },
+            }
+          : {}),
+        // Control flow info (if available)
+        ...(meta.hasBranches !== undefined
+          ? {
+              controlFlow: {
+                hasBranches: meta.hasBranches,
+                hasLoops: meta.hasLoops,
+                hasExceptions: meta.hasExceptions,
+                hasAwaits: meta.hasAwaits,
+                branchCount: meta.branchCount,
+                loopCount: meta.loopCount,
+                returnCount: meta.returnCount,
+              },
+            }
+          : {}),
+        // Call info (if available)
+        ...(meta.callCount
+          ? {
+              calls: {
+                count: meta.callCount,
+                hasAsync: meta.hasAsyncCalls,
+              },
+            }
+          : {}),
+        // Documentation info (if available)
+        ...(meta.hasDocumentation
+          ? {
+              documentation: {
+                hasDocumentation: true,
+                hasParams: meta.hasParams,
+                hasExamples: meta.hasExamples,
+                isDeprecated: meta.isDeprecated,
+              },
+            }
+          : {}),
+        // Type info
+        ...(meta.returnType ? { returnType: meta.returnType } : {}),
+        ...(meta.paramCount ? { paramCount: meta.paramCount } : {}),
+        // Expansion info
+        ...(r.isExpanded ? { isExpanded: true, relationshipType: r.relationshipType } : {}),
+        // Content (loaded from file)
+        ...(content ? { content } : {}),
+      };
+    });
+
+    // Apply token-based pagination for content
+    const { results: finalResults, contentPagination } = applyContentPagination(mappedResults, args.includeContent);
+
     return {
       content: [
         {
@@ -315,77 +513,13 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
           text: JSON.stringify(
             {
               query: args.query,
-              count: paginatedResult.data.length,
+              count: finalResults.length,
               pagination: paginatedResult.pagination,
+              ...(queryExpansion ? { queryExpansion } : {}),
               ...(rerankStats.reranked ? { rerank: rerankStats } : {}),
               ...(expansionStats.expanded ? { expansion: expansionStats } : {}),
-              results: (paginatedResult.data as SemanticSearchResult[]).map((r) => {
-                const meta = r.metadata || {};
-                return {
-                  id: r.id,
-                  name: r.name || meta.name,
-                  type: r.type || meta.entityType || meta.type,
-                  similarity: r.similarity,
-                  ...(r.reranked ? { reranked: true } : {}),
-                  filePath: r.filePath || meta.filePath || meta.path,
-                  // Location info for navigation (file:startLine-endLine)
-                  startLine: meta.startLine,
-                  endLine: meta.endLine,
-                  language: meta.language,
-                  // Complexity metrics (if available)
-                  ...(meta.cyclomatic
-                    ? {
-                        complexity: {
-                          cyclomatic: meta.cyclomatic,
-                          cognitive: meta.cognitive,
-                          linesOfCode: meta.linesOfCode,
-                          nestingDepth: meta.nestingDepth,
-                        },
-                      }
-                    : {}),
-                  // Control flow info (if available)
-                  ...(meta.hasBranches !== undefined
-                    ? {
-                        controlFlow: {
-                          hasBranches: meta.hasBranches,
-                          hasLoops: meta.hasLoops,
-                          hasExceptions: meta.hasExceptions,
-                          hasAwaits: meta.hasAwaits,
-                          branchCount: meta.branchCount,
-                          loopCount: meta.loopCount,
-                          returnCount: meta.returnCount,
-                        },
-                      }
-                    : {}),
-                  // Call info (if available)
-                  ...(meta.callCount
-                    ? {
-                        calls: {
-                          count: meta.callCount,
-                          hasAsync: meta.hasAsyncCalls,
-                        },
-                      }
-                    : {}),
-                  // Documentation info (if available)
-                  ...(meta.hasDocumentation
-                    ? {
-                        documentation: {
-                          hasDocumentation: true,
-                          hasParams: meta.hasParams,
-                          hasExamples: meta.hasExamples,
-                          isDeprecated: meta.isDeprecated,
-                        },
-                      }
-                    : {}),
-                  // Type info
-                  ...(meta.returnType ? { returnType: meta.returnType } : {}),
-                  ...(meta.paramCount ? { paramCount: meta.paramCount } : {}),
-                  // Expansion info
-                  ...(r.isExpanded ? { isExpanded: true, relationshipType: r.relationshipType } : {}),
-                  // Content (if requested)
-                  ...(args.includeContent && r.content ? { content: r.content } : {}),
-                };
-              }),
+              ...(contentPagination ? { contentPagination } : {}),
+              results: finalResults,
             },
             null,
             2,
@@ -532,7 +666,7 @@ const FindSimilarCodeSchema = z.object({
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   minSimilarity: z.number().optional().default(0.7).describe("Minimum similarity threshold (0.0-1.0)"),
-  includeContent: z.boolean().optional().default(true).describe("Include full code content with comments in results"),
+  includeContent: z.boolean().optional().default(false).describe("Include full source code (startLine to endLine) in results"),
 });
 
 export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof FindSimilarCodeSchema>> {
@@ -573,24 +707,38 @@ export class FindSimilarCodeToolHandler extends BaseToolHandler<z.infer<typeof F
 
     const paginatedResult = paginate(allResults, args.offset, safeLimit);
 
+    // Build results with optional content loading
+    const mappedResults = (paginatedResult.data as SemanticSearchResult[]).map((r) => {
+      const filePath = r.filePath || (r.metadata?.path as string);
+      const startLine = r.metadata?.startLine as number | undefined;
+      const endLine = r.metadata?.endLine as number | undefined;
+      const content = args.includeContent ? loadSourceCode(filePath, startLine, endLine) : undefined;
+
+      return {
+        id: r.id,
+        name: r.name,
+        type: r.type,
+        similarity: r.similarity,
+        filePath,
+        startLine,
+        endLine,
+        ...(content ? { content } : {}),
+      };
+    });
+
+    // Apply token-based pagination for content
+    const { results: finalResults, contentPagination } = applyContentPagination(mappedResults, args.includeContent);
+
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify(
             {
-              count: paginatedResult.data.length,
+              count: finalResults.length,
               pagination: paginatedResult.pagination,
-              results: (paginatedResult.data as SemanticSearchResult[]).map((r) => ({
-                id: r.id,
-                name: r.name,
-                type: r.type,
-                similarity: r.similarity,
-                filePath: r.filePath || r.metadata?.path,
-                startLine: r.metadata?.startLine,
-                endLine: r.metadata?.endLine,
-                ...(args.includeContent && r.content ? { content: r.content } : {}),
-              })),
+              ...(contentPagination ? { contentPagination } : {}),
+              results: finalResults,
             },
             null,
             2,
@@ -817,7 +965,7 @@ const CrossLanguageSearchSchema = z.object({
   languages: z.array(z.string()).optional().describe("Languages to search in"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
-  includeContent: z.boolean().optional().default(true).describe("Include full code content with comments in results"),
+  includeContent: z.boolean().optional().default(false).describe("Include full source code (startLine to endLine) in results"),
 });
 
 export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<typeof CrossLanguageSearchSchema>> {
@@ -850,6 +998,28 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
 
     const paginatedResult = paginate(allResults, args.offset, safeLimit);
 
+    // Build results with optional content loading
+    const mappedResults = (paginatedResult.data as SemanticSearchResult[]).map((r) => {
+      const filePath = r.filePath || (r.metadata?.path as string);
+      const startLine = r.metadata?.startLine as number | undefined;
+      const endLine = r.metadata?.endLine as number | undefined;
+      const content = args.includeContent ? loadSourceCode(filePath, startLine, endLine) : undefined;
+
+      return {
+        id: r.id,
+        name: r.name,
+        language: r.metadata?.language,
+        filePath,
+        startLine,
+        endLine,
+        similarity: r.similarity,
+        ...(content ? { content } : {}),
+      };
+    });
+
+    // Apply token-based pagination for content
+    const { results: finalResults, contentPagination } = applyContentPagination(mappedResults, args.includeContent);
+
     return {
       content: [
         {
@@ -858,18 +1028,10 @@ export class CrossLanguageSearchToolHandler extends BaseToolHandler<z.infer<type
             {
               query: args.query,
               languages,
-              count: paginatedResult.data.length,
+              count: finalResults.length,
               pagination: paginatedResult.pagination,
-              results: (paginatedResult.data as SemanticSearchResult[]).map((r) => ({
-                id: r.id,
-                name: r.name,
-                language: r.metadata?.language,
-                filePath: r.filePath || r.metadata?.path,
-                startLine: r.metadata?.startLine,
-                endLine: r.metadata?.endLine,
-                similarity: r.similarity,
-                ...(args.includeContent && r.content ? { content: r.content } : {}),
-              })),
+              ...(contentPagination ? { contentPagination } : {}),
+              results: finalResults,
             },
             null,
             2,

@@ -708,6 +708,14 @@ export class GraphStorageLibSQL implements GraphStorage {
     return this.adapter;
   }
 
+  /**
+   * Get co-occurrence operations for query expansion.
+   * Used by CooccurrenceIndex for term pair storage and retrieval.
+   */
+  getCooccurrenceOps() {
+    return this.adapter.getCooccurrenceOps();
+  }
+
   // ===========================================================================
   // HELPER METHODS
   // ===========================================================================

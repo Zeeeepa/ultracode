@@ -5,6 +5,7 @@
  */
 
 export { CacheOperations, type VectorToStringFn } from "./cache-ops.js";
+export { CooccurrenceOperations, type CooccurrenceStats, type RelatedTerm } from "./cooccurrence-ops.js";
 
 // Operation classes
 export { EntityOperations, type RowToEntityMapper } from "./entity-ops.js";

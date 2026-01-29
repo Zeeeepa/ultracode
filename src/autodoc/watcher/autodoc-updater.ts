@@ -981,10 +981,12 @@ export async function updateDescription(
   });
 
   // Check if it's a placeholder or empty
+  // Short descriptions (< 200 chars) are considered incomplete and should be enhanced by LLM
   const isPlaceholder = currentDescription.length === 0 || placeholderPatterns.some((p) => p.test(currentDescription));
+  const isShortDescription = currentDescription.length < 200;
 
-  if (!isPlaceholder && currentDescription.length > 20) {
-    // Description exists and is not a placeholder
+  if (!isPlaceholder && !isShortDescription) {
+    // Description exists, is not a placeholder, and is detailed enough
     log.d("AUTODOC_LLM", "description_exists", {
       module: moduleInfo.name,
       isPlaceholder: false,

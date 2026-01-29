@@ -16,12 +16,27 @@
 
 import type { QueryAgent } from "../agents/query-agent.js";
 import { log } from "../logging/index.js";
+import type { QueryExpander } from "../nlp/query-expander.js";
 import type { FusionOptions, HybridResult, SemanticResult, SimilarityResult } from "../types/semantic.js";
 import type { EmbeddingGenerator } from "./embedding-generator.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import type { VectorStore } from "./vector-store.js";
+
+// =============================================================================
+// EXTENDED SEMANTIC RESULT WITH EXPANSION INFO
+// =============================================================================
+export interface SemanticResultWithExpansion extends SemanticResult {
+  /** Expanded query string (for debugging/transparency) */
+  expandedQuery?: string;
+  /** Query expansion metadata */
+  expansionInfo?: {
+    originalTokens: string[];
+    coocTerms: Array<{ term: string; weight: number }>;
+    prfTerms: Array<{ term: string; weight: number }>;
+  };
+}
 
 // =============================================================================
 // 2. CONSTANTS AND CONFIGURATION
@@ -86,6 +101,7 @@ export class HybridSearchEngine {
   private vectorStore: VectorStore;
   private embeddingGen: EmbeddingGenerator;
   private queryAgent: QueryAgent | null = null;
+  private queryExpander: QueryExpander | null = null;
   private searchMetrics = {
     totalSearches: 0,
     avgSearchTime: 0,
@@ -96,6 +112,15 @@ export class HybridSearchEngine {
     this.vectorStore = vectorStore;
     this.embeddingGen = embeddingGen;
     this.queryAgent = queryAgent || null;
+  }
+
+  /**
+   * Set the query expander for automatic query expansion.
+   * When set, semantic search will use two-pass expansion (cooc + PRF).
+   */
+  setQueryExpander(expander: QueryExpander): void {
+    this.queryExpander = expander;
+    log.i("HYBRID", "QueryExpander configured");
   }
 
   /**
@@ -283,25 +308,81 @@ export class HybridSearchEngine {
   }
 
   /**
-   * Perform pure semantic search without structural component
+   * Perform pure semantic search without structural component.
+   *
+   * When QueryExpander is configured, uses two-pass query expansion:
+   * 1. First pass: quick search with original query to get initial results
+   * 2. Expand query using co-occurrence + PRF from initial results
+   * 3. Final pass: search with expanded query for better recall
    */
-  async semanticSearch(query: string, limit = 10): Promise<SemanticResult> {
+  async semanticSearch(query: string, limit = 10): Promise<SemanticResultWithExpansion> {
     const startTime = Date.now();
 
     try {
-      const queryEmbedding = await this.embeddingGen.generateEmbedding(query);
-      const searchResult = await this.vectorStore.adaptiveSearch(queryEmbedding, limit);
-      const processingTime = Date.now() - startTime;
+      // If no query expander, use simple single-pass search
+      if (!this.queryExpander) {
+        const queryEmbedding = await this.embeddingGen.generateEmbedding(query);
+        const searchResult = await this.vectorStore.adaptiveSearch(queryEmbedding, limit);
+        const processingTime = Date.now() - startTime;
 
-      return {
-        query,
-        results: searchResult.results,
-        processingTime,
-      };
+        return {
+          query,
+          results: searchResult.results,
+          processingTime,
+        };
+      }
+
+      // Two-pass search with query expansion
+      return this.semanticSearchWithExpansion(query, limit, startTime);
     } catch (error) {
       log.e("HYBRID", "Semantic search failed", { query, error: (error as Error).message });
       throw error;
     }
+  }
+
+  /**
+   * Two-pass semantic search with query expansion.
+   * Internal method used when QueryExpander is configured.
+   */
+  private async semanticSearchWithExpansion(
+    query: string,
+    limit: number,
+    startTime: number,
+  ): Promise<SemanticResultWithExpansion> {
+    // Pass 1: Quick initial search for PRF
+    const initialEmbedding = await this.embeddingGen.generateEmbedding(query);
+    const initialResults = await this.vectorStore.adaptiveSearch(initialEmbedding, 5);
+
+    // Expand query using cooc + PRF
+    const expanded = await this.queryExpander!.expand(
+      query,
+      initialResults.results.map((r) => ({ content: r.content || "" })),
+    );
+
+    log.d("HYBRID", "Query expanded", {
+      original: query,
+      expanded: expanded.expanded,
+      coocTerms: expanded.coocTerms.length,
+      prfTerms: expanded.prfTerms.length,
+    });
+
+    // Pass 2: Final search with expanded query
+    const expandedEmbedding = await this.embeddingGen.generateEmbedding(expanded.expanded);
+    const finalResults = await this.vectorStore.adaptiveSearch(expandedEmbedding, limit);
+
+    const processingTime = Date.now() - startTime;
+
+    return {
+      query,
+      expandedQuery: expanded.expanded,
+      results: finalResults.results,
+      processingTime,
+      expansionInfo: {
+        originalTokens: expanded.originalTokens,
+        coocTerms: expanded.coocTerms,
+        prfTerms: expanded.prfTerms,
+      },
+    };
   }
 
   /**

@@ -22,6 +22,7 @@ Index codebase for analysis. **Run once before using other tools.**
 | `limit` | number | 10 | Max results |
 | `branch` | string | main | Branch to search |
 | `projectPath` | string | current | **Cross-project search:** path to another project |
+| `includeContent` | boolean | false | **Include source code** (startLine to endLine) in results. Token-limited: large functions may fill the limit, remaining results shown without content. Use `offset` to paginate. |
 | `minCyclomatic` | number | - | Filter: minimum cyclomatic complexity |
 | `maxCyclomatic` | number | - | Filter: maximum cyclomatic complexity |
 | `hasExceptions` | boolean | - | Filter: must have try-catch blocks |
@@ -40,6 +41,9 @@ Index codebase for analysis. **Run once before using other tools.**
     "type": "function",
     "similarity": 0.89,
     "filePath": "src/utils.ts",
+    "startLine": 45,
+    "endLine": 89,
+    "content": "function processData(...) { ... }",  // only with includeContent=true
     "complexity": {
       "cyclomatic": 8,
       "cognitive": 12,
@@ -65,7 +69,15 @@ Index codebase for analysis. **Run once before using other tools.**
       "hasExamples": false,
       "isDeprecated": false
     }
-  }]
+  }],
+  "contentPagination": {  // only when content exceeds ~8K tokens
+    "includedCount": 3,
+    "totalCount": 10,
+    "tokensUsed": 7500,
+    "tokenLimit": 8000,
+    "hasMore": true,
+    "message": "Content included for 3 of 10 results. Use offset to see more."
+  }
 }
 ```
 
@@ -96,6 +108,7 @@ Find semantically similar code.
 | `code` | string | **required** | Code snippet to find similar |
 | `threshold` | number | 0.5 | Similarity threshold (0-1) |
 | `limit` | number | 10 | Max results |
+| `includeContent` | boolean | false | Include source code in results (token-limited) |
 
 ### `cross_language_search`
 Search across multiple languages.
@@ -104,6 +117,7 @@ Search across multiple languages.
 |-------|------|---------|-------------|
 | `query` | string | **required** | Search query |
 | `languages` | string[] | all | Languages (ts, js, py, go...) |
+| `includeContent` | boolean | false | Include source code in results (token-limited) |
 
 ---
 
