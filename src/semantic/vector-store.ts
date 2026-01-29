@@ -528,18 +528,42 @@ export class VectorStore {
         docs: docResults.length,
       });
 
-      // Extract entity IDs from result IDs (format: "ent:{entityId}")
+      // Extract entity IDs from result IDs (format: "ent:{entityId}" or "ent:{filePath}:{type}:{name}")
       const entityIds = entityResults.map((r) => (r.id.startsWith("ent:") ? r.id.slice(4) : r.id));
 
       // Batch fetch entities from LibSQL (parallel getEntity calls)
-      const entities = await Promise.all(entityIds.map((id) => storage.getEntity(id)));
-      const entityMap = new Map<string, NonNullable<(typeof entities)[0]>>();
-      for (let i = 0; i < entityIds.length; i++) {
-        const entity = entities[i];
-        if (entity) {
-          entityMap.set(entityIds[i]!, entity);
-        }
-      }
+      // Try direct ID lookup first, then fallback to filePath:type:name parsing
+      const entityMap = new Map<string, NonNullable<Awaited<ReturnType<typeof storage.getEntity>>>>();
+
+      await Promise.all(
+        entityIds.map(async (id, i) => {
+          // Try direct ID lookup first (for hash-based IDs)
+          let entity = await storage.getEntity(id);
+
+          // If not found, try parsing as filePath:type:name format
+          if (!entity && id.includes(":")) {
+            const lastColonIdx = id.lastIndexOf(":");
+            const secondLastColonIdx = id.lastIndexOf(":", lastColonIdx - 1);
+            if (secondLastColonIdx > 0) {
+              const filePath = id.slice(0, secondLastColonIdx);
+              const type = id.slice(secondLastColonIdx + 1, lastColonIdx);
+              const name = id.slice(lastColonIdx + 1);
+
+              const found = await storage.findEntities({
+                filters: { filePath, name, entityType: type as any },
+                limit: 1,
+              });
+              if (found.length > 0) {
+                entity = found[0]!;
+              }
+            }
+          }
+
+          if (entity) {
+            entityMap.set(entityIds[i]!, entity);
+          }
+        }),
+      );
 
       // Enrich entity results
       const enrichedEntities = entityResults.map((r) => {

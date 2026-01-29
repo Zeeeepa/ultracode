@@ -197,8 +197,33 @@ export class GetGraphStatsToolHandler extends BaseToolHandler<z.infer<typeof Get
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
     const stats = await storage.getStatistics();
 
+    // Add co-occurrence stats if available
+    let cooccurrenceStats = null;
+    try {
+      const storageWithCooc = storage as unknown as {
+        getCooccurrenceOps: () => { getStats: () => Promise<unknown> };
+      };
+      if (typeof storageWithCooc.getCooccurrenceOps === "function") {
+        cooccurrenceStats = await storageWithCooc.getCooccurrenceOps().getStats();
+      }
+    } catch {
+      // Ignore - cooccurrence may not be available
+    }
+
     return {
-      content: [{ type: "text", text: JSON.stringify(stats, null, 2) }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              ...stats,
+              cooccurrence: cooccurrenceStats,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   }
 }

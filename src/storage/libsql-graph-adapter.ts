@@ -35,6 +35,7 @@ import type {
   RelationType,
 } from "../types/storage.js";
 import { CacheOperations } from "./libsql/cache-ops.js";
+import { CooccurrenceOperations } from "./libsql/cooccurrence-ops.js";
 import { EntityOperations } from "./libsql/entity-ops.js";
 import { MetadataOperations } from "./libsql/metadata-ops.js";
 import { RelationshipOperations } from "./libsql/relationship-ops.js";
@@ -123,6 +124,7 @@ export class LibSQLGraphAdapter {
   private vectorOps: VectorOperations;
   private cacheOps: CacheOperations;
   private metadataOps: MetadataOperations;
+  private cooccurrenceOps: CooccurrenceOperations;
 
   constructor(config: LibSQLGraphConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -159,6 +161,7 @@ export class LibSQLGraphAdapter {
 
     this.cacheOps = new CacheOperations(getClient, (v) => this.vectorToString(v));
     this.metadataOps = new MetadataOperations(getClient, getContext);
+    this.cooccurrenceOps = new CooccurrenceOperations(getClient, getContext);
   }
 
   // ===========================================================================
@@ -577,6 +580,31 @@ export class LibSQLGraphAdapter {
         `CREATE INDEX IF NOT EXISTS idx_files_project_branch ON files(project_hash, branch_name)`,
         // Tombstones index
         `CREATE INDEX IF NOT EXISTS idx_tombstones_lookup ON tombstones(project_hash, branch_name, entity_type)`,
+        // Co-occurrence table for query expansion
+        // Stores term pairs that frequently appear together in comments/docs
+        `CREATE TABLE IF NOT EXISTS cooccurrence (
+          term1 TEXT NOT NULL,
+          term2 TEXT NOT NULL,
+          count INTEGER NOT NULL DEFAULT 1,
+          pmi REAL,
+          project_hash TEXT NOT NULL,
+          branch_name TEXT NOT NULL DEFAULT 'main',
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (term1, term2, project_hash, branch_name)
+        )`,
+        // Term frequency table for PMI calculation
+        `CREATE TABLE IF NOT EXISTS term_frequency (
+          term TEXT NOT NULL,
+          doc_count INTEGER NOT NULL DEFAULT 1,
+          total_count INTEGER NOT NULL DEFAULT 1,
+          project_hash TEXT NOT NULL,
+          branch_name TEXT NOT NULL DEFAULT 'main',
+          PRIMARY KEY (term, project_hash, branch_name)
+        )`,
+        // Co-occurrence indexes
+        `CREATE INDEX IF NOT EXISTS idx_cooc_term1 ON cooccurrence(term1, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_cooc_pmi ON cooccurrence(pmi DESC, project_hash, branch_name)`,
+        `CREATE INDEX IF NOT EXISTS idx_term_freq_project ON term_frequency(project_hash, branch_name)`,
       ],
       "write",
     );
@@ -892,6 +920,18 @@ export class LibSQLGraphAdapter {
   clear = (): Promise<void> => this.metadataOps.clear();
 
   clearAll = (): Promise<void> => this.metadataOps.clearAll();
+
+  // ===========================================================================
+  // COOCCURRENCE OPERATIONS (for query expansion)
+  // ===========================================================================
+
+  /**
+   * Get the CooccurrenceOperations instance for query expansion.
+   * Used by CooccurrenceIndex to update/query term pairs.
+   */
+  getCooccurrenceOps(): CooccurrenceOperations {
+    return this.cooccurrenceOps;
+  }
 
   // ===========================================================================
   // TOMBSTONE OPERATIONS (for layered branch support)

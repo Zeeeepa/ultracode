@@ -77,7 +77,7 @@ interface PendingUpdate {
 const MODULE_DOC_FILENAME = "AUTODOC.md";
 
 export class AutoDocWatcher {
-  private config: Required<AutoDocWatcherConfig>;
+  private config: Required<Omit<AutoDocWatcherConfig, "useLlm">> & { useLlm: boolean | undefined };
   private pendingUpdates: Map<string, PendingUpdate> = new Map();
   private debounceControllers: Map<string, AbortController> = new Map();
   private subscriptionId: string | null = null;
@@ -89,6 +89,9 @@ export class AutoDocWatcher {
   private autodocCheckTime = 0;
   /** Cache TTL for .autodoc check (5 minutes) */
   private static readonly AUTODOC_CHECK_TTL = 5 * 60 * 1000;
+  /** Cached LLM availability (lazy check) */
+  private llmAvailabilityChecked = false;
+  private llmAvailabilityResult = false;
 
   constructor(config: AutoDocWatcherConfig) {
     this.config = {
@@ -97,9 +100,36 @@ export class AutoDocWatcher {
       maxDebounceMs: config.maxDebounceMs ?? 15000,
       rootDir: config.rootDir,
       enabled: config.enabled ?? true,
-      useLlm: config.useLlm ?? false,
+      useLlm: config.useLlm, // Keep undefined for lazy check
       llmConfig: config.llmConfig ?? { provider: "ollama" },
     };
+  }
+
+  /**
+   * Check if LLM should be used (lazy detection if not explicitly configured)
+   */
+  private async shouldUseLlm(): Promise<boolean> {
+    // If explicitly configured, use that value
+    if (this.config.useLlm !== undefined) {
+      return this.config.useLlm;
+    }
+
+    // Lazy check: detect LLM availability once
+    if (!this.llmAvailabilityChecked) {
+      this.llmAvailabilityChecked = true;
+      try {
+        const { detectLLMProviders } = await import("../llm/llm-provider.js");
+        const { recommended } = await detectLLMProviders();
+        this.llmAvailabilityResult = !!recommended;
+        if (this.llmAvailabilityResult) {
+          log.i("AUTODOCWATCH", "llm_auto_detected", { provider: recommended?.name });
+        }
+      } catch {
+        this.llmAvailabilityResult = false;
+      }
+    }
+
+    return this.llmAvailabilityResult;
   }
 
   /**
@@ -215,14 +245,15 @@ export class AutoDocWatcher {
         const exists = await fileExists(autodocPath);
 
         if (!exists) {
-          log.i("AUTODOCWATCH", "creating_missing_autodoc", { module: mod.name, path: mod.path });
+          const useLlm = await this.shouldUseLlm();
+          log.i("AUTODOCWATCH", "creating_missing_autodoc", { module: mod.name, path: mod.path, useLlm });
 
           // Generate LLM descriptions first (includes export/file descriptions)
           let llmDescriptions: { exportDescs?: Record<string, string>; fileDescs?: Record<string, string> } | undefined;
-          if (this.config.useLlm) {
+          if (useLlm) {
             const { generateModuleDescriptionLLM } = await import("./autodoc-updater.js");
             const desc = await generateModuleDescriptionLLM(mod, {
-              useLlm: this.config.useLlm,
+              useLlm,
               llmConfig: this.config.llmConfig,
             });
             if (desc) {
@@ -477,17 +508,18 @@ export class AutoDocWatcher {
       if (!autodocExists) {
         // If .autodoc is enabled, create new AUTODOC.md for new modules
         if (autodocEnabled) {
-          log.i("AUTODOCWATCH", "creating_new_autodoc", { module_path: modulePath });
+          const useLlm = await this.shouldUseLlm();
+          log.i("AUTODOCWATCH", "creating_new_autodoc", { module_path: modulePath, useLlm });
 
           // Get module info to generate initial content with entity line ranges
           const moduleInfo = await this.getModuleInfo(modulePath);
 
           // Generate LLM descriptions first (includes export/file descriptions)
           let llmDescriptions: { exportDescs?: Record<string, string>; fileDescs?: Record<string, string> } | undefined;
-          if (this.config.useLlm) {
+          if (useLlm) {
             const { generateModuleDescriptionLLM } = await import("./autodoc-updater.js");
             const desc = await generateModuleDescriptionLLM(moduleInfo, {
-              useLlm: this.config.useLlm,
+              useLlm,
               llmConfig: this.config.llmConfig,
             });
             if (desc) {
@@ -520,7 +552,7 @@ export class AutoDocWatcher {
           log.i("AUTODOCWATCH", "autodoc_created", {
             module_path: modulePath,
             autodoc_path: autodocPath,
-            usedLlm: this.config.useLlm,
+            usedLlm: useLlm,
           });
 
           // Publish event for new module
@@ -550,8 +582,9 @@ export class AutoDocWatcher {
       const moduleInfo = await this.getModuleInfo(modulePath);
 
       // Update content incrementally
+      const useLlmForUpdate = await this.shouldUseLlm();
       const updatedContent = await updateAutodocContent(currentContent, moduleInfo, Array.from(pending.changedFiles), {
-        useLlm: this.config.useLlm,
+        useLlm: useLlmForUpdate,
         llmConfig: this.config.llmConfig,
       });
 
@@ -613,14 +646,15 @@ export class AutoDocWatcher {
         const exists = await fileExists(autodocPath);
 
         if (!exists) {
-          log.i("AUTODOCWATCH", "creating_autodoc_for_new_module", { module: mod.name, useLlm: this.config.useLlm });
+          const useLlm = await this.shouldUseLlm();
+          log.i("AUTODOCWATCH", "creating_autodoc_for_new_module", { module: mod.name, useLlm });
 
           // Generate LLM descriptions first (includes export/file descriptions)
           let llmDescriptions: { exportDescs?: Record<string, string>; fileDescs?: Record<string, string> } | undefined;
-          if (this.config.useLlm) {
+          if (useLlm) {
             const { generateModuleDescriptionLLM } = await import("./autodoc-updater.js");
             const desc = await generateModuleDescriptionLLM(mod, {
-              useLlm: this.config.useLlm,
+              useLlm,
               llmConfig: this.config.llmConfig,
             });
             if (desc) {

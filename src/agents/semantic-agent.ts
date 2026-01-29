@@ -30,6 +30,8 @@
 import { getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
 import { log } from "../logging/index.js";
+import { CooccurrenceIndex } from "../nlp/cooccurrence-index.js";
+import { QueryExpander } from "../nlp/query-expander.js";
 import { CodeAnalyzer } from "../semantic/code-analyzer.js";
 import { getEmbeddingAccumulator } from "../semantic/embedding-accumulator.js";
 import {
@@ -184,6 +186,10 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
   // Global embedding cache for language built-ins and framework patterns
   private globalCache: GlobalEmbeddingCache | null = null;
+
+  // Query expansion components for improved semantic search recall
+  private cooccurrenceIndex: CooccurrenceIndex | null = null;
+  private queryExpander: QueryExpander | null = null;
 
   /**
    * Get last oversized entities warning (for index tool response)
@@ -347,6 +353,21 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     log.i("SEMANTIC", "vectorstore_ready", { project: getProjectHash(workingDir), branch: currentBranch });
 
     this.hybridSearch = new HybridSearchEngine(this.vectorStore, this.embeddingGen);
+
+    // Initialize query expansion components for improved semantic search
+    try {
+      const graphStorage = await getGraphStorage();
+      // IMPORTANT: Set project context for cooccurrence operations
+      graphStorage.setProject(workingDir, currentBranch);
+      const coocOps = graphStorage.getCooccurrenceOps();
+      this.cooccurrenceIndex = new CooccurrenceIndex(coocOps);
+      this.queryExpander = new QueryExpander(this.cooccurrenceIndex);
+      this.hybridSearch.setQueryExpander(this.queryExpander);
+      log.i("SEMANTIC", "query_expander_ready", { project: getProjectHash(workingDir), branch: currentBranch });
+    } catch (err) {
+      log.w("SEMANTIC", "query_expander_init_fail", { err: (err as Error).message });
+      // Continue without query expansion - fallback to simple search
+    }
 
     this.codeAnalyzer = new CodeAnalyzer(this.vectorStore, this.embeddingGen, this.cache);
     this.vectorIndexManager = new VectorIndexManager(this.vectorStore, this.codeAnalyzer, this.embeddingGen);
@@ -829,7 +850,18 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // DISABLED: entity:* regex subscription caused excessive updates
     // knowledgeBus.subscribe(this.id, /^entity:.*/, this.handleEntityUpdate.bind(this));
 
-    // REMOVED: semantic:new_entities subscription - workers now generate embeddings directly
+    // Subscribe to semantic:new_entities ONLY for co-occurrence index update
+    // (Workers handle embedding generation directly, but co-occurrence needs the entities)
+    knowledgeBus.subscribe(this.id, "semantic:new_entities", async (entry: KnowledgeEntry) => {
+      if (!this.cooccurrenceIndex) return;
+      const entities = entry.data as ParsedEntity[] | undefined;
+      if (!entities?.length) return;
+      try {
+        await this.updateCooccurrenceFromEntities(entities);
+      } catch (error) {
+        log.w("COOC", "update_fail", { err: (error as Error).message, count: entities.length });
+      }
+    });
 
     knowledgeBus.subscribe(this.id, "resources:adjusted", this.handleResourceAdjustment.bind(this));
 
@@ -868,6 +900,26 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
         log.i("SEMANTIC", "faiss_context_switched", { branch: data.newBranch });
       } catch (error) {
         log.e("SEMANTIC", "faiss_context_switch_fail", { err: String(error) });
+      }
+    });
+
+    // Subscribe to full index completion to recalculate PMI for co-occurrence
+    knowledgeBus.subscribe(this.id, "index:completed", async (entry: KnowledgeEntry) => {
+      const data = entry.data as { incremental?: boolean } | undefined;
+      if (data?.incremental) {
+        return; // Skip PMI recalculation for incremental updates
+      }
+
+      // Recalculate PMI after full indexing for better query expansion
+      if (this.cooccurrenceIndex) {
+        try {
+          log.i("COOC", "recalculating_pmi");
+          await this.cooccurrenceIndex.recalculatePMI();
+          const stats = await this.cooccurrenceIndex.getStats();
+          log.i("COOC", "pmi_done", { pairs: stats.totalPairs, terms: stats.totalTerms });
+        } catch (error) {
+          log.w("COOC", "pmi_fail", { err: (error as Error).message });
+        }
       }
     });
   }
@@ -986,6 +1038,10 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     if (!Array.isArray(entities) || entities.length === 0) {
       return;
     }
+
+    // Update co-occurrence index BEFORE worker check
+    // Workers skip embedding generation but we still need cooc data for query expansion
+    await this.updateCooccurrenceFromEntities(entities);
 
     // SKIP if workers are generating embeddings via IPC
     // Workers send embeddings to EmbeddingAccumulator, no need for duplicate generation
@@ -1694,6 +1750,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     profile("6_COMMENTS");
     log.t("EMBEDDING", "processStandaloneComments returned successfully", { agentId: this.id });
 
+    // NOTE: Co-occurrence already updated at start of handleNewEntities via updateCooccurrenceFromEntities
+
     // Final performance summary
     const totalMs = Date.now() - perfStart;
     const totalSpeed = totalMs > 0 ? Math.round((filteredEntities.length / totalMs) * 1000) : 0;
@@ -1703,6 +1761,70 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       speed: `${totalSpeed}/s`,
     });
     log.d("EMBEDDING", `handleNewEntities complete`, { agentId: this.id });
+  }
+
+  /**
+   * Update co-occurrence index directly from parsed entities.
+   * Called early in handleNewEntities, before worker check.
+   * Extracts natural language text from entity metadata (docs, comments, names).
+   */
+  private async updateCooccurrenceFromEntities(entities: ParsedEntity[]): Promise<void> {
+    if (!this.cooccurrenceIndex || entities.length === 0) {
+      return;
+    }
+
+    try {
+      const startTime = Date.now();
+
+      // Extract natural language text from entities
+      const textChunks: string[] = [];
+
+      for (const entity of entities) {
+        const e = entity as any;
+
+        // Entity name and type (split camelCase for better co-occurrence)
+        if (e.name) {
+          textChunks.push(e.name);
+        }
+
+        // Documentation description
+        if (e.documentation?.description) {
+          textChunks.push(e.documentation.description);
+        }
+
+        // Documentation params
+        if (e.documentation?.params?.length > 0) {
+          for (const p of e.documentation.params) {
+            if (p.description) {
+              textChunks.push(`${p.name} ${p.description}`);
+            }
+          }
+        }
+
+        // Signature (contains param types and names)
+        if (e.signature && e.signature.length > 20) {
+          textChunks.push(e.signature);
+        }
+      }
+
+      // Filter to meaningful chunks
+      const filtered = textChunks.filter((text) => {
+        const hasLetters = /[a-zA-Z\u0400-\u04FF]{3,}/.test(text);
+        const hasContent = text.length >= 10;
+        return hasLetters && hasContent;
+      });
+
+      if (filtered.length === 0) {
+        return;
+      }
+
+      await this.cooccurrenceIndex.updateFromChunks(filtered);
+
+      const elapsed = Date.now() - startTime;
+      log.d("COOC", "entities_updated", { entities: entities.length, chunks: filtered.length, ms: elapsed });
+    } catch (error) {
+      log.w("COOC", "entities_update_failed", { error: (error as Error).message });
+    }
   }
 
   /**
