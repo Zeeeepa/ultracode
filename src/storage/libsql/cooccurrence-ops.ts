@@ -211,14 +211,7 @@ export class CooccurrenceOperations {
         ORDER BY
           CASE WHEN pmi IS NOT NULL THEN pmi ELSE count * 0.01 END DESC
       `,
-      args: [
-        ...normalizedTerms,
-        ...normalizedTerms,
-        projectHash,
-        branchName,
-        ...normalizedTerms,
-        ...normalizedTerms,
-      ],
+      args: [...normalizedTerms, ...normalizedTerms, projectHash, branchName, ...normalizedTerms, ...normalizedTerms],
     });
 
     // Group by source term and limit
