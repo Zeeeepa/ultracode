@@ -6,50 +6,34 @@ import { OVMSGrpcClient } from "./ovms-grpc-client.js";
 import { GPU_WARMUP_TEXTS, getTokenizerModel, normalizeVector, sleep } from "./ovms-utils.js";
 
 /**
- * Basic typing for @xenova/transformers tokenizer
+ * @lenml/tokenizers PreTrainedTokenizer interface
+ * Compatible with @xenova/transformers API
  */
-interface TokenizerOutput {
-  input_ids:
-    | {
-        data: BigInt64Array | number[];
-        dims?: number[];
-        shape?: number[];
-      }
-    | number[][];
-  attention_mask?:
-    | {
-        data: BigInt64Array | number[];
-        dims?: number[];
-        shape?: number[];
-      }
-    | number[][];
-  token_type_ids?:
-    | {
-        data: BigInt64Array | number[];
-        dims?: number[];
-        shape?: number[];
-      }
-    | number[][];
+interface LenmlTokenizer {
+  (
+    text: string | string[],
+    options?: {
+      text_pair?: string | string[];
+      padding?: boolean | "max_length";
+      add_special_tokens?: boolean;
+      truncation?: boolean;
+      max_length?: number;
+      return_tensor?: boolean;
+      return_token_type_ids?: boolean;
+    },
+  ): {
+    input_ids: number[] | number[][];
+    attention_mask: number[] | number[][];
+    token_type_ids?: number[] | number[][];
+  };
+  encode(text: string, options?: { add_special_tokens?: boolean }): number[];
 }
 
-interface TokenizerOptions {
-  padding?: boolean;
-  truncation?: boolean;
-  max_length?: number;
-  return_tensor?: boolean;
-}
-
-interface Tokenizer {
-  (text: string | string[], options?: TokenizerOptions): Promise<TokenizerOutput>;
-  from_pretrained?: (model: string, options?: { progress_callback?: unknown }) => Promise<Tokenizer>;
-}
-
-interface TokenizerConstructor {
-  from_pretrained: (model: string, options?: { progress_callback?: unknown }) => Promise<Tokenizer>;
-}
+// Cache for loaded tokenizer JSON files from HuggingFace
+const tokenizerJsonCache = new Map<string, { json: object; config: object }>();
 
 // Will be loaded dynamically
-let TokenizerClass: TokenizerConstructor | null = null;
+let loadedTokenizer: LenmlTokenizer | null = null;
 
 /**
  * OVMS API response types
@@ -146,7 +130,7 @@ export class OVMSProvider implements EmbeddingProvider {
   private grpcPort: number;
   private grpcClient: OVMSGrpcClient | null = null;
   private log?: ProviderLogger | undefined;
-  private tokenizer: Tokenizer | null = null;
+  private tokenizer: LenmlTokenizer | null = null;
   private isNative: boolean;
   private endpoints: string[];
   private endpointIndex: number = 0;
@@ -202,38 +186,18 @@ export class OVMSProvider implements EmbeddingProvider {
       endpoints: this.endpoints,
     });
 
-    // Load tokenizer library
-    if (!TokenizerClass) {
-      try {
-        const transformers = await import("@xenova/transformers");
-        // Access AutoTokenizer from module (works with both ESM and CJS)
-        const transformersExt = transformers as {
-          AutoTokenizer?: TokenizerConstructor;
-          default?: { AutoTokenizer?: TokenizerConstructor };
-        };
-        TokenizerClass = transformersExt.AutoTokenizer || transformersExt.default?.AutoTokenizer || null;
-        if (!TokenizerClass) {
-          throw new Error("AutoTokenizer not found in @xenova/transformers");
-        }
-        this.log?.info("Loaded @xenova/transformers");
-      } catch (error: unknown) {
-        const err = toError(error);
-        throw new Error(`Failed to load tokenizer library: ${err.message}`);
-      }
-    }
-
-    // Load tokenizer for the model
-    // NOTE: @xenova/transformers downloads tokenizer files on first run (~5-50MB depending on model)
-    // This is cached in ~/.cache/huggingface/ and reused on subsequent runs
+    // Load tokenizer from HuggingFace via @lenml/tokenizers
+    // NOTE: Downloads tokenizer.json from HuggingFace Hub on first run (~1-5MB)
+    // This is cached in memory for subsequent calls
     try {
       const tokenizerModel = getTokenizerModel(this.modelId);
       this.log?.info("Loading tokenizer", { model: tokenizerModel });
 
       const startTime = Date.now();
-      this.tokenizer = await TokenizerClass.from_pretrained(tokenizerModel);
+      this.tokenizer = await this.loadTokenizerFromHub(tokenizerModel);
       const elapsed = Date.now() - startTime;
 
-      this.log?.info("Tokenizer loaded", { elapsedMs: elapsed });
+      this.log?.info("Tokenizer loaded via @lenml/tokenizers", { elapsedMs: elapsed });
     } catch (error: unknown) {
       const err = toError(error);
       throw new Error(`Failed to load tokenizer for ${this.modelId}: ${err.message}`);
@@ -376,6 +340,95 @@ export class OVMSProvider implements EmbeddingProvider {
 
   getDimension(): number | undefined {
     return this.info.dimension;
+  }
+
+  /**
+   * Load tokenizer from HuggingFace Hub using @lenml/tokenizers
+   * Downloads tokenizer.json and tokenizer_config.json from HuggingFace
+   */
+  private async loadTokenizerFromHub(modelId: string): Promise<LenmlTokenizer> {
+    // Check cache first
+    if (tokenizerJsonCache.has(modelId) && loadedTokenizer) {
+      return loadedTokenizer;
+    }
+
+    const baseUrl = `https://huggingface.co/${modelId}/resolve/main`;
+
+    // Download tokenizer files in parallel
+    const [tokenizerJson, tokenizerConfig] = await Promise.all([
+      fetch(`${baseUrl}/tokenizer.json`, { signal: AbortSignal.timeout(30_000) }).then((r) => {
+        if (!r.ok) throw new Error(`Failed to fetch tokenizer.json: HTTP ${r.status}`);
+        return r.json() as Promise<object>;
+      }),
+      fetch(`${baseUrl}/tokenizer_config.json`, { signal: AbortSignal.timeout(30_000) })
+        .then((r) => {
+          if (!r.ok) return {} as object; // tokenizer_config.json is optional
+          return r.json() as Promise<object>;
+        })
+        .catch(() => ({}) as object), // Ignore errors for config
+    ]);
+
+    // Cache the JSON files
+    tokenizerJsonCache.set(modelId, { json: tokenizerJson, config: tokenizerConfig });
+
+    // Load @lenml/tokenizers dynamically
+    const lenmlTokenizers = await import("@lenml/tokenizers");
+    const TokenizerLoaderClass = lenmlTokenizers.TokenizerLoader;
+
+    if (!TokenizerLoaderClass) {
+      throw new Error("TokenizerLoader not found in @lenml/tokenizers");
+    }
+
+    // Create tokenizer from JSON - returns PreTrainedTokenizer which is callable
+    const tokenizer = TokenizerLoaderClass.fromPreTrained({
+      tokenizerJSON: tokenizerJson as object,
+      tokenizerConfig: tokenizerConfig as object,
+    });
+
+    // PreTrainedTokenizer extends Callable, so we cast it to our interface
+    loadedTokenizer = tokenizer as unknown as LenmlTokenizer;
+
+    return loadedTokenizer;
+  }
+
+  /**
+   * Tokenize a batch of texts using @lenml/tokenizers
+   * Uses the same API as @xenova/transformers (PreTrainedTokenizer._call)
+   * Returns 2D arrays for input_ids, attention_mask, and optionally token_type_ids
+   */
+  private tokenizeBatch(
+    texts: string[],
+    maxLength: number,
+  ): {
+    inputIds2D: number[][];
+    attentionMask2D: number[][];
+    tokenTypeIds2D: number[][] | null;
+    seqLen: number;
+  } {
+    if (!this.tokenizer) {
+      throw new Error("Tokenizer not initialized");
+    }
+
+    // @lenml/tokenizers PreTrainedTokenizer is callable with same API as @xenova/transformers
+    const encoded = this.tokenizer(texts, {
+      padding: true,
+      truncation: true,
+      max_length: maxLength,
+      return_tensor: false,
+    });
+
+    // Result is already in 2D array format when passing multiple texts
+    const inputIds2D = encoded.input_ids as number[][];
+    const attentionMask2D = encoded.attention_mask as number[][];
+    const tokenTypeIds2D = encoded.token_type_ids ? (encoded.token_type_ids as number[][]) : null;
+    const seqLen = inputIds2D[0]?.length || 0;
+
+    return {
+      inputIds2D,
+      attentionMask2D,
+      tokenTypeIds2D,
+      seqLen,
+    };
   }
 
   async embed(text: string, opts?: EmbedOptions): Promise<Float32Array> {
@@ -600,67 +653,15 @@ export class OVMSProvider implements EmbeddingProvider {
       paddedTexts.push(""); // Empty padding
     }
 
-    // Tokenize ALL texts at once
+    // Tokenize ALL texts at once using @lenml/tokenizers
     this.log?.debug("Tokenizing all texts", { count: paddedTexts.length });
     const tokenizeStart = Date.now();
     if (!this.tokenizer) {
       throw new Error("Tokenizer not initialized");
     }
-    const encoded = await this.tokenizer(paddedTexts, {
-      padding: true,
-      truncation: true,
-      max_length: 256,
-      return_tensor: false,
-    });
 
-    // Extract as nested arrays
-    const inputIdsRaw = encoded.input_ids;
-    const attentionMaskRaw = encoded.attention_mask;
-    const tokenTypeIdsRaw = encoded.token_type_ids;
-
-    let inputIds2D: number[][];
-    let attentionMask2D: number[][];
-    let tokenTypeIds2D: number[][] | null = null;
-    let seqLen: number;
-
-    // Type guard for tensor data
-    const isTensorData = (
-      data: unknown,
-    ): data is { data: BigInt64Array | number[]; dims?: number[]; shape?: number[] } =>
-      typeof data === "object" && data !== null && "data" in data;
-
-    if (isTensorData(inputIdsRaw) && (inputIdsRaw.dims || inputIdsRaw.shape)) {
-      const shape = inputIdsRaw.dims || inputIdsRaw.shape;
-      const totalTexts = shape![0]!;
-      seqLen = shape![1]!;
-      const inputIdsFlat = Array.from(inputIdsRaw.data as ArrayLike<number>).map(Number);
-      const attentionMaskFlat =
-        isTensorData(attentionMaskRaw) && attentionMaskRaw.data
-          ? Array.from(attentionMaskRaw.data as ArrayLike<number>).map(Number)
-          : [];
-
-      inputIds2D = [];
-      attentionMask2D = [];
-      for (let i = 0; i < totalTexts; i++) {
-        inputIds2D.push(inputIdsFlat.slice(i * seqLen, (i + 1) * seqLen));
-        attentionMask2D.push(attentionMaskFlat.slice(i * seqLen, (i + 1) * seqLen));
-      }
-
-      if (tokenTypeIdsRaw && isTensorData(tokenTypeIdsRaw)) {
-        const tokenTypeIdsFlat = Array.from(tokenTypeIdsRaw.data as ArrayLike<number>).map(Number);
-        tokenTypeIds2D = [];
-        for (let i = 0; i < totalTexts; i++) {
-          tokenTypeIds2D.push(tokenTypeIdsFlat.slice(i * seqLen, (i + 1) * seqLen));
-        }
-      }
-    } else {
-      inputIds2D = inputIdsRaw as number[][];
-      attentionMask2D = (attentionMaskRaw as number[][]) || [];
-      seqLen = inputIds2D[0]?.length || 0;
-      if (tokenTypeIdsRaw) {
-        tokenTypeIds2D = tokenTypeIdsRaw as number[][];
-      }
-    }
+    // Use tokenizeBatch helper that handles @lenml/tokenizers API
+    const { inputIds2D, attentionMask2D, tokenTypeIds2D, seqLen } = this.tokenizeBatch(paddedTexts, 256);
 
     const tokenizeMs = Date.now() - tokenizeStart;
     this.log?.debug("Tokenized all", { totalTexts: inputIds2D.length, seqLen, tokenizeMs });
@@ -853,66 +854,16 @@ export class OVMSProvider implements EmbeddingProvider {
     const batchStartTime = Date.now();
     const originalCount = texts.length;
 
-    // Tokenize all texts
+    // Tokenize all texts using @lenml/tokenizers
     this.log?.debug("gRPC: Tokenizing texts", { count: texts.length });
     const tokenizeStart = Date.now();
 
     if (!this.tokenizer) {
       throw new Error("Tokenizer not initialized");
     }
-    const encoded = await this.tokenizer(texts, {
-      padding: true,
-      truncation: true,
-      max_length: 256,
-      return_tensor: false,
-    });
 
-    // Extract as 2D arrays
-    const inputIdsRaw = encoded.input_ids;
-    const attentionMaskRaw = encoded.attention_mask;
-    const tokenTypeIdsRaw = encoded.token_type_ids;
-
-    let inputIds2D: number[][];
-    let attentionMask2D: number[][];
-    let tokenTypeIds2D: number[][] | null = null;
-
-    // Type guard for tensor data
-    const isTensorData = (
-      data: unknown,
-    ): data is { data: BigInt64Array | number[]; dims?: number[]; shape?: number[] } =>
-      typeof data === "object" && data !== null && "data" in data;
-
-    if (isTensorData(inputIdsRaw) && (inputIdsRaw.dims || inputIdsRaw.shape)) {
-      const shape = inputIdsRaw.dims || inputIdsRaw.shape;
-      const totalTexts = shape![0]!;
-      const seqLen = shape![1]!;
-      const inputIdsFlat = Array.from(inputIdsRaw.data as ArrayLike<number>).map(Number);
-      const attentionMaskFlat =
-        isTensorData(attentionMaskRaw) && attentionMaskRaw.data
-          ? Array.from(attentionMaskRaw.data as ArrayLike<number>).map(Number)
-          : [];
-
-      inputIds2D = [];
-      attentionMask2D = [];
-      for (let i = 0; i < totalTexts; i++) {
-        inputIds2D.push(inputIdsFlat.slice(i * seqLen, (i + 1) * seqLen));
-        attentionMask2D.push(attentionMaskFlat.slice(i * seqLen, (i + 1) * seqLen));
-      }
-
-      if (tokenTypeIdsRaw && isTensorData(tokenTypeIdsRaw)) {
-        const tokenTypeIdsFlat = Array.from(tokenTypeIdsRaw.data as ArrayLike<number>).map(Number);
-        tokenTypeIds2D = [];
-        for (let i = 0; i < totalTexts; i++) {
-          tokenTypeIds2D.push(tokenTypeIdsFlat.slice(i * seqLen, (i + 1) * seqLen));
-        }
-      }
-    } else {
-      inputIds2D = inputIdsRaw as number[][];
-      attentionMask2D = (attentionMaskRaw as number[][]) || [];
-      if (tokenTypeIdsRaw) {
-        tokenTypeIds2D = tokenTypeIdsRaw as number[][];
-      }
-    }
+    // Use tokenizeBatch helper that handles @lenml/tokenizers API
+    const { inputIds2D, attentionMask2D, tokenTypeIds2D } = this.tokenizeBatch(texts, 256);
 
     const tokenizeMs = Date.now() - tokenizeStart;
     this.log?.debug("gRPC: Tokenization complete", {

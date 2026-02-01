@@ -18,25 +18,212 @@
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.3.2-f472b6)](https://bun.sh)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
 
-**Мультиагентный MCP-сервер для анализа кода с продвинутым графовым пониманием**
+# MCP-tool для быстрой и точной работы с кодом
 
-Мощный инструмент анализа кода, который понимает структуру вашей кодовой базы, находит дубликаты, анализирует влияние изменений и предоставляет интеллектуальные предложения по рефакторингу через Model Context Protocol (MCP).
+Сокращает до 90% затраты времени и токенов при работе с кодом через ИИ-агентов. Поиск, анализ, изменение кода происходят по базе графов полной структуры кода. Локальная embedding-модель позволяет делать запросы в произвольной форме, тут же проверять и дополнять результат.  
 
-## Возможности
+Полная индексация среднего проекта - 5 секунд. Инкрементная индексация изменений - на лету.
 
-- 🔍 **Семантический поиск по коду** - Поиск кода по смыслу, а не только по ключевым словам
-- 🔄 **Обнаружение дубликатов** - Автоматический поиск похожих блоков кода
-- 📊 **Анализ влияния** - Узнайте, что сломается при изменении кода
-- 🎯 **Умный рефакторинг** - Получайте AI-предложения по рефакторингу
-- 🌳 **Поддержка Git-веток** - Анализ кода в разных ветках
-- ⚡ **SIMD/CUDA ускорение** - Быстрая обработка с аппаратным ускорением
-- 🌍 **10 языков** - TypeScript, JavaScript, Python, Go, Rust, Java, C++, Swift, Kotlin, Bash
+| | ❌ Обычная работа с ИИ-агентом | ✅ Работа через UltraScript |
+|---|---|---|
+| **Поиск** | ИИ-агент использует grep/replace для полнотекстового поиска по ключевым словам. Найденные файлы читает и анализирует целиком, потом идёт по цепочке из файлов. <br />На простую задачу в большом проекте уходит **30 минут и 1М+ токенов**. При этом найдёт не всё. | ИИ-агент запрашивает UltraScript и моментально получает полные и точные сведения со ссылками на строки кода. Семантика находит даже неочевидные связи. <br />Запрос выполняется **100мс и возвращает 5К токенов** (быстрее в 18 000 раз, дешевле в 200 раз). |
+| **Редактирование** | ИИ-агент редактирует файлы "вслепую". Вместо аккуратного изменения возникает 10-20 итераций: ломает → проверяет → чинит → ломает. Плюс десяток запросов на подбор bash/pwsh команд. <br />Уходит **до 1 часа и 2М+ токенов**. | UltraScript точно меняет код на уровне структуры + линтинг + форматирование + анализ изменений с локальной трассировкой. Если что-то сломается — сообщит в том же ответе. <br />**В 18 000 раз быстрее, в 200 раз дешевле.** |
+| **Память** | ИИ-агент забывает что делал и повторно создаёт тот же функционал рядом с существующим. Или часами отлаживает функцию, которую сам же отключил. <br />Уходит **много часов и 10М+ токенов**. | Через UltraScript агент получает полную структуру кода в компактном виде. AutoDoc автоматически ведёт документацию. Агент не попадёт в ловушку беспамятства. <br />Всё сразу корректно. |
+| **Git** | При переключении ветки или ваших изменениях — агент не определит это и продолжит работать с устаревшим представлением о коде. <br />Нужно принудительно заставлять проводить повторный анализ. | Все запросы идут по актуальному коду. Переключайте ветки, меняйте файлы — инкрементная индексация графа и семантики происходит мгновенно. <br />Не нужно ничего делать дополнительно и даже задумываться об этом. |
 
-> Для проектов с C# - используйте аналогичный [ultrasharp-tools-mcp](https://github.com/faxenoff/ultrasharp-tools-mcp)
+# Возможности
 
-## 1. Установка
+MCP-сервер предоставляет **66 инструментов** для анализа и модификации кода.
 
-Проект оптимизирован под [Bun](https://bun.sh) (это альтернативный JavaScript-runtime). Под npm проект тоже работает, но 4-10 раз медленней (нет смысла его так использовать).
+## Поиск и навигация
+
+| Инструмент | Описание |
+|------------|----------|
+| [**semantic_search**](docs/features/search.md#semantic_search) | Семантический поиск по смыслу с фильтрами (complexity, flow, docs) |
+| [**pattern_search**](docs/features/search.md#pattern_search) | Продвинутый поиск: regex, семантический, гибридный |
+| [**query**](docs/features/search.md#query) | NLP-запросы на естественном языке о коде |
+| [**find_similar_code**](docs/features/search.md#find_similar_code) | Поиск функций с аналогичной логикой |
+| [**cross_language_search**](docs/features/search.md#cross_language_search) | Единый поиск по всем языкам проекта |
+| [**find_related_concepts**](docs/features/search.md#find_related_concepts) | Поиск связанных концепций |
+
+## Анализ кода
+
+| Инструмент | Описание |
+|------------|----------|
+| [**analyze_code_impact**](docs/features/analysis.md#analyze_code_impact) | Анализ влияния — что сломается при изменении |
+| [**find_duplicates**](docs/features/analysis.md#find_duplicates) | Семантический поиск клонов кода |
+| [**jscpd_detect_clones**](docs/features/analysis.md#jscpd_detect_clones) | Детектор клонов на базе jscpd |
+| [**suggest_refactoring**](docs/features/analysis.md#suggest_refactoring) | AI-предложения по улучшению кода |
+| [**analyze_hotspots**](docs/features/analysis.md#analyze_hotspots) | Сложные участки с высокой цикломатической сложностью |
+| [**analyze_state_chaos**](docs/features/analysis.md#analyze_state_chaos) | Анализ запутанных зависимостей данных |
+| [**detect_technology_stack**](docs/features/analysis.md#detect_technology_stack) | Определение стека технологий проекта |
+
+## Статическая трассировка и отладка
+
+| Инструмент | Описание |
+|------------|----------|
+| [**trace_flow**](docs/features/tracing.md#trace_flow) | Как код попадает от точки A к B |
+| [**trace_backwards**](docs/features/tracing.md#trace_backwards) | Почему функция не вызывается |
+| [**trace_data_flow**](docs/features/tracing.md#trace_data_flow) | Как данные влияют на состояние |
+| [**analyze_state_impact**](docs/features/tracing.md#analyze_state_impact) | Что изменится при другом значении |
+| [**find_decision_points**](docs/features/tracing.md#find_decision_points) | Точки ветвления в коде |
+
+## Модификация кода
+
+| Инструмент | Описание |
+|------------|----------|
+| [**modify_code**](docs/features/modification.md#modify_code) | Структурное редактирование на уровне AST с валидацией |
+| [**create_file**](docs/features/modification.md#create_file) | Создание нового файла |
+| [**copy_file**](docs/features/modification.md#copy_file) | Копирование файла с обновлением графа |
+| [**rename_file**](docs/features/modification.md#rename_file) | Переименование файла с обновлением импортов |
+| [**split_file**](docs/features/modification.md#split_file) | Разделение файла на части |
+| [**synthesize_files**](docs/features/modification.md#synthesize_files) | Объединение файлов |
+| [**rename_symbol**](docs/features/modification.md#rename_symbol) | Переименование по всему проекту |
+| [**add_member**](docs/features/modification.md#add_member) | Добавление методов/свойств в классы |
+
+## Валидация кода
+
+| Инструмент | Описание |
+|------------|----------|
+| [**validate_file**](docs/features/validation.md#validate_file) | Валидация файла через ESLint/Pylint/golint/clippy |
+| [**validate_directory**](docs/features/validation.md#validate_directory) | Пакетная валидация директории |
+
+## Документация (AutoDoc)
+
+| Инструмент | Описание |
+|------------|----------|
+| [**autodoc_init**](docs/features/autodoc.md#autodoc_init) | Инициализация системы AutoDoc |
+| [**autodoc_generate**](docs/features/autodoc.md#autodoc_generate) | Генерация документации для сущностей |
+| [**autodoc_save**](docs/features/autodoc.md#autodoc_save) | Сохранение документации в .autodoc/ |
+| [**autodoc_get**](docs/features/autodoc.md#autodoc_get) | Получение документации сущности |
+| [**autodoc_search**](docs/features/autodoc.md#autodoc_search) | Семантический поиск по документации |
+| [**autodoc_validate**](docs/features/autodoc.md#autodoc_validate) | Проверка актуальности документации |
+| [**autodoc_status**](docs/features/autodoc.md#autodoc_status) | Статистика документирования |
+| [**autodoc_sync**](docs/features/autodoc.md#autodoc_sync) | Синхронизация с изменениями кода |
+| [**autodoc_changelog**](docs/features/autodoc.md#autodoc_changelog) | История изменений документации |
+| [**autodoc_install_hooks**](docs/features/autodoc.md#autodoc_install_hooks) | Установка Git hooks для автообновления |
+| [**autodoc_detect_language**](docs/features/autodoc.md#autodoc_detect_language) | Определение языка для генерации |
+
+## Git-интеграция
+
+| Инструмент | Описание |
+|------------|----------|
+| [**list_branches**](docs/features/git.md#list_branches) | Список проиндексированных веток |
+| [**switch_branch**](docs/features/git.md#switch_branch) | Переключение между ветками с автопереиндексацией |
+| [**get_branch_status**](docs/features/git.md#get_branch_status) | Статус текущей ветки |
+| [**get_changed_files**](docs/features/git.md#get_changed_files) | Сравнение файлов между ветками |
+| [**cleanup_branches**](docs/features/git.md#cleanup_branches) | Очистка старых веток (LRU) |
+
+## Семантический мерж
+
+| Инструмент | Описание |
+|------------|----------|
+| [**semantic_merge**](docs/features/merge.md#semantic_merge) | AI-powered 3-way мерж с пониманием кода |
+| [**analyze_merge_conflicts**](docs/features/merge.md#analyze_merge_conflicts) | Анализ конфликтов с объяснением причин |
+| [**get_merge_suggestions**](docs/features/merge.md#get_merge_suggestions) | AI-предложения по разрешению конфликтов |
+| [**get_semantic_merge_info**](docs/features/merge.md#get_semantic_merge_info) | Информация о семантических различиях |
+
+## Снапшоты и безопасность
+
+| Инструмент | Описание |
+|------------|----------|
+| [**create_snapshot**](docs/features/snapshots.md#create_snapshot) | Сохранение точки восстановления |
+| [**undo**](docs/features/snapshots.md#undo) | Мгновенный откат к снапшоту |
+| [**list_snapshots**](docs/features/snapshots.md#list_snapshots) | Список доступных снапшотов |
+| [**cleanup_snapshots**](docs/features/snapshots.md#cleanup_snapshots) | Очистка старых снапшотов |
+
+## Граф кода и индексация
+
+| Инструмент | Описание |
+|------------|----------|
+| [**index**](docs/features/indexing.md#index) | Индексация кодовой базы |
+| [**clean_index**](docs/features/indexing.md#clean_index) | Полная переиндексация |
+| [**get_members**](docs/features/graph.md#get_members) | Список сущностей в файле |
+| [**list_entity_relationships**](docs/features/graph.md#list_entity_relationships) | Связи и зависимости сущности |
+| [**get_graph**](docs/features/graph.md#get_graph) | Получение графа (JSON/GraphML/Mermaid) |
+| [**get_graph_stats**](docs/features/graph.md#get_graph_stats) | Статистика графа |
+| [**get_graph_health**](docs/features/graph.md#get_graph_health) | Диагностика состояния графа |
+| [**reset_graph**](docs/features/graph.md#reset_graph) | Полная очистка графа |
+
+## Метрики и мониторинг
+
+| Инструмент | Описание |
+|------------|----------|
+| [**get_metrics**](docs/features/metrics.md#get_metrics) | Системные метрики и статистика |
+| [**get_version**](docs/features/metrics.md#get_version) | Версия сервера и runtime |
+| [**get_agent_metrics**](docs/features/metrics.md#get_agent_metrics) | Телеметрия многоагентной системы |
+| [**get_bus_stats**](docs/features/metrics.md#get_bus_stats) | Статистика шины знаний |
+| [**clear_bus_topic**](docs/features/metrics.md#clear_bus_topic) | Очистка кешированных записей топика |
+| [**get_watcher_status**](docs/features/metrics.md#get_watcher_status) | Статус фоновых наблюдателей |
+
+---
+
+## Дополнительные возможности
+
+### Производительность
+- **SIMD/WebAssembly** — встроенное ускорение на CPU
+- **CUDA/FAISS** — GPU-ускорение для больших проектов
+- **WebGPU/Dawn** — кросс-платформенное GPU-ускорение
+- **Streaming индексация** — парсинг и индексация параллельно
+- **Локальные эмбеддинги** — TEI/Ollama/vLLM без внешних API
+
+### Поддержка языков
+
+| Язык | Парсер | Сущности | Связи | Метрики | Типы |
+|------|--------|----------|-------|---------|------|
+| **TypeScript** | TS Compiler API | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **JavaScript** | TS Compiler API | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
+| **Python** | ast + Pyright | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Kotlin** | kotlin-compiler | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Java** | JavaParser | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Go** | go/parser | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
+| **Rust** | syn + ANTLR | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
+| **Swift** | SwiftSyntax | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
+| **C/C++** | clang AST | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
+| **Bash** | regex + heuristics | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | — |
+| **PowerShell** | regex + heuristics | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | — |
+| **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
+
+**Легенда:**
+- **Сущности** — функции, классы, интерфейсы, типы, enums, переменные
+- **Связи** — imports, calls, extends, implements, references
+- **Метрики** — cyclomatic, cognitive complexity, control flow, documentation
+- **Типы** — type inference, type references, generics
+
+### Фреймворки
+
+| Фреймворк | Дополнительные возможности |
+|-----------|---------------------------|
+| **Angular** | Компоненты, директивы, pipes, services, модули, DI-иерархия, template bindings |
+| **NgRx** | Actions, reducers, effects, selectors, feature states, action creators |
+| **React** | JSX/TSX, functional/class components, hooks (useState, useEffect, useMemo, useCallback, useContext) |
+
+### Встроенная документация (MCP Prompts)
+
+В системные промпты можно добавить [короткий промпт](docs/claude.cfg/add-to-CLAUDE.md) который поможет ИИ-агенту узнать о способе получения информации о работе Ultrascript-tools.
+
+- **quick-start** — быстрый старт и выбор инструментов
+- **tool-reference** — полный справочник 66 инструментов
+- **workflows** — готовые сценарии: анализ, рефакторинг, поиск дубликатов
+- **tracing-guide** — руководство по трассировке и отладке
+
+### UltraCode Agent
+- **Делегирование задач** — передайте сложную задачу агенту `/ultracode`
+- **Максимальная эффективность** — агент сам выберет оптимальные инструменты
+- **Комплексный анализ** — поиск, трассировка, рефакторинг в одном запросе
+- **Естественный язык** — опишите задачу своими словами
+
+### Клиент-серверная архитектура
+- **Один процесс на машину** — при запуске множества ИИ-агентов работает только один UltraScript
+- **Экономия 10+ ГБ RAM** — вместо N копий индексов в памяти — один общий
+- **Мгновенное подключение** — новые агенты подключаются к работающему серверу за миллисекунды
+- **Изоляция сессий** — каждый агент получает независимую MCP-сессию
+
+> Для проектов с C# — используйте аналогичный [ultrasharp-tools-mcp](https://github.com/faxenoff/ultrasharp-tools-mcp)
+
+# Установка
+
+Проект оптимизирован под [Bun](https://bun.sh) (это альтернативный JavaScript-runtime) и работает под ним на 50% быстрее.
 
 **Установка Bun** (одной командой):
 
@@ -56,8 +243,8 @@ curl -fsSL https://bun.sh/install | bash
 # 1. Установка пакета
 bun install -g ultrascript-tools-mcp
 
-# 2. Разрешить и выполнить postinstall скрипты (компиляция нативных модулей)
-bun pm -g trust ultrascript-tools-mcp openvino-node webgpu
+# 2. Разрешить postinstall скрипты для нативных модулей
+bun pm -g trust ultrascript-tools-mcp
 ```
 
 ```bash
@@ -65,9 +252,20 @@ bun pm -g trust ultrascript-tools-mcp openvino-node webgpu
 npm install -g ultrascript-tools-mcp
 ```
 
-> **Почему два шага для Bun?** Bun блокирует postinstall скрипты для безопасности. Команда `bun pm trust` разрешает выполнение скриптов и сразу их запускает — повторная установка не нужна.
+> **Почему два шага для Bun?** 
+> Для достижения ultra-скорости UltraScript использует нативные компоненты:
+>
+> - **faiss-napi** — HNSW/IVF индексы для векторного поиска (100x ускорение)
+> - **cbor-extract** — быстрая нативная сериализация метаданных
+> - **webgpu** — Dawn GPU backend для AMD/Intel
+> - **protobufjs** — бинарный протокол для IPC
+> - **xxhash-wasm** — SIMD-ускоренное хеширование файлов
+> - **libSQL** — нативные SQLite bindings с векторным расширением
+> - **oxc-parser** — Rust-парсер для TS/JS (в 10x быстрее tsc)
+>
+> Bun блокирует postinstall скрипты по умолчанию. Команда `bun pm trust` разрешает их выполнение — повторная установка не нужна.
 
-> **Примечание**: Для полноценного анализа кода на разных языках требуются соответствующие runtime:
+> **Примечание**: Для полноценного анализа кода на разных языках требуются runtime:
 > 
 > - TypeScript/JavaScript — встроено (TypeScript Compiler API)
 > - Python — требуется Python 3.8+ (`python --version`)
@@ -88,419 +286,49 @@ npm install -g ultrascript-tools-mcp
 }
 ```
 
-### Способы подключения к Claude Code
-
-| Способ                    | Скорость | Описание                                    |
-| ------------------------- | -------- | ------------------------------------------- |
-| **1. Cosmopolitan Proxy** | ⭐⭐       | Универсальный бинарник, авто-выбор Bun/Node |
-| **2. Direct Node/Bun**    | ⭐        | Прямой запуск без прокси                    |
-| **3. Ultra-режим**        | ⭐⭐⭐      | Claude + MCP под Bun                        |
-
-**Способ 1 — Cosmopolitan Proxy (рекомендуется):**
-
-```json
-{
-  "mcpServers": {
-    "ultrascript-tools": {
-      "type": "stdio",
-      "command": "path\\to\\ultrascript-tools.cmd",
-      "args": ["."]
-    }
-  }
-}
-```
-
-**Способ 3 — Ultra-режим (максимальная производительность):**
-
-```powershell
-# Запуск Claude Code через Bun
-bun "$env:USERPROFILE\.bun\install\global\node_modules\@anthropic-ai\claude-code\cli.js" --continue --permission-mode bypassPermissions
-```
-
 > Подробная документация: [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md)
 
-**Настройка семантических эмбеддингов (локальная LLM)**
-Для небольших интеллектуальных задач по анализу/модификации кода используется небольшая локальная модель, запускаемся через ollama/TEI. Это снимает затраты токенов и времени с вашего основного ИИ-агента. Особенно важно для анализа сотен и тысяч изменений в коде.
+## **Настройка локальных моделей**
 
-После установки проекта - запустите
+Для интеллектуальных задач используются локальные модели: embedding-модель для семантического поиска и LLM для AutoDoc. Это снимает затраты токенов с вашего основного ИИ-агента.
 
-```bash
-# Интерактивный мастер настройки
-bunx ultrascript-tools-mcp setup
-```
+**После установки автоматически запустится мастер настройки.**
 
-Мастер настройки:
+**Шаг 1: Embedding-провайдер** (семантический поиск)
 
-- Автоматически определит вашу GPU (NVIDIA Turing/Ampere/Ada/Hopper/Blackwood*)
-- Поможет выбрать лучшую модель эмбеддингов
-- Автоматически установит TEI (Docker) или Ollama
+| Провайдер | Скорость | Рекомендация |
+|-----------|----------|--------------|
+| **vLLM** | 1352 emb/s | ⭐ NVIDIA GPU (Production) |
+| **TEI** | 1193 emb/s | ⭐ NVIDIA GPU |
+| **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), универсальный |
+| **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU |
+
+**Шаг 2: LLM-провайдер** (AutoDoc, рефакторинг)
+
+| Провайдер | Модели | Рекомендация |
+|-----------|--------|--------------|
+| **Docker Model Runner** | Qwen 2.5, DeepSeek R1, Phi-4, Llama 3.2 | ⭐ Если установлен Docker Desktop |
+| **Ollama** | qwen2.5-coder, deepseek-coder, phi4 | Универсальный вариант |
+| **Пропустить** | — | Настроить позже |
+
+Мастер автоматически:
+- Определит вашу GPU (NVIDIA Turing/Ampere/Ada/Hopper/Blackwell*)
+- Предложит оптимальные модели под ваше железо
+- Установит выбранные провайдеры
 - Сохранит конфигурацию в системную директорию
 
-*Для Blackwood (GTX 50xxx) используется неофициальный форк TEI
-
-### 2. MCP Prompts (встроенная документация)
-
-Сервер предоставляет **MCP Prompts** — встроенную документацию, доступную прямо из Claude:
-
-| Prompt           | Описание                                                         |
-| ---------------- | ---------------------------------------------------------------- |
-| `quick-start`    | Быстрый старт — когда и какие инструменты использовать           |
-| `tool-reference` | Полный справочник 50+ инструментов с параметрами                 |
-| `workflows`      | Типичные сценарии: анализ проекта, рефакторинг, поиск дубликатов |
-
-> **Совет:** В системные промпты можно добавить [короткий промпт](docs/claude.cfg/add-to-CLAUDE.md) который поможет ИИ-агенту узнать о способе получения информации о работе Ultrascript-tools.
-
-## Доступные инструменты
-
-MCP-сервер предоставляет **55+ инструментов** для анализа и модификации кода:
-
-#### Индексация и поиск
-
-| Инструмент              | Описание                                                 |
-| ----------------------- | -------------------------------------------------------- |
-| `index`                 | Индексация кодовой базы для анализа                      |
-| `query`                 | Запросы на естественном языке о коде                     |
-| `semantic_search`       | Семантический поиск с фильтрами (complexity, flow, docs) |
-| `pattern_search`        | Продвинутый поиск (regex/semantic/hybrid)                |
-| `find_similar_code`     | Поиск похожих фрагментов кода                            |
-| `cross_language_search` | Поиск по нескольким языкам                               |
-| `find_related_concepts` | Поиск связанных концепций                                |
-
-#### Анализ сущностей
-
-| Инструмент                  | Описание                           |
-| --------------------------- | ---------------------------------- |
-| `get_members`               | Список сущностей/членов в файле    |
-| `list_entity_relationships` | Показать зависимости кода          |
-| `detect_technology_stack`   | Определить стек технологий проекта |
-
-#### Качество кода
-
-| Инструмент            | Описание                                  |
-| --------------------- | ----------------------------------------- |
-| `find_duplicates`     | Поиск дублирующегося кода (семантический) |
-| `jscpd_detect_clones` | Детектор клонов на базе jscpd             |
-| `analyze_code_impact` | Анализ влияния изменений                  |
-| `suggest_refactoring` | AI-предложения по рефакторингу            |
-| `analyze_hotspots`    | Поиск сложных участков кода               |
-| `analyze_state_chaos` | Анализ хаоса состояния                    |
-| `validate_file`       | Валидация файла                           |
-| `validate_directory`  | Валидация директории                      |
-
-#### Модификация кода
-
-| Инструмент         | Описание                               |
-| ------------------ | -------------------------------------- |
-| `modify_code`      | Модификация кода сущности              |
-| `create_file`      | Создание нового файла                  |
-| `copy_file`        | Копирование файла                      |
-| `rename_file`      | Переименование файла                   |
-| `split_file`       | Разделение файла на части              |
-| `synthesize_files` | Объединение файлов                     |
-| `rename_symbol`    | Переименование символа во всём проекте |
-| `add_member`       | Добавление члена в класс               |
-
-#### Снапшоты и откат
-
-| Инструмент          | Описание                    |
-| ------------------- | --------------------------- |
-| `create_snapshot`   | Создание снапшота состояния |
-| `undo`              | Откат к снапшоту            |
-| `list_snapshots`    | Список снапшотов            |
-| `cleanup_snapshots` | Очистка старых снапшотов    |
-
-#### Git-интеграция
-
-| Инструмент          | Описание                        |
-| ------------------- | ------------------------------- |
-| `list_branches`     | Список проиндексированных веток |
-| `switch_branch`     | Переключение между ветками      |
-| `get_branch_status` | Статус анализа ветки            |
-| `get_changed_files` | Сравнение файлов между ветками  |
-| `cleanup_branches`  | Очистка старых веток (LRU)      |
-
-#### Граф и система
-
-| Инструмент            | Описание                   |
-| --------------------- | -------------------------- |
-| `get_graph`           | Получить граф кода         |
-| `get_graph_stats`     | Статистика графа           |
-| `get_graph_health`    | Проверка здоровья графа    |
-| `reset_graph`         | Сброс графа                |
-| `clean_index`         | Очистка индекса            |
-| `lerna_project_graph` | Граф Lerna-монорепозитория |
-
-#### Статический анализ потока
-
-| Инструмент             | Описание                                           |
-| ---------------------- | -------------------------------------------------- |
-| `trace_flow`           | Трассировка от точки A к B с состояниями и Mermaid |
-| `trace_backwards`      | Обратная трассировка — почему метод не вызывается  |
-| `trace_data_flow`      | Анализ потока данных к состоянию                   |
-| `analyze_state_impact` | Влияние состояния на сценарии                      |
-| `find_decision_points` | Точки решений в коде                               |
-
-#### Метрики и отладка
-
-| Инструмент          | Описание                  |
-| ------------------- | ------------------------- |
-| `get_metrics`       | Метрики системы           |
-| `get_version`       | Версия сервера            |
-| `get_agent_metrics` | Метрики агентов           |
-| `get_bus_stats`     | Статистика шины сообщений |
-| `clear_bus_topic`   | Очистка топика шины       |
-
-## Конфигурация
-
-Настройка через переменные окружения или конфиг-файл `config/default.yaml`.
-
-### Базовая конфигурация
-
-```yaml
-# Минимальный конфиг - работает из коробки
-mcp:
-  embedding:
-    provider: "memory"  # Без ML
-    enabled: true
-```
-
-### Опционально: ML-семантический поиск
-
-Для улучшенного семантического поиска запустите мастер настройки:
-
-```bash
-# Интерактивная настройка
-bunx ultrascript-tools-mcp setup
-```
-
-### Сравнение провайдеров эмбеддингов
-
-| Провайдер        | Время/запрос | Batch     | GPU     | Установка      | Рекомендация             |
-| ---------------- | ------------ | --------- | ------- | -------------- | ------------------------ |
-| **vLLM**         | **0.3-1ms**  | ✅ Native | NVIDIA  | Docker         | ⭐ Production GPU         |
-| **TEI GPU**      | **0.5-2ms**  | ✅ Native | NVIDIA  | Docker Desktop | ⭐ Альтернатива vLLM      |
-| **OVMS Native**  | 0.8-2ms      | ✅ Native | CPU/NPU | Setup wizard   | ⭐ Рекомендуется для CPU  |
-| **Ollama**       | 10-50ms      | ❌        | Все     | ollama.ai      | Простая установка        |
-| **CloudRU**      | 5-20ms       | ✅        | Cloud   | API key        | Российское облако        |
-| **HuggingFace**  | 50-200ms     | ✅        | Cloud   | API key        | Cloud API                |
-
-#### Auto-detection (рекомендуется)
-
-По умолчанию используется `provider: "auto"` — система автоматически определяет доступный провайдер в порядке приоритета:
-
-1. **OVMS Native** (порт 8083) — локальный OpenVINO
-2. **vLLM** (порт 8000) — Docker контейнер
-3. **TEI** (порт 8081) — Docker контейнер
-4. **Ollama** (порт 11434) — локальный сервер
-
-#### OVMS Native — для CPU/NPU
-
-- Автоустановка через `bunx ultrascript-tools-mcp setup`
-- Поддержка V3 OpenAI-compatible API (`/v3/embeddings`)
-- Автоматическое управление жизненным циклом процесса
-- Определение устройства: NPU → NVIDIA GPU → Intel GPU → CPU
-
-#### vLLM — для NVIDIA GPU (Production)
-
-- Максимальная производительность для NVIDIA GPU
-- Поддержка больших batch размеров
-- Docker: `ghcr.io/vllm-project/vllm-openai`
-
-### Быстрый старт
-
-```bash
-# Интерактивный мастер настройки (рекомендуется)
-bunx ultrascript-tools-mcp setup
-
-# Или с конкретным провайдером
-bunx ultrascript-tools-mcp setup --provider tei     # NVIDIA GPU
-bunx ultrascript-tools-mcp setup --provider ollama  # Универсальный
-bunx ultrascript-tools-mcp setup --provider ovms-native  # CPU/NPU
-```
-
-### Расположение конфигурации
-
-- Windows: `%LOCALAPPDATA%\UltraScriptTools\config\semantic-config.json`
-- macOS: `~/Library/Application Support/UltraScriptTools/config/semantic-config.json`
-- Linux: `~/.local/share/UltraScriptTools/config/semantic-config.json`
-
-## Производительность
-
-- **В 5 раз быстрее** встроенных инструментов Claude для больших кодовых баз
-- **Streaming Mode** — парсинг и индексация происходят параллельно:
-  - **37% быстрее** (16.8s → 10.5s для 150+ файлов)
-  - **91.6%** файлов индексируется сразу через IPC streaming
-- **Parallel Data Files** — JSON/YAML обрабатываются параллельно:
-  - **34x быстрее** (6.7s → 195ms для 174 файлов)
-  - **892 файла/сек** вместо 26 файлов/сек
-- **WASM SIMD** — встроен в npm-пакет, работает везде (ускорение ещё в 2-4 раза)
-- **CUDA Worker** — отдельный процесс для GPU-операций (ускорение 10-50x для больших проектов)
-  - Изолированный Node.js subprocess для стабильности (не влияет на основной Bun процесс)
-  - FAISS + CUDA для быстрого векторного поиска
-  - Автоматический fallback на CPU при отсутствии GPU
-- **WebGPU/Dawn** — кросс-платформенное ускорение (Windows/Linux, включён в npm-пакет)
-
-### Архитектура хранения (v2.5)
-
-- **libSQL/SQLite** — единая база данных для графа и векторов
-- **Внешняя индексация** — поддержка удалённых libSQL серверов для масштабирования
-- **Инкрементальная индексация** — обновление только изменённых файлов
-
-### FAISS HNSW (быстрый векторный поиск)
-
-FAISS обеспечивает **10-100x ускорение** векторного поиска для больших индексов (10k+ векторов).
-
-| Платформа   | Статус  | Примечание               |
-| ----------- | ------- | ------------------------ |
-| Windows x64 | Bundled | OpenBLAS + DLLs включены |
-| Linux x64   | Bundled | Системные libopenblas    |
-| macOS ARM   | Bundled | Accelerate framework     |
-| macOS x64   | Bundled | OpenBLAS                 |
-
-**Зависимости (автоматически устанавливаются):**
-
-- `faiss-node` — Node.js bindings для FAISS
-- OpenBLAS/LAPACK — матричные операции (DLLs включены для Windows)
-
-**Если FAISS не работает:**
-
-```bash
-# Переустановить с копированием DLL
-node scripts/postinstall.js
-
-# Или проверить наличие DLL в:
-# node_modules/faiss-node/lib/binding/node-v137-win32-x64/
-```
-
-Без FAISS система автоматически использует **LibSQL DiskANN** (медленнее, но работает везде).
-
-### 2. Начало работы
-
-Откройте Claude Desktop и спросите:
-
-- "Проиндексируй мой проект в /path/to/my-project"
-- "Найди все функции связанные с аутентификацией"
-- "Покажи дублирующийся код в этом проекте"
-- "Что сломается если изменить класс UserManager?"
-
-### Поиск похожего кода
-
-```
-Вы: "Найди дублирующийся код в моём проекте"
-
-Ответ:
-✓ Найдено 12 групп дубликатов
-  - auth/login.ts и auth/verify.ts (схожесть: 89%)
-  - utils/format.ts и helpers/formatter.ts (схожесть: 85%)
-```
-
-### Анализ влияния
-
-```
-Вы: "Что сломается если изменить UserManager.login()?"
-
-Ответ:
-✓ Анализ влияния:
-  - 15 файлов зависят от этого метода
-  - Найдено 23 места вызова
-  - Высокий риск: AuthController, SessionService
-```
-
-### Семантический поиск
-
-```
-Вы: "Найди код который валидирует email адреса"
-
-Ответ:
-✓ Найдено 4 совпадения:
-  - validators/email.ts: validateEmail()
-  - utils/auth.ts: checkEmailFormat()
-  - services/user.ts: verifyUserEmail()
-```
-
-### Расширенный семантический поиск (NEW)
-
-```
-Вы: "Найди сложный код с цикломатической сложностью больше 10"
-
-semantic_search query="data processing" minCyclomatic=10
-
-Ответ:
-✓ Найдено 3 совпадения:
-  - parsers/complex-handler.ts: processData()
-    complexity: cyclomatic=15, cognitive=22
-    controlFlow: 8 branches, 3 loops, 2 exceptions
-    calls: 12 функций
-```
-
-```
-Вы: "Найди async код без обработки ошибок"
-
-semantic_search query="API calls" hasAwaits=true hasExceptions=false
-
-Ответ:
-✓ Найдено 5 потенциальных проблем:
-  - api/users.ts: fetchUsers() - await без try-catch
-  - api/orders.ts: getOrders() - await без try-catch
-```
-
-```
-Вы: "Найди недокументированный публичный API"
-
-semantic_search query="export function" hasDocumentation=false
-
-Ответ:
-✓ Найдено 12 функций без документации:
-  - utils/format.ts: formatDate()
-  - helpers/validation.ts: validateInput()
-```
-
-### Проблемы с установкой
-
-**Bun: заблокированы postinstall скрипты**
-
-Если при установке видите `Blocked N postinstalls`:
-
-```bash
-# Посмотреть заблокированные скрипты
-bun pm -g untrusted
-
-# Разрешить нужные пакеты
-bun pm -g trust ultrascript-tools-mcp openvino-node webgpu
-
-# Или разрешить все сразу
-bun pm -g trust --all
-
-# Переустановить
-bun install -g ultrascript-tools-mcp
-```
-
-**Очистка кеша и переустановка**
-
-```bash
-# Bun
-bun pm cache rm
-bun install -g ultrascript-tools-mcp
-
-# npm
-npm cache clean --force
-npm install -g ultrascript-tools-mcp
-```
-
-### Настройка эмбеддингов
-
-Если настройка эмбеддингов не удалась или хотите переконфигурировать:
-
-```bash
-# Запустите мастер настройки
-bunx ultrascript-tools-mcp setup
-```
-
-## Продвинутые возможности
-
-### GPU ускорение
-
-**macOS (Apple Silicon):**
+> **Повторный запуск мастера:**
+> ```bash
+> # Bun
+> bunx ultrascript-tools-mcp setup
+>
+> # Node.js
+> npx ultrascript-tools-mcp setup
+> ```
+
+*Для Blackwell (RTX 50xx) используется неофициальный форк TEI
+
+### GPU ускорение macOS (Apple Silicon):
 
 ```bash
 # При установке предлагается собрать Metal backend
@@ -513,47 +341,58 @@ bunx ultrascript-tools-mcp setup
 ./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh
 ```
 
-## CLI команды
+# Конфигурация
 
-```bash
-# Настройка семантических эмбеддингов (интерактивный мастер)
-bunx ultrascript-tools-mcp setup
+## Структура данных
 
-# Настройка с конкретным провайдером
-bunx ultrascript-tools-mcp setup --provider tei         # NVIDIA GPU
-bunx ultrascript-tools-mcp setup --provider ollama      # Универсальный
-bunx ultrascript-tools-mcp setup --provider ovms-native # CPU/NPU
-bunx ultrascript-tools-mcp setup --provider vllm        # NVIDIA GPU (Production)
+Все данные UltraScript хранятся в системной директории:
+
+- **Windows**: `%LOCALAPPDATA%\UltraScriptTools\`
+- **macOS**: `~/Library/Application Support/UltraScriptTools/`
+- **Linux**: `~/.local/share/UltraScriptTools/`
+
+```
+UltraScriptTools/
+├── config/
+│   ├── semantic-config.json    # Embedding/LLM провайдеры (setup wizard)
+│   └── parser-config.json      # Пути к runtime (Java, Kotlin)
+├── projects/
+│   └── {hash}/                 # Данные проекта (hash от пути)
+│       ├── faiss-*.bin         # FAISS индекс для векторного поиска
+│       └── *.json              # Метаданные индекса
+├── logs/                       # Логи сервера (ротация по дням)
+├── models/                     # Скачанные embedding модели
+├── llamacpp/                   # llama.cpp бинарники и модели
+├── ovms/                       # OpenVINO Model Server модели
+├── hf-cache/                   # Кеш HuggingFace моделей
+├── autodoc.db                  # База AutoDoc документации
+└── unified-storage.db          # Единое хранилище графов и сущностей
 ```
 
-> **Примечание:** Индексирование проекта выполняется **автоматически** при открытии через MCP-клиент (Claude Desktop и др.). Git-интеграция следит за изменениями веток и файлов.
+## Параметры конфигурации
 
-## Переменные окружения
+Расширенные параметры можно задать в `config/default.yaml` (для разработчиков) или через переменные окружения.
+Embedding/LLM настраиваются через setup wizard и хранятся в `semantic-config.json`.
 
-```bash
-# Уровень логирования (debug, info, warn, error)
-LOG_LEVEL=info
+Основные параметры:
 
-# Провайдер эмбеддингов (auto, tei, ollama, ovms-native, vllm, openai, cloudru, huggingface)
-MCP_EMBEDDING_PROVIDER=auto
+| Секция | Параметр | По умолчанию | Описание |
+|--------|----------|--------------|----------|
+| **logging** | `level` | `info` | Уровень логов: debug, info, warn, error |
+| | `maxFiles` | `5` | Количество файлов логов для ротации |
+| **database** | `mode` | `WAL` | Режим libSQL: WAL, DELETE, TRUNCATE |
+| | `cacheSize` | `10000` | Размер кеша libSQL |
+| **indexing** | `autoSwitchOnBranchChange` | `true` | Автопереключение БД при смене ветки |
+| | `maxBranchesPerRepo` | `10` | Макс. веток на репозиторий |
+| | `incrementalThreshold` | `20` | Порог файлов для полной переиндексации |
+| **git** | `enabled` | `true` | Git-интеграция |
+| | `autoReindex` | `true` | Автоиндексация при смене ветки |
+| | `debounceMs` | `60000` | Задержка перед индексацией изменений |
+| **parser** | `maxFileSize` | `1048576` | Макс. размер файла (1MB) |
+| | `timeout` | `60000` | Таймаут парсинга (60 сек) |
+| **performance** | `maxWorkerThreads` | `4` | Параллельные воркеры парсинга |
 
-# Модель эмбеддингов
-MCP_EMBEDDING_MODEL=all-MiniLM-L6-v2
-
-# API ключ (для cloud провайдеров: openai, huggingface, cloudru)
-MCP_EMBEDDING_API_KEY=
-
-# Включить/отключить эмбеддинги
-MCP_EMBEDDING_ENABLED=true
-
-# Размер батча для индексации
-MCP_DEV_INDEX_BATCH=100
-
-# Таймаут агента (мс)
-MCP_AGENT_TIMEOUT=90000
-```
-
-## Участие в разработке
+# Участие в разработке
 
 Этот пакет с открытым исходным кодом под лицензией MIT.
 

@@ -7,13 +7,7 @@ const BUILD_MODE = process.env.BUILD_MODE || "dev";
 const isPackageMode = BUILD_MODE === "package";
 
 // Common external dependencies (for reference, actual externals are in noExternal: false)
-const _EXTERNAL_DEPS = [
-  "@modelcontextprotocol/sdk",
-  "sharp",
-  "onnxruntime-node",
-  "better-sqlite3",
-  "@xenova/transformers",
-];
+const _EXTERNAL_DEPS = ["@modelcontextprotocol/sdk", "better-sqlite3", "@lenml/tokenizers"];
 
 // Common esbuild options (kept for potential future use)
 const _commonEsbuildOptions = (options: any) => {
@@ -76,9 +70,7 @@ export default defineConfig([
 
       // Native modules with dynamic requires - must not be bundled
       "faiss-napi", // FAISS vector search - native NAPI bindings
-      "sharp", // Image processing (optional - used by @xenova/transformers)
-      "onnxruntime-node", // ONNX runtime native bindings (optional)
-      "@xenova/transformers", // Optional ML embeddings (requires sharp/onnxruntime)
+      "@lenml/tokenizers", // Lightweight tokenizer for OVMS provider
     ],
 
     // Type generation
@@ -171,10 +163,8 @@ export default defineConfig([
       "node:fs",
       "typescript", // Must be external - uses require("fs") internally which fails in ESM bundle
       "@modelcontextprotocol/sdk",
-      "sharp",
-      "onnxruntime-node",
       "better-sqlite3",
-      "@xenova/transformers",
+      "@lenml/tokenizers",
     ],
 
     // No DTS for workers
@@ -267,7 +257,7 @@ export default defineConfig([
       };
     },
 
-    external: ["@modelcontextprotocol/sdk", "sharp", "onnxruntime-node", "@xenova/transformers"],
+    external: ["@modelcontextprotocol/sdk", "@lenml/tokenizers"],
 
     dts: false,
   },
