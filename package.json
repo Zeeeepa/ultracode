@@ -121,10 +121,10 @@
     "@biomejs/biome": "^2.3.13",
     "@biomejs/cli-win32-x64": "^2.3.13",
     "@oxc-project/types": "^0.111.0",
-    "@rollup/rollup-win32-x64-msvc": "^4.57.0",
+    "@rollup/rollup-win32-x64-msvc": "^4.57.1",
     "@types/bun": "latest",
     "@types/glob": "^9.0.0",
-    "@types/node": "^25.1.0",
+    "@types/node": "^25.2.0",
     "antlr4ng": "^3.0.16",
     "antlr4ng-cli": "^2.0.0",
     "cmake-js": "^8.0.0",
@@ -139,11 +139,11 @@
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",
     "@grpc/proto-loader": "^0.8.0",
-    "@huggingface/inference": "^4.13.10",
+    "@huggingface/inference": "^4.13.11",
     "@libsql/client": "^0.17.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@types/eslint": "^9.6.1",
-    "@xenova/transformers": "^2.17.2",
+    "@lenml/tokenizers": "^3.7.2",
     "cbor-x": "^1.6.0",
     "eslint": "^9.39.2",
     "fast-glob": "^3.3.3",
@@ -171,9 +171,7 @@
     "webgpu": "^0.3.8"
   },
   "overrides": {
-    "boolean": "3.2.0",
-    "sharp": "npm:null@^2.0.0",
-    "onnxruntime-node": "npm:null@^2.0.0"
+    "boolean": "3.2.0"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -183,13 +181,11 @@
   },
   "notes": {
     "boolean@3.2.0": "Deprecated transitive dependency. Package is unmaintained but functional.",
-    "sharp-override": "sharp replaced with null - not needed for text embeddings (only tokenization used from @xenova/transformers)",
-    "onnxruntime-node-override": "onnxruntime-node replaced with null - using OVMS Docker for inference instead",
+    "lenml-tokenizers": "@lenml/tokenizers - lightweight tokenizer (~2MB) without ONNX runtime. Inference is done by external services (OVMS, TEI, vLLM).",
     "faiss-napi": "High-performance vector indexing with NAPI bindings. Works directly under Bun (no subprocess needed). 32 prebuilt binaries for Windows/Linux/macOS (x64/ARM64). Uses HNSW/IVF indexes."
   },
   "trustedDependencies": [
     "cbor-extract",
-    "esbuild",
     "faiss-napi",
     "protobufjs",
     "webgpu"
