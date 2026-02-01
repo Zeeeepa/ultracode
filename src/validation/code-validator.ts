@@ -2,7 +2,7 @@
  * Code Validator - Multi-language Linting and Validation
  *
  * Provides code validation with before/after comparison:
- * - ESLint for TypeScript/JavaScript
+ * - oxlint for TypeScript/JavaScript (~100x faster than ESLint)
  * - Pylint for Python
  * - Extensible linter interface
  *
@@ -82,7 +82,7 @@ export class CodeValidator {
    */
   private async initializeLinters(): Promise<void> {
     // Linters will be loaded on-demand
-    // This prevents import errors if ESLint/Pylint are not installed
+    // This prevents import errors if oxlint/Pylint are not installed
   }
 
   /**
@@ -212,7 +212,7 @@ export class CodeValidator {
       case ".jsx":
       case ".mjs":
       case ".cjs":
-        return this.getOrLoadLinter("eslint");
+        return this.getOrLoadLinter("oxlint");
       case ".py":
       case ".pyi":
         return this.getOrLoadLinter("pylint");
@@ -230,10 +230,10 @@ export class CodeValidator {
     }
 
     try {
-      if (linterName === "eslint") {
-        const { ESLintLinter } = await import("./linters/eslint-linter.js");
-        const linter = new ESLintLinter();
-        this.linters.set("eslint", linter);
+      if (linterName === "oxlint") {
+        const { OxlintLinter } = await import("./linters/oxlint-linter.js");
+        const linter = new OxlintLinter();
+        this.linters.set("oxlint", linter);
         return linter;
       } else if (linterName === "pylint") {
         const { PylintLinter } = await import("./linters/pylint-linter.js");
