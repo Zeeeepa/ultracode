@@ -256,11 +256,11 @@ export class LibSQLGraphAdapter {
       await this.client.execute("PRAGMA journal_mode = OFF");
       await this.client.execute("PRAGMA synchronous = OFF");
 
-      // Proactive integrity check to detect corruption early
-      log.t("STORAGE", `[LibSQLGraphAdapter] ▶ integrityCheck`);
-      const integrityStart = Date.now();
-      await this.quickIntegrityCheck();
-      log.t("STORAGE", `[LibSQLGraphAdapter] ◀ integrityCheck (${Date.now() - integrityStart}ms)`);
+      // Async integrity check - runs in background, doesn't block startup
+      // Logs error if corruption detected, but doesn't stop initialization
+      this.quickIntegrityCheck()
+        .then(() => log.i("LIBSQLADAPT", "integrity_passed"))
+        .catch((err) => log.e("LIBSQLADAPT", "integrity_error", { err: (err as Error).message }));
 
       // Create all tables
       log.t("STORAGE", `[LibSQLGraphAdapter] ▶ createTables`);
@@ -392,31 +392,13 @@ export class LibSQLGraphAdapter {
       }
     }
 
-    // Run PRAGMA integrity_check - thorough check for corruption
-    try {
-      log.i("LIBSQLADAPT", "integrity_check_start");
-      const integrityCheck = await this.client.execute("PRAGMA integrity_check");
-      const firstRow = integrityCheck.rows[0];
-      const result = firstRow ? String(Object.values(firstRow)[0]) : "ok";
-      if (result !== "ok") {
-        log.e("LIBSQLADAPT", "integrity_check_fail", { result });
-        throw new Error(`SQLITE_CORRUPT: integrity_check failed: ${result}`);
-      }
-      log.i("LIBSQLADAPT", "integrity_check_ok");
-    } catch (error) {
-      const msg = (error as Error).message || "";
-      // Re-throw corruption errors
-      if (
-        msg.includes("SQLITE_CORRUPT") ||
-        msg.includes("malformed") ||
-        msg.includes("corrupt") ||
-        msg.includes("integrity_check failed")
-      ) {
-        throw error;
-      }
-      // Log but don't fail on other PRAGMA errors (might not be supported)
-      log.w("LIBSQLADAPT", "pragma_error", { err: msg });
-      throw error; // Re-throw any error during integrity check
+    // Run PRAGMA quick_check - fast check for corruption (vs slow integrity_check)
+    // quick_check is ~100x faster on large databases while catching most issues
+    const integrityCheck = await this.client.execute("PRAGMA quick_check");
+    const firstRow = integrityCheck.rows[0];
+    const result = firstRow ? String(Object.values(firstRow)[0]) : "ok";
+    if (result !== "ok") {
+      throw new Error(`SQLITE_CORRUPT: quick_check failed: ${result}`);
     }
 
     // NOTE: embeddings table removed in v5 - FAISS handles vector storage

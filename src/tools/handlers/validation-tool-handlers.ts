@@ -135,10 +135,10 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
 
   private getDefaultValidators(ext: string): string[] {
     const map: Record<string, string[]> = {
-      ".ts": ["eslint", "tsc"],
-      ".tsx": ["eslint", "tsc"],
-      ".js": ["eslint"],
-      ".jsx": ["eslint"],
+      ".ts": ["oxlint", "tsc"],
+      ".tsx": ["oxlint", "tsc"],
+      ".js": ["oxlint"],
+      ".jsx": ["oxlint"],
       ".py": ["pylint", "mypy"],
       ".rs": ["cargo-check"],
       ".go": ["go-vet"],
@@ -156,9 +156,14 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
     try {
       let command: string;
       switch (validator) {
-        case "eslint":
-          command = fixable ? `npx eslint --fix --format json "${filePath}"` : `npx eslint --format json "${filePath}"`;
+        case "oxlint": {
+          // Find oxlint binary from package
+          const oxlintBin = await this.findOxlintBin();
+          command = fixable
+            ? `"${oxlintBin}" --fix --format json "${filePath}"`
+            : `"${oxlintBin}" --format json "${filePath}"`;
           break;
+        }
         case "tsc":
           command = `npx tsc --noEmit "${filePath}" 2>&1`;
           break;
@@ -202,10 +207,65 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
     }
   }
 
+  private oxlintBinPath: string | null = null;
+
+  /**
+   * Find oxlint binary path from installed package
+   */
+  private async findOxlintBin(): Promise<string> {
+    if (this.oxlintBinPath) return this.oxlintBinPath;
+
+    const { createRequire } = await import("node:module");
+    const { dirname, join } = await import("node:path");
+    const { access } = await import("node:fs/promises");
+
+    try {
+      // Find oxlint package location
+      const require = createRequire(import.meta.url);
+      const oxlintPkg = require.resolve("oxlint/package.json");
+      const oxlintDir = dirname(oxlintPkg);
+
+      // Get binary name from package.json
+      const pkg = require(oxlintPkg) as { bin?: Record<string, string> | string };
+      const binPath = typeof pkg.bin === "string" ? pkg.bin : typeof pkg.bin === "object" ? pkg.bin["oxlint"] : null;
+
+      if (binPath) {
+        const fullPath = join(oxlintDir, binPath);
+        await access(fullPath);
+        this.oxlintBinPath = fullPath;
+        return fullPath;
+      }
+    } catch {
+      // Fallback to npx
+    }
+
+    this.oxlintBinPath = "npx oxlint";
+    return "npx oxlint";
+  }
+
   private parseValidatorOutput(validator: string, output: string): ValidationIssue[] {
     try {
-      if (validator === "eslint" || validator === "pylint") {
-        // Try JSON parse
+      if (validator === "oxlint") {
+        // oxlint JSON format: { diagnostics: [...] }
+        const parsed = JSON.parse(output) as {
+          diagnostics?: Array<{
+            message: string;
+            code?: string;
+            severity: string;
+            labels?: Array<{ span?: { line?: number; column?: number } }>;
+          }>;
+        };
+        if (parsed.diagnostics) {
+          return parsed.diagnostics.map((d) => ({
+            line: d.labels?.[0]?.span?.line,
+            column: d.labels?.[0]?.span?.column,
+            message: d.message,
+            rule: d.code,
+            severity: d.severity === "error" ? "error" : "warning",
+          }));
+        }
+      } else if (validator === "pylint") {
+        // pylint JSON format: array of files with messages
         const parsed = JSON.parse(output);
         if (Array.isArray(parsed)) {
           return parsed.flatMap((file: ParsedValidatorFile) =>
