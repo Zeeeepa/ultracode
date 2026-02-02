@@ -807,7 +807,7 @@ export class ParsingSubprocessPool {
       return [files];
     }
 
-    const STAT_BATCH_SIZE = 30; // stat 30 files at a time (parallel)
+    const STAT_BATCH_SIZE = 100; // stat 100 files at a time (parallel) for faster distribution
     const MAX_FILES_PER_CHUNK = 90; // Cap max files per worker to prevent bottleneck (6 workers × 90 = 540)
     const chunks: string[][] = Array.from({ length: workerCount }, () => []);
     const chunkWeights: number[] = Array(workerCount).fill(0); // weighted sizes
