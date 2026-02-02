@@ -1727,9 +1727,9 @@ export class CodeValidator {
   }
 
   private initializeLinters(): void {
-    // TypeScript/JavaScript - ESLint
-    this.linters.set('typescript', new ESLintLinter());
-    this.linters.set('javascript', new ESLintLinter());
+    // TypeScript/JavaScript - oxlint
+    this.linters.set('typescript', new oxlintLinter());
+    this.linters.set('javascript', new oxlintLinter());
 
     // Python - Pylint/Ruff
     this.linters.set('python', new PylintLinter());
@@ -1768,14 +1768,14 @@ interface Linter {
   lint(filePath: string, content: string): Promise<ValidationProblem[]>;
 }
 
-// ESLint implementation
-class ESLintLinter implements Linter {
-  name = 'ESLint';
+// oxlint implementation
+class oxlintLinter implements Linter {
+  name = 'oxlint';
 
   async lint(filePath: string, content: string): Promise<ValidationProblem[]> {
     try {
-      const { ESLint } = await import('eslint');
-      const eslint = new ESLint();
+      const { oxlint } = await import('eslint');
+      const eslint = new oxlint();
 
       const results = await eslint.lintText(content, { filePath });
       const problems: ValidationProblem[] = [];
@@ -1788,14 +1788,14 @@ class ESLintLinter implements Linter {
             line: message.line,
             column: message.column,
             ruleId: message.ruleId || undefined,
-            source: 'ESLint'
+            source: 'oxlint'
           });
         }
       }
 
       return problems;
     } catch (error) {
-      console.warn('[ESLintLinter] Linting failed:', error);
+      console.warn('[oxlintLinter] Linting failed:', error);
       return [];
     }
   }
@@ -2473,7 +2473,7 @@ async createGitSnapshot(description: string, files?: string[]): Promise<string> 
 
 **Задачи:**
 1. ✅ Создать `CodeValidator` class
-2. ✅ Реализовать ESLint integration
+2. ✅ Реализовать oxlint integration
 3. ✅ Реализовать Pylint integration
 4. ✅ Добавить before/after comparison
 5. ✅ Интегрировать с CodeModifier
@@ -2775,5 +2775,5 @@ ultrascript-tools-mcp/
 **Вопросы для обсуждения:**
 1. Приоритизация фаз - согласен ли с предложенным порядком?
 2. WASM SIMD vs Native addons - какой подход предпочтительнее для deployment?
-3. ESLint/Pylint integration - добавлять ли поддержку других linters (Rust Clippy, Go golint)?
+3. oxlint/Pylint integration - добавлять ли поддержку других linters (Rust Clippy, Go golint)?
 4. Pattern search - нужны ли дополнительные query modes (AST-based, dependency-based)?

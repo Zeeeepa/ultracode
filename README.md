@@ -18,159 +18,165 @@
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.3.2-f472b6)](https://bun.sh)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
 
-# MCP-tool для быстрой и точной работы с кодом
+# Codebase RAG for Fast and Accurate Code Work
 
-Сокращает до 90% затраты времени и токенов при работе с кодом через ИИ-агентов. Поиск, анализ, изменение кода происходят по базе графов полной структуры кода. Локальная embedding-модель позволяет делать запросы в произвольной форме, тут же проверять и дополнять результат.  
-
-Полная индексация среднего проекта - 5 секунд. Инкрементная индексация изменений - на лету.
-
-| | ❌ Обычная работа с ИИ-агентом | ✅ Работа через UltraScript |
-|---|---|---|
-| **Поиск** | ИИ-агент использует grep/replace для полнотекстового поиска по ключевым словам. Найденные файлы читает и анализирует целиком, потом идёт по цепочке из файлов. <br />На простую задачу в большом проекте уходит **30 минут и 1М+ токенов**. При этом найдёт не всё. | ИИ-агент запрашивает UltraScript и моментально получает полные и точные сведения со ссылками на строки кода. Семантика находит даже неочевидные связи. <br />Запрос выполняется **100мс и возвращает 5К токенов** (быстрее в 18 000 раз, дешевле в 200 раз). |
-| **Редактирование** | ИИ-агент редактирует файлы "вслепую". Вместо аккуратного изменения возникает 10-20 итераций: ломает → проверяет → чинит → ломает. Плюс десяток запросов на подбор bash/pwsh команд. <br />Уходит **до 1 часа и 2М+ токенов**. | UltraScript точно меняет код на уровне структуры + линтинг + форматирование + анализ изменений с локальной трассировкой. Если что-то сломается — сообщит в том же ответе. <br />**В 18 000 раз быстрее, в 200 раз дешевле.** |
-| **Память** | ИИ-агент забывает что делал и повторно создаёт тот же функционал рядом с существующим. Или часами отлаживает функцию, которую сам же отключил. <br />Уходит **много часов и 10М+ токенов**. | Через UltraScript агент получает полную структуру кода в компактном виде. AutoDoc автоматически ведёт документацию. Агент не попадёт в ловушку беспамятства. <br />Всё сразу корректно. |
-| **Git** | При переключении ветки или ваших изменениях — агент не определит это и продолжит работать с устаревшим представлением о коде. <br />Нужно принудительно заставлять проводить повторный анализ. | Все запросы идут по актуальному коду. Переключайте ветки, меняйте файлы — инкрементная индексация графа и семантики происходит мгновенно. <br />Не нужно ничего делать дополнительно и даже задумываться об этом. |
-
-# Возможности
-
-MCP-сервер предоставляет **66 инструментов** для анализа и модификации кода.
-
-## Поиск и навигация
-
-| Инструмент | Описание |
-|------------|----------|
-| [**semantic_search**](docs/features/search.md#semantic_search) | Семантический поиск по смыслу с фильтрами (complexity, flow, docs) |
-| [**pattern_search**](docs/features/search.md#pattern_search) | Продвинутый поиск: regex, семантический, гибридный |
-| [**query**](docs/features/search.md#query) | NLP-запросы на естественном языке о коде |
-| [**find_similar_code**](docs/features/search.md#find_similar_code) | Поиск функций с аналогичной логикой |
-| [**cross_language_search**](docs/features/search.md#cross_language_search) | Единый поиск по всем языкам проекта |
-| [**find_related_concepts**](docs/features/search.md#find_related_concepts) | Поиск связанных концепций |
-
-## Анализ кода
-
-| Инструмент | Описание |
-|------------|----------|
-| [**analyze_code_impact**](docs/features/analysis.md#analyze_code_impact) | Анализ влияния — что сломается при изменении |
-| [**find_duplicates**](docs/features/analysis.md#find_duplicates) | Семантический поиск клонов кода |
-| [**jscpd_detect_clones**](docs/features/analysis.md#jscpd_detect_clones) | Детектор клонов на базе jscpd |
-| [**suggest_refactoring**](docs/features/analysis.md#suggest_refactoring) | AI-предложения по улучшению кода |
-| [**analyze_hotspots**](docs/features/analysis.md#analyze_hotspots) | Сложные участки с высокой цикломатической сложностью |
-| [**analyze_state_chaos**](docs/features/analysis.md#analyze_state_chaos) | Анализ запутанных зависимостей данных |
-| [**detect_technology_stack**](docs/features/analysis.md#detect_technology_stack) | Определение стека технологий проекта |
-
-## Статическая трассировка и отладка
-
-| Инструмент | Описание |
-|------------|----------|
-| [**trace_flow**](docs/features/tracing.md#trace_flow) | Как код попадает от точки A к B |
-| [**trace_backwards**](docs/features/tracing.md#trace_backwards) | Почему функция не вызывается |
-| [**trace_data_flow**](docs/features/tracing.md#trace_data_flow) | Как данные влияют на состояние |
-| [**analyze_state_impact**](docs/features/tracing.md#analyze_state_impact) | Что изменится при другом значении |
-| [**find_decision_points**](docs/features/tracing.md#find_decision_points) | Точки ветвления в коде |
-
-## Модификация кода
-
-| Инструмент | Описание |
-|------------|----------|
-| [**modify_code**](docs/features/modification.md#modify_code) | Структурное редактирование на уровне AST с валидацией |
-| [**create_file**](docs/features/modification.md#create_file) | Создание нового файла |
-| [**copy_file**](docs/features/modification.md#copy_file) | Копирование файла с обновлением графа |
-| [**rename_file**](docs/features/modification.md#rename_file) | Переименование файла с обновлением импортов |
-| [**split_file**](docs/features/modification.md#split_file) | Разделение файла на части |
-| [**synthesize_files**](docs/features/modification.md#synthesize_files) | Объединение файлов |
-| [**rename_symbol**](docs/features/modification.md#rename_symbol) | Переименование по всему проекту |
-| [**add_member**](docs/features/modification.md#add_member) | Добавление методов/свойств в классы |
-
-## Валидация кода
-
-| Инструмент | Описание |
-|------------|----------|
-| [**validate_file**](docs/features/validation.md#validate_file) | Валидация файла через ESLint/Pylint/golint/clippy |
-| [**validate_directory**](docs/features/validation.md#validate_directory) | Пакетная валидация директории |
-
-## Документация (AutoDoc)
-
-| Инструмент | Описание |
-|------------|----------|
-| [**autodoc_init**](docs/features/autodoc.md#autodoc_init) | Инициализация системы AutoDoc |
-| [**autodoc_generate**](docs/features/autodoc.md#autodoc_generate) | Генерация документации для сущностей |
-| [**autodoc_save**](docs/features/autodoc.md#autodoc_save) | Сохранение документации в .autodoc/ |
-| [**autodoc_get**](docs/features/autodoc.md#autodoc_get) | Получение документации сущности |
-| [**autodoc_search**](docs/features/autodoc.md#autodoc_search) | Семантический поиск по документации |
-| [**autodoc_validate**](docs/features/autodoc.md#autodoc_validate) | Проверка актуальности документации |
-| [**autodoc_status**](docs/features/autodoc.md#autodoc_status) | Статистика документирования |
-| [**autodoc_sync**](docs/features/autodoc.md#autodoc_sync) | Синхронизация с изменениями кода |
-| [**autodoc_changelog**](docs/features/autodoc.md#autodoc_changelog) | История изменений документации |
-| [**autodoc_install_hooks**](docs/features/autodoc.md#autodoc_install_hooks) | Установка Git hooks для автообновления |
-| [**autodoc_detect_language**](docs/features/autodoc.md#autodoc_detect_language) | Определение языка для генерации |
-
-## Git-интеграция
-
-| Инструмент | Описание |
-|------------|----------|
-| [**list_branches**](docs/features/git.md#list_branches) | Список проиндексированных веток |
-| [**switch_branch**](docs/features/git.md#switch_branch) | Переключение между ветками с автопереиндексацией |
-| [**get_branch_status**](docs/features/git.md#get_branch_status) | Статус текущей ветки |
-| [**get_changed_files**](docs/features/git.md#get_changed_files) | Сравнение файлов между ветками |
-| [**cleanup_branches**](docs/features/git.md#cleanup_branches) | Очистка старых веток (LRU) |
-
-## Семантический мерж
-
-| Инструмент | Описание |
-|------------|----------|
-| [**semantic_merge**](docs/features/merge.md#semantic_merge) | AI-powered 3-way мерж с пониманием кода |
-| [**analyze_merge_conflicts**](docs/features/merge.md#analyze_merge_conflicts) | Анализ конфликтов с объяснением причин |
-| [**get_merge_suggestions**](docs/features/merge.md#get_merge_suggestions) | AI-предложения по разрешению конфликтов |
-| [**get_semantic_merge_info**](docs/features/merge.md#get_semantic_merge_info) | Информация о семантических различиях |
-
-## Снапшоты и безопасность
-
-| Инструмент | Описание |
-|------------|----------|
-| [**create_snapshot**](docs/features/snapshots.md#create_snapshot) | Сохранение точки восстановления |
-| [**undo**](docs/features/snapshots.md#undo) | Мгновенный откат к снапшоту |
-| [**list_snapshots**](docs/features/snapshots.md#list_snapshots) | Список доступных снапшотов |
-| [**cleanup_snapshots**](docs/features/snapshots.md#cleanup_snapshots) | Очистка старых снапшотов |
-
-## Граф кода и индексация
-
-| Инструмент | Описание |
-|------------|----------|
-| [**index**](docs/features/indexing.md#index) | Индексация кодовой базы |
-| [**clean_index**](docs/features/indexing.md#clean_index) | Полная переиндексация |
-| [**get_members**](docs/features/graph.md#get_members) | Список сущностей в файле |
-| [**list_entity_relationships**](docs/features/graph.md#list_entity_relationships) | Связи и зависимости сущности |
-| [**get_graph**](docs/features/graph.md#get_graph) | Получение графа (JSON/GraphML/Mermaid) |
-| [**get_graph_stats**](docs/features/graph.md#get_graph_stats) | Статистика графа |
-| [**get_graph_health**](docs/features/graph.md#get_graph_health) | Диагностика состояния графа |
-| [**reset_graph**](docs/features/graph.md#reset_graph) | Полная очистка графа |
-
-## Метрики и мониторинг
-
-| Инструмент | Описание |
-|------------|----------|
-| [**get_metrics**](docs/features/metrics.md#get_metrics) | Системные метрики и статистика |
-| [**get_version**](docs/features/metrics.md#get_version) | Версия сервера и runtime |
-| [**get_agent_metrics**](docs/features/metrics.md#get_agent_metrics) | Телеметрия многоагентной системы |
-| [**get_bus_stats**](docs/features/metrics.md#get_bus_stats) | Статистика шины знаний |
-| [**clear_bus_topic**](docs/features/metrics.md#clear_bus_topic) | Очистка кешированных записей топика |
-| [**get_watcher_status**](docs/features/metrics.md#get_watcher_status) | Статус фоновых наблюдателей |
+🌐 **Language**: [EN] | [RU](./README_ru.md)
 
 ---
 
-## Дополнительные возможности
+---
 
-### Производительность
-- **SIMD/WebAssembly** — встроенное ускорение на CPU
-- **CUDA/FAISS** — GPU-ускорение для больших проектов
-- **WebGPU/Dawn** — кросс-платформенное GPU-ускорение
-- **Streaming индексация** — парсинг и индексация параллельно
-- **Локальные эмбеддинги** — TEI/Ollama/vLLM без внешних API
+Reduces time and token costs by up to 90% when working with code through AI agents. Code search, analysis, and modification operate on a complete code structure graph database. Local embedding models enable flexible queries with immediate verification and refinement.
 
-### Поддержка языков
+**Full indexing of a medium-sized project takes 3 seconds**. Incremental indexing of changes happens on the fly.
 
-| Язык | Парсер | Сущности | Связи | Метрики | Типы |
-|------|--------|----------|-------|---------|------|
+| | ❌ Regular AI Agent Work | ✅ Work via UltraScript |
+|---|---|---|
+| **Search** | AI agent uses grep/replace for full-text keyword search. Reads and analyzes found files entirely, then follows file chains. <br />A simple task in a large project takes **30 minutes and 1M+ tokens**. And it won't find everything. | AI agent queries UltraScript and instantly receives complete and accurate information with line-of-code references. Semantics find even non-obvious connections. <br />Query executes in **100ms and returns 5K tokens** (18,000x faster, 200x cheaper). |
+| **Editing** | AI agent edits files "blindly". Instead of careful modification, it goes through 10-20 iterations: breaks → checks → fixes → breaks. Plus dozens of requests to find bash/pwsh commands. <br />Takes **up to 1 hour and 2M+ tokens**. | UltraScript precisely modifies code at the structure level + linting + formatting + impact analysis with local tracing. If something breaks — reports it in the same response. <br />**18,000x faster, 200x cheaper.** |
+| **Memory** | AI agent forgets what it did and recreates the same functionality next to existing code. Or debugs a function for hours that it disabled itself. <br />Takes **many hours and 10M+ tokens**. | Through UltraScript, the agent gets the complete code structure in compact form. AutoDoc automatically maintains documentation. Agent won't fall into the forgetfulness trap. <br />Everything correct immediately. |
+| **Git** | When switching branches or making changes — agent won't detect this and will continue working with outdated code representation. <br />Need to forcefully trigger re-analysis. | All queries work with current code. Switch branches, modify files — incremental indexing of graph and semantics happens instantly. <br />Nothing additional needed, not even thinking about it. |
+
+# Features
+
+MCP server provides **66 tools** for code analysis and modification.
+
+## Search and Navigation
+
+| Tool | Description |
+|------|-------------|
+| [**semantic_search**](docs/features/search.md#semantic_search) | Semantic search by meaning with filters (complexity, flow, docs) |
+| [**pattern_search**](docs/features/search.md#pattern_search) | Advanced search: regex, semantic, hybrid |
+| [**query**](docs/features/search.md#query) | NLP queries in natural language about code |
+| [**find_similar_code**](docs/features/search.md#find_similar_code) | Find functions with similar logic |
+| [**cross_language_search**](docs/features/search.md#cross_language_search) | Unified search across all project languages |
+| [**find_related_concepts**](docs/features/search.md#find_related_concepts) | Find related concepts |
+
+## Code Analysis
+
+| Tool | Description |
+|------|-------------|
+| [**analyze_code_impact**](docs/features/analysis.md#analyze_code_impact) | Impact analysis — what will break on modification |
+| [**find_duplicates**](docs/features/analysis.md#find_duplicates) | Semantic code clone detection |
+| [**jscpd_detect_clones**](docs/features/analysis.md#jscpd_detect_clones) | jscpd-based clone detector |
+| [**suggest_refactoring**](docs/features/analysis.md#suggest_refactoring) | AI-powered code improvement suggestions |
+| [**analyze_hotspots**](docs/features/analysis.md#analyze_hotspots) | Complex areas with high cyclomatic complexity |
+| [**analyze_state_chaos**](docs/features/analysis.md#analyze_state_chaos) | Analysis of tangled data dependencies |
+| [**detect_technology_stack**](docs/features/analysis.md#detect_technology_stack) | Project technology stack detection |
+
+## Static Tracing and Debugging
+
+| Tool | Description |
+|------|-------------|
+| [**trace_flow**](docs/features/tracing.md#trace_flow) | How code flows from point A to B |
+| [**trace_backwards**](docs/features/tracing.md#trace_backwards) | Why a function is not being called |
+| [**trace_data_flow**](docs/features/tracing.md#trace_data_flow) | How data affects state |
+| [**analyze_state_impact**](docs/features/tracing.md#analyze_state_impact) | What changes with different values |
+| [**find_decision_points**](docs/features/tracing.md#find_decision_points) | Branching points in code |
+
+## Code Modification
+
+| Tool | Description |
+|------|-------------|
+| [**modify_code**](docs/features/modification.md#modify_code) | Structural AST-level editing with validation |
+| [**create_file**](docs/features/modification.md#create_file) | Create new file |
+| [**copy_file**](docs/features/modification.md#copy_file) | Copy file with graph updates |
+| [**rename_file**](docs/features/modification.md#rename_file) | Rename file with import updates |
+| [**split_file**](docs/features/modification.md#split_file) | Split file into parts |
+| [**synthesize_files**](docs/features/modification.md#synthesize_files) | Merge files |
+| [**rename_symbol**](docs/features/modification.md#rename_symbol) | Project-wide symbol renaming |
+| [**add_member**](docs/features/modification.md#add_member) | Add methods/properties to classes |
+
+## Code Validation
+
+| Tool | Description |
+|------|-------------|
+| [**validate_file**](docs/features/validation.md#validate_file) | File validation via oxlint/Pylint/golint/clippy |
+| [**validate_directory**](docs/features/validation.md#validate_directory) | Batch directory validation |
+
+## Documentation (AutoDoc)
+
+| Tool | Description |
+|------|-------------|
+| [**autodoc_init**](docs/features/autodoc.md#autodoc_init) | Initialize AutoDoc system |
+| [**autodoc_generate**](docs/features/autodoc.md#autodoc_generate) | Generate documentation for entities |
+| [**autodoc_save**](docs/features/autodoc.md#autodoc_save) | Save documentation to .autodoc |
+| [**autodoc_get**](docs/features/autodoc.md#autodoc_get) | Get entity documentation |
+| [**autodoc_search**](docs/features/autodoc.md#autodoc_search) | Semantic search through documentation |
+| [**autodoc_validate**](docs/features/autodoc.md#autodoc_validate) | Check documentation freshness |
+| [**autodoc_status**](docs/features/autodoc.md#autodoc_status) | Documentation coverage statistics |
+| [**autodoc_sync**](docs/features/autodoc.md#autodoc_sync) | Synchronize with code changes |
+| [**autodoc_changelog**](docs/features/autodoc.md#autodoc_changelog) | Documentation change history |
+| [**autodoc_install_hooks**](docs/features/autodoc.md#autodoc_install_hooks) | Install Git hooks for auto-updates |
+| [**autodoc_detect_language**](docs/features/autodoc.md#autodoc_detect_language) | Detect language for generation |
+
+## Git Integration
+
+| Tool | Description |
+|------|-------------|
+| [**list_branches**](docs/features/git.md#list_branches) | List indexed branches |
+| [**switch_branch**](docs/features/git.md#switch_branch) | Switch branches with auto-reindexing |
+| [**get_branch_status**](docs/features/git.md#get_branch_status) | Current branch status |
+| [**get_changed_files**](docs/features/git.md#get_changed_files) | Compare files between branches |
+| [**cleanup_branches**](docs/features/git.md#cleanup_branches) | Clean up old branches (LRU) |
+
+## Semantic Merge
+
+| Tool | Description |
+|------|-------------|
+| [**semantic_merge**](docs/features/merge.md#semantic_merge) | AI-powered 3-way merge with code understanding |
+| [**analyze_merge_conflicts**](docs/features/merge.md#analyze_merge_conflicts) | Analyze conflicts with explanations |
+| [**get_merge_suggestions**](docs/features/merge.md#get_merge_suggestions) | AI suggestions for conflict resolution |
+| [**get_semantic_merge_info**](docs/features/merge.md#get_semantic_merge_info) | Information about semantic differences |
+
+## Snapshots and Safety
+
+| Tool | Description |
+|------|-------------|
+| [**create_snapshot**](docs/features/snapshots.md#create_snapshot) | Save restore point |
+| [**undo**](docs/features/snapshots.md#undo) | Instant rollback to snapshot |
+| [**list_snapshots**](docs/features/snapshots.md#list_snapshots) | List available snapshots |
+| [**cleanup_snapshots**](docs/features/snapshots.md#cleanup_snapshots) | Clean up old snapshots |
+
+## Code Graph and Indexing
+
+| Tool | Description |
+|------|-------------|
+| [**index**](docs/features/indexing.md#index) | Index codebase |
+| [**clean_index**](docs/features/indexing.md#clean_index) | Full reindexing |
+| [**get_members**](docs/features/graph.md#get_members) | List entities in file |
+| [**list_entity_relationships**](docs/features/graph.md#list_entity_relationships) | Entity relationships and dependencies |
+| [**get_graph**](docs/features/graph.md#get_graph) | Get graph (JSON/GraphML/Mermaid) |
+| [**get_graph_stats**](docs/features/graph.md#get_graph_stats) | Graph statistics |
+| [**get_graph_health**](docs/features/graph.md#get_graph_health) | Graph health diagnostics |
+| [**reset_graph**](docs/features/graph.md#reset_graph) | Full graph cleanup |
+
+## Metrics and Monitoring
+
+| Tool | Description |
+|------|-------------|
+| [**get_metrics**](docs/features/metrics.md#get_metrics) | System metrics and statistics |
+| [**get_version**](docs/features/metrics.md#get_version) | Server and runtime version |
+| [**get_agent_metrics**](docs/features/metrics.md#get_agent_metrics) | Multi-agent system telemetry |
+| [**get_bus_stats**](docs/features/metrics.md#get_bus_stats) | Knowledge bus statistics |
+| [**clear_bus_topic**](docs/features/metrics.md#clear_bus_topic) | Clear cached topic entries |
+| [**get_watcher_status**](docs/features/metrics.md#get_watcher_status) | Background watcher status |
+
+---
+
+## Additional Features
+
+### Performance
+- **SIMD/WebAssembly** — built-in CPU acceleration
+- **CUDA/FAISS** — GPU acceleration for large projects
+- **WebGPU/Dawn** — cross-platform GPU acceleration
+- **Streaming indexing** — parsing and indexing in parallel
+- **Local embeddings** — TEI/Ollama/vLLM without external APIs
+
+### Language Support
+
+| Language | Parser | Entities | Relationships | Metrics | Types |
+|----------|--------|----------|--------------|---------|-------|
 | **TypeScript** | TS Compiler API | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
 | **JavaScript** | TS Compiler API | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
 | **Python** | ast + Pyright | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
@@ -184,48 +190,48 @@ MCP-сервер предоставляет **66 инструментов** дл
 | **PowerShell** | regex + heuristics | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | — |
 | **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
 
-**Легенда:**
-- **Сущности** — функции, классы, интерфейсы, типы, enums, переменные
-- **Связи** — imports, calls, extends, implements, references
-- **Метрики** — cyclomatic, cognitive complexity, control flow, documentation
-- **Типы** — type inference, type references, generics
+**Legend:**
+- **Entities** — functions, classes, interfaces, types, enums, variables
+- **Relationships** — imports, calls, extends, implements, references
+- **Metrics** — cyclomatic, cognitive complexity, control flow, documentation
+- **Types** — type inference, type references, generics
 
-### Фреймворки
+### Frameworks
 
-| Фреймворк | Дополнительные возможности |
-|-----------|---------------------------|
-| **Angular** | Компоненты, директивы, pipes, services, модули, DI-иерархия, template bindings |
+| Framework | Additional Capabilities |
+|-----------|------------------------|
+| **Angular** | Components, directives, pipes, services, modules, DI hierarchy, template bindings |
 | **NgRx** | Actions, reducers, effects, selectors, feature states, action creators |
 | **React** | JSX/TSX, functional/class components, hooks (useState, useEffect, useMemo, useCallback, useContext) |
 
-### Встроенная документация (MCP Prompts)
+### Built-in Documentation (MCP Prompts)
 
-В системные промпты можно добавить [короткий промпт](docs/claude.cfg/add-to-CLAUDE.md) который поможет ИИ-агенту узнать о способе получения информации о работе Ultrascript-tools.
+You can add a [short prompt](docs/claude.cfg/add-to-CLAUDE.md) to your system prompts that will help the AI agent learn about Ultrascript-tools capabilities.
 
-- **quick-start** — быстрый старт и выбор инструментов
-- **tool-reference** — полный справочник 66 инструментов
-- **workflows** — готовые сценарии: анализ, рефакторинг, поиск дубликатов
-- **tracing-guide** — руководство по трассировке и отладке
+- **quick-start** — quick start and tool selection
+- **tool-reference** — complete reference of 66 tools
+- **workflows** — ready scenarios: analysis, refactoring, duplicate detection
+- **tracing-guide** — tracing and debugging guide
 
 ### UltraCode Agent
-- **Делегирование задач** — передайте сложную задачу агенту `/ultracode`
-- **Максимальная эффективность** — агент сам выберет оптимальные инструменты
-- **Комплексный анализ** — поиск, трассировка, рефакторинг в одном запросе
-- **Естественный язык** — опишите задачу своими словами
+- **Task delegation** — hand over complex tasks to `/ultracode` agent
+- **Maximum efficiency** — agent selects optimal tools itself
+- **Comprehensive analysis** — search, tracing, refactoring in one request
+- **Natural language** — describe the task in your own words
 
-### Клиент-серверная архитектура
-- **Один процесс на машину** — при запуске множества ИИ-агентов работает только один UltraScript
-- **Экономия 10+ ГБ RAM** — вместо N копий индексов в памяти — один общий
-- **Мгновенное подключение** — новые агенты подключаются к работающему серверу за миллисекунды
-- **Изоляция сессий** — каждый агент получает независимую MCP-сессию
+### Client-Server Architecture
+- **One process per machine** — when running multiple AI agents, only one UltraScript instance runs
+- **Save 10+ GB RAM** — instead of N copies of indexes in memory — one shared
+- **Instant connection** — new agents connect to running server in milliseconds
+- **Session isolation** — each agent gets independent MCP session
 
-> Для проектов с C# — используйте аналогичный [ultrasharp-tools-mcp](https://github.com/faxenoff/ultrasharp-tools-mcp)
+> For C# projects — use the similar [ultrasharp-tools-mcp](https://github.com/faxenoff/ultrasharp-tools-mcp)
 
-# Установка
+# Installation
 
-Проект оптимизирован под [Bun](https://bun.sh) (это альтернативный JavaScript-runtime) и работает под ним на 50% быстрее.
+The project is optimized for [Bun](https://bun.sh) (an alternative JavaScript runtime) and runs 50% faster with it.
 
-**Установка Bun** (одной командой):
+**Installing Bun** (one command):
 
 ```bash
 # Windows (PowerShell)
@@ -235,46 +241,46 @@ powershell -c "irm bun.sh/install.ps1 | iex"
 curl -fsSL https://bun.sh/install | bash
 ```
 
-**Установка Ultrascript-tools**
+**Installing Ultrascript-tools**
 
 ```bash
-# Bun (рекомендуется) — два шага:
+# Bun (recommended) — two steps:
 
-# 1. Установка пакета
+# 1. Install package
 bun install -g ultrascript-tools-mcp
 
-# 2. Разрешить postinstall скрипты для нативных модулей
+# 2. Allow postinstall scripts for native modules
 bun pm -g trust ultrascript-tools-mcp
 ```
 
 ```bash
-# npm (альтернатива) — один шаг:
+# npm (alternative) — one step:
 npm install -g ultrascript-tools-mcp
 ```
 
-> **Почему два шага для Bun?** 
-> Для достижения ultra-скорости UltraScript использует нативные компоненты:
+> **Why two steps for Bun?**
+> To achieve ultra-speed, UltraScript uses native components:
 >
-> - **faiss-napi** — HNSW/IVF индексы для векторного поиска (100x ускорение)
-> - **cbor-extract** — быстрая нативная сериализация метаданных
-> - **webgpu** — Dawn GPU backend для AMD/Intel
-> - **protobufjs** — бинарный протокол для IPC
-> - **xxhash-wasm** — SIMD-ускоренное хеширование файлов
-> - **libSQL** — нативные SQLite bindings с векторным расширением
-> - **oxc-parser** — Rust-парсер для TS/JS (в 10x быстрее tsc)
+> - **faiss-napi** — HNSW/IVF indexes for vector search (100x speedup)
+> - **cbor-extract** — fast native metadata serialization
+> - **webgpu** — Dawn GPU backend for AMD/Intel
+> - **protobufjs** — binary protocol for IPC
+> - **xxhash-wasm** — SIMD-accelerated file hashing
+> - **libSQL** — native SQLite bindings with vector extension
+> - **oxc-parser** — Rust parser for TS/JS (10x faster than tsc)
 >
-> Bun блокирует postinstall скрипты по умолчанию. Команда `bun pm trust` разрешает их выполнение — повторная установка не нужна.
+> Bun blocks postinstall scripts by default. The `bun pm trust` command allows their execution — no reinstall needed.
 
-> **Примечание**: Для полноценного анализа кода на разных языках требуются runtime:
-> 
-> - TypeScript/JavaScript — встроено (TypeScript Compiler API)
-> - Python — требуется Python 3.8+ (`python --version`)
-> - Java/Kotlin — требуется JRE 11+ (`java --version`)
-> - Go — требуется Go 1.18+ (`go version`)
-> - Rust — требуется Rust toolchain (`rustc --version`)
-> - C/C++ — требуется Clang 12+ (`clang --version`)
+> **Note**: For full code analysis on different languages, runtimes are required:
+>
+> - TypeScript/JavaScript — built-in (TypeScript Compiler API)
+> - Python — requires Python 3.8+ (`python --version`)
+> - Java/Kotlin — requires JRE 11+ (`java --version`)
+> - Go — requires Go 1.18+ (`go version`)
+> - Rust — requires Rust toolchain (`rustc --version`)
+> - C/C++ — requires Clang 12+ (`clang --version`)
 
-**Конфиг Claude Code** (`~/.claude.json`):
+**Claude Code Config** (`~/.claude.json`):
 
 ```json
 {
@@ -286,38 +292,38 @@ npm install -g ultrascript-tools-mcp
 }
 ```
 
-> Подробная документация: [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md)
+> Detailed documentation: [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md)
 
-## **Настройка локальных моделей**
+## **Local Model Setup**
 
-Для интеллектуальных задач используются локальные модели: embedding-модель для семантического поиска и LLM для AutoDoc. Это снимает затраты токенов с вашего основного ИИ-агента.
+Local models are used for intelligent tasks: embedding model for semantic search and LLM for AutoDoc. This removes token costs from your main AI agent.
 
-**После установки автоматически запустится мастер настройки.**
+**After installation, a setup wizard will launch and download and configure everything needed.**
 
-**Шаг 1: Embedding-провайдер** (семантический поиск)
+**Step 1: Embedding Provider** (semantic search)
 
-| Провайдер | Скорость | Рекомендация |
-|-----------|----------|--------------|
-| **vLLM** | 1352 emb/s | ⭐ NVIDIA GPU (Production) |
+| Provider | Speed | Recommendation |
+|----------|-------|----------------|
+| **vLLM** | 1352 emb/s | ⭐ NVIDIA GPU (recommended) |
 | **TEI** | 1193 emb/s | ⭐ NVIDIA GPU |
-| **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), универсальный |
-| **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU |
+| **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), universal |
+| **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Can help if main VRAM is occupied by local LLM. |
 
-**Шаг 2: LLM-провайдер** (AutoDoc, рефакторинг)
+**Step 2: LLM Provider** (AutoDoc, refactoring)
 
-| Провайдер | Модели | Рекомендация |
-|-----------|--------|--------------|
-| **Docker Model Runner** | Qwen 2.5, DeepSeek R1, Phi-4, Llama 3.2 | ⭐ Если установлен Docker Desktop |
-| **Ollama** | qwen2.5-coder, deepseek-coder, phi4 | Универсальный вариант |
-| **Пропустить** | — | Настроить позже |
+| Provider | Models | Recommendation |
+|----------|--------|----------------|
+| **Docker Model Runner** | Qwen 2.5, DeepSeek R1, Phi-4, Llama 3.2 | ⭐ If Docker Desktop is installed |
+| **Ollama** | qwen2.5-coder, deepseek-coder, phi4 | Universal option |
+| **Skip** | — | Configure later |
 
-Мастер автоматически:
-- Определит вашу GPU (NVIDIA Turing/Ampere/Ada/Hopper/Blackwell*)
-- Предложит оптимальные модели под ваше железо
-- Установит выбранные провайдеры
-- Сохранит конфигурацию в системную директорию
+The wizard automatically:
+- Detects your GPU (NVIDIA Turing/Ampere/Ada/Hopper/Blackwell*)
+- Suggests optimal models for your hardware
+- Installs selected providers
+- Saves configuration to system directory
 
-> **Повторный запуск мастера:**
+> **Re-run wizard:**
 > ```bash
 > # Bun
 > bunx ultrascript-tools-mcp setup
@@ -326,26 +332,40 @@ npm install -g ultrascript-tools-mcp
 > npx ultrascript-tools-mcp setup
 > ```
 
-*Для Blackwell (RTX 50xx) используется неофициальный форк TEI
+*For Blackwell (RTX 50xx), an unofficial TEI fork is used
 
-### GPU ускорение macOS (Apple Silicon):
+### AUTODOC Setup
+
+To activate auto-documentation mode - create a `.autodoc` folder in the project root and enable LLM usage (easiest to use the same claude).
+
+After running Ultrascript with Autodoc mode enabled:
+
+1. In all folders with source code (from supported languages), AUTODOC.md files will be created with a template listing files in the directory.
+2. LLM will go through these files and generate descriptions in AUTODOC.md — what the code in the files specifically does.
+
+After this, you can yourself (or with an AI agent's help) create needed files with project overview in the .autodoc directory and add "human descriptions" in AUTODOC.md files where needed. There you can use direct references to code lines in files (for describing start and end of code block, use two numbers. Example: FILE:XX-ZZ). UltraScript will track code changes and automatically update all code references to keep them current. It won't touch documentation text.
+
+### GPU Acceleration macOS (Apple Silicon):
+
+I don't currently have the ability to build a native binary on modern Macbook.
+Build it yourself if you really need it.
 
 ```bash
-# При установке предлагается собрать Metal backend
-# Требования для сборки:
+# During installation, Metal backend build is offered
+# Build requirements:
 #   - Xcode Command Line Tools: xcode-select --install
 #   - Homebrew: https://brew.sh
 #   - CMake: brew install cmake
 
-# Можно собрать позже:
+# Can build later:
 ./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh
 ```
 
-# Конфигурация
+# Configuration
 
-## Структура данных
+## Data Structure
 
-Все данные UltraScript хранятся в системной директории:
+All UltraScript data is stored in system directory:
 
 - **Windows**: `%LOCALAPPDATA%\UltraScriptTools\`
 - **macOS**: `~/Library/Application Support/UltraScriptTools/`
@@ -354,50 +374,50 @@ npm install -g ultrascript-tools-mcp
 ```
 UltraScriptTools/
 ├── config/
-│   ├── semantic-config.json    # Embedding/LLM провайдеры (setup wizard)
-│   └── parser-config.json      # Пути к runtime (Java, Kotlin)
+│   ├── semantic-config.json    # Embedding/LLM providers (setup wizard)
+│   └── parser-config.json      # Runtime paths (Java, Kotlin)
 ├── projects/
-│   └── {hash}/                 # Данные проекта (hash от пути)
-│       ├── faiss-*.bin         # FAISS индекс для векторного поиска
-│       └── *.json              # Метаданные индекса
-├── logs/                       # Логи сервера (ротация по дням)
-├── models/                     # Скачанные embedding модели
-├── llamacpp/                   # llama.cpp бинарники и модели
-├── ovms/                       # OpenVINO Model Server модели
-├── hf-cache/                   # Кеш HuggingFace моделей
-├── autodoc.db                  # База AutoDoc документации
-└── unified-storage.db          # Единое хранилище графов и сущностей
+│   └── {hash}/                 # Project data (hash from path)
+│       ├── faiss-*.bin         # FAISS index for vector search
+│       └── *.json              # Index metadata
+├── logs/                       # Server logs (daily rotation)
+├── models/                     # Downloaded embedding models
+├── llamacpp/                   # llama.cpp binaries and models
+├── ovms/                       # OpenVINO Model Server models
+├── hf-cache/                   # HuggingFace model cache
+├── autodoc.db                  # AutoDoc documentation database
+└── unified-storage.db          # Unified storage for graphs and entities
 ```
 
-## Параметры конфигурации
+## Configuration Parameters
 
-Расширенные параметры можно задать в `config/default.yaml` (для разработчиков) или через переменные окружения.
-Embedding/LLM настраиваются через setup wizard и хранятся в `semantic-config.json`.
+Advanced parameters can be set in `config/default.yaml` (for developers) or via environment variables.
+Embedding/LLM are configured via setup wizard and stored in `semantic-config.json`.
 
-Основные параметры:
+Main parameters:
 
-| Секция | Параметр | По умолчанию | Описание |
-|--------|----------|--------------|----------|
-| **logging** | `level` | `info` | Уровень логов: debug, info, warn, error |
-| | `maxFiles` | `5` | Количество файлов логов для ротации |
-| **database** | `mode` | `WAL` | Режим libSQL: WAL, DELETE, TRUNCATE |
-| | `cacheSize` | `10000` | Размер кеша libSQL |
-| **indexing** | `autoSwitchOnBranchChange` | `true` | Автопереключение БД при смене ветки |
-| | `maxBranchesPerRepo` | `10` | Макс. веток на репозиторий |
-| | `incrementalThreshold` | `20` | Порог файлов для полной переиндексации |
-| **git** | `enabled` | `true` | Git-интеграция |
-| | `autoReindex` | `true` | Автоиндексация при смене ветки |
-| | `debounceMs` | `60000` | Задержка перед индексацией изменений |
-| **parser** | `maxFileSize` | `1048576` | Макс. размер файла (1MB) |
-| | `timeout` | `60000` | Таймаут парсинга (60 сек) |
-| **performance** | `maxWorkerThreads` | `4` | Параллельные воркеры парсинга |
+| Section | Parameter | Default | Description |
+|---------|-----------|---------|-------------|
+| **logging** | `level` | `info` | Log level: debug, info, warn, error |
+| | `maxFiles` | `5` | Number of log files for rotation |
+| **database** | `mode` | `WAL` | libSQL mode: WAL, DELETE, TRUNCATE |
+| | `cacheSize` | `10000` | libSQL cache size |
+| **indexing** | `autoSwitchOnBranchChange` | `true` | Auto-switch DB on branch change |
+| | `maxBranchesPerRepo` | `10` | Max branches per repository |
+| | `incrementalThreshold` | `20` | File threshold for full reindexing |
+| **git** | `enabled` | `true` | Git integration |
+| | `autoReindex` | `true` | Auto-index on branch change |
+| | `debounceMs` | `60000` | Delay before indexing changes |
+| **parser** | `maxFileSize` | `1048576` | Max file size (1MB) |
+| | `timeout` | `60000` | Parsing timeout (60 sec) |
+| **performance** | `maxWorkerThreads` | `4` | Parallel parsing workers |
 
-# Участие в разработке
+# Contributing
 
-Этот пакет с открытым исходным кодом под лицензией MIT.
+This package is open source under the MIT license.
 
-Репозиторий: https://github.com/faxenoff/ultrascript-tools-mcp
+Repository: https://github.com/faxenoff/ultrascript-tools-mcp
 
-## Лицензия
+## License
 
 MIT © faxenoff

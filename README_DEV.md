@@ -188,7 +188,7 @@ TypeScript, JavaScript, Python, C#, C/C++, Rust, Go, Java, VBA
 Copy, rename, split, synthesize файлов с автообновлением импортов и графа. Экономия 85-95% токенов
 
 ### ✅ Автоматическая валидация кода
-ESLint/Pylint интеграция с отчетами до/после изменений. Batch-валидация директорий
+oxlint/Pylint интеграция с отчетами до/после изменений. Batch-валидация директорий
 
 ### 🔍 Продвинутый поиск (Pattern Search)
 4 режима поиска: по сущностям, контенту, семантике, гибридный. SIMD-ускорение. Фильтрация по фреймворкам
@@ -391,7 +391,7 @@ npx @modelcontextprotocol/inspector add code-graph-rag \
 - `synthesize_files` - 🆕 объединение файлов в один
 
 **Валидация кода:**
-- `validate_file` - 🆕 валидация файла (ESLint/Pylint)
+- `validate_file` - 🆕 валидация файла (oxlint/Pylint)
 - `validate_directory` - 🆕 batch-валидация директории
 
 **Граф зависимостей:**
