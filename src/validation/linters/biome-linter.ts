@@ -1,10 +1,3 @@
-/**
- * Oxlint Linter Integration
- *
- * Fast linter for TypeScript/JavaScript files using oxlint binary.
- * ~100x faster than ESLint.
- */
-
 import { copyFile, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,15 +5,15 @@ import { log } from "../../logging/index.js";
 import { exec } from "../../utils/shell.js";
 import type { Linter, ValidationProblem } from "../code-validator.js";
 
-export class OxlintLinter implements Linter {
-  name = "oxlint";
+export class BiomeLinter implements Linter {
+  name = "biome";
   private binPath: string | null = null;
 
   /**
-   * Lint file with oxlint
+   * Lint file with Biome
    * @param filePath - Path to file to lint
-   * @param _content - File content (not used, oxlint reads from disk)
-   * @param autofix - Apply automatic fixes (oxlint --fix)
+   * @param _content - File content (not used, Biome reads from disk)
+   * @param autofix - Apply automatic fixes (biome check --write)
    * @param dryRun - Show what would be fixed without applying changes
    */
   async lint(filePath: string, _content: string, autofix = false, dryRun = false): Promise<ValidationProblem[]> {
@@ -29,14 +22,14 @@ export class OxlintLinter implements Linter {
 
       // Dry-run режим: создать временный файл
       if (autofix && dryRun) {
-        const tempFile = join(tmpdir(), `oxlint-dryrun-${Date.now()}.tmp`);
+        const tempFile = join(tmpdir(), `biome-dryrun-${Date.now()}.tmp`);
 
         try {
           // Скопировать в temp
           await copyFile(filePath, tempFile);
 
           // Применить автофиксы к копии
-          const command = `"${bin}" --fix --format json "${tempFile}"`;
+          const command = `"${bin}" check --write --reporter=json "${tempFile}"`;
           await exec(command, { timeout: 30000 });
 
           // Прочитать изменения
@@ -51,7 +44,7 @@ export class OxlintLinter implements Linter {
               message: `[DRY-RUN] Would apply autofixes (${fixed.length - original.length} chars diff)`,
               line: 0,
               column: 0,
-              source: "oxlint",
+              source: "biome",
             });
           }
 
@@ -63,21 +56,18 @@ export class OxlintLinter implements Linter {
       }
 
       // Обычная логика
-      const fixFlag = autofix ? "--fix" : "";
-      const { stdout, stderr } = await exec(`"${bin}" ${fixFlag} --format json "${filePath}"`.trim(), {
-        timeout: 30000,
-      });
+      const writeFlag = autofix ? "--write" : "";
+      const command = `"${bin}" check ${writeFlag} --reporter=json "${filePath}"`;
 
-      const output = stdout || stderr;
-      return this.parseOutput(output);
+      const { stdout, stderr } = await exec(command, { timeout: 30000 });
+      return this.parseOutput(stdout || stderr);
     } catch (error) {
-      // oxlint returns non-zero on lint errors
       const err = error as { stdout?: string; stderr?: string };
       const output = err.stdout || err.stderr || "";
       if (output) {
         return this.parseOutput(output);
       }
-      log.w("OXLINT", "lint_fail", { err: String(error) });
+      log.w("BIOME", "lint_fail", { err: String(error) });
       return [];
     }
   }
@@ -86,22 +76,22 @@ export class OxlintLinter implements Linter {
     try {
       const parsed = JSON.parse(output) as {
         diagnostics?: Array<{
-          message: string;
-          code?: string;
+          message: { content: string };
           severity: string;
-          labels?: Array<{ span?: { line?: number; column?: number } }>;
+          location?: { span?: { start?: { line: number; column: number } } };
+          category?: string;
         }>;
       };
 
       if (!parsed.diagnostics) return [];
 
       return parsed.diagnostics.map((d) => ({
-        severity: d.severity === "error" ? "error" : ("warning" as const),
-        message: d.message,
-        line: d.labels?.[0]?.span?.line ?? 0,
-        column: d.labels?.[0]?.span?.column ?? 0,
-        ruleId: d.code,
-        source: "oxlint",
+        severity: d.severity === "error" ? "error" : "warning",
+        message: d.message.content,
+        line: d.location?.span?.start?.line ?? 0,
+        column: d.location?.span?.start?.column ?? 0,
+        ruleId: d.category,
+        source: "biome",
       }));
     } catch {
       return [];
@@ -117,23 +107,21 @@ export class OxlintLinter implements Linter {
 
     try {
       const require = createRequire(import.meta.url);
-      const oxlintPkg = require.resolve("oxlint/package.json");
-      const oxlintDir = dirname(oxlintPkg);
-      const pkg = require(oxlintPkg) as { bin?: Record<string, string> | string };
+      const biomePkg = require.resolve("@biomejs/biome/package.json");
+      const biomeDir = dirname(biomePkg);
 
-      const binPath = typeof pkg.bin === "string" ? pkg.bin : typeof pkg.bin === "object" ? pkg.bin["oxlint"] : null;
-
-      if (binPath) {
-        const fullPath = join(oxlintDir, binPath);
-        await access(fullPath);
-        this.binPath = fullPath;
-        return fullPath;
-      }
-    } catch {
-      // Fallback
+      // Biome binary обычно в bin/biome
+      const binPath = join(biomeDir, "bin", "biome");
+      await access(binPath);
+      this.binPath = binPath;
+      return binPath;
+    } catch (error) {
+      // Biome не найден (критическая ошибка, так как в dependencies)
+      log.e("BIOME", "not_found", {
+        err: String(error),
+        hint: "Biome should be in dependencies",
+      });
+      throw new Error("Biome binary not found (check installation)");
     }
-
-    this.binPath = "npx oxlint";
-    return "npx oxlint";
   }
 }

@@ -6,6 +6,9 @@
 
 ## Файлы
 
+- `oxlint.config.ts`
+- `test-autofix-validation.ts`
+- `test-linter-detection.ts`
 - `tsup.config.ts`
 
 ## Экспорты
@@ -29,3 +32,16 @@ export default defineConfig({
   clean: true,
 })
 ```
+
+## Biome Trust в Bun
+
+Проект использует Biome для форматирования и линтинга кода. Biome имеет postinstall скрипт (проверка платформы), который требует trust в Bun.
+
+**Уже настроено:** Biome добавлен в `trustedDependencies` в package.json.
+
+**Если видите "Blocked 1 postinstall":**
+```bash
+bun pm trust @biomejs/biome
+```
+
+**Примечание:** Biome v2.0 уберет postinstall скрипт, устраняя эту необходимость.

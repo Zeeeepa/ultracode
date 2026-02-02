@@ -6,10 +6,14 @@
  * - validate_directory
  */
 
-import { z } from "zod";
+import type { z } from "zod";
+import { log } from "../../logging/index.js";
+import { detectLinterConfigs } from "../../utils/config-detector.js";
 import { toError } from "../../utils/error-handling.js";
-import { projectPathParam } from "../base-schemas.js";
+import { BiomeLinter } from "../../validation/linters/biome-linter.js";
+import { OxlintLinter } from "../../validation/linters/oxlint-linter.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import { ValidateDirectorySchema, ValidateFileSchema } from "../schemas/validation-schemas.js";
 
 // =============================================================================
 // TYPE DEFINITIONS
@@ -23,7 +27,7 @@ interface ValidationIssue {
   column?: number;
   message: string;
   rule?: string;
-  severity: "error" | "warning";
+  severity: "error" | "warning" | "info";
 }
 
 /**
@@ -74,13 +78,6 @@ interface ExecError extends Error {
 // VALIDATE FILE
 // =============================================================================
 
-const ValidateFileSchema = z.object({
-  filePath: z.string(),
-  projectPath: projectPathParam,
-  validators: z.array(z.string()).optional(),
-  fixable: z.boolean().optional().default(false),
-});
-
 export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof ValidateFileSchema>> {
   protected parseArgs(args: unknown) {
     return ValidateFileSchema.parse(args);
@@ -99,7 +96,13 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
       const validators = args.validators || this.getDefaultValidators(ext);
 
       for (const validator of validators) {
-        const result = await this.runValidator(validator, filePath, args.fixable);
+        const result = await this.runValidator(
+          validator,
+          filePath,
+          args.fixable,
+          args.dryRun ?? false,
+          args.projectPath,
+        );
         results.push(result);
       }
 
@@ -147,21 +150,85 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
     return map[ext] || [];
   }
 
-  private async runValidator(validator: string, filePath: string, fixable: boolean): Promise<ValidationResult> {
+  private async runValidator(
+    validator: string,
+    filePath: string,
+    fixable: boolean,
+    dryRun: boolean,
+    projectPath?: string,
+  ): Promise<ValidationResult> {
     const { exec } = await import("../../utils/shell.js");
-    const { dirname } = await import("node:path");
+    const { dirname, extname } = await import("node:path");
 
     const cwd = dirname(filePath);
+    const ext = extname(filePath);
+
+    // Автоопределение линтера для TS/JS файлов при fixable=true
+    if (fixable && (validator === "oxlint" || ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx")) {
+      const configInfo = await detectLinterConfigs(projectPath || cwd);
+
+      if (configInfo.preferredFixerForTS === "biome") {
+        log.d("VALIDATION", "using_biome", { filePath, config: "biome.json" });
+        try {
+          const biomeLinter = new BiomeLinter();
+          const problems = await biomeLinter.lint(filePath, "", true, dryRun);
+          return {
+            validator: "biome",
+            errors: problems.filter((p) => p.severity === "error").length,
+            warnings: problems.filter((p) => p.severity === "warning").length,
+            issues: problems.map((p) => ({
+              line: p.line,
+              column: p.column,
+              message: p.message,
+              rule: p.ruleId,
+              severity: p.severity,
+            })),
+          };
+        } catch (error) {
+          // Fallback на oxlint если Biome не может обработать файл
+          log.w("VALIDATION", "biome_failed_fallback", {
+            filePath,
+            err: String(error),
+            fallback: "oxlint",
+          });
+          // Продолжить с oxlint
+        }
+      } else if (configInfo.preferredFixerForTS === "eslint") {
+        log.d("VALIDATION", "eslint_config_detected", {
+          filePath,
+          config: ".eslintrc",
+          note: "ESLint not implemented, falling back to oxlint",
+        });
+        // TODO: Реализовать ESLint поддержку
+        // Fallback на oxlint
+      }
+    }
 
     try {
       let command: string;
       switch (validator) {
         case "oxlint": {
-          // Find oxlint binary from package
+          // Использовать OxlintLinter для поддержки dry-run
+          if (fixable || dryRun) {
+            const oxlintLinter = new OxlintLinter();
+            const problems = await oxlintLinter.lint(filePath, "", fixable, dryRun);
+            return {
+              validator: "oxlint",
+              errors: problems.filter((p) => p.severity === "error").length,
+              warnings: problems.filter((p) => p.severity === "warning").length,
+              issues: problems.map((p) => ({
+                line: p.line,
+                column: p.column,
+                message: p.message,
+                rule: p.ruleId,
+                severity: p.severity,
+              })),
+            };
+          }
+
+          // Старая логика для обычной валидации
           const oxlintBin = await this.findOxlintBin();
-          command = fixable
-            ? `"${oxlintBin}" --fix --format json "${filePath}"`
-            : `"${oxlintBin}" --format json "${filePath}"`;
+          command = `"${oxlintBin}" --format json "${filePath}"`;
           break;
         }
         case "tsc":
@@ -305,15 +372,6 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
 // VALIDATE DIRECTORY
 // =============================================================================
 
-const ValidateDirectorySchema = z.object({
-  directory: z.string().optional(),
-  projectPath: projectPathParam,
-  validators: z.array(z.string()).optional(),
-  extensions: z.array(z.string()).optional(),
-  maxFiles: z.number().optional().default(100),
-  parallel: z.boolean().optional().default(true),
-});
-
 export class ValidateDirectoryToolHandler extends BaseToolHandler<z.infer<typeof ValidateDirectorySchema>> {
   protected parseArgs(args: unknown) {
     return ValidateDirectorySchema.parse(args);
@@ -347,7 +405,10 @@ export class ValidateDirectoryToolHandler extends BaseToolHandler<z.infer<typeof
         const promises = files.map(async (file) => {
           const result = await validateHandler.handle({
             filePath: file,
+            projectPath: args.projectPath,
             validators: args.validators,
+            fixable: args.fixable,
+            dryRun: args.dryRun,
           });
           const text = result.content[0]?.text || "{}";
           const parsed = JSON.parse(text as string);
@@ -358,7 +419,10 @@ export class ValidateDirectoryToolHandler extends BaseToolHandler<z.infer<typeof
         for (const file of files) {
           const result = await validateHandler.handle({
             filePath: file,
+            projectPath: args.projectPath,
             validators: args.validators,
+            fixable: args.fixable,
+            dryRun: args.dryRun,
           });
           const text = result.content[0]?.text || "{}";
           const parsed = JSON.parse(text as string);

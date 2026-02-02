@@ -336,13 +336,13 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "validate_file",
       description:
-        "Validate code file using appropriate linter (ESLint for JS/TS, Pylint for Python). Returns problems categorized by severity.",
+        "Validate code file using appropriate linter (oxlint for JS/TS, Pylint for Python). Supports automatic fixes with fixable parameter and auto-detection of linter based on project config (biome.json, .eslintrc). Returns problems categorized by severity.",
       inputSchema: zodToJsonSchema(ValidateFileSchema),
     },
     {
       name: "validate_directory",
       description:
-        "Validate all code files in directory. Batch processing with concurrency limit. Returns aggregated validation report.",
+        "Validate all code files in directory with batch processing. Supports automatic fixes with fixable parameter and auto-detection of linter. Returns aggregated validation report.",
       inputSchema: zodToJsonSchema(ValidateDirectorySchema),
     },
 

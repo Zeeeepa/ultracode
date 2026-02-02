@@ -118,9 +118,7 @@
     "*.{ts,tsx,js,jsx,json,css,md,yml,yaml}": "biome check --write"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.3.13",
-    "@biomejs/cli-win32-x64": "^2.3.13",
-    "@oxc-project/types": "^0.111.0",
+    "@oxc-project/types": "^0.112.0",
     "@rollup/rollup-win32-x64-msvc": "^4.57.1",
     "@types/bun": "latest",
     "@types/glob": "^9.0.0",
@@ -137,6 +135,13 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@biomejs/biome": "^2.3.13",
+    "@biomejs/cli-darwin-arm64": "^2.3.13",
+    "@biomejs/cli-darwin-x64": "^2.3.13",
+    "@biomejs/cli-linux-arm64": "^2.3.13",
+    "@biomejs/cli-linux-x64": "^2.3.13",
+    "@biomejs/cli-win32-arm64": "^2.3.13",
+    "@biomejs/cli-win32-x64": "^2.3.13",
     "@grpc/grpc-js": "^1.14.3",
     "@grpc/proto-loader": "^0.8.0",
     "@huggingface/inference": "^4.13.11",
@@ -153,8 +158,8 @@
     "java-parser": "^3.0.1",
     "lru-cache": "^11.2.5",
     "nanoid": "^5.1.6",
-    "oxc-parser": "^0.111.0",
-    "oxlint": "^1.42.0",
+    "oxc-parser": "^0.112.0",
+    "oxlint": "^1.43.0",
     "p-limit": "^7.2.0",
     "p-map": "^7.0.4",
     "protobufjs": "^8.0.0",
@@ -184,6 +189,7 @@
     "faiss-napi": "High-performance vector indexing with NAPI bindings. Works directly under Bun (no subprocess needed). 32 prebuilt binaries for Windows/Linux/macOS (x64/ARM64). Uses HNSW/IVF indexes."
   },
   "trustedDependencies": [
+    "@biomejs/biome",
     "cbor-extract",
     "faiss-napi",
     "protobufjs",
