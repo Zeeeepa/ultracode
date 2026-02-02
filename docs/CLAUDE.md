@@ -110,9 +110,17 @@ const semanticAgent = await getOrCreateAgent(container, conductor, AgentType.SEM
 - **Async Prefetch**: PrefetchManager читает следующие 3 файла параллельно с парсингом (96-100% I/O overlap)
 - **Parallel Pool Creation**: Все языковые пулы создаются через `Promise.all` (15ms vs 10+ сек)
 
-**Performance (Streaming Mode + Batch Accumulator + Aggressive Pragmas):**
-- ultrascript-tools-mcp (537 файлов): **17-18x speedup** (68s → 3.8s) 🚀
-- Data files (174 JSON/YAML): **34x speedup** (6.7s → 195ms, **892 files/s**)
+**Performance (Centralized Embeddings + Optimized Chunks):**
+- **ultrascript-tools-mcp (523 TS files):** **3.1 sec total** (~169 files/sec) 🚀
+  - Parsing: ~2.6s (workersms), 18 chunks, 6 workers
+  - Embeddings: centralized batching via Main process
+  - **2.5x faster** vs decentralized (7.8s → 3.1s)
+- **TypeScript parsing speed:** **130-140 files/sec** (было 16 files/sec decentralized)
+  - **8x speedup** with centralized embeddings (no HTTP contention)
+- **Optimal chunk size:** 40 files/chunk (vs 100 default)
+  - More chunks = workers finish at different times = less IPC contention
+  - **-19% totalms** (3830ms → 3100ms) compared to 100 files/chunk
+- Data files (174 JSON/YAML): **34x speedup** (6.7s → 195ms, **892 files/sec**)
 - **91-95%** файлов индексируется через streaming
 - DB write speed: **11,300 entities/sec** (journal_mode=OFF, synchronous=OFF)
 - Worker load balance: **0% deviation** (было 70%/30%)
