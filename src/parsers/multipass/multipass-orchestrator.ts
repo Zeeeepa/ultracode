@@ -25,6 +25,7 @@ import { cpus } from "node:os";
 import { log } from "../../logging/index.js";
 import type { ParseResult, ParserOptions } from "../../types/parser.js";
 import { readFilesParallel, readText } from "../../utils/file-ops.js";
+import { forEachParallel } from "../../utils/parallel.js";
 import { fastParse, fastParseBatch } from "./oxc-fast-parser.js";
 import type { BatchStrategy, MultiPassConfig, QuickParseResult } from "./types.js";
 
@@ -70,6 +71,10 @@ export class MultiPassOrchestrator {
     // Pre-warm OXC by parsing a dummy file
     await fastParse("warmup.ts", "const x = 1;");
     log.i("MULTIPASS", "oxc_warm");
+
+    // Pre-warm TypeScript parser in background (don't await)
+    // This eliminates ~50-100ms delay on first detailedPass()
+    this.getTypeScriptParser().catch(() => {});
   }
 
   /**
@@ -236,42 +241,37 @@ export class MultiPassOrchestrator {
     };
 
     // Process high-complexity files with TypeScript API
+    // Using continuous queue (p-limit) instead of chunk-based to eliminate tail latency
     if (strategy.detailed.length > 0) {
       const tsParser = await this.getTypeScriptParser();
 
-      // Process in controlled concurrency
-      const chunks = this.chunkArray(strategy.detailed, this.config.tsConcurrency);
-
-      for (const chunk of chunks) {
-        const chunkPromises = chunk.map(async (filePath) => {
+      await forEachParallel(
+        strategy.detailed,
+        async (filePath) => {
           const content = await getContent(filePath);
           const hash = Date.now().toString(16);
           const result = await tsParser.parse(filePath, content, hash);
           results.set(filePath, result);
-        });
-
-        await Promise.all(chunkPromises);
-      }
+        },
+        this.config.tsConcurrency,
+      );
     }
 
     // Process medium-complexity files with workers (future: use worker pool)
-    // For now, use TS API with higher concurrency
+    // For now, use TS API with higher concurrency via continuous queue
     if (strategy.workers.length > 0) {
       const tsParser = await this.getTypeScriptParser();
-      const workerConcurrency = this.config.workerPoolSize;
 
-      const chunks = this.chunkArray(strategy.workers, workerConcurrency);
-
-      for (const chunk of chunks) {
-        const chunkPromises = chunk.map(async (filePath) => {
+      await forEachParallel(
+        strategy.workers,
+        async (filePath) => {
           const content = await getContent(filePath);
           const hash = Date.now().toString(16);
           const result = await tsParser.parse(filePath, content, hash);
           results.set(filePath, result);
-        });
-
-        await Promise.all(chunkPromises);
-      }
+        },
+        this.config.workerPoolSize,
+      );
     }
 
     return results;
@@ -353,17 +353,6 @@ export class MultiPassOrchestrator {
       default:
         return "typescript";
     }
-  }
-
-  /**
-   * Split array into chunks
-   */
-  private chunkArray<T>(arr: T[], size: number): T[][] {
-    const chunks: T[][] = [];
-    for (let i = 0; i < arr.length; i += size) {
-      chunks.push(arr.slice(i, i + size));
-    }
-    return chunks;
   }
 
   /**
