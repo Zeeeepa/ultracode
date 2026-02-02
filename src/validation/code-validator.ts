@@ -63,7 +63,7 @@ export interface BeforeAfterReport {
 
 export interface Linter {
   name: string;
-  lint(filePath: string, content: string): Promise<ValidationProblem[]>;
+  lint(filePath: string, content: string, autofix?: boolean, dryRun?: boolean): Promise<ValidationProblem[]>;
 }
 
 // =============================================================================
