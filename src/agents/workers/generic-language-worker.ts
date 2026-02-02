@@ -596,9 +596,9 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
         const content = fileContents.get(file) || "";
         await generateEmbeddingsForEntities(result.entities, content, result.filePath);
 
-        // Send embeddings every 5 files or if we have 500+ embeddings accumulated
-        // This balances IPC overhead vs parallelism
-        if (results.length % 5 === 0) {
+        // Send embeddings every 10 files to reduce IPC contention
+        // With smaller chunks (40 files), this means ~4 IPC calls per chunk
+        if (results.length % 10 === 0) {
           if (embConfig.centralizedEmbeddings) {
             sendCollectedTexts({ postWorkerMessage, getWorkerId });
           } else {

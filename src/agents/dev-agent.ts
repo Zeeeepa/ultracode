@@ -76,6 +76,7 @@ interface IndexingResult {
     skippedFiles: number;
     deletedEntities: number;
   };
+  perfTimings?: Record<string, number>;
 }
 
 interface IndexingTaskResult {
@@ -364,6 +365,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   private async performRealIndexing(payload: IndexTaskPayload): Promise<IndexingResult> {
     const directory = payload.directory;
     const excludePatterns = payload.excludePatterns || [];
+    const perfStart = Date.now();
+    const perfTimings: Record<string, number> = {};
 
     log.i("DEVAGENT", "Starting indexing", {
       directory,
@@ -371,12 +374,61 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       samplePatterns: excludePatterns.slice(0, 5),
     });
 
-    const collectResult = await collectFilesAsync(directory, { excludePatterns, agentId: this.id });
-    let allFiles = collectResult.files;
-    log.i("DEVAGENT", "Files collected", { count: allFiles.length });
-
     // Smart Incremental: filter to only changed/new files
     const isIncremental = payload.incremental === true;
+
+    // OPTIMIZATION: Run collectFiles in PARALLEL with preSpawn preparation
+    // For full reindex: destroyPools + setPoolMode + setEmbeddingConfig run alongside collectFiles
+    // This saves ~300-400ms by overlapping I/O-bound operations
+    perfTimings["collectFiles_start"] = Date.now() - perfStart;
+    const collectPromise = collectFilesAsync(directory, { excludePatterns, agentId: this.id });
+
+    // Prepare preSpawn in parallel with collectFiles (only for full reindex)
+    let preSpawnPreparePromise: Promise<{
+      embeddingConfig: ReturnType<typeof buildWorkerEmbeddingConfig>;
+    } | null> | null = null;
+    if (!isIncremental && this.parserAgent) {
+      perfTimings["preSpawnPrepare_start"] = Date.now() - perfStart;
+      preSpawnPreparePromise = (async () => {
+        // 1. Destroy existing worker pools
+        log.i("DEVAGENT", "Destroying existing worker pools for full reindex (parallel with collectFiles)");
+        await this.parserAgent!.destroyWorkerPools();
+
+        // 2. Set pool mode
+        await this.parserAgent!.setPoolMode("per-language");
+
+        // 3. Configure embedding
+        const embeddingConfig = buildWorkerEmbeddingConfig();
+        if (embeddingConfig) {
+          this.parserAgent!.setEmbeddingConfig(embeddingConfig);
+          log.i("DEVAGENT", "Embedding config passed to parser", {
+            provider: embeddingConfig.provider,
+            model: embeddingConfig.modelName,
+          });
+        }
+
+        return { embeddingConfig };
+      })();
+    }
+
+    // Wait for collectFiles
+    const collectResult = await collectPromise;
+    let allFiles = collectResult.files;
+    perfTimings["collectFiles_end"] = Date.now() - perfStart;
+    log.i("DEVAGENT", "Files collected", {
+      count: allFiles.length,
+      ms: perfTimings["collectFiles_end"]! - perfTimings["collectFiles_start"]!,
+    });
+
+    // Wait for preSpawn preparation (if running)
+    let preSpawnPrepareResult: { embeddingConfig: ReturnType<typeof buildWorkerEmbeddingConfig> } | null = null;
+    if (preSpawnPreparePromise) {
+      preSpawnPrepareResult = await preSpawnPreparePromise;
+      perfTimings["preSpawnPrepare_end"] = Date.now() - perfStart;
+      log.i("DEVAGENT", "PreSpawn preparation done (parallel)", {
+        ms: perfTimings["preSpawnPrepare_end"]! - perfTimings["preSpawnPrepare_start"]!,
+      });
+    }
     const deletedEntityIds: string[] = [];
 
     if (isIncremental && allFiles.length > 0) {
@@ -516,204 +568,212 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       lastIndexTime: 0,
     };
 
-    // Set pool mode based on indexing type:
-    // - Incremental: universal pool (keepalive, fast for small changes)
-    // - Full reindex: per-language pools (memory cleanup after each language)
-    if (this.parserAgent) {
-      const poolMode = isIncremental ? "universal" : "per-language";
-      await this.parserAgent.setPoolMode(poolMode);
-      log.i("DEVAGENT", "Pool mode configured", { mode: poolMode, isIncremental });
-    }
-
-    // Configure embedding generation FIRST (before pre-spawn so workers get the config)
+    // Pool mode configuration:
+    // - Full reindex: already configured in parallel (preSpawnPrepareResult)
+    // - Incremental: configure now (universal pool with keepalive)
     let preSpawnPromise: Promise<void> | null = null;
     if (this.parserAgent) {
-      const embeddingConfig = buildWorkerEmbeddingConfig();
-      if (embeddingConfig) {
-        // Set embedding config BEFORE spawning workers so they get it during init
+      if (isIncremental) {
+        // Incremental: use universal pool (keepalive, fast for small changes)
+        await this.parserAgent.setPoolMode("universal");
+        log.i("DEVAGENT", "Pool mode configured", { mode: "universal", isIncremental });
+      } else {
+        // Full reindex: pool mode already set in parallel preparation
+        log.i("DEVAGENT", "Pool mode configured", { mode: "per-language", isIncremental });
+      }
+    }
+
+    // Get embedding config (from parallel preparation or build new for incremental)
+    const embeddingConfig = preSpawnPrepareResult?.embeddingConfig ?? buildWorkerEmbeddingConfig();
+
+    // Configure embedding and preSpawn
+    if (this.parserAgent && embeddingConfig) {
+      // For incremental mode: set embedding config now (wasn't done in parallel)
+      if (isIncremental) {
         this.parserAgent.setEmbeddingConfig(embeddingConfig);
         log.i("DEVAGENT", "Embedding config passed to parser", {
           provider: embeddingConfig.provider,
           model: embeddingConfig.modelName,
         });
+      }
 
-        // For llamacpp: start server in background (parallel with worker spawn)
-        let llamacppStartPromise: Promise<void> | null = null;
-        if (embeddingConfig.provider === "llamacpp") {
-          llamacppStartPromise = (async () => {
-            const { llamacppEmbeddingManager } = await import("../semantic/llamacpp-server-manager.js");
-            const { loadSemanticConfig, getDataDir } = await import("../utils/config-paths.js");
-            const { existsSync, readdirSync } = await import("node:fs");
-            const { join } = await import("node:path");
+      // For llamacpp: start server in background (parallel with worker spawn)
+      let llamacppStartPromise: Promise<void> | null = null;
+      if (embeddingConfig.provider === "llamacpp") {
+        llamacppStartPromise = (async () => {
+          const { llamacppEmbeddingManager } = await import("../semantic/llamacpp-server-manager.js");
+          const { loadSemanticConfig, getDataDir } = await import("../utils/config-paths.js");
+          const { existsSync, readdirSync } = await import("node:fs");
+          const { join } = await import("node:path");
 
-            const semanticConfig = loadSemanticConfig();
-            const llamacppConfig = semanticConfig?.embedding?.llamacpp;
+          const semanticConfig = loadSemanticConfig();
+          const llamacppConfig = semanticConfig?.embedding?.llamacpp;
 
-            if (llamacppConfig && !llamacppEmbeddingManager.getState().isRunning) {
-              const dataDir = getDataDir();
-              const searchPaths = [
-                join(dataDir, "hf-cache", "multilingual-e5-base-Q8_0.gguf"),
-                join(dataDir, "llamacpp", "models", "multilingual-e5-base-Q8_0.gguf"),
-                join(dataDir, "models", "multilingual-e5-base-Q8_0.gguf"),
-              ];
+          if (llamacppConfig && !llamacppEmbeddingManager.getState().isRunning) {
+            const dataDir = getDataDir();
+            const searchPaths = [
+              join(dataDir, "hf-cache", "multilingual-e5-base-Q8_0.gguf"),
+              join(dataDir, "llamacpp", "models", "multilingual-e5-base-Q8_0.gguf"),
+              join(dataDir, "models", "multilingual-e5-base-Q8_0.gguf"),
+            ];
 
-              let modelPath: string | null = null;
-              for (const p of searchPaths) {
-                if (existsSync(p)) {
-                  modelPath = p;
-                  break;
-                }
+            let modelPath: string | null = null;
+            for (const p of searchPaths) {
+              if (existsSync(p)) {
+                modelPath = p;
+                break;
               }
+            }
 
-              if (!modelPath) {
-                const hfCache = join(dataDir, "hf-cache");
-                if (existsSync(hfCache)) {
-                  try {
-                    const files = readdirSync(hfCache);
-                    const gguf = files.find((f) => f.endsWith(".gguf"));
-                    if (gguf) modelPath = join(hfCache, gguf);
-                  } catch {
-                    // Ignore
-                  }
-                }
-              }
-
-              if (modelPath) {
-                log.i("DEVAGENT", "Starting llama-server for workers...", { port: 8085, model: modelPath });
-                const started = await llamacppEmbeddingManager.ensureRunning({
-                  modelPath,
-                  mode: "embedding",
-                  port: 8085,
-                  contextSize: llamacppConfig.context_size || 512,
-                  nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
-                });
-                if (started) {
-                  log.i("DEVAGENT", "llama-server ready for workers");
-                } else {
-                  log.w("DEVAGENT", "llama-server start failed - embeddings may not work");
+            if (!modelPath) {
+              const hfCache = join(dataDir, "hf-cache");
+              if (existsSync(hfCache)) {
+                try {
+                  const files = readdirSync(hfCache);
+                  const gguf = files.find((f) => f.endsWith(".gguf"));
+                  if (gguf) modelPath = join(hfCache, gguf);
+                } catch {
+                  // Ignore
                 }
               }
             }
-          })();
-        }
 
-        // PRE-SPAWN: Start worker pools with embedding config already set
-        // This runs in parallel with llamacpp server start (if applicable)
-        if (!isIncremental && codeFiles.length > 0) {
-          preSpawnPromise = this.parserAgent.preSpawnPools(codeFiles);
-        }
-
-        // Wait for llamacpp server if needed (workers need it before generating embeddings)
-        if (llamacppStartPromise) {
-          await llamacppStartPromise;
-        }
-
-        // Configure vector provider for embedding accumulator
-        // v6: Get provider directly from singleton (LayeredFaissProvider or FaissProvider)
-        const { getProjectHash, getCurrentGitBranchOrDefault } = await import("../shared/storage-paths.js");
-        const configLoader = ConfigLoader.getInstance();
-        const embConfig = configLoader.getEmbeddingConfig();
-        const useLayeredIndex = embConfig.useLayeredIndex;
-        const projectHash = getProjectHash(payload.directory);
-        const currentBranch = getCurrentGitBranchOrDefault(payload.directory);
-
-        let vectorProvider: import("../semantic/faiss/types.js").IVectorProvider | null = null;
-
-        try {
-          if (useLayeredIndex) {
-            const { getLayeredFaissProvider } = await import("../semantic/faiss/layered-faiss-provider.js");
-            const provider = getLayeredFaissProvider();
-
-            // Check if initialized, initialize if not
-            // Note: isInitialized is private, so we just try to initialize
-            if ("initialize" in provider && typeof provider.initialize === "function") {
-              log.d("DEVAGENT", "Initializing LayeredFaissProvider", {
-                dir: payload.directory,
-                projectHash,
-                branch: currentBranch,
+            if (modelPath) {
+              log.i("DEVAGENT", "Starting llama-server for workers...", { port: 8085, model: modelPath });
+              const started = await llamacppEmbeddingManager.ensureRunning({
+                modelPath,
+                mode: "embedding",
+                port: 8085,
+                contextSize: llamacppConfig.context_size || 512,
+                nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
               });
-              await provider.initialize(payload.directory, projectHash, currentBranch);
-            }
-            vectorProvider = provider;
-          } else {
-            const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
-            const provider = await initializeFaissProvider();
-            if (provider) {
-              await provider.setProjectContext(projectHash, currentBranch);
-              vectorProvider = provider;
+              if (started) {
+                log.i("DEVAGENT", "llama-server ready for workers");
+              } else {
+                log.w("DEVAGENT", "llama-server start failed - embeddings may not work");
+              }
             }
           }
-        } catch (e) {
-          log.w("DEVAGENT", "Failed to get vector provider", { error: String(e) });
-        }
+        })();
+      }
 
-        if (vectorProvider) {
-          log.d("DEVAGENT", "vector_provider_branch", {
-            branch: currentBranch,
-            layered: useLayeredIndex,
-          });
-          this.parserAgent.setVectorProvider(vectorProvider);
-          log.i("DEVAGENT", "Vector provider configured", {
-            projectHash,
-            dir: payload.directory,
-            layered: useLayeredIndex,
-          });
+      // PRE-SPAWN: Start worker pools with embedding config already set
+      // This runs in parallel with llamacpp server start (if applicable)
+      if (!isIncremental && codeFiles.length > 0) {
+        perfTimings["preSpawn_start"] = Date.now() - perfStart;
+        preSpawnPromise = this.parserAgent.preSpawnPools(codeFiles);
+      }
 
-          // Smart Incremental: remove embeddings for deleted entities
-          if (deletedEntityIds.length > 0) {
-            try {
-              // Convert entity IDs to embedding IDs (prefixed with "ent:")
-              const embeddingIds = deletedEntityIds.map((id) => (id.startsWith("ent:") ? id : `ent:${id}`));
-              await vectorProvider.remove(embeddingIds);
-              log.i("DEVAGENT", "Removed embeddings for changed/deleted files", {
-                count: embeddingIds.length,
-              });
-            } catch (error) {
-              log.w("DEVAGENT", "Failed to remove embeddings", {
-                error: (error as Error).message,
-              });
-            }
+      // Wait for llamacpp server if needed (workers need it before generating embeddings)
+      if (llamacppStartPromise) {
+        await llamacppStartPromise;
+      }
+
+      // Configure vector provider for embedding accumulator
+      // v6: Get provider directly from singleton (LayeredFaissProvider or FaissProvider)
+      const { getProjectHash, getCurrentGitBranchOrDefault } = await import("../shared/storage-paths.js");
+      const configLoader = ConfigLoader.getInstance();
+      const embConfig = configLoader.getEmbeddingConfig();
+      const useLayeredIndex = embConfig.useLayeredIndex;
+      const projectHash = getProjectHash(payload.directory);
+      const currentBranch = getCurrentGitBranchOrDefault(payload.directory);
+
+      let vectorProvider: import("../semantic/faiss/types.js").IVectorProvider | null = null;
+
+      try {
+        if (useLayeredIndex) {
+          const { getLayeredFaissProvider } = await import("../semantic/faiss/layered-faiss-provider.js");
+          const provider = getLayeredFaissProvider();
+
+          // Check if initialized, initialize if not
+          // Note: isInitialized is private, so we just try to initialize
+          if ("initialize" in provider && typeof provider.initialize === "function") {
+            log.d("DEVAGENT", "Initializing LayeredFaissProvider", {
+              dir: payload.directory,
+              projectHash,
+              branch: currentBranch,
+            });
+            await provider.initialize(payload.directory, projectHash, currentBranch);
           }
+          vectorProvider = provider;
         } else {
-          log.w("DEVAGENT", "Vector provider not available - embeddings will not be saved");
+          const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
+          const provider = await initializeFaissProvider();
+          if (provider) {
+            await provider.setProjectContext(projectHash, currentBranch);
+            vectorProvider = provider;
+          }
         }
+      } catch (e) {
+        log.w("DEVAGENT", "Failed to get vector provider", { error: String(e) });
+      }
 
-        // For centralized embedding mode (OVMS/llamacpp): create EmbeddingGenerator in Main
-        // Workers send texts, Main generates embeddings via single connection
-        if (embeddingConfig.centralizedEmbeddings) {
+      if (vectorProvider) {
+        log.d("DEVAGENT", "vector_provider_branch", {
+          branch: currentBranch,
+          layered: useLayeredIndex,
+        });
+        this.parserAgent.setVectorProvider(vectorProvider);
+        log.i("DEVAGENT", "Vector provider configured", {
+          projectHash,
+          dir: payload.directory,
+          layered: useLayeredIndex,
+        });
+
+        // Smart Incremental: remove embeddings for deleted entities
+        if (deletedEntityIds.length > 0) {
           try {
-            const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
-            const { buildEmbeddingGeneratorOptions } = await import("../agents/semantic/provider-config.js");
-            const { loadSemanticConfig } = await import("../utils/config-paths.js");
-            const { getConfig } = await import("../config/yaml-config.js");
-
-            // Load configs for EmbeddingGenerator
-            const semanticConfig = loadSemanticConfig();
-            const yamlConfig = getConfig();
-
-            // Build options for EmbeddingGenerator (same as SemanticAgent)
-            // Cast provider to ProviderKind (centralized mode only uses ovms/tei/vllm/llamacpp)
-            const generatorOptions = buildEmbeddingGeneratorOptions(
-              embeddingConfig.provider as import("./semantic/provider-config.js").ProviderKind,
-              embeddingConfig.modelName,
-              embeddingConfig.batchSize,
-              semanticConfig,
-              yamlConfig,
-            );
-
-            const embeddingGenerator = new EmbeddingGenerator(generatorOptions);
-            await embeddingGenerator.initialize();
-
-            await this.parserAgent.setEmbeddingGenerator(embeddingGenerator);
-            log.i("DEVAGENT", "Centralized EmbeddingGenerator configured", {
-              provider: embeddingConfig.provider,
-              model: embeddingConfig.modelName,
+            // Convert entity IDs to embedding IDs (prefixed with "ent:")
+            const embeddingIds = deletedEntityIds.map((id) => (id.startsWith("ent:") ? id : `ent:${id}`));
+            await vectorProvider.remove(embeddingIds);
+            log.i("DEVAGENT", "Removed embeddings for changed/deleted files", {
+              count: embeddingIds.length,
             });
           } catch (error) {
-            log.e("DEVAGENT", "Failed to initialize centralized EmbeddingGenerator", {
+            log.w("DEVAGENT", "Failed to remove embeddings", {
               error: (error as Error).message,
             });
           }
+        }
+      } else {
+        log.w("DEVAGENT", "Vector provider not available - embeddings will not be saved");
+      }
+
+      // For centralized embedding mode (OVMS/llamacpp): create EmbeddingGenerator in Main
+      // Workers send texts, Main generates embeddings via single connection
+      if (embeddingConfig.centralizedEmbeddings) {
+        try {
+          const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
+          const { buildEmbeddingGeneratorOptions } = await import("../agents/semantic/provider-config.js");
+          const { loadSemanticConfig } = await import("../utils/config-paths.js");
+          const { getConfig } = await import("../config/yaml-config.js");
+
+          // Load configs for EmbeddingGenerator
+          const semanticConfig = loadSemanticConfig();
+          const yamlConfig = getConfig();
+
+          // Build options for EmbeddingGenerator (same as SemanticAgent)
+          // Cast provider to ProviderKind (centralized mode only uses ovms/tei/vllm/llamacpp)
+          const generatorOptions = buildEmbeddingGeneratorOptions(
+            embeddingConfig.provider as import("./semantic/provider-config.js").ProviderKind,
+            embeddingConfig.modelName,
+            embeddingConfig.batchSize,
+            semanticConfig,
+            yamlConfig,
+          );
+
+          const embeddingGenerator = new EmbeddingGenerator(generatorOptions);
+          await embeddingGenerator.initialize();
+
+          await this.parserAgent.setEmbeddingGenerator(embeddingGenerator);
+          log.i("DEVAGENT", "Centralized EmbeddingGenerator configured", {
+            provider: embeddingConfig.provider,
+            model: embeddingConfig.modelName,
+          });
+        } catch (error) {
+          log.e("DEVAGENT", "Failed to initialize centralized EmbeddingGenerator", {
+            error: (error as Error).message,
+          });
         }
       }
     }
@@ -742,9 +802,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     // Wait for pre-spawned workers to be ready before parsing
     if (preSpawnPromise) {
       await preSpawnPromise;
+      perfTimings["preSpawn_end"] = Date.now() - perfStart;
     }
 
     // Process CODE files through ParserAgent (AST parsing with worker pools)
+    perfTimings["parsing_start"] = Date.now() - perfStart;
     const files = codeFiles; // Use only code files for parsing
     for (let i = 0; i < files.length; i += effectiveBatchSize) {
       const batch = files.slice(i, Math.min(i + effectiveBatchSize, files.length));
@@ -771,13 +833,17 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             createdAt: Date.now(),
           };
 
+          const parseStart = Date.now();
           const results = (await this.parserAgent.process(parseTask)) as ParseResult[];
+          const parseMs = Date.now() - parseStart;
 
           // DEBUG: Log parse results count
           log.i("DEVAGENT", "Parser batch completed", {
             batchSent: batch.length,
             resultsReceived: results?.length || 0,
             batchIndex: i,
+            parseMs,
+            filesPerSec: Math.round((batch.length / parseMs) * 1000),
           });
           log.flush(); // Ensure batch completion is visible in logs
 
@@ -1134,11 +1200,13 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
 
     // Disable streaming mode after code files parsing is complete
+    perfTimings["parsing_end"] = Date.now() - perfStart;
     if (this.parserAgent) {
       this.parserAgent.setStreamingMode(false);
     }
 
     // Flush any remaining queued data from batch accumulator
+    perfTimings["flush_start"] = Date.now() - perfStart;
     let streamingEntities = 0;
     let streamingRelationships = 0;
     if (this.indexerAgent) {
@@ -1167,17 +1235,22 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
     // Process DATA files with heuristic entities (no AST, just file-level indexing)
     // Use parallel processing for better performance
+    perfTimings["flush_end"] = Date.now() - perfStart;
     if (dataFiles.length > 0) {
+      perfTimings["dataFiles_start"] = Date.now() - perfStart;
       const dataResult = await this.processDataFilesParallel(dataFiles);
       totalEntities += dataResult.entities;
       filesProcessed += dataResult.files;
+      perfTimings["dataFiles_end"] = Date.now() - perfStart;
     }
 
+    perfTimings["indexing_end"] = Date.now() - perfStart;
     log.i("DEVAGENT", "index_done", {
       files: filesProcessed,
       total: allFiles.length,
       entities: totalEntities,
       rels: totalRelationships,
+      totalMs: perfTimings["indexing_end"],
     });
 
     // FULL INDEXING COMPLETE: Switch to keepalive mode for fast incremental processing
@@ -1189,10 +1262,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       filesProcessed,
       totalEntities,
       totalRelationships,
+      perfTimings,
     });
     log.flush(); // Force flush to ensure completion message is visible
 
     // Flush any pending embeddings to FAISS
+    perfTimings["embFlush_start"] = Date.now() - perfStart;
     if (this.parserAgent) {
       const accumulator = this.parserAgent.getAccumulator();
       if (accumulator) {
@@ -1215,7 +1290,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         });
       }
     }
+    perfTimings["embFlush_end"] = Date.now() - perfStart;
 
+    perfTimings["keepalive_start"] = Date.now() - perfStart;
     if (this.parserAgent) {
       try {
         const memoryBeforeMB = this.parserAgent.getTotalMemoryMB();
@@ -1248,16 +1325,32 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       }
     }
 
+    perfTimings["keepalive_end"] = Date.now() - perfStart;
+
     // Force garbage collection after indexing to reclaim memory
     if (tryGarbageCollect(true)) {
       log.i("DEVAGENT", "gc_after_index");
     }
+
+    perfTimings["total"] = Date.now() - perfStart;
+    log.i("DEVAGENT", "PERF_SUMMARY", {
+      collectFiles: (perfTimings["collectFiles_end"] ?? 0) - (perfTimings["collectFiles_start"] ?? 0),
+      destroyPools: (perfTimings["destroyPools_end"] ?? 0) - (perfTimings["destroyPools_start"] ?? 0),
+      preSpawn: (perfTimings["preSpawn_end"] ?? 0) - (perfTimings["preSpawn_start"] ?? 0),
+      parsing: (perfTimings["parsing_end"] ?? 0) - (perfTimings["parsing_start"] ?? 0),
+      flush: (perfTimings["flush_end"] ?? 0) - (perfTimings["flush_start"] ?? 0),
+      dataFiles: (perfTimings["dataFiles_end"] ?? 0) - (perfTimings["dataFiles_start"] ?? 0),
+      embFlush: (perfTimings["embFlush_end"] ?? 0) - (perfTimings["embFlush_start"] ?? 0),
+      keepalive: (perfTimings["keepalive_end"] ?? 0) - (perfTimings["keepalive_start"] ?? 0),
+      total: perfTimings["total"],
+    });
 
     return {
       filesProcessed,
       entitiesExtracted: totalEntities,
       relationshipsCreated: totalRelationships,
       totalFiles: allFiles.length,
+      perfTimings, // Detailed timing breakdown
     };
   }
 

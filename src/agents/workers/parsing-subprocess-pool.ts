@@ -159,7 +159,7 @@ export class ParsingSubprocessPool {
     this.poolSize = options.poolSize || 1;
     this.memoryLimitMB = options.memoryLimitMB || 1024; // 1GB default
     this.killAfterBatch = options.killAfterBatch ?? true; // Kill after batch by default
-    this.maxFilesPerChunk = options.maxFilesPerChunk || 100; // Limit chunk size for memory safety
+    this.maxFilesPerChunk = options.maxFilesPerChunk || 40; // Optimal: 18 chunks for 523 files, -19% vs 100
     this.keepaliveMode = options.keepaliveMode ?? false;
     this.keepaliveMemoryLimitMB = options.keepaliveMemoryLimitMB || 1024; // 1GB for keepalive worker
     this.embeddingConfig = options.embeddingConfig;
@@ -416,16 +416,22 @@ export class ParsingSubprocessPool {
       // Look up pending task by taskId (fixes race condition with concurrent results)
       const pendingTask = taskId ? state.pendingTasks.get(taskId) : null;
 
-      // DEBUG: Log what we received from worker
+      // DEBUG: Log what we received from worker with timing
+      const workerTimeMs = response.stats?.totalTime ?? 0;
+      const roundTripMs = pendingTask?.sendTime ? Date.now() - pendingTask.sendTime : 0;
+      const ipcOverheadMs = roundTripMs - workerTimeMs;
+      const fileCount = pendingTask?.fileCount ?? response.stats?.filesProcessed ?? 0;
       log.i("SUBPROCESS", "result_received", {
         workerId,
         language: this.language,
         taskId,
-        hasResults: !!response.results,
+        files: fileCount,
         resultsLength: response.results?.length ?? 0,
-        hasPendingTask: !!pendingTask,
-        pendingTasksCount: state.pendingTasks.size,
-        statsFilesProcessed: response.stats?.filesProcessed ?? 0,
+        workerTimeMs, // Time worker spent parsing
+        roundTripMs, // Total time from send to receive
+        ipcOverheadMs, // Difference = IPC + serialization overhead
+        filesPerSec: workerTimeMs > 0 ? Math.round((fileCount / workerTimeMs) * 1000) : 0,
+        memoryMB: Math.round((response.stats?.memoryUsed ?? 0) / 1024 / 1024),
       });
 
       // Update stats
@@ -906,6 +912,9 @@ export class ParsingSubprocessPool {
   async submitTask(files: string[], options?: ParserOptions): Promise<ParseResult[]> {
     if (files.length === 0) return [];
 
+    const taskStart = Date.now();
+    const perf: Record<string, number> = {};
+
     // Mark batch processing started - prevents workers from being killed mid-batch
     this.isBatchProcessing = true;
 
@@ -915,9 +924,10 @@ export class ParsingSubprocessPool {
     const workersBefore = this.workers.size;
     let workersAfter = workersBefore;
 
-    const INCREMENTAL_THRESHOLD = 50; // Below this = incremental mode (1 worker)
+    const INCREMENTAL_THRESHOLD = 20; // Below this = incremental mode (1 worker)
     const isIncrementalMode = this.keepaliveMode && files.length < INCREMENTAL_THRESHOLD;
 
+    perf["ensureWorkers_start"] = Date.now() - taskStart;
     if (isIncrementalMode) {
       // Incremental mode: use fixed poolSize (1 worker), no scaling
       await this.ensureWorkers(this.poolSize);
@@ -933,6 +943,7 @@ export class ParsingSubprocessPool {
       await this.ensureWorkers(optimalWorkers);
       workersAfter = this.workers.size;
     }
+    perf["ensureWorkers_end"] = Date.now() - taskStart;
 
     log.i("SUBPROCESS", `submitTask scaling`, {
       language: this.language,
@@ -946,7 +957,9 @@ export class ParsingSubprocessPool {
     // Distribute files using size-based round-robin for balanced load
     // This replaces the old sequential slice approach
     // Now async with parallel stat() for better performance
+    perf["distribute_start"] = Date.now() - taskStart;
     const chunks = await this.distributeFilesBySizeAsync(files, this.workers.size);
+    perf["distribute_end"] = Date.now() - taskStart;
 
     // Apply maxFilesPerChunk limit - split large chunks if needed
     const limitedChunks: string[][] = [];
@@ -969,13 +982,39 @@ export class ParsingSubprocessPool {
     });
 
     // Submit all chunks IN PARALLEL to different workers
+    perf["workers_start"] = Date.now() - taskStart;
+    const chunkTimings: number[] = [];
     const promises = limitedChunks.map((chunk, idx) => {
+      const chunkStart = Date.now();
       log.d("SUBPROCESS", `Submitting chunk ${idx}`, { language: this.language, files: chunk.length });
-      return this.submitSingleTask(chunk, options);
+      return this.submitSingleTask(chunk, options).then((result) => {
+        chunkTimings.push(Date.now() - chunkStart);
+        return result;
+      });
     });
 
     try {
       const results = await Promise.all(promises);
+      perf["workers_end"] = Date.now() - taskStart;
+      perf["total"] = Date.now() - taskStart;
+
+      // Log detailed timing breakdown
+      const sortedChunkTimings = [...chunkTimings].sort((a, b) => b - a);
+      log.i("SUBPROCESS", "POOL_PERF", {
+        language: this.language,
+        files: files.length,
+        workers: this.workers.size,
+        chunks: limitedChunks.length,
+        ensureWorkersMs: perf["ensureWorkers_end"]! - perf["ensureWorkers_start"]!,
+        distributeMs: perf["distribute_end"]! - perf["distribute_start"]!,
+        workersMs: perf["workers_end"]! - perf["workers_start"]!,
+        totalMs: perf["total"],
+        maxChunkMs: sortedChunkTimings[0] ?? 0,
+        minChunkMs: sortedChunkTimings[sortedChunkTimings.length - 1] ?? 0,
+        avgChunkMs:
+          chunkTimings.length > 0 ? Math.round(chunkTimings.reduce((a, b) => a + b, 0) / chunkTimings.length) : 0,
+      });
+
       return results.flat();
     } finally {
       // Mark batch processing complete - workers can now be killed if needed
@@ -1064,7 +1103,13 @@ export class ParsingSubprocessPool {
 
     state.busy = true;
     // Store task in pendingTasks Map by taskId (fixes race condition)
-    state.pendingTasks.set(task.id, { resolve: task.resolve, reject: task.reject });
+    // Include sendTime for IPC overhead measurement
+    state.pendingTasks.set(task.id, {
+      resolve: task.resolve,
+      reject: task.reject,
+      sendTime: Date.now(),
+      fileCount: task.files.length,
+    });
 
     const request: ParseRequest = {
       type: "parse",

@@ -374,10 +374,10 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     queueBatchSize,
     dimensions,
     providerOptions,
-    // Local inference providers (OVMS, llamacpp) use centralized embedding mode:
+    // All providers use centralized embedding mode:
     // Workers send texts to Main, Main generates embeddings via single connection
     // Benefits: optimal batching, no HTTP connection contention, better GPU utilization
-    centralizedEmbeddings: providerKind === "ovms" || providerKind === "llamacpp",
+    centralizedEmbeddings: true,
   };
 
   // Log only on first call
