@@ -30,6 +30,8 @@ export interface BunProcess {
 export interface PendingTask {
   resolve: (results: ParseResult[]) => void;
   reject: (error: Error) => void;
+  sendTime?: number; // For IPC overhead measurement
+  fileCount?: number; // Files in this task
 }
 
 /**
