@@ -149,6 +149,8 @@ MCP-сервер предоставляет **66 инструментов** дл
 | [**get_graph_health**](docs/features/graph_ru.md#get_graph_health) | Диагностика состояния графа |
 | [**reset_graph**](docs/features/graph_ru.md#reset_graph) | Полная очистка графа |
 
+> **Архитектура хранения**: [Prolly Tree](docs/architecture/prolly-tree_ru.md) — версионируемое хранилище графа с O(log n) diff между ветками
+
 ## Метрики и мониторинг
 
 | Инструмент | Описание |
