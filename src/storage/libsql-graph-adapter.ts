@@ -52,6 +52,8 @@ import {
   type SupportedDimension,
 } from "./libsql/types.js";
 import { VectorOperations, type VectorOpsContext } from "./libsql/vector-ops.js";
+// Prolly Tree components for versioned storage
+import { BranchDiffCache, CommitManager, ProllyNodeStore, ProllyTree, serializeEntity } from "./prolly/index.js";
 
 // Re-export types for backwards compatibility
 export {
@@ -125,6 +127,12 @@ export class LibSQLGraphAdapter {
   private cacheOps: CacheOperations;
   private metadataOps: MetadataOperations;
   private cooccurrenceOps: CooccurrenceOperations;
+
+  // Prolly Tree components for versioned graph storage
+  private prollyNodeStore: ProllyNodeStore | null = null;
+  private prollyTree: ProllyTree | null = null;
+  private commitManager: CommitManager | null = null;
+  private branchDiffCache: BranchDiffCache | null = null;
 
   constructor(config: LibSQLGraphConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -277,6 +285,12 @@ export class LibSQLGraphAdapter {
         (id, type) => this.addTombstone(id, type),
         (type) => this.getTombstonedIds(type),
       );
+
+      // Initialize Prolly Tree components for versioned storage
+      log.t("STORAGE", `[LibSQLGraphAdapter] ▶ initProllyComponents`);
+      const prollyStart = Date.now();
+      await this.initializeProllyComponents();
+      log.t("STORAGE", `[LibSQLGraphAdapter] ◀ initProllyComponents (${Date.now() - prollyStart}ms)`);
 
       this.isInitialized = true;
       log.t("STORAGE", `[LibSQLGraphAdapter] ◀ initialize() END (${Date.now() - startTime}ms)`);
@@ -1131,5 +1145,139 @@ export class LibSQLGraphAdapter {
     this.searchCache.clear();
     this.metadataCache.clear();
     log.i("CACHE", `All caches cleared`);
+  }
+
+  // ===========================================================================
+  // PROLLY TREE OPERATIONS (versioned graph storage)
+  // ===========================================================================
+
+  /**
+   * Initialize Prolly Tree components for versioned storage.
+   * Called during adapter initialization.
+   */
+  private async initializeProllyComponents(): Promise<void> {
+    if (!this.client) throw new Error("Client not initialized");
+
+    // Initialize node store (content-addressed storage)
+    this.prollyNodeStore = new ProllyNodeStore();
+    await this.prollyNodeStore.initialize(this.client);
+
+    // Initialize commit manager (versioning)
+    this.commitManager = new CommitManager();
+    await this.commitManager.initialize(this.client);
+
+    // Initialize Prolly tree (built on top of node store)
+    this.prollyTree = new ProllyTree(this.prollyNodeStore);
+    await this.prollyTree.initialize();
+
+    // Initialize branch diff cache (O(1) lookups instead of tombstone queries)
+    this.branchDiffCache = new BranchDiffCache(this.prollyNodeStore, this.commitManager);
+
+    log.i("LIBSQLADAPT", "prolly_components_init", { components: 4 });
+  }
+
+  /**
+   * Set Prolly Tree context for current project/branch.
+   * Should be called after setProjectContext().
+   */
+  setProllyContext(projectHash: string, branchName: string): void {
+    if (this.commitManager) {
+      this.commitManager.setContext(projectHash, branchName);
+    }
+    log.d("LIBSQLADAPT", "prolly_context_set", { project: projectHash.slice(0, 8), branch: branchName });
+  }
+
+  /**
+   * Get the Prolly Node Store for content-addressed storage operations.
+   */
+  getProllyNodeStore(): ProllyNodeStore | null {
+    return this.prollyNodeStore;
+  }
+
+  /**
+   * Get the Prolly Tree for tree operations (build, insert, delete, diff).
+   */
+  getProllyTree(): ProllyTree | null {
+    return this.prollyTree;
+  }
+
+  /**
+   * Get the Commit Manager for versioning operations.
+   */
+  getCommitManager(): CommitManager | null {
+    return this.commitManager;
+  }
+
+  /**
+   * Get the Branch Diff Cache for optimized branch reads.
+   */
+  getBranchDiffCache(): BranchDiffCache | null {
+    return this.branchDiffCache;
+  }
+
+  /**
+   * Create a new commit from current graph state.
+   * Builds Prolly tree from entities and creates a versioned snapshot.
+   */
+  async createGraphCommit(message?: string): Promise<string | null> {
+    if (!this.prollyTree || !this.commitManager) {
+      log.w("LIBSQLADAPT", "prolly_not_ready");
+      return null;
+    }
+
+    // Get all entities for current project/branch
+    const entities = await this.entityOps.getAllEntities();
+    const relationships = await this.relationshipOps.getAllRelationships();
+
+    // Convert entities to Prolly tree entries
+    const entries = entities.map((e) => ({
+      key: e.id,
+      value: serializeEntity(e),
+    }));
+
+    // Build Prolly tree from entities
+    const rootHash = await this.prollyTree.build(entries);
+
+    // Create commit
+    const commit = await this.commitManager.commit(
+      rootHash,
+      null, // fileTreeHash - can be set via MerkleFileTracker
+      { entityCount: entities.length, relationshipCount: relationships.length },
+      message,
+    );
+
+    log.i("LIBSQLADAPT", "commit_created", {
+      hash: commit.commitHash.slice(0, 8),
+      entities: entities.length,
+      relationships: relationships.length,
+    });
+
+    return commit.commitHash;
+  }
+
+  /**
+   * Initialize branch diff cache for optimized reads on feature branches.
+   * Call this when switching to a feature branch with a base branch.
+   */
+  async initBranchDiff(baseBranch: string): Promise<void> {
+    if (!this.branchDiffCache || !this.prollyTree) {
+      log.w("LIBSQLADAPT", "prolly_not_ready_for_diff");
+      return;
+    }
+
+    const { branchName } = this.currentContext;
+
+    await this.branchDiffCache.initForBranch(baseBranch, branchName);
+
+    log.i("LIBSQLADAPT", "branch_diff_init", { branch: branchName, base: baseBranch });
+  }
+
+  /**
+   * Check if entity is deleted on current branch (via diff cache).
+   * Returns false if diff cache not initialized.
+   */
+  isEntityDeletedOnBranch(entityId: string): boolean {
+    if (!this.branchDiffCache) return false;
+    return this.branchDiffCache.isDeleted(entityId);
   }
 }

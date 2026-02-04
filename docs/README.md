@@ -29,6 +29,7 @@ Complete documentation for UltraScript Tools MCP - Multi-agent LiteRAG server fo
 - **[Layered Indexing](architecture/layered-indexing.md)** - Progressive code indexing strategy
 - **[Branch-Aware Indexing](architecture/branch-aware-indexing.md)** - Git branch isolation and management
 - **[Worker Threads](architecture/worker-threads.md)** - Parallel processing architecture
+- **[Prolly Tree](architecture/prolly-tree.md)** - Versioned graph storage with O(log n) diff ([RU](architecture/prolly-tree_ru.md))
 
 ### 🚢 Deployment
 
