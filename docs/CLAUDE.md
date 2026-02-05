@@ -586,6 +586,12 @@ bun add openvino-node @xenova/transformers
 - `cleanup_branches` - очистка старых веток (LRU)
 - `get_changed_files` - измененные файлы между ветками
 
+**History (Prolly Tree):**
+- `list_commits` - список коммитов графа (версионные снапшоты)
+- `get_entity_history` - история изменений сущности по коммитам
+- `diff_commits` - сравнение двух версий графа
+- `checkout_commit` - time travel — просмотр графа на момент коммита
+
 **Tracing (статический анализ потока):**
 - `trace_flow` - трассировка выполнения от A к B с анализом состояний
 - `trace_backwards` - обратная трассировка (почему метод не вызывается?)

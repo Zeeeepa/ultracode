@@ -17,6 +17,7 @@
 - **Navigate**: `get_members`, `list_entity_relationships`
 - **Analyze**: `analyze_code_impact`, `detect_code_clones`, `analyze_hotspots`
 - **Trace**: `trace_flow`, `trace_backwards`, `trace_data_flow`
+- **History**: `list_commits`, `diff_commits`, `checkout_commit`, `get_entity_history`
 - **Modify**: `modify_code`, `rename_symbol`, `create_file`, `add_member` *(auto-validates, returns errors/warnings)*
 
 > For C# use UltrasharpTools MCP (Roslyn-based).

@@ -10,7 +10,7 @@
 |------|------|-------------|----------|
 | `JscpdCloneDetectionSchema` | const | Валидация параметров поиска дублирующегося кода в проекте | [→ analysis-schemas.ts:8-24] |
 | `SuggestRefactoringSchema` | const | Валидация входных данных для анализа возможностей рефакторинга | [→ analysis-schemas.ts:26-33] |
-| `AnalyzeHotspotsSchema` | const | Валидация параметров анализа критических точек в коде | [→ analysis-schemas.ts:44-51] |
+| `AnalyzeHotspotsSchema` | const | Валидация параметров анализа критических точек в коде. Поддерживает `includeHistoricalMetrics` (boolean, default: true) и `lookbackDays` (number, default: 30) для расчёта changeFrequency через Prolly Tree/Git | [→ analysis-schemas.ts:44-57] |
 | `AnalyzeStateChaosSchema` | const | Валидация настроек анализа состояния и его влияния | [→ analysis-schemas.ts:53-67] |
 | `AutoDocInitSchema` | const | Валидация инициализации системы автоматической документации | [→ autodoc-schemas.ts:8-12] |
 | `AutoDocSaveSchema` | const | Валидация сохранения документов в markdown-формате | [→ autodoc-schemas.ts:14-22] |
@@ -58,9 +58,13 @@
 | `RollbackSnapshotSchema` | const | Валидация отката кода к предыдущему снимку состояния | [→ snapshot-schemas.ts:8-11] |
 | `ListSnapshotsSchema` | const | Валидация получения списка доступных снимков состояния | [→ snapshot-schemas.ts:8-11] |
 | `CleanupSnapshotsSchema` | const | Валидация удаления старых снимков состояния проекта | [→ snapshot-schemas.ts:8-11] |
-| `ValidateFileSchema` | const | Валидация проверки синтаксиса одного файла программы | [→ validation-schemas.ts:8-11] |
-| `ValidateDirectorySchema` | const | Валидация проверки синтаксиса файлов в директории | [→ validation-schemas.ts:8-11] |
-| `DetectTechnologyStackSchema` | const | Валидация определения используемых технологий в коде | [→ validation-schemas.ts:19-21] |
+| `ValidateFileSchema` | const | Валидация проверки синтаксиса одного файла программы | [→ validation-schemas.ts:8-18] |
+| `ValidateDirectorySchema` | const | Валидация проверки синтаксиса файлов в директории | [→ validation-schemas.ts:8-18] |
+| `DetectTechnologyStackSchema` | const | Валидация определения используемых технологий в коде | [→ validation-schemas.ts:20-33] |
+| `GetEntityHistorySchema` | const | Валидация получения истории изменений entity через Prolly Tree | [→ history-schemas.ts:8-12] |
+| `DiffCommitsSchema` | const | Валидация сравнения двух версий графа (diff commits) | [→ history-schemas.ts:14-19] |
+| `CheckoutCommitSchema` | const | Валидация time travel — просмотр графа в определённой версии | [→ history-schemas.ts:21-27] |
+| `ListCommitsSchema` | const | Валидация получения списка версий (commit history) | [→ history-schemas.ts:29-33] |
 
 ## Files
 
@@ -75,3 +79,4 @@
 - **semantic-schemas.ts** — Схемы для семантического поиска и анализа кода
 - **snapshot-schemas.ts** — Схемы для управления версиями и снимками состояния
 - **validation-schemas.ts** — Схемы для валидации кода и определения технологий
+- **history-schemas.ts** — Схемы для версионирования графа и time travel (Prolly Tree)

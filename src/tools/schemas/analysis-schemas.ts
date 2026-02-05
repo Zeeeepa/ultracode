@@ -48,6 +48,12 @@ export const AnalyzeHotspotsSchema = z.object({
     .default("complexity")
     .describe("Metric: complexity, changes, coupling, or all"),
   limit: z.number().optional().default(10).describe("Maximum hotspots to return"),
+  includeHistoricalMetrics: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe("Use Prolly Tree history for changeFrequency calculation"),
+  lookbackDays: z.number().optional().default(30).describe("Number of days to look back for change frequency"),
 });
 
 export const AnalyzeStateChaosSchema = z.object({

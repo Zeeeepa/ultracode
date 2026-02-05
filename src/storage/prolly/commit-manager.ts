@@ -39,6 +39,13 @@ export class CommitManager {
   }
 
   /**
+   * Update the client reference (called after flush() in LibSQLGraphAdapter)
+   */
+  updateClient(client: Client): void {
+    this.client = client;
+  }
+
+  /**
    * Create the commits and branch_heads tables
    */
   private async createTables(): Promise<void> {
@@ -178,6 +185,27 @@ export class CommitManager {
             ORDER BY created_at DESC
             LIMIT ?`,
       args: [this.projectHash, this.branchName, limit],
+    });
+
+    return result.rows
+      .filter((row) => row !== undefined)
+      .map((row) => this.rowToCommit(row as Record<string, unknown>));
+  }
+
+  /**
+   * Get commits within a time range for the current branch.
+   * Used for analyzing change frequency in hotspot detection.
+   */
+  async getCommitsSince(sinceTimestamp: number, limit: number = 1000): Promise<GraphCommit[]> {
+    if (!this.client) throw new Error("Client not initialized");
+
+    const result = await this.client.execute({
+      sql: `SELECT * FROM graph_commits
+            WHERE project_hash = ? AND branch_name = ?
+              AND created_at >= ?
+            ORDER BY created_at DESC
+            LIMIT ?`,
+      args: [this.projectHash, this.branchName, sinceTimestamp, limit],
     });
 
     return result.rows

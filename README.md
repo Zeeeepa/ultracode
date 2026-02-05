@@ -24,8 +24,6 @@
 
 ---
 
----
-
 Reduces time and token costs by up to 90% when working with code through AI agents. Code search, analysis, and modification operate on a complete code structure graph database. Local embedding models enable flexible queries with immediate verification and refinement.
 
 **Full indexing of a medium-sized project takes 3 seconds**. Incremental indexing of changes happens on the fly.
@@ -39,7 +37,7 @@ Reduces time and token costs by up to 90% when working with code through AI agen
 
 # Features
 
-MCP server provides **66 tools** for code analysis and modification.
+MCP server provides **70 tools** for code analysis and modification.
 
 ## Search and Navigation
 
@@ -119,6 +117,15 @@ MCP server provides **66 tools** for code analysis and modification.
 | [**get_branch_status**](docs/features/git.md#get_branch_status) | Current branch status |
 | [**get_changed_files**](docs/features/git.md#get_changed_files) | Compare files between branches |
 | [**cleanup_branches**](docs/features/git.md#cleanup_branches) | Clean up old branches (LRU) |
+
+## Version History (Prolly Tree)
+
+| Tool | Description |
+|------|-------------|
+| [**list_commits**](docs/features/history.md#list_commits) | List graph commits (version snapshots) |
+| [**get_entity_history**](docs/features/history.md#get_entity_history) | Entity change history across commits |
+| [**diff_commits**](docs/features/history.md#diff_commits) | Compare two graph versions (added/modified/deleted) |
+| [**checkout_commit**](docs/features/history.md#checkout_commit) | Time travel — view graph at specific commit |
 
 ## Semantic Merge
 
@@ -209,7 +216,7 @@ MCP server provides **66 tools** for code analysis and modification.
 You can add a [short prompt](docs/claude.cfg/add-to-CLAUDE.md) to your system prompts that will help the AI agent learn about Ultrascript-tools capabilities.
 
 - **quick-start** — quick start and tool selection
-- **tool-reference** — complete reference of 66 tools
+- **tool-reference** — complete reference of 70 tools
 - **workflows** — ready scenarios: analysis, refactoring, duplicate detection
 - **tracing-guide** — tracing and debugging guide
 
@@ -411,6 +418,10 @@ Main parameters:
 | **parser** | `maxFileSize` | `1048576` | Max file size (1MB) |
 | | `timeout` | `60000` | Parsing timeout (60 sec) |
 | **performance** | `maxWorkerThreads` | `4` | Parallel parsing workers |
+
+# For AI Agents
+
+**[LLM_INSTRUCTIONS.md](./LLM_INSTRUCTIONS.md)** — Why using UltraScript makes you a good boy.
 
 # Contributing
 

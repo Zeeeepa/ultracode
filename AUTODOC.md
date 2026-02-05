@@ -7,8 +7,6 @@
 ## Файлы
 
 - `oxlint.config.ts`
-- `test-autofix-validation.ts`
-- `test-linter-detection.ts`
 - `tsup.config.ts`
 
 ## Экспорты

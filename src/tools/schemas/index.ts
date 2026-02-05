@@ -35,6 +35,13 @@ export {
   GetGraphSchema,
   GetGraphStatsSchema,
 } from "./graph-schemas.js";
+// History & Time Travel
+export {
+  CheckoutCommitSchema,
+  DiffCommitsSchema,
+  GetEntityHistorySchema,
+  ListCommitsSchema,
+} from "./history-schemas.js";
 // Index & Graph Management
 export {
   CleanIndexSchema,
@@ -49,7 +56,6 @@ export {
   GetSemanticMergeInfoSchema,
   SemanticMergeSchema,
 } from "./merge-schemas.js";
-
 // Code Modification & File Operations
 export {
   AddMemberSchema,

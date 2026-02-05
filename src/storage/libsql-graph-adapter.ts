@@ -1033,6 +1033,14 @@ export class LibSQLGraphAdapter {
     await this.client!.execute("PRAGMA journal_mode = OFF");
     await this.client!.execute("PRAGMA synchronous = OFF");
 
+    // Update client references in Prolly components
+    if (this.prollyNodeStore) {
+      this.prollyNodeStore.updateClient(this.client!);
+    }
+    if (this.commitManager) {
+      this.commitManager.updateClient(this.client!);
+    }
+
     // Log file size for diagnostics
     try {
       const { statSync } = await import("node:fs");

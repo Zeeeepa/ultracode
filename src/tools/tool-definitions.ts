@@ -24,6 +24,8 @@ import {
   AutoDocStatusSchema,
   AutoDocSyncSchema,
   AutoDocValidateSchema,
+  // History & Time Travel
+  CheckoutCommitSchema,
   CleanIndexSchema,
   CleanupSnapshotsSchema,
   ClearBusTopicSchema,
@@ -33,10 +35,12 @@ import {
   CrossLanguageSearchSchema,
   DetectCodeClonesSchema,
   DetectTechnologyStackSchema,
+  DiffCommitsSchema,
   FindRelatedConceptsSchema,
   FindSimilarCodeSchema,
   GetAgentMetricsSchema,
   GetBusStatsSchema,
+  GetEntityHistorySchema,
   GetGraphHealthSchema,
   GetGraphSchema,
   GetGraphStatsSchema,
@@ -44,6 +48,7 @@ import {
   GetSemanticMergeInfoSchema,
   IndexToolSchema,
   JscpdCloneDetectionSchema,
+  ListCommitsSchema,
   ListEntitiesToolSchema,
   ListRelationshipsToolSchema,
   ListSnapshotsSchema,
@@ -446,5 +451,32 @@ export function getToolsList(): ToolDefinition[] {
     // Trace Tools
     // ==========================================================================
     ...traceToolDefinitions,
+
+    // ==========================================================================
+    // History & Time Travel Tools
+    // ==========================================================================
+    {
+      name: "get_entity_history",
+      description:
+        "Get change history for a specific entity across commits. Shows when entity was added, modified, or deleted.",
+      inputSchema: zodToJsonSchema(GetEntityHistorySchema),
+    },
+    {
+      name: "diff_commits",
+      description: "Compare two graph commits and show differences (added, modified, deleted entities).",
+      inputSchema: zodToJsonSchema(DiffCommitsSchema),
+    },
+    {
+      name: "checkout_commit",
+      description:
+        "View graph state at a specific commit (time travel). Retrieve entity snapshots from historical versions.",
+      inputSchema: zodToJsonSchema(CheckoutCommitSchema),
+    },
+    {
+      name: "list_commits",
+      description:
+        "List graph commits (version history). Shows commit hashes, messages, entity counts, and timestamps.",
+      inputSchema: zodToJsonSchema(ListCommitsSchema),
+    },
   ];
 }
