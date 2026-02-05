@@ -1292,6 +1292,26 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
     perfTimings["embFlush_end"] = Date.now() - perfStart;
 
+    // Create graph commit after indexing (Prolly Tree versioning)
+    perfTimings["commit_start"] = Date.now() - perfStart;
+    try {
+      const storage = await getGraphStorage();
+      const adapter = (storage as any).getLibSQLAdapter?.();
+      if (adapter?.createGraphCommit) {
+        const commitHash = await adapter.createGraphCommit(`Index: ${filesProcessed} files`);
+        if (commitHash) {
+          log.i("DEVAGENT", "graph_commit_created", {
+            commit: commitHash.slice(0, 8),
+            files: filesProcessed,
+            entities: totalEntities,
+          });
+        }
+      }
+    } catch (err) {
+      log.w("DEVAGENT", "graph_commit_failed", { error: (err as Error).message });
+    }
+    perfTimings["commit_end"] = Date.now() - perfStart;
+
     perfTimings["keepalive_start"] = Date.now() - perfStart;
     if (this.parserAgent) {
       try {
@@ -1578,6 +1598,23 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           });
         }
       }
+    }
+
+    // Create graph commit after incremental indexing (Prolly Tree versioning)
+    try {
+      const storage = await getGraphStorage();
+      const adapter = (storage as any).getLibSQLAdapter?.();
+      if (adapter?.createGraphCommit && successCount > 0) {
+        const commitHash = await adapter.createGraphCommit(`Incremental: ${successCount} files`);
+        if (commitHash) {
+          log.i("DEVAGENT", "incr_commit_created", {
+            commit: commitHash.slice(0, 8),
+            files: successCount,
+          });
+        }
+      }
+    } catch (err) {
+      log.w("DEVAGENT", "incr_commit_failed", { error: (err as Error).message });
     }
 
     // INCREMENTAL: Kill workers only if memory > 1GB (keep alive for next changes)

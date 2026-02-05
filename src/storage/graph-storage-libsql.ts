@@ -709,6 +709,14 @@ export class GraphStorageLibSQL implements GraphStorage {
   }
 
   /**
+   * Get the LibSQL adapter for Prolly Tree operations.
+   * Alias for getAdapter() - used by history tools.
+   */
+  getLibSQLAdapter(): LibSQLGraphAdapter {
+    return this.adapter;
+  }
+
+  /**
    * Get co-occurrence operations for query expansion.
    * Used by CooccurrenceIndex for term pair storage and retrieval.
    */

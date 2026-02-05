@@ -12,6 +12,7 @@
 import { execSync } from "node:child_process";
 import { z } from "zod";
 import type { BranchInfo } from "../../core/branch-manager.js";
+import { log } from "../../logging/index.js";
 import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
@@ -91,6 +92,7 @@ export class ListBranchesToolHandler extends BaseToolHandler<z.infer<typeof List
 const SwitchBranchSchema = z.object({
   branchName: z.string(),
   createIfNotExists: z.boolean().optional().default(false),
+  baseBranch: z.string().optional().describe("Base branch for diff cache (default: main)"),
 });
 
 export class SwitchBranchToolHandler extends BaseToolHandler<z.infer<typeof SwitchBranchSchema>> {
@@ -110,6 +112,27 @@ export class SwitchBranchToolHandler extends BaseToolHandler<z.infer<typeof Swit
     try {
       // Note: createIfNotExists is not supported by BranchManager - branch DB created on first index
       await branchManager.switchBranch(args.branchName);
+
+      // Initialize branch diff cache for feature branches (Prolly Tree optimization)
+      const baseBranches = ["main", "master", "develop", "dev"];
+      if (!baseBranches.includes(args.branchName.toLowerCase())) {
+        try {
+          const storage = await this.context.getGraphStorage();
+          const adapter = (storage as any).getLibSQLAdapter?.();
+          if (adapter?.initBranchDiff) {
+            const baseBranch = args.baseBranch || "main";
+            await adapter.initBranchDiff(baseBranch);
+            log.i("BRANCHTOOLS", "branch_diff_init", {
+              branch: args.branchName,
+              base: baseBranch,
+            });
+          }
+        } catch (diffError) {
+          log.w("BRANCHTOOLS", "branch_diff_init_fail", {
+            err: (diffError as Error).message,
+          });
+        }
+      }
 
       return {
         content: [

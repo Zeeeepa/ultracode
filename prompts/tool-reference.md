@@ -193,12 +193,16 @@ Clone detector based on jscpd.
 | `semanticThreshold` | number | 0.7 | Min similarity threshold (0-1) |
 
 ### `analyze_hotspots`
-Find complex code areas.
+Find complex code areas. Uses Prolly Tree history for change frequency with Git fallback.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `metric` | string | "complexity" | Metric: `complexity` / `changes` / `coupling` |
+| `metric` | string | "complexity" | Metric: `complexity` / `changes` / `coupling` / `all` |
 | `limit` | number | 10 | Max results |
+| `includeHistoricalMetrics` | boolean | true | Use Prolly Tree history for changeFrequency |
+| `lookbackDays` | number | 30 | Days to look back for change frequency |
+
+**Returns (with history):** `changeFrequency`, `changeFrequencyScore`, `changeSource` ("prolly" | "git" | "none")
 
 ### `analyze_state_chaos`
 State chaos analysis (mutations, side-effects).
@@ -334,6 +338,57 @@ Changed files between branches.
 
 ### `cleanup_branches`
 Cleanup old branches (LRU).
+
+---
+
+## Version History (Prolly Tree) — NEW
+
+### `list_commits`
+List graph commits (version snapshots).
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `branchName` | string | current | Branch name |
+| `limit` | number | 100 | Max commits |
+
+### `get_entity_history`
+Get entity change history across commits.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `entityId` | string | **required** | Entity ID |
+| `limit` | number | 50 | Max commits |
+
+**Returns:** History with `changeType`: "added" | "modified" | "deleted"
+
+### `diff_commits`
+Compare two graph commits (added/modified/deleted entities).
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `commitA` | string | **required** | First commit hash (older) |
+| `commitB` | string | HEAD | Second commit hash (newer) |
+| `includeEntities` | boolean | false | Include full entity data |
+
+### `checkout_commit`
+Time travel — view graph at specific commit.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `commitHash` | string | **required** | Commit hash to view |
+| `entityId` | string | - | Specific entity to retrieve |
+| `query` | string | - | Search in historical state |
+
+```
+# List recent commits
+list_commits limit=5
+
+# Compare commits
+diff_commits commitA="abc123" commitB="xyz789"
+
+# View entity at old commit
+checkout_commit commitHash="abc123" entityId="xyz789"
+```
 
 ---
 

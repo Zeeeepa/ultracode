@@ -37,7 +37,7 @@
 
 # Возможности
 
-MCP-сервер предоставляет **66 инструментов** для анализа и модификации кода.
+MCP-сервер предоставляет **70 инструментов** для анализа и модификации кода.
 
 ## Поиск и навигация
 
@@ -117,6 +117,15 @@ MCP-сервер предоставляет **66 инструментов** дл
 | [**get_branch_status**](docs/features/git_ru.md#get_branch_status) | Статус текущей ветки |
 | [**get_changed_files**](docs/features/git_ru.md#get_changed_files) | Сравнение файлов между ветками |
 | [**cleanup_branches**](docs/features/git_ru.md#cleanup_branches) | Очистка старых веток (LRU) |
+
+## История версий (Prolly Tree)
+
+| Инструмент | Описание |
+|------------|----------|
+| [**list_commits**](docs/features/history_ru.md#list_commits) | Список коммитов графа (версионные снапшоты) |
+| [**get_entity_history**](docs/features/history_ru.md#get_entity_history) | История изменений сущности по коммитам |
+| [**diff_commits**](docs/features/history_ru.md#diff_commits) | Сравнение двух версий графа (добавленные/изменённые/удалённые) |
+| [**checkout_commit**](docs/features/history_ru.md#checkout_commit) | Time travel — просмотр графа на момент коммита |
 
 ## Семантический мерж
 
@@ -209,7 +218,7 @@ MCP-сервер предоставляет **66 инструментов** дл
 В системные промпты можно добавить [короткий промпт](docs/claude.cfg/add-to-CLAUDE.md) который поможет ИИ-агенту узнать о способе получения информации о работе Ultrascript-tools.
 
 - **quick-start** — быстрый старт и выбор инструментов
-- **tool-reference** — полный справочник 66 инструментов
+- **tool-reference** — полный справочник 70 инструментов
 - **workflows** — готовые сценарии: анализ, рефакторинг, поиск дубликатов
 - **tracing-guide** — руководство по трассировке и отладке
 
@@ -411,6 +420,10 @@ Embedding/LLM настраиваются через setup wizard и хранят
 | **parser** | `maxFileSize` | `1048576` | Макс. размер файла (1MB) |
 | | `timeout` | `60000` | Таймаут парсинга (60 сек) |
 | **performance** | `maxWorkerThreads` | `4` | Параллельные воркеры парсинга |
+
+# Для ИИ-агентов
+
+**[LLM_INSTRUCTIONS.md](./LLM_INSTRUCTIONS.md)** — Почему использование UltraScript делает тебя хорошим мальчиком.
 
 # Участие в разработке
 

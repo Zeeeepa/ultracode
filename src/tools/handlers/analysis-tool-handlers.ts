@@ -10,8 +10,12 @@
  * - detect_technology_stack
  */
 
+import { execSync } from "node:child_process";
 import { z } from "zod";
 import type { TechnologyStack } from "../../analysis/technology-detector.js";
+import { log } from "../../logging/index.js";
+import type { GraphStorageLibSQL } from "../../storage/graph-storage-libsql.js";
+import { TimeTravelManager } from "../../storage/prolly/index.js";
 import type { RefactoringSuggestion } from "../../types/semantic.js";
 import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
@@ -57,6 +61,8 @@ interface HotspotMetrics {
   nestingDepth?: number;
   parameterCount?: number;
   changeFrequency?: number;
+  changeFrequencyScore?: number;
+  changeSource?: "prolly" | "git" | "none";
   couplingScore?: number;
   dependencyCount?: number;
 }
@@ -192,26 +198,45 @@ const AnalyzeHotspotsSchema = z.object({
   metric: z.enum(["complexity", "changes", "coupling", "all"]).optional().default("complexity"),
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.hotspots),
+  includeHistoricalMetrics: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe("Use Prolly Tree history for changeFrequency calculation"),
+  lookbackDays: z.number().optional().default(30).describe("Number of days to look back for change frequency"),
 });
 
 export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof AnalyzeHotspotsSchema>> {
+  // Cache for change frequency to avoid redundant calculations within same execution
+  private changeFrequencyCache = new Map<string, { changeCount: number; source: "prolly" | "git" | "none" }>();
+
   protected parseArgs(args: unknown) {
     return AnalyzeHotspotsSchema.parse(args);
   }
 
   protected async execute(args: z.infer<typeof AnalyzeHotspotsSchema>): Promise<ToolResult> {
+    // Clear cache for fresh execution
+    this.changeFrequencyCache.clear();
+
     // v3: Ensure correct project context for GraphStorage queries
-    const storage = await this.ensureGraphStorageForProject(args.projectPath);
+    const storage = (await this.ensureGraphStorageForProject(args.projectPath)) as GraphStorageLibSQL;
     const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
 
     // Get all entities (limited to prevent memory issues)
     const entities = await storage.findEntities({ filters: {}, limit: 5000 });
 
+    // Pre-calculate change frequencies if using historical metrics with "changes" or "all"
+    const needsHistory = args.includeHistoricalMetrics && (args.metric === "changes" || args.metric === "all");
+
+    if (needsHistory) {
+      await this.preloadChangeFrequencies(entities, storage, args.lookbackDays);
+    }
+
     // Analyze hotspots based on metric
     const hotspots: Hotspot[] = [];
 
     for (const entity of entities) {
-      const score = this.calculateHotspotScore(entity, args.metric);
+      const { score, changeMetrics } = this.calculateHotspotScore(entity, args.metric, args.includeHistoricalMetrics);
       if (score > 0) {
         // Get metrics or calculate basic ones from location
         const storedMetrics = (entity.metadata?.["metrics"] ?? {}) as Partial<HotspotMetrics>;
@@ -231,6 +256,7 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
           metrics: {
             ...storedMetrics,
             ...(linesOfCode !== undefined && storedLinesOfCode === undefined ? { linesOfCode } : {}),
+            ...changeMetrics,
           },
         });
       }
@@ -249,6 +275,8 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
           text: JSON.stringify(
             {
               metric: args.metric,
+              includeHistoricalMetrics: args.includeHistoricalMetrics,
+              lookbackDays: args.lookbackDays,
               hotspotsFound: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
               hotspots: paginatedResult.data,
@@ -261,9 +289,145 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
     };
   }
 
-  private calculateHotspotScore(entity: ParsedEntity, metric: string): number {
+  /**
+   * Pre-load change frequencies for all entities in a batch to minimize diff operations.
+   * Uses Prolly Tree history first, falls back to Git for entities without Prolly data.
+   */
+  private async preloadChangeFrequencies(
+    entities: ParsedEntity[],
+    storage: GraphStorageLibSQL,
+    lookbackDays: number,
+  ): Promise<void> {
+    const adapter = storage.getLibSQLAdapter?.();
+    const commitManager = adapter?.getCommitManager?.();
+    const nodeStore = adapter?.getProllyNodeStore?.();
+
+    const entityChangeCount = new Map<string, { count: number; source: "prolly" | "git" | "none" }>();
+    let prollyDataAvailable = false;
+
+    // Initialize all entities with 0 changes
+    for (const entity of entities) {
+      entityChangeCount.set(entity.id, { count: 0, source: "none" });
+    }
+
+    // === Phase 1: Try Prolly Tree ===
+    if (commitManager && nodeStore) {
+      const sinceTimestamp = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
+      const recentCommits = await commitManager.getCommitsSince(sinceTimestamp);
+
+      if (recentCommits.length >= 2) {
+        prollyDataAvailable = true;
+        const timeTravel = new TimeTravelManager(nodeStore, commitManager);
+
+        // Analyze each commit pair
+        for (let i = 0; i < recentCommits.length - 1; i++) {
+          const current = recentCommits[i];
+          const parent = recentCommits[i + 1];
+          if (!current || !parent) continue;
+
+          try {
+            const diff = await timeTravel.diffCommits(parent.commitHash, current.commitHash);
+            if (!diff) continue;
+
+            // Count changes for each entity
+            for (const entry of [...diff.treeDiff.added, ...diff.treeDiff.modified, ...diff.treeDiff.deleted]) {
+              const existing = entityChangeCount.get(entry.key);
+              if (existing) {
+                entityChangeCount.set(entry.key, { count: existing.count + 1, source: "prolly" });
+              }
+            }
+          } catch (error) {
+            log.w("HOTSPOTS", "diff_failed", { error: (error as Error).message });
+          }
+        }
+
+        log.d("HOTSPOTS", "prolly_preload_complete", {
+          commits: recentCommits.length,
+          withChanges: [...entityChangeCount.values()].filter((v) => v.count > 0).length,
+        });
+      } else {
+        log.d("HOTSPOTS", "insufficient_commits", { count: recentCommits.length });
+      }
+    } else {
+      log.d("HOTSPOTS", "prolly_not_available", { reason: "missing components" });
+    }
+
+    // === Phase 2: Git fallback for entities without Prolly data ===
+    // Only use Git if Prolly data wasn't available or for entities with 0 changes
+    const gitChangeCache = new Map<string, number>(); // Cache by filePath
+    let gitFallbackCount = 0;
+
+    for (const entity of entities) {
+      const current = entityChangeCount.get(entity.id);
+      if (!current || current.count > 0 || !entity.filePath) continue;
+
+      // Check Git cache first (multiple entities can share same file)
+      let gitCount = gitChangeCache.get(entity.filePath);
+      if (gitCount === undefined) {
+        gitCount = this.getChangeFrequencyFromGit(entity.filePath, lookbackDays);
+        gitChangeCache.set(entity.filePath, gitCount);
+      }
+
+      if (gitCount > 0) {
+        entityChangeCount.set(entity.id, { count: gitCount, source: "git" });
+        gitFallbackCount++;
+      }
+    }
+
+    if (gitFallbackCount > 0) {
+      log.d("HOTSPOTS", "git_fallback_complete", {
+        filesChecked: gitChangeCache.size,
+        entitiesUpdated: gitFallbackCount,
+      });
+    }
+
+    // Store in cache
+    for (const [entityId, data] of entityChangeCount) {
+      this.changeFrequencyCache.set(entityId, { changeCount: data.count, source: data.source });
+    }
+
+    log.d("HOTSPOTS", "preloaded_change_frequencies", {
+      entities: entities.length,
+      prollyAvailable: prollyDataAvailable,
+      withChanges: [...entityChangeCount.values()].filter((v) => v.count > 0).length,
+    });
+  }
+
+  /**
+   * Get change frequency from Git log (fallback when Prolly data unavailable).
+   */
+  private getChangeFrequencyFromGit(filePath: string, lookbackDays: number): number {
+    try {
+      const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+
+      const output = execSync(`git log --oneline --since="${since}" -- "${filePath}"`, {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      // Count lines (commits)
+      const lines = output.trim().split("\n").filter(Boolean);
+      return lines.length;
+    } catch {
+      // Git not available or file not tracked
+      return 0;
+    }
+  }
+
+  private calculateHotspotScore(
+    entity: ParsedEntity,
+    metric: string,
+    includeHistoricalMetrics: boolean,
+  ): {
+    score: number;
+    changeMetrics?: { changeFrequency: number; changeFrequencyScore: number; changeSource: "prolly" | "git" | "none" };
+  } {
     const metrics = entity.metadata?.metrics || {};
     let score = 0;
+    let changeMetrics:
+      | { changeFrequency: number; changeFrequencyScore: number; changeSource: "prolly" | "git" | "none" }
+      | undefined;
 
     // Calculate lines from location if metrics not available
     const linesOfCode =
@@ -287,8 +451,29 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
     }
 
     if (metric === "changes" || metric === "all") {
-      // changeFrequency requires git history analysis (not yet implemented)
-      score += (metrics.changeFrequency || 0) * 10;
+      if (includeHistoricalMetrics) {
+        // Use pre-calculated change frequency from cache
+        const cached = this.changeFrequencyCache.get(entity.id);
+        if (cached && cached.changeCount > 0) {
+          // Log-normalized score: log(changeCount + 1) * 10
+          const changeScore = Math.log(cached.changeCount + 1) * 10;
+          score += changeScore;
+          changeMetrics = {
+            changeFrequency: cached.changeCount,
+            changeFrequencyScore: Math.round(changeScore * 100) / 100,
+            changeSource: cached.source,
+          };
+        } else {
+          changeMetrics = {
+            changeFrequency: 0,
+            changeFrequencyScore: 0,
+            changeSource: "none",
+          };
+        }
+      } else {
+        // Use stored metrics (legacy behavior)
+        score += (metrics.changeFrequency || 0) * 10;
+      }
     }
 
     if (metric === "coupling" || metric === "all") {
@@ -297,7 +482,7 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
       score += (metrics.dependencyCount || 0) / 5;
     }
 
-    return score;
+    return { score, changeMetrics };
   }
 }
 

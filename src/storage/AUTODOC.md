@@ -62,11 +62,12 @@
 |------|----------|
 | `graph-storage-factory.ts` | Singleton фабрика для создания GraphStorageLibSQL, конфигурация, глобальный контекст проекта |
 | `graph-storage-libsql.ts` | Реализация интерфейса GraphStorage через LibSQLGraphAdapter с async API |
-| `libsql-graph-adapter.ts` | Основной адаптер: граф + векторы в одной базе, DiskANN, LRU кэши, CBOR сериализация |
+| `libsql-graph-adapter.ts` | Основной адаптер: граф + векторы в одной базе, DiskANN, LRU кэши, CBOR сериализация, Prolly Tree |
 | `batch-operations-libsql.ts` | Пакетные операции для LibSQL с оптимизацией батчей |
 | `cache-manager.ts` | Менеджер кэширования для временных данных |
 | `sqlite-adapter.ts` | Sync SQLite адаптер (только Bun runtime), обёртка bun:sqlite с API better-sqlite3 |
 | `bun-sqlite-adapter.ts` | Простой прямой wrapper над bun:sqlite для legacy кода |
+| `prolly/` | **Версионирование графа** — Prolly Tree, commits, time travel (см. prolly/AUTODOC.md) |
 
 ## Unified Storage (v4)
 
@@ -190,6 +191,45 @@ await storage.recordIncrementalChanges(5);
 // Сбросить после полной переиндексации
 await storage.resetIncrementalTracking();
 ```
+
+## Prolly Tree — Версионирование графа (v3.3.x)
+
+Prolly Tree обеспечивает версионирование графа кода с эффективным diff и time travel:
+
+```typescript
+// После индексации автоматически создаётся commit
+const adapter = storage.getLibSQLAdapter();
+const commitHash = await adapter.createGraphCommit("Index: 42 files");
+
+// Получить историю commits
+const commits = await adapter.getCommitManager().getHistory(100);
+
+// Time travel — получить entity в определённой версии
+const timeTravel = new TimeTravelManager(
+  adapter.getProllyNodeStore(),
+  adapter.getCommitManager()
+);
+const entity = await timeTravel.getEntityAt(entityId, commitHash);
+
+// Diff между версиями
+const diff = await timeTravel.diffCommits(commitA, commitB);
+// { added: [...], modified: [...], deleted: [...] }
+```
+
+**Компоненты:**
+- `ProllyNodeStore` — content-addressed хранилище узлов
+- `ProllyTree` — B-tree с probabilistic chunking
+- `CommitManager` — управление версиями и branch heads
+- `BranchDiffCache` — O(1) кэш для branch diff
+- `TimeTravelManager` — API для исторических запросов
+
+**MCP Tools:**
+- `list_commits` — история версий графа
+- `get_entity_history` — история изменений entity
+- `diff_commits` — сравнение версий
+- `checkout_commit` — time travel
+
+Подробнее: `src/storage/prolly/AUTODOC.md`
 
 ## Runtime Compatibility
 

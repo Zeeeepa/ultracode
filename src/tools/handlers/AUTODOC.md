@@ -21,13 +21,14 @@
 | `snapshot-tool-handlers.ts`  | Обработчики для работы со снимками: создание, восстановление и управление. |
 | `tracing-tool-handlers.ts`   | Обработчики для трассировки: отслеживание изменений, логирование и т.д.  |
 | `validation-tool-handlers.ts`| Обработчики для валидации: проверка корректности данных, структуры и т.д. |
+| `history-tool-handlers.ts`   | Обработчики для истории и time travel: версионирование графа, diff коммитов. |
 
 ## 3. Экспорты
 
 | Экспорт                             | Описание                                                                 |
 |-------------------------------------|--------------------------------------------------------------------------|
 | `AnalyzeCodeImpactToolHandler`      | Обработчик для анализа влияния изменений в коде.                         |
-| `AnalyzeHotspotsToolHandler`        | Обработчик для поиска горячих точек в коде.                              |
+| `AnalyzeHotspotsToolHandler`        | Обработчик для поиска горячих точек в коде. Поддерживает `includeHistoricalMetrics` и `lookbackDays` для расчёта changeFrequency через Prolly Tree или Git fallback. |
 | `AnalyzeStateChaosToolHandler`      | Обработчик для анализа состояния хаоса в проекте.                        |
 | `DetectTechnologyStackToolHandler`  | Обработчик для определения стека технологий проекта.                     |
 | `FindRelatedConceptsToolHandler`    | Обработчик для поиска связанных концептов в коде.                        |
@@ -41,6 +42,10 @@
 | `ListEntityRelationshipsToolHandler`| Обработчик для получения списка связей между сущностями.                 |
 | `ListFileEntitiesToolHandler`       | Обработчик для получения списка сущностей в файле.                       |
 | `QueryToolHandler`                  | Обработчик для выполнения запросов к индексу.                            |
+| `GetEntityHistoryToolHandler`       | Обработчик для получения истории изменений entity.                       |
+| `DiffCommitsToolHandler`            | Обработчик для сравнения версий графа (diff).                            |
+| `CheckoutCommitToolHandler`         | Обработчик для time travel — просмотр графа в прошлом.                   |
+| `ListCommitsToolHandler`            | Обработчик для получения списка версий (commits).                        |
 
 ## 4. Использование
 

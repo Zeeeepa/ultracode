@@ -212,6 +212,13 @@ export class ToolRegistry {
     this.registerLazy("autodoc_changelog", async () => (await autodocLoader()).AutoDocChangelogToolHandler);
     this.registerLazy("autodoc_install_hooks", async () => (await autodocLoader()).AutoDocInstallHooksToolHandler);
     this.registerLazy("autodoc_detect_language", async () => (await autodocLoader()).AutoDocDetectLanguageToolHandler);
+
+    // --- History & Time Travel tools (~15KB) ---
+    const historyLoader = () => import("./handlers/history-tool-handlers.js");
+    this.registerLazy("get_entity_history", async () => (await historyLoader()).GetEntityHistoryToolHandler);
+    this.registerLazy("diff_commits", async () => (await historyLoader()).DiffCommitsToolHandler);
+    this.registerLazy("checkout_commit", async () => (await historyLoader()).CheckoutCommitToolHandler);
+    this.registerLazy("list_commits", async () => (await historyLoader()).ListCommitsToolHandler);
   }
 }
 

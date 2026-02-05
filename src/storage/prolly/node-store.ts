@@ -64,6 +64,13 @@ export class ProllyNodeStore {
   }
 
   /**
+   * Update the client reference (called after flush() in LibSQLGraphAdapter)
+   */
+  updateClient(client: Client): void {
+    this.client = client;
+  }
+
+  /**
    * Create the prolly_nodes table if it doesn't exist
    */
   private async createTable(): Promise<void> {
