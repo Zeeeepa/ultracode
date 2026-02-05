@@ -62,9 +62,9 @@
 | `ValidateDirectorySchema` | const | Валидация проверки синтаксиса файлов в директории | [→ validation-schemas.ts:8-18] |
 | `DetectTechnologyStackSchema` | const | Валидация определения используемых технологий в коде | [→ validation-schemas.ts:20-33] |
 | `GetEntityHistorySchema` | const | Валидация получения истории изменений entity через Prolly Tree | [→ history-schemas.ts:8-12] |
-| `DiffCommitsSchema` | const | Валидация сравнения двух версий графа (diff commits) | [→ history-schemas.ts:14-19] |
-| `CheckoutCommitSchema` | const | Валидация time travel — просмотр графа в определённой версии | [→ history-schemas.ts:21-27] |
-| `ListCommitsSchema` | const | Валидация получения списка версий (commit history) | [→ history-schemas.ts:29-33] |
+| `DiffCommitsSchema` | const | Валидация сравнения двух версий графа (diff commits) | [→ history-schemas.ts:17-21] |
+| `CheckoutCommitSchema` | const | Валидация time travel — просмотр графа в определённой версии | [→ history-schemas.ts:17-21] |
+| `ListCommitsSchema` | const | Валидация получения списка версий (commit history) | [→ history-schemas.ts:26-31] |
 
 ## Files
 
