@@ -15,6 +15,7 @@ import {
   ListFileEntitiesToolHandler,
   QueryToolHandler,
 } from "./handlers/entity-tool-handlers.js";
+import { GetToolsForTaskHandler } from "./handlers/get-tools-for-task-handler.js";
 // ==========================================================================
 // Import ONLY basic handlers immediately (loaded at startup)
 // ==========================================================================
@@ -25,6 +26,7 @@ import {
   GetGraphToolHandler,
   ResetGraphToolHandler,
 } from "./handlers/graph-tool-handlers.js";
+import { GetHelpToolHandler } from "./handlers/help-tool-handler.js";
 import { IndexToolHandler } from "./handlers/index-tool-handler.js";
 import {
   ClearBusTopicToolHandler,
@@ -106,6 +108,10 @@ export class ToolRegistry {
     // PHASE 0: Basic tools - loaded immediately (blocking startup)
     // These are the most commonly used tools and should be available instantly
     // ==========================================================================
+
+    // Help tools (essential for agents to discover features)
+    this.register("get_help", GetHelpToolHandler);
+    this.register("get_tools_for_task", GetToolsForTaskHandler);
 
     // Index tool
     this.register("index", IndexToolHandler);

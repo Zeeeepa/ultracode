@@ -569,8 +569,24 @@ function createMcpServer(session?: ClientSession): Server {
           description: "Common workflows: analyze project, search & refactor, find duplicates, git integration",
         },
         {
+          name: "tracing-guide",
+          description: "Code tracing guide - trace_flow, trace_backwards, data flow analysis, state impact",
+        },
+        {
           name: "autodoc-guide",
           description: "AutoDoc guide - automatic documentation layer with semantic search, code-doc linking",
+        },
+        {
+          name: "explore-guide",
+          description: "Explore Agent guide - fast codebase reconnaissance, search & navigation optimized for speed",
+        },
+        {
+          name: "planning-guide",
+          description: "Planning Agent guide - risk assessment, impact analysis, tracing for safe refactoring",
+        },
+        {
+          name: "modification-guide",
+          description: "Modification Agent guide - safe code changes with snapshots, validation, and auto-rollback",
         },
       ],
     };

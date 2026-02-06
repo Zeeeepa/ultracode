@@ -9,7 +9,7 @@ export const traceToolDefinitions = [
   {
     name: "trace_flow",
     description:
-      "Trace execution flow from point A to point B in the codebase. Finds all possible paths and analyzes state changes, conditions, and async boundaries along each path. Returns paths with confidence scores and optional Mermaid diagrams.",
+      "[PLAN] Static analysis: trace execution from A→B. Use when: 'How does code get from login() to saveUser()?', 'What paths lead to handleError()?'. Finds ALL possible paths with state changes, conditions, async boundaries. Returns confidence-scored paths + optional Mermaid diagrams. Example: trace_flow(from='handleRequest', to='sendEmail'). 📖 get_help(topic='tracing') for guide.",
     inputSchema: {
       type: "object",
       properties: {
@@ -31,7 +31,7 @@ export const traceToolDefinitions = [
   {
     name: "trace_backwards",
     description:
-      "Trace backwards from a method to find why it might not be called. Analysis types: why_not_called (blocking conditions), what_affects (dependencies), dependencies (full graph). Returns callers, blocking conditions, state dependencies, and diagnosis.",
+      "[PLAN] Static analysis: why isn't method called? Use when: 'Why doesn't processPayment() run?', 'What blocks saveUser()?'. Questions: 'why_not_called' (find blockers), 'what_affects' (dependencies), 'dependencies' (full graph). Returns callers, blocking conditions, state deps, diagnosis. Example: trace_backwards(target='sendNotification', question='why_not_called'). 📖 get_help(topic='tracing').",
     inputSchema: {
       type: "object",
       properties: {
@@ -51,7 +51,7 @@ export const traceToolDefinitions = [
   {
     name: "trace_data_flow",
     description:
-      "Trace how data flows from sources to affect a target state. Identifies data sources, transformations, branching, and builds behavior matrix for different inputs.",
+      "[PLAN] Static analysis: trace data flow from sources→target state. Use when: 'How does user input affect isValid?', 'What data feeds into price calculation?'. Identifies sources, transformations, branching, builds behavior matrix. Example: trace_data_flow(entryPoint='handleSubmit', targetState='form.errors'). 📖 get_help(topic='tracing').",
     inputSchema: {
       type: "object",
       properties: {
@@ -70,7 +70,7 @@ export const traceToolDefinitions = [
   {
     name: "analyze_state_impact",
     description:
-      "Analyze the impact of a state variable across different scenarios. Shows usages, reachable/blocked paths per scenario, conflicts, and ripple effects.",
+      "[PLAN] Analyze the impact of a state variable across different scenarios. Shows usages, reachable/blocked paths per scenario, conflicts, and ripple effects.",
     inputSchema: {
       type: "object",
       properties: {
@@ -93,7 +93,7 @@ export const traceToolDefinitions = [
   {
     name: "find_decision_points",
     description:
-      "Find all decision points in a scenario's execution flow. Types: validation, api_response, state_mutation, guard, loop, error_handling, feature_flag. Returns grouped by impact with Mermaid flowchart.",
+      "[PLAN] Find all decision points in a scenario's execution flow. Types: validation, api_response, state_mutation, guard, loop, error_handling, feature_flag. Returns grouped by impact with Mermaid flowchart.",
     inputSchema: {
       type: "object",
       properties: {
