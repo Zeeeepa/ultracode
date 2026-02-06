@@ -1,6 +1,6 @@
 {
   "name": "ultrascript-tools-mcp",
-  "version": "3.3.5",
+  "version": "3.3.6",
   "description": "Codebase RAG MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/Go/Rust/Java/C++/Kotlin",
   "license": "MIT",
   "author": "faxenoff",
@@ -102,6 +102,7 @@
     "bun:start": "bun src/index.ts",
     "bun:dist": "bun dist/index.js",
     "ulog": "node dist/cli/log-query/log-query-cli.js",
+    "debug:tools": "bun src/cli/debug-tools-visibility.ts",
     "smoke": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop",
     "smoke:clean": "node scripts/smoke-graph-health.js /home/er77/_work_fodler/baserow-develop --clean",
     "smoke:semantic": "node scripts/smoke-semantic.js /home/er77/_work_fodler/baserow-develop",

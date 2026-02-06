@@ -11,13 +11,43 @@
 | Ручная проверка зависимостей | `analyze_code_impact` | Показывает что сломается |
 | `Grep` для дубликатов | `detect_code_clones` | Семантическое сходство |
 
+**⚡ Индексация автоматическая** — GitWatcher индексирует инкрементно при изменениях файлов и полностью при переключении веток. Manual `index()` нужен только для force reindex.
+
 ## Быстрый справочник
 
+### Базовые инструменты
 - **Поиск**: `semantic_search`, `pattern_search`, `find_similar_code`
 - **Навигация**: `get_members`, `list_entity_relationships`
 - **Анализ**: `analyze_code_impact`, `detect_code_clones`, `analyze_hotspots`
 - **Трассировка**: `trace_flow`, `trace_backwards`, `trace_data_flow`
-- **Модификация**: `modify_code`, `rename_symbol`, `create_file`, `add_member` *(авто-валидация, возвращает ошибки/warnings)*
+- **Модификация**: `modify_code`, `rename_symbol`, `create_file`, `add_member` *(авто-валидация)*
+
+### Для разных типов агентов
+
+**🔍 Explore Agent** (быстрая разведка):
+- `semantic_search` — поиск по смыслу с фильтрами (complexity, async, docs)
+- `pattern_search` — regex + framework-aware поиск
+- `get_members` — список сущностей файла
+- `detect_technology_stack` — определение стека проекта
+
+**📋 Plan Agent** (оценка рисков):
+- `analyze_code_impact` — что сломается при изменении
+- `trace_flow` — как код попадает от A к B
+- `trace_backwards` — почему метод не вызывается
+- `analyze_hotspots` — сложные участки кода
+
+**✏️ Modify Agent** (безопасные изменения):
+- `modify_code` + `create_snapshot` — изменение с автосохранением
+- `rename_symbol` — переименование с обновлением ссылок
+- `validate_file` — проверка перед коммитом
+- `undo` — откат к snapshot
+
+### Документация и помощь
+- `get_help(topic='quick-start')` — быстрый старт
+- `get_help(topic='explore')` — гайд для Explore агентов
+- `get_help(topic='planning')` — гайд для Plan агентов
+- `get_help(topic='modification')` — гайд для Modify агентов
+- `get_tools_for_task(task='find duplicates')` — рекомендации инструментов
 
 > Для C# используй UltrasharpTools MCP (на основе Roslyn).
 
