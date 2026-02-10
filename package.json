@@ -1,6 +1,6 @@
 {
   "name": "ultrascript-tools-mcp",
-  "version": "3.3.6",
+  "version": "3.3.7",
   "description": "Codebase RAG MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/Go/Rust/Java/C++/Kotlin",
   "license": "MIT",
   "author": "faxenoff",
@@ -112,7 +112,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@oxc-project/types": "^0.112.0",
+    "@oxc-project/types": "^0.113.0",
     "@types/bun": "latest",
     "@types/node": "^25.2.2",
     "antlr4ng": "^3.0.16",
