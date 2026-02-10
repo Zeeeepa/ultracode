@@ -126,8 +126,13 @@ export async function performGlobalShutdown(signal: string): Promise<void> {
 
 /**
  * Register all signal handlers for graceful shutdown
+ *
+ * @param options.pipeMode - When true, skip stdin close handlers.
+ *   In pipe mode the server inherits stdin from the first comm.c proxy,
+ *   so stdin closing just means that one proxy exited — not that the server should die.
+ *   The server has its own shutdown logic via activeClients === 0 → scheduleShutdown().
  */
-export function registerSignalHandlers(): void {
+export function registerSignalHandlers(options?: { pipeMode?: boolean }): void {
   process.on("SIGINT", () => {
     performGlobalShutdown("SIGINT");
   });
@@ -143,20 +148,28 @@ export function registerSignalHandlers(): void {
     }
   });
 
-  // Windows: detect parent process exit via stdin close
-  process.stdin.on("close", () => {
-    if (!isShuttingDownGlobal) {
-      log.i("SHUTDOWN", "stdin closed (parent exited), shutting down...");
-      performGlobalShutdown("stdin-close");
-    }
-  });
+  // In pipe mode, stdin is NOT used for MCP communication (Named Pipe is).
+  // The server's stdin is inherited from the first comm.c process that spawned it.
+  // When that comm.c exits, stdin closes — but other clients may still be connected.
+  // Shutdown is handled by scheduleShutdown() when activeClients drops to 0.
+  if (!options?.pipeMode) {
+    // stdio mode: detect parent process exit via stdin close
+    process.stdin.on("close", () => {
+      if (!isShuttingDownGlobal) {
+        log.i("SHUTDOWN", "stdin closed (parent exited), shutting down...");
+        performGlobalShutdown("stdin-close");
+      }
+    });
 
-  process.stdin.on("end", () => {
-    if (!isShuttingDownGlobal) {
-      log.i("SHUTDOWN", "stdin ended (parent exited), shutting down...");
-      performGlobalShutdown("stdin-end");
-    }
-  });
+    process.stdin.on("end", () => {
+      if (!isShuttingDownGlobal) {
+        log.i("SHUTDOWN", "stdin ended (parent exited), shutting down...");
+        performGlobalShutdown("stdin-end");
+      }
+    });
+  } else {
+    log.i("SHUTDOWN", "pipe mode: stdin close handlers skipped");
+  }
 }
 
 // =============================================================================

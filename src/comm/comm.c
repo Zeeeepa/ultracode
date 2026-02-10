@@ -251,13 +251,21 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
 
         ascii_to_utf16(cmd_line, cmd_line_w, sizeof(cmd_line_w) / sizeof(cmd_line_w[0]));
 
+        // Open NUL as stdin for server — server must NOT inherit comm.c's stdin.
+        // When comm.c exits, its stdin closes. If server inherited that handle,
+        // the server's process.stdin.on("close") fires and kills the server,
+        // disconnecting ALL other clients. Server uses Named Pipe, not stdin.
+        char16_t nul_path_w[] = u"NUL";
+        int64_t nul_handle = CreateFile(nul_path_w, kNtGenericRead, 0, NULL,
+                                        kNtOpenExisting, 0, 0);
+
         // Start MCP server as background process
         struct NtStartupInfo si = {0};
 
         si.cb = sizeof(si);
         si.dwFlags = kNtStartfUsestdhandles | kNtStartfUseshowwindow;
         si.wShowWindow = 0;  // SW_HIDE
-        si.hStdInput = GetStdHandle(kNtStdInputHandle);
+        si.hStdInput = nul_handle != -1 ? nul_handle : GetStdHandle(kNtStdInputHandle);
         si.hStdOutput = GetStdHandle(kNtStdErrorHandle);  // Server output to stderr
         si.hStdError = GetStdHandle(kNtStdErrorHandle);
 
@@ -274,14 +282,17 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
             &pi
         );
 
+        if (nul_handle != -1) CloseHandle(nul_handle);
+
         if (!ok) {
+            fprintf(stderr, "Comm: failed to start server\n");
             return 1;
         }
 
         CloseHandle(pi.hThread);
 
-        // Wait for Named Pipe to be available
-        for (int retry = 0; retry < 100 && g_running; retry++) {
+        // Wait for Named Pipe to be available (up to ~30 sec for heavy init)
+        for (int retry = 0; retry < 300 && g_running; retry++) {
             pipe_handle = CreateFile(
                 pipe_name_w,
                 kNtGenericRead | kNtGenericWrite,
@@ -293,15 +304,28 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
             );
 
             if (pipe_handle != -1) break;
+
+            // Check if server exited early (EADDRINUSE, crash, etc.)
+            uint32_t exit_code;
+            if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != 259) {
+                fprintf(stderr, "Comm: server exited during startup (code=%lu)\n",
+                        (unsigned long)exit_code);
+                CloseHandle(pi.hProcess);
+                return 1;
+            }
+
             Sleep(100);
         }
 
         if (pipe_handle == -1) {
+            fprintf(stderr, "Comm: timeout waiting for server pipe\n");
             TerminateProcess(pi.hProcess, 0);
             CloseHandle(pi.hProcess);
             return 1;
         }
     }
+
+    fprintf(stderr, "Comm: connected to server pipe\n");
 
     // Send client's cwd to server (pre-MCP handshake)
     win_send_init_cwd(pipe_handle);
@@ -311,31 +335,63 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
     int64_t our_stdin = GetStdHandle(kNtStdInputHandle);
     int64_t our_stdout = GetStdHandle(kNtStdOutputHandle);
     uint32_t bytes_read, bytes_written, bytes_avail;
+    int pipe_errors = 0;
+    int stdin_errors = 0;
 
     while (g_running) {
-        // Check Named Pipe for output -> forward to stdout
-        if (PeekNamedPipe(pipe_handle, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
-            if (ReadFile(pipe_handle, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
-                WriteFile(our_stdout, buf, bytes_read, &bytes_written, NULL);
+        bool had_activity = false;
+
+        // Named Pipe -> stdout (server -> Claude Code)
+        if (PeekNamedPipe(pipe_handle, NULL, 0, NULL, &bytes_avail, NULL)) {
+            pipe_errors = 0;
+            if (bytes_avail > 0) {
+                had_activity = true;
+                if (ReadFile(pipe_handle, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                    if (!WriteFile(our_stdout, buf, bytes_read, &bytes_written, NULL)
+                        || bytes_written != bytes_read) {
+                        fprintf(stderr, "Comm: stdout write failed\n");
+                        break;
+                    }
+                }
+            }
+        } else {
+            if (++pipe_errors >= 50) {
+                fprintf(stderr, "Comm: server pipe unresponsive\n");
+                break;
             }
         }
 
-        // Check stdin -> forward to Named Pipe
-        if (PeekNamedPipe(our_stdin, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
-            if (ReadFile(our_stdin, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
-                WriteFile(pipe_handle, buf, bytes_read, &bytes_written, NULL);
+        // stdin -> Named Pipe (Claude Code -> server)
+        if (PeekNamedPipe(our_stdin, NULL, 0, NULL, &bytes_avail, NULL)) {
+            stdin_errors = 0;
+            if (bytes_avail > 0) {
+                had_activity = true;
+                if (ReadFile(our_stdin, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                    if (!WriteFile(pipe_handle, buf, bytes_read, &bytes_written, NULL)
+                        || bytes_written != bytes_read) {
+                        fprintf(stderr, "Comm: pipe write failed\n");
+                        break;
+                    }
+                }
             }
+        } else {
+            // stdin closed = Claude Code disconnected, normal exit
+            if (++stdin_errors >= 50) break;
         }
 
         // Check if server exited (only if we started it)
         if (we_started_server) {
             uint32_t exit_code;
             if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != 259) {
+                fprintf(stderr, "Comm: server exited (code=%lu)\n",
+                        (unsigned long)exit_code);
                 break;
             }
         }
 
-        Sleep(10);  // 10ms sleep - balance between responsiveness and CPU/IO usage
+        if (!had_activity) {
+            Sleep(10);
+        }
     }
 
     // Cleanup
@@ -404,13 +460,18 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
 
         ascii_to_utf16(cmd_line, cmd_line_w, sizeof(cmd_line_w) / sizeof(cmd_line_w[0]));
 
+        // Open NUL as stdin for server (same reason as stdio mode)
+        char16_t nul_path_w[] = u"NUL";
+        int64_t nul_handle = CreateFile(nul_path_w, kNtGenericRead, 0, NULL,
+                                        kNtOpenExisting, 0, 0);
+
         // Start MCP server as background process
         struct NtStartupInfo si = {0};
 
         si.cb = sizeof(si);
         si.dwFlags = kNtStartfUsestdhandles | kNtStartfUseshowwindow;
         si.wShowWindow = 0;  // SW_HIDE
-        si.hStdInput = GetStdHandle(kNtStdInputHandle);
+        si.hStdInput = nul_handle != -1 ? nul_handle : GetStdHandle(kNtStdInputHandle);
         si.hStdOutput = GetStdHandle(kNtStdErrorHandle);  // Server output to stderr
         si.hStdError = GetStdHandle(kNtStdErrorHandle);
 
@@ -427,14 +488,17 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
             &pi
         );
 
+        if (nul_handle != -1) CloseHandle(nul_handle);
+
         if (!ok) {
+            fprintf(stderr, "Comm: failed to start server\n");
             return 1;
         }
 
         CloseHandle(pi.hThread);
 
-        // Wait for Named Pipe to be available
-        for (int retry = 0; retry < 100 && g_running; retry++) {
+        // Wait for Named Pipe to be available (up to ~30 sec for heavy init)
+        for (int retry = 0; retry < 300 && g_running; retry++) {
             pipe_handle = CreateFile(
                 pipe_name_w,
                 kNtGenericRead | kNtGenericWrite,
@@ -446,15 +510,28 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
             );
 
             if (pipe_handle != -1) break;
+
+            // Check if server exited early
+            uint32_t exit_code;
+            if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != 259) {
+                fprintf(stderr, "Comm: server exited during startup (code=%lu)\n",
+                        (unsigned long)exit_code);
+                CloseHandle(pi.hProcess);
+                return 1;
+            }
+
             Sleep(100);
         }
 
         if (pipe_handle == -1) {
+            fprintf(stderr, "Comm: timeout waiting for server pipe\n");
             TerminateProcess(pi.hProcess, 0);
             CloseHandle(pi.hProcess);
             return 1;
         }
     }
+
+    fprintf(stderr, "Comm: connected to server pipe\n");
 
     // Send client's cwd to server (pre-MCP handshake)
     win_send_init_cwd(pipe_handle);
@@ -464,20 +541,42 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
     int64_t our_stdin = GetStdHandle(kNtStdInputHandle);
     int64_t our_stdout = GetStdHandle(kNtStdOutputHandle);
     uint32_t bytes_read, bytes_written, bytes_avail;
+    int pipe_errors = 0;
+    int stdin_errors = 0;
 
     while (g_running) {
-        // Check Named Pipe for output -> forward to stdout
-        if (PeekNamedPipe(pipe_handle, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
-            if (ReadFile(pipe_handle, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
-                WriteFile(our_stdout, buf, bytes_read, &bytes_written, NULL);
+        bool had_activity = false;
+
+        // Named Pipe -> stdout
+        if (PeekNamedPipe(pipe_handle, NULL, 0, NULL, &bytes_avail, NULL)) {
+            pipe_errors = 0;
+            if (bytes_avail > 0) {
+                had_activity = true;
+                if (ReadFile(pipe_handle, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                    if (!WriteFile(our_stdout, buf, bytes_read, &bytes_written, NULL)
+                        || bytes_written != bytes_read) {
+                        break;
+                    }
+                }
             }
+        } else {
+            if (++pipe_errors >= 50) break;
         }
 
-        // Check stdin -> forward to Named Pipe
-        if (PeekNamedPipe(our_stdin, NULL, 0, NULL, &bytes_avail, NULL) && bytes_avail > 0) {
-            if (ReadFile(our_stdin, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
-                WriteFile(pipe_handle, buf, bytes_read, &bytes_written, NULL);
+        // stdin -> Named Pipe
+        if (PeekNamedPipe(our_stdin, NULL, 0, NULL, &bytes_avail, NULL)) {
+            stdin_errors = 0;
+            if (bytes_avail > 0) {
+                had_activity = true;
+                if (ReadFile(our_stdin, buf, BUFFER_SIZE, &bytes_read, NULL) && bytes_read > 0) {
+                    if (!WriteFile(pipe_handle, buf, bytes_read, &bytes_written, NULL)
+                        || bytes_written != bytes_read) {
+                        break;
+                    }
+                }
             }
+        } else {
+            if (++stdin_errors >= 50) break;
         }
 
         // Check if server exited (only if we started it)
@@ -488,14 +587,15 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
             }
         }
 
-        Sleep(10);  // 10ms sleep - balance between responsiveness and CPU/IO usage
+        if (!had_activity) {
+            Sleep(10);
+        }
     }
 
     // Cleanup
     CloseHandle(pipe_handle);
 
     // Don't terminate server - it supports multiple clients and has graceful shutdown
-    // Server will auto-shutdown when all clients disconnect (idle timeout)
     if (we_started_server) {
         CloseHandle(pi.hProcess);
     }

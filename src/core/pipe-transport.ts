@@ -7,6 +7,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
+import { log } from "../logging/index.js";
 
 /**
  * Get the pipe/socket path based on platform
@@ -239,6 +240,7 @@ export class PipeServer {
 
       this.server.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
+          log.e("PIPE", "EADDRINUSE: pipe already in use by another server instance, exiting", { pipe: this.pipePath });
           process.exit(1);
         }
         reject(err);
@@ -270,6 +272,7 @@ export class PipeServer {
 
       this.server.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
+          log.e("PIPE", "EADDRINUSE: pipe already in use by another server instance, exiting", { pipe: this.pipePath });
           process.exit(1);
         }
         reject(err);

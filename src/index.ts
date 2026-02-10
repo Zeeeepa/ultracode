@@ -886,7 +886,7 @@ async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
 }
 
 // Register signal handlers from extracted module
-registerSignalHandlers();
+registerSignalHandlers({ pipeMode: pipeServerMode });
 registerDebugSignalHandler();
 
 /**
