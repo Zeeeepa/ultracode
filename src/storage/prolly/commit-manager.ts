@@ -445,6 +445,19 @@ export class CommitManager {
   }
 
   /**
+   * Get ALL active root hashes across ALL projects.
+   * prolly_nodes is a global table shared across projects, so GC must
+   * consider roots from every project to avoid deleting shared nodes.
+   */
+  async getAllActiveRootHashes(): Promise<Set<string>> {
+    if (!this.client) throw new Error("Client not initialized");
+
+    const result = await this.client.execute("SELECT DISTINCT root_node_hash FROM graph_commits");
+
+    return new Set(result.rows.map((r) => r["root_node_hash"] as string));
+  }
+
+  /**
    * Delete old commits, keeping only the most recent N.
    * Returns number of deleted commits.
    */
