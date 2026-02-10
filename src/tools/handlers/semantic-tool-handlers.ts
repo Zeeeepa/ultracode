@@ -247,6 +247,12 @@ const SemanticSearchSchema = z.object({
   hasDocumentation: z.boolean().optional().describe("Filter: must have documentation/docstrings"),
   isDeprecated: z.boolean().optional().describe("Filter: deprecated entities only"),
   minCallCount: z.number().optional().describe("Filter: minimum number of function calls"),
+  // History filters (Prolly Tree)
+  changedInLastCommits: z
+    .number()
+    .optional()
+    .describe("Filter: only entities changed in last N graph commits (Prolly Tree)"),
+  changedSinceMs: z.number().optional().describe("Filter: only entities changed since this Unix timestamp (ms)"),
 });
 
 export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof SemanticSearchSchema>> {
@@ -405,6 +411,27 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
 
         return true;
       });
+    }
+
+    // Apply Prolly Tree history filter
+    if (args.changedInLastCommits !== undefined || args.changedSinceMs !== undefined) {
+      const { getRecentlyChangedEntities } = await import("../../storage/prolly/recently-changed.js");
+      const storage = await this.context.getGraphStorage();
+      const adapter = (
+        storage as import("../../storage/graph-storage-libsql.js").GraphStorageLibSQL
+      ).getLibSQLAdapter?.();
+      if (adapter) {
+        const recentlyChanged = await getRecentlyChangedEntities(adapter, {
+          lastCommits: args.changedInLastCommits,
+          sinceTimestamp: args.changedSinceMs,
+        });
+        if (recentlyChanged) {
+          filteredResults = filteredResults.filter((r: SemanticSearchResult) => {
+            const entityId = r.metadata?.entityId || r.id?.replace(/^ent:/, "");
+            return entityId ? recentlyChanged.changedIds.has(entityId) : false;
+          });
+        }
+      }
     }
 
     // Expand results with graph neighbors if requested
@@ -1066,6 +1093,12 @@ const PatternSearchSchema = z.object({
   offset: z.number().optional().default(0),
   limit: z.number().optional().default(SAFE_LIMITS.searchResults),
   minSimilarity: z.number().optional().default(0.7),
+  // History filters (Prolly Tree)
+  changedInLastCommits: z
+    .number()
+    .optional()
+    .describe("Filter: only entities changed in last N graph commits (Prolly Tree)"),
+  changedSinceMs: z.number().optional().describe("Filter: only entities changed since this Unix timestamp (ms)"),
 });
 
 export class PatternSearchToolHandler extends BaseToolHandler<z.infer<typeof PatternSearchSchema>> {
@@ -1115,12 +1148,29 @@ export class PatternSearchToolHandler extends BaseToolHandler<z.infer<typeof Pat
     await patternSearch.initialize();
 
     // Fetch more for pagination
-    const allResults = await patternSearch.search({
+    let allResults = await patternSearch.search({
       pattern: args.pattern,
       mode: args.mode,
       scope: { entityTypes: args.entityTypes as EntityType[] | undefined },
       limit: 500,
     });
+
+    // Apply Prolly Tree history filter
+    if (args.changedInLastCommits !== undefined || args.changedSinceMs !== undefined) {
+      const { getRecentlyChangedEntities } = await import("../../storage/prolly/recently-changed.js");
+      const adapter = (
+        storage as import("../../storage/graph-storage-libsql.js").GraphStorageLibSQL
+      ).getLibSQLAdapter?.();
+      if (adapter) {
+        const recentlyChanged = await getRecentlyChangedEntities(adapter, {
+          lastCommits: args.changedInLastCommits,
+          sinceTimestamp: args.changedSinceMs,
+        });
+        if (recentlyChanged) {
+          allResults = allResults.filter((r) => recentlyChanged.changedIds.has(r.entity.id));
+        }
+      }
+    }
 
     const paginatedResult = paginate(allResults, args.offset, safeLimit);
 

@@ -90,12 +90,15 @@ Storage: `%LOCALAPPDATA%\UltraScriptTools\projects\{hash}/`
 - **Control Flow**: `hasExceptions`, `hasLoops`, `hasAwaits`
 - **Documentation**: `hasDocumentation`, `isDeprecated`
 - **Call Analysis**: `minCallCount`
+- **History (Prolly Tree)**: `changedInLastCommits`, `changedSinceMs` — **dramatically faster responses**: narrows 500+ results to 10-20 recently changed entities, reducing response size and agent processing time
 
 **Examples:**
 ```
 semantic_search query="data processing" minCyclomatic=10  # Complex code
 semantic_search query="API" hasAwaits=true hasExceptions=false  # Async without error handling
 semantic_search query="export" hasDocumentation=false  # Undocumented exports
+semantic_search query="auth" changedInLastCommits=5  # ⚡ Only recently changed — much faster response
+pattern_search pattern="handle.*" mode="entity" changedInLastCommits=3  # ⚡ 10x fewer results = 10x faster
 ```
 
 **Returns enhanced data:**

@@ -49,11 +49,11 @@
 | `AddMemberSchema` | const | Валидация добавления нового метода или свойства в класс | [→ modification-schemas.ts:64-72] |
 | `SemanticSearchSchema` | const | Валидация семантического поиска на естественном языке | [→ semantic-schemas.ts:8-13] |
 | `FindSimilarCodeSchema` | const | Валидация поиска аналогичного кода по фрагменту | [→ semantic-schemas.ts:15-20] |
-| `AnalyzeCodeImpactSchema` | const | Валидация анализа влияния изменений на остальной код | [→ semantic-schemas.ts:22-27] |
-| `DetectCodeClonesSchema` | const | Валидация обнаружения семантически похожих блоков кода | [→ semantic-schemas.ts:29-32] |
-| `FindRelatedConceptsSchema` | const | Валидация поиска связанных с сущностью концепций | [→ semantic-schemas.ts:29-32] |
-| `CrossLanguageSearchSchema` | const | Валидация поиска кода в нескольких языках программирования | [→ semantic-schemas.ts:29-32] |
-| `PatternSearchSchema` | const | Валидация поиска по регулярным выражениям и шаблонам | [→ semantic-schemas.ts:29-32] |
+| `AnalyzeCodeImpactSchema` | const | Валидация анализа влияния изменений на остальной код | [→ semantic-schemas.ts:22-37] |
+| `DetectCodeClonesSchema` | const | Валидация обнаружения семантически похожих блоков кода | [→ semantic-schemas.ts:33-36] |
+| `FindRelatedConceptsSchema` | const | Валидация поиска связанных с сущностью концепций | [→ semantic-schemas.ts:33-36] |
+| `CrossLanguageSearchSchema` | const | Валидация поиска кода в нескольких языках программирования | [→ semantic-schemas.ts:33-36] |
+| `PatternSearchSchema` | const | Валидация поиска по регулярным выражениям и шаблонам | [→ semantic-schemas.ts:33-36] |
 | `CreateSnapshotSchema` | const | Валидация создания снимка состояния кода в момент времени | [→ snapshot-schemas.ts:8-11] |
 | `RollbackSnapshotSchema` | const | Валидация отката кода к предыдущему снимку состояния | [→ snapshot-schemas.ts:8-11] |
 | `ListSnapshotsSchema` | const | Валидация получения списка доступных снимков состояния | [→ snapshot-schemas.ts:8-11] |

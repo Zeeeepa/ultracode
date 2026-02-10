@@ -9,7 +9,7 @@ export const traceToolDefinitions = [
   {
     name: "trace_flow",
     description:
-      "[PLAN] Static analysis: trace execution from A→B. Use when: 'How does code get from login() to saveUser()?', 'What paths lead to handleError()?'. Finds ALL possible paths with state changes, conditions, async boundaries. Returns confidence-scored paths + optional Mermaid diagrams. Example: trace_flow(from='handleRequest', to='sendEmail'). 📖 get_help(topic='tracing') for guide.",
+      "[PLAN] Static analysis: trace execution from A→B. Use when: 'How does code get from login() to saveUser()?', 'What paths lead to handleError()?'. Finds ALL possible paths with state changes, conditions, async boundaries. Returns confidence-scored paths + optional Mermaid diagrams. Supports highlightRecentChanges to annotate recently modified nodes. Example: trace_flow(from='handleRequest', to='sendEmail', highlightRecentChanges=true). 📖 get_help(topic='tracing') for guide.",
     inputSchema: {
       type: "object",
       properties: {
@@ -24,6 +24,16 @@ export const traceToolDefinitions = [
           description: "Output format",
           default: "sequence",
         },
+        highlightRecentChanges: {
+          type: "boolean",
+          description: "Annotate trace nodes with recently-changed status (Prolly Tree)",
+          default: false,
+        },
+        recentCommitsCount: {
+          type: "number",
+          description: "Number of recent commits to consider for highlighting",
+          default: 10,
+        },
       },
       required: ["from", "to"],
     },
@@ -31,7 +41,7 @@ export const traceToolDefinitions = [
   {
     name: "trace_backwards",
     description:
-      "[PLAN] Static analysis: why isn't method called? Use when: 'Why doesn't processPayment() run?', 'What blocks saveUser()?'. Questions: 'why_not_called' (find blockers), 'what_affects' (dependencies), 'dependencies' (full graph). Returns callers, blocking conditions, state deps, diagnosis. Example: trace_backwards(target='sendNotification', question='why_not_called'). 📖 get_help(topic='tracing').",
+      "[PLAN] Static analysis: why isn't method called? Use when: 'Why doesn't processPayment() run?', 'What blocks saveUser()?'. Questions: 'why_not_called' (find blockers), 'what_affects' (dependencies), 'dependencies' (full graph). Returns callers, blocking conditions, state deps, diagnosis. Supports highlightRecentChanges to annotate recently modified callers. Example: trace_backwards(target='sendNotification', question='why_not_called', highlightRecentChanges=true). 📖 get_help(topic='tracing').",
     inputSchema: {
       type: "object",
       properties: {
@@ -44,6 +54,16 @@ export const traceToolDefinitions = [
         depth: { type: "number", description: "Backward traversal depth", default: 15 },
         includeStates: { type: "boolean", description: "Include state dependencies", default: true },
         includeEffects: { type: "boolean", description: "Include side effects", default: true },
+        highlightRecentChanges: {
+          type: "boolean",
+          description: "Annotate trace nodes with recently-changed status (Prolly Tree)",
+          default: false,
+        },
+        recentCommitsCount: {
+          type: "number",
+          description: "Number of recent commits to consider for highlighting",
+          default: 10,
+        },
       },
       required: ["target", "question"],
     },

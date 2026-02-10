@@ -45,6 +45,16 @@ const TraceFlowSchema = z.object({
   trackConditions: z.boolean().optional().default(true).describe("Track conditions/branches"),
   maxDepth: z.number().optional().default(15).describe("Maximum traversal depth"),
   format: z.enum(["sequence", "tree", "graph", "mermaid"]).optional().default("sequence").describe("Output format"),
+  highlightRecentChanges: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Annotate trace nodes with recently-changed status (Prolly Tree)"),
+  recentCommitsCount: z
+    .number()
+    .optional()
+    .default(10)
+    .describe("Number of recent commits to consider for highlighting"),
 });
 
 const TraceBackwardsSchema = z.object({
@@ -56,6 +66,16 @@ const TraceBackwardsSchema = z.object({
   depth: z.number().optional().default(15).describe("Backward traversal depth"),
   includeStates: z.boolean().optional().default(true).describe("Include state dependencies"),
   includeEffects: z.boolean().optional().default(true).describe("Include side effects"),
+  highlightRecentChanges: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Annotate trace nodes with recently-changed status (Prolly Tree)"),
+  recentCommitsCount: z
+    .number()
+    .optional()
+    .default(10)
+    .describe("Number of recent commits to consider for highlighting"),
 });
 
 const TraceDataFlowSchema = z.object({
@@ -134,6 +154,43 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
 
     const result = await this.traceEngine.traceFlow(params);
 
+    // Annotate nodes with recently-changed status if requested
+    let recentlyChangedAnnotation:
+      | {
+          recentlyChangedNodes: string[];
+          totalAnnotated: number;
+          commitsAnalyzed: number;
+        }
+      | undefined;
+    if (args.highlightRecentChanges) {
+      const { getRecentlyChangedEntities } = await import("../../storage/prolly/recently-changed.js");
+      type StorageWithAdapter = typeof storage & {
+        getLibSQLAdapter?: () => import("../../storage/libsql-graph-adapter.js").LibSQLGraphAdapter | null;
+      };
+      const adapter = (storage as StorageWithAdapter).getLibSQLAdapter?.();
+      if (adapter) {
+        const recentlyChanged = await getRecentlyChangedEntities(adapter, {
+          lastCommits: args.recentCommitsCount,
+        });
+        if (recentlyChanged) {
+          const changedNodes: string[] = [];
+          for (const path of result.paths) {
+            for (const step of path.steps) {
+              if (step.entityId && recentlyChanged.changedIds.has(step.entityId)) {
+                changedNodes.push(step.entityId);
+                (step as unknown as Record<string, unknown>)["recentlyChanged"] = true;
+              }
+            }
+          }
+          recentlyChangedAnnotation = {
+            recentlyChangedNodes: [...new Set(changedNodes)],
+            totalAnnotated: new Set(changedNodes).size,
+            commitsAnalyzed: recentlyChanged.commitsAnalyzed,
+          };
+        }
+      }
+    }
+
     // Format output
     let output: string;
     if (args.format === "mermaid") {
@@ -141,6 +198,7 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
         {
           success: true,
           ...result,
+          ...(recentlyChangedAnnotation ? { recentlyChangedAnnotation } : {}),
           formatted: result.mermaid || this.formatter.formatTraceFlowAsMermaid(result),
         },
         null,
@@ -152,6 +210,7 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
         {
           success: true,
           ...result,
+          ...(recentlyChangedAnnotation ? { recentlyChangedAnnotation } : {}),
           formatted: this.formatter.formatTraceFlowAsText(result),
           // Include debug info if present
           _debug: (result as ResultWithDebug)._debug,
@@ -197,10 +256,46 @@ export class TraceBackwardsToolHandler extends BaseToolHandler<z.infer<typeof Tr
 
     const result = await this.traceEngine.traceBackwards(params);
 
+    // Annotate callers with recently-changed status if requested
+    let recentlyChangedAnnotation:
+      | {
+          recentlyChangedNodes: string[];
+          totalAnnotated: number;
+          commitsAnalyzed: number;
+        }
+      | undefined;
+    if (args.highlightRecentChanges) {
+      const { getRecentlyChangedEntities } = await import("../../storage/prolly/recently-changed.js");
+      type StorageWithAdapter = typeof storage & {
+        getLibSQLAdapter?: () => import("../../storage/libsql-graph-adapter.js").LibSQLGraphAdapter | null;
+      };
+      const adapter = (storage as StorageWithAdapter).getLibSQLAdapter?.();
+      if (adapter) {
+        const recentlyChanged = await getRecentlyChangedEntities(adapter, {
+          lastCommits: args.recentCommitsCount,
+        });
+        if (recentlyChanged) {
+          const changedNodes: string[] = [];
+          for (const caller of result.callers) {
+            if (caller.entityId && recentlyChanged.changedIds.has(caller.entityId)) {
+              changedNodes.push(caller.entityId);
+              (caller as unknown as Record<string, unknown>)["recentlyChanged"] = true;
+            }
+          }
+          recentlyChangedAnnotation = {
+            recentlyChangedNodes: [...new Set(changedNodes)],
+            totalAnnotated: new Set(changedNodes).size,
+            commitsAnalyzed: recentlyChanged.commitsAnalyzed,
+          };
+        }
+      }
+    }
+
     const output = JSON.stringify(
       {
         success: true,
         ...result,
+        ...(recentlyChangedAnnotation ? { recentlyChangedAnnotation } : {}),
         formatted: this.formatter.formatTraceBackwardsAsText(result),
       },
       null,
