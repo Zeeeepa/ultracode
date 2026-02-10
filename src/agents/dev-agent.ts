@@ -1306,6 +1306,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             entities: totalEntities,
           });
         }
+        // GC: keep last 20 commits per branch, clean orphaned Prolly nodes
+        adapter.pruneAndGC?.(20)?.catch?.((err: unknown) => log.w("DEVAGENT", "prune_gc_fail", { err: String(err) }));
       }
     } catch (err) {
       log.w("DEVAGENT", "graph_commit_failed", { error: (err as Error).message });
@@ -1612,6 +1614,10 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             files: successCount,
           });
         }
+        // GC: keep last 20 commits per branch, clean orphaned Prolly nodes
+        adapter
+          .pruneAndGC?.(20)
+          ?.catch?.((err: unknown) => log.w("DEVAGENT", "incr_prune_gc_fail", { err: String(err) }));
       }
     } catch (err) {
       log.w("DEVAGENT", "incr_commit_failed", { error: (err as Error).message });

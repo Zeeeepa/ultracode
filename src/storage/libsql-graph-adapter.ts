@@ -1263,6 +1263,51 @@ export class LibSQLGraphAdapter {
     return commit.commitHash;
   }
 
+  /** Timestamp of last GC run — used to rate-limit pruneAndGC() */
+  private lastGcRunAt = 0;
+
+  /**
+   * Prune old commits for the current branch and garbage-collect orphaned
+   * Prolly Tree nodes.  Rate-limited to run at most once per 10 minutes
+   * unless `force` is true.
+   *
+   * @param keepCommits  Number of most-recent commits to keep per branch.
+   * @param force        Skip the rate-limit check.
+   * @returns Counts of pruned commits and GC-deleted nodes (or null if skipped).
+   */
+  async pruneAndGC(keepCommits = 20, force = false): Promise<{ pruned: number; gcDeleted: number } | null> {
+    if (!this.commitManager || !this.prollyNodeStore) {
+      return null;
+    }
+
+    // Rate-limit: skip if last run was < 10 min ago
+    const now = Date.now();
+    if (!force && now - this.lastGcRunAt < 10 * 60 * 1000) {
+      return null;
+    }
+    this.lastGcRunAt = now;
+
+    // 1. Prune this branch's history
+    const pruned = await this.commitManager.pruneHistory(keepCommits);
+
+    if (pruned === 0) return { pruned: 0, gcDeleted: 0 };
+
+    // 2. Get ALL active root hashes (across all projects)
+    const roots = await this.commitManager.getAllActiveRootHashes();
+
+    // 3. Collect garbage — delete orphaned nodes
+    const gcDeleted = await this.prollyNodeStore.collectGarbage([...roots]);
+
+    // 4. VACUUM if significant cleanup (reclaim disk space)
+    if (gcDeleted > 1000 && this.client) {
+      await this.client.execute("VACUUM");
+      log.i("LIBSQLADAPT", "vacuum_after_gc", { gcDeleted });
+    }
+
+    log.i("LIBSQLADAPT", "prune_gc_complete", { pruned, gcDeleted });
+    return { pruned, gcDeleted };
+  }
+
   /**
    * Initialize branch diff cache for optimized reads on feature branches.
    * Call this when switching to a feature branch with a base branch.
