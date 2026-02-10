@@ -64,6 +64,12 @@ semantic_search(query="API endpoint", hasAwaits=true, hasExceptions=false)
 
 semantic_search(query="public API", hasDocumentation=false)
 → Undocumented public APIs (needs docs)
+
+semantic_search(query="auth functions", changedInLastCommits=5)
+→ ⚡ Auth code changed in last 5 commits — 10-20 results instead of 500+, much faster response
+
+pattern_search(pattern="handle.*Error", mode="entity", changedInLastCommits=3)
+→ ⚡ Recently modified error handlers only — dramatically smaller response, faster agent processing
 ```
 
 ## Typical Explore Workflow

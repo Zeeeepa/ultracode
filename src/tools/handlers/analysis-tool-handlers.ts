@@ -656,6 +656,16 @@ const AnalyzeCodeImpactSchema = z.object({
   filePath: z.string().optional(),
   projectPath: projectPathParam,
   depth: z.number().optional().default(3),
+  highlightRecentChanges: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Annotate impacted entities with recently-changed status (Prolly Tree)"),
+  recentCommitsCount: z
+    .number()
+    .optional()
+    .default(10)
+    .describe("Number of recent commits to consider for highlighting"),
 });
 
 export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof AnalyzeCodeImpactSchema>> {
@@ -710,6 +720,41 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
       currentDepth++;
     }
 
+    // Annotate with recently-changed status if requested
+    let recentlyChangedImpact:
+      | {
+          recentlyAddedCount: number;
+          recentlyModifiedCount: number;
+          volatileRatio: number;
+          commitsAnalyzed: number;
+        }
+      | undefined;
+    if (args.highlightRecentChanges) {
+      const { getRecentlyChangedEntities } = await import("../../storage/prolly/recently-changed.js");
+      const adapter = (storage as GraphStorageLibSQL).getLibSQLAdapter?.();
+      if (adapter) {
+        const recentlyChanged = await getRecentlyChangedEntities(adapter, {
+          lastCommits: args.recentCommitsCount,
+        });
+        if (recentlyChanged) {
+          let recentlyAddedCount = 0;
+          let recentlyModifiedCount = 0;
+          for (const id of impactedEntities) {
+            if (recentlyChanged.addedIds.has(id)) recentlyAddedCount++;
+            else if (recentlyChanged.modifiedIds.has(id)) recentlyModifiedCount++;
+          }
+          const totalRecent = recentlyAddedCount + recentlyModifiedCount;
+          recentlyChangedImpact = {
+            recentlyAddedCount,
+            recentlyModifiedCount,
+            volatileRatio:
+              impactedEntities.size > 0 ? Math.round((totalRecent / impactedEntities.size) * 100) / 100 : 0,
+            commitsAnalyzed: recentlyChanged.commitsAnalyzed,
+          };
+        }
+      }
+    }
+
     return {
       content: [
         {
@@ -721,6 +766,7 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
               totalImpactedEntities: impactedEntities.size,
               impactDepth: args.depth,
               riskLevel: impactedEntities.size > 50 ? "high" : impactedEntities.size > 20 ? "medium" : "low",
+              ...(recentlyChangedImpact ? { recentlyChangedImpact } : {}),
             },
             null,
             2,

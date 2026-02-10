@@ -43,6 +43,7 @@ export { CommitManager } from "./commit-manager.js";
 // Core components
 export { type NodeStoreConfig, ProllyNodeStore } from "./node-store.js";
 export { deserializeEntity, ProllyTree, serializeEntity } from "./prolly-tree.js";
+export { getRecentlyChangedEntities, type RecentChangeFilter, type RecentChangeResult } from "./recently-changed.js";
 export { TimeTravelManager } from "./time-travel.js";
 // Types
 export * from "./types.js";

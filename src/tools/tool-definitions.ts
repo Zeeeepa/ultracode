@@ -172,7 +172,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "semantic_search",
       description:
-        "[EXPLORE] Search codebase by MEANING using natural language (5-10x faster than Grep). Understands 'auth functions', 'error handlers', 'API endpoints'. Returns rich metadata: complexity, control flow, documentation status. Supports filters: minCyclomatic, hasExceptions, hasAwaits, hasDocumentation. Examples: 'data processing minCyclomatic=10' (complex code), 'API hasAwaits=true hasExceptions=false' (async without error handling). 📖 Run get_help(topic='quick-start') for full guide.",
+        "[EXPLORE] Search codebase by MEANING using natural language (5-10x faster than Grep). Understands 'auth functions', 'error handlers', 'API endpoints'. Returns rich metadata: complexity, control flow, documentation status. Supports filters: minCyclomatic, hasExceptions, hasAwaits, hasDocumentation. Supports changedInLastCommits/changedSinceMs to narrow to recently changed code. Examples: 'data processing minCyclomatic=10' (complex code), 'API hasAwaits=true changedInLastCommits=5' (recently changed async code). 📖 Run get_help(topic='quick-start') for full guide.",
       inputSchema: zodToJsonSchema(SemanticSearchSchema),
     },
     {
@@ -188,7 +188,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "pattern_search",
       description:
-        "[EXPLORE] Advanced multi-mode search: entity (regex on names/types), content (search inside code), semantic (meaning), hybrid (combined). Framework-aware (filter by React/Vue/Angular). SIMD-accelerated. Use when semantic_search isn't enough. Examples: pattern_search(pattern='handle.*Error', mode='entity'), pattern_search(pattern='useState', mode='content', frameworks=['React']). 📖 get_help(topic='tool-reference').",
+        "[EXPLORE] Advanced multi-mode search: entity (regex on names/types), content (search inside code), semantic (meaning), hybrid (combined). Framework-aware (filter by React/Vue/Angular). SIMD-accelerated. Supports changedInLastCommits/changedSinceMs history filters. Use when semantic_search isn't enough. Examples: pattern_search(pattern='handle.*Error', mode='entity'), pattern_search(pattern='useState', mode='content', changedInLastCommits=5). 📖 get_help(topic='tool-reference').",
       inputSchema: zodToJsonSchema(PatternSearchSchema),
     },
 
@@ -198,7 +198,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "analyze_code_impact",
       description:
-        "[PLAN] Impact analysis: what breaks if I change X? Find all entities/files depending on a symbol. Use BEFORE refactoring/deletion to prevent regressions. Workflow: 1) get_members(file='utils.ts') to get entity IDs, 2) analyze_code_impact(entityId='...'). Returns dependent files, functions, risk score. Example: changing User interface? Check impact first. 📖 get_help(topic='workflows').",
+        "[PLAN] Impact analysis: what breaks if I change X? Find all entities/files depending on a symbol. Use BEFORE refactoring/deletion to prevent regressions. Supports highlightRecentChanges to annotate volatile dependencies. Workflow: 1) get_members(file='utils.ts') to get entity IDs, 2) analyze_code_impact(entityId='...', highlightRecentChanges=true). Returns dependent files, functions, risk score, volatility ratio. 📖 get_help(topic='workflows').",
       inputSchema: zodToJsonSchema(AnalyzeCodeImpactSchema),
     },
     {

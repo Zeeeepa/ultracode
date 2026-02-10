@@ -31,6 +31,8 @@ Index codebase for analysis. **Run once before using other tools.**
 | `hasDocumentation` | boolean | - | Filter: must have documentation/docstrings |
 | `isDeprecated` | boolean | - | Filter: deprecated entities only |
 | `minCallCount` | number | - | Filter: minimum number of function calls |
+| `changedInLastCommits` | number | - | Filter: only entities changed in last N graph commits (Prolly Tree). **⚡ Dramatically faster** — narrows 500+ results to 10-20 |
+| `changedSinceMs` | number | - | Filter: only entities changed since this Unix timestamp (ms). **⚡ Same speedup** as changedInLastCommits |
 
 **Returns (enhanced):**
 ```json
@@ -99,6 +101,8 @@ Advanced search with multiple modes.
 | `entityTypes` | string[] | all | Entity types (function, class, interface...) |
 | `files` | string[] | all | Filter by files |
 | `frameworks` | string[] | all | Filter by frameworks (React, Vue...) |
+| `changedInLastCommits` | number | - | Filter: only entities changed in last N graph commits (Prolly Tree). **⚡ Much faster responses** |
+| `changedSinceMs` | number | - | Filter: only entities changed since this Unix timestamp (ms). **⚡ Much faster responses** |
 
 ### `find_similar_code`
 Find semantically similar code.
@@ -191,6 +195,8 @@ Clone detector based on jscpd.
 | `includeSemantic` | boolean | true | Include semantically related entities |
 | `semanticLimit` | number | 10 | Max semantic matches |
 | `semanticThreshold` | number | 0.7 | Min similarity threshold (0-1) |
+| `highlightRecentChanges` | boolean | false | Annotate impacted entities with recently-changed status (Prolly Tree) |
+| `recentCommitsCount` | number | 10 | Number of recent commits to consider for highlighting |
 
 ### `analyze_hotspots`
 Find complex code areas. Uses Prolly Tree history for change frequency with Git fallback.
@@ -438,9 +444,12 @@ Message bus statistics.
 | `maxDepth` | number | 15 | Maximum traversal depth |
 | `trackStates` | boolean | true | Track state changes along paths |
 | `trackConditions` | boolean | true | Track conditions/branches |
+| `highlightRecentChanges` | boolean | false | Annotate trace nodes with recently-changed status (Prolly Tree) |
+| `recentCommitsCount` | number | 10 | Number of recent commits to consider |
 
 ```
 trace_flow from="handleLogin" to="sendEmail" format="mermaid"
+trace_flow from="handleLogin" to="sendEmail" highlightRecentChanges=true
 ```
 
 ### `trace_backwards`
@@ -453,9 +462,12 @@ trace_flow from="handleLogin" to="sendEmail" format="mermaid"
 | `depth` | number | 15 | Backward traversal depth |
 | `includeStates` | boolean | true | Include state dependencies |
 | `includeEffects` | boolean | true | Include side effects |
+| `highlightRecentChanges` | boolean | false | Annotate trace nodes with recently-changed status (Prolly Tree) |
+| `recentCommitsCount` | number | 10 | Number of recent commits to consider |
 
 ```
 trace_backwards target="sendNotification" question="why_not_called"
+trace_backwards target="sendNotification" question="why_not_called" highlightRecentChanges=true
 ```
 
 ### `trace_data_flow`

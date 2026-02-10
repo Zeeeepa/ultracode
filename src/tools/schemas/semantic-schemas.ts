@@ -24,6 +24,16 @@ export const AnalyzeCodeImpactSchema = z.object({
   filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
   depth: z.number().optional().default(2).describe("Depth of impact analysis"),
   branch: z.string().optional().describe("Branch name (null = main branch)"),
+  highlightRecentChanges: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Annotate impacted entities with recently-changed status (Prolly Tree)"),
+  recentCommitsCount: z
+    .number()
+    .optional()
+    .default(10)
+    .describe("Number of recent commits to consider for highlighting"),
 });
 
 export const DetectCodeClonesSchema = z.object({
