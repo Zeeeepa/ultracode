@@ -329,29 +329,25 @@ export class TechnologyDetector {
       // React
       if (source === "react" || source.startsWith("react/")) {
         importCounts.set("React", (importCounts.get("React") || 0) + 1);
-        if (!importFiles.has("React")) importFiles.set("React", new Set());
-        importFiles.get("React")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("React", () => new Set()).add(imp.filePath);
       }
 
       // Vue
       if (source === "vue" || source.startsWith("vue/")) {
         importCounts.set("Vue", (importCounts.get("Vue") || 0) + 1);
-        if (!importFiles.has("Vue")) importFiles.set("Vue", new Set());
-        importFiles.get("Vue")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("Vue", () => new Set()).add(imp.filePath);
       }
 
       // Angular
       if (source.startsWith("@angular/")) {
         importCounts.set("Angular", (importCounts.get("Angular") || 0) + 1);
-        if (!importFiles.has("Angular")) importFiles.set("Angular", new Set());
-        importFiles.get("Angular")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("Angular", () => new Set()).add(imp.filePath);
       }
 
       // Express
       if (source === "express") {
         importCounts.set("Express", (importCounts.get("Express") || 0) + 1);
-        if (!importFiles.has("Express")) importFiles.set("Express", new Set());
-        importFiles.get("Express")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("Express", () => new Set()).add(imp.filePath);
       }
 
       // =================================================================
@@ -361,8 +357,7 @@ export class TechnologyDetector {
       // Spring Framework
       if (source.startsWith("org.springframework.")) {
         importCounts.set("Spring", (importCounts.get("Spring") || 0) + 1);
-        if (!importFiles.has("Spring")) importFiles.set("Spring", new Set());
-        importFiles.get("Spring")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("Spring", () => new Set()).add(imp.filePath);
       }
 
       // JPA/Hibernate
@@ -372,15 +367,13 @@ export class TechnologyDetector {
         source.startsWith("org.hibernate.")
       ) {
         importCounts.set("JPA/Hibernate", (importCounts.get("JPA/Hibernate") || 0) + 1);
-        if (!importFiles.has("JPA/Hibernate")) importFiles.set("JPA/Hibernate", new Set());
-        importFiles.get("JPA/Hibernate")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("JPA/Hibernate", () => new Set()).add(imp.filePath);
       }
 
       // Lombok
       if (source.startsWith("lombok.")) {
         importCounts.set("Lombok", (importCounts.get("Lombok") || 0) + 1);
-        if (!importFiles.has("Lombok")) importFiles.set("Lombok", new Set());
-        importFiles.get("Lombok")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("Lombok", () => new Set()).add(imp.filePath);
       }
 
       // =================================================================
@@ -390,22 +383,19 @@ export class TechnologyDetector {
       // Android
       if (source.startsWith("android.") || source.startsWith("androidx.") || source.startsWith("com.android.")) {
         importCounts.set("Android", (importCounts.get("Android") || 0) + 1);
-        if (!importFiles.has("Android")) importFiles.set("Android", new Set());
-        importFiles.get("Android")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("Android", () => new Set()).add(imp.filePath);
       }
 
       // Kotlin Coroutines
       if (source.startsWith("kotlinx.coroutines.")) {
         importCounts.set("Coroutines", (importCounts.get("Coroutines") || 0) + 1);
-        if (!importFiles.has("Coroutines")) importFiles.set("Coroutines", new Set());
-        importFiles.get("Coroutines")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("Coroutines", () => new Set()).add(imp.filePath);
       }
 
       // Ktor
       if (source.startsWith("io.ktor.")) {
         importCounts.set("Ktor", (importCounts.get("Ktor") || 0) + 1);
-        if (!importFiles.has("Ktor")) importFiles.set("Ktor", new Set());
-        importFiles.get("Ktor")!.add(imp.filePath);
+        importFiles.getOrInsertComputed("Ktor", () => new Set()).add(imp.filePath);
       }
     }
 
