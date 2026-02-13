@@ -380,8 +380,7 @@ export class RaceDetector {
       for (const m of conditionalWrites) {
         if (m.condition) {
           const key = m.condition.replace(/\s+/g, "");
-          if (!conditionGroups.has(key)) conditionGroups.set(key, []);
-          conditionGroups.get(key)!.push(m);
+          conditionGroups.getOrInsertComputed(key, () => []).push(m);
         }
       }
 

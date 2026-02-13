@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "ignoreDeprecations": "6.0",
     "lib": ["ESNext"],
     "target": "ESNext",
     "module": "ESNext",
@@ -8,8 +9,6 @@
 
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": true,
 
     "outDir": "./dist",
@@ -43,7 +42,7 @@
 
     "isolatedModules": true,
 
-    "types": ["node", "bun"]
+    "types": ["node"]
   },
   "include": ["src/**/*", "src/types/**/*.d.ts"],
   "exclude": [
