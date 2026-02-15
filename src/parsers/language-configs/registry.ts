@@ -9,6 +9,7 @@ import type { SupportedLanguage } from "../../types/parser.js";
 import {
   C_CONFIG,
   CPP_CONFIG,
+  CSHARP_CONFIG,
   GO_CONFIG,
   JAVA_CONFIG,
   KOTLIN_CONFIG,
@@ -34,6 +35,7 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   python: PYTHON_CONFIG,
   c: C_CONFIG,
   cpp: CPP_CONFIG,
+  csharp: CSHARP_CONFIG,
   rust: RUST_CONFIG,
   go: GO_CONFIG,
   java: JAVA_CONFIG,

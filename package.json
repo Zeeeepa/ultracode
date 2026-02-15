@@ -1,6 +1,6 @@
 {
   "name": "ultrascript-tools-mcp",
-  "version": "3.3.7",
+  "version": "4.0.0",
   "description": "Codebase RAG MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/Go/Rust/Java/C++/Kotlin",
   "license": "MIT",
   "author": "faxenoff",
@@ -60,7 +60,8 @@
     "claude-skills/**/*.md",
     "claude-skills/manifest.json",
     "dist/parsers/python-ast-cli.py",
-    "dist/parsers/go-ast-cli.go"
+    "dist/parsers/go-ast-cli.go",
+    "dist/roslyn-addon/**"
   ],
   "scripts": {
     "prebuild": "node -e \"const fs=require('fs');const p=require('path');const d='dist';if(fs.existsSync(d)){fs.readdirSync(d).filter(f=>f.endsWith('.js')||f.endsWith('.js.map')).forEach(f=>fs.unlinkSync(p.join(d,f)));console.log('[prebuild] Cleaned old JS chunks from dist/')}\"",
@@ -125,13 +126,13 @@
     "typescript": "^6.0.0-beta"
   },
   "dependencies": {
-    "@biomejs/biome": "^2.3.15",
-    "@biomejs/cli-darwin-arm64": "^2.3.15",
-    "@biomejs/cli-darwin-x64": "^2.3.15",
-    "@biomejs/cli-linux-arm64": "^2.3.15",
-    "@biomejs/cli-linux-x64": "^2.3.15",
-    "@biomejs/cli-win32-arm64": "^2.3.15",
-    "@biomejs/cli-win32-x64": "^2.3.15",
+    "@biomejs/biome": "^2.4.0",
+    "@biomejs/cli-darwin-arm64": "^2.4.0",
+    "@biomejs/cli-darwin-x64": "^2.4.0",
+    "@biomejs/cli-linux-arm64": "^2.4.0",
+    "@biomejs/cli-linux-x64": "^2.4.0",
+    "@biomejs/cli-win32-arm64": "^2.4.0",
+    "@biomejs/cli-win32-x64": "^2.4.0",
     "@grpc/grpc-js": "^1.14.3",
     "@grpc/proto-loader": "^0.8.0",
     "@huggingface/inference": "^4.13.12",

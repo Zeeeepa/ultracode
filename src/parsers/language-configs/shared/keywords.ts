@@ -33,6 +33,10 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   c: "c",
   h: "c",
 
+  // C#
+  cs: "csharp",
+  csx: "csharp",
+
   // C++
   cpp: "cpp",
   cxx: "cpp",
@@ -163,6 +167,14 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: ["include", "import"],
     exports: ["extern", "static"],
     types: ["typedef", "const", "volatile", "register", "auto"],
+  },
+
+  csharp: {
+    functions: ["void", "async", "static", "virtual", "override", "abstract", "partial"],
+    classes: ["class", "struct", "record", "interface", "enum", "delegate"],
+    imports: ["using"],
+    exports: ["public", "internal", "protected"],
+    types: ["int", "string", "bool", "double", "float", "decimal", "object", "dynamic", "var"],
   },
 
   cpp: {

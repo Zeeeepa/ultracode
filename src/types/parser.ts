@@ -49,6 +49,7 @@ export const SUPPORTED_LANGUAGES = [
   "python",
   "c",
   "cpp",
+  "csharp",
   "rust",
   "go",
   "java",
@@ -123,7 +124,11 @@ export interface ParsedEntity {
     | "ngrx_selector"
     | "file"
     | "actor"
-    | "extension";
+    | "extension"
+    | "namespace"
+    | "delegate"
+    | "record"
+    | "constructor";
 
   /** File path containing this entity */
   filePath?: string | undefined; // Optional for backward compatibility
