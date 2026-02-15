@@ -118,6 +118,27 @@ export default defineConfig([
       } catch (e: any) {
         console.warn("[tsup] Proto copy warning:", e.message);
       }
+
+      // Copy Roslyn addon if available (built separately by ultrasharp-tools-mcp)
+      const { cpSync, existsSync } = await import("node:fs");
+      const { resolve } = await import("node:path");
+      const addonSources = [
+        resolve("..", "ultrasharp-tools-mcp", "Run.Publish", "Addon"),
+        resolve("external-libs", "roslyn-addon"),
+      ];
+      const addonDst = join("dist", "roslyn-addon");
+      for (const addonSrc of addonSources) {
+        if (existsSync(addonSrc)) {
+          try {
+            await mkdir(addonDst, { recursive: true });
+            cpSync(addonSrc, addonDst, { recursive: true });
+            console.log(`[tsup] Copied Roslyn addon from ${addonSrc} to dist/roslyn-addon/`);
+          } catch (e: any) {
+            console.warn("[tsup] Roslyn addon copy warning:", e.message);
+          }
+          break;
+        }
+      }
     },
   },
 

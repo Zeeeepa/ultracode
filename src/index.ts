@@ -139,6 +139,8 @@ import { installSkillsIfNeeded } from "./skills-installer.js";
 // Make knowledgeBus available globally for tool handlers
 (global as GlobalWithKnowledgeBus).knowledgeBus = knowledgeBus;
 
+// Roslyn addon lifecycle (C# parsing)
+import { ensureRoslynStarted, findSolutionFile, isRoslynAvailable, shutdownRoslynClient } from "./addons/index.js";
 // v5: Per-client session isolation for multi-client support
 import { ClientSession, registerSession, unregisterSession } from "./core/client-session.js";
 import { PipeServer } from "./core/pipe-transport.js";
@@ -377,6 +379,18 @@ try {
   log.i("GPU", "worker_init", { blocking: false });
 } catch (err) {
   log.e("GPU", "worker_init_fail", { err: (err as Error).message });
+}
+
+// Roslyn addon: start only if .sln/.slnx found AND DLL available
+const slnPath = findSolutionFile(directory);
+if (slnPath && isRoslynAvailable()) {
+  ensureRoslynStarted(slnPath)
+    .then((parser) => {
+      log.i("ROSLYN", "addon_started", { sln: slnPath, available: !!parser });
+    })
+    .catch((err) => {
+      log.e("ROSLYN", "addon_start_fail", { err: (err as Error).message });
+    });
 }
 
 // v3: Set initial project context for GraphStorage
@@ -1089,6 +1103,15 @@ async function main() {
           log.e("FAISS", "shutdown_err", { err: String(error) });
         }
 
+        // 2.8. Shutdown Roslyn addon (if running)
+        try {
+          log.t("ROSLYN", "shutdown_start", {});
+          await shutdownRoslynClient();
+          log.i("ROSLYN", "shutdown_ok", {});
+        } catch (error) {
+          log.e("ROSLYN", "shutdown_err", { err: String(error) });
+        }
+
         // 3. Shutdown conductor and agents
         if (conductor) {
           log.t("CONDUCTOR", "shutdown_start", {});
@@ -1262,6 +1285,7 @@ async function main() {
               ".c",
               ".cpp",
               ".java",
+              ".cs",
             ];
 
             const detection = await detectSupportedProject(clientProjectPath, extensions);
@@ -1353,6 +1377,7 @@ async function main() {
       ".c",
       ".cpp",
       ".java",
+      ".cs",
     ];
 
     // Run detection and indexing in background (don't block MCP ready state)

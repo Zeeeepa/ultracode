@@ -10,8 +10,12 @@
  * - Incremental Parser: src/parsers/incremental-parser.ts
  */
 
+import { createHash } from "node:crypto";
 import type { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { extname } from "node:path";
+import type { CSharpParsedEntity } from "../addons/csharp-native-parser.js";
+import { getCSharpParser } from "../addons/index.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -21,7 +25,7 @@ import { log } from "../logging/index.js";
 import { isFileSupported } from "../parsers/language-configs.js";
 import { type EmbeddingAccumulator, getEmbeddingAccumulator } from "../semantic/embedding-accumulator.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
-import type { FileChange, ParseResult, ParserOptions, ParserStats, ParserTask } from "../types/parser.js";
+import type { FileChange, ParsedEntity, ParseResult, ParserOptions, ParserStats, ParserTask } from "../types/parser.js";
 import type { EmbeddingPoolStats, WorkerEmbeddingConfig } from "../types/semantic.js";
 import { BaseAgent } from "./base.js";
 import type { BinaryEmbedding } from "./workers/language-worker-pool.js";
@@ -88,6 +92,8 @@ function detectLanguage(filePath: string): string {
     ".hxx": "cpp",
     ".java": "java",
     ".go": "go",
+    ".cs": "csharp",
+    ".csx": "csharp",
     ".c": "c",
     ".h": "c",
     ".kt": "kotlin",
@@ -130,6 +136,161 @@ function groupFilesByLanguage(files: string[]): Map<string, string[]> {
   }
 
   return groups;
+}
+
+/**
+ * Map C# entity type from Roslyn to ParsedEntity.type
+ */
+const CSHARP_TYPE_MAP = {
+  class: "class",
+  method: "method",
+  property: "property",
+  field: "field",
+  enum: "enum",
+  struct: "struct",
+  interface: "interface",
+  namespace: "namespace",
+  delegate: "delegate",
+  record: "record",
+  constructor: "constructor",
+  event: "event",
+  indexer: "property",
+} as const satisfies Record<string, ParsedEntity["type"]>;
+
+/**
+ * Convert CSharpParsedEntity[] from Roslyn addon to ParseResult
+ */
+function convertCSharpResult(filePath: string, entities: CSharpParsedEntity[]): ParseResult {
+  const startTime = Date.now();
+  const converted: ParsedEntity[] = [];
+
+  function convert(entity: CSharpParsedEntity): ParsedEntity {
+    const mappedType: ParsedEntity["type"] =
+      (CSHARP_TYPE_MAP as Record<string, ParsedEntity["type"]>)[entity.type] ?? "variable";
+    const meta = entity.metadata;
+
+    // Build modifiers
+    const modifiers: string[] = [];
+    if (meta?.accessibility) modifiers.push(meta.accessibility);
+    if (meta?.isStatic) modifiers.push("static");
+    if (meta?.isAsync) modifiers.push("async");
+    if (meta?.isAbstract) modifiers.push("abstract");
+
+    const parsed: ParsedEntity = {
+      id: entity.id,
+      name: entity.name,
+      type: mappedType,
+      filePath: entity.filePath,
+      language: "csharp",
+      location: {
+        start: { line: entity.startLine, column: 0, index: 0 },
+        end: { line: entity.endLine, column: 0, index: 0 },
+      },
+      modifiers: modifiers.length > 0 ? modifiers : undefined,
+    };
+
+    // Inheritance
+    if (meta?.baseTypes?.length || meta?.interfaces?.length) {
+      parsed.inheritance = {
+        baseClasses: meta?.baseTypes ?? [],
+        interfaces: meta?.interfaces,
+      };
+    }
+
+    // Calls
+    if (meta?.calls?.length) {
+      parsed.calls = meta.calls.map((c) => ({
+        name: c.name,
+        target: c.receiver,
+        location: {
+          start: { line: c.line, column: 0, index: 0 },
+          end: { line: c.line, column: 0, index: 0 },
+        },
+        argumentCount: 0,
+      }));
+    }
+
+    // Complexity
+    if (meta?.complexity !== undefined) {
+      parsed.complexity = {
+        cyclomatic: meta.complexity,
+        cognitive: 0,
+        linesOfCode: entity.endLine - entity.startLine + 1,
+        linesOfLogic: 0,
+        nestingDepth: 0,
+        parameterCount: meta.parameters?.length ?? 0,
+        returnCount: 0,
+      };
+    }
+
+    // Documentation
+    if (meta?.docComment) {
+      parsed.documentation = {
+        description: meta.docComment,
+      };
+    }
+
+    // Return type
+    if (meta?.returnType) {
+      parsed.returnType = meta.returnType;
+    }
+
+    // Parameters
+    if (meta?.parameters?.length) {
+      parsed.parameters = meta.parameters.map((p) => ({
+        name: p.name,
+        type: p.type,
+        optional: p.isOptional,
+        defaultValue: p.defaultValue,
+      }));
+    }
+
+    // Type parameters (generics)
+    if (meta?.typeParameters?.length) {
+      parsed.typeParameters = meta.typeParameters.map((tp) => ({
+        name: tp,
+      }));
+    }
+
+    // Children
+    if (entity.children?.length) {
+      parsed.children = entity.children.map(convert);
+    }
+
+    return parsed;
+  }
+
+  // Flatten: top-level + children all go into entities[]
+  function flatten(entity: CSharpParsedEntity): void {
+    converted.push(convert(entity));
+    if (entity.children) {
+      for (const child of entity.children) {
+        flatten(child);
+      }
+    }
+  }
+
+  for (const entity of entities) {
+    flatten(entity);
+  }
+
+  // Content hash
+  let contentHash = "";
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    contentHash = createHash("md5").update(content).digest("hex");
+  } catch {
+    // File might not exist or be readable
+  }
+
+  return {
+    filePath,
+    language: "csharp",
+    entities: converted,
+    contentHash,
+    timestamp: Date.now(),
+    parseTimeMs: Date.now() - startTime,
+  };
 }
 
 // =============================================================================
@@ -647,9 +808,24 @@ export class ParserAgent extends BaseAgent {
       fileCount: supportedFiles.length,
     });
 
+    // Split C# files — they bypass worker pool, go via Roslyn addon
+    const csharpFiles: string[] = [];
+    const otherFiles: string[] = [];
+    for (const f of supportedFiles) {
+      if (detectLanguage(f) === "csharp") csharpFiles.push(f);
+      else otherFiles.push(f);
+    }
+
     // Always use subprocess worker pools for memory isolation
     const startTime = Date.now();
-    const results = await this.parseWithWorkers(supportedFiles, options);
+
+    // Parse both in parallel
+    const [workerResults, csharpResults] = await Promise.all([
+      otherFiles.length > 0 ? this.parseWithWorkers(otherFiles, options) : Promise.resolve([]),
+      csharpFiles.length > 0 ? this.parseCSharpFiles(csharpFiles) : Promise.resolve([]),
+    ]);
+
+    const results = [...workerResults, ...csharpResults];
     const elapsed = Date.now() - startTime;
 
     const totalEntities = results.reduce((sum, r) => sum + (r.entities?.length || 0), 0);
@@ -658,6 +834,7 @@ export class ParserAgent extends BaseAgent {
       filesProcessed: supportedFiles.length,
       resultsCount: results.length,
       totalEntities,
+      csharpFiles: csharpFiles.length,
       elapsedMs: elapsed,
       filesPerSec: Math.round(supportedFiles.length / (elapsed / 1000)),
     });
@@ -992,6 +1169,47 @@ export class ParserAgent extends BaseAgent {
     }
 
     return flatResults;
+  }
+
+  /**
+   * Parse C# files via Roslyn addon (bypasses worker pool).
+   * Returns empty array if addon is not running.
+   */
+  private async parseCSharpFiles(files: string[]): Promise<ParseResult[]> {
+    const parser = getCSharpParser();
+    if (!parser) {
+      log.w("PARSER", "csharp_skip", { count: files.length, reason: "addon_not_started" });
+      return [];
+    }
+
+    const startTime = Date.now();
+    log.i("PARSER", "csharp_batch_start", { count: files.length });
+
+    const BATCH = 500;
+    const allResults: ParseResult[] = [];
+
+    for (let i = 0; i < files.length; i += BATCH) {
+      const batch = files.slice(i, i + BATCH);
+      const result = await parser.parseBatch(batch.map((f) => ({ filePath: f })));
+      if (!result) continue;
+
+      for (const fileResult of result.files) {
+        const pr = convertCSharpResult(fileResult.filePath, fileResult.entities);
+        allResults.push(pr);
+
+        // Streaming callback
+        if (this.streamingMode && this.onStreamingResult) {
+          this.onStreamingResult(pr, "csharp-batch", allResults.length - 1, files.length);
+        }
+      }
+    }
+
+    log.i("PARSER", "csharp_batch_done", {
+      files: files.length,
+      entities: allResults.reduce((s, r) => s + r.entities.length, 0),
+      dur: Date.now() - startTime,
+    });
+    return allResults;
   }
 
   /**

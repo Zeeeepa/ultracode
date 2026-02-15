@@ -4,6 +4,7 @@
 
 export { C_CONFIG } from "./c.js";
 export { CPP_CONFIG } from "./cpp.js";
+export { CSHARP_CONFIG } from "./csharp.js";
 export { GO_CONFIG } from "./go.js";
 export { JAVA_CONFIG } from "./java.js";
 export { KOTLIN_CONFIG } from "./kotlin.js";
