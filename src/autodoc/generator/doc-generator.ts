@@ -380,7 +380,12 @@ export function generateArchitectureDoc(projectName: string, modules: ModuleInfo
   const groups = new Map<string, ModuleInfo[]>();
   for (const mod of modules) {
     const parent = path.basename(path.dirname(mod.path));
-    groups.getOrInsertComputed(parent, () => []).push(mod);
+    let arr = groups.get(parent);
+    if (!arr) {
+      arr = [];
+      groups.set(parent, arr);
+    }
+    arr.push(mod);
   }
 
   lines.push("## Module Structure");

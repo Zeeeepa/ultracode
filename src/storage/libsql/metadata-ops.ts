@@ -42,6 +42,27 @@ export class MetadataOperations {
   }
 
   /**
+   * Batch update or insert multiple file infos in a single DB round-trip.
+   */
+  async batchUpdateFileInfo(infos: FileInfo[]): Promise<void> {
+    if (infos.length === 0) return;
+    const client = this.getClient();
+    if (!client) throw new Error("Client not initialized");
+
+    const { projectHash, branchName } = this.getContext();
+    const statements = infos.map((info) => ({
+      sql: `
+        INSERT OR REPLACE INTO files
+        (path, project_hash, branch_name, hash, last_indexed, entity_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      args: [info.path, projectHash, branchName, info.hash, info.lastIndexed, info.entityCount] as (string | number)[],
+    }));
+
+    await client.batch(statements, "write");
+  }
+
+  /**
    * Get file info by path
    */
   async getFileInfo(path: string): Promise<FileInfo | null> {

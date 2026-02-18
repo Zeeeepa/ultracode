@@ -1351,6 +1351,24 @@ export class ParserAgent extends BaseAgent {
       log.w("PARSER", `Skipped ${skippedFiles.length} files (unsupported languages)`);
     }
 
+    // Shutdown per-language pools after batch to free memory immediately
+    // Per-language pools are single-use (killAfterBatch: true) and should not linger
+    if (languagesUsed.length > 0) {
+      const shutdownPromises = languagesUsed.map((lang) => {
+        const pool = this.languagePools.get(lang);
+        if (pool) {
+          this.languagePools.delete(lang);
+          return pool.shutdown();
+        }
+        return Promise.resolve();
+      });
+      await Promise.all(shutdownPromises);
+      log.i("PARSER", `Shutdown ${languagesUsed.length} per-language pools after batch`, {
+        languages: languagesUsed.join(","),
+        remainingPools: this.languagePools.size,
+      });
+    }
+
     return flatResults;
   }
 

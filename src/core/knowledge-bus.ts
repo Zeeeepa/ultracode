@@ -77,7 +77,11 @@ export class KnowledgeBus extends EventEmitter {
     this.topicBloom.add(topic);
 
     // Store knowledge
-    const entries = this.knowledge.getOrInsertComputed(topic, () => []);
+    let entries = this.knowledge.get(topic);
+    if (!entries) {
+      entries = [];
+      this.knowledge.set(topic, entries);
+    }
     entries.push(entry);
 
     // Limit entries per topic
@@ -112,7 +116,12 @@ export class KnowledgeBus extends EventEmitter {
 
     const topicKey = topic instanceof RegExp ? "*" : topic;
 
-    this.subscriptions.getOrInsertComputed(topicKey, () => []).push(subscription);
+    let subs = this.subscriptions.get(topicKey);
+    if (!subs) {
+      subs = [];
+      this.subscriptions.set(topicKey, subs);
+    }
+    subs.push(subscription);
 
     // Track subscription location for O(1) unsubscribe
     this.subscriptionToTopic.set(subscription.id, topicKey);

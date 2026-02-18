@@ -795,6 +795,8 @@ export class LibSQLGraphAdapter {
 
   updateFileInfo = (info: FileInfo): Promise<void> => this.metadataOps.updateFileInfo(info);
 
+  batchUpdateFileInfo = (infos: FileInfo[]): Promise<void> => this.metadataOps.batchUpdateFileInfo(infos);
+
   getFileInfo = (path: string): Promise<FileInfo | null> => this.metadataOps.getFileInfo(path);
 
   getOutdatedFiles = (since: number): Promise<FileInfo[]> => this.metadataOps.getOutdatedFiles(since);

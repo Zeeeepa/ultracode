@@ -16,6 +16,7 @@
 import { execSync } from "node:child_process";
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { LineOffsetMap } from "./base-parser-utils.js";
 
 // =============================================================================
 // PARSER STATS
@@ -183,6 +184,12 @@ export class ZigNativeParser {
     const relationships: EntityRelationship[] = [];
     let match: RegExpExecArray | null;
 
+    // Pre-compute line offset map: O(n) build, O(log n) per lookup
+    const lineMap = new LineOffsetMap(content);
+
+    // Pre-computed type body ranges for O(log n) isInsideTypeBody checks
+    const typeBodyRanges: Array<{ start: number; end: number }> = [];
+
     // =========================================================================
     // IMPORTS
     // =========================================================================
@@ -198,7 +205,7 @@ export class ZigNativeParser {
         name: localName,
         type: "import",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers: [],
         importData: {
           source,
@@ -236,6 +243,8 @@ export class ZigNativeParser {
 
       const children: ParsedEntity[] = [];
       if (body) {
+        // Record type body range for O(log n) isInsideTypeBody
+        typeBodyRanges.push({ start: bodyStartIdx, end: bodyStartIdx + body.length + 2 });
         this.parseStructBody(body, filePath, name, children, relationships);
       }
 
@@ -244,7 +253,7 @@ export class ZigNativeParser {
         name,
         type: "struct",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers,
         metadata: { isValueType: true },
         ...(children.length > 0 && { children }),
@@ -269,6 +278,7 @@ export class ZigNativeParser {
 
       const children: ParsedEntity[] = [];
       if (body) {
+        typeBodyRanges.push({ start: bodyStartIdx, end: bodyStartIdx + body.length + 2 });
         this.parseEnumBody(body, filePath, name, children, relationships);
       }
 
@@ -277,7 +287,7 @@ export class ZigNativeParser {
         name,
         type: "enum",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers,
         ...(children.length > 0 && { children }),
       });
@@ -301,6 +311,7 @@ export class ZigNativeParser {
 
       const children: ParsedEntity[] = [];
       if (body) {
+        typeBodyRanges.push({ start: bodyStartIdx, end: bodyStartIdx + body.length + 2 });
         // Union body is similar to struct body (fields + methods)
         this.parseStructBody(body, filePath, name, children, relationships);
       }
@@ -310,7 +321,7 @@ export class ZigNativeParser {
         name,
         type: "union",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers,
         ...(children.length > 0 && { children }),
       });
@@ -336,6 +347,7 @@ export class ZigNativeParser {
       const children: ParsedEntity[] = [];
       if (body) {
         // Error set members: ErrorName,
+        const bodyLineMap = new LineOffsetMap(body);
         const memberRe = /(\w+)\s*,/g;
         let memberMatch: RegExpExecArray | null;
         while ((memberMatch = memberRe.exec(body))) {
@@ -345,7 +357,7 @@ export class ZigNativeParser {
               name: memberName,
               type: "enum_variant",
               filePath,
-              location: this.getLocationFromIndex(body, memberMatch.index),
+              location: bodyLineMap.getEntityLocation(memberMatch.index),
             });
           }
         }
@@ -356,11 +368,14 @@ export class ZigNativeParser {
         name,
         type: "type",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers,
         ...(children.length > 0 && { children }),
       });
     }
+
+    // Sort type body ranges for binary search
+    typeBodyRanges.sort((a, b) => a.start - b.start);
 
     // =========================================================================
     // TOP-LEVEL FUNCTIONS
@@ -378,7 +393,7 @@ export class ZigNativeParser {
       if (!name) continue;
 
       // Skip if this function is inside a struct/enum body (already parsed as method)
-      if (this.isInsideTypeBody(content, match.index, entities)) continue;
+      if (this.isInsideTypeBodyFast(match.index, typeBodyRanges)) continue;
 
       const funcId = `${filePath}:function:${name}`;
       const modifiers: string[] = [];
@@ -394,7 +409,7 @@ export class ZigNativeParser {
         name,
         type: "function",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers,
         ...(parameters.length > 0 && { parameters }),
         ...(returnType && { returnType }),
@@ -415,7 +430,7 @@ export class ZigNativeParser {
         name: testName,
         type: "function",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers: ["test"],
       });
     }
@@ -432,7 +447,7 @@ export class ZigNativeParser {
         name: `comptime_block_${comptimeIdx}`,
         type: "function",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers: ["comptime"],
       });
     }
@@ -449,7 +464,7 @@ export class ZigNativeParser {
       if (!name || knownNames.has(name)) continue;
 
       // Skip if inside a struct/enum body
-      if (this.isInsideTypeBody(content, match.index, entities)) continue;
+      if (this.isInsideTypeBodyFast(match.index, typeBodyRanges)) continue;
 
       const constId = `${filePath}:constant:${name}`;
       const modifiers: string[] = [];
@@ -460,7 +475,7 @@ export class ZigNativeParser {
         name,
         type: "constant",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers,
         ...(typeAnnotation && { returnType: typeAnnotation }),
       });
@@ -476,7 +491,7 @@ export class ZigNativeParser {
       const typeAnnotation = match[3]?.trim();
       if (!name || knownNames.has(name)) continue;
 
-      if (this.isInsideTypeBody(content, match.index, entities)) continue;
+      if (this.isInsideTypeBodyFast(match.index, typeBodyRanges)) continue;
 
       const varId = `${filePath}:variable:${name}`;
       const modifiers: string[] = [];
@@ -487,7 +502,7 @@ export class ZigNativeParser {
         name,
         type: "variable",
         filePath,
-        location: this.getLocationFromIndex(content, match.index),
+        location: lineMap.getEntityLocation(match.index),
         modifiers,
         ...(typeAnnotation && { returnType: typeAnnotation }),
       });
@@ -496,7 +511,7 @@ export class ZigNativeParser {
     // =========================================================================
     // EXTRACT CALLS AND CONTROL FLOW (Second Pass)
     // =========================================================================
-    this.extractCallsAndControlFlow(content, filePath, entities, relationships);
+    this.extractCallsAndControlFlow(content, filePath, entities, relationships, lineMap);
 
     // Log summary
     const callsRels = relationships.filter((r) => r.type === "calls");
@@ -524,6 +539,8 @@ export class ZigNativeParser {
     children: ParsedEntity[],
     relationships: EntityRelationship[],
   ): void {
+    const bodyLineMap = new LineOffsetMap(body);
+
     // Parse methods first (so we can exclude them from field detection)
     const methodNames = new Set<string>();
     this.resetRegex(METHOD_IN_BODY_RE);
@@ -547,13 +564,14 @@ export class ZigNativeParser {
       if (isInline) modifiers.push("inline");
 
       const parameters = this.parseParameters(paramsStr);
+      const location = bodyLineMap.getEntityLocation(match.index);
 
       children.push({
         id: `${filePath}:${isMethod ? "method" : "function"}:${fullName}`,
         name: fullName,
         type: isMethod ? "method" : "function",
         filePath,
-        location: this.getLocationFromIndex(body, match.index),
+        location,
         modifiers,
         ...(parameters.length > 0 && { parameters }),
         ...(returnType && { returnType }),
@@ -563,7 +581,7 @@ export class ZigNativeParser {
         from: fullName,
         to: parentName,
         type: "member_of",
-        metadata: { line: this.getLocationFromIndex(body, match.index).start.line },
+        metadata: { line: location.start.line },
       });
 
       // Extract calls from method body
@@ -623,7 +641,7 @@ export class ZigNativeParser {
           name: fullName,
           type: "field",
           filePath,
-          location: this.getLocationFromIndex(body, body.indexOf(trimmed)),
+          location: bodyLineMap.getEntityLocation(body.indexOf(trimmed)),
           ...(fieldType && { returnType: fieldType }),
         });
       }
@@ -641,6 +659,8 @@ export class ZigNativeParser {
     children: ParsedEntity[],
     relationships: EntityRelationship[],
   ): void {
+    const bodyLineMap = new LineOffsetMap(body);
+
     // Parse methods first
     const methodNames = new Set<string>();
     this.resetRegex(METHOD_IN_BODY_RE);
@@ -668,7 +688,7 @@ export class ZigNativeParser {
         name: fullName,
         type: isMethod ? "method" : "function",
         filePath,
-        location: this.getLocationFromIndex(body, match.index),
+        location: bodyLineMap.getEntityLocation(match.index),
         modifiers,
         ...(parameters.length > 0 && { parameters }),
         ...(returnType && { returnType }),
@@ -701,7 +721,7 @@ export class ZigNativeParser {
           name: fullName,
           type: "enum_variant",
           filePath,
-          location: this.getLocationFromIndex(body, body.indexOf(trimmed)),
+          location: bodyLineMap.getEntityLocation(body.indexOf(trimmed)),
         });
       }
     }
@@ -716,8 +736,22 @@ export class ZigNativeParser {
     filePath: string,
     entities: ParsedEntity[],
     relationships: EntityRelationship[],
+    lineMap: LineOffsetMap,
   ): void {
     this.resetRegex(FUNC_WITH_BODY_RE);
+
+    // Build HashMaps for O(1) entity lookup instead of O(n) entities.find()
+    const funcEntitiesByName = new Map<string, ParsedEntity[]>();
+    const entityByFullName = new Map<string, ParsedEntity>();
+    for (const e of entities) {
+      if (e.type === "function" || e.type === "method") {
+        const shortName = e.name.includes(".") ? e.name.split(".").pop()! : e.name;
+        const list = funcEntitiesByName.get(shortName);
+        if (list) list.push(e);
+        else funcEntitiesByName.set(shortName, [e]);
+        entityByFullName.set(e.name, e);
+      }
+    }
 
     let funcMatch: RegExpExecArray | null;
     let functionsProcessed = 0;
@@ -727,17 +761,16 @@ export class ZigNativeParser {
       if (!funcName) continue;
 
       const bodyStartIndex = funcMatch.index + funcMatch[0].length - 1;
-      const funcLine = content.slice(0, funcMatch.index).split("\n").length;
+      const funcLine = lineMap.getLine(funcMatch.index);
 
       const body = this.extractBraceBlock(content, bodyStartIndex);
       if (!body) continue;
 
-      // Find matching entity
-      const funcEntity = entities.find(
+      // Find matching entity via HashMap O(1) + small array scan
+      const candidates = funcEntitiesByName.get(funcName);
+      const funcEntity = candidates?.find(
         (e) =>
-          (e.type === "function" || e.type === "method") &&
-          (e.name === funcName || e.name.endsWith(`.${funcName}`)) &&
-          Math.abs(e.location.start.line - funcLine) <= 5,
+          (e.name === funcName || e.name.endsWith(`.${funcName}`)) && Math.abs(e.location.start.line - funcLine) <= 5,
       );
 
       if (!funcEntity || !funcEntity.id) continue;
@@ -760,11 +793,14 @@ export class ZigNativeParser {
         for (const call of calls) {
           const qualifiedCallName = call.target ? `${call.target}.${call.name}` : call.name;
 
-          const targetEntity = entities.find(
-            (e) =>
-              (e.type === "function" || e.type === "method") &&
-              (e.name === qualifiedCallName || e.name === call.name || e.name.endsWith(`.${call.name}`)),
-          );
+          // O(1) lookup via HashMap instead of O(n) entities.find()
+          let targetEntity = entityByFullName.get(qualifiedCallName) || entityByFullName.get(call.name);
+          if (!targetEntity) {
+            const targetCandidates = funcEntitiesByName.get(call.name);
+            if (targetCandidates && targetCandidates.length > 0) {
+              targetEntity = targetCandidates[0];
+            }
+          }
 
           if (targetEntity) {
             relationships.push({
@@ -1027,44 +1063,17 @@ export class ZigNativeParser {
     );
   }
 
-  private isInsideTypeBody(content: string, index: number, entities: ParsedEntity[]): boolean {
-    // Quick heuristic: check if this index is between a struct/enum/union opening brace
-    // and its closing brace. We check entities that have children (body was parsed).
-    for (const entity of entities) {
-      if (
-        (entity.type === "struct" || entity.type === "enum" || entity.type === "union") &&
-        entity.children &&
-        entity.children.length > 0
-      ) {
-        const entityStart = entity.location.start.index;
-        // Find the opening brace after the entity declaration
-        const braceIdx = content.indexOf("{", entityStart);
-        if (braceIdx >= 0 && braceIdx < index) {
-          const bodyEnd = this.findClosingBrace(content, braceIdx);
-          if (bodyEnd > index) return true;
-        }
-      }
+  private isInsideTypeBodyFast(index: number, typeBodyRanges: Array<{ start: number; end: number }>): boolean {
+    // Binary search: find last range where start <= index
+    let lo = 0;
+    let hi = typeBodyRanges.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (typeBodyRanges[mid]!.start <= index) lo = mid + 1;
+      else hi = mid - 1;
     }
-    return false;
-  }
-
-  private findClosingBrace(content: string, startIndex: number): number {
-    if (content[startIndex] !== "{") return -1;
-    let depth = 1;
-    let i = startIndex + 1;
-    while (i < content.length && depth > 0) {
-      if (content[i] === "{") depth++;
-      else if (content[i] === "}") depth--;
-      else if (content[i] === '"') {
-        i++;
-        while (i < content.length && content[i] !== '"') {
-          if (content[i] === "\\") i++;
-          i++;
-        }
-      }
-      i++;
-    }
-    return depth === 0 ? i - 1 : -1;
+    // hi is the index of the last range with start <= index
+    return hi >= 0 && index < typeBodyRanges[hi]!.end;
   }
 
   private parseParameters(
@@ -1124,24 +1133,6 @@ export class ZigNativeParser {
     }
 
     return hasContent ? commas + 1 : 0;
-  }
-
-  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
-    let line = 1;
-    let column = 0;
-    for (let i = 0; i < index && i < content.length; i++) {
-      if (content[i] === "\n") {
-        line++;
-        column = 0;
-      } else {
-        column++;
-      }
-    }
-
-    return {
-      start: { line, column, index },
-      end: { line, column: column + 1, index: index + 1 },
-    };
   }
 
   async parseIncremental(

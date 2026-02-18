@@ -29,6 +29,39 @@ export function buildEntityNameMap(entities: Entity[]): Map<string, Entity[]> {
 }
 
 /**
+ * Incrementally add entities to both byName and bySuffix maps.
+ * O(k) where k = number of new entities, instead of O(n) full rebuild.
+ *
+ * The bySuffix map stores entities keyed by `.simpleName` suffix,
+ * enabling O(1) suffix lookup in resolveByNameAndLine().
+ *
+ * @param byName - Existing name→entities map (mutated in place)
+ * @param bySuffix - Existing suffix→entities map (mutated in place)
+ * @param entities - New entities to add
+ */
+export function addEntitiesToNameMap(
+  byName: Map<string, Entity[]>,
+  bySuffix: Map<string, Entity[]>,
+  entities: Entity[],
+): void {
+  for (const e of entities) {
+    // Add to byName
+    const arr = byName.get(e.name) || [];
+    arr.push(e);
+    byName.set(e.name, arr);
+
+    // Add to bySuffix — extract simple name after last '.'
+    const dotIdx = e.name.lastIndexOf(".");
+    if (dotIdx >= 0) {
+      const suffix = e.name.slice(dotIdx); // e.g. ".myMethod"
+      const suffArr = bySuffix.get(suffix) || [];
+      suffArr.push(e);
+      bySuffix.set(suffix, suffArr);
+    }
+  }
+}
+
+/**
  * Resolve an entity by name, optionally using line number for disambiguation.
  * When multiple entities share the same name, returns the one closest to the given line.
  *
@@ -51,6 +84,7 @@ export function resolveByNameAndLine(
   line?: number,
   sourceFile?: string,
   preferContainerType?: boolean,
+  bySuffix?: Map<string, Entity[]>,
 ): string | undefined {
   // First try exact match
   let candidates = byName.get(name);
@@ -59,10 +93,16 @@ export function resolveByNameAndLine(
   // e.g., "myMethod" should match "MyClass.myMethod"
   if ((!candidates || candidates.length === 0) && !name.includes(".")) {
     const suffix = `.${name}`;
-    candidates = [];
-    for (const [entityName, entities] of byName) {
-      if (entityName.endsWith(suffix)) {
-        candidates.push(...entities);
+    if (bySuffix) {
+      // O(1) lookup via pre-built suffix index
+      candidates = bySuffix.get(suffix);
+    } else {
+      // Fallback: O(n) scan for backwards compatibility (indexEntities path)
+      candidates = [];
+      for (const [entityName, entities] of byName) {
+        if (entityName.endsWith(suffix)) {
+          candidates.push(...entities);
+        }
       }
     }
   }
