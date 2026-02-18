@@ -68,6 +68,7 @@ interface CombinedEmbeddingConfig {
     model?: string;
     max_batch_size?: number;
     batchSize?: number;
+    encoding_format?: "float" | "base64";
     timeoutMs?: number;
     concurrency?: number;
     models?: ModelEntry[];
@@ -325,6 +326,7 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
       // Higher concurrency for embedding workloads (server handles batching internally)
       concurrency: vllmConfig.concurrency || 12,
       maxBatchSize: vllmConfig.max_batch_size || 200,
+      encodingFormat: vllmConfig.encoding_format || "float",
     };
   } else if (embeddingConfig.llamacpp || embeddingConfig.platform === "llamacpp") {
     // llama.cpp provider (local GGUF models)
@@ -362,7 +364,8 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
   // Queue batch size for centralized mode (texts per HTTP request)
   // Rule: batchSize <= --parallel, smaller batches = better GPU utilization
   // 64 texts * 8 parallel = 512 texts in flight
-  const queueBatchSize = providerKind === "llamacpp" ? 72 : providerKind === "ovms" ? 200 : undefined;
+  const queueBatchSize =
+    providerKind === "llamacpp" ? 72 : providerKind === "ovms" ? 200 : providerKind === "tei" ? 50 : undefined;
 
   const result: WorkerEmbeddingConfig = {
     enabled: true,

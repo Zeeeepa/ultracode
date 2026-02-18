@@ -15,7 +15,7 @@ import type { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 import type { CSharpParsedEntity } from "../addons/csharp-native-parser.js";
-import { getCSharpParser } from "../addons/index.js";
+import { ensureRoslynStarted, findSolutionFile, getCSharpParser } from "../addons/index.js";
 // =============================================================================
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
@@ -25,7 +25,15 @@ import { log } from "../logging/index.js";
 import { isFileSupported } from "../parsers/language-configs.js";
 import { type EmbeddingAccumulator, getEmbeddingAccumulator } from "../semantic/embedding-accumulator.js";
 import { type AgentMessage, type AgentTask, AgentType } from "../types/agent.js";
-import type { FileChange, ParsedEntity, ParseResult, ParserOptions, ParserStats, ParserTask } from "../types/parser.js";
+import type {
+  EntityRelationship,
+  FileChange,
+  ParsedEntity,
+  ParseResult,
+  ParserOptions,
+  ParserStats,
+  ParserTask,
+} from "../types/parser.js";
 import type { EmbeddingPoolStats, WorkerEmbeddingConfig } from "../types/semantic.js";
 import { BaseAgent } from "./base.js";
 import type { BinaryEmbedding } from "./workers/language-worker-pool.js";
@@ -163,6 +171,7 @@ const CSHARP_TYPE_MAP = {
 function convertCSharpResult(filePath: string, entities: CSharpParsedEntity[]): ParseResult {
   const startTime = Date.now();
   const converted: ParsedEntity[] = [];
+  const relationships: EntityRelationship[] = [];
 
   function convert(entity: CSharpParsedEntity): ParsedEntity {
     const mappedType: ParsedEntity["type"] =
@@ -252,26 +261,188 @@ function convertCSharpResult(filePath: string, entities: CSharpParsedEntity[]): 
       }));
     }
 
-    // Children
-    if (entity.children?.length) {
-      parsed.children = entity.children.map(convert);
-    }
+    // NOTE: Don't set parsed.children here — we flatten manually below
+    // to avoid double-flattening in indexEntities() → flattenParsedEntities()
 
     return parsed;
   }
 
-  // Flatten: top-level + children all go into entities[]
-  function flatten(entity: CSharpParsedEntity): void {
-    converted.push(convert(entity));
+  // Flatten tree and build relationships
+  function flatten(entity: CSharpParsedEntity, parentName?: string): void {
+    const parsed = convert(entity);
+    converted.push(parsed);
+
+    // Parent → child CONTAINS relationship
+    if (parentName) {
+      relationships.push({
+        from: parentName,
+        to: parsed.name,
+        type: "contains",
+        sourceFile: filePath,
+        metadata: { line: parsed.location.start.line },
+      });
+    }
+
+    // Inheritance relationships
+    if (parsed.inheritance?.baseClasses) {
+      for (const base of parsed.inheritance.baseClasses) {
+        relationships.push({
+          from: parsed.name,
+          to: base,
+          type: "inherits",
+          sourceFile: filePath,
+          metadata: { line: parsed.location.start.line },
+        });
+      }
+    }
+    if (parsed.inheritance?.interfaces) {
+      for (const iface of parsed.inheritance.interfaces) {
+        relationships.push({
+          from: parsed.name,
+          to: iface,
+          type: "implements",
+          sourceFile: filePath,
+          metadata: { line: parsed.location.start.line },
+        });
+      }
+    }
+
+    // Call relationships
+    if (parsed.calls) {
+      for (const call of parsed.calls) {
+        relationships.push({
+          from: parsed.name,
+          to: call.target || call.name,
+          type: "calls",
+          sourceFile: filePath,
+          metadata: { line: call.location?.start?.line },
+        });
+      }
+    }
+
+    // Recurse children
     if (entity.children) {
       for (const child of entity.children) {
-        flatten(child);
+        flatten(child, entity.name);
       }
     }
   }
 
-  for (const entity of entities) {
-    flatten(entity);
+  // SAFEGUARD: If Roslyn returned flat entities (no children but parentId present),
+  // reconstruct the tree to generate proper contains relationships.
+  // This handles the case where JSON serialization might lose nested children.
+  const hasAnyChildren = entities.some((e) => e.children && e.children.length > 0);
+  const hasAnyParentId = entities.some((e) => !!e.parentId);
+
+  if (!hasAnyChildren && hasAnyParentId && entities.length > 1) {
+    log.w("PARSER", "csharp_flat_detected", {
+      entities: entities.length,
+      withParentId: entities.filter((e) => !!e.parentId).length,
+      hint: "Roslyn returned flat list — reconstructing tree from parentId",
+    });
+
+    // Build parentId → entity map for tree reconstruction
+    const byId = new Map<string, CSharpParsedEntity>();
+    for (const e of entities) byId.set(e.id, e);
+
+    // Reconstruct: assign children to parents
+    for (const e of entities) {
+      if (e.parentId) {
+        const parent = byId.get(e.parentId);
+        if (parent) {
+          if (!parent.children) parent.children = [];
+          parent.children.push(e);
+        }
+      }
+    }
+
+    // Flatten root entities (those without parentId) — children are reached via recursion
+    for (const entity of entities) {
+      if (!entity.parentId) {
+        flatten(entity);
+      }
+    }
+    // Also flatten orphaned entities (parentId set but parent not found in byId)
+    for (const entity of entities) {
+      if (entity.parentId && !byId.has(entity.parentId)) {
+        flatten(entity);
+      }
+    }
+  } else {
+    // Normal tree mode: entities already have children populated
+    for (const entity of entities) {
+      flatten(entity);
+    }
+  }
+
+  // ROBUST FALLBACK: Always generate "contains" relationships from parentId.
+  // This guarantees relationships even if tree serialization failed.
+  // Deduplicates with relationships already generated by the tree pass.
+  // IMPORTANT: Collect ALL entities recursively (including nested children),
+  // because in tree mode the top-level `entities` array only has root entities
+  // and children (which have parentId) are nested inside entity.children.
+  const allEntitiesFlat: CSharpParsedEntity[] = [];
+  function collectAll(e: CSharpParsedEntity): void {
+    allEntitiesFlat.push(e);
+    if (e.children) {
+      for (const child of e.children) collectAll(child);
+    }
+  }
+  for (const e of entities) collectAll(e);
+
+  const existingContains = new Set(relationships.filter((r) => r.type === "contains").map((r) => `${r.from}|${r.to}`));
+
+  const byId = new Map<string, CSharpParsedEntity>();
+  for (const e of allEntitiesFlat) byId.set(e.id, e);
+
+  let parentIdFallbackCount = 0;
+  for (const entity of allEntitiesFlat) {
+    if (entity.parentId) {
+      const parent = byId.get(entity.parentId);
+      if (parent) {
+        const key = `${parent.name}|${entity.name}`;
+        if (!existingContains.has(key)) {
+          existingContains.add(key);
+          relationships.push({
+            from: parent.name,
+            to: entity.name,
+            type: "contains",
+            sourceFile: filePath,
+            metadata: { line: entity.startLine },
+          });
+          parentIdFallbackCount++;
+        }
+      }
+    }
+  }
+
+  if (parentIdFallbackCount > 0) {
+    log.w("PARSER", "csharp_parentId_fallback", {
+      file: filePath.split(/[/\\]/).pop(),
+      addedRelationships: parentIdFallbackCount,
+      totalRelationships: relationships.length,
+    });
+  }
+
+  // DEBUG: Log conversion results for C# files
+  if (converted.length > 0 || relationships.length > 0) {
+    const withChildren = entities.filter((e) => e.children && e.children.length > 0);
+    const withParentId = allEntitiesFlat.filter((e) => !!e.parentId);
+    const relsByType: Record<string, number> = {};
+    for (const r of relationships) relsByType[r.type] = (relsByType[r.type] || 0) + 1;
+    log.i("PARSER", "csharp_convert_result", {
+      file: filePath.split(/[/\\]/).pop(),
+      topLevelEntities: entities.length,
+      allEntitiesFlat: allEntitiesFlat.length,
+      withChildren: withChildren.length,
+      withParentId: withParentId.length,
+      totalConverted: converted.length,
+      relationships: relationships.length,
+      relsByType,
+      parentIdFallback: parentIdFallbackCount,
+      entityNames: converted.slice(0, 5).map((e) => `${e.name}(${e.type})`),
+      relSample: relationships.slice(0, 5).map((r) => `${r.from}->${r.to}:${r.type}`),
+    });
   }
 
   // Content hash
@@ -287,6 +458,7 @@ function convertCSharpResult(filePath: string, entities: CSharpParsedEntity[]): 
     filePath,
     language: "csharp",
     entities: converted,
+    relationships,
     contentHash,
     timestamp: Date.now(),
     parseTimeMs: Date.now() - startTime,
@@ -384,7 +556,8 @@ export class ParserAgent extends BaseAgent {
         // Lazy init accumulator on first texts - use dimensions from config
         const dimensions = this.embeddingConfig?.dimensions ?? 384;
         const queueBatchSize = this.embeddingConfig?.queueBatchSize ?? 128;
-        this.embeddingAccumulator = getEmbeddingAccumulator({ dimensions, queueBatchSize });
+        const parallelBatches = this.embeddingConfig?.provider === "tei" ? 4 : 12;
+        this.embeddingAccumulator = getEmbeddingAccumulator({ dimensions, queueBatchSize, parallelBatches });
         log.d("PARSER", "Initialized embedding accumulator (centralized mode)", { dimensions, queueBatchSize });
       }
       // Add texts for centralized embedding generation (fire-and-forget, errors logged internally)
@@ -816,6 +989,14 @@ export class ParserAgent extends BaseAgent {
       else otherFiles.push(f);
     }
 
+    if (csharpFiles.length > 0) {
+      log.i("PARSER", "csharp_split", {
+        csharp: csharpFiles.length,
+        other: otherFiles.length,
+        sample: csharpFiles.slice(0, 3),
+      });
+    }
+
     // Always use subprocess worker pools for memory isolation
     const startTime = Date.now();
 
@@ -1176,9 +1357,33 @@ export class ParserAgent extends BaseAgent {
    * Returns empty array if addon is not running.
    */
   private async parseCSharpFiles(files: string[]): Promise<ParseResult[]> {
-    const parser = getCSharpParser();
+    let parser = getCSharpParser();
+
+    // Lazy start: discover .sln from C# files directory and start addon
+    if (!parser && files.length > 0) {
+      const { dirname } = await import("node:path");
+      // Walk up from first .cs file to find .sln/.slnx
+      let dir = dirname(files[0]!);
+      let slnPath: string | null = null;
+      for (let i = 0; i < 10; i++) {
+        slnPath = findSolutionFile(dir);
+        if (slnPath) break;
+        const parent = dirname(dir);
+        if (parent === dir) break; // root
+        dir = parent;
+      }
+
+      if (slnPath) {
+        log.i("PARSER", "csharp_lazy_start", { sln: slnPath, files: files.length });
+        const started = await ensureRoslynStarted(slnPath);
+        if (started) {
+          parser = started;
+        }
+      }
+    }
+
     if (!parser) {
-      log.w("PARSER", "csharp_skip", { count: files.length, reason: "addon_not_started" });
+      log.w("PARSER", "csharp_skip", { count: files.length, reason: "no_sln_or_addon_unavailable" });
       return [];
     }
 
@@ -1191,7 +1396,31 @@ export class ParserAgent extends BaseAgent {
     for (let i = 0; i < files.length; i += BATCH) {
       const batch = files.slice(i, i + BATCH);
       const result = await parser.parseBatch(batch.map((f) => ({ filePath: f })));
-      if (!result) continue;
+      if (!result) {
+        log.w("PARSER", "csharp_batch_null_result", { batchIndex: i, batchSize: batch.length });
+        continue;
+      }
+
+      // DEBUG: Inspect raw Roslyn response to diagnose relationship issues
+      if (result.files && result.files.length > 0) {
+        const sample = result.files[0]!;
+        const sampleEntities = sample.entities || [];
+        const withChildren = sampleEntities.filter((e) => e.children && e.children.length > 0);
+        const withCalls = sampleEntities.filter((e) => e.metadata?.calls && e.metadata.calls.length > 0);
+        log.w("PARSER", "csharp_raw_response", {
+          filesInResponse: result.files.length,
+          sampleFile: sample.filePath?.split(/[/\\]/).pop(),
+          sampleEntities: sampleEntities.length,
+          withChildren: withChildren.length,
+          withCalls: withCalls.length,
+          entityTree: sampleEntities.slice(0, 3).map((e) => ({
+            name: e.name,
+            type: e.type,
+            children: e.children?.length ?? 0,
+            childNames: e.children?.slice(0, 5).map((c) => c.name),
+          })),
+        });
+      }
 
       for (const fileResult of result.files) {
         const pr = convertCSharpResult(fileResult.filePath, fileResult.entities);
@@ -1207,6 +1436,7 @@ export class ParserAgent extends BaseAgent {
     log.i("PARSER", "csharp_batch_done", {
       files: files.length,
       entities: allResults.reduce((s, r) => s + r.entities.length, 0),
+      relationships: allResults.reduce((s, r) => s + (r.relationships?.length || 0), 0),
       dur: Date.now() - startTime,
     });
     return allResults;
@@ -1312,6 +1542,7 @@ export class ParserAgent extends BaseAgent {
       this.embeddingAccumulator = getEmbeddingAccumulator({
         dimensions: config.dimensions ?? 384,
         queueBatchSize: config.queueBatchSize ?? 128,
+        parallelBatches: config.provider === "tei" ? 4 : 12,
       });
       log.i("PARSER", "Accumulator configured for centralized mode", {
         dimensions: config.dimensions,

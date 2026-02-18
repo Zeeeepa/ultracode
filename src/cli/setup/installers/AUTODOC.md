@@ -12,7 +12,7 @@
 | `installOllama` | function | Проверяет установку и запускает сервис Ollama для встраивания | [→ ollama-installer.ts:11-65] |
 | `installOVMSNative` | function | Устанавливает OpenVINO Model Server с поддержкой нескольких устройств | [→ ovms-installer.ts:16-478] |
 | `installTEI` | function | Развёртывает контейнер с Text Embeddings Inference и моделями | [→ tei-installer.ts:18-20] |
-| `installVLLM` | function | Создаёт контейнер vLLM с поддержкой OpenAI-совместимого API | [→ vllm-installer.ts:15-202] |
+| `installVLLM` | function | Создаёт контейнер vLLM с поддержкой OpenAI-совместимого API | [→ vllm-installer.ts:15-204] |
 
 ## Files
 

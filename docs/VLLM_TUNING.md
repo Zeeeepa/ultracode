@@ -17,21 +17,23 @@ npm run setup
 Параметры задаются при создании контейнера в `vllm-installer.ts`:
 
 ```bash
-docker run ... vllm/vllm-openai:latest "model-name" \
+docker run ... vllm/vllm-openai:latest-cu130 "model-name" \
   --max-model-len 512 \
   --dtype auto \
   --gpu-memory-utilization 0.8 \
   --max-num-batched-tokens 16384 \
-  --max-num-seqs 256
+  --max-num-seqs 256 \
+  --disable-log-requests
 ```
 
 | Параметр | Значение | Описание |
 |----------|----------|----------|
-| `--max-model-len` | 512 | Макс. длина контекста (для коротких embedding текстов) |
+| `--max-model-len` | 512 (dynamic) | Макс. длина контекста (динамически из модели, напр. 8192 для BGE-M3) |
 | `--dtype` | auto | Автовыбор типа данных для GPU |
 | `--gpu-memory-utilization` | 0.8 | 80% GPU памяти |
 | `--max-num-batched-tokens` | 16384 | Токенов в batch (высокое для encoder) |
 | `--max-num-seqs` | 256 | Concurrent sequences для batching |
+| `--disable-log-requests` | - | Отключает логирование каждого запроса (снижает overhead, vLLM 0.14+) |
 
 ## Client Parameters (semantic-config.json)
 
@@ -41,7 +43,8 @@ docker run ... vllm/vllm-openai:latest "model-name" \
     "platform": "vllm",
     "vllm": {
       "endpoint": "http://127.0.0.1:8000",
-      "max_batch_size": 256,
+      "max_batch_size": 200,
+      "encoding_format": "base64",
       "concurrency": 12,
       "selected_model": "intfloat/multilingual-e5-small",
       "models": [
@@ -57,7 +60,8 @@ docker run ... vllm/vllm-openai:latest "model-name" \
 
 | Параметр | Значение | Описание |
 |----------|----------|----------|
-| `max_batch_size` | 256 | Текстов в HTTP запросе |
+| `max_batch_size` | 200 | Текстов в HTTP запросе |
+| `encoding_format` | `"base64"` | Формат ответа: base64 (~33% меньше трафика) или float |
 | `concurrency` | 12 | Параллельных HTTP запросов |
 
 ## Benchmark Results (RTX 5090, multilingual-e5-small)
@@ -79,12 +83,14 @@ docker run ... vllm/vllm-openai:latest "model-name" \
 | + max-num-batched-tokens=16384 | **1352/s** | **+7%** |
 | + max-num-seqs=256 | (included above) | |
 
-### vLLM vs llama.cpp
+### vLLM vs Other Providers (RTX 5090, e5-small)
 
 | Provider | Скорость | Отношение |
 |----------|----------|-----------|
-| llama.cpp (optimized) | 373/s | 1x |
-| **vLLM (optimized)** | **1352/s** | **3.6x** |
+| llama.cpp (optimized) | 441/s | 1x |
+| OVMS Native (CPU/iGPU) | 260-326/s | 0.7x |
+| **TEI (120-latest)** | **1169/s** | **2.7x** |
+| **vLLM (optimized)** | **1352/s** | **3.1x** |
 
 ## Optimization Tips
 
@@ -114,14 +120,28 @@ docker run ... vllm/vllm-openai:latest "model-name" \
 --gpu-memory-utilization 0.9
 ```
 
-### 4. Client Batching
+### 4. encoding_format: "base64" (vLLM 0.14+)
+
+Запрос с `encoding_format: "base64"` возвращает embeddings в base64 вместо JSON float массива:
+
+- ~33% меньше данных по сети
+- Быстрее десериализация (один `atob()` vs парсинг тысяч чисел)
+- Автоматический fallback: если сервер вернёт JSON floats, клиент обработает их корректно
+
+```json
+{
+  "encoding_format": "base64"
+}
+```
+
+### 5. Client Batching
 
 Согласовать `max_batch_size` и `concurrency` с серверными параметрами:
 
 - `max_batch_size` ≤ `max-num-seqs`
 - `concurrency` × `max_batch_size` ≈ `max-num-batched-tokens` / avg_text_length
 
-### 5. Model Selection
+### 6. Model Selection
 
 | Модель | Размерность | Скорость | Качество |
 |--------|-------------|----------|----------|

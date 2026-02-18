@@ -1,12 +1,10 @@
 # TEI gRPC Migration Plan
 
-## Status: WAITING
+## Status: READY
 
-Ожидаем merge PR в TEI для поддержки Blackwell (GTX 50xx).
-После этого будет доступен gRPC образ для Blackwell.
+TEI 1.9+ поддерживает Blackwell нативно. Форк больше не нужен.
 
 **Tracking:**
-- Форк: https://hub.docker.com/r/hotchpotch/tei-blackwell-testing
 - Upstream TEI: https://github.com/huggingface/text-embeddings-inference
 
 ## Почему gRPC?
@@ -25,9 +23,9 @@
 - Batch splitting для больших запросов
 - ~20% загрузка GPU (недогружен)
 
-### Проблема
-Форк `hotchpotch/tei-blackwell-testing` не включает gRPC бинарник.
-Официальный TEI gRPC образ не поддерживает Blackwell.
+### Проблема (решена)
+TEI 1.9+ поддерживает Blackwell нативно. Форк больше не нужен.
+gRPC образ доступен в official TEI latest.
 
 ## План миграции
 
@@ -60,8 +58,7 @@
 1. Обновить `config/embedding-models.json`:
    ```json
    {
-     "image_gpu": "ghcr.io/huggingface/text-embeddings-inference:1.8-grpc",
-     "image_gpu_blackwell": "hotchpotch/tei-blackwell-testing:grpc"  // когда появится
+     "image_gpu": "ghcr.io/huggingface/text-embeddings-inference:latest"
    }
    ```
 
@@ -120,4 +117,4 @@ message EmbedResponse {
 
 - [TEI GitHub](https://github.com/huggingface/text-embeddings-inference)
 - [TEI gRPC Docs](https://huggingface.co/docs/text-embeddings-inference/en/quick_tour)
-- [Blackwell Fork](https://hub.docker.com/r/hotchpotch/tei-blackwell-testing)
+- TEI 1.9+ — нативная поддержка Blackwell (sm100/sm120)

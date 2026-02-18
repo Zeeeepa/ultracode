@@ -137,27 +137,49 @@ src/merge/
 
 ---
 
-## 🟡 WAITING — Ожидают внешние зависимости
+## 🟢 READY — TEI/vLLM Improvements
 
 ### TEI gRPC Migration
 
 **Документация:** [TEI_GRPC_MIGRATION_PLAN.md](./TEI_GRPC_MIGRATION_PLAN.md)
 
-**Статус:** Ожидаем merge PR в upstream TEI для поддержки Blackwell (GTX 50xx)
+**Статус:** READY — TEI 1.9.1+ поддерживает Blackwell нативно. gRPC образ доступен (`120-1.9.1-grpc`).
 
-**Проблема:** Форк `hotchpotch/tei-blackwell-testing` не включает gRPC бинарник.
-Официальный TEI gRPC образ не поддерживает Blackwell.
+**Текущая скорость (HTTP):** 1169 emb/s (Accumulator), peak 2442 emb/s (RTX 5090, e5-small)
 
-**Ожидаемый результат:**
-- GPU загрузка: 20% → 60-80%
-- Throughput: ~450 chunks/s → ~1000+ chunks/s
-- Latency: ~10ms → ~3-5ms
+**Ожидаемый результат (gRPC):**
+- Latency: ~10ms → ~3-5ms (устранение HTTP overhead)
+- Throughput: 1169 → 1500+ emb/s (оценка)
+- GPU загрузка: выше за счёт streaming
 
-**Временные оптимизации (применены):**
-- [x] Sliding window pipeline (не ждём весь batch)
-- [x] Concurrency 8 → 16
-- [x] max_batch_tokens 16K → 32K
-- [x] max_client_batch_size 512 → 1024
+**gRPC image tags для Blackwell:** `120-1.9.1-grpc`, `120-latest-grpc`
+
+---
+
+### Бенчмарк новых моделей
+
+**Статус:** Модели добавлены в каталог, не протестированы.
+
+- [ ] **EmbeddingGemma-300M** (`tei-embeddinggemma-300m`) — SOTA <500M params, 768D, 100+ языков. Нужно: запустить контейнер с `120-latest`, прогнать индексацию, замерить emb/s и качество поиска vs e5-small.
+- [ ] **Qwen3-Embedding-0.6B** (`vllm-qwen3-embedding-0.6b`) — code search модель, 1024D. Нужно: запустить vLLM контейнер, прогнать индексацию, сравнить качество code search vs e5-base.
+- [ ] **vLLM на Blackwell** — текущий бенчмарк 1352 emb/s получен до перехода на `120-latest`. Нужно перезамерить.
+
+---
+
+### TEI Accumulator tuning
+
+**Статус:** Базовые оптимизации применены, есть потенциал улучшения.
+
+**Выполнено:**
+- [x] Configurable `parallelBatches` (вместо hardcoded 12)
+- [x] TEI-specific: `queueBatchSize=50`, `parallelBatches=4`
+- [x] Backoff 500ms при 429 "overloaded"
+
+**TODO:**
+- [ ] Экспоненциальный backoff вместо фиксированного 500ms (500 → 1000 → 2000ms, max retries)
+- [ ] Adaptive `parallelBatches` — автоматическое снижение при 429, повышение при успехе
+- [ ] Проверить `concurrency: 16` в TEI config vs `parallelBatches: 4` — возможно рассинхрон
+- [ ] Профилирование: узкое место — сеть, TEI inference, или FAISS flush?
 
 ---
 

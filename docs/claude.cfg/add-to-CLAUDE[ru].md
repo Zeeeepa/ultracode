@@ -49,8 +49,6 @@
 - `get_help(topic='modification')` — гайд для Modify агентов
 - `get_tools_for_task(task='find duplicates')` — рекомендации инструментов
 
-> Для C# используй UltrasharpTools MCP (на основе Roslyn).
-
 ## Трассировка — Когда использовать
 
 | Вопрос | Инструмент |

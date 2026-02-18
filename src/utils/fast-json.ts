@@ -85,6 +85,7 @@ const vllmEmbeddingSchema: Schema = {
       anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
     },
     model: { type: "string" },
+    encoding_format: { type: "string" },
   },
   required: ["input"],
 };
@@ -274,6 +275,7 @@ export interface OpenAIEmbeddingRequest {
 export interface VllmEmbeddingRequest {
   input: string | string[];
   model?: string;
+  encoding_format?: string;
 }
 
 export interface VllmRerankRequest {

@@ -87,16 +87,6 @@ interface ParsedEntity {
   };
 }
 
-/**
- * State chaos analysis result
- */
-interface StateAnalysis {
-  totalStateEntities: number;
-  statePatterns: string[];
-  chaosScore: number;
-  recommendations: string[];
-}
-
 // TechnologyStack imported from technology-detector.ts
 
 // =============================================================================
@@ -551,6 +541,11 @@ export class FindRelatedConceptsToolHandler extends BaseToolHandler<z.infer<type
 
 const AnalyzeStateChaosSchema = z.object({
   projectPath: projectPathParam,
+  scope: z.enum(["file", "module", "project"]).optional().default("project"),
+  stateIdentifiers: z.array(z.string()).optional(),
+  autoDetect: z.boolean().optional().default(true),
+  maxDepth: z.number().optional(),
+  excludePatterns: z.array(z.string()).optional(),
   format: z.enum(["summary", "detailed", "json"]).optional().default("summary"),
 });
 
@@ -563,87 +558,55 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
     // v3: Ensure correct project context for GraphStorage queries
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
-    // Find state-related entities (limited to prevent memory issues)
-    const entities = await storage.findEntities({
-      filters: {},
-      limit: 5000,
+    // Use the full ChaosAnalyzer engine
+    const { ChaosAnalyzer } = await import("../../analysis/chaos/index.js");
+    const analyzer = new ChaosAnalyzer(storage);
+
+    const results = await analyzer.analyze({
+      scope: args.scope || "project",
+      stateIdentifiers: args.stateIdentifiers,
+      autoDetect: args.autoDetect ?? true,
+      maxDepth: args.maxDepth,
+      excludePatterns: args.excludePatterns,
     });
-
-    // Analyze state management patterns
-    const stateEntities = entities.filter(
-      (e: ParsedEntity) =>
-        e.name.toLowerCase().includes("state") ||
-        e.name.toLowerCase().includes("store") ||
-        e.name.toLowerCase().includes("context") ||
-        e.metadata?.isStateful,
-    );
-
-    const analysis = {
-      totalStateEntities: stateEntities.length,
-      statePatterns: this.detectStatePatterns(stateEntities),
-      chaosScore: this.calculateChaosScore(stateEntities),
-      recommendations: this.generateRecommendations(stateEntities),
-    };
 
     if (args.format === "json") {
       return {
-        content: [{ type: "text", text: JSON.stringify(analysis, null, 2) }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                statePatterns: results,
+                csharpPatterns: analyzer.csharpPatterns,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
       };
     }
 
-    const text = args.format === "detailed" ? this.formatDetailed(analysis) : this.formatSummary(analysis);
+    if (args.format === "detailed" && (results.length > 0 || analyzer.csharpPatterns.length > 0)) {
+      const parts: string[] = [];
+      if (results.length > 0) {
+        parts.push(results.map((r) => analyzer.formatDetailed(r)).join("\n\n---\n\n"));
+      }
+      // formatForAI already includes C# patterns section — use it for the C# part
+      if (analyzer.csharpPatterns.length > 0 && results.length === 0) {
+        parts.push(analyzer.formatForAI(results));
+      }
+      return {
+        content: [{ type: "text", text: parts.join("\n\n") }],
+      };
+    }
 
+    // Default: AI-friendly summary (includes C# anti-patterns)
+    const text = analyzer.formatForAI(results);
     return {
       content: [{ type: "text", text }],
     };
-  }
-
-  private detectStatePatterns(entities: ParsedEntity[]): string[] {
-    const patterns: string[] = [];
-    const names = entities.map((e) => e.name.toLowerCase());
-
-    if (names.some((n) => n.includes("redux"))) patterns.push("Redux");
-    if (names.some((n) => n.includes("zustand"))) patterns.push("Zustand");
-    if (names.some((n) => n.includes("mobx"))) patterns.push("MobX");
-    if (names.some((n) => n.includes("context"))) patterns.push("React Context");
-    if (names.some((n) => n.includes("vuex"))) patterns.push("Vuex");
-    if (names.some((n) => n.includes("pinia"))) patterns.push("Pinia");
-
-    return patterns.length > 0 ? patterns : ["Custom/Unknown"];
-  }
-
-  private calculateChaosScore(entities: ParsedEntity[]): number {
-    // Higher score = more chaos
-    let score = 0;
-    score += entities.length > 20 ? 30 : entities.length;
-    score += this.detectStatePatterns(entities).length > 2 ? 20 : 0;
-    return Math.min(100, score);
-  }
-
-  private generateRecommendations(entities: ParsedEntity[]): string[] {
-    const recs: string[] = [];
-    if (entities.length > 20) {
-      recs.push("Consider consolidating state management");
-    }
-    if (this.detectStatePatterns(entities).length > 2) {
-      recs.push("Multiple state patterns detected - consider standardizing");
-    }
-    return recs;
-  }
-
-  private formatSummary(analysis: StateAnalysis): string {
-    return `State Analysis Summary:
-- Total state entities: ${analysis.totalStateEntities}
-- Patterns detected: ${analysis.statePatterns.join(", ")}
-- Chaos score: ${analysis.chaosScore}/100
-- Recommendations: ${analysis.recommendations.length}`;
-  }
-
-  private formatDetailed(analysis: StateAnalysis): string {
-    return `${this.formatSummary(analysis)}
-
-Recommendations:
-${analysis.recommendations.map((r: string, i: number) => `${i + 1}. ${r}`).join("\n")}`;
   }
 }
 
@@ -679,6 +642,32 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
 
     let entityId = args.entityId;
 
+    // Try direct ID lookup first
+    if (entityId) {
+      const directEntity = await storage.getEntity(entityId);
+      if (!directEntity) {
+        // entityId might be a name, not a hash — try name-based search
+        const byName = await storage.searchEntities({ namePattern: entityId });
+        if (byName.length > 0) {
+          // If filePath provided, prefer entities from that file
+          if (args.filePath) {
+            const normalizedPath = this.context.normalizeInputPath(args.filePath);
+            const normalizedFilter = (normalizedPath || "").replace(/\\/g, "/").toLowerCase();
+            const inFile = byName.find((e) => {
+              const ep = (e.filePath || "").replace(/\\/g, "/").toLowerCase();
+              return ep.includes(normalizedFilter) || ep.endsWith(normalizedFilter);
+            });
+            if (inFile) entityId = inFile.id;
+            else entityId = byName[0]!.id;
+          } else {
+            entityId = byName[0]!.id;
+          }
+        } else {
+          entityId = undefined;
+        }
+      }
+    }
+
     // Find entity by file path if needed
     if (!entityId && args.filePath) {
       const normalizedPath = this.context.normalizeInputPath(args.filePath);
@@ -701,22 +690,24 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
     const entity = await storage.getEntity(entityId);
     const relationships = await storage.getRelationshipsForEntity(entityId);
 
-    // Calculate impact
+    // Calculate impact using level-based BFS
     const impactedEntities = new Set<string>();
-    const queue = [entityId];
+    let frontier = [entityId];
     let currentDepth = 0;
 
-    while (queue.length > 0 && currentDepth < args.depth) {
-      const current = queue.shift()!;
-      const rels = await storage.getRelationshipsForEntity(current);
-
-      for (const rel of rels) {
-        const targetId = rel.fromId === current ? rel.toId : rel.fromId;
-        if (!impactedEntities.has(targetId)) {
-          impactedEntities.add(targetId);
-          queue.push(targetId);
+    while (frontier.length > 0 && currentDepth < args.depth) {
+      const nextFrontier: string[] = [];
+      for (const current of frontier) {
+        const rels = await storage.getRelationshipsForEntity(current);
+        for (const rel of rels) {
+          const targetId = rel.fromId === current ? rel.toId : rel.fromId;
+          if (!impactedEntities.has(targetId) && targetId !== entityId) {
+            impactedEntities.add(targetId);
+            nextFrontier.push(targetId);
+          }
         }
       }
+      frontier = nextFrontier;
       currentDepth++;
     }
 

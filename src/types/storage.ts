@@ -326,6 +326,8 @@ export interface GraphStorage {
   updateEntity(id: string, updates: Partial<Entity>): Promise<void>;
   deleteEntity(id: string): Promise<void>;
   getEntity(id: string): Promise<Entity | null>;
+  /** Batch fetch entities by IDs. Returns Map<id, Entity> for found entities. */
+  getEntitiesBatch(ids: string[]): Promise<Map<string, Entity>>;
   findEntities(query: EntityQuery): Promise<Entity[]>;
 
   // NEW: Enhanced entity queries for Chaos Analysis and advanced tools

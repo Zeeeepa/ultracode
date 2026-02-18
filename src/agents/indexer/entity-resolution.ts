@@ -7,6 +7,11 @@
 
 import type { Entity } from "../../types/storage.js";
 
+// Container types that should be preferred for "contains" relationship resolution.
+// In C#, constructors share the class name — without this filter, the constructor
+// wins by line proximity and steals all "contains" relationships from the class.
+const CONTAINER_TYPES = new Set(["class", "interface", "module", "namespace", "enum", "struct", "object"]);
+
 /**
  * Build a map of entity names to their instances for efficient lookup.
  *
@@ -34,9 +39,19 @@ export function buildEntityNameMap(entities: Entity[]): Map<string, Entity[]> {
  * @param byName - Map from entity names to entity arrays
  * @param name - The entity name to resolve
  * @param line - Optional line number for disambiguation
+ * @param sourceFile - Optional source file path; when provided, entities from the same file are strongly preferred
+ * @param preferContainerType - When true, prefer container types (class, interface, module, etc.)
+ *   over member types (constructor, method). Essential for "contains" relationships where
+ *   a C# constructor shares the class name but should not be the parent.
  * @returns The entity ID if found, undefined otherwise
  */
-export function resolveByNameAndLine(byName: Map<string, Entity[]>, name: string, line?: number): string | undefined {
+export function resolveByNameAndLine(
+  byName: Map<string, Entity[]>,
+  name: string,
+  line?: number,
+  sourceFile?: string,
+  preferContainerType?: boolean,
+): string | undefined {
   // First try exact match
   let candidates = byName.get(name);
 
@@ -53,6 +68,26 @@ export function resolveByNameAndLine(byName: Map<string, Entity[]>, name: string
   }
 
   if (!candidates || candidates.length === 0) return undefined;
+
+  // When sourceFile is provided, strongly prefer same-file entities.
+  // This prevents cross-file name collisions in the pending buffer
+  // (e.g., multiple files with a "Dispose" method).
+  if (sourceFile && candidates.length > 1) {
+    const sameFile = candidates.filter((c) => c.filePath === sourceFile);
+    if (sameFile.length > 0) {
+      candidates = sameFile;
+    }
+  }
+
+  // For "contains" relationships, prefer container types over member types.
+  // In C#, constructors have the same name as the class — without this,
+  // the constructor wins by line proximity and steals all contains relationships.
+  if (preferContainerType && candidates.length > 1) {
+    const containers = candidates.filter((c) => CONTAINER_TYPES.has(c.type));
+    if (containers.length > 0) {
+      candidates = containers;
+    }
+  }
 
   if (line == null) return candidates[0]?.id;
 

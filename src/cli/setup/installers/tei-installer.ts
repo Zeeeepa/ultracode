@@ -42,15 +42,15 @@ export async function installTEI(model: EmbeddingModel, gpu: GPUInfo): Promise<b
     console.error(`${c.dim}  ${t("tei.hf_token_set_hint")}${c.reset}`);
   }
 
-  // Select image based on GPU
+  // Select image based on GPU (Blackwell needs separate image with sm_120 support)
   let imageTag: string;
-  if (gpu.isBlackwell) {
-    imageTag = "hotchpotch/tei-blackwell-testing:latest";
-    printWarn(t("tei.blackwell_detected"));
+  if (gpu.available && gpu.isBlackwell && model.image_gpu_blackwell) {
+    imageTag = model.image_gpu_blackwell;
+    printInfo(t("tei.blackwell_image"));
   } else if (gpu.available) {
-    imageTag = model.image_gpu || "ghcr.io/huggingface/text-embeddings-inference:1.8.3";
+    imageTag = model.image_gpu || "ghcr.io/huggingface/text-embeddings-inference:latest";
   } else {
-    imageTag = model.image_cpu || "ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3";
+    imageTag = model.image_cpu || "ghcr.io/huggingface/text-embeddings-inference:cpu-latest";
   }
 
   const containerName = "tei-server";

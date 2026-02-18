@@ -64,7 +64,7 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
       // Vector store not available
     }
 
-    const workingDir = (this.context.config as { directory?: string }).directory || process.cwd();
+    const workingDir = this.resolveProjectPath({});
     const modifier = new CodeModifier(storage, vectorStore, workingDir);
     const impactAnalyzer = new ImpactAnalyzer(storage, semanticSearch);
 

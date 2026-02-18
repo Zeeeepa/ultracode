@@ -9,7 +9,7 @@
 | Name | Type | Location |
 |------|------|----------|
 | `AnalyzeHotspotsResult` | interface | [→ vector-index-manager.ts:30-33] |
-| `buildEmbeddingGeneratorOptions` | function | [→ provider-config.ts:211-279] |
+| `buildEmbeddingGeneratorOptions` | function | [→ provider-config.ts:211-281] |
 | `buildEmbeddingText` | function | [→ embedding-processor.ts:104-174] |
 | `buildVectorMetadata` | function | [→ embedding-processor.ts:179-236] |
 | `buildWarmupText` | function | [→ cache-warmup.ts:41-68] |
@@ -21,7 +21,7 @@
 | `EMBEDDING_EXCLUDE_PATTERNS` | const | [→ embedding-processor.ts:46-82] |
 | `EmbeddingProcessorContext` | interface | [→ embedding-processor.ts:59-82] |
 | `generateEmbeddings` | function | [→ embedding-processor.ts:404-442] |
-| `getBatchSizeFromConfig` | function | [→ provider-config.ts:284-293] |
+| `getBatchSizeFromConfig` | function | [→ provider-config.ts:286-295] |
 | `getModelNameFromSemanticConfig` | function | [→ provider-config.ts:142-155] |
 | `HotspotItem` | interface | [→ vector-index-manager.ts:16-28] |
 | `mapSemanticConfigToProvider` | function | [→ provider-config.ts:112-132] |

@@ -231,6 +231,36 @@ export abstract class BaseToolHandler<TArgs = unknown> {
   }
 
   /**
+   * Summarize tool args for logging (truncate large values)
+   */
+  private summarizeArgs(args: unknown): Record<string, unknown> {
+    if (!args || typeof args !== "object") return {};
+    const summary: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+      if (value === undefined || value === null) continue;
+      if (typeof value === "string") {
+        summary[key] = value.length > 80 ? value.slice(0, 80) + "..." : value;
+      } else if (Array.isArray(value)) {
+        summary[key] = `[${value.length}]`;
+      } else {
+        summary[key] = value;
+      }
+    }
+    return summary;
+  }
+
+  /**
+   * Calculate response size in bytes
+   */
+  private responseSize(result: ToolResult): number {
+    let size = 0;
+    for (const item of result.content) {
+      size += item.text.length;
+    }
+    return size;
+  }
+
+  /**
    * Main entry point for tool execution
    */
   async handle(args: unknown): Promise<ToolResult> {
@@ -245,7 +275,14 @@ export abstract class BaseToolHandler<TArgs = unknown> {
       const limitedResult = this.applyResponseLimits(result);
 
       const duration = Date.now() - startTime;
-      log.i("BASETOOL", "mcp_response", { tool: toolName, durationMs: duration, reqId: this.context.requestId });
+      const respSize = this.responseSize(limitedResult);
+      log.i("BASETOOL", "mcp_response", {
+        tool: toolName,
+        durationMs: duration,
+        respBytes: respSize,
+        args: this.summarizeArgs(args),
+        reqId: this.context.requestId,
+      });
 
       return limitedResult;
     } catch (error) {
@@ -254,6 +291,7 @@ export abstract class BaseToolHandler<TArgs = unknown> {
         tool: toolName,
         durationMs: duration,
         err: (error as Error).message,
+        args: this.summarizeArgs(args),
         reqId: this.context.requestId,
       });
 

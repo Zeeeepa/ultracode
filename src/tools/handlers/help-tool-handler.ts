@@ -29,10 +29,9 @@ export class GetHelpToolHandler extends BaseToolHandler<HelpArgs> {
 
     try {
       // Resolve path to prompts directory
-      // In production: dist/tools/handlers/ -> dist/ -> prompts/
-      // In development: src/tools/handlers/ -> src/ -> prompts/
+      // Bundled output is dist/index.js, so one level up = project root
       const currentDir = dirname(fileURLToPath(import.meta.url));
-      const projectRoot = join(currentDir, "..", "..", "..");
+      const projectRoot = join(currentDir, "..");
       const promptsDir = join(projectRoot, "prompts");
 
       // Map topic to filename

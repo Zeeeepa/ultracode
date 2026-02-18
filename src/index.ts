@@ -642,12 +642,13 @@ function createMcpServer(session?: ClientSession): Server {
     const requestId = createRequestId();
     const startTime = Date.now();
 
-    // Log with session info for debugging
+    // Log with session info and brief args for debugging
     log.i("MCP", "request", {
       tool: name,
       req: requestId,
       sid: session?.sessionId,
       proj: session?.projectPath,
+      args: briefArgs(args),
     });
 
     // v5: Pass session to executeToolCall for per-client isolation
@@ -684,6 +685,26 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, re
   } finally {
     aborted = true;
   }
+}
+
+/**
+ * Summarize tool arguments for logging (skip large values, truncate strings)
+ */
+function briefArgs(args: unknown): string {
+  if (!args || typeof args !== "object") return "";
+  const obj = args as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string") {
+      parts.push(`${key}=${value.length > 60 ? value.slice(0, 60) + "…" : value}`);
+    } else if (Array.isArray(value)) {
+      parts.push(`${key}=[${value.length}]`);
+    } else if (typeof value === "boolean" || typeof value === "number") {
+      parts.push(`${key}=${value}`);
+    }
+  }
+  return parts.join(" ");
 }
 
 /**
@@ -886,7 +907,7 @@ async function processDebugRequests(requests: DebugRequest[]): Promise<void> {
     // Mark activity to prevent idle mode during active requests
     getConductor().markActivity();
 
-    log.i("MCP", "request", { tool: name, req: requestId });
+    log.i("MCP", "request", { tool: name, req: requestId, args: briefArgs(args) });
     const result = await executeToolCall(name, args, requestId, startTime);
 
     const response = {

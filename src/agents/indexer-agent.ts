@@ -454,9 +454,11 @@ export class IndexerAgent extends BaseAgent {
 
     // OPTIMIZATION: Publish entities for embedding IMMEDIATELY after entity insertion
     // Don't wait for relationship insertion - embedding can start in parallel
+    // Use stableEntityId from storageEntities to ensure embedding IDs match graph DB IDs
     if (validParsed.length) {
-      const entitiesWithPath = validParsed.map((entity) => ({
+      const entitiesWithPath = validParsed.map((entity, i) => ({
         ...entity,
+        id: storageEntities[i]?.id || entity.id,
         filePath: filePath,
       }));
       knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
@@ -486,8 +488,11 @@ export class IndexerAgent extends BaseAgent {
       const callsSample: Array<{ from: string; to: string; fromId: string; toId: string }> = [];
 
       for (const rel of providedRelationships) {
-        let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line);
-        let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line);
+        // Pass sourceFile to prefer same-file entities when resolving names.
+        const relSourceFile = rel.sourceFile || filePath;
+        const isContains = rel.type === "contains";
+        let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line, relSourceFile, isContains);
+        let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line, rel.targetFile || relSourceFile);
 
         // DEBUG: Track calls relationship resolution
         if (rel.type === "calls") {
@@ -717,10 +722,10 @@ export class IndexerAgent extends BaseAgent {
     // Reset idle flush timer on each queue
     this.resetIdleFlushTimer();
 
-    // DEBUG: Log incoming relationships for Python files
-    if (filePath.endsWith(".py")) {
-      log.i("INDEXER", "queue_py_rels", {
-        file: filePath,
+    // DEBUG: Log incoming relationships for Python and C# files
+    if (filePath.endsWith(".py") || filePath.endsWith(".cs")) {
+      log.i("INDEXER", "queue_rels_debug", {
+        file: filePath.split(/[/\\]/).pop(),
         entities: entities.length,
         relationships: providedRelationships?.length ?? 0,
         relSample: providedRelationships?.slice(0, 3).map((r) => `${r.from}->${r.to}:${r.type}`),
@@ -745,6 +750,21 @@ export class IndexerAgent extends BaseAgent {
         };
 
         this.pendingStorageEntities.push(entity);
+
+        // DEBUG: Log entity ID details for ALL C# class entities to trace ID mismatch
+        if (filePath.endsWith(".cs") && (parsed.type === "class" || parsed.type === "interface")) {
+          log.w("INDEXER", "csharp_entity_id_debug", {
+            name: entity.name,
+            type: entity.type,
+            id: entity.id,
+            entityFilePath: entityFilePath?.split(/[/\\]/).slice(-2).join("/"),
+            parsedFilePath: parsed.filePath?.split(/[/\\]/).slice(-2).join("/"),
+            paramFilePath: filePath?.split(/[/\\]/).slice(-2).join("/"),
+            pathMatch: entityFilePath === filePath,
+            startIndex: base.location?.start?.index,
+            endIndex: base.location?.end?.index,
+          });
+        }
       } catch {
         // Skip invalid entities
       }
@@ -773,9 +793,19 @@ export class IndexerAgent extends BaseAgent {
         }
       }
 
+      // DEBUG: Log resolution stats for C# files
+      let csResolved = 0;
+      let csUnresolved = 0;
+
       for (const rel of providedRelationships) {
-        let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line);
-        let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line);
+        // Pass sourceFile to prefer same-file entities when resolving names.
+        // Prevents cross-file collisions in the pending buffer (e.g., multiple "Dispose" methods).
+        const relSourceFile = rel.sourceFile || filePath;
+        // For "contains" relationships, prefer container types (class > constructor)
+        // to avoid C# constructor name collision stealing parent relationships.
+        const isContains = rel.type === "contains";
+        let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line, relSourceFile, isContains);
+        let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line, rel.targetFile || relSourceFile);
 
         // DEBUG: Log resolution result for cross-module calls
         if (rel.metadata?.["crossModule"]) {
@@ -786,8 +816,30 @@ export class IndexerAgent extends BaseAgent {
           });
         }
 
-        if (!fromId) fromId = `external:${rel.sourceFile || filePath}:${rel.from}`;
+        if (!fromId) fromId = `external:${relSourceFile}:${rel.from}`;
         if (!toId) toId = `external:${rel.targetFile || "unknown"}:${rel.to}`;
+
+        // DEBUG: Log first 5 C# contains relationships to trace ID resolution
+        if (filePath.endsWith(".cs") && rel.type === "contains" && csResolved + csUnresolved < 5) {
+          log.w("INDEXER", "csharp_rel_id_debug", {
+            file: filePath.split(/[/\\]/).pop(),
+            from: rel.from,
+            to: rel.to,
+            fromId: fromId.slice(0, 16),
+            toId: toId.slice(0, 16),
+            fromIsExternal: fromId.startsWith("external:"),
+            toIsExternal: toId.startsWith("external:"),
+            sourceFile: relSourceFile?.split(/[/\\]/).slice(-2).join("/"),
+          });
+        }
+
+        // Track C# resolution stats
+        if (filePath.endsWith(".cs")) {
+          const fromResolved = !fromId.startsWith("external:");
+          const toResolved = !toId.startsWith("external:");
+          if (fromResolved && toResolved) csResolved++;
+          else csUnresolved++;
+        }
 
         this.pendingRelationships.push({
           id: stableRelationshipId(fromId, toId, rel.type as RelationType),
@@ -797,6 +849,23 @@ export class IndexerAgent extends BaseAgent {
           metadata: { line: rel.metadata?.line, context: rel.type },
           createdAt: Date.now(),
         } as Relationship);
+      }
+
+      // DEBUG: Log C# resolution summary
+      if (filePath.endsWith(".cs") && (csResolved > 0 || csUnresolved > 0)) {
+        log.i("INDEXER", "csharp_rel_resolution", {
+          file: filePath.split(/[/\\]/).pop(),
+          resolved: csResolved,
+          unresolved: csUnresolved,
+          pendingEntities: this.pendingStorageEntities.length,
+          byNameSize: byName.size,
+          pendingRels: this.pendingRelationships.length,
+          // Show entity names relevant to this file
+          fileEntityNames: this.pendingStorageEntities
+            .filter((e) => e.filePath === filePath)
+            .slice(0, 10)
+            .map((e) => `${e.name}(${e.type})`),
+        });
       }
     }
 
@@ -844,8 +913,17 @@ export class IndexerAgent extends BaseAgent {
       const entityResult = await this.batchOps.insertEntities(entitiesToFlush);
 
       // Publish for embedding generation (all at once)
+      // Build lookup: name+type+filePath → stableEntityId for correct embedding IDs
+      const stableIdLookup = new Map<string, string>();
+      for (const e of entitiesToFlush) {
+        stableIdLookup.set(`${e.name}|${e.type}|${e.filePath}`, e.id);
+      }
       for (const { entities, filePath } of parsedToFlush) {
-        const entitiesWithPath = entities.map((e) => ({ ...e, filePath }));
+        const entitiesWithPath = entities.map((e) => {
+          const fp = e.filePath || filePath;
+          const dbId = stableIdLookup.get(`${e.name}|${e.type}|${fp}`);
+          return { ...e, id: dbId || e.id, filePath: fp };
+        });
         knowledgeBus.publish("semantic:new_entities", entitiesWithPath, this.id);
       }
 
@@ -864,10 +942,53 @@ export class IndexerAgent extends BaseAgent {
       // Insert relationships in one batch (skip if empty)
       let relResult = { processed: 0 };
       if (relationshipsToFlush.length > 0) {
+        // Classify relationships: real (hash IDs) vs external (unresolved)
+        const realRels = relationshipsToFlush.filter(
+          (r) => !r.fromId.startsWith("external:") && !r.toId.startsWith("external:"),
+        );
+        const externalRels = relationshipsToFlush.length - realRels.length;
         log.i("INDEXER", "flush_rels", {
           count: relationshipsToFlush.length,
-          sample: relationshipsToFlush.slice(0, 3).map((r) => `${r.fromId}->${r.toId}:${r.type}`),
+          real: realRels.length,
+          external: externalRels,
+          sample: realRels.slice(0, 3).map((r) => `${r.fromId}->${r.toId}:${r.type}`),
         });
+
+        // DEBUG: Cross-check C# entity IDs vs relationship references
+        const csEntities = entitiesToFlush.filter((e) => e.language === "csharp" && e.type === "class");
+        if (csEntities.length > 0) {
+          const csEntityIds = new Set(csEntities.map((e) => e.id));
+          const allEntityIds = new Set(entitiesToFlush.map((e) => e.id));
+          // Count relationships that reference C# class entity IDs
+          let csFromCount = 0;
+          let csToCount = 0;
+          let anyRefCount = 0;
+          for (const r of relationshipsToFlush) {
+            if (csEntityIds.has(r.fromId)) csFromCount++;
+            if (csEntityIds.has(r.toId)) csToCount++;
+            if (allEntityIds.has(r.fromId) || allEntityIds.has(r.toId)) anyRefCount++;
+          }
+          // Sample: first 3 C# class entities + their referencing relationships
+          const samples = csEntities.slice(0, 3).map((e) => {
+            const rels = relationshipsToFlush.filter((r) => r.fromId === e.id || r.toId === e.id);
+            return {
+              name: e.name,
+              id: e.id,
+              filePath: e.filePath?.split(/[/\\]/).slice(-2).join("/"),
+              relsCount: rels.length,
+              relSample: rels.slice(0, 3).map((r) => `${r.fromId.slice(0, 8)}→${r.toId.slice(0, 8)}:${r.type}`),
+            };
+          });
+          log.w("INDEXER", "flush_cs_crosscheck", {
+            csClasses: csEntities.length,
+            csClassRelsFrom: csFromCount,
+            csClassRelsTo: csToCount,
+            totalRels: relationshipsToFlush.length,
+            relsRefAnyEntity: anyRefCount,
+            samples,
+          });
+        }
+
         relResult = await this.batchOps.insertRelationships(relationshipsToFlush);
       }
 

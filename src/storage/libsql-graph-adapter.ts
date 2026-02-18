@@ -743,6 +743,7 @@ export class LibSQLGraphAdapter {
   insertEntity = (entity: Entity): Promise<void> => this.entityOps.insertEntity(entity);
   insertEntities = (entities: Entity[]): Promise<BatchResult> => this.entityOps.insertEntities(entities);
   getEntity = (id: string): Promise<Entity | null> => this.entityOps.getEntity(id);
+  getEntitiesBatch = (ids: string[]): Promise<Map<string, Entity>> => this.entityOps.getEntitiesBatch(ids);
 
   findEntities(query: EntityQuery): Promise<Entity[]> {
     return this.entityOps.findEntities(query);

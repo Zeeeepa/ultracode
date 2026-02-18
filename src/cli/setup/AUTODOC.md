@@ -16,19 +16,19 @@
 | `selectLLMModel` | function | Интерактивно выбирает модель LLM для выбранного провайдера | [→ setup-llm.ts:295-298] |
 | `installLLMProvider` | function | Выполняет установку и запуск выбранного LLM провайдера | [→ setup-llm.ts:489-489] |
 | `selectLanguage` | function | Интерактивно выбирает язык комментариев кода (English или multi) | [→ setup-selection.ts:14-31] |
-| `getProviderRecommendations` | function | Возвращает список рекомендуемых провайдеров на основе аппаратного обеспечения | [→ setup-selection.ts:37-109] |
-| `selectProvider` | function | Интерактивно выбирает embedding провайдер из списка рекомендаций | [→ setup-selection.ts:118-130] |
-| `selectModel` | function | Интерактивно выбирает embedding модель для выбранного провайдера | [→ setup-selection.ts:155-289] |
-| `EmbeddingModel` | interface | Интерфейс конфигурации embedding модели с параметрами и характеристиками | [→ setup-types.ts:5-37] |
-| `ModelsConfig` | interface | Интерфейс конфигурации всех доступных embedding моделей и провайдеров | [→ setup-types.ts:39-44] |
-| `GPUInfo` | interface | Интерфейс информации о GPU (доступность, архитектура, VRAM) | [→ setup-types.ts:46-53] |
-| `LLMModel` | interface | Интерфейс конфигурации LLM модели с контекстом и производительностью | [→ setup-types.ts:55-71] |
-| `TGIModel` | interface | Интерфейс модели для Text Generation Inference с GPU архитектурами | [→ setup-types.ts:73-86] |
-| `OllamaLLMModel` | interface | Интерфейс модели для Ollama провайдера с токенами в секунду | [→ setup-types.ts:88-98] |
-| `LLMConfig` | interface | Интерфейс конфигурации всех доступных LLM моделей и провайдеров | [→ setup-types.ts:100-108] |
-| `ProviderOption` | interface | Интерфейс опции провайдера с рекомендацией и характеристиками | [→ setup-types.ts:110-118] |
-| `InstallResult` | interface | Интерфейс результата установки провайдера с статусом успеха | [→ setup-types.ts:120-132] |
-| `SelectedLLMModel` | interface | Интерфейс выбранной LLM модели с провайдером и параметрами | [→ setup-types.ts:134-142] |
+| `getProviderRecommendations` | function | Возвращает список рекомендуемых провайдеров на основе аппаратного обеспечения | [→ setup-selection.ts:37-106] |
+| `selectProvider` | function | Интерактивно выбирает embedding провайдер из списка рекомендаций | [→ setup-selection.ts:115-127] |
+| `selectModel` | function | Интерактивно выбирает embedding модель для выбранного провайдера | [→ setup-selection.ts:152-286] |
+| `EmbeddingModel` | interface | Интерфейс конфигурации embedding модели с параметрами и характеристиками | [→ setup-types.ts:5-39] |
+| `ModelsConfig` | interface | Интерфейс конфигурации всех доступных embedding моделей и провайдеров | [→ setup-types.ts:41-46] |
+| `GPUInfo` | interface | Интерфейс информации о GPU (доступность, архитектура, VRAM) | [→ setup-types.ts:48-55] |
+| `LLMModel` | interface | Интерфейс конфигурации LLM модели с контекстом и производительностью | [→ setup-types.ts:57-73] |
+| `TGIModel` | interface | Интерфейс модели для Text Generation Inference с GPU архитектурами | [→ setup-types.ts:75-88] |
+| `OllamaLLMModel` | interface | Интерфейс модели для Ollama провайдера с токенами в секунду | [→ setup-types.ts:90-100] |
+| `LLMConfig` | interface | Интерфейс конфигурации всех доступных LLM моделей и провайдеров | [→ setup-types.ts:102-110] |
+| `ProviderOption` | interface | Интерфейс опции провайдера с рекомендацией и характеристиками | [→ setup-types.ts:112-120] |
+| `InstallResult` | interface | Интерфейс результата установки провайдера с статусом успеха | [→ setup-types.ts:122-134] |
+| `SelectedLLMModel` | interface | Интерфейс выбранной LLM модели с провайдером и параметрами | [→ setup-types.ts:136-144] |
 | `c` | const | Объект с ANSI кодами цветов для форматирования консольного вывода | [→ setup-ui.ts:8-11] |
 | `printBanner` | function | Выводит приветственный баннер setup модуля в консоль | [→ setup-ui.ts:21-27] |
 | `printOK` | function | Выводит зелёное сообщение об успешном выполнении операции | [→ setup-ui.ts:27-42] |

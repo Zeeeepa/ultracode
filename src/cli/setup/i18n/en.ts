@@ -44,7 +44,7 @@ export const en: SetupStrings = {
       pros: ["Native batch", "HuggingFace optimization", "Low latency"],
       cons: ["Requires Docker"],
     },
-    tei_blackwell: "Requires special image: hotchpotch/tei-blackwell-testing",
+    tei_blackwell: "(unused — TEI 1.9 supports Blackwell natively)",
     llamacpp: {
       name: "llama.cpp (Native GGUF)",
       pros: ["No Docker", "441 emb/s", "CUDA/Vulkan/CPU", "Low VRAM usage"],
@@ -342,7 +342,8 @@ export const en: SetupStrings = {
   tei: {
     setup: "TEI setup...",
     hf_token_set_hint: 'Set: $env:HF_TOKEN = "hf_xxx" or export HF_TOKEN=hf_xxx',
-    blackwell_detected: "Blackwell GPU detected — using special image",
+    blackwell_detected: "Blackwell GPU detected — using sm_120 image (TEI 1.9+)",
+    blackwell_image: "Using Blackwell image (sm_120) for RTX 50xx GPU",
     pull_time_hint: "This may take a few minutes...",
     batch_config: "Batch: {texts} texts, {tokens} tokens",
     hf_token_partial: "HF_TOKEN: ****{suffix}",

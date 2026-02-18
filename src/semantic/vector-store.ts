@@ -579,6 +579,7 @@ export class VectorStore {
               type: entity.type,
               filePath: entity.filePath,
               name: entity.name,
+              language: entity.language,
               // Add location info for better navigation
               startLine: entity.location?.start?.line,
               endLine: entity.location?.end?.line,

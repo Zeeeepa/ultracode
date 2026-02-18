@@ -232,8 +232,6 @@ You can add a [short prompt](docs/claude.cfg/add-to-CLAUDE.md) to your system pr
 - **Instant connection** — new agents connect to running server in milliseconds
 - **Session isolation** — each agent gets independent MCP session
 
-> For C# projects — use the similar [ultrasharp-tools-mcp](https://github.com/faxenoff/ultrasharp-tools-mcp)
-
 # Installation
 
 The project is optimized for [Bun](https://bun.sh) (an alternative JavaScript runtime) and runs 50% faster with it.
@@ -312,7 +310,7 @@ Local models are used for intelligent tasks: embedding model for semantic search
 | Provider | Speed | Recommendation |
 |----------|-------|----------------|
 | **vLLM** | 1352 emb/s | ⭐ NVIDIA GPU (recommended) |
-| **TEI** | 1193 emb/s | ⭐ NVIDIA GPU |
+| **TEI** | 1169 emb/s | ⭐ NVIDIA GPU (Blackwell: `120-latest` image) |
 | **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), universal |
 | **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Can help if main VRAM is occupied by local LLM. |
 

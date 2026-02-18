@@ -38,7 +38,7 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
     return false;
   }
 
-  const imageTag = "vllm/vllm-openai:latest";
+  const imageTag = "vllm/vllm-openai:latest-cu130";
   const containerName = "vllm-server";
   const port = 8000;
 
@@ -128,14 +128,16 @@ export async function installVLLM(model: EmbeddingModel, gpu: GPUInfo): Promise<
     dockerCmd += ` -e HF_TOKEN="${hfToken}"`;
   }
 
-  // vLLM v0.12+: model as positional argument, auto-detects embedding models
+  // vLLM v0.14+: model as positional argument, auto-detects embedding models
   dockerCmd += ` "${imageTag}" "${model.model_id}"`;
-  dockerCmd += ` --max-model-len 512`; // Limit context for embeddings (short texts)
+  const maxModelLen = (model as any).vllm_config?.max_model_len || model.context_tokens || 512;
+  dockerCmd += ` --max-model-len ${maxModelLen}`; // Dynamic context: 512 for short texts, 8192 for BGE-M3
   dockerCmd += ` --dtype auto`; // Auto-select best dtype for GPU
   dockerCmd += ` --gpu-memory-utilization 0.8`; // 80% GPU memory (was 0.7)
   // Embedding throughput optimizations
   dockerCmd += ` --max-num-batched-tokens 16384`; // Higher for encoder models (default ~2048)
   dockerCmd += ` --max-num-seqs 256`; // More concurrent sequences for batching
+  dockerCmd += ` --disable-log-requests`; // Reduce server logging overhead (vLLM 0.14+)
 
   console.error(`[DEBUG] Running: ${dockerCmd}`);
 

@@ -55,8 +55,24 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
     });
 
     if (vllmResponse.ok) {
-      log.i("FACTORY", "Auto-detected: vLLM Docker (port 8000)");
-      return { provider: "vllm", model: "intfloat/multilingual-e5-large-instruct" };
+      // Query /v1/models to discover actually loaded model (don't hardcode)
+      let modelName = "intfloat/multilingual-e5-small";
+      try {
+        const modelsResp = await fetch("http://127.0.0.1:8000/v1/models", {
+          method: "GET",
+          signal: AbortSignal.timeout(2000),
+        });
+        if (modelsResp.ok) {
+          const modelsData = (await modelsResp.json()) as { data?: Array<{ id?: string }> };
+          if (modelsData.data?.[0]?.id) {
+            modelName = modelsData.data[0].id;
+          }
+        }
+      } catch {
+        log.d("FACTORY", "vLLM /v1/models failed, using default model name");
+      }
+      log.i("FACTORY", `Auto-detected: vLLM Docker (port 8000), model=${modelName}`);
+      return { provider: "vllm", model: modelName };
     }
   } catch (_error) {
     log.d("FACTORY", "vLLM not available, checking TEI");
@@ -148,6 +164,7 @@ export interface ProviderFactoryOptions {
     concurrency?: number | undefined;
     checkServer?: boolean;
     maxBatchSize?: number | undefined;
+    encodingFormat?: "float" | "base64";
   };
   llamacpp?: {
     baseUrl?: string | undefined;
@@ -289,6 +306,7 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         concurrency: opts.vllm?.concurrency,
         maxBatchSize: opts.vllm?.maxBatchSize,
         checkServer: opts.vllm?.checkServer,
+        encodingFormat: opts.vllm?.encodingFormat,
         logger: makeProviderLogger(null, "PROVIDER_VLLM"),
       });
     }

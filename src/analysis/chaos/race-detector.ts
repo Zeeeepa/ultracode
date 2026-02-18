@@ -8,6 +8,7 @@
  * - Async boundaries without locks
  */
 
+import { log } from "../../logging/index.js";
 import type {
   MutationPoint,
   RaceAnalysis,
@@ -18,6 +19,7 @@ import type {
 } from "../../types/chaos-analysis.js";
 import type { Entity, GraphStorage } from "../../types/storage.js";
 import { RelationType } from "../../types/storage.js";
+import type { RelationshipLookup } from "./state-detector.js";
 
 /**
  * Extended entity with optional code content
@@ -76,6 +78,20 @@ const HIDDEN_ASYNC_APIS = [
   // File APIs
   "FileReader",
   "FileWriter",
+
+  // C# Task-based async APIs
+  "Task.Run",
+  "Task.Factory.StartNew",
+  "Task.WhenAll",
+  "Task.WhenAny",
+  "Task.Delay",
+  "Parallel.ForEach",
+  "Parallel.For",
+  "Parallel.ForEachAsync",
+  "ThreadPool.QueueUserWorkItem",
+  "Channel.",
+  "Timer",
+  "PeriodicTimer",
 ];
 
 /**
@@ -100,10 +116,50 @@ const ASYNC_BEHAVIOR_PATTERNS = [
   /emit/i,
   /dispatch/i,
   /broadcast/i,
+
+  // C# async patterns
+  /async\s+Task/,
+  /async\s+ValueTask/,
+  /\.ConfigureAwait\(/,
+  /CancellationToken/,
+  /IAsyncEnumerable/,
 ];
 
 export class RaceDetector {
+  private _entityCache: Map<string, Entity> | null = null;
+  /** Pre-loaded relationship lookup: entityId → Relationship[] */
+  private _relLookup: RelationshipLookup | null = null;
+  /** Cache "is parent async" result per entityId to avoid re-processing */
+  private _relCache: Map<string, boolean> = new Map();
+
   constructor(private storage: GraphStorage) {}
+
+  /**
+   * Set pre-loaded entity cache to avoid N+1 DB queries.
+   * Call before analyzeRaces() and clear after with clearEntityCache().
+   */
+  setEntityCache(entities: Entity[]): void {
+    this._entityCache = new Map(entities.map((e) => [e.id, e]));
+  }
+
+  /** Set pre-loaded relationship lookup to avoid per-entity DB queries */
+  setRelationshipCache(lookup: RelationshipLookup): void {
+    this._relLookup = lookup;
+  }
+
+  clearEntityCache(): void {
+    this._entityCache = null;
+    this._relLookup = null;
+    this._relCache.clear();
+  }
+
+  /** Lookup entity from cache first, fallback to DB */
+  private async getEntityCached(id: string): Promise<Entity | null> {
+    if (this._entityCache) {
+      return this._entityCache.get(id) || null;
+    }
+    return this.storage.getEntity(id);
+  }
 
   /**
    * Analyze state operations for race conditions
@@ -116,7 +172,17 @@ export class RaceDetector {
     );
 
     // Convert to mutation points with additional analysis
+    const tMut = performance.now();
     const mutations = await this.analyzeMutations(writers);
+    const dtMut = performance.now() - tMut;
+    if (dtMut > 200) {
+      log.w("CHAOS_RACE", "slow_mutations", {
+        id: stateIdentifier,
+        writers: writers.length,
+        ms: +dtMut.toFixed(0),
+        cached: !!this._entityCache,
+      });
+    }
 
     // Calculate risk factors
     const factors = this.calculateRiskFactors(mutations);
@@ -141,101 +207,94 @@ export class RaceDetector {
   }
 
   /**
-   * Convert state operations to detailed mutation points
+   * Convert state operations to detailed mutation points.
+   * Uses parallel async context detection for better throughput.
    */
   private async analyzeMutations(writers: StateOperation[]): Promise<MutationPoint[]> {
-    const mutations: MutationPoint[] = [];
+    // Run all isAsyncContext checks in parallel (each may hit DB for relationships)
+    const asyncResults = await Promise.all(writers.map((w) => this.isAsyncContext(w)));
 
-    for (const writer of writers) {
-      // Analyze the containing entity for async context
-      const isAsync = await this.isAsyncContext(writer);
-      const hasLock = this.detectLockPattern(writer.code, writer.context);
-      const condition = this.extractCondition(writer.context);
-      const mutationType = this.classifyMutation(writer);
-
-      mutations.push({
-        file: writer.file,
-        line: writer.line,
-        entityId: writer.entityId,
-        entityName: writer.entityName,
-        mutationType,
-        condition,
-        isAsync,
-        hasLock,
-        code: writer.code,
-      });
-    }
-
-    return mutations;
+    return writers.map((writer, i) => ({
+      file: writer.file,
+      line: writer.line,
+      entityId: writer.entityId,
+      entityName: writer.entityName,
+      mutationType: this.classifyMutation(writer),
+      condition: this.extractCondition(writer.context),
+      isAsync: asyncResults[i]!,
+      hasLock: this.detectLockPattern(writer.code, writer.context),
+      code: writer.code,
+    }));
   }
 
   /**
    * Check if operation is in async context
-   * Includes detection of hidden async APIs that appear synchronous
+   * Includes detection of hidden async APIs that appear synchronous.
+   * Uses entity cache to avoid N+1 DB queries.
    */
   private async isAsyncContext(operation: StateOperation): Promise<boolean> {
     const codeToCheck = `${operation.code}\n${operation.context || ""}`;
 
-    // Check for hidden async APIs (localStorage, etc.)
-    for (const api of HIDDEN_ASYNC_APIS) {
-      if (codeToCheck.includes(api)) {
-        return true;
-      }
-    }
-
-    // Check for async behavior patterns
-    for (const pattern of ASYNC_BEHAVIOR_PATTERNS) {
-      if (pattern.test(codeToCheck)) {
-        return true;
-      }
-    }
-
-    // Check explicit async/await/Promise
+    // 1. Quick code-based checks first (no DB needed)
     if (/async\s|await\s|\.then\(|Promise|setTimeout|setInterval|\.subscribe\(/.test(codeToCheck)) {
       return true;
     }
 
-    if (!operation.entityId) {
-      return false;
+    for (const api of HIDDEN_ASYNC_APIS) {
+      if (codeToCheck.includes(api)) return true;
     }
 
+    for (const pattern of ASYNC_BEHAVIOR_PATTERNS) {
+      if (pattern.test(codeToCheck)) return true;
+    }
+
+    // 2. Entity-based checks (single cached lookup instead of 2 DB calls)
+    if (!operation.entityId) return false;
+
     try {
-      const entity = (await this.storage.getEntity(operation.entityId)) as EntityWithCode | null;
+      const entity = (await this.getEntityCached(operation.entityId)) as EntityWithCode | null;
       if (!entity) return false;
 
+      // C# fast path: check metadata for async modifiers
+      if (entity.language === "csharp" || entity.metadata?.language === "csharp") {
+        if (entity.metadata?.modifiers?.includes("async")) return true;
+        if (/Task|ValueTask/.test(entity.metadata?.returnType || "")) return true;
+      }
+
+      // Check full entity code body
       const code = entity.code || "";
+      if (/^async\s/.test(code) || /async\s+function/.test(code)) return true;
 
-      // Check if function is async
-      if (/^async\s/.test(code) || /async\s+function/.test(code)) {
-        return true;
-      }
-
-      // Check for hidden async APIs in full function body
       for (const api of HIDDEN_ASYNC_APIS) {
-        if (code.includes(api)) {
-          return true;
-        }
+        if (code.includes(api)) return true;
       }
 
-      // Check for async behavior patterns in full function
       for (const pattern of ASYNC_BEHAVIOR_PATTERNS) {
-        if (pattern.test(code)) {
-          return true;
-        }
+        if (pattern.test(code)) return true;
       }
 
-      // Check parent for event handler patterns
-      const relationships = await this.storage.getRelationshipsForEntity(operation.entityId);
+      // 3. Parent check — only if all code checks failed
+      // Use _relCache to avoid duplicate DB queries for same entityId (important with Promise.all)
+      if (this._relCache.has(operation.entityId)) {
+        return this._relCache.get(operation.entityId)!;
+      }
+
+      const relationships =
+        this._relLookup?.get(operation.entityId) || (await this.storage.getRelationshipsForEntity(operation.entityId));
+      let parentIsAsync = false;
       for (const rel of relationships) {
         if (rel.type === RelationType.CONTAINS) {
-          const parent = await this.storage.getEntity(rel.fromId);
+          const parent = await this.getEntityCached(rel.fromId);
           if (parent?.name && /handler|listener|callback|on[A-Z]/i.test(parent.name)) {
-            return true;
+            parentIsAsync = true;
+            break;
           }
         }
       }
+      this._relCache.set(operation.entityId, parentIsAsync);
+      if (parentIsAsync) return true;
     } catch {
-      // Fallback to code analysis already done above
+      // Fallback — code-based checks above already ran
     }
 
     return false;
@@ -255,6 +314,14 @@ export class RaceDetector {
       /await\s+.*lock/i,
       /critical\s*section/i,
       /with\s*lock/i,
+      // C# synchronization primitives
+      /\block\s*\(/,
+      /SemaphoreSlim/,
+      /Monitor\.(Enter|Exit|TryEnter)/,
+      /Interlocked\./,
+      /ReaderWriterLockSlim/,
+      /SpinLock/,
+      /Volatile\.(Read|Write)/,
     ];
 
     const combined = `${code}\n${context}`;

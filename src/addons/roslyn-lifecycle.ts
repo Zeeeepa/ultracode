@@ -7,6 +7,7 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { log } from "../logging/index.js";
 import { CSharpNativeParser } from "./csharp-native-parser.js";
 import { RoslynAddonClient } from "./roslyn-client.js";
@@ -18,6 +19,7 @@ import { RoslynAddonClient } from "./roslyn-client.js";
 let roslynClient: RoslynAddonClient | null = null;
 let csharpParser: CSharpNativeParser | null = null;
 let startPromise: Promise<CSharpNativeParser | null> | null = null;
+let exitHandlerRegistered = false;
 
 // ============================================================================
 // Solution Discovery
@@ -52,27 +54,59 @@ const ADDON_DLL_NAME = "Ultrasharp.Addon.dll";
  * Check if the Roslyn addon DLL is available on disk.
  */
 export function isRoslynAvailable(): boolean {
+  const thisDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     // Built alongside ultrascript dist
-    join(dirname(new URL(import.meta.url).pathname), "..", "roslyn-addon", ADDON_DLL_NAME),
+    join(thisDir, "..", "roslyn-addon", ADDON_DLL_NAME),
     // External libs
     join(process.cwd(), "external-libs", "roslyn-addon", ADDON_DLL_NAME),
+    // Development: ultrasharp-tools-mcp build output
+    join(process.cwd(), "..", "ultrasharp-tools-mcp", "Run.Publish", "Addon", ADDON_DLL_NAME),
+    // Development: Droid/Addon bundled
+    join(process.cwd(), "..", "ultrasharp-tools-mcp", "Run.Publish", "Droid", "Addon", ADDON_DLL_NAME),
   ];
 
   for (const candidate of candidates) {
-    // Normalize Windows paths (remove leading / from /D:/...)
-    const normalized = process.platform === "win32" && candidate.startsWith("/") ? candidate.slice(1) : candidate;
-    if (existsSync(normalized)) {
+    if (existsSync(candidate)) {
+      log.i("ROSLYN", "dll_found", { path: candidate });
       return true;
     }
   }
 
+  log.w("ROSLYN", "dll_not_found", { searched: candidates });
   return false;
 }
 
 // ============================================================================
 // Lifecycle
 // ============================================================================
+
+/**
+ * Register process exit handler to clean up Roslyn addon.
+ * Called once on first startup.
+ */
+function registerExitHandler(): void {
+  if (exitHandlerRegistered) return;
+  exitHandlerRegistered = true;
+
+  const cleanup = () => {
+    if (roslynClient) {
+      log.i("ROSLYN", "exit_cleanup");
+      try {
+        // Synchronous cleanup on process exit — just kill the child process
+        roslynClient.shutdown().catch(() => {});
+      } catch {
+        // Best effort
+      }
+      roslynClient = null;
+      csharpParser = null;
+    }
+  };
+
+  process.on("exit", cleanup);
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
+}
 
 /**
  * Get or create the RoslynAddonClient singleton.
@@ -93,24 +127,30 @@ export function getRoslynClient(options?: { slnPath?: string }): RoslynAddonClie
  * - Requires slnPath (won't start without solution file)
  * - Lazy singleton: subsequent calls return cached instance
  * - Non-blocking: Phase 2 (solution loading) runs in background
+ * - Protected against concurrent/re-entrant calls via startPromise guard
  */
 export async function ensureRoslynStarted(slnPath: string): Promise<CSharpNativeParser | null> {
-  // Return existing parser if already initialized
+  // Return existing parser if already initialized and connected
   if (csharpParser?.isAvailable) {
     return csharpParser;
   }
 
-  // Deduplicate concurrent start calls
+  // Deduplicate concurrent start calls — but DON'T clear startPromise in finally
+  // so that rapid concurrent callers all get the same result
   if (startPromise) {
     return startPromise;
   }
 
   startPromise = doStart(slnPath);
-  try {
-    return await startPromise;
-  } finally {
+  const result = await startPromise;
+
+  // Only clear startPromise if startup failed, so we can retry.
+  // On success, keep it to avoid re-starting.
+  if (!result) {
     startPromise = null;
   }
+
+  return result;
 }
 
 async function doStart(slnPath: string): Promise<CSharpNativeParser | null> {
@@ -119,6 +159,9 @@ async function doStart(slnPath: string): Promise<CSharpNativeParser | null> {
     log.w("ROSLYN", "addon_not_available", { hint: "Ultrasharp.Addon.dll not found" });
     return null;
   }
+
+  // Register exit handler to kill dotnet process on parent exit
+  registerExitHandler();
 
   try {
     const client = getRoslynClient({ slnPath });

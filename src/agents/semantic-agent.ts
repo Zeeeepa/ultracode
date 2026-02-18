@@ -850,16 +850,38 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // DISABLED: entity:* regex subscription caused excessive updates
     // knowledgeBus.subscribe(this.id, /^entity:.*/, this.handleEntityUpdate.bind(this));
 
-    // Subscribe to semantic:new_entities ONLY for co-occurrence index update
-    // (Workers handle embedding generation directly, but co-occurrence needs the entities)
+    // Subscribe to semantic:new_entities for co-occurrence AND non-worker embedding generation.
+    // Workers handle embedding generation via IPC for their languages (TS, JS, Python, etc.),
+    // but non-worker languages (e.g., csharp via Roslyn addon) need manual generation here.
     knowledgeBus.subscribe(this.id, "semantic:new_entities", async (entry: KnowledgeEntry) => {
-      if (!this.cooccurrenceIndex) return;
       const entities = entry.data as ParsedEntity[] | undefined;
       if (!entities?.length) return;
+
+      // Always update co-occurrence
+      if (this.cooccurrenceIndex) {
+        try {
+          await this.updateCooccurrenceFromEntities(entities);
+        } catch (error) {
+          log.w("COOC", "update_fail", { err: (error as Error).message, count: entities.length });
+        }
+      }
+
+      // Generate embeddings for non-worker languages (csharp, etc.)
+      // Worker languages have embeddings generated via IPC and don't need this path
       try {
-        await this.updateCooccurrenceFromEntities(entities);
+        const { SUPPORTED_LANGUAGES: WORKER_LANGUAGES } = await import("./workers/language-detection.js");
+        const workerLangs = new Set<string>(WORKER_LANGUAGES);
+        const nonWorkerEntities = entities.filter((e) => !workerLangs.has(e.language ?? ""));
+        if (nonWorkerEntities.length > 0) {
+          log.i("EMBEDDING", "generating_for_non_worker", {
+            total: entities.length,
+            nonWorker: nonWorkerEntities.length,
+            languages: [...new Set(nonWorkerEntities.map((e) => e.language))],
+          });
+          await this.handleNewEntities(nonWorkerEntities);
+        }
       } catch (error) {
-        log.w("COOC", "update_fail", { err: (error as Error).message, count: entities.length });
+        log.w("EMBEDDING", "non_worker_embed_fail", { err: (error as Error).message });
       }
     });
 
@@ -1043,17 +1065,28 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     // Workers skip embedding generation but we still need cooc data for query expansion
     await this.updateCooccurrenceFromEntities(entities);
 
-    // SKIP if workers are generating embeddings via IPC
-    // Workers send embeddings to EmbeddingAccumulator, no need for duplicate generation
+    // Workers generate embeddings via IPC for their supported languages.
+    // Non-worker languages (e.g., csharp via Roslyn addon) still need manual generation.
     try {
       const { buildWorkerEmbeddingConfig } = await import("../config/worker-embedding-config.js");
       const workerConfig = buildWorkerEmbeddingConfig();
       if (workerConfig?.enabled) {
-        log.d("EMBEDDING", "Skipping - workers generate embeddings via IPC", {
-          agentId: this.id,
-          entities: entities.length,
+        const { SUPPORTED_LANGUAGES: WORKER_LANGUAGES } = await import("./workers/language-detection.js");
+        const workerLangs = new Set<string>(WORKER_LANGUAGES);
+        const nonWorkerEntities = entities.filter((e) => !workerLangs.has(e.language ?? ""));
+        if (nonWorkerEntities.length === 0) {
+          log.d("EMBEDDING", "Skipping - workers generate embeddings via IPC", {
+            agentId: this.id,
+            entities: entities.length,
+          });
+          return;
+        }
+        log.i("EMBEDDING", "non_worker_entities", {
+          workerHandled: entities.length - nonWorkerEntities.length,
+          needGeneration: nonWorkerEntities.length,
+          languages: [...new Set(nonWorkerEntities.map((e) => e.language))],
         });
-        return;
+        entities = nonWorkerEntities;
       }
     } catch {
       // Config not available, continue with generation

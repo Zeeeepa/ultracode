@@ -44,8 +44,6 @@ triggers:
 | Kotlin | ⭐⭐ | Coroutines, data classes |
 | Bash | ⭐ | Functions, variables |
 
-> **For C# projects** use UltrasharpTools MCP — uses Roslyn for deep analysis.
-
 ---
 
 ## Code Modification via MCP

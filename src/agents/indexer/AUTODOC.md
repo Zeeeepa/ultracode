@@ -8,7 +8,7 @@
 
 | Name | Type | Location |
 |------|------|----------|
-| `buildEntityNameMap` | function | [→ entity-resolution.ts:16-24] |
+| `buildEntityNameMap` | function | [→ entity-resolution.ts:21-29] |
 | `buildRelationships` | function | [→ relationship-builder.ts:16-190] |
 | `createExternalPlaceholder` | function | [→ external-placeholder.ts:60-99] |
 | `EmbeddingSchedulerContext` | interface | [→ git-event-handlers.ts:181-188] |
@@ -19,7 +19,7 @@
 | `initXXHash` | function | [→ stable-id.ts:27-31] |
 | `parseExternalId` | function | [→ external-placeholder.ts:19] |
 | `processExternalRelationships` | function | [→ external-placeholder.ts:108-112] |
-| `resolveByNameAndLine` | function | [→ entity-resolution.ts:39-70] |
+| `resolveByNameAndLine` | function | [→ entity-resolution.ts:45-105] |
 | `runtimeSleep` | function | [→ git-event-handlers.ts:193-195] |
 | `scheduleEmbeddingGeneration` | function | [→ git-event-handlers.ts:201-228] |
 | `stableEntityId` | function | [→ stable-id.ts:52-61] |

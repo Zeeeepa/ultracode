@@ -229,7 +229,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "analyze_state_chaos",
       description:
-        "[ANALYZE] Analyze state management chaos in TypeScript/Angular codebases. Detects scattered state, measures coupling, identifies mutations, and suggests refactoring strategies. Returns AI-friendly summary or detailed report.",
+        "[ANALYZE] Analyze state management chaos in any codebase (TypeScript, C#, etc.). Detects scattered state, race conditions, C# anti-patterns (async-void, mutable-static, god-service), and suggests refactoring strategies.",
       inputSchema: zodToJsonSchema(AnalyzeStateChaosSchema),
     },
     {
