@@ -22,6 +22,8 @@ const EXTENSION_LANGUAGE_MAP: Record<string, SupportedLanguage> = {
   ".h": "c",
   ".hpp": "cpp",
   ".swift": "swift",
+  ".zig": "zig",
+  ".zon": "zig",
   ".cs": "csharp",
   ".csx": "csharp",
 };

@@ -32,6 +32,8 @@ export const SUPPORTED_CODE_EXTENSIONS = [
   ".html",
   ".htm", // HTML
   ".json", // JSON with AST parsing (swagger, package.json, tsconfig.json)
+  ".zig",
+  ".zon", // Zig
 ] as const;
 
 /**

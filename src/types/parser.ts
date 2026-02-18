@@ -62,6 +62,7 @@ export const SUPPORTED_LANGUAGES = [
   "powershell",
   "batch",
   "json",
+  "zig",
 ] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 

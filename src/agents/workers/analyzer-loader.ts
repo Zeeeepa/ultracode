@@ -125,6 +125,16 @@ async function createAnalyzer(language: string): Promise<BaseParser> {
       break;
     }
 
+    case "zig": {
+      const { workerLog } = await import("./worker-logging.js");
+      workerLog("INFO", `Loading ZigNativeParser`);
+      const { ZigNativeParser } = await import("../../parsers/zig-native-parser.js");
+      analyzer = new ZigNativeParser();
+      await analyzer.initialize();
+      workerLog("INFO", `ZigNativeParser initialized`);
+      break;
+    }
+
     case "bash": {
       const { BashNativeParser } = await import("../../parsers/bash-native-parser.js");
       analyzer = new BashNativeParser();
@@ -288,6 +298,7 @@ export const SUPPORTED_WORKER_LANGUAGES = [
   "typescript",
   "javascript",
   "json",
+  "zig",
 ] as const;
 
 /**

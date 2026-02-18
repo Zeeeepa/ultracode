@@ -107,6 +107,8 @@ function detectLanguage(filePath: string): string {
     ".kt": "kotlin",
     ".kts": "kotlin",
     ".swift": "swift",
+    ".zig": "zig",
+    ".zon": "zig",
     ".css": "css",
     ".scss": "css",
     ".sass": "css",

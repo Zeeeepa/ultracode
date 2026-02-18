@@ -32,6 +32,8 @@ export const LANGUAGE_MAP: Record<string, string> = {
   ".psm1": "powershell",
   ".psd1": "powershell",
   ".swift": "swift",
+  ".zig": "zig",
+  ".zon": "zig",
   ".css": "css",
   ".scss": "css",
   ".sass": "css",
@@ -67,6 +69,7 @@ export const SUPPORTED_LANGUAGES = [
   "typescript",
   "javascript",
   "json",
+  "zig",
 ] as const;
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];

@@ -10,3 +10,4 @@ export { JAVA_CONFIG } from "./java.js";
 export { KOTLIN_CONFIG } from "./kotlin.js";
 export { RUST_CONFIG } from "./rust.js";
 export { SWIFT_CONFIG } from "./swift.js";
+export { ZIG_CONFIG } from "./zig.js";

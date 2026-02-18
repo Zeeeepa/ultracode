@@ -31,6 +31,7 @@ type CppParserType = typeof import("./cpp-native-parser.js").CppNativeParser;
 type BashParserType = typeof import("./bash-native-parser.js").BashNativeParser;
 type PowerShellParserType = typeof import("./powershell-native-parser.js").PowerShellNativeParser;
 type JsonParserType = typeof import("./json-parser.js").JsonParser;
+type ZigParserType = typeof import("./zig-native-parser.js").ZigNativeParser;
 
 // =============================================================================
 // LANGUAGE DETECTION
@@ -69,6 +70,8 @@ const EXTENSION_TO_LANGUAGE: Record<string, SupportedLanguage> = {
   ".cc": "cpp",
   ".hpp": "cpp",
   ".swift": "swift",
+  ".zig": "zig",
+  ".zon": "zig",
   ".css": "css",
   ".html": "html",
   ".xml": "xml",
@@ -91,6 +94,7 @@ const CPP_EXTENSIONS = new Set([".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx"
 const BASH_EXTENSIONS = new Set([".sh", ".bash", ".zsh"]);
 const POWERSHELL_EXTENSIONS = new Set([".ps1", ".psm1", ".psd1"]);
 const JSON_EXTENSIONS = new Set([".json"]);
+const ZIG_EXTENSIONS = new Set([".zig", ".zon"]);
 
 // =============================================================================
 // PROJECT TYPE DETECTION
@@ -105,6 +109,7 @@ export type ProjectType =
   | "rust" // Cargo.toml
   | "cpp" // CMakeLists.txt, Makefile
   | "dotnet" // *.csproj, *.sln
+  | "zig" // build.zig
   | "mixed" // Multiple languages detected
   | "unknown";
 
@@ -138,6 +143,7 @@ export function detectProjectType(workspaceRoot: string): ProjectInfo {
     { file: "Cargo.toml", type: "rust", langs: ["rust"] },
     { file: "CMakeLists.txt", type: "cpp", langs: ["c", "cpp"] },
     { file: "Makefile", type: "cpp", langs: ["c", "cpp"] },
+    { file: "build.zig", type: "zig", langs: ["zig"] },
   ];
 
   const detectedTypes: ProjectType[] = [];
@@ -189,6 +195,7 @@ export class UnifiedParser implements BaseParser {
   private bashParser: InstanceType<BashParserType> | null = null;
   private powershellParser: InstanceType<PowerShellParserType> | null = null;
   private jsonParser: InstanceType<JsonParserType> | null = null;
+  private zigParser: InstanceType<ZigParserType> | null = null;
 
   // Track which parsers are initialized
   private initializedParsers = new Set<string>();
@@ -251,6 +258,9 @@ export class UnifiedParser implements BaseParser {
         case "c":
         case "cpp":
           initPromises.push(this.ensureCppParser());
+          break;
+        case "zig":
+          initPromises.push(this.ensureZigParser());
           break;
       }
     }
@@ -361,6 +371,14 @@ export class UnifiedParser implements BaseParser {
     this.initializedParsers.add("json");
   }
 
+  private async ensureZigParser(): Promise<void> {
+    if (this.zigParser) return;
+    const { ZigNativeParser } = await import("./zig-native-parser.js");
+    this.zigParser = new ZigNativeParser();
+    await this.zigParser.initialize();
+    this.initializedParsers.add("zig");
+  }
+
   // =============================================================================
   // PARSING
   // =============================================================================
@@ -426,6 +444,9 @@ export class UnifiedParser implements BaseParser {
       } else if (JSON_EXTENSIONS.has(ext)) {
         await this.ensureJsonParser();
         result = await this.jsonParser!.parse(filePath, content, contentHash);
+      } else if (ZIG_EXTENSIONS.has(ext)) {
+        await this.ensureZigParser();
+        result = await this.zigParser!.parse(filePath, content, contentHash);
       } else {
         // For other languages, use regex-based fallback
         result = this.fallbackParse(filePath, content, contentHash, startTime);
@@ -512,6 +533,11 @@ export class UnifiedParser implements BaseParser {
     if (POWERSHELL_EXTENSIONS.has(ext)) {
       await this.ensurePowershellParser();
       return this.powershellParser!.parseIncremental(filePath, content, contentHash, edits);
+    }
+
+    if (ZIG_EXTENSIONS.has(ext)) {
+      await this.ensureZigParser();
+      return this.zigParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     // For other languages, just do full parse
@@ -703,6 +729,7 @@ export class UnifiedParser implements BaseParser {
     if (this.cppParser) allStats.push(this.cppParser.getStats());
     if (this.bashParser) allStats.push(this.bashParser.getStats());
     if (this.powershellParser) allStats.push(this.powershellParser.getStats());
+    if (this.zigParser) allStats.push(this.zigParser.getStats());
 
     return {
       filesParsed: this.stats.filesParsed,
@@ -729,6 +756,7 @@ export class UnifiedParser implements BaseParser {
     this.cppParser?.clearCache();
     this.bashParser?.clearCache();
     this.powershellParser?.clearCache();
+    this.zigParser?.clearCache();
   }
 
   /**
