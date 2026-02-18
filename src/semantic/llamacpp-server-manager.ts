@@ -502,8 +502,11 @@ class LlamaCppServerManager {
       if (isWindows) {
         // Add bin directory to PATH for DLLs
         env["PATH"] = `${binDir};${process.env["PATH"] || ""}`;
+      } else if (process.platform === "darwin") {
+        // macOS uses DYLD_LIBRARY_PATH (not LD_LIBRARY_PATH)
+        env["DYLD_LIBRARY_PATH"] = `${binDir}:${process.env["DYLD_LIBRARY_PATH"] || ""}`;
       } else {
-        // Add lib paths on Linux
+        // Linux
         env["LD_LIBRARY_PATH"] = `${binDir}:${process.env["LD_LIBRARY_PATH"] || ""}`;
       }
 

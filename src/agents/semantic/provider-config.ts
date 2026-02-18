@@ -17,6 +17,7 @@ export type ProviderKind =
   | "ovms-native"
   | "vllm"
   | "llamacpp"
+  | "mlx"
   | "ollama"
   | "openai"
   | "cloudru"
@@ -38,6 +39,19 @@ interface OvmsConfigExtended {
   grpcPort?: number;
   timeoutMs?: number;
   concurrency?: number;
+}
+
+/**
+ * Extended MLX configuration with runtime fields
+ */
+interface MlxConfigExtended {
+  endpoint?: string;
+  max_batch_size?: number;
+  timeoutMs?: number;
+  concurrency?: number;
+  auto_start?: boolean;
+  autoStart?: boolean;
+  selected_model?: string | null;
 }
 
 /**
@@ -124,6 +138,8 @@ export function mapSemanticConfigToProvider(semanticConfig: SemanticConfig | nul
       return "vllm";
     case "llamacpp":
       return "llamacpp";
+    case "mlx":
+      return "mlx";
     case "tei":
       return "tei";
     default:
@@ -148,6 +164,8 @@ export function getModelNameFromSemanticConfig(semanticConfig: SemanticConfig | 
       return semanticConfig.embedding?.vllm?.selected_model || "intfloat/multilingual-e5-large-instruct";
     case "llamacpp":
       return semanticConfig.embedding?.llamacpp?.selected_model || "multilingual-e5-base";
+    case "mlx":
+      return semanticConfig.embedding?.mlx?.selected_model || "intfloat/multilingual-e5-base";
     case "tei":
       return semanticConfig.embedding?.tei?.selected_model || "BAAI/bge-m3";
     default:
@@ -198,6 +216,15 @@ export function buildWorkerProviderOptions(
         nGpuLayers: llamacppConfig?.n_gpu_layers ?? llamacppConfig?.nGpuLayers ?? 99,
         // Performance tuning
         maxBatchSize: llamacppConfig?.max_batch_size ?? 256,
+      };
+    }
+    case "mlx": {
+      const mlxConfig = semanticConfig?.embedding?.mlx as MlxConfigExtended | undefined;
+      return {
+        baseUrl: mlxConfig?.endpoint || "http://127.0.0.1:8087",
+        timeoutMs: mlxConfig?.timeoutMs ?? 30000,
+        concurrency: mlxConfig?.concurrency ?? 4,
+        maxBatchSize: mlxConfig?.max_batch_size ?? 128,
       };
     }
     default:
@@ -274,6 +301,18 @@ export function buildEmbeddingGeneratorOptions(
       nGpuLayers: llamacppConfig?.n_gpu_layers ?? llamacppConfig?.nGpuLayers ?? 99,
       // Auto-start server if not running (default: true)
       autoStart: llamacppConfig?.auto_start ?? llamacppConfig?.autoStart ?? true,
+    };
+  }
+
+  // Configure MLX from semantic-config.json
+  if (semanticConfig?.embedding?.platform === "mlx") {
+    const mlxConfig = semanticConfig?.embedding?.mlx as MlxConfigExtended | undefined;
+    options.mlx = {
+      baseUrl: mlxConfig?.endpoint || "http://127.0.0.1:8087",
+      timeoutMs: mlxConfig?.timeoutMs ?? 30000,
+      concurrency: mlxConfig?.concurrency ?? 4,
+      maxBatchSize: mlxConfig?.max_batch_size ?? 128,
+      autoStart: mlxConfig?.auto_start ?? mlxConfig?.autoStart ?? true,
     };
   }
 

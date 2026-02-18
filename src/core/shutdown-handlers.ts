@@ -11,6 +11,7 @@ import { log } from "../logging/index.js";
 import type { KVPairs } from "../logging/log-types.js";
 import { shutdownFaissProvider } from "../semantic/faiss/faiss-provider.js";
 import { shutdownGpuClient } from "../semantic/gpu/gpu-client.js";
+import { shutdownMlx } from "../semantic/mlx-server-manager.js";
 import { shutdownOVMSNative } from "../semantic/ovms-native-manager.js";
 import type { Agent } from "../types/agent.js";
 import { resourceManager } from "./resource-manager.js";
@@ -85,6 +86,14 @@ export async function performGlobalShutdown(signal: string): Promise<void> {
     log.i("SHUTDOWN", "ovms_shutdown_ok");
   } catch (error) {
     log.e("SHUTDOWN", "ovms_shutdown_fail", { err: String(error) });
+  }
+
+  // Shutdown MLX server (if running)
+  try {
+    await shutdownMlx();
+    log.i("SHUTDOWN", "mlx_shutdown_ok");
+  } catch (error) {
+    log.e("SHUTDOWN", "mlx_shutdown_fail", { err: String(error) });
   }
 
   // Shutdown GPU worker (if running)

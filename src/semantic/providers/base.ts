@@ -8,6 +8,7 @@ export type ProviderKind =
   | "ovms-native" // OVMS native binary (no Docker)
   | "vllm" // vLLM Docker container (NVIDIA GPU)
   | "llamacpp" // llama.cpp native server (GGUF models)
+  | "mlx" // Apple MLX (macOS ARM64 Metal GPU)
   | "auto";
 
 export interface ProviderInfo {
