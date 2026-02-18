@@ -7,7 +7,7 @@
 | Name | Type | Location |
 |------|------|----------|
 | `ProviderStrings` | interface | [→ types.ts:8-12] |
-| `SetupStrings` | interface | [→ types.ts:17-396] |
+| `SetupStrings` | interface | [→ types.ts:17-397] |
 
 ## Files
 

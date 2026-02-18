@@ -146,6 +146,8 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
       ".rs": ["cargo-check"],
       ".go": ["go-vet"],
       ".java": ["javac"],
+      ".cs": ["roslyn"],
+      ".csx": ["roslyn"],
     };
     return map[ext] || [];
   }
@@ -246,6 +248,75 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
         case "go-vet":
           command = `go vet "${filePath}" 2>&1`;
           break;
+        case "roslyn": {
+          // C# validation via Roslyn addon — parse file and extract diagnostics
+          try {
+            const { getCSharpParser, ensureRoslynStarted, findSolutionFile } = await import("../../addons/index.js");
+            let parser = getCSharpParser();
+
+            // Lazy start if not running
+            if (!parser) {
+              let dir = cwd;
+              let slnPath: string | null = null;
+              for (let i = 0; i < 10; i++) {
+                slnPath = findSolutionFile(dir);
+                if (slnPath) break;
+                const { dirname: dn } = await import("node:path");
+                const parent = dn(dir);
+                if (parent === dir) break;
+                dir = parent;
+              }
+              if (slnPath) {
+                parser = await ensureRoslynStarted(slnPath);
+              }
+            }
+
+            if (!parser) {
+              return {
+                validator: "roslyn",
+                errors: 0,
+                warnings: 0,
+                issues: [{ message: "Roslyn addon not available (no .sln found or DLL missing)", severity: "warning" }],
+              };
+            }
+
+            // Parse file to get diagnostics from Roslyn
+            const parseResult = await parser.parseFile(filePath);
+            if (!parseResult || !parseResult.entities || parseResult.entities.length === 0) {
+              return { validator: "roslyn", errors: 0, warnings: 0, issues: [] };
+            }
+
+            // Extract diagnostics from metadata of all entities
+            const issues: ValidationIssue[] = [];
+            for (const entity of parseResult.entities) {
+              if (entity.metadata?.diagnostics) {
+                for (const diag of entity.metadata.diagnostics) {
+                  issues.push({
+                    line: diag.line,
+                    column: diag.column,
+                    message: `${diag.id}: ${diag.message}`,
+                    rule: diag.id,
+                    severity: diag.severity === "error" ? "error" : diag.severity === "warning" ? "warning" : "info",
+                  });
+                }
+              }
+            }
+
+            return {
+              validator: "roslyn",
+              errors: issues.filter((i) => i.severity === "error").length,
+              warnings: issues.filter((i) => i.severity === "warning").length,
+              issues,
+            };
+          } catch (error) {
+            return {
+              validator: "roslyn",
+              errors: 1,
+              warnings: 0,
+              issues: [{ message: `Roslyn validation failed: ${String(error)}`, severity: "error" }],
+            };
+          }
+        }
         default:
           return { validator, errors: 0, warnings: 0, issues: [{ message: "Unknown validator", severity: "error" }] };
       }
@@ -380,8 +451,7 @@ export class ValidateDirectoryToolHandler extends BaseToolHandler<z.infer<typeof
   protected async execute(args: z.infer<typeof ValidateDirectorySchema>): Promise<ToolResult> {
     const { glob } = await import("../../utils/glob.js");
 
-    const config = this.context.config as { directory?: string };
-    const directory = args.directory || config.directory;
+    const directory = this.resolveProjectPath(args);
     const extensions = args.extensions || [".ts", ".tsx", ".js", ".jsx", ".py"];
 
     try {

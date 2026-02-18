@@ -327,6 +327,7 @@ export class WorkerEmbeddingClient {
   private async generateVLLM(texts: string[]): Promise<Float32Array[]> {
     const url = `${this.baseUrl}/v1/embeddings`;
     const timeout = this.config.providerOptions?.timeoutMs || 30000;
+    const encodingFormat = this.config.providerOptions?.encodingFormat || "float";
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -338,6 +339,7 @@ export class WorkerEmbeddingClient {
         body: JSON.stringify({
           model: this.config.modelName,
           input: texts,
+          encoding_format: encodingFormat,
         }),
         signal: controller.signal,
       });
@@ -348,12 +350,19 @@ export class WorkerEmbeddingClient {
       }
 
       const result = (await response.json()) as {
-        data: Array<{ embedding: number[]; index: number }>;
+        data: Array<{ embedding: number[] | string; index: number }>;
       };
 
       // Sort by index to ensure correct order
       const sorted = [...result.data].sort((a, b) => a.index - b.index);
-      return sorted.map((item) => new Float32Array(item.embedding));
+      return sorted.map((item) => {
+        if (typeof item.embedding === "string") {
+          // base64-encoded Float32 array (vLLM 0.14+)
+          const binaryData = Buffer.from(item.embedding, "base64");
+          return new Float32Array(binaryData.buffer, binaryData.byteOffset, binaryData.length / 4);
+        }
+        return new Float32Array(item.embedding);
+      });
     } finally {
       clearTimeout(timeoutId);
     }

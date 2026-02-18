@@ -83,18 +83,25 @@ export class PathBuilder {
       // Process in batches of 16 for better cache locality
       const batch = queue.splice(0, Math.min(16, queue.length));
 
-      for (const { id, depth } of batch) {
-        if (visited.has(id) || depth > maxDepth) continue;
-        visited.add(id);
+      // Filter to unvisited nodes within depth
+      const validBatch = batch.filter(({ id, depth }) => !visited.has(id) && depth <= maxDepth);
+      if (validBatch.length === 0) continue;
 
-        // Get entity and relationships
-        const entity = await this.storage.getEntity(id);
+      // Mark all as visited upfront to avoid re-queuing
+      for (const { id } of validBatch) visited.add(id);
+
+      // Batch fetch all entities in one query instead of N getEntity() calls
+      const batchIds = validBatch.map(({ id }) => id);
+      const entityMap = await this.storage.getEntitiesBatch(batchIds);
+
+      for (const { id, depth } of validBatch) {
+        const entity = entityMap.get(id);
         if (!entity) continue;
 
         const node = this.entityToNode(entity);
         nodes.set(id, node);
 
-        // Get outgoing relationships (calls)
+        // Get outgoing relationships (calls) — still per-entity (no batch API for relationships)
         const outRels = await this.storage.getRelationshipsForEntity(id);
         const outgoing: string[] = [];
         const incoming: string[] = [];
@@ -132,10 +139,6 @@ export class PathBuilder {
         // Also find incoming NgRx relationships by entity name
         const incomingNgRx = await findIncomingNgRxRelationships(this.storage, entity.name);
         for (const rel of incomingNgRx) {
-          // For NgRx flow tracing, we need to INVERT certain relationships:
-          // - HANDLES_ACTION: reducer -> action means action TRIGGERS reducer (action -> reducer in flow)
-          // - LISTENS_TO_ACTION: effect -> action means action TRIGGERS effect (action -> effect in flow)
-          // These are semantically "incoming" to the action but should be "outgoing" in flow graph
           const isInvertedRelation = isInvertedNgRxRelation(rel.type);
 
           if (isInvertedRelation) {
@@ -172,12 +175,24 @@ export class PathBuilder {
 
     // Add implicit NgRx reducer -> featureSelector connections
     const reducerSelectorConnections = await findReducerToSelectorConnections(this.storage);
+
+    // Batch fetch all missing entities at once instead of N getEntity() calls
+    const missingConnIds = new Set<string>();
+    for (const conn of reducerSelectorConnections) {
+      if (nodes.has(conn.reducerId) || nodes.has(conn.selectorId)) {
+        if (!nodes.has(conn.reducerId)) missingConnIds.add(conn.reducerId);
+        if (!nodes.has(conn.selectorId)) missingConnIds.add(conn.selectorId);
+      }
+    }
+    const missingEntities =
+      missingConnIds.size > 0 ? await this.storage.getEntitiesBatch([...missingConnIds]) : new Map<string, Entity>();
+
     for (const conn of reducerSelectorConnections) {
       // Only add if both nodes are in the graph
       if (nodes.has(conn.reducerId) || nodes.has(conn.selectorId)) {
-        // Ensure both nodes exist in graph
+        // Ensure both nodes exist in graph (use batch-fetched entities)
         if (!nodes.has(conn.reducerId)) {
-          const reducerEntity = await this.storage.getEntity(conn.reducerId);
+          const reducerEntity = missingEntities.get(conn.reducerId);
           if (reducerEntity) {
             nodes.set(conn.reducerId, this.entityToNode(reducerEntity));
             forward.set(conn.reducerId, []);
@@ -185,7 +200,7 @@ export class PathBuilder {
           }
         }
         if (!nodes.has(conn.selectorId)) {
-          const selectorEntity = await this.storage.getEntity(conn.selectorId);
+          const selectorEntity = missingEntities.get(conn.selectorId);
           if (selectorEntity) {
             nodes.set(conn.selectorId, this.entityToNode(selectorEntity));
             forward.set(conn.selectorId, []);
@@ -679,18 +694,22 @@ export class PathBuilder {
    */
   async getCallers(entityId: string): Promise<Array<{ entity: Entity; probability: CallProbability }>> {
     const rels = await this.storage.getRelationshipsForEntity(entityId, RelationType.CALLS);
+
+    // Collect all caller IDs, then batch fetch
+    const callerIds = rels.filter((rel) => rel.toId === entityId).map((rel) => rel.fromId);
+    if (callerIds.length === 0) return [];
+
+    const entityMap = await this.storage.getEntitiesBatch(callerIds);
     const callers: Array<{ entity: Entity; probability: CallProbability }> = [];
 
-    for (const rel of rels) {
-      if (rel.toId === entityId) {
-        const caller = await this.storage.getEntity(rel.fromId);
-        if (caller) {
-          const node = this.entityToNode(caller);
-          callers.push({
-            entity: caller,
-            probability: this.getCallProbability(node),
-          });
-        }
+    for (const id of callerIds) {
+      const caller = entityMap.get(id);
+      if (caller) {
+        const node = this.entityToNode(caller);
+        callers.push({
+          entity: caller,
+          probability: this.getCallProbability(node),
+        });
       }
     }
 
@@ -702,18 +721,13 @@ export class PathBuilder {
    */
   async getCallees(entityId: string): Promise<Entity[]> {
     const rels = await this.storage.getRelationshipsForEntity(entityId, RelationType.CALLS);
-    const callees: Entity[] = [];
 
-    for (const rel of rels) {
-      if (rel.fromId === entityId) {
-        const callee = await this.storage.getEntity(rel.toId);
-        if (callee) {
-          callees.push(callee);
-        }
-      }
-    }
+    // Collect all callee IDs, then batch fetch
+    const calleeIds = rels.filter((rel) => rel.fromId === entityId).map((rel) => rel.toId);
+    if (calleeIds.length === 0) return [];
 
-    return callees;
+    const entityMap = await this.storage.getEntitiesBatch(calleeIds);
+    return calleeIds.map((id) => entityMap.get(id)).filter((e): e is Entity => e != null);
   }
 }
 

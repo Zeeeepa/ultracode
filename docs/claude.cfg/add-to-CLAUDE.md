@@ -50,8 +50,6 @@
 - `get_help(topic='modification')` — guide for Modify agents
 - `get_tools_for_task(task='find duplicates')` — tool recommendations
 
-> For C# use UltrasharpTools MCP (Roslyn-based).
-
 ## Tracing — When to Use
 
 | Question | Tool |

@@ -92,6 +92,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   private readonly defaultMaxConcurrency: number;
   private readonly defaultMemoryLimit: number;
   private resourceMixin = new ResourceAdjustmentMixin();
+  // Mutex: serialize indexing tasks to prevent concurrent setProjectContext corruption
+  private indexingLock: Promise<void> = Promise.resolve();
 
   constructor(_agentId?: string) {
     const agentConfig = getDevAgentConfig();
@@ -222,48 +224,63 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
   }
 
   private async handleIndexTask(task: AgentTask): Promise<unknown> {
+    // Serialize indexing: wait for any previous indexing to complete.
+    // Without this, concurrent auto-indexing (server + client) corrupts shared
+    // project context on IndexerAgent/BatchOperations, causing relationships
+    // to be stored under the wrong project_hash.
+    const prevLock = this.indexingLock;
+    let releaseLock: () => void;
+    this.indexingLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    await prevLock;
+
     const payload = task.payload as IndexTaskPayload;
     log.i("DEVAGENT", "index_start", { dir: payload.directory });
 
-    if (!this.indexerAgent) {
-      throw new Error("Indexer agent not initialized");
+    try {
+      if (!this.indexerAgent) {
+        throw new Error("Indexer agent not initialized");
+      }
+
+      // v3: Set project context on GLOBAL GraphStorage singleton before indexing
+      const indexBranch = getCurrentGitBranch(payload.directory);
+      setGlobalProjectContext(payload.directory, indexBranch);
+      // v3: Also set context on IndexerAgent (for BatchOperations)
+      this.indexerAgent.setProjectContext(payload.directory);
+      // v6: CRITICAL - Update global ProjectContextManager so getCurrentIndexingDirectory() returns correct path
+      // Without this, code using getCurrentIndexingDirectory() (e.g., vector provider setup) gets wrong project!
+      setCurrentIndexingDirectory(payload.directory);
+      log.d("DEVAGENT", "set_ctx", { dir: payload.directory, branch: indexBranch });
+
+      const result = {
+        status: "started",
+        directory: payload.directory,
+        incremental: payload.incremental || false,
+        excludePatterns: payload.excludePatterns || [],
+        batchMode: payload.batchMode || false,
+        timestamp: Date.now(),
+        filesProcessed: 0,
+        entitiesExtracted: 0,
+        relationshipsCreated: 0,
+      };
+
+      // Publish indexing started event
+      // Publish indexing started event (topic, data, source)
+      knowledgeBus.publish("indexing:started", result, this.id);
+
+      // Perform real indexing using parser and indexer agents
+      const indexingResult = await this.performRealIndexing(payload);
+
+      return {
+        ...result,
+        ...indexingResult,
+        status: "completed",
+        message: `Real indexing completed for ${payload.directory}`,
+      };
+    } finally {
+      releaseLock!();
     }
-
-    // v3: Set project context on GLOBAL GraphStorage singleton before indexing
-    const indexBranch = getCurrentGitBranch(payload.directory);
-    setGlobalProjectContext(payload.directory, indexBranch);
-    // v3: Also set context on IndexerAgent (for BatchOperations)
-    this.indexerAgent.setProjectContext(payload.directory);
-    // v6: CRITICAL - Update global ProjectContextManager so getCurrentIndexingDirectory() returns correct path
-    // Without this, code using getCurrentIndexingDirectory() (e.g., vector provider setup) gets wrong project!
-    setCurrentIndexingDirectory(payload.directory);
-    log.d("DEVAGENT", "set_ctx", { dir: payload.directory, branch: indexBranch });
-
-    const result = {
-      status: "started",
-      directory: payload.directory,
-      incremental: payload.incremental || false,
-      excludePatterns: payload.excludePatterns || [],
-      batchMode: payload.batchMode || false,
-      timestamp: Date.now(),
-      filesProcessed: 0,
-      entitiesExtracted: 0,
-      relationshipsCreated: 0,
-    };
-
-    // Publish indexing started event
-    // Publish indexing started event (topic, data, source)
-    knowledgeBus.publish("indexing:started", result, this.id);
-
-    // Perform real indexing using parser and indexer agents
-    const indexingResult = await this.performRealIndexing(payload);
-
-    return {
-      ...result,
-      ...indexingResult,
-      status: "completed",
-      message: `Real indexing completed for ${payload.directory}`,
-    };
   }
 
   private async handleImplementationTask(task: AgentTask): Promise<unknown> {

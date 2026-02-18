@@ -496,7 +496,9 @@ export class TraceEngine {
   private async resolveEntity(nameOrQuery: string): Promise<Entity | null> {
     // Parse file:name format (supports both / and \)
     // Match pattern: anything with path separator followed by .ts/.js/.py/.kt etc, then :name
-    const fileQualifiedMatch = nameOrQuery.match(/^(.+?\.(?:ts|js|tsx|jsx|py|go|rs|java|kt|kts|c|cpp|h|hpp)):(.+)$/i);
+    const fileQualifiedMatch = nameOrQuery.match(
+      /^(.+?\.(?:ts|js|tsx|jsx|py|go|rs|java|kt|kts|c|cs|csx|cpp|h|hpp)):(.+)$/i,
+    );
     let name = nameOrQuery;
     let filePath: string | undefined;
 
@@ -583,11 +585,15 @@ export class TraceEngine {
           minSimilarity: 0.6,
         });
         if (results.length > 0) {
+          // Batch fetch all candidate entities at once
+          const candidateIds = results.map((r) => r.entityId);
+          const candidateMap = await this.storage.getEntitiesBatch(candidateIds);
+
           // Filter by filePath if provided
           if (filePath) {
             const normalizedFilter = filePath.replace(/\\/g, "/").toLowerCase();
             for (const result of results) {
-              const entity = await this.storage.getEntity(result.entityId);
+              const entity = candidateMap.get(result.entityId);
               if (entity) {
                 const entityPath = (entity.filePath || "").replace(/\\/g, "/").toLowerCase();
                 if (entityPath.includes(normalizedFilter) || entityPath.endsWith(normalizedFilter)) {
@@ -596,7 +602,7 @@ export class TraceEngine {
               }
             }
           }
-          return this.storage.getEntity(results[0]!.entityId);
+          return candidateMap.get(results[0]!.entityId) || null;
         }
       } catch {
         // Semantic search not available or failed
@@ -618,10 +624,20 @@ export class TraceEngine {
     const read = new Set<string>();
     const critical = new Set<string>();
 
+    // Collect all unique entity IDs from all paths, then batch fetch
+    const allEntityIds = new Set<string>();
     for (const path of paths) {
       for (const step of path.steps) {
-        // Get entity metadata
-        const entity = await this.storage.getEntity(step.entityId);
+        allEntityIds.add(step.entityId);
+      }
+    }
+
+    const entityMap =
+      allEntityIds.size > 0 ? await this.storage.getEntitiesBatch([...allEntityIds]) : new Map<string, Entity>();
+
+    for (const path of paths) {
+      for (const step of path.steps) {
+        const entity = entityMap.get(step.entityId);
         if (!entity?.metadata) continue;
 
         const meta = entity.metadata as Record<string, any>;

@@ -1045,10 +1045,13 @@ export class AutoDocDetectLanguageToolHandler extends BaseToolHandler<z.infer<ty
       let analyzed = 0;
       for (const entity of entities) {
         if (analyzed >= args.sampleSize) break;
-        if (entity.metadata?.["comments"]) {
-          const commentsText = Array.isArray(entity.metadata["comments"])
-            ? entity.metadata["comments"].join("\n")
-            : String(entity.metadata["comments"]);
+
+        // Check metadata.comments (tree-sitter parsers) OR documentation field (Roslyn C# parser)
+        const commentsSource =
+          entity.metadata?.["comments"] || (entity as unknown as { documentation?: string }).documentation;
+
+        if (commentsSource) {
+          const commentsText = Array.isArray(commentsSource) ? commentsSource.join("\n") : String(commentsSource);
           const result = detectLanguageFromText(commentsText);
           if (result.confidence > 0) {
             results.push(result);

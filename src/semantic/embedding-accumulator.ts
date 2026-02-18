@@ -54,6 +54,8 @@ export interface AccumulatorConfig {
   dimensions: number;
   /** Batch size for OVMS requests (texts per batch) */
   queueBatchSize: number;
+  /** Max parallel batch requests in flight (default 12 for llamacpp, lower for TEI) */
+  parallelBatches: number;
 }
 
 export interface AccumulatorStats {
@@ -71,6 +73,7 @@ const DEFAULT_CONFIG: AccumulatorConfig = {
   flushThreshold: 500, // Async flush every 500 embeddings (was 5000, now incremental)
   dimensions: 384, // Default for e5-small, MiniLM models (most common)
   queueBatchSize: 200, // Send 200 texts per OVMS request (good for GPU utilization)
+  parallelBatches: 12, // Default for llamacpp (--parallel 8), TEI should use 4
 };
 
 export class EmbeddingAccumulator {
@@ -351,8 +354,7 @@ export class EmbeddingAccumulator {
     this.queueProcessingPromise = this.processQueueLoop();
   }
 
-  // Number of parallel batches to send to llama-server (match --parallel)
-  private static readonly PARALLEL_BATCHES = 12;
+  // PARALLEL_BATCHES removed — now configurable via config.parallelBatches
 
   /**
    * Process a single batch and return results.
@@ -429,7 +431,7 @@ export class EmbeddingAccumulator {
     log.i("ACCUMULATOR", "Queue processing started", {
       queueSize: this.textQueue.length,
       batchSize: this.config.queueBatchSize,
-      parallelBatches: EmbeddingAccumulator.PARALLEL_BATCHES,
+      parallelBatches: this.config.parallelBatches,
     });
 
     const loopStart = performance.now();
@@ -441,13 +443,18 @@ export class EmbeddingAccumulator {
 
       while (this.textQueue.length > 0 || inFlight.length > 0) {
         // Launch new batches up to parallel limit
-        while (inFlight.length < EmbeddingAccumulator.PARALLEL_BATCHES && this.textQueue.length > 0) {
+        while (inFlight.length < this.config.parallelBatches && this.textQueue.length > 0) {
           const batch = this.textQueue.splice(0, this.config.queueBatchSize);
           if (batch.length === 0) break;
 
-          const batchPromise = this.processSingleBatch(batch).catch((error) => {
-            log.e("ACCUMULATOR", "Batch failed", { error: (error as Error).message, count: batch.length });
-            // Re-queue failed batch
+          const batchPromise = this.processSingleBatch(batch).catch(async (error) => {
+            const msg = (error as Error).message;
+            const is429 = msg.includes("429") || msg.includes("overloaded");
+            log.e("ACCUMULATOR", "Batch failed", { error: msg, count: batch.length, is429 });
+            // Re-queue failed batch with backoff for 429
+            if (is429) {
+              await new Promise((r) => setTimeout(r, 500));
+            }
             this.textQueue.unshift(...batch);
             return null;
           });

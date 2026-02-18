@@ -203,7 +203,10 @@ export type RefactoringStrategy =
   | "StateMachine" // Explicit state machine (XState)
   | "Signal" // Angular Signals
   | "Store" // NgRx/Redux store
-  | "Service"; // Angular service with BehaviorSubject
+  | "Service" // Angular service with BehaviorSubject
+  | "DI_Lifetime" // C#: Fix DI lifetime (Singleton→Scoped)
+  | "Channel" // C#: System.Threading.Channels for producer-consumer
+  | "ImmutableState"; // C#: Record types + immutable collections
 
 /**
  * Single refactoring step

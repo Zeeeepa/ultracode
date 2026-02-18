@@ -57,12 +57,13 @@ export const AnalyzeHotspotsSchema = z.object({
 });
 
 export const AnalyzeStateChaosSchema = z.object({
-  scope: z.enum(["file", "module", "project"]).describe("Analysis scope"),
+  projectPath: z.string().optional().describe("Project directory path"),
+  scope: z.enum(["file", "module", "project"]).optional().default("project").describe("Analysis scope"),
   stateIdentifiers: z
     .array(z.string())
     .optional()
     .describe("Specific state identifiers to analyze (e.g., ['token', 'userId'])"),
-  autoDetect: z.boolean().optional().default(false).describe("Automatically detect state patterns"),
+  autoDetect: z.boolean().optional().default(true).describe("Automatically detect state patterns"),
   format: z
     .enum(["summary", "detailed", "json"])
     .optional()

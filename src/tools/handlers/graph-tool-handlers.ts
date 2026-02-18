@@ -57,7 +57,7 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
   }
 
   protected async execute(args: z.infer<typeof CleanIndexSchema>): Promise<ToolResult> {
-    const targetDir = args.directory || (this.context.config as { directory?: string }).directory;
+    const targetDir = this.resolveProjectPath(args);
 
     // v3: Ensure correct project context for GraphStorage queries
     const storage = await this.ensureGraphStorageForProject(targetDir);

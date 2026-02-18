@@ -231,6 +231,69 @@ export class EntityOperations {
   }
 
   /**
+   * Batch fetch entities by IDs in a single SQL query.
+   * Returns Map<id, Entity> for found entities.
+   * Uses IN clause with chunking for large ID sets.
+   */
+  async getEntitiesBatch(ids: string[]): Promise<Map<string, Entity>> {
+    const result = new Map<string, Entity>();
+    if (ids.length === 0) return result;
+
+    const client = this.getClient();
+    if (!client) throw new Error("Client not initialized");
+
+    const { projectHash, branchName, baseBranch } = this.getContext();
+
+    // Get tombstones once (not per ID)
+    let tombstones: Set<string> | null = null;
+    if (baseBranch && this.tombstoneGetter) {
+      tombstones = await this.tombstoneGetter("entity");
+    }
+
+    // Deduplicate and filter tombstoned IDs
+    const uniqueIds = [...new Set(ids)].filter((id) => !tombstones?.has(id));
+    if (uniqueIds.length === 0) return result;
+
+    // SQLite has a limit of ~999 variables per query — chunk if needed
+    const CHUNK_SIZE = 400;
+
+    for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+
+      // 1. Fetch from current branch
+      const rows = await client.execute({
+        sql: `SELECT * FROM entities WHERE id IN (${placeholders}) AND project_hash = ? AND branch_name = ?`,
+        args: [...chunk, projectHash, branchName],
+      });
+
+      for (const row of rows.rows) {
+        const entity = this.rowToEntity(row);
+        result.set(entity.id, entity);
+      }
+
+      // 2. If on feature branch, fetch missing from base
+      if (baseBranch) {
+        const missingIds = chunk.filter((id) => !result.has(id));
+        if (missingIds.length > 0) {
+          const missingPlaceholders = missingIds.map(() => "?").join(",");
+          const baseRows = await client.execute({
+            sql: `SELECT * FROM entities WHERE id IN (${missingPlaceholders}) AND project_hash = ? AND branch_name = ?`,
+            args: [...missingIds, projectHash, baseBranch],
+          });
+
+          for (const row of baseRows.rows) {
+            const entity = this.rowToEntity(row);
+            result.set(entity.id, entity);
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Build filter SQL clause and args
    */
   private buildFilterClause(
@@ -268,13 +331,25 @@ export class EntityOperations {
 
       if (filters.name) {
         if (filters.name instanceof RegExp) {
-          let pattern = filters.name.source;
-          pattern = pattern.replace(/\.\*/g, "%").replace(/\*/g, "%").replace(/\./g, "_");
-          if (!pattern.includes("%") && !pattern.includes("_")) {
-            pattern = `%${pattern}%`;
+          const source = filters.name.source;
+          // Handle regex alternation (|) — split into multiple OR clauses
+          if (source.includes("|")) {
+            const alternatives = source.split("|").map((alt) => {
+              let p = alt.replace(/\.\*/g, "%").replace(/\*/g, "%").replace(/\./g, "_");
+              if (!p.includes("%") && !p.includes("_")) p = `%${p}%`;
+              return p;
+            });
+            sql += ` AND (${alternatives.map(() => "name LIKE ?").join(" OR ")})`;
+            args.push(...alternatives);
+          } else {
+            let pattern = source;
+            pattern = pattern.replace(/\.\*/g, "%").replace(/\*/g, "%").replace(/\./g, "_");
+            if (!pattern.includes("%") && !pattern.includes("_")) {
+              pattern = `%${pattern}%`;
+            }
+            sql += " AND name LIKE ?";
+            args.push(pattern);
           }
-          sql += " AND name LIKE ?";
-          args.push(pattern);
         } else {
           sql += " AND name = ?";
           args.push(filters.name);

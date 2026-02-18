@@ -152,6 +152,7 @@ export interface SemanticConfig {
     vllm?: {
       endpoint: string;
       max_batch_size?: number;
+      encoding_format?: "float" | "base64";
       selected_model: string | null;
       models?: Array<{
         id: string;
@@ -283,6 +284,9 @@ const MODEL_DIMENSIONS: Record<string, number> = {
   "Alibaba-NLP/gte-Qwen2-1.5B-instruct": 1536,
   "Alibaba-NLP/gte-Qwen2-7B-instruct": 3584,
   "jinaai/jina-embeddings-v3": 1024,
+  // New TEI 1.9+ models
+  "google/embeddinggemma-300m": 768,
+  "Qwen/Qwen3-Embedding-0.6B": 1024,
 };
 
 /**

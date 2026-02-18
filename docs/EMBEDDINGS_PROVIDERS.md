@@ -7,8 +7,8 @@
 | Provider | Endpoint | Batch | GPU | Docker | Speed | Use Case |
 |----------|----------|-------|-----|--------|-------|----------|
 | **llamacpp** | `/v1/embeddings` | Yes | CUDA/Vulkan/CPU | No | **441/s** | Native GGUF, low VRAM |
-| **vllm** | `/v1/embeddings` | Yes | CUDA | Yes | Max throughput |
-| **tei** | `/embed` | Yes | CUDA/CPU | Yes | HuggingFace models |
+| **vllm** | `/v1/embeddings` | Yes | CUDA | Yes | **1352/s** | Max throughput |
+| **tei** | `/embed` | Yes | CUDA/CPU | Yes | **1169/s** | HuggingFace models |
 | **ollama** | `/api/embeddings` | No | CUDA/CPU | No | Simple setup |
 | **ovms** | `/v3/embeddings` | Yes | CPU/iGPU | Yes/No | **260-326/s** | Intel optimized, centralized |
 | **openai** | `/v1/embeddings` | Yes | Cloud | No | OpenAI API |
@@ -156,28 +156,33 @@ vLLM - высокопроизводительный inference server с continuo
 ### Server Configuration
 ```bash
 docker run --gpus all -p 8000:8000 \
-  vllm/vllm-openai:latest \
+  vllm/vllm-openai:latest-cu130 \
   --model intfloat/multilingual-e5-base \
   --task embed \
   --dtype auto \
-  --max-model-len 512
+  --max-model-len 512 \
+  --disable-log-requests
 ```
 
 ### Client Configuration
 ```typescript
-batchSize: 64       // texts per request
-concurrency: 8      // high parallelism for continuous batching
+batchSize: 200       // texts per request (vLLM 0.14+ handles larger batches)
+concurrency: 12      // high parallelism for continuous batching
+encodingFormat: "base64"  // ~33% smaller payloads (vLLM 0.14+)
 timeoutMs: 30000
 ```
 
-### Benchmark
+### Benchmark (RTX 5090, multilingual-e5-small)
 
 | Metric | Value |
 |--------|-------|
-| **Speed** | TBD |
-| **VRAM** | TBD |
-| **Model** | TBD |
-| **GPU** | TBD |
+| **Speed** | **1352 emb/s** (optimized server) |
+| **Baseline** | ~1260 emb/s (default settings) |
+| **vs llama.cpp** | **3.6x** faster (1352 vs 373) |
+| **VRAM** | ~1.5 GB (e5-small) |
+| **Model** | intfloat/multilingual-e5-small (384 dims) |
+| **GPU** | RTX 5090 (Blackwell, sm_120) |
+| **Config** | max-num-batched-tokens=16384, max-num-seqs=256 |
 
 ### Особенности
 - Continuous batching - автоматическое объединение запросов
@@ -196,34 +201,68 @@ timeoutMs: 30000
 
 ### Server Configuration
 ```bash
+# Стандартные GPU (Turing/Ampere/Ada/Hopper):
 docker run --gpus all -p 8081:80 \
-  ghcr.io/huggingface/text-embeddings-inference:1.8.3 \
+  ghcr.io/huggingface/text-embeddings-inference:latest \
+  --model-id intfloat/multilingual-e5-small \
+  --max-batch-tokens 32768 \
+  --max-client-batch-size 1024
+
+# Blackwell GPU (RTX 50xx, sm_120):
+docker run --gpus all -p 8081:80 \
+  ghcr.io/huggingface/text-embeddings-inference:120-latest \
   --model-id intfloat/multilingual-e5-small \
   --max-batch-tokens 32768 \
   --max-client-batch-size 1024
 ```
 
+**ВАЖНО:** Стандартный `latest` image скомпилирован для compute cap 80 (Ampere).
+Для Blackwell GPU (compute cap 120) необходим image `120-latest` (TEI 1.9.1+).
+
 ### Client Configuration
 ```typescript
-batchSize: 50       // optimized for TEI
-concurrency: 16     // high concurrency
-timeoutMs: 30000
+batchSize: 50           // optimized for TEI (queueBatchSize)
+parallelBatches: 4      // concurrent batch requests (TEI-specific, lower than llamacpp=12)
+concurrency: 16         // TEI server concurrency
+timeoutMs: 120000
 ```
 
-### Benchmark
+### Accumulator Config (TEI-specific)
+TEI требует более низкий параллелизм чем llamacpp/vLLM из-за внутреннего batching:
+- `queueBatchSize: 50` (vs llamacpp=72, ovms=200)
+- `parallelBatches: 4` (vs default=12)
+- При 429 "overloaded" — backoff 500ms с автоматическим re-queue
+
+### Benchmark (RTX 5090, multilingual-e5-small)
 
 | Metric | Value |
 |--------|-------|
-| **Speed** | TBD |
-| **VRAM** | TBD |
-| **Model** | TBD |
-| **GPU** | TBD |
+| **Accumulator speed** | **1169 emb/s** (overall), peak **2442 emb/s** |
+| **Worker embedding** | **924 emb/s** (7911 embeddings in 8.6s) |
+| **FAISS flush** | 8206 vectors in 531ms = **15,440/s** |
+| **Full index** | 800 files in **10.2 sec** |
+| **429 errors** | **0** (with optimized config) |
+| **Model** | intfloat/multilingual-e5-small (384 dims) |
+| **GPU** | RTX 5090 (Blackwell, sm_120, image `120-latest`) |
+| **Config** | queueBatchSize=50, parallelBatches=4 |
+| **TEI startup** | 0 sec (hot), >5 min (cold model download) |
+
+### Docker Image Tags (TEI 1.9.1+)
+
+| GPU Architecture | Compute Cap | Image Tag |
+|-----------------|-------------|-----------|
+| Turing (RTX 20xx) | 7.5 | `latest` |
+| Ampere (RTX 30xx) | 8.0/8.6 | `latest` |
+| Ada (RTX 40xx) | 8.9 | `latest` |
+| Hopper (H100) | 9.0 | `hopper-latest` |
+| **Blackwell (RTX 50xx)** | **12.0** | **`120-latest`** |
+| CPU | — | `cpu-latest` |
 
 ### Особенности
 - Нативная поддержка HuggingFace моделей
 - Endpoint `/embed` (не OpenAI-compatible)
 - Поддержка reranking (`/rerank`)
-- RTX 50xx: использовать `hotchpotch/tei-blackwell-testing`
+- RTX 50xx: требует image `120-latest` (sm_120 support, TEI 1.9.1+)
 
 ---
 

@@ -335,7 +335,8 @@ export async function runSetup(args: string[]): Promise<void> {
         provider === "vllm"
           ? {
               endpoint: "http://127.0.0.1:8000",
-              max_batch_size: 64,
+              max_batch_size: 200, // vLLM 0.14+ handles larger batches well
+              encoding_format: "base64", // ~33% smaller payloads (vLLM 0.14+)
               selected_model: selectedModel.model_id,
               models: [
                 {

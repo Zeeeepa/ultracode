@@ -182,6 +182,10 @@ export class GraphStorageLibSQL implements GraphStorage {
     return await this.adapter.getEntity(id);
   }
 
+  async getEntitiesBatch(ids: string[]): Promise<Map<string, Entity>> {
+    return await this.adapter.getEntitiesBatch(ids);
+  }
+
   async getEntityFromBranch(id: string, targetBranch: string): Promise<Entity | null> {
     // Temporarily switch context, get entity, switch back
     const currentContext = this.adapter.getProjectContext();

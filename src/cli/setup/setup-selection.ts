@@ -64,16 +64,13 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
   if (gpu.available) {
     const teiOption: ProviderOption = {
       id: "tei",
-      name: gpu.isBlackwell ? `${t("provider.tei.name")} — Blackwell edition` : t("provider.tei.name"),
-      recommended: !isNvidiaGPU && !gpu.isBlackwell && gpu.computeCap >= 8.0, // Recommend if no NVIDIA
+      name: t("provider.tei.name"),
+      recommended: !isNvidiaGPU && gpu.computeCap >= 8.0, // Recommend if no NVIDIA
       speed: "1193 emb/s", // Measured with e5-small on RTX 5090
       pros: ta("provider.tei.pros"),
       cons: [...ta("provider.tei.cons")],
       available: true,
     };
-    if (gpu.isBlackwell) {
-      teiOption.cons.push(t("provider.tei_blackwell"));
-    }
     options.push(teiOption);
   }
 
@@ -186,7 +183,7 @@ export async function selectModel(
 
   // Filter by GPU compatibility
   if (provider === "tei" && gpu.available) {
-    const arch = gpu.isBlackwell ? "blackwell-patch" : gpu.architecture;
+    const arch = gpu.architecture;
     models = models.filter((m) => m.gpu_architectures.includes(arch) || m.gpu_architectures.includes("cpu"));
   }
 

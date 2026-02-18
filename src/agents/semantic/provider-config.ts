@@ -252,8 +252,10 @@ export function buildEmbeddingGeneratorOptions(
 
   // Configure vLLM from semantic-config.json
   if (semanticConfig?.embedding?.platform === "vllm" && semanticConfig?.embedding?.vllm) {
+    const vllmCfg = semanticConfig.embedding.vllm;
     options.vllm = {
-      baseUrl: semanticConfig.embedding.vllm.endpoint,
+      baseUrl: vllmCfg.endpoint,
+      encodingFormat: vllmCfg.encoding_format as "float" | "base64" | undefined,
     };
   }
 

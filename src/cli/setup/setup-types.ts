@@ -11,6 +11,7 @@ export interface EmbeddingModel {
   gpu_architectures: string[];
   gpu_support: boolean;
   image_gpu?: string;
+  image_gpu_blackwell?: string;
   image_cpu?: string;
   language: string;
   context_tokens: number;
@@ -34,6 +35,7 @@ export interface EmbeddingModel {
   trust_remote_code?: boolean;
   weight_format?: string;
   available?: boolean;
+  vllm_config?: { max_model_len?: number; trust_remote_code?: boolean };
 }
 
 export interface ModelsConfig {

@@ -23,6 +23,8 @@ export const SUPPORTED_CODE_EXTENSIONS = [
   ".swift", // Swift
   ".kt",
   ".kts", // Kotlin
+  ".cs",
+  ".csx", // C#
   ".css",
   ".scss",
   ".sass",
@@ -42,6 +44,11 @@ export const SUPPORTED_DATA_EXTENSIONS = [
   ".yml", // Config files
   ".toml", // Cargo.toml, pyproject.toml
   ".xml", // Maven pom.xml, Android layouts
+  ".csproj",
+  ".sln",
+  ".slnx",
+  ".targets",
+  ".props", // C#/.NET project files
   ".md",
   ".mdx", // Documentation
   ".txt", // Plain text

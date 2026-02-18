@@ -7,11 +7,12 @@
  * Pattern from: gpu-client.ts (subprocess management)
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { log } from "../logging/index.js";
 import {
   encodeMessage,
@@ -55,9 +56,10 @@ const ADDON_DLL_NAME = "Ultrasharp.Addon.dll";
 
 /** Find addon DLL in known locations */
 function findAddonPath(): string | null {
+  const thisDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     // Built alongside ultrascript dist
-    join(dirname(new URL(import.meta.url).pathname), "..", "roslyn-addon", ADDON_DLL_NAME),
+    join(thisDir, "..", "roslyn-addon", ADDON_DLL_NAME),
     // External libs
     join(process.cwd(), "external-libs", "roslyn-addon", ADDON_DLL_NAME),
     // Development: ultrasharp-tools-mcp build output
@@ -66,11 +68,9 @@ function findAddonPath(): string | null {
     resolve(process.cwd(), "..", "ultrasharp-tools-mcp", "Run.Publish", "Droid", "Addon", ADDON_DLL_NAME),
   ];
 
-  // Normalize Windows paths (remove leading / from /D:/...)
   for (const candidate of candidates) {
-    const normalized = process.platform === "win32" && candidate.startsWith("/") ? candidate.slice(1) : candidate;
-    if (existsSync(normalized)) {
-      return normalized;
+    if (existsSync(candidate)) {
+      return candidate;
     }
   }
 
@@ -217,9 +217,16 @@ export class RoslynAddonClient {
     this.process = spawn("dotnet", args, {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      env: {
+        ...process.env,
+        // Disable MSBuild node reuse — prevents orphaned dotnet worker processes
+        // that MSBuildWorkspace spawns for parallel project evaluation.
+        MSBUILDDISABLENODEREUSE: "1",
+      },
     });
 
-    this.process.unref(); // Don't keep parent alive
+    // NOTE: No process.unref() — we WANT the parent to track and kill the child on exit.
+    // Previously, unref() caused orphaned dotnet processes (20+ zombie .NET processes).
 
     // Log stderr
     this.process.stderr?.on("data", (data: Buffer) => {
@@ -320,21 +327,12 @@ export class RoslynAddonClient {
   }
 
   private tryRestart(): void {
-    if (this._restartCount >= this._options.maxRestarts) {
-      log.e("RoslynAddon", "max_restarts", { count: this._restartCount });
-      return;
-    }
-
-    this._restartCount++;
-    log.w("RoslynAddon", "restarting", { attempt: this._restartCount });
-
-    setTimeout(async () => {
-      try {
-        await this.start();
-      } catch (error) {
-        log.e("RoslynAddon", "restart_failed", { err: String(error) });
-      }
-    }, 2000);
+    // Disabled auto-restart: was causing 20+ orphaned .NET processes.
+    // The lifecycle manager (roslyn-lifecycle.ts) handles recovery.
+    log.w("RoslynAddon", "process_exited_no_restart", {
+      restartCount: this._restartCount,
+      hint: "Auto-restart disabled. Use ensureRoslynStarted() for recovery.",
+    });
   }
 
   private cleanup(): void {
@@ -343,8 +341,19 @@ export class RoslynAddonClient {
       this.socket = null;
     }
     if (this.process) {
+      const pid = this.process.pid;
       try {
-        this.process.kill();
+        // On Windows, kill the entire process tree (dotnet + any MSBuild workers)
+        if (process.platform === "win32" && pid) {
+          try {
+            execSync(`taskkill /PID ${pid} /T /F`, { stdio: "ignore", timeout: 5000 });
+          } catch {
+            // Fallback to regular kill
+            this.process.kill();
+          }
+        } else {
+          this.process.kill();
+        }
       } catch {
         /* already dead */
       }

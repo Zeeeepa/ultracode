@@ -316,6 +316,7 @@ export interface SetupStrings {
     setup: string;
     hf_token_set_hint: string;
     blackwell_detected: string;
+    blackwell_image: string;
     pull_time_hint: string;
     batch_config: string;
     hf_token_partial: string;

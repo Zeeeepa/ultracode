@@ -22,6 +22,7 @@ export interface VLLMOptions {
   checkServer?: boolean;
   logger?: ProviderLogger;
   maxBatchSize?: number | undefined;
+  encodingFormat?: "float" | "base64";
 }
 
 /**
@@ -30,15 +31,16 @@ export interface VLLMOptions {
  * Connects to a local vLLM Docker container for embedding generation.
  * vLLM provides high-performance GPU inference with OpenAI-compatible API.
  *
- * Setup (vLLM v0.12+):
+ * Setup (vLLM v0.14+):
  * docker run -d --name vllm-server -p 8000:8000 \
  *   --gpus all \
  *   -v ~/.cache/huggingface:/root/.cache/huggingface \
- *   vllm/vllm-openai:latest \
- *   intfloat/multilingual-e5-large-instruct \
- *   --gpu-memory-utilization 0.7
+ *   vllm/vllm-openai:latest-cu130 \
+ *   intfloat/multilingual-e5-small \
+ *   --gpu-memory-utilization 0.8 --disable-log-requests
  *
  * Note: vLLM auto-detects embedding models by architecture.
+ * Supports encoding_format: "base64" for ~33% smaller payloads (vLLM 0.14+).
  */
 export class VLLMProvider implements EmbeddingProvider {
   public info: ProviderInfo;
@@ -48,6 +50,7 @@ export class VLLMProvider implements EmbeddingProvider {
   private checkServer: boolean;
   private log?: ProviderLogger | undefined;
   private maxBatchSize: number;
+  private encodingFormat: "float" | "base64";
 
   constructor(opts: VLLMOptions) {
     this.log = opts.logger;
@@ -56,6 +59,7 @@ export class VLLMProvider implements EmbeddingProvider {
     this.concurrency = Math.max(1, opts.concurrency ?? 8);
     this.checkServer = opts.checkServer !== false;
     this.maxBatchSize = opts.maxBatchSize ?? 100;
+    this.encodingFormat = opts.encodingFormat ?? "float";
 
     this.info = {
       name: "vllm",
@@ -93,8 +97,8 @@ export class VLLMProvider implements EmbeddingProvider {
           `Make sure vLLM Docker container is running:\n` +
           `docker run -d --name vllm-server -p 8000:8000 --gpus all \\\n` +
           `  -v ~/.cache/huggingface:/root/.cache/huggingface \\\n` +
-          `  vllm/vllm-openai:latest ${this.info.model} \\\n` +
-          `  --gpu-memory-utilization 0.7`,
+          `  vllm/vllm-openai:latest-cu130 ${this.info.model} \\\n` +
+          `  --gpu-memory-utilization 0.8 --disable-log-requests`,
       );
     }
   }
@@ -218,6 +222,7 @@ export class VLLMProvider implements EmbeddingProvider {
         body: stringify.vllmEmbedding({
           model: this.info.model,
           input: text,
+          encoding_format: this.encodingFormat,
         }),
       });
 
@@ -227,7 +232,7 @@ export class VLLMProvider implements EmbeddingProvider {
       }
 
       const json = (await res.json()) as {
-        data: Array<{ embedding: number[]; index: number }>;
+        data: Array<{ embedding: number[] | string; index: number }>;
         model: string;
         usage?: { prompt_tokens: number; total_tokens: number };
       };
@@ -236,7 +241,8 @@ export class VLLMProvider implements EmbeddingProvider {
         throw new Error("vLLM invalid response format");
       }
 
-      const arr = new Float32Array(json.data[0].embedding);
+      const raw = json.data[0].embedding;
+      const arr = typeof raw === "string" ? this.decodeBase64ToFloat32(raw) : new Float32Array(raw);
       this.info.dimension = this.info.dimension ?? arr.length;
       return arr;
     } catch (error: unknown) {
@@ -307,6 +313,7 @@ export class VLLMProvider implements EmbeddingProvider {
         body: stringify.vllmEmbedding({
           model: this.info.model,
           input: texts,
+          encoding_format: this.encodingFormat,
         }),
       });
 
@@ -316,7 +323,7 @@ export class VLLMProvider implements EmbeddingProvider {
       }
 
       const json = (await res.json()) as {
-        data: Array<{ embedding: number[]; index: number }>;
+        data: Array<{ embedding: number[] | string; index: number }>;
         model: string;
         usage?: { prompt_tokens: number; total_tokens: number };
       };
@@ -329,7 +336,10 @@ export class VLLMProvider implements EmbeddingProvider {
       const sorted = [...json.data].sort((a, b) => a.index - b.index);
 
       const embeddings = sorted.map((item) => {
-        const arr = new Float32Array(item.embedding);
+        const arr =
+          typeof item.embedding === "string"
+            ? this.decodeBase64ToFloat32(item.embedding)
+            : new Float32Array(item.embedding);
         this.info.dimension = this.info.dimension ?? arr.length;
         return arr;
       });
@@ -345,6 +355,20 @@ export class VLLMProvider implements EmbeddingProvider {
 
       throw new Error(`vLLM embedBatch error: ${err.message}`);
     }
+  }
+
+  /**
+   * Decode base64-encoded Float32 array (vLLM 0.14+ encoding_format: "base64")
+   */
+  private decodeBase64ToFloat32(base64: string): Float32Array {
+    const binaryString = atob(base64);
+    const floatCount = binaryString.length / 4;
+    const result = new Float32Array(floatCount);
+    const bytes = new Uint8Array(result.buffer);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return result;
   }
 
   async close(): Promise<void> {}

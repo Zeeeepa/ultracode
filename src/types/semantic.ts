@@ -325,6 +325,7 @@ export interface EmbeddingConfig {
     timeoutMs?: number | undefined;
     concurrency?: number | undefined;
     maxBatchSize?: number | undefined;
+    encodingFormat?: "float" | "base64";
   };
   llamacpp?: {
     baseUrl?: string | undefined;

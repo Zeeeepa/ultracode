@@ -5,6 +5,7 @@
  * Provides AI-friendly and detailed output formats.
  */
 
+import { log } from "../../logging/index.js";
 import type {
   ChaosAnalysisOptions,
   ChaosAnalysisResult,
@@ -14,18 +15,56 @@ import type {
   RaceRisk,
 } from "../../types/chaos-analysis.js";
 import type { GraphStorage } from "../../types/storage.js";
-import { StateDetector, type StatePatternWithRaces } from "./state-detector.js";
+import { type CSharpChaosPattern, detectCSharpChaosPatterns } from "./csharp-patterns.js";
+import { buildRelationshipLookup, StateDetector, type StatePatternWithRaces } from "./state-detector.js";
 
 export class ChaosAnalyzer {
   private detector: StateDetector;
+  private storage: GraphStorage;
+  private _csharpPatterns: CSharpChaosPattern[] = [];
 
   constructor(storage: GraphStorage) {
+    this.storage = storage;
     this.detector = new StateDetector(storage);
   }
 
+  /** C# anti-patterns detected in last analyze() call */
+  get csharpPatterns(): CSharpChaosPattern[] {
+    return this._csharpPatterns;
+  }
+
   async analyze(options: ChaosAnalysisOptions): Promise<ChaosAnalysisResult[]> {
-    const patterns = await this.detector.detectPatterns(options);
+    const t0 = performance.now();
+
+    // Load all entities and relationships ONCE and pass through entire pipeline
+    const allEntities = await this.storage.getAllEntities();
+    const tEntities = performance.now();
+    log.i("CHAOS", "1_getAllEntities", { count: allEntities.length, ms: +(tEntities - t0).toFixed(0) });
+
+    // Pre-load ALL relationships in 1 query → Map<entityId, Relationship[]> for O(1) lookup
+    const allRelationships = await this.storage.getAllRelationships();
+    const relLookup = buildRelationshipLookup(allRelationships);
+    const tRels = performance.now();
+    log.i("CHAOS", "1b_getAllRelationships", {
+      count: allRelationships.length,
+      indexKeys: relLookup.size,
+      ms: +(tRels - tEntities).toFixed(0),
+    });
+
+    const patterns = await this.detector.detectPatterns(options, allEntities, relLookup);
+    const tPatterns = performance.now();
+    log.i("CHAOS", "2_detectPatterns", { patterns: patterns.length, ms: +(tPatterns - tEntities).toFixed(0) });
+
     const results: ChaosAnalysisResult[] = [];
+
+    // Detect C# specific anti-patterns (reusing already-loaded entities)
+    try {
+      this._csharpPatterns = detectCSharpChaosPatterns(allEntities);
+    } catch {
+      this._csharpPatterns = [];
+    }
+    const tCsharp = performance.now();
+    log.i("CHAOS", "3_csharpPatterns", { count: this._csharpPatterns.length, ms: +(tCsharp - tPatterns).toFixed(0) });
 
     for (const pattern of patterns) {
       const { raceAnalysis } = pattern;
@@ -152,7 +191,7 @@ export class ChaosAnalyzer {
           steps: [],
           newComponents: [],
           benefits: {
-            reducedCoupling: strategy === "Service" ? 40 : 60,
+            reducedCoupling: strategy === "Service" ? 40 : strategy === "ImmutableState" ? 50 : 60,
             reducedMutations: Math.floor(raceAnalysis.writers / 2),
             reducedComplexity: raceAnalysis.conflicts.length > 0 ? 50 : 30,
             improvedTestability: true,
@@ -167,6 +206,14 @@ export class ChaosAnalyzer {
       });
     }
 
+    log.i("CHAOS", "4_total", {
+      entities: allEntities.length,
+      statePatterns: patterns.length,
+      csharpPatterns: this._csharpPatterns.length,
+      results: results.length,
+      totalMs: +(performance.now() - t0).toFixed(0),
+    });
+
     return results;
   }
 
@@ -174,7 +221,7 @@ export class ChaosAnalyzer {
    * Format results for AI consumption (compact, token-efficient)
    */
   formatForAI(results: ChaosAnalysisResult[]): string {
-    if (results.length === 0) {
+    if (results.length === 0 && this._csharpPatterns.length === 0) {
       return "No state patterns detected.";
     }
 
@@ -220,7 +267,49 @@ export class ChaosAnalyzer {
       output.push("---\n");
     }
 
+    // Append C# anti-patterns section if detected
+    if (this._csharpPatterns.length > 0) {
+      output.push(this.formatCSharpPatternsForAI());
+    }
+
     return output.join("\n");
+  }
+
+  /**
+   * Format C# anti-patterns for AI consumption
+   */
+  private formatCSharpPatternsForAI(): string {
+    const lines: string[] = ["\n# C# Anti-Patterns\n"];
+
+    // Group by pattern type
+    const byPattern = new Map<string, CSharpChaosPattern[]>();
+    for (const p of this._csharpPatterns) {
+      const arr = byPattern.get(p.pattern) || [];
+      arr.push(p);
+      byPattern.set(p.pattern, arr);
+    }
+
+    const severityEmoji: Record<string, string> = {
+      critical: "🔴",
+      high: "🟠",
+      medium: "🟡",
+    };
+
+    for (const [pattern, items] of byPattern) {
+      const sev = items[0]!.severity;
+      lines.push(`## ${severityEmoji[sev] || "⚪"} ${pattern} (${items.length} found)`);
+      for (const item of items.slice(0, 10)) {
+        lines.push(`- **${item.entityName}** ${item.filePath}:${item.line}`);
+        lines.push(`  ${item.description}`);
+        lines.push(`  💡 ${item.suggestion}`);
+      }
+      if (items.length > 10) {
+        lines.push(`  ... and ${items.length - 10} more`);
+      }
+      lines.push("");
+    }
+
+    return lines.join("\n");
   }
 
   /**
@@ -403,6 +492,25 @@ export class ChaosAnalyzer {
       fixes.push("Создайте централизованный сервис для управления состоянием");
     }
 
+    // C# specific quick fixes
+    const allCode = pattern.operations.map((op) => op.code).join("\n");
+
+    if (/async\s+void\b/.test(allCode)) {
+      fixes.push("Замените 'async void' на 'async Task' — async void не обрабатывает исключения");
+    }
+
+    if (/static\b/.test(allCode) && !/readonly|const|ConcurrentDictionary/.test(allCode)) {
+      fixes.push("Используйте ConcurrentDictionary или переместите state в DI-managed service");
+    }
+
+    if (/\.ctor|constructor/i.test(pattern.identifier) && pattern.operations.length > 10) {
+      fixes.push("Разделите god-service на меньшие сфокусированные сервисы");
+    }
+
+    if (/async\s+Task/.test(allCode) && !/CancellationToken/.test(allCode)) {
+      fixes.push("Добавьте параметр CancellationToken в async методы");
+    }
+
     return fixes;
   }
 
@@ -416,6 +524,29 @@ export class ChaosAnalyzer {
     // Critical race conditions → State machine
     if (raceAnalysis.raceRisk === "critical" || raceAnalysis.conflicts.length >= 3) {
       return "StateMachine";
+    }
+
+    // C# specific strategies: detect from operation code patterns
+    const allCode = pattern.operations.map((op) => op.code).join("\n");
+    const isCSharpContext =
+      /\bTask\b|\basync\s+Task\b|\bawait\b.*\.\w+Async\b/.test(allCode) ||
+      pattern.operations.some((op) => op.file.endsWith(".cs"));
+
+    if (isCSharpContext) {
+      // Mutable static in singleton context → fix DI lifetime
+      if (/static\b/.test(allCode) && /Singleton|AddSingleton/.test(allCode)) {
+        return "DI_Lifetime";
+      }
+
+      // High race with async producers/consumers → Channel
+      if (raceAnalysis.raceRisk === "high" && raceAnalysis.asyncWriters > 2) {
+        return "Channel";
+      }
+
+      // Many mutable fields → immutable state
+      if (raceAnalysis.writers > 5 && raceAnalysis.unprotectedWriters > 3) {
+        return "ImmutableState";
+      }
     }
 
     // High race with async → Event-driven
@@ -450,6 +581,11 @@ export class ChaosAnalyzer {
       Context: "Context API подойдёт для передачи состояния через дерево компонентов.",
       Signal: "Angular Signals обеспечат реактивность с автоматическим отслеживанием зависимостей.",
       StateManager: "Кастомный StateManager позволит реализовать специфичную логику синхронизации.",
+      DI_Lifetime:
+        "Mutable state в Singleton-сервисе вызывает гонки. Измените lifetime на Scoped или используйте ImmutableDictionary.",
+      Channel: `${raceAnalysis.asyncWriters} async producer/consumer нуждаются в упорядоченной обработке. System.Threading.Channels обеспечит безопасную очередь.`,
+      ImmutableState:
+        "Множество неконтролируемых мутаций. Используйте record types и ImmutableCollections для предотвращения гонок.",
     };
     return reasons[strategy];
   }

@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import { log } from "../../logging/index.js";
 import type { Entity, EntityType, Relationship } from "../../types/storage.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
@@ -126,6 +127,7 @@ export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
     let entityId = args.entityId;
+    let resolvedFrom = "provided";
 
     // If name provided, find entity by name
     if (!entityId && args.entityName) {
@@ -133,18 +135,35 @@ export class ListEntityRelationshipsToolHandler extends BaseToolHandler<z.infer<
         filters: { name: args.entityName },
         limit: 1,
       });
+      log.w("TOOL", "list_rels_findEntity", {
+        name: args.entityName,
+        found: entities.length,
+        sample: entities
+          .slice(0, 3)
+          .map((e) => ({ id: e.id?.slice(0, 12), name: e.name, type: e.type, file: e.filePath?.split(/[/\\]/).pop() })),
+      });
       if (entities.length > 0 && entities[0]) {
         entityId = entities[0].id;
+        resolvedFrom = "byName";
       }
     }
 
     if (!entityId) {
+      log.w("TOOL", "list_rels_not_found", { entityId: args.entityId, entityName: args.entityName });
       return {
         content: [{ type: "text", text: JSON.stringify({ error: "Entity not found" }) }],
       };
     }
 
+    log.w("TOOL", "list_rels_query", { entityId: entityId.slice(0, 16), resolvedFrom, direction: args.direction });
     const relationships = await storage.getRelationshipsForEntity(entityId);
+    log.w("TOOL", "list_rels_result", {
+      entityId: entityId.slice(0, 16),
+      totalRels: relationships.length,
+      sample: relationships
+        .slice(0, 5)
+        .map((r) => ({ from: r.fromId?.slice(0, 12), to: r.toId?.slice(0, 12), type: r.type })),
+    });
 
     // Filter by direction
     let filtered = relationships;

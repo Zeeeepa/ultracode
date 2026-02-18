@@ -97,8 +97,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
   }
 
   protected async execute(args: IndexToolArgs): Promise<ToolResult> {
-    const config = this.context.config as { directory?: string };
-    const targetDir = args.directory || config.directory || process.cwd();
+    const targetDir = this.resolveProjectPath(args);
 
     // Step 0: Check if indexing is already in progress (prevent concurrent indexing)
     if (isIndexing()) {
