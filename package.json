@@ -1,7 +1,7 @@
 {
   "name": "ultrascript-tools-mcp",
   "version": "4.3.0",
-  "description": "Codebase RAG MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/Go/Rust/Java/C++/Kotlin",
+  "description": "Codebase RAG MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/C#/Go/Rust/Java/C++/Kotlin/Swift/Zig/Bash",
   "license": "MIT",
   "author": "faxenoff",
   "homepage": "https://github.com/faxenoff/ultrascript-tools-mcp",

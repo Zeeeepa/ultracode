@@ -180,7 +180,7 @@ MCP-сервер предоставляет **70 инструментов** дл
 - **CUDA/FAISS** — GPU-ускорение для больших проектов
 - **WebGPU/Dawn** — кросс-платформенное GPU-ускорение
 - **Streaming индексация** — парсинг и индексация параллельно
-- **Локальные эмбеддинги** — TEI/Ollama/vLLM без внешних API
+- **Локальные эмбеддинги** — TEI/Ollama/vLLM/MLX без внешних API
 
 ### Поддержка языков
 
@@ -194,7 +194,9 @@ MCP-сервер предоставляет **70 инструментов** дл
 | **Go** | go/parser | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
 | **Rust** | syn + ANTLR | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
 | **Swift** | SwiftSyntax | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
+| **C#** | Roslyn Compiler | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 | **C/C++** | clang AST | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
+| **Zig** | regex + heuristics | ⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ | ⭐⭐ |
 | **Bash** | regex + heuristics | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | — |
 | **PowerShell** | regex + heuristics | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | — |
 | **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
@@ -285,6 +287,8 @@ npm install -g ultrascript-tools-mcp
 > - Java/Kotlin — требуется JRE 11+ (`java --version`)
 > - Go — требуется Go 1.18+ (`go version`)
 > - Rust — требуется Rust toolchain (`rustc --version`)
+> - C# — требуется .NET SDK 8+ (`dotnet --version`)
+> - Zig — встроено (regex-based, Zig toolchain не требуется)
 > - C/C++ — требуется Clang 12+ (`clang --version`)
 
 **Конфиг Claude Code** (`~/.claude.json`):
@@ -313,6 +317,7 @@ npm install -g ultrascript-tools-mcp
 |-----------|----------|--------------|
 | **vLLM** | 1352 emb/s | ⭐ NVIDIA GPU (рекомендуется) |
 | **TEI** | 1169 emb/s | ⭐ NVIDIA GPU (Blackwell: image `120-latest`) |
+| **MLX** | ~500 emb/s | ⭐ macOS Apple Silicon (Metal GPU) |
 | **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), универсальный |
 | **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Может выручить, если основная VRAM будет занята локальной LLM. |
 
@@ -352,19 +357,29 @@ npm install -g ultrascript-tools-mcp
 
 После этого вы можете сами (или с помощью ИИ-агента) сделать нужные вам файлы с общим описанием проекта в директории .autodoc и добавить "человеческое описание" в файлы AUTODOC.md где вам потребуется. Там вы можете использовать прямые ссылки на строки кода в файлах (для описания начала и конца блока кода используйте два числа. Пример: FILE:XX-ZZ). UltraScript будет отслеживать изменения кода и автоматически обновлять все ссылки на код, чтобы они всегда оставались актуальными. Текст документации он трогать не будет. 
 
-### GPU ускорение macOS (Apple Silicon):
+### macOS Apple Silicon (MLX Эмбеддинги)
 
-Пока у меня нет возможности собрать нативный бинарник на современном Macbook. 
-Соберите самостоятельно, если вам это сильно потребуется.
+Нативная поддержка эмбеддингов через Apple MLX (Metal GPU):
+
+- **MLX провайдер** автоматически определяет macOS ARM64 и использует Metal GPU
+- Мастер настройки предлагает MLX по умолчанию на Apple Silicon
+- Модели: `intfloat/multilingual-e5-base` (768d), `intfloat/multilingual-e5-small` (384d), `BAAI/bge-m3` (1024d, 8K контекст)
+- Автоматически создаёт Python venv, устанавливает зависимости, скачивает модели с HuggingFace
 
 ```bash
-# При установке предлагается собрать Metal backend
+# Перезапустите мастер для выбора MLX:
+bunx ultrascript-tools-mcp setup
+# Выберите "MLX" → автонастройка venv + модель + сервер на порту 8087
+```
+
+### GPU ускорение (CUDA/WebGPU/Metal)
+
+```bash
+# macOS: Metal backend для CUDA-подобного ускорения
 # Требования для сборки:
 #   - Xcode Command Line Tools: xcode-select --install
 #   - Homebrew: https://brew.sh
 #   - CMake: brew install cmake
-
-# Можно собрать позже:
 ./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh
 ```
 

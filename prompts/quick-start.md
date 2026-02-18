@@ -27,10 +27,12 @@
 | Python | ⭐⭐⭐ | Type hints, async, decorators |
 | Go | ⭐⭐⭐ | Goroutines, interfaces |
 | Rust | ⭐⭐⭐ | Traits, lifetimes, macros |
+| C# | ⭐⭐ | Roslyn, LINQ, async/await, interfaces |
 | Java | ⭐⭐ | Generics, annotations |
 | C++ | ⭐⭐ | Templates, namespaces |
 | Swift | ⭐⭐ | Protocols, extensions |
 | Kotlin | ⭐⭐ | Coroutines, data classes |
+| Zig | ⭐ | Functions, structs, comptime |
 | Bash | ⭐ | Functions, variables |
 
 ## Typical Workflow

@@ -1,7 +1,7 @@
 ---
 name: UltraCode
 version: 1.0.0
-description: Code analysis for TS/JS/Python/Go/Rust/Java/C++/Swift/Kotlin/Bash
+description: Code analysis for TS/JS/Python/C#/Go/Rust/Java/C++/Swift/Kotlin/Zig/Bash
 triggers:
   - code analysis
   - semantic search
@@ -12,7 +12,7 @@ triggers:
 
 # UltraCode — Claude Code Skill
 
-**Auto-activated for**: TS/JS/Python/Go/Rust/Java/C++/Swift/Kotlin/Bash code analysis
+**Auto-activated for**: TS/JS/Python/C#/Go/Rust/Java/C++/Swift/Kotlin/Zig/Bash code analysis
 
 ## When to Use
 
@@ -38,10 +38,12 @@ triggers:
 | Python | ⭐⭐⭐ | Type hints, async, decorators |
 | Go | ⭐⭐⭐ | Goroutines, interfaces |
 | Rust | ⭐⭐⭐ | Traits, lifetimes, macros |
+| C# | ⭐⭐ | Roslyn, LINQ, async/await, interfaces |
 | Java | ⭐⭐ | Generics, annotations |
 | C++ | ⭐⭐ | Templates, namespaces |
 | Swift | ⭐⭐ | Protocols, extensions |
 | Kotlin | ⭐⭐ | Coroutines, data classes |
+| Zig | ⭐ | Functions, structs, comptime |
 | Bash | ⭐ | Functions, variables |
 
 ---

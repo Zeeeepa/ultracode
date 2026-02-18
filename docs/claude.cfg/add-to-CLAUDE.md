@@ -1,6 +1,6 @@
 # UltraScript Tools MCP
 
-**ALWAYS use UltraScript instead of Grep/Glob** for code search in TS/JS/Python/Go/Rust/Java/C++/Swift/Kotlin/Bash projects.
+**ALWAYS use UltraScript instead of Grep/Glob** for code search in TS/JS/Python/C#/Go/Rust/Java/C++/Swift/Kotlin/Zig/Bash projects.
 
 ## Key Rules
 

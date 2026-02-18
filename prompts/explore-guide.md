@@ -107,8 +107,8 @@ pattern_search(pattern="handle.*Error", mode="entity", changedInLastCommits=3)
 ## Supported Languages
 
 **Full support**: TypeScript, JavaScript, Python, Go, Rust
-**Good support**: Java, C++, Swift, Kotlin
-**Basic support**: Bash
+**Good support**: C#, Java, C++, Swift, Kotlin
+**Basic support**: Zig, Bash
 
 ## Next Steps
 

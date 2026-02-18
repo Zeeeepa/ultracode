@@ -178,7 +178,7 @@ MCP server provides **70 tools** for code analysis and modification.
 - **CUDA/FAISS** — GPU acceleration for large projects
 - **WebGPU/Dawn** — cross-platform GPU acceleration
 - **Streaming indexing** — parsing and indexing in parallel
-- **Local embeddings** — TEI/Ollama/vLLM without external APIs
+- **Local embeddings** — TEI/Ollama/vLLM/MLX without external APIs
 
 ### Language Support
 
@@ -192,7 +192,9 @@ MCP server provides **70 tools** for code analysis and modification.
 | **Go** | go/parser | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
 | **Rust** | syn + ANTLR | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
 | **Swift** | SwiftSyntax | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
+| **C#** | Roslyn Compiler | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 | **C/C++** | clang AST | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
+| **Zig** | regex + heuristics | ⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ | ⭐⭐ |
 | **Bash** | regex + heuristics | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | — |
 | **PowerShell** | regex + heuristics | ⭐⭐⭐ | ⭐⭐ | ⭐⭐ | — |
 | **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
@@ -283,6 +285,8 @@ npm install -g ultrascript-tools-mcp
 > - Java/Kotlin — requires JRE 11+ (`java --version`)
 > - Go — requires Go 1.18+ (`go version`)
 > - Rust — requires Rust toolchain (`rustc --version`)
+> - C# — requires .NET SDK 8+ (`dotnet --version`)
+> - Zig — built-in (regex-based, no Zig toolchain required)
 > - C/C++ — requires Clang 12+ (`clang --version`)
 
 **Claude Code Config** (`~/.claude.json`):
@@ -311,6 +315,7 @@ Local models are used for intelligent tasks: embedding model for semantic search
 |----------|-------|----------------|
 | **vLLM** | 1352 emb/s | ⭐ NVIDIA GPU (recommended) |
 | **TEI** | 1169 emb/s | ⭐ NVIDIA GPU (Blackwell: `120-latest` image) |
+| **MLX** | ~500 emb/s | ⭐ macOS Apple Silicon (Metal GPU) |
 | **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), universal |
 | **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Can help if main VRAM is occupied by local LLM. |
 
@@ -350,19 +355,29 @@ After running Ultrascript with Autodoc mode enabled:
 
 After this, you can yourself (or with an AI agent's help) create needed files with project overview in the .autodoc directory and add "human descriptions" in AUTODOC.md files where needed. There you can use direct references to code lines in files (for describing start and end of code block, use two numbers. Example: FILE:XX-ZZ). UltraScript will track code changes and automatically update all code references to keep them current. It won't touch documentation text.
 
-### GPU Acceleration macOS (Apple Silicon):
+### macOS Apple Silicon (MLX Embeddings)
 
-I don't currently have the ability to build a native binary on modern Macbook.
-Build it yourself if you really need it.
+Native embedding support via Apple MLX framework (Metal GPU):
+
+- **MLX provider** auto-detects macOS ARM64 and uses Metal GPU
+- Setup wizard offers MLX as the default on Apple Silicon
+- Models: `intfloat/multilingual-e5-base` (768d), `intfloat/multilingual-e5-small` (384d), `BAAI/bge-m3` (1024d, 8K context)
+- Auto-installs Python venv with dependencies, downloads models from HuggingFace
 
 ```bash
-# During installation, Metal backend build is offered
+# Re-run wizard to switch to MLX:
+bunx ultrascript-tools-mcp setup
+# Select "MLX" → auto-setup venv + model + server on port 8087
+```
+
+### GPU Acceleration (CUDA/WebGPU/Metal)
+
+```bash
+# macOS: Metal backend for CUDA-like acceleration
 # Build requirements:
 #   - Xcode Command Line Tools: xcode-select --install
 #   - Homebrew: https://brew.sh
 #   - CMake: brew install cmake
-
-# Can build later:
 ./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh
 ```
 
