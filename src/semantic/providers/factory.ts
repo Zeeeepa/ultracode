@@ -1,11 +1,13 @@
 import { log } from "../../logging/index.js";
 import { makeProviderLogger } from "../../utils/provider-logger.js";
 import { LLAMACPP_EMBEDDING_PORT } from "../llamacpp-server-manager.js";
+import { MLX_EMBEDDING_PORT } from "../mlx-server-manager.js";
 import { OVMS_NATIVE_GRPC_PORT, OVMS_NATIVE_REST_PORT } from "../ovms-native-manager.js";
 import type { EmbeddingProvider, ProviderKind } from "./base.js";
 import { CloudRUProvider } from "./cloudru-provider.js";
 import { HuggingFaceProvider } from "./huggingface-provider.js";
 import { LlamaCppProvider } from "./llamacpp-provider.js";
+import { MlxProvider } from "./mlx-provider.js";
 import { OllamaProvider } from "./ollama-provider.js";
 import { OpenAIProvider } from "./openai-provider.js";
 import { OVMSProvider } from "./ovms-provider.js";
@@ -14,9 +16,27 @@ import { VLLMProvider } from "./vllm-provider.js";
 
 /**
  * Auto-detect available embedding providers
- * Priority: OVMS Native (8083) > llama.cpp (8085) > vLLM (8000) > TEI (8081)
+ * macOS ARM64: MLX (8087) > OVMS (8083) > llama.cpp (8085) > vLLM (8000) > TEI (8081)
+ * Other:       OVMS (8083) > llama.cpp (8085) > vLLM (8000) > TEI (8081)
  */
 async function detectAvailableProvider(): Promise<{ provider: ProviderKind; model: string }> {
+  // On macOS ARM64, try MLX first (native Metal GPU)
+  if (process.platform === "darwin" && process.arch === "arm64") {
+    try {
+      const mlxResponse = await fetch(`http://127.0.0.1:${MLX_EMBEDDING_PORT}/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(2000),
+      });
+
+      if (mlxResponse.ok) {
+        log.i("FACTORY", "Auto-detected: MLX (port 8087)");
+        return { provider: "mlx", model: "intfloat/multilingual-e5-base" };
+      }
+    } catch (_error) {
+      log.d("FACTORY", "MLX not available, checking OVMS");
+    }
+  }
+
   // Try OVMS Native first (port 8083)
   try {
     const ovmsNativeResponse = await fetch(`http://127.0.0.1:${OVMS_NATIVE_REST_PORT}/v2/health/ready`, {
@@ -100,6 +120,7 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
       "  - vLLM (1352 emb/s) - NVIDIA GPU, Docker required\n" +
       "  - TEI (1193 emb/s) - GPU, Docker required\n" +
       "  - llama.cpp (373 emb/s) - Native GGUF, no Docker\n" +
+      "  - MLX - Apple Silicon Metal GPU, macOS ARM64\n" +
       "  - OVMS - Intel optimized, no Docker",
   );
 }
@@ -182,6 +203,15 @@ export interface ProviderFactoryOptions {
     ubatchSize?: number | undefined;
     /** Batch size for prompt processing (default: 1024) */
     batchSize?: number | undefined;
+  };
+  mlx?: {
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
+    checkServer?: boolean;
+    maxBatchSize?: number | undefined;
+    /** Auto-start MLX server if not running (default: true) */
+    autoStart?: boolean;
   };
 }
 
@@ -338,10 +368,29 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
       });
     }
 
+    case "mlx": {
+      const mlxBaseUrl = opts.mlx?.baseUrl || `http://127.0.0.1:${MLX_EMBEDDING_PORT}`;
+      log.i("FACTORY", "Creating MLX provider", {
+        baseUrl: mlxBaseUrl,
+        model: actualModel,
+        autoStart: opts.mlx?.autoStart,
+      });
+      return new MlxProvider({
+        model: actualModel,
+        baseUrl: mlxBaseUrl,
+        timeoutMs: opts.mlx?.timeoutMs,
+        concurrency: opts.mlx?.concurrency,
+        maxBatchSize: opts.mlx?.maxBatchSize,
+        checkServer: opts.mlx?.checkServer,
+        autoStart: opts.mlx?.autoStart,
+        logger: makeProviderLogger(null, "PROVIDER_MLX"),
+      });
+    }
+
     default:
       throw new Error(
         `Unknown embedding provider: ${actualProvider}. ` +
-          `Supported providers: vllm, tei, ollama, llamacpp, ovms, ovms-native, openai, cloudru, huggingface`,
+          `Supported providers: vllm, tei, ollama, llamacpp, mlx, ovms, ovms-native, openai, cloudru, huggingface`,
       );
   }
 }

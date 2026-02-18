@@ -24,7 +24,7 @@ interface ModelEntry {
  * Includes all possible properties from both sources
  */
 interface CombinedEmbeddingConfig {
-  platform?: "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp" | string;
+  platform?: "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp" | "mlx" | string;
   architecture?: string;
   // Provider-specific configs
   tei?: {
@@ -81,6 +81,15 @@ interface CombinedEmbeddingConfig {
     n_gpu_layers?: number;
     timeoutMs?: number;
     concurrency?: number;
+    models?: ModelEntry[];
+  };
+  mlx?: {
+    endpoint?: string;
+    selected_model?: string;
+    max_batch_size?: number;
+    timeoutMs?: number;
+    concurrency?: number;
+    auto_start?: boolean;
     models?: ModelEntry[];
   };
   // Common properties (may come from yaml-config)
@@ -348,6 +357,23 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
       contextSize: llamacppConfig.context_size || 8192,
       nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
     };
+  } else if (embeddingConfig.mlx || embeddingConfig.platform === "mlx") {
+    // MLX provider (Apple Silicon Metal GPU)
+    providerKind = "mlx";
+    const mlxConfig = embeddingConfig.mlx || {};
+    modelName = mlxConfig.selected_model || "intfloat/multilingual-e5-base";
+    batchSize = mlxConfig.max_batch_size || 128;
+    // Get vector_size from selected model in models array
+    const selectedModel = mlxConfig.models?.find((m: ModelEntry) => m.id === modelName);
+    if (selectedModel?.vector_size) {
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
+    providerOptions = {
+      baseUrl: mlxConfig.endpoint || "http://127.0.0.1:8087",
+      timeoutMs: mlxConfig.timeoutMs || 30000,
+      concurrency: mlxConfig.concurrency || 4,
+      maxBatchSize: mlxConfig.max_batch_size || 128,
+    };
   } else {
     // No embedding provider configured
     return null;
@@ -365,7 +391,15 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
   // Rule: batchSize <= --parallel, smaller batches = better GPU utilization
   // 64 texts * 8 parallel = 512 texts in flight
   const queueBatchSize =
-    providerKind === "llamacpp" ? 72 : providerKind === "ovms" ? 200 : providerKind === "tei" ? 50 : undefined;
+    providerKind === "mlx"
+      ? 64
+      : providerKind === "llamacpp"
+        ? 72
+        : providerKind === "ovms"
+          ? 200
+          : providerKind === "tei"
+            ? 50
+            : undefined;
 
   const result: WorkerEmbeddingConfig = {
     enabled: true,

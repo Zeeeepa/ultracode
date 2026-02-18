@@ -188,6 +188,7 @@ export type EmbeddingProviderKind =
   | "ovms"
   | "vllm"
   | "llamacpp"
+  | "mlx"
   | "auto";
 
 /**
@@ -336,6 +337,14 @@ export interface EmbeddingConfig {
     nGpuLayers?: number | undefined;
     checkServer?: boolean;
     /** Auto-start llama-server if not running (default: true) */
+    autoStart?: boolean;
+  };
+  mlx?: {
+    baseUrl?: string | undefined;
+    timeoutMs?: number | undefined;
+    concurrency?: number | undefined;
+    maxBatchSize?: number | undefined;
+    checkServer?: boolean;
     autoStart?: boolean;
   };
 }

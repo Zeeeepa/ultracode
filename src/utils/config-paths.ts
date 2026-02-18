@@ -118,7 +118,7 @@ export function ensureDataDir(): string {
 export interface SemanticConfig {
   enabled: boolean;
   embedding: {
-    platform: "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp";
+    platform: "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp" | "mlx";
     architecture: string;
     ovms?: {
       endpoint: string;
@@ -172,6 +172,18 @@ export interface SemanticConfig {
       max_batch_size?: number; // Max texts per HTTP request (default: 256)
       concurrency?: number; // Parallel HTTP requests (default: 4)
       auto_start?: boolean; // Auto-start llama-server (default: true)
+      selected_model: string | null;
+      models?: Array<{
+        id: string;
+        languages: string[];
+        vector_size: number;
+      }>;
+    };
+    mlx?: {
+      endpoint: string;
+      max_batch_size?: number;
+      concurrency?: number;
+      auto_start?: boolean;
       selected_model: string | null;
       models?: Array<{
         id: string;
@@ -336,6 +348,10 @@ export function getVectorDimensions(): number {
       case "llamacpp":
         selectedModel = config.embedding.llamacpp?.selected_model || null;
         models = config.embedding.llamacpp?.models;
+        break;
+      case "mlx":
+        selectedModel = config.embedding.mlx?.selected_model || null;
+        models = config.embedding.mlx?.models;
         break;
     }
 

@@ -7,28 +7,32 @@
       "description": "Для локальной разработки. TEI E5-Small — 1,169 emb/s (GPU), vLLM — 1,352 emb/s (GPU), OpenVINO — 583 chunks/s (CPU). 94 языка.",
       "ovms": "ovms-multilingual-e5-base",
       "tei": "tei-multilingual-e5-small",
-      "vllm": "vllm-multilingual-e5-small"
+      "vllm": "vllm-multilingual-e5-small",
+      "mlx": "mlx-e5-small"
     },
     "production": {
       "name": "Production (качество + скорость)",
       "description": "Для production. OpenVINO E5-Base — лучший баланс качества и скорости, 94 языка.",
       "ovms": "ovms-multilingual-e5-base",
       "tei": "tei-multilingual-e5-base",
-      "vllm": "vllm-multilingual-e5-large"
+      "vllm": "vllm-multilingual-e5-large",
+      "mlx": "mlx-e5-base"
     },
     "large_context": {
       "name": "Длинный контекст (8K)",
       "description": "Для legacy проектов с методами 500+ строк. BGE-M3 — 8K контекст, 100+ языков.",
       "tei": "bge-m3",
       "ovms": "ovms-bge-m3",
-      "vllm": "vllm-bge-m3"
+      "vllm": "vllm-bge-m3",
+      "mlx": "mlx-bge-m3"
     },
     "multilingual": {
       "name": "Мультиязычный код",
       "description": "Для проектов с RU/CN/JP комментариями. Nomic v2 MoE — 8K контекст, мультиязычный.",
       "ovms": "ovms-multilingual-e5-base",
       "tei": "tei-paraphrase-multilingual",
-      "vllm": "vllm-multilingual-e5-large"
+      "vllm": "vllm-multilingual-e5-large",
+      "mlx": "mlx-e5-base"
     },
     "frontier": {
       "name": "Максимальное качество (4096 dims)",
@@ -101,6 +105,24 @@
           "rerank": "/v1/rerank",
           "score": "/v1/score",
           "classify": "/classify"
+        }
+      }
+    },
+    "mlx": {
+      "name": "MLX (Apple Silicon)",
+      "description": "Apple MLX framework для macOS ARM64\n🍎 Нативный Metal GPU inference\n✅ Без Docker, без NVIDIA\n⚡ HuggingFace модели напрямую\n🐍 Python FastAPI сервер\n📦 Auto-setup: venv + pip install",
+      "requires": ["macos-arm64", "python3"],
+      "optional": [],
+      "default_port": 8087,
+      "supports_batch": true,
+      "api_format": "openai",
+      "capabilities": {
+        "embeddings": true,
+        "rerank": false,
+        "score": false,
+        "classify": false,
+        "endpoints": {
+          "embeddings": "/v1/embeddings"
         }
       }
     },
@@ -831,13 +853,68 @@
       "optimal_batch_size": 32,
       "use_case": "production",
       "description": "🎯 BGE качество (62.17 MTEB). Компактный Q8 GGUF. Только English."
+    },
+    {
+      "id": "mlx-e5-base",
+      "provider": "mlx",
+      "name": "Multilingual E5 Base (MLX)",
+      "badge": "🍎🌍 Apple Silicon Default",
+      "model_id": "intfloat/multilingual-e5-base",
+      "gpu_architectures": ["apple-metal"],
+      "gpu_support": true,
+      "language": "multi",
+      "context_tokens": 512,
+      "dimensions": 768,
+      "size_mb": 1110,
+      "benchmark_chunks_per_sec": null,
+      "quality_gap": 0.608,
+      "optimal_batch_size": 64,
+      "use_case": "production",
+      "description": "🍎 Default MLX модель. 🌍 94 языка. Metal GPU. Автоустановка через pip."
+    },
+    {
+      "id": "mlx-e5-small",
+      "provider": "mlx",
+      "name": "Multilingual E5 Small (MLX)",
+      "badge": "⚡🍎 Fast Apple Silicon",
+      "model_id": "intfloat/multilingual-e5-small",
+      "gpu_architectures": ["apple-metal"],
+      "gpu_support": true,
+      "language": "multi",
+      "context_tokens": 512,
+      "dimensions": 384,
+      "size_mb": 471,
+      "benchmark_chunks_per_sec": null,
+      "quality_gap": 0.58,
+      "optimal_batch_size": 128,
+      "use_case": "development",
+      "description": "⚡ Быстрая MLX модель для разработки. 🌍 94 языка. Меньше RAM."
+    },
+    {
+      "id": "mlx-bge-m3",
+      "provider": "mlx",
+      "name": "BGE M3 (MLX, 8K)",
+      "badge": "📄🍎 8K + 100+ langs",
+      "model_id": "BAAI/bge-m3",
+      "gpu_architectures": ["apple-metal"],
+      "gpu_support": true,
+      "language": "multi",
+      "context_tokens": 8192,
+      "dimensions": 1024,
+      "size_mb": 2200,
+      "benchmark_chunks_per_sec": null,
+      "quality_gap": 0.307,
+      "optimal_batch_size": 32,
+      "use_case": "large_context",
+      "description": "📄 8K контекст + 🌍 100+ языков. BGE-M3 через MLX. Для legacy кода."
     }
   ],
   "default_models": {
     "ovms": "ovms-multilingual-e5-base",
     "tei": "tei-multilingual-e5-small",
     "vllm": "vllm-multilingual-e5-large",
-    "llamacpp": "llamacpp-e5-base"
+    "llamacpp": "llamacpp-e5-base",
+    "mlx": "mlx-e5-base"
   },
   "_tei_benchmark_note": "TEI E5-small: 1,169 emb/s accumulator (peak 2,442), RTX 5090 Blackwell (120-latest), queueBatch=50, parallelBatches=4",
   "_vllm_benchmark_note": "vLLM E5-small: 1,352 emb/s (optimized, max-num-batched-tokens=16384), RTX 5090 Blackwell, 3.6x vs llama.cpp",
@@ -889,6 +966,10 @@
     "amd_gpu": {
       "model": "llamacpp-e5-base",
       "reason": "🔧 AMD GPU через Vulkan. llama.cpp без Docker."
+    },
+    "apple_silicon": {
+      "model": "mlx-e5-base",
+      "reason": "🍎 Apple Silicon Metal GPU. Нативный MLX без Docker. 94 языка."
     }
   }
 }
