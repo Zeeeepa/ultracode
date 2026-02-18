@@ -93,6 +93,10 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   // Batch/CMD
   bat: "batch",
   cmd: "batch",
+
+  // Zig
+  zig: "zig",
+  zon: "zig",
 };
 
 /**
@@ -279,5 +283,13 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: [],
     exports: [],
     types: ["$ref", "allOf", "anyOf", "oneOf", "definitions", "components"],
+  },
+
+  zig: {
+    functions: ["fn", "inline", "export", "extern", "comptime", "test"],
+    classes: ["struct", "union", "enum", "error"],
+    imports: ["@import"],
+    exports: ["pub", "export"],
+    types: ["type", "anytype", "comptime_int", "comptime_float", "bool", "void", "noreturn", "anyerror"],
   },
 };

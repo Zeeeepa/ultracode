@@ -15,6 +15,7 @@ import {
   KOTLIN_CONFIG,
   RUST_CONFIG,
   SWIFT_CONFIG,
+  ZIG_CONFIG,
 } from "./compiled-languages/index.js";
 
 // Import all language configurations
@@ -48,6 +49,7 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   powershell: POWERSHELL_CONFIG,
   batch: BATCH_CONFIG,
   json: JSON_CONFIG,
+  zig: ZIG_CONFIG,
 };
 
 /**
