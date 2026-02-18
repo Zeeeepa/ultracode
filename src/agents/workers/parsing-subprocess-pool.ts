@@ -616,10 +616,20 @@ export class ParsingSubprocessPool {
     state.busy = false;
     state.process = null;
 
-    // Respawn worker
-    this.spawnWorker(workerId).then(() => {
-      this.processNextTask(workerId);
-    });
+    // Only respawn if there's active work (batch processing or queued tasks)
+    // Don't respawn idle workers after batch completes - they'll be killed anyway
+    if (this.isBatchProcessing || this.taskQueue.length > 0) {
+      this.spawnWorker(workerId).then(() => {
+        this.processNextTask(workerId);
+      });
+    } else {
+      // No work to do - remove worker from pool instead of respawning
+      this.workers.delete(workerId);
+      log.i("SUBPROCESS", `Worker ${workerId} crashed with no pending work, removed from pool`, {
+        language: this.language,
+        remainingWorkers: this.workers.size,
+      });
+    }
   }
 
   /**
@@ -723,6 +733,33 @@ export class ParsingSubprocessPool {
       killed,
       remaining: this.workers.size,
     });
+  }
+
+  /**
+   * Kill all idle workers and remove them from the pool.
+   * Used after batch completes for non-keepalive pools to immediately free memory.
+   * Sets intentionalKill to prevent unexpected exit handlers from respawning.
+   */
+  private killAllIdleWorkers(): void {
+    const workerIds = Array.from(this.workers.keys());
+    let killed = 0;
+
+    for (const workerId of workerIds) {
+      const state = this.workers.get(workerId);
+      if (state && state.pendingTasks.size === 0) {
+        state.intentionalKill = true;
+        killProcess(state.process);
+        this.workers.delete(workerId);
+        killed++;
+      }
+    }
+
+    if (killed > 0) {
+      log.i("SUBPROCESS", `Killed all ${killed} idle workers after batch`, {
+        language: this.language,
+        remaining: this.workers.size,
+      });
+    }
   }
 
   /**
@@ -1028,9 +1065,14 @@ export class ParsingSubprocessPool {
         workersUsed: this.embeddingStatsAgg.workersUsed.size,
       });
 
-      // Scale down to 1 worker after full indexing in keepalive mode
+      // Cleanup workers after batch completion
       if (this.keepaliveMode && this.workers.size > 1) {
+        // Keepalive mode: scale down to 1 worker for incremental updates
         await this.scaleDownWorkers(1);
+      } else if (!this.keepaliveMode) {
+        // Non-keepalive pool (per-language): kill ALL idle workers immediately
+        // These workers have no more work and waste memory sitting idle
+        this.killAllIdleWorkers();
       }
     }
   }

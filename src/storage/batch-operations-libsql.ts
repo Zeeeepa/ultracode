@@ -174,12 +174,12 @@ export class BatchOperationsLibSQL {
       const batchNum = Math.floor(i / this.batchSize);
 
       try {
-        // Prepare entities with stable IDs
+        // Prepare entities with stable IDs (skip if already computed)
         const entitiesWithIds = batch.map((entity) => {
           const now = Date.now();
           return {
             ...entity,
-            id: this.stableEntityId(entity),
+            id: entity.id || this.stableEntityId(entity),
             createdAt: entity.createdAt || now,
             updatedAt: entity.updatedAt || now,
           };

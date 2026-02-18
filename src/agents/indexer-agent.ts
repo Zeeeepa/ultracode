@@ -41,7 +41,7 @@ import type {
 import { flattenParsedEntities, parsedEntityToEntity, type RelationType } from "../types/storage.js";
 import { sleep, tryGarbageCollect } from "../utils/runtime-detection.js";
 import { BaseAgent } from "./base.js";
-import { buildEntityNameMap, resolveByNameAndLine } from "./indexer/entity-resolution.js";
+import { addEntitiesToNameMap, buildEntityNameMap, resolveByNameAndLine } from "./indexer/entity-resolution.js";
 import { processExternalRelationships } from "./indexer/external-placeholder.js";
 import {
   type EmbeddingSchedulerContext,
@@ -128,12 +128,16 @@ export class IndexerAgent extends BaseAgent {
 
   // Batch accumulator for streaming indexing optimization
   // Accumulates entities/relationships and flushes in batches to reduce DB operations
-  private readonly BATCH_FLUSH_THRESHOLD = 50; // Flush every 50 files
+  private readonly BATCH_FLUSH_THRESHOLD = 200; // Flush every 200 files (was 50)
   private pendingStorageEntities: Entity[] = [];
   private pendingRelationships: Relationship[] = [];
   private pendingParsedEntities: Array<{ entities: ParsedEntity[]; filePath: string }> = [];
   private pendingFilesCount = 0;
   private batchFlushPromise: Promise<void> | null = null;
+
+  // Incremental entity name map — avoids O(n²) full rebuild on each file
+  private entityNameMap = new Map<string, Entity[]>();
+  private entitySuffixMap = new Map<string, Entity[]>();
 
   // Idle flush timer - flushes pending batch if no activity for 10 seconds
   private idleFlushAbort: AbortController | null = null;
@@ -732,9 +736,10 @@ export class IndexerAgent extends BaseAgent {
       });
     }
 
-    // Flatten and convert entities
+    // Flatten and convert entities — collect into temp array for incremental Map update
     const flatEntities = flattenParsedEntities(entities);
     const fileHash = nanoid(8);
+    const newEntities: Entity[] = [];
 
     for (const parsed of flatEntities) {
       try {
@@ -749,7 +754,7 @@ export class IndexerAgent extends BaseAgent {
           updatedAt: Date.now(),
         };
 
-        this.pendingStorageEntities.push(entity);
+        newEntities.push(entity);
 
         // DEBUG: Log entity ID details for ALL C# class entities to trace ID mismatch
         if (filePath.endsWith(".cs") && (parsed.type === "class" || parsed.type === "interface")) {
@@ -770,10 +775,12 @@ export class IndexerAgent extends BaseAgent {
       }
     }
 
-    // Build relationships
-    if (providedRelationships && providedRelationships.length > 0) {
-      const byName = buildEntityNameMap(this.pendingStorageEntities);
+    // Push new entities to pending buffer and incrementally update name maps — O(k) not O(n)
+    this.pendingStorageEntities.push(...newEntities);
+    addEntitiesToNameMap(this.entityNameMap, this.entitySuffixMap, newEntities);
 
+    // Build relationships using incremental entityNameMap + suffixMap
+    if (providedRelationships && providedRelationships.length > 0) {
       // DEBUG: Log cross-module call resolution for Swift
       if (filePath.endsWith(".swift")) {
         const callsRels = providedRelationships.filter((r) => r.type === "calls" && r.metadata?.["crossModule"]);
@@ -782,12 +789,12 @@ export class IndexerAgent extends BaseAgent {
             file: filePath.split(/[/\\]/).pop(),
             crossModuleCalls: callsRels.length,
             pendingEntities: this.pendingStorageEntities.length,
-            byNameSize: byName.size,
-            serverPosterKeys: Array.from(byName.keys()).filter((k) => k.includes("ServerPoster")),
+            byNameSize: this.entityNameMap.size,
+            serverPosterKeys: Array.from(this.entityNameMap.keys()).filter((k) => k.includes("ServerPoster")),
             calls: callsRels.slice(0, 5).map((r) => ({
               from: r.from,
               to: r.to,
-              inByName: byName.has(r.to),
+              inByName: this.entityNameMap.has(r.to),
             })),
           });
         }
@@ -804,8 +811,22 @@ export class IndexerAgent extends BaseAgent {
         // For "contains" relationships, prefer container types (class > constructor)
         // to avoid C# constructor name collision stealing parent relationships.
         const isContains = rel.type === "contains";
-        let fromId = resolveByNameAndLine(byName, rel.from, rel.metadata?.line, relSourceFile, isContains);
-        let toId = resolveByNameAndLine(byName, rel.to, rel.metadata?.line, rel.targetFile || relSourceFile);
+        let fromId = resolveByNameAndLine(
+          this.entityNameMap,
+          rel.from,
+          rel.metadata?.line,
+          relSourceFile,
+          isContains,
+          this.entitySuffixMap,
+        );
+        let toId = resolveByNameAndLine(
+          this.entityNameMap,
+          rel.to,
+          rel.metadata?.line,
+          rel.targetFile || relSourceFile,
+          undefined,
+          this.entitySuffixMap,
+        );
 
         // DEBUG: Log resolution result for cross-module calls
         if (rel.metadata?.["crossModule"]) {
@@ -858,7 +879,7 @@ export class IndexerAgent extends BaseAgent {
           resolved: csResolved,
           unresolved: csUnresolved,
           pendingEntities: this.pendingStorageEntities.length,
-          byNameSize: byName.size,
+          byNameSize: this.entityNameMap.size,
           pendingRels: this.pendingRelationships.length,
           // Show entity names relevant to this file
           fileEntityNames: this.pendingStorageEntities
@@ -873,7 +894,8 @@ export class IndexerAgent extends BaseAgent {
     this.pendingParsedEntities.push({ entities: flatEntities, filePath });
     this.pendingFilesCount++;
 
-    // Auto-flush if threshold reached
+    // Immediate fire-and-forget flush when threshold reached
+    // Starts DB work concurrently with parsing — no delay
     if (this.pendingFilesCount >= this.BATCH_FLUSH_THRESHOLD) {
       this.flushPendingBatch().catch((err) => {
         log.w("INDEXER", "Auto-flush failed", { error: (err as Error).message });
@@ -896,11 +918,13 @@ export class IndexerAgent extends BaseAgent {
     const parsedToFlush = this.pendingParsedEntities;
     const filesCount = this.pendingFilesCount;
 
-    // Reset accumulators
+    // Reset accumulators and incremental maps
     this.pendingStorageEntities = [];
     this.pendingRelationships = [];
     this.pendingParsedEntities = [];
     this.pendingFilesCount = 0;
+    this.entityNameMap = new Map();
+    this.entitySuffixMap = new Map();
 
     if (entitiesToFlush.length === 0) {
       return { entities: 0, relationships: 0, files: 0 };
@@ -992,21 +1016,34 @@ export class IndexerAgent extends BaseAgent {
         relResult = await this.batchOps.insertRelationships(relationshipsToFlush);
       }
 
-      // Update file info for Smart Incremental indexing
-      // Group entities by file path and update file info for each unique file
+      // Update file info for Smart Incremental indexing — batch instead of N sequential calls
       const fileEntityCounts = new Map<string, number>();
       for (const { filePath, entities } of parsedToFlush) {
         const current = fileEntityCounts.get(filePath) || 0;
         fileEntityCounts.set(filePath, current + entities.length);
       }
+      const fileInfoBatch: FileInfo[] = [];
+      const now = Date.now();
       for (const [filePath, entityCount] of fileEntityCounts) {
-        const fileInfo: FileInfo = {
+        fileInfoBatch.push({
           path: filePath,
           hash: nanoid(8),
-          lastIndexed: Date.now(),
+          lastIndexed: now,
           entityCount,
-        };
-        await this.graphStorage.updateFileInfo(fileInfo);
+        });
+      }
+      if (fileInfoBatch.length > 0) {
+        if (
+          "batchUpdateFileInfo" in this.graphStorage &&
+          typeof (this.graphStorage as any).batchUpdateFileInfo === "function"
+        ) {
+          await (this.graphStorage as any).batchUpdateFileInfo(fileInfoBatch);
+        } else {
+          // Fallback: sequential updates
+          for (const fi of fileInfoBatch) {
+            await this.graphStorage.updateFileInfo(fi);
+          }
+        }
       }
 
       // Update stats

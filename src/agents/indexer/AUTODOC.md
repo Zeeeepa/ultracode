@@ -19,7 +19,7 @@
 | `initXXHash` | function | [→ stable-id.ts:27-31] |
 | `parseExternalId` | function | [→ external-placeholder.ts:19] |
 | `processExternalRelationships` | function | [→ external-placeholder.ts:108-112] |
-| `resolveByNameAndLine` | function | [→ entity-resolution.ts:45-105] |
+| `resolveByNameAndLine` | function | [→ entity-resolution.ts:78-145] |
 | `runtimeSleep` | function | [→ git-event-handlers.ts:193-195] |
 | `scheduleEmbeddingGeneration` | function | [→ git-event-handlers.ts:201-228] |
 | `stableEntityId` | function | [→ stable-id.ts:52-61] |

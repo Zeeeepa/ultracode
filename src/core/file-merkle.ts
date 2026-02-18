@@ -117,7 +117,12 @@ export class FileMerkleTree {
       let child = normalizedPath;
 
       while (current !== "." && current !== child) {
-        dirChildren.getOrInsertComputed(current, () => new Set()).add(child);
+        let set = dirChildren.get(current);
+        if (!set) {
+          set = new Set();
+          dirChildren.set(current, set);
+        }
+        set.add(child);
 
         child = current;
         current = dirname(current);
@@ -125,7 +130,12 @@ export class FileMerkleTree {
 
       // Add to root
       if (child !== ".") {
-        dirChildren.getOrInsertComputed(".", () => new Set()).add(child);
+        let rootSet = dirChildren.get(".");
+        if (!rootSet) {
+          rootSet = new Set();
+          dirChildren.set(".", rootSet);
+        }
+        rootSet.add(child);
       }
     }
 

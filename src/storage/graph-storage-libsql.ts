@@ -475,6 +475,10 @@ export class GraphStorageLibSQL implements GraphStorage {
     await this.adapter.updateFileInfo(info);
   }
 
+  async batchUpdateFileInfo(infos: FileInfo[]): Promise<void> {
+    await this.adapter.batchUpdateFileInfo(infos);
+  }
+
   async getFileInfo(path: string): Promise<FileInfo | null> {
     return await this.adapter.getFileInfo(path);
   }

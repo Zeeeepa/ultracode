@@ -447,7 +447,12 @@ export class RaceDetector {
       for (const m of conditionalWrites) {
         if (m.condition) {
           const key = m.condition.replace(/\s+/g, "");
-          conditionGroups.getOrInsertComputed(key, () => []).push(m);
+          let arr = conditionGroups.get(key);
+          if (!arr) {
+            arr = [];
+            conditionGroups.set(key, arr);
+          }
+          arr.push(m);
         }
       }
 

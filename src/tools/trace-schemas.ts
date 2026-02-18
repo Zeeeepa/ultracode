@@ -34,6 +34,11 @@ export const traceToolDefinitions = [
           description: "Number of recent commits to consider for highlighting",
           default: 10,
         },
+        projectPath: {
+          type: "string",
+          description:
+            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
+        },
       },
       required: ["from", "to"],
     },
@@ -64,6 +69,11 @@ export const traceToolDefinitions = [
           description: "Number of recent commits to consider for highlighting",
           default: 10,
         },
+        projectPath: {
+          type: "string",
+          description:
+            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
+        },
       },
       required: ["target", "question"],
     },
@@ -83,6 +93,11 @@ export const traceToolDefinitions = [
           description: "Data sources to analyze (auto-detected if not specified)",
         },
         trackTransformations: { type: "boolean", description: "Track data transformations", default: true },
+        projectPath: {
+          type: "string",
+          description:
+            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
+        },
       },
       required: ["entryPoint", "targetState"],
     },
@@ -106,6 +121,11 @@ export const traceToolDefinitions = [
           minItems: 1,
         },
         scope: { type: "string", description: "Scope of analysis (semantic query)" },
+        projectPath: {
+          type: "string",
+          description:
+            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
+        },
       },
       required: ["state", "scenarios"],
     },
@@ -125,6 +145,11 @@ export const traceToolDefinitions = [
           enum: ["impact", "location", "type"],
           description: "How to group results",
           default: "impact",
+        },
+        projectPath: {
+          type: "string",
+          description:
+            "Project directory path. If not specified, uses current project. Supports absolute paths or relative to CWD.",
         },
       },
       required: ["scenario"],

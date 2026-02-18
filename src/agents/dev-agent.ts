@@ -411,7 +411,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         log.i("DEVAGENT", "Destroying existing worker pools for full reindex (parallel with collectFiles)");
         await this.parserAgent!.destroyWorkerPools();
 
-        // 2. Set pool mode
+        // 2. Set pool mode — per-language pools run in parallel (Promise.all)
+        // Faster for initial indexing: N languages × M workers = high parallelism
         await this.parserAgent!.setPoolMode("per-language");
 
         // 3. Configure embedding
@@ -595,7 +596,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         await this.parserAgent.setPoolMode("universal");
         log.i("DEVAGENT", "Pool mode configured", { mode: "universal", isIncremental });
       } else {
-        // Full reindex: pool mode already set in parallel preparation
+        // Full reindex: pool mode already set in parallel preparation (per-language)
         log.i("DEVAGENT", "Pool mode configured", { mode: "per-language", isIncremental });
       }
     }
@@ -800,6 +801,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     // Instead of 492 separate DB calls, we do ~10 batch calls (50 files each)
     const streamingIndexedFiles = new Set<string>();
 
+    let totalStreamingQueueMs = 0; // Time main thread spends in streaming callback (queueForIndexing)
+    let streamingCallbackCount = 0;
+
     if (this.parserAgent && this.indexerAgent) {
       // Streaming callback - queues for batch indexing (instant, non-blocking)
       this.parserAgent.setStreamingMode(true, (result, _taskId, _fileIndex, _totalFiles) => {
@@ -810,8 +814,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         // Mark as streaming immediately
         streamingIndexedFiles.add(result.filePath);
 
-        // Queue for batch indexing (non-blocking, accumulates data)
+        // Measure time spent in queueForIndexing on main thread
+        const queueStart = Date.now();
         this.indexerAgent!.queueForIndexing(result.entities, result.filePath, result.relationships || []);
+        totalStreamingQueueMs += Date.now() - queueStart;
+        streamingCallbackCount++;
       });
       log.i("DEVAGENT", "Streaming mode enabled (batch accumulator)");
     }
@@ -824,6 +831,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
     // Process CODE files through ParserAgent (AST parsing with worker pools)
     perfTimings["parsing_start"] = Date.now() - perfStart;
+    let totalWorkerParseMs = 0; // Time workers spend parsing (wall-clock from main's perspective)
+    let totalMainProcessMs = 0; // Time main thread spends processing results
+    let totalMainIndexMs = 0; // Time main thread spends indexing to graph
     const files = codeFiles; // Use only code files for parsing
     for (let i = 0; i < files.length; i += effectiveBatchSize) {
       const batch = files.slice(i, Math.min(i + effectiveBatchSize, files.length));
@@ -853,6 +863,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
           const parseStart = Date.now();
           const results = (await this.parserAgent.process(parseTask)) as ParseResult[];
           const parseMs = Date.now() - parseStart;
+          totalWorkerParseMs += parseMs;
+          const processStart = Date.now();
 
           // DEBUG: Log parse results count
           log.i("DEVAGENT", "Parser batch completed", {
@@ -946,6 +958,9 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             unique: byFile.size,
           });
 
+          totalMainProcessMs += Date.now() - processStart;
+          const indexStart = Date.now();
+
           // PARALLEL indexing with frequent yields to allow IPC callbacks
           // OPTIMIZATION 1: Reduced from 32 to 8 for more frequent event loop yields
           const INDEXING_CONCURRENCY = 8;
@@ -1020,6 +1035,8 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               }
             }
           }
+
+          totalMainIndexMs += Date.now() - indexStart;
 
           // NOTE: Streaming results are added after the main loop completes
           // to avoid double-counting (moved outside the batch loop)
@@ -1218,6 +1235,26 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
     // Disable streaming mode after code files parsing is complete
     perfTimings["parsing_end"] = Date.now() - perfStart;
+
+    // Detailed breakdown of "parsing" phase - shows main thread bottleneck
+    const totalParsingPhase = (perfTimings["parsing_end"] ?? 0) - (perfTimings["parsing_start"] ?? 0);
+    // Note: streamingQueueMs runs INSIDE workerParseMs (concurrent on event loop during IPC waits)
+    // So real worker-only time ≈ workerParseMs - streamingQueueMs
+    const estimatedPureWorkerMs = Math.max(0, totalWorkerParseMs - totalStreamingQueueMs);
+    log.i("DEVAGENT", "PARSING_PHASE_BREAKDOWN", {
+      totalMs: totalParsingPhase,
+      workerParseMs: totalWorkerParseMs,
+      streamingQueueMs: totalStreamingQueueMs,
+      streamingCallbacks: streamingCallbackCount,
+      estimatedPureWorkerMs,
+      mainProcessMs: totalMainProcessMs,
+      mainIndexMs: totalMainIndexMs,
+      overheadMs: totalParsingPhase - totalWorkerParseMs - totalMainProcessMs - totalMainIndexMs,
+      pureWorkerPct: totalParsingPhase > 0 ? `${Math.round((estimatedPureWorkerMs / totalParsingPhase) * 100)}%` : "0%",
+      streamingPct: totalParsingPhase > 0 ? `${Math.round((totalStreamingQueueMs / totalParsingPhase) * 100)}%` : "0%",
+      mainProcessPct: totalParsingPhase > 0 ? `${Math.round((totalMainProcessMs / totalParsingPhase) * 100)}%` : "0%",
+      mainIndexPct: totalParsingPhase > 0 ? `${Math.round((totalMainIndexMs / totalParsingPhase) * 100)}%` : "0%",
+    });
     if (this.parserAgent) {
       this.parserAgent.setStreamingMode(false);
     }

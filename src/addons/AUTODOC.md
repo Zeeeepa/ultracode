@@ -1,6 +1,6 @@
 # Addons
 
-Управляет внешним процессом Roslyn для парсинга C# файлов с резервной поддержкой tree-sitter.
+Модуль управления парсингом C# через Roslyn addon с fallback на tree-sitter
 
 ## Exports
 

@@ -9,7 +9,45 @@
  * Eliminates ~150 lines of duplicated code across parsers
  */
 
-import type { ASTNode } from "../types/parser.js";
+import type { ASTNode, ParsedEntity } from "../types/parser.js";
+
+/**
+ * Pre-computed line offset map for O(log n) index→line/column lookups.
+ *
+ * Replaces O(n) char-by-char iteration per call with a single O(n) build pass
+ * and O(log n) binary search per query. For a 190K-line file with 2000+ entities,
+ * this reduces ~380M iterations to ~34K binary search steps.
+ */
+export class LineOffsetMap {
+  private offsets: number[];
+
+  constructor(content: string) {
+    this.offsets = [0];
+    for (let i = 0; i < content.length; i++) {
+      if (content[i] === "\n") this.offsets.push(i + 1);
+    }
+  }
+
+  getLocation(index: number): { line: number; column: number; index: number } {
+    let lo = 0;
+    let hi = this.offsets.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (this.offsets[mid]! <= index) lo = mid;
+      else hi = mid - 1;
+    }
+    return { line: lo + 1, column: index - this.offsets[lo]!, index };
+  }
+
+  getEntityLocation(index: number): ParsedEntity["location"] {
+    const start = this.getLocation(index);
+    return { start, end: { line: start.line, column: start.column + 1, index: index + 1 } };
+  }
+
+  getLine(index: number): number {
+    return this.getLocation(index).line;
+  }
+}
 
 export interface Location {
   start: {

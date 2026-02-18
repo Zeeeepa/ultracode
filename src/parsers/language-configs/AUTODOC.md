@@ -17,15 +17,15 @@
 | `isDecoratorNode` | function | Определяет, является ли узел декоратором функции или класса. | [→ python-helpers.ts:75-78] |
 | `isSpecialClassNode` | function | Проверяет dataclass и другие специальные классы. | [→ python-helpers.ts:81-98] |
 | `getPythonNodeCategory` | function | Возвращает расширённую категорию типа узла Python. | [→ python-helpers.ts:103-143] |
-| `LANGUAGE_CONFIGS` | const | Словарь конфигураций всех поддерживаемых языков программирования. | [→ registry.ts:30-51] |
-| `getLanguageConfig` | function | Получает конфигурацию по названию языка программирования. | [→ registry.ts:56-58] |
-| `getFileConfig` | function | Получает конфигурацию языка по пути файла автоматически. | [→ registry.ts:56-58] |
-| `isFunctionNode` | function | Проверяет, является ли узел определением функции языка. | [→ registry.ts:63-66] |
-| `isClassNode` | function | Проверяет, является ли узел определением класса языка. | [→ registry.ts:79-82] |
-| `isImportNode` | function | Проверяет, является ли узел импортом модуля или пакета. | [→ registry.ts:87-90] |
-| `isExportNode` | function | Проверяет, является ли узел экспортом или переэкспортом. | [→ registry.ts:95-98] |
-| `isTypeNode` | function | Проверяет, является ли узел определением типа или интерфейса. | [→ registry.ts:104-119] |
-| `validateConfigurations` | function | Валидирует все конфигурации языков при запуске приложения. | [→ registry.ts:104-119] |
+| `LANGUAGE_CONFIGS` | const | Словарь конфигураций всех поддерживаемых языков программирования. | [→ registry.ts:31-53] |
+| `getLanguageConfig` | function | Получает конфигурацию по названию языка программирования. | [→ registry.ts:58-60] |
+| `getFileConfig` | function | Получает конфигурацию языка по пути файла автоматически. | [→ registry.ts:58-60] |
+| `isFunctionNode` | function | Проверяет, является ли узел определением функции языка. | [→ registry.ts:58-60] |
+| `isClassNode` | function | Проверяет, является ли узел определением класса языка. | [→ registry.ts:81-84] |
+| `isImportNode` | function | Проверяет, является ли узел импортом модуля или пакета. | [→ registry.ts:89-92] |
+| `isExportNode` | function | Проверяет, является ли узел экспортом или переэкспортом. | [→ registry.ts:97-100] |
+| `isTypeNode` | function | Проверяет, является ли узел определением типа или интерфейса. | [→ registry.ts:106-121] |
+| `validateConfigurations` | function | Валидирует все конфигурации языков при запуске приложения. | [→ registry.ts:106-121] |
 
 ## Files
 
