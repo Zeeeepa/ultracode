@@ -9,6 +9,7 @@
  * - Link Extractor: src/autodoc/parser/link-extractor.ts
  */
 
+import { basename } from "node:path";
 import type { ParsedDocument, ParsedReference, ParsedSection } from "../types.js";
 import { extractReferences } from "./link-extractor.js";
 
@@ -114,7 +115,7 @@ export function parseMarkdown(content: string, filePath: string): ParsedDocument
 
   // If no title found, use filename
   if (!title) {
-    title = filePath.split("/").pop()?.replace(/\.md$/, "") || "Untitled";
+    title = basename(filePath, ".md") || "Untitled";
   }
 
   return {

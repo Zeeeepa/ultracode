@@ -130,6 +130,24 @@ export class LayeredFaissProvider {
     return this.isInitialized;
   }
 
+  /**
+   * Get current configured dimensions
+   */
+  getDimensions(): number {
+    return this.config.dimensions;
+  }
+
+  /**
+   * Update dimensions (e.g. when embedding model changes)
+   * Only effective before initialize() creates the FAISS index.
+   */
+  setDimensions(dimensions: number): void {
+    if (this.config.dimensions !== dimensions) {
+      log.i("LAYERED_FAISS", "dimensions_updated", { from: this.config.dimensions, to: dimensions });
+      this.config.dimensions = dimensions;
+    }
+  }
+
   // ===========================================================================
   // Lifecycle
   // ===========================================================================
@@ -868,10 +886,14 @@ let layeredProviderInstance: LayeredFaissProvider | null = null;
 
 /**
  * Get the layered FAISS provider singleton
+ * @param config - Optional config to set dimensions etc. on first creation or to update existing instance.
  */
-export function getLayeredFaissProvider(): LayeredFaissProvider {
+export function getLayeredFaissProvider(config?: Partial<LayeredFaissConfig>): LayeredFaissProvider {
   if (!layeredProviderInstance) {
-    layeredProviderInstance = new LayeredFaissProvider();
+    layeredProviderInstance = new LayeredFaissProvider(config);
+  } else if (config?.dimensions && config.dimensions !== layeredProviderInstance.getDimensions()) {
+    // Update dimensions if they changed (e.g. model switch)
+    layeredProviderInstance.setDimensions(config.dimensions);
   }
   return layeredProviderInstance;
 }

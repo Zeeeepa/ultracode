@@ -4,13 +4,13 @@ import type { CodeUnit } from "../models/code-unit.js";
 import { type Resolution, ResolutionStrategy, type SemanticConflict } from "../models/semantic-conflict.js";
 
 /**
- * AI-Assisted Conflict Resolver - Использует embeddings для умного разрешения конфликтов
+ * AI-Assisted Conflict Resolver - Uses embeddings for intelligent conflict resolution
  *
- * Функции:
- * - Semantic similarity analysis для кода из разных веток
- * - Intent prediction на основе векторной близости к известным паттернам
- * - Confidence scoring с учётом семантической дистанции
- * - Intelligent merge suggestions для compatible changes
+ * Features:
+ * - Semantic similarity analysis for code from different branches
+ * - Intent prediction based on vector proximity to known patterns
+ * - Confidence scoring accounting for semantic distance
+ * - Intelligent merge suggestions for compatible changes
  */
 
 export interface AIConflictResolverConfig {
@@ -18,9 +18,9 @@ export interface AIConflictResolverConfig {
   embeddingGenerator: EmbeddingGenerator;
 
   // Similarity thresholds
-  highSimilarityThreshold: number; // default: 0.9 - очень похожие изменения
-  mediumSimilarityThreshold: number; // default: 0.7 - умеренно похожие
-  lowSimilarityThreshold: number; // default: 0.5 - мало похожие
+  highSimilarityThreshold: number; // default: 0.9 - very similar changes
+  mediumSimilarityThreshold: number; // default: 0.7 - moderately similar
+  lowSimilarityThreshold: number; // default: 0.5 - slightly similar
 
   // Confidence settings
   minConfidenceForAutoMerge: number; // default: 0.8
@@ -28,26 +28,26 @@ export interface AIConflictResolverConfig {
 }
 
 /**
- * Результат AI-анализа конфликта
+ * AI conflict analysis result
  */
 export interface AIAnalysisResult {
-  // Semantic similarity между branchA и branchB
+  // Semantic similarity between branchA and branchB
   similarity: number;
 
-  // Semantic distance от base до каждой ветки
+  // Semantic distance from base to each branch
   branchADistance: number;
   branchBDistance: number;
 
-  // Предсказанная стратегия разрешения
+  // Predicted resolution strategy
   suggestedStrategy: ResolutionStrategy;
 
-  // Confidence в предложенной стратегии
+  // Confidence in the suggested strategy
   confidence: number;
 
-  // Объяснение решения
+  // Explanation of the decision
   explanation: string;
 
-  // Merged code (если AI смог сгенерировать)
+  // Merged code (if AI was able to generate it)
   mergedCode?: string | undefined;
 }
 
@@ -60,9 +60,9 @@ export class AIConflictResolver {
   }
 
   /**
-   * Проанализировать конфликт с помощью AI
+   * Analyze a conflict using AI
    *
-   * @param conflict - Конфликт для анализа
+   * @param conflict - Conflict to analyze
    * @returns AI analysis result
    */
   async analyzeConflict(conflict: SemanticConflict): Promise<AIAnalysisResult> {
@@ -102,7 +102,7 @@ export class AIConflictResolver {
   }
 
   /**
-   * Получить или сгенерировать embedding для code unit
+   * Get or generate embedding for a code unit
    */
   private async getEmbedding(unit: CodeUnit | null): Promise<Float32Array | null> {
     if (!unit) return null;
@@ -133,10 +133,10 @@ export class AIConflictResolver {
   }
 
   /**
-   * Подготовить текст для embedding
+   * Prepare text for embedding
    */
   private prepareTextForEmbedding(unit: CodeUnit): string {
-    // Включаем контекст: имя, сигнатуру, контент
+    // Include context: name, signature, content
     const parts: string[] = [];
 
     if (unit.fullyQualifiedName) {
@@ -157,7 +157,7 @@ export class AIConflictResolver {
   }
 
   /**
-   * Определить стратегию разрешения на основе similarity analysis
+   * Determine resolution strategy based on similarity analysis
    */
   private determineStrategy(
     conflict: SemanticConflict,
@@ -174,7 +174,7 @@ export class AIConflictResolver {
 
     // Case 1: Very high similarity - likely same change
     if (similarity >= this.config.highSimilarityThreshold) {
-      // Выбираем ветку с меньшей дистанцией от base
+      // Choose the branch with smaller distance from base
       const preferA = branchADistance <= branchBDistance;
 
       return {
@@ -187,7 +187,7 @@ export class AIConflictResolver {
 
     // Case 2: Medium similarity - compatible changes
     if (similarity >= this.config.mediumSimilarityThreshold) {
-      // Попробовать интеллектуальное слияние
+      // Try intelligent merge
       const mergedCode = this.attemptIntelligentMerge(conflict, similarity);
 
       if (mergedCode) {
@@ -199,7 +199,7 @@ export class AIConflictResolver {
         };
       }
 
-      // Если AI merge не удалось - предложить manual review
+      // If AI merge failed - suggest manual review
       return {
         strategy: ResolutionStrategy.ManualReview,
         confidence: 0.6,
@@ -225,47 +225,47 @@ export class AIConflictResolver {
   }
 
   /**
-   * Попытка интеллектуального слияния на основе semantic analysis
+   * Attempt intelligent merge based on semantic analysis
    *
-   * Эвристика: если изменения семантически близки, пытаемся объединить их
+   * Heuristic: if changes are semantically close, try to combine them
    */
   private attemptIntelligentMerge(conflict: SemanticConflict, similarity: number): string | null {
     const { baseUnit, branchAUnit, branchBUnit } = conflict;
 
-    // Эвристика 1: Если одна ветка добавила функционал, другая - bugfix
-    // пытаемся объединить оба изменения
+    // Heuristic 1: If one branch added functionality, the other - bugfix
+    // try to combine both changes
     const baseLength = baseUnit?.content.length || 0;
     const branchALength = branchAUnit.content.length;
     const branchBLength = branchBUnit.content.length;
 
-    // Если обе ветки добавили код (увеличили размер)
+    // If both branches added code (increased size)
     const branchAAdded = branchALength > baseLength;
     const branchBAdded = branchBLength > baseLength;
 
     if (branchAAdded && branchBAdded && similarity >= 0.7) {
-      // Простая стратегия: берем более длинную версию
-      // (предполагаем, что она включает больше функционала)
+      // Simple strategy: take the longer version
+      // (assuming it includes more functionality)
       return branchALength > branchBLength ? branchAUnit.content : branchBUnit.content;
     }
 
-    // Эвристика 2: Если изменения маленькие и похожие - берем одну из веток
+    // Heuristic 2: If changes are small and similar - take one of the branches
     const maxChange = Math.max(Math.abs(branchALength - baseLength), Math.abs(branchBLength - baseLength));
 
     if (maxChange < 100 && similarity >= 0.8) {
-      // Маленькие похожие изменения - берем branchA
+      // Small similar changes - take branchA
       return branchAUnit.content;
     }
 
-    // TODO: Более продвинутые эвристики:
-    // - AST-based merge для структурных изменений
-    // - Line-by-line diff с semantic scoring
-    // - ML-based code generation для merge
+    // TODO: More advanced heuristics:
+    // - AST-based merge for structural changes
+    // - Line-by-line diff with semantic scoring
+    // - ML-based code generation for merge
 
-    return null; // Не можем безопасно слить
+    return null; // Cannot safely merge
   }
 
   /**
-   * Cosine similarity между двумя векторами (0-1, где 1 = identical)
+   * Cosine similarity between two vectors (0-1, where 1 = identical)
    */
   private cosineSimilarity(a: Float32Array | null, b: Float32Array | null): number {
     if (!a || !b || a.length !== b.length) return 0;
@@ -297,14 +297,14 @@ export class AIConflictResolver {
   }
 
   /**
-   * Cache key для embedding
+   * Cache key for embedding
    */
   private getCacheKey(unit: CodeUnit): string {
     return `${unit.id}-${unit.contentHash}`;
   }
 
   /**
-   * Создать Resolution на основе AI analysis
+   * Create Resolution based on AI analysis
    */
   createResolution(aiAnalysis: AIAnalysisResult): Resolution {
     return {
@@ -316,19 +316,19 @@ export class AIConflictResolver {
   }
 
   /**
-   * Очистить cache
+   * Clear cache
    */
   clearCache(): void {
     this.embeddingCache.clear();
   }
 
   /**
-   * Получить статистику cache
+   * Get cache statistics
    */
   getCacheStats(): { size: number; maxSize: number } {
     return {
       size: this.embeddingCache.size,
-      maxSize: 1000, // Можно сделать конфигурируемым
+      maxSize: 1000, // Can be made configurable
     };
   }
 }

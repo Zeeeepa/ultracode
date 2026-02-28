@@ -14,13 +14,13 @@ Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  ToMe Tools Setup for Embeddings" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  Target: $env:LOCALAPPDATA\UltraScriptTools\tome\"
+Write-Host "  Target: $env:LOCALAPPDATA\UltraCode\tome\"
 Write-Host "  ToMe: 0.3 (30% merging, 1.5-2x speedup)"
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
-$INSTALL_DIR = "$env:LOCALAPPDATA\UltraScriptTools\tome"
-$MODELS_DIR = "$env:LOCALAPPDATA\UltraScriptTools\ovms\models"
+$INSTALL_DIR = "$env:LOCALAPPDATA\UltraCode\tome"
+$MODELS_DIR = "$env:LOCALAPPDATA\UltraCode\ovms\models"
 $TOME_RATIO = 0.3
 
 # ============================================

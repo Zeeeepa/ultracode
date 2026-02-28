@@ -1,298 +1,309 @@
 /**
- * TASK-002: Semantic Agent Type Definitions
+ * Semantic search and vector operation type definitions.
  *
- * Type definitions for semantic search and vector operations
- * Supports 384-dimensional vectors with all-MiniLM-L6-v2 model
+ * Provides types for embedding generation, similarity search,
+ * clone detection, cross-language lookup, and refactoring hints.
+ * Default vector dimensionality comes from all-MiniLM-L6-v2 (384-d).
  *
- * Architecture References:
- * - Project Overview: doc/PROJECT_OVERVIEW.md
- * - Coding Standards: doc/CODING_STANDARD.md
- * - Architectural Decisions: doc/ARCHITECTURAL_DECISIONS.md
- *
- * @task_id TASK-002
- * @history
- *  - 2025-09-14: Created by Dev-Agent - TASK-002: Initial semantic types
- * implementation
+ * Related modules:
+ *   - src/config/constants.ts (VECTOR_CONSTANTS, CACHE_CONSTANTS)
+ *   - src/semantic/ (runtime implementations)
  */
 
 import { CACHE_CONSTANTS, VECTOR_CONSTANTS } from "../config/constants.js";
 
-// =============================================================================
-// 2. CONSTANTS AND CONFIGURATION
-// =============================================================================
+// ---------------------------------------------------------------------------
+// Numeric constants
+// ---------------------------------------------------------------------------
+
 export const VECTOR_DIMENSIONS = VECTOR_CONSTANTS.DEFAULT_VECTOR_DIMENSIONS; // all-MiniLM-L6-v2 dimensions
 export const DEFAULT_SIMILARITY_THRESHOLD = VECTOR_CONSTANTS.DEFAULT_SIMILARITY_THRESHOLD;
 export const MAX_BATCH_SIZE = VECTOR_CONSTANTS.MAX_BATCH_SIZE; // Optimal for 4-core CPU
 export const MAX_CACHE_ENTRIES = CACHE_CONSTANTS.MAX_CACHE_ENTRIES;
 
-// =============================================================================
-// 3. DATA MODELS AND TYPE DEFINITIONS
-// =============================================================================
+// ---------------------------------------------------------------------------
+// Embedding representation
+// ---------------------------------------------------------------------------
 
-/**
- * Vector embedding representation
- */
+/** A single vector embedding tied to a content string. */
 export interface VectorEmbedding {
   id: string;
-  content: string;
   vector: Float32Array;
-  metadata?: Record<string, unknown>;
+  content: string;
   createdAt: number;
+  metadata?: Record<string, unknown>;
 }
 
-/**
- * Similarity search result
- */
+// ---------------------------------------------------------------------------
+// Search results
+// ---------------------------------------------------------------------------
+
+/** One entry returned by a cosine-similarity search. */
 export interface SimilarityResult {
   id: string;
-  content: string;
   similarity: number;
+  content: string;
   metadata?: Record<string, unknown>;
 }
 
-/**
- * Hybrid search result combining structural and semantic
- */
+/** Combined result from both structural graph and semantic search. */
 export interface HybridResult {
   id: string;
   score: number;
   source: "structural" | "semantic" | "hybrid";
-  content?: string | undefined;
   metadata?: Record<string, unknown>;
+  content?: string | undefined;
 }
 
-/**
- * Semantic analysis result
- */
+/** Aggregated output of a semantic search request. */
+export interface SemanticResult {
+  query: string;
+  processingTime: number;
+  results: SimilarityResult[];
+}
+
+// ---------------------------------------------------------------------------
+// Semantic analysis
+// ---------------------------------------------------------------------------
+
+/** High-level semantic breakdown of a code fragment. */
 export interface SemanticAnalysis {
-  entities: string[];
-  concepts: string[];
+  summary: string;
   complexity: number;
   semanticType: "function" | "class" | "module" | "utility" | "test";
-  summary: string;
+  entities: string[];
+  concepts: string[];
 }
 
-/**
- * Similar code detection result
- */
+// ---------------------------------------------------------------------------
+// Code similarity and clone detection
+// ---------------------------------------------------------------------------
+
+/** A code fragment that is similar to a query fragment. */
 export interface SimilarCode {
   id: string;
+  similarity: number;
   path: string;
   content: string;
-  similarity: number;
   type: "exact" | "near" | "semantic";
-  /** Starting line number of the code fragment */
-  startLine?: number;
-  /** Ending line number of the code fragment */
-  endLine?: number;
-  /** Entity name if available */
+  /** Entity name when available */
   name?: string;
+  /** First line of the matching fragment */
+  startLine?: number;
+  /** Last line of the matching fragment */
+  endLine?: number;
 }
 
-/**
- * Code clone group
- */
+/** Group of code fragments that are clones of each other. */
 export interface CloneGroup {
   id: string;
-  members: SimilarCode[];
   avgSimilarity: number;
   cloneType: "type1" | "type2" | "type3" | "type4"; // Exact, renamed, gapped, semantic
+  members: SimilarCode[];
 }
 
-/**
- * Cross-language search result
- */
+// ---------------------------------------------------------------------------
+// Cross-language search
+// ---------------------------------------------------------------------------
+
+/** Result item from a query that spans multiple languages. */
 export interface CrossLangResult {
   id: string;
+  similarity: number;
   language: string;
   path: string;
   content: string;
-  similarity: number;
-  /** Starting line number of the code fragment */
-  startLine?: number;
-  /** Ending line number of the code fragment */
-  endLine?: number;
-  /** Entity name if available */
+  /** Entity name when available */
   name?: string;
+  /** First line of the matching fragment */
+  startLine?: number;
+  /** Last line of the matching fragment */
+  endLine?: number;
 }
 
-/**
- * Refactoring suggestion
- */
+// ---------------------------------------------------------------------------
+// Refactoring
+// ---------------------------------------------------------------------------
+
+/** An actionable refactoring proposal with confidence score. */
 export interface RefactoringSuggestion {
   type: "extract" | "rename" | "move" | "combine" | "simplify";
-  description: string;
   impact: "low" | "medium" | "high";
   confidence: number;
+  description: string;
   code?: string;
 }
 
-/**
- * RRF fusion options
- */
+// ---------------------------------------------------------------------------
+// Result fusion
+// ---------------------------------------------------------------------------
+
+/** Parameters for Reciprocal Rank Fusion of structural + semantic lists. */
 export interface FusionOptions {
   k: number; // RRF constant (default 60)
+  limit: number;
   structuralWeight: number;
   semanticWeight: number;
-  limit: number;
 }
 
-/**
- * Semantic operation results
- */
-export interface SemanticResult {
-  query: string;
-  results: SimilarityResult[];
-  processingTime: number;
-}
-
-// CacheEntry removed - use CacheEntry from storage.ts instead
+// ---------------------------------------------------------------------------
+// Vector storage
+// ---------------------------------------------------------------------------
 
 /**
- * Vector backend type
- * libsql DiskANN is the only supported backend
+ * Only libsql DiskANN is supported as a vector backend.
  */
 export type VectorBackend = "libsql";
 
-/**
- * Vector store configuration
- */
+/** Settings for the underlying vector store. */
 export interface VectorStoreConfig {
-  dbPath: string;
   dimensions: number;
-  cacheSize?: number | undefined;
+  dbPath: string;
   walMode?: boolean;
+  cacheSize?: number | undefined;
   workingDirectory?: string | undefined;
 
-  // Use layered FAISS index (base + delta + tombstones)
+  /** Enable layered FAISS index (base + delta + tombstones) */
   useLayeredIndex?: boolean;
 
-  // LibSQL DiskANN configuration
+  /** LibSQL DiskANN-specific overrides */
   libsql?: {
     metric?: "cosine" | "l2"; // Default: cosine
     compression?: "float8" | "float16" | "float32"; // Default: float32
-    searchL?: number | undefined; // Neighbors visited during search (default: 200)
     insertL?: number | undefined; // Neighbors visited during insert (default: 70)
+    searchL?: number | undefined; // Neighbors visited during search (default: 200)
   };
 }
 
-/**
- * Embedding generator configuration
- */
+// ---------------------------------------------------------------------------
+// Embedding provider kinds
+// ---------------------------------------------------------------------------
+
+/** Supported embedding provider identifiers. */
 export type EmbeddingProviderKind =
-  | "ollama"
-  | "openai"
+  | "auto"
   | "cloudru"
   | "huggingface"
-  | "tei"
-  | "ovms"
-  | "vllm"
   | "llamacpp"
   | "mlx"
-  | "auto";
+  | "ollama"
+  | "openai"
+  | "ovms"
+  | "tei"
+  | "vllm";
+
+// ---------------------------------------------------------------------------
+// Worker embedding configuration
+// ---------------------------------------------------------------------------
 
 /**
- * Serializable embedding configuration for subprocess workers.
- * Subset of EmbeddingConfig that can be passed via IPC.
- * Workers use this to initialize their own EmbeddingGenerator.
+ * Serializable subset of embedding settings that can cross an IPC boundary.
+ * Workers use this to bootstrap their own EmbeddingGenerator instance.
  */
 export interface WorkerEmbeddingConfig {
-  /** Whether embedding generation is enabled in workers */
+  /** Whether workers should generate embeddings at all */
   enabled: boolean;
-  /** Provider kind: ollama, tei, ovms, openai, etc. */
+  /** Which provider to use (ollama, tei, ovms, openai, ...) */
   provider: EmbeddingProviderKind;
-  /** Model name for the embedding provider */
+  /** Name of the model for the selected provider */
   modelName: string;
-  /** Maximum tokens for text truncation (legacy, use contextTokens) */
-  maxTokens: number;
-  /** Model's context window size in tokens (e.g., 512 for e5-small) */
+  /** Context window of the model in tokens (e.g. 512 for e5-small) */
   contextTokens: number;
-  /** Batch size for embedding generation (tokens for llama-server) */
+  /** Legacy max-token limit for text truncation */
+  maxTokens: number;
+  /** How many items per batch when generating embeddings */
   batchSize: number;
-  /** Queue batch size for centralized mode (texts per HTTP request, default 128) */
+  /** Texts per HTTP request in centralized mode (default 128) */
   queueBatchSize?: number;
-  /** Vector dimensions (e.g., 384 for e5-small) */
+  /** Output vector dimensionality (e.g. 384 for e5-small) */
   dimensions?: number;
-  /** Worker index for endpoint assignment (0-based) */
+  /** 0-based index used for endpoint assignment across workers */
   workerIndex?: number;
   /**
-   * Centralized embedding mode: workers send texts to Main, Main generates embeddings.
-   * Used by OVMS provider for better throughput via gRPC.
-   * When true, workers don't initialize WorkerEmbeddingClient.
+   * When true, workers delegate embedding generation to the main process
+   * via centralized queue (useful for OVMS gRPC throughput).
    */
   centralizedEmbeddings?: boolean;
-  /** Provider-specific options (serializable) */
+  /** Provider-level transport and auth options (must be serializable) */
   providerOptions?: {
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
     timeoutMs?: number | undefined;
     concurrency?: number | undefined;
-    // OVMS/TEI specific
     maxBatchSize?: number | undefined;
     useEmbeddingsApi?: boolean;
     encodingFormat?: "float" | "base64";
     protocol?: "rest" | "grpc";
     grpcPort?: number;
-    /** Available endpoints for load balancing (e.g., ["embeddings-gpu", "embeddings-cpu"]) */
+    /** Endpoints available for round-robin load balancing */
     endpoints?: string[];
-    // llama.cpp specific
     contextSize?: number | undefined;
     nGpuLayers?: number | undefined;
   };
 }
 
-/**
- * Embedding generation statistics from subprocess pool.
- * Aggregated across all workers for summary logging.
- */
+// ---------------------------------------------------------------------------
+// Embedding pool statistics
+// ---------------------------------------------------------------------------
+
+/** Aggregated performance counters across all embedding workers. */
 export interface EmbeddingPoolStats {
-  /** Total embeddings generated */
+  /** Embeddings generated in total */
   total: number;
-  /** Duration from first embedding to last (ms) */
+  /** Wall-clock time from first to last batch (ms) */
   durationMs: number;
-  /** Throughput (embeddings per second) */
+  /** Embeddings per second */
   speedPerSec: number;
-  /** Number of workers that generated embeddings */
+  /** How many workers participated */
   workers: number;
-  /** Total batch requests to embedding provider */
+  /** Total HTTP/gRPC batch requests sent */
   batches: number;
-  /** Embedding provider used */
+  /** Name of the provider that was used */
   provider?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Full embedding configuration
+// ---------------------------------------------------------------------------
+
+/** Complete embedding configuration including per-provider option blocks. */
 export interface EmbeddingConfig {
   modelName: string;
+  batchSize: number;
   quantized: boolean;
   localPath?: string;
-  batchSize: number;
-  /** Queue batch size for centralized mode (texts per HTTP request, default 128) */
+  /** Texts per HTTP request in centralized mode (default 128) */
   queueBatchSize?: number;
 
   provider?: EmbeddingProviderKind; // default: 'memory'
+
   ollama?: {
     baseUrl?: string | undefined;
     timeoutMs?: number | undefined;
     concurrency?: number | undefined;
     headers?: Record<string, string>;
     autoPull?: boolean;
-    warmupText?: string;
     checkServer?: boolean;
+    warmupText?: string;
     pullTimeoutMs?: number;
   };
+
   openai?: {
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
     timeoutMs?: number | undefined;
-    concurrency?: number | undefined;
     maxBatchSize?: number | undefined;
+    concurrency?: number | undefined;
   };
+
   cloudru?: {
     baseUrl?: string | undefined;
     apiKey?: string | undefined;
     timeoutMs?: number | undefined;
-    concurrency?: number | undefined;
     maxBatchSize?: number | undefined;
+    concurrency?: number | undefined;
   };
+
   huggingface?: {
     apiKey?: string | undefined;
     baseUrl?: string | undefined;
@@ -300,27 +311,27 @@ export interface EmbeddingConfig {
     concurrency?: number | undefined;
     warmupText?: string;
   };
+
   tei?: {
     baseUrl?: string | undefined;
     timeoutMs?: number | undefined;
     concurrency?: number | undefined;
     checkServer?: boolean;
   };
+
   ovms?: {
     baseUrl?: string | undefined;
     timeoutMs?: number | undefined;
     concurrency?: number | undefined;
     checkServer?: boolean;
     miniBatchSize?: number; // Internal batch size for OVMS server (default: 8)
-    // OVMS v3 embeddings API options
-    useEmbeddingsApi?: boolean; // Use /v3/embeddings OpenAI-compatible API (default: true)
-    encodingFormat?: "float" | "base64"; // Response format for embeddings API (default: base64)
-    // Protocol options
-    protocol?: "rest" | "grpc"; // "rest" (HTTP/JSON) or "grpc" (binary protobuf, ~30% faster)
-    grpcPort?: number; // gRPC port (OVMS default: 9000)
-    // Multi-device round-robin load balancing
-    endpoints?: string[]; // ["embeddings-cpu", "embeddings-gpu"]
+    useEmbeddingsApi?: boolean; // /v3/embeddings OpenAI-compatible endpoint (default: true)
+    encodingFormat?: "float" | "base64"; // Response encoding for embeddings API (default: base64)
+    protocol?: "rest" | "grpc"; // "rest" = HTTP/JSON, "grpc" = binary protobuf (~30 % faster)
+    grpcPort?: number; // gRPC port (default: 9000)
+    endpoints?: string[]; // Round-robin targets: ["embeddings-cpu", "embeddings-gpu"]
   };
+
   vllm?: {
     baseUrl?: string | undefined;
     timeoutMs?: number | undefined;
@@ -328,17 +339,19 @@ export interface EmbeddingConfig {
     maxBatchSize?: number | undefined;
     encodingFormat?: "float" | "base64";
   };
+
   llamacpp?: {
     baseUrl?: string | undefined;
     timeoutMs?: number | undefined;
     concurrency?: number | undefined;
     maxBatchSize?: number | undefined;
-    contextSize?: number | undefined;
     nGpuLayers?: number | undefined;
+    contextSize?: number | undefined;
     checkServer?: boolean;
-    /** Auto-start llama-server if not running (default: true) */
+    /** Spawn llama-server automatically when not running (default: true) */
     autoStart?: boolean;
   };
+
   mlx?: {
     baseUrl?: string | undefined;
     timeoutMs?: number | undefined;
@@ -349,31 +362,35 @@ export interface EmbeddingConfig {
   };
 }
 
-/**
- * Semantic operations interface
- */
+// ---------------------------------------------------------------------------
+// Semantic operations contract
+// ---------------------------------------------------------------------------
+
+/** Interface that a semantic agent must satisfy. */
 export interface SemanticOperations {
-  // Basic semantic search
+  // Similarity search
   semanticSearch(query: string, limit?: number): Promise<SemanticResult>;
 
-  // Code similarity
+  // Clone and similarity detection
   findSimilarCode(code: string, threshold?: number): Promise<SimilarCode[]>;
   detectClones(minSimilarity?: number): Promise<CloneGroup[]>;
 
-  // Semantic analysis
+  // Deep analysis
   analyzeCodeSemantics(code: string): Promise<SemanticAnalysis>;
   generateCodeEmbedding(code: string): Promise<Float32Array>;
 
-  // Cross-language search
+  // Multi-language lookup
   crossLanguageSearch(query: string, languages: string[]): Promise<CrossLangResult[]>;
 
-  // Refactoring suggestions
+  // Refactoring hints
   suggestRefactoring(code: string): Promise<RefactoringSuggestion[]>;
 }
 
-/**
- * Semantic task types
- */
+// ---------------------------------------------------------------------------
+// Task classification
+// ---------------------------------------------------------------------------
+
+/** Discriminator for semantic work items dispatched to workers. */
 export enum SemanticTaskType {
   EMBED = "embed",
   SEARCH = "search",
@@ -382,31 +399,16 @@ export enum SemanticTaskType {
   REFACTOR = "refactor",
 }
 
-/**
- * Semantic agent metrics
- */
+// ---------------------------------------------------------------------------
+// Metrics
+// ---------------------------------------------------------------------------
+
+/** Runtime counters for the semantic subsystem. */
 export interface SemanticMetrics {
+  vectorsStored: number;
   embeddingsGenerated: number;
   searchesPerformed: number;
+  cacheHitRate: number;
   avgEmbeddingTime: number;
   avgSearchTime: number;
-  cacheHitRate: number;
-  vectorsStored: number;
-}
-
-/**
- * Embedding pool statistics for performance monitoring
- * Aggregated across all workers in a subprocess pool
- */
-export interface EmbeddingPoolStats {
-  /** Total number of embeddings generated */
-  total: number;
-  /** Duration from first batch to last batch completion (ms) */
-  durationMs: number;
-  /** Throughput: embeddings per second */
-  speedPerSec: number;
-  /** Number of workers that processed embeddings */
-  workers: number;
-  /** Total number of batch requests to embedding provider */
-  batches: number;
 }

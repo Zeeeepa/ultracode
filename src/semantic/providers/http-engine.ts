@@ -8,7 +8,8 @@ export class HttpError extends Error {
     public body?: string,
     options?: ErrorOptions | undefined,
   ) {
-    super(`HTTP ${status} ${statusText}${body ? `: ${body.slice(0, 300)}` : ""}`, options);
+    const tail = body ? `: ${body.slice(0, 300)}` : "";
+    super(`HTTP ${status} ${statusText}${tail}`, options);
     this.name = "HttpError";
   }
 }
@@ -30,85 +31,80 @@ export interface RequestConfig<TBody = unknown> {
 }
 
 export class HttpEngine {
-  private baseUrl: string;
-  private timeoutMs: number;
-  private maxRetries: number;
-  private backoffMs: number;
-  private defaultHeaders: Record<string, string>;
-  private limit: ReturnType<typeof pLimit>;
+  private readonly origin: string;
+  private readonly timeout: number;
+  private readonly retries: number;
+  private readonly backoff: number;
+  private readonly hdrs: Record<string, string>;
+  private readonly gate: ReturnType<typeof pLimit>;
 
   constructor(opts: HttpEngineOptions) {
-    this.baseUrl = opts.baseUrl.replace(/\/$/, "");
-    this.timeoutMs = opts.timeoutMs ?? 10000;
-    this.maxRetries = Math.max(0, opts.maxRetries ?? 2);
-    this.backoffMs = opts.backoffMs ?? 200;
-    this.defaultHeaders = opts.defaultHeaders ?? { "Content-Type": "application/json" };
-    this.limit = pLimit(Math.max(1, opts.concurrency ?? 4));
+    this.origin = opts.baseUrl.replace(/\/$/, "");
+    this.timeout = opts.timeoutMs ?? 10_000;
+    this.retries = Math.max(0, opts.maxRetries ?? 2);
+    this.backoff = opts.backoffMs ?? 200;
+    this.hdrs = opts.defaultHeaders ?? { "Content-Type": "application/json" };
+    this.gate = pLimit(Math.max(1, opts.concurrency ?? 4));
   }
 
-  private async fetchWithRetry(path: string, init: RequestInit): Promise<Response> {
-    let attempt = 0;
-    const url = `${this.baseUrl}${path}`;
+  async callSingle<R = unknown>(
+    cfg: RequestConfig,
+    input: unknown,
+    parse: (json: unknown) => R,
+    opts?: { signal?: AbortSignal },
+  ): Promise<R> {
+    return this.gate(async () => {
+      const body = cfg.buildBody ? cfg.buildBody(input) : input;
+      const headers = { ...this.hdrs, ...(cfg.headers ?? {}) };
+      const res = await this.fetchRetry(cfg.path, {
+        method: cfg.method ?? "POST",
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: opts?.signal,
+      });
+      const raw = await res.text();
+      return parse(raw ? JSON.parse(raw) : null);
+    });
+  }
 
-    while (true) {
+  async callBatch<R = unknown>(
+    cfg: RequestConfig,
+    inputs: unknown[],
+    parseSingle: (json: unknown) => R,
+    opts?: { signal?: AbortSignal },
+  ): Promise<R[]> {
+    return Promise.all(inputs.map((item) => this.callSingle(cfg, item, parseSingle, opts)));
+  }
+
+  private async fetchRetry(path: string, init: RequestInit): Promise<Response> {
+    const url = `${this.origin}${path}`;
+    let attempt = 0;
+
+    for (;;) {
       try {
-        // Use AbortSignal.timeout() for Bun compatibility (no setTimeout)
         const res = await fetch(url, {
           ...init,
-          signal: init.signal ?? AbortSignal.timeout(this.timeoutMs),
+          signal: init.signal ?? AbortSignal.timeout(this.timeout),
         });
-
         if (res.ok) return res;
 
-        if ((res.status === 429 || (res.status >= 500 && res.status < 600)) && attempt < this.maxRetries) {
+        const canRetry = res.status === 429 || (res.status >= 500 && res.status < 600);
+        if (canRetry && attempt < this.retries) {
           attempt++;
-          await sleep(this.backoffMs * attempt);
+          await sleep(this.backoff * attempt);
           continue;
         }
-
-        const body = await res.text().catch(() => "");
-        throw new HttpError(res.status, res.statusText, body);
+        const text = await res.text().catch(() => "");
+        throw new HttpError(res.status, res.statusText, text);
       } catch (err) {
-        if (attempt < this.maxRetries) {
+        if (err instanceof HttpError) throw err;
+        if (attempt < this.retries) {
           attempt++;
-          await sleep(this.backoffMs * attempt);
+          await sleep(this.backoff * attempt);
           continue;
         }
         throw err;
       }
     }
-  }
-
-  async callSingle<TParsed = unknown>(
-    config: RequestConfig,
-    input: unknown,
-    parser: (json: unknown) => TParsed,
-    opts?: { signal?: AbortSignal },
-  ): Promise<TParsed> {
-    return this.limit(async () => {
-      const body = config.buildBody ? config.buildBody(input) : input;
-      const headers = { ...this.defaultHeaders, ...(config.headers ?? {}) };
-
-      const init: RequestInit = {
-        method: config.method ?? "POST",
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: opts?.signal,
-      };
-
-      const res = await this.fetchWithRetry(config.path, init);
-      const text = await res.text();
-      const json = text ? JSON.parse(text) : null;
-      return parser(json);
-    });
-  }
-
-  async callBatch<TParsed = unknown>(
-    config: RequestConfig,
-    inputs: unknown[],
-    parseSingle: (json: unknown) => TParsed,
-    opts?: { signal?: AbortSignal },
-  ): Promise<TParsed[]> {
-    return Promise.all(inputs.map((input) => this.callSingle(config, input, parseSingle, opts)));
   }
 }

@@ -181,6 +181,9 @@ export class TraceEngine {
       mermaid = this.generateMermaidDiagram(paths, sourceEntity.name, targetEntity.name);
     }
 
+    // 8. Annotate API contract boundaries in paths
+    await this.annotateApiContractBoundaries(paths);
+
     const totalTime = performance.now() - startTime;
     log.i("TRACEENGINE", "trace_done", { timeMs: +totalTime.toFixed(0), visited: linearTrace.nodesVisited });
 
@@ -232,6 +235,53 @@ export class TraceEngine {
       summary: linear.summary,
       warnings: [],
     };
+  }
+
+  /**
+   * Annotate trace path steps that cross API contract boundaries (Swagger/OpenAPI).
+   * Adds crossesApiContract and contractInfo to steps where entity has isApiContract metadata.
+   */
+  private async annotateApiContractBoundaries(paths: TracePath[]): Promise<void> {
+    // Collect all unique entity IDs from all paths
+    const entityIds = new Set<string>();
+    for (const path of paths) {
+      for (const step of path.steps) {
+        if (step.entityId) entityIds.add(step.entityId);
+      }
+    }
+
+    if (entityIds.size === 0) return;
+
+    // Batch fetch entities
+    const entityBatch = await this.storage.getEntitiesBatch(Array.from(entityIds));
+
+    // Annotate steps
+    let annotated = 0;
+    for (const path of paths) {
+      for (const step of path.steps) {
+        if (!step.entityId) continue;
+        const entity = entityBatch.get(step.entityId);
+        if (entity?.metadata?.["isApiContract"]) {
+          const swaggerType = entity.metadata["swaggerType"] as string;
+          (step as unknown as Record<string, unknown>)["crossesApiContract"] = true;
+          (step as unknown as Record<string, unknown>)["contractInfo"] = {
+            type: "swagger",
+            swaggerType,
+            endpoint:
+              swaggerType === "endpoint"
+                ? `${entity.metadata["httpMethod"] || ""} ${entity.metadata["path"] || ""}`.trim()
+                : undefined,
+            schemaName: swaggerType === "schema" ? entity.name : undefined,
+          };
+          annotated++;
+        }
+      }
+
+      // Add warning if path crosses API contract boundary
+      if (annotated > 0 && path.warnings) {
+        path.warnings.push("Path crosses API contract boundary — changes may affect external consumers");
+      }
+    }
   }
 
   /**
@@ -830,7 +880,8 @@ export class TraceEngine {
         // No callers
         if (callers.length === 0) {
           possibleReasons.push("No callers found - method may be unused");
-          mostLikely = "Dead code - no call sites exist";
+          possibleReasons.push("Target may be behind an API contract boundary — check swagger consumers");
+          mostLikely = "Dead code - no call sites exist (or called via API contract)";
         } else {
           // All callers are conditional
           const conditionalCallers = callers.filter((c) => c.probability !== "always");

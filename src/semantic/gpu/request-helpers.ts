@@ -1,10 +1,10 @@
 /**
  * GPU Request Helpers
  *
- * Утилиты для работы с GPU Worker requests.
- * Извлечение векторов и преобразование данных для передачи через IPC.
+ * Utilities for working with GPU Worker requests.
+ * Vector extraction and data conversion for IPC transfer.
  *
- * Используется в gpu-client.ts для подготовки данных перед отправкой в worker.
+ * Used in gpu-client.ts to prepare data before sending to worker.
  */
 
 import {
@@ -18,39 +18,39 @@ import {
 import type { GpuWorkerRequest } from "./types.js";
 
 /**
- * Результат извлечения векторов из request
+ * Result of extracting vectors from request
  */
 export interface ExtractedVectors {
   /**
-   * Извлечённые векторы в Float32Array формате
-   * Может быть undefined для requests без векторов (например stats, shutdown)
+   * Extracted vectors in Float32Array format
+   * May be undefined for requests without vectors (e.g. stats, shutdown)
    */
   vectors?: Float32Array;
 
   /**
-   * Данные заголовка запроса без векторов
-   * Содержит type, ids, k и другие параметры
+   * Request header data without vectors
+   * Contains type, ids, k and other parameters
    */
   headerData: Record<string, unknown>;
 }
 
 /**
- * Типизированное извлечение векторов из GPU request
+ * Typed vector extraction from GPU request
  *
- * Безопасно извлекает векторные данные из различных типов GPU запросов,
- * конвертируя их в Float32Array для передачи через stdin/stdout.
- * Остальные данные запроса сохраняются в headerData.
+ * Safely extracts vector data from various GPU request types,
+ * converting them to Float32Array for transfer via stdin/stdout.
+ * Remaining request data is stored in headerData.
  *
- * **Поддерживаемые типы:**
- * - `faiss.add` - извлекает vectors
- * - `faiss.search` - извлекает vector
- * - `faiss.batchSearch` - извлекает vectors
- * - `faiss.train` - извлекает vectors
- * - `cuda.cosine` - объединяет a и b в один массив
- * - `cuda.batchCosine` - объединяет query и database в один массив
+ * **Supported types:**
+ * - `faiss.add` - extracts vectors
+ * - `faiss.search` - extracts vector
+ * - `faiss.batchSearch` - extracts vectors
+ * - `faiss.train` - extracts vectors
+ * - `cuda.cosine` - merges a and b into a single array
+ * - `cuda.batchCosine` - merges query and database into a single array
  *
- * @param request - GPU Worker request для обработки
- * @returns Объект с vectors (Float32Array) и headerData
+ * @param request - GPU Worker request to process
+ * @returns Object with vectors (Float32Array) and headerData
  *
  * @example
  * ```typescript
@@ -67,7 +67,7 @@ export interface ExtractedVectors {
  *
  * @example
  * ```typescript
- * // CUDA операция - объединяет 2 вектора
+ * // CUDA operation - merges 2 vectors
  * const request: CudaCosineRequest = {
  *   type: "cuda.cosine",
  *   a: [1, 2, 3],
@@ -80,47 +80,47 @@ export interface ExtractedVectors {
  * ```
  */
 export function extractVectorsFromRequest(request: GpuWorkerRequest): ExtractedVectors {
-  // Faiss.add: извлечь vectors array
+  // Faiss.add: extract vectors array
   if (isFaissAddRequest(request)) {
     const { vectors: v, ...rest } = request;
     const vectors = v instanceof Float32Array ? v : new Float32Array(v);
     return { vectors, headerData: rest };
   }
 
-  // Faiss.search: извлечь single vector
+  // Faiss.search: extract single vector
   if (isFaissSearchRequest(request)) {
     const { vector: v, ...rest } = request;
     const vectors = v instanceof Float32Array ? v : new Float32Array(v);
     return { vectors, headerData: rest };
   }
 
-  // Faiss.batchSearch: извлечь vectors array
+  // Faiss.batchSearch: extract vectors array
   if (isFaissBatchSearchRequest(request)) {
     const { vectors: v, ...rest } = request;
     const vectors = v instanceof Float32Array ? v : new Float32Array(v);
     return { vectors, headerData: rest };
   }
 
-  // Faiss.train: извлечь vectors array
+  // Faiss.train: extract vectors array
   if (isFaissTrainRequest(request)) {
     const { vectors: v, ...rest } = request;
     const vectors = v instanceof Float32Array ? v : new Float32Array(v);
     return { vectors, headerData: rest };
   }
 
-  // CUDA cosine: объединить a и b в один массив
+  // CUDA cosine: merge a and b into a single array
   if (isCudaCosineRequest(request)) {
     const { a, b, ...rest } = request;
     const aArr = a instanceof Float32Array ? a : new Float32Array(a);
     const bArr = b instanceof Float32Array ? b : new Float32Array(b);
 
-    // Создать объединённый массив: [a..., b...]
+    // Create merged array: [a..., b...]
     const totalLen = aArr.length + bArr.length;
     const vectors = new Float32Array(totalLen);
     vectors.set(aArr, 0);
     vectors.set(bArr, aArr.length);
 
-    // Добавить dimensions для worker'a
+    // Add dimensions for the worker
     const headerData = {
       ...rest,
       dimensions: aArr.length,
@@ -129,18 +129,18 @@ export function extractVectorsFromRequest(request: GpuWorkerRequest): ExtractedV
     return { vectors, headerData };
   }
 
-  // CUDA batchCosine: объединить query и database arrays
+  // CUDA batchCosine: merge query and database arrays
   if (isCudaBatchCosineRequest(request)) {
     const { query, database, ...rest } = request;
     const queryArr = query instanceof Float32Array ? query : new Float32Array(query);
 
-    // Конвертировать database arrays в Float32Array
+    // Convert database arrays to Float32Array
     const dbArrs = database.map((d) => (d instanceof Float32Array ? d : new Float32Array(d)));
 
-    // Вычислить общую длину: query + sum(database lengths)
+    // Calculate total length: query + sum(database lengths)
     const totalLen = queryArr.length + dbArrs.reduce((sum, arr) => sum + arr.length, 0);
 
-    // Создать объединённый массив: [query..., db1..., db2..., ...]
+    // Create merged array: [query..., db1..., db2..., ...]
     const vectors = new Float32Array(totalLen);
     vectors.set(queryArr, 0);
 
@@ -150,7 +150,7 @@ export function extractVectorsFromRequest(request: GpuWorkerRequest): ExtractedV
       offset += arr.length;
     }
 
-    // Добавить метаданные для worker'a
+    // Add metadata for the worker
     const headerData = {
       ...rest,
       dimensions: queryArr.length,
@@ -161,7 +161,7 @@ export function extractVectorsFromRequest(request: GpuWorkerRequest): ExtractedV
     return { vectors, headerData };
   }
 
-  // Для остальных типов (stats, shutdown, etc.) - только headerData
+  // For remaining types (stats, shutdown, etc.) - only headerData
   const headerData: Record<string, unknown> = { ...request };
   return { headerData };
 }

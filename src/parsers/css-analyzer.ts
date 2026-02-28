@@ -8,6 +8,7 @@
  * - Variables (CSS custom properties, SCSS variables)
  */
 
+import { basename } from "node:path";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getNodeLocation } from "./base-parser-utils.js";
 
@@ -22,7 +23,7 @@ export class CSSAnalyzer {
     const moduleId = `${filePath}:stylesheet`;
     entities.push({
       id: moduleId,
-      name: filePath.split("/").pop() || "styles",
+      name: basename(filePath) || "styles",
       type: "module",
       filePath,
       location: {

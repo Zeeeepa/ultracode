@@ -6,7 +6,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { cpus } from "node:os";
-import { extname } from "node:path";
+import { basename, extname } from "node:path";
 import { buildWorkerEmbeddingConfig } from "../config/worker-embedding-config.js";
 import { ConfigLoader, getConfig } from "../config/yaml-config.js";
 import { type KnowledgeEntry, knowledgeBus } from "../core/knowledge-bus.js";
@@ -1051,11 +1051,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
 
           for (const file of batch) {
             const extWithDot = extname(file).toLowerCase();
-            const fileName = file.split("/").pop() || "unknown";
+            const fileName = basename(file);
             const fileNameNoExt = fileName.replace(/\.[^/.]+$/, "");
             const ext = extWithDot.slice(1) || fileName; // For dotfiles like .gitignore
 
-            // Определяем тип файла
+            // Determine file type
             const isCode = isCodeExtension(extWithDot);
             const isData = isDataExtension(extWithDot) || isDataExtension("." + fileName.toLowerCase());
 
@@ -1063,7 +1063,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               continue;
             }
 
-            // Для data-файлов вычисляем contentHash для semantic merge
+            // For data files, compute contentHash for semantic merge
             let contentHash: string | undefined;
             let fileContent: string | undefined;
             if (isData) {
@@ -1071,11 +1071,11 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 fileContent = readFileSync(file, "utf-8");
                 contentHash = hashText(fileContent);
               } catch {
-                // Не удалось прочитать файл - пропускаем hash
+                // Failed to read file - skip hash
               }
             }
 
-            // file entity - создаём для всех файлов
+            // file entity - create for all files
             entities.push({
               name: fileName,
               type: "file",
@@ -1086,17 +1086,17 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
                 language: ext,
                 path: file,
                 isDataFile: isData,
-                contentHash, // Для semantic merge
+                contentHash, // For semantic merge
               },
             });
 
-            // Для data-файлов не создаём дополнительных entities (module, class, function)
+            // For data files, do not create additional entities (module, class, function)
             if (isData) {
               continue;
             }
 
-            // module entity - для ВСЕХ code файлов (fallback когда parserAgent недоступен)
-            // Это минимальная индексация, чтобы файлы были видны в поиске
+            // module entity - for ALL code files (fallback when parserAgent is unavailable)
+            // This is minimal indexing so that files are visible in search
             entities.push({
               name: fileNameNoExt,
               type: "module",
@@ -1106,7 +1106,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               metadata: { language: ext, moduleType: "file" },
             });
 
-            // Python: классы по соглашению начинаются с заглавной буквы
+            // Python: classes by convention start with an uppercase letter
             if (ext === "py" && /^[A-Z]/.test(fileNameNoExt)) {
               entities.push({
                 name: fileNameNoExt,
@@ -1118,7 +1118,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               });
             }
 
-            // Kotlin/Java: классы по соглашению начинаются с заглавной буквы
+            // Kotlin/Java: classes by convention start with an uppercase letter
             if ((ext === "kt" || ext === "kts" || ext === "java") && /^[A-Z]/.test(fileNameNoExt)) {
               entities.push({
                 name: fileNameNoExt,
@@ -1130,7 +1130,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
               });
             }
 
-            // JS/TS: экспортируемые функции для не-тестовых файлов
+            // JS/TS: exported functions for non-test files
             if ((ext === "js" || ext === "ts") && !file.includes(".test.") && !file.includes(".spec.")) {
               entities.push({
                 name: `export_default`,
@@ -1298,6 +1298,20 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       perfTimings["dataFiles_end"] = Date.now() - perfStart;
     }
 
+    // Post-indexing: Resolve Swagger ↔ Code links (only if swagger entities exist)
+    perfTimings["swaggerLink_start"] = Date.now() - perfStart;
+    try {
+      const { resolveSwaggerLinks } = await import("./dev/indexing-pipeline.js");
+      const swaggerRels = await resolveSwaggerLinks();
+      if (swaggerRels > 0) {
+        totalRelationships += swaggerRels;
+        log.i("DEVAGENT", "swagger_links_created", { count: swaggerRels });
+      }
+    } catch (err) {
+      log.w("DEVAGENT", "swagger_link_skip", { error: (err as Error).message });
+    }
+    perfTimings["swaggerLink_end"] = Date.now() - perfStart;
+
     perfTimings["indexing_end"] = Date.now() - perfStart;
     log.i("DEVAGENT", "index_done", {
       files: filesProcessed,
@@ -1416,6 +1430,7 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       parsing: (perfTimings["parsing_end"] ?? 0) - (perfTimings["parsing_start"] ?? 0),
       flush: (perfTimings["flush_end"] ?? 0) - (perfTimings["flush_start"] ?? 0),
       dataFiles: (perfTimings["dataFiles_end"] ?? 0) - (perfTimings["dataFiles_start"] ?? 0),
+      swaggerLink: (perfTimings["swaggerLink_end"] ?? 0) - (perfTimings["swaggerLink_start"] ?? 0),
       embFlush: (perfTimings["embFlush_end"] ?? 0) - (perfTimings["embFlush_start"] ?? 0),
       keepalive: (perfTimings["keepalive_end"] ?? 0) - (perfTimings["keepalive_start"] ?? 0),
       total: perfTimings["total"],
@@ -1465,7 +1480,20 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     log.i("DEVAGENT", "incr_reindex_start", { files: files.length });
 
     // Separate files into supported (full parsing) and other (heuristic entities)
-    const supportedExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".kt"];
+    const supportedExtensions = [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".mjs",
+      ".cjs",
+      ".py",
+      ".go",
+      ".rs",
+      ".java",
+      ".kt",
+      ".tpl",
+    ];
     const supportedFiles: string[] = [];
     const otherFiles: string[] = [];
 

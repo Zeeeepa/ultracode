@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build script for UltraScript Tools MCP Server using Bun
+# Build script for UltraCode Server using Bun
 # Compiles TypeScript to dist/ directory using tsup with Bun runtime
 
 set -e  # Exit on error
@@ -39,12 +39,66 @@ echo "Type check passed!"
 echo ""
 
 # ============================================================================
+# STEP 1.5: Build Roslyn C# addon (UltraCode.CSharp)
+# ============================================================================
+echo "[1.5/4] Checking Roslyn C# addon..."
+
+ROSLYN_BUILT=false
+if command -v dotnet &> /dev/null; then
+    ROSLYN_DIR="$(pwd)/roslyn"
+    ROSLYN_PUBLISH="$(pwd)/dist/roslyn-addon"
+    ROSLYN_DLL="$ROSLYN_PUBLISH/UltraCode.CSharp.dll"
+    ROSLYN_HASH_FILE="$ROSLYN_PUBLISH/.build-hash"
+
+    ROSLYN_NEED_BUILD=0
+    if [ ! -f "$ROSLYN_DLL" ]; then
+        ROSLYN_NEED_BUILD=1
+    elif [ -f "$ROSLYN_HASH_FILE" ]; then
+        SAVED_HASH=$(cat "$ROSLYN_HASH_FILE")
+        CURRENT_HASH=$(find "$ROSLYN_DIR" \( -name "*.cs" -o -name "*.csproj" -o -name "*.props" \) \
+            -not -path "*/obj/*" -not -path "*/bin/*" | sort | xargs cat | sha256sum | awk '{print $1}')
+        if [ "$SAVED_HASH" != "$CURRENT_HASH" ]; then
+            ROSLYN_NEED_BUILD=1
+        fi
+    else
+        ROSLYN_NEED_BUILD=1
+    fi
+
+    if [ "$ROSLYN_NEED_BUILD" -eq 1 ]; then
+        echo "[BUILD] Publishing UltraCode.CSharp..."
+        if dotnet publish "$ROSLYN_DIR/UltraCode.CSharp/UltraCode.CSharp.csproj" \
+            -c Release -o "$ROSLYN_PUBLISH" --no-self-contained -v quiet; then
+            mkdir -p "$ROSLYN_PUBLISH"
+            CURRENT_HASH=$(find "$ROSLYN_DIR" \( -name "*.cs" -o -name "*.csproj" -o -name "*.props" \) \
+                -not -path "*/obj/*" -not -path "*/bin/*" | sort | xargs cat | sha256sum | awk '{print $1}')
+            echo -n "$CURRENT_HASH" > "$ROSLYN_HASH_FILE"
+            ROSLYN_BUILT=true
+            echo "[OK] Roslyn addon built successfully"
+        else
+            echo "[WARNING] Roslyn build failed, continuing without C# addon..."
+        fi
+    else
+        echo "[OK] Roslyn addon is up to date"
+        ROSLYN_BUILT=true
+    fi
+else
+    if [ -f "dist/roslyn-addon/UltraCode.CSharp.dll" ]; then
+        echo "[OK] Using pre-built Roslyn addon (dotnet not installed)"
+        ROSLYN_BUILT=true
+    else
+        echo "[SKIP] .NET SDK not found, Roslyn addon not available"
+        echo "       Install .NET 10 SDK from: https://dotnet.microsoft.com/download"
+    fi
+fi
+echo ""
+
+# ============================================================================
 # STEP 2: Build Comm proxy (Cosmopolitan binary)
 # ============================================================================
-echo "[2/4] Checking Comm proxy (ultrascript-tools.com)..."
+echo "[2/4] Checking Comm proxy (ultracode.com)..."
 
 COMM_SRC="$(pwd)/src/comm/comm.c"
-COMM_OUT="$(pwd)/src/comm/ultrascript-tools.com"
+COMM_OUT="$(pwd)/src/comm/ultracode.com"
 
 # Check for cosmocc
 COSMOCC=""
@@ -270,6 +324,7 @@ fi
 echo "[6/6] Build summary:"
 echo ""
 echo "Core build: ✓ Success"
+[ "$ROSLYN_BUILT" = true ] && echo "Roslyn addon: ✓ Built" || echo "Roslyn addon: ⊗ Skipped (no .NET SDK)"
 [ "$WASM_BUILT" = true ] && echo "WASM modules: ✓ Built" || echo "WASM modules: ⊗ Skipped (no Emscripten)"
 [ "$CUDA_BUILT" = true ] && echo "CUDA module: ✓ Built" || echo "CUDA module: ⊗ Skipped (no CUDA Toolkit or CMake)"
 echo ""

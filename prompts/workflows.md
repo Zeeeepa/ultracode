@@ -1,4 +1,4 @@
-# UltraScript Tools — Common Workflows
+# UltraCode — Common Workflows
 
 ## 1. Analyze New Project
 
@@ -111,6 +111,128 @@
 3. analyze_hotspots metric="complexity" limit=20
 ```
 
+## 13. AutoDoc Workflow
+
+Set up and maintain automatic documentation for a project:
+
+```
+1. Detect project language
+   autodoc_detect_language scope="comments"
+   -> Determines language from code comments
+
+2. Initialize AutoDoc
+   autodoc_init enabled=true language="en"
+   -> Creates .autodoc/ directory structure
+
+3. Check status
+   autodoc_status
+   -> Shows docs count, sections, refs
+
+4. Generate documentation for key modules
+   autodoc_generate filePath="src/core/" scope="module" style="detailed"
+   -> Generates AutoDoc content using LLM
+
+5. Save generated documentation
+   autodoc_save filePath="ARCHITECTURE.md" content="..."
+   -> Parses links, generates embeddings, extracts sections
+
+6. Search documentation
+   autodoc_search query="authentication flow" mode="semantic"
+   -> Finds relevant docs and code
+
+7. After code changes — sync and validate
+   autodoc_sync scope="outdated"
+   -> Finds outdated documents
+   autodoc_validate fixBrokenRefs=true
+   -> Fixes broken references
+
+8. View change history
+   autodoc_changelog limit=10
+   -> Shows what docs changed after code modifications
+```
+
+**AutoDoc Watcher** provides automatic updates when enabled in config:
+```yaml
+mcp:
+  autodoc:
+    watcherEnabled: true
+```
+
+## 14. Semantic Merge Workflow
+
+Resolve merge conflicts using semantic code understanding:
+
+```
+1. Analyze merge conflicts
+   analyze_merge_conflicts filePath="src/service.ts"
+   -> Lists conflicts with type classification:
+      structural, semantic, textual
+   -> Shows risk assessment per conflict
+
+2. Get AI-powered resolution suggestions
+   get_merge_suggestions conflictId="conflict_1" strategy="auto"
+   -> Returns suggested code with confidence score
+   -> Explains reasoning
+
+3. Check merge engine status
+   get_semantic_merge_info filePath="src/service.ts"
+   -> Shows supported languages, active sessions
+
+4. Apply semantic merge
+   semantic_merge \
+     basePath="src/service.ts.base" \
+     oursPath="src/service.ts.ours" \
+     theirsPath="src/service.ts.theirs" \
+     outputPath="src/service.ts" \
+     strategy="semantic"
+   -> Merges using structural understanding
+
+5. Validate result
+   validate_file filePath="src/service.ts"
+   -> Ensures merged file is syntactically valid
+```
+
+**When to use semantic merge over manual resolution:**
+- Structural conflicts (both branches modified the same class differently)
+- Renamed or moved code that git cannot track
+- Complex refactoring merges across multiple files
+- Any conflict where line-by-line diff is insufficient
+
+## 15. Prolly Tree History Workflow
+
+Leverage version history for change tracking and time travel:
+
+```
+1. List recent graph commits
+   list_commits limit=10
+   -> Shows commit hashes with timestamps
+
+2. Track entity change history
+   get_entity_history entityId="AuthService_class_xyz" limit=20
+   -> Shows: added, modified, deleted across commits
+
+3. Compare two points in time
+   diff_commits commitA="abc123" commitB="xyz789"
+   -> Lists added/modified/deleted entities between commits
+
+4. Time travel — view code at a specific commit
+   checkout_commit commitHash="abc123" entityId="AuthService_class_xyz"
+   -> Retrieves entity as it existed at that commit
+
+5. Use history filters for faster searches
+   semantic_search query="auth" changedInLastCommits=5
+   -> Only recently changed entities — 10-20 results instead of 500+
+
+   analyze_code_impact entity="AuthService" highlightRecentChanges=true
+   -> Annotates impacted entities with recently-changed status
+```
+
+**Key benefits of Prolly Tree history:**
+- `changedInLastCommits` / `changedSinceMs` filters dramatically speed up search
+- `highlightRecentChanges` on impact analysis shows active conflict zones
+- `get_entity_history` reveals how code evolved over time
+- `checkout_commit` enables viewing any historical state without git checkout
+
 ## Quick Reference
 
 ### Search
@@ -127,6 +249,7 @@
 - `hasDocumentation` — filter by documentation presence
 - `isDeprecated` — filter deprecated entities
 - `minCallCount` — filter by number of function calls
+- `changedInLastCommits` / `changedSinceMs` — filter by Prolly Tree history
 
 ### Analysis
 - `list_file_entities` — entities in file
@@ -134,14 +257,23 @@
 - `analyze_code_impact` — impact analysis
 - `detect_code_clones` — find duplicates
 - `analyze_hotspots` — complex areas
+- `find_decision_points` — decision points in execution flow
+- `analyze_state_chaos` — state mutation analysis
 
 ### Modification
 - `modify_code` — modify code
 - `rename_symbol` — rename
-- `create_file` / `copy_file` / `rename_file`
+- `create_file` / `copy_file` / `rename_file` / `split_file` / `synthesize_files`
 - `create_snapshot` / `rollback_snapshot` / `undo`
+- `semantic_merge` / `analyze_merge_conflicts` / `get_merge_suggestions`
 
-### Git
+### AutoDoc
+- `autodoc_init` / `autodoc_status` / `autodoc_detect_language`
+- `autodoc_generate` / `autodoc_save` / `autodoc_get` / `autodoc_search`
+- `autodoc_validate` / `autodoc_sync` / `autodoc_changelog`
+
+### Git & History
 - `list_branches` — list branches
 - `switch_branch` — switch branch
 - `get_changed_files` — changed files
+- `list_commits` / `diff_commits` / `checkout_commit` / `get_entity_history`

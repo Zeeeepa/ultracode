@@ -136,7 +136,7 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
     try {
       printInfo(`URL: ${downloadUrl}`);
       const response = await fetch(downloadUrl, {
-        headers: { "User-Agent": "ultrascript-tools-mcp/1.0" },
+        headers: { "User-Agent": "ultracode/1.0" },
       });
 
       if (!response.ok) {

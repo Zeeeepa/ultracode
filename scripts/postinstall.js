@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Post-install script for ultrascript-tools-mcp
+ * Post-install script for ultracode
  *
  * - CUDA libraries (win32/linux) are bundled in npm package
  * - For Apple Silicon: offers to build Metal backend
@@ -71,17 +71,17 @@ function isIntelMac() {
 }
 
 function checkMetalLibExists() {
-  const metalPath = join(projectRoot, "external-libs", "metal-darwin-arm64", "ultrascript_metal.node");
+  const metalPath = join(projectRoot, "external-libs", "metal-darwin-arm64", "ultracode_metal.node");
   return existsSync(metalPath);
 }
 
 function checkCudaLibExists() {
   const plat = platform();
   if (plat === "win32") {
-    return existsSync(join(projectRoot, "external-libs", "cuda-win32-x64", "ultrascript_cuda.node"));
+    return existsSync(join(projectRoot, "external-libs", "cuda-win32-x64", "ultracode_cuda.node"));
   }
   if (plat === "linux") {
-    return existsSync(join(projectRoot, "external-libs", "cuda-linux-x64", "ultrascript_cuda.node"));
+    return existsSync(join(projectRoot, "external-libs", "cuda-linux-x64", "ultracode_cuda.node"));
   }
   return false;
 }
@@ -167,7 +167,7 @@ async function handleAppleSilicon() {
   printBox("Apple Silicon Detected", [
     "Your Mac has an Apple Silicon chip (M1/M2/M3/M4).",
     "",
-    "UltraScript can use Metal for GPU-accelerated vector operations.",
+    "UltraCode can use Metal for GPU-accelerated vector operations.",
     "This provides significantly faster semantic search.",
     "",
     `${colors.bright}Requirements to build Metal backend:${colors.reset}`,
@@ -186,16 +186,12 @@ async function handleAppleSilicon() {
     if (!success) {
       console.log();
       printInfo("You can build later by running:");
-      console.log(
-        `  ${colors.cyan}./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh${colors.reset}`,
-      );
+      console.log(`  ${colors.cyan}./node_modules/ultracode/scripts/build-native-libs-macos.sh${colors.reset}`);
     }
   } else {
     printInfo("Skipping Metal build. Using WASM SIMD fallback.");
     printInfo("You can build later by running:");
-    console.log(
-      `  ${colors.cyan}./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh${colors.reset}`,
-    );
+    console.log(`  ${colors.cyan}./node_modules/ultracode/scripts/build-native-libs-macos.sh${colors.reset}`);
   }
 }
 
@@ -226,14 +222,14 @@ async function main() {
   }
 
   // Skip if explicitly requested
-  if (process.env.ULTRASCRIPT_SKIP_POSTINSTALL === "1") {
+  if (process.env.ULTRACODE_SKIP_POSTINSTALL === "1") {
     return;
   }
 
   const platformInfo = detectPlatformInfo();
 
-  printBox("UltraScript Tools MCP - Installed", [
-    `${colors.green}${colors.bright}Thank you for installing UltraScript Tools MCP!${colors.reset}`,
+  printBox("UltraCode - Installed", [
+    `${colors.green}${colors.bright}Thank you for installing UltraCode!${colors.reset}`,
     "",
     `Platform: ${platformInfo.name}`,
     `GPU Acceleration: ${platformInfo.hasGPU ? colors.green + "Available" : colors.yellow + "Not available"} (${platformInfo.gpuType})${colors.reset}`,
@@ -256,9 +252,9 @@ async function main() {
     `${colors.bright}Configure your MCP client (e.g., Claude Desktop):${colors.reset}`,
     "",
     `${colors.dim}"mcpServers": {${colors.reset}`,
-    `${colors.dim}  "ultrascript-tools": {${colors.reset}`,
+    `${colors.dim}  "ultracode": {${colors.reset}`,
     `${colors.dim}    "command": "node",${colors.reset}`,
-    `${colors.dim}    "args": ["node_modules/ultrascript-tools-mcp/dist/index.js"]${colors.reset}`,
+    `${colors.dim}    "args": ["node_modules/ultracode/dist/index.js"]${colors.reset}`,
     `${colors.dim}  }${colors.reset}`,
     `${colors.dim}}${colors.reset}`,
     "",
@@ -276,14 +272,14 @@ async function runSetupWizard() {
   // Skip if not interactive
   if (!process.stdin.isTTY) {
     printInfo("Non-interactive mode - skipping setup wizard");
-    printInfo("Run setup manually: npx ultrascript-setup");
+    printInfo("Run setup manually: npx ultracode-setup");
     return;
   }
 
   const shouldSkip = await askSkip("Run setup wizard to configure semantic search?");
 
   if (shouldSkip) {
-    printInfo("Skipping setup. Run later with: npx ultrascript-setup");
+    printInfo("Skipping setup. Run later with: npx ultracode-setup");
     return;
   }
 

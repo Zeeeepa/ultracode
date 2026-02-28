@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 
 /**
- * UltraScript Tools - Native Libraries Downloader
+ * UltraCode - Native Libraries Downloader
  *
  * Downloads pre-built native libraries from GitHub releases.
  * Falls back to manual build instructions if binaries are not available.
  *
  * Supported platforms:
- * - Windows x64: cuda-win32-x64/ultrascript_cuda.node
- * - Linux x64:   cuda-linux-x64/ultrascript_cuda.node
- * - macOS ARM:   metal-darwin-arm64/ultrascript_metal.node
+ * - Windows x64: cuda-win32-x64/ultracode_cuda.node
+ * - Linux x64:   cuda-linux-x64/ultracode_cuda.node
+ * - macOS ARM:   metal-darwin-arm64/ultracode_metal.node
  */
 
 import { createWriteStream, existsSync, mkdirSync, unlinkSync } from "node:fs";
@@ -24,7 +24,7 @@ const __dirname = dirname(__filename);
 const projectRoot = join(__dirname, "..");
 
 // Configuration
-const GITHUB_REPO = "faxenoff/ultrascript-tools-mcp";
+const GITHUB_REPO = "faxenoff/ultracode";
 const NATIVE_LIBS_DIR = join(projectRoot, "external-libs");
 
 // ANSI colors
@@ -70,7 +70,7 @@ function getLibraryInfo() {
     return {
       platform: "win32",
       arch: "x64",
-      libraryName: "ultrascript_cuda.node",
+      libraryName: "ultracode_cuda.node",
       folder: "cuda-win32-x64",
       type: "cuda",
       buildCommand: "scripts\\build-cuda-x64.bat",
@@ -81,7 +81,7 @@ function getLibraryInfo() {
     return {
       platform: "linux",
       arch: "x64",
-      libraryName: "ultrascript_cuda.node",
+      libraryName: "ultracode_cuda.node",
       folder: "cuda-linux-x64",
       type: "cuda",
       buildCommand: "bash scripts/build-linux-wsl.sh",
@@ -92,7 +92,7 @@ function getLibraryInfo() {
     return {
       platform: "darwin",
       arch: "arm64",
-      libraryName: "ultrascript_metal.node",
+      libraryName: "ultracode_metal.node",
       folder: "metal-darwin-arm64",
       type: "metal",
       buildCommand: "./scripts/build-native-libs-macos.sh",
@@ -127,7 +127,7 @@ function fetchJson(url) {
   return new Promise((resolve, reject) => {
     const options = {
       headers: {
-        "User-Agent": "ultrascript-tools-mcp",
+        "User-Agent": "ultracode",
         Accept: "application/vnd.github.v3+json",
       },
     };
@@ -165,7 +165,7 @@ function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
     const options = {
       headers: {
-        "User-Agent": "ultrascript-tools-mcp",
+        "User-Agent": "ultracode",
         Accept: "application/octet-stream",
       },
     };
@@ -205,7 +205,7 @@ function downloadAndExtract(url, destDir) {
   return new Promise((resolve, reject) => {
     const options = {
       headers: {
-        "User-Agent": "ultrascript-tools-mcp",
+        "User-Agent": "ultracode",
         Accept: "application/octet-stream",
       },
     };
@@ -342,7 +342,7 @@ function printBuildInstructions(libInfo) {
   }
 
   console.log("");
-  printInfo("UltraScript Tools works without native libraries - just slower for large codebases.");
+  printInfo("UltraCode works without native libraries - just slower for large codebases.");
   console.log("");
 }
 
@@ -357,8 +357,8 @@ async function main() {
   }
 
   // Skip if disabled
-  if (process.env.ULTRASCRIPT_SKIP_NATIVE === "1") {
-    printInfo("Native library download disabled via ULTRASCRIPT_SKIP_NATIVE");
+  if (process.env.ULTRACODE_SKIP_NATIVE === "1") {
+    printInfo("Native library download disabled via ULTRACODE_SKIP_NATIVE");
     return;
   }
 

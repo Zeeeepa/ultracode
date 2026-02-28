@@ -1,109 +1,109 @@
-# Зависимости проекта
+# Project Dependencies
 
-## Обзор
+## Overview
 
-Документ описывает все зависимости UltraScript Tools MCP v3.1+, их назначение и версии.
+This document describes all dependencies of UltraCode v3.1+, their purpose, and versions.
 
 ## Runtime Dependencies
 
-### Ядро системы
+### System Core
 
-| Пакет | Версия | Назначение |
-|-------|--------|------------|
-| `@modelcontextprotocol/sdk` | ^1.25.2 | MCP протокол, JSON-RPC сервер |
-| `@libsql/client` | ^0.17.0 | LibSQL/Turso драйвер для хранения графа |
-| `zod` | ^4.3.5 | Валидация схем, JSON Schema генерация |
-| `lru-cache` | ^11.2.4 | LRU кэш для парсеров и эмбеддингов |
-| `nanoid` | ^5.1.6 | Генерация уникальных ID |
-| `graphology` | ^0.26.0 | Граф в памяти, обход и анализ |
-| `graphology-shortest-path` | ^2.1.0 | Поиск кратчайших путей в графе |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@modelcontextprotocol/sdk` | ^1.25.2 | MCP protocol, JSON-RPC server |
+| `@libsql/client` | ^0.17.0 | LibSQL/Turso driver for graph storage |
+| `zod` | ^4.3.5 | Schema validation, JSON Schema generation |
+| `lru-cache` | ^11.2.4 | LRU cache for parsers and embeddings |
+| `nanoid` | ^5.1.6 | Unique ID generation |
+| `graphology` | ^0.26.0 | In-memory graph, traversal and analysis |
+| `graphology-shortest-path` | ^2.1.0 | Shortest path search in graph |
 
-### Семантический слой
+### Semantic Layer
 
-| Пакет | Версия | Назначение |
-|-------|--------|------------|
-| `@huggingface/inference` | ^4.13.4 | HuggingFace API клиент |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@huggingface/inference` | ^4.13.4 | HuggingFace API client |
 
-**Эмбеддинги через внешние сервера:**
+**Embeddings via external servers:**
 
-- **llama.cpp** — native GGUF server (порт 8085), CUDA/Vulkan/CPU
-- **OVMS** — OpenVINO Model Server (порт 8083), Intel iGPU/CPU
-- **vLLM** — Docker container (порт 8000), NVIDIA GPU
-- **TEI** — Docker container (порт 8081), HuggingFace models
-- **Ollama** — local LLM (порт 11434), простая установка
+- **llama.cpp** — native GGUF server (port 8085), CUDA/Vulkan/CPU
+- **OVMS** — OpenVINO Model Server (port 8083), Intel iGPU/CPU
+- **vLLM** — Docker container (port 8000), NVIDIA GPU
+- **TEI** — Docker container (port 8081), HuggingFace models
+- **Ollama** — local LLM (port 11434), easy setup
 
-> См. [EMBEDDINGS_PROVIDERS.md](../docs/EMBEDDINGS_PROVIDERS.md) для детальной документации провайдеров.
+> See [EMBEDDINGS_PROVIDERS.md](../docs/EMBEDDINGS_PROVIDERS.md) for detailed provider documentation.
 
-### Утилиты
+### Utilities
 
-| Пакет | Версия | Назначение |
-|-------|--------|------------|
-| `yaml` | ^2.8.2 | Парсинг YAML конфигов |
-| `eslint` | ^9.39.1 | Линтинг JS/TS (validate_file) |
-| `@types/eslint` | ^9.6.1 | TypeScript типы для ESLint |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `yaml` | ^2.8.2 | YAML config parsing |
+| `eslint` | ^9.39.1 | JS/TS linting (validate_file) |
+| `@types/eslint` | ^9.6.1 | TypeScript types for ESLint |
 
 ## Development Dependencies
 
-### Сборка
+### Build
 
-| Пакет | Версия | Назначение |
-|-------|--------|------------|
-| `tsup` | ^8.5.1 | Бандлер TypeScript |
-| `typescript` | ^5.9.3 | TypeScript компилятор |
-| `@rollup/rollup-win32-x64-msvc` | ^4.53.3 | Rollup для Windows |
-| `cmake-js` | ^7.4.0 | Сборка нативных модулей |
-| `node-addon-api` | ^8.5.0 | N-API для нативных модулей |
-| `node-gyp` | ^12.1.0 | Сборка C++ addon'ов |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `tsup` | ^8.5.1 | TypeScript bundler |
+| `typescript` | ^5.9.3 | TypeScript compiler |
+| `@rollup/rollup-win32-x64-msvc` | ^4.53.3 | Rollup for Windows |
+| `cmake-js` | ^7.4.0 | Native module build |
+| `node-addon-api` | ^8.5.0 | N-API for native modules |
+| `node-gyp` | ^12.1.0 | C++ addon build |
 
-### Качество кода
+### Code Quality
 
-| Пакет | Версия | Назначение |
-|-------|--------|------------|
-| `@biomejs/biome` | ^2.3.8 | Линтер и форматтер |
-| `@biomejs/cli-win32-x64` | ^2.3.8 | Biome CLI для Windows |
-| `@commitlint/cli` | ^20.2.0 | Линтинг commit messages |
-| `@commitlint/config-conventional` | ^20.2.0 | Conventional Commits конфиг |
-| `lint-staged` | ^16.2.7 | Pre-commit линтинг |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@biomejs/biome` | ^2.3.8 | Linter and formatter |
+| `@biomejs/cli-win32-x64` | ^2.3.8 | Biome CLI for Windows |
+| `@commitlint/cli` | ^20.2.0 | Commit message linting |
+| `@commitlint/config-conventional` | ^20.2.0 | Conventional Commits config |
+| `lint-staged` | ^16.2.7 | Pre-commit linting |
 | `simple-git-hooks` | ^2.13.1 | Git hooks |
 
-### Тестирование
+### Testing
 
-| Пакет | Версия | Назначение |
-|-------|--------|------------|
-| `@types/bun` | latest | Bun test runner типы |
-| `@types/node` | ^24.10.1 | Node.js типы |
-| `@types/better-sqlite3` | ^7.6.13 | SQLite типы |
-| `minimatch` | ^10.1.1 | Glob matching для тестов |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@types/bun` | latest | Bun test runner types |
+| `@types/node` | ^24.10.1 | Node.js types |
+| `@types/better-sqlite3` | ^7.6.13 | SQLite types |
+| `minimatch` | ^10.1.1 | Glob matching for tests |
 
 ## Optional Dependencies
 
-| Пакет | Версия | Назначение | Статус |
-|-------|--------|------------|--------|
-| `@webgpu/node` | npm:null@^2.0.0 | WebGPU для Node.js | **Заглушка** — пустой пакет для transformers.js |
-| `@webgpu/types` | ^0.1.69 | WebGPU TypeScript типы | Только типы, не исполняемый код |
-| `webgpu` | ^0.3.8 | Dawn WebGPU runtime | **Рабочий** — используется WebGPUBackend |
-| `faiss-napi` | ^0.10.3 | FAISS векторный индекс | Рабочий, HNSW/IVF индексы |
+| Package | Version | Purpose | Status |
+|---------|---------|---------|--------|
+| `@webgpu/node` | npm:null@^2.0.0 | WebGPU for Node.js | **Stub** — empty package for transformers.js |
+| `@webgpu/types` | ^0.1.69 | WebGPU TypeScript types | Types only, no executable code |
+| `webgpu` | ^0.3.8 | Dawn WebGPU runtime | **Working** — used by WebGPUBackend |
+| `faiss-napi` | ^0.10.3 | FAISS vector index | Working, HNSW/IVF indexes |
 
-### WebGPU — подробности
+### WebGPU — Details
 
-**`webgpu-backend.ts`** — полноценный GPU backend с WGSL compute шейдером для косинусного сходства.
+**`webgpu-backend.ts`** — a full GPU backend with a WGSL compute shader for cosine similarity.
 
-Порядок выбора backend'а (`backend-selector.ts`):
+Backend selection order (`backend-selector.ts`):
 
-| Приоритет | Backend | Условие |
-|-----------|---------|---------|
+| Priority | Backend | Condition |
+|----------|---------|-----------|
 | 100 | CUDA Native | NVIDIA + Node.js runtime |
-| 98-100 | CUDA Worker | NVIDIA (через subprocess для Bun) |
+| 98-100 | CUDA Worker | NVIDIA (via subprocess for Bun) |
 | 95 | Metal | Apple Silicon (macOS ARM64) |
-| **80** | **WebGPU** | **Когда CUDA/Metal недоступны** |
+| **80** | **WebGPU** | **When CUDA/Metal are unavailable** |
 | 50 | WASM SIMD | CPU fallback |
-| 1 | Pure JS | Всегда доступен |
+| 1 | Pure JS | Always available |
 
-> **Вывод**: WebGPU — запасной вариант для систем без NVIDIA/Apple Silicon.
-> На практике редко используется: CUDA/Metal имеют более высокий приоритет.
-> Dawn WebGPU также имеет проблемы совместимости с новыми GPU (Blackwell).
+> **Conclusion**: WebGPU is a fallback option for systems without NVIDIA/Apple Silicon.
+> In practice it is rarely used: CUDA/Metal have higher priority.
+> Dawn WebGPU also has compatibility issues with newer GPUs (Blackwell).
 
-## Системные требования
+## System Requirements
 
 ### Node.js
 
@@ -115,10 +115,10 @@
 }
 ```
 
-### Внешние парсеры (опционально)
+### External Parsers (optional)
 
-| Язык | Требование | Версия |
-|------|------------|--------|
+| Language | Requirement | Version |
+|----------|-------------|---------|
 | Python | Python runtime | 3.8+ |
 | Java/Kotlin | JRE | 11+ |
 | Go | Go toolchain | 1.18+ |
@@ -127,17 +127,17 @@
 | Swift | Swift toolchain | 5.5+ |
 | C# | .NET SDK | 6.0+ |
 
-## Граф зависимостей
+## Dependency Graph
 
 ```
-ultrascript-tools-mcp
+ultracode
 ├── Core
 │   ├── @modelcontextprotocol/sdk ── JSON-RPC, MCP protocol
 │   ├── @libsql/client ───────────── LibSQL/Turso database
 │   ├── graphology ───────────────── In-memory graph + algorithms
 │   └── zod ──────────────────────── Schema validation
 │
-├── Semantic (внешние сервера)
+├── Semantic (external servers)
 │   ├── llama.cpp ────────────────── Native GGUF (CUDA/Vulkan/CPU)
 │   ├── OVMS ─────────────────────── OpenVINO Model Server (Intel)
 │   ├── vLLM ─────────────────────── NVIDIA GPU Docker
@@ -145,7 +145,7 @@ ultrascript-tools-mcp
 │   ├── Ollama ───────────────────── Local LLM
 │   └── @huggingface/inference ───── HF Cloud API
 │
-├── GPU Backends (приоритет)
+├── GPU Backends (priority)
 │   ├── CUDA Native ──────────────── NVIDIA + Node.js (100)
 │   ├── CUDA Worker ──────────────── NVIDIA + Bun (98-100)
 │   ├── Metal ────────────────────── Apple Silicon (95)
@@ -164,11 +164,11 @@ ultrascript-tools-mcp
     └── eslint ───────────────────── JS/TS validation
 ```
 
-## Версионирование
+## Versioning
 
 ### Overrides
 
-Текущие overrides в package.json:
+Current overrides in package.json:
 
 ```json
 {
@@ -180,11 +180,11 @@ ultrascript-tools-mcp
 }
 ```
 
-| Override | Причина |
-|----------|---------|
-| `boolean@3.2.0` | Deprecated транзитивная зависимость, пакет не поддерживается но работает |
-| `sharp → null` | Не нужен — используется только токенизация из transformers.js |
-| `onnxruntime-node → null` | Заменён на OVMS Docker для инференса |
+| Override | Reason |
+|----------|--------|
+| `boolean@3.2.0` | Deprecated transitive dependency, package is unsupported but works |
+| `sharp → null` | Not needed — only tokenization from transformers.js is used |
+| `onnxruntime-node → null` | Replaced by OVMS Docker for inference |
 
 ### Trusted Dependencies
 
@@ -200,36 +200,36 @@ ultrascript-tools-mcp
 }
 ```
 
-> Пакеты с postinstall скриптами для сборки нативных модулей.
+> Packages with postinstall scripts for building native modules.
 
-## Обновление зависимостей
+## Updating Dependencies
 
-### Безопасное обновление
+### Safe Update
 
 ```bash
-# Проверка устаревших пакетов
+# Check outdated packages
 npm outdated
 
-# Обновление patch/minor версий
+# Update patch/minor versions
 npm update
 
-# Audit безопасности
+# Security audit
 npm audit
 npm audit fix
 ```
 
-### Критичные зависимости
+### Critical Dependencies
 
-При обновлении следующих пакетов требуется полное тестирование:
+Full testing is required when updating the following packages:
 
-1. **@libsql/client** — драйвер БД, проверить миграции
-2. **@modelcontextprotocol/sdk** — API изменения, проверить MCP совместимость
-3. **zod** — breaking changes в v4, проверить валидацию
-4. **faiss-napi** — нативное расширение, проверить HNSW индексы
-5. **oxc-parser** — парсер JS/TS, проверить AST совместимость
+1. **@libsql/client** — DB driver, verify migrations
+2. **@modelcontextprotocol/sdk** — API changes, verify MCP compatibility
+3. **zod** — breaking changes in v4, verify validation
+4. **faiss-napi** — native extension, verify HNSW indexes
+5. **oxc-parser** — JS/TS parser, verify AST compatibility
 
-## Связанные документы
+## Related Documents
 
-- [→ ARCHITECTURE.md](./architecture.md) — архитектура системы
-- [→ DEPLOYMENT.md](./deployment.md) — сборка и деплой
-- [→ PROCESSES.md](./processes.md) — технические процессы
+- [→ ARCHITECTURE.md](./architecture.md) — system architecture
+- [→ DEPLOYMENT.md](./deployment.md) — build and deployment
+- [→ PROCESSES.md](./processes.md) — technical processes

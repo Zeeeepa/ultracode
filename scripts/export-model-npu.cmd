@@ -9,7 +9,7 @@ echo   Export Model for NPU (Fixed Dimensions)
 echo ============================================
 echo.
 
-set "MODELS_DIR=%LOCALAPPDATA%\UltraScriptTools\models"
+set "MODELS_DIR=%LOCALAPPDATA%\UltraCode\models"
 set "MODEL_NAME=intfloat/multilingual-e5-base"
 set "MAX_SEQ_LEN=512"
 set "BATCH_SIZE=1"

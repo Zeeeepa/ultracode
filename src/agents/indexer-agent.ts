@@ -1190,7 +1190,7 @@ export class IndexerAgent extends BaseAgent {
    */
   async queryGraph(query: GraphQuery): Promise<GraphQueryResult> {
     // Check cache
-    const cacheKey = QueryCacheManager.createKey(query);
+    const cacheKey = QueryCacheManager.createKey(query as unknown as Record<string, unknown>);
     const cached = this.cacheManager.get<GraphQueryResult>(cacheKey);
     if (cached) {
       log.t("INDEXER", "cache_hit_query");
@@ -1386,7 +1386,7 @@ export class IndexerAgent extends BaseAgent {
           "**/.git/**",
           "**/dist/**",
           "**/build/**",
-          "**/.ultrascript/**",
+          "**/.ultracode/**",
           "**/coverage/**",
           "**/__pycache__/**",
           "**/venv/**",

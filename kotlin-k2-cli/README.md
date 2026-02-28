@@ -68,7 +68,7 @@ java -Xms256m -Xmx1g -jar build/libs/kotlin-k2-cli-1.0.0-all.jar
 - stdout: Results
 - stderr: Logs
 
-## Integration with UltraScript
+## Integration with UltraCode
 
 The `kotlin-k2-provider.ts` in the parent project automatically:
 1. Detects JVM 11+
@@ -76,4 +76,4 @@ The `kotlin-k2-provider.ts` in the parent project automatically:
 3. Sends parse requests via stdin
 4. Receives results via stdout
 
-If K2 CLI JAR is not found, UltraScript falls back to ANTLR-based parsing.
+If K2 CLI JAR is not found, UltraCode falls back to ANTLR-based parsing.

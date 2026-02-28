@@ -7,6 +7,7 @@
  * - Angular template syntax
  */
 
+import { basename } from "node:path";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getNodeLocation } from "./base-parser-utils.js";
 
@@ -21,7 +22,7 @@ export class HTMLAnalyzer {
     const moduleId = `${filePath}:template`;
     entities.push({
       id: moduleId,
-      name: filePath.split("/").pop() || "template",
+      name: basename(filePath) || "template",
       type: "module",
       filePath,
       location: {

@@ -6,7 +6,7 @@
 # Installs Token Merging tools for model conversion
 # ToMe ratio: 0.3 (optimal for embeddings, 1.5-2x speedup)
 #
-# Output: ~/.local/share/ultrascript-tools/tome/
+# Output: ~/.local/share/ultracode/tome/
 #
 
 set -e
@@ -25,13 +25,13 @@ echo ""
 echo "============================================"
 echo "  ToMe Tools Setup for Embeddings"
 echo "============================================"
-echo "  Target: ~/.local/share/ultrascript-tools/tome/"
+echo "  Target: ~/.local/share/ultracode/tome/"
 echo "  ToMe: 0.3 (30% merging, 1.5-2x speedup)"
 echo "============================================"
 echo ""
 
-INSTALL_DIR="$HOME/.local/share/ultrascript-tools/tome"
-MODELS_DIR="$HOME/.local/share/ultrascript-tools/ovms/models"
+INSTALL_DIR="$HOME/.local/share/ultracode/tome"
+MODELS_DIR="$HOME/.local/share/ultracode/ovms/models"
 TOME_RATIO="0.3"
 
 # ============================================

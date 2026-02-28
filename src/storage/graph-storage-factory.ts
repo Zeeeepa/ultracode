@@ -100,13 +100,24 @@ export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
       // Reset on failure so next call can retry
       initializationPromise = null;
 
-      // Auto-recovery: if initialization fails, try to delete corrupt DB and retry once
+      const errMsg = (error as Error).message || "";
+      const isBusy = errMsg.includes("SQLITE_BUSY") || errMsg.includes("database is locked");
+
+      if (isBusy) {
+        // Don't delete the DB on SQLITE_BUSY - it's not corrupt, just locked
+        log.w("STORAGE", `Initialization failed due to database lock (will retry on next access)`, {
+          error: errMsg,
+        });
+        throw error;
+      }
+
+      // Auto-recovery: if initialization fails due to corruption, delete and retry
       const paths = getGlobalDbPaths();
       const unifiedDbPath = join(dirname(paths.graphDbPath), "unified-storage.db");
       if (existsSync(unifiedDbPath)) {
         log.w("STORAGE", `Initialization failed, attempting auto-recovery by deleting corrupt DB`, {
           path: unifiedDbPath,
-          error: (error as Error).message,
+          error: errMsg,
         });
         try {
           unlinkSync(unifiedDbPath);

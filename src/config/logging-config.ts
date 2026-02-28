@@ -1,18 +1,12 @@
-/**
- * Centralized Logging Configuration
- *
- * Provides configuration for the rotated logging system
- * Logs are stored in centralized AppData directory
- */
-
 import { getLogsDir } from "../shared/storage-paths.js";
 import { type LoggerConfig, LogLevel } from "../utils/logger-types.js";
 
+const TEN_MB = 10 * 1024 * 1024;
+
 export const LOGGING_CONFIG: LoggerConfig = {
   logDir: getLogsDir(),
-  maxFileSize: 10 * 1024 * 1024, // 10MB
+  maxFileSize: TEN_MB,
   maxFiles: 20,
-  // TRACE level for startup/async flow analysis - change to DEBUG when done investigating
   logLevel: LogLevel.TRACE,
   enableRotation: true,
   enableTimestamp: true,
@@ -30,7 +24,6 @@ export const MCP_LOG_CATEGORIES = {
   PERFORMANCE: "PERFORMANCE",
   INCIDENT: "INCIDENT",
   RECOVERY: "RECOVERY",
-  // TRACE categories for startup analysis
   STARTUP: "STARTUP",
   ASYNC: "ASYNC",
   STORAGE: "STORAGE",

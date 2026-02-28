@@ -1,28 +1,91 @@
+---
+module_name: compiled-languages
+description: "Parser configurations for compiled languages: C, C++, C#, Go, Java, Kotlin, Rust, Swift, Zig"
+status: active
+language: typescript
+---
+
 # Compiled Languages
 
-*Last updated: 2026-01-10*
+> Parser configuration objects defining AST node types, file extensions, keywords, and extraction rules for nine compiled programming languages.
 
-Конфигурации синтаксического анализа для скомпилированных языков программирования.
+## Overview
+
+The compiled-languages module provides `LanguageConfig` objects for C, C++, C#, Go, Java, Kotlin, Rust, Swift, and Zig. Each config defines the file extensions, language-specific keywords, Tree-sitter node types for functions/classes/methods/imports/exports/variables/types/interfaces, and extraction rules for name resolution, modifier detection, and parameter/return type handling. These configs are consumed by the central language registry.
+
+## Data Flow
+
+- **Inputs:** Imported by `registry.ts` during initialization.
+- **Processing:** Static configuration data; no runtime processing.
+- **Outputs:** `LanguageConfig` objects registered in `LANGUAGE_CONFIGS`.
+
+## Public API
+
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `C_CONFIG` | const | C language parser configuration | [`c.ts:8-67`](./c.ts) |
+| `CPP_CONFIG` | const | C++ configuration with templates and methods | [`cpp.ts:8-82`](./cpp.ts) |
+| `CSHARP_CONFIG` | const | C# configuration with access modifiers | [`csharp.ts:8-85`](./csharp.ts) |
+| `GO_CONFIG` | const | Go configuration with interfaces and types | [`go.ts:8-60`](./go.ts) |
+| `JAVA_CONFIG` | const | Java configuration with access modifiers | [`java.ts:8-79`](./java.ts) |
+| `KOTLIN_CONFIG` | const | Kotlin configuration with core elements | [`kotlin.ts:8-29`](./kotlin.ts) |
+| `RUST_CONFIG` | const | Rust configuration with traits and visibility | [`rust.ts:8-105`](./rust.ts) |
+| `SWIFT_CONFIG` | const | Swift configuration with protocols | [`swift.ts:8-29`](./swift.ts) |
+| `ZIG_CONFIG` | const | Zig language parser configuration | [`zig.ts:8-29`](./zig.ts) |
+
+## Dependencies
+
+### Internal Modules
+
+| Module | Purpose |
+|--------|---------|
+| `shared/types` | `LanguageConfig`, `NodeTypeConfig`, `ExtractorConfig` interfaces |
+
+### External Packages
+
+| Package | Purpose |
+|---------|---------|
+| (none) | Pure configuration data |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Languages covered | C, C++, C#, Go, Java, Kotlin, Rust, Swift, Zig |
+| Config completeness | Full node type mappings and extractor rules per language |
+
+## Error Handling
+
+Configs are static data and do not produce runtime errors. Validation is performed by `validateConfigurations()` in the registry.
+
+## Known Limitations
+
+- Zig support is minimal compared to more established languages.
+- Kotlin config uses simplified extraction logic.
 
 ## Exports
 
-| Name | Type | Description | Location |
-|------|------|-------------|----------|
-| `C_CONFIG` | const | Конфигурация типов узлов и экстракторов для C. | [→ c.ts:8-67] |
-| `CPP_CONFIG` | const | Конфигурация с поддержкой шаблонов и методов C++. | [→ cpp.ts:8-82] |
-| `GO_CONFIG` | const | Конфигурация типов и интерфейсов языка Go. | [→ go.ts:8-60] |
-| `JAVA_CONFIG` | const | Конфигурация с модификаторами доступа Java. | [→ java.ts:8-79] |
-| `KOTLIN_CONFIG` | const | Минимальная конфигурация с основными элементами Kotlin. | [→ kotlin.ts:8-29] |
-| `RUST_CONFIG` | const | Полная конфигурация видимости и типов Rust. | [→ rust.ts:8-105] |
-| `SWIFT_CONFIG` | const | Конфигурация с протоколами и модификаторами Swift. | [→ swift.ts:8-29] |
+- `C_CONFIG`
+- `CPP_CONFIG`
+- `CSHARP_CONFIG`
+- `GO_CONFIG`
+- `JAVA_CONFIG`
+- `KOTLIN_CONFIG`
+- `RUST_CONFIG`
+- `SWIFT_CONFIG`
+- `ZIG_CONFIG`
 
 ## Files
 
-- **c.ts** — Конфигурация парсера для языка C с типами узлов.
-- **cpp.ts** — Конфигурация парсера для языка C++ с шаблонами и классами.
-- **go.ts** — Конфигурация парсера для языка Go с интерфейсами.
-- **index.ts** — Экспорт всех конфигураций скомпилированных языков.
-- **java.ts** — Конфигурация парсера для Java с модификаторами доступа.
-- **kotlin.ts** — Конфигурация парсера для языка Kotlin с упрощённой извлекательной логикой.
-- **rust.ts** — Конфигурация парсера для Rust с трейтами и видимостью.
-- **swift.ts** — Конфигурация парсера для Swift с протоколами и модификаторами.
+| File | Description |
+|------|-------------|
+| `index.ts` | Re-exports all compiled language configurations |
+| `c.ts` | C language parser configuration |
+| `cpp.ts` | C++ with template and class support |
+| `csharp.ts` | C# with access modifiers and properties |
+| `go.ts` | Go with interfaces and goroutine types |
+| `java.ts` | Java with annotations and access modifiers |
+| `kotlin.ts` | Kotlin with simplified extraction |
+| `rust.ts` | Rust with traits, visibility, and lifetimes |
+| `swift.ts` | Swift with protocols and modifiers |
+| `zig.ts` | Zig language configuration |

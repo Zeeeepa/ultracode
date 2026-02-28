@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Build CUDA native addon for UltraScript Tools MCP
+    Build CUDA native addon for UltraCode
 .DESCRIPTION
     Compiles the CUDA vector operations addon using cmake-js.
     Requires: CUDA Toolkit 11.x+, Visual Studio Build Tools, cmake-js
@@ -96,14 +96,14 @@ if (-not (Test-Path $DistDir)) {
     New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
 }
 
-$buildNode = Join-Path $CudaDir "build/Release/ultrascript_cuda.node"
+$buildNode = Join-Path $CudaDir "build/Release/ultracode_cuda.node"
 if (-not (Test-Path $buildNode)) {
-    $buildNode = Join-Path $CudaDir "build/Debug/ultrascript_cuda.node"
+    $buildNode = Join-Path $CudaDir "build/Debug/ultracode_cuda.node"
 }
 
 if (Test-Path $buildNode) {
     Copy-Item $buildNode -Destination $DistDir -Force
-    Write-Host "[CUDA Build] Copied: $DistDir/ultrascript_cuda.node" -ForegroundColor Green
+    Write-Host "[CUDA Build] Copied: $DistDir/ultracode_cuda.node" -ForegroundColor Green
 } else {
     Write-Host "[CUDA Build] WARNING: .node file not found at expected location" -ForegroundColor Yellow
     Write-Host "[CUDA Build] Looking for .node files..." -ForegroundColor Yellow
@@ -114,7 +114,7 @@ if (Test-Path $buildNode) {
 }
 
 # Verify
-$finalNode = Join-Path $DistDir "ultrascript_cuda.node"
+$finalNode = Join-Path $DistDir "ultracode_cuda.node"
 if (Test-Path $finalNode) {
     $size = (Get-Item $finalNode).Length / 1KB
     Write-Host "`n[CUDA Build] SUCCESS! Built: $finalNode (${size:N0} KB)" -ForegroundColor Green

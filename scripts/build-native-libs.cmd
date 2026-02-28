@@ -1,5 +1,5 @@
 @echo off
-REM UltraScript Tools - Native Library Builder (Windows wrapper)
+REM UltraCode - Native Library Builder (Windows wrapper)
 REM Without arguments: builds all platforms and creates archives
 REM With arguments: passes them to PowerShell script
 

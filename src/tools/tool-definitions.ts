@@ -13,6 +13,7 @@ import {
   AnalyzeHotspotsSchema,
   AnalyzeMergeConflictsSchema,
   AnalyzeStateChaosSchema,
+  AnalyzeSwaggerImpactSchema,
   AutoDocChangelogSchema,
   AutoDocDetectLanguageSchema,
   AutoDocGenerateSchema,
@@ -97,7 +98,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "get_help",
       description:
-        "[INFO] Get detailed documentation and guides about UltraScript Tools. Essential reading before using tools. Topics: 'quick-start', 'tool-reference', 'workflows', 'tracing', 'autodoc'. Agent-specific: 'explore' (fast search), 'planning' (risk assessment), 'modification' (safe code changes). Use category matching your role for optimized guidance.",
+        "[INFO] Get detailed documentation and guides about UltraCode. Essential reading before using tools. Topics: 'quick-start', 'tool-reference', 'workflows', 'tracing', 'autodoc'. Agent-specific: 'explore' (fast search), 'planning' (risk assessment), 'modification' (safe code changes). Use category matching your role for optimized guidance.",
       inputSchema: zodToJsonSchema(
         z.object({
           topic: z
@@ -231,6 +232,12 @@ export function getToolsList(): ToolDefinition[] {
       description:
         "[ANALYZE] Analyze state management chaos in any codebase (TypeScript, C#, etc.). Detects scattered state, race conditions, C# anti-patterns (async-void, mutable-static, god-service), and suggests refactoring strategies.",
       inputSchema: zodToJsonSchema(AnalyzeStateChaosSchema),
+    },
+    {
+      name: "analyze_swagger_impact",
+      description:
+        "[PLAN] Analyze impact of Swagger/OpenAPI spec changes. Shows affected controllers (producers), generated clients (consumers), and generated types. Assesses breaking change risk. Use before modifying swagger files or controllers that produce API. 📖 get_help(topic='workflows').",
+      inputSchema: zodToJsonSchema(AnalyzeSwaggerImpactSchema),
     },
     {
       name: "detect_technology_stack",

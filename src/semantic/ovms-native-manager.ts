@@ -254,8 +254,8 @@ class OVMSNativeManager {
     }
 
     // Debug: skip subprocess spawning to identify console window source
-    if (process.env["ULTRASCRIPT_NO_SUBPROCESS"] === "1") {
-      log.w("OVMS", "SKIPPED (ULTRASCRIPT_NO_SUBPROCESS=1)");
+    if (process.env["ULTRACODE_NO_SUBPROCESS"] === "1") {
+      log.w("OVMS", "SKIPPED (ULTRACODE_NO_SUBPROCESS=1)");
       return false;
     }
 

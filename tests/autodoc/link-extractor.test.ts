@@ -68,8 +68,8 @@ See [Google](https://google.com) for search.
   describe("generateEntityRef", () => {
     it("generates entity reference link", () => {
       const ref = generateEntityRef("MyClass.myMethod", "method");
-      // Uses ultrascript:// protocol for entities
-      expect(ref).toContain("ultrascript://entity/MyClass.myMethod");
+      // Uses ultracode:// protocol for entities
+      expect(ref).toContain("ultracode://entity/MyClass.myMethod");
       expect(ref).toContain("→");
     });
   });

@@ -1,39 +1,21 @@
-/**
- * TASK-002: Semantic Cache with LRU Eviction
- *
- * High-performance caching for embeddings and similarity results
- * Implements LRU eviction with TTL support for optimal memory usage
- *
- * External Dependencies:
- * - lru-cache: https://github.com/isaacs/node-lru-cache - LRU cache implementation
- *
- * Architecture References:
- * - Project Overview: doc/PROJECT_OVERVIEW.md
- * - Coding Standards: doc/CODING_STANDARD.md
- * - Architectural Decisions: doc/ARCHITECTURAL_DECISIONS.md
- *
- * @task_id TASK-002
- * @history
- *  - 2025-09-14: Created by Dev-Agent - TASK-002: Semantic cache with LRU implementation
- */
-
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
 import { LRUCache } from "lru-cache";
 import { log } from "../logging/index.js";
 import type { SemanticAnalysis, SemanticResult, SimilarityResult, VectorEmbedding } from "../types/semantic.js";
 
-// =============================================================================
-// 2. CONSTANTS AND CONFIGURATION
-// =============================================================================
-const DEFAULT_MAX_SIZE = 5000;
-const DEFAULT_TTL = 3600000; // 1 hour in milliseconds
-const DEFAULT_MAX_AGE = 86400000; // 24 hours in milliseconds
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
 
-// =============================================================================
-// 3. DATA MODELS AND TYPE DEFINITIONS
-// =============================================================================
+const CAPACITY = 5_000;
+const TTL_MS = 60 * 60 * 1_000; // 1h
+const MEM_CEILING_EMBEDDINGS = 100 * 1024 * 1024; // 100 MB
+const MEM_CEILING_RESULTS = 50 * 1024 * 1024; // 50 MB
+const MEM_CEILING_GENERAL = 50 * 1024 * 1024; // 50 MB
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 interface CacheOptions {
   maxSize?: number;
   ttl?: number | undefined;
@@ -53,238 +35,165 @@ interface CacheStats {
 
 type CacheValue = VectorEmbedding | SimilarityResult[] | Float32Array | SemanticAnalysis | SemanticResult;
 
-// =============================================================================
-// 4. UTILITY FUNCTIONS AND HELPERS
-// =============================================================================
-function estimateMemorySize(value: CacheValue): number {
-  if (value instanceof Float32Array) {
-    return value.length * 4; // 4 bytes per float32
-  } else if (Array.isArray(value)) {
-    return value.length * 100; // Rough estimate for array of objects
-  } else if (typeof value === "object" && value !== null) {
-    return JSON.stringify(value).length * 2; // Rough estimate for objects
-  }
-  return 100; // Default size
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function sizeOfValue(v: CacheValue): number {
+  if (v instanceof Float32Array) return v.byteLength;
+  if (Array.isArray(v)) return v.length * 100;
+  if (typeof v === "object" && v !== null) return JSON.stringify(v).length * 2;
+  return 64;
 }
 
-function generateCacheKey(...parts: (string | number)[]): string {
-  return parts.join(":");
+function cacheKey(ns: string, k: string): string {
+  return `${ns}:${k}`;
 }
 
-// =============================================================================
-// 5. CORE BUSINESS LOGIC
-// =============================================================================
+// ---------------------------------------------------------------------------
+// SemanticCache
+// ---------------------------------------------------------------------------
+
 export class SemanticCache {
-  private embeddingCache: LRUCache<string, Float32Array>;
-  private resultCache: LRUCache<string, SimilarityResult[]>;
-  private generalCache: LRUCache<string, CacheValue>;
+  private embeddings: LRUCache<string, Float32Array>;
+  private results: LRUCache<string, SimilarityResult[]>;
+  private misc: LRUCache<string, CacheValue>;
 
-  private stats = {
-    hits: 0,
-    misses: 0,
-    evictions: 0,
-  };
+  private counters = { hits: 0, misses: 0, evictions: 0 };
 
-  constructor(options: CacheOptions = {}) {
-    const config = {
-      maxSize: options.maxSize || DEFAULT_MAX_SIZE,
-      ttl: options.ttl || DEFAULT_TTL,
-      maxAge: options.maxAge || DEFAULT_MAX_AGE,
-      updateAgeOnGet: options.updateAgeOnGet ?? true,
-      updateAgeOnHas: options.updateAgeOnHas ?? false,
+  constructor(opts: CacheOptions = {}) {
+    const perBucket = Math.floor((opts.maxSize ?? CAPACITY) / 3);
+    const liveTtl = opts.ttl ?? TTL_MS;
+    const refreshOnGet = opts.updateAgeOnGet ?? true;
+    const refreshOnHas = opts.updateAgeOnHas ?? false;
+    const onEvict = () => {
+      this.counters.evictions++;
     };
 
-    // Initialize embedding cache - lru-cache v11 with ttlAutopurge
-    this.embeddingCache = new LRUCache<string, Float32Array>({
-      max: Math.floor(config.maxSize / 3),
-      ttl: config.ttl,
-      ttlAutopurge: true, // Automatic TTL cleanup
-      maxSize: 100 * 1024 * 1024, // 100MB max memory
-      sizeCalculation: (value) => value.length * 4,
-      updateAgeOnGet: config.updateAgeOnGet,
-      updateAgeOnHas: config.updateAgeOnHas,
-      dispose: () => this.stats.evictions++,
+    this.embeddings = new LRUCache<string, Float32Array>({
+      max: perBucket,
+      ttl: liveTtl,
+      ttlAutopurge: true,
+      maxSize: MEM_CEILING_EMBEDDINGS,
+      sizeCalculation: (v) => v.byteLength,
+      updateAgeOnGet: refreshOnGet,
+      updateAgeOnHas: refreshOnHas,
+      dispose: onEvict,
     });
 
-    // Initialize result cache - lru-cache v11 with ttlAutopurge
-    this.resultCache = new LRUCache<string, SimilarityResult[]>({
-      max: Math.floor(config.maxSize / 3),
-      ttl: config.ttl,
-      ttlAutopurge: true, // Automatic TTL cleanup
-      maxSize: 50 * 1024 * 1024, // 50MB max memory
-      sizeCalculation: (value) => value.length * 100,
-      updateAgeOnGet: config.updateAgeOnGet,
-      updateAgeOnHas: config.updateAgeOnHas,
-      dispose: () => this.stats.evictions++,
+    this.results = new LRUCache<string, SimilarityResult[]>({
+      max: perBucket,
+      ttl: liveTtl,
+      ttlAutopurge: true,
+      maxSize: MEM_CEILING_RESULTS,
+      sizeCalculation: (v) => v.length * 100,
+      updateAgeOnGet: refreshOnGet,
+      updateAgeOnHas: refreshOnHas,
+      dispose: onEvict,
     });
 
-    // Initialize general cache - lru-cache v11 with ttlAutopurge
-    this.generalCache = new LRUCache<string, CacheValue>({
-      max: Math.floor(config.maxSize / 3),
-      ttl: config.ttl,
-      ttlAutopurge: true, // Automatic TTL cleanup
-      maxSize: 50 * 1024 * 1024, // 50MB max memory
-      sizeCalculation: estimateMemorySize,
-      updateAgeOnGet: config.updateAgeOnGet,
-      updateAgeOnHas: config.updateAgeOnHas,
-      dispose: () => this.stats.evictions++,
+    this.misc = new LRUCache<string, CacheValue>({
+      max: perBucket,
+      ttl: liveTtl,
+      ttlAutopurge: true,
+      maxSize: MEM_CEILING_GENERAL,
+      sizeCalculation: sizeOfValue,
+      updateAgeOnGet: refreshOnGet,
+      updateAgeOnHas: refreshOnHas,
+      dispose: onEvict,
     });
 
-    log.d("CACHE", "Initialized", { maxSize: config.maxSize, ttl: config.ttl });
+    log.d("CACHE", "Initialized", { maxSize: opts.maxSize ?? CAPACITY, ttl: liveTtl });
   }
 
-  /**
-   * Cache an embedding
-   */
+  // -- embeddings -----------------------------------------------------------
+
   setEmbedding(key: string, embedding: Float32Array, ttl?: number): void {
-    const cacheKey = generateCacheKey("embedding", key);
-    this.embeddingCache.set(cacheKey, embedding, { ttl });
+    this.embeddings.set(cacheKey("emb", key), embedding, ttl != null ? { ttl } : undefined);
   }
 
-  /**
-   * Get a cached embedding
-   */
   getEmbedding(key: string): Float32Array | undefined {
-    const cacheKey = generateCacheKey("embedding", key);
-    const result = this.embeddingCache.get(cacheKey);
-
-    if (result) {
-      this.stats.hits++;
-    } else {
-      this.stats.misses++;
-    }
-
-    return result;
+    const v = this.embeddings.get(cacheKey("emb", key));
+    v ? this.counters.hits++ : this.counters.misses++;
+    return v;
   }
 
-  /**
-   * Cache similarity search results
-   */
-  setSearchResults(query: string, results: SimilarityResult[], ttl?: number): void {
-    const cacheKey = generateCacheKey("search", query);
-    this.resultCache.set(cacheKey, results, { ttl });
+  // -- search results -------------------------------------------------------
+
+  setSearchResults(query: string, items: SimilarityResult[], ttl?: number): void {
+    this.results.set(cacheKey("sr", query), items, ttl != null ? { ttl } : undefined);
   }
 
-  /**
-   * Get cached search results
-   */
   getSearchResults(query: string): SimilarityResult[] | undefined {
-    const cacheKey = generateCacheKey("search", query);
-    const results = this.resultCache.get(cacheKey);
-
-    if (results) {
-      this.stats.hits++;
-    } else {
-      this.stats.misses++;
-    }
-
-    return results;
+    const v = this.results.get(cacheKey("sr", query));
+    v ? this.counters.hits++ : this.counters.misses++;
+    return v;
   }
 
-  /**
-   * Cache a general value
-   */
+  // -- generic key/value ----------------------------------------------------
+
   set(key: string, value: CacheValue, ttl?: number): void {
-    this.generalCache.set(key, value, { ttl });
+    this.misc.set(key, value, ttl != null ? { ttl } : undefined);
   }
 
-  /**
-   * Get a cached general value
-   */
   get<T = CacheValue>(key: string): T | undefined {
-    const result = this.generalCache.get(key);
-
-    if (result !== undefined) {
-      this.stats.hits++;
-    } else {
-      this.stats.misses++;
-    }
-
-    return result as T | undefined;
+    const v = this.misc.get(key);
+    v !== undefined ? this.counters.hits++ : this.counters.misses++;
+    return v as T | undefined;
   }
 
-  /**
-   * Check if a key exists in any cache
-   */
+  // -- lookup / removal -----------------------------------------------------
+
   has(key: string): boolean {
-    return (
-      this.embeddingCache.has(generateCacheKey("embedding", key)) ||
-      this.resultCache.has(generateCacheKey("search", key)) ||
-      this.generalCache.has(key)
-    );
+    return this.embeddings.has(cacheKey("emb", key)) || this.results.has(cacheKey("sr", key)) || this.misc.has(key);
   }
 
-  /**
-   * Delete a specific key from all caches
-   */
   delete(key: string): boolean {
-    const embeddingDeleted = this.embeddingCache.delete(generateCacheKey("embedding", key));
-    const searchDeleted = this.resultCache.delete(generateCacheKey("search", key));
-    const generalDeleted = this.generalCache.delete(key);
-
-    return embeddingDeleted || searchDeleted || generalDeleted;
+    const a = this.embeddings.delete(cacheKey("emb", key));
+    const b = this.results.delete(cacheKey("sr", key));
+    const c = this.misc.delete(key);
+    return a || b || c;
   }
 
-  /**
-   * Clear all caches
-   */
   clear(): void {
-    this.embeddingCache.clear();
-    this.resultCache.clear();
-    this.generalCache.clear();
-    this.stats = { hits: 0, misses: 0, evictions: 0 };
+    this.embeddings.clear();
+    this.results.clear();
+    this.misc.clear();
+    this.counters = { hits: 0, misses: 0, evictions: 0 };
     log.d("CACHE", "All caches cleared");
   }
 
-  /**
-   * Prune expired entries from all caches
-   */
+  // -- maintenance ----------------------------------------------------------
+
   prune(): number {
     const before = this.size();
-
-    this.embeddingCache.purgeStale();
-    this.resultCache.purgeStale();
-    this.generalCache.purgeStale();
-
-    const pruned = before - this.size();
-    log.d("CACHE", "Pruned expired entries", { count: pruned });
-
-    return pruned;
+    this.embeddings.purgeStale();
+    this.results.purgeStale();
+    this.misc.purgeStale();
+    const removed = before - this.size();
+    log.d("CACHE", "Pruned expired entries", { count: removed });
+    return removed;
   }
 
-  /**
-   * Get total size across all caches
-   */
   size(): number {
-    return this.embeddingCache.size + this.resultCache.size + this.generalCache.size;
+    return this.embeddings.size + this.results.size + this.misc.size;
   }
 
-  /**
-   * Get cache statistics
-   */
+  // -- stats ----------------------------------------------------------------
+
   getStats(): CacheStats {
-    const total = this.stats.hits + this.stats.misses;
-    const hitRate = total > 0 ? this.stats.hits / total : 0;
-
-    // Calculate approximate memory usage
-    const embeddingMemory = this.embeddingCache.calculatedSize || 0;
-    const resultMemory = this.resultCache.calculatedSize || 0;
-    const generalMemory = this.generalCache.calculatedSize || 0;
-    const memoryUsage = embeddingMemory + resultMemory + generalMemory;
-
+    const total = this.counters.hits + this.counters.misses;
     return {
       size: this.size(),
-      hits: this.stats.hits,
-      misses: this.stats.misses,
-      evictions: this.stats.evictions,
-      hitRate,
-      memoryUsage,
+      hits: this.counters.hits,
+      misses: this.counters.misses,
+      evictions: this.counters.evictions,
+      hitRate: total > 0 ? this.counters.hits / total : 0,
+      memoryUsage:
+        (this.embeddings.calculatedSize || 0) + (this.results.calculatedSize || 0) + (this.misc.calculatedSize || 0),
     };
   }
 
-  /**
-   * Get detailed cache information
-   */
   getInfo(): {
     embedding: { size: number; memory: number };
     results: { size: number; memory: number };
@@ -292,81 +201,46 @@ export class SemanticCache {
     stats: CacheStats;
   } {
     return {
-      embedding: {
-        size: this.embeddingCache.size,
-        memory: this.embeddingCache.calculatedSize || 0,
-      },
-      results: {
-        size: this.resultCache.size,
-        memory: this.resultCache.calculatedSize || 0,
-      },
-      general: {
-        size: this.generalCache.size,
-        memory: this.generalCache.calculatedSize || 0,
-      },
+      embedding: { size: this.embeddings.size, memory: this.embeddings.calculatedSize || 0 },
+      results: { size: this.results.size, memory: this.results.calculatedSize || 0 },
+      general: { size: this.misc.size, memory: this.misc.calculatedSize || 0 },
       stats: this.getStats(),
     };
   }
 
-  /**
-   * Warm up cache with pre-computed embeddings
-   */
+  // -- bulk operations ------------------------------------------------------
+
   async warmup(embeddings: Map<string, Float32Array>): Promise<void> {
+    const cap = Math.floor(CAPACITY / 3);
     let loaded = 0;
-
-    for (const [key, embedding] of embeddings) {
-      if (loaded >= Math.floor(DEFAULT_MAX_SIZE / 3)) {
-        break; // Don't exceed cache limits
-      }
-
-      this.setEmbedding(key, embedding);
+    for (const [k, v] of embeddings) {
+      if (loaded >= cap) break;
+      this.setEmbedding(k, v);
       loaded++;
     }
-
     log.d("CACHE", "Warmed up", { embeddings: loaded });
   }
 
-  /**
-   * Export cache contents for persistence
-   */
   export(): {
     embeddings: Array<[string, Float32Array]>;
     results: Array<[string, SimilarityResult[]]>;
     general: Array<[string, CacheValue]>;
   } {
     return {
-      embeddings: Array.from(this.embeddingCache.entries()),
-      results: Array.from(this.resultCache.entries()),
-      general: Array.from(this.generalCache.entries()),
+      embeddings: Array.from(this.embeddings.entries()),
+      results: Array.from(this.results.entries()),
+      general: Array.from(this.misc.entries()),
     };
   }
 
-  /**
-   * Import cache contents from export
-   */
   import(data: {
     embeddings?: Array<[string, Float32Array]>;
     results?: Array<[string, SimilarityResult[]]>;
     general?: Array<[string, CacheValue]>;
   }): void {
-    if (data.embeddings) {
-      for (const [key, value] of data.embeddings) {
-        this.embeddingCache.set(key, value);
-      }
-    }
-
-    if (data.results) {
-      for (const [key, value] of data.results) {
-        this.resultCache.set(key, value);
-      }
-    }
-
-    if (data.general) {
-      for (const [key, value] of data.general) {
-        this.generalCache.set(key, value);
-      }
-    }
-
+    if (data.embeddings) for (const [k, v] of data.embeddings) this.embeddings.set(k, v);
+    if (data.results) for (const [k, v] of data.results) this.results.set(k, v);
+    if (data.general) for (const [k, v] of data.general) this.misc.set(k, v);
     log.d("CACHE", "Imported entries", { count: this.size() });
   }
 }

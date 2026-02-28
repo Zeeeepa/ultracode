@@ -195,6 +195,10 @@ export class JsonParser {
       const version = json.openapi || json.swagger || "unknown";
       const title = json.info?.title || "API";
 
+      // Extract servers for base URL (OpenAPI 3.x)
+      const servers = json.servers as Array<{ url: string; description?: string }> | undefined;
+      const baseUrl = servers?.[0]?.url;
+
       entities.push({
         name: title,
         type: "module",
@@ -203,6 +207,15 @@ export class JsonParser {
         metadata: {
           apiVersion: version,
           description: json.info?.description,
+          swaggerType: "api_spec",
+          isApiContract: true,
+          swaggerVersion: json.info?.version,
+          specVersion: version,
+          baseUrl,
+          servers: servers?.map((s: { url: string; description?: string }) => ({
+            url: s.url,
+            description: s.description,
+          })),
         },
       });
 
@@ -236,6 +249,9 @@ export class JsonParser {
                   parameters: this.extractParameters(operation.parameters),
                   requestBody: this.extractRequestBody(operation.requestBody),
                   responses: this.extractResponses(operation.responses),
+                  swaggerType: "endpoint",
+                  isApiContract: true,
+                  operationId: operation.operationId,
                 },
               };
 
@@ -277,6 +293,8 @@ export class JsonParser {
             metadata: {
               tagDescription: tag.description,
               externalDocs: tag.externalDocs,
+              swaggerType: "tag",
+              isApiContract: true,
             },
           });
         }
@@ -323,6 +341,8 @@ export class JsonParser {
             };
           }),
           enum: schema["enum"],
+          swaggerType: "schema",
+          isApiContract: true,
         },
       };
 

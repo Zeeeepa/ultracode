@@ -1,24 +1,24 @@
-# ultrascript-tools-mcp
+# ultracode
 
-## Описание модуля
+## Module Description
 
-Модуль `ultrascript-tools-mcp` предоставляет конфигурацию для сборки TypeScript-проекта с использованием `tsup`. Этот модуль отвечает за настройку процесса транспиляции и сборки кода, включая поддержку различных форматов выходных файлов и оптимизацию для использования в различных средах выполнения.
+The `ultracode` module provides configuration for building a TypeScript project using `tsup`. This module is responsible for setting up the transpilation and build process, including support for various output file formats and optimization for use in different runtime environments.
 
-## Файлы
+## Files
 
 - `oxlint.config.ts`
 - `tsup.config.ts`
 
-## Экспорты
+## Exports
 
 
 
-## Использование
+## Usage
 
-Данный модуль используется как часть конфигурации сборки проекта и не требует прямого импорта в коде приложения. Для использования необходимо включить его в конфигурацию сборки `tsup`:
+This module is used as part of the project build configuration and does not require direct import in application code. To use it, include it in the `tsup` build configuration:
 
 ```ts
-// Пример использования в tsup.config.ts
+// Example usage in tsup.config.ts
 import { defineConfig } from 'tsup'
 
 export default defineConfig({
@@ -31,15 +31,15 @@ export default defineConfig({
 })
 ```
 
-## Biome Trust в Bun
+## Biome Trust in Bun
 
-Проект использует Biome для форматирования и линтинга кода. Biome имеет postinstall скрипт (проверка платформы), который требует trust в Bun.
+The project uses Biome for code formatting and linting. Biome has a postinstall script (platform check) that requires trust in Bun.
 
-**Уже настроено:** Biome добавлен в `trustedDependencies` в package.json.
+**Already configured:** Biome is added to `trustedDependencies` in package.json.
 
-**Если видите "Blocked 1 postinstall":**
+**If you see "Blocked 1 postinstall":**
 ```bash
 bun pm trust @biomejs/biome
 ```
 
-**Примечание:** Biome v2.0 уберет postinstall скрипт, устраняя эту необходимость.
+**Note:** Biome v2.0 will remove the postinstall script, eliminating this requirement.

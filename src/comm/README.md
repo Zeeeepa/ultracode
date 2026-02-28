@@ -1,6 +1,6 @@
-# UltraScript.Comm (Portable C Proxy)
+# UltraCode.Comm (Portable C Proxy)
 
-Lightweight proxy for UltraScript Tools MCP server.
+Lightweight proxy for UltraCode MCP server.
 Single portable binary for Windows, Linux, and macOS using [Cosmopolitan Libc](https://github.com/jart/cosmopolitan).
 
 ## Features
@@ -27,7 +27,7 @@ Claude Desktop <--stdin/stdout--> Comm <--Named Pipe/Unix Socket--> Core
 # 1. Install cosmocc (one-time)
 .\setup.ps1
 
-# 2. Build (creates ultrascript-tools.com in dist/)
+# 2. Build (creates ultracode.com in dist/)
 .\build.ps1
 ```
 
@@ -38,7 +38,7 @@ Claude Desktop <--stdin/stdout--> Comm <--Named Pipe/Unix Socket--> Core
 make
 
 # Or using cosmocc directly
-cosmocc -Os -DNDEBUG -o ultrascript-tools.com comm.c
+cosmocc -Os -DNDEBUG -o ultracode.com comm.c
 ```
 
 ## Building
@@ -58,23 +58,23 @@ make
 make install  # copies to dist/
 
 # Using cosmocc directly
-cosmocc -Os -DNDEBUG -o ultrascript-tools.com comm.c
+cosmocc -Os -DNDEBUG -o ultracode.com comm.c
 
 # Using gcc directly (single platform only)
-gcc -Os -o ultrascript comm.c
+gcc -Os -o ultracode comm.c
 ```
 
 ## Usage
 
 ```bash
 # Show help
-./ultrascript-tools.com --help
+./ultracode.com --help
 
 # Show version
-./ultrascript-tools.com --version
+./ultracode.com --version
 
 # Normal usage (called by Claude Desktop)
-./ultrascript-tools.com [PROJECT_PATH]
+./ultracode.com [PROJECT_PATH]
 ```
 
 ## Claude Desktop Configuration
@@ -82,8 +82,8 @@ gcc -Os -o ultrascript comm.c
 ```json
 {
   "mcpServers": {
-    "ultrascript": {
-      "command": "path/to/ultrascript-tools.com",
+    "ultracode": {
+      "command": "path/to/ultracode.com",
       "args": ["/path/to/project"]
     }
   }
@@ -94,8 +94,8 @@ gcc -Os -o ultrascript comm.c
 
 | OS | Pipe/Socket Path |
 |----|------------------|
-| Windows | `\\.\pipe\UltraScript_Core` |
-| Linux/macOS | `/tmp/UltraScript_Core.sock` |
+| Windows | `\\.\pipe\UltraCode_Core` |
+| Linux/macOS | `/tmp/UltraCode_Core.sock` |
 
 ## Comparison with Node.js version
 
@@ -109,7 +109,7 @@ gcc -Os -o ultrascript comm.c
 
 ## NPM Distribution
 
-The pre-built `ultrascript-tools.com` is included in the npm package. It works on:
+The pre-built `ultracode.com` is included in the npm package. It works on:
 - Windows x64
 - Linux x64
 - macOS x64 (Intel)
@@ -120,4 +120,4 @@ The pre-built `ultrascript-tools.com` is included in the npm package. It works o
 
 ## License
 
-Same as UltraScript Tools project (MIT).
+Same as UltraCode project (AGPL-3.0-only).

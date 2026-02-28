@@ -316,10 +316,10 @@ export class FileOperations {
   }
 
   private async copyDirectory(source: string, target: string, updateGraph: boolean): Promise<FileOperationResult> {
-    const COPY_CONCURRENCY = 8; // Ограничение параллелизма для копирования файлов
+    const COPY_CONCURRENCY = 8; // Concurrency limit for file copying
     const operations = this;
 
-    // Результаты копирования
+    // Copy results
     interface CopyResult {
       filesAffected: string[];
       entitiesAffected: number;
@@ -332,21 +332,21 @@ export class FileOperations {
       const files: Array<{ src: string; dest: string }> = [];
       const subdirPromises: Promise<CopyResult>[] = [];
 
-      // Сначала создаём директории и собираем файлы
+      // First create directories and collect files
       for (const entry of entries) {
         const srcPath = join(srcDir, entry.name);
         const destPath = join(destDir, entry.name);
 
         if (entry.isDirectory()) {
           await mkdir(destPath, { recursive: true });
-          // Рекурсивно обрабатываем поддиректории параллельно
+          // Recursively process subdirectories in parallel
           subdirPromises.push(walk(srcPath, destPath));
         } else {
           files.push({ src: srcPath, dest: destPath });
         }
       }
 
-      // Копируем файлы параллельно с ограничением concurrency
+      // Copy files in parallel with concurrency limit
       const filesAffected: string[] = [];
       let entitiesAffected = 0;
       let embeddingsUpdated = 0;
@@ -363,7 +363,7 @@ export class FileOperations {
         }
       }
 
-      // Ждём результаты всех поддиректорий
+      // Wait for results from all subdirectories
       if (subdirPromises.length > 0) {
         const subdirResults = await Promise.all(subdirPromises);
         for (const subResult of subdirResults) {

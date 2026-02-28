@@ -1,34 +1,124 @@
+---
+module_name: language-configs
+description: "Language-specific parsing configurations for 20+ programming languages with AST node types and extraction rules"
+status: active
+language: typescript
+---
+
 # Language Configs
 
-*Last updated: 2026-01-10*
+> Central registry of language-specific parsing configurations defining AST node types, file extensions, keywords, and extraction rules for 20+ programming languages.
 
-Модуль конфигураций языков программирования для парсинга кода.
+## Overview
+
+The language-configs module provides `LanguageConfig` objects for every supported programming language, organized into four sub-modules: compiled languages (C, C++, C#, Go, Java, Kotlin, Rust, Swift, Zig), JavaScript family (JS, TS, JSX, TSX), scripting languages (Python, Bash, Batch, PowerShell), and markup languages (CSS, HTML, JSON, XML). The central registry maps language names to configs and provides lookup functions for determining language from file paths, checking AST node types (function, class, import, export, type), and validating configurations.
+
+## Data Flow
+
+- **Inputs:** File paths or language names from the parser module.
+- **Processing:** Extension-based language detection, config lookup from the registry map.
+- **Outputs:** `LanguageConfig` objects with node types, keywords, extractors for the AST parser.
+
+## Public API
+
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `LANGUAGE_CONFIGS` | const | Registry mapping all language names to configs | [`registry.ts:31-53`](./registry.ts) |
+| `getLanguageConfig` | function | Gets config by language name | [`registry.ts:58-60`](./registry.ts) |
+| `getFileConfig` | function | Gets config by file path (auto-detection) | [`registry.ts:65-68`](./registry.ts) |
+| `isFunctionNode` | function | Checks if AST node is a function | [`registry.ts:73-76`](./registry.ts) |
+| `isClassNode` | function | Checks if AST node is a class | [`registry.ts:81-84`](./registry.ts) |
+| `isImportNode` | function | Checks if AST node is an import | [`registry.ts:89-92`](./registry.ts) |
+| `isExportNode` | function | Checks if AST node is an export | [`registry.ts:97-100`](./registry.ts) |
+| `isTypeNode` | function | Checks if AST node is a type/interface | [`registry.ts:105-108`](./registry.ts) |
+| `validateConfigurations` | function | Validates all configs at startup | [`registry.ts:113-125`](./registry.ts) |
+| `isMagicMethodNode` | function | Checks for Python magic methods | [`python-helpers.ts:14-19`](./python-helpers.ts) |
+| `getPythonNodeCategory` | function | Returns extended Python node category | [`python-helpers.ts:103-143`](./python-helpers.ts) |
+
+## Dependencies
+
+### Internal Modules
+
+| Module | Purpose |
+|--------|---------|
+| `types/parser` | `SupportedLanguage` type definition |
+| `logging` | Validation result logging |
+
+### External Packages
+
+| Package | Purpose |
+|---------|---------|
+| (none) | Pure TypeScript configuration data |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Supported languages | 20 (JS, TS, JSX, TSX, Python, C, C++, C#, Rust, Go, Java, Kotlin, Swift, Zig, CSS, HTML, XML, JSON, Bash, PowerShell, Batch) |
+| Default language | `javascript` when extension is unrecognized |
+| Config structure | Extensions, keywords, nodeTypes, extractors |
+
+## Error Handling
+
+`detectLanguageFromPath` falls back to `javascript` for unknown extensions. `validateConfigurations` logs errors for invalid configs and returns `false`. Config lookups are type-safe via the `SupportedLanguage` union type.
+
+## Known Limitations
+
+- Language detection is extension-based only; file content analysis is not performed.
+- `.h` files default to C; C++ detection requires path hints.
+- No support for languages without Tree-sitter grammars.
 
 ## Exports
 
-| Name | Type | Description | Location |
-|------|------|-------------|----------|
-| `isMagicMethodNode` | function | Проверяет, является ли узел методом магии Python. | [→ python-helpers.ts:14-19] |
-| `isAsyncNode` | function | Проверяет, является ли узел асинхронной конструкцией Python. | [→ python-helpers.ts:24-27] |
-| `isGeneratorNode` | function | Определяет, является ли узел генератором или yield выражением. | [→ python-helpers.ts:32-35] |
-| `isComprehensionNode` | function | Проверяет, является ли узел list/dict/set comprehension. | [→ python-helpers.ts:40-48] |
-| `isContextManagerNode` | function | Определяет контекстный менеджер (with statement). | [→ python-helpers.ts:53-56] |
-| `isExceptionHandlingNode` | function | Проверяет, обрабатывает ли узел исключения Python. | [→ python-helpers.ts:61-70] |
-| `isDecoratorNode` | function | Определяет, является ли узел декоратором функции или класса. | [→ python-helpers.ts:75-78] |
-| `isSpecialClassNode` | function | Проверяет dataclass и другие специальные классы. | [→ python-helpers.ts:81-98] |
-| `getPythonNodeCategory` | function | Возвращает расширённую категорию типа узла Python. | [→ python-helpers.ts:103-143] |
-| `LANGUAGE_CONFIGS` | const | Словарь конфигураций всех поддерживаемых языков программирования. | [→ registry.ts:31-53] |
-| `getLanguageConfig` | function | Получает конфигурацию по названию языка программирования. | [→ registry.ts:58-60] |
-| `getFileConfig` | function | Получает конфигурацию языка по пути файла автоматически. | [→ registry.ts:58-60] |
-| `isFunctionNode` | function | Проверяет, является ли узел определением функции языка. | [→ registry.ts:58-60] |
-| `isClassNode` | function | Проверяет, является ли узел определением класса языка. | [→ registry.ts:81-84] |
-| `isImportNode` | function | Проверяет, является ли узел импортом модуля или пакета. | [→ registry.ts:89-92] |
-| `isExportNode` | function | Проверяет, является ли узел экспортом или переэкспортом. | [→ registry.ts:97-100] |
-| `isTypeNode` | function | Проверяет, является ли узел определением типа или интерфейса. | [→ registry.ts:106-121] |
-| `validateConfigurations` | function | Валидирует все конфигурации языков при запуске приложения. | [→ registry.ts:106-121] |
+- `C_CONFIG`
+- `CPP_CONFIG`
+- `CSHARP_CONFIG`
+- `GO_CONFIG`
+- `JAVA_CONFIG`
+- `KOTLIN_CONFIG`
+- `RUST_CONFIG`
+- `SWIFT_CONFIG`
+- `HELM_CONFIG`
+- `JAVASCRIPT_CONFIG`
+- `JSX_CONFIG`
+- `TSX_CONFIG`
+- `TYPESCRIPT_CONFIG`
+- `CSS_CONFIG`
+- `HTML_CONFIG`
+- `JSON_CONFIG`
+- `XML_CONFIG`
+- `getPythonNodeCategory`
+- `isAsyncNode`
+- `isComprehensionNode`
+- `isContextManagerNode`
+- `isDecoratorNode`
+- `isExceptionHandlingNode`
+- `isGeneratorNode`
+- `isMagicMethodNode`
+- `isSpecialClassNode`
+- `getFileConfig`
+- `getLanguageConfig`
+- `isClassNode`
+- `isExportNode`
+- `isFunctionNode`
+- `isImportNode`
+- `isTypeNode`
+- `LANGUAGE_CONFIGS`
+- `validateConfigurations`
+- `BASH_CONFIG`
+- `BATCH_CONFIG`
+- `POWERSHELL_CONFIG`
+- `PYTHON_CONFIG`
+- `FILE_EXTENSIONS`
+- `LANGUAGE_KEYWORDS`
+- `detectLanguageFromPath`
+- `getSupportedExtensions`
+- `isFileSupported`
 
 ## Files
 
-- **index.ts** — Переэкспортирует конфигурации всех поддерживаемых языков программирования.
-- **python-helpers.ts** — Утилиты для определения специальных типов узлов Python AST.
-- **registry.ts** — Центральный реестр конфигураций всех языков с функциями поиска.
+| File | Description |
+|------|-------------|
+| `index.ts` | Re-exports all configs, helpers, types, and registry functions |
+| `registry.ts` | Central language config registry with lookup and validation |
+| `python-helpers.ts` | Python-specific AST node type utilities |

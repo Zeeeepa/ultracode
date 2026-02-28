@@ -15,6 +15,7 @@ export {
   RUST_CONFIG,
   SWIFT_CONFIG,
 } from "./compiled-languages/index.js";
+export { HELM_CONFIG } from "./infrastructure/index.js";
 // Re-export individual configs for advanced usage
 export { JAVASCRIPT_CONFIG, JSX_CONFIG, TSX_CONFIG, TYPESCRIPT_CONFIG } from "./javascript-family/index.js";
 export { CSS_CONFIG, HTML_CONFIG, JSON_CONFIG, XML_CONFIG } from "./markup-languages/index.js";

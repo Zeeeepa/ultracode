@@ -1,25 +1,9 @@
 /**
- * TASK-20250105-VBA-JAVA-GO-PHASE2: Go Language Analyzer
+ * Go Language Analyzer
  *
- * Analyzer for Go language supporting:
- * - Packages and package declarations
- * - Functions (regular and receiver functions/methods)
- * - Structs and their fields
- * - Interfaces and their methods
- * - Type aliases and constants
- * - Variables (module-level)
- * - Goroutines and channels (special Go features)
- *
- * Relationships:
- * - Package imports
- * - Function/method calls
- * - Interface satisfaction (Go's implicit implementation)
- * - Struct embedding (composition)
- * - Channel operations (send/receive)
- * - Type assertions and conversions
- *
- * Implementation uses circuit breakers for safety and follows the proven
- * pattern from C++ analyzer with Go-specific adaptations.
+ * AST-driven extraction of Go structural entities: packages, imports,
+ * functions, methods, structs, interfaces, type aliases, consts, vars,
+ * plus relationship edges (imports, calls, member_of, embeds).
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
@@ -27,759 +11,488 @@ import { log } from "../logging/index.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
-// Circuit breaker constants
-const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
-const PARSE_TIMEOUT_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
+const MAX_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
+const DEADLINE_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
+
+// ---------------------------------------------------------------------------
+// Internal state per parse run
+// ---------------------------------------------------------------------------
+
+interface RunState {
+  fp: string;
+  pkg: string;
+  entities: ParsedEntity[];
+  rels: EntityRelationship[];
+  t0: number;
+  lvl: number;
+}
+
+// ---------------------------------------------------------------------------
+// Analyzer
+// ---------------------------------------------------------------------------
 
 export class GoAnalyzer {
-  private recursionDepth = 0;
-  private parseStartTime = 0;
-  private currentPackage = "";
+  private handlers: Map<string, (n: ASTNode, s: RunState) => void>;
 
-  private isExported(name?: string): boolean {
-    return !!name && /^[A-Z]/.test(name);
+  constructor() {
+    this.handlers = new Map<string, (n: ASTNode, s: RunState) => void>([
+      ["source_file", (n, s) => this.descend(n, s)],
+      ["package_clause", (n, s) => this.onPackage(n, s)],
+      ["import_declaration", (n, s) => this.onImports(n, s)],
+      ["function_declaration", (n, s) => this.onFunc(n, s)],
+      ["method_declaration", (n, s) => this.onMethod(n, s)],
+      ["type_declaration", (n, s) => this.onTypeDecl(n, s)],
+      ["const_declaration", (n, s) => this.onConsts(n, s)],
+      ["var_declaration", (n, s) => this.onVars(n, s)],
+    ]);
   }
 
-  private collectIdentifiersFromNameField(nameField: ASTNode | null): string[] {
-    if (!nameField) return [];
-    if (nameField.type === "identifier") return [nameField.text];
-    if (nameField.type === "identifier_list") {
-      return nameField.namedChildren.filter((c) => c.type === "identifier").map((c) => c.text);
-    }
-    return [];
-  }
-
-  /**
-   * Main entry point for analyzing Go code
-   */
   async analyze(
     rootNode: ASTNode,
     filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
-    this.resetState();
-
-    const entities: ParsedEntity[] = [];
-    const relationships: EntityRelationship[] = [];
+    const state: RunState = {
+      fp: filePath,
+      pkg: "",
+      entities: [],
+      rels: [],
+      t0: Date.now(),
+      lvl: 0,
+    };
 
     try {
-      // Extract entities and relationships from AST
-      this.extractEntities(rootNode, filePath, entities, relationships);
-    } catch (error) {
-      if (error instanceof CircuitBreakerError) {
-        log.w("GOANALYZER", "circuit_break", { file: filePath, err: error.message });
+      this.visit(rootNode, state);
+    } catch (err) {
+      if (err instanceof CircuitBreakerError) {
+        log.w("GOANALYZER", "circuit_break", { file: filePath, err: err.message });
       } else {
-        log.e("GOANALYZER", "analyze_err", { file: filePath, err: String(error) });
+        log.e("GOANALYZER", "analyze_err", { file: filePath, err: String(err) });
       }
-      // Return partial results on error
     }
 
-    return { entities, relationships };
+    return { entities: state.entities, relationships: state.rels };
   }
 
-  /**
-   * Reset analyzer state for new file
-   */
-  private resetState(): void {
-    this.recursionDepth = 0;
-    this.parseStartTime = Date.now();
-    this.currentPackage = "";
-  }
+  // -- traversal ------------------------------------------------------------
 
-  /**
-   * Extract entities from Go AST
-   */
-  private extractEntities(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    parentContext?: string,
-  ): void {
-    this.recursionDepth++;
-    checkCircuitBreakers(this.recursionDepth, this.parseStartTime, MAX_RECURSION_DEPTH, PARSE_TIMEOUT_MS);
-
+  private visit(node: ASTNode, s: RunState): void {
+    s.lvl++;
+    checkCircuitBreakers(s.lvl, s.t0, MAX_DEPTH, DEADLINE_MS);
     try {
-      switch (node.type) {
-        case "source_file":
-          // Process source file
-          for (let i = 0; i < node.childCount; i++) {
-            const child = node.child(i);
-            if (child) {
-              this.extractEntities(child, filePath, entities, relationships, parentContext);
-            }
-          }
-          break;
-
-        case "package_clause": {
-          // Extract package declaration
-          const packageName = this.getPackageName(node);
-          if (packageName) {
-            this.currentPackage = packageName;
-            entities.push({
-              id: `${filePath}:package:${packageName}`,
-              name: packageName,
-              type: "module",
-              filePath,
-              location: getNodeLocation(node),
-              metadata: {
-                isPackage: true,
-              },
-            });
-          }
-          break;
-        }
-
-        case "import_declaration":
-          // Handle imports
-          this.extractImports(node, filePath, relationships);
-          break;
-
-        case "function_declaration":
-          // Extract regular functions
-          this.extractFunction(node, filePath, entities, relationships);
-          break;
-
-        case "method_declaration":
-          // Extract methods (receiver functions)
-          this.extractMethod(node, filePath, entities, relationships);
-          break;
-
-        case "type_declaration":
-          // Extract type declarations (structs, interfaces, aliases)
-          this.extractTypeDeclaration(node, filePath, entities, relationships);
-          break;
-
-        case "const_declaration":
-          // Extract constants
-          this.extractConstant(node, filePath, entities);
-          break;
-
-        case "var_declaration":
-          // Extract variables
-          this.extractVariable(node, filePath, entities);
-          break;
-
-        default:
-          // Recursively process children for unhandled node types
-          for (let i = 0; i < node.childCount; i++) {
-            const child = node.child(i);
-            if (child) {
-              this.extractEntities(child, filePath, entities, relationships, parentContext);
-            }
-          }
-      }
+      const h = this.handlers.get(node.type);
+      if (h) h(node, s);
+      else this.descend(node, s);
     } finally {
-      this.recursionDepth--;
+      s.lvl--;
     }
   }
 
-  /**
-   * Extract package name from package clause
-   */
-  private getPackageName(node: ASTNode): string | null {
-    const identifierNode = node.childForFieldName("name");
-    if (identifierNode && typeof identifierNode.text === "string" && identifierNode.text.length) {
-      return identifierNode.text;
+  private descend(node: ASTNode, s: RunState): void {
+    for (let i = 0, n = node.childCount; i < n; i++) {
+      const ch = node.child(i);
+      if (ch) this.visit(ch, s);
+    }
+  }
+
+  // -- package --------------------------------------------------------------
+
+  private onPackage(node: ASTNode, s: RunState): void {
+    const name = this.extractPkgName(node);
+    if (!name) return;
+    s.pkg = name;
+    s.entities.push({
+      id: `${s.fp}:package:${name}`,
+      name,
+      type: "module",
+      filePath: s.fp,
+      location: getNodeLocation(node),
+      metadata: { isPackage: true },
+    });
+  }
+
+  private extractPkgName(node: ASTNode): string | null {
+    const named = node.childForFieldName("name");
+    if (named?.type === "identifier" && named.text) return named.text;
+
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const c = node.namedChild(i);
+      if (c?.type === "identifier" && c.text) return c.text;
     }
 
-    const candNamed = node.namedChildren.find((c) => c.type === "identifier");
-    if (candNamed && typeof candNamed.text === "string" && candNamed.text.length) {
-      return candNamed.text;
-    }
-
-    const candAny = node.children.find((c) => c.type === "identifier");
-    if (candAny && typeof candAny.text === "string" && candAny.text.length) {
-      return candAny.text;
+    for (let i = 0; i < node.childCount; i++) {
+      const c = node.child(i);
+      if (c?.type === "identifier" && c.text) return c.text;
     }
 
     const m = /\bpackage\s+([A-Za-z_]\w*)/.exec(node.text);
-    if (m && m[1] !== undefined) {
-      return m[1];
-    }
-    return null;
+    return m?.[1] ?? null;
   }
 
-  /**
-   * Find all descendants of a given type (safe across implementations)
-   */
-  private findDescendantsByType(node: ASTNode, type: string): ASTNode[] {
-    // Type guard for nodes with descendantsOfType method
-    if (
-      typeof node === "object" &&
-      node !== null &&
-      "descendantsOfType" in node &&
-      typeof (node as { descendantsOfType: unknown }).descendantsOfType === "function"
-    ) {
-      try {
-        return (node as { descendantsOfType: (t: string) => ASTNode[] | null }).descendantsOfType(type) || [];
-      } catch {}
-    }
-    const results: ASTNode[] = [];
-    const stack: ASTNode[] = [node];
-    while (stack.length) {
-      const n = stack.pop()!;
-      if (n.type === type) results.push(n);
-      for (let i = 0; i < n.namedChildCount; i++) {
-        const ch = n.namedChild(i);
-        if (ch) stack.push(ch);
-      }
-    }
-    return results;
-  }
+  // -- imports --------------------------------------------------------------
 
-  /**
-   * Extract string literal content from node (strip quotes and backticks)
-   */
-  private getStringLiteralFromNode(node: ASTNode): string | null {
-    const pathField = node.childForFieldName("path");
-    const txt =
-      pathField?.text ??
-      node.namedChildren.find((c) => c.type === "interpreted_string_literal" || c.type === "raw_string_literal")?.text;
-
-    if (!txt) return null;
-    // remove leading/trailing quotes/backticks
-    return txt.replace(/^[`'"]|[`'"]$/g, "");
-  }
-
-  /**
-   * Extract imports and create relationships
-   */
-  private extractImports(node: ASTNode, filePath: string, relationships: EntityRelationship[]): void {
-    const packageId = `${filePath}:package:${this.currentPackage || ""}`;
-
-    // Собираем import_spec на любом уровне (в т.ч. внутри import (...))
-    const importSpecs = this.findDescendantsByType(node, "import_spec");
-
+  private onImports(node: ASTNode, s: RunState): void {
+    const origin = `${s.fp}:package:${s.pkg || ""}`;
     const seen = new Set<string>();
 
-    if (importSpecs.length > 0) {
-      for (const spec of importSpecs) {
-        const importPath = this.getStringLiteralFromNode(spec);
-        if (!importPath || seen.has(importPath)) continue;
-        seen.add(importPath);
-
-        const aliasNode = spec.childForFieldName("alias") || spec.childForFieldName("name");
-        relationships.push({
-          from: packageId,
-          to: importPath,
+    const specs = this.collect(node, "import_spec");
+    if (specs.length > 0) {
+      for (const sp of specs) {
+        const p = this.stripQuotes(sp);
+        if (!p || seen.has(p)) continue;
+        seen.add(p);
+        const aliasNode = sp.childForFieldName("alias") ?? sp.childForFieldName("name");
+        s.rels.push({
+          from: origin,
+          to: p,
           type: "imports",
-          metadata: {
-            importType: "package",
-            alias: aliasNode?.text,
-          },
+          metadata: { importType: "package", alias: aliasNode?.text },
         });
       }
     } else {
-      // Фоллбек: одиночный импорт без import_spec
-      const importPath = this.getStringLiteralFromNode(node);
-      if (importPath && !seen.has(importPath)) {
-        seen.add(importPath);
-        relationships.push({
-          from: packageId,
-          to: importPath,
-          type: "imports",
-          metadata: { importType: "package" },
+      const p = this.stripQuotes(node);
+      if (p && !seen.has(p)) {
+        seen.add(p);
+        s.rels.push({ from: origin, to: p, type: "imports", metadata: { importType: "package" } });
+      }
+    }
+  }
+
+  // -- functions ------------------------------------------------------------
+
+  private onFunc(node: ASTNode, s: RunState): void {
+    const name = node.childForFieldName("name")?.text;
+    if (!name) return;
+
+    const eid = `${s.fp}:function:${name}`;
+    const ent: ParsedEntity = {
+      id: eid,
+      name,
+      type: "function",
+      filePath: s.fp,
+      location: getNodeLocation(node),
+      metadata: { isPublic: isExported(name), package: s.pkg },
+    };
+
+    this.addParamsAndReturn(node, ent);
+    s.entities.push(ent);
+
+    const body = node.childForFieldName("body");
+    if (body) this.collectCalls(body, eid, s);
+  }
+
+  // -- methods --------------------------------------------------------------
+
+  private onMethod(node: ASTNode, s: RunState): void {
+    const name = node.childForFieldName("name")?.text;
+    const recv = node.childForFieldName("receiver");
+    if (!name || !recv) return;
+
+    const recvType = this.recvTypeName(recv);
+    const mid = `${s.fp}:method:${recvType}:${name}`;
+
+    const ent: ParsedEntity = {
+      id: mid,
+      name,
+      type: "method",
+      filePath: s.fp,
+      location: getNodeLocation(node),
+      metadata: { isPublic: isExported(name), receiver: recvType, package: s.pkg },
+    };
+
+    this.addParamsAndReturn(node, ent);
+    s.entities.push(ent);
+
+    if (recvType) {
+      s.rels.push({
+        from: mid,
+        to: `${s.fp}:type:${recvType}`,
+        type: "member_of",
+        metadata: { memberType: "method" },
+      });
+    }
+
+    const body = node.childForFieldName("body");
+    if (body) this.collectCalls(body, mid, s);
+  }
+
+  private recvTypeName(recv: ASTNode): string {
+    const param = recv.namedChild(0);
+    if (!param) return "";
+    const typeNode = param.childForFieldName("type");
+    if (!typeNode) return "";
+    if (typeNode.type === "pointer_type") {
+      const inner = typeNode.namedChild(0);
+      return inner?.text ?? "";
+    }
+    return typeNode.text ?? "";
+  }
+
+  // -- type declarations ----------------------------------------------------
+
+  private onTypeDecl(node: ASTNode, s: RunState): void {
+    const kids = node.namedChildren;
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i]!.type === "type_spec") this.processTypeSpec(kids[i]!, s);
+    }
+  }
+
+  private processTypeSpec(spec: ASTNode, s: RunState): void {
+    const tName = spec.childForFieldName("name")?.text;
+    const tBody = spec.childForFieldName("type");
+    if (!tName || !tBody) return;
+
+    const kind =
+      tBody.type === "struct_type"
+        ? "class"
+        : tBody.type === "interface_type"
+          ? "interface"
+          : ("typedef" as ParsedEntity["type"]);
+
+    const tid = `${s.fp}:type:${tName}`;
+    s.entities.push({
+      id: tid,
+      name: tName,
+      type: kind,
+      filePath: s.fp,
+      location: getNodeLocation(spec),
+      metadata: { isPublic: isExported(tName), package: s.pkg, goType: tBody.type },
+    });
+
+    if (tBody.type === "struct_type") {
+      this.structFields(tBody, tid, s);
+      this.structEmbeds(tBody, tid, s);
+    } else if (tBody.type === "interface_type") {
+      this.ifaceMethods(tBody, tid, s);
+    }
+  }
+
+  // -- struct fields & embeds -----------------------------------------------
+
+  private structFields(body: ASTNode, structId: string, s: RunState): void {
+    for (const list of body.namedChildren) {
+      if (list.type !== "field_declaration_list") continue;
+      for (const decl of list.namedChildren) {
+        if (decl.type !== "field_declaration") continue;
+        const fName = decl.childForFieldName("name")?.text;
+        if (!fName) continue;
+        const fType = decl.childForFieldName("type")?.text ?? "unknown";
+        const fid = `${structId}:field:${fName}`;
+
+        s.entities.push({
+          id: fid,
+          name: fName,
+          type: "property",
+          filePath: s.fp,
+          location: getNodeLocation(decl),
+          metadata: { isPublic: isExported(fName), fieldType: fType, parent: structId },
+        });
+        s.rels.push({ from: fid, to: structId, type: "member_of", metadata: { memberType: "field" } });
+      }
+    }
+  }
+
+  private structEmbeds(body: ASTNode, structId: string, s: RunState): void {
+    for (const list of body.namedChildren) {
+      if (list.type !== "field_declaration_list") continue;
+      for (const decl of list.namedChildren) {
+        if (decl.type !== "field_declaration") continue;
+        if (decl.childForFieldName("name")) continue;
+        const typeField = decl.childForFieldName("type");
+        if (!typeField?.text) continue;
+        s.rels.push({
+          from: structId,
+          to: `${s.fp}:type:${typeField.text}`,
+          type: "embeds",
+          metadata: { embeddingType: "struct" },
         });
       }
     }
   }
 
-  /**
-   * Extract function declaration
-   */
-  private extractFunction(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    const functionName = nameNode?.text;
+  // -- interface methods ----------------------------------------------------
 
-    if (functionName) {
-      const entityId = `${filePath}:function:${functionName}`;
-      const entity: ParsedEntity = {
-        id: entityId,
-        name: functionName,
-        type: "function",
-        filePath,
-        location: getNodeLocation(node),
-        metadata: {
-          isPublic: this.isExported(functionName), // Capital = exported in Go
-          package: this.currentPackage,
-        },
-      };
+  private ifaceMethods(body: ASTNode, ifaceId: string, s: RunState): void {
+    for (const ms of body.namedChildren) {
+      if (ms.type !== "method_spec") continue;
+      const mName = ms.childForFieldName("name")?.text;
+      if (!mName) continue;
 
-      // Extract parameters
-      const parameters = node.childForFieldName("parameters");
-      if (parameters) {
-        const meta = entity.metadata ?? (entity.metadata = {});
-        meta["parameters"] = this.extractParameters(parameters);
-      }
-
-      // Extract return type
-      const result = node.childForFieldName("result");
-      if (result) {
-        const meta = entity.metadata ?? (entity.metadata = {});
-        meta["returnType"] = result.text;
-      }
-
-      entities.push(entity);
-
-      // Extract function calls within body
-      const body = node.childForFieldName("body");
-      if (body) {
-        this.extractFunctionCalls(body, entityId, filePath, relationships);
-      }
-    }
-  }
-
-  /**
-   * Extract method declaration (receiver function)
-   */
-  private extractMethod(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    const methodName = nameNode?.text;
-    const receiver = node.childForFieldName("receiver");
-
-    if (methodName && receiver) {
-      // Extract receiver type
-      const receiverType = this.extractReceiverType(receiver);
-
-      const methodId = `${filePath}:method:${receiverType}:${methodName}`;
-      const entity: ParsedEntity = {
-        id: methodId,
-        name: methodName,
+      const mid = `${ifaceId}:method:${mName}`;
+      const ent: ParsedEntity = {
+        id: mid,
+        name: mName,
         type: "method",
-        filePath,
-        location: getNodeLocation(node),
-        metadata: {
-          isPublic: this.isExported(methodName),
-          receiver: receiverType,
-          package: this.currentPackage,
-        },
+        filePath: s.fp,
+        location: getNodeLocation(ms),
+        metadata: { isAbstract: true, parent: ifaceId },
       };
 
-      // Extract parameters
-      const parameters = node.childForFieldName("parameters");
-      if (parameters) {
-        const meta = entity.metadata ?? (entity.metadata = {});
-        meta["parameters"] = this.extractParameters(parameters);
-      }
+      const params = ms.childForFieldName("parameters");
+      if (params) (ent.metadata ??= {})["parameters"] = this.paramList(params);
 
-      // Extract return type
-      const result = node.childForFieldName("result");
-      if (result) {
-        const meta = entity.metadata ?? (entity.metadata = {});
-        meta["returnType"] = result.text;
-      }
+      const ret = ms.childForFieldName("result");
+      if (ret) (ent.metadata ??= {})["returnType"] = ret.text;
 
-      entities.push(entity);
-
-      // Create relationship to receiver type
-      if (receiverType) {
-        relationships.push({
-          from: methodId,
-          to: `${filePath}:type:${receiverType}`,
-          type: "member_of",
-          metadata: {
-            memberType: "method",
-          },
-        });
-      }
-
-      // Extract function calls within body
-      const body = node.childForFieldName("body");
-      if (body) {
-        this.extractFunctionCalls(body, methodId, filePath, relationships);
-      }
+      s.entities.push(ent);
+      s.rels.push({ from: mid, to: ifaceId, type: "member_of", metadata: { memberType: "method" } });
     }
   }
 
-  /**
-   * Extract receiver type from receiver parameter
-   */
-  private extractReceiverType(receiver: ASTNode): string {
-    // Look for the type in the receiver parameter list
-    const paramDecl = receiver.namedChild(0);
-    if (paramDecl) {
-      const typeNode = paramDecl.childForFieldName("type");
-      if (typeNode) {
-        // Handle pointer receivers (*Type)
-        if (typeNode.type === "pointer_type") {
-          const baseType = typeNode.namedChild(0);
-          return baseType?.text || "";
-        }
-        return typeNode.text || "";
-      }
-    }
-    return "";
-  }
+  // -- consts & vars --------------------------------------------------------
 
-  /**
-   * Extract type declarations (structs, interfaces, type aliases)
-   */
-  private extractTypeDeclaration(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-  ): void {
-    const typeSpecs = node.namedChildren.filter((c) => c.type === "type_spec");
-
-    for (const typeSpec of typeSpecs) {
-      const nameNode = typeSpec.childForFieldName("name");
-      const typeName = nameNode?.text;
-      const typeNode = typeSpec.childForFieldName("type");
-
-      if (typeName && typeNode) {
-        const entityType = this.getEntityTypeFromGoType(typeNode.type);
-
-        const typeId = `${filePath}:type:${typeName}`;
-        const entity: ParsedEntity = {
-          id: typeId,
-          name: typeName,
-          type: entityType,
-          filePath,
-          location: getNodeLocation(typeSpec),
-          metadata: {
-            isPublic: this.isExported(typeName),
-            package: this.currentPackage,
-            goType: typeNode.type,
-          },
-        };
-
-        entities.push(entity);
-
-        // Extract struct fields
-        if (typeNode.type === "struct_type") {
-          this.extractStructFields(typeNode, typeId, filePath, entities, relationships);
-        }
-
-        // Extract interface methods
-        if (typeNode.type === "interface_type") {
-          this.extractInterfaceMethods(typeNode, typeId, filePath, entities, relationships);
-        }
-
-        // Handle type embedding
-        if (typeNode.type === "struct_type") {
-          this.extractEmbeddedTypes(typeNode, typeId, filePath, relationships);
-        }
-      }
-    }
-  }
-
-  /**
-   * Map Go type to entity type
-   */
-  private getEntityTypeFromGoType(goType: string): ParsedEntity["type"] {
-    switch (goType) {
-      case "struct_type":
-        return "class"; // Map struct to class
-      case "interface_type":
-        return "interface";
-      default:
-        return "typedef"; // For type aliases and other types
-    }
-  }
-
-  /**
-   * Extract struct fields
-   */
-  private extractStructFields(
-    structNode: ASTNode,
-    structId: string,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-  ): void {
-    const fieldList = structNode.namedChildren.filter((c) => c.type === "field_declaration_list");
-
-    for (const list of fieldList) {
-      const fields = list.namedChildren.filter((c) => c.type === "field_declaration");
-
-      for (const field of fields) {
-        const nameNode = field.childForFieldName("name");
-        const fieldName = nameNode?.text;
-        const typeNode = field.childForFieldName("type");
-
-        if (fieldName) {
-          const fieldId = `${structId}:field:${fieldName}`;
-          const fieldEntity: ParsedEntity = {
-            id: fieldId,
-            name: fieldName,
-            type: "property",
-            filePath,
-            location: getNodeLocation(field),
-            metadata: {
-              isPublic: this.isExported(fieldName),
-              fieldType: typeNode?.text || "unknown",
-              parent: structId,
-            },
-          };
-
-          entities.push(fieldEntity);
-
-          // Create relationship
-          relationships.push({
-            from: fieldId,
-            to: structId,
-            type: "member_of",
-            metadata: {
-              memberType: "field",
-            },
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Extract interface methods
-   */
-  private extractInterfaceMethods(
-    interfaceNode: ASTNode,
-    interfaceId: string,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-  ): void {
-    const methodSpecs = interfaceNode.namedChildren.filter((c) => c.type === "method_spec");
-
-    for (const methodSpec of methodSpecs) {
-      const nameNode = methodSpec.childForFieldName("name");
-      const methodName = nameNode?.text;
-
-      if (methodName) {
-        const methodId = `${interfaceId}:method:${methodName}`;
-        const methodEntity: ParsedEntity = {
-          id: methodId,
-          name: methodName,
-          type: "method",
-          filePath,
-          location: getNodeLocation(methodSpec),
-          metadata: {
-            isAbstract: true, // Interface methods are abstract
-            parent: interfaceId,
-          },
-        };
-
-        // Extract parameters
-        const parameters = methodSpec.childForFieldName("parameters");
-        if (parameters) {
-          const meta = methodEntity.metadata ?? (methodEntity.metadata = {});
-          meta["parameters"] = this.extractParameters(parameters);
-        }
-
-        // Extract return type
-        const result = methodSpec.childForFieldName("result");
-        if (result) {
-          const meta = methodEntity.metadata ?? (methodEntity.metadata = {});
-          meta["returnType"] = result.text;
-        }
-
-        entities.push(methodEntity);
-
-        // Create relationship
-        relationships.push({
-          from: methodId,
-          to: interfaceId,
-          type: "member_of",
-          metadata: {
-            memberType: "method",
-          },
+  private onConsts(node: ASTNode, s: RunState): void {
+    for (const cs of node.namedChildren) {
+      if (cs.type !== "const_spec") continue;
+      const names = this.namesFromField(cs.childForFieldName("name"));
+      if (names.length === 0) continue;
+      const val = cs.childForFieldName("value")?.text;
+      for (const cn of names) {
+        s.entities.push({
+          id: `${s.fp}:const:${cn}`,
+          name: cn,
+          type: "constant",
+          filePath: s.fp,
+          location: getNodeLocation(cs),
+          metadata: { isPublic: isExported(cn), value: val, package: s.pkg },
         });
       }
     }
   }
 
-  /**
-   * Extract embedded types (struct embedding/composition)
-   */
-  private extractEmbeddedTypes(
-    structNode: ASTNode,
-    structId: string,
-    filePath: string,
-    relationships: EntityRelationship[],
-  ): void {
-    const fieldList = structNode.namedChildren.filter((c) => c.type === "field_declaration_list");
-
-    for (const list of fieldList) {
-      const fields = list.namedChildren.filter((c) => c.type === "field_declaration");
-
-      for (const field of fields) {
-        // Check if it's an embedded field (no name, just type)
-        const nameNode = field.childForFieldName("name");
-        const typeNode = field.childForFieldName("type");
-
-        if (!nameNode && typeNode) {
-          // This is an embedded type
-          const embeddedType = typeNode.text;
-          if (embeddedType) {
-            relationships.push({
-              from: structId,
-              to: `${filePath}:type:${embeddedType}`,
-              type: "embeds",
-              metadata: {
-                embeddingType: "struct",
-              },
-            });
-          }
-        }
+  private onVars(node: ASTNode, s: RunState): void {
+    const specs = this.collect(node, "var_spec");
+    for (const vs of specs) {
+      const names = this.varNames(vs);
+      if (names.length === 0) continue;
+      const tp = vs.childForFieldName("type")?.text;
+      const init = vs.childForFieldName("value")?.text;
+      for (const vn of names) {
+        s.entities.push({
+          id: `${s.fp}:var:${vn}`,
+          name: vn,
+          type: "variable",
+          filePath: s.fp,
+          location: getNodeLocation(vs),
+          metadata: { isPublic: isExported(vn), variableType: tp, initialValue: init, package: s.pkg },
+        });
       }
     }
   }
 
-  /**
-   * Extract constants
-   */
-  private extractConstant(node: ASTNode, filePath: string, entities: ParsedEntity[]): void {
-    const constSpecs = node.namedChildren.filter((c) => c.type === "const_spec");
+  private varNames(spec: ASTNode): string[] {
+    const fromField = this.namesFromField(spec.childForFieldName("name"));
+    if (fromField.length > 0) return fromField;
 
-    for (const constSpec of constSpecs) {
-      const nameField = constSpec.childForFieldName("name");
-      const names = this.collectIdentifiersFromNameField(nameField);
-      if (names.length) {
-        const valueNode = constSpec.childForFieldName("value");
-        for (const constName of names) {
-          entities.push({
-            id: `${filePath}:const:${constName}`,
-            name: constName,
-            type: "constant",
-            filePath,
-            location: getNodeLocation(constSpec),
-            metadata: {
-              isPublic: this.isExported(constName),
-              value: valueNode?.text,
-              package: this.currentPackage,
-            },
+    for (let i = 0; i < spec.namedChildCount; i++) {
+      const c = spec.namedChild(i);
+      if (c?.type === "identifier_list") {
+        const ids = c.namedChildren.filter((x) => x.type === "identifier").map((x) => x.text);
+        if (ids.length > 0) return ids;
+      }
+    }
+
+    const typeNode = spec.childForFieldName("type");
+    const typeIds = new Set<string>();
+    if (typeNode) for (const t of this.collect(typeNode, "identifier")) typeIds.add(t.text);
+
+    return this.collect(spec, "identifier")
+      .map((n) => n.text)
+      .filter((t) => !typeIds.has(t));
+  }
+
+  // -- call scanning --------------------------------------------------------
+
+  private collectCalls(node: ASTNode, callerId: string, s: RunState): void {
+    // Iterative DFS to avoid deep recursion
+    const stack: ASTNode[] = [node];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (cur.type === "call_expression") {
+        const callee = cur.childForFieldName("function");
+        if (callee?.text) {
+          s.rels.push({
+            from: callerId,
+            to: `${s.fp}:function:${callee.text}`,
+            type: "calls",
+            metadata: { callType: "function" },
           });
         }
       }
-    }
-  }
-
-  /**
-   * Extract variables
-   */
-  private extractVariable(node: ASTNode, filePath: string, entities: ParsedEntity[]): void {
-    const varSpecs = this.findDescendantsByType(node, "var_spec");
-
-    for (const varSpec of varSpecs) {
-      const nameField = varSpec.childForFieldName("name");
-      let names = this.collectIdentifiersFromNameField(nameField);
-
-      if (!names.length) {
-        const list = varSpec.namedChildren.find((c) => c.type === "identifier_list");
-        if (list) {
-          names = list.namedChildren.filter((c) => c.type === "identifier").map((c) => c.text);
-        }
-      }
-
-      if (!names.length) {
-        names = varSpec.namedChildren.filter((c) => c.type === "identifier").map((c) => c.text);
-      }
-
-      if (!names.length) {
-        const typeNode = varSpec.childForFieldName("type");
-        const typeIdSet = new Set<string>();
-        if (typeNode) {
-          for (const t of this.findDescendantsByType(typeNode, "identifier")) {
-            typeIdSet.add(t.text);
-          }
-        }
-        const allIds = this.findDescendantsByType(varSpec, "identifier");
-        names = allIds.map((n) => n.text).filter((txt) => !typeIdSet.has(txt));
-      }
-
-      if (names.length) {
-        const typeNode = varSpec.childForFieldName("type");
-        const valueNode = varSpec.childForFieldName("value");
-        for (const varName of names) {
-          entities.push({
-            id: `${filePath}:var:${varName}`,
-            name: varName,
-            type: "variable",
-            filePath,
-            location: getNodeLocation(varSpec),
-            metadata: {
-              isPublic: this.isExported(varName),
-              variableType: typeNode?.text,
-              initialValue: valueNode?.text,
-              package: this.currentPackage,
-            },
-          });
-        }
+      for (let i = cur.childCount - 1; i >= 0; i--) {
+        const ch = cur.child(i);
+        if (ch) stack.push(ch);
       }
     }
   }
 
-  /**
-   * Extract function parameters
-   */
-  private extractParameters(parametersNode: ASTNode): string[] {
-    const params: string[] = [];
-    const paramDecls = parametersNode.namedChildren.filter((c) => c.type === "parameter_declaration");
+  // -- helpers --------------------------------------------------------------
 
-    for (const paramDecl of paramDecls) {
-      const nameNode = paramDecl.childForFieldName("name");
-      const typeNode = paramDecl.childForFieldName("type");
-
-      if (nameNode && typeNode) {
-        params.push(`${nameNode.text}: ${typeNode.text}`);
-      } else if (typeNode) {
-        // Anonymous parameter
-        params.push(typeNode.text);
-      }
-    }
-
-    return params;
+  private addParamsAndReturn(node: ASTNode, ent: ParsedEntity): void {
+    const params = node.childForFieldName("parameters");
+    if (params) (ent.metadata ??= {})["parameters"] = this.paramList(params);
+    const result = node.childForFieldName("result");
+    if (result) (ent.metadata ??= {})["returnType"] = result.text;
   }
 
-  /**
-   * Extract function calls to create relationships
-   */
-  private extractFunctionCalls(
-    node: ASTNode,
-    callerId: string,
-    filePath: string,
-    relationships: EntityRelationship[],
-  ): void {
-    this.recursionDepth++;
-    checkCircuitBreakers(this.recursionDepth, this.parseStartTime, MAX_RECURSION_DEPTH, PARSE_TIMEOUT_MS);
-
-    try {
-      if (node.type === "call_expression") {
-        const functionNode = node.childForFieldName("function");
-        if (functionNode) {
-          const functionName = functionNode.text;
-          if (functionName) {
-            relationships.push({
-              from: callerId,
-              to: `${filePath}:function:${functionName}`,
-              type: "calls",
-              metadata: {
-                callType: "function",
-              },
-            });
-          }
-        }
-      }
-
-      // Recursively search for calls in children
-      for (let i = 0; i < node.childCount; i++) {
-        const child = node.child(i);
-        if (child) {
-          this.extractFunctionCalls(child, callerId, filePath, relationships);
-        }
-      }
-    } finally {
-      this.recursionDepth--;
+  private paramList(params: ASTNode): string[] {
+    const out: string[] = [];
+    for (const pd of params.namedChildren) {
+      if (pd.type !== "parameter_declaration") continue;
+      const pn = pd.childForFieldName("name")?.text;
+      const pt = pd.childForFieldName("type")?.text;
+      out.push(pn && pt ? `${pn}: ${pt}` : (pt ?? ""));
     }
+    return out;
   }
+
+  private collect(root: ASTNode, type: string): ASTNode[] {
+    const native = root as unknown as { descendantsOfType?: (t: string) => ASTNode[] | null };
+    if (typeof native.descendantsOfType === "function") {
+      try {
+        return native.descendantsOfType(type) ?? [];
+      } catch {
+        /* fallthrough */
+      }
+    }
+    const result: ASTNode[] = [];
+    const q: ASTNode[] = [root];
+    let head = 0;
+    while (head < q.length) {
+      const c = q[head++]!;
+      if (c.type === type) result.push(c);
+      for (let i = 0; i < c.namedChildCount; i++) {
+        const ch = c.namedChild(i);
+        if (ch) q.push(ch);
+      }
+    }
+    return result;
+  }
+
+  private stripQuotes(node: ASTNode): string | null {
+    const pathField = node.childForFieldName("path");
+    const raw =
+      pathField?.text ??
+      node.namedChildren.find((c) => c.type === "interpreted_string_literal" || c.type === "raw_string_literal")?.text;
+    if (!raw) return null;
+    return raw.replace(/^[`'"]+|[`'"]+$/g, "");
+  }
+
+  private namesFromField(field: ASTNode | null): string[] {
+    if (!field) return [];
+    if (field.type === "identifier") return [field.text];
+    if (field.type === "identifier_list") {
+      return field.namedChildren.filter((c) => c.type === "identifier").map((c) => c.text);
+    }
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+
+function isExported(name?: string): boolean {
+  if (!name || name.length === 0) return false;
+  const code = name.charCodeAt(0);
+  return code >= 65 && code <= 90;
 }

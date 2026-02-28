@@ -1,19 +1,21 @@
 /**
- * PythonAnalyzer Test Suite
+ * PythonAnalyzer / CycleDetector Test Suite
  *
- * Tests for the Python code analyzer methods.
+ * Tests for Python code analysis methods.
+ * After the TASK-003B refactoring, dependency/cycle methods moved from
+ * PythonAnalyzer to the standalone CycleDetector class.
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
-import { PythonAnalyzer } from "../../src/parsers/python-analyzer.js";
+import { CycleDetector } from "../../src/parsers/python-analyzer.js";
 
-describe("PythonAnalyzer", () => {
-  let analyzer: PythonAnalyzer;
+describe("CycleDetector", () => {
+  let detector: CycleDetector;
+  let dependencyCache: Map<string, Set<string>>;
 
   beforeEach(() => {
-    analyzer = new PythonAnalyzer();
-    // Reset static dependency cache before each test
-    (PythonAnalyzer as any).dependencyCache = new Map<string, Set<string>>();
+    dependencyCache = new Map<string, Set<string>>();
+    detector = new CycleDetector(dependencyCache);
   });
 
   describe("resolveImportPath", () => {
@@ -25,12 +27,12 @@ describe("PythonAnalyzer", () => {
       { importModule: ".", fromFile: "pkg/sub/module.py", expected: "pkg/sub" },
       { importModule: ".utils", fromFile: "pkg\\sub\\module.py", expected: "pkg/sub/utils" },
     ])("maps importModule '$importModule' from '$fromFile' to '$expected'", ({ importModule, fromFile, expected }) => {
-      const result = (analyzer as any).resolveImportPath(importModule, fromFile);
+      const result = detector.resolveImportPath(importModule, fromFile);
       expect(result).toBe(expected);
     });
 
     test("returns undefined for empty importModule", () => {
-      const result = (analyzer as any).resolveImportPath("", "pkg/sub/module.py");
+      const result = detector.resolveImportPath("", "pkg/sub/module.py");
       expect(result).toBeUndefined();
     });
   });
@@ -42,7 +44,7 @@ describe("PythonAnalyzer", () => {
       { className: "top.level.Name", fromFile: "anything/here.py", expected: "top/level" },
       { className: "", fromFile: "pkg/sub/module.py", expected: "pkg/sub/module" },
     ])("maps className '$className' from '$fromFile' to '$expected'", ({ className, fromFile, expected }) => {
-      const result = (analyzer as any).resolveClassPath(className, fromFile);
+      const result = detector.resolveClassPath(className, fromFile);
       expect(result).toBe(expected);
     });
   });
@@ -50,17 +52,30 @@ describe("PythonAnalyzer", () => {
   describe("cached dependencies and cycles", () => {
     test("addCachedDependencies merges cached deps and seeds cache for current file", () => {
       // Pre-seed cache with C -> D
-      (PythonAnalyzer as any).dependencyCache.set("C", new Set(["D"]));
+      dependencyCache.set("C", new Set(["D"]));
 
-      // Graph for file A: A -> B
-      const graphA = new Map<string, Set<string>>();
-      graphA.set("A", new Set(["B"]));
-      (analyzer as any).addCachedDependencies(graphA, "A");
+      // Build a graph for file A that imports B — this triggers addCachedDependencies internally
+      const contextA: any = {
+        filePath: "A.py",
+        imports: [
+          {
+            sourceFile: "A.py",
+            targetModule: "B",
+            importType: "absolute",
+            symbols: [],
+            line: 1,
+            isUsed: false,
+            usageLocations: [],
+          },
+        ],
+        classes: new Map(),
+        relationships: [],
+      };
+      const graphA = detector.buildDependencyGraph(contextA);
 
       // Cache should contain edges A -> B
-      const cache = (PythonAnalyzer as any).dependencyCache;
-      expect(cache.get("A") instanceof Set).toBe(true);
-      expect(cache.get("A")?.has("B")).toBe(true);
+      expect(dependencyCache.get("A") instanceof Set).toBe(true);
+      expect(dependencyCache.get("A")?.has("B")).toBe(true);
 
       // Graph should also include cached edges C -> D
       expect(graphA.get("C") instanceof Set).toBe(true);
@@ -68,21 +83,49 @@ describe("PythonAnalyzer", () => {
     });
 
     test("findAllCycles detects cycle across two files using cache (A <-> B)", () => {
-      // Step 1: analyze A -> B and cache it
-      const graphA = new Map<string, Set<string>>();
-      graphA.set("A", new Set(["B"]));
-      (analyzer as any).addCachedDependencies(graphA, "A");
+      // Step 1: build graph for A -> B (seeds cache)
+      const contextA: any = {
+        filePath: "A.py",
+        imports: [
+          {
+            sourceFile: "A.py",
+            targetModule: "B",
+            importType: "absolute",
+            symbols: [],
+            line: 1,
+            isUsed: false,
+            usageLocations: [],
+          },
+        ],
+        classes: new Map(),
+        relationships: [],
+      };
+      detector.buildDependencyGraph(contextA);
 
-      // Step 2: analyze B -> A and merge cached A -> B
-      const graphB = new Map<string, Set<string>>();
-      graphB.set("B", new Set(["A"]));
-      (analyzer as any).addCachedDependencies(graphB, "B");
+      // Step 2: build graph for B -> A (merges cached A -> B)
+      const contextB: any = {
+        filePath: "B.py",
+        imports: [
+          {
+            sourceFile: "B.py",
+            targetModule: "A",
+            importType: "absolute",
+            symbols: [],
+            line: 1,
+            isUsed: false,
+            usageLocations: [],
+          },
+        ],
+        classes: new Map(),
+        relationships: [],
+      };
+      const graphB = detector.buildDependencyGraph(contextB);
 
       // Ensure cycle edges exist
       expect(graphB.get("A")?.has("B")).toBe(true);
       expect(graphB.get("B")?.has("A")).toBe(true);
 
-      const cycles = (analyzer as any).findAllCycles(graphB);
+      const cycles = detector.findAllCycles(graphB);
       expect(cycles.length).toBeGreaterThan(0);
 
       const hasAB = cycles.some((c: any) => {
@@ -105,16 +148,16 @@ describe("PythonAnalyzer", () => {
     });
 
     test("import cycle A <-> B is detected", () => {
-      // 1) Analyze A.py first to seed cache A -> B
+      // 1) Build graph for A.py first to seed cache A -> B
       const contextA: any = {
         filePath: "A.py",
         imports: [mkImp("A.py", "B")],
         classes: new Map(),
         relationships: [],
       };
-      (analyzer as any).buildDependencyGraph(contextA);
+      detector.buildDependencyGraph(contextA);
 
-      // 2) Now analyze B.py with import A (cycle B -> A)
+      // 2) Now detect circular deps for B.py with import A (cycle B -> A)
       const contextB: any = {
         filePath: "B.py",
         imports: [mkImp("B.py", "A")],
@@ -122,7 +165,7 @@ describe("PythonAnalyzer", () => {
         relationships: [],
       };
 
-      const results = (analyzer as any).detectCircularDependencies(contextB);
+      const results = detector.detectCircularDependencies(contextB);
       expect(Array.isArray(results)).toBe(true);
       expect(results.length).toBeGreaterThan(0);
 
@@ -146,7 +189,7 @@ describe("PythonAnalyzer", () => {
         classes: new Map(),
         relationships: [],
       };
-      (analyzer as any).buildDependencyGraph(contextA);
+      detector.buildDependencyGraph(contextA);
 
       // 2) B -> A and B has class Sub(A.Base)
       const classesB = new Map<string, any>([
@@ -173,7 +216,7 @@ describe("PythonAnalyzer", () => {
         relationships: [],
       };
 
-      const results = (analyzer as any).detectCircularDependencies(contextB);
+      const results = detector.detectCircularDependencies(contextB);
       expect(results.length).toBeGreaterThan(0);
 
       // Prefer "inheritance" classification when inheritance is present
@@ -182,10 +225,8 @@ describe("PythonAnalyzer", () => {
 
     test("reference cycle classification when graph comes from cache only", () => {
       // 1) Manually seed cache with a cycle A <-> B
-      (PythonAnalyzer as any).dependencyCache = new Map<string, Set<string>>([
-        ["A", new Set(["B"])],
-        ["B", new Set(["A"])],
-      ]);
+      dependencyCache.set("A", new Set(["B"]));
+      dependencyCache.set("B", new Set(["A"]));
 
       // 2) Context without imports, but with a references relationship B -> A
       const contextRef: any = {
@@ -203,7 +244,7 @@ describe("PythonAnalyzer", () => {
         ],
       };
 
-      const results = (analyzer as any).detectCircularDependencies(contextRef);
+      const results = detector.detectCircularDependencies(contextRef);
       expect(results.length).toBeGreaterThan(0);
 
       // No imports and no inheritance => should classify as "reference"

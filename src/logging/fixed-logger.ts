@@ -3,8 +3,8 @@
  * Format: YYYYMMDD-HHmmss.mmm L PPPPP HHHHHHHH MODULE_______________ EVENT________________ kv...
  */
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "fs";
-import { join } from "path";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { getBuildHash, getPid } from "./build-info.js";
 import { kvError, kvOpEnd, kvOpStart } from "./kv-serializer.js";
 import { formatLogLine, formatLogLineColored } from "./log-formatter.js";
@@ -62,7 +62,7 @@ export class FixedLogger {
   private getLogFilePath(): string {
     const date = new Date();
     const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
-    return join(this.config.logDir, `ultrascript-${dateStr}.log`);
+    return join(this.config.logDir, `ultracode-${dateStr}.log`);
   }
 
   /**
@@ -112,7 +112,7 @@ export class FixedLogger {
     try {
       const todayStr = this.getTodayDateStr();
       const files = readdirSync(this.config.logDir)
-        .filter((f) => f.startsWith("ultrascript-") && f.endsWith(".log"))
+        .filter((f) => f.startsWith("ultracode-") && f.endsWith(".log"))
         .map((f) => {
           const filePath = join(this.config.logDir, f);
           try {

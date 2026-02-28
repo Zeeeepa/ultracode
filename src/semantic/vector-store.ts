@@ -197,7 +197,8 @@ export class VectorStore {
       if (this.useLayeredIndex) {
         // v6: Use singleton layered provider to ensure consistency across components
         // DevAgent/ParserAgent and SemanticAgent/VectorStore must use the same instance
-        this.layeredProvider = getLayeredFaissProvider();
+        // Pass dimensions so the FAISS index matches the embedding model
+        this.layeredProvider = getLayeredFaissProvider({ dimensions: this.config.dimensions });
 
         if (this.currentContext) {
           // Initialize with context if available
@@ -647,30 +648,30 @@ export class VectorStore {
             docCount: enrichedDocs.length,
           });
 
-          // Helper: определить вес refType
+          // Helper: determine refType weight
           const getRefTypeWeight = (refType: string): number => {
             const weights: Record<string, number> = {
-              describes: 1.0, // главная описываемая сущность
-              depends: 0.9, // зависимость
-              uses: 0.8, // использует
-              participates: 0.7, // участвует в сценарии
-              example: 0.6, // упомянут в примере
-              test: 0.5, // упомянут в тестах
+              describes: 1.0, // main described entity
+              depends: 0.9, // dependency
+              uses: 0.8, // uses
+              participates: 0.7, // participates in scenario
+              example: 0.6, // mentioned in example
+              test: 0.5, // mentioned in tests
             };
             return weights[refType] || 0.8;
           };
 
-          // Helper: определить вес секции по заголовку
+          // Helper: determine section weight by heading
           const getSectionWeight = (sectionTitle: string): number => {
             const lower = sectionTitle.toLowerCase();
             if (lower.includes("overview") || lower.includes("architecture")) return 1.0;
             if (lower.includes("implement") || lower.includes("usage")) return 0.9;
             if (lower.includes("example")) return 0.7;
             if (lower.includes("test")) return 0.6;
-            return 0.85; // default для неизвестных секций
+            return 0.85; // default for unknown sections
           };
 
-          // 1. Собрать entity references из всех найденных AutoDoc документов
+          // 1. Collect entity references from all found AutoDoc documents
           interface EntityRefInfo {
             docId: string;
             docSimilarity: number;
@@ -686,10 +687,10 @@ export class VectorStore {
             const doc = await adm.getDocument(docResult.id);
             if (!doc) continue;
 
-            // Получить все references из документа
+            // Get all references from the document
             const refs = await adm.getReferences(doc.filePath);
 
-            // Verbose logging для диагностики
+            // Verbose logging for diagnostics
             log.i("VECTOR", "autodoc_all_refs", {
               docId: docResult.id,
               totalRefs: refs.length,
@@ -698,7 +699,7 @@ export class VectorStore {
               refValid: refs.map((r: Reference) => r.valid),
             });
 
-            // TEMPORARY: также принимаем LINE_RANGE пока парсер не исправлен
+            // TEMPORARY: also accept LINE_RANGE until parser is fixed
             const entityRefs = refs.filter(
               (ref: Reference) =>
                 (ref.targetType === RefTargetType.ENTITY || ref.targetType === RefTargetType.LINE_RANGE) &&
@@ -713,18 +714,18 @@ export class VectorStore {
               sampleTargetIds: entityRefs.slice(0, 3).map((r: Reference) => r.targetId),
             });
 
-            // Подсчитать частоту упоминаний каждого entityId
+            // Count mention frequency of each entityId
             const mentionCounts = new Map<string, number>();
             for (const ref of entityRefs) {
               const id = ref.targetId!;
               mentionCounts.set(id, (mentionCounts.get(id) || 0) + 1);
             }
 
-            // Сохранить первое упоминание каждого entity
+            // Save the first mention of each entity
             for (const ref of entityRefs) {
               const entityId = ref.targetId!;
               if (!entityRefsFromDocs.has(entityId)) {
-                // Парсим section title (doc.section может быть null)
+                // Parse section title (doc.section may be null)
                 const sectionTitle = doc.section || "Overview";
 
                 entityRefsFromDocs.set(entityId, {
@@ -743,7 +744,7 @@ export class VectorStore {
             uniqueEntities: entityRefsFromDocs.size,
           });
 
-          // 2. Дедупликация с уже найденными entities
+          // 2. Deduplicate with already found entities
           const existingEntityIds = new Set<string>();
           for (const r of enrichedEntities) {
             const entityId = r.metadata?.["entityId"];
@@ -794,9 +795,9 @@ export class VectorStore {
               resolved: resolvedEntities.length,
             });
 
-            // 4. Создать enriched results для resolved entities
+            // 4. Create enriched results for resolved entities
             for (const { name: entityName, entity, refInfo } of resolvedEntities) {
-              // Вычислить динамический similarity на основе комбинации факторов
+              // Calculate dynamic similarity based on a combination of factors
               const refTypeWeight = getRefTypeWeight(refInfo.refType);
               const sectionWeight = getSectionWeight(refInfo.sectionTitle);
               const frequencyBoost = Math.min(1.0 + (refInfo.mentions - 1) * 0.05, 1.2);
@@ -829,7 +830,7 @@ export class VectorStore {
                   endLine: entity.location?.end?.line,
                   startColumn: entity.location?.start?.column,
                   endColumn: entity.location?.end?.column,
-                  // AutoDoc enrichment markers (internal only, не для пользователя)
+                  // AutoDoc enrichment markers (internal only, not for user)
                   foundVia: "autodoc",
                   sourceDoc: refInfo.docId,
                   sourceDocTitle: refInfo.docTitle,
@@ -849,7 +850,7 @@ export class VectorStore {
         }
       }
 
-      // Combine и sort по similarity
+      // Combine and sort by similarity
       const combined = [...enrichedEntities, ...enrichedDocs, ...autodocDerivedResults];
       combined.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
 

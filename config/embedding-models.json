@@ -20,10 +20,10 @@
     },
     "large_context": {
       "name": "Длинный контекст (8K)",
-      "description": "Для legacy проектов с методами 500+ строк. BGE-M3 — 8K контекст, 100+ языков.",
+      "description": "Для проектов с методами 500+ строк. BGE-M3 8K контекст, 100+ языков.",
       "tei": "bge-m3",
-      "ovms": "ovms-bge-m3",
       "vllm": "vllm-bge-m3",
+      "ovms": "ovms-bge-m3",
       "mlx": "mlx-bge-m3"
     },
     "multilingual": {
@@ -36,10 +36,10 @@
     },
     "frontier": {
       "name": "Максимальное качество (4096 dims)",
-      "description": "Для критичных проектов. E5-Mistral 7B — frontier качество, требует 16GB VRAM.",
-      "tei": "tei-multilingual-e5-base",
-      "ovms": "ovms-multilingual-e5-base",
-      "vllm": "vllm-e5-mistral-7b"
+      "description": "Для критичных проектов. E5-Mistral 7B — 4096 dims, 16GB VRAM.",
+      "vllm": "vllm-e5-mistral-7b",
+      "tei": "bge-m3",
+      "ovms": "ovms-multilingual-e5-base"
     },
     "gpu_optimized": {
       "name": "GPU-ускоренный (vLLM)",
@@ -68,7 +68,7 @@
     },
     "tei": {
       "name": "TEI (GPU Docker)",
-      "description": "HuggingFace Text Embeddings Inference\n🚀 1,169 emb/s (E5-small, Accumulator, RTX 5090)\n⚡ Peak 2,442 emb/s\n📄 До 8K контекст\n🐳 Требует Docker\n✅ RTX 50xx: image 120-latest (TEI 1.9.1+)",
+      "description": "HuggingFace Text Embeddings Inference\n🚀 1,169 emb/s (E5-small, Accumulator, RTX 5090)\n⚡ Peak 2,442 emb/s\n📄 До 8K контекст (BGE-M3)\n🐳 Требует Docker\n✅ RTX 50xx: image 120-latest (TEI 1.9.2+)",
       "requires": ["docker"],
       "optional": ["nvidia-gpu"],
       "default_port": 8081,
@@ -935,6 +935,10 @@
       "model": "ovms-minilm-int8",
       "reason": "510 chunks/s, gap 0.601. Если только английский код."
     },
+    "long_context_8k_vllm": {
+      "model": "vllm-bge-m3",
+      "reason": "🏆 BGE-M3 vLLM — 8K контекст, 100+ языков. fp16 GPU."
+    },
     "long_context_8k": {
       "model": "vllm-bge-m3",
       "reason": "🏆 BGE-M3 через vLLM! 8K контекст, 100+ языков."
@@ -951,9 +955,13 @@
       "model": "vllm-multilingual-e5-large",
       "reason": "🚀 vLLM GPU-ускоренный. 94 языка. OpenAI API. Быстрый batching."
     },
+    "code_search": {
+      "model": "vllm-jina-embeddings-v3",
+      "reason": "💻 Jina V3 — multi-task LoRA для кода, 8K контекст, 1024 dims. ~3GB VRAM."
+    },
     "vllm_frontier": {
       "model": "vllm-e5-mistral-7b",
-      "reason": "🚀 FRONTIER! E5-Mistral 7B. 4096 dims. Максимальное качество. 16GB VRAM."
+      "reason": "🚀 FRONTIER! E5-Mistral 7B. 4096 dims, максимальное качество. 16GB VRAM."
     },
     "vllm_8k_context": {
       "model": "vllm-bge-m3",

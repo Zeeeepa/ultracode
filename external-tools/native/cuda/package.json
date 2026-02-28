@@ -1,8 +1,8 @@
 {
-  "name": "ultrascript-cuda-addon",
+  "name": "ultracode-cuda-addon",
   "version": "1.0.0",
-  "description": "CUDA-accelerated vector operations for UltraScript Tools MCP",
-  "main": "../../dist/native/cuda/ultrascript_cuda.node",
+  "description": "CUDA-accelerated vector operations for UltraCode",
+  "main": "../../dist/native/cuda/ultracode_cuda.node",
   "scripts": {
     "build": "cmake-js compile",
     "clean": "cmake-js clean",

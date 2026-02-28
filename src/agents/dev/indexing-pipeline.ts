@@ -1,10 +1,10 @@
 /**
  * Indexing Pipeline - Modular phases for DevAgent indexing
  *
- * Разбивает огромную функцию performRealIndexing (876 строк, complexity 889)
- * на маленькие понятные фазы для улучшения читаемости и поддержки.
+ * Breaks the huge performRealIndexing function (876 lines, complexity 889)
+ * into small understandable phases for improved readability and maintainability.
  *
- * @see src/agents/dev-agent.ts - оригинальная функция performRealIndexing
+ * @see src/agents/dev-agent.ts - original performRealIndexing function
  */
 
 import { statSync } from "node:fs";
@@ -18,7 +18,7 @@ import { collectFilesAsync } from "./file-collector.js";
 // =============================================================================
 
 /**
- * Параметры индексации
+ * Indexing parameters
  */
 export interface IndexingOptions {
   directory: string;
@@ -28,7 +28,7 @@ export interface IndexingOptions {
 }
 
 /**
- * Контекст индексации (передаётся между фазами)
+ * Indexing context (passed between phases)
  */
 export interface IndexingContext {
   directory: string;
@@ -40,7 +40,7 @@ export interface IndexingContext {
 }
 
 /**
- * Результат анализа изменений
+ * Change analysis result
  */
 export interface ChangeAnalysis {
   changedFiles: string[];
@@ -50,7 +50,7 @@ export interface ChangeAnalysis {
 }
 
 /**
- * Результат индексации
+ * Indexing result
  */
 export interface IndexingResult {
   filesProcessed: number;
@@ -61,7 +61,7 @@ export interface IndexingResult {
 }
 
 /**
- * Результат сохранения в граф
+ * Graph save result
  */
 export interface SaveResult {
   entityCount: number;
@@ -69,7 +69,7 @@ export interface SaveResult {
 }
 
 /**
- * Результат генерации embeddings
+ * Embedding generation result
  */
 export interface EmbeddingResult {
   count: number;
@@ -77,14 +77,14 @@ export interface EmbeddingResult {
 }
 
 // =============================================================================
-// PHASE 1: ИНИЦИАЛИЗАЦИЯ
+// PHASE 1: INITIALIZATION
 // =============================================================================
 
 /**
- * Инициализация и валидация параметров индексации
+ * Initialize and validate indexing parameters
  *
- * @param options - Параметры индексации
- * @returns Контекст индексации
+ * @param options - Indexing parameters
+ * @returns Indexing context
  */
 export async function initializeIndexing(options: IndexingOptions): Promise<IndexingContext> {
   const { directory, excludePatterns = [], incremental = false, agentId } = options;
@@ -95,7 +95,7 @@ export async function initializeIndexing(options: IndexingOptions): Promise<Inde
     samplePatterns: excludePatterns.slice(0, 5),
   });
 
-  // Собрать файлы для индексации (async для использования Bun.Glob)
+  // Collect files for indexing (async for Bun.Glob usage)
   const collectResult = await collectFilesAsync(directory, { excludePatterns, agentId });
   const allFiles = collectResult.files;
 
@@ -112,14 +112,14 @@ export async function initializeIndexing(options: IndexingOptions): Promise<Inde
 }
 
 // =============================================================================
-// PHASE 2: АНАЛИЗ ИЗМЕНЕНИЙ (для инкрементальной индексации)
+// PHASE 2: CHANGE ANALYSIS (for incremental indexing)
 // =============================================================================
 
 /**
- * Определить изменённые, новые и удалённые файлы
+ * Detect changed, new, and deleted files
  *
- * @param context - Контекст индексации
- * @returns Анализ изменений или null если не инкрементальная индексация
+ * @param context - Indexing context
+ * @returns Change analysis or null if not incremental indexing
  */
 export async function detectChangedFiles(context: IndexingContext): Promise<ChangeAnalysis | null> {
   if (!context.isIncremental || context.allFiles.length === 0) {
@@ -130,7 +130,7 @@ export async function detectChangedFiles(context: IndexingContext): Promise<Chan
   const indexedFiles = await storage.getAllIndexedFiles();
 
   if (indexedFiles.size === 0) {
-    // Нет индексированных файлов - это первая индексация
+    // No indexed files - this is the first indexing
     return {
       changedFiles: [],
       newFiles: context.allFiles,
@@ -143,16 +143,16 @@ export async function detectChangedFiles(context: IndexingContext): Promise<Chan
   const newFiles: string[] = [];
   const unchangedFiles: string[] = [];
 
-  // Найти изменённые и новые файлы
+  // Find changed and new files
   for (const file of context.allFiles) {
     const normalizedPath = file.replace(/\\/g, "/");
     const lastIndexed = indexedFiles.get(normalizedPath);
 
     if (lastIndexed === undefined) {
-      // Новый файл
+      // New file
       newFiles.push(file);
     } else {
-      // Проверить изменение
+      // Check for modification
       try {
         const stats = statSync(file);
         const mtime = stats.mtimeMs;
@@ -162,13 +162,13 @@ export async function detectChangedFiles(context: IndexingContext): Promise<Chan
           unchangedFiles.push(file);
         }
       } catch {
-        // Не удалось получить stats, пропустить
+        // Failed to get stats, skip
         unchangedFiles.push(file);
       }
     }
   }
 
-  // Найти удалённые файлы (есть в индексе, но нет на диске)
+  // Find deleted files (exist in index but not on disk)
   const currentFilesSet = new Set(context.allFiles.map((file) => file.replace(/\\/g, "/")));
   const deletedFiles: string[] = [];
 
@@ -195,14 +195,14 @@ export async function detectChangedFiles(context: IndexingContext): Promise<Chan
 }
 
 // =============================================================================
-// PHASE 3: ОЧИСТКА УСТАРЕВШИХ ENTITIES
+// PHASE 3: CLEAN UP STALE ENTITIES
 // =============================================================================
 
 /**
- * Удалить entities для изменённых и удалённых файлов
+ * Delete entities for changed and deleted files
  *
- * @param filesToClean - Список файлов для очистки
- * @returns Массив ID удалённых entities
+ * @param filesToClean - List of files to clean
+ * @returns Array of deleted entity IDs
  */
 export async function cleanStaleEntities(filesToClean: string[]): Promise<string[]> {
   if (filesToClean.length === 0) {
@@ -239,26 +239,26 @@ export async function cleanStaleEntities(filesToClean: string[]): Promise<string
 }
 
 // =============================================================================
-// PHASE 4: ПРИМЕНИТЬ РЕЗУЛЬТАТЫ АНАЛИЗА
+// PHASE 4: APPLY ANALYSIS RESULTS
 // =============================================================================
 
 /**
- * Применить результаты анализа изменений к контексту
- * Обновляет список файлов для обработки и удаляет устаревшие entities
+ * Apply change analysis results to the context
+ * Updates the list of files to process and deletes stale entities
  *
- * @param context - Контекст индексации
- * @param analysis - Анализ изменений
- * @returns Обновлённый контекст
+ * @param context - Indexing context
+ * @param analysis - Change analysis
+ * @returns Updated context
  */
 export async function applyChangeAnalysis(
   context: IndexingContext,
   analysis: ChangeAnalysis,
 ): Promise<IndexingContext> {
-  // Удалить entities для изменённых и удалённых файлов
+  // Delete entities for changed and deleted files
   const filesToClean = [...analysis.changedFiles, ...analysis.deletedFiles];
   const deletedEntityIds = await cleanStaleEntities(filesToClean);
 
-  // Обновить список файлов для обработки (только изменённые и новые)
+  // Update file list for processing (only changed and new)
   const filesToProcess = [...analysis.changedFiles, ...analysis.newFiles];
 
   log.i("DEVAGENT", "Files to process after analysis", {
@@ -266,7 +266,7 @@ export async function applyChangeAnalysis(
     entitiesDeleted: deletedEntityIds.length,
   });
 
-  // Если нет файлов для обработки, вернуть пустой контекст
+  // If no files to process, return empty context
   if (filesToProcess.length === 0) {
     log.i("DEVAGENT", "No files changed, skipping indexing");
   }
@@ -279,11 +279,11 @@ export async function applyChangeAnalysis(
 }
 
 // =============================================================================
-// PHASE 5: РАЗДЕЛЕНИЕ ФАЙЛОВ
+// PHASE 5: FILE SEPARATION
 // =============================================================================
 
 /**
- * Результат разделения файлов
+ * File separation result
  */
 export interface FileSeparationResult {
   codeFiles: string[];
@@ -291,10 +291,10 @@ export interface FileSeparationResult {
 }
 
 /**
- * Разделить файлы на code и data по расширению
+ * Separate files into code and data by extension
  *
- * @param files - Список файлов
- * @returns Разделённые файлы
+ * @param files - List of files
+ * @returns Separated files
  */
 export function separateCodeAndDataFiles(files: string[]): FileSeparationResult {
   const codeFiles: string[] = [];
@@ -325,27 +325,138 @@ export function separateCodeAndDataFiles(files: string[]): FileSeparationResult 
 }
 
 // =============================================================================
+// PHASE 6: POST-INDEXING SWAGGER LINKING
+// =============================================================================
+
+/**
+ * Post-indexing step: Link swagger specifications to code entities.
+ * Should be called after all files are indexed.
+ * Creates PRODUCES_API, CONSUMES_API, GENERATED_FROM relationships.
+ *
+ * @returns Number of swagger relationships created, or 0 if no swagger entities found
+ */
+export async function resolveSwaggerLinks(): Promise<number> {
+  const storage = await getGraphStorage();
+
+  // Check if any swagger entities exist in the graph
+  const allEntities = await storage.getAllEntities();
+  const hasSwagger = allEntities.some((e) => e.metadata?.["swaggerType"]);
+
+  if (!hasSwagger) {
+    return 0; // No swagger entities — zero overhead for non-swagger projects
+  }
+
+  log.i("DEVAGENT", "swagger_link_start", { totalEntities: allEntities.length });
+
+  try {
+    // Dynamically import to avoid loading swagger module for non-swagger projects
+    const { analyzeSwaggerCodeLinks, buildSwaggerRelationships } = await import(
+      "../../parsers/swagger/swagger-code-linker.js"
+    );
+
+    // Analyze swagger↔code links
+    const analysis = analyzeSwaggerCodeLinks(allEntities);
+    const totalLinks = analysis.producers.length + analysis.consumers.length + analysis.generatedTypes.length;
+
+    if (totalLinks === 0) {
+      log.i("DEVAGENT", "swagger_link_none");
+      return 0;
+    }
+
+    // Build relationships
+    const swaggerRelationships = buildSwaggerRelationships(analysis);
+
+    // Store relationships in graph
+    const { nanoid } = await import("nanoid");
+    const relationships = swaggerRelationships.map((rel) => ({
+      id: nanoid(12),
+      fromId: `swagger:${rel.fromName}`,
+      toId: `swagger:${rel.toName}`,
+      type: rel.type,
+      metadata: {
+        ...rel.metadata,
+        fromFile: rel.fromFile,
+        toFile: rel.toFile,
+      },
+    }));
+
+    // Try to resolve fromId/toId to actual entity IDs
+    const entityByName = new Map<string, string>();
+    for (const e of allEntities) {
+      entityByName.set(e.name, e.id);
+      // Also map with file path for disambiguation
+      entityByName.set(`${e.filePath}:${e.name}`, e.id);
+    }
+
+    for (const rel of relationships) {
+      // Try to resolve swagger: prefixed IDs to real entity IDs
+      const fromName = rel.fromId.replace("swagger:", "");
+      const toName = rel.toId.replace("swagger:", "");
+
+      // Resolve with file path first, then by name
+      const fromFile = rel.metadata?.fromFile as string | undefined;
+      const toFile = rel.metadata?.toFile as string | undefined;
+
+      if (fromFile) {
+        const fileKey = `${fromFile}:${fromName}`;
+        if (entityByName.has(fileKey)) {
+          rel.fromId = entityByName.get(fileKey)!;
+        }
+      }
+      if (!rel.fromId.startsWith("swagger:") === false && entityByName.has(fromName)) {
+        rel.fromId = entityByName.get(fromName)!;
+      }
+
+      if (toFile) {
+        const fileKey = `${toFile}:${toName}`;
+        if (entityByName.has(fileKey)) {
+          rel.toId = entityByName.get(fileKey)!;
+        }
+      }
+      if (!rel.toId.startsWith("swagger:") === false && entityByName.has(toName)) {
+        rel.toId = entityByName.get(toName)!;
+      }
+    }
+
+    const result = await storage.insertRelationships(relationships);
+
+    log.i("DEVAGENT", "swagger_link_done", {
+      producers: analysis.producers.length,
+      consumers: analysis.consumers.length,
+      generatedTypes: analysis.generatedTypes.length,
+      relationshipsCreated: result.processed,
+      configs: analysis.codegenConfigs,
+    });
+
+    return result.processed;
+  } catch (error) {
+    log.w("DEVAGENT", "swagger_link_error", { error: (error as Error).message });
+    return 0;
+  }
+}
+
+// =============================================================================
 // UTILITIES
 // =============================================================================
 
 /**
- * Проверить, нужна ли инкрементальная индексация
+ * Check if incremental indexing is needed
  *
- * @param context - Контекст индексации
- * @returns true если инкрементальная индексация применима
+ * @param context - Indexing context
+ * @returns true if incremental indexing is applicable
  */
 export function shouldUseIncrementalMode(context: IndexingContext): boolean {
   return context.isIncremental && context.allFiles.length > 0;
 }
 
 /**
- * Построить результат индексации
+ * Build indexing result
  *
- * @param context - Контекст индексации
- * @param filesProcessed - Количество обработанных файлов
- * @param totalEntities - Количество извлечённых entities
- * @param totalRelationships - Количество созданных relationships
- * @returns Результат индексации
+ * @param context - Indexing context
+ * @param filesProcessed - Number of processed files
+ * @param totalEntities - Number of extracted entities
+ * @param totalRelationships - Number of created relationships
+ * @returns Indexing result
  */
 export function buildIndexingResult(
   context: IndexingContext,

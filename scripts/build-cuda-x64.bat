@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM UltraScript Tools - CUDA Build Script (x64 Environment)
+REM UltraCode - CUDA Build Script (x64 Environment)
 REM
 REM Builds CUDA addon with Blackwell (sm_120) support.
 REM Run from any terminal - it will configure everything automatically.
@@ -10,7 +10,7 @@ setlocal enabledelayedexpansion
 
 echo.
 echo ============================================================================
-echo   UltraScript Tools - CUDA Native Library Builder
+echo   UltraCode - CUDA Native Library Builder
 echo   Supports: GTX 1650 Ti (7.5) to RTX 5090 Blackwell (12.0)
 echo ============================================================================
 echo.
@@ -151,14 +151,14 @@ echo Copying output...
 
 if not exist "!OUTPUT_DIR!" mkdir "!OUTPUT_DIR!"
 
-if exist "build\Release\ultrascript_cuda.node" (
-    copy /y "build\Release\ultrascript_cuda.node" "!OUTPUT_DIR!\"
+if exist "build\Release\ultracode_cuda.node" (
+    copy /y "build\Release\ultracode_cuda.node" "!OUTPUT_DIR!\"
     echo.
-    echo SUCCESS: Built !OUTPUT_DIR!\ultrascript_cuda.node
-) else if exist "build\ultrascript_cuda.node" (
-    copy /y "build\ultrascript_cuda.node" "!OUTPUT_DIR!\"
+    echo SUCCESS: Built !OUTPUT_DIR!\ultracode_cuda.node
+) else if exist "build\ultracode_cuda.node" (
+    copy /y "build\ultracode_cuda.node" "!OUTPUT_DIR!\"
     echo.
-    echo SUCCESS: Built !OUTPUT_DIR!\ultrascript_cuda.node
+    echo SUCCESS: Built !OUTPUT_DIR!\ultracode_cuda.node
 ) else (
     echo.
     echo WARNING: Output file not found

@@ -12,6 +12,7 @@
  */
 
 import { execSync, spawn } from "node:child_process";
+import { basename } from "node:path";
 import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 
@@ -270,7 +271,7 @@ export class BashNativeParser {
         location: this.getLocationFromIndex(content, match.index),
         importData: {
           source,
-          specifiers: [{ local: source.split("/").pop() || source }],
+          specifiers: [{ local: basename(source) || source }],
         },
       });
     }

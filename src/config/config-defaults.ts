@@ -37,7 +37,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
   },
   database: {
-    path: "", // Empty = use centralized storage (AppData/UltraScriptTools/projects/<hash>/)
+    path: "", // Empty = use centralized storage (AppData/UltraCode/projects/<hash>/)
     mode: "WAL",
     cacheSize: 10000,
     mmapSize: 268435456, // 256MB
@@ -89,7 +89,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     evictionStrategy: "LRU",
     cleanupIntervalMs: 3600000, // 1 hour
     incrementalThreshold: 20, // If >20 files changed, do full reindex
-    dataDir: "", // Empty = use centralized storage (AppData/UltraScriptTools/projects/<hash>/branches/)
+    dataDir: "", // Empty = use centralized storage (AppData/UltraCode/projects/<hash>/branches/)
     autoIndex: false, // Disabled: tree-sitter parsing blocks UI 25+ sec. Use `index` command.
     autoIndexExtensions: [
       ".ts",

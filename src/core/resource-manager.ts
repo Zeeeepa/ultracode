@@ -1,6 +1,11 @@
 /**
- * Resource Manager for commodity hardware optimization
- * Monitors and manages CPU, memory, and I/O resources
+ * Resource Manager — monitors and manages CPU, memory, and I/O resources
+ * for commodity hardware optimization.
+ *
+ * Rewritten with simplified internals:
+ *  - Ring buffer implemented via fixed-size array with write cursor (no shift())
+ *  - Unified pressure evaluation with hysteresis
+ *  - Map-based allocation registry (retained from original)
  */
 
 import { EventEmitter } from "node:events";
@@ -9,12 +14,16 @@ import { log } from "../logging/index.js";
 import type { ResourceConstraints } from "../types/agent.js";
 import { knowledgeBus } from "./knowledge-bus.js";
 
-// Event-driven architecture: resource monitoring uses setInterval for Node.js, disabled for Bun
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Check if running in Bun */
+const MB = 1048576;
+const toMB = (bytes: number): number => Math.round(bytes / MB);
+
 function isBunRuntime(): boolean {
   return typeof globalThis.Bun !== "undefined";
 }
+
+// ─── Exported Interfaces ─────────────────────────────────────────────────────
 
 export interface ResourceSnapshot {
   timestamp: number;
@@ -42,39 +51,108 @@ export interface ResourceAllocation {
   priority: number;
 }
 
+// ─── Ring Buffer ─────────────────────────────────────────────────────────────
+
+/**
+ * Fixed-capacity ring buffer that avoids Array.shift() overhead.
+ * Oldest entries are silently overwritten when capacity is reached.
+ */
+class SnapshotRing {
+  private buf: (ResourceSnapshot | undefined)[];
+  private head = 0; // next write position
+  private len = 0;
+
+  constructor(private readonly capacity: number) {
+    this.buf = new Array<ResourceSnapshot | undefined>(capacity);
+  }
+
+  push(snap: ResourceSnapshot): void {
+    this.buf[this.head] = snap;
+    this.head = (this.head + 1) % this.capacity;
+    if (this.len < this.capacity) this.len++;
+  }
+
+  /** Return the most recently pushed snapshot, or null. */
+  latest(): ResourceSnapshot | null {
+    if (this.len === 0) return null;
+    const idx = (this.head - 1 + this.capacity) % this.capacity;
+    return this.buf[idx]!;
+  }
+
+  /**
+   * Return snapshots with timestamp >= cutoff, ordered oldest-first.
+   * Uses binary search on the logical (unwrapped) array.
+   */
+  since(cutoffMs: number): ResourceSnapshot[] {
+    if (this.len === 0) return [];
+
+    // Build a logical view: oldest element is at logical index 0
+    const start = this.len < this.capacity ? 0 : this.head; // oldest physical index
+
+    // Binary search for first index where timestamp >= cutoff
+    let lo = 0;
+    let hi = this.len;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      const physIdx = (start + mid) % this.capacity;
+      if (this.buf[physIdx]!.timestamp < cutoffMs) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+
+    // Collect from lo..len
+    const result: ResourceSnapshot[] = [];
+    for (let i = lo; i < this.len; i++) {
+      result.push(this.buf[(start + i) % this.capacity]!);
+    }
+    return result;
+  }
+
+  get size(): number {
+    return this.len;
+  }
+}
+
+// ─── Resource Manager ────────────────────────────────────────────────────────
+
 export class ResourceManager extends EventEmitter {
+  // Constraints
   private constraints: ResourceConstraints;
-  private allocations: Map<string, ResourceAllocation> = new Map();
-  private snapshots: ResourceSnapshot[] = [];
-  private maxSnapshots = 60; // Keep 1 minute of history at 1 second intervals
-  private monitoringRunning = false;
 
-  // Adaptive monitoring state
-  private adaptiveMonitoringInterval = 1000; // Start with 1 second
-  private readonly MIN_MONITORING_INTERVAL = 1000; // Minimum 1 second
-  private readonly MAX_MONITORING_INTERVAL = 10000; // Maximum 10 seconds
+  // Allocations
+  private allocations = new Map<string, ResourceAllocation>();
 
-  // Throttling state
-  private isThrottled = false;
-  private throttleThreshold = 0.8; // Throttle at 80% resource usage
+  // Monitoring
+  private snapshots: SnapshotRing;
+  private monitoring = false;
+  private tickTimer?: ReturnType<typeof setInterval>;
+
+  // Adaptive polling
+  private pollingIntervalMs = 1000;
+  private static readonly POLL_FLOOR = 1000;
+  private static readonly POLL_CEILING = 10_000;
+
+  // Throttle
+  private throttled = false;
+  private readonly throttleThreshold = 0.8; // 80%
 
   constructor(constraints?: ResourceConstraints) {
     super();
 
-    // Default constraints - scale generously based on system memory
-    // OpenVINO and embedding generation need significant memory
-    const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
-    const defaultMemoryMB = Math.min(
-      Math.max(4096, Math.floor(totalMemoryGB * 512)), // 50% of system memory
-      16384, // Cap at 16GB
-    );
+    const systemMemGB = os.totalmem() / (1024 * 1024 * 1024);
+    const cpuCount = os.cpus().length;
+    const autoMemoryMB = Math.min(Math.max(4096, Math.floor(systemMemGB * 512)), 16384);
 
-    this.constraints = constraints || {
-      maxMemoryMB: defaultMemoryMB,
-      maxCpuPercent: 95, // Allow higher CPU usage
-      maxConcurrentAgents: Math.min(20, os.cpus().length * 3), // Scale with CPU cores
+    this.constraints = constraints ?? {
+      maxMemoryMB: autoMemoryMB,
+      maxCpuPercent: 95,
+      maxConcurrentAgents: Math.min(20, cpuCount * 3),
       maxTaskQueueSize: 200,
     };
+
+    this.snapshots = new SnapshotRing(60);
 
     log.i("RESOURCEMGR", "init", {
       memMB: this.constraints.maxMemoryMB,
@@ -82,199 +160,120 @@ export class ResourceManager extends EventEmitter {
     });
   }
 
-  /** Timer handle for Node.js setInterval */
-  private monitoringTimer?: ReturnType<typeof setInterval> | undefined;
+  // ─── Monitoring ──────────────────────────────────────────────────────────
 
-  /**
-   * Start adaptive resource monitoring
-   * Event-driven: uses setInterval for Node.js, disabled for Bun
-   */
+  /** Start adaptive resource monitoring. Disabled under Bun runtime. */
   startMonitoring(): void {
-    if (this.monitoringRunning) return;
-    this.monitoringRunning = true;
+    if (this.monitoring) return;
+    this.monitoring = true;
     this.emit("monitoring:started");
 
-    // For Bun: skip monitoring loop to avoid CPU spinning
     if (isBunRuntime()) return;
 
-    // For Node.js: use setInterval with adaptive interval
-    const runMonitoringCycle = () => {
-      if (!this.monitoringRunning) return;
-
-      this.captureSnapshot();
-      const pressure = this.checkResourcePressure();
-
-      // Adapt monitoring frequency based on resource pressure
-      if (pressure > 0.8) {
-        this.adaptiveMonitoringInterval = this.MIN_MONITORING_INTERVAL;
-      } else if (pressure < 0.3) {
-        this.adaptiveMonitoringInterval = Math.min(this.MAX_MONITORING_INTERVAL, this.adaptiveMonitoringInterval * 1.5);
-      } else {
-        this.adaptiveMonitoringInterval = 2000;
-      }
-    };
-
-    // Run initial capture
-    runMonitoringCycle();
-
-    // Use setInterval with base interval (adaptive logic inside callback)
-    this.monitoringTimer = setInterval(runMonitoringCycle, 2000); // Check every 2 seconds
+    this.tick();
+    this.tickTimer = setInterval(() => this.tick(), 2000);
   }
 
-  /**
-   * Stop resource monitoring
-   */
+  /** Stop resource monitoring and reset polling interval. */
   stopMonitoring(): void {
-    if (this.monitoringRunning) {
-      this.monitoringRunning = false;
-      this.adaptiveMonitoringInterval = 1000;
+    if (!this.monitoring) return;
+    this.monitoring = false;
+    this.pollingIntervalMs = 1000;
 
-      // Clear timer
-      if (this.monitoringTimer) {
-        clearInterval(this.monitoringTimer);
-        this.monitoringTimer = undefined;
-      }
-
-      this.emit("monitoring:stopped");
+    if (this.tickTimer) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = undefined;
     }
+
+    this.emit("monitoring:stopped");
   }
 
-  /**
-   * Request resource allocation for an agent
-   */
-  requestAllocation(agentId: string, memoryMB: number, cpuPercent: number, priority = 5): boolean {
-    const currentTotal = this.getTotalAllocated();
+  // ─── Allocation ──────────────────────────────────────────────────────────
 
-    // Check if allocation would exceed constraints
-    if (currentTotal.memory + memoryMB > this.constraints.maxMemoryMB) {
+  /** Request resource allocation for an agent. Returns true on success. */
+  requestAllocation(agentId: string, memoryMB: number, cpuPercent: number, priority = 5): boolean {
+    const totals = this.sumAllocated();
+
+    if (totals.memory + memoryMB > this.constraints.maxMemoryMB) {
       this.emit("allocation:denied", {
         agentId,
         reason: "memory_exceeded",
         requested: memoryMB,
-        available: this.constraints.maxMemoryMB - currentTotal.memory,
+        available: this.constraints.maxMemoryMB - totals.memory,
       });
       return false;
     }
 
-    if (currentTotal.cpu + cpuPercent > this.constraints.maxCpuPercent) {
+    if (totals.cpu + cpuPercent > this.constraints.maxCpuPercent) {
       this.emit("allocation:denied", {
         agentId,
         reason: "cpu_exceeded",
         requested: cpuPercent,
-        available: this.constraints.maxCpuPercent - currentTotal.cpu,
+        available: this.constraints.maxCpuPercent - totals.cpu,
       });
       return false;
     }
 
-    // Grant allocation
-    this.allocations.set(agentId, {
-      agentId,
-      memoryMB,
-      cpuPercent,
-      priority,
-    });
-
+    this.allocations.set(agentId, { agentId, memoryMB, cpuPercent, priority });
     this.emit("allocation:granted", { agentId, memoryMB, cpuPercent });
     return true;
   }
 
-  /**
-   * Release resources allocated to an agent
-   */
+  /** Release resources allocated to an agent. */
   releaseAllocation(agentId: string): void {
-    if (this.allocations.has(agentId)) {
-      const allocation = this.allocations.get(agentId)!;
+    const existing = this.allocations.get(agentId);
+    if (existing) {
       this.allocations.delete(agentId);
-      this.emit("allocation:released", allocation);
+      this.emit("allocation:released", existing);
     }
   }
 
-  /**
-   * Get current resource usage
-   */
+  // ─── Queries ─────────────────────────────────────────────────────────────
+
+  /** Get the most recent resource snapshot, or null if none recorded yet. */
   getCurrentUsage(): ResourceSnapshot | null {
-    return this.snapshots[this.snapshots.length - 1] || null;
+    return this.snapshots.latest();
   }
 
   /**
-   * Get resource usage history
-   * O(log n) binary search instead of O(n) filter (snapshots are sorted by timestamp)
+   * Get resource usage history for the last N seconds.
+   * O(log n) binary search on the internal ring buffer.
    */
   getHistory(seconds = 60): ResourceSnapshot[] {
-    const cutoff = Date.now() - seconds * 1000;
-    const snapshots = this.snapshots;
-
-    // Binary search for first index where timestamp >= cutoff
-    let left = 0;
-    let right = snapshots.length;
-
-    while (left < right) {
-      const mid = (left + right) >>> 1;
-      // Safe access: mid is always < right <= length, and left <= mid
-      if (snapshots[mid]!.timestamp < cutoff) {
-        left = mid + 1;
-      } else {
-        right = mid;
-      }
-    }
-
-    // Return slice from found index to end
-    return snapshots.slice(left);
+    return this.snapshots.since(Date.now() - seconds * 1000);
   }
 
-  /**
-   * Check if system should be throttled
-   */
+  /** Check if system should be throttled. */
   isSystemThrottled(): boolean {
-    return this.isThrottled;
+    return this.throttled;
   }
 
-  /**
-   * Get available resources
-   */
-  getAvailableResources(): {
-    memoryMB: number;
-    cpuPercent: number;
-  } {
-    const allocated = this.getTotalAllocated();
+  /** Get remaining available resources after all current allocations. */
+  getAvailableResources(): { memoryMB: number; cpuPercent: number } {
+    const totals = this.sumAllocated();
     return {
-      memoryMB: Math.max(0, this.constraints.maxMemoryMB - allocated.memory),
-      cpuPercent: Math.max(0, this.constraints.maxCpuPercent - allocated.cpu),
+      memoryMB: Math.max(0, this.constraints.maxMemoryMB - totals.memory),
+      cpuPercent: Math.max(0, this.constraints.maxCpuPercent - totals.cpu),
     };
   }
 
   /**
-   * Suggest optimal allocation for a new agent
+   * Suggest optimal allocation for a new agent based on priority (0-10).
+   * Returns null if insufficient resources remain.
    */
-  suggestAllocation(priority: number): {
-    memoryMB: number;
-    cpuPercent: number;
-  } | null {
-    const available = this.getAvailableResources();
+  suggestAllocation(priority: number): { memoryMB: number; cpuPercent: number } | null {
+    const avail = this.getAvailableResources();
 
-    if (available.memoryMB < 50 || available.cpuPercent < 5) {
-      return null; // Not enough resources
-    }
+    if (avail.memoryMB < 50 || avail.cpuPercent < 5) return null;
 
-    // Allocate based on priority (0-10 scale)
-    const memoryFactor = priority / 10;
-    const cpuFactor = priority / 10;
-
+    const factor = priority / 10;
     return {
-      memoryMB: Math.min(
-        Math.floor(available.memoryMB * memoryFactor * 0.5), // Use up to 50% of available
-        256, // Cap at 256MB per agent
-      ),
-      cpuPercent: Math.min(
-        Math.floor(available.cpuPercent * cpuFactor * 0.5), // Use up to 50% of available
-        25, // Cap at 25% per agent
-      ),
+      memoryMB: Math.min(Math.floor(avail.memoryMB * factor * 0.5), 256),
+      cpuPercent: Math.min(Math.floor(avail.cpuPercent * factor * 0.5), 25),
     };
   }
 
-  /**
-   * Force garbage collection if available
-   */
+  /** Force garbage collection if the --expose-gc flag is active. */
   requestGarbageCollection(): void {
     if (global.gc) {
       log.i("RESOURCEMGR", "gc_forced");
@@ -285,175 +284,140 @@ export class ResourceManager extends EventEmitter {
     }
   }
 
-  // Private methods
+  /** Adjust resource constraints for large codebases. */
+  adjustForCodebaseSize(fileCount: number, projectSizeMB: number): void {
+    let memLimit = this.constraints.maxMemoryMB;
+    let agentLimit = this.constraints.maxConcurrentAgents;
 
+    if (fileCount > 10_000) {
+      memLimit = Math.min(this.constraints.maxMemoryMB * 3, 16384);
+      agentLimit = 2;
+      log.i("RESOURCEMGR", "xlarge_codebase", { files: fileCount, memMB: memLimit, agents: agentLimit });
+    } else if (fileCount > 5000) {
+      memLimit = Math.min(this.constraints.maxMemoryMB * 2, 12288);
+      agentLimit = Math.max(4, Math.floor(agentLimit / 2));
+      log.i("RESOURCEMGR", "vlarge_codebase", { files: fileCount, memMB: memLimit, agents: agentLimit });
+    } else if (fileCount > 2000) {
+      memLimit = Math.min(this.constraints.maxMemoryMB * 1.5, 8192);
+      log.i("RESOURCEMGR", "large_codebase", { files: fileCount, memMB: memLimit });
+    }
+
+    this.constraints.maxMemoryMB = memLimit;
+    this.constraints.maxConcurrentAgents = agentLimit;
+
+    const payload = { fileCount, projectSizeMB, newMemoryLimit: memLimit, newAgentLimit: agentLimit };
+    this.emit("resources:adjusted", payload);
+    knowledgeBus.publish("resources:adjusted", payload, "resource-manager", 60_000);
+  }
+
+  /** Get a shallow copy of current resource constraints. */
+  getConstraints(): ResourceConstraints {
+    return { ...this.constraints };
+  }
+
+  // ─── Internals ───────────────────────────────────────────────────────────
+
+  /** Single monitoring tick: capture snapshot, evaluate pressure, adapt interval. */
+  private tick(): void {
+    if (!this.monitoring) return;
+
+    this.captureSnapshot();
+    const pressure = this.evaluatePressure();
+
+    // Adapt polling frequency
+    if (pressure > 0.8) {
+      this.pollingIntervalMs = ResourceManager.POLL_FLOOR;
+    } else if (pressure < 0.3) {
+      this.pollingIntervalMs = Math.min(ResourceManager.POLL_CEILING, Math.round(this.pollingIntervalMs * 1.5));
+    } else {
+      this.pollingIntervalMs = 2000;
+    }
+  }
+
+  /** Capture a system resource snapshot and push it into the ring buffer. */
   private captureSnapshot(): void {
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
+    const totalBytes = os.totalmem();
+    const freeBytes = os.freemem();
+    const usedBytes = totalBytes - freeBytes;
+    const cores = os.cpus().length;
 
-    const snapshot: ResourceSnapshot = {
+    const snap: ResourceSnapshot = {
       timestamp: Date.now(),
       memory: {
-        total: Math.round(totalMem / 1024 / 1024),
-        used: Math.round(usedMem / 1024 / 1024),
-        free: Math.round(freeMem / 1024 / 1024),
-        percentage: (usedMem / totalMem) * 100,
+        total: toMB(totalBytes),
+        used: toMB(usedBytes),
+        free: toMB(freeBytes),
+        percentage: (usedBytes / totalBytes) * 100,
       },
       cpu: {
-        cores: os.cpus().length,
-        usage: this.calculateCpuUsage(),
+        cores,
+        usage: this.estimateCpuUsage(),
         loadAverage: os.loadavg(),
       },
       io: {
-        pendingReads: 0, // Would need actual I/O monitoring
+        pendingReads: 0,
         pendingWrites: 0,
       },
     };
 
-    this.snapshots.push(snapshot);
-
-    // Maintain snapshot limit
-    if (this.snapshots.length > this.maxSnapshots) {
-      this.snapshots.shift();
-    }
-
-    this.emit("snapshot:captured", snapshot);
+    this.snapshots.push(snap);
+    this.emit("snapshot:captured", snap);
   }
 
-  private calculateCpuUsage(): number {
-    // Simplified CPU usage calculation
-    // In production, would track actual CPU time
-    // Guard load average as it may return [0,0,0] or be unsupported in some envs
-    const loadAvgArr = os.loadavg();
-    const loadAvg = Array.isArray(loadAvgArr) && typeof loadAvgArr[0] === "number" ? loadAvgArr[0] : 0;
+  /** Derive approximate CPU usage from 1-minute load average. */
+  private estimateCpuUsage(): number {
+    const avg = os.loadavg();
+    const oneMin = Array.isArray(avg) && typeof avg[0] === "number" ? avg[0] : 0;
     const cores = os.cpus().length || 1;
-    return Math.min(100, (loadAvg / cores) * 100);
+    return Math.min(100, (oneMin / cores) * 100);
   }
 
   /**
-   * Check resource pressure and return normalized value (0-1)
-   * Returns the maximum pressure from memory and CPU usage
+   * Evaluate combined resource pressure (0..1).
+   * Manages throttle state transitions and emits critical-level warnings.
    */
-  private checkResourcePressure(): number {
-    const current = this.getCurrentUsage();
-    if (!current) return 0;
+  private evaluatePressure(): number {
+    const latest = this.getCurrentUsage();
+    if (!latest) return 0;
 
-    // Calculate normalized pressure (0-1)
-    const memoryPressureValue = current.memory.percentage / 100;
-    const cpuPressureValue = current.cpu.usage / 100;
-    const pressure = Math.max(memoryPressureValue, cpuPressureValue);
+    const memPressure = latest.memory.percentage / 100;
+    const cpuPressure = latest.cpu.usage / 100;
+    const pressure = Math.max(memPressure, cpuPressure);
 
-    // Check if we should throttle
-    const memoryPressure = current.memory.percentage > this.throttleThreshold * 100;
-    const cpuPressure = current.cpu.usage > this.throttleThreshold * 100;
+    const thresholdPct = this.throttleThreshold * 100;
+    const memOver = latest.memory.percentage > thresholdPct;
+    const cpuOver = latest.cpu.usage > thresholdPct;
+    const shouldThrottle = memOver || cpuOver;
 
-    const wasThrottled = this.isThrottled;
-    this.isThrottled = memoryPressure || cpuPressure;
-
-    if (this.isThrottled && !wasThrottled) {
-      log.w("RESOURCEMGR", "throttle_on", { mem: memoryPressure, cpu: cpuPressure });
-      this.emit("throttle:enabled", { memory: memoryPressure, cpu: cpuPressure });
-
-      // Try to free up memory
-      if (memoryPressure) {
-        this.requestGarbageCollection();
-      }
-    } else if (!this.isThrottled && wasThrottled) {
+    if (shouldThrottle && !this.throttled) {
+      this.throttled = true;
+      log.w("RESOURCEMGR", "throttle_on", { mem: memOver, cpu: cpuOver });
+      this.emit("throttle:enabled", { memory: memOver, cpu: cpuOver });
+      if (memOver) this.requestGarbageCollection();
+    } else if (!shouldThrottle && this.throttled) {
+      this.throttled = false;
       log.i("RESOURCEMGR", "throttle_off");
       this.emit("throttle:disabled");
     }
 
-    // Emit warnings for critical levels
-    if (current.memory.percentage > 90) {
-      this.emit("memory:critical", current.memory);
-    }
-
-    if (current.cpu.usage > 90) {
-      this.emit("cpu:critical", current.cpu);
-    }
+    if (latest.memory.percentage > 90) this.emit("memory:critical", latest.memory);
+    if (latest.cpu.usage > 90) this.emit("cpu:critical", latest.cpu);
 
     return pressure;
   }
 
-  private getTotalAllocated(): { memory: number; cpu: number } {
-    let totalMemory = 0;
-    let totalCpu = 0;
-
-    for (const allocation of this.allocations.values()) {
-      totalMemory += allocation.memoryMB;
-      totalCpu += allocation.cpuPercent;
+  /** Sum all current allocations. */
+  private sumAllocated(): { memory: number; cpu: number } {
+    let memory = 0;
+    let cpu = 0;
+    for (const alloc of this.allocations.values()) {
+      memory += alloc.memoryMB;
+      cpu += alloc.cpuPercent;
     }
-
-    return { memory: totalMemory, cpu: totalCpu };
-  }
-
-  /**
-   * Adjust resources based on codebase size for large projects
-   */
-  adjustForCodebaseSize(fileCount: number, projectSizeMB: number): void {
-    let adjustedMemoryMB = this.constraints.maxMemoryMB;
-    let adjustedConcurrentAgents = this.constraints.maxConcurrentAgents;
-
-    // Large codebase (>2000 files) adjustments
-    if (fileCount > 2000) {
-      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 1.5, 8192); // Increase by 50%, cap at 8GB
-      log.i("RESOURCEMGR", "large_codebase", { files: fileCount, memMB: adjustedMemoryMB });
-    }
-
-    // Very large codebase (>5000 files) adjustments
-    if (fileCount > 5000) {
-      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 2, 12288); // Double memory, cap at 12GB
-      adjustedConcurrentAgents = Math.max(4, Math.floor(adjustedConcurrentAgents / 2)); // Keep some concurrency
-      log.i("RESOURCEMGR", "vlarge_codebase", {
-        files: fileCount,
-        memMB: adjustedMemoryMB,
-        agents: adjustedConcurrentAgents,
-      });
-    }
-
-    // Extremely large codebase (>10000 files) adjustments
-    if (fileCount > 10000) {
-      adjustedMemoryMB = Math.min(this.constraints.maxMemoryMB * 3, 16384); // Triple memory, cap at 16GB
-      adjustedConcurrentAgents = 2; // Minimum 2 agents for stability
-      log.i("RESOURCEMGR", "xlarge_codebase", {
-        files: fileCount,
-        memMB: adjustedMemoryMB,
-        agents: adjustedConcurrentAgents,
-      });
-    }
-
-    // Apply adjustments
-    this.constraints.maxMemoryMB = adjustedMemoryMB;
-    this.constraints.maxConcurrentAgents = adjustedConcurrentAgents;
-
-    this.emit("resources:adjusted", {
-      fileCount,
-      projectSizeMB,
-      newMemoryLimit: adjustedMemoryMB,
-      newAgentLimit: adjustedConcurrentAgents,
-    });
-
-    knowledgeBus.publish(
-      "resources:adjusted",
-      {
-        fileCount,
-        projectSizeMB,
-        newMemoryLimit: adjustedMemoryMB,
-        newAgentLimit: adjustedConcurrentAgents,
-      },
-      "resource-manager",
-      60000,
-    );
-  }
-
-  /**
-   * Get current resource constraints
-   */
-  getConstraints(): ResourceConstraints {
-    return { ...this.constraints };
+    return { memory, cpu };
   }
 }
 
-// Singleton instance
+// ─── Singleton ───────────────────────────────────────────────────────────────
+
 export const resourceManager = new ResourceManager();

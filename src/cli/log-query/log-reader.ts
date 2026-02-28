@@ -3,9 +3,9 @@
  * Reads log files line by line and applies filters
  */
 
-import { createReadStream, existsSync, readdirSync, statSync, watch } from "fs";
-import { join } from "path";
-import { createInterface } from "readline";
+import { createReadStream, existsSync, readdirSync, statSync, watch } from "node:fs";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { extractFields, formatLogLineColored, parseLogLine } from "../../logging/log-formatter.js";
 import type { LogLevelChar, ParsedLogLine } from "../../logging/log-types.js";
 import { LOG_LEVEL_NAMES } from "../../logging/log-types.js";
@@ -130,16 +130,16 @@ export function getDefaultLogDir(): string {
   if (process.platform === "win32") {
     const localAppData = process.env["LOCALAPPDATA"];
     if (localAppData) {
-      return join(localAppData, "UltraScriptTools", "logs");
+      return join(localAppData, "UltraCode", "logs");
     }
   }
   const xdgData = process.env["XDG_DATA_HOME"];
   if (xdgData) {
-    return join(xdgData, "UltraScriptTools", "logs");
+    return join(xdgData, "UltraCode", "logs");
   }
   const home = process.env["HOME"];
   if (home) {
-    return join(home, ".local", "share", "UltraScriptTools", "logs");
+    return join(home, ".local", "share", "UltraCode", "logs");
   }
   return join(process.cwd(), "logs");
 }
@@ -147,7 +147,7 @@ export function getDefaultLogDir(): string {
 /**
  * Find log files in directory
  * @param dir - Directory to search
- * @param type - 'main' for ultrascript logs, 'worker' for worker logs, 'all' for both
+ * @param type - 'main' for ultracode logs, 'worker' for worker logs, 'all' for both
  */
 export function findLogFiles(dir: string, type: "main" | "worker" | "all" = "main"): string[] {
   if (!existsSync(dir)) return [];
@@ -156,9 +156,9 @@ export function findLogFiles(dir: string, type: "main" | "worker" | "all" = "mai
     const files = readdirSync(dir)
       .filter((f) => {
         if (!f.endsWith(".log")) return false;
-        if (type === "main") return f.startsWith("ultrascript-");
+        if (type === "main") return f.startsWith("ultracode-");
         if (type === "worker") return f.startsWith("worker-");
-        return f.startsWith("ultrascript-") || f.startsWith("worker-");
+        return f.startsWith("ultracode-") || f.startsWith("worker-");
       })
       .map((f) => join(dir, f))
       .sort((a, b) => {
@@ -301,7 +301,7 @@ export function collectEmbeddingSessions(entries: ParsedLogLine[]): EmbeddingSes
           timestamp: e.timestamp,
           total: Number(e.kv["total"]) || 0,
           durationMs: durationMs || 0,
-          speedPerSec: parseInt(String(e.kv["speed"]).replace("/s", "")) || 0,
+          speedPerSec: parseInt(String(e.kv["speed"]).replace("/s", ""), 10) || 0,
           workers: Number(e.kv["workers"]) || 0,
           batches: Number(e.kv["batches"]) || 0,
           provider: e.kv["provider"] ? String(e.kv["provider"]) : undefined,

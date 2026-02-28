@@ -10,17 +10,17 @@
  */
 
 import { type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
-import { extname, join, relative } from "node:path";
+import { basename, extname, join, relative } from "node:path";
 import fg from "fast-glob";
 import { log } from "../../logging/index.js";
 import { isBunRuntime } from "../../utils/runtime.js";
 import { isCodeExtension, isDataExtension, SUPPORTED_DATA_EXTENSIONS } from "./file-extensions.js";
 
 /** Name of the ignore file */
-const IGNORE_FILE_NAME = ".ultrascriptignore";
+const IGNORE_FILE_NAME = ".ultracodeignore";
 
 /**
- * Load patterns from .ultrascriptignore file if it exists
+ * Load patterns from .ultracodeignore file if it exists
  * Supports gitignore-style syntax:
  * - Lines starting with # are comments
  * - Empty lines are ignored
@@ -201,7 +201,7 @@ async function collectFilesWithBunGlob(
 
   for await (const relativePath of glob.scan({ cwd: directory, onlyFiles: true, ignore: ignorePatterns })) {
     const fullPath = join(directory, relativePath);
-    const fileName = relativePath.split("/").pop() || relativePath;
+    const fileName = basename(relativePath);
 
     // Double-check exclude patterns (in case Bun.Glob ignore doesn't match all)
     if (shouldExclude(fullPath, excludePatterns)) {
@@ -294,7 +294,7 @@ function collectFilesWithNodeFs(
 export function collectFiles(directory: string, options: CollectFilesOptions): CollectFilesResult {
   const { excludePatterns: baseExcludePatterns } = options;
 
-  // Load project-specific ignore patterns from .ultrascriptignore
+  // Load project-specific ignore patterns from .ultracodeignore
   const ignorePatterns = loadIgnoreFile(directory);
   const excludePatterns = [...baseExcludePatterns, ...ignorePatterns];
 
@@ -390,7 +390,7 @@ async function collectFilesWithFastGlob(
 
   // Filter to supported file types only
   for (const fullPath of allFiles) {
-    const fileName = fullPath.split(/[/\\]/).pop() || "";
+    const fileName = basename(fullPath);
     if (isSupportedFile(fileName)) {
       files.push(fullPath);
     }
@@ -413,7 +413,7 @@ async function collectFilesWithFastGlob(
 export async function collectFilesAsync(directory: string, options: CollectFilesOptions): Promise<CollectFilesResult> {
   const { excludePatterns: baseExcludePatterns } = options;
 
-  // Load project-specific ignore patterns from .ultrascriptignore
+  // Load project-specific ignore patterns from .ultracodeignore
   const ignorePatterns = loadIgnoreFile(directory);
   const excludePatterns = [...baseExcludePatterns, ...ignorePatterns];
 

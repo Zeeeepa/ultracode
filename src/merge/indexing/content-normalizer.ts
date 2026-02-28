@@ -2,43 +2,43 @@ import { hashText } from "../../utils/fast-hash.js";
 import { readBytes } from "../../utils/file-ops.js";
 
 /**
- * Нормализует файлы перед сравнением: encoding, BOM, line endings.
+ * Normalizes files before comparison: encoding, BOM, line endings.
  *
- * КРИТИЧНО для корректного Fast Path matching:
- * - Одинаковые файлы должны давать одинаковый contentHash
- * - Различия в encoding/BOM/line endings не должны создавать false negatives
+ * CRITICAL for correct Fast Path matching:
+ * - Identical files must produce the same contentHash
+ * - Differences in encoding/BOM/line endings must not create false negatives
  *
- * Основано на ContentNormalizer из SharpToolsMCP.
+ * Based on ContentNormalizer from SharpToolsMCP.
  */
 export class ContentNormalizer {
   /**
-   * Нормализовать файл.
+   * Normalize a file.
    *
    * @param filePath - Absolute path to file
    * @returns Normalized content with metadata
    */
   async normalize(filePath: string): Promise<NormalizedContent> {
-    // 1. Прочитать raw bytes using optimized file-ops
+    // 1. Read raw bytes using optimized file-ops
     const rawBytes = Buffer.from(await readBytes(filePath));
 
-    // 2. Определить encoding и BOM
+    // 2. Detect encoding and BOM
     const { encoding, hasBom } = this.detectEncoding(rawBytes);
 
-    // 3. Декодировать в string
+    // 3. Decode to string
     let content = rawBytes.toString(encoding);
 
-    // 4. Удалить BOM если есть (U+FEFF at start)
+    // 4. Remove BOM if present (U+FEFF at start)
     if (hasBom && content.charCodeAt(0) === 0xfeff) {
       content = content.slice(1);
     }
 
-    // 5. Нормализовать line endings: CRLF/CR → LF
+    // 5. Normalize line endings: CRLF/CR → LF
     content = this.normalizeLineEndings(content);
 
-    // 6. Trim trailing whitespace на каждой строке
+    // 6. Trim trailing whitespace on each line
     content = this.trimTrailingWhitespace(content);
 
-    // 7. Удалить trailing empty lines в конце файла
+    // 7. Remove trailing empty lines at end of file
     content = content.replace(/\n+$/, "\n");
 
     return {
@@ -49,9 +49,9 @@ export class ContentNormalizer {
   }
 
   /**
-   * Вычислить SHA256 hash контента.
+   * Compute SHA256 hash of content.
    *
-   * Используется для Fast Path Level 1 matching (exact content match).
+   * Used for Fast Path Level 1 matching (exact content match).
    *
    * @param content - Normalized content string
    * @returns Hex-encoded SHA256 hash
@@ -61,7 +61,7 @@ export class ContentNormalizer {
   }
 
   /**
-   * Определить encoding через BOM detection.
+   * Detect encoding via BOM detection.
    *
    * @param bytes - Raw file bytes
    * @returns Detected encoding and BOM presence
@@ -88,7 +88,7 @@ export class ContentNormalizer {
   }
 
   /**
-   * Нормализовать line endings (CRLF/CR → LF).
+   * Normalize line endings (CRLF/CR → LF).
    *
    * @param content - Content with potentially mixed line endings
    * @returns Content with Unix-style LF line endings
@@ -102,7 +102,7 @@ export class ContentNormalizer {
   }
 
   /**
-   * Удалить trailing whitespace на каждой строке.
+   * Remove trailing whitespace on each line.
    *
    * @param content - Content to trim
    * @returns Content with trimmed lines
@@ -116,7 +116,7 @@ export class ContentNormalizer {
 }
 
 /**
- * Результат нормализации файла.
+ * File normalization result.
  */
 export interface NormalizedContent {
   content: string; // Normalized content (UTF-8, LF, no BOM)

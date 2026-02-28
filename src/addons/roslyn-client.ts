@@ -1,7 +1,7 @@
 /**
- * RoslynAddonClient — manages a C# Ultrasharp.Addon subprocess for Roslyn analysis.
+ * RoslynAddonClient — manages a C# UltraCode.CSharp subprocess for Roslyn analysis.
  *
- * Spawns: `dotnet exec <path>/Ultrasharp.Addon.dll --pipe <name> --parent-pid <pid>`
+ * Spawns: `dotnet exec <path>/UltraCode.CSharp.dll --pipe <name> --parent-pid <pid>`
  * Connects via Named Pipe with binary framing (compatible with ipc-protocol.ts).
  *
  * Pattern from: gpu-client.ts (subprocess management)
@@ -27,7 +27,7 @@ import {
 // ============================================================================
 
 export interface RoslynClientOptions {
-  /** Path to Ultrasharp.Addon.dll */
+  /** Path to UltraCode.CSharp.dll */
   addonPath?: string;
   /** Path to .sln for eager loading */
   slnPath?: string;
@@ -52,20 +52,20 @@ export type DiagnosticsHandler = (data: unknown) => void;
 // Addon Discovery
 // ============================================================================
 
-const ADDON_DLL_NAME = "Ultrasharp.Addon.dll";
+const ADDON_DLL_NAME = "UltraCode.CSharp.dll";
 
 /** Find addon DLL in known locations */
 function findAddonPath(): string | null {
   const thisDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    // Built alongside ultrascript dist
+    // Built alongside ultracode dist (produced by build-roslyn scripts)
     join(thisDir, "..", "roslyn-addon", ADDON_DLL_NAME),
-    // External libs
+    // External libs fallback
     join(process.cwd(), "external-libs", "roslyn-addon", ADDON_DLL_NAME),
-    // Development: ultrasharp-tools-mcp build output
-    resolve(process.cwd(), "..", "ultrasharp-tools-mcp", "Run.Publish", "Addon", ADDON_DLL_NAME),
-    // Development: Droid/Addon bundled
-    resolve(process.cwd(), "..", "ultrasharp-tools-mcp", "Run.Publish", "Droid", "Addon", ADDON_DLL_NAME),
+    // Development: local dotnet build output
+    resolve(process.cwd(), "roslyn", "UltraCode.CSharp", "bin", "Release", "net10.0", ADDON_DLL_NAME),
+    // Development: dist/roslyn-addon from build pipeline
+    resolve(process.cwd(), "dist", "roslyn-addon", ADDON_DLL_NAME),
   ];
 
   for (const candidate of candidates) {
@@ -105,7 +105,7 @@ export class RoslynAddonClient {
   }
 
   constructor(options: RoslynClientOptions = {}) {
-    this._pipeName = `UltraScript_Roslyn_${randomUUID().slice(0, 8)}`;
+    this._pipeName = `UltraCode_Roslyn_${randomUUID().slice(0, 8)}`;
     this._options = {
       addonPath: options.addonPath || findAddonPath() || "",
       slnPath: options.slnPath || "",

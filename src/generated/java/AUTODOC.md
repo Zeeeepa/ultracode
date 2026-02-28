@@ -1,29 +1,32 @@
-# Модуль Java
+---
+module_name: java
+description: "ANTLR-generated lexer and parser for Java 20 syntax analysis"
+status: generated
+language: typescript
+---
 
-## Описание
+# Java
 
-Модуль Java предоставляет функциональность для работы с синтаксическим анализом и парсингом кода на языке Java с использованием ANTLR. Включает генерируемые файлы лексера и парсера для Java 20, а также слушатели и посетители для обработки синтаксических деревьев.
+> ANTLR-generated lexer, parser, listener, and visitor for parsing Java 20 source code into syntax trees.
 
-## Файлы
+## Overview
 
-| Файл | Описание |
-|------|----------|
-| `index.ts` | Главный файл модуля, экспортирующий необходимые компоненты для работы с Java-парсером |
-| `Java20Lexer.ts` | Генерируемый лексер для языка Java 20, разбирающий входной текст на токены |
-| `Java20Parser.ts` | Генерируемый парсер для языка Java 20, строящий синтаксическое дерево из токенов |
-| `Java20ParserListener.ts` | Интерфейс слушателя для обработки событий при обходе синтаксического дерева парсера |
-| `Java20ParserVisitor.ts` | Интерфейс посетителя для обхода синтаксического дерева с возможностью возврата значений |
+Provides the full ANTLR toolchain output for Java 20 grammar, enabling tokenization and AST construction of Java source files. Used internally by the code analysis pipeline.
 
-## Экспорты
+## Exports
 
-Модуль не предоставляет публичных экспортов. Все компоненты предназначены для внутреннего использования и используются только внутри модуля.
 
-## Использование
 
-Данный модуль предназначен для внутреннего использования в системах анализа Java-кода и не требует прямого взаимодействия с пользователем. Пример использования:
+## Files
 
-```typescript
-// Внутреннее использование в рамках проекта
-import { Java20Parser } from './java';
-// Используется для парсинга Java-кода
-```
+| File | Description |
+|------|-------------|
+| `index.ts` | Re-exports parser components for internal consumption |
+| `Java20Lexer.ts` | Generated lexer that tokenizes Java 20 source code |
+| `Java20Lexer.interp` | ANTLR interpreter data for the Java 20 lexer |
+| `Java20Lexer.tokens` | Token vocabulary definitions for the lexer |
+| `Java20Parser.ts` | Generated parser that builds syntax trees from tokens |
+| `Java20Parser.interp` | ANTLR interpreter data for the Java 20 parser |
+| `Java20Parser.tokens` | Token vocabulary definitions for the parser |
+| `Java20ParserListener.ts` | Listener interface for syntax tree traversal events |
+| `Java20ParserVisitor.ts` | Visitor interface for syntax tree traversal with return values |

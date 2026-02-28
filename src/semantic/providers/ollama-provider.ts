@@ -2,10 +2,7 @@ import { toError } from "../../utils/error-handling.js";
 import { stringify } from "../../utils/fast-json.js";
 import type { EmbeddingProvider, EmbedOptions, ProviderCapabilities, ProviderInfo, ProviderLogger } from "./base.js";
 
-/**
- * Ollama API response type
- */
-interface OllamaEmbeddingResponse {
+interface OllamaEmbedResponse {
   embedding: number[];
   model?: string;
 }
@@ -23,71 +20,71 @@ export interface OllamaOptions {
   logger?: ProviderLogger;
 }
 
+function maxTokensFor(model: string): number {
+  return model.includes("arctic") ? 8192 : 512;
+}
+
+function seemsMissing(msg: string, model: string): boolean {
+  const lc = msg.toLowerCase();
+  return (
+    lc.includes("model not found") ||
+    lc.includes("no such model") ||
+    (lc.includes("not found") && lc.includes(model.toLowerCase()))
+  );
+}
+
 export class OllamaProvider implements EmbeddingProvider {
-  public info: ProviderInfo;
-  private baseUrl: string;
-  private timeoutMs: number;
-  private pullTimeoutMs: number;
-  private concurrency: number;
-  private headers: Record<string, string>;
-  private opts: Required<Pick<OllamaOptions, "autoPull" | "warmupText" | "checkServer">>;
-  private log?: ProviderLogger | undefined;
+  info: ProviderInfo;
 
-  constructor(opts: OllamaOptions) {
-    this.log = opts.logger;
-    this.baseUrl = opts.baseUrl ?? "http://127.0.0.1:11434";
-    this.timeoutMs = opts.timeoutMs ?? 10_000;
-    this.pullTimeoutMs = opts.pullTimeoutMs ?? 120_000;
-    this.concurrency = Math.max(1, opts.concurrency ?? 8); // Higher concurrency for throughput
-    this.headers = {
-      "Content-Type": "application/json",
-      ...(opts.headers ?? {}),
-    };
-    this.opts = {
-      autoPull: opts.autoPull !== false,
-      warmupText: opts.warmupText ?? "warm up",
-      checkServer: opts.checkServer !== false,
-    };
+  private readonly origin: string;
+  private readonly timeout: number;
+  private readonly pullTimeout: number;
+  private readonly concurrency: number;
+  private readonly hdrs: Record<string, string>;
+  private readonly pull: boolean;
+  private readonly warmText: string;
+  private readonly probe: boolean;
+  private readonly log?: ProviderLogger | undefined;
 
-    // Determine maxTokens based on model
-    // snowflake-arctic-embed2 supports 8192, most others 512
-    const maxTokens = opts.model.includes("arctic") ? 8192 : 512;
-
+  constructor(o: OllamaOptions) {
+    this.origin = o.baseUrl ?? "http://127.0.0.1:11434";
+    this.timeout = o.timeoutMs ?? 10_000;
+    this.pullTimeout = o.pullTimeoutMs ?? 120_000;
+    this.concurrency = Math.max(1, o.concurrency ?? 8);
+    this.pull = o.autoPull !== false;
+    this.warmText = o.warmupText ?? "warm up";
+    this.probe = o.checkServer !== false;
+    this.log = o.logger;
+    this.hdrs = { "Content-Type": "application/json", ...(o.headers ?? {}) };
     this.info = {
       name: "ollama",
-      model: opts.model,
+      model: o.model,
       supportsBatch: false,
-      maxTokens,
+      maxTokens: maxTokensFor(o.model),
     };
   }
 
   async initialize(): Promise<void> {
     this.log?.info("initialize", {
       model: this.info.model,
-      baseUrl: this.baseUrl,
-      timeoutMs: this.timeoutMs,
+      baseUrl: this.origin,
+      timeoutMs: this.timeout,
       concurrency: this.concurrency,
     });
-
-    if (this.opts.checkServer) {
-      await this.checkServerAvailability();
-    }
+    if (this.probe) await this.checkReachable();
     try {
-      const vec = await this.embed(this.opts.warmupText);
-      this.info.dimension = vec.length;
-      this.log?.info("initialized", { dimension: this.info.dimension });
-    } catch (error: unknown) {
-      const err = toError(error);
-      if (this.opts.autoPull && this.isModelMissingError(err)) {
+      await this.doWarmup();
+    } catch (raw: unknown) {
+      const e = toError(raw);
+      if (this.pull && seemsMissing(e.message, this.info.model)) {
         this.log?.info("model not found, pulling", { model: this.info.model });
         await this.pullModel();
-        const vec = await this.embed(this.opts.warmupText);
-        this.info.dimension = vec.length;
+        await this.doWarmup();
         this.log?.info("initialized after pull", { dimension: this.info.dimension });
         return;
       }
-      this.log?.error("initialize failed", { error: err.message }, undefined, err);
-      throw err;
+      this.log?.error("initialize failed", { error: e.message }, undefined, e);
+      throw e;
     }
   }
 
@@ -95,101 +92,79 @@ export class OllamaProvider implements EmbeddingProvider {
     return this.info.dimension;
   }
 
-  private isModelMissingError(err: Error): boolean {
-    const msg = err.message.toLowerCase();
-    return (
-      msg.includes("model not found") ||
-      msg.includes("no such model") ||
-      (msg.includes("not found") && msg.includes(this.info.model.toLowerCase()))
-    );
-  }
-
-  private async checkServerAvailability(): Promise<void> {
-    // Use AbortSignal.timeout() for Bun compatibility (no setTimeout)
-    const signal = AbortSignal.timeout(Math.min(this.timeoutMs, 5000));
-    try {
-      const res = await fetch(`${this.baseUrl}/api/version`, { method: "GET", signal });
-      if (!res.ok) {
-        const tags = await fetch(`${this.baseUrl}/api/tags`, { method: "GET", signal }).catch(() => null);
-        if (!tags || !tags.ok) {
-          throw new Error(`Ollama server is not reachable: HTTP ${res.status}`);
-        }
-      }
-    } catch (e) {
-      throw new Error(`Ollama server check failed: ${(e as Error).message}`);
-    }
-  }
-
-  private async pullModel(): Promise<void> {
-    // Use AbortSignal.timeout() for Bun compatibility (no setTimeout)
-    const signal = AbortSignal.timeout(this.pullTimeoutMs);
-    try {
-      const res = await fetch(`${this.baseUrl}/api/pull`, {
-        method: "POST",
-        headers: this.headers,
-        body: stringify.ollamaPull({ name: this.info.model }),
-        signal,
-      });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(`Ollama pull failed HTTP ${res.status}: ${body}`);
-      }
-
-      const reader = res.body?.getReader?.();
-      if (reader) {
-        while (true) {
-          const { done } = await reader.read();
-          if (done) break;
-        }
-      } else {
-        await res.arrayBuffer().catch(() => undefined);
-      }
-    } catch (e) {
-      throw new Error(`Ollama pull error: ${(e as Error).message}`);
-    }
+  getCapabilities(): ProviderCapabilities {
+    return { embeddings: true, rerank: false, score: false, classify: false };
   }
 
   async embed(text: string, opts?: EmbedOptions): Promise<Float32Array> {
     this.log?.debug("embed()", { len: text?.length }, opts?.requestId);
-
-    // Use AbortSignal.timeout() for Bun compatibility (no setTimeout)
-    const res = await fetch(`${this.baseUrl}/api/embeddings`, {
+    const sig = opts?.signal ?? AbortSignal.timeout(this.timeout);
+    const res = await fetch(`${this.origin}/api/embeddings`, {
       method: "POST",
-      headers: this.headers,
+      headers: this.hdrs,
       body: stringify.ollamaEmbedding({ model: this.info.model, prompt: text }),
-      signal: opts?.signal ?? AbortSignal.timeout(this.timeoutMs),
+      signal: sig,
     });
-
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Ollama HTTP ${res.status}: ${body}`);
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Ollama HTTP ${res.status}: ${detail}`);
     }
-
-    const json = (await res.json()) as OllamaEmbeddingResponse;
+    const json = (await res.json()) as OllamaEmbedResponse;
     if (!json || !Array.isArray(json.embedding)) {
       throw new Error("Ollama invalid response: missing embedding array");
     }
-
-    const arr = new Float32Array(json.embedding);
-    this.info.dimension = this.info.dimension ?? arr.length;
-    return arr;
+    const vec = new Float32Array(json.embedding);
+    this.info.dimension ??= vec.length;
+    return vec;
   }
 
   async embedBatch(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
     this.log?.debug("embedBatch()", { count: texts.length }, opts?.requestId);
-
-    const pLimit = (await import("p-limit")).default;
-    const limit = pLimit(this.concurrency);
-    return Promise.all(texts.map((t) => limit(() => this.embed(t, opts))));
+    const { default: pLimit } = await import("p-limit");
+    const gate = pLimit(this.concurrency);
+    return Promise.all(texts.map((t) => gate(() => this.embed(t, opts))));
   }
 
-  getCapabilities(): ProviderCapabilities {
-    return {
-      embeddings: true,
-      rerank: false,
-      score: false,
-      classify: false,
-    };
+  private async doWarmup(): Promise<void> {
+    const vec = await this.embed(this.warmText);
+    this.info.dimension = vec.length;
+    this.log?.info("initialized", { dimension: this.info.dimension });
+  }
+
+  private async checkReachable(): Promise<void> {
+    const tmo = Math.min(this.timeout, 5000);
+    const sig = AbortSignal.timeout(tmo);
+    for (const ep of ["/api/version", "/api/tags"]) {
+      try {
+        const r = await fetch(`${this.origin}${ep}`, { method: "GET", signal: sig });
+        if (r.ok) return;
+      } catch {
+        /* next endpoint */
+      }
+    }
+    throw new Error(`Ollama server is not reachable at ${this.origin}`);
+  }
+
+  private async pullModel(): Promise<void> {
+    const sig = AbortSignal.timeout(this.pullTimeout);
+    const res = await fetch(`${this.origin}/api/pull`, {
+      method: "POST",
+      headers: this.hdrs,
+      body: stringify.ollamaPull({ name: this.info.model }),
+      signal: sig,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Ollama pull failed HTTP ${res.status}: ${body}`);
+    }
+    const reader = res.body?.getReader?.();
+    if (reader) {
+      for (;;) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } else {
+      await res.arrayBuffer().catch(() => undefined);
+    }
   }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Setup script for UltraScript.Comm build environment
+# Setup script for UltraCode.Comm build environment
 # Downloads and installs cosmocc (Cosmopolitan C Compiler)
 
 $ErrorActionPreference = "Stop"
@@ -93,7 +93,7 @@ function Add-ToPathPermanent {
 
 # Main
 Write-Host ""
-Write-Host "=== UltraScript.Comm Setup ===" -ForegroundColor Magenta
+Write-Host "=== UltraCode.Comm Setup ===" -ForegroundColor Magenta
 Write-Host ""
 
 # Check existing installation

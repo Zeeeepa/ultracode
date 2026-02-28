@@ -1,82 +1,139 @@
+---
+module_name: schemas
+description: "Zod validation schemas for all MCP tool input parameters"
+status: active
+language: typescript
+---
+
 # Schemas
 
-*Last updated: 2026-01-25*
+> Centralized Zod validation schemas defining the input parameter contracts for all MCP tools, organized by functional domain.
 
-Модуль содержит схемы валидации Zod для всех инструментов MCP.
+## Overview
+
+The schemas module contains all Zod schema definitions that validate and type-check input arguments for MCP tool handlers. Schemas are organized by domain: analysis, autodoc, entity, graph, history, index, merge, modification, semantic, snapshot, and validation. Each schema defines required and optional parameters with descriptions, defaults, and constraints. The central `index.ts` re-exports all schemas for convenient consumption by the tool registry.
+
+## Data Flow
+
+- **Inputs:** Raw `unknown` arguments from MCP protocol requests.
+- **Processing:** Zod schema parsing with validation, type coercion, and default value application.
+- **Outputs:** Typed argument objects consumed by tool handlers.
+
+## Public API
+
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `AnalyzeHotspotsSchema` | const | Hotspot analysis with historical metrics options | [`analysis-schemas.ts:44-57`](./analysis-schemas.ts) |
+| `AnalyzeStateChaosSchema` | const | State chaos and race condition analysis params | [`analysis-schemas.ts:53-53`](./analysis-schemas.ts) |
+| `JscpdCloneDetectionSchema` | const | Duplicate code detection parameters | [`analysis-schemas.ts:8-8`](./analysis-schemas.ts) |
+| `AutoDocGenerateSchema` | const | LLM documentation generation parameters | [`autodoc-schemas.ts:61-87`](./autodoc-schemas.ts) |
+| `IndexToolSchema` | const | Project indexing with exclude patterns | [`index-schemas.ts:54-60`](./index-schemas.ts) |
+| `SemanticSearchSchema` | const | Natural language semantic search | [`semantic-schemas.ts:8-13`](./semantic-schemas.ts) |
+| `AnalyzeCodeImpactSchema` | const | Code change impact analysis | [`semantic-schemas.ts:22-37`](./semantic-schemas.ts) |
+| `ModifyEntityCodeSchema` | const | Entity code modification params | [`modification-schemas.ts:8-15`](./modification-schemas.ts) |
+| `RenameSymbolSchema` | const | Symbol rename with reference updates | [`modification-schemas.ts:55-62`](./modification-schemas.ts) |
+| `SemanticMergeSchema` | const | Semantic branch merge with conflict resolution | [`merge-schemas.ts:8-21`](./merge-schemas.ts) |
+| `ValidateFileSchema` | const | Single file syntax validation | [`validation-schemas.ts:8-18`](./validation-schemas.ts) |
+| `GetEntityHistorySchema` | const | Entity change history via Prolly Tree | [`history-schemas.ts:8-11`](./history-schemas.ts) |
+| `DEFAULT_EXCLUDE_PATTERNS` | const | Default file exclusion patterns for indexing | [`index-schemas.ts:9-60`](./index-schemas.ts) |
+
+## Dependencies
+
+### Internal Modules
+
+| Module | Purpose |
+|--------|---------|
+| (none) | Schemas are self-contained with no internal dependencies |
+
+### External Packages
+
+| Package | Purpose |
+|---------|---------|
+| `zod` | Schema definition and validation |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Total schemas | 60+ validation schemas |
+| Schema groups | 12 domain files (analysis, autodoc, entity, graph, history, index, merge, modification, semantic, snapshot, validation) |
+| Validation approach | Zod parse with descriptive error messages |
+
+## Error Handling
+
+Invalid inputs produce Zod validation errors with field-level messages describing what was expected. All schemas use `.describe()` for self-documenting parameters visible in MCP tool listings.
+
+## Known Limitations
+
+- Schemas validate structure only; semantic validation (e.g., file existence) is handled by handlers.
+- No runtime schema composition; each tool has a standalone schema definition.
 
 ## Exports
 
-| Name | Type | Description | Location |
-|------|------|-------------|----------|
-| `JscpdCloneDetectionSchema` | const | Валидация параметров поиска дублирующегося кода в проекте | [→ analysis-schemas.ts:8-24] |
-| `SuggestRefactoringSchema` | const | Валидация входных данных для анализа возможностей рефакторинга | [→ analysis-schemas.ts:26-33] |
-| `AnalyzeHotspotsSchema` | const | Валидация параметров анализа критических точек в коде. Поддерживает `includeHistoricalMetrics` (boolean, default: true) и `lookbackDays` (number, default: 30) для расчёта changeFrequency через Prolly Tree/Git | [→ analysis-schemas.ts:44-57] |
-| `AnalyzeStateChaosSchema` | const | Валидация настроек анализа состояния и его влияния | [→ analysis-schemas.ts:53-67] |
-| `AutoDocInitSchema` | const | Валидация инициализации системы автоматической документации | [→ autodoc-schemas.ts:8-12] |
-| `AutoDocSaveSchema` | const | Валидация сохранения документов в markdown-формате | [→ autodoc-schemas.ts:14-22] |
-| `AutoDocGetSchema` | const | Валидация получения документов по ID или пути файла | [→ autodoc-schemas.ts:24-27] |
-| `AutoDocSearchSchema` | const | Валидация поиска документации текстом или семантикой | [→ autodoc-schemas.ts:24-27] |
-| `AutoDocValidateSchema` | const | Валидация проверки ссылок в документации | [→ autodoc-schemas.ts:39-42] |
-| `AutoDocStatusSchema` | const | Валидация запроса статуса автодокументации без параметров | [→ autodoc-schemas.ts:44] |
-| `AutoDocSyncSchema` | const | Валидация синхронизации документов между диском и базой | [→ autodoc-schemas.ts:39-42] |
-| `AutoDocGenerateSchema` | const | Валидация генерации документации с помощью LLM | [→ autodoc-schemas.ts:61-87] |
-| `AutoDocChangelogSchema` | const | Валидация получения истории изменений документации | [→ autodoc-schemas.ts:89-93] |
-| `AutoDocInstallHooksSchema` | const | Валидация установки/удаления git-хуков документации | [→ autodoc-schemas.ts:95-101] |
-| `AutoDocDetectLanguageSchema` | const | Валидация определения языка документации автоматически | [→ autodoc-schemas.ts:103-110] |
-| `ListEntitiesToolSchema` | const | Валидация получения списка сущностей из файла | [→ entity-schemas.ts:9-13] |
-| `ListRelationshipsToolSchema` | const | Валидация получения связей между сущностями проекта | [→ entity-schemas.ts:9-13] |
-| `QueryToolSchema` | const | Валидация естественного языкового запроса к графу знаний | [→ entity-schemas.ts:29-34] |
-| `GetGraphSchema` | const | Валидация получения сущностей из графа с поиском | [→ graph-schemas.ts:9-13] |
-| `GetGraphStatsSchema` | const | Валидация получения статистики графа знаний без параметров | [→ graph-schemas.ts:15] |
-| `GetGraphHealthSchema` | const | Валидация проверки здоровья графа кода | [→ graph-schemas.ts:9-13] |
-| `GetBusStatsSchema` | const | Валидация получения статистики шины знаний без параметров | [→ graph-schemas.ts:19] |
-| `ClearBusTopicSchema` | const | Валидация очистки тематического раздела шины знаний | [→ graph-schemas.ts:15-17] |
-| `DEFAULT_EXCLUDE_PATTERNS` | const | Стандартные паттерны исключения файлов при индексировании | [→ index-schemas.ts:9-60] |
-| `IndexToolSchema` | const | Валидация параметров индексирования директорий проекта | [→ index-schemas.ts:54-60] |
-| `CleanIndexSchema` | const | Валидация очистки и переиндексирования графа знаний | [→ index-schemas.ts:62-66] |
-| `GetAgentMetricsSchema` | const | Валидация получения метрик работы агентов без параметров | [→ index-schemas.ts:68] |
-| `SemanticMergeSchema` | const | Валидация семантического слияния веток с разрешением конфликтов | [→ merge-schemas.ts:8-21] |
-| `AnalyzeMergeConflictsSchema` | const | Валидация анализа конфликтов между двумя ветками | [→ merge-schemas.ts:23-26] |
-| `GetMergeSuggestionsSchema` | const | Валидация получения AI-рекомендаций по разрешению конфликтов | [→ merge-schemas.ts:23-26] |
-| `GetSemanticMergeInfoSchema` | const | Валидация получения информации о слиянии без параметров | [→ merge-schemas.ts:34] |
-| `ModifyEntityCodeSchema` | const | Валидация изменения кода отдельной сущности проекта | [→ modification-schemas.ts:8-15] |
-| `CopyFileSchema` | const | Валидация копирования файлов или директорий проекта | [→ modification-schemas.ts:17-22] |
-| `RenameFileSchema` | const | Валидация переименования файла с обновлением импортов | [→ modification-schemas.ts:24-30] |
-| `SplitFileSchema` | const | Валидация разделения файла на несколько отдельных файлов | [→ modification-schemas.ts:32-37] |
-| `SynthesizeFilesSchema` | const | Валидация объединения нескольких файлов в один файл | [→ modification-schemas.ts:39-45] |
-| `CreateFileSchema` | const | Валидация создания нового файла с содержимым | [→ modification-schemas.ts:47-53] |
-| `RenameSymbolSchema` | const | Валидация переименования переменной или функции в коде | [→ modification-schemas.ts:55-62] |
-| `AddMemberSchema` | const | Валидация добавления нового метода или свойства в класс | [→ modification-schemas.ts:64-72] |
-| `SemanticSearchSchema` | const | Валидация семантического поиска на естественном языке | [→ semantic-schemas.ts:8-13] |
-| `FindSimilarCodeSchema` | const | Валидация поиска аналогичного кода по фрагменту | [→ semantic-schemas.ts:15-20] |
-| `AnalyzeCodeImpactSchema` | const | Валидация анализа влияния изменений на остальной код | [→ semantic-schemas.ts:22-37] |
-| `DetectCodeClonesSchema` | const | Валидация обнаружения семантически похожих блоков кода | [→ semantic-schemas.ts:33-36] |
-| `FindRelatedConceptsSchema` | const | Валидация поиска связанных с сущностью концепций | [→ semantic-schemas.ts:33-36] |
-| `CrossLanguageSearchSchema` | const | Валидация поиска кода в нескольких языках программирования | [→ semantic-schemas.ts:33-36] |
-| `PatternSearchSchema` | const | Валидация поиска по регулярным выражениям и шаблонам | [→ semantic-schemas.ts:33-36] |
-| `CreateSnapshotSchema` | const | Валидация создания снимка состояния кода в момент времени | [→ snapshot-schemas.ts:8-11] |
-| `RollbackSnapshotSchema` | const | Валидация отката кода к предыдущему снимку состояния | [→ snapshot-schemas.ts:8-11] |
-| `ListSnapshotsSchema` | const | Валидация получения списка доступных снимков состояния | [→ snapshot-schemas.ts:8-11] |
-| `CleanupSnapshotsSchema` | const | Валидация удаления старых снимков состояния проекта | [→ snapshot-schemas.ts:8-11] |
-| `ValidateFileSchema` | const | Валидация проверки синтаксиса одного файла программы | [→ validation-schemas.ts:8-18] |
-| `ValidateDirectorySchema` | const | Валидация проверки синтаксиса файлов в директории | [→ validation-schemas.ts:8-18] |
-| `DetectTechnologyStackSchema` | const | Валидация определения используемых технологий в коде | [→ validation-schemas.ts:20-33] |
-| `GetEntityHistorySchema` | const | Валидация получения истории изменений entity через Prolly Tree | [→ history-schemas.ts:8-12] |
-| `DiffCommitsSchema` | const | Валидация сравнения двух версий графа (diff commits) | [→ history-schemas.ts:17-21] |
-| `CheckoutCommitSchema` | const | Валидация time travel — просмотр графа в определённой версии | [→ history-schemas.ts:17-21] |
-| `ListCommitsSchema` | const | Валидация получения списка версий (commit history) | [→ history-schemas.ts:26-31] |
+- `AnalyzeHotspotsSchema`
+- `AnalyzeStateChaosSchema`
+- `JscpdCloneDetectionSchema`
+- `SuggestRefactoringSchema`
+- `AutoDocChangelogSchema`
+- `AutoDocDetectLanguageSchema`
+- `AutoDocGenerateSchema`
+- `AutoDocGetSchema`
+- `AutoDocInitSchema`
+- `AutoDocInstallHooksSchema`
+- `AutoDocSaveSchema`
+- `AutoDocSearchSchema`
+- `AutoDocStatusSchema`
+- `AutoDocSyncSchema`
+- `AutoDocValidateSchema`
+- `ListEntitiesToolSchema`
+- `ListRelationshipsToolSchema`
+- `QueryToolSchema`
+- `ClearBusTopicSchema`
+- `GetBusStatsSchema`
+- `GetGraphHealthSchema`
+- `GetGraphSchema`
+- `GetGraphStatsSchema`
+- `CheckoutCommitSchema`
+- `DiffCommitsSchema`
+- `GetEntityHistorySchema`
+- `ListCommitsSchema`
+- `CleanIndexSchema`
+- `DEFAULT_EXCLUDE_PATTERNS`
+- `GetAgentMetricsSchema`
+- `IndexToolSchema`
+- `AnalyzeMergeConflictsSchema`
+- `GetMergeSuggestionsSchema`
+- `GetSemanticMergeInfoSchema`
+- `SemanticMergeSchema`
+- `AddMemberSchema`
+- `CopyFileSchema`
+- `CreateFileSchema`
+- `ModifyEntityCodeSchema`
+- `RenameFileSchema`
+- `RenameSymbolSchema`
+- `SplitFileSchema`
+- `SynthesizeFilesSchema`
+- `AnalyzeCodeImpactSchema`
+- `AnalyzeSwaggerImpactSchema`
+- `CrossLanguageSearchSchema`
+- `DetectCodeClonesSchema`
+- `FindRelatedConceptsSchema`
+- `FindSimilarCodeSchema`
+- `PatternSearchSchema`
 
 ## Files
 
-- **analysis-schemas.ts** — Схемы для анализа кода, обнаружения клонов и горячих точек
-- **autodoc-schemas.ts** — Схемы для автоматической генерации и управления документацией
-- **entity-schemas.ts** — Схемы для работы с сущностями, запросами и связями
-- **graph-schemas.ts** — Схемы для операций с графом знаний и шиной данных
-- **index-schemas.ts** — Схемы для индексирования и управления графом кода
-- **index.ts** — Центральный экспорт всех схем валидации инструментов
-- **merge-schemas.ts** — Схемы для семантического слияния и разрешения конфликтов
-- **modification-schemas.ts** — Схемы для модификации кода и операций с файлами
-- **semantic-schemas.ts** — Схемы для семантического поиска и анализа кода
-- **snapshot-schemas.ts** — Схемы для управления версиями и снимками состояния
-- **validation-schemas.ts** — Схемы для валидации кода и определения технологий
-- **history-schemas.ts** — Схемы для версионирования графа и time travel (Prolly Tree)
+| File | Description |
+|------|-------------|
+| `index.ts` | Central re-export of all schemas |
+| `analysis-schemas.ts` | Schemas for code analysis, clone detection, hotspots, state chaos |
+| `autodoc-schemas.ts` | Schemas for documentation generation and management |
+| `entity-schemas.ts` | Schemas for entity listing, relationships, queries |
+| `graph-schemas.ts` | Schemas for knowledge graph and data bus operations |
+| `history-schemas.ts` | Schemas for entity history and commit time travel |
+| `index-schemas.ts` | Schemas for indexing and exclude patterns |
+| `merge-schemas.ts` | Schemas for semantic merging and conflict resolution |
+| `modification-schemas.ts` | Schemas for code modification and file operations |
+| `semantic-schemas.ts` | Schemas for semantic search and code analysis |
+| `snapshot-schemas.ts` | Schemas for snapshot management |
+| `validation-schemas.ts` | Schemas for file validation and technology detection |

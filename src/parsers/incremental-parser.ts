@@ -1,18 +1,3 @@
-/**
- * TASK-001: Incremental Parser Module
- *
- * Handles incremental parsing with content hashing and caching.
- * Uses xxhash for ultra-fast hashing and LRU cache for warm restarts.
- *
- * Architecture References:
- * - Parser Types: src/types/parser.ts
- * - Unified Parser: src/parsers/unified-parser.ts
- * - TypeScript Parser: src/parsers/typescript-parser.ts
- */
-
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
 import { extname } from "node:path";
 import { LRUCache } from "lru-cache";
 import xxhash from "xxhash-wasm";
@@ -31,94 +16,115 @@ import { sleep } from "../utils/runtime-detection.js";
 import { MultiPassOrchestrator } from "./multipass/multipass-orchestrator.js";
 import { UnifiedParser } from "./unified-parser.js";
 
-// =============================================================================
-// 2. CONSTANTS AND CONFIGURATION
-// =============================================================================
-const DEFAULT_CACHE_SIZE = 100 * 1024 * 1024; // 100MB
-const DEFAULT_BATCH_SIZE = 50; // Increased from 10 - SWC can handle more
-const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds for complex files
-const MULTIPASS_THRESHOLD = 20; // Use multi-pass for batches >= 20 files
-const TS_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
+const DEFAULT_CACHE_BYTES = 100 * 1024 * 1024;
+const DEFAULT_BATCH_SIZE = 50;
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MULTIPASS_THRESHOLD = 20;
+const TS_JS_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
 
-// =============================================================================
-// 3. DATA MODELS AND TYPE DEFINITIONS
-// =============================================================================
-type HashFunction = (data: string) => string;
+const EXTENSION_TO_LANGUAGE: Record<string, SupportedLanguage> = {
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".mts": "typescript",
+  ".cts": "typescript",
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".mjs": "javascript",
+  ".cjs": "javascript",
+  ".py": "python",
+  ".pyi": "python",
+  ".pyw": "python",
+  ".c": "c",
+  ".h": "c",
+  ".cpp": "cpp",
+  ".cxx": "cpp",
+  ".cc": "cpp",
+  ".hpp": "cpp",
+  ".hh": "cpp",
+  ".hxx": "cpp",
+  ".rs": "rust",
+  ".go": "go",
+  ".java": "java",
+  ".kt": "kotlin",
+  ".kts": "kotlin",
+  ".swift": "swift",
+  ".css": "css",
+  ".scss": "css",
+  ".sass": "css",
+  ".less": "css",
+  ".html": "html",
+  ".htm": "html",
+  ".xml": "xml",
+};
+
+type ContentHasher = (input: string) => string;
 
 interface BatchResult {
   results: ParseResult[];
   errors: Array<{ file: string; error: Error }>;
-  stats: {
-    total: number;
-    succeeded: number;
-    failed: number;
-    fromCache: number;
-    totalTimeMs: number;
-  };
+  stats: { total: number; succeeded: number; failed: number; fromCache: number; totalTimeMs: number };
 }
 
-// =============================================================================
-// 4. UTILITY FUNCTIONS AND HELPERS
-// =============================================================================
-
-// Removed: stringToUint8Array - no longer needed with native crypto
-
-/**
- * Create a timeout promise (Bun-compatible)
- */
-async function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  const abortController = new AbortController();
-
-  const timeoutPromise = (async (): Promise<never> => {
+async function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  const ac = new AbortController();
+  const timer = (async (): Promise<never> => {
     await sleep(ms);
-    if (!abortController.signal.aborted) {
-      throw new Error(`Timeout after ${ms}ms`);
-    }
-    return new Promise(() => {});
+    if (!ac.signal.aborted) throw new Error(`Timeout after ${ms}ms`);
+    return new Promise<never>(() => {});
   })();
-
-  return Promise.race([
-    promise.then((result) => {
-      abortController.abort();
-      return result;
-    }),
-    timeoutPromise,
-  ]);
+  try {
+    const value = await Promise.race([promise, timer]);
+    ac.abort();
+    return value;
+  } catch (err) {
+    ac.abort();
+    throw err;
+  }
 }
 
-// =============================================================================
-// 5. CORE BUSINESS LOGIC
-// =============================================================================
+function extractEntitiesViaRegex(source: string): Array<{ type: string; name: string }> {
+  const seen = new Set<string>();
+  const entities: Array<{ type: string; name: string }> = [];
+  const patterns: [RegExp, string][] = [
+    [/(?:^|\s)class\s+([A-Za-z_$][\w$]*)/gm, "class"],
+    [/(?:^|\s)function\s+([A-Za-z_$][\w$]*)\s*\(/gm, "function"],
+    [/(?:^|\s)interface\s+([A-Za-z_$][\w$]*)\b/gm, "interface"],
+    [/(?:^|\s)type\s+([A-Za-z_$][\w$]*)\s*=/gm, "type"],
+  ];
+  for (const [regex, kind] of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(source)) !== null) {
+      const id = `${kind}:${m[1]!}`;
+      if (!seen.has(id)) {
+        seen.add(id);
+        entities.push({ type: kind, name: m[1]! });
+      }
+    }
+  }
+  return entities;
+}
 
-/**
- * Incremental parser with advanced caching and batch processing
- */
 export class IncrementalParser {
   private parser: UnifiedParser;
   private multiPass: MultiPassOrchestrator | null = null;
   private cache: LRUCache<string, CacheEntry>;
-  private hashFunction: HashFunction | null = null;
-  private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
+  private hashFn: ContentHasher | null = null;
+  private xxInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
   private stats: ParserStats;
-  private fileHashes: Map<string, string> = new Map();
-  private useMultiPass = true; // Enable multi-pass by default
+  private fileHashMap = new Map<string, string>();
+  private multiPassEnabled = true;
 
-  constructor(cacheSize: number = DEFAULT_CACHE_SIZE) {
-    // TASK-001: Initialize parser and cache
+  constructor(cacheBytes: number = DEFAULT_CACHE_BYTES) {
     this.parser = new UnifiedParser();
-
-    // lru-cache v11: add max parameter and ttlAutopurge
     this.cache = new LRUCache<string, CacheEntry>({
-      max: 1000, // Maximum 1000 cached parse results
-      maxSize: cacheSize,
-      sizeCalculation: (entry) => entry.size,
-      updateAgeOnGet: true, // LRU semantics
-      dispose: (entry) => {
-        // Clean up when evicted
-        log.d("INCPARSER", "cache_evict", { hash: entry.hash });
+      max: 1000,
+      maxSize: cacheBytes,
+      sizeCalculation: (e) => e.size,
+      updateAgeOnGet: true,
+      dispose: (e) => {
+        log.d("INCPARSER", "cache_evict", { hash: e.hash });
       },
     });
-
     this.stats = {
       filesParsed: 0,
       cacheHits: 0,
@@ -131,302 +137,280 @@ export class IncrementalParser {
     };
   }
 
-  /**
-   * Initialize the parser and hash function
-   */
   async initialize(): Promise<void> {
     log.i("INCPARSER", "init_start");
-
-    // Initialize unified parser (TypeScript Compiler API + fallbacks)
     await this.parser.initialize();
-
-    // Initialize multi-pass orchestrator (OXC + TS API)
-    if (this.useMultiPass) {
+    if (this.multiPassEnabled) {
       try {
-        this.multiPass = new MultiPassOrchestrator({
-          oxcConcurrency: 16,
-          tsConcurrency: 4,
-          workerPoolSize: 8,
-        });
+        this.multiPass = new MultiPassOrchestrator({ oxcConcurrency: 16, tsConcurrency: 4, workerPoolSize: 8 });
         await this.multiPass.initialize();
         log.i("INCPARSER", "multipass_init");
-      } catch (e) {
-        log.w("INCPARSER", "multipass_fail", { err: String(e) });
+      } catch (err) {
+        log.w("INCPARSER", "multipass_fail", { err: String(err) });
         this.multiPass = null;
       }
     }
-
-    // Initialize xxHash for ultra-fast hashing (10-15x faster than SHA-256)
-    this.xxhashInstance = await xxhash();
-    this.hashFunction = (content: string) => {
-      if (!this.xxhashInstance) {
-        throw new Error("xxHash not initialized");
-      }
-      // Use xxHash64 for 64-bit hash, convert to hex
-      const hash = this.xxhashInstance.h64ToString(content);
-      return hash.substring(0, 16); // Match previous hash length for compatibility
+    this.xxInstance = await xxhash();
+    this.hashFn = (text: string) => {
+      if (!this.xxInstance) throw new Error("xxHash not initialized");
+      return this.xxInstance.h64ToString(text).substring(0, 16);
     };
-
     log.i("INCPARSER", "init_done");
   }
 
-  /**
-   * Compute content hash using xxHash
-   */
   computeFileHash(content: string): string {
-    if (!this.hashFunction || !this.xxhashInstance) {
-      // Fallback to synchronous xxHash if not initialized
+    if (!this.hashFn || !this.xxInstance)
       throw new Error("IncrementalParser not initialized - call initialize() first");
-    }
-
-    return this.hashFunction(content);
+    return this.hashFn(content);
   }
 
-  /**
-   * Parse a single file with caching
-   */
-  async parseFile(filePath: string, content?: string | undefined, options: ParserOptions = {}): Promise<ParseResult> {
-    const startTime = Date.now();
-
-    const shouldUseCache = options.useCache !== false;
-
+  async parseFile(
+    filePath: string,
+    content?: string | undefined,
+    options: ParserOptions = {} as ParserOptions,
+  ): Promise<ParseResult> {
+    const t0 = Date.now();
+    const useCache = options.useCache !== false;
     try {
-      // Read content if not provided
-      if (content === undefined) {
-        content = await readText(filePath);
-      }
-
-      // Compute hash
-      const contentHash = this.computeFileHash(content);
-
-      // Check cache if enabled
-      if (shouldUseCache) {
-        const cached = this.getFromCache(filePath, contentHash);
-        if (cached) {
+      const src = content ?? (await readText(filePath));
+      const hash = this.computeFileHash(src);
+      if (useCache) {
+        const hit = this.fetchCached(filePath, hash);
+        if (hit) {
           this.stats.cacheHits++;
-          return cached;
+          return hit;
         }
       }
-
       this.stats.cacheMisses++;
-
       let result: ParseResult;
       try {
-        result = await timeout(
-          this.parser.parse(filePath, content, contentHash),
-          options.timeoutMs || DEFAULT_TIMEOUT_MS,
-        );
-      } catch (parseError) {
-        log.e("INCPARSER", "parse_fail", { file: filePath, err: String(parseError) });
-        throw parseError;
+        result = await raceWithTimeout(this.parser.parse(filePath, src, hash), options.timeoutMs || DEFAULT_TIMEOUT_MS);
+      } catch (pe) {
+        log.e("INCPARSER", "parse_fail", { file: filePath, err: String(pe) });
+        throw pe;
       }
-
-      // Fallback: if the parser returned no entities and no errors (common in tests with mock parser),
-      // do a lightweight regex-based extraction to satisfy entity expectations.
-      if ((!result.errors || result.errors.length === 0) && (!result.entities || result.entities.length === 0)) {
-        const lang = result.language || this.detectLanguage(filePath);
-        const extracted = this.simpleExtractEntities(content);
-        if (extracted.length > 0) {
+      if ((!result.errors || !result.errors.length) && (!result.entities || !result.entities.length)) {
+        const extracted = extractEntitiesViaRegex(src);
+        if (extracted.length) {
           result = {
             ...result,
-            language: lang,
+            language: result.language || (EXTENSION_TO_LANGUAGE[extname(filePath).toLowerCase()] ?? "javascript"),
             entities: extracted as unknown as ParsedEntity[],
           };
         }
       }
-
-      // Store in cache
-      if (shouldUseCache) {
-        this.addToCache(filePath, contentHash, result);
-      }
-
-      // Update stats
-      this.updateStats(result.parseTimeMs);
-
-      // Store hash for incremental updates
-      this.fileHashes.set(filePath, contentHash);
-
+      if (useCache) this.storeCached(filePath, hash, result);
+      this.stats.filesParsed++;
+      this.stats.totalParseTimeMs += result.parseTimeMs;
+      this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
+      this.fileHashMap.set(filePath, hash);
       return result;
-    } catch (error) {
+    } catch (err) {
       this.stats.errorCount++;
-      log.e("INCPARSER", "parse_err", { file: filePath, err: String(error) });
-
-      const errorResult: ParseResult = {
+      log.e("INCPARSER", "parse_err", { file: filePath, err: String(err) });
+      const fallback: ParseResult = {
         filePath,
         language: "javascript",
         entities: [],
         contentHash: "",
         timestamp: Date.now(),
-        parseTimeMs: Date.now() - startTime,
-        errors: [
-          {
-            message: error instanceof Error ? error.message : String(error),
-          },
-        ],
+        parseTimeMs: Date.now() - t0,
+        relationships: undefined,
+        errors: [{ message: err instanceof Error ? err.message : String(err) }],
       };
-      if (shouldUseCache) {
-        this.addToCache(filePath, "error", errorResult);
-      }
-      return errorResult;
+      if (useCache) this.storeCached(filePath, "error", fallback);
+      return fallback;
     }
   }
 
-  /**
-   * Process files in batches for optimal performance
-   *
-   * OPTIMIZATIONS:
-   * 1. Multi-pass parsing for TS/JS: SWC fast pass → TS API detailed pass
-   * 2. readFilesParallel() with concurrency=24 for fast IO
-   * 3. Parallel processing with controlled concurrency
-   */
-  async parseBatch(files: string[], options: ParserOptions = {}): Promise<BatchResult> {
-    const batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
-    const startTime = Date.now();
-    let fromCache = 0;
-
-    log.i("INCPARSER", "batch_start", { cnt: files.length, batch: batchSize });
-
-    // Separate TS/JS files for multi-pass and other files for standard parsing
+  async parseBatch(files: string[], options: ParserOptions = {} as ParserOptions): Promise<BatchResult> {
+    const batchSz = options.batchSize || DEFAULT_BATCH_SIZE;
+    const t0 = Date.now();
+    let cacheHitTotal = 0;
+    log.i("INCPARSER", "batch_start", { cnt: files.length, batch: batchSz });
     const tsFiles: string[] = [];
     const otherFiles: string[] = [];
-
-    for (const file of files) {
-      const ext = extname(file).toLowerCase();
-      if (TS_EXTENSIONS.has(ext)) {
-        tsFiles.push(file);
-      } else {
-        otherFiles.push(file);
-      }
-    }
-
+    for (const f of files) (TS_JS_EXTENSIONS.has(extname(f).toLowerCase()) ? tsFiles : otherFiles).push(f);
     log.d("INCPARSER", "file_dist", { ts: tsFiles.length, other: otherFiles.length });
-
-    // Process TS/JS files with multi-pass if available and batch is large enough
-    const useMultiPassForBatch = this.multiPass && tsFiles.length >= MULTIPASS_THRESHOLD;
-    let tsResults: ParseResult[] = [];
-    let tsErrors: Array<{ file: string; error: Error }> = [];
-
-    if (tsFiles.length > 0) {
-      if (useMultiPassForBatch) {
-        log.d("INCPARSER", "multipass_use", { cnt: tsFiles.length });
-        try {
-          tsResults = await this.multiPass!.parseBatch(tsFiles, options);
-        } catch (e) {
-          log.w("INCPARSER", "multipass_err", { err: String(e) });
-          const fallback = await this.parseBatchStandard(tsFiles, options);
-          tsResults = fallback.results;
-          tsErrors = fallback.errors;
-        }
-      } else {
-        const fallback = await this.parseBatchStandard(tsFiles, options);
-        tsResults = fallback.results;
-        tsErrors = fallback.errors;
-        fromCache += fallback.stats.fromCache;
-      }
-    }
-
-    // Process other files with standard batch parsing
-    let otherResults: ParseResult[] = [];
-    let otherErrors: Array<{ file: string; error: Error }> = [];
-
-    if (otherFiles.length > 0) {
-      const fallback = await this.parseBatchStandard(otherFiles, options);
-      otherResults = fallback.results;
-      otherErrors = fallback.errors;
-      fromCache += fallback.stats.fromCache;
-    }
-
-    // Merge results
-    const results = [...tsResults, ...otherResults];
-    const errors = [...tsErrors, ...otherErrors];
-    const totalTimeMs = Date.now() - startTime;
-
-    // Update stats
-    this.stats.throughput = (results.length / totalTimeMs) * 1000;
-
+    const useMP = this.multiPass !== null && tsFiles.length >= MULTIPASS_THRESHOLD;
+    const tsOut = await this.batchTsGroup(tsFiles, options, useMP);
+    cacheHitTotal += tsOut.stats.fromCache;
+    const otherOut = otherFiles.length > 0 ? await this.batchStandard(otherFiles, options) : this.emptyBatch();
+    cacheHitTotal += otherOut.stats.fromCache;
+    const allRes = [...tsOut.results, ...otherOut.results];
+    const allErr = [...tsOut.errors, ...otherOut.errors];
+    const elapsed = Date.now() - t0;
+    this.stats.throughput = elapsed > 0 ? (allRes.length / elapsed) * 1000 : 0;
     log.i("INCPARSER", "batch_done", {
-      cnt: results.length,
-      dur: totalTimeMs,
+      cnt: allRes.length,
+      dur: elapsed,
       rate: Math.round(this.stats.throughput),
-      multipass: useMultiPassForBatch,
+      multipass: useMP,
     });
-
-    if (errors.length > 0) {
-      log.w("INCPARSER", "batch_errors", { cnt: errors.length });
-      for (const e of errors.slice(0, 5)) {
-        log.d("INCPARSER", "batch_err_item", { file: e.file, err: e.error.message });
-      }
+    if (allErr.length) {
+      log.w("INCPARSER", "batch_errors", { cnt: allErr.length });
+      for (const e of allErr.slice(0, 5)) log.d("INCPARSER", "batch_err_item", { file: e.file, err: e.error.message });
     }
-
     return {
-      results,
-      errors,
+      results: allRes,
+      errors: allErr,
       stats: {
         total: files.length,
-        succeeded: results.length,
-        failed: errors.length,
-        fromCache,
-        totalTimeMs,
+        succeeded: allRes.length,
+        failed: allErr.length,
+        fromCache: cacheHitTotal,
+        totalTimeMs: elapsed,
       },
     };
   }
 
-  /**
-   * Standard batch processing (fallback / non-TS files)
-   */
-  private async parseBatchStandard(files: string[], options: ParserOptions): Promise<BatchResult> {
-    const batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
+  async processIncremental(
+    changes: FileChange[],
+    options: ParserOptions = {} as ParserOptions,
+  ): Promise<ParseResult[]> {
+    const out: ParseResult[] = [];
+    log.d("INCPARSER", "incr_start", { cnt: changes.length });
+    for (const ch of changes) {
+      if (ch.changeType === "deleted") {
+        this.evictFile(ch.filePath);
+        this.fileHashMap.delete(ch.filePath);
+        continue;
+      }
+      if (!ch.content) continue;
+      const newHash = this.computeFileHash(ch.content);
+      const oldHash = this.fileHashMap.get(ch.filePath);
+      if (oldHash === newHash) {
+        const cached = this.fetchCached(ch.filePath, newHash);
+        if (cached) {
+          out.push(cached);
+          continue;
+        }
+      }
+      const parsed = ch.edits?.length
+        ? await this.parser.parseIncremental(ch.filePath, ch.content, newHash, ch.edits)
+        : await this.parseFile(ch.filePath, ch.content, options);
+      out.push(parsed);
+      this.fileHashMap.set(ch.filePath, newHash);
+    }
+    return out;
+  }
+
+  getStats(): ParserStats {
+    return { ...this.stats, ...this.parser.getStats() };
+  }
+
+  clearCache(): void {
+    this.cache.clear();
+    this.fileHashMap.clear();
+    this.parser.clearCache();
+    this.stats.cacheMemoryMB = this.cache.calculatedSize / (1024 * 1024);
+    log.d("INCPARSER", "cache_clear");
+  }
+
+  async warmRestart(cacheData: Array<{ file: string; hash: string; result: ParseResult }>): Promise<void> {
+    log.d("INCPARSER", "cache_warm", { cnt: cacheData.length });
+    for (const item of cacheData) {
+      this.storeCached(item.file, item.hash, item.result);
+      this.fileHashMap.set(item.file, item.hash);
+    }
+    log.d("INCPARSER", "cache_warmed");
+  }
+
+  exportCache(): Array<{ file: string; hash: string; result: ParseResult }> {
+    const out: Array<{ file: string; hash: string; result: ParseResult }> = [];
+    for (const [key, entry] of this.cache.entries()) {
+      const sep = key.indexOf(":");
+      const file = sep >= 0 ? key.substring(0, sep) : key;
+      if (file) out.push({ file, hash: entry.hash, result: entry.result });
+    }
+    return out;
+  }
+
+  private fetchCached(filePath: string, hash: string): ParseResult | null {
+    const entry = this.cache.get(`${filePath}:${hash}`);
+    return entry ? { ...entry.result, timestamp: Date.now(), fromCache: true } : null;
+  }
+
+  private storeCached(filePath: string, hash: string, result: ParseResult): void {
+    this.cache.set(`${filePath}:${hash}`, {
+      hash,
+      result,
+      cachedAt: Date.now(),
+      size: (result.entities?.length ?? 0) * 500 + 200,
+    });
+    this.stats.cacheMemoryMB = this.cache.calculatedSize / (1024 * 1024);
+  }
+
+  private evictFile(filePath: string): void {
+    const pfx = `${filePath}:`;
+    for (const k of this.cache.keys()) if (k.startsWith(pfx)) this.cache.delete(k);
+    this.stats.cacheMemoryMB = this.cache.calculatedSize / (1024 * 1024);
+  }
+
+  private async batchTsGroup(tsFiles: string[], options: ParserOptions, useMP: boolean): Promise<BatchResult> {
+    if (!tsFiles.length) return this.emptyBatch();
+    if (useMP) {
+      log.d("INCPARSER", "multipass_use", { cnt: tsFiles.length });
+      try {
+        const results = await this.multiPass!.parseBatch(tsFiles, options);
+        return {
+          results,
+          errors: [],
+          stats: { total: tsFiles.length, succeeded: results.length, failed: 0, fromCache: 0, totalTimeMs: 0 },
+        };
+      } catch (mpErr) {
+        log.w("INCPARSER", "multipass_err", { err: String(mpErr) });
+      }
+    }
+    return this.batchStandard(tsFiles, options);
+  }
+
+  private async batchStandard(files: string[], options: ParserOptions): Promise<BatchResult> {
+    const sz = options.batchSize || DEFAULT_BATCH_SIZE;
     const results: ParseResult[] = [];
     const errors: Array<{ file: string; error: Error }> = [];
-    const startTime = Date.now();
-    let fromCache = 0;
-
-    // Process in batches with parallel IO
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batch = files.slice(i, i + batchSize);
-
-      // OPTIMIZATION: Pre-read all files with high concurrency (24 for SSD)
+    const t0 = Date.now();
+    let hits = 0;
+    for (let i = 0; i < files.length; i += sz) {
+      const chunk = files.slice(i, i + sz);
       let contents: (string | Uint8Array)[];
       try {
-        contents = await readFilesParallel(batch, { concurrency: 24, encoding: "text" });
-      } catch (readError) {
-        log.w("INCPARSER", "read_fail", { err: String(readError) });
+        contents = await readFilesParallel(chunk, { concurrency: 24, encoding: "text" });
+      } catch (ioErr) {
+        log.w("INCPARSER", "read_fail", { err: String(ioErr) });
         contents = [];
-        for (const file of batch) {
+        for (const f of chunk) {
           try {
-            contents.push(await readText(file));
+            contents.push(await readText(f));
           } catch {
             contents.push("");
           }
         }
       }
-
-      // Process batch in parallel
-      const batchPromises = batch.map((file, idx) =>
-        this.parseFile(file, contents[idx] as string, options)
-          .then((result) => {
-            if (result.fromCache) fromCache++;
-            results.push(result);
-          })
-          .catch((error) => {
-            errors.push({ file, error });
-          }),
+      await Promise.all(
+        chunk.map((file, idx) =>
+          this.parseFile(file, contents[idx] as string, options)
+            .then((r) => {
+              if (r.fromCache) hits++;
+              results.push(r);
+            })
+            .catch((e) => {
+              errors.push({ file, error: e });
+            }),
+        ),
       );
-
-      await Promise.all(batchPromises);
-
-      // Log progress for large batches
-      if (files.length > 100 && (i + batchSize) % 200 === 0) {
-        const elapsed = Date.now() - startTime;
-        const throughput = Math.round((results.length / elapsed) * 1000);
-        log.d("INCPARSER", "batch_progress", {
-          done: Math.min(i + batchSize, files.length),
-          total: files.length,
-          rate: throughput,
-        });
+      if (files.length > 100) {
+        const done = Math.min(i + sz, files.length);
+        if (done % 200 === 0) {
+          const el = Date.now() - t0;
+          log.d("INCPARSER", "batch_progress", {
+            done,
+            total: files.length,
+            rate: Math.round((results.length / el) * 1000),
+          });
+        }
       }
     }
-
     return {
       results,
       errors,
@@ -434,242 +418,13 @@ export class IncrementalParser {
         total: files.length,
         succeeded: results.length,
         failed: errors.length,
-        fromCache,
-        totalTimeMs: Date.now() - startTime,
+        fromCache: hits,
+        totalTimeMs: Date.now() - t0,
       },
     };
   }
 
-  /**
-   * Process incremental changes
-   */
-  async processIncremental(changes: FileChange[], options: ParserOptions = {}): Promise<ParseResult[]> {
-    const results: ParseResult[] = [];
-
-    log.d("INCPARSER", "incr_start", { cnt: changes.length });
-
-    for (const change of changes) {
-      const { filePath, changeType, content } = change;
-
-      switch (changeType) {
-        case "created":
-        case "modified":
-          if (content) {
-            // TASK-001: Use incremental parsing for modified files
-            const newHash = this.computeFileHash(content);
-            const oldHash = this.fileHashes.get(filePath);
-
-            if (oldHash && oldHash === newHash) {
-              // Content unchanged, get from cache
-              const cached = this.getFromCache(filePath, newHash);
-              if (cached) {
-                results.push(cached);
-                continue;
-              }
-            }
-
-            // Parse with incremental support if edits provided
-            let result: ParseResult;
-            if (change.edits && change.edits.length > 0) {
-              result = await this.parser.parseIncremental(filePath, content, newHash, change.edits);
-            } else {
-              result = await this.parseFile(filePath, content, options);
-            }
-
-            results.push(result);
-            this.fileHashes.set(filePath, newHash);
-          }
-          break;
-
-        case "deleted":
-          // Remove from cache and hash map
-          this.removeFromCache(filePath);
-          this.fileHashes.delete(filePath);
-          break;
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Get parsed result from cache
-   */
-  private getFromCache(filePath: string, contentHash: string): ParseResult | null {
-    const cacheKey = `${filePath}:${contentHash}`;
-    const entry = this.cache.get(cacheKey);
-
-    if (entry) {
-      return {
-        ...entry.result,
-        timestamp: Date.now(),
-        fromCache: true,
-      };
-    }
-
-    return null;
-  }
-
-  /**
-   * Add parsed result to cache
-   */
-  private addToCache(filePath: string, contentHash: string, result: ParseResult): void {
-    const cacheKey = `${filePath}:${contentHash}`;
-
-    // Estimate size without full serialization for performance
-    // Typical entity is ~500 bytes, result overhead ~200 bytes
-    const size = (result.entities?.length || 0) * 500 + 200;
-
-    const entry: CacheEntry = {
-      hash: contentHash,
-      result,
-      cachedAt: Date.now(),
-      size,
-    };
-
-    this.cache.set(cacheKey, entry);
-    this.updateCacheStats();
-  }
-
-  /**
-   * Remove file from cache
-   */
-  private removeFromCache(filePath: string): void {
-    // Remove all entries for this file
-    for (const key of this.cache.keys()) {
-      if (key.startsWith(`${filePath}:`)) {
-        this.cache.delete(key);
-      }
-    }
-    this.updateCacheStats();
-  }
-
-  /**
-   * Update parser statistics
-   */
-  private updateStats(parseTimeMs: number): void {
-    this.stats.filesParsed++;
-    this.stats.totalParseTimeMs += parseTimeMs;
-    this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
-  }
-
-  /**
-   * Update cache statistics
-   */
-  private updateCacheStats(): void {
-    this.stats.cacheMemoryMB = this.cache.calculatedSize / 1024 / 1024;
-  }
-
-  /**
-   * Very small, regex-based fallback extractor to cover tests when running with a mock parser.
-   * Extracts: JS/TS classes and functions, TS interfaces and type aliases.
-   */
-  private simpleExtractEntities(content: string): Array<{ type: string; name: string }> {
-    const entities: Array<{ type: string; name: string }> = [];
-    const seen = new Set<string>();
-    const push = (type: string, name: string) => {
-      const key = `${type}:${name}`;
-      if (!seen.has(key)) {
-        entities.push({ type, name });
-        seen.add(key);
-      }
-    };
-
-    // Classes (JS/TS)
-    const classRe = /(?:^|\s)class\s+([A-Za-z_$][\w$]*)/gm;
-    let match: RegExpExecArray | null;
-    while ((match = classRe.exec(content))) push("class", match[1]!);
-
-    // Functions (JS/TS)
-    const fnDeclRe = /(?:^|\s)function\s+([A-Za-z_$][\w$]*)\s*\(/gm;
-    while ((match = fnDeclRe.exec(content))) push("function", match[1]!);
-
-    // TypeScript-only syntaxes: interface, type alias (we also allow them for JS files; harmless if present)
-    const ifaceRe = /(?:^|\s)interface\s+([A-Za-z_$][\w$]*)\b/gm;
-    while ((match = ifaceRe.exec(content))) push("interface", match[1]!);
-
-    const typeAliasRe = /(?:^|\s)type\s+([A-Za-z_$][\w$]*)\s*=/gm;
-    while ((match = typeAliasRe.exec(content))) push("type", match[1]!);
-
-    return entities;
-  }
-
-  /**
-   * Basic language detection from file extension for fallback mode.
-   */
-  private detectLanguage(filePath: string): SupportedLanguage {
-    const ext = extname(filePath).toLowerCase();
-    if (ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts") return "typescript";
-    if (ext === ".js" || ext === ".jsx" || ext === ".mjs" || ext === ".cjs") return "javascript";
-    if (ext === ".py" || ext === ".pyi" || ext === ".pyw") return "python";
-    if (ext === ".c" || ext === ".h") return "c";
-    if (ext === ".cpp" || ext === ".cxx" || ext === ".cc" || ext === ".hpp" || ext === ".hh" || ext === ".hxx")
-      return "cpp";
-    if (ext === ".rs") return "rust";
-    if (ext === ".go") return "go";
-    if (ext === ".java") return "java";
-    if (ext === ".kt" || ext === ".kts") return "kotlin";
-    if (ext === ".swift") return "swift";
-    if (ext === ".css" || ext === ".scss" || ext === ".sass" || ext === ".less") return "css";
-    if (ext === ".html" || ext === ".htm") return "html";
-    if (ext === ".xml") return "xml";
-    // Default to javascript for unknown extensions to satisfy ParseResult typing
-    return "javascript";
-  }
-
-  /**
-   * Get parser statistics
-   */
-  getStats(): ParserStats {
-    const parserStats = this.parser.getStats();
-    return {
-      ...this.stats,
-      ...parserStats,
-    };
-  }
-
-  /**
-   * Clear all caches
-   */
-  clearCache(): void {
-    this.cache.clear();
-    this.fileHashes.clear();
-    this.parser.clearCache();
-    this.updateCacheStats();
-    log.d("INCPARSER", "cache_clear");
-  }
-
-  /**
-   * Warm restart from cached data
-   */
-  async warmRestart(cacheData: Array<{ file: string; hash: string; result: ParseResult }>): Promise<void> {
-    log.d("INCPARSER", "cache_warm", { cnt: cacheData.length });
-
-    for (const { file, hash, result } of cacheData) {
-      this.addToCache(file, hash, result);
-      this.fileHashes.set(file, hash);
-    }
-
-    log.d("INCPARSER", "cache_warmed");
-  }
-
-  /**
-   * Export cache for persistence
-   */
-  exportCache(): Array<{ file: string; hash: string; result: ParseResult }> {
-    const exported: Array<{ file: string; hash: string; result: ParseResult }> = [];
-
-    for (const [key, entry] of this.cache.entries()) {
-      const [file] = key.split(":");
-      if (file) {
-        exported.push({
-          file,
-          hash: entry.hash,
-          result: entry.result,
-        });
-      }
-    }
-
-    return exported;
+  private emptyBatch(): BatchResult {
+    return { results: [], errors: [], stats: { total: 0, succeeded: 0, failed: 0, fromCache: 0, totalTimeMs: 0 } };
   }
 }

@@ -2,7 +2,7 @@
  * MLX Embedding Server Manager
  *
  * Manages the lifecycle of the Python-based MLX embedding server:
- * - Creates/validates Python venv in ~/.ultrascript/mlx/venv/
+ * - Creates/validates Python venv in ~/.ultracode/mlx/venv/
  * - Installs dependencies from requirements.txt
  * - Starts/stops the FastAPI server process
  * - Health monitoring and auto-restart
@@ -282,8 +282,8 @@ class MlxServerManager {
     }
 
     // Debug: skip subprocess spawning if disabled
-    if (process.env["ULTRASCRIPT_NO_SUBPROCESS"] === "1") {
-      log.w("MLX", "SKIPPED (ULTRASCRIPT_NO_SUBPROCESS=1)");
+    if (process.env["ULTRACODE_NO_SUBPROCESS"] === "1") {
+      log.w("MLX", "SKIPPED (ULTRACODE_NO_SUBPROCESS=1)");
       this.state.isStarting = false;
       return false;
     }

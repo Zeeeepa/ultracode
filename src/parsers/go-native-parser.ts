@@ -13,10 +13,10 @@
  * No native modules required - uses subprocess.
  */
 
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
@@ -360,7 +360,6 @@ export class GoNativeParser {
 
     // Check for external CLI script or binary
     this.cliScriptAvailable = existsSync(GO_CLI_SCRIPT_PATH);
-    // Check for binary (Windows: .exe, Unix: no extension)
     const binaryPath = process.platform === "win32" ? GO_CLI_BINARY_PATH + ".exe" : GO_CLI_BINARY_PATH;
     this.cliBinaryAvailable = existsSync(binaryPath);
 
@@ -375,7 +374,16 @@ export class GoNativeParser {
       const available = await this.checkGo();
       if (available) {
         this.goAvailable = true;
-        // If CLI script is not available, use inline script
+
+        // Auto-build binary if source exists but binary is missing or outdated
+        if (this.cliScriptAvailable && !this.cliBinaryAvailable) {
+          await this.buildCliBinary(binaryPath);
+        } else if (this.cliScriptAvailable && this.cliBinaryAvailable) {
+          // Rebuild if source is newer than binary
+          await this.rebuildIfOutdated(binaryPath);
+        }
+
+        // If CLI script is not available and no binary, use inline script
         if (!this.cliScriptAvailable && !this.cliBinaryAvailable) {
           await this.ensureScriptExists();
         }
@@ -396,6 +404,49 @@ export class GoNativeParser {
   }
 
   /**
+   * Build go-ast-cli binary from source.
+   * Works on all platforms: Windows (.exe), macOS, Linux.
+   */
+  private buildCliBinary(binaryPath: string): Promise<void> {
+    return new Promise((resolve) => {
+      log.i("GOPARSER", "building_binary", { output: binaryPath });
+      const proc = execFile(
+        this.goPath,
+        ["build", "-o", binaryPath, GO_CLI_SCRIPT_PATH],
+        { windowsHide: true, timeout: 30_000 },
+        (error) => {
+          if (error) {
+            log.w("GOPARSER", "build_failed", { error: error.message });
+            // Not fatal — will fall back to `go run`
+            resolve();
+            return;
+          }
+          this.cliBinaryAvailable = true;
+          log.i("GOPARSER", "build_ok", { path: binaryPath });
+          resolve();
+        },
+      );
+      proc.on("error", () => resolve());
+    });
+  }
+
+  /**
+   * Rebuild binary if the .go source is newer than the existing binary.
+   */
+  private async rebuildIfOutdated(binaryPath: string): Promise<void> {
+    try {
+      const srcStat = statSync(GO_CLI_SCRIPT_PATH);
+      const binStat = statSync(binaryPath);
+      if (srcStat.mtimeMs > binStat.mtimeMs) {
+        log.i("GOPARSER", "rebuild_outdated");
+        await this.buildCliBinary(binaryPath);
+      }
+    } catch {
+      // stat failed — skip rebuild
+    }
+  }
+
+  /**
    * Check if Go is available
    */
   private checkGo(): Promise<boolean> {
@@ -413,7 +464,7 @@ export class GoNativeParser {
    * Ensure the Go script exists in temp directory
    */
   private async ensureScriptExists(): Promise<void> {
-    const tempDir = join(tmpdir(), "ultrascript-parsers");
+    const tempDir = join(tmpdir(), "ultracode-parsers");
     if (!existsSync(tempDir)) {
       mkdirSync(tempDir, { recursive: true });
     }
@@ -521,10 +572,11 @@ export class GoNativeParser {
         }
 
         try {
-          const result = JSON.parse(stdout);
-          if (!result.relationships) {
-            result.relationships = [];
+          const raw = JSON.parse(stdout);
+          if (!raw.relationships) {
+            raw.relationships = [];
           }
+          const result = this.mapGoResultToParseResult(raw, filePath);
           resolve(result);
         } catch (e) {
           reject(new Error(`Failed to parse Go CLI binary output: ${e}`));
@@ -568,10 +620,11 @@ export class GoNativeParser {
         }
 
         try {
-          const result = JSON.parse(stdout);
-          if (!result.relationships) {
-            result.relationships = [];
+          const raw = JSON.parse(stdout);
+          if (!raw.relationships) {
+            raw.relationships = [];
           }
+          const result = this.mapGoResultToParseResult(raw, filePath);
           resolve(result);
         } catch (e) {
           reject(new Error(`Failed to parse Go CLI script output: ${e}`));
@@ -618,6 +671,12 @@ export class GoNativeParser {
           const result = JSON.parse(stdout);
           // Add empty relationships for inline script
           result.relationships = [];
+          // Ensure entity IDs for inline script
+          for (const entity of result.entities) {
+            if (!entity.id) {
+              entity.id = `${filePath}:${entity.type}:${entity.name}`;
+            }
+          }
           resolve(result);
         } catch (e) {
           reject(new Error(`Failed to parse Go output: ${e}`));
@@ -640,6 +699,7 @@ export class GoNativeParser {
     const packageMatch = /^\s*package\s+(\w+)/m.exec(content);
     if (packageMatch?.[1]) {
       entities.push({
+        id: `${filePath}:module:${packageMatch[1]}`,
         name: packageMatch[1],
         type: "module",
         filePath,
@@ -654,14 +714,16 @@ export class GoNativeParser {
       const alias = match[1];
       const source = match[2];
       if (!source) continue;
+      const importName = alias || basename(source) || source;
       entities.push({
-        name: alias || source.split("/").pop() || source,
+        id: `${filePath}:import:${importName}`,
+        name: importName,
         type: "import",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         importData: {
           source,
-          specifiers: [{ local: alias || source.split("/").pop() || source }],
+          specifiers: [{ local: importName }],
         },
       });
     }
@@ -677,14 +739,16 @@ export class GoNativeParser {
         const alias = lineMatch[1];
         const source = lineMatch[2];
         if (!source) continue;
+        const importName = alias || basename(source) || source;
         entities.push({
-          name: alias || source.split("/").pop() || source,
+          id: `${filePath}:import:${importName}`,
+          name: importName,
           type: "import",
           filePath,
           location: this.getLocationFromIndex(content, match.index),
           importData: {
             source,
-            specifiers: [{ local: alias || source.split("/").pop() || source }],
+            specifiers: [{ local: importName }],
           },
         });
       }
@@ -701,8 +765,10 @@ export class GoNativeParser {
       const firstChar = name.charAt(0);
       if (firstChar && firstChar === firstChar.toUpperCase()) modifiers.push("exported");
 
+      const funcFullName = receiver ? `${receiver}.${name}` : name;
       entities.push({
-        name: receiver ? `${receiver}.${name}` : name,
+        id: `${filePath}:function:${funcFullName}`,
+        name: funcFullName,
         type: "function",
         filePath,
         location: this.getLocationFromIndex(content, match.index),
@@ -720,9 +786,11 @@ export class GoNativeParser {
       const firstChar = name.charAt(0);
       if (firstChar && firstChar === firstChar.toUpperCase()) modifiers.push("exported");
 
+      const typeKind = kind === "struct" ? "class" : "interface";
       entities.push({
+        id: `${filePath}:${typeKind}:${name}`,
         name,
-        type: kind === "struct" ? "class" : "interface",
+        type: typeKind,
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         ...(modifiers.length > 0 && { modifiers: modifiers }),
@@ -739,9 +807,11 @@ export class GoNativeParser {
       const firstChar = name.charAt(0);
       if (firstChar && firstChar === firstChar.toUpperCase()) modifiers.push("exported");
 
+      const valType = isConst ? "constant" : "variable";
       entities.push({
+        id: `${filePath}:${valType}:${name}`,
         name,
-        type: isConst ? "constant" : "variable",
+        type: valType,
         filePath,
         location: this.getLocationFromIndex(content, match.index),
         ...(modifiers.length > 0 && { modifiers: modifiers }),
@@ -770,6 +840,105 @@ export class GoNativeParser {
       start: { line, column, index },
       end: { line, column: column + 1, index: index + 1 },
     };
+  }
+
+  /**
+   * Map raw Go CLI JSON output to proper ParseResult format.
+   * Adds dummy locations for calls/controlFlow items and ensures entity IDs.
+   */
+  private mapGoResultToParseResult(raw: GoParseResult, filePath: string): GoParseResult {
+    const dummyLocation = {
+      start: { line: 0, column: 0, index: 0 },
+      end: { line: 0, column: 0, index: 0 },
+    };
+
+    const mapEntity = (entity: ParsedEntity): ParsedEntity => {
+      // Ensure entity ID
+      if (!entity.id) {
+        entity.id = `${filePath}:${entity.type}:${entity.name}`;
+      }
+
+      // Map calls from Go CLI format (CallInfo) to ParsedEntity.calls format
+      // The raw JSON from Go CLI has calls/controlFlow in a slightly different format
+      const entityAny = entity as unknown as Record<string, unknown>;
+      const rawCalls = entityAny["calls"] as
+        | Array<{
+            name: string;
+            target?: string;
+            argumentCount: number;
+            line?: number;
+            isDefer?: boolean;
+            isGo?: boolean;
+            isBuiltin?: boolean;
+          }>
+        | undefined;
+
+      if (rawCalls && rawCalls.length > 0) {
+        entity.calls = rawCalls.map((c) => ({
+          name: c.name,
+          ...(c.target && { target: c.target }),
+          location: dummyLocation,
+          argumentCount: c.argumentCount,
+          ...(c.isGo && { isAwait: true }),
+        }));
+      }
+
+      // Map controlFlow from Go CLI format to ParsedEntity.controlFlow format
+      const rawCF = entityAny["controlFlow"] as
+        | {
+            branches?: Array<{ type: string; condition?: string; line?: number }>;
+            loops?: Array<{ type: string; line?: number }>;
+            exceptions?: Array<{ type: string; line?: number }>;
+            returns?: Array<{ hasValue: boolean; line?: number }>;
+            awaits?: Array<{ type: string; line?: number }>;
+          }
+        | undefined;
+
+      if (rawCF) {
+        const hasCF =
+          (rawCF.branches && rawCF.branches.length > 0) ||
+          (rawCF.loops && rawCF.loops.length > 0) ||
+          (rawCF.exceptions && rawCF.exceptions.length > 0) ||
+          (rawCF.returns && rawCF.returns.length > 0) ||
+          (rawCF.awaits && rawCF.awaits.length > 0);
+
+        if (hasCF) {
+          entity.controlFlow = {
+            branches: (rawCF.branches || []).map((b) => ({
+              type: b.type as "if" | "else" | "else-if" | "switch" | "case" | "default" | "ternary",
+              ...(b.condition && { condition: b.condition }),
+              location: dummyLocation,
+            })),
+            loops: (rawCF.loops || []).map((l) => ({
+              type: l.type as "for" | "for-of" | "for-in" | "while" | "do-while",
+              location: dummyLocation,
+            })),
+            exceptions: (rawCF.exceptions || []).map((e) => ({
+              type: e.type as "try" | "catch" | "finally" | "throw",
+              location: dummyLocation,
+            })),
+            returns: (rawCF.returns || []).map((r) => ({
+              hasValue: r.hasValue,
+              location: dummyLocation,
+            })),
+            awaits: (rawCF.awaits || []).map((a) => ({
+              expression: a.type,
+              location: dummyLocation,
+            })),
+          };
+        }
+      }
+
+      // Recursively map children
+      if (entity.children && entity.children.length > 0) {
+        entity.children = entity.children.map(mapEntity);
+      }
+
+      return entity;
+    };
+
+    raw.entities = raw.entities.map(mapEntity);
+    return raw;
   }
 
   /**

@@ -59,11 +59,11 @@ export class MetalBackend implements VectorBackend {
       // Try to load native Metal addon from multiple possible locations
       const possiblePaths = [
         // Bundled in npm package (external-libs/)
-        "../../../external-libs/metal-darwin-arm64/ultrascript_metal.node",
+        "../../../external-libs/metal-darwin-arm64/ultracode_metal.node",
         // Local development builds
-        "../../../dist/native/metal/ultrascript_metal.node",
-        "../../../build/Release/ultrascript_metal.node",
-        "../../../external-tools/native/metal/build/Release/ultrascript_metal.node",
+        "../../../dist/native/metal/ultracode_metal.node",
+        "../../../build/Release/ultracode_metal.node",
+        "../../../external-tools/native/metal/build/Release/ultracode_metal.node",
       ];
 
       for (const addonPath of possiblePaths) {

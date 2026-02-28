@@ -27,23 +27,23 @@ export class OxlintLinter implements Linter {
     try {
       const bin = await this.getBinPath();
 
-      // Dry-run режим: создать временный файл
+      // Dry-run mode: create a temporary file
       if (autofix && dryRun) {
         const tempFile = join(tmpdir(), `oxlint-dryrun-${Date.now()}.tmp`);
 
         try {
-          // Скопировать в temp
+          // Copy to temp
           await copyFile(filePath, tempFile);
 
-          // Применить автофиксы к копии
+          // Apply autofixes to the copy
           const command = `"${bin}" --fix --format json "${tempFile}"`;
           await exec(command, { timeout: 30000 });
 
-          // Прочитать изменения
+          // Read changes
           const original = await readFile(filePath, "utf-8");
           const fixed = await readFile(tempFile, "utf-8");
 
-          // Вернуть проблемы + информацию о том, что было бы исправлено
+          // Return problems + information about what would be fixed
           const problems = await this.lint(filePath, _content, false);
           if (original !== fixed) {
             problems.push({
@@ -57,12 +57,12 @@ export class OxlintLinter implements Linter {
 
           return problems;
         } finally {
-          // Удалить временный файл
+          // Delete the temporary file
           await unlink(tempFile).catch(() => {});
         }
       }
 
-      // Обычная логика
+      // Normal logic
       const fixFlag = autofix ? "--fix" : "";
       const { stdout, stderr } = await exec(`"${bin}" ${fixFlag} --format json "${filePath}"`.trim(), {
         timeout: 30000,

@@ -60,12 +60,12 @@ npx cmake-js compile
 
 # Copy output
 mkdir -p "$OUTPUT_DIR"
-if [ -f "build/Release/ultrascript_cuda.node" ]; then
-    cp build/Release/ultrascript_cuda.node "$OUTPUT_DIR/"
-elif [ -f "build/Debug/ultrascript_cuda.node" ]; then
-    cp build/Debug/ultrascript_cuda.node "$OUTPUT_DIR/"
-elif [ -f "build/ultrascript_cuda.node" ]; then
-    cp build/ultrascript_cuda.node "$OUTPUT_DIR/"
+if [ -f "build/Release/ultracode_cuda.node" ]; then
+    cp build/Release/ultracode_cuda.node "$OUTPUT_DIR/"
+elif [ -f "build/Debug/ultracode_cuda.node" ]; then
+    cp build/Debug/ultracode_cuda.node "$OUTPUT_DIR/"
+elif [ -f "build/ultracode_cuda.node" ]; then
+    cp build/ultracode_cuda.node "$OUTPUT_DIR/"
 else
     echo ""
     echo "ERROR: Build output not found!"

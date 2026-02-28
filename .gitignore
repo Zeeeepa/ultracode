@@ -24,9 +24,17 @@ native/
 build/
 .build-cache/
 
+# Go parser binary (built from go-ast-cli.go)
+src/parsers/go-ast-cli
+src/parsers/go-ast-cli.exe
+
 # WASM modules - built from Rust source
 # Sources moved to external-tools/wasm (also ignored)
 wasm/
+
+# .NET / Roslyn build artifacts
+roslyn/**/bin/
+roslyn/**/obj/
 
 # ============================================================================
 # DEVELOPMENT & CACHES
@@ -123,7 +131,7 @@ src/merge/**/temp/
 
 /.claude
 /.codex
-/.ultrascript
+/.ultracode
 /.ultrasharp
 external-tools/native/cuda/build/
 external-tools/native/cuda/node_modules/

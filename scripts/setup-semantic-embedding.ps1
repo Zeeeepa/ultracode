@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # ==============================================================================
-# UltraScript Tools MCP - Semantic Embedding Setup (PowerShell)
+# UltraCode - Semantic Embedding Setup (PowerShell)
 # ==============================================================================
 # This script provides interactive setup for local embedding providers:
 #   - TEI (Text Embeddings Inference) with Docker
@@ -27,11 +27,11 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $ConfigFile = Join-Path $ProjectRoot "config\embedding-models.json"
 
-# Centralized config directory: %LOCALAPPDATA%\UltraScriptTools\config
+# Centralized config directory: %LOCALAPPDATA%\UltraCode\config
 if ($env:LOCALAPPDATA) {
-    $OutputConfigDir = Join-Path $env:LOCALAPPDATA "UltraScriptTools\config"
+    $OutputConfigDir = Join-Path $env:LOCALAPPDATA "UltraCode\config"
 } elseif ($IsLinux -or $IsMacOS) {
-    $OutputConfigDir = Join-Path $HOME ".ultrascript-tools\config"
+    $OutputConfigDir = Join-Path $HOME ".ultracode\config"
 } else {
     $OutputConfigDir = Join-Path $ProjectRoot ".ultrasharp"
 }
@@ -46,7 +46,7 @@ function Write-Err { param($msg) Write-Host $msg -ForegroundColor Red }
 # Banner
 Write-Host ""
 Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "UltraScript Tools MCP - Semantic Embedding Setup" -ForegroundColor Cyan
+Write-Host "UltraCode - Semantic Embedding Setup" -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host ""
 

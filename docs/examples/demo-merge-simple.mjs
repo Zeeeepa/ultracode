@@ -2,8 +2,8 @@
 /**
  * Simplified Semantic Merge Demo
  *
- * Анализирует merge между master и master-beta в fabuza-front
- * Показывает: Fast Path (hash) vs Semantic (embedding) matching
+ * Analyzes merge between master and master-beta in fabuza-front
+ * Shows: Fast Path (hash) vs Semantic (embedding) matching
  */
 
 import { execSync } from "node:child_process";
@@ -17,15 +17,15 @@ const BRANCH_B = "master-beta";
 const metrics = {
   startTime: Date.now(),
   totalFiles: 0,
-  fastPathMatches: 0, // Одинаковые хеши
-  modifiedInBoth: 0, // Изменены в обеих ветках (потенциальные конфликты)
-  modifiedInOne: 0, // Изменены только в одной ветке
+  fastPathMatches: 0, // Identical hashes
+  modifiedInBoth: 0, // Modified in both branches (potential conflicts)
+  modifiedInOne: 0, // Modified in only one branch
   addedFiles: 0,
   deletedFiles: 0,
   renamedFiles: 0,
 };
 
-// Утилиты
+// Utilities
 function exec(cmd) {
   try {
     return execSync(cmd, {
@@ -50,21 +50,21 @@ function getFileContent(path, branch) {
   }
 }
 
-// Получить merge base
+// Get merge base
 console.log("🔍 Finding merge base...");
 const mergeBase = exec(`git merge-base ${BRANCH_A} ${BRANCH_B}`);
 console.log(`📍 Merge base: ${mergeBase.slice(0, 8)}\n`);
 
-// Получить список изменённых файлов
+// Get the list of changed files
 console.log("📊 Analyzing changed files...");
 
-// Файлы изменённые в branch A (от base к master)
+// Files changed in branch A (from base to master)
 const filesA = exec(`git diff --name-status ${mergeBase} ${BRANCH_A}`).split("\n").filter(Boolean);
 
-// Файлы изменённые в branch B (от base к master-beta)
+// Files changed in branch B (from base to master-beta)
 const filesB = exec(`git diff --name-status ${mergeBase} ${BRANCH_B}`).split("\n").filter(Boolean);
 
-// Парсим изменения
+// Parse changes
 const changesA = new Map();
 const changesB = new Map();
 
@@ -81,10 +81,10 @@ filesB.forEach((line) => {
 console.log(`✅ Branch A (${BRANCH_A}): ${changesA.size} files changed`);
 console.log(`✅ Branch B (${BRANCH_B}): ${changesB.size} files changed\n`);
 
-// Анализ пересечений
+// Intersection analysis
 console.log("⚡ Fast Path Analysis (hash-based)...\n");
 
-// Множество всех файлов
+// Set of all files
 const allFiles = new Set([...changesA.keys(), ...changesB.keys()]);
 metrics.totalFiles = allFiles.size;
 
@@ -95,15 +95,15 @@ for (const file of allFiles) {
   const statusA = changesA.get(file);
   const statusB = changesB.get(file);
 
-  // Только TS/TSX/JS/JSX файлы для анализа
+  // Only TS/TSX/JS/JSX files for analysis
   if (!/\.(ts|tsx|js|jsx)$/.test(file)) {
     continue;
   }
 
   if (statusA && statusB) {
-    // Изменён в обеих ветках
+    // Changed in both branches
     if (statusA === "M" && statusB === "M") {
-      // Оба модифицировали - проверяем хеши
+      // Both modified - check hashes
       const contentBase = getFileContent(file, mergeBase);
       const contentA = getFileContent(file, BRANCH_A);
       const contentB = getFileContent(file, BRANCH_B);
@@ -117,7 +117,7 @@ for (const file of allFiles) {
       const hashB = hashContent(contentB);
 
       if (hashA === hashB) {
-        // Идентичные изменения
+        // Identical changes
         metrics.fastPathMatches++;
         fastPathResults.push({
           file,
@@ -126,7 +126,7 @@ for (const file of allFiles) {
           hashB,
         });
       } else {
-        // Разные изменения - нужен semantic analysis
+        // Different changes - need semantic analysis
         metrics.modifiedInBoth++;
         semanticCandidates.push({
           file,
@@ -138,15 +138,15 @@ for (const file of allFiles) {
         });
       }
     } else {
-      // Разные операции (add/delete/rename)
+      // Different operations (add/delete/rename)
       metrics.modifiedInBoth++;
     }
   } else if (statusA || statusB) {
-    // Изменён только в одной ветке - автоматический merge
+    // Changed in only one branch - automatic merge
     metrics.modifiedInOne++;
   }
 
-  // Подсчёт операций
+  // Count operations
   if (statusA === "A" || statusB === "A") metrics.addedFiles++;
   if (statusA === "D" || statusB === "D") metrics.deletedFiles++;
   if (statusA?.startsWith("R") || statusB?.startsWith("R")) metrics.renamedFiles++;
@@ -164,7 +164,7 @@ console.log(`   Renamed files: ${metrics.renamedFiles}\n`);
 console.log("🧠 Semantic Analysis Candidates:");
 console.log(`   Files requiring embedding analysis: ${semanticCandidates.length}\n`);
 
-// Топ-10 файлов по размеру изменений
+// Top 10 files by change size
 if (semanticCandidates.length > 0) {
   console.log("📋 Top 10 files with largest changes:");
 
@@ -185,7 +185,7 @@ if (semanticCandidates.length > 0) {
   console.log();
 }
 
-// Генерация финального отчёта
+// Generate final report
 const totalTime = (Date.now() - metrics.startTime) / 1000;
 
 console.log("=".repeat(60));

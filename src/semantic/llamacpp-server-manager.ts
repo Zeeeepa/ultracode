@@ -229,7 +229,7 @@ class LlamaCppServerManager {
   /**
    * Find llama-server binary
    * Searches in:
-   * 1. ~/.ultrascript/llamacpp/bin/
+   * 1. ~/.ultracode/llamacpp/bin/
    * 2. System PATH
    */
   private findBinary(): string | null {
@@ -417,8 +417,8 @@ class LlamaCppServerManager {
     }
 
     // Debug: skip subprocess spawning if disabled
-    if (process.env["ULTRASCRIPT_NO_SUBPROCESS"] === "1") {
-      log.w("LLAMACPP", "SKIPPED (ULTRASCRIPT_NO_SUBPROCESS=1)");
+    if (process.env["ULTRACODE_NO_SUBPROCESS"] === "1") {
+      log.w("LLAMACPP", "SKIPPED (ULTRACODE_NO_SUBPROCESS=1)");
       this.state.isStarting = false;
       return false;
     }
@@ -703,7 +703,7 @@ class LlamaCppServerManager {
     try {
       await execAsync(`taskkill /F /PID ${pid}`, { timeout: 5000 });
       log.d("LLAMACPP", "Process killed via taskkill", { pid });
-    } catch (error: unknown) {
+    } catch (_error: unknown) {
       log.d("LLAMACPP", "taskkill error (process may already be dead)", { pid });
     }
   }

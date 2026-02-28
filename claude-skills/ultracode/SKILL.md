@@ -304,4 +304,4 @@ index directory="D:\\other\\project"
 semantic_search query="auth" projectPath="D:\\other\\project"
 ```
 
-Storage: `%LOCALAPPDATA%\UltraScriptTools\projects\{hash}/`
+Storage: `%LOCALAPPDATA%\UltraCode\projects\{hash}/`

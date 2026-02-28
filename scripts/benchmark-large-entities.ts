@@ -58,7 +58,7 @@ function getDataDir(): string {
     default:
       baseDir = process.env.XDG_DATA_HOME || path.join(require("os").homedir(), ".local", "share");
   }
-  return path.join(baseDir, "UltraScriptTools");
+  return path.join(baseDir, "UltraCode");
 }
 
 // Load large entities from database
@@ -70,8 +70,8 @@ async function loadLargeEntities(minTokens: number = 512): Promise<LargeEntity[]
   // List all project directories and find graph.db
   let dbPath: string | null = null;
 
-  // First check local .ultrascript
-  const localDb = path.join(process.cwd(), ".ultrascript", "graph.db");
+  // First check local .ultracode
+  const localDb = path.join(process.cwd(), ".ultracode", "graph.db");
   if (fs.existsSync(localDb)) {
     dbPath = localDb;
   }

@@ -3,33 +3,20 @@ import type { KnowledgeBus } from "../core/knowledge-bus.js";
 import type { ResourceManager } from "../core/resource-manager.js";
 import type { Agent, AgentMetrics, AgentStatus, AgentType, ResourceConstraints } from "../types/agent.js";
 
-/**
- * Extended interface for Agent with optional runtime methods
- */
-interface AgentWithMetrics extends Agent {
-  currentTask?: {
-    type: string;
-    [key: string]: unknown;
-  };
+interface AgentExt extends Agent {
+  currentTask?: { type: string; [k: string]: unknown };
 }
 
-/**
- * Performance metrics from Conductor
- */
-interface ConductorPerformanceMetrics {
+interface PerfSnapshot {
   totalTasks?: number;
   avgProcessingTime?: number;
   overheadReduction?: number;
   cacheHitRate?: number;
 }
 
-/**
- * Extended interface for ConductorOrchestrator with internal state
- * Note: Accessing private properties via type assertion (runtime hack)
- */
-interface ConductorInternalAccess {
+interface ConductorInternal {
   agents: Map<string, Agent>;
-  getPerformanceMetrics?(): ConductorPerformanceMetrics;
+  getPerformanceMetrics?(): PerfSnapshot;
   pendingTasks?: Map<string, unknown> | Set<unknown>;
   approvalRequired?: Map<string, unknown> | Set<unknown>;
   directImplementationAttempts?: number;
@@ -42,23 +29,19 @@ interface AgentSummary {
   queueLength: number;
   memoryUsageMB: number;
   cpuUsagePercent: number;
-  capabilities: {
-    maxConcurrency: number;
-    memoryLimitMB: number;
-    priority: number;
-  };
+  capabilities: { maxConcurrency: number; memoryLimitMB: number; priority: number };
   metrics: AgentMetrics;
   currentTaskType?: string;
   lastActivity: number;
 }
 
-interface ResourceSummary {
+interface ResSummary {
   throttled: boolean;
   constraints: ResourceConstraints;
   currentUsage?: ReturnType<ResourceManager["getCurrentUsage"]>;
 }
 
-interface KnowledgeBusSummary {
+interface BusSummary {
   topicCount: number;
   entryCount: number;
   subscriptionCount: number;
@@ -78,81 +61,66 @@ export interface AgentMetricsSnapshot {
     directImplementationAttempts: number;
   };
   agents: AgentSummary[];
-  resources: ResourceSummary;
-  knowledgeBus: KnowledgeBusSummary;
+  resources: ResSummary;
+  knowledgeBus: BusSummary;
 }
 
-function normalizeAgent(agent: Agent): AgentSummary {
-  const metrics = agent.getMetrics();
+function summarize(a: Agent): AgentSummary {
+  const m = a.getMetrics();
   return {
-    id: agent.id,
-    type: agent.type,
-    status: agent.status,
-    queueLength: agent.getTaskQueue().length,
-    memoryUsageMB: agent.getMemoryUsage(),
-    cpuUsagePercent: agent.getCpuUsage(),
+    id: a.id,
+    type: a.type,
+    status: a.status,
+    queueLength: a.getTaskQueue().length,
+    memoryUsageMB: a.getMemoryUsage(),
+    cpuUsagePercent: a.getCpuUsage(),
     capabilities: {
-      maxConcurrency: agent.capabilities.maxConcurrency,
-      memoryLimitMB: agent.capabilities.memoryLimit,
-      priority: agent.capabilities.priority,
+      maxConcurrency: a.capabilities.maxConcurrency,
+      memoryLimitMB: a.capabilities.memoryLimit,
+      priority: a.capabilities.priority,
     },
-    metrics,
-    currentTaskType: (agent as AgentWithMetrics).currentTask?.type,
-    lastActivity: metrics.lastActivity,
+    metrics: m,
+    currentTaskType: (a as AgentExt).currentTask?.type,
+    lastActivity: m.lastActivity,
   };
 }
 
-export async function collectAgentMetrics(options: {
+export async function collectAgentMetrics(opts: {
   conductor: ConductorOrchestrator;
   resourceManager: ResourceManager;
   knowledgeBus: KnowledgeBus;
 }): Promise<AgentMetricsSnapshot> {
-  const { conductor, resourceManager, knowledgeBus } = options;
+  const ci = opts.conductor as unknown as ConductorInternal;
+  const agents: Agent[] = ci.agents instanceof Map ? Array.from(ci.agents.values()) : [];
+  const perf: PerfSnapshot = typeof ci.getPerformanceMetrics === "function" ? ci.getPerformanceMetrics() : {};
 
-  const conductorInternal = conductor as unknown as ConductorInternalAccess;
-  const agentCollection = conductorInternal.agents instanceof Map ? conductorInternal.agents.values() : ([] as Agent[]);
-  const agentMap: Agent[] = Array.from(agentCollection);
-  const conductorMetrics =
-    typeof conductorInternal.getPerformanceMetrics === "function"
-      ? conductorInternal.getPerformanceMetrics()
-      : {
-          totalTasks: 0,
-          avgProcessingTime: 0,
-          overheadReduction: 0,
-          cacheHitRate: 0,
-        };
-
-  const resources: ResourceSummary = {
-    throttled: resourceManager.isSystemThrottled(),
-    constraints: resourceManager.getConstraints(),
+  const res: ResSummary = {
+    throttled: opts.resourceManager.isSystemThrottled(),
+    constraints: opts.resourceManager.getConstraints(),
   };
+  const usage = opts.resourceManager.getCurrentUsage();
+  if (usage) res.currentUsage = usage;
 
-  const usage = resourceManager.getCurrentUsage();
-  if (usage) {
-    resources.currentUsage = usage;
-  }
-
-  const knowledgeStats = knowledgeBus.getStats();
-
+  const bs = opts.knowledgeBus.getStats();
   return {
     timestamp: new Date().toISOString(),
     conductor: {
-      registeredAgents: agentMap.length,
-      totalTasks: conductorMetrics.totalTasks ?? 0,
-      averageProcessingTime: conductorMetrics.avgProcessingTime ?? 0,
-      overheadReduction: conductorMetrics.overheadReduction ?? 0,
-      cacheHitRate: conductorMetrics.cacheHitRate ?? 0,
-      pendingTasks: conductorInternal.pendingTasks?.size ?? 0,
-      approvalsPending: conductorInternal.approvalRequired?.size ?? 0,
-      directImplementationAttempts: conductorInternal.directImplementationAttempts ?? 0,
+      registeredAgents: agents.length,
+      totalTasks: perf.totalTasks ?? 0,
+      averageProcessingTime: perf.avgProcessingTime ?? 0,
+      overheadReduction: perf.overheadReduction ?? 0,
+      cacheHitRate: perf.cacheHitRate ?? 0,
+      pendingTasks: ci.pendingTasks?.size ?? 0,
+      approvalsPending: ci.approvalRequired?.size ?? 0,
+      directImplementationAttempts: ci.directImplementationAttempts ?? 0,
     },
-    agents: agentMap.map(normalizeAgent),
-    resources,
+    agents: agents.map(summarize),
+    resources: res,
     knowledgeBus: {
-      topicCount: knowledgeStats.topicCount,
-      entryCount: knowledgeStats.entryCount,
-      subscriptionCount: knowledgeStats.subscriptionCount,
-      messageQueueSize: knowledgeStats.messageQueueSize,
+      topicCount: bs.topicCount,
+      entryCount: bs.entryCount,
+      subscriptionCount: bs.subscriptionCount,
+      messageQueueSize: bs.messageQueueSize,
     },
   };
 }

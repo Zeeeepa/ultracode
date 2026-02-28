@@ -165,7 +165,7 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
     const cwd = dirname(filePath);
     const ext = extname(filePath);
 
-    // Автоопределение линтера для TS/JS файлов при fixable=true
+    // Auto-detect linter for TS/JS files when fixable=true
     if (fixable && (validator === "oxlint" || ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx")) {
       const configInfo = await detectLinterConfigs(projectPath || cwd);
 
@@ -187,13 +187,13 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
             })),
           };
         } catch (error) {
-          // Fallback на oxlint если Biome не может обработать файл
+          // Fallback to oxlint if Biome cannot process the file
           log.w("VALIDATION", "biome_failed_fallback", {
             filePath,
             err: String(error),
             fallback: "oxlint",
           });
-          // Продолжить с oxlint
+          // Continue with oxlint
         }
       } else if (configInfo.preferredFixerForTS === "eslint") {
         log.d("VALIDATION", "eslint_config_detected", {
@@ -201,8 +201,8 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
           config: ".eslintrc",
           note: "ESLint not implemented, falling back to oxlint",
         });
-        // TODO: Реализовать ESLint поддержку
-        // Fallback на oxlint
+        // TODO: Implement ESLint support
+        // Fallback to oxlint
       }
     }
 
@@ -210,7 +210,7 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
       let command: string;
       switch (validator) {
         case "oxlint": {
-          // Использовать OxlintLinter для поддержки dry-run
+          // Use OxlintLinter for dry-run support
           if (fixable || dryRun) {
             const oxlintLinter = new OxlintLinter();
             const problems = await oxlintLinter.lint(filePath, "", fixable, dryRun);
@@ -228,7 +228,7 @@ export class ValidateFileToolHandler extends BaseToolHandler<z.infer<typeof Vali
             };
           }
 
-          // Старая логика для обычной валидации
+          // Legacy logic for regular validation
           const oxlintBin = await this.findOxlintBin();
           command = `"${oxlintBin}" --format json "${filePath}"`;
           break;

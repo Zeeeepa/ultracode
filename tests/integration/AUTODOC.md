@@ -1,26 +1,26 @@
-# Модуль integration
+# Integration Module
 
-## Описание
+## Description
 
-Модуль `integration` предназначен для реализации интеграционных решений и взаимодействия с внешними системами. Включает инструменты для тестирования и работы с интеграционными компонентами.
+The `integration` module is designed for implementing integration solutions and interacting with external systems. It includes tools for testing and working with integration components.
 
-## Файлы
+## Files
 
-| Файл                     | Описание                                               |
+| File                     | Description                                               |
 |--------------------------|--------------------------------------------------------|
-| `test-mcp-tool.mjs`      | Инструмент для тестирования MCP (Model Control Protocol) интеграций |
+| `test-mcp-tool.mjs`      | Tool for testing MCP (Model Control Protocol) integrations |
 
-## Экспорты
+## Exports
 
-В данном модуле отсутствуют публичные экспорты. Модуль предназначен для внутреннего использования.
+This module has no public exports. The module is intended for internal use.
 
-## Использование
+## Usage
 
-Данный модуль используется внутри системы для выполнения интеграционных тестов и взаимодействия с внешними API через MCP протокол. Пример использования:
+This module is used within the system for running integration tests and interacting with external APIs via the MCP protocol. Usage example:
 
 ```javascript
-// Импорт внутри модуля
+// Import within the module
 import { testMcpTool } from './integration/test-mcp-tool.mjs';
 ```
 
-> Примечание: Модуль предназначен для внутреннего использования и не экспортирует публичные API.
+> Note: The module is intended for internal use and does not export public APIs.

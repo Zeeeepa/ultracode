@@ -1,75 +1,75 @@
-﻿# CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-**UltraScript Tools MCP Server** - Multi-agent LiteRAG MCP server для продвинутого анализа кодовых графов с семантическими возможностями. Сервер реализует 24 MCP-метода для анализа кодовых баз на 10 языках программирования с использованием архитектуры на основе агентов.
+**UltraCode Server** - Multi-agent LiteRAG MCP server for advanced code graph analysis with semantic capabilities. The server implements 70+ MCP tools for analyzing codebases in 14 programming languages using an agent-based architecture.
 
 ## Build & Development Commands
 
 ```bash
-# Сборка проекта
-npm run build                 # Компиляция TypeScript через tsup
-npm run build:watch          # Watch-режим для разработки
-make package                 # Сборка NPM-пакета с проверками метаданных
+# Build project
+npm run build                 # Compile TypeScript via tsup
+npm run build:watch          # Watch mode for development
+make package                 # Build NPM package with metadata checks
 
-# Проверка кода
-npm run typecheck            # TypeScript проверка типов
-npm run lint                 # Биом линтинг
-npm run lint:fix             # Автофикс линт-ошибок
-npm run format               # Форматирование кода через Biome
+# Code quality
+npm run typecheck            # TypeScript type checking
+npm run lint                 # Biome linting
+npm run lint:fix             # Auto-fix lint errors
+npm run format               # Code formatting via Biome
 
-# Тестирование
-npm test                     # Запуск всех тестов Jest
-npm run test:verbose         # Подробный вывод тестов
-npm run test:watch           # Watch-режим для тестов
-npm run test:coverage        # Генерация покрытия кода
-npm run test:quiet           # Тихий режим (минимальный вывод)
+# Testing
+npm test                     # Run all Jest tests
+npm run test:verbose         # Verbose test output
+npm run test:watch           # Watch mode for tests
+npm run test:coverage        # Generate code coverage
+npm run test:quiet           # Quiet mode (minimal output)
 
-# Запуск MCP сервера
-ultrascript-tools-mcp <directory>                    # Анализ кодовой базы
-ultrascript-tools-mcp --config config/dev.yaml <dir> # С кастомной конфигурацией
-ultrascript-tools-mcp --help                         # Справка по CLI
-ultrascript-tools-mcp --version                      # Версия сервера
+# Run MCP server
+ultracode <directory>                    # Analyze codebase
+ultracode --config config/dev.yaml <dir> # With custom configuration
+ultracode --help                         # CLI help
+ultracode --version                      # Server version
 
-# One-shot индексация из CLI (debug)
+# One-shot indexing from CLI (debug)
 node dist/index.js /path/to/project '{"jsonrpc":"2.0","id":"index-1","method":"tools/call","params":{"name":"index","arguments":{"directory":"/path/to/project","incremental":false,"fullScan":true,"reset":true}}}'
 ```
 
 ## Multi-Agent Architecture
 
-Проект использует **многоагентную архитектуру LiteRAG** с координацией через `ConductorOrchestrator`:
+The project uses a **multi-agent LiteRAG architecture** coordinated through `ConductorOrchestrator`:
 
-### Ключевые агенты
-- **ParserAgent** (`src/agents/parser-agent.ts`) - AST-парсинг через нативные парсеры языков
-- **IndexerAgent** (`src/agents/indexer-agent.ts`) - Индексация графов в SQLite, батчинг операций
-- **SemanticAgent** (`src/agents/semantic-agent.ts`) - Векторные эмбеддинги, семантический поиск
-- **QueryAgent** (`src/agents/query-agent.ts`) - Выполнение запросов к графу, оптимизация
-- **DoraAgent** (`src/agents/dora-agent.ts`) - Специализированный анализ метрик и сложности
-- **DevAgent** (`src/agents/dev-agent.ts`) - Инкрементальная индексация, файловые операции
-- **ConductorOrchestrator** (`src/agents/conductor-orchestrator.ts`) - Координатор всех агентов, распределение задач
+### Key Agents
+- **ParserAgent** (`src/agents/parser-agent.ts`) - AST parsing via native language parsers
+- **IndexerAgent** (`src/agents/indexer-agent.ts`) - Graph indexing in SQLite, batch operations
+- **SemanticAgent** (`src/agents/semantic-agent.ts`) - Vector embeddings, semantic search
+- **QueryAgent** (`src/agents/query-agent.ts`) - Graph query execution, optimization
+- **DoraAgent** (`src/agents/dora-agent.ts`) - Specialized metrics and complexity analysis
+- **DevAgent** (`src/agents/dev-agent.ts`) - Incremental indexing, file operations
+- **ConductorOrchestrator** (`src/agents/conductor-orchestrator.ts`) - Coordinator for all agents, task distribution
 
-### Координация агентов
-- **ResourceManager** (`src/core/resource-manager.ts`) - Управление лимитами памяти/CPU, backpressure
-- **KnowledgeBus** (`src/core/knowledge-bus.ts`) - Pub/sub шина для межагентного взаимодействия
-- **DIContainer** (`src/core/di-container.ts`) - Dependency Injection контейнер для управления агентами
-- **AgentRegistry** (`src/core/agent-registry.ts`) - Автоматическая регистрация агентов в DI контейнере
-- Все агенты наследуются от `BaseAgent` (`src/agents/base.ts`) с унифицированным lifecycle
+### Agent Coordination
+- **ResourceManager** (`src/core/resource-manager.ts`) - Memory/CPU limit management, backpressure
+- **KnowledgeBus** (`src/core/knowledge-bus.ts`) - Pub/sub bus for inter-agent communication
+- **DIContainer** (`src/core/di-container.ts`) - Dependency Injection container for agent management
+- **AgentRegistry** (`src/core/agent-registry.ts`) - Automatic agent registration in the DI container
+- All agents inherit from `BaseAgent` (`src/agents/base.ts`) with a unified lifecycle
 
 ### Dependency Injection Container (NEW)
 
-**DI Container** (`src/core/di-container.ts`) предоставляет централизованное управление зависимостями:
+**DI Container** (`src/core/di-container.ts`) provides centralized dependency management:
 
-**Возможности:**
+**Features:**
 
-- ✅ Singleton/Transient service lifetimes
-- ✅ Circular dependency detection
-- ✅ Type-safe agent resolution
-- ✅ Automatic disposal on shutdown
-- ✅ Global container instance
+- Singleton/Transient service lifetimes
+- Circular dependency detection
+- Type-safe agent resolution
+- Automatic disposal on shutdown
+- Global container instance
 
-**Использование:**
+**Usage:**
 ```typescript
 import { getGlobalContainer } from "./core/di-container.js";
 import { registerAllAgents, getOrCreateAgent } from "./core/agent-registry.js";
@@ -83,48 +83,48 @@ const devAgent = await getOrCreateAgent(container, conductor, AgentType.DEV);
 const semanticAgent = await getOrCreateAgent(container, conductor, AgentType.SEMANTIC);
 ```
 
-**Agent Registry** (`src/core/agent-registry.ts`) автоматически регистрирует все агенты:
+**Agent Registry** (`src/core/agent-registry.ts`) automatically registers all agents:
 - DevAgent, SemanticAgent, DoraAgent, ParserAgent, IndexerAgent, QueryAgent
-- Lazy initialization - агенты создаются только при первом запросе
-- Интеграция с ConductorOrchestrator
+- Lazy initialization - agents are created only on first request
+- Integration with ConductorOrchestrator
 
 ## Parser Worker Pool System
 
-**Generic Language Worker Pool** для параллельного парсинга файлов:
+**Generic Language Worker Pool** for parallel file parsing:
 
-**Архитектура:**
+**Architecture:**
 - **SubprocessPool** (`src/agents/workers/parsing-subprocess-pool.ts`) - Subprocess pool management
-- **GenericLanguageWorker** (`src/agents/workers/generic-language-worker.ts`) - Universal worker для всех 10 языков
-- Автоматическое определение pool size на основе скорости парсинга языка:
-  - Python: 4 workers (медленный: ~266ms/file)
-  - TypeScript/JavaScript: 3 workers (средний: ~15-20ms/file)
-  - Go/C: 2 workers (быстрый: ~10-15ms/file)
+- **GenericLanguageWorker** (`src/agents/workers/generic-language-worker.ts`) - Universal worker for all 10 languages
+- Automatic pool size determination based on language parsing speed:
+  - Python: 4 workers (slow: ~266ms/file)
+  - TypeScript/JavaScript: 3 workers (medium: ~15-20ms/file)
+  - Go/C: 2 workers (fast: ~10-15ms/file)
 
-**Оптимизации:**
-- **Streaming Mode**: Workers отправляют `streaming_result` после парсинга каждого файла → главный процесс индексирует сразу
-- **Parallel Data Files**: JSON/YAML обрабатываются через `Promise.all` с chunking
-- **Lazy initialization**: Pools создаются только для используемых языков
-- **Smart threshold**: Workers активируются только для >50 файлов (предотвращает overhead)
-- **Pool reuse**: Workers переиспользуются между сессиями индексации
-- **Greedy Load Balancing**: Файлы сортируются по размеру и назначаются на worker с минимальной нагрузкой (0% deviation)
-- **Async Prefetch**: PrefetchManager читает следующие 3 файла параллельно с парсингом (96-100% I/O overlap)
-- **Parallel Pool Creation**: Все языковые пулы создаются через `Promise.all` (15ms vs 10+ сек)
+**Optimizations:**
+- **Streaming Mode**: Workers send `streaming_result` after parsing each file, allowing the main process to index immediately
+- **Parallel Data Files**: JSON/YAML processed via `Promise.all` with chunking
+- **Lazy initialization**: Pools are created only for languages in use
+- **Smart threshold**: Workers activate only for >50 files (prevents overhead)
+- **Pool reuse**: Workers are reused between indexing sessions
+- **Greedy Load Balancing**: Files sorted by size and assigned to the worker with minimal load (0% deviation)
+- **Async Prefetch**: PrefetchManager reads the next 3 files in parallel with parsing (96-100% I/O overlap)
+- **Parallel Pool Creation**: All language pools created via `Promise.all` (15ms vs 10+ sec)
 
 **Performance (Centralized Embeddings + Optimized Chunks):**
-- **ultrascript-tools-mcp (523 TS files):** **3.1 sec total** (~169 files/sec) 🚀
+- **ultracode (523 TS files):** **3.1 sec total** (~169 files/sec)
   - Parsing: ~2.6s (workersms), 18 chunks, 6 workers
   - Embeddings: centralized batching via Main process
-  - **2.5x faster** vs decentralized (7.8s → 3.1s)
-- **TypeScript parsing speed:** **130-140 files/sec** (было 16 files/sec decentralized)
+  - **2.5x faster** vs decentralized (7.8s -> 3.1s)
+- **TypeScript parsing speed:** **130-140 files/sec** (was 16 files/sec decentralized)
   - **8x speedup** with centralized embeddings (no HTTP contention)
 - **Optimal chunk size:** 40 files/chunk (vs 100 default)
   - More chunks = workers finish at different times = less IPC contention
-  - **-19% totalms** (3830ms → 3100ms) compared to 100 files/chunk
-- Data files (174 JSON/YAML): **34x speedup** (6.7s → 195ms, **892 files/sec**)
-- **91-95%** файлов индексируется через streaming
+  - **-19% totalms** (3830ms -> 3100ms) compared to 100 files/chunk
+- Data files (174 JSON/YAML): **34x speedup** (6.7s -> 195ms, **892 files/sec**)
+- **91-95%** of files indexed via streaming
 - DB write speed: **11,300 entities/sec** (journal_mode=OFF, synchronous=OFF)
-- Worker load balance: **0% deviation** (было 70%/30%)
-- I/O overlap ratio: **96-100%** (I/O latency скрыта)
+- Worker load balance: **0% deviation** (was 70%/30%)
+- I/O overlap ratio: **96-100%** (I/O latency hidden)
 
 **Streaming Mode API:**
 ```typescript
@@ -135,219 +135,219 @@ parserAgent.setStreamingMode(true, async (result, taskId, fileIndex, totalFiles)
 });
 ```
 
-**Конфигурация** (`config/production.yaml`):
+**Configuration** (`config/production.yaml`):
 ```yaml
 parser:
   agent:
-    batchSize: 50          # Размер батча для worker pool
-    workerPoolSize: 4      # Количество worker threads
+    batchSize: 50          # Batch size for worker pool
+    workerPoolSize: 4      # Number of worker threads
 ```
 
-### .ultrascriptignore
+### .ultracodeignore
 
-Файл `.ultrascriptignore` в корне проекта позволяет исключить файлы из индексации:
+The `.ultracodeignore` file in the project root allows excluding files from indexing:
 
 ```gitignore
-# Комментарии начинаются с #
-**/lib/java/**       # Исключить директорию
-**/go-ast-cli.go     # Исключить конкретный файл
-**/test-fixtures/**  # Тестовые фикстуры
+# Comments start with #
+**/lib/java/**       # Exclude directory
+**/go-ast-cli.go     # Exclude specific file
+**/test-fixtures/**  # Test fixtures
 ```
 
-**Синтаксис:**
+**Syntax:**
 - Gitignore-style glob patterns (`**/`, `*.ext`)
-- Комментарии начинаются с `#`
-- Пустые строки игнорируются
-- Паттерны без glob-символов автоматически оборачиваются в `**/{pattern}/**`
+- Comments start with `#`
+- Empty lines are ignored
+- Patterns without glob characters are automatically wrapped in `**/{pattern}/**`
 
-**Файлы:**
-- `src/agents/dev/file-collector.ts` - `loadIgnoreFile()` функция
-- Паттерны объединяются с базовыми `excludePatterns` из конфигурации
+**Files:**
+- `src/agents/dev/file-collector.ts` - `loadIgnoreFile()` function
+- Patterns are merged with base `excludePatterns` from configuration
 
 ## Language Parsers
 
-Поддержка языков через **нативные парсеры** (`src/parsers/`):
+Language support via **native parsers** (`src/parsers/`):
 
-### Приоритет 0: TypeScript/JavaScript (in-process)
-- **TypeScript Compiler API** - полная типизация, резолвинг, семантика
-- `ts.createSourceFile()` для быстрого синтаксического парсинга
-- `ts.createProgram()` + `TypeChecker` для полного анализа с типами
-- `@angular/compiler` для Angular templates и компонентов
+### Priority 0: TypeScript/JavaScript (in-process)
+- **TypeScript Compiler API** - full typing, resolution, semantics
+- `ts.createSourceFile()` for fast syntactic parsing
+- `ts.createProgram()` + `TypeChecker` for full analysis with types
+- `@angular/compiler` for Angular templates and components
 
-### Приоритет 1: Python (subprocess)
-- **Python `ast` модуль** - `python -c "import ast; ..."` для базового AST
-- **Pyright** (опционально) - полный type inference через `npx pyright`
-- Требования: Python 3.8+
+### Priority 1: Python (subprocess)
+- **Python `ast` module** - `python -c "import ast; ..."` for basic AST
+- **Pyright** (optional) - full type inference via `npx pyright`
+- Requirements: Python 3.8+
 
-### Приоритет 2: Java/Kotlin (JAR)
-- **JavaParser** - `java -jar javaparser-cli.jar` для Java AST
-- **kotlin-compiler-embeddable** для Kotlin
-- Требования: JRE 11+
+### Priority 2: Java/Kotlin (JAR)
+- **JavaParser** - `java -jar javaparser-cli.jar` for Java AST
+- **kotlin-compiler-embeddable** for Kotlin
+- Requirements: JRE 11+
 
-### Приоритет 3: Другие языки
-- **Go**: `go/parser` стандартная библиотека
+### Priority 3: Other languages
+- **Go**: `go/parser` standard library
 - **Rust**: `syn` + `rust-analyzer`
 - **C/C++**: `clang -Xclang -ast-dump=json`
 - **Swift**: SwiftSyntax / SourceKit
 
-Конфигурация языков: `src/parsers/language-configs.ts`
+Language configuration: `src/parsers/language-configs.ts`
 
-**Философия**: Разработчик, работающий с кодом на языке X, **всегда имеет** runtime/компилятор X.
-Это устраняет проблемы с NODE_MODULE_VERSION, C++ компиляцией и 28MB prebuilds.
+**Philosophy**: A developer working with code in language X **always has** the X runtime/compiler installed.
+This eliminates issues with NODE_MODULE_VERSION, C++ compilation, and 28MB prebuilds.
 
 ### Enhanced Parser Data (NEW)
 
-Парсеры TypeScript, Python и Kotlin извлекают расширенные данные для семантического поиска:
+TypeScript, Python, and Kotlin parsers extract enhanced data for semantic search:
 
-**Извлекаемые данные:**
-- **calls** - граф вызовов функций/методов с target, argumentCount, isAwait
-- **controlFlow** - ветвления (if/switch), циклы (for/while), исключения (try/catch), await-точки
+**Extracted data:**
+- **calls** - function/method call graph with target, argumentCount, isAwait
+- **controlFlow** - branches (if/switch), loops (for/while), exceptions (try/catch), await points
 - **complexity** - cyclomatic, cognitive, linesOfCode, nestingDepth
-- **documentation** - JSDoc/docstrings с description, params, returns, examples, deprecated
-- **typeReferences** - используемые типы (для анализа зависимостей)
+- **documentation** - JSDoc/docstrings with description, params, returns, examples, deprecated
+- **typeReferences** - used types (for dependency analysis)
 
-**Использование в semantic_search:**
+**Usage in semantic_search:**
 ```typescript
-// Найти сложный код с высокой цикломатической сложностью
+// Find complex code with high cyclomatic complexity
 semantic_search({ query: "data processing", minCyclomatic: 10 })
 
-// Найти async код без обработки ошибок
+// Find async code without error handling
 semantic_search({ query: "API calls", hasAwaits: true, hasExceptions: false })
 
-// Найти недокументированный публичный API
+// Find undocumented public API
 semantic_search({ query: "export function", hasDocumentation: false })
 
-// Найти код с большим количеством вызовов (потенциальные hotspots)
+// Find code with many calls (potential hotspots)
 semantic_search({ query: "", minCallCount: 20 })
 ```
 
-**Векторизация:**
-Все эти данные включаются в embedding text для улучшенного семантического матчинга:
-- Описания из документации
-- Имена вызываемых функций
-- Информация о сложности (для complex code)
-- Информация о control flow (branches, loops, exceptions, awaits)
+**Vectorization:**
+All this data is included in the embedding text for improved semantic matching:
+- Descriptions from documentation
+- Names of called functions
+- Complexity information (for complex code)
+- Control flow information (branches, loops, exceptions, awaits)
 
 ## Cross-Project Support (NEW)
 
-MCP сервер поддерживает работу с **несколькими проектами** одновременно, каждый со своими изолированными базами данных.
+The MCP server supports working with **multiple projects** simultaneously, each with its own isolated databases.
 
-### Архитектура
+### Architecture
 
 ```
-%LOCALAPPDATA%\UltraScriptTools\
+%LOCALAPPDATA%\UltraCode\
 ├── config/
-│   └── semantic-config.json       # Глобальная конфигурация
+│   └── semantic-config.json       # Global configuration
 └── projects/
-    ├── {hash1}/                   # Проект 1 (hash от пути)
+    ├── {hash1}/                   # Project 1 (hash of path)
     │   ├── graph.db               # Entity graph
     │   ├── vectors.db             # Embeddings
-    │   └── meta.json              # Метаданные проекта
-    └── {hash2}/                   # Проект 2
+    │   └── meta.json              # Project metadata
+    └── {hash2}/                   # Project 2
         ├── graph.db
         ├── vectors.db
         └── meta.json
 ```
 
-### Использование
+### Usage
 
-**Переключение через `index`:**
+**Switching via `index`:**
 ```typescript
-// Индексация другого проекта автоматически переключает контекст
-index({ directory: "D:\\другой\\проект" })
+// Indexing another project automatically switches context
+index({ directory: "D:\\other\\project" })
 ```
 
-**Поиск в другом проекте через `projectPath`:**
+**Searching in another project via `projectPath`:**
 ```typescript
-// semantic_search поддерживает projectPath для кросс-проектного поиска
+// semantic_search supports projectPath for cross-project search
 semantic_search({
   query: "authentication",
-  projectPath: "D:\\другой\\проект"
+  projectPath: "D:\\other\\project"
 })
 ```
 
-### Ключевые компоненты
+### Key Components
 
-- **ProjectContextManager** (`src/shared/project-context.ts`) - Singleton для управления контекстом проекта
-- **getProjectSQLiteManager** (`src/storage/sqlite-manager.ts`) - Получение SQLiteManager для конкретного проекта
-- **switchGlobalProjectContext** (`src/index.ts`) - Переключение глобального контекста между проектами
-- **resetGraphStorage** (`src/storage/graph-storage-factory.ts`) - Сброс кэша GraphStorage при переключении
+- **ProjectContextManager** (`src/shared/project-context.ts`) - Singleton for project context management
+- **getProjectSQLiteManager** (`src/storage/sqlite-manager.ts`) - Get SQLiteManager for a specific project
+- **switchGlobalProjectContext** (`src/index.ts`) - Switch global context between projects
+- **resetGraphStorage** (`src/storage/graph-storage-factory.ts`) - Reset GraphStorage cache on switch
 
-### Поведение
+### Behavior
 
-1. При указании `directory` в `index` или `projectPath` в `semantic_search`:
-   - Автоматически создаётся/открывается БД для указанного проекта
-   - Глобальный контекст переключается на новый проект
-   - Все последующие операции работают с данными этого проекта
+1. When specifying `directory` in `index` or `projectPath` in `semantic_search`:
+   - The database for the specified project is automatically created/opened
+   - Global context switches to the new project
+   - All subsequent operations work with that project's data
 
-2. Данные каждого проекта **полностью изолированы** - изменения в одном проекте не влияют на другой
+2. Each project's data is **fully isolated** - changes in one project do not affect another
 
-3. При переключении назад на предыдущий проект его данные сохранены и доступны
+3. When switching back to a previous project, its data is preserved and available
 
-### Пример workflow
+### Example Workflow
 
 ```typescript
-// 1. Индексируем основной проект
+// 1. Index the main project
 index({ directory: "D:\\work\\main-project" })
-// → Контекст: main-project, 8000 entities
+// -> Context: main-project, 8000 entities
 
-// 2. Переключаемся на другой проект для анализа
+// 2. Switch to another project for analysis
 index({ directory: "D:\\work\\other-project" })
-// → Контекст: other-project, 50000 entities
+// -> Context: other-project, 50000 entities
 
-// 3. Ищем в other-project
+// 3. Search in other-project
 semantic_search({ query: "newsletter" })
-// → Результаты из other-project
+// -> Results from other-project
 
-// 4. Возвращаемся к основному проекту
+// 4. Return to the main project
 index({ directory: "D:\\work\\main-project", incremental: true })
-// → Контекст: main-project, данные сохранены
+// -> Context: main-project, data preserved
 ```
 
 ## GPU/CUDA Worker Architecture (v2.5)
 
-CUDA операции вынесены в отдельный worker-процесс для изоляции и стабильности:
+CUDA operations are offloaded to a separate worker process for isolation and stability:
 
-### Архитектура
+### Architecture
 
 ```
 Main Process (MCP Server)
-    ↓
+    |
 GPU Backend Selector
-    ↓
-┌─────────────────────────────────────────┐
-│  GPU Worker Subprocess                  │
-│  ├── CUDA Backend (RTX/GTX)            │
-│  ├── Dawn/WebGPU Backend (cross-platform)│
-│  └── WASM SIMD Fallback                │
-└─────────────────────────────────────────┘
+    |
++------------------------------------------+
+|  GPU Worker Subprocess                   |
+|  +-- CUDA Backend (RTX/GTX)             |
+|  +-- Dawn/WebGPU Backend (cross-platform)|
+|  +-- WASM SIMD Fallback                 |
++------------------------------------------+
 ```
 
-### Компоненты
+### Components
 
-- **`src/gpu/backend-selector.ts`** - выбор GPU бэкенда по доступности
-- **`src/gpu/backends/cuda-backend.ts`** - Native CUDA addon для NVIDIA
-- **`src/gpu/backends/gpu-worker-backend.ts`** - Worker subprocess для изоляции
-- **`external-tools/native/cuda/`** - C++ CUDA addon исходники
+- **`src/gpu/backend-selector.ts`** - GPU backend selection by availability
+- **`src/gpu/backends/cuda-backend.ts`** - Native CUDA addon for NVIDIA
+- **`src/gpu/backends/gpu-worker-backend.ts`** - Worker subprocess for isolation
+- **`external-tools/native/cuda/`** - C++ CUDA addon source files
 
-### Особенности
+### Features
 
-- **Изоляция crashes**: GPU ошибки не роняют основной MCP процесс
-- **Blackwell detection**: CC ≥12.0 автоматически fallback на WASM SIMD
-- **Windows `windowsHide`**: Скрытые консольные окна subprocess'ов
-- **Graceful fallback**: CUDA → Dawn WebGPU → WASM SIMD → Pure JS
+- **Crash isolation**: GPU errors do not crash the main MCP process
+- **Blackwell detection**: CC >=12.0 automatically falls back to WASM SIMD
+- **Windows `windowsHide`**: Hidden console windows for subprocesses
+- **Graceful fallback**: CUDA -> Dawn WebGPU -> WASM SIMD -> Pure JS
 
-### Native модули
+### Native Modules
 
 ```
 external-libs/
-├── cuda-win32-x64/ultrascript_cuda.node
-├── cuda-linux-x64/ultrascript_cuda.node
+├── cuda-win32-x64/ultracode_cuda.node
+├── cuda-linux-x64/ultracode_cuda.node
 ├── dawn-win32-x64/*.node
 └── dawn-linux-x64/*.node
 ```
 
-### Сборка CUDA модуля
+### Building the CUDA Module
 
 ```bash
 npm run build:cuda        # Windows PowerShell
@@ -355,64 +355,64 @@ npm run build:cuda:debug  # Debug build
 npm run build:cuda:clean  # Clean rebuild
 ```
 
-Требования: CUDA Toolkit 12.x, cmake-js, node-addon-api
+Requirements: CUDA Toolkit 12.x, cmake-js, node-addon-api
 
 ## Storage Layer
 
 **libSQL-based unified storage** (`src/storage/`):
 
-- **GraphStorageLibSQL** (`graph-storage-libsql.ts`) - основной интерфейс для entities/relationships/vectors
-- **LibSQLGraphAdapter** (`libsql-graph-adapter.ts`) - адаптер для libSQL/Turso
-- **BunSQLiteAdapter** (`bun-sqlite-adapter.ts`) - адаптер для Bun native SQLite
-- **VectorStore** (`src/semantic/vector-store.ts`) - интеграция для семантического поиска
-- **GraphStorageFactory** (`graph-storage-factory.ts`) - factory для создания storage
+- **GraphStorageLibSQL** (`graph-storage-libsql.ts`) - main interface for entities/relationships/vectors
+- **LibSQLGraphAdapter** (`libsql-graph-adapter.ts`) - adapter for libSQL/Turso
+- **BunSQLiteAdapter** (`bun-sqlite-adapter.ts`) - adapter for Bun native SQLite
+- **VectorStore** (`src/semantic/vector-store.ts`) - integration for semantic search
+- **GraphStorageFactory** (`graph-storage-factory.ts`) - factory for creating storage
 
-**Унифицированное хранилище** (`project.db`):
-- Entities и relationships
-- Vector embeddings (vectors таблица)
-- **Aggressive pragmas** для максимальной скорости записи:
-  - `journal_mode = OFF` - нет журнала (данные можно перегенерировать)
-  - `synchronous = OFF` - нет fsync (11,300 entities/sec)
-- Поддержка Turso edge database
+**Unified storage** (`project.db`):
+- Entities and relationships
+- Vector embeddings (vectors table)
+- **Aggressive pragmas** for maximum write speed:
+  - `journal_mode = OFF` - no journal (data can be regenerated)
+  - `synchronous = OFF` - no fsync (11,300 entities/sec)
+- Turso edge database support
 
 ## Semantic Search & Embeddings
 
-Модульная система провайдеров эмбеддингов (`src/semantic/providers/`):
+Modular embedding provider system (`src/semantic/providers/`):
 
-### Провайдеры и производительность
+### Providers and Performance
 
-| Провайдер | Файл | Время/запрос | Batch | Рекомендация |
-|-----------|------|-------------|-------|--------------|
-| **ovms-native** | `ovms-provider.ts` | **0.8-2ms** | ✅ Native | ⭐ CPU/NPU, рекомендуется |
-| **vllm** | `vllm-provider.ts` | 1-3ms | ✅ Native | ⭐ NVIDIA GPU Production |
-| **tei** | `tei-provider.ts` | 5-15ms | ✅ Native | Альтернатива OVMS |
-| **ollama** | `ollama-provider.ts` | 10-50ms | ❌ | Простая установка |
-| **openai** | `openai-provider.ts` | 50-200ms | ✅ | Cloud API |
-| **huggingface** | `huggingface-provider.ts` | 100-500ms | ❌ | Cloud API |
+| Provider | File | Time/request | Batch | Recommendation |
+|----------|------|-------------|-------|----------------|
+| **ovms-native** | `ovms-provider.ts` | **0.8-2ms** | Native | CPU/NPU, recommended |
+| **vllm** | `vllm-provider.ts` | 1-3ms | Native | NVIDIA GPU Production |
+| **tei** | `tei-provider.ts` | 5-15ms | Native | Alternative to OVMS |
+| **ollama** | `ollama-provider.ts` | 10-50ms | No | Easy setup |
+| **openai** | `openai-provider.ts` | 50-200ms | Yes | Cloud API |
+| **huggingface** | `huggingface-provider.ts` | 100-500ms | No | Cloud API |
 
 ### OVMS Provider (v2.5 - Recommended)
 
-**OVMS (OpenVINO Model Server)** - рекомендуемый провайдер эмбеддингов:
+**OVMS (OpenVINO Model Server)** - recommended embedding provider:
 
-**Варианты:**
-- `ovms-native` - локальный бинарник OVMS, автоматическое управление lifecycle
-- `vllm` - Docker контейнер vLLM для NVIDIA GPU (высокая производительность)
+**Variants:**
+- `ovms-native` - local OVMS binary, automatic lifecycle management
+- `vllm` - Docker container vLLM for NVIDIA GPU (high performance)
 
-**Файлы:**
-- `src/semantic/providers/ovms-provider.ts` - провайдер для V3/V2 API
-- `src/semantic/providers/ovms-grpc-client.ts` - gRPC клиент для V2 API
-- `src/semantic/ovms-native-manager.ts` - lifecycle management OVMS процесса
+**Files:**
+- `src/semantic/providers/ovms-provider.ts` - provider for V3/V2 API
+- `src/semantic/providers/ovms-grpc-client.ts` - gRPC client for V2 API
+- `src/semantic/ovms-native-manager.ts` - lifecycle management of the OVMS process
 
-**Особенности:**
+**Features:**
 - V3 OpenAI-compatible API (`/v3/embeddings`) - batch requests, base64 encoding
-- V2 API fallback (`/v2/models/{model}/infer`) для legacy моделей
-- Автоматическое завершение OVMS процесса при shutdown (taskkill /T на Windows)
-- Поддержка моделей: jina-embeddings-v3, bge-m3, multilingual-e5-large
+- V2 API fallback (`/v2/models/{model}/infer`) for legacy models
+- Automatic OVMS process termination on shutdown (taskkill /T on Windows)
+- Model support: jina-embeddings-v3, bge-m3, multilingual-e5-large
 
-**Конфигурация:**
+**Configuration:**
 ```yaml
 embedding:
-  platform: "ovms-native"  # или "vllm" для NVIDIA GPU
+  platform: "ovms-native"  # or "vllm" for NVIDIA GPU
   ovms:
     endpoint: "http://127.0.0.1:8083"  # Native: 8083, Docker: 8082
     batch_size: 200
@@ -424,308 +424,358 @@ embedding:
 
 ### OpenVINO Provider (Legacy)
 
-Локальный CPU провайдер с native batch inference:
+Local CPU provider with native batch inference:
 
 ```typescript
-// Файл: src/semantic/providers/openvino-provider.ts
-// Модели: all-MiniLM-L6-v2, bge-small-en-v1.5, multilingual-e5-small
-// Устройства: CPU, GPU, AUTO (NPU не поддерживается)
+// File: src/semantic/providers/openvino-provider.ts
+// Models: all-MiniLM-L6-v2, bge-small-en-v1.5, multilingual-e5-small
+// Devices: CPU, GPU, AUTO (NPU not supported)
 ```
 
-**Установка:**
+**Installation:**
 ```bash
 bun add openvino-node @xenova/transformers
 ```
 
-### Benchmark English моделей — Large Entities (RTX 5090 + i9)
+### Benchmark of English Models - Large Entities (RTX 5090 + i9)
 
-**Benchmark на 100 сущностях (крупнейшая: SemanticAgent 1253 lines) со Smart Chunker:**
+**Benchmark on 100 entities (largest: SemanticAgent 1253 lines) with Smart Chunker:**
 
-#### Embedding Models (Реальные бенчмарки 2025-12-07)
+#### Embedding Models (Real benchmarks 2025-12-07)
 
-| Rank | Провайдер | Модель | Chunks/s | ms/chunk | tok/s | Context | Рекомендация |
-|------|-----------|--------|----------|----------|-------|---------|--------------|
-| 1 | **OpenVINO CPU** | all-MiniLM-L6-v2 | **474** | **2.1ms** | **80,507** | 256 | 🏆 Fastest overall |
-| 2 | OpenVINO CPU | paraphrase-multilingual | 161 | 6.2ms | 16,089 | 128 | 🌍 50+ языков |
-| 3 | **Ollama GPU** | granite-embedding:30m | **123** | **8.1ms** | **34,685** | 512 | 🏆 Fast Ollama |
-| 4 | OpenVINO CPU | gte-small | 87 | 11.5ms | 24,400 | 512 | Качество |
-| 5 | OpenVINO CPU | multilingual-e5-small | 69 | 14.6ms | 19,290 | 512 | 🌍 94 языка |
-| 6 | **Ollama GPU** | snowflake-arctic-embed2 | **15** | **65.4ms** | **9,968** | 8192 | 🏆 Best 8K |
-| 7 | Ollama GPU | nomic-embed-text | 2 | 580.8ms | 1,123 | 8192 | ❌ Очень медленно |
+| Rank | Provider | Model | Chunks/s | ms/chunk | tok/s | Context | Recommendation |
+|------|----------|-------|----------|----------|-------|---------|----------------|
+| 1 | **OpenVINO CPU** | all-MiniLM-L6-v2 | **474** | **2.1ms** | **80,507** | 256 | Fastest overall |
+| 2 | OpenVINO CPU | paraphrase-multilingual | 161 | 6.2ms | 16,089 | 128 | 50+ languages |
+| 3 | **Ollama GPU** | granite-embedding:30m | **123** | **8.1ms** | **34,685** | 512 | Fast Ollama |
+| 4 | OpenVINO CPU | gte-small | 87 | 11.5ms | 24,400 | 512 | Quality |
+| 5 | OpenVINO CPU | multilingual-e5-small | 69 | 14.6ms | 19,290 | 512 | 94 languages |
+| 6 | **Ollama GPU** | snowflake-arctic-embed2 | **15** | **65.4ms** | **9,968** | 8192 | Best 8K |
+| 7 | Ollama GPU | nomic-embed-text | 2 | 580.8ms | 1,123 | 8192 | Very slow |
 
-**Ключевые выводы:**
-- **OpenVINO MiniLM** — абсолютный лидер (474 chunks/s, 80K tok/s, CPU only!)
-- **Ollama Granite:30m** — лучший Ollama для разработки (123 chunks/s)
-- **Snowflake Arctic** — лучший для 8K контекста (15 chunks/s, full class embedding)
-- **Nomic Embed** — НЕ РЕКОМЕНДУЕТСЯ (2 chunks/s, очень медленно)
+**Key takeaways:**
+- **OpenVINO MiniLM** - absolute leader (474 chunks/s, 80K tok/s, CPU only!)
+- **Ollama Granite:30m** - best Ollama for development (123 chunks/s)
+- **Snowflake Arctic** - best for 8K context (15 chunks/s, full class embedding)
+- **Nomic Embed** - NOT RECOMMENDED (2 chunks/s, very slow)
 
-**Рекомендации:**
-- **Разработка (быстрая индексация)**: OpenVINO + all-MiniLM-L6-v2 (474 chunks/s)
-- **Production (большие классы)**: Ollama + snowflake-arctic-embed2 (8K context)
-- **Мультиязычный код (RU/CN)**: OpenVINO + multilingual-e5-small (69 chunks/s)
-- **Простой setup**: Ollama + granite-embedding:30m (123 chunks/s)
+**Recommendations:**
+- **Development (fast indexing)**: OpenVINO + all-MiniLM-L6-v2 (474 chunks/s)
+- **Production (large classes)**: Ollama + snowflake-arctic-embed2 (8K context)
+- **Multilingual code (RU/CN)**: OpenVINO + multilingual-e5-small (69 chunks/s)
+- **Simple setup**: Ollama + granite-embedding:30m (123 chunks/s)
 
-**Ограничения OpenVINO:**
-- Intel NPU не поддерживается для BERT моделей (masked_fill/Select)
+**OpenVINO limitations:**
+- Intel NPU is not supported for BERT models (masked_fill/Select)
 
-### LLM модели для AutoDoc (генерация документации)
+### LLM Models for AutoDoc (documentation generation)
 
-Конфигурация: `config/llm-models.json`
+Configuration: `config/llm-models.json`
 
 #### LLM Benchmark (2025-12-07, SemanticAgent 1253 lines)
 
-| Модель | Provider | Size | tok/s | TTFT | Total | Output | Качество |
-|--------|----------|------|-------|------|-------|--------|----------|
-| **qwen3-coder:30b** | Ollama | 18GB | 12 | 32.87s | 75.6s | 3638 chars | 🏆 Excellent |
+| Model | Provider | Size | tok/s | TTFT | Total | Output | Quality |
+|-------|----------|------|-------|------|-------|--------|---------|
+| **qwen3-coder:30b** | Ollama | 18GB | 12 | 32.87s | 75.6s | 3638 chars | Excellent |
 | deepseek-coder:6.7b | Ollama | 3.8GB | 10 | 12.71s | 51.3s | 1966 chars | Good |
 
 #### OpenVINO LLM Models (config/llm-models.json)
 
-| Модель | Размер | Контекст | Скорость CPU | Рекомендация |
-|--------|--------|----------|--------------|--------------|
-| **Qwen2.5-Coder-7B INT4** | 4GB | 32K | ~10 tok/s | 🏆 Лучшая для кода |
-| **Phi-4-mini INT4** | 2.5GB | 16K | ~20 tok/s | ⚡ Быстрая + качество |
-| **Phi-3-mini-128K INT4** | 2GB | 128K | ~18 tok/s | 📄 Ultra long context |
-| **Qwen2.5-0.5B GGUF** | 350MB | 32K | ~90 tok/s | 🪶 Ultra compact |
-| **Qwen3-4B NPU INT4** | 2.5GB | 8K | ~22 tok/s NPU | 💚 NPU optimized |
+| Model | Size | Context | CPU Speed | Recommendation |
+|-------|------|---------|-----------|----------------|
+| **Qwen2.5-Coder-7B INT4** | 4GB | 32K | ~10 tok/s | Best for code |
+| **Phi-4-mini INT4** | 2.5GB | 16K | ~20 tok/s | Fast + quality |
+| **Phi-3-mini-128K INT4** | 2GB | 128K | ~18 tok/s | Ultra long context |
+| **Qwen2.5-0.5B GGUF** | 350MB | 32K | ~90 tok/s | Ultra compact |
+| **Qwen3-4B NPU INT4** | 2.5GB | 8K | ~22 tok/s NPU | NPU optimized |
 
-**Рекомендации по выбору:**
-- **Best Quality**: `qwen3-coder:30b` — comprehensive docs (12 tok/s, 18GB VRAM)
-- **Faster**: `deepseek-coder:6.7b` — 2x faster TTFT (10 tok/s, 4GB VRAM)
-- **Ограниченная память (<4GB)**: `Qwen2.5-0.5B` через GGUF — 350MB, 90 tok/s
-- **NPU (Intel Core Ultra)**: `Qwen3-4B` — официальная оптимизация, ~15W
+**Selection recommendations:**
+- **Best Quality**: `qwen3-coder:30b` - comprehensive docs (12 tok/s, 18GB VRAM)
+- **Faster**: `deepseek-coder:6.7b` - 2x faster TTFT (10 tok/s, 4GB VRAM)
+- **Limited memory (<4GB)**: `Qwen2.5-0.5B` via GGUF - 350MB, 90 tok/s
+- **NPU (Intel Core Ultra)**: `Qwen3-4B` - official optimization, ~15W
 
 **OpenVINO 2025.4 features:**
-- **Qwen3-Embedding-0.6B** — новая embedding модель для RAG
-- **Qwen3-30B-A3B MoE** — 30B качество при скорости 3B
-- **Gemma-3-4B NPU** — новая поддержка NPU
-- **Mistral-Small-24B** — Jan 2025 release
-- Прямая поддержка GGUF файлов (без конвертации)
-- NPU контекст до 10K токенов (было 8K)
-- Structured output с XGrammar
-- Tool calling + parsers для agentic AI
-- Prefix caching для chat history
-- См. `docs/NPU_WAITING.md`
+- **Qwen3-Embedding-0.6B** - new embedding model for RAG
+- **Qwen3-30B-A3B MoE** - 30B quality at 3B speed
+- **Gemma-3-4B NPU** - new NPU support
+- **Mistral-Small-24B** - Jan 2025 release
+- Direct GGUF file support (no conversion needed)
+- NPU context up to 10K tokens (was 8K)
+- Structured output with XGrammar
+- Tool calling + parsers for agentic AI
+- Prefix caching for chat history
+- See `.autodoc/known-issues.md`
 
-Провайдер выбирается через `config/default.yaml`, CLI setup или `MCP_EMBEDDING_PROVIDER` env.
+Provider is selected via `config/default.yaml`, CLI setup, or `MCP_EMBEDDING_PROVIDER` env.
 
 ## Configuration System
 
 **YAML-based configuration** (`config/`):
-- `default.yaml` - базовые настройки
-- `development.yaml` - настройки для разработки
-- `production.yaml` - production оптимизации
-- `cloud_prod.yaml` - cloud-specific настройки
+- `default.yaml` - base settings
+- `development.yaml` - development settings
+- `production.yaml` - production optimizations
+- `cloud_prod.yaml` - cloud-specific settings
 
-Конфигурация загружается через `ConfigLoader` (`src/config/yaml-config.ts`) с поддержкой env-переменных:
-- `MCP_EMBEDDING_PROVIDER` - провайдер эмбеддингов
-- `MCP_USE_PARSER` - включить/выключить ParserAgent
-- `MCP_DEV_INDEX_BATCH` - размер батча для индексации
-- `MCP_DEBUG_DISABLE_SEMANTIC` - отключить семантический агент (для отладки)
+Configuration is loaded via `ConfigLoader` (`src/config/yaml-config.ts`) with env variable support:
+- `MCP_EMBEDDING_PROVIDER` - embedding provider
+- `MCP_USE_PARSER` - enable/disable ParserAgent
+- `MCP_DEV_INDEX_BATCH` - batch size for indexing
+- `MCP_DEBUG_DISABLE_SEMANTIC` - disable semantic agent (for debugging)
+
+## Swagger/OpenAPI Integration
+
+Automatic linking of Swagger/OpenAPI specifications with project code.
+
+### Architecture
+
+When indexing a project with swagger JSON files:
+
+1. **json-parser.ts** parses swagger and creates entities with `metadata.swaggerType` (`api_spec`, `endpoint`, `schema`, `tag`) and `metadata.isApiContract: true`
+2. **swagger-code-linker.ts** (post-indexing step) links swagger with code:
+   - Producers: controllers -> swagger endpoints (`PRODUCES_API`)
+   - Consumers: generated clients -> swagger endpoints (`CONSUMES_API`)
+   - Generated types: TS/C# types -> swagger schemas (`GENERATED_FROM`)
+3. **swagger-usage-detector.ts** determines which swagger files are actually used (multi-signal scoring)
+
+### New RelationType
+
+```typescript
+RelationType.PRODUCES_API    // Controller -> Swagger endpoint
+RelationType.CONSUMES_API    // Generated client -> Swagger endpoint
+RelationType.GENERATED_FROM  // Generated type -> Swagger schema
+```
+
+### Supported Frameworks
+
+**API Producers**: NestJS, Express/Fastify, Spring Boot, .NET (Swashbuckle, Microsoft.OpenApi)
+**Code Generators**: openapi-generator-cli, NSwag, swagger-codegen, Autorest, Refitter, ng-openapi-gen
+
+### Key Files
+
+```
+src/parsers/swagger/types.ts              - Types for swagger analysis
+src/parsers/swagger/swagger-code-linker.ts - Swagger <-> code linking
+src/parsers/swagger/index.ts              - Module exports
+src/analysis/swagger-usage-detector.ts     - Active swagger file detection
+```
+
+### Enrichment of Existing Tools
+
+- **analyze_code_impact**: added `contractImpact` section when swagger links exist
+- **analyze_swagger_impact**: new tool for analyzing the impact of swagger changes
+- **modify_code**: warnings when modifying controllers/generated code (`swaggerImpact`)
+- **trace_flow/trace_backwards**: `crossesApiContract` annotations when crossing API boundaries
+- **get_graph_health**: detection of swagger desynchronization with generated code
+
+### Zero Overhead
+
+All swagger modules are lazy-loaded and protected by `metadata.swaggerType` checks in the graph. Projects without swagger files have zero overhead.
 
 ## MCP Tools Structure
 
-30+ MCP-методов реализованы в `src/index.ts` + `src/tools/`:
+30+ MCP tools implemented in `src/index.ts` + `src/tools/`:
 
 **Core indexing:**
-- `index` - индексация кодовой базы
-- `clean_index` - полная переиндексация
-- `reset_graph` - очистка графа
+- `index` - codebase indexing
+- `clean_index` - full re-indexing
+- `reset_graph` - graph cleanup
 
 **Graph queries:**
-- `get_graph` - получение графа сущностей
-- `list_entity_relationships` - связи сущности
-- `get_members` - список сущностей в файле (UltrasharpTools-совместимое имя)
-- `query` - универсальный запрос к графу
-- `get_graph_health` - диагностика БД
-- `get_graph_stats` - статистика графа
+- `get_graph` - get entity graph
+- `list_entity_relationships` - entity relationships
+- `get_members` - list entities in a file (UltrasharpTools-compatible name)
+- `query` - universal graph query
+- `get_graph_health` - database diagnostics
+- `get_graph_stats` - graph statistics
 
 **Code Modification:**
-- `modify_code` - модификация кода сущности (UltrasharpTools-совместимое имя)
-- `create_file` - создание файла с auto-parse в граф
-- `rename_symbol` - переименование символа с обновлением ссылок
-- `add_member` - добавление члена в класс/интерфейс
-- `copy_file` - копирование файла с обновлением графа
-- `rename_file` - переименование файла с обновлением импортов
-- `split_file` - разделение файла на части
-- `synthesize_files` - объединение файлов
+- `modify_code` - entity code modification (UltrasharpTools-compatible name)
+- `create_file` - create file with auto-parse into graph
+- `rename_symbol` - rename symbol with reference updates
+- `add_member` - add member to class/interface
+- `copy_file` - copy file with graph update
+- `rename_file` - rename file with import updates
+- `split_file` - split file into parts
+- `synthesize_files` - merge files
 
 **Code Validation:**
-- `validate_file` - валидация файла (ESLint/Pylint)
-- `validate_directory` - пакетная валидация директории
+- `validate_file` - file validation (ESLint/Pylint)
+- `validate_directory` - batch directory validation
 
 **Semantic analysis:**
-- `semantic_search` - семантический поиск по коду с rich metadata
+- `semantic_search` - semantic code search with rich metadata
   - **Filters**: minCyclomatic, maxCyclomatic, hasExceptions, hasLoops, hasAwaits, hasDocumentation, isDeprecated, minCallCount
   - **Returns**: complexity metrics, control flow info, call counts, documentation status
-- `find_duplicates` - поиск дубликатов (семантический, UltrasharpTools-совместимое имя)
-- `jscpd_detect_clones` - JSCPD-based поиск дубликатов (без эмбеддингов)
-- `find_similar_code` - поиск похожего кода
-- `suggest_refactoring` - AI рефакторинг
-- `pattern_search` - продвинутый поиск (entity/content/semantic/hybrid)
+- `find_duplicates` - duplicate search (semantic, UltrasharpTools-compatible name)
+- `jscpd_detect_clones` - JSCPD-based duplicate search (no embeddings)
+- `find_similar_code` - similar code search
+- `suggest_refactoring` - AI refactoring
+- `pattern_search` - advanced search (entity/content/semantic/hybrid)
 
 **Advanced analysis:**
-- `analyze_code_impact` - анализ влияния изменений
-- `analyze_hotspots` - поиск горячих точек (complexity/changes/coupling)
-- `find_related_concepts` - поиск связанных концепций
-- `cross_language_search` - поиск по нескольким языкам
-- `analyze_state_chaos` - анализ хаоса в управлении состоянием
-- `detect_technology_stack` - определение технологического стека
-- `lerna_project_graph` - граф Lerna workspace зависимостей
+- `analyze_code_impact` - change impact analysis
+- `analyze_hotspots` - hotspot search (complexity/changes/coupling)
+- `find_related_concepts` - related concepts search
+- `cross_language_search` - cross-language search
+- `analyze_state_chaos` - state management chaos analysis
+- `analyze_swagger_impact` - Swagger/OpenAPI specification change impact analysis
+- `detect_technology_stack` - technology stack detection
+- `lerna_project_graph` - Lerna workspace dependency graph
 
 **Version Management:**
-- `create_snapshot` - создание snapshot для rollback
-- `undo` - откат к snapshot (UltrasharpTools-совместимое имя)
-- `list_snapshots` - список доступных snapshot'ов
-- `cleanup_snapshots` - очистка старых snapshot'ов
+- `create_snapshot` - create snapshot for rollback
+- `undo` - rollback to snapshot (UltrasharpTools-compatible name)
+- `list_snapshots` - list available snapshots
+- `cleanup_snapshots` - clean up old snapshots
 
 **Branch Management:**
-- `list_branches` - список проиндексированных веток
-- `switch_branch` - переключение активной ветки
-- `get_branch_status` - статус текущей ветки
-- `cleanup_branches` - очистка старых веток (LRU)
-- `get_changed_files` - измененные файлы между ветками
+- `list_branches` - list indexed branches
+- `switch_branch` - switch active branch
+- `get_branch_status` - current branch status
+- `cleanup_branches` - clean up old branches (LRU)
+- `get_changed_files` - changed files between branches
 
 **History (Prolly Tree):**
-- `list_commits` - список коммитов графа (версионные снапшоты)
-- `get_entity_history` - история изменений сущности по коммитам
-- `diff_commits` - сравнение двух версий графа
-- `checkout_commit` - time travel — просмотр графа на момент коммита
+- `list_commits` - list graph commits (versioned snapshots)
+- `get_entity_history` - entity change history by commits
+- `diff_commits` - compare two graph versions
+- `checkout_commit` - time travel - view graph at a specific commit
 
-**Tracing (статический анализ потока):**
-- `trace_flow` - трассировка выполнения от A к B с анализом состояний
-- `trace_backwards` - обратная трассировка (почему метод не вызывается?)
-- `trace_data_flow` - трассировка потока данных к целевому состоянию
-- `analyze_state_impact` - анализ влияния состояния на разные сценарии
-- `find_decision_points` - поиск всех точек принятия решений
+**Tracing (static flow analysis):**
+- `trace_flow` - execution tracing from A to B with state analysis
+- `trace_backwards` - reverse tracing (why is a method not called?)
+- `trace_data_flow` - data flow tracing to target state
+- `analyze_state_impact` - state impact analysis across scenarios
+- `find_decision_points` - find all decision points
 
 **Monitoring:**
-- `get_version` - версия сервера
-- `get_metrics` - системные метрики
-- `get_agent_metrics` - метрики агентов
-- `get_bus_stats` - статистика knowledge bus
-- `clear_bus_topic` - очистка топика bus
+- `get_version` - server version
+- `get_metrics` - system metrics
+- `get_agent_metrics` - agent metrics
+- `get_bus_stats` - knowledge bus statistics
+- `clear_bus_topic` - clear bus topic
 
 ## Testing Infrastructure
 
-**Jest-based testing** с поддержкой ES modules:
+**Jest-based testing** with ES modules support:
 
 ```bash
-# Тесты находятся в
-tests/                   # Основные интеграционные тесты
-src/**/__tests__/        # Unit-тесты рядом с кодом
-tests/fixtures/          # Тестовые данные
+# Tests are located in
+tests/                   # Main integration tests
+src/**/__tests__/        # Unit tests alongside code
+tests/fixtures/          # Test data
 
-# Конфигурация тестов
-jest.config.js           # Jest config с ESM support
-jest.setup.js            # Глобальные моки и setup
-tsconfig.test.json       # TypeScript config для тестов
+# Test configuration
+jest.config.js           # Jest config with ESM support
+jest.setup.js            # Global mocks and setup
+tsconfig.test.json       # TypeScript config for tests
 ```
 
-Особенности:
-- `maxWorkers: 1` - тесты запускаются последовательно (SQLite constraints)
-- Моки: `src/__mocks__/` - nanoid, p-limit, connection-pool
-- Coverage threshold: стремиться к сохранению текущего уровня покрытия
+Features:
+- `maxWorkers: 1` - tests run sequentially (SQLite constraints)
+- Mocks: `src/__mocks__/` - nanoid, p-limit, connection-pool
+- Coverage threshold: aim to maintain current coverage level
 
 ## Key Architectural Patterns
 
-1. **Multi-agent coordination**: задачи делегируются через `ConductorOrchestrator` → специализированные агенты
-2. **Provider pattern**: эмбеддинги через абстракцию `EmbeddingProvider` с множественными реализациями
-3. **Singleton storage**: `SQLiteManager`, `GraphStorage` через factory для консистентности
-4. **Pub/Sub bus**: `KnowledgeBus` для асинхронной коммуникации агентов
-5. **Backpressure handling**: `AgentBusyError` с `retryAfterMs` hints когда агенты перегружены
-6. **Deterministic IDs**: SHA256-based стабильные ID для entities/relationships
+1. **Multi-agent coordination**: tasks are delegated via `ConductorOrchestrator` to specialized agents
+2. **Provider pattern**: embeddings via `EmbeddingProvider` abstraction with multiple implementations
+3. **Singleton storage**: `SQLiteManager`, `GraphStorage` via factory for consistency
+4. **Pub/Sub bus**: `KnowledgeBus` for asynchronous agent communication
+5. **Backpressure handling**: `AgentBusyError` with `retryAfterMs` hints when agents are overloaded
+6. **Deterministic IDs**: SHA256-based stable IDs for entities/relationships
 
 ## Working with Native Modules
 
-**better-sqlite3** - нативный модуль, требует rebuild при несовпадении `NODE_MODULE_VERSION`:
+**better-sqlite3** - native module, requires rebuild on `NODE_MODULE_VERSION` mismatch:
 
 ```bash
-# Автоматический rebuild начиная с v2.6.4
-# При ручной необходимости:
+# Automatic rebuild starting from v2.6.4
+# If manual rebuild is needed:
 npm rebuild better-sqlite3
 ```
 
-**sqlite-vec extension** - опциональное ускорение векторного поиска:
-- Автоматически включается если доступен
-- Graceful fallback на чистый SQLite если недоступен
+**sqlite-vec extension** - optional vector search acceleration:
+- Automatically enabled if available
+- Graceful fallback to pure SQLite if unavailable
 
 ## Common Development Tasks
 
-**Добавление нового языка:**
-1. Определить нативный парсер языка (compiler API, CLI tool, LSP)
-2. Создать анализатор в `src/parsers/<lang>-analyzer.ts`
-3. Добавить конфиг в `src/parsers/language-configs.ts`
-4. Добавить тесты в `tests/parsers/`
-5. Обновить README с требованиями к runtime
+**Adding a new language:**
+1. Identify the native parser for the language (compiler API, CLI tool, LSP)
+2. Create an analyzer in `src/parsers/<lang>-analyzer.ts`
+3. Add config to `src/parsers/language-configs.ts`
+4. Add tests to `tests/parsers/`
+5. Update README with runtime requirements
 
-**Добавление нового MCP-метода:**
-1. Определить схему в `src/index.ts` (zod schema)
-2. Добавить handler в switch case (строка ~1000+)
-3. Реализовать логику в `src/tools/` если сложная
-4. Добавить интеграционный тест
-5. Обновить README.md с описанием метода
+**Adding a new MCP tool:**
+1. Define schema in `src/index.ts` (zod schema)
+2. Add handler in switch case (line ~1000+)
+3. Implement logic in `src/tools/` if complex
+4. Add integration test
+5. Update README.md with tool description
 
-**Добавление нового embedding провайдера:**
-1. Создать класс в `src/semantic/providers/<name>-provider.ts`
-2. Имплементировать `EmbeddingProvider` интерфейс
-3. Зарегистрировать в `src/semantic/providers/factory.ts`
-4. Добавить тесты в `src/semantic/__tests__/`
+**Adding a new embedding provider:**
+1. Create class in `src/semantic/providers/<name>-provider.ts`
+2. Implement `EmbeddingProvider` interface
+3. Register in `src/semantic/providers/factory.ts`
+4. Add tests to `src/semantic/__tests__/`
 
 ## Performance Considerations
 
-- **Батчинг**: используйте `BatchOperations` для массовых вставок (1000+ записей)
-- **Incremental parsing**: включен по умолчанию через `IncrementalParser` (LRU cache 1000 файлов)
-- **Query optimization**: `QueryOptimizer` автоматически оптимизирует сложные запросы
-- **Connection pooling**: пул соединений для параллельных read-операций
-- **Agent limits**: настраивайте `maxConcurrency` в конфиге для баланса performance/memory
+- **Batching**: use `BatchOperations` for bulk inserts (1000+ records)
+- **Incremental parsing**: enabled by default via `IncrementalParser` (LRU cache of 1000 files)
+- **Query optimization**: `QueryOptimizer` automatically optimizes complex queries
+- **Connection pooling**: connection pool for parallel read operations
+- **Agent limits**: configure `maxConcurrency` in config to balance performance/memory
 
 ## Troubleshooting
 
-**"Native module mismatch"**: см. выше про better-sqlite3 rebuild
+**"Native module mismatch"**: see above about better-sqlite3 rebuild
 
-**"Legacy database missing columns"**: удалить `vectors.db` для clean rebuild или запустить миграции
+**"Legacy database missing columns"**: delete `vectors.db` for clean rebuild or run migrations
 
-**"Agent saturation"**: увеличить `maxConcurrent` в конфиге или обработать `AgentBusyError` с retry
+**"Agent saturation"**: increase `maxConcurrent` in config or handle `AgentBusyError` with retry
 
-**"JSCPD не находит дубликаты"**: проверить `minLines`/`minTokens` параметры, JSCPD требует минимум 5 строк
+**"JSCPD not finding duplicates"**: check `minLines`/`minTokens` parameters, JSCPD requires at least 5 lines
 
-**"Семантический поиск не работает"**: проверить `MCP_EMBEDDING_PROVIDER` env и настройки в `config/default.yaml`
+**"Semantic search not working"**: check `MCP_EMBEDDING_PROVIDER` env and settings in `config/default.yaml`
 
-**"Language runtime not found"**: Нативные парсеры требуют установленный runtime языка:
-- TypeScript/JS: Node.js (уже есть)
+**"Language runtime not found"**: Native parsers require the installed language runtime:
+- TypeScript/JS: Node.js (already present)
 - Python: `python --version` (3.8+)
 - Java/Kotlin: `java --version` (JRE 11+)
 - Go: `go version` (1.18+)
 
-**"OpenVINO dependencies not installed"**: Установить зависимости:
+**"OpenVINO dependencies not installed"**: Install dependencies:
 ```bash
 bun add openvino-node @xenova/transformers
-# Проверить: node -e "require('openvino-node')"
+# Verify: node -e "require('openvino-node')"
 ```
 
-**"OpenVINO NPU не работает"**: NPU не поддерживает BERT модели (masked_fill/Select limitation). Используйте CPU:
+**"OpenVINO NPU not working"**: NPU does not support BERT models (masked_fill/Select limitation). Use CPU:
 ```bash
-bunx ultrascript-tools-mcp setup --provider openvino
-# Выберите CPU device
+bunx ultracode setup --provider openvino
+# Select CPU device
 ```
 
-**"OpenVINO batch reshape failed"**: Некоторые модели не поддерживают dynamic batch. Провайдер автоматически fallback на sequential inference.
+**"OpenVINO batch reshape failed"**: Some models do not support dynamic batch. The provider automatically falls back to sequential inference.
 
 ## Bun Runtime Support
 
-Проект поддерживает **Bun runtime** с автоматическим использованием оптимизированных API:
+The project supports **Bun runtime** with automatic use of optimized APIs:
 
 ### Runtime Utilities (`src/utils/`)
 
-| Модуль | Описание | Bun оптимизация |
-|--------|----------|-----------------|
-| `runtime.ts` | Определение runtime (Bun/Node/Deno), feature flags | - |
-| `file-ops.ts` | Файловые операции | `Bun.file()`, `Bun.write()` |
-| `shell.ts` | Shell команды, Git helpers | `Bun.$` API |
-| `glob.ts` | Glob поиск файлов | `Bun.Glob` |
+| Module | Description | Bun optimization |
+|--------|-------------|------------------|
+| `runtime.ts` | Runtime detection (Bun/Node/Deno), feature flags | - |
+| `file-ops.ts` | File operations | `Bun.file()`, `Bun.write()` |
+| `shell.ts` | Shell commands, Git helpers | `Bun.$` API |
+| `glob.ts` | Glob file search | `Bun.Glob` |
 
-### Использование
+### Usage
 
 ```typescript
 // Runtime detection
@@ -747,45 +797,45 @@ const files = await glob("**/*.ts", { cwd: "./src" });
 
 ### SQLite Support
 
-`src/storage/sqlite-adapter.ts` уже поддерживает `bun:sqlite`:
-- Автоматический выбор между `better-sqlite3` (Node) и `bun:sqlite` (Bun)
-- API-совместимость через `BunDatabaseAdapter`
-- SQLite производительность схожа (I/O bound)
+`src/storage/sqlite-adapter.ts` already supports `bun:sqlite`:
+- Automatic selection between `better-sqlite3` (Node) and `bun:sqlite` (Bun)
+- API compatibility via `BunDatabaseAdapter`
+- Similar SQLite performance (I/O bound)
 
 ### Benchmark Results (Node.js vs Bun)
 
-| Операция | Speedup |
-|----------|---------|
-| File Read | 🚀 **1.3-1.8x** faster |
-| fileExists | 🚀 **3.8x** faster |
-| stat | 🚀 **1.4x** faster |
-| readdir | 🚀 **1.4x** faster |
-| glob | 🚀 **1.4-1.6x** faster |
+| Operation | Speedup |
+|-----------|---------|
+| File Read | **1.3-1.8x** faster |
+| fileExists | **3.8x** faster |
+| stat | **1.4x** faster |
+| readdir | **1.4x** faster |
+| glob | **1.4-1.6x** faster |
 | writeFile (small) | ~same |
-| writeFile (>50KB, FileSink) | 🚀 **3-4x faster** |
-| Startup time | 🚀 **1.5-1.8x** faster |
-| HTTP fetch | 🚀 **1.7x** faster |
-| SHA-256 (CryptoHasher) | 🚀 **2.8x** faster |
+| writeFile (>50KB, FileSink) | **3-4x faster** |
+| Startup time | **1.5-1.8x** faster |
+| HTTP fetch | **1.7x** faster |
+| SHA-256 (CryptoHasher) | **2.8x** faster |
 
-**Общий результат**: Bun быстрее в большинстве операций, особенно с FileSink для больших файлов.
+**Overall result**: Bun is faster in most operations, especially with FileSink for large files.
 
-Запуск бенчмарка:
+Running the benchmark:
 ```bash
 npx tsx scripts/benchmark-runtime.ts  # Node.js
 bun scripts/benchmark-runtime.ts       # Bun
-npx tsx scripts/compare-benchmarks.ts  # Сравнение
+npx tsx scripts/compare-benchmarks.ts  # Comparison
 ```
 
-### Документация
+### Documentation
 
-См. детальный план: `docs/development/bun-optimization-plan.md`
+See `.autodoc/development.md` for Bun optimization details.
 
 ## Code Style
 
-- **TypeScript strict mode** включен (`tsconfig.json`)
-- **Biome** для линтинга и форматирования (`.biome.json`)
-- **Naming conventions**: kebab-case файлы, PascalCase классы, camelCase переменные
-- **Git hooks**: pre-commit запускает `lint-staged` + `typecheck`
+- **TypeScript strict mode** enabled (`tsconfig.json`)
+- **Biome** for linting and formatting (`.biome.json`)
+- **Naming conventions**: kebab-case files, PascalCase classes, camelCase variables
+- **Git hooks**: pre-commit runs `lint-staged` + `typecheck`
 
 ## Important Files
 
@@ -794,9 +844,9 @@ src/index.ts                          - MCP server entry point, tool definitions
 src/agents/conductor-orchestrator.ts  - Multi-agent coordinator
 src/storage/graph-storage.ts          - Graph database interface
 src/semantic/embedding-generator.ts   - Embedding pipeline
-src/parsers/typescript-parser.ts      - TypeScript Compiler API парсер
-src/parsers/python-parser.ts          - Python ast парсер (subprocess)
-src/parsers/java-parser.ts            - JavaParser интеграция
+src/parsers/typescript-parser.ts      - TypeScript Compiler API parser
+src/parsers/python-parser.ts          - Python ast parser (subprocess)
+src/parsers/java-parser.ts            - JavaParser integration
 config/default.yaml                   - Default configuration
 package.json                          - Scripts and dependencies
 tsup.config.ts                        - Build configuration (externals)
@@ -804,15 +854,15 @@ tsup.config.ts                        - Build configuration (externals)
 
 ## Logs & Debugging
 
-### Новая система логов (v3.0+)
+### New Logging System (v3.0+)
 
-**Формат с фиксированными позициями** для удобного парсинга:
+**Fixed-position format** for convenient parsing:
 
 ```
 20260107-143045.123 I 12345 a1b2c3d4 PARSER               file_parsed          file=/src/index.ts dur=45ms
 ```
 
-**Использование в коде:**
+**Usage in code:**
 ```typescript
 import { log } from "../logging/index.js";
 
@@ -823,63 +873,63 @@ log.d("STORAGE", "cache_hit", { key: "abc123" });
 log.t("QUERY", "sql_exec", { rows: 150 });
 ```
 
-📖 **Полная документация**: [docs/LOGGING.md](./LOGGING.md)
+**Full documentation**: [.autodoc/configuration.md](../.autodoc/configuration.md)
 
-### CLI: ulog (анализ логов)
+### CLI: ulog (log analysis)
 
 ```bash
-# Установка (после сборки)
+# Installation (after build)
 npm link
 
-# Базовое использование
-ulog logs/mcp-server.log              # Все логи
-ulog -l E,W logs/                     # Только ERROR и WARN
-ulog -m PARSER logs/server.log        # Только модуль PARSER
-ulog -m "EMBED*" logs/                # Модули начинающиеся с EMBED
+# Basic usage
+ulog logs/mcp-server.log              # All logs
+ulog -l E,W logs/                     # Only ERROR and WARN
+ulog -m PARSER logs/server.log        # Only PARSER module
+ulog -m "EMBED*" logs/                # Modules starting with EMBED
 
-# Фильтр по времени
-ulog --from 1h logs/server.log        # Последний час
-ulog --from 30m logs/                 # Последние 30 минут
-ulog --from "20260107-1400" logs/     # С конкретного времени
-ulog -t 15m logs/server.log           # Короткая форма --from
+# Time filter
+ulog --from 1h logs/server.log        # Last hour
+ulog --from 30m logs/                 # Last 30 minutes
+ulog --from "20260107-1400" logs/     # From specific time
+ulog -t 15m logs/server.log           # Short form of --from
 
-# Фильтр по KV парам
-ulog -k "dur>100" logs/server.log     # Операции дольше 100ms
-ulog -k "err=*" logs/                 # Все записи с ошибками
-ulog -k "retry>1" logs/               # С повторными попытками
+# KV parameter filter
+ulog -k "dur>100" logs/server.log     # Operations longer than 100ms
+ulog -k "err=*" logs/                 # All entries with errors
+ulog -k "retry>1" logs/               # With retries
 
-# Вывод
-ulog --stats logs/server.log          # Статистика по уровням/модулям
-ulog -c logs/server.log               # Только количество
+# Output
+ulog --stats logs/server.log          # Statistics by level/module
+ulog -c logs/server.log               # Count only
 ulog -f logs/server.log               # Follow mode (tail -f)
-ulog -o json logs/server.log          # JSON формат
-ulog --fields "ts,module,err" logs/   # Только указанные поля
+ulog -o json logs/server.log          # JSON format
+ulog --fields "ts,module,err" logs/   # Only specified fields
 
-# Комбинированные фильтры
+# Combined filters
 ulog -l E -m PARSER --from 1h -k "dur>50" logs/
 ```
 
-### Расположение логов
+### Log Locations
 
 ```
-Windows: %LOCALAPPDATA%\UltraScriptTools\logs\mcp-server-YYYY-MM-DD.log
-Linux:   ~/.local/share/ultrascript-tools/logs/mcp-server-YYYY-MM-DD.log
-macOS:   ~/Library/Application Support/ultrascript-tools/logs/mcp-server-YYYY-MM-DD.log
+Windows: %LOCALAPPDATA%\UltraCode\logs\mcp-server-YYYY-MM-DD.log
+Linux:   ~/.local/share/ultracode/logs/mcp-server-YYYY-MM-DD.log
+macOS:   ~/Library/Application Support/ultracode/logs/mcp-server-YYYY-MM-DD.log
 ```
 
-### Скрипт read-logs.ps1 (рекомендуется)
+### read-logs.ps1 Script (recommended)
 
-**ВАЖНО**: Используй этот скрипт вместо ручных PowerShell команд!
+**IMPORTANT**: Use this script instead of manual PowerShell commands!
 
 ```powershell
-# Из корня проекта:
-.\scripts\read-logs.ps1 PERFORMANCE          # PERFORMANCE логи (последние 50)
-.\scripts\read-logs.ps1 ERROR                # ERROR и FATAL
-.\scripts\read-logs.ps1 PERFORMANCE -Lines 100   # Больше строк
-.\scripts\read-logs.ps1 -Stats               # Статистика по категориям
-.\scripts\read-logs.ps1 PERFORMANCE -Date 2025-12-24  # Конкретная дата
+# From project root:
+.\scripts\read-logs.ps1 PERFORMANCE          # PERFORMANCE logs (last 50)
+.\scripts\read-logs.ps1 ERROR                # ERROR and FATAL
+.\scripts\read-logs.ps1 PERFORMANCE -Lines 100   # More lines
+.\scripts\read-logs.ps1 -Stats               # Statistics by category
+.\scripts\read-logs.ps1 PERFORMANCE -Date 2025-12-24  # Specific date
 
-# Примеры вывода -Stats:
+# Example -Stats output:
 # By Level:
 #   DEBUG         11801
 #   INFO           4852
@@ -890,46 +940,46 @@ macOS:   ~/Library/Application Support/ultrascript-tools/logs/mcp-server-YYYY-MM
 #   CRASH                  3
 ```
 
-### Быстрый поиск логов (PowerShell)
+### Quick Log Search (PowerShell)
 
 ```powershell
-# Найти сегодняшний лог
-$log = "$env:LOCALAPPDATA\UltraScriptTools\logs\mcp-server-$(Get-Date -Format 'yyyy-MM-dd').log"
+# Find today's log
+$log = "$env:LOCALAPPDATA\UltraCode\logs\mcp-server-$(Get-Date -Format 'yyyy-MM-dd').log"
 
-# Показать последние 100 строк
+# Show last 100 lines
 Get-Content $log -Tail 100
 
-# Поиск по паттерну
+# Search by pattern
 Select-String -Path $log -Pattern "PERFORMANCE|ERROR|FATAL" | Select-Object -Last 50
 
-# Только PERFORMANCE логи
+# Only PERFORMANCE logs
 Select-String -Path $log -Pattern "PERFORMANCE" | Select-Object -Last 30
 
-# Поиск ошибок
+# Search for errors
 Select-String -Path $log -Pattern "ERROR|FATAL|crash" -CaseSensitive:$false
 
-# Статистика по категориям
+# Statistics by category
 Select-String -Path $log -Pattern "^\[.*\] \[(\w+)\]" |
   ForEach-Object { $_.Matches.Groups[1].Value } |
   Group-Object | Sort-Object Count -Descending
 ```
 
-### PERFORMANCE логи (этапы эмбеддинга)
+### PERFORMANCE Logs (embedding phases)
 
-Формат: `[PERFORMANCE] <PHASE> | entities: N | ms: X | speed: X/s`
+Format: `[PERFORMANCE] <PHASE> | entities: N | ms: X | speed: X/s`
 
-| Фаза | Описание |
-|------|----------|
-| `1_FILE_READ` | Чтение файлов и вычисление content hash |
-| `2_COMMENT_EXTRACT` | Извлечение комментариев из файлов |
-| `3_TEXT_BUILD` | Построение текстов для эмбеддинга |
-| `4_EMBEDDING_GEN` | Генерация эмбеддингов через TEI/OVMS |
-| `5_DB_INSERT` | Вставка в vector store |
-| `6_INDEX_REBUILD` | Пересоздание индекса (bulk mode) |
-| `BATCH_COMPLETE` | Итог по batch (50 entities) |
-| `QUEUE_COMPLETE` | Итог по всей очереди |
+| Phase | Description |
+|-------|-------------|
+| `1_FILE_READ` | Reading files and computing content hash |
+| `2_COMMENT_EXTRACT` | Extracting comments from files |
+| `3_TEXT_BUILD` | Building texts for embedding |
+| `4_EMBEDDING_GEN` | Generating embeddings via TEI/OVMS |
+| `5_DB_INSERT` | Inserting into vector store |
+| `6_INDEX_REBUILD` | Rebuilding index (bulk mode) |
+| `BATCH_COMPLETE` | Batch summary (50 entities) |
+| `QUEUE_COMPLETE` | Full queue summary |
 
-**Пример вывода:**
+**Example output:**
 ```
 [PERFORMANCE] 1_FILE_READ       | entities: 50 | ms: 12  | speed: 4166/s
 [PERFORMANCE] 2_COMMENT_EXTRACT | entities: 50 | ms: 8   | speed: 6250/s
@@ -939,35 +989,35 @@ Select-String -Path $log -Pattern "^\[.*\] \[(\w+)\]" |
 [PERFORMANCE] BATCH_COMPLETE    | entities: 50 | totalMs: 83 | speed: 602/s
 ```
 
-**Анализ производительности:**
+**Performance analysis:**
 ```powershell
-# Средняя скорость эмбеддинга
+# Average embedding speed
 Select-String -Path $log -Pattern "4_EMBEDDING_GEN.*speed: (\d+)" |
   ForEach-Object { [int]$_.Matches.Groups[1].Value } |
   Measure-Object -Average -Maximum -Minimum
 
-# Общая скорость очереди
+# Overall queue speed
 Select-String -Path $log -Pattern "QUEUE_COMPLETE.*speed: (\d+)" |
   ForEach-Object { $_.Line }
 ```
 
-### Уровни логирования
+### Logging Levels
 
-Конфигурация в `config/default.yaml`:
+Configuration in `config/default.yaml`:
 ```yaml
 logging:
   level: info        # trace, debug, info, warn, error
-  fileLevel: debug   # уровень для файла (обычно ниже)
-  maxFiles: 7        # ротация логов
-  maxSizeMB: 50      # макс размер файла
+  fileLevel: debug   # file level (usually lower)
+  maxFiles: 7        # log rotation
+  maxSizeMB: 50      # max file size
 ```
 
 ## Documentation References
 
-См. подробную документацию:
-- [README.md](../README.md) - Полное описание возможностей
-- [LOGGING.md](./LOGGING.md) - Система логирования и CLI ulog
-- [BACKLOG.md](./BACKLOG.md) - Roadmap и задачи проекта
-- [TEI_GRPC_MIGRATION_PLAN.md](./TEI_GRPC_MIGRATION_PLAN.md) - План миграции на gRPC
-- [GPU_COMPATIBILITY.md](./GPU_COMPATIBILITY.md) - Совместимость GPU
-- [MULTIPROCESS_ARCHITECTURE.md](./MULTIPROCESS_ARCHITECTURE.md) - Архитектура многопроцессности
+See detailed documentation:
+- [README.md](../README.md) - Full feature description
+- [.autodoc/configuration.md](../.autodoc/configuration.md) - Logging, limits, timeouts
+- [.autodoc/backlog.md](../.autodoc/backlog.md) - Roadmap and open tasks
+- [.autodoc/benchmarks.md](../.autodoc/benchmarks.md) - Model and provider benchmarks
+- [.autodoc/known-issues.md](../.autodoc/known-issues.md) - Known issues (Bun, NPU, GPU)
+- [.autodoc/multiprocess.md](../.autodoc/multiprocess.md) - Multi-process architecture

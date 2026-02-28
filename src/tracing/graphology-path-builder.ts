@@ -105,6 +105,7 @@ const DEFAULT_MAX_DEPTH = 20;
 const DEFAULT_MAX_PATHS = 10;
 const CONDITION_WEIGHT = 0.3;
 const ASYNC_WEIGHT = 0.2;
+const API_CONTRACT_WEIGHT = 0.5; // API contract boundaries are heavier — trace prefers direct paths
 
 // Edge types used for call tracing (forward direction)
 const CALL_EDGE_TYPES = new Set(["calls", "imports", "references"]);
@@ -832,6 +833,12 @@ export class GraphologyPathBuilder {
     // Add penalty for conditional/async
     if (attrs.metadata?.["conditional"]) weight += CONDITION_WEIGHT;
     if (attrs.metadata?.["isAsync"]) weight += ASYNC_WEIGHT;
+
+    // API contract boundaries are heavier — trace prefers direct code paths
+    const edgeType = attrs.type;
+    if (edgeType === "produces_api" || edgeType === "consumes_api" || edgeType === "generated_from") {
+      weight += API_CONTRACT_WEIGHT;
+    }
 
     return weight;
   }

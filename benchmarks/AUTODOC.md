@@ -1,34 +1,34 @@
-# Автодокументация модуля `benchmarks`
+# Auto-documentation for module `benchmarks`
 
-## 1. Описание модуля
+## 1. Module Description
 
-Модуль `benchmarks` предназначен для проведения различных бенчмарков, связанных с производительностью и оптимизацией кода. Он включает в себя инструменты для тестирования производительности больших проектов, SIMD-операций, воркеров, а также специфичных задач, связанных с LLM и встраиванием. Модуль используется для анализа производительности и оптимизации кода в TypeScript/JavaScript проектах.
+The `benchmarks` module is designed for running various benchmarks related to code performance and optimization. It includes tools for testing the performance of large projects, SIMD operations, workers, as well as specific tasks related to LLM and embeddings. The module is used for performance analysis and code optimization in TypeScript/JavaScript projects.
 
-## 2. Файлы модуля
+## 2. Module Files
 
-| Файл                         | Описание                                                                 |
+| File                         | Description                                                                 |
 |------------------------------|--------------------------------------------------------------------------|
-| `benchmark-large-project.js` | Бенчмарк для оценки производительности работы с большими проектами.     |
-| `benchmark-simd.js`          | Бенчмарк для тестирования SIMD-операций и их влияния на производительность. |
-| `benchmark-workers.js`       | Бенчмарк для сравнения производительности воркеров и многопоточности.   |
-| `embedding-benchmark.ts`     | Бенчмарк для оценки производительности работы с встраиванием (embeddings). |
-| `granite4-benchmark.ts`      | Бенчмарк для тестирования производительности модели Granite4.           |
-| `llm-benchmark.ts`           | Бенчмарк для оценки производительности LLM-моделей и их обработки.       |
+| `benchmark-large-project.js` | Benchmark for evaluating performance when working with large projects.     |
+| `benchmark-simd.js`          | Benchmark for testing SIMD operations and their impact on performance. |
+| `benchmark-workers.js`       | Benchmark for comparing worker performance and multithreading.   |
+| `embedding-benchmark.ts`     | Benchmark for evaluating embedding performance. |
+| `granite4-benchmark.ts`      | Benchmark for testing Granite4 model performance.           |
+| `llm-benchmark.ts`           | Benchmark for evaluating LLM model performance and processing.       |
 
-## 3. Экспорты
+## 3. Exports
 
-В модуле отсутствуют публичные экспорты. Все файлы являются внутренними и используются только внутри модуля.
+The module has no public exports. All files are internal and are used only within the module.
 
-## 4. Использование
+## 4. Usage
 
-Для использования бенчмарков необходимо вызвать соответствующие скрипты или функции из файлов модуля. Пример запуска:
+To use the benchmarks, run the corresponding scripts or functions from the module files. Example:
 
 ```bash
 node benchmark-large-project.js
 node benchmark-simd.js
 ```
 
-или в TypeScript:
+or in TypeScript:
 
 ```ts
 import './embedding-benchmark.ts';

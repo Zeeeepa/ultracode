@@ -1,27 +1,19 @@
 /**
- * TASK-20250105-VBA-JAVA-GO-PHASE3: Java Language Analyzer
+ * Java AST Analyzer — iterative DFS traversal with Map-based dispatch.
  *
- * Analyzer for Java language supporting:
- * - Packages and imports
- * - Classes (regular, abstract, inner, anonymous)
- * - Interfaces and annotations
- * - Enums and records (Java 14+)
- * - Methods and constructors
- * - Fields and constants
- * - Lambda expressions and method references
- * - Generic type parameters
+ * Processes tree-sitter Java ASTs and extracts the following artefacts:
+ *  - Package declarations and import dependencies
+ *  - Type declarations: class, interface, enum, record, annotation type
+ *  - Member declarations: methods (with call-graph), constructors, fields
+ *  - Relationships: inherits, implements, member_of, imports, calls
  *
- * Relationships:
- * - Class inheritance (extends)
- * - Interface implementation (implements)
- * - Method calls and field access
- * - Package organization
- * - Generic type usage
- * - Annotation usage
- * - Inner class relationships
- *
- * Implementation uses circuit breakers for safety and follows the proven
- * pattern from Go and C++ analyzers with Java-specific adaptations.
+ * Architecture:
+ *  - Handler registry: Map<string, Handler> populated once per instance.
+ *  - Tree walk: fully iterative (explicit stack), never recursive.
+ *  - Modifiers: parsed into Set<string> for O(1) lookups via `has()`.
+ *  - Child iteration: single `childrenWithType` generator replaces ad-hoc helpers.
+ *  - Call scanning: iterative stack instead of recursive descent.
+ *  - Entity construction: `javaEntity` factory avoids repeated boilerplate.
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
@@ -29,862 +21,730 @@ import { log } from "../logging/index.js";
 import type { ASTNode, EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { CircuitBreakerError, checkCircuitBreakers, getNodeLocation } from "./base-parser-utils.js";
 
-// Circuit breaker constants
-const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
-const PARSE_TIMEOUT_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
+/** Maximum nesting depth before the circuit breaker trips. */
+const MAX_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
+/** Wall-clock timeout (ms) for the entire analysis pass. */
+const TIMEOUT_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
+
+/**
+ * Work-item pushed onto the iterative DFS stack.
+ * Each frame carries a snapshot of the enclosing type stack so that
+ * popping from the DFS stack automatically "restores" the scope.
+ */
+interface StackFrame {
+  node: ASTNode;
+  containerStack: string[];
+}
+
+/**
+ * Signature for every node-type handler registered in the dispatch map.
+ * All arguments are passed positionally to avoid allocating option objects.
+ */
+type NodeHandler = (
+  nd: ASTNode,
+  fp: string,
+  pkg: { value: string },
+  cs: string[],
+  ent: ParsedEntity[],
+  rel: EntityRelationship[],
+  depth: { value: number },
+  t0: number,
+) => void;
+
+// ---------------------------------------------------------------------------
+// Free-standing helpers (pure functions, not on the class)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generator that yields every named child whose `type` matches `wanted`.
+ * Replaces both `forEachNamedChildOfType` and `findFirstNamedChildOfType`
+ * from the previous implementation with a single iterable primitive.
+ */
+function* childrenWithType(parent: ASTNode, wanted: string): Generator<ASTNode> {
+  const kids = parent.namedChildren;
+  for (let k = 0; k < kids.length; k++) {
+    if (kids[k]!.type === wanted) yield kids[k]!;
+  }
+}
+
+/** First named child whose type belongs to `accepted`, or undefined. */
+function firstChildIn(parent: ASTNode, accepted: Set<string>): ASTNode | undefined {
+  const kids = parent.namedChildren;
+  for (let k = 0; k < kids.length; k++) {
+    if (accepted.has(kids[k]!.type)) return kids[k]!;
+  }
+  return undefined;
+}
+
+/**
+ * Parse modifier keywords attached to a declaration into a Set<string>.
+ * Annotations are explicitly excluded — they are collected separately
+ * by `collectAnnotations` when needed.
+ */
+function parseModifiers(node: ASTNode): Set<string> {
+  const modNode = node.childForFieldName("modifiers");
+  if (!modNode) return new Set();
+  const s = new Set<string>();
+  for (let i = 0; i < modNode.childCount; i++) {
+    const ch = modNode.child(i);
+    if (ch && ch.type !== "annotation" && ch.type !== "marker_annotation") s.add(ch.text);
+  }
+  return s;
+}
+
+/** Collect the textual representation of every annotation from the modifiers node. */
+function collectAnnotations(node: ASTNode): string[] {
+  const modNode = node.childForFieldName("modifiers");
+  if (!modNode) return [];
+  const out: string[] = [];
+  for (const kid of modNode.namedChildren) {
+    if (kid.type === "annotation" || kid.type === "marker_annotation") out.push(kid.text);
+  }
+  return out;
+}
+
+/** Build relationship metadata — always includes the `line` slot. */
+function edgeMeta(extra: Record<string, unknown>, line?: number): EntityRelationship["metadata"] {
+  return { line: line ?? undefined, ...extra };
+}
+
+/** Qualified name: prepend enclosing container name when nested. */
+function qualifiedName(simple: string, cs: string[]): string {
+  const outer = cs.length > 0 ? cs[cs.length - 1] : null;
+  return outer ? `${outer}.${simple}` : simple;
+}
+
+/**
+ * Factory that stamps out a ParsedEntity with all the boilerplate
+ * fields pre-filled. Language is always "java"; path, signature,
+ * and children are always undefined for this analyzer.
+ */
+function javaEntity(
+  fp: string,
+  name: string,
+  type: ParsedEntity["type"],
+  loc: ParsedEntity["location"],
+  id: string,
+  extra?: Partial<Pick<ParsedEntity, "modifiers" | "returnType" | "metadata" | "parameters">>,
+): ParsedEntity {
+  return {
+    name,
+    type,
+    location: loc,
+    id,
+    path: undefined,
+    signature: undefined,
+    filePath: fp,
+    language: "java",
+    children: undefined,
+    returnType: extra?.returnType,
+    modifiers: extra?.modifiers,
+    parameters: extra?.parameters,
+    metadata: extra?.metadata,
+  };
+}
+
+/** Node types that can represent a package or import path. */
+const ID_TYPES = new Set(["scoped_identifier", "identifier"]);
+
+// ---------------------------------------------------------------------------
+// Analyzer class
+// ---------------------------------------------------------------------------
 
 export class JavaAnalyzer {
-  private recursionDepth = 0;
-  private parseStartTime = 0;
-  private currentPackage = "";
-  private currentClass: string | null = null;
+  /** Dispatch map from tree-sitter node type to handler method. */
+  private handlerMap: Map<string, NodeHandler>;
 
-  /**
-   * Ensure a module entity exists for the current package (including default)
-   * Returns the module id
-   */
-  private ensurePackageEntity(filePath: string, entities: ParsedEntity[]): string {
-    const pkg = this.currentPackage || "(default)";
-    const moduleId = `${filePath}:package:${pkg}`;
-
-    const exists = entities.some((e) => e.id === moduleId);
-    if (!exists) {
-      entities.push({
-        id: moduleId,
-        name: pkg,
-        type: "module",
-        filePath,
-        location: {
-          start: { line: 1, column: 0, index: 0 },
-          end: { line: 1, column: 0, index: 0 },
-        },
-        metadata: { isPackage: true },
-      });
+  constructor() {
+    const m = new Map<string, NodeHandler>();
+    m.set("package_declaration", this.onPackage.bind(this));
+    m.set("import_declaration", this.onImport.bind(this));
+    // Type declarations — all share one unified handler that pattern-matches
+    for (const t of [
+      "class_declaration",
+      "interface_declaration",
+      "enum_declaration",
+      "record_declaration",
+      "annotation_type_declaration",
+    ]) {
+      m.set(t, this.onTypeDecl.bind(this));
     }
-    return moduleId;
+    // Member declarations — another unified handler
+    for (const t of ["method_declaration", "constructor_declaration", "field_declaration"]) {
+      m.set(t, this.onMemberDecl.bind(this));
+    }
+    this.handlerMap = m;
   }
 
+  // =========================================================================
+  // Public API
+  // =========================================================================
+
   /**
-   * Main entry point for analyzing Java code
+   * Analyse a Java AST and produce entities + relationships.
+   * Circuit-breaker errors are caught and logged as warnings;
+   * unexpected errors are logged at error level.
    */
   async analyze(
     rootNode: ASTNode,
     filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
-    this.resetState();
-
     const entities: ParsedEntity[] = [];
     const relationships: EntityRelationship[] = [];
-
     try {
-      // Extract entities and relationships from AST
-      this.extractEntities(rootNode, filePath, entities, relationships);
-    } catch (error) {
-      if (error instanceof CircuitBreakerError) {
-        log.w("JAVAANALYZER", "circuit_break", { file: filePath, err: error.message });
+      this.walk(rootNode, filePath, entities, relationships);
+    } catch (err) {
+      if (err instanceof CircuitBreakerError) {
+        log.w("JAVAANALYZER", "circuit_break", { file: filePath, err: err.message });
       } else {
-        log.e("JAVAANALYZER", "analyze_err", { file: filePath, err: String(error) });
+        log.e("JAVAANALYZER", "analyze_err", { file: filePath, err: String(err) });
       }
-      // Return partial results on error
     }
-
     return { entities, relationships };
   }
 
-  /**
-   * Reset analyzer state for new file
-   */
-  private resetState(): void {
-    this.recursionDepth = 0;
-    this.parseStartTime = Date.now();
-    this.currentPackage = "";
-    this.currentClass = null;
-  }
+  // =========================================================================
+  // Iterative DFS traversal
+  // =========================================================================
 
   /**
-   * Extract entities from Java AST
+   * Non-recursive depth-first walk over the entire AST.
+   * Children are pushed in reverse order so the leftmost child
+   * is processed first (standard pre-order DFS).
    */
-  private extractEntities(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    parentContext?: string,
-  ): void {
-    this.recursionDepth++;
-    checkCircuitBreakers(this.recursionDepth, this.parseStartTime, MAX_RECURSION_DEPTH, PARSE_TIMEOUT_MS);
+  private walk(root: ASTNode, fp: string, ent: ParsedEntity[], rel: EntityRelationship[]): void {
+    const pkg = { value: "" };
+    const depth = { value: 0 };
+    const t0 = Date.now();
+    const stack: StackFrame[] = [{ node: root, containerStack: [] }];
 
-    try {
-      switch (node.type) {
-        case "program":
-          // Process program (root node)
-          for (let i = 0; i < node.childCount; i++) {
-            const child = node.child(i);
-            if (child) {
-              this.extractEntities(child, filePath, entities, relationships, parentContext);
-            }
-          }
-          break;
+    while (stack.length > 0) {
+      const { node, containerStack } = stack.pop()!;
+      depth.value++;
+      checkCircuitBreakers(depth.value, t0, MAX_DEPTH, TIMEOUT_MS);
 
-        case "package_declaration":
-          // Extract package declaration
-          this.extractPackage(node, filePath, entities);
-          break;
-
-        case "import_declaration":
-          // Handle imports
-          this.extractImports(node, filePath, entities, relationships);
-          break;
-
-        case "class_declaration":
-          // Extract class declaration
-          this.extractClass(node, filePath, entities, relationships);
-          break;
-
-        case "interface_declaration":
-          // Extract interface declaration
-          this.extractInterface(node, filePath, entities, relationships);
-          break;
-
-        case "enum_declaration":
-          // Extract enum declaration
-          this.extractEnum(node, filePath, entities, relationships);
-          break;
-
-        case "record_declaration":
-          // Extract record declaration (Java 14+)
-          this.extractRecord(node, filePath, entities, relationships);
-          break;
-
-        case "annotation_type_declaration":
-          // Extract annotation declaration
-          this.extractAnnotation(node, filePath, entities);
-          break;
-
-        case "method_declaration":
-          // Extract method declaration
-          if (this.currentClass) {
-            this.extractMethod(node, filePath, entities, relationships, this.currentClass);
-          }
-          break;
-
-        case "constructor_declaration":
-          // Extract constructor
-          if (this.currentClass) {
-            this.extractConstructor(node, filePath, entities, relationships, this.currentClass);
-          }
-          break;
-
-        case "field_declaration":
-          // Extract fields
-          if (this.currentClass) {
-            this.extractField(node, filePath, entities, relationships, this.currentClass);
-          }
-          break;
-
-        default:
-          // Recursively process children for unhandled node types
-          for (let i = 0; i < node.childCount; i++) {
-            const child = node.child(i);
-            if (child) {
-              this.extractEntities(child, filePath, entities, relationships, parentContext);
-            }
-          }
+      const h = this.handlerMap.get(node.type);
+      if (h) {
+        // Handlers manage their own child expansion (e.g. type bodies).
+        h(node, fp, pkg, containerStack, ent, rel, depth, t0);
+        depth.value--;
+        continue;
       }
-    } finally {
-      this.recursionDepth--;
+      // No handler — push children for further exploration.
+      for (let i = node.childCount - 1; i >= 0; i--) {
+        const ch = node.child(i);
+        if (ch) stack.push({ node: ch, containerStack });
+      }
+      depth.value--;
     }
   }
 
-  /**
-   * Extract package declaration
-   */
-  private extractPackage(node: ASTNode, filePath: string, entities: ParsedEntity[]): void {
-    const packageNameNode = node.namedChildren.find((c) => c.type === "scoped_identifier" || c.type === "identifier");
-    if (packageNameNode) {
-      const packageName = packageNameNode.text.replace(/\s+/g, "");
-      this.currentPackage = packageName;
+  // =========================================================================
+  // Package & import handlers
+  // =========================================================================
 
-      entities.push({
-        id: `${filePath}:package:${packageName}`,
-        name: packageName,
-        type: "module",
-        filePath,
-        location: getNodeLocation(node),
-        metadata: {
-          isPackage: true,
-        },
-      });
-    }
+  /** Extract a package declaration and register a module entity. */
+  private onPackage(nd: ASTNode, fp: string, pkg: { value: string }, _cs: string[], ent: ParsedEntity[]): void {
+    const nameNode = firstChildIn(nd, ID_TYPES);
+    if (!nameNode) return;
+    const p = nameNode.text.replace(/\s+/g, "");
+    pkg.value = p;
+    ent.push(javaEntity(fp, p, "module", getNodeLocation(nd), `${fp}:package:${p}`, { metadata: { isPackage: true } }));
   }
 
-  /**
-   * Extract imports and create relationships
-   */
-  private extractImports(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
+  /** Extract an import declaration and create an "imports" relationship. */
+  private onImport(
+    nd: ASTNode,
+    fp: string,
+    pkg: { value: string },
+    _cs: string[],
+    ent: ParsedEntity[],
+    rel: EntityRelationship[],
   ): void {
-    const importPath = node.namedChildren.find((c) => c.type === "scoped_identifier" || c.type === "identifier");
-    const asterisk = node.namedChildren.find((c) => c.type === "asterisk");
-
-    if (importPath) {
-      const path = importPath.text;
-      const isWildcard = !!asterisk;
-
-      const fromId = this.ensurePackageEntity(filePath, entities);
-
-      relationships.push({
-        from: fromId,
-        to: path,
-        type: "imports",
-        metadata: {
-          isWildcard,
-          isStatic: node.text.includes("static"),
-        },
-      });
-    }
+    const pathNode = firstChildIn(nd, ID_TYPES);
+    if (!pathNode) return;
+    const moduleId = this.ensurePkgEntity(fp, pkg.value, ent);
+    rel.push({
+      from: moduleId,
+      to: pathNode.text,
+      type: "imports",
+      metadata: edgeMeta({
+        isWildcard: nd.namedChildren.some((c) => c.type === "asterisk"),
+        isStatic: nd.text.includes("static"),
+      }),
+    });
   }
 
+  // =========================================================================
+  // Unified type-declaration handler
+  // =========================================================================
+
   /**
-   * Extract class declaration
+   * Handle all five type-level declarations through pattern matching on
+   * `nd.type`. After registering the entity, expands the type body
+   * with an updated container stack that includes the new type.
    */
-  private extractClass(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
+  private onTypeDecl(
+    nd: ASTNode,
+    fp: string,
+    pkg: { value: string },
+    cs: string[],
+    ent: ParsedEntity[],
+    rel: EntityRelationship[],
+    depth: { value: number },
+    t0: number,
   ): void {
-    const nameNode = node.childForFieldName("name");
-    const className = nameNode?.text;
+    const nameNode = nd.childForFieldName("name");
+    if (!nameNode) return;
+    const qn = qualifiedName(nameNode.text, cs);
+    const mods = parseModifiers(nd);
+    const modArr = [...mods];
+    const nested = cs.length > 0;
 
-    if (className) {
-      const previousClass = this.currentClass;
-      const fullClassName = previousClass ? `${previousClass}.${className}` : className;
-      this.currentClass = fullClassName;
-
-      const modifiers = this.extractModifiers(node);
-      const classId = `${filePath}:class:${fullClassName}`;
-
-      const entity: ParsedEntity = {
-        id: classId,
-        name: fullClassName,
-        type: "class",
-        filePath,
-        location: getNodeLocation(node),
-        modifiers,
-        metadata: {
-          isAbstract: modifiers.includes("abstract"),
-          isFinal: modifiers.includes("final"),
-          isStatic: modifiers.includes("static"),
-          isPublic: modifiers.includes("public"),
-          isPrivate: modifiers.includes("private"),
-          isProtected: modifiers.includes("protected"),
-          package: this.currentPackage,
-          isInnerClass: !!previousClass,
-        },
-      };
-
-      entities.push(entity);
-
-      // Extract superclass
-      const superclass = node.childForFieldName("superclass");
-      if (superclass) {
-        const superclassName = superclass.namedChildren[0]?.text;
-        if (superclassName) {
-          relationships.push({
-            from: classId,
-            to: `${filePath}:class:${superclassName}`,
-            type: "inherits",
+    switch (nd.type) {
+      case "class_declaration": {
+        const id = `${fp}:class:${qn}`;
+        ent.push(
+          javaEntity(fp, qn, "class", getNodeLocation(nd), id, {
+            modifiers: modArr,
             metadata: {
-              inheritanceType: "extends",
+              isAbstract: mods.has("abstract"),
+              isFinal: mods.has("final"),
+              isStatic: mods.has("static"),
+              isPublic: mods.has("public"),
+              isPrivate: mods.has("private"),
+              isProtected: mods.has("protected"),
+              package: pkg.value,
+              isInnerClass: nested,
             },
-          });
-        }
+          }),
+        );
+        this.addSuperclass(nd, id, fp, rel);
+        this.addInterfaces(nd, id, fp, rel);
+        this.expandBody(nd, fp, pkg, cs, qn, ent, rel, depth, t0);
+        break;
       }
-
-      // Extract interfaces
-      const interfaces = node.childForFieldName("interfaces");
-      if (interfaces) {
-        const interfaceList = interfaces.namedChildren.filter((c) => c.type === "type_identifier");
-        for (const iface of interfaceList) {
-          relationships.push({
-            from: classId,
-            to: `${filePath}:interface:${iface.text}`,
-            type: "implements",
-            metadata: {},
-          });
-        }
+      case "interface_declaration": {
+        const id = `${fp}:interface:${qn}`;
+        ent.push(
+          javaEntity(fp, qn, "interface", getNodeLocation(nd), id, {
+            modifiers: modArr,
+            metadata: { isPublic: mods.has("public"), package: pkg.value },
+          }),
+        );
+        this.addExtendedIfaces(nd, id, fp, rel);
+        this.expandBody(nd, fp, pkg, cs, qn, ent, rel, depth, t0);
+        break;
       }
-
-      // Process class body
-      const body = node.childForFieldName("body");
-      if (body) {
-        for (let i = 0; i < body.childCount; i++) {
-          const child = body.child(i);
-          if (child) {
-            this.extractEntities(child, filePath, entities, relationships, fullClassName);
-          }
-        }
+      case "enum_declaration": {
+        const id = `${fp}:enum:${qn}`;
+        ent.push(
+          javaEntity(fp, qn, "enum", getNodeLocation(nd), id, {
+            modifiers: modArr,
+            metadata: { isPublic: mods.has("public"), package: pkg.value },
+          }),
+        );
+        this.extractEnumConsts(nd, id, fp, ent, rel);
+        this.expandBody(nd, fp, pkg, cs, qn, ent, rel, depth, t0);
+        break;
       }
-
-      // Restore previous class context
-      this.currentClass = previousClass;
-    }
-  }
-
-  /**
-   * Extract interface declaration
-   */
-  private extractInterface(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    const interfaceName = nameNode?.text;
-
-    if (interfaceName) {
-      const modifiers = this.extractModifiers(node);
-      const previousClass = this.currentClass;
-      const fullInterfaceName = previousClass ? `${previousClass}.${interfaceName}` : interfaceName;
-      const interfaceId = `${filePath}:interface:${fullInterfaceName}`;
-
-      const entity: ParsedEntity = {
-        id: interfaceId,
-        name: fullInterfaceName,
-        type: "interface",
-        filePath,
-        location: getNodeLocation(node),
-        modifiers,
-        metadata: {
-          isPublic: modifiers.includes("public"),
-          package: this.currentPackage,
-        },
-      };
-
-      entities.push(entity);
-
-      // Extract extended interfaces
-      const extendsList = node.childForFieldName("extends");
-      if (extendsList) {
-        const interfaces = extendsList.namedChildren.filter((c) => c.type === "type_identifier");
-        for (const iface of interfaces) {
-          relationships.push({
-            from: interfaceId,
-            to: `${filePath}:interface:${iface.text}`,
-            type: "inherits",
+      case "record_declaration": {
+        const id = `${fp}:record:${qn}`;
+        ent.push(
+          javaEntity(fp, qn, "class", getNodeLocation(nd), id, {
+            modifiers: modArr,
             metadata: {
-              inheritanceType: "extends",
+              isRecord: true,
+              isPublic: mods.has("public"),
+              isFinal: true,
+              package: pkg.value,
             },
-          });
-        }
+          }),
+        );
+        this.extractRecordComps(nd, id, fp, ent, rel);
+        this.expandBody(nd, fp, pkg, cs, qn, ent, rel, depth, t0);
+        break;
       }
-
-      // Store current class context and process interface body
-      this.currentClass = fullInterfaceName;
-
-      const body = node.childForFieldName("body");
-      if (body) {
-        for (let i = 0; i < body.childCount; i++) {
-          const child = body.child(i);
-          if (child) {
-            this.extractEntities(child, filePath, entities, relationships, fullInterfaceName);
-          }
-        }
+      case "annotation_type_declaration": {
+        const id = `${fp}:annotation:${qn}`;
+        ent.push(
+          javaEntity(fp, `@${qn}`, "interface", getNodeLocation(nd), id, {
+            modifiers: modArr,
+            metadata: { isAnnotation: true, isPublic: mods.has("public"), package: pkg.value },
+          }),
+        );
+        break;
       }
-
-      this.currentClass = previousClass;
     }
   }
 
+  // =========================================================================
+  // Unified member-declaration handler
+  // =========================================================================
+
   /**
-   * Extract enum declaration
+   * Handle method, constructor, and field declarations.
+   * Only processes nodes inside a type container (containerStack non-empty).
    */
-  private extractEnum(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
+  private onMemberDecl(
+    nd: ASTNode,
+    fp: string,
+    _pkg: { value: string },
+    cs: string[],
+    ent: ParsedEntity[],
+    rel: EntityRelationship[],
+    depth: { value: number },
+    t0: number,
   ): void {
-    const nameNode = node.childForFieldName("name");
-    const enumName = nameNode?.text;
+    const enclosing = cs.length > 0 ? cs[cs.length - 1]! : null;
+    if (!enclosing) return;
+    const mods = parseModifiers(nd);
+    const modArr = [...mods];
 
-    if (enumName) {
-      const modifiers = this.extractModifiers(node);
-      const previousClass = this.currentClass;
-      const fullEnumName = previousClass ? `${previousClass}.${enumName}` : enumName;
-      const enumId = `${filePath}:enum:${fullEnumName}`;
+    switch (nd.type) {
+      case "method_declaration": {
+        const nameNode = nd.childForFieldName("name");
+        if (!nameNode) return;
+        const mn = nameNode.text;
+        const mid = `${fp}:class:${enclosing}:method:${mn}`;
 
-      const entity: ParsedEntity = {
-        id: enumId,
-        name: fullEnumName,
-        type: "enum",
-        filePath,
-        location: getNodeLocation(node),
-        modifiers,
-        metadata: {
-          isPublic: modifiers.includes("public"),
-          package: this.currentPackage,
-        },
-      };
-
-      entities.push(entity);
-
-      this.currentClass = fullEnumName;
-
-      // Extract enum constants
-      const body = node.childForFieldName("body");
-      if (body) {
-        const enumConstants = body.namedChildren.filter((c) => c.type === "enum_constant");
-        for (const constant of enumConstants) {
-          const constantName = constant.childForFieldName("name")?.text;
-          if (constantName) {
-            const constantId = `${enumId}:constant:${constantName}`;
-            const constantEntity: ParsedEntity = {
-              id: constantId,
-              name: constantName,
-              type: "constant",
-              filePath,
-              location: getNodeLocation(constant),
-              metadata: {
-                parent: enumId,
-                enumValue: true,
-              },
-            };
-
-            entities.push(constantEntity);
-
-            relationships.push({
-              from: constantId,
-              to: enumId,
-              type: "member_of",
-              metadata: {
-                memberType: "enum_constant",
-              },
-            });
-          }
-        }
-
-        for (let i = 0; i < body.childCount; i++) {
-          const child = body.child(i);
-          if (child && child.type !== "enum_constant") {
-            this.extractEntities(child, filePath, entities, relationships, fullEnumName);
-          }
-        }
-      }
-
-      // Restore previous class context
-      this.currentClass = previousClass;
-    }
-  }
-
-  /**
-   * Extract record declaration (Java 14+)
-   */
-  private extractRecord(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    const recordName = nameNode?.text;
-
-    if (recordName) {
-      const modifiers = this.extractModifiers(node);
-      const previousClass = this.currentClass;
-      const fullRecordName = previousClass ? `${previousClass}.${recordName}` : recordName;
-      const recordId = `${filePath}:record:${fullRecordName}`;
-
-      const entity: ParsedEntity = {
-        id: recordId,
-        name: fullRecordName,
-        type: "class", // Records are special classes
-        filePath,
-        location: getNodeLocation(node),
-        modifiers,
-        metadata: {
-          isRecord: true,
-          isPublic: modifiers.includes("public"),
-          isFinal: true, // Records are implicitly final
-          package: this.currentPackage,
-        },
-      };
-
-      entities.push(entity);
-
-      this.currentClass = fullRecordName;
-
-      // Extract record components
-      const parameters = node.childForFieldName("parameters");
-      if (parameters) {
-        const components = parameters.namedChildren.filter((c) => c.type === "record_component");
-        for (const component of components) {
-          const componentName = component.childForFieldName("name")?.text;
-          const componentType = component.childForFieldName("type")?.text;
-
-          if (componentName) {
-            const componentId = `${recordId}:component:${componentName}`;
-            const componentEntity: ParsedEntity = {
-              id: componentId,
-              name: componentName,
-              type: "property",
-              filePath,
-              location: getNodeLocation(component),
-              metadata: {
-                parent: recordId,
-                fieldType: componentType,
-                isRecordComponent: true,
-              },
-            };
-
-            entities.push(componentEntity);
-
-            relationships.push({
-              from: componentId,
-              to: recordId,
-              type: "member_of",
-              metadata: {
-                memberType: "record_component",
-              },
-            });
-          }
-        }
-      }
-
-      const body = node.childForFieldName("body");
-      if (body) {
-        for (let i = 0; i < body.childCount; i++) {
-          const child = body.child(i);
-          if (child) {
-            this.extractEntities(child, filePath, entities, relationships, fullRecordName);
-          }
-        }
-      }
-
-      this.currentClass = previousClass;
-    }
-  }
-
-  /**
-   * Extract annotation declaration
-   */
-  private extractAnnotation(node: ASTNode, filePath: string, entities: ParsedEntity[]): void {
-    const nameNode = node.childForFieldName("name");
-    const annotationName = nameNode?.text;
-
-    if (annotationName) {
-      const modifiers = this.extractModifiers(node);
-      const previousClass = this.currentClass;
-      const fullAnnotationName = previousClass ? `${previousClass}.${annotationName}` : annotationName;
-      const annotationId = `${filePath}:annotation:${fullAnnotationName}`;
-
-      const entity: ParsedEntity = {
-        id: annotationId,
-        name: `@${fullAnnotationName}`,
-        type: "interface", // Annotations are special interfaces
-        filePath,
-        location: getNodeLocation(node),
-        modifiers,
-        metadata: {
-          isAnnotation: true,
-          isPublic: modifiers.includes("public"),
-          package: this.currentPackage,
-        },
-      };
-
-      entities.push(entity);
-    }
-  }
-
-  /**
-   * Extract method declaration
-   */
-  private extractMethod(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    parentClass: string,
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    const methodName = nameNode?.text;
-
-    if (methodName) {
-      const modifiers = this.extractModifiers(node);
-      const returnType = node.childForFieldName("type")?.text;
-      const methodId = `${filePath}:class:${parentClass}:method:${methodName}`;
-
-      const entity: ParsedEntity = {
-        id: methodId,
-        name: methodName,
-        type: "method",
-        filePath,
-        location: getNodeLocation(node),
-        modifiers,
-        returnType,
-        metadata: {
-          isPublic: modifiers.includes("public"),
-          isPrivate: modifiers.includes("private"),
-          isProtected: modifiers.includes("protected"),
-          isStatic: modifiers.includes("static"),
-          isFinal: modifiers.includes("final"),
-          isAbstract: modifiers.includes("abstract"),
-          isSynchronized: modifiers.includes("synchronized"),
-          parent: parentClass,
-        },
-      };
-
-      // Extract parameters
-      const parameters = node.childForFieldName("parameters");
-      if (parameters) {
-        entity.parameters = this.extractParameters(parameters);
-      }
-
-      // Extract annotations
-      const annotations = this.extractAnnotations(node);
-      if (annotations.length > 0) {
-        entity.metadata ??= {};
-        entity.metadata["annotations"] = annotations;
-      }
-
-      entities.push(entity);
-
-      // Create relationship to parent class
-      relationships.push({
-        from: methodId,
-        to: `${filePath}:class:${parentClass}`,
-        type: "member_of",
-        metadata: {
-          memberType: "method",
-        },
-      });
-
-      // Extract method calls within body
-      const body = node.childForFieldName("body");
-      if (body) {
-        this.extractMethodCalls(body, methodId, filePath, relationships);
-      }
-    }
-  }
-
-  /**
-   * Extract constructor declaration
-   */
-  private extractConstructor(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    parentClass: string,
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    const constructorName = nameNode?.text || parentClass.split(".").pop();
-
-    if (constructorName) {
-      const modifiers = this.extractModifiers(node);
-      const constructorId = `${filePath}:class:${parentClass}:constructor:${constructorName}`;
-
-      const entity: ParsedEntity = {
-        id: constructorId,
-        name: constructorName,
-        type: "method",
-        filePath,
-        location: getNodeLocation(node),
-        modifiers,
-        metadata: {
-          isConstructor: true,
-          isPublic: modifiers.includes("public"),
-          isPrivate: modifiers.includes("private"),
-          isProtected: modifiers.includes("protected"),
-          parent: parentClass,
-        },
-      };
-
-      // Extract parameters
-      const parameters = node.childForFieldName("parameters");
-      if (parameters) {
-        entity.parameters = this.extractParameters(parameters);
-      }
-
-      entities.push(entity);
-
-      // Create relationship to parent class
-      relationships.push({
-        from: constructorId,
-        to: `${filePath}:class:${parentClass}`,
-        type: "member_of",
-        metadata: {
-          memberType: "constructor",
-        },
-      });
-    }
-  }
-
-  /**
-   * Extract field declaration
-   */
-  private extractField(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    parentClass: string,
-  ): void {
-    const typeNode = node.childForFieldName("type");
-    const fieldType = typeNode?.text;
-
-    // Extract all variable declarators
-    const declarators = node.namedChildren.filter((c) => c.type === "variable_declarator");
-
-    for (const declarator of declarators) {
-      const nameNode = declarator.childForFieldName("name");
-      const fieldName = nameNode?.text;
-
-      if (fieldName) {
-        const modifiers = this.extractModifiers(node);
-        const valueNode = declarator.childForFieldName("value");
-        const fieldId = `${filePath}:class:${parentClass}:field:${fieldName}`;
-
-        const entity: ParsedEntity = {
-          id: fieldId,
-          name: fieldName,
-          type: modifiers.includes("final") ? "constant" : "property",
-          filePath,
-          location: getNodeLocation(declarator),
-          modifiers,
+        const entity = javaEntity(fp, mn, "method", getNodeLocation(nd), mid, {
+          modifiers: modArr,
+          returnType: nd.childForFieldName("type")?.text,
           metadata: {
-            fieldType,
-            isPublic: modifiers.includes("public"),
-            isPrivate: modifiers.includes("private"),
-            isProtected: modifiers.includes("protected"),
-            isStatic: modifiers.includes("static"),
-            isFinal: modifiers.includes("final"),
-            isVolatile: modifiers.includes("volatile"),
-            isTransient: modifiers.includes("transient"),
-            initialValue: valueNode?.text,
-            parent: parentClass,
+            isPublic: mods.has("public"),
+            isPrivate: mods.has("private"),
+            isProtected: mods.has("protected"),
+            isStatic: mods.has("static"),
+            isFinal: mods.has("final"),
+            isAbstract: mods.has("abstract"),
+            isSynchronized: mods.has("synchronized"),
+            parent: enclosing,
           },
-        };
-
-        entities.push(entity);
-
-        // Create relationship to parent class
-        relationships.push({
-          from: fieldId,
-          to: `${filePath}:class:${parentClass}`,
+        });
+        const p = nd.childForFieldName("parameters");
+        if (p) entity.parameters = this.extractParams(p);
+        const ann = collectAnnotations(nd);
+        if (ann.length > 0) {
+          entity.metadata ??= {};
+          entity.metadata["annotations"] = ann;
+        }
+        ent.push(entity);
+        rel.push({
+          from: mid,
+          to: `${fp}:class:${enclosing}`,
           type: "member_of",
+          metadata: edgeMeta({ memberType: "method" }),
+        });
+        const body = nd.childForFieldName("body");
+        if (body) this.scanCalls(body, mid, rel, depth, t0);
+        break;
+      }
+
+      case "constructor_declaration": {
+        const nameNode = nd.childForFieldName("name");
+        const label = nameNode?.text ?? enclosing.split(".").pop()!;
+        const cid = `${fp}:class:${enclosing}:constructor:${label}`;
+
+        const entity = javaEntity(fp, label, "method", getNodeLocation(nd), cid, {
+          modifiers: modArr,
           metadata: {
-            memberType: "field",
+            isConstructor: true,
+            isPublic: mods.has("public"),
+            isPrivate: mods.has("private"),
+            isProtected: mods.has("protected"),
+            parent: enclosing,
           },
         });
+        const p = nd.childForFieldName("parameters");
+        if (p) entity.parameters = this.extractParams(p);
+        ent.push(entity);
+        rel.push({
+          from: cid,
+          to: `${fp}:class:${enclosing}`,
+          type: "member_of",
+          metadata: edgeMeta({ memberType: "constructor" }),
+        });
+        break;
+      }
+
+      case "field_declaration": {
+        const fieldType = nd.childForFieldName("type")?.text;
+        for (const decl of childrenWithType(nd, "variable_declarator")) {
+          const fn = decl.childForFieldName("name");
+          if (!fn) continue;
+          const fid = `${fp}:class:${enclosing}:field:${fn.text}`;
+          const isFinal = mods.has("final");
+          ent.push(
+            javaEntity(fp, fn.text, isFinal ? "constant" : "property", getNodeLocation(decl), fid, {
+              modifiers: modArr,
+              metadata: {
+                fieldType,
+                isPublic: mods.has("public"),
+                isPrivate: mods.has("private"),
+                isProtected: mods.has("protected"),
+                isStatic: mods.has("static"),
+                isFinal,
+                isVolatile: mods.has("volatile"),
+                isTransient: mods.has("transient"),
+                initialValue: decl.childForFieldName("value")?.text,
+                parent: enclosing,
+              },
+            }),
+          );
+          rel.push({
+            from: fid,
+            to: `${fp}:class:${enclosing}`,
+            type: "member_of",
+            metadata: edgeMeta({ memberType: "field" }),
+          });
+        }
+        break;
       }
     }
   }
 
-  /**
-   * Extract modifiers from a node
-   */
-  private extractModifiers(node: ASTNode): string[] {
-    const modifiers: string[] = [];
-    const modifiersNode = node.childForFieldName("modifiers");
+  // =========================================================================
+  // Relationship helpers
+  // =========================================================================
 
-    if (modifiersNode) {
-      for (let i = 0; i < modifiersNode.childCount; i++) {
-        const child = modifiersNode.child(i);
-        if (child && child.type !== "annotation") {
-          modifiers.push(child.text);
+  /** Register an "inherits" (extends) relationship for a class superclass. */
+  private addSuperclass(nd: ASTNode, classId: string, fp: string, rel: EntityRelationship[]): void {
+    const sf = nd.childForFieldName("superclass");
+    if (!sf) return;
+    const first = sf.namedChildren.length > 0 ? sf.namedChildren[0]! : undefined;
+    if (!first) return;
+    rel.push({
+      from: classId,
+      to: `${fp}:class:${first.text}`,
+      type: "inherits",
+      metadata: edgeMeta({ inheritanceType: "extends" }),
+    });
+  }
+
+  /** Register "implements" relationships for every interface a class lists. */
+  private addInterfaces(nd: ASTNode, classId: string, fp: string, rel: EntityRelationship[]): void {
+    const f = nd.childForFieldName("interfaces");
+    if (!f) return;
+    for (const i of childrenWithType(f, "type_identifier")) {
+      rel.push({
+        from: classId,
+        to: `${fp}:interface:${i.text}`,
+        type: "implements",
+        metadata: edgeMeta({}),
+      });
+    }
+  }
+
+  /** Register "inherits" relationships for interfaces extending other interfaces. */
+  private addExtendedIfaces(nd: ASTNode, ifaceId: string, fp: string, rel: EntityRelationship[]): void {
+    const f = nd.childForFieldName("extends");
+    if (!f) return;
+    for (const e of childrenWithType(f, "type_identifier")) {
+      rel.push({
+        from: ifaceId,
+        to: `${fp}:interface:${e.text}`,
+        type: "inherits",
+        metadata: edgeMeta({ inheritanceType: "extends" }),
+      });
+    }
+  }
+
+  // =========================================================================
+  // Enum constant & record component extraction
+  // =========================================================================
+
+  /** Extract enum constants from the enum body and register them as entities. */
+  private extractEnumConsts(
+    enumNd: ASTNode,
+    enumId: string,
+    fp: string,
+    ent: ParsedEntity[],
+    rel: EntityRelationship[],
+  ): void {
+    const body = enumNd.childForFieldName("body");
+    if (!body) return;
+    for (const kid of childrenWithType(body, "enum_constant")) {
+      const cn = kid.childForFieldName("name");
+      if (!cn) continue;
+      const cid = `${enumId}:constant:${cn.text}`;
+      ent.push(
+        javaEntity(fp, cn.text, "constant", getNodeLocation(kid), cid, {
+          metadata: { parent: enumId, enumValue: true },
+        }),
+      );
+      rel.push({
+        from: cid,
+        to: enumId,
+        type: "member_of",
+        metadata: edgeMeta({ memberType: "enum_constant" }),
+      });
+    }
+  }
+
+  /** Extract record components (the parameter list of a record declaration). */
+  private extractRecordComps(
+    recNd: ASTNode,
+    recId: string,
+    fp: string,
+    ent: ParsedEntity[],
+    rel: EntityRelationship[],
+  ): void {
+    const pf = recNd.childForFieldName("parameters");
+    if (!pf) return;
+    for (const comp of childrenWithType(pf, "record_component")) {
+      const cn = comp.childForFieldName("name");
+      if (!cn) continue;
+      const ct = comp.childForFieldName("type");
+      const cid = `${recId}:component:${cn.text}`;
+      ent.push(
+        javaEntity(fp, cn.text, "property", getNodeLocation(comp), cid, {
+          metadata: { parent: recId, fieldType: ct?.text, isRecordComponent: true },
+        }),
+      );
+      rel.push({
+        from: cid,
+        to: recId,
+        type: "member_of",
+        metadata: edgeMeta({ memberType: "record_component" }),
+      });
+    }
+  }
+
+  // =========================================================================
+  // Body expansion (iterative)
+  // =========================================================================
+
+  /**
+   * After a type declaration has been registered, iterate over its body
+   * children with an updated container stack. Uses an explicit stack
+   * to avoid recursion: children are pushed in reverse order and popped
+   * one-by-one, dispatching to the handler map or expanding further.
+   */
+  private expandBody(
+    typeNd: ASTNode,
+    fp: string,
+    pkg: { value: string },
+    outerCs: string[],
+    qn: string,
+    ent: ParsedEntity[],
+    rel: EntityRelationship[],
+    depth: { value: number },
+    t0: number,
+  ): void {
+    const body = typeNd.childForFieldName("body");
+    if (!body) return;
+    const innerCs = [...outerCs, qn];
+    const pending: ASTNode[] = [];
+    for (let i = body.childCount - 1; i >= 0; i--) {
+      const ch = body.child(i);
+      if (ch) pending.push(ch);
+    }
+    while (pending.length > 0) {
+      const cur = pending.pop()!;
+      depth.value++;
+      checkCircuitBreakers(depth.value, t0, MAX_DEPTH, TIMEOUT_MS);
+      const h = this.handlerMap.get(cur.type);
+      if (h) {
+        h(cur, fp, pkg, innerCs, ent, rel, depth, t0);
+      } else {
+        for (let j = cur.childCount - 1; j >= 0; j--) {
+          const gc = cur.child(j);
+          if (gc) pending.push(gc);
         }
       }
+      depth.value--;
     }
-
-    return modifiers;
   }
 
-  /**
-   * Extract annotations from a node
-   */
-  private extractAnnotations(node: ASTNode): string[] {
-    const annotations: string[] = [];
-    const modifiersNode = node.childForFieldName("modifiers");
-
-    if (modifiersNode) {
-      const annotationNodes = modifiersNode.namedChildren.filter(
-        (c) => c.type === "annotation" || c.type === "marker_annotation",
-      );
-      for (const annotation of annotationNodes) {
-        annotations.push(annotation.text);
-      }
-    }
-
-    return annotations;
-  }
+  // =========================================================================
+  // Method-call scanning (iterative)
+  // =========================================================================
 
   /**
-   * Extract method parameters
+   * Walk a method body looking for `method_invocation` nodes and record
+   * "calls" relationships. Uses an explicit stack to stay iterative.
    */
-  private extractParameters(parametersNode: ASTNode): Array<{ name: string; type?: string }> {
-    const params: Array<{ name: string; type?: string }> = [];
-    const formalParams = parametersNode.namedChildren.filter(
-      (c) => c.type === "formal_parameter" || c.type === "spread_parameter",
-    );
-
-    for (const param of formalParams) {
-      const nameNode = param.childForFieldName("name");
-      const typeNode = param.childForFieldName("type");
-
-      if (nameNode) {
-        params.push({
-          name: nameNode.text,
-          type: typeNode?.text,
-        });
-      }
-    }
-
-    return params;
-  }
-
-  /**
-   * Extract method calls to create relationships
-   */
-  private extractMethodCalls(
-    node: ASTNode,
+  private scanCalls(
+    body: ASTNode,
     callerId: string,
-    filePath: string,
-    relationships: EntityRelationship[],
+    rel: EntityRelationship[],
+    depth: { value: number },
+    t0: number,
   ): void {
-    this.recursionDepth++;
-    checkCircuitBreakers(this.recursionDepth, this.parseStartTime, MAX_RECURSION_DEPTH, PARSE_TIMEOUT_MS);
-
-    try {
-      if (node.type === "method_invocation") {
-        const nameNode = node.childForFieldName("name");
-        if (nameNode) {
-          const methodName = nameNode.text;
-          relationships.push({
+    const stk: ASTNode[] = [body];
+    while (stk.length > 0) {
+      const cur = stk.pop()!;
+      depth.value++;
+      checkCircuitBreakers(depth.value, t0, MAX_DEPTH, TIMEOUT_MS);
+      if (cur.type === "method_invocation") {
+        const inv = cur.childForFieldName("name");
+        if (inv) {
+          rel.push({
             from: callerId,
-            to: methodName,
+            to: inv.text,
             type: "calls",
-            metadata: {
-              callType: "method",
-            },
+            metadata: edgeMeta({ callType: "method" }),
           });
         }
       }
-
-      // Recursively search for calls in children
-      for (let i = 0; i < node.childCount; i++) {
-        const child = node.child(i);
-        if (child) {
-          this.extractMethodCalls(child, callerId, filePath, relationships);
-        }
+      for (let j = cur.childCount - 1; j >= 0; j--) {
+        const kid = cur.child(j);
+        if (kid) stk.push(kid);
       }
-    } finally {
-      this.recursionDepth--;
+      depth.value--;
     }
+  }
+
+  // =========================================================================
+  // Parameter extraction
+  // =========================================================================
+
+  /**
+   * Walk the formal parameter list of a method or constructor and
+   * return structured parameter descriptors.
+   */
+  private extractParams(
+    paramsNode: ASTNode,
+  ): Array<{ name: string; type: string | undefined; defaultValue: string | undefined }> {
+    const out: Array<{ name: string; type: string | undefined; defaultValue: string | undefined }> = [];
+    for (const p of paramsNode.namedChildren) {
+      if (p.type !== "formal_parameter" && p.type !== "spread_parameter") continue;
+      const pn = p.childForFieldName("name");
+      if (!pn) continue;
+      out.push({
+        name: pn.text,
+        type: p.childForFieldName("type")?.text,
+        defaultValue: undefined,
+      });
+    }
+    return out;
+  }
+
+  // =========================================================================
+  // Package entity guarantee
+  // =========================================================================
+
+  /**
+   * Ensure a module entity exists for the current package.
+   * If no package has been declared, the label "(default)" is used.
+   * Returns the module ID so callers can reference it in relationships.
+   */
+  private ensurePkgEntity(fp: string, pkgName: string, ent: ParsedEntity[]): string {
+    const label = pkgName || "(default)";
+    const mid = `${fp}:package:${label}`;
+    if (!ent.some((e) => e.id === mid)) {
+      ent.push(
+        javaEntity(
+          fp,
+          label,
+          "module",
+          { start: { line: 1, column: 0, index: 0 }, end: { line: 1, column: 0, index: 0 } },
+          mid,
+          { metadata: { isPackage: true } },
+        ),
+      );
+    }
+    return mid;
   }
 }

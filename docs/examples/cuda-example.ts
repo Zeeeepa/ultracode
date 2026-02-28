@@ -18,7 +18,7 @@ import { performance } from "node:perf_hooks";
 // Try to load CUDA addon (optional dependency)
 let cuda: any = null;
 try {
-  cuda = require("../../dist/native/cuda/ultrascript_cuda.node");
+  cuda = require("../../dist/native/cuda/ultracode_cuda.node");
   console.log("✅ CUDA addon loaded successfully\n");
 } catch (_error) {
   console.log("❌ CUDA addon not available");

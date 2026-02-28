@@ -1,36 +1,12 @@
-/**
- * TASK-002: Hybrid Search Engine with Reciprocal Rank Fusion (RRF)
- *
- * Combines structural and semantic search results using RRF algorithm
- * Optimized for balanced retrieval with configurable weights
- *
- * Architecture References:
- * - Project Overview: doc/PROJECT_OVERVIEW.md
- * - Coding Standards: doc/CODING_STANDARD.md
- * - Architectural Decisions: doc/ARCHITECTURAL_DECISIONS.md
- *
- * @task_id TASK-002
- * @history
- *  - 2025-09-14: Created by Dev-Agent - TASK-002: Hybrid search with RRF implementation
- */
-
 import type { QueryAgent } from "../agents/query-agent.js";
 import { log } from "../logging/index.js";
 import type { QueryExpander } from "../nlp/query-expander.js";
 import type { FusionOptions, HybridResult, SemanticResult, SimilarityResult } from "../types/semantic.js";
 import type { EmbeddingGenerator } from "./embedding-generator.js";
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
 import type { VectorStore } from "./vector-store.js";
 
-// =============================================================================
-// EXTENDED SEMANTIC RESULT WITH EXPANSION INFO
-// =============================================================================
 export interface SemanticResultWithExpansion extends SemanticResult {
-  /** Expanded query string (for debugging/transparency) */
   expandedQuery?: string;
-  /** Query expansion metadata */
   expansionInfo?: {
     originalTokens: string[];
     coocTerms: Array<{ term: string; weight: number }>;
@@ -38,19 +14,6 @@ export interface SemanticResultWithExpansion extends SemanticResult {
   };
 }
 
-// =============================================================================
-// 2. CONSTANTS AND CONFIGURATION
-// =============================================================================
-const DEFAULT_FUSION_OPTIONS: FusionOptions = {
-  k: 60, // RRF constant
-  structuralWeight: 0.6,
-  semanticWeight: 0.4,
-  limit: 10,
-};
-
-// =============================================================================
-// 3. DATA MODELS AND TYPE DEFINITIONS
-// =============================================================================
 interface StructuralResult {
   id: string;
   path: string;
@@ -69,38 +32,58 @@ interface RankedResult {
   metadata?: Record<string, unknown>;
 }
 
-// =============================================================================
-// 4. UTILITY FUNCTIONS AND HELPERS
-// =============================================================================
-function normalizeScores(results: RankedResult[]): RankedResult[] {
-  const maxScore = Math.max(...results.map((r) => r.score));
-  const minScore = Math.min(...results.map((r) => r.score));
-  const range = maxScore - minScore || 1;
+const FUSION_DEFAULTS: FusionOptions = {
+  k: 60,
+  structuralWeight: 0.6,
+  semanticWeight: 0.4,
+  limit: 10,
+};
 
-  return results.map((r) => ({
-    ...r,
-    score: (r.score - minScore) / range,
-  }));
+function rescaleToUnitRange(items: RankedResult[]): RankedResult[] {
+  if (items.length < 2) return items;
+
+  let lo = items[0]!.score;
+  let hi = lo;
+  for (let idx = 1; idx < items.length; idx++) {
+    const val = items[idx]!.score;
+    if (val < lo) lo = val;
+    if (val > hi) hi = val;
+  }
+
+  const span = hi - lo;
+  if (span === 0) {
+    for (const item of items) item.score = 1;
+    return items;
+  }
+
+  for (const item of items) {
+    item.score = (item.score - lo) / span;
+  }
+  return items;
 }
 
-function deduplicateResults(results: RankedResult[]): RankedResult[] {
-  const seen = new Set<string>();
-  return results.filter((r) => {
-    if (seen.has(r.id)) {
-      return false;
+function eliminateDuplicateEntries(items: RankedResult[]): RankedResult[] {
+  const encountered = new Map<string, true>();
+  const unique: RankedResult[] = [];
+  for (const item of items) {
+    if (!encountered.has(item.id)) {
+      encountered.set(item.id, true);
+      unique.push(item);
     }
-    seen.add(r.id);
-    return true;
-  });
+  }
+  return unique;
 }
 
-// =============================================================================
-// 5. CORE BUSINESS LOGIC
-// =============================================================================
+function classifyResultOrigin(entry: RankedResult): "structural" | "semantic" | "hybrid" {
+  if (entry.structuralRank !== undefined && entry.semanticRank !== undefined) return "hybrid";
+  if (entry.structuralRank !== undefined) return "structural";
+  return "semantic";
+}
+
 export class HybridSearchEngine {
   private vectorStore: VectorStore;
   private embeddingGen: EmbeddingGenerator;
-  private queryAgent: QueryAgent | null = null;
+  private queryAgent: QueryAgent | null;
   private queryExpander: QueryExpander | null = null;
   private searchMetrics = {
     totalSearches: 0,
@@ -111,77 +94,110 @@ export class HybridSearchEngine {
   constructor(vectorStore: VectorStore, embeddingGen: EmbeddingGenerator, queryAgent?: QueryAgent) {
     this.vectorStore = vectorStore;
     this.embeddingGen = embeddingGen;
-    this.queryAgent = queryAgent || null;
+    this.queryAgent = queryAgent ?? null;
   }
 
-  /**
-   * Set the query expander for automatic query expansion.
-   * When set, semantic search will use two-pass expansion (cooc + PRF).
-   */
   setQueryExpander(expander: QueryExpander): void {
     this.queryExpander = expander;
     log.i("HYBRID", "QueryExpander configured");
   }
 
-  /**
-   * Set the query agent for structural search
-   */
   setQueryAgent(queryAgent: QueryAgent): void {
     this.queryAgent = queryAgent;
   }
 
-  /**
-   * Perform hybrid search combining structural and semantic results
-   */
   async search(query: string, options: Partial<FusionOptions> = {}): Promise<HybridResult[]> {
-    const startTime = Date.now();
-    const fusionOptions = { ...DEFAULT_FUSION_OPTIONS, ...options };
+    const t0 = Date.now();
+    const opts: FusionOptions = { ...FUSION_DEFAULTS, ...options };
 
     try {
-      // Generate query embedding
-      const queryEmbedding = await this.embeddingGen.generateEmbedding(query);
+      const queryVector = await this.embeddingGen.generateEmbedding(query);
 
-      // Parallel execution of structural and semantic search
-      const [structuralResults, semanticSearchResult] = await Promise.all([
-        this.performStructuralSearch(query, fusionOptions.limit * 2),
-        this.vectorStore.adaptiveSearch(queryEmbedding, fusionOptions.limit * 2),
+      const fetchLimit = opts.limit * 2;
+      const [structuralHits, vectorSearchOutput] = await Promise.all([
+        this.runStructuralSearch(query, fetchLimit),
+        this.vectorStore.adaptiveSearch(queryVector, fetchLimit),
       ]);
-      const semanticResults = semanticSearchResult.results;
 
-      log.d("HYBRID", `Found ${structuralResults.length} structural and ${semanticResults.length} semantic results`, {
-        usedFaiss: semanticSearchResult.usedFaiss,
-      });
+      log.d(
+        "HYBRID",
+        `Found ${structuralHits.length} structural and ${vectorSearchOutput.results.length} semantic results`,
+        {
+          usedFaiss: vectorSearchOutput.usedFaiss,
+        },
+      );
 
-      // Apply Reciprocal Rank Fusion
-      const fusedResults = this.fuseResults(structuralResults, semanticResults, fusionOptions);
+      const merged = this.applyReciprocalRankFusion(structuralHits, vectorSearchOutput.results, opts);
 
-      // Update metrics
-      const searchTime = Date.now() - startTime;
-      this.updateMetrics(searchTime, fusedResults.length);
+      const elapsed = Date.now() - t0;
+      this.recordMetrics(elapsed, merged.length);
 
       log.i("HYBRID", `Hybrid search complete`, {
-        resultsCount: fusedResults.length,
-        searchTimeMs: searchTime,
+        resultsCount: merged.length,
+        searchTimeMs: elapsed,
       });
 
-      return fusedResults;
-    } catch (error) {
-      log.e("HYBRID", "Hybrid search failed", { error: (error as Error).message });
-      throw error;
+      return merged;
+    } catch (err) {
+      log.e("HYBRID", "Hybrid search failed", { error: (err as Error).message });
+      throw err;
     }
   }
 
-  /**
-   * Perform structural search using QueryAgent
-   */
-  private async performStructuralSearch(query: string, limit: number): Promise<StructuralResult[]> {
+  async semanticSearch(query: string, limit = 10): Promise<SemanticResultWithExpansion> {
+    const t0 = Date.now();
+
+    try {
+      if (this.queryExpander) {
+        return await this.twoPassExpandedSearch(query, limit, t0);
+      }
+
+      const embedding = await this.embeddingGen.generateEmbedding(query);
+      const outcome = await this.vectorStore.adaptiveSearch(embedding, limit);
+
+      return {
+        query,
+        results: outcome.results,
+        processingTime: Date.now() - t0,
+      };
+    } catch (err) {
+      log.e("HYBRID", "Semantic search failed", { query, error: (err as Error).message });
+      throw err;
+    }
+  }
+
+  async rerank(
+    results: HybridResult[],
+    query: string,
+    scoreFunction?: (result: HybridResult, query: string) => number,
+  ): Promise<HybridResult[]> {
+    const scorer = scoreFunction ?? defaultTermMatchScorer;
+
+    const boosted = results.map((entry) => ({
+      ...entry,
+      score: entry.score * 0.7 + scorer(entry, query) * 0.3,
+    }));
+
+    boosted.sort((a, b) => b.score - a.score);
+    return boosted;
+  }
+
+  getMetrics(): typeof this.searchMetrics {
+    return { ...this.searchMetrics };
+  }
+
+  clearCaches(): void {
+    this.embeddingGen.clearCache();
+    log.i("HYBRID", "Caches cleared");
+  }
+
+  private async runStructuralSearch(query: string, limit: number): Promise<StructuralResult[]> {
     if (!this.queryAgent) {
       log.d("HYBRID", "QueryAgent not available, skipping structural search");
       return [];
     }
 
     try {
-      // Use QueryAgent to search for structural matches
       const task = {
         id: `search-${Date.now()}`,
         type: "search",
@@ -190,262 +206,135 @@ export class HybridSearchEngine {
         createdAt: Date.now(),
       };
 
-      const results = (await this.queryAgent.process(task)) as StructuralResult[];
-      return results || [];
-    } catch (error) {
-      log.e("HYBRID", "Structural search failed", { error: (error as Error).message });
+      const output = (await this.queryAgent.process(task)) as StructuralResult[];
+      return output ?? [];
+    } catch (err) {
+      log.e("HYBRID", "Structural search failed", { error: (err as Error).message });
       return [];
     }
   }
 
-  /**
-   * Apply Reciprocal Rank Fusion to combine results
-   * OPTIMIZED: Pre-computed RRF scores using Float32Array for better cache utilization
-   */
-  private fuseResults(
+  private applyReciprocalRankFusion(
     structural: StructuralResult[],
     semantic: SimilarityResult[],
-    options: FusionOptions,
+    opts: FusionOptions,
   ): HybridResult[] {
-    const scores = new Map<string, RankedResult>();
-    const k = options.k;
+    const accumulator = new Map<string, RankedResult>();
+    const kConst = opts.k;
 
-    // OPTIMIZATION: Pre-compute RRF scores in Float32Array for better cache utilization
-    const structuralLen = structural.length;
-    const semanticLen = semantic.length;
+    const computeRrf = (rank: number, weight: number) => weight / (kConst + rank + 1);
 
-    // Pre-compute structural RRF scores
-    const structuralScores = new Float32Array(structuralLen);
-    const structuralWeight = options.structuralWeight;
-    for (let i = 0; i < structuralLen; i++) {
-      structuralScores[i] = structuralWeight / (k + i + 1);
-    }
+    for (let rank = 0; rank < structural.length; rank++) {
+      const entry = structural[rank]!;
+      const rrfContribution = computeRrf(rank, opts.structuralWeight);
 
-    // Pre-compute semantic RRF scores
-    const semanticScores = new Float32Array(semanticLen);
-    const semanticWeight = options.semanticWeight;
-    for (let i = 0; i < semanticLen; i++) {
-      semanticScores[i] = semanticWeight / (k + i + 1);
-    }
-
-    // Process structural results with pre-computed RRF scoring
-    for (let rank = 0; rank < structuralLen; rank++) {
-      const item = structural[rank]!;
-      const rrfScore = structuralScores[rank]!;
-
-      const existing = scores.get(item.id);
-      if (existing) {
-        existing.score += rrfScore;
-        existing.structuralRank = rank;
+      const prev = accumulator.get(entry.id);
+      if (prev) {
+        prev.score += rrfContribution;
+        prev.structuralRank = rank;
       } else {
-        scores.set(item.id, {
-          id: item.id,
-          score: rrfScore,
+        accumulator.set(entry.id, {
+          id: entry.id,
+          score: rrfContribution,
           structuralRank: rank,
-          content: item.content,
-          metadata: { path: item.path, type: item.type, name: item.name },
+          content: entry.content,
+          metadata: { path: entry.path, type: entry.type, name: entry.name },
         });
       }
     }
 
-    // Process semantic results with pre-computed RRF scoring
-    for (let rank = 0; rank < semanticLen; rank++) {
-      const item = semantic[rank]!;
-      const rrfScore = semanticScores[rank]!;
+    for (let rank = 0; rank < semantic.length; rank++) {
+      const entry = semantic[rank]!;
+      const rrfContribution = computeRrf(rank, opts.semanticWeight);
 
-      const existing = scores.get(item.id);
-      if (existing) {
-        existing.score += rrfScore;
-        existing.semanticRank = rank;
-        // Merge metadata
-        if (item.metadata) {
-          existing.metadata = { ...existing.metadata, ...item.metadata };
+      const prev = accumulator.get(entry.id);
+      if (prev) {
+        prev.score += rrfContribution;
+        prev.semanticRank = rank;
+        if (entry.metadata) {
+          prev.metadata = { ...prev.metadata, ...entry.metadata };
         }
       } else {
-        scores.set(item.id, {
-          id: item.id,
-          score: rrfScore,
+        accumulator.set(entry.id, {
+          id: entry.id,
+          score: rrfContribution,
           semanticRank: rank,
-          content: item.content,
-          metadata: item.metadata,
+          content: entry.content,
+          metadata: entry.metadata,
         });
       }
     }
 
-    // Sort by combined score and limit
-    const rankedResults = Array.from(scores.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, options.limit);
+    const ranked = Array.from(accumulator.values());
+    ranked.sort((a, b) => b.score - a.score);
+    const topN = ranked.slice(0, opts.limit);
 
-    // Normalize scores and deduplicate
-    const normalized = normalizeScores(rankedResults);
-    const deduplicated = deduplicateResults(normalized);
+    const normalized = rescaleToUnitRange(topN);
+    const deduped = eliminateDuplicateEntries(normalized);
 
-    // Convert to HybridResult format
-    return deduplicated.map((r) => ({
+    return deduped.map((r) => ({
       id: r.id,
       score: r.score,
-      source: this.determineSource(r),
+      source: classifyResultOrigin(r),
       content: r.content,
       metadata: r.metadata,
     }));
   }
 
-  /**
-   * Determine the primary source of a result
-   */
-  private determineSource(result: RankedResult): "structural" | "semantic" | "hybrid" {
-    const hasStructural = result.structuralRank !== undefined;
-    const hasSemantic = result.semanticRank !== undefined;
-
-    if (hasStructural && hasSemantic) {
-      return "hybrid";
-    } else if (hasStructural) {
-      return "structural";
-    } else {
-      return "semantic";
-    }
-  }
-
-  /**
-   * Perform pure semantic search without structural component.
-   *
-   * When QueryExpander is configured, uses two-pass query expansion:
-   * 1. First pass: quick search with original query to get initial results
-   * 2. Expand query using co-occurrence + PRF from initial results
-   * 3. Final pass: search with expanded query for better recall
-   */
-  async semanticSearch(query: string, limit = 10): Promise<SemanticResultWithExpansion> {
-    const startTime = Date.now();
-
-    try {
-      // If no query expander, use simple single-pass search
-      if (!this.queryExpander) {
-        const queryEmbedding = await this.embeddingGen.generateEmbedding(query);
-        const searchResult = await this.vectorStore.adaptiveSearch(queryEmbedding, limit);
-        const processingTime = Date.now() - startTime;
-
-        return {
-          query,
-          results: searchResult.results,
-          processingTime,
-        };
-      }
-
-      // Two-pass search with query expansion
-      return this.semanticSearchWithExpansion(query, limit, startTime);
-    } catch (error) {
-      log.e("HYBRID", "Semantic search failed", { query, error: (error as Error).message });
-      throw error;
-    }
-  }
-
-  /**
-   * Two-pass semantic search with query expansion.
-   * Internal method used when QueryExpander is configured.
-   */
-  private async semanticSearchWithExpansion(
+  private async twoPassExpandedSearch(
     query: string,
     limit: number,
-    startTime: number,
+    startedAt: number,
   ): Promise<SemanticResultWithExpansion> {
-    // Pass 1: Quick initial search for PRF
-    const initialEmbedding = await this.embeddingGen.generateEmbedding(query);
-    const initialResults = await this.vectorStore.adaptiveSearch(initialEmbedding, 5);
+    const firstPassEmb = await this.embeddingGen.generateEmbedding(query);
+    const firstPassHits = await this.vectorStore.adaptiveSearch(firstPassEmb, 5);
 
-    // Expand query using cooc + PRF
-    const expanded = await this.queryExpander!.expand(
-      query,
-      initialResults.results.map((r) => ({ content: r.content || "" })),
-    );
+    const prfDocuments = firstPassHits.results.map((r) => ({ content: r.content || "" }));
+    const expansion = await this.queryExpander!.expand(query, prfDocuments);
 
     log.d("HYBRID", "Query expanded", {
       original: query,
-      expanded: expanded.expanded,
-      coocTerms: expanded.coocTerms.length,
-      prfTerms: expanded.prfTerms.length,
+      expanded: expansion.expanded,
+      coocTerms: expansion.coocTerms.length,
+      prfTerms: expansion.prfTerms.length,
     });
 
-    // Pass 2: Final search with expanded query
-    const expandedEmbedding = await this.embeddingGen.generateEmbedding(expanded.expanded);
-    const finalResults = await this.vectorStore.adaptiveSearch(expandedEmbedding, limit);
-
-    const processingTime = Date.now() - startTime;
+    const expandedEmb = await this.embeddingGen.generateEmbedding(expansion.expanded);
+    const finalHits = await this.vectorStore.adaptiveSearch(expandedEmb, limit);
 
     return {
       query,
-      expandedQuery: expanded.expanded,
-      results: finalResults.results,
-      processingTime,
+      expandedQuery: expansion.expanded,
+      results: finalHits.results,
+      processingTime: Date.now() - startedAt,
       expansionInfo: {
-        originalTokens: expanded.originalTokens,
-        coocTerms: expanded.coocTerms,
-        prfTerms: expanded.prfTerms,
+        originalTokens: expansion.originalTokens,
+        coocTerms: expansion.coocTerms,
+        prfTerms: expansion.prfTerms,
       },
     };
   }
 
-  /**
-   * Re-rank results based on custom scoring
-   */
-  async rerank(
-    results: HybridResult[],
-    query: string,
-    scoreFunction?: (result: HybridResult, query: string) => number,
-  ): Promise<HybridResult[]> {
-    if (!scoreFunction) {
-      // Default re-ranking based on query terms
-      scoreFunction = (result, q) => {
-        const terms = q.toLowerCase().split(/\s+/);
-        const content = (result.content || "").toLowerCase();
+  private recordMetrics(elapsedMs: number, resultCount: number): void {
+    const prev = this.searchMetrics;
+    const count = prev.totalSearches + 1;
 
-        let score = 0;
-        for (const term of terms) {
-          if (content.includes(term)) {
-            score += 1;
-          }
-        }
-
-        return score / terms.length;
-      };
-    }
-
-    // Calculate new scores
-    const reranked = results.map((r) => ({
-      ...r,
-      score: r.score * 0.7 + scoreFunction(r, query) * 0.3,
-    }));
-
-    // Sort by new scores
-    return reranked.sort((a, b) => b.score - a.score);
+    this.searchMetrics = {
+      totalSearches: count,
+      avgSearchTime: prev.avgSearchTime + (elapsedMs - prev.avgSearchTime) / count,
+      avgResultCount: prev.avgResultCount + (resultCount - prev.avgResultCount) / count,
+    };
   }
+}
 
-  /**
-   * Update search metrics
-   */
-  private updateMetrics(searchTime: number, resultCount: number): void {
-    this.searchMetrics.totalSearches++;
+function defaultTermMatchScorer(result: HybridResult, query: string): number {
+  const words = query.toLowerCase().split(/\s+/);
+  const text = (result.content ?? "").toLowerCase();
+  if (words.length === 0) return 0;
 
-    const prevAvgTime = this.searchMetrics.avgSearchTime;
-    const prevAvgCount = this.searchMetrics.avgResultCount;
-    const n = this.searchMetrics.totalSearches;
-
-    this.searchMetrics.avgSearchTime = (prevAvgTime * (n - 1) + searchTime) / n;
-    this.searchMetrics.avgResultCount = (prevAvgCount * (n - 1) + resultCount) / n;
+  let hits = 0;
+  for (const w of words) {
+    if (text.includes(w)) hits++;
   }
-
-  /**
-   * Get search metrics
-   */
-  getMetrics(): typeof this.searchMetrics {
-    return { ...this.searchMetrics };
-  }
-
-  /**
-   * Clear all caches
-   */
-  clearCaches(): void {
-    this.embeddingGen.clearCache();
-    log.i("HYBRID", "Caches cleared");
-  }
+  return hits / words.length;
 }

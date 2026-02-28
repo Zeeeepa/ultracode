@@ -36,7 +36,7 @@ export interface LlamaCppOptions {
  * llama.cpp provides native inference without Docker using GGUF models.
  *
  * Setup:
- * llama-server --model ~/.ultrascript/hf-cache/model.gguf \
+ * llama-server --model ~/.ultracode/hf-cache/model.gguf \
  *   --port 8085 --host 127.0.0.1 \
  *   --ctx-size 8192 --n-gpu-layers 99 \
  *   --embedding

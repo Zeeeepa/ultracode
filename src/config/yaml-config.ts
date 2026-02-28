@@ -24,72 +24,50 @@ import { DEFAULT_CONFIG } from "./config-defaults.js";
 // TYPE-SAFE ENV PARSING HELPERS
 // =============================================================================
 
-/**
- * Parse embedding provider from string
- */
+/** Generic enum-like string validator */
+function parseOneOf<T extends string>(value: string | undefined, allowed: readonly T[]): T | undefined {
+  if (!value) return undefined;
+  return allowed.includes(value as T) ? (value as T) : undefined;
+}
+
+const EMBEDDING_PROVIDERS = ["ollama", "openai", "cloudru", "huggingface", "tei", "ovms", "auto"] as const;
+const DATABASE_MODES = ["WAL", "DELETE", "TRUNCATE"] as const;
+const SYNC_LEVELS = ["OFF", "NORMAL", "FULL"] as const;
+const TEMP_STORES = ["DEFAULT", "FILE", "MEMORY"] as const;
+const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
+const LB_STRATEGIES = ["round-robin", "least-loaded", "priority"] as const;
+
 function parseEmbeddingProvider(
   value: string | undefined,
 ): "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "ovms" | "auto" | undefined {
-  if (!value) return undefined;
-  const providers = ["ollama", "openai", "cloudru", "huggingface", "tei", "ovms", "auto"];
-  return providers.includes(value)
-    ? (value as "ollama" | "openai" | "cloudru" | "huggingface" | "tei" | "ovms" | "auto")
-    : undefined;
+  return parseOneOf(value, EMBEDDING_PROVIDERS);
 }
 
-/**
- * Parse database journal mode from string
- */
 function parseDatabaseMode(value: string | undefined): "WAL" | "DELETE" | "TRUNCATE" | undefined {
-  if (!value) return undefined;
-  const modes = ["WAL", "DELETE", "TRUNCATE"];
-  return modes.includes(value) ? (value as "WAL" | "DELETE" | "TRUNCATE") : undefined;
+  return parseOneOf(value, DATABASE_MODES);
 }
 
-/**
- * Parse database synchronous level from string
- */
 function parseSynchronousLevel(value: string | undefined): "OFF" | "NORMAL" | "FULL" | undefined {
-  if (!value) return undefined;
-  const levels = ["OFF", "NORMAL", "FULL"];
-  return levels.includes(value) ? (value as "OFF" | "NORMAL" | "FULL") : undefined;
+  return parseOneOf(value, SYNC_LEVELS);
 }
 
-/**
- * Parse database temp store from string
- */
 function parseTempStore(value: string | undefined): "DEFAULT" | "FILE" | "MEMORY" | undefined {
-  if (!value) return undefined;
-  const stores = ["DEFAULT", "FILE", "MEMORY"];
-  return stores.includes(value) ? (value as "DEFAULT" | "FILE" | "MEMORY") : undefined;
+  return parseOneOf(value, TEMP_STORES);
 }
 
-/**
- * Parse logging level from string
- */
 function parseLogLevel(value: string | undefined): "debug" | "info" | "warn" | "error" | undefined {
-  if (!value) return undefined;
-  const levels = ["debug", "info", "warn", "error"];
-  return levels.includes(value) ? (value as "debug" | "info" | "warn" | "error") : undefined;
+  return parseOneOf(value, LOG_LEVELS);
 }
 
-/**
- * Parse logging format from string
- */
 function parseLogFormat(value: string | undefined): "json" | "text" | undefined {
   if (!value) return undefined;
   return value === "json" || value === "text" ? value : undefined;
 }
 
-/**
- * Parse load balancing strategy from string
- */
 function parseLoadBalancingStrategy(
   value: string | undefined,
 ): "round-robin" | "least-loaded" | "priority" | undefined {
-  if (!value) return undefined;
-  const strategies = ["round-robin", "least-loaded", "priority"];
-  return strategies.includes(value) ? (value as "round-robin" | "least-loaded" | "priority") : undefined;
+  return parseOneOf(value, LB_STRATEGIES);
 }
 
 // Re-export types for backward compatibility
@@ -122,6 +100,38 @@ import type {
   MCPConfig,
   ParserConfig,
 } from "./config-types.js";
+
+// =============================================================================
+// HELPER: resolve value from yaml -> env -> default with coercion
+// =============================================================================
+
+/** Boolean-aware pick: yaml first, then env (with "true"/"false" parsing), then fallback */
+function pickBool(yamlVal: boolean | undefined, envName: string, fallback: boolean | undefined): boolean | undefined {
+  if (yamlVal !== undefined) return yamlVal;
+  const envVal = process.env[envName];
+  if (envVal === "true") return true;
+  if (envVal === "false") return false;
+  return fallback;
+}
+
+/** Number-aware pick */
+function pickNum(yamlVal: number | undefined, envName: string, fallback: number | undefined): number | undefined {
+  if (yamlVal !== undefined) return yamlVal;
+  const raw = process.env[envName];
+  if (raw !== undefined && raw !== "") {
+    const n = Number(raw);
+    if (!Number.isNaN(n)) return n;
+  }
+  return fallback;
+}
+
+/** String-aware pick */
+function pickStr(yamlVal: string | undefined, envName: string, fallback: string | undefined): string | undefined {
+  if (yamlVal !== undefined && yamlVal !== "") return yamlVal;
+  const raw = process.env[envName];
+  if (raw !== undefined && raw !== "") return raw;
+  return fallback;
+}
 
 // =============================================================================
 // CONFIGURATION LOADER CLASS
@@ -221,34 +231,34 @@ export class ConfigLoader {
    * Get embedding configuration with fallback
    */
   public getEmbeddingConfig(): EmbeddingConfigResolved {
-    const embeddingConfig = this.config.mcp.embedding || {};
+    const ec = this.config.mcp.embedding || {};
     return {
-      model: embeddingConfig.model || "all-MiniLM-L6-v2",
-      provider: parseEmbeddingProvider(embeddingConfig.provider) || "auto",
-      apiKey: embeddingConfig.apiKey || "",
-      enabled: embeddingConfig.enabled || false,
+      model: ec.model || "all-MiniLM-L6-v2",
+      provider: parseEmbeddingProvider(ec.provider) || "auto",
+      apiKey: ec.apiKey || "",
+      enabled: ec.enabled || false,
 
       // Two-stage retrieval with reranker
-      useReranker: embeddingConfig.useReranker || false,
-      rerankerModel: embeddingConfig.rerankerModel || "granite-embedding-reranker-english-r2",
-      rerankerTopK: embeddingConfig.rerankerTopK || 100,
-      rerankerFinalK: embeddingConfig.rerankerFinalK || 10,
+      useReranker: ec.useReranker || false,
+      rerankerModel: ec.rerankerModel || "granite-embedding-reranker-english-r2",
+      rerankerTopK: ec.rerankerTopK || 100,
+      rerankerFinalK: ec.rerankerFinalK || 10,
 
       // Language hint for optimization
-      queryLanguage: embeddingConfig.queryLanguage || "english",
+      queryLanguage: ec.queryLanguage || "english",
 
       // Two-phase mode for Bun compatibility
-      twoPhaseMode: embeddingConfig.twoPhaseMode ?? false,
+      twoPhaseMode: ec.twoPhaseMode ?? false,
 
       // Layered FAISS index (base + delta)
-      useLayeredIndex: embeddingConfig.useLayeredIndex ?? true,
+      useLayeredIndex: ec.useLayeredIndex ?? true,
 
       // Provider-specific configurations
-      ollama: embeddingConfig.ollama || undefined,
-      openai: embeddingConfig.openai || undefined,
-      cloudru: embeddingConfig.cloudru || undefined,
-      huggingface: embeddingConfig.huggingface || undefined,
-      tei: embeddingConfig.tei || undefined,
+      ollama: ec.ollama || undefined,
+      openai: ec.openai || undefined,
+      cloudru: ec.cloudru || undefined,
+      huggingface: ec.huggingface || undefined,
+      tei: ec.tei || undefined,
     };
   }
 
@@ -271,16 +281,10 @@ export class ConfigLoader {
     const env = process.env.NODE_ENV || "development";
     const configDir = resolve(process.cwd(), "config");
 
-    // Try environment-specific config first
-    const envConfigPath = join(configDir, `${env}.yaml`);
-    if (existsSync(envConfigPath)) {
-      return envConfigPath;
-    }
-
-    // Fall back to default config
-    const defaultConfigPath = join(configDir, "default.yaml");
-    if (existsSync(defaultConfigPath)) {
-      return defaultConfigPath;
+    // Try environment-specific config first, then default
+    for (const candidate of [`${env}.yaml`, "default.yaml"]) {
+      const candidatePath = join(configDir, candidate);
+      if (existsSync(candidatePath)) return candidatePath;
     }
 
     // No config file found - will use defaults with env variables
@@ -296,11 +300,11 @@ export class ConfigLoader {
     // Load YAML configuration if file exists
     if (this.configPath && existsSync(this.configPath)) {
       try {
-        const yamlContent = readTextSync(this.configPath);
-        yamlConfig = parseYaml(yamlContent) || {};
+        const rawText = readTextSync(this.configPath);
+        yamlConfig = parseYaml(rawText) || {};
         log.i("CONFIG", "loaded", { path: this.configPath });
-      } catch (error) {
-        log.w("CONFIG", "yaml_load_fail", { err: error instanceof Error ? error.message : String(error) });
+      } catch (err) {
+        log.w("CONFIG", "yaml_load_fail", { err: err instanceof Error ? err.message : String(err) });
         log.w("CONFIG", "fallback_env");
       }
     } else {
@@ -308,495 +312,400 @@ export class ConfigLoader {
     }
 
     // Merge with defaults and environment variables
-    return this.mergeWithEnvironment(yamlConfig);
+    return this.assembleConfig(yamlConfig);
   }
 
   /**
-   * Merge YAML config with environment variables and defaults
+   * Build the embedding section of config using a layered approach
    */
-  private mergeWithEnvironment(yamlConfig: Partial<AppConfig>): AppConfig {
+  private buildEmbeddingConfig(yaml: Partial<AppConfig>) {
+    const yEmb = yaml.mcp?.embedding;
+    const dEmb = DEFAULT_CONFIG.mcp.embedding;
+
+    return {
+      model: pickStr(yEmb?.model, "MCP_EMBEDDING_MODEL", dEmb?.model),
+      provider:
+        parseEmbeddingProvider(yEmb?.provider) ||
+        parseEmbeddingProvider(process.env["MCP_EMBEDDING_PROVIDER"]) ||
+        dEmb?.provider ||
+        "auto",
+      apiKey: pickStr(yEmb?.apiKey, "MCP_EMBEDDING_API_KEY", dEmb?.apiKey),
+      enabled: pickBool(yEmb?.enabled, "MCP_EMBEDDING_ENABLED", dEmb?.enabled),
+      ollama: yEmb?.ollama || {
+        baseUrl: process.env["OLLAMA_BASE_URL"] || undefined,
+        timeout: pickNum(undefined, "OLLAMA_TIMEOUT_MS", undefined),
+        timeoutMs: pickNum(undefined, "OLLAMA_TIMEOUT_MS", undefined),
+        concurrency: pickNum(undefined, "OLLAMA_CONCURRENCY", undefined),
+        headers: undefined,
+        autoPull: process.env["OLLAMA_AUTO_PULL"] !== "false",
+        warmupText: process.env["OLLAMA_WARMUP_TEXT"] || undefined,
+        checkServer: process.env["OLLAMA_CHECK_SERVER"] !== "false",
+        pullTimeoutMs: pickNum(undefined, "OLLAMA_PULL_TIMEOUT_MS", undefined),
+      },
+      openai: yEmb?.openai || {
+        baseUrl: process.env["OPENAI_BASE_URL"] || undefined,
+        apiKey: process.env["OPENAI_API_KEY"] || undefined,
+        timeout: pickNum(undefined, "OPENAI_TIMEOUT_MS", undefined),
+        timeoutMs: pickNum(undefined, "OPENAI_TIMEOUT_MS", undefined),
+        concurrency: pickNum(undefined, "OPENAI_CONCURRENCY", undefined),
+        maxBatchSize: pickNum(undefined, "OPENAI_MAX_BATCH_SIZE", undefined),
+      },
+      cloudru: yEmb?.cloudru || {
+        baseUrl: process.env["CLOUDRU_BASE_URL"] || undefined,
+        apiKey: process.env["CLOUDRU_API_KEY"] || undefined,
+        timeout: pickNum(undefined, "CLOUDRU_TIMEOUT_MS", undefined),
+        timeoutMs: pickNum(undefined, "CLOUDRU_TIMEOUT_MS", undefined),
+        concurrency: pickNum(undefined, "CLOUDRU_CONCURRENCY", undefined),
+        maxBatchSize: pickNum(undefined, "CLOUDRU_MAX_BATCH_SIZE", undefined),
+      },
+      huggingface: yEmb?.huggingface || {
+        apiKey: process.env["HUGGINGFACE_API_KEY"] || undefined,
+        baseUrl: process.env["HUGGINGFACE_BASE_URL"] || undefined,
+        timeout: pickNum(undefined, "HUGGINGFACE_TIMEOUT_MS", undefined),
+        timeoutMs: pickNum(undefined, "HUGGINGFACE_TIMEOUT_MS", undefined),
+        concurrency: pickNum(undefined, "HUGGINGFACE_CONCURRENCY", undefined),
+        warmupText: process.env["HUGGINGFACE_WARMUP_TEXT"] || undefined,
+      },
+      tei: yEmb?.tei || {
+        baseUrl: process.env["TEI_BASE_URL"] || undefined,
+        timeoutMs: pickNum(undefined, "TEI_TIMEOUT_MS", undefined),
+        concurrency: pickNum(undefined, "TEI_CONCURRENCY", undefined),
+        checkServer: process.env["TEI_CHECK_SERVER"] !== "false",
+      },
+      // Two-phase mode for stability (separate embedding from DB writes)
+      twoPhaseMode: pickBool(yEmb?.twoPhaseMode, "MCP_EMBEDDING_TWO_PHASE", false),
+      // Layered FAISS index (base + delta) - enabled by default
+      useLayeredIndex:
+        yEmb?.useLayeredIndex !== undefined ? yEmb.useLayeredIndex : process.env["MCP_FAISS_LAYERED"] !== "false",
+    };
+  }
+
+  /**
+   * Build resource constraints block for coordinator/conductor
+   */
+  private buildResourceConstraints(
+    yaml:
+      | { maxMemoryMB?: number; maxCpuPercent?: number; maxConcurrentAgents?: number; maxTaskQueueSize?: number }
+      | undefined,
+    envPrefix: string,
+    fallbackMaxConcurrent: number | undefined,
+    defaults:
+      | { maxMemoryMB?: number; maxCpuPercent?: number; maxConcurrentAgents?: number; maxTaskQueueSize?: number }
+      | undefined,
+  ) {
+    return {
+      maxMemoryMB: pickNum(yaml?.maxMemoryMB, `${envPrefix}_MAX_MEMORY_MB`, defaults?.maxMemoryMB) ?? 0,
+      maxCpuPercent: pickNum(yaml?.maxCpuPercent, `${envPrefix}_MAX_CPU_PERCENT`, defaults?.maxCpuPercent) ?? 0,
+      maxConcurrentAgents:
+        pickNum(yaml?.maxConcurrentAgents, `${envPrefix}_MAX_CONCURRENT_AGENTS`, undefined) ||
+        fallbackMaxConcurrent ||
+        defaults?.maxConcurrentAgents ||
+        0,
+      maxTaskQueueSize:
+        pickNum(yaml?.maxTaskQueueSize, `${envPrefix}_MAX_TASK_QUEUE_SIZE`, defaults?.maxTaskQueueSize) ?? 0,
+    };
+  }
+
+  /**
+   * Assemble final config by merging YAML, env vars, and defaults
+   */
+  private assembleConfig(yaml: Partial<AppConfig>): AppConfig {
+    const d = DEFAULT_CONFIG;
+
+    // Shared fallback for maxConcurrentAgents
+    const sharedMaxConcurrent =
+      yaml.mcp?.agents?.maxConcurrent || Number(process.env["MCP_MAX_CONCURRENT_AGENTS"]) || undefined;
+
     const config: AppConfig = {
       mcp: {
-        embedding: {
-          model:
-            yamlConfig.mcp?.embedding?.model ||
-            process.env["MCP_EMBEDDING_MODEL"] ||
-            DEFAULT_CONFIG.mcp.embedding?.model,
-          provider:
-            parseEmbeddingProvider(yamlConfig.mcp?.embedding?.provider) ||
-            parseEmbeddingProvider(process.env["MCP_EMBEDDING_PROVIDER"]) ||
-            DEFAULT_CONFIG.mcp.embedding?.provider ||
-            "auto",
-          apiKey:
-            yamlConfig.mcp?.embedding?.apiKey ||
-            process.env["MCP_EMBEDDING_API_KEY"] ||
-            DEFAULT_CONFIG.mcp.embedding?.apiKey,
-          enabled:
-            yamlConfig.mcp?.embedding?.enabled !== undefined
-              ? yamlConfig.mcp?.embedding?.enabled
-              : process.env["MCP_EMBEDDING_ENABLED"] === "true" || DEFAULT_CONFIG.mcp.embedding?.enabled,
-          ollama: yamlConfig.mcp?.embedding?.ollama || {
-            baseUrl: process.env["OLLAMA_BASE_URL"] || undefined,
-            timeout: Number(process.env["OLLAMA_TIMEOUT_MS"]) || undefined,
-            timeoutMs: Number(process.env["OLLAMA_TIMEOUT_MS"]) || undefined,
-            concurrency: Number(process.env["OLLAMA_CONCURRENCY"]) || undefined,
-            headers: undefined,
-            autoPull: process.env["OLLAMA_AUTO_PULL"] !== "false",
-            warmupText: process.env["OLLAMA_WARMUP_TEXT"] || undefined,
-            checkServer: process.env["OLLAMA_CHECK_SERVER"] !== "false",
-            pullTimeoutMs: Number(process.env["OLLAMA_PULL_TIMEOUT_MS"]) || undefined,
-          },
-          openai: yamlConfig.mcp?.embedding?.openai || {
-            baseUrl: process.env["OPENAI_BASE_URL"] || undefined,
-            apiKey: process.env["OPENAI_API_KEY"] || undefined,
-            timeout: Number(process.env["OPENAI_TIMEOUT_MS"]) || undefined,
-            timeoutMs: Number(process.env["OPENAI_TIMEOUT_MS"]) || undefined,
-            concurrency: Number(process.env["OPENAI_CONCURRENCY"]) || undefined,
-            maxBatchSize: Number(process.env["OPENAI_MAX_BATCH_SIZE"]) || undefined,
-          },
-          cloudru: yamlConfig.mcp?.embedding?.cloudru || {
-            baseUrl: process.env["CLOUDRU_BASE_URL"] || undefined,
-            apiKey: process.env["CLOUDRU_API_KEY"] || undefined,
-            timeout: Number(process.env["CLOUDRU_TIMEOUT_MS"]) || undefined,
-            timeoutMs: Number(process.env["CLOUDRU_TIMEOUT_MS"]) || undefined,
-            concurrency: Number(process.env["CLOUDRU_CONCURRENCY"]) || undefined,
-            maxBatchSize: Number(process.env["CLOUDRU_MAX_BATCH_SIZE"]) || undefined,
-          },
-          huggingface: yamlConfig.mcp?.embedding?.huggingface || {
-            apiKey: process.env["HUGGINGFACE_API_KEY"] || undefined,
-            baseUrl: process.env["HUGGINGFACE_BASE_URL"] || undefined,
-            timeout: Number(process.env["HUGGINGFACE_TIMEOUT_MS"]) || undefined,
-            timeoutMs: Number(process.env["HUGGINGFACE_TIMEOUT_MS"]) || undefined,
-            concurrency: Number(process.env["HUGGINGFACE_CONCURRENCY"]) || undefined,
-            warmupText: process.env["HUGGINGFACE_WARMUP_TEXT"] || undefined,
-          },
-          tei: yamlConfig.mcp?.embedding?.tei || {
-            baseUrl: process.env["TEI_BASE_URL"] || undefined,
-            timeoutMs: Number(process.env["TEI_TIMEOUT_MS"]) || undefined,
-            concurrency: Number(process.env["TEI_CONCURRENCY"]) || undefined,
-            checkServer: process.env["TEI_CHECK_SERVER"] !== "false",
-          },
-          // Two-phase mode for stability (separate embedding from DB writes)
-          twoPhaseMode:
-            yamlConfig.mcp?.embedding?.twoPhaseMode !== undefined
-              ? yamlConfig.mcp?.embedding?.twoPhaseMode
-              : process.env["MCP_EMBEDDING_TWO_PHASE"] === "true",
-          // Layered FAISS index (base + delta) - enabled by default
-          useLayeredIndex:
-            yamlConfig.mcp?.embedding?.useLayeredIndex !== undefined
-              ? yamlConfig.mcp?.embedding?.useLayeredIndex
-              : process.env["MCP_FAISS_LAYERED"] !== "false",
-        },
+        embedding: this.buildEmbeddingConfig(yaml),
         server: {
-          host: yamlConfig.mcp?.server?.host || process.env["MCP_SERVER_HOST"] || DEFAULT_CONFIG.mcp.server?.host,
-          port:
-            yamlConfig.mcp?.server?.port || Number(process.env["MCP_SERVER_PORT"]) || DEFAULT_CONFIG.mcp.server?.port,
-          timeout:
-            yamlConfig.mcp?.server?.timeout ||
-            Number(process.env["MCP_SERVER_TIMEOUT"]) ||
-            DEFAULT_CONFIG.mcp.server?.timeout,
+          host: pickStr(yaml.mcp?.server?.host, "MCP_SERVER_HOST", d.mcp.server?.host),
+          port: pickNum(yaml.mcp?.server?.port, "MCP_SERVER_PORT", d.mcp.server?.port),
+          timeout: pickNum(yaml.mcp?.server?.timeout, "MCP_SERVER_TIMEOUT", d.mcp.server?.timeout),
         },
         agents: {
-          maxConcurrent:
-            yamlConfig.mcp?.agents?.maxConcurrent ||
-            Number(process.env["MCP_MAX_CONCURRENT_AGENTS"]) ||
-            DEFAULT_CONFIG.mcp.agents?.maxConcurrent,
-          defaultTimeout:
-            yamlConfig.mcp?.agents?.defaultTimeout ||
-            Number(process.env["MCP_AGENT_TIMEOUT"]) ||
-            DEFAULT_CONFIG.mcp.agents?.defaultTimeout,
+          maxConcurrent: pickNum(
+            yaml.mcp?.agents?.maxConcurrent,
+            "MCP_MAX_CONCURRENT_AGENTS",
+            d.mcp.agents?.maxConcurrent,
+          ),
+          defaultTimeout: pickNum(yaml.mcp?.agents?.defaultTimeout, "MCP_AGENT_TIMEOUT", d.mcp.agents?.defaultTimeout),
           useParser:
-            yamlConfig.mcp?.agents?.useParser !== undefined
-              ? yamlConfig.mcp?.agents?.useParser
-              : process.env["MCP_USE_PARSER"] !== "0" || DEFAULT_CONFIG.mcp.agents?.useParser,
-          devIndexBatch:
-            yamlConfig.mcp?.agents?.devIndexBatch ||
-            Number(process.env["MCP_DEV_INDEX_BATCH"]) ||
-            DEFAULT_CONFIG.mcp.agents?.devIndexBatch,
+            yaml.mcp?.agents?.useParser !== undefined
+              ? yaml.mcp.agents.useParser
+              : process.env["MCP_USE_PARSER"] !== "0" || d.mcp.agents?.useParser,
+          devIndexBatch: pickNum(yaml.mcp?.agents?.devIndexBatch, "MCP_DEV_INDEX_BATCH", d.mcp.agents?.devIndexBatch),
         },
         semantic: {
-          cacheWarmupLimit:
-            yamlConfig.mcp?.semantic?.cacheWarmupLimit !== undefined
-              ? yamlConfig.mcp.semantic.cacheWarmupLimit
-              : process.env["MCP_SEMANTIC_WARMUP_LIMIT"] !== undefined
-                ? Number(process.env["MCP_SEMANTIC_WARMUP_LIMIT"])
-                : DEFAULT_CONFIG.mcp.semantic?.cacheWarmupLimit,
-          popularEntitiesTopic:
-            yamlConfig.mcp?.semantic?.popularEntitiesTopic ||
-            process.env["MCP_SEMANTIC_WARMUP_TOPIC"] ||
-            DEFAULT_CONFIG.mcp.semantic?.popularEntitiesTopic,
+          cacheWarmupLimit: pickNum(
+            yaml.mcp?.semantic?.cacheWarmupLimit,
+            "MCP_SEMANTIC_WARMUP_LIMIT",
+            d.mcp.semantic?.cacheWarmupLimit,
+          ),
+          popularEntitiesTopic: pickStr(
+            yaml.mcp?.semantic?.popularEntitiesTopic,
+            "MCP_SEMANTIC_WARMUP_TOPIC",
+            d.mcp.semantic?.popularEntitiesTopic,
+          ),
         },
       },
       database: {
-        path: yamlConfig.database?.path || process.env["DATABASE_PATH"] || DEFAULT_CONFIG.database?.path,
+        path: pickStr(yaml.database?.path, "DATABASE_PATH", d.database?.path),
         mode:
-          parseDatabaseMode(yamlConfig.database?.mode) ||
-          parseDatabaseMode(process.env["DATABASE_MODE"]) ||
-          DEFAULT_CONFIG.database?.mode,
-        cacheSize:
-          yamlConfig.database?.cacheSize ||
-          Number(process.env["DATABASE_CACHE_SIZE"]) ||
-          DEFAULT_CONFIG.database?.cacheSize,
-        mmapSize:
-          yamlConfig.database?.mmapSize ||
-          Number(process.env["DATABASE_MMAP_SIZE"]) ||
-          DEFAULT_CONFIG.database?.mmapSize,
+          parseDatabaseMode(yaml.database?.mode) || parseDatabaseMode(process.env["DATABASE_MODE"]) || d.database?.mode,
+        cacheSize: pickNum(yaml.database?.cacheSize, "DATABASE_CACHE_SIZE", d.database?.cacheSize),
+        mmapSize: pickNum(yaml.database?.mmapSize, "DATABASE_MMAP_SIZE", d.database?.mmapSize),
         synchronous:
-          parseSynchronousLevel(yamlConfig.database?.synchronous) ||
+          parseSynchronousLevel(yaml.database?.synchronous) ||
           parseSynchronousLevel(process.env["DATABASE_SYNCHRONOUS"]) ||
-          DEFAULT_CONFIG.database?.synchronous,
+          d.database?.synchronous,
         tempStore:
-          parseTempStore(yamlConfig.database?.tempStore) ||
+          parseTempStore(yaml.database?.tempStore) ||
           parseTempStore(process.env["DATABASE_TEMP_STORE"]) ||
-          DEFAULT_CONFIG.database?.tempStore,
+          d.database?.tempStore,
       },
       logging: {
-        level:
-          parseLogLevel(yamlConfig.logging?.level) ||
-          parseLogLevel(process.env["LOG_LEVEL"]) ||
-          DEFAULT_CONFIG.logging?.level,
-        format:
-          parseLogFormat(yamlConfig.logging?.format) ||
-          parseLogFormat(process.env["LOG_FORMAT"]) ||
-          DEFAULT_CONFIG.logging?.format,
-        outputFile: yamlConfig.logging?.outputFile || process.env["LOG_FILE"] || DEFAULT_CONFIG.logging?.outputFile,
-        maxFileSize:
-          yamlConfig.logging?.maxFileSize || process.env["LOG_MAX_FILE_SIZE"] || DEFAULT_CONFIG.logging?.maxFileSize,
-        maxFiles:
-          yamlConfig.logging?.maxFiles || Number(process.env["LOG_MAX_FILES"]) || DEFAULT_CONFIG.logging?.maxFiles,
-        enableConsole:
-          yamlConfig.logging?.enableConsole !== undefined
-            ? yamlConfig.logging?.enableConsole
-            : process.env["LOG_ENABLE_CONSOLE"] !== "false" || DEFAULT_CONFIG.logging?.enableConsole,
+        level: parseLogLevel(yaml.logging?.level) || parseLogLevel(process.env["LOG_LEVEL"]) || d.logging?.level,
+        format: parseLogFormat(yaml.logging?.format) || parseLogFormat(process.env["LOG_FORMAT"]) || d.logging?.format,
+        outputFile: pickStr(yaml.logging?.outputFile, "LOG_FILE", d.logging?.outputFile),
+        maxFileSize: yaml.logging?.maxFileSize || process.env["LOG_MAX_FILE_SIZE"] || d.logging?.maxFileSize,
+        maxFiles: pickNum(yaml.logging?.maxFiles, "LOG_MAX_FILES", d.logging?.maxFiles),
+        enableConsole: pickBool(yaml.logging?.enableConsole, "LOG_ENABLE_CONSOLE", d.logging?.enableConsole),
       },
       parser: {
         treeSitter: {
-          enabled:
-            yamlConfig.parser?.treeSitter?.enabled !== undefined
-              ? yamlConfig.parser?.treeSitter?.enabled
-              : process.env["PARSER_TREE_SITTER_ENABLED"] !== "false" || DEFAULT_CONFIG.parser.treeSitter?.enabled,
+          enabled: pickBool(
+            yaml.parser?.treeSitter?.enabled,
+            "PARSER_TREE_SITTER_ENABLED",
+            d.parser.treeSitter?.enabled,
+          ),
           languageConfigs:
-            yamlConfig.parser?.treeSitter?.languageConfigs ||
+            yaml.parser?.treeSitter?.languageConfigs ||
             process.env["PARSER_LANGUAGES"]?.split(",") ||
-            DEFAULT_CONFIG.parser.treeSitter?.languageConfigs,
-          maxFileSize:
-            yamlConfig.parser?.treeSitter?.maxFileSize ||
-            Number(process.env["PARSER_MAX_FILE_SIZE"]) ||
-            DEFAULT_CONFIG.parser.treeSitter?.maxFileSize,
-          timeout:
-            yamlConfig.parser?.treeSitter?.timeout ||
-            Number(process.env["PARSER_TIMEOUT"]) ||
-            DEFAULT_CONFIG.parser.treeSitter?.timeout,
-          bufferSize:
-            yamlConfig.parser?.treeSitter?.bufferSize ||
-            Number(process.env["PARSER_BUFFER_SIZE"]) ||
-            DEFAULT_CONFIG.parser.treeSitter?.bufferSize,
+            d.parser.treeSitter?.languageConfigs,
+          maxFileSize: pickNum(
+            yaml.parser?.treeSitter?.maxFileSize,
+            "PARSER_MAX_FILE_SIZE",
+            d.parser.treeSitter?.maxFileSize,
+          ),
+          timeout: pickNum(yaml.parser?.treeSitter?.timeout, "PARSER_TIMEOUT", d.parser.treeSitter?.timeout),
+          bufferSize: pickNum(
+            yaml.parser?.treeSitter?.bufferSize,
+            "PARSER_BUFFER_SIZE",
+            d.parser.treeSitter?.bufferSize,
+          ),
         },
         incremental: {
-          enabled:
-            yamlConfig.parser?.incremental?.enabled !== undefined
-              ? yamlConfig.parser?.incremental?.enabled
-              : process.env["PARSER_INCREMENTAL_ENABLED"] !== "false" || DEFAULT_CONFIG.parser.incremental?.enabled,
-          cacheSize:
-            yamlConfig.parser?.incremental?.cacheSize ||
-            Number(process.env["PARSER_CACHE_SIZE"]) ||
-            DEFAULT_CONFIG.parser.incremental?.cacheSize,
-          cacheTTL:
-            yamlConfig.parser?.incremental?.cacheTTL ||
-            Number(process.env["PARSER_CACHE_TTL"]) ||
-            DEFAULT_CONFIG.parser.incremental?.cacheTTL,
+          enabled: pickBool(
+            yaml.parser?.incremental?.enabled,
+            "PARSER_INCREMENTAL_ENABLED",
+            d.parser.incremental?.enabled,
+          ),
+          cacheSize: pickNum(yaml.parser?.incremental?.cacheSize, "PARSER_CACHE_SIZE", d.parser.incremental?.cacheSize),
+          cacheTTL: pickNum(yaml.parser?.incremental?.cacheTTL, "PARSER_CACHE_TTL", d.parser.incremental?.cacheTTL),
         },
         agent: {
-          maxConcurrency:
-            yamlConfig.parser?.agent?.maxConcurrency ||
-            Number(process.env["PARSER_AGENT_MAX_CONCURRENCY"]) ||
-            DEFAULT_CONFIG.parser.agent?.maxConcurrency,
-          memoryLimit:
-            yamlConfig.parser?.agent?.memoryLimit ||
-            Number(process.env["PARSER_AGENT_MEMORY_LIMIT"]) ||
-            DEFAULT_CONFIG.parser.agent?.memoryLimit,
-          priority:
-            yamlConfig.parser?.agent?.priority ||
-            Number(process.env["PARSER_AGENT_PRIORITY"]) ||
-            DEFAULT_CONFIG.parser.agent?.priority,
-          batchSize:
-            yamlConfig.parser?.agent?.batchSize ||
-            Number(process.env["PARSER_AGENT_BATCH_SIZE"]) ||
-            DEFAULT_CONFIG.parser.agent?.batchSize,
-          cacheSize:
-            yamlConfig.parser?.agent?.cacheSize ||
-            Number(process.env["PARSER_AGENT_CACHE_SIZE"]) ||
-            DEFAULT_CONFIG.parser.agent?.cacheSize,
-          workerPoolSize:
-            yamlConfig.parser?.agent?.workerPoolSize ||
-            Number(process.env["PARSER_AGENT_WORKER_POOL_SIZE"]) ||
-            DEFAULT_CONFIG.parser.agent?.workerPoolSize,
+          maxConcurrency: pickNum(
+            yaml.parser?.agent?.maxConcurrency,
+            "PARSER_AGENT_MAX_CONCURRENCY",
+            d.parser.agent?.maxConcurrency,
+          ),
+          memoryLimit: pickNum(
+            yaml.parser?.agent?.memoryLimit,
+            "PARSER_AGENT_MEMORY_LIMIT",
+            d.parser.agent?.memoryLimit,
+          ),
+          priority: pickNum(yaml.parser?.agent?.priority, "PARSER_AGENT_PRIORITY", d.parser.agent?.priority),
+          batchSize: pickNum(yaml.parser?.agent?.batchSize, "PARSER_AGENT_BATCH_SIZE", d.parser.agent?.batchSize),
+          cacheSize: pickNum(yaml.parser?.agent?.cacheSize, "PARSER_AGENT_CACHE_SIZE", d.parser.agent?.cacheSize),
+          workerPoolSize: pickNum(
+            yaml.parser?.agent?.workerPoolSize,
+            "PARSER_AGENT_WORKER_POOL_SIZE",
+            d.parser.agent?.workerPoolSize,
+          ),
         },
       },
       indexer: {
-        maxConcurrency:
-          yamlConfig.indexer?.maxConcurrency ||
-          Number(process.env["INDEXER_AGENT_MAX_CONCURRENCY"]) ||
-          DEFAULT_CONFIG.indexer?.maxConcurrency,
-        memoryLimit:
-          yamlConfig.indexer?.memoryLimit ||
-          Number(process.env["INDEXER_AGENT_MEMORY_LIMIT"]) ||
-          DEFAULT_CONFIG.indexer?.memoryLimit,
-        priority:
-          yamlConfig.indexer?.priority ||
-          Number(process.env["INDEXER_AGENT_PRIORITY"]) ||
-          DEFAULT_CONFIG.indexer?.priority,
-        batchSize:
-          yamlConfig.indexer?.batchSize ||
-          Number(process.env["INDEXER_AGENT_BATCH_SIZE"]) ||
-          DEFAULT_CONFIG.indexer?.batchSize,
-        cacheSize:
-          yamlConfig.indexer?.cacheSize ||
-          Number(process.env["INDEXER_AGENT_CACHE_SIZE"]) ||
-          DEFAULT_CONFIG.indexer?.cacheSize,
-        cacheTTL:
-          yamlConfig.indexer?.cacheTTL ||
-          Number(process.env["INDEXER_AGENT_CACHE_TTL"]) ||
-          DEFAULT_CONFIG.indexer?.cacheTTL,
+        maxConcurrency: pickNum(
+          yaml.indexer?.maxConcurrency,
+          "INDEXER_AGENT_MAX_CONCURRENCY",
+          d.indexer?.maxConcurrency,
+        ),
+        memoryLimit: pickNum(yaml.indexer?.memoryLimit, "INDEXER_AGENT_MEMORY_LIMIT", d.indexer?.memoryLimit),
+        priority: pickNum(yaml.indexer?.priority, "INDEXER_AGENT_PRIORITY", d.indexer?.priority),
+        batchSize: pickNum(yaml.indexer?.batchSize, "INDEXER_AGENT_BATCH_SIZE", d.indexer?.batchSize),
+        cacheSize: pickNum(yaml.indexer?.cacheSize, "INDEXER_AGENT_CACHE_SIZE", d.indexer?.cacheSize),
+        cacheTTL: pickNum(yaml.indexer?.cacheTTL, "INDEXER_AGENT_CACHE_TTL", d.indexer?.cacheTTL),
       },
       indexing: {
-        // branchAware removed - auto-detected via .git directory
-        autoSwitchOnBranchChange:
-          yamlConfig.indexing?.autoSwitchOnBranchChange ??
-          (process.env["INDEXING_AUTO_SWITCH"] === "true" ? true : undefined) ??
-          DEFAULT_CONFIG.indexing.autoSwitchOnBranchChange,
-        maxBranchesPerRepo:
-          yamlConfig.indexing?.maxBranchesPerRepo ||
-          Number(process.env["INDEXING_MAX_BRANCHES_PER_REPO"]) ||
-          DEFAULT_CONFIG.indexing.maxBranchesPerRepo,
-        maxTotalBranches:
-          yamlConfig.indexing?.maxTotalBranches ||
-          Number(process.env["INDEXING_MAX_TOTAL_BRANCHES"]) ||
-          DEFAULT_CONFIG.indexing.maxTotalBranches,
-        evictionStrategy:
-          (yamlConfig.indexing?.evictionStrategy as "LRU" | "LFU" | "FIFO") || DEFAULT_CONFIG.indexing.evictionStrategy,
-        cleanupIntervalMs:
-          yamlConfig.indexing?.cleanupIntervalMs ||
-          Number(process.env["INDEXING_CLEANUP_INTERVAL_MS"]) ||
-          DEFAULT_CONFIG.indexing.cleanupIntervalMs,
-        incrementalThreshold:
-          yamlConfig.indexing?.incrementalThreshold ||
-          Number(process.env["INDEXING_INCREMENTAL_THRESHOLD"]) ||
-          DEFAULT_CONFIG.indexing.incrementalThreshold,
-        dataDir: yamlConfig.indexing?.dataDir || process.env["INDEXING_DATA_DIR"] || DEFAULT_CONFIG.indexing.dataDir,
+        autoSwitchOnBranchChange: pickBool(
+          yaml.indexing?.autoSwitchOnBranchChange,
+          "INDEXING_AUTO_SWITCH",
+          d.indexing.autoSwitchOnBranchChange,
+        ),
+        maxBranchesPerRepo: pickNum(
+          yaml.indexing?.maxBranchesPerRepo,
+          "INDEXING_MAX_BRANCHES_PER_REPO",
+          d.indexing.maxBranchesPerRepo,
+        ),
+        maxTotalBranches: pickNum(
+          yaml.indexing?.maxTotalBranches,
+          "INDEXING_MAX_TOTAL_BRANCHES",
+          d.indexing.maxTotalBranches,
+        ),
+        evictionStrategy: (yaml.indexing?.evictionStrategy as "LRU" | "LFU" | "FIFO") || d.indexing.evictionStrategy,
+        cleanupIntervalMs: pickNum(
+          yaml.indexing?.cleanupIntervalMs,
+          "INDEXING_CLEANUP_INTERVAL_MS",
+          d.indexing.cleanupIntervalMs,
+        ),
+        incrementalThreshold: pickNum(
+          yaml.indexing?.incrementalThreshold,
+          "INDEXING_INCREMENTAL_THRESHOLD",
+          d.indexing.incrementalThreshold,
+        ),
+        dataDir: pickStr(yaml.indexing?.dataDir, "INDEXING_DATA_DIR", d.indexing.dataDir),
       },
       git: {
-        enabled:
-          yamlConfig.git?.enabled ??
-          (process.env["GIT_ENABLED"] === "true" ? true : undefined) ??
-          DEFAULT_CONFIG.git.enabled,
-        watchBranchChanges:
-          yamlConfig.git?.watchBranchChanges ??
-          (process.env["GIT_WATCH_BRANCH_CHANGES"] === "true" ? true : undefined) ??
-          DEFAULT_CONFIG.git.watchBranchChanges,
-        watchUncommitted:
-          yamlConfig.git?.watchUncommitted ??
-          (process.env["GIT_WATCH_UNCOMMITTED"] === "true" ? true : undefined) ??
-          DEFAULT_CONFIG.git.watchUncommitted,
-        uncommittedPollIntervalMs:
-          yamlConfig.git?.uncommittedPollIntervalMs ||
-          Number(process.env["GIT_UNCOMMITTED_POLL_INTERVAL_MS"]) ||
-          DEFAULT_CONFIG.git.uncommittedPollIntervalMs,
-        includeUntracked:
-          yamlConfig.git?.includeUntracked ??
-          (process.env["GIT_INCLUDE_UNTRACKED"] === "true" ? true : undefined) ??
-          DEFAULT_CONFIG.git.includeUntracked,
-        autoReindex:
-          yamlConfig.git?.autoReindex ??
-          (process.env["GIT_AUTO_REINDEX"] === "true" ? true : undefined) ??
-          DEFAULT_CONFIG.git.autoReindex,
-        diffMode: (yamlConfig.git?.diffMode as "incremental" | "full") || DEFAULT_CONFIG.git.diffMode,
-        pollIntervalMs:
-          yamlConfig.git?.pollIntervalMs ||
-          Number(process.env["GIT_POLL_INTERVAL_MS"]) ||
-          DEFAULT_CONFIG.git.pollIntervalMs,
+        enabled: pickBool(yaml.git?.enabled, "GIT_ENABLED", d.git.enabled),
+        watchBranchChanges: pickBool(
+          yaml.git?.watchBranchChanges,
+          "GIT_WATCH_BRANCH_CHANGES",
+          d.git.watchBranchChanges,
+        ),
+        watchUncommitted: pickBool(yaml.git?.watchUncommitted, "GIT_WATCH_UNCOMMITTED", d.git.watchUncommitted),
+        uncommittedPollIntervalMs: pickNum(
+          yaml.git?.uncommittedPollIntervalMs,
+          "GIT_UNCOMMITTED_POLL_INTERVAL_MS",
+          d.git.uncommittedPollIntervalMs,
+        ),
+        includeUntracked: pickBool(yaml.git?.includeUntracked, "GIT_INCLUDE_UNTRACKED", d.git.includeUntracked),
+        autoReindex: pickBool(yaml.git?.autoReindex, "GIT_AUTO_REINDEX", d.git.autoReindex),
+        diffMode: (yaml.git?.diffMode as "incremental" | "full") || d.git.diffMode,
+        pollIntervalMs: pickNum(yaml.git?.pollIntervalMs, "GIT_POLL_INTERVAL_MS", d.git.pollIntervalMs),
       },
       devAgent: {
-        maxConcurrency:
-          yamlConfig.devAgent?.maxConcurrency ||
-          Number(process.env["DEV_AGENT_MAX_CONCURRENCY"]) ||
-          DEFAULT_CONFIG.devAgent.maxConcurrency,
-        memoryLimit:
-          yamlConfig.devAgent?.memoryLimit ||
-          Number(process.env["DEV_AGENT_MEMORY_LIMIT"]) ||
-          DEFAULT_CONFIG.devAgent.memoryLimit,
-        priority:
-          yamlConfig.devAgent?.priority ||
-          Number(process.env["DEV_AGENT_PRIORITY"]) ||
-          DEFAULT_CONFIG.devAgent.priority,
+        maxConcurrency: pickNum(yaml.devAgent?.maxConcurrency, "DEV_AGENT_MAX_CONCURRENCY", d.devAgent.maxConcurrency),
+        memoryLimit: pickNum(yaml.devAgent?.memoryLimit, "DEV_AGENT_MEMORY_LIMIT", d.devAgent.memoryLimit),
+        priority: pickNum(yaml.devAgent?.priority, "DEV_AGENT_PRIORITY", d.devAgent.priority),
       },
       doraAgent: {
-        maxConcurrency:
-          yamlConfig.doraAgent?.maxConcurrency ||
-          Number(process.env["DORA_AGENT_MAX_CONCURRENCY"]) ||
-          DEFAULT_CONFIG.doraAgent.maxConcurrency,
-        memoryLimit:
-          yamlConfig.doraAgent?.memoryLimit ||
-          Number(process.env["DORA_AGENT_MEMORY_LIMIT"]) ||
-          DEFAULT_CONFIG.doraAgent.memoryLimit,
-        priority:
-          yamlConfig.doraAgent?.priority ||
-          Number(process.env["DORA_AGENT_PRIORITY"]) ||
-          DEFAULT_CONFIG.doraAgent.priority,
+        maxConcurrency: pickNum(
+          yaml.doraAgent?.maxConcurrency,
+          "DORA_AGENT_MAX_CONCURRENCY",
+          d.doraAgent.maxConcurrency,
+        ),
+        memoryLimit: pickNum(yaml.doraAgent?.memoryLimit, "DORA_AGENT_MEMORY_LIMIT", d.doraAgent.memoryLimit),
+        priority: pickNum(yaml.doraAgent?.priority, "DORA_AGENT_PRIORITY", d.doraAgent.priority),
       },
       queryAgent: {
-        maxConcurrency:
-          yamlConfig.queryAgent?.maxConcurrency ||
-          Number(process.env["QUERY_AGENT_MAX_CONCURRENCY"]) ||
-          DEFAULT_CONFIG.queryAgent.maxConcurrency,
-        memoryLimit:
-          yamlConfig.queryAgent?.memoryLimit ||
-          Number(process.env["QUERY_AGENT_MEMORY_LIMIT"]) ||
-          DEFAULT_CONFIG.queryAgent.memoryLimit,
-        priority:
-          yamlConfig.queryAgent?.priority ||
-          Number(process.env["QUERY_AGENT_PRIORITY"]) ||
-          DEFAULT_CONFIG.queryAgent.priority,
-        simpleQueryTimeout:
-          yamlConfig.queryAgent?.simpleQueryTimeout ||
-          Number(process.env["QUERY_AGENT_SIMPLE_TIMEOUT"]) ||
-          DEFAULT_CONFIG.queryAgent.simpleQueryTimeout,
-        complexQueryTimeout:
-          yamlConfig.queryAgent?.complexQueryTimeout ||
-          Number(process.env["QUERY_AGENT_COMPLEX_TIMEOUT"]) ||
-          DEFAULT_CONFIG.queryAgent.complexQueryTimeout,
-        cacheWarmupSize:
-          yamlConfig.queryAgent?.cacheWarmupSize ||
-          Number(process.env["QUERY_AGENT_CACHE_WARMUP"]) ||
-          DEFAULT_CONFIG.queryAgent.cacheWarmupSize,
+        maxConcurrency: pickNum(
+          yaml.queryAgent?.maxConcurrency,
+          "QUERY_AGENT_MAX_CONCURRENCY",
+          d.queryAgent.maxConcurrency,
+        ),
+        memoryLimit: pickNum(yaml.queryAgent?.memoryLimit, "QUERY_AGENT_MEMORY_LIMIT", d.queryAgent.memoryLimit),
+        priority: pickNum(yaml.queryAgent?.priority, "QUERY_AGENT_PRIORITY", d.queryAgent.priority),
+        simpleQueryTimeout: pickNum(
+          yaml.queryAgent?.simpleQueryTimeout,
+          "QUERY_AGENT_SIMPLE_TIMEOUT",
+          d.queryAgent.simpleQueryTimeout,
+        ),
+        complexQueryTimeout: pickNum(
+          yaml.queryAgent?.complexQueryTimeout,
+          "QUERY_AGENT_COMPLEX_TIMEOUT",
+          d.queryAgent.complexQueryTimeout,
+        ),
+        cacheWarmupSize: pickNum(
+          yaml.queryAgent?.cacheWarmupSize,
+          "QUERY_AGENT_CACHE_WARMUP",
+          d.queryAgent.cacheWarmupSize,
+        ),
       },
       semanticAgent: {
-        maxConcurrency:
-          yamlConfig.semanticAgent?.maxConcurrency ||
-          Number(process.env["SEMANTIC_AGENT_MAX_CONCURRENCY"]) ||
-          DEFAULT_CONFIG.semanticAgent.maxConcurrency,
-        memoryLimit:
-          yamlConfig.semanticAgent?.memoryLimit ||
-          Number(process.env["SEMANTIC_AGENT_MEMORY_LIMIT"]) ||
-          DEFAULT_CONFIG.semanticAgent.memoryLimit,
-        priority:
-          yamlConfig.semanticAgent?.priority ||
-          Number(process.env["SEMANTIC_AGENT_PRIORITY"]) ||
-          DEFAULT_CONFIG.semanticAgent.priority,
-        batchSize:
-          yamlConfig.semanticAgent?.batchSize ||
-          Number(process.env["SEMANTIC_AGENT_BATCH_SIZE"]) ||
-          DEFAULT_CONFIG.semanticAgent.batchSize,
-        modelPath:
-          yamlConfig.semanticAgent?.modelPath ||
-          process.env["SEMANTIC_AGENT_MODEL_PATH"] ||
-          DEFAULT_CONFIG.semanticAgent.modelPath,
+        maxConcurrency: pickNum(
+          yaml.semanticAgent?.maxConcurrency,
+          "SEMANTIC_AGENT_MAX_CONCURRENCY",
+          d.semanticAgent.maxConcurrency,
+        ),
+        memoryLimit: pickNum(
+          yaml.semanticAgent?.memoryLimit,
+          "SEMANTIC_AGENT_MEMORY_LIMIT",
+          d.semanticAgent.memoryLimit,
+        ),
+        priority: pickNum(yaml.semanticAgent?.priority, "SEMANTIC_AGENT_PRIORITY", d.semanticAgent.priority),
+        batchSize: pickNum(yaml.semanticAgent?.batchSize, "SEMANTIC_AGENT_BATCH_SIZE", d.semanticAgent.batchSize),
+        modelPath: pickStr(yaml.semanticAgent?.modelPath, "SEMANTIC_AGENT_MODEL_PATH", d.semanticAgent.modelPath),
       },
       coordinator: {
-        maxConcurrency:
-          yamlConfig.coordinator?.maxConcurrency ||
-          Number(process.env["COORDINATOR_MAX_CONCURRENCY"]) ||
-          DEFAULT_CONFIG.coordinator.maxConcurrency,
-        memoryLimit:
-          yamlConfig.coordinator?.memoryLimit ||
-          Number(process.env["COORDINATOR_MEMORY_LIMIT"]) ||
-          DEFAULT_CONFIG.coordinator.memoryLimit,
-        priority:
-          yamlConfig.coordinator?.priority ||
-          Number(process.env["COORDINATOR_PRIORITY"]) ||
-          DEFAULT_CONFIG.coordinator.priority,
-        taskQueueLimit:
-          yamlConfig.coordinator?.taskQueueLimit ||
-          Number(process.env["COORDINATOR_TASK_QUEUE_LIMIT"]) ||
-          DEFAULT_CONFIG.coordinator.taskQueueLimit,
+        maxConcurrency: pickNum(
+          yaml.coordinator?.maxConcurrency,
+          "COORDINATOR_MAX_CONCURRENCY",
+          d.coordinator.maxConcurrency,
+        ),
+        memoryLimit: pickNum(yaml.coordinator?.memoryLimit, "COORDINATOR_MEMORY_LIMIT", d.coordinator.memoryLimit),
+        priority: pickNum(yaml.coordinator?.priority, "COORDINATOR_PRIORITY", d.coordinator.priority),
+        taskQueueLimit: pickNum(
+          yaml.coordinator?.taskQueueLimit,
+          "COORDINATOR_TASK_QUEUE_LIMIT",
+          d.coordinator.taskQueueLimit,
+        ),
         loadBalancingStrategy:
-          parseLoadBalancingStrategy(yamlConfig.coordinator?.loadBalancingStrategy) ||
+          parseLoadBalancingStrategy(yaml.coordinator?.loadBalancingStrategy) ||
           parseLoadBalancingStrategy(process.env["COORDINATOR_LOAD_BALANCING_STRATEGY"]) ||
-          DEFAULT_CONFIG.coordinator.loadBalancingStrategy,
-        resourceConstraints: {
-          maxMemoryMB:
-            yamlConfig.coordinator?.resourceConstraints?.maxMemoryMB ||
-            Number(process.env["COORDINATOR_MAX_MEMORY_MB"]) ||
-            DEFAULT_CONFIG.coordinator.resourceConstraints?.maxMemoryMB,
-          maxCpuPercent:
-            yamlConfig.coordinator?.resourceConstraints?.maxCpuPercent ||
-            Number(process.env["COORDINATOR_MAX_CPU_PERCENT"]) ||
-            DEFAULT_CONFIG.coordinator.resourceConstraints?.maxCpuPercent,
-          maxConcurrentAgents:
-            yamlConfig.coordinator?.resourceConstraints?.maxConcurrentAgents ||
-            Number(process.env["COORDINATOR_MAX_CONCURRENT_AGENTS"]) ||
-            yamlConfig.mcp?.agents?.maxConcurrent ||
-            Number(process.env["MCP_MAX_CONCURRENT_AGENTS"]) ||
-            DEFAULT_CONFIG.coordinator.resourceConstraints?.maxConcurrentAgents,
-          maxTaskQueueSize:
-            yamlConfig.coordinator?.resourceConstraints?.maxTaskQueueSize ||
-            Number(process.env["COORDINATOR_MAX_TASK_QUEUE_SIZE"]) ||
-            DEFAULT_CONFIG.coordinator.resourceConstraints?.maxTaskQueueSize,
-        },
+          d.coordinator.loadBalancingStrategy,
+        resourceConstraints: this.buildResourceConstraints(
+          yaml.coordinator?.resourceConstraints,
+          "COORDINATOR",
+          sharedMaxConcurrent,
+          d.coordinator.resourceConstraints,
+        ),
       },
       conductor: {
-        maxConcurrency:
-          yamlConfig.conductor?.maxConcurrency ||
-          Number(process.env["CONDUCTOR_MAX_CONCURRENCY"]) ||
-          DEFAULT_CONFIG.conductor.maxConcurrency,
-        memoryLimit:
-          yamlConfig.conductor?.memoryLimit ||
-          Number(process.env["CONDUCTOR_MEMORY_LIMIT"]) ||
-          DEFAULT_CONFIG.conductor.memoryLimit,
-        priority:
-          yamlConfig.conductor?.priority ||
-          Number(process.env["CONDUCTOR_PRIORITY"]) ||
-          DEFAULT_CONFIG.conductor.priority,
-        taskQueueLimit:
-          yamlConfig.conductor?.taskQueueLimit ||
-          Number(process.env["CONDUCTOR_TASK_QUEUE_LIMIT"]) ||
-          DEFAULT_CONFIG.conductor.taskQueueLimit,
+        maxConcurrency: pickNum(
+          yaml.conductor?.maxConcurrency,
+          "CONDUCTOR_MAX_CONCURRENCY",
+          d.conductor.maxConcurrency,
+        ),
+        memoryLimit: pickNum(yaml.conductor?.memoryLimit, "CONDUCTOR_MEMORY_LIMIT", d.conductor.memoryLimit),
+        priority: pickNum(yaml.conductor?.priority, "CONDUCTOR_PRIORITY", d.conductor.priority),
+        taskQueueLimit: pickNum(
+          yaml.conductor?.taskQueueLimit,
+          "CONDUCTOR_TASK_QUEUE_LIMIT",
+          d.conductor.taskQueueLimit,
+        ),
         loadBalancingStrategy:
-          parseLoadBalancingStrategy(yamlConfig.conductor?.loadBalancingStrategy) ||
+          parseLoadBalancingStrategy(yaml.conductor?.loadBalancingStrategy) ||
           parseLoadBalancingStrategy(process.env["CONDUCTOR_LOAD_BALANCING_STRATEGY"]) ||
-          DEFAULT_CONFIG.conductor.loadBalancingStrategy,
-        resourceConstraints: {
-          maxMemoryMB:
-            yamlConfig.conductor?.resourceConstraints?.maxMemoryMB ||
-            Number(process.env["CONDUCTOR_MAX_MEMORY_MB"]) ||
-            DEFAULT_CONFIG.conductor.resourceConstraints?.maxMemoryMB,
-          maxCpuPercent:
-            yamlConfig.conductor?.resourceConstraints?.maxCpuPercent ||
-            Number(process.env["CONDUCTOR_MAX_CPU_PERCENT"]) ||
-            DEFAULT_CONFIG.conductor.resourceConstraints?.maxCpuPercent,
-          maxConcurrentAgents:
-            yamlConfig.conductor?.resourceConstraints?.maxConcurrentAgents ||
-            Number(process.env["CONDUCTOR_MAX_CONCURRENT_AGENTS"]) ||
-            yamlConfig.mcp?.agents?.maxConcurrent ||
-            Number(process.env["MCP_MAX_CONCURRENT_AGENTS"]) ||
-            DEFAULT_CONFIG.conductor.resourceConstraints?.maxConcurrentAgents,
-          maxTaskQueueSize:
-            yamlConfig.conductor?.resourceConstraints?.maxTaskQueueSize ||
-            Number(process.env["CONDUCTOR_MAX_TASK_QUEUE_SIZE"]) ||
-            DEFAULT_CONFIG.conductor.resourceConstraints?.maxTaskQueueSize,
-        },
-        complexityThreshold:
-          yamlConfig.conductor?.complexityThreshold ||
-          Number(process.env["CONDUCTOR_COMPLEXITY_THRESHOLD"]) ||
-          DEFAULT_CONFIG.conductor.complexityThreshold,
+          d.conductor.loadBalancingStrategy,
+        resourceConstraints: this.buildResourceConstraints(
+          yaml.conductor?.resourceConstraints,
+          "CONDUCTOR",
+          sharedMaxConcurrent,
+          d.conductor.resourceConstraints,
+        ),
+        complexityThreshold: pickNum(
+          yaml.conductor?.complexityThreshold,
+          "CONDUCTOR_COMPLEXITY_THRESHOLD",
+          d.conductor.complexityThreshold,
+        ),
         mandatoryDelegation:
-          yamlConfig.conductor?.mandatoryDelegation !== undefined
-            ? yamlConfig.conductor?.mandatoryDelegation
+          yaml.conductor?.mandatoryDelegation !== undefined
+            ? yaml.conductor.mandatoryDelegation
             : process.env["CONDUCTOR_MANDATORY_DELEGATION"] !== "false" &&
-              (process.env["CONDUCTOR_MANDATORY_DELEGATION"] === "true" ||
-                DEFAULT_CONFIG.conductor.mandatoryDelegation),
+              (process.env["CONDUCTOR_MANDATORY_DELEGATION"] === "true" || d.conductor.mandatoryDelegation),
       },
       vectorBackend: {
-        libsql: yamlConfig.vectorBackend?.libsql || {
+        libsql: yaml.vectorBackend?.libsql || {
           metric: (process.env["LIBSQL_METRIC"] as "cosine" | "l2") || undefined,
           compression: (process.env["LIBSQL_COMPRESSION"] as "float8" | "float16" | "float32") || undefined,
-          searchL: Number(process.env["LIBSQL_SEARCH_L"]) || undefined,
-          insertL: Number(process.env["LIBSQL_INSERT_L"]) || undefined,
+          searchL: pickNum(undefined, "LIBSQL_SEARCH_L", undefined),
+          insertL: pickNum(undefined, "LIBSQL_INSERT_L", undefined),
         },
       },
-      environment: yamlConfig.environment || process.env.NODE_ENV || DEFAULT_CONFIG.environment,
-      debug:
-        yamlConfig.debug !== undefined ? yamlConfig.debug : process.env["DEBUG"] === "true" || DEFAULT_CONFIG.debug,
+      environment: yaml.environment || process.env.NODE_ENV || d.environment,
+      debug: pickBool(yaml.debug, "DEBUG", d.debug) ?? false,
     };
 
     return config;
@@ -818,12 +727,12 @@ export function getConfig(): AppConfig {
  * Get MCP configuration with embedding safety check
  */
 export function getMCPConfigSafe(): MCPConfig & { embeddingAvailable: boolean } {
-  const config = ConfigLoader.getInstance();
-  const mcpConfig = config.getMCPConfig();
+  const loader = ConfigLoader.getInstance();
+  const mcpConfig = loader.getMCPConfig();
 
   return {
     ...mcpConfig,
-    embeddingAvailable: config.isEmbeddingEnabled(),
+    embeddingAvailable: loader.isEmbeddingEnabled(),
   };
 }
 
@@ -854,7 +763,7 @@ export function validateConfig(config: AppConfig): { valid: boolean; errors: str
   const errors: string[] = [];
 
   // Note: database.path can be empty - empty means use centralized storage
-  // (%LOCALAPPDATA%/UltraScriptTools/projects/<hash>/)
+  // (%LOCALAPPDATA%/UltraCode/projects/<hash>/)
 
   // Validate MCP configuration
   if (config.mcp.embedding?.enabled && !config.mcp.embedding.provider) {

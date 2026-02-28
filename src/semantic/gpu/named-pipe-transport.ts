@@ -20,7 +20,7 @@ import { sleep } from "../../utils/runtime-detection.js";
 // Constants
 // =============================================================================
 
-const PIPE_PREFIX = process.platform === "win32" ? "\\\\.\\pipe\\ultrascript-gpu-" : "/tmp/ultrascript-gpu-";
+const PIPE_PREFIX = process.platform === "win32" ? "\\\\.\\pipe\\ultracode-gpu-" : "/tmp/ultracode-gpu-";
 
 // =============================================================================
 // Types

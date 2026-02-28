@@ -1,33 +1,33 @@
-// Mock ConnectionPool for testing (CommonJS)
+let seq = 0;
 
 class ConnectionPool {
-  constructor(config) {
-    this.config = config;
-    this.initialized = false;
+  constructor(cfg) {
+    this.cfg = cfg;
+    this.active = false;
+    this.conns = new Map();
   }
 
   async initialize() {
-    this.initialized = true;
-    return Promise.resolve();
+    this.active = true;
   }
 
   async acquire() {
-    // Return mock connection immediately
-    return {
-      id: "mock-conn",
-      db: global.testDb || null,
-      inUse: true,
-      lastUsed: Date.now(),
-    };
+    const id = `conn-${++seq}`;
+    const c = { id, db: global.testDb || null, inUse: true, created: Date.now(), lastUsed: Date.now() };
+    this.conns.set(id, c);
+    return c;
   }
 
-  release(connection) {
-    if (connection) connection.inUse = false;
+  release(c) {
+    if (c) {
+      c.inUse = false;
+      c.lastUsed = Date.now();
+    }
   }
 
   async shutdown() {
-    this.initialized = false;
-    return Promise.resolve();
+    this.conns.clear();
+    this.active = false;
   }
 }
 

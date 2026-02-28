@@ -349,7 +349,30 @@ export class GitWatcher {
     const files = Array.from(this.pendingChanges);
     const bulkMode = files.length >= this.bulkModeThreshold;
 
-    log.i("GITWATCHER", "flushing", { count: files.length, bulkMode, threshold: this.bulkModeThreshold });
+    // Detect swagger file changes for special handling
+    const swaggerFiles = files.filter((f) => {
+      const lower = f.toLowerCase();
+      return (
+        lower.includes("swagger") ||
+        lower.includes("openapi") ||
+        (lower.endsWith(".json") && (lower.includes("api") || lower.includes("spec")))
+      );
+    });
+
+    if (swaggerFiles.length > 0) {
+      log.i("GITWATCHER", "swagger_files_changed", {
+        swaggerFiles: swaggerFiles.length,
+        files: swaggerFiles,
+        warning: "Generated code may need regeneration",
+      });
+    }
+
+    log.i("GITWATCHER", "flushing", {
+      count: files.length,
+      bulkMode,
+      threshold: this.bulkModeThreshold,
+      swaggerChanges: swaggerFiles.length,
+    });
 
     // Clear pending changes
     this.pendingChanges.clear();

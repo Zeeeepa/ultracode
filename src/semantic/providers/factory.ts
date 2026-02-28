@@ -14,106 +14,93 @@ import { OVMSProvider } from "./ovms-provider.js";
 import { TEIProvider } from "./tei-provider.js";
 import { VLLMProvider } from "./vllm-provider.js";
 
-/**
- * Auto-detect available embedding providers
- * macOS ARM64: MLX (8087) > OVMS (8083) > llama.cpp (8085) > vLLM (8000) > TEI (8081)
- * Other:       OVMS (8083) > llama.cpp (8085) > vLLM (8000) > TEI (8081)
- */
-async function detectAvailableProvider(): Promise<{ provider: ProviderKind; model: string }> {
-  // On macOS ARM64, try MLX first (native Metal GPU)
+//Auto-detection order
+
+interface DetectionCandidate {
+  provider: ProviderKind;
+  model: string;
+  url: string;
+  label: string;
+  postDetect?: () => Promise<string | null>;
+}
+
+function buildCandidates(): DetectionCandidate[] {
+  const list: DetectionCandidate[] = [];
+
+  // On macOS ARM64, try MLX first (native Metal GPU acceleration)
   if (process.platform === "darwin" && process.arch === "arm64") {
-    try {
-      const mlxResponse = await fetch(`http://127.0.0.1:${MLX_EMBEDDING_PORT}/health`, {
-        method: "GET",
-        signal: AbortSignal.timeout(2000),
-      });
-
-      if (mlxResponse.ok) {
-        log.i("FACTORY", "Auto-detected: MLX (port 8087)");
-        return { provider: "mlx", model: "intfloat/multilingual-e5-base" };
-      }
-    } catch (_error) {
-      log.d("FACTORY", "MLX not available, checking OVMS");
-    }
+    list.push({
+      provider: "mlx",
+      model: "intfloat/multilingual-e5-base",
+      url: `http://127.0.0.1:${MLX_EMBEDDING_PORT}/health`,
+      label: "MLX",
+    });
   }
 
-  // Try OVMS Native first (port 8083)
-  try {
-    const ovmsNativeResponse = await fetch(`http://127.0.0.1:${OVMS_NATIVE_REST_PORT}/v2/health/ready`, {
-      method: "GET",
-      signal: AbortSignal.timeout(2000),
-    });
-
-    if (ovmsNativeResponse.ok) {
-      log.i("FACTORY", "Auto-detected: OVMS Native (port 8083)");
-      return { provider: "ovms-native", model: "multilingual-e5-base" };
-    }
-  } catch (_error) {
-    log.d("FACTORY", "OVMS Native not available, checking llama.cpp");
-  }
-
-  // Try llama.cpp (port 8085)
-  try {
-    const llamacppResponse = await fetch(`http://127.0.0.1:${LLAMACPP_EMBEDDING_PORT}/health`, {
-      method: "GET",
-      signal: AbortSignal.timeout(2000),
-    });
-
-    if (llamacppResponse.ok) {
-      log.i("FACTORY", "Auto-detected: llama.cpp (port 8085)");
-      return { provider: "llamacpp", model: "gguf" };
-    }
-  } catch (_error) {
-    log.d("FACTORY", "llama.cpp not available, checking vLLM");
-  }
-
-  // Try vLLM Docker (port 8000)
-  try {
-    const vllmResponse = await fetch("http://127.0.0.1:8000/health", {
-      method: "GET",
-      signal: AbortSignal.timeout(2000),
-    });
-
-    if (vllmResponse.ok) {
-      // Query /v1/models to discover actually loaded model (don't hardcode)
-      let modelName = "intfloat/multilingual-e5-small";
-      try {
-        const modelsResp = await fetch("http://127.0.0.1:8000/v1/models", {
-          method: "GET",
-          signal: AbortSignal.timeout(2000),
-        });
-        if (modelsResp.ok) {
-          const modelsData = (await modelsResp.json()) as { data?: Array<{ id?: string }> };
-          if (modelsData.data?.[0]?.id) {
-            modelName = modelsData.data[0].id;
+  list.push(
+    {
+      provider: "ovms-native",
+      model: "multilingual-e5-base",
+      url: `http://127.0.0.1:${OVMS_NATIVE_REST_PORT}/v2/health/ready`,
+      label: "OVMS Native",
+    },
+    {
+      provider: "llamacpp",
+      model: "gguf",
+      url: `http://127.0.0.1:${LLAMACPP_EMBEDDING_PORT}/health`,
+      label: "llama.cpp",
+    },
+    {
+      provider: "vllm",
+      model: "intfloat/multilingual-e5-small",
+      url: "http://127.0.0.1:8000/health",
+      label: "vLLM Docker",
+      async postDetect() {
+        try {
+          const resp = await fetch("http://127.0.0.1:8000/v1/models", {
+            method: "GET",
+            signal: AbortSignal.timeout(2000),
+          });
+          if (resp.ok) {
+            const body = (await resp.json()) as { data?: Array<{ id?: string }> };
+            return body.data?.[0]?.id ?? null;
           }
+        } catch {
+          log.d("FACTORY", "vLLM /v1/models failed, using default model name");
         }
-      } catch {
-        log.d("FACTORY", "vLLM /v1/models failed, using default model name");
+        return null;
+      },
+    },
+    {
+      provider: "tei",
+      model: "BAAI/bge-m3",
+      url: "http://127.0.0.1:8081/health",
+      label: "TEI",
+    },
+  );
+
+  return list;
+}
+
+async function detectAvailableProvider(): Promise<{ provider: ProviderKind; model: string }> {
+  for (const candidate of buildCandidates()) {
+    try {
+      const res = await fetch(candidate.url, { method: "GET", signal: AbortSignal.timeout(2000) });
+      if (!res.ok) continue;
+
+      let modelName = candidate.model;
+      if (candidate.postDetect) {
+        const discovered = await candidate.postDetect();
+        if (discovered) modelName = discovered;
       }
-      log.i("FACTORY", `Auto-detected: vLLM Docker (port 8000), model=${modelName}`);
-      return { provider: "vllm", model: modelName };
+
+      log.i("FACTORY", `Auto-detected: ${candidate.label}, model=${modelName}`);
+      return { provider: candidate.provider, model: modelName };
+    } catch {
+      log.d("FACTORY", `${candidate.label} not available`);
     }
-  } catch (_error) {
-    log.d("FACTORY", "vLLM not available, checking TEI");
   }
 
-  // Try TEI (Text Embeddings Inference) Docker container
-  try {
-    const teiResponse = await fetch("http://127.0.0.1:8081/health", {
-      method: "GET",
-      signal: AbortSignal.timeout(2000), // 2s timeout
-    });
-
-    if (teiResponse.ok) {
-      log.i("FACTORY", "Auto-detected: TEI (Text Embeddings Inference) Docker");
-      return { provider: "tei", model: "BAAI/bge-m3" };
-    }
-  } catch (_error) {
-    log.d("FACTORY", "TEI not available");
-  }
-
-  // No provider available - throw error
   throw new Error(
     "No embedding provider available. Please run: bun run mcp setup-embedding\n" +
       "Supported providers (by speed):\n" +
@@ -124,6 +111,8 @@ async function detectAvailableProvider(): Promise<{ provider: ProviderKind; mode
       "  - OVMS - Intel optimized, no Docker",
   );
 }
+
+//Factory options
 
 export interface ProviderFactoryOptions {
   provider: ProviderKind;
@@ -215,23 +204,17 @@ export interface ProviderFactoryOptions {
   };
 }
 
-export async function createProvider(opts: ProviderFactoryOptions): Promise<EmbeddingProvider> {
-  let actualProvider = opts.provider;
-  let actualModel = opts.modelName;
+//Provider builder registry (Map-based dispatch)
 
-  // Auto-detect if provider is "auto"
-  if (opts.provider === "auto") {
-    const detected = await detectAvailableProvider();
-    actualProvider = detected.provider;
-    actualModel = detected.model;
-    log.i("FACTORY", `Auto mode selected: ${actualProvider} with ${actualModel}`);
-  }
+type BuilderFn = (model: string, opts: ProviderFactoryOptions) => EmbeddingProvider;
 
-  switch (actualProvider) {
-    case "openai":
+const builders = new Map<string, BuilderFn>([
+  [
+    "openai",
+    (model, opts) => {
       if (!opts.openai?.apiKey) throw new Error("OpenAI apiKey is required");
       return new OpenAIProvider({
-        model: actualModel,
+        model,
         apiKey: opts.openai.apiKey,
         baseUrl: opts.openai.baseUrl,
         timeoutMs: opts.openai.timeoutMs,
@@ -240,22 +223,27 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         maxBatchSize: opts.openai.maxBatchSize,
         logger: makeProviderLogger(null, "PROVIDER_OPENAI"),
       });
-
-    case "cloudru":
-      return new CloudRUProvider({
-        model: actualModel,
+    },
+  ],
+  [
+    "cloudru",
+    (model, opts) =>
+      new CloudRUProvider({
+        model,
         apiKey: opts.cloudru?.apiKey,
         baseUrl: opts.cloudru?.baseUrl,
         timeoutMs: opts.cloudru?.timeoutMs,
         concurrency: opts.cloudru?.concurrency,
         maxBatchSize: opts.cloudru?.maxBatchSize,
         logger: makeProviderLogger(null, "PROVIDER_CLOUDRU"),
-      });
-
-    case "huggingface":
+      }),
+  ],
+  [
+    "huggingface",
+    (model, opts) => {
       if (!opts.huggingface?.apiKey) throw new Error("HuggingFace apiKey is required");
       return new HuggingFaceProvider({
-        model: actualModel,
+        model,
         apiKey: opts.huggingface.apiKey,
         baseUrl: opts.huggingface.baseUrl,
         timeoutMs: opts.huggingface.timeoutMs,
@@ -263,12 +251,15 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         warmupText: opts.huggingface.warmupText,
         logger: makeProviderLogger(null, "PROVIDER_HUGGINGFACE"),
       });
-
-    case "tei":
+    },
+  ],
+  [
+    "tei",
+    (model, opts) => {
       log.i("FACTORY", `Creating TEI provider`, { tei: opts.tei });
       log.i("FACTORY", `TEI baseUrl=${opts.tei?.baseUrl || "UNDEFINED - will use default 8081"}`);
       return new TEIProvider({
-        model: actualModel,
+        model,
         baseUrl: opts.tei?.baseUrl,
         timeoutMs: opts.tei?.timeoutMs,
         concurrency: opts.tei?.concurrency,
@@ -276,11 +267,14 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         maxBatchSize: opts.tei?.maxBatchSize,
         logger: makeProviderLogger(null, "PROVIDER_TEI"),
       });
-
-    case "ollama":
+    },
+  ],
+  [
+    "ollama",
+    (model, opts) => {
       log.i("FACTORY", `Creating Ollama provider`, { ollama: opts.ollama });
       return new OllamaProvider({
-        model: actualModel,
+        model,
         baseUrl: opts.ollama?.baseUrl,
         timeoutMs: opts.ollama?.timeoutMs,
         concurrency: opts.ollama?.concurrency,
@@ -291,47 +285,15 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         pullTimeoutMs: opts.ollama?.pullTimeoutMs,
         logger: makeProviderLogger(null, "PROVIDER_OLLAMA"),
       });
-
-    case "ovms":
-    case "ovms-native": {
-      // OVMS Native: 8083 (REST), 9001 (gRPC) - managed by ovms-native-manager
-      const isNative = actualProvider === "ovms-native";
-      const defaultRestPort = OVMS_NATIVE_REST_PORT;
-      const defaultGrpcPort = OVMS_NATIVE_GRPC_PORT;
-      const defaultBaseUrl = opts.ovms?.baseUrl || `http://127.0.0.1:${defaultRestPort}`;
-
-      log.i("FACTORY", `Creating OVMS provider (${actualProvider})`, {
-        ovms: opts.ovms,
-        isNative,
-        baseUrl: defaultBaseUrl,
-        grpcPort: opts.ovms?.grpcPort ?? defaultGrpcPort,
-      });
-
-      return new OVMSProvider({
-        model: actualModel,
-        baseUrl: defaultBaseUrl,
-        timeoutMs: opts.ovms?.timeoutMs,
-        concurrency: opts.ovms?.concurrency,
-        checkServer: opts.ovms?.checkServer,
-        miniBatchSize: opts.ovms?.miniBatchSize,
-        // OVMS Native now uses export_model.py which creates MediaPipe graph for /v3/embeddings
-        // So we enable useEmbeddingsApi for both Docker and Native modes
-        useEmbeddingsApi: opts.ovms?.useEmbeddingsApi ?? true,
-        encodingFormat: opts.ovms?.encodingFormat,
-        protocol: opts.ovms?.protocol as "rest" | "grpc" | undefined,
-        grpcPort: opts.ovms?.grpcPort ?? defaultGrpcPort,
-        isNative, // Tells provider not to try Docker auto-start
-        // Multi-device round-robin: ["embeddings-cpu", "embeddings-gpu"]
-        endpoints: opts.ovms?.endpoints,
-        logger: makeProviderLogger(null, `PROVIDER_${actualProvider.toUpperCase().replace("-", "_")}`),
-      });
-    }
-
-    case "vllm": {
-      const vllmBaseUrl = opts.vllm?.baseUrl || "http://127.0.0.1:8000";
+    },
+  ],
+  [
+    "vllm",
+    (model, opts) => {
+      const baseUrl = opts.vllm?.baseUrl || "http://127.0.0.1:8000";
       return new VLLMProvider({
-        model: actualModel,
-        baseUrl: vllmBaseUrl,
+        model,
+        baseUrl,
         timeoutMs: opts.vllm?.timeoutMs,
         concurrency: opts.vllm?.concurrency,
         maxBatchSize: opts.vllm?.maxBatchSize,
@@ -339,21 +301,23 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         encodingFormat: opts.vllm?.encodingFormat,
         logger: makeProviderLogger(null, "PROVIDER_VLLM"),
       });
-    }
-
-    case "llamacpp": {
-      const llamacppBaseUrl = opts.llamacpp?.baseUrl || `http://127.0.0.1:${LLAMACPP_EMBEDDING_PORT}`;
+    },
+  ],
+  [
+    "llamacpp",
+    (model, opts) => {
+      const baseUrl = opts.llamacpp?.baseUrl || `http://127.0.0.1:${LLAMACPP_EMBEDDING_PORT}`;
       log.i("FACTORY", "Creating llama.cpp provider", {
-        baseUrl: llamacppBaseUrl,
-        model: actualModel,
+        baseUrl,
+        model,
         autoStart: opts.llamacpp?.autoStart,
         parallelSlots: opts.llamacpp?.parallelSlots,
         ubatchSize: opts.llamacpp?.ubatchSize,
         batchSize: opts.llamacpp?.batchSize,
       });
       return new LlamaCppProvider({
-        model: actualModel,
-        baseUrl: llamacppBaseUrl,
+        model,
+        baseUrl,
         timeoutMs: opts.llamacpp?.timeoutMs,
         concurrency: opts.llamacpp?.concurrency,
         maxBatchSize: opts.llamacpp?.maxBatchSize,
@@ -366,18 +330,20 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         batchSize: opts.llamacpp?.batchSize,
         logger: makeProviderLogger(null, "PROVIDER_LLAMACPP"),
       });
-    }
-
-    case "mlx": {
-      const mlxBaseUrl = opts.mlx?.baseUrl || `http://127.0.0.1:${MLX_EMBEDDING_PORT}`;
+    },
+  ],
+  [
+    "mlx",
+    (model, opts) => {
+      const baseUrl = opts.mlx?.baseUrl || `http://127.0.0.1:${MLX_EMBEDDING_PORT}`;
       log.i("FACTORY", "Creating MLX provider", {
-        baseUrl: mlxBaseUrl,
-        model: actualModel,
+        baseUrl,
+        model,
         autoStart: opts.mlx?.autoStart,
       });
       return new MlxProvider({
-        model: actualModel,
-        baseUrl: mlxBaseUrl,
+        model,
+        baseUrl,
         timeoutMs: opts.mlx?.timeoutMs,
         concurrency: opts.mlx?.concurrency,
         maxBatchSize: opts.mlx?.maxBatchSize,
@@ -385,12 +351,63 @@ export async function createProvider(opts: ProviderFactoryOptions): Promise<Embe
         autoStart: opts.mlx?.autoStart,
         logger: makeProviderLogger(null, "PROVIDER_MLX"),
       });
-    }
+    },
+  ],
+]);
 
-    default:
-      throw new Error(
-        `Unknown embedding provider: ${actualProvider}. ` +
-          `Supported providers: vllm, tei, ollama, llamacpp, mlx, ovms, ovms-native, openai, cloudru, huggingface`,
-      );
+// OVMS and ovms-native share the same builder
+const ovmsBuilder: BuilderFn = (model, opts) => {
+  const isNative = opts.provider === "ovms-native";
+  const defaultBaseUrl = opts.ovms?.baseUrl || `http://127.0.0.1:${OVMS_NATIVE_REST_PORT}`;
+  const grpcPort = opts.ovms?.grpcPort ?? OVMS_NATIVE_GRPC_PORT;
+
+  log.i("FACTORY", `Creating OVMS provider (${opts.provider})`, {
+    ovms: opts.ovms,
+    isNative,
+    baseUrl: defaultBaseUrl,
+    grpcPort,
+  });
+
+  return new OVMSProvider({
+    model,
+    baseUrl: defaultBaseUrl,
+    timeoutMs: opts.ovms?.timeoutMs,
+    concurrency: opts.ovms?.concurrency,
+    checkServer: opts.ovms?.checkServer,
+    miniBatchSize: opts.ovms?.miniBatchSize,
+    useEmbeddingsApi: opts.ovms?.useEmbeddingsApi ?? true,
+    encodingFormat: opts.ovms?.encodingFormat,
+    protocol: opts.ovms?.protocol as "rest" | "grpc" | undefined,
+    grpcPort,
+    isNative,
+    endpoints: opts.ovms?.endpoints,
+    logger: makeProviderLogger(null, `PROVIDER_${opts.provider.toUpperCase().replace("-", "_")}`),
+  });
+};
+builders.set("ovms", ovmsBuilder);
+builders.set("ovms-native", ovmsBuilder);
+
+//Public factory function
+
+export async function createProvider(opts: ProviderFactoryOptions): Promise<EmbeddingProvider> {
+  let targetKind = opts.provider;
+  let targetModel = opts.modelName;
+
+  // Resolve "auto" by probing local servers
+  if (targetKind === "auto") {
+    const detected = await detectAvailableProvider();
+    targetKind = detected.provider;
+    targetModel = detected.model;
+    log.i("FACTORY", `Auto mode selected: ${targetKind} with ${targetModel}`);
   }
+
+  const builder = builders.get(targetKind);
+  if (!builder) {
+    throw new Error(
+      `Unknown embedding provider: ${targetKind}. ` +
+        `Supported providers: vllm, tei, ollama, llamacpp, mlx, ovms, ovms-native, openai, cloudru, huggingface`,
+    );
+  }
+
+  return builder(targetModel, { ...opts, provider: targetKind });
 }

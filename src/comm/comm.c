@@ -1,8 +1,8 @@
-// UltraScript.Comm - Lightweight stdio proxy for UltraScript Tools MCP server
+// UltraCode.Comm - Lightweight stdio proxy for UltraCode MCP server
 // Single portable binary for Windows/Linux/macOS via Cosmopolitan Libc
 //
 // Build with cosmocc:
-//   cosmocc -Os -DNDEBUG -o ultrascript-tools.com comm.c
+//   cosmocc -Os -DNDEBUG -o ultracode.com comm.c
 //
 // Supports two transport modes:
 //   --stdio (default) - Direct child process with stdio proxy (Bun compatible)
@@ -47,10 +47,10 @@
 bool32 GetExitCodeProcess(int64_t hProcess, uint32_t *lpExitCode);
 
 #define VERSION "2.3.0"
-#define APP_NAME "UltraScript.Comm"
+#define APP_NAME "UltraCode.Comm"
 #define BUFFER_SIZE 8192
-#define PIPE_NAME "\\\\.\\pipe\\UltraScript_Core"
-#define INIT_PREFIX "ULTRASCRIPT_CWD:"
+#define PIPE_NAME "\\\\.\\pipe\\UltraCode_Core"
+#define INIT_PREFIX "ULTRACODE_CWD:"
 
 // Transport mode
 typedef enum {
@@ -67,8 +67,8 @@ static void signal_handler(int sig) {
 
 static void print_help(void) {
     printf("%s v%s\n", APP_NAME, VERSION);
-    printf("Lightweight stdio proxy for UltraScript Tools MCP server.\n\n");
-    printf("Usage: ultrascript-tools.com [OPTIONS] [PROJECT_PATH]\n\n");
+    printf("Lightweight stdio proxy for UltraCode MCP server.\n\n");
+    printf("Usage: ultracode.com [OPTIONS] [PROJECT_PATH]\n\n");
     printf("Transport modes:\n");
     printf("  --stdio         Direct child process proxy (default, Bun compatible)\n");
     printf("  --pipe          Named Pipe IPC (Node.js, faster)\n\n");
@@ -114,7 +114,7 @@ static int win_send_init_cwd(int64_t pipe_handle) {
     // Convert to Windows path format
     convert_unix_to_win_path(cwd);
 
-    // Build init message: ULTRASCRIPT_CWD:/path/to/project\n
+    // Build init message: ULTRACODE_CWD:/path/to/project\n
     snprintf(init_msg, sizeof(init_msg), "%s%s\n", INIT_PREFIX, cwd);
 
     // Send to server

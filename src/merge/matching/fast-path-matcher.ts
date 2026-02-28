@@ -2,9 +2,9 @@ import type { CodeUnit } from "../models/code-unit.js";
 import type { VersionedIndex } from "../models/versioned-index.js";
 
 /**
- * Fast Path Matcher - O(1) matching через hash/signature lookups.
+ * Fast Path Matcher - O(1) matching via hash/signature lookups.
  *
- * 4 уровня matching (от самого строгого к самому слабому):
+ * 4 matching levels (from strictest to weakest):
  * 1. Exact Content Match (contentHash) - 50-60% coverage
  * 2. Structural Match (structuralHash) - 25-30% coverage
  * 3. Signature Match (FQN + params) - 5-10% coverage
@@ -12,11 +12,11 @@ import type { VersionedIndex } from "../models/versioned-index.js";
  *
  * Total Fast Path coverage: ~90-95%
  *
- * Основано на FastPathMatcher из SharpToolsMCP.
+ * Based on FastPathMatcher from SharpToolsMCP.
  */
 export class FastPathMatcher {
   /**
-   * Выполнить bulk matching между двумя индексами.
+   * Perform bulk matching between two indices.
    *
    * @param baseIndex - Base version index
    * @param targetIndex - Target version index (branchA or branchB)
@@ -38,7 +38,7 @@ export class FastPathMatcher {
   }
 
   /**
-   * Найти match для одного unit в base index.
+   * Find match for a single unit in the base index.
    *
    * Tries levels in order: Exact → Structural → Signature → ID
    */
@@ -216,7 +216,7 @@ export class FastPathMatcher {
   }
 
   /**
-   * Вычислить статистику Fast Path coverage.
+   * Compute Fast Path coverage statistics.
    */
   computeStatistics(matchResults: Map<string, FastPathMatchResult>, totalUnits: number): FastPathStatistics {
     const byLevel = new Map<FastPathMatchLevel, number>();
@@ -241,7 +241,7 @@ export class FastPathMatcher {
 }
 
 /**
- * Результат Fast Path matching.
+ * Fast Path matching result.
  */
 export interface FastPathMatchResult {
   baseUnitId: string; // ID of matched unit in base
@@ -251,7 +251,7 @@ export interface FastPathMatchResult {
 }
 
 /**
- * Уровни Fast Path matching.
+ * Fast Path matching levels.
  */
 export enum FastPathMatchLevel {
   ExactContent = "exact_content", // Level 1: contentHash match
@@ -261,7 +261,7 @@ export enum FastPathMatchLevel {
 }
 
 /**
- * Статистика Fast Path matching.
+ * Fast Path matching statistics.
  */
 export interface FastPathStatistics {
   totalUnits: number; // Total units to match

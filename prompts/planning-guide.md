@@ -1,4 +1,4 @@
-# UltraScript Tools — Planning Agent Guide
+# UltraCode — Planning Agent Guide
 
 **For: Risk assessment, impact analysis, and architectural planning**
 
@@ -8,7 +8,7 @@ You're the **Plan Agent**. Your job: **assess risks BEFORE changes**. Answer "wh
 
 ## Critical Tools for Planning
 
-### ⚠️ Risk Assessment
+### Risk Assessment
 
 | Tool | When to Use | What You Learn |
 |------|-------------|----------------|
@@ -16,31 +16,34 @@ You're the **Plan Agent**. Your job: **assess risks BEFORE changes**. Answer "wh
 | **trace_flow** | Understanding execution paths | How does code get from A to B? |
 | **trace_backwards** | Debugging | Why isn't method X called? |
 | **trace_data_flow** | Data dependencies | How does input affect output? |
+| **analyze_swagger_impact** | Before changing swagger/controllers | What consumers break? |
 | **analyze_hotspots** | Find problem areas | Most complex/changed code |
+| **find_decision_points** | Understanding control flow | What conditions govern a scenario? |
+| **analyze_state_chaos** | State mutation risks | Where are uncontrolled side-effects? |
 
-### 🎯 Planning Workflow (ALWAYS DO THIS)
+### Planning Workflow (ALWAYS DO THIS)
 
 Before ANY code modification:
 
 ```
 1. Find the entity
    get_members(filePath="src/utils.ts")
-   → Get entity ID
+   -> Get entity ID
 
 2. Check impact
    analyze_code_impact(entityId="...")
-   → See what depends on it
+   -> See what depends on it
 
 3. Create safety net
    create_snapshot(description="Before refactoring utils")
-   → Can rollback if needed
+   -> Can rollback if needed
 
 4. Make changes
    modify_code(...) or rename_symbol(...)
 
 5. If issues
    undo(snapshotId="...")
-   → Restore from snapshot
+   -> Restore from snapshot
 ```
 
 ## Tracing Tools
@@ -114,29 +117,74 @@ trace_data_flow(
 - Data sources
 - Transformations
 - Branching logic
-- Behavior matrix (different inputs → outputs)
+- Behavior matrix (different inputs -> outputs)
+
+### find_decision_points - "What conditions govern a scenario?"
+
+**Use when:**
+- "What if/switch/guard conditions exist in checkout flow?"
+- "Where are all the branching points in auth?"
+- "What feature flags control this behavior?"
+
+**Example:**
+```
+find_decision_points(
+  scenario="user registration",
+  groupBy="impact"
+)
+```
+
+**Returns:**
+- Decision points classified by type (validation, api_response, state_mutation, guard, loop, error_handling, feature_flag)
+- Impact levels (critical, high, medium, low)
+- Mermaid flowchart
+- Summary with total count, critical count, possible outcomes
+
+### analyze_state_chaos - "Where are uncontrolled mutations?"
+
+**Use when:**
+- "What state is mutated without controls?"
+- "Where are side-effects hiding?"
+- "Is state management clean?"
+
+**Example:**
+```
+analyze_state_chaos(
+  scope="module",
+  autoDetect=true
+)
+```
+
+**Returns:**
+- Uncontrolled mutations
+- Side-effect patterns
+- State dependency conflicts
+- Recommendations for cleanup
 
 ## Impact Analysis
 
 ### analyze_code_impact - CRITICAL before changes
 
+Use the `highlightRecentChanges` option to annotate impacted entities with their recently-changed status from Prolly Tree history. This helps identify which parts of the impact zone are actively being modified by others:
+
 **Workflow:**
 ```
 1. Get entity ID
    get_members(filePath="src/models/User.ts")
-   → Find User interface
+   -> Find User interface
 
 2. Check impact
-   analyze_code_impact(entityId="User_interface_xyz")
+   analyze_code_impact(entityId="User_interface_xyz", highlightRecentChanges=true)
 
 3. Review results:
    - 45 files depend on User
    - 23 functions use it
    - Risk score: HIGH
+   - 5 impacted entities changed in last 10 commits (potential conflicts!)
 
 4. Decision:
-   - Low impact → proceed
-   - High impact → plan carefully or cancel
+   - Low impact -> proceed
+   - High impact -> plan carefully or cancel
 ```
 
 ## analyze_hotspots - Find trouble spots
@@ -151,17 +199,36 @@ trace_data_flow(
 - Change frequency (git history)
 - Coupling (many dependencies)
 
+## Swagger/API Contract Awareness
+
+`analyze_code_impact` now includes a `contractImpact` section when affected entities have swagger relationships (`produces_api`, `consumes_api`, `generated_from`). Use `analyze_swagger_impact` for dedicated API analysis:
+
+```
+analyze_swagger_impact(schemaName="User")
+-> Shows: 3 controllers produce this schema, 2 generated clients consume it
+-> Risk: HIGH — changing User schema breaks 5 consumers
+
+analyze_swagger_impact(endpointPath="GET /api/users")
+-> Shows: UserController produces, frontend-client consumes
+-> Risk: MEDIUM
+```
+
+**When to check swagger impact:**
+- Before modifying controllers with `@ApiOperation` / `[HttpGet]` decorators
+- Before changing swagger/OpenAPI JSON files
+- Before modifying generated client code (it will be overwritten!)
+
 ## Common Planning Scenarios
 
 ### Scenario 1: Renaming a function
 
 ```
-❌ BAD (no planning):
+BAD (no planning):
 rename_symbol(entityName="oldName", newName="newName")
 
-✅ GOOD (with planning):
+GOOD (with planning):
 1. analyze_code_impact(entityId="oldName_func_xyz")
-   → Check: 12 files affected
+   -> Check: 12 files affected
 2. create_snapshot(description="Before rename")
 3. rename_symbol(entityName="oldName", newName="newName")
 4. Verify tests pass
@@ -172,13 +239,13 @@ rename_symbol(entityName="oldName", newName="newName")
 
 ```
 1. analyze_hotspots(scope="src/payments/")
-   → Find: processor.ts has cyclomatic=22
+   -> Find: processor.ts has cyclomatic=22
 
 2. get_members(filePath="src/payments/processor.ts")
-   → See: processPayment() is complex
+   -> See: processPayment() is complex
 
 3. analyze_code_impact(entityId="processPayment_xyz")
-   → WARNING: 34 callers!
+   -> WARNING: 34 callers!
 
 4. Decision: Split into smaller functions, not delete
 ```
@@ -199,24 +266,42 @@ rename_symbol(entityName="oldName", newName="newName")
 3. Next step: Fix verification or remove guard
 ```
 
+### Scenario 4: Understanding decision complexity
+
+```
+1. find_decision_points(
+     scenario="checkout flow",
+     groupBy="type"
+   )
+
+2. Results:
+   - 3 validation checks (input, payment, inventory)
+   - 2 API response handlers (payment gateway, shipping)
+   - 1 feature flag (express checkout)
+   - Total: 12 decision points, 3 critical
+
+3. Decision: Simplify by extracting validation into a pipeline
+```
+
 ## Risk Levels
 
 | Impact | Files Affected | Action |
 |--------|----------------|--------|
-| 🟢 **Low** | 1-5 files | Safe to proceed |
-| 🟡 **Medium** | 6-20 files | Review changes carefully |
-| 🔴 **High** | 20+ files | Consider alternative approach |
-| ⛔ **Critical** | Core types, interfaces | Require architectural review |
+| **Low** | 1-5 files | Safe to proceed |
+| **Medium** | 6-20 files | Review changes carefully |
+| **High** | 20+ files | Consider alternative approach |
+| **Critical** | Core types, interfaces | Require architectural review |
 
 ## Tips for Effective Planning
 
-✅ **DO:**
+**DO:**
 - Always check impact before modifications
 - Create snapshots before risky changes
 - Use tracing to understand data flow
 - Check complexity before refactoring
+- Use `highlightRecentChanges` to detect active conflict zones
 
-❌ **DON'T:**
+**DON'T:**
 - Skip impact analysis for "small" changes
 - Delete code without checking dependencies
 - Modify core types without full review
@@ -233,8 +318,8 @@ After planning:
 If something went wrong:
 ```
 list_snapshots()
-→ See available snapshots
+-> See available snapshots
 
 undo(snapshotId="snapshot_20260206_1234")
-→ Restore to before changes
+-> Restore to before changes
 ```

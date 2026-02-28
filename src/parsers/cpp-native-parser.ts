@@ -177,7 +177,7 @@ export class CppNativeParser {
    */
   private async parseWithClang(filePath: string, content: string, isCpp: boolean): Promise<CppParseResult> {
     // Write content to temp file
-    const tempDir = join(tmpdir(), "ultrascript-parsers");
+    const tempDir = join(tmpdir(), "ultracode-parsers");
     if (!existsSync(tempDir)) {
       mkdirSync(tempDir, { recursive: true });
     }

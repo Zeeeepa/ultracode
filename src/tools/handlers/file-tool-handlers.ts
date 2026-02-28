@@ -133,6 +133,27 @@ export class ModifyEntityCodeToolHandler extends BaseToolHandler<z.infer<typeof 
         }
       }
 
+      // Include swagger impact if available
+      if (result.swaggerWarning) {
+        // Enrich with full swagger contract analysis
+        try {
+          const swaggerImpact = await impactAnalyzer.detectSwaggerContractBreaks(entityId);
+          response["swaggerImpact"] = {
+            affectsContract: swaggerImpact.affectsContract,
+            contractBreaks: swaggerImpact.contractBreaks,
+            isGeneratedCode: swaggerImpact.isGeneratedCode,
+            generatedFromSwagger: swaggerImpact.generatedFromSwagger,
+            warning: result.swaggerWarning,
+          };
+        } catch {
+          // Fallback to just the warning
+          response["swaggerImpact"] = {
+            affectsContract: true,
+            warning: result.swaggerWarning,
+          };
+        }
+      }
+
       return {
         content: [
           {

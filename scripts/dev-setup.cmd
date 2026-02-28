@@ -4,7 +4,7 @@ REM Runs dev-setup.ps1 with proper execution policy
 
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║           UltraScript Tools - Development Setup               ║
+echo ║           UltraCode - Development Setup               ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 

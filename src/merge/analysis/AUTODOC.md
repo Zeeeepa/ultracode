@@ -1,30 +1,72 @@
-# Модуль анализа (analysis)
+---
+module_name: analysis
+description: "Conflict detection and change intent classification for semantic merge"
+status: active
+language: typescript
+---
 
-## Описание
+# Analysis
 
-Модуль анализа предоставляет инструменты для обнаружения конфликтов и классификации намерений в текстовых данных. Используется для автоматической обработки и интерпретации пользовательских запросов и контента.
+> Detects merge conflicts between code units from different branches and classifies the intent behind each change (bug fix, refactoring, feature addition, or API change).
 
-## Файлы
+## Overview
 
-| Файл | Описание |
-|------|----------|
-| `conflict-detector.ts` | Обнаруживает конфликтующие элементы в данных, такие как противоречивые намерения или несоответствия между различными частями текста. |
-| `index.ts` | Экспортирует основные классы модуля для использования в других частях приложения. |
-| `intent-classifier.ts` | Классифицирует намерения пользователей на основе текстовых входных данных, определяя их категорию и смысл. |
+The analysis module provides two core capabilities for the semantic merge pipeline. ConflictDetector analyzes pairs of code units from two branches to identify overlapping changes, API-breaking modifications, and incompatible intents, assigning severity levels and auto-resolvability flags. IntentClassifier uses heuristic pattern matching to determine why code was changed, collecting evidence such as added try-catch blocks, null checks, renamed variables, or signature changes to classify each modification.
 
-## Экспорты
+## Data Flow
 
-- `ConflictDetector` — класс для обнаружения конфликтов в текстовых данных
-- `IntentClassifier` — класс для классификации намерений пользователей
+- **Inputs**: Base, branchA, and branchB CodeUnit objects with optional ChangeIntent metadata.
+- **Processing**: ConflictDetector compares content hashes, signatures, and FQNs across branches; IntentClassifier collects evidence from code patterns to determine change type.
+- **Outputs**: SemanticConflict objects with severity and auto-resolve flags; ChangeIntent objects with type, confidence, and evidence arrays.
 
-## Пример использования
+## Public API
 
-```typescript
-import { ConflictDetector, IntentClassifier } from './analysis';
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `ConflictDetector` | class | Detects conflicts between branch code units with severity classification | [`conflict-detector.ts:19-251`](./conflict-detector.ts) |
+| `IntentClassifier` | class | Classifies change intents using heuristic evidence collection | [`intent-classifier.ts:23-245`](./intent-classifier.ts) |
 
-const detector = new ConflictDetector();
-const classifier = new IntentClassifier();
+## Dependencies
 
-const conflicts = detector.detect(text);
-const intent = classifier.classify(text);
-```
+### Internal Modules
+
+| Module | Purpose |
+|--------|---------|
+| `merge/models` | CodeUnit, SemanticConflict, ChangeIntent, and related types |
+
+### External Packages
+
+| Package | Purpose |
+|---------|---------|
+| (none) | No external dependencies |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Intent compatibility | Uses a compatibility matrix (BugFix+Refactoring compatible, APIChange incompatible with all) |
+| Severity classification | Based on normalized length difference ratio between base and branch content |
+| Auto-resolve threshold | Only Low severity with compatible intents qualifies for auto-resolution |
+
+## Error Handling
+
+The module does not throw exceptions. If evidence is insufficient for classification, IntentClassifier returns an Unknown intent with zero confidence. ConflictDetector returns null when no conflict is detected.
+
+## Known Limitations
+
+- Difference computation uses simplified length-based metric rather than true Levenshtein or diff-based analysis.
+- Intent classification relies on regex heuristics and may misclassify complex refactorings.
+- No cross-file conflict detection (operates on individual CodeUnit pairs only).
+
+## Exports
+
+- `ConflictDetector`
+- `IntentClassifier`
+
+## Files
+
+| File | Description |
+|------|-------------|
+| `conflict-detector.ts` | Detects overlapping, API-breaking, and intent-incompatible conflicts between branch code units |
+| `index.ts` | Re-exports ConflictDetector and IntentClassifier |
+| `intent-classifier.ts` | Classifies changes as BugFix, Refactoring, FeatureAddition, or APIChange using pattern evidence |

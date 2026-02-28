@@ -12,35 +12,35 @@ import {
 import type { CodeUnit } from "../models/code-unit.js";
 
 /**
- * Intent Classifier - Классификация намерений изменений
+ * Intent Classifier - Classifies change intents
  *
- * Анализирует разницу между base и changed unit,
- * определяет намерение изменения (BugFix, Refactoring, FeatureAddition, APIChange).
+ * Analyzes the difference between base and changed unit,
+ * determines change intent (BugFix, Refactoring, FeatureAddition, APIChange).
  *
- * Основан на эвристиках и pattern matching.
+ * Based on heuristics and pattern matching.
  */
 
 export class IntentClassifier {
   /**
-   * Классифицировать намерение изменения
+   * Classify the change intent
    *
-   * @param baseUnit - Unit до изменения (может быть null для новых units)
-   * @param changedUnit - Unit после изменения
-   * @returns ChangeIntent с типом и confidence
+   * @param baseUnit - Unit before the change (may be null for new units)
+   * @param changedUnit - Unit after the change
+   * @returns ChangeIntent with type and confidence
    */
   classifyIntent(baseUnit: CodeUnit | null, changedUnit: CodeUnit): ChangeIntent {
-    // Если baseUnit нет - это FeatureAddition
+    // If there is no baseUnit - this is a FeatureAddition
     if (!baseUnit) {
       return this.classifyNewUnit(changedUnit);
     }
 
-    // Собираем доказательства для каждого типа намерения
+    // Collect evidence for each intent type
     const bugFixEvidence = this.collectBugFixEvidence(baseUnit, changedUnit);
     const refactoringEvidence = this.collectRefactoringEvidence(baseUnit, changedUnit);
     const featureEvidence = this.collectFeatureAdditionEvidence(baseUnit, changedUnit);
     const apiChangeEvidence = this.collectAPIChangeEvidence(baseUnit, changedUnit);
 
-    // Выбираем тип с наибольшим количеством доказательств
+    // Choose the type with the most evidence
     const evidenceCounts = [
       { type: ChangeIntentType.BugFix, evidence: bugFixEvidence, count: bugFixEvidence.length },
       {
@@ -67,7 +67,7 @@ export class IntentClassifier {
       return createUnknownIntent();
     }
 
-    // Создаём intent на основе победившего типа
+    // Create intent based on the winning type
     switch (winner.type) {
       case ChangeIntentType.BugFix:
         return createBugFixIntent(bugFixEvidence);
@@ -83,12 +83,12 @@ export class IntentClassifier {
   }
 
   /**
-   * Классифицировать новый unit (baseUnit === null)
+   * Classify a new unit (baseUnit === null)
    */
   private classifyNewUnit(changedUnit: CodeUnit): ChangeIntent {
     const evidence: ChangeEvidence[] = [];
 
-    // Новый unit - это всегда FeatureAddition
+    // New unit is always a FeatureAddition
     if (changedUnit.type === "class") {
       evidence.push({
         type: EvidenceType.NewClass,
@@ -113,14 +113,14 @@ export class IntentClassifier {
   }
 
   /**
-   * Собрать доказательства BugFix
+   * Collect BugFix evidence
    */
   private collectBugFixEvidence(baseUnit: CodeUnit, changedUnit: CodeUnit): ChangeEvidence[] {
     const evidence: ChangeEvidence[] = [];
     const baseContent = baseUnit.content.toLowerCase();
     const changedContent = changedUnit.content.toLowerCase();
 
-    // Добавлен try-catch
+    // Added try-catch
     if (!baseContent.includes("try") && changedContent.includes("try")) {
       evidence.push({
         type: EvidenceType.AddedTryCatch,
@@ -129,7 +129,7 @@ export class IntentClassifier {
       });
     }
 
-    // Добавлена валидация (if, guard clause)
+    // Added validation (if, guard clause)
     const baseIfCount = (baseContent.match(/\bif\s*\(/g) || []).length;
     const changedIfCount = (changedContent.match(/\bif\s*\(/g) || []).length;
     if (changedIfCount > baseIfCount) {
@@ -140,7 +140,7 @@ export class IntentClassifier {
       });
     }
 
-    // Добавлена null check
+    // Added null check
     const hasNullCheck =
       changedContent.includes("!= null") ||
       changedContent.includes("!== null") ||
@@ -159,12 +159,12 @@ export class IntentClassifier {
   }
 
   /**
-   * Собрать доказательства Refactoring
+   * Collect Refactoring evidence
    */
   private collectRefactoringEvidence(baseUnit: CodeUnit, changedUnit: CodeUnit): ChangeEvidence[] {
     const evidence: ChangeEvidence[] = [];
 
-    // Переименование (имя изменилось, но структура та же)
+    // Rename (name changed, but structure is the same)
     if (baseUnit.name !== changedUnit.name && baseUnit.structuralHash === changedUnit.structuralHash) {
       evidence.push({
         type: EvidenceType.RenamedVariable,
@@ -173,8 +173,8 @@ export class IntentClassifier {
       });
     }
 
-    // Структура сохранена (CFG preserved)
-    // Если structuralHash одинаковый, но contentHash разный - это скорее всего refactoring
+    // Structure preserved (CFG preserved)
+    // If structuralHash is the same but contentHash differs - this is most likely refactoring
     if (baseUnit.structuralHash === changedUnit.structuralHash && baseUnit.contentHash !== changedUnit.contentHash) {
       evidence.push({
         type: EvidenceType.CFGPreserved,
@@ -187,12 +187,12 @@ export class IntentClassifier {
   }
 
   /**
-   * Собрать доказательства FeatureAddition
+   * Collect FeatureAddition evidence
    */
   private collectFeatureAdditionEvidence(baseUnit: CodeUnit, changedUnit: CodeUnit): ChangeEvidence[] {
     const evidence: ChangeEvidence[] = [];
 
-    // Добавлены новые методы (children)
+    // New methods added (children)
     const newChildren = changedUnit.childIds.length - baseUnit.childIds.length;
     if (newChildren > 0) {
       evidence.push({
@@ -202,7 +202,7 @@ export class IntentClassifier {
       });
     }
 
-    // Размер кода значительно увеличился (>30%)
+    // Code size increased significantly (>30%)
     const sizeIncrease = (changedUnit.content.length - baseUnit.content.length) / baseUnit.content.length;
 
     if (sizeIncrease > 0.3) {
@@ -217,12 +217,12 @@ export class IntentClassifier {
   }
 
   /**
-   * Собрать доказательства APIChange
+   * Collect APIChange evidence
    */
   private collectAPIChangeEvidence(baseUnit: CodeUnit, changedUnit: CodeUnit): ChangeEvidence[] {
     const evidence: ChangeEvidence[] = [];
 
-    // Signature изменилась
+    // Signature changed
     if (baseUnit.signature && changedUnit.signature && baseUnit.signature !== changedUnit.signature) {
       evidence.push({
         type: EvidenceType.SignatureChanged,
@@ -231,7 +231,7 @@ export class IntentClassifier {
       });
     }
 
-    // FQN изменился (переименование или перемещение)
+    // FQN changed (rename or move)
     if (baseUnit.fullyQualifiedName !== changedUnit.fullyQualifiedName) {
       evidence.push({
         type: EvidenceType.SignatureChanged,

@@ -24,7 +24,7 @@
 # 4. Check CMake (install if needed)
 # 5. Compile CUDA kernels (3-5 minutes)
 # 6. Build Node.js addon
-# 7. Output: dist/native/cuda/ultrascript_cuda.node
+# 7. Output: dist/native/cuda/ultracode_cuda.node
 ```
 
 ### Option 2: Manual
@@ -38,7 +38,7 @@ npm install
 # Build CUDA addon
 npm run build
 
-# Output: ../../dist/native/cuda/ultrascript_cuda.node
+# Output: ../../dist/native/cuda/ultracode_cuda.node
 ```
 
 ## Test CUDA Module
@@ -47,7 +47,7 @@ npm run build
 
 ```bash
 # From project root
-node -e "const cuda = require('./dist/native/cuda/ultrascript_cuda.node'); console.log(cuda.getDeviceInfo())"
+node -e "const cuda = require('./dist/native/cuda/ultracode_cuda.node'); console.log(cuda.getDeviceInfo())"
 
 # Expected output:
 # {
@@ -76,7 +76,7 @@ bun docs/examples/cuda-example.ts
 
 ```typescript
 // Load CUDA addon
-const cuda = require('./dist/native/cuda/ultrascript_cuda.node');
+const cuda = require('./dist/native/cuda/ultracode_cuda.node');
 
 // Check device
 const info = cuda.getDeviceInfo();
@@ -127,7 +127,7 @@ winget install Kitware.CMake
 
 **Check output file**:
 ```bash
-ls dist/native/cuda/ultrascript_cuda.node
+ls dist/native/cuda/ultracode_cuda.node
 ```
 
 If missing, rebuild:

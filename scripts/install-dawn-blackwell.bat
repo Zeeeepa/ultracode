@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM UltraScript Tools - Install pre-built Dawn for Blackwell
+REM UltraCode - Install pre-built Dawn for Blackwell
 REM
 REM Quick install of pre-built dawn.node for RTX 50xx (Blackwell) GPUs.
 REM Copies from external-libs to node_modules/webgpu.

@@ -1,33 +1,32 @@
-# Rust Module Documentation
+---
+module_name: rust
+description: "ANTLR-generated lexer and parser for Rust syntax analysis"
+status: generated
+language: typescript
+---
 
-## Title and Overview
+# Rust
 
-Модуль `rust` предоставляет функциональность для анализа и парсинга кода на языке Rust. Он включает лексер, парсер и вспомогательные компоненты для работы с синтаксисом Rust. Модуль предназначен для внутреннего использования в системе и не экспортирует публичные API.
+> ANTLR-generated lexer, parser, listener, and visitor for parsing Rust source code into syntax trees.
+
+## Overview
+
+Provides the full ANTLR toolchain output for Rust grammar, enabling tokenization and AST construction of Rust source files. Used internally by the code analysis pipeline.
+
+## Exports
+
+
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `index.ts` | Основной файл модуля, который экспортирует все компоненты парсера Rust. Содержит точку входа для работы с Rust-анализом. |
-| `RustLexer.ts` | Лексер для разбора исходного кода Rust на токены. Обрабатывает ключевые слова, идентификаторы, литералы и другие синтаксические элементы языка. |
-| `RustParser.ts` | Парсер для построения синтаксической структуры из токенов, полученных от лексера. Обеспечивает разбор Rust-синтаксиса в AST (Abstract Syntax Tree). |
-| `RustParserListener.ts` | Интерфейс для слушателей парсинга. Позволяет отслеживать события во время разбора Rust-кода и выполнять дополнительные действия. |
-| `RustParserVisitor.ts` | Интерфейс посетителя для обхода AST. Предоставляет методы для обработки различных элементов синтаксической структуры Rust-кода. |
-
-## Exports
-
-Нет публичных экспортов. Модуль предназначен для внутреннего использования и не предоставляет внешнего API.
-
-## Usage
-
-Модуль используется внутри системы для анализа и обработки кода на Rust. Пример использования:
-
-```typescript
-import * as rust from './rust';
-
-// Использование компонентов модуля для парсинга Rust-кода
-const lexer = new rust.RustLexer();
-const parser = new rust.RustParser();
-```
-
-> Примечание: Модуль предназначен только для внутреннего использования и не должен экспортироваться за пределы проекта.
+| `index.ts` | Re-exports parser components for internal consumption |
+| `RustLexer.ts` | Generated lexer that tokenizes Rust source code |
+| `RustLexer.interp` | ANTLR interpreter data for the Rust lexer |
+| `RustLexer.tokens` | Token vocabulary definitions for the lexer |
+| `RustParser.ts` | Generated parser that builds syntax trees from tokens |
+| `RustParser.interp` | ANTLR interpreter data for the Rust parser |
+| `RustParser.tokens` | Token vocabulary definitions for the parser |
+| `RustParserListener.ts` | Listener interface for syntax tree traversal events |
+| `RustParserVisitor.ts` | Visitor interface for syntax tree traversal with return values |

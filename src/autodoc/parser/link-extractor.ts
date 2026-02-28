@@ -13,8 +13,11 @@
  * Architecture References:
  * - AutoDoc Types: src/autodoc/types.ts
  * - RFC Section 4.3: Link Syntax
+ *
+ * @module
  */
 
+import { basename } from "node:path";
 import type { ParsedReference } from "../types.js";
 import { RefTargetType } from "../types.js";
 
@@ -240,14 +243,14 @@ export function generateCodeRef(filePath: string, lineStart: number, lineEnd?: n
  */
 export function generateEntityRef(entityId: string, displayText?: string): string {
   const text = displayText || `entity:${entityId}`;
-  return `[→ ${text}](ultrascript://entity/${entityId})`;
+  return `[→ ${text}](ultracode://entity/${entityId})`;
 }
 
 /**
  * Generate markdown link for a doc reference
  */
 export function generateDocRef(docPath: string, section?: string | undefined, displayText?: string): string {
-  const text = displayText || docPath.split("/").pop()?.replace(".md", "") || docPath;
+  const text = displayText || basename(docPath, ".md") || docPath;
   const target = section ? `${docPath}#${section}` : docPath;
   return `[→ ${text}](${target})`;
 }

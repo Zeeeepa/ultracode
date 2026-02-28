@@ -1,20 +1,17 @@
 ```
-        ██  ██
-        ██  ██  ██    ██████ █████▄  ▄████▄
-        ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
-        ██  ██  ██      ██   ██   ██ ██  ██
-        ██  ██  ██████  ██   ██   ██ ██  ██
-        ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄
-                         ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
-                         ▄▄██▀ ▀████ ██ ██ ██ ██     ██
+         ██  ██
+         ██  ██  ██    ██████ █████▄  ▄████▄
+         ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
+         ██  ██  ██      ██   ██   ██ ██  ██
+         ██  ██  ██████  ██   ██   ██ ██  ██
+         ▀████▀          ▄████ ▄████▄ █████▄ █████
+                         ██    ██  ██ ██  ██ ██▄▄▄
+                         ▀████ ▀████▀ █████▀ ██▄▄▄
 
-     ╔═════════════════════════════════════════════════════╗
-     ║            ULTRASCRIPT TOOLS MCP SERVER             ║
-     ╚═════════════════════════════════════════════════════╝
 ```
 
-[![npm version](https://badge.fury.io/js/ultrascript-tools-mcp.svg)](https://www.npmjs.com/package/ultrascript-tools-mcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm version](https://badge.fury.io/js/ultracode.svg)](https://www.npmjs.com/package/ultracode)
+[![License: AGPL-3.0 / Commercial](https://img.shields.io/badge/License-AGPL--3.0_|_Commercial-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.3.2-f472b6)](https://bun.sh)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
 
@@ -28,11 +25,11 @@ Reduces time and token costs by up to 90% when working with code through AI agen
 
 **Full indexing of a medium-sized project takes 3 seconds**. Incremental indexing of changes happens on the fly.
 
-| | ❌ Regular AI Agent Work | ✅ Work via UltraScript |
+| | ❌ Regular AI Agent Work | ✅ Work via UltraCode |
 |---|---|---|
-| **Search** | AI agent uses grep/replace for full-text keyword search. Reads and analyzes found files entirely, then follows file chains. <br />A simple task in a large project takes **30 minutes and 1M+ tokens**. And it won't find everything. | AI agent queries UltraScript and instantly receives complete and accurate information with line-of-code references. Semantics find even non-obvious connections. <br />Query executes in **100ms and returns 5K tokens** (18,000x faster, 200x cheaper). |
-| **Editing** | AI agent edits files "blindly". Instead of careful modification, it goes through 10-20 iterations: breaks → checks → fixes → breaks. Plus dozens of requests to find bash/pwsh commands. <br />Takes **up to 1 hour and 2M+ tokens**. | UltraScript precisely modifies code at the structure level + linting + formatting + impact analysis with local tracing. If something breaks — reports it in the same response. <br />**18,000x faster, 200x cheaper.** |
-| **Memory** | AI agent forgets what it did and recreates the same functionality next to existing code. Or debugs a function for hours that it disabled itself. <br />Takes **many hours and 10M+ tokens**. | Through UltraScript, the agent gets the complete code structure in compact form. AutoDoc automatically maintains documentation. Agent won't fall into the forgetfulness trap. <br />Everything correct immediately. |
+| **Search** | AI agent uses grep/replace for full-text keyword search. Reads and analyzes found files entirely, then follows file chains. <br />A simple task in a large project takes **30 minutes and 1M+ tokens**. And it won't find everything. | AI agent queries UltraCode and instantly receives complete and accurate information with line-of-code references. Semantics find even non-obvious connections. <br />Query executes in **100ms and returns 5K tokens** (18,000x faster, 200x cheaper). |
+| **Editing** | AI agent edits files "blindly". Instead of careful modification, it goes through 10-20 iterations: breaks → checks → fixes → breaks. Plus dozens of requests to find bash/pwsh commands. <br />Takes **up to 1 hour and 2M+ tokens**. | UltraCode precisely modifies code at the structure level + linting + formatting + impact analysis with local tracing. If something breaks — reports it in the same response. <br />**18,000x faster, 200x cheaper.** |
+| **Memory** | AI agent forgets what it did and recreates the same functionality next to existing code. Or debugs a function for hours that it disabled itself. <br />Takes **many hours and 10M+ tokens**. | Through UltraCode, the agent gets the complete code structure in compact form. AutoDoc automatically maintains documentation. Agent won't fall into the forgetfulness trap. <br />Everything correct immediately. |
 | **Git** | When switching branches or making changes — agent won't detect this and will continue working with outdated code representation. <br />Need to forcefully trigger re-analysis. | All queries work with current code. Switch branches, modify files — incremental indexing of graph and semantics happens instantly. <br />Nothing additional needed, not even thinking about it. |
 
 # Features
@@ -43,131 +40,132 @@ MCP server provides **70 tools** for code analysis and modification.
 
 | Tool | Description |
 |------|-------------|
-| [**semantic_search**](docs/features/search.md#semantic_search) | Semantic search by meaning with filters (complexity, flow, docs) |
-| [**pattern_search**](docs/features/search.md#pattern_search) | Advanced search: regex, semantic, hybrid |
-| [**query**](docs/features/search.md#query) | NLP queries in natural language about code |
-| [**find_similar_code**](docs/features/search.md#find_similar_code) | Find functions with similar logic |
-| [**cross_language_search**](docs/features/search.md#cross_language_search) | Unified search across all project languages |
-| [**find_related_concepts**](docs/features/search.md#find_related_concepts) | Find related concepts |
+| [**semantic_search**](.autodoc/features/search.md#semantic_search) | Semantic search by meaning with filters (complexity, flow, docs) |
+| [**pattern_search**](.autodoc/features/search.md#pattern_search) | Advanced search: regex, semantic, hybrid |
+| [**query**](.autodoc/features/search.md#query) | NLP queries in natural language about code |
+| [**find_similar_code**](.autodoc/features/search.md#find_similar_code) | Find functions with similar logic |
+| [**cross_language_search**](.autodoc/features/search.md#cross_language_search) | Unified search across all project languages |
+| [**find_related_concepts**](.autodoc/features/search.md#find_related_concepts) | Find related concepts |
 
 ## Code Analysis
 
 | Tool | Description |
 |------|-------------|
-| [**analyze_code_impact**](docs/features/analysis.md#analyze_code_impact) | Impact analysis — what will break on modification |
-| [**find_duplicates**](docs/features/analysis.md#find_duplicates) | Semantic code clone detection |
-| [**jscpd_detect_clones**](docs/features/analysis.md#jscpd_detect_clones) | jscpd-based clone detector |
-| [**suggest_refactoring**](docs/features/analysis.md#suggest_refactoring) | AI-powered code improvement suggestions |
-| [**analyze_hotspots**](docs/features/analysis.md#analyze_hotspots) | Complex areas with high cyclomatic complexity |
-| [**analyze_state_chaos**](docs/features/analysis.md#analyze_state_chaos) | Analysis of tangled data dependencies |
-| [**detect_technology_stack**](docs/features/analysis.md#detect_technology_stack) | Project technology stack detection |
+| [**analyze_code_impact**](.autodoc/features/analysis.md#analyze_code_impact) | Impact analysis — what will break on modification |
+| [**find_duplicates**](.autodoc/features/analysis.md#find_duplicates) | Semantic code clone detection |
+| [**jscpd_detect_clones**](.autodoc/features/analysis.md#jscpd_detect_clones) | jscpd-based clone detector |
+| [**suggest_refactoring**](.autodoc/features/analysis.md#suggest_refactoring) | AI-powered code improvement suggestions |
+| [**analyze_hotspots**](.autodoc/features/analysis.md#analyze_hotspots) | Complex areas with high cyclomatic complexity |
+| [**analyze_state_chaos**](.autodoc/features/analysis.md#analyze_state_chaos) | Analysis of tangled data dependencies |
+| [**analyze_swagger_impact**](.autodoc/features/swagger.md#analyze_swagger_impact) | Swagger/OpenAPI spec change impact analysis |
+| [**detect_technology_stack**](.autodoc/features/analysis.md#detect_technology_stack) | Project technology stack detection |
 
 ## Static Tracing and Debugging
 
 | Tool | Description |
 |------|-------------|
-| [**trace_flow**](docs/features/tracing.md#trace_flow) | How code flows from point A to B |
-| [**trace_backwards**](docs/features/tracing.md#trace_backwards) | Why a function is not being called |
-| [**trace_data_flow**](docs/features/tracing.md#trace_data_flow) | How data affects state |
-| [**analyze_state_impact**](docs/features/tracing.md#analyze_state_impact) | What changes with different values |
-| [**find_decision_points**](docs/features/tracing.md#find_decision_points) | Branching points in code |
+| [**trace_flow**](.autodoc/features/tracing.md#trace_flow) | How code flows from point A to B |
+| [**trace_backwards**](.autodoc/features/tracing.md#trace_backwards) | Why a function is not being called |
+| [**trace_data_flow**](.autodoc/features/tracing.md#trace_data_flow) | How data affects state |
+| [**analyze_state_impact**](.autodoc/features/tracing.md#analyze_state_impact) | What changes with different values |
+| [**find_decision_points**](.autodoc/features/tracing.md#find_decision_points) | Branching points in code |
 
 ## Code Modification
 
 | Tool | Description |
 |------|-------------|
-| [**modify_code**](docs/features/modification.md#modify_code) | Structural AST-level editing with validation |
-| [**create_file**](docs/features/modification.md#create_file) | Create new file |
-| [**copy_file**](docs/features/modification.md#copy_file) | Copy file with graph updates |
-| [**rename_file**](docs/features/modification.md#rename_file) | Rename file with import updates |
-| [**split_file**](docs/features/modification.md#split_file) | Split file into parts |
-| [**synthesize_files**](docs/features/modification.md#synthesize_files) | Merge files |
-| [**rename_symbol**](docs/features/modification.md#rename_symbol) | Project-wide symbol renaming |
-| [**add_member**](docs/features/modification.md#add_member) | Add methods/properties to classes |
+| [**modify_code**](.autodoc/features/modification.md#modify_code) | Structural AST-level editing with validation |
+| [**create_file**](.autodoc/features/modification.md#create_file) | Create new file |
+| [**copy_file**](.autodoc/features/modification.md#copy_file) | Copy file with graph updates |
+| [**rename_file**](.autodoc/features/modification.md#rename_file) | Rename file with import updates |
+| [**split_file**](.autodoc/features/modification.md#split_file) | Split file into parts |
+| [**synthesize_files**](.autodoc/features/modification.md#synthesize_files) | Merge files |
+| [**rename_symbol**](.autodoc/features/modification.md#rename_symbol) | Project-wide symbol renaming |
+| [**add_member**](.autodoc/features/modification.md#add_member) | Add methods/properties to classes |
 
 ## Code Validation
 
 | Tool | Description |
 |------|-------------|
-| [**validate_file**](docs/features/validation.md#validate_file) | File validation via oxlint/Pylint/golint/clippy |
-| [**validate_directory**](docs/features/validation.md#validate_directory) | Batch directory validation |
+| [**validate_file**](.autodoc/features/validation.md#validate_file) | File validation via oxlint/Pylint/golint/clippy |
+| [**validate_directory**](.autodoc/features/validation.md#validate_directory) | Batch directory validation |
 
 ## Documentation (AutoDoc)
 
 | Tool | Description |
 |------|-------------|
-| [**autodoc_init**](docs/features/autodoc.md#autodoc_init) | Initialize AutoDoc system |
-| [**autodoc_generate**](docs/features/autodoc.md#autodoc_generate) | Generate documentation for entities |
-| [**autodoc_save**](docs/features/autodoc.md#autodoc_save) | Save documentation to .autodoc |
-| [**autodoc_get**](docs/features/autodoc.md#autodoc_get) | Get entity documentation |
-| [**autodoc_search**](docs/features/autodoc.md#autodoc_search) | Semantic search through documentation |
-| [**autodoc_validate**](docs/features/autodoc.md#autodoc_validate) | Check documentation freshness |
-| [**autodoc_status**](docs/features/autodoc.md#autodoc_status) | Documentation coverage statistics |
-| [**autodoc_sync**](docs/features/autodoc.md#autodoc_sync) | Synchronize with code changes |
-| [**autodoc_changelog**](docs/features/autodoc.md#autodoc_changelog) | Documentation change history |
-| [**autodoc_install_hooks**](docs/features/autodoc.md#autodoc_install_hooks) | Install Git hooks for auto-updates |
-| [**autodoc_detect_language**](docs/features/autodoc.md#autodoc_detect_language) | Detect language for generation |
+| [**autodoc_init**](.autodoc/features/autodoc.md#autodoc_init) | Initialize AutoDoc system |
+| [**autodoc_generate**](.autodoc/features/autodoc.md#autodoc_generate) | Generate documentation for entities |
+| [**autodoc_save**](.autodoc/features/autodoc.md#autodoc_save) | Save documentation to .autodoc |
+| [**autodoc_get**](.autodoc/features/autodoc.md#autodoc_get) | Get entity documentation |
+| [**autodoc_search**](.autodoc/features/autodoc.md#autodoc_search) | Semantic search through documentation |
+| [**autodoc_validate**](.autodoc/features/autodoc.md#autodoc_validate) | Check documentation freshness |
+| [**autodoc_status**](.autodoc/features/autodoc.md#autodoc_status) | Documentation coverage statistics |
+| [**autodoc_sync**](.autodoc/features/autodoc.md#autodoc_sync) | Synchronize with code changes |
+| [**autodoc_changelog**](.autodoc/features/autodoc.md#autodoc_changelog) | Documentation change history |
+| [**autodoc_install_hooks**](.autodoc/features/autodoc.md#autodoc_install_hooks) | Install Git hooks for auto-updates |
+| [**autodoc_detect_language**](.autodoc/features/autodoc.md#autodoc_detect_language) | Detect language for generation |
 
 ## Git Integration
 
 | Tool | Description |
 |------|-------------|
-| [**list_branches**](docs/features/git.md#list_branches) | List indexed branches |
-| [**switch_branch**](docs/features/git.md#switch_branch) | Switch branches with auto-reindexing |
-| [**get_branch_status**](docs/features/git.md#get_branch_status) | Current branch status |
-| [**get_changed_files**](docs/features/git.md#get_changed_files) | Compare files between branches |
-| [**cleanup_branches**](docs/features/git.md#cleanup_branches) | Clean up old branches (LRU) |
+| [**list_branches**](.autodoc/features/git.md#list_branches) | List indexed branches |
+| [**switch_branch**](.autodoc/features/git.md#switch_branch) | Switch branches with auto-reindexing |
+| [**get_branch_status**](.autodoc/features/git.md#get_branch_status) | Current branch status |
+| [**get_changed_files**](.autodoc/features/git.md#get_changed_files) | Compare files between branches |
+| [**cleanup_branches**](.autodoc/features/git.md#cleanup_branches) | Clean up old branches (LRU) |
 
 ## Version History (Prolly Tree)
 
 | Tool | Description |
 |------|-------------|
-| [**list_commits**](docs/features/history.md#list_commits) | List graph commits (version snapshots) |
-| [**get_entity_history**](docs/features/history.md#get_entity_history) | Entity change history across commits |
-| [**diff_commits**](docs/features/history.md#diff_commits) | Compare two graph versions (added/modified/deleted) |
-| [**checkout_commit**](docs/features/history.md#checkout_commit) | Time travel — view graph at specific commit |
+| [**list_commits**](.autodoc/features/history.md#list_commits) | List graph commits (version snapshots) |
+| [**get_entity_history**](.autodoc/features/history.md#get_entity_history) | Entity change history across commits |
+| [**diff_commits**](.autodoc/features/history.md#diff_commits) | Compare two graph versions (added/modified/deleted) |
+| [**checkout_commit**](.autodoc/features/history.md#checkout_commit) | Time travel — view graph at specific commit |
 
 ## Semantic Merge
 
 | Tool | Description |
 |------|-------------|
-| [**semantic_merge**](docs/features/merge.md#semantic_merge) | AI-powered 3-way merge with code understanding |
-| [**analyze_merge_conflicts**](docs/features/merge.md#analyze_merge_conflicts) | Analyze conflicts with explanations |
-| [**get_merge_suggestions**](docs/features/merge.md#get_merge_suggestions) | AI suggestions for conflict resolution |
-| [**get_semantic_merge_info**](docs/features/merge.md#get_semantic_merge_info) | Information about semantic differences |
+| [**semantic_merge**](.autodoc/features/merge.md#semantic_merge) | AI-powered 3-way merge with code understanding |
+| [**analyze_merge_conflicts**](.autodoc/features/merge.md#analyze_merge_conflicts) | Analyze conflicts with explanations |
+| [**get_merge_suggestions**](.autodoc/features/merge.md#get_merge_suggestions) | AI suggestions for conflict resolution |
+| [**get_semantic_merge_info**](.autodoc/features/merge.md#get_semantic_merge_info) | Information about semantic differences |
 
 ## Snapshots and Safety
 
 | Tool | Description |
 |------|-------------|
-| [**create_snapshot**](docs/features/snapshots.md#create_snapshot) | Save restore point |
-| [**undo**](docs/features/snapshots.md#undo) | Instant rollback to snapshot |
-| [**list_snapshots**](docs/features/snapshots.md#list_snapshots) | List available snapshots |
-| [**cleanup_snapshots**](docs/features/snapshots.md#cleanup_snapshots) | Clean up old snapshots |
+| [**create_snapshot**](.autodoc/features/snapshots.md#create_snapshot) | Save restore point |
+| [**undo**](.autodoc/features/snapshots.md#undo) | Instant rollback to snapshot |
+| [**list_snapshots**](.autodoc/features/snapshots.md#list_snapshots) | List available snapshots |
+| [**cleanup_snapshots**](.autodoc/features/snapshots.md#cleanup_snapshots) | Clean up old snapshots |
 
 ## Code Graph and Indexing
 
 | Tool | Description |
 |------|-------------|
-| [**index**](docs/features/indexing.md#index) | Index codebase |
-| [**clean_index**](docs/features/indexing.md#clean_index) | Full reindexing |
-| [**get_members**](docs/features/graph.md#get_members) | List entities in file |
-| [**list_entity_relationships**](docs/features/graph.md#list_entity_relationships) | Entity relationships and dependencies |
-| [**get_graph**](docs/features/graph.md#get_graph) | Get graph (JSON/GraphML/Mermaid) |
-| [**get_graph_stats**](docs/features/graph.md#get_graph_stats) | Graph statistics |
-| [**get_graph_health**](docs/features/graph.md#get_graph_health) | Graph health diagnostics |
-| [**reset_graph**](docs/features/graph.md#reset_graph) | Full graph cleanup |
+| [**index**](.autodoc/features/indexing.md#index) | Index codebase |
+| [**clean_index**](.autodoc/features/indexing.md#clean_index) | Full reindexing |
+| [**get_members**](.autodoc/features/graph.md#get_members) | List entities in file |
+| [**list_entity_relationships**](.autodoc/features/graph.md#list_entity_relationships) | Entity relationships and dependencies |
+| [**get_graph**](.autodoc/features/graph.md#get_graph) | Get graph (JSON/GraphML/Mermaid) |
+| [**get_graph_stats**](.autodoc/features/graph.md#get_graph_stats) | Graph statistics |
+| [**get_graph_health**](.autodoc/features/graph.md#get_graph_health) | Graph health diagnostics |
+| [**reset_graph**](.autodoc/features/graph.md#reset_graph) | Full graph cleanup |
 
 ## Metrics and Monitoring
 
 | Tool | Description |
 |------|-------------|
-| [**get_metrics**](docs/features/metrics.md#get_metrics) | System metrics and statistics |
-| [**get_version**](docs/features/metrics.md#get_version) | Server and runtime version |
-| [**get_agent_metrics**](docs/features/metrics.md#get_agent_metrics) | Multi-agent system telemetry |
-| [**get_bus_stats**](docs/features/metrics.md#get_bus_stats) | Knowledge bus statistics |
-| [**clear_bus_topic**](docs/features/metrics.md#clear_bus_topic) | Clear cached topic entries |
-| [**get_watcher_status**](docs/features/metrics.md#get_watcher_status) | Background watcher status |
+| [**get_metrics**](.autodoc/features/metrics.md#get_metrics) | System metrics and statistics |
+| [**get_version**](.autodoc/features/metrics.md#get_version) | Server and runtime version |
+| [**get_agent_metrics**](.autodoc/features/metrics.md#get_agent_metrics) | Multi-agent system telemetry |
+| [**get_bus_stats**](.autodoc/features/metrics.md#get_bus_stats) | Knowledge bus statistics |
+| [**clear_bus_topic**](.autodoc/features/metrics.md#clear_bus_topic) | Clear cached topic entries |
+| [**get_watcher_status**](.autodoc/features/metrics.md#get_watcher_status) | Background watcher status |
 
 ---
 
@@ -215,7 +213,7 @@ MCP server provides **70 tools** for code analysis and modification.
 
 ### Built-in Documentation (MCP Prompts)
 
-You can add a [short prompt](docs/claude.cfg/add-to-CLAUDE.md) to your system prompts that will help the AI agent learn about Ultrascript-tools capabilities.
+You can add a [short prompt](.autodoc/claude.cfg/add-to-CLAUDE.md) to your system prompts that will help the AI agent learn about UltraCode capabilities.
 
 - **quick-start** — quick start and tool selection
 - **tool-reference** — complete reference of 70 tools
@@ -229,7 +227,7 @@ You can add a [short prompt](docs/claude.cfg/add-to-CLAUDE.md) to your system pr
 - **Natural language** — describe the task in your own words
 
 ### Client-Server Architecture
-- **One process per machine** — when running multiple AI agents, only one UltraScript instance runs
+- **One process per machine** — when running multiple AI agents, only one UltraCode instance runs
 - **Save 10+ GB RAM** — instead of N copies of indexes in memory — one shared
 - **Instant connection** — new agents connect to running server in milliseconds
 - **Session isolation** — each agent gets independent MCP session
@@ -248,25 +246,25 @@ powershell -c "irm bun.sh/install.ps1 | iex"
 curl -fsSL https://bun.sh/install | bash
 ```
 
-**Installing Ultrascript-tools**
+**Installing UltraCode**
 
 ```bash
 # Bun (recommended) — two steps:
 
 # 1. Install package
-bun install -g ultrascript-tools-mcp
+bun install -g ultracode
 
 # 2. Allow postinstall scripts for native modules
-bun pm -g trust ultrascript-tools-mcp
+bun pm -g trust ultracode
 ```
 
 ```bash
 # npm (alternative) — one step:
-npm install -g ultrascript-tools-mcp
+npm install -g ultracode
 ```
 
 > **Why two steps for Bun?**
-> To achieve ultra-speed, UltraScript uses native components:
+> To achieve ultra-speed, UltraCode uses native components:
 >
 > - **faiss-napi** — HNSW/IVF indexes for vector search (100x speedup)
 > - **cbor-extract** — fast native metadata serialization
@@ -294,14 +292,14 @@ npm install -g ultrascript-tools-mcp
 ```json
 {
   "mcpServers": {
-    "ultrascript-tools": {
-      "command": "ultrascript"
+    "ultracode": {
+      "command": "ultracode"
     }
   }
 }
 ```
 
-> Detailed documentation: [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md)
+> Configuration: [.autodoc/claude.cfg/add-to-CLAUDE.md](.autodoc/claude.cfg/add-to-CLAUDE.md)
 
 ## **Local Model Setup**
 
@@ -336,10 +334,10 @@ The wizard automatically:
 > **Re-run wizard:**
 > ```bash
 > # Bun
-> bunx ultrascript-tools-mcp setup
+> bunx ultracode setup
 >
 > # Node.js
-> npx ultrascript-tools-mcp setup
+> npx ultracode setup
 > ```
 
 *For Blackwell (RTX 50xx), an unofficial TEI fork is used
@@ -348,12 +346,12 @@ The wizard automatically:
 
 To activate auto-documentation mode - create a `.autodoc` folder in the project root and enable LLM usage (easiest to use the same claude).
 
-After running Ultrascript with Autodoc mode enabled:
+After running UltraCode with Autodoc mode enabled:
 
 1. In all folders with source code (from supported languages), AUTODOC.md files will be created with a template listing files in the directory.
 2. LLM will go through these files and generate descriptions in AUTODOC.md — what the code in the files specifically does.
 
-After this, you can yourself (or with an AI agent's help) create needed files with project overview in the .autodoc directory and add "human descriptions" in AUTODOC.md files where needed. There you can use direct references to code lines in files (for describing start and end of code block, use two numbers. Example: FILE:XX-ZZ). UltraScript will track code changes and automatically update all code references to keep them current. It won't touch documentation text.
+After this, you can yourself (or with an AI agent's help) create needed files with project overview in the .autodoc directory and add "human descriptions" in AUTODOC.md files where needed. There you can use direct references to code lines in files (for describing start and end of code block, use two numbers. Example: FILE:XX-ZZ). UltraCode will track code changes and automatically update all code references to keep them current. It won't touch documentation text.
 
 ### macOS Apple Silicon (MLX Embeddings)
 
@@ -366,7 +364,7 @@ Native embedding support via Apple MLX framework (Metal GPU):
 
 ```bash
 # Re-run wizard to switch to MLX:
-bunx ultrascript-tools-mcp setup
+bunx ultracode setup
 # Select "MLX" → auto-setup venv + model + server on port 8087
 ```
 
@@ -378,21 +376,21 @@ bunx ultrascript-tools-mcp setup
 #   - Xcode Command Line Tools: xcode-select --install
 #   - Homebrew: https://brew.sh
 #   - CMake: brew install cmake
-./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh
+./node_modules/ultracode/scripts/build-native-libs-macos.sh
 ```
 
 # Configuration
 
 ## Data Structure
 
-All UltraScript data is stored in system directory:
+All UltraCode data is stored in system directory:
 
-- **Windows**: `%LOCALAPPDATA%\UltraScriptTools\`
-- **macOS**: `~/Library/Application Support/UltraScriptTools/`
-- **Linux**: `~/.local/share/UltraScriptTools/`
+- **Windows**: `%LOCALAPPDATA%\UltraCode\`
+- **macOS**: `~/Library/Application Support/UltraCode/`
+- **Linux**: `~/.local/share/UltraCode/`
 
 ```
-UltraScriptTools/
+UltraCode/
 ├── config/
 │   ├── semantic-config.json    # Embedding/LLM providers (setup wizard)
 │   └── parser-config.json      # Runtime paths (Java, Kotlin)
@@ -434,14 +432,15 @@ Main parameters:
 
 # For AI Agents
 
-**[LLM_INSTRUCTIONS.md](./LLM_INSTRUCTIONS.md)** — Why using UltraScript makes you a good boy.
+**[LLM_INSTRUCTIONS.md](./LLM_INSTRUCTIONS.md)** — Why using UltraCode makes you a good boy.
 
 # Contributing
 
-This package is open source under the MIT license.
-
-Repository: https://github.com/faxenoff/ultrascript-tools-mcp
+Repository: https://github.com/faxenoff/ultracode
 
 ## License
 
-MIT © faxenoff
+**Dual License** — see [LICENSE](LICENSE)
+
+- **Open Source**: [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html) — free to use, modify, and distribute with source code disclosure
+- **Commercial**: for proprietary/closed-source use or SaaS without AGPL obligations — contact [faxenoff@gmail.com](mailto:faxenoff@gmail.com)

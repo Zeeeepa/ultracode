@@ -19,6 +19,13 @@ export const FindSimilarCodeSchema = z.object({
   branch: z.string().optional().describe("Branch name (null = main branch)"),
 });
 
+export const AnalyzeSwaggerImpactSchema = z.object({
+  swaggerFile: z.string().optional().describe("Path to swagger file (auto-detected if omitted)"),
+  schemaName: z.string().optional().describe("Specific schema name to analyze"),
+  endpointPath: z.string().optional().describe("Specific endpoint like 'GET /api/users'"),
+  projectPath: z.string().optional().describe("Project directory path"),
+});
+
 export const AnalyzeCodeImpactSchema = z.object({
   entityId: z.string().describe("Entity ID or name to analyze impact for"),
   filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),

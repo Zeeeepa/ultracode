@@ -1,25 +1,13 @@
 /**
- * TASK-20251005191500: C++ Language Analyzer
+ * C++ Language Analyzer
  *
- * Analyzer for C++ language supporting:
- * Phase 3 - Core C++ features:
- * - Classes (with access modifiers: public, private, protected, abstract, final)
- * - Methods (const, static, virtual, override, final, noexcept)
- * - Constructors and Destructors
- * - Namespaces
- * - Member variables and constants
- * - Operator overloading (basic)
- * - Single and multiple inheritance
- * - Friend declarations
+ * AST-driven extraction of C++ entities and relationships:
+ * namespaces, classes/structs, methods, fields, enums, free functions,
+ * templates, friend declarations, using directives, operator overloads,
+ * single/multiple/virtual inheritance.
  *
- * Phase 4 - Limited Template Support:
- * - Simple template class definitions
- * - Simple template function definitions
- * - Template parameter extraction
- * - Skips complex metaprogramming (SFINAE, variadic templates)
- *
- * Implementation uses semantic layer with lazy evaluation pattern
- * and comprehensive circuit breakers for safety.
+ * Safety: recursion cap, wall-clock timeout, cumulative complexity scoring,
+ * template nesting limit, memoisation for template entities.
  */
 
 import { PARSER_CONSTANTS } from "../config/constants.js";
@@ -37,773 +25,475 @@ import {
 } from "./cpp-declarator-utils.js";
 import { extractTemplateParameters, isComplexTemplate } from "./cpp-template-utils.js";
 
-// Circuit breaker constants
-const MAX_RECURSION_DEPTH = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
-const PARSE_TIMEOUT_MS = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
-const MAX_COMPLEXITY_SCORE = PARSER_CONSTANTS.COMPLEXITY_THRESHOLD;
-const MAX_TEMPLATE_DEPTH = 10;
+const REC_CAP = PARSER_CONSTANTS.MAX_RECURSION_DEPTH;
+const TIME_CAP = PARSER_CONSTANTS.PARSE_TIMEOUT_MS;
+const CMPLX_CAP = PARSER_CONSTANTS.COMPLEXITY_THRESHOLD;
+const TPL_CAP = 10;
 
-// Complexity scoring for templates
-interface ComplexityScore {
-  templateDepth: number;
-  nestedClasses: number;
-  inheritanceDepth: number;
-  operatorCount: number;
-  total: number;
+// ---------------------------------------------------------------------------
+// Per-run mutable state
+// ---------------------------------------------------------------------------
+
+interface CppRunState {
+  entities: ParsedEntity[];
+  rels: EntityRelationship[];
+  fp: string;
+  depth: number;
+  t0: number;
+  tplNest: number;
+  cmplx: { tpl: number; nested: number; inherit: number; ops: number; total: number };
+  tplMemo: Map<string, ParsedEntity>;
 }
 
-export class CppAnalyzer {
-  private recursionDepth = 0;
-  private parseStartTime = 0;
-  private templateDepth = 0;
-  private complexityScore: ComplexityScore = {
-    templateDepth: 0,
-    nestedClasses: 0,
-    inheritanceDepth: 0,
-    operatorCount: 0,
-    total: 0,
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function mkEntity(
+  name: string,
+  type: ParsedEntity["type"],
+  loc: ParsedEntity["location"],
+  mods?: string[],
+  meta?: Record<string, unknown>,
+): ParsedEntity {
+  return {
+    name,
+    type,
+    location: loc,
+    id: undefined,
+    path: undefined,
+    signature: undefined,
+    filePath: undefined,
+    language: "cpp",
+    children: undefined,
+    returnType: undefined,
+    modifiers: mods,
+    metadata: meta,
   };
+}
 
-  // Memoization cache for template patterns
-  private templateCache = new Map<string, ParsedEntity>();
+function relMeta(extra: Record<string, unknown>, line?: number): EntityRelationship["metadata"] {
+  return { line: line ?? undefined, ...extra };
+}
 
-  /**
-   * Main entry point for analyzing C++ code
-   */
+// ---------------------------------------------------------------------------
+// Analyzer
+// ---------------------------------------------------------------------------
+
+export class CppAnalyzer {
+  private nodeMap: Map<string, (n: ASTNode, s: CppRunState, ns: string) => void>;
+
+  constructor() {
+    this.nodeMap = new Map([
+      ["translation_unit", (n, s, ns) => this.walkKids(n, s, ns)],
+      ["namespace_definition", (n, s, ns) => this.doNamespace(n, s, ns)],
+      ["class_specifier", (n, s, ns) => this.doClassStruct(n, s, ns)],
+      ["struct_specifier", (n, s, ns) => this.doClassStruct(n, s, ns)],
+      ["function_definition", (n, s, ns) => this.doFreeFunc(n, s, ns, false)],
+      ["template_declaration", (n, s, ns) => this.doTemplate(n, s, ns)],
+      ["using_declaration", (n, s, ns) => this.doUsing(n, s, ns)],
+      ["using_directive", (n, s, ns) => this.doUsing(n, s, ns)],
+      ["alias_declaration", (n, s, ns) => this.doUsing(n, s, ns)],
+      ["enum_specifier", (n, s, ns) => this.doEnum(n, s, ns)],
+      ["declaration", (n, s, ns) => this.walkKids(n, s, ns)],
+    ]);
+  }
+
   async analyze(
     rootNode: ASTNode,
     filePath: string,
   ): Promise<{ entities: ParsedEntity[]; relationships: EntityRelationship[] }> {
-    this.resetState();
-
-    const entities: ParsedEntity[] = [];
-    const relationships: EntityRelationship[] = [];
-
-    try {
-      // Phase 1: Syntactic extraction from CST
-      this.extractEntities(rootNode, filePath, entities, relationships);
-
-      // Phase 2: Build semantic graph with lazy evaluation
-      this.buildSemanticGraph(entities, relationships);
-    } catch (error) {
-      if (error instanceof CircuitBreakerError) {
-        log.w("CPPANALYZER", "circuit_break", { file: filePath, err: error.message });
-      } else {
-        log.e("CPPANALYZER", "analyze_err", { file: filePath, err: String(error) });
-      }
-      // Return partial results on error
-    }
-
-    return { entities, relationships };
-  }
-
-  /**
-   * Reset analyzer state for new file
-   */
-  private resetState(): void {
-    this.recursionDepth = 0;
-    this.parseStartTime = Date.now();
-    this.templateDepth = 0;
-    this.complexityScore = {
-      templateDepth: 0,
-      nestedClasses: 0,
-      inheritanceDepth: 0,
-      operatorCount: 0,
-      total: 0,
+    const s: CppRunState = {
+      entities: [],
+      rels: [],
+      fp: filePath,
+      depth: 0,
+      t0: Date.now(),
+      tplNest: 0,
+      cmplx: { tpl: 0, nested: 0, inherit: 0, ops: 0, total: 0 },
+      tplMemo: new Map(),
     };
-    this.templateCache.clear();
-  }
-
-  /**
-   * Check circuit breakers
-   */
-  private checkCircuitBreakers(): void {
-    // Recursion depth check
-    if (this.recursionDepth > MAX_RECURSION_DEPTH) {
-      throw new CircuitBreakerError(`Maximum recursion depth ${MAX_RECURSION_DEPTH} exceeded`);
-    }
-
-    // Timeout check
-    const elapsedTime = Date.now() - this.parseStartTime;
-    if (elapsedTime > PARSE_TIMEOUT_MS) {
-      throw new CircuitBreakerError(`Parse timeout ${PARSE_TIMEOUT_MS}ms exceeded`);
-    }
-
-    // Complexity score check
-    this.complexityScore.total =
-      this.complexityScore.templateDepth * 10 +
-      this.complexityScore.nestedClasses * 5 +
-      this.complexityScore.inheritanceDepth * 3 +
-      this.complexityScore.operatorCount * 2;
-
-    if (this.complexityScore.total > MAX_COMPLEXITY_SCORE) {
-      throw new CircuitBreakerError(
-        `Complexity score ${this.complexityScore.total} exceeds limit ${MAX_COMPLEXITY_SCORE}`,
-      );
-    }
-
-    // Template depth check
-    if (this.templateDepth > MAX_TEMPLATE_DEPTH) {
-      throw new CircuitBreakerError(`Template depth ${this.templateDepth} exceeds limit ${MAX_TEMPLATE_DEPTH}`);
-    }
-  }
-
-  /**
-   * Extract entities from the CST
-   */
-  private extractEntities(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    namespace: string = "",
-  ): void {
-    this.recursionDepth++;
-    this.checkCircuitBreakers();
 
     try {
-      switch (node.type) {
-        case "translation_unit":
-          // Root node - process all children
-          for (const child of node.children) {
-            this.extractEntities(child, filePath, entities, relationships, namespace);
-          }
-          break;
+      this.step(rootNode, s, "");
+      this.pruneRels(s.rels);
+    } catch (err) {
+      if (err instanceof CircuitBreakerError) {
+        log.w("CPPANALYZER", "circuit_break", { file: filePath, err: err.message });
+      } else {
+        log.e("CPPANALYZER", "analyze_err", { file: filePath, err: String(err) });
+      }
+    }
 
-        case "namespace_definition":
-          this.extractNamespace(node, filePath, entities, relationships, namespace);
-          break;
+    return { entities: s.entities, relationships: s.rels };
+  }
 
-        case "class_specifier":
-        case "struct_specifier":
-          this.extractClass(node, filePath, entities, relationships, namespace);
-          break;
+  // -- traversal ------------------------------------------------------------
 
-        case "function_definition":
-          this.extractFunction(node, filePath, entities, relationships, namespace, false);
-          break;
-
-        case "template_declaration":
-          this.extractTemplate(node, filePath, entities, relationships, namespace);
-          break;
-
-        case "using_declaration":
-        case "using_directive":
-        case "alias_declaration":
-          this.extractUsing(node, filePath, entities, relationships, namespace);
-          break;
-
-        case "enum_specifier":
-          this.extractEnum(node, filePath, entities, relationships, namespace);
-          break;
-
-        case "declaration":
-          // Process declarations that might contain classes, functions, etc.
-          for (const child of node.children) {
-            this.extractEntities(child, filePath, entities, relationships, namespace);
-          }
-          break;
-
-        default:
-          // Recursively process other node types
-          for (const child of node.children) {
-            if (child.type !== "comment" && child.type !== "preproc_include") {
-              this.extractEntities(child, filePath, entities, relationships, namespace);
-            }
-          }
+  private step(node: ASTNode, s: CppRunState, ns: string): void {
+    s.depth++;
+    this.guard(s);
+    try {
+      const handler = this.nodeMap.get(node.type);
+      if (handler) {
+        handler(node, s, ns);
+      } else {
+        const kids = node.children;
+        for (let i = 0; i < kids.length; i++) {
+          const k = kids[i]!;
+          if (k.type !== "comment" && k.type !== "preproc_include") this.step(k, s, ns);
+        }
       }
     } finally {
-      this.recursionDepth--;
+      s.depth--;
     }
   }
 
-  /**
-   * Extract namespace entities
-   */
-  private extractNamespace(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    parentNamespace: string = "",
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    const bodyNode = node.childForFieldName("body");
-
-    if (nameNode && bodyNode) {
-      const namespaceName = nameNode.text;
-      const fullName = parentNamespace ? `${parentNamespace}::${namespaceName}` : namespaceName;
-
-      const entity: ParsedEntity = {
-        name: fullName,
-        type: "module",
-        location: getNodeLocation(node),
-        modifiers: ["namespace"],
-      };
-
-      entities.push(entity);
-
-      // Process namespace contents
-      for (const child of bodyNode.children) {
-        this.extractEntities(child, filePath, entities, relationships, fullName);
-      }
-    }
+  private walkKids(node: ASTNode, s: CppRunState, ns: string): void {
+    const kids = node.children;
+    for (let i = 0; i < kids.length; i++) this.step(kids[i]!, s, ns);
   }
 
-  /**
-   * Extract class/struct entities
-   */
-  private extractClass(
-    node: ASTNode,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    namespace: string,
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    const bodyNode = node.childForFieldName("body");
+  private guard(s: CppRunState): void {
+    if (s.depth > REC_CAP) throw new CircuitBreakerError(`Depth ${s.depth} > ${REC_CAP}`);
+    const dt = Date.now() - s.t0;
+    if (dt > TIME_CAP) throw new CircuitBreakerError(`Elapsed ${dt}ms > ${TIME_CAP}ms`);
 
-    if (!nameNode) return;
-
-    const className = nameNode.text;
-    const fullName = namespace ? `${namespace}::${className}` : className;
-
-    // Track nested class complexity
-    if (namespace.includes("::")) {
-      this.complexityScore.nestedClasses++;
-    }
-
-    // Collect modifiers for the class
-    const modifiers: string[] = [];
-    if (node.type === "struct_specifier") modifiers.push("struct");
-    if (isAbstractClass(node)) modifiers.push("abstract");
-    if (isFinalClass(node)) modifiers.push("final");
-
-    const entity: ParsedEntity = {
-      name: fullName,
-      type: "class",
-      location: getNodeLocation(node),
-      modifiers,
-    };
-
-    entities.push(entity);
-
-    // Extract base classes (inheritance)
-    const baseList = node.childForFieldName("base_class_clause");
-    if (baseList) {
-      this.extractInheritance(baseList, fullName, relationships, filePath);
-    }
-
-    // Process class body
-    if (bodyNode) {
-      this.extractClassMembers(bodyNode, fullName, filePath, entities, relationships);
-    }
+    s.cmplx.total = s.cmplx.tpl * 10 + s.cmplx.nested * 5 + s.cmplx.inherit * 3 + s.cmplx.ops * 2;
+    if (s.cmplx.total > CMPLX_CAP) throw new CircuitBreakerError(`Complexity ${s.cmplx.total} > ${CMPLX_CAP}`);
+    if (s.tplNest > TPL_CAP) throw new CircuitBreakerError(`Template depth ${s.tplNest} > ${TPL_CAP}`);
   }
 
-  /**
-   * Extract class members (methods, fields, etc.)
-   */
-  private extractClassMembers(
-    bodyNode: ASTNode,
-    className: string,
-    filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-  ): void {
-    let currentAccessSpecifier = "private"; // Default for class, "public" for struct
+  // -- namespace ------------------------------------------------------------
 
-    for (const child of bodyNode.children) {
-      switch (child.type) {
+  private doNamespace(node: ASTNode, s: CppRunState, parentNs: string): void {
+    const nameField = node.childForFieldName("name");
+    const bodyField = node.childForFieldName("body");
+    if (!nameField || !bodyField) return;
+
+    const qn = parentNs ? `${parentNs}::${nameField.text}` : nameField.text;
+    s.entities.push(mkEntity(qn, "module", getNodeLocation(node), ["namespace"]));
+
+    const kids = bodyField.children;
+    for (let i = 0; i < kids.length; i++) this.step(kids[i]!, s, qn);
+  }
+
+  // -- class / struct -------------------------------------------------------
+
+  private doClassStruct(node: ASTNode, s: CppRunState, ns: string): void {
+    const nameField = node.childForFieldName("name");
+    if (!nameField) return;
+
+    const qn = ns ? `${ns}::${nameField.text}` : nameField.text;
+    if (ns.includes("::")) s.cmplx.nested++;
+
+    const mods: string[] = [];
+    if (node.type === "struct_specifier") mods.push("struct");
+    if (isAbstractClass(node)) mods.push("abstract");
+    if (isFinalClass(node)) mods.push("final");
+
+    s.entities.push(mkEntity(qn, "class", getNodeLocation(node), mods));
+
+    const baseClause = node.childForFieldName("base_class_clause");
+    if (baseClause) this.doBases(baseClause, qn, s);
+
+    const body = node.childForFieldName("body");
+    if (body) this.doClassBody(body, qn, s);
+  }
+
+  private doClassBody(body: ASTNode, className: string, s: CppRunState): void {
+    let access = "private";
+    const kids = body.children;
+
+    for (let i = 0; i < kids.length; i++) {
+      const m = kids[i]!;
+      switch (m.type) {
         case "access_specifier": {
-          // Update current access level
-          const specifierNode = child.firstChild;
-          if (specifierNode) {
-            currentAccessSpecifier = specifierNode.text.replace(":", "");
+          const f = m.firstChild;
+          if (f) access = f.text.replace(":", "");
+          break;
+        }
+        case "field_declaration":
+          this.doField(m, className, s, access);
+          break;
+        case "friend_declaration":
+          this.doFriend(m, className, s);
+          break;
+        case "using_declaration":
+          this.doUsing(m, s, className);
+          break;
+        case "template_declaration":
+          s.tplNest++;
+          if (s.tplNest <= TPL_CAP) this.doTemplate(m, s, className);
+          s.tplNest--;
+          break;
+        case "function_definition":
+        case "function_declaration":
+          this.doMethodDecl(m, className, s, access);
+          break;
+        case "declaration": {
+          const dc = m.children;
+          for (let j = 0; j < dc.length; j++) {
+            const dd = dc[j]!;
+            if (dd.type === "function_definition" || dd.type === "function_declaration") {
+              this.doMethodDecl(dd, className, s, access);
+            } else if (dd.type === "field_declaration") {
+              this.doField(dd, className, s, access);
+            }
           }
           break;
         }
-
-        case "field_declaration":
-          this.extractField(child, className, filePath, entities, relationships, currentAccessSpecifier);
-          break;
-
-        case "friend_declaration":
-          this.extractFriend(child, className, relationships, filePath);
-          break;
-
-        case "using_declaration":
-          // Handle using declarations within class
-          this.extractUsing(child, filePath, entities, relationships, className);
-          break;
-
-        case "template_declaration":
-          // Member templates
-          this.templateDepth++;
-          if (this.templateDepth <= MAX_TEMPLATE_DEPTH) {
-            this.extractTemplate(child, filePath, entities, relationships, className);
-          }
-          this.templateDepth--;
-          break;
-
-        case "function_definition":
-          this.extractMethod(child, className, filePath, entities, relationships, currentAccessSpecifier);
-          break;
-
-        case "function_declaration":
-          this.extractMethod(child, className, filePath, entities, relationships, currentAccessSpecifier);
-          break;
-
-        case "declaration":
-          // Process nested declarations
-          for (const decl of child.children) {
-            if (decl.type === "function_definition" || decl.type === "function_declaration") {
-              this.extractMethod(decl, className, filePath, entities, relationships, currentAccessSpecifier);
-            } else if (decl.type === "field_declaration") {
-              this.extractField(decl, className, filePath, entities, relationships, currentAccessSpecifier);
-            }
-          }
-          break;
       }
     }
   }
 
-  /**
-   * Extract method/function entities
-   */
-  private extractMethod(
-    node: ASTNode,
-    className: string,
-    _filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    accessSpecifier: string = "public",
-  ): void {
-    const declaratorNode = node.childForFieldName("declarator");
-    if (!declaratorNode) return;
-    let functionName = extractFunctionName(declaratorNode);
-    if (!functionName) return;
-    functionName = canonicalizeOperatorName(functionName, node);
-    const fullName = `${className}::${functionName}`;
+  // -- methods --------------------------------------------------------------
 
-    // Check for operator overloading
-    const isOperator = functionName.startsWith("operator");
-    if (isOperator) {
-      this.complexityScore.operatorCount++;
-    }
+  private doMethodDecl(node: ASTNode, className: string, s: CppRunState, access: string): void {
+    const declNode = node.childForFieldName("declarator");
+    if (!declNode) return;
 
-    // Check for special methods
-    const isConstructor = functionName === className.split("::").pop();
-    const isDestructor = functionName.startsWith("~");
+    let fname = extractFunctionName(declNode);
+    if (!fname) return;
 
-    // Extract method qualifiers
-    const qualifiers = extractMethodQualifiers(node);
+    fname = canonicalizeOperatorName(fname, node);
+    const qn = `${className}::${fname}`;
 
-    // Collect modifiers
-    const modifiers: string[] = [];
-    if (accessSpecifier !== "public") modifiers.push(accessSpecifier);
-    if (qualifiers.isStatic) modifiers.push("static");
-    if (qualifiers.isConst) modifiers.push("const");
-    if (qualifiers.isVirtual) modifiers.push("virtual");
-    if (qualifiers.isOverride) modifiers.push("override");
-    if (qualifiers.isFinal) modifiers.push("final");
-    if (qualifiers.isNoexcept) modifiers.push("noexcept");
-    if (isOperator) modifiers.push("operator");
+    if (fname.startsWith("operator")) s.cmplx.ops++;
 
-    // Determine the correct type for ParsedEntity
-    let entityType: ParsedEntity["type"] = "method";
-    if (isConstructor || isDestructor) {
-      entityType = "method"; // No specific constructor/destructor in the type union
-    }
+    const quals = extractMethodQualifiers(node);
+    const mods: string[] = [];
+    if (access !== "public") mods.push(access);
+    if (quals.isStatic) mods.push("static");
+    if (quals.isConst) mods.push("const");
+    if (quals.isVirtual) mods.push("virtual");
+    if (quals.isOverride) mods.push("override");
+    if (quals.isFinal) mods.push("final");
+    if (quals.isNoexcept) mods.push("noexcept");
+    if (fname.startsWith("operator")) mods.push("operator");
 
-    const entity: ParsedEntity = {
-      name: fullName,
-      type: entityType,
-      location: getNodeLocation(node),
-      modifiers,
-    };
-    entities.push(entity);
-
-    // Create relationship to parent class
-    relationships.push({
-      from: fullName,
-      to: className,
-      type: "contains",
-    });
+    s.entities.push(mkEntity(qn, "method", getNodeLocation(node), mods));
+    s.rels.push({ from: qn, to: className, type: "contains" });
   }
 
-  /**
-   * Extract field/member variable entities
-   */
-  private extractField(
-    node: ASTNode,
-    className: string,
-    _filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    accessSpecifier: string,
-  ): void {
-    const declaratorNode = node.childForFieldName("declarator");
-    if (!declaratorNode) return;
+  // -- fields ---------------------------------------------------------------
 
-    const fieldName = extractFieldName(declaratorNode);
-    if (!fieldName) return;
+  private doField(node: ASTNode, className: string, s: CppRunState, access: string): void {
+    const declNode = node.childForFieldName("declarator");
+    if (!declNode) return;
 
-    const fullName = `${className}::${fieldName}`;
+    const fname = extractFieldName(declNode);
+    if (!fname) return;
 
-    // Check if it's static or const
-    const isStatic = node.text.includes("static");
-    const isConst = node.text.includes("const");
-    const isMutable = node.text.includes("mutable");
+    const qn = `${className}::${fname}`;
+    const txt = node.text;
+    const mods: string[] = [];
+    if (access !== "public") mods.push(access);
+    if (txt.includes("static")) mods.push("static");
+    if (txt.includes("const")) mods.push("const");
+    if (txt.includes("mutable")) mods.push("mutable");
 
-    // Collect modifiers
-    const modifiers: string[] = [];
-    if (accessSpecifier !== "public") modifiers.push(accessSpecifier);
-    if (isStatic) modifiers.push("static");
-    if (isConst) modifiers.push("const");
-    if (isMutable) modifiers.push("mutable");
-
-    const entity: ParsedEntity = {
-      name: fullName,
-      type: "property", // Using 'property' for fields
-      location: getNodeLocation(node),
-      modifiers,
-    };
-
-    entities.push(entity);
-
-    // Create relationship to parent class
-    relationships.push({
-      from: fullName,
-      to: className,
-      type: "contains",
-    });
+    s.entities.push(mkEntity(qn, "property", getNodeLocation(node), mods));
+    s.rels.push({ from: qn, to: className, type: "contains" });
   }
 
-  /**
-   * Extract function entities (non-member functions)
-   */
-  private extractFunction(
-    node: ASTNode,
-    _filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    namespace: string,
-    isTemplate: boolean = false,
-  ): void {
-    const declaratorNode = node.childForFieldName("declarator");
-    if (!declaratorNode) return;
+  // -- free functions -------------------------------------------------------
 
-    let functionName = extractFunctionName(declaratorNode);
-    if (!functionName) return;
+  private doFreeFunc(node: ASTNode, s: CppRunState, ns: string, isTpl: boolean): void {
+    const declNode = node.childForFieldName("declarator");
+    if (!declNode) return;
 
-    functionName = canonicalizeOperatorName(functionName, node);
+    let fname = extractFunctionName(declNode);
+    if (!fname) return;
 
-    const fullName = namespace ? `${namespace}::${functionName}` : functionName;
+    fname = canonicalizeOperatorName(fname, node);
+    const qn = ns ? `${ns}::${fname}` : fname;
+    const txt = node.text;
 
-    // Collect modifiers
-    const modifiers: string[] = [];
-    if (isTemplate) modifiers.push("template");
-    if (node.text.includes("inline")) modifiers.push("inline");
-    if (node.text.includes("extern")) modifiers.push("extern");
+    const mods: string[] = [];
+    if (isTpl) mods.push("template");
+    if (txt.includes("inline")) mods.push("inline");
+    if (txt.includes("extern")) mods.push("extern");
 
-    const entity: ParsedEntity = {
-      name: fullName,
-      type: "function",
-      location: getNodeLocation(node),
-      modifiers,
-    };
+    s.entities.push(mkEntity(qn, "function", getNodeLocation(node), mods));
+    if (ns) s.rels.push({ from: qn, to: ns, type: "contains" });
+  }
 
-    entities.push(entity);
+  // -- templates ------------------------------------------------------------
 
-    // If in namespace, create relationship
-    if (namespace) {
-      relationships.push({
-        from: fullName,
-        to: namespace,
-        type: "contains",
+  private doTemplate(node: ASTNode, s: CppRunState, ns: string): void {
+    s.tplNest++;
+    s.cmplx.tpl++;
+
+    if (s.tplNest > TPL_CAP) {
+      log.w("CPPANALYZER", "tpl_too_deep", { depth: s.tplNest });
+      s.tplNest--;
+      return;
+    }
+
+    const paramsField = node.childForFieldName("parameters");
+    const inner = node.children.find(
+      (c) => c.type === "class_specifier" || c.type === "struct_specifier" || c.type === "function_definition",
+    );
+
+    if (!inner) {
+      s.tplNest--;
+      return;
+    }
+
+    const tplParams = extractTemplateParameters(paramsField);
+    if (isComplexTemplate(tplParams, node.text)) {
+      log.w("CPPANALYZER", "tpl_complex");
+      s.tplNest--;
+      return;
+    }
+
+    let declId = "";
+    if (inner.type === "function_definition") {
+      const d = inner.childForFieldName("declarator");
+      declId = extractFunctionName(d) || "";
+    } else {
+      declId = inner.childForFieldName("name")?.text || "";
+    }
+
+    const cacheKey = `${ns}::${inner.type}::${declId}::${tplParams}`;
+    if (s.tplMemo.has(cacheKey)) {
+      const cached = s.tplMemo.get(cacheKey);
+      if (cached) s.entities.push(cached);
+      s.tplNest--;
+      return;
+    }
+
+    if (inner.type === "class_specifier" || inner.type === "struct_specifier") {
+      this.doClassStruct(inner, s, ns);
+      const safeName = inner.childForFieldName("name")?.text || declId;
+      const targetQn = ns ? `${ns}::${safeName}` : safeName;
+      this.markTemplate(s, targetQn, tplParams, cacheKey);
+    } else if (inner.type === "function_definition") {
+      this.doFreeFunc(inner, s, ns, true);
+      const targetQn = ns ? `${ns}::${declId}` : declId;
+      this.markTemplate(s, targetQn, tplParams, cacheKey);
+    }
+
+    s.tplNest--;
+  }
+
+  private markTemplate(s: CppRunState, targetName: string, tplParams: string, cacheKey: string): void {
+    let target: ParsedEntity | undefined;
+    for (let i = s.entities.length - 1; i >= 0; i--) {
+      if (s.entities[i]!.name === targetName) {
+        target = s.entities[i];
+        break;
+      }
+    }
+    if (!target) return;
+
+    const mods = (target.modifiers ??= []);
+    if (!mods.includes("template")) mods.push("template");
+    if (tplParams) {
+      const tag = `template<${tplParams}>`;
+      if (!mods.includes(tag)) mods.push(tag);
+    }
+    s.tplMemo.set(cacheKey, target);
+  }
+
+  // -- using ----------------------------------------------------------------
+
+  private doUsing(node: ASTNode, s: CppRunState, ns: string): void {
+    const target = node.children.find((c) => c.type === "qualified_identifier" || c.type === "identifier");
+    if (target && ns) {
+      s.rels.push({ from: ns, to: target.text, type: "references" });
+    }
+  }
+
+  // -- enums ----------------------------------------------------------------
+
+  private doEnum(node: ASTNode, s: CppRunState, ns: string): void {
+    const nameField = node.childForFieldName("name");
+    if (!nameField) return;
+
+    const qn = ns ? `${ns}::${nameField.text}` : nameField.text;
+    const txt = node.text;
+    const mods: string[] = [];
+    if (txt.includes("class") || txt.includes("struct")) mods.push("scoped");
+
+    s.entities.push(mkEntity(qn, "enum", getNodeLocation(node), mods));
+
+    const body = node.childForFieldName("body");
+    if (!body) return;
+
+    const kids = body.children;
+    for (let i = 0; i < kids.length; i++) {
+      const k = kids[i]!;
+      if (k.type !== "enumerator") continue;
+      const valName = k.childForFieldName("name");
+      if (!valName) continue;
+      const valQn = `${qn}::${valName.text}`;
+      s.entities.push(mkEntity(valQn, "constant", getNodeLocation(k), ["enum_value"]));
+      s.rels.push({ from: valQn, to: qn, type: "contains" });
+    }
+  }
+
+  // -- inheritance ----------------------------------------------------------
+
+  private doBases(baseList: ASTNode, derived: string, s: CppRunState): void {
+    let depthCounter = 0;
+    const kids = baseList.children;
+
+    for (let i = 0; i < kids.length; i++) {
+      const spec = kids[i]!;
+      if (spec.type !== "base_class_specifier" && spec.type !== "base_specifier") continue;
+
+      depthCounter++;
+      s.cmplx.inherit = Math.max(s.cmplx.inherit, depthCounter);
+
+      const txt = spec.text;
+      const isVirtual = txt.includes("virtual");
+      let access = "private";
+      if (txt.includes("public")) access = "public";
+      else if (txt.includes("protected")) access = "protected";
+
+      const baseId = spec.children.find((c) => c.type === "type_identifier" || c.type === "qualified_identifier");
+
+      if (baseId) {
+        s.rels.push({
+          from: derived,
+          to: baseId.text,
+          type: "inherits",
+          metadata: relMeta({ access, isVirtual }),
+        });
+      }
+    }
+  }
+
+  // -- friend ---------------------------------------------------------------
+
+  private doFriend(node: ASTNode, className: string, s: CppRunState): void {
+    const target = node.children.find(
+      (c) => c.type === "type_identifier" || c.type === "qualified_identifier" || c.type === "function_definition",
+    );
+    if (!target) return;
+
+    const friendName =
+      target.type === "function_definition" ? extractFunctionName(target.childForFieldName("declarator")) : target.text;
+
+    if (friendName) {
+      s.rels.push({
+        from: className,
+        to: friendName,
+        type: "references",
+        metadata: relMeta({ relation: "friend" }),
       });
     }
   }
 
-  /**
-   * Extract template entities (Phase 4 - Limited support)
-   */
-  private extractTemplate(
-    node: ASTNode,
-    _filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    namespace: string,
-  ): void {
-    this.templateDepth++;
-    this.complexityScore.templateDepth++;
+  // -- post-processing ------------------------------------------------------
 
-    if (this.templateDepth > MAX_TEMPLATE_DEPTH) {
-      log.w("CPPANALYZER", "tpl_too_deep", { depth: this.templateDepth });
-      this.templateDepth--;
-      return;
+  private pruneRels(rels: EntityRelationship[]): void {
+    let w = 0;
+    for (let r = 0; r < rels.length; r++) {
+      if (rels[r]!.from && rels[r]!.to) rels[w++] = rels[r]!;
     }
-
-    const parametersNode = node.childForFieldName("parameters");
-    const declarationNode = node.children.find(
-      (child) =>
-        child.type === "class_specifier" || child.type === "struct_specifier" || child.type === "function_definition",
-    );
-
-    if (!declarationNode) {
-      this.templateDepth--;
-      return;
-    }
-
-    const templateParams = extractTemplateParameters(parametersNode);
-
-    if (isComplexTemplate(templateParams, node.text)) {
-      log.w("CPPANALYZER", "tpl_complex");
-      this.templateDepth--;
-      return;
-    }
-
-    // Build declaration name for cache key (avoid collisions like two different functions with same template params)
-    let declName = "";
-    if (declarationNode.type === "function_definition") {
-      const d = declarationNode.childForFieldName("declarator");
-      declName = extractFunctionName(d) || "";
-    } else if (declarationNode.type === "class_specifier" || declarationNode.type === "struct_specifier") {
-      const n = declarationNode.childForFieldName("name");
-      declName = n?.text || "";
-    }
-
-    // Generate cache key for memoization with declaration name
-    const cacheKey = `${namespace}::${declarationNode.type}::${declName}::${templateParams}`;
-
-    if (this.templateCache.has(cacheKey)) {
-      const cached = this.templateCache.get(cacheKey);
-      if (cached) entities.push(cached);
-      this.templateDepth--;
-      return;
-    }
-
-    if (declarationNode.type === "class_specifier" || declarationNode.type === "struct_specifier") {
-      this.extractClass(declarationNode, _filePath, entities, relationships, namespace);
-      const classNameNode = declarationNode.childForFieldName("name");
-      const declNameSafe = classNameNode?.text || declName;
-      const targetName = namespace ? `${namespace}::${declNameSafe}` : declNameSafe;
-      this.markEntityAsTemplate(entities, targetName, templateParams, cacheKey);
-    } else if (declarationNode.type === "function_definition") {
-      this.extractFunction(declarationNode, _filePath, entities, relationships, namespace, true);
-      const targetName = namespace ? `${namespace}::${declName}` : declName;
-      this.markEntityAsTemplate(entities, targetName, templateParams, cacheKey);
-    }
-
-    this.templateDepth--;
-  }
-
-  /**
-   * Safely mark the last entity as a template and put into cache
-   */
-
-  private markEntityAsTemplate(
-    entities: ParsedEntity[],
-    targetName: string,
-    templateParams: string,
-    cacheKey: string,
-  ): void {
-    const ent = [...entities].reverse().find((e) => e.name === targetName);
-    if (!ent) return;
-    ent.modifiers = ent.modifiers || [];
-    if (!ent.modifiers.includes("template")) {
-      ent.modifiers.push("template");
-    }
-    if (templateParams) {
-      const flag = `template<${templateParams}>`;
-      if (!ent.modifiers.includes(flag)) ent.modifiers.push(flag);
-    }
-    this.templateCache.set(cacheKey, ent);
-  }
-
-  /**
-   * Extract using declarations and directives
-   */
-  private extractUsing(
-    node: ASTNode,
-    _filePath: string,
-    _entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    namespace: string,
-  ): void {
-    // Extract the name being used
-    const nameNode = node.children.find(
-      (child) => child.type === "qualified_identifier" || child.type === "identifier",
-    );
-
-    if (nameNode) {
-      const targetName = nameNode.text;
-
-      // Create a using relationship
-      if (namespace) {
-        relationships.push({
-          from: namespace,
-          to: targetName,
-          type: "references",
-        });
-      }
-    }
-  }
-
-  /**
-   * Extract enum entities
-   */
-  private extractEnum(
-    node: ASTNode,
-    _filePath: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    namespace: string,
-  ): void {
-    const nameNode = node.childForFieldName("name");
-    if (!nameNode) return;
-
-    const enumName = nameNode.text;
-    const fullName = namespace ? `${namespace}::${enumName}` : enumName;
-
-    // Collect modifiers
-    const modifiers: string[] = [];
-    if (node.text.includes("class") || node.text.includes("struct")) {
-      modifiers.push("scoped");
-    }
-
-    const entity: ParsedEntity = {
-      name: fullName,
-      type: "enum", // This is a valid type in ParsedEntity
-      location: getNodeLocation(node),
-      modifiers,
-    };
-
-    entities.push(entity);
-
-    // Extract enum values
-    const bodyNode = node.childForFieldName("body");
-    if (bodyNode) {
-      for (const child of bodyNode.children) {
-        if (child.type === "enumerator") {
-          const enumeratorName = child.childForFieldName("name");
-          if (enumeratorName) {
-            const valueName = `${fullName}::${enumeratorName.text}`;
-            entities.push({
-              name: valueName,
-              type: "constant", // Using 'constant' for enum values
-              location: getNodeLocation(child),
-              modifiers: ["enum_value"],
-            });
-
-            relationships.push({
-              from: valueName,
-              to: fullName,
-              type: "contains",
-            });
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Extract inheritance relationships
-   */
-  private extractInheritance(
-    baseListNode: ASTNode,
-    derivedClass: string,
-    relationships: EntityRelationship[],
-    _filePath: string,
-  ): void {
-    let inheritanceDepth = 0;
-
-    for (const child of baseListNode.children) {
-      if (child.type === "base_class_specifier" || child.type === "base_specifier") {
-        inheritanceDepth++;
-
-        // Track inheritance depth for complexity
-        this.complexityScore.inheritanceDepth = Math.max(this.complexityScore.inheritanceDepth, inheritanceDepth);
-
-        // Check for virtual inheritance
-        const isVirtual = child.text.includes("virtual");
-
-        // Extract access specifier (public, protected, private)
-        let accessSpecifier = "private"; // default for class
-        if (child.text.includes("public")) accessSpecifier = "public";
-        else if (child.text.includes("protected")) accessSpecifier = "protected";
-
-        // Find the base class name
-        const baseNameNode = child.children.find(
-          (node) => node.type === "type_identifier" || node.type === "qualified_identifier",
-        );
-
-        if (baseNameNode) {
-          const baseClassName = baseNameNode.text;
-
-          relationships.push({
-            from: derivedClass,
-            to: baseClassName,
-            type: "inherits",
-            metadata: {
-              access: accessSpecifier,
-              isVirtual: isVirtual,
-            },
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Extract friend relationships
-   */
-  private extractFriend(
-    node: ASTNode,
-    className: string,
-    relationships: EntityRelationship[],
-    _filePath: string,
-  ): void {
-    const friendTarget = node.children.find(
-      (child) =>
-        child.type === "type_identifier" ||
-        child.type === "qualified_identifier" ||
-        child.type === "function_definition",
-    );
-
-    if (friendTarget) {
-      const friendName =
-        friendTarget.type === "function_definition"
-          ? extractFunctionName(friendTarget.childForFieldName("declarator"))
-          : friendTarget.text;
-
-      if (friendName) {
-        relationships.push({
-          from: className,
-          to: friendName,
-          type: "references",
-          metadata: { relation: "friend" },
-        });
-      }
-    }
-  }
-
-  /**
-   * Build semantic graph with lazy evaluation (Phase 2)
-   */
-  private buildSemanticGraph(_entities: ParsedEntity[], relationships: EntityRelationship[]): void {
-    // This is where we would build a richer semantic graph
-    // For now, we're keeping the syntactic information
-    // Future enhancement: Add type resolution, symbol tables, etc.
-
-    // Remove invalid relationships
-    const validRelationships = relationships.filter((rel) => {
-      // Keep relationships even if target doesn't exist (might be external)
-      return rel.from && rel.to;
-    });
-
-    // Update relationships array
-    relationships.length = 0;
-    relationships.push(...validRelationships);
+    rels.length = w;
   }
 }

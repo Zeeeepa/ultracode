@@ -1,32 +1,32 @@
-# Тестовый модуль для MCP
+# Test Module for MCP
 
-## Описание
+## Description
 
-Модуль `tests` предназначен для выполнения тестов, связанных с протоколом MCP (Model Control Protocol). Включает в себя тесты для прямого взаимодействия с MCP и тесты протокола MCP. Этот модуль используется для проверки корректности работы компонентов, связанных с MCP, в рамках проекта.
+The `tests` module is designed for running tests related to the MCP (Model Control Protocol) protocol. It includes tests for direct interaction with MCP and MCP protocol tests. This module is used to verify the correct operation of MCP-related components within the project.
 
-## Файлы
+## Files
 
-| Файл | Описание |
+| File | Description |
 |------|----------|
-| `test-mcp-direct.js` | Содержит тесты для прямого взаимодействия с MCP, включая проверку функциональности и корректности работы компонентов без использования протокола. |
-| `test-mcp-protocol.js` | Содержит тесты протокола MCP, проверяющие корректность обмена данными и соответствие протоколу. |
+| `test-mcp-direct.js` | Contains tests for direct interaction with MCP, including functionality and correctness verification of components without using the protocol. |
+| `test-mcp-protocol.js` | Contains MCP protocol tests that verify the correctness of data exchange and protocol compliance. |
 
-## Экспорты
+## Exports
 
-В модуле отсутствуют публичные экспорты. Все функции и классы предназначены для внутреннего использования и тестирования.
+The module has no public exports. All functions and classes are intended for internal use and testing.
 
-## Использование
+## Usage
 
-Для запуска тестов необходимо выполнить команду:
+To run the tests, execute the following command:
 
 ```bash
 npm run test
 ```
 
-или
+or
 
 ```bash
 yarn test
 ```
 
-Тесты автоматически запустятся и отобразят результаты проверки компонентов MCP.
+The tests will automatically run and display the MCP component verification results.

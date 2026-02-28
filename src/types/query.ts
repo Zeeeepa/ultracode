@@ -1,32 +1,28 @@
 /**
- * TASK-002: Query Type Definitions for QueryAgent
+ * Query type definitions for graph operations and traversal.
  *
- * Type definitions for graph traversal, relationship queries, and query operations.
- * Provides interfaces for query processing, caching, and streaming.
+ * Covers entity filtering, graph path analysis, dependency trees,
+ * impact analysis, caching configuration, and streaming support.
  *
- * External Dependencies:
- * - None (pure TypeScript type definitions)
- *
- * Architecture References:
- * - Storage Types: src/types/storage.ts
- * - Agent Types: src/types/agent.ts
- * - Graph Storage: src/storage/graph-storage.ts
- *
- * @task_id TASK-002
- * @coding_standard Adheres to: doc/CODING_STANDARD.md
- * @history
- *  - 2025-01-14: Created by Dev-Agent - TASK-002: Initial query type definitions
+ * Related modules:
+ *   - src/types/storage.ts (Entity, Relationship base types)
+ *   - src/types/agent.ts (Agent coordination types)
+ *   - src/storage/graph-storage.ts (runtime graph storage)
  */
 
 import { CACHE_CONSTANTS } from "../config/constants.js";
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
 import type { Entity, EntityType, Relationship, RelationType } from "./storage.js";
 
-// =============================================================================
-// 2. CONSTANTS AND CONFIGURATION
-// =============================================================================
+// ---------------------------------------------------------------------------
+// Re-exports
+// ---------------------------------------------------------------------------
+
+export type { Entity, Relationship } from "./storage.js";
+
+// ---------------------------------------------------------------------------
+// Numeric limits and defaults
+// ---------------------------------------------------------------------------
+
 export const MAX_QUERY_DEPTH = 10;
 export const DEFAULT_QUERY_LIMIT = 100;
 export const MAX_CONCURRENT_QUERIES = 10;
@@ -34,106 +30,106 @@ export const CACHE_L1_SIZE = 100; // Hot cache
 export const CACHE_L2_SIZE = 1000; // Warm cache
 export const DEFAULT_TTL_MS = CACHE_CONSTANTS.CACHE_TTL_MS;
 
-// =============================================================================
-// 3. DATA MODELS AND TYPE DEFINITIONS
-// =============================================================================
+// ---------------------------------------------------------------------------
+// Entity filtering
+// ---------------------------------------------------------------------------
 
-// Re-export Entity and Relationship for external usage
-export type { Entity, Relationship } from "./storage.js";
-
-/**
- * Filter for entity queries
- */
+/** Criteria for narrowing entity lookup results. */
 export interface EntityFilter {
-  id?: string | string[];
-  name?: string | RegExp;
   type?: EntityType | EntityType[] | undefined;
-  filePath?: string | string[];
+  name?: string | RegExp;
   namePattern?: string | undefined;
+  id?: string | string[];
+  filePath?: string | string[];
   hasRelationType?: RelationType;
 }
 
-/**
- * Graph traversal path
- */
+// ---------------------------------------------------------------------------
+// Graph traversal primitives
+// ---------------------------------------------------------------------------
+
+/** A path between two nodes in the graph. */
 export interface Path {
-  nodes: Entity[];
   edges: Relationship[];
+  nodes: Entity[];
   length: number;
   cost?: number;
 }
 
-/**
- * Subgraph representation
- */
+/** A rooted sub-graph extracted from the full graph. */
 export interface Graph {
   rootId: string;
+  depth: number;
   entities: Map<string, Entity>;
   relationships: Map<string, Relationship>;
-  depth: number;
 }
 
-/**
- * Dependency tree structure
- */
+// ---------------------------------------------------------------------------
+// Dependency analysis
+// ---------------------------------------------------------------------------
+
+/** Top-level dependency tree rooted at a single entity. */
 export interface DependencyTree {
   root: Entity;
-  dependencies: Map<string, DependencyNode>;
   cycles: Cycle[];
+  dependencies: Map<string, DependencyNode>;
 }
 
+/** Single node inside a dependency tree. */
 export interface DependencyNode {
   entity: Entity;
-  children: DependencyNode[];
   depth: number;
   circular: boolean;
+  children: DependencyNode[];
 }
 
-/**
- * Cycle detection result
- */
+/** Represents a detected cyclic dependency. */
 export interface Cycle {
+  type: "import" | "inheritance" | "reference";
   nodes: Entity[];
   edges: Relationship[];
-  type: "import" | "inheritance" | "reference";
 }
 
-/**
- * Code hotspot analysis
- */
+// ---------------------------------------------------------------------------
+// Hotspot and impact analysis
+// ---------------------------------------------------------------------------
+
+/** A code entity flagged as a hotspot based on combined metrics. */
 export interface Hotspot {
-  entity: Entity;
   score: number;
+  entity: Entity;
   metrics: {
+    complexity: number;
+    changeFrequency: number;
     incomingRelationships: number;
     outgoingRelationships: number;
-    changeFrequency: number;
-    complexity: number;
   };
 }
 
-/**
- * Impact analysis result
- */
+/** Result of analysing the blast radius when an entity changes. */
 export interface ImpactAnalysis {
   sourceEntity: Entity;
-  impactedEntities: Entity[];
+  riskLevel: "low" | "medium" | "high" | "critical";
   directImpacts: Entity[];
   indirectImpacts: Entity[];
-  riskLevel: "low" | "medium" | "high" | "critical";
+  impactedEntities: Entity[];
   affectedFiles: string[];
 }
 
-/**
- * Change ripple effect
- */
+// ---------------------------------------------------------------------------
+// Change tracking and ripple effects
+// ---------------------------------------------------------------------------
+
+/** Describes a single change event on an entity. */
 export interface Change {
   entityId: string;
-  type: "added" | "modified" | "deleted";
   timestamp: number;
+  type: "added" | "modified" | "deleted";
 }
 
+/** Aggregated effect of one or more changes on the graph. */
 export interface RippleEffect {
+  estimatedRisk: number;
   changes: Change[];
   affectedEntities: Map<
     string,
@@ -143,26 +139,27 @@ export interface RippleEffect {
       reason: string;
     }
   >;
-  estimatedRisk: number;
 }
 
-/**
- * Query operations interface
- */
+// ---------------------------------------------------------------------------
+// Query operations contract
+// ---------------------------------------------------------------------------
+
+/** High-level interface that a query executor must implement. */
 export interface QueryOperations {
-  // Basic queries
+  // Entity lookups
   getEntity(id: string): Promise<Entity | null>;
   listEntities(filter: EntityFilter): Promise<Entity[]>;
 
-  // Relationship queries
+  // Relationship lookups
   getRelationships(entityId: string, type?: RelationType): Promise<Relationship[]>;
   getRelatedEntities(entityId: string, depth: number): Promise<Entity[]>;
 
-  // Graph traversal
+  // Traversal
   findPath(fromId: string, toId: string): Promise<Path | null>;
   getSubgraph(rootId: string, depth: number): Promise<Graph>;
 
-  // Advanced queries
+  // Dependency and cycle detection
   findDependencies(entityId: string): Promise<DependencyTree>;
   detectCycles(): Promise<Cycle[]>;
   analyzeHotspots(): Promise<Hotspot[]>;
@@ -172,84 +169,88 @@ export interface QueryOperations {
   calculateChangeRipple(changes: Change[]): Promise<RippleEffect>;
 }
 
-/**
- * Graph query for processing
- */
+// ---------------------------------------------------------------------------
+// Query representation and results
+// ---------------------------------------------------------------------------
+
+/** Internal representation of a graph query before execution. */
 export interface GraphQuery {
   id: string;
+  hash: string;
+  timestamp: number;
   type: "entity" | "relationship" | "traversal" | "analysis";
   operation: string;
   params: Record<string, unknown>;
-  hash: string;
-  timestamp: number;
 }
 
-/**
- * Query result wrapper
- */
+/** Wrapper that pairs a query with its result data and execution metadata. */
 export interface QueryResult<T = unknown> {
-  query: GraphQuery;
   data: T;
+  query: GraphQuery;
   metadata: {
-    executionTimeMs: number;
     fromCache: boolean;
+    executionTimeMs: number;
     cacheLevel?: "L1" | "L2" | "L3";
   };
 }
 
-/**
- * Optimized query for execution
- */
+/** A query after the optimiser has rewritten it for execution. */
 export interface OptimizedQuery {
   sql: string;
-  params?: unknown[];
   estimatedCost: number;
+  params?: unknown[];
   useIndex?: string | undefined;
 }
 
-// CacheEntry removed - use CacheEntry from storage.ts instead
+// ---------------------------------------------------------------------------
+// Cache statistics
+// ---------------------------------------------------------------------------
 
-/**
- * Cache statistics
- */
+/** Snapshot of cache tier utilisation and performance. */
 export interface CacheStats {
+  hitRate: number;
+  totalHits: number;
+  totalMisses: number;
+  memoryUsageMB: number;
   l1Entries: number;
   l2Entries: number;
   l3Entries: number;
-  totalHits: number;
-  totalMisses: number;
-  hitRate: number;
-  memoryUsageMB: number;
 }
 
-/**
- * Connection pool configuration
- */
+// ---------------------------------------------------------------------------
+// Connection pool settings
+// ---------------------------------------------------------------------------
+
+/** Tuning knobs for the database connection pool. */
 export interface ConnectionPoolConfig {
   maxConnections: number;
   minConnections: number;
-  acquireTimeout: number;
   idleTimeout: number;
+  acquireTimeout: number;
   connectionTestInterval: number;
 }
 
-/**
- * Streaming options
- */
+// ---------------------------------------------------------------------------
+// Streaming
+// ---------------------------------------------------------------------------
+
+/** Options for streaming large result sets in batches. */
 export interface StreamOptions {
   batchSize: number;
   highWaterMark: number;
   encoding?: BufferEncoding;
 }
 
-/**
- * Query metrics for monitoring
- */
+// ---------------------------------------------------------------------------
+// Monitoring metrics
+// ---------------------------------------------------------------------------
+
+/** Aggregated query performance counters. */
 export interface QueryMetrics {
   totalQueries: number;
-  averageResponseTime: number;
   slowQueries: number;
   errorRate: number;
   cacheHitRate: number;
+  averageResponseTime: number;
   concurrentQueries: number;
 }

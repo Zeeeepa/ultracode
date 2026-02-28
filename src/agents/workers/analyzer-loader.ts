@@ -135,6 +135,16 @@ async function createAnalyzer(language: string): Promise<BaseParser> {
       break;
     }
 
+    case "helm": {
+      const { workerLog: helmLog } = await import("./worker-logging.js");
+      helmLog("INFO", `Loading HelmParser`);
+      const { HelmParser } = await import("../../parsers/helm-parser.js");
+      analyzer = new HelmParser();
+      await analyzer.initialize();
+      helmLog("INFO", `HelmParser initialized`);
+      break;
+    }
+
     case "bash": {
       const { BashNativeParser } = await import("../../parsers/bash-native-parser.js");
       analyzer = new BashNativeParser();
@@ -162,39 +172,22 @@ async function createAnalyzer(language: string): Promise<BaseParser> {
     }
 
     case "json": {
-      // Simple JSON parser - just returns empty entities (JSON doesn't have code entities)
-      // JSON files are indexed for search but don't have AST entities
+      const { workerLog } = await import("./worker-logging.js");
+      workerLog("INFO", `Loading JsonParser`);
+      const { JsonParser } = await import("../../parsers/json-parser.js");
+      const jsonParser = new JsonParser();
+      await jsonParser.initialize();
+      // Wrap JsonParser in BaseParser interface (add missing parseIncremental and clearCache)
       analyzer = {
-        initialize: async () => {},
-        supportsFile: () => true,
-        parse: async (filePath: string, _content: string, hash: string) => ({
-          entities: [],
-          filePath,
-          contentHash: hash,
-          language: "json",
-          timestamp: Date.now(),
-          parseTimeMs: 0,
-        }),
-        parseIncremental: async (filePath: string, _content: string, hash: string) => ({
-          entities: [],
-          filePath,
-          contentHash: hash,
-          language: "json",
-          timestamp: Date.now(),
-          parseTimeMs: 0,
-        }),
-        getStats: () => ({
-          filesParsed: 0,
-          cacheHits: 0,
-          cacheMisses: 0,
-          avgParseTimeMs: 0,
-          totalParseTimeMs: 0,
-          throughput: 0,
-          cacheMemoryMB: 0,
-          errorCount: 0,
-        }),
+        initialize: async () => jsonParser.initialize(),
+        supportsFile: (filePath: string) => jsonParser.supportsFile(filePath),
+        parse: (filePath: string, content: string, hash: string) => jsonParser.parse(filePath, content, hash),
+        parseIncremental: (filePath: string, content: string, hash: string) =>
+          jsonParser.parse(filePath, content, hash),
+        getStats: () => jsonParser.getStats(),
         clearCache: () => {},
       };
+      workerLog("INFO", `JsonParser initialized OK`);
       break;
     }
 
@@ -299,6 +292,7 @@ export const SUPPORTED_WORKER_LANGUAGES = [
   "javascript",
   "json",
   "zig",
+  "helm",
 ] as const;
 
 /**

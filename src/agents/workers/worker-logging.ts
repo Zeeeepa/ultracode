@@ -14,7 +14,7 @@ export const WORKER_ID = process.env["PARSING_WORKER_ID"] || "unknown";
 
 // Ensure logs directory exists early
 try {
-  const logsDir = join(process.env["APPDATA"] || join(homedir(), "AppData", "Local"), "UltraScriptTools", "logs");
+  const logsDir = join(process.env["APPDATA"] || join(homedir(), "AppData", "Local"), "UltraCode", "logs");
   mkdirSync(logsDir, { recursive: true });
 } catch {}
 
@@ -32,7 +32,7 @@ export function getLocalDateForLog(): string {
  */
 export const WORKER_LOG_FILE = join(
   process.env["LOCALAPPDATA"] || join(homedir(), "AppData", "Local"),
-  "UltraScriptTools",
+  "UltraCode",
   "logs",
   `worker-${getLocalDateForLog()}.log`,
 );

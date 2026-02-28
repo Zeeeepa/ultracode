@@ -10,22 +10,22 @@ import {
 } from "../models/semantic-conflict.js";
 
 /**
- * Conflict Detector - Детекция конфликтов при слиянии
+ * Conflict Detector - Detects conflicts during merge
  *
- * Анализирует, когда обе ветки изменили один и тот же код,
- * определяет тип конфликта и severity.
+ * Analyzes when both branches modified the same code,
+ * determines conflict type and severity.
  */
 
 export class ConflictDetector {
   /**
-   * Определить, есть ли конфликт между двумя изменениями
+   * Determine whether there is a conflict between two changes
    *
-   * @param baseUnit - Unit в base (может быть null)
-   * @param branchAUnit - Unit в branchA
-   * @param branchBUnit - Unit в branchB
-   * @param branchAIntent - Intent изменения в branchA (опционально)
-   * @param branchBIntent - Intent изменения в branchB (опционально)
-   * @returns SemanticConflict если есть конфликт, null если нет
+   * @param baseUnit - Unit in base (may be null)
+   * @param branchAUnit - Unit in branchA
+   * @param branchBUnit - Unit in branchB
+   * @param branchAIntent - Change intent in branchA (optional)
+   * @param branchBIntent - Change intent in branchB (optional)
+   * @returns SemanticConflict if there is a conflict, null if not
    */
   detectConflict(
     baseUnit: CodeUnit | null,
@@ -34,18 +34,18 @@ export class ConflictDetector {
     branchAIntent?: ChangeIntent | undefined,
     branchBIntent?: ChangeIntent | undefined,
   ): SemanticConflict | null {
-    // Если обе ветки сделали идентичные изменения - нет конфликта
+    // If both branches made identical changes - no conflict
     if (branchAUnit.contentHash === branchBUnit.contentHash) {
       return null;
     }
 
-    // Проверяем API breaking changes
+    // Check for API breaking changes
     const apiConflict = this.detectAPIConflict(baseUnit, branchAUnit, branchBUnit);
     if (apiConflict) {
       return apiConflict;
     }
 
-    // Проверяем несовместимые намерения
+    // Check for incompatible intents
     if (branchAIntent && branchBIntent) {
       const intentConflict = this.detectIntentConflict(
         baseUnit,
@@ -59,20 +59,20 @@ export class ConflictDetector {
       }
     }
 
-    // Overlapping changes - обе ветки изменили один и тот же код
+    // Overlapping changes - both branches modified the same code
     const conflict = createOverlappingConflict(baseUnit, branchAUnit, branchBUnit);
 
-    // Определяем severity на основе extent of changes
+    // Determine severity based on extent of changes
     conflict.severity = this.classifySeverity(baseUnit, branchAUnit, branchBUnit);
 
-    // Проверяем, можно ли автоматически разрешить
+    // Check if it can be automatically resolved
     conflict.autoResolvable = this.isAutoResolvable(conflict, branchAIntent, branchBIntent);
 
     return conflict;
   }
 
   /**
-   * Детекция API breaking changes
+   * Detect API breaking changes
    */
   private detectAPIConflict(
     baseUnit: CodeUnit | null,
@@ -81,11 +81,11 @@ export class ConflictDetector {
   ): SemanticConflict | null {
     if (!baseUnit) return null;
 
-    // Проверяем signature changes
+    // Check signature changes
     const branchASignatureChanged = baseUnit.signature !== branchAUnit.signature;
     const branchBSignatureChanged = baseUnit.signature !== branchBUnit.signature;
 
-    // Обе ветки изменили signature - это API breaking change
+    // Both branches changed signature - this is an API breaking change
     if (branchASignatureChanged && branchBSignatureChanged) {
       return createAPIBreakingConflict(baseUnit, branchAUnit, branchBUnit);
     }
@@ -102,7 +102,7 @@ export class ConflictDetector {
   }
 
   /**
-   * Детекция конфликта намерений
+   * Detect intent conflict
    */
   private detectIntentConflict(
     baseUnit: CodeUnit | null,
@@ -111,7 +111,7 @@ export class ConflictDetector {
     branchAIntent: ChangeIntent,
     branchBIntent: ChangeIntent,
   ): SemanticConflict | null {
-    // Проверяем совместимость намерений
+    // Check intent compatibility
     const compatible = this.areIntentsCompatible(branchAIntent.type, branchBIntent.type);
 
     if (!compatible) {
@@ -122,21 +122,21 @@ export class ConflictDetector {
   }
 
   /**
-   * Проверка совместимости намерений
+   * Check intent compatibility
    */
   private areIntentsCompatible(intentA: ChangeIntentType, intentB: ChangeIntentType): boolean {
-    // Матрица совместимости намерений
+    // Intent compatibility matrix
     const compatibilityMatrix: Record<ChangeIntentType, Set<ChangeIntentType>> = {
       [ChangeIntentType.BugFix]: new Set([
-        ChangeIntentType.BugFix, // Два bug fix'а обычно compatible
+        ChangeIntentType.BugFix, // Two bug fixes are usually compatible
         ChangeIntentType.Refactoring, // BugFix + Refactoring = OK
       ]),
       [ChangeIntentType.Refactoring]: new Set([ChangeIntentType.BugFix, ChangeIntentType.Refactoring]),
       [ChangeIntentType.FeatureAddition]: new Set([
-        ChangeIntentType.FeatureAddition, // Два feature addition могут быть compatible
+        ChangeIntentType.FeatureAddition, // Two feature additions can be compatible
       ]),
       [ChangeIntentType.APIChange]: new Set([
-        // API changes обычно incompatible с другими изменениями
+        // API changes are usually incompatible with other changes
       ]),
       [ChangeIntentType.Unknown]: new Set([ChangeIntentType.Unknown]),
     };
@@ -146,65 +146,65 @@ export class ConflictDetector {
   }
 
   /**
-   * Классификация severity конфликта
+   * Classify conflict severity
    */
   private classifySeverity(baseUnit: CodeUnit | null, branchAUnit: CodeUnit, branchBUnit: CodeUnit): ConflictSeverity {
     if (!baseUnit) {
-      // Оба добавили новый unit (маловероятно, но возможно)
+      // Both added a new unit (unlikely, but possible)
       return ConflictSeverity.Medium;
     }
 
-    // Вычисляем extent of changes
+    // Compute extent of changes
     const branchADiff = this.computeDifference(baseUnit.content, branchAUnit.content);
     const branchBDiff = this.computeDifference(baseUnit.content, branchBUnit.content);
 
-    // Если оба изменили много - High severity
+    // If both changed a lot - High severity
     if (branchADiff > 0.5 && branchBDiff > 0.5) {
       return ConflictSeverity.High;
     }
 
-    // Если один изменил много - Medium severity
+    // If one changed a lot - Medium severity
     if (branchADiff > 0.3 || branchBDiff > 0.3) {
       return ConflictSeverity.Medium;
     }
 
-    // Малые изменения - Low severity
+    // Small changes - Low severity
     return ConflictSeverity.Low;
   }
 
   /**
-   * Вычислить разницу между двумя версиями кода (0.0-1.0)
+   * Compute difference between two code versions (0.0-1.0)
    */
   private computeDifference(baseContent: string, changedContent: string): number {
-    // Простая метрика: Levenshtein distance normalized
-    // Для production можно использовать diff library
+    // Simple metric: Levenshtein distance normalized
+    // For production a diff library can be used
     const maxLength = Math.max(baseContent.length, changedContent.length);
     if (maxLength === 0) return 0.0;
 
-    // Упрощённая версия: просто сравниваем длину
+    // Simplified version: just compare lengths
     const lengthDiff = Math.abs(baseContent.length - changedContent.length);
     return Math.min(lengthDiff / maxLength, 1.0);
   }
 
   /**
-   * Проверка, можно ли автоматически разрешить конфликт
+   * Check whether the conflict can be automatically resolved
    */
   private isAutoResolvable(
     conflict: SemanticConflict,
     branchAIntent?: ChangeIntent | undefined,
     branchBIntent?: ChangeIntent | undefined,
   ): boolean {
-    // Critical conflicts - не разрешаются автоматически
+    // Critical conflicts - cannot be auto-resolved
     if (conflict.severity === ConflictSeverity.Critical) {
       return false;
     }
 
-    // API breaking changes - не разрешаются автоматически
+    // API breaking changes - cannot be auto-resolved
     if (conflict.type === ConflictType.APIBreakingChange) {
       return false;
     }
 
-    // Если намерения совместимы и severity Low - можно попробовать автоматически
+    // If intents are compatible and severity is Low - can try auto-resolve
     if (
       branchAIntent &&
       branchBIntent &&
@@ -214,12 +214,12 @@ export class ConflictDetector {
       return true;
     }
 
-    // По умолчанию не разрешаем автоматически
+    // By default do not auto-resolve
     return false;
   }
 
   /**
-   * Batch detection для нескольких пар units
+   * Batch detection for multiple unit pairs
    */
   detectConflicts(
     matches: Array<{

@@ -4,7 +4,7 @@
  * Provides GPU-accelerated computations using NVIDIA CUDA.
  * Performance: 100-200x faster than CPU for 8192-dim vectors.
  *
- * @module ultrascript-cuda-addon
+ * @module ultracode-cuda-addon
  */
 
 export interface CUDADeviceInfo {

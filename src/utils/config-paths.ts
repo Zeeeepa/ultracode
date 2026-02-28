@@ -1,26 +1,26 @@
 /**
- * Cross-platform configuration paths for UltraScript Tools
+ * Cross-platform configuration paths for UltraCode
  *
  * Provides unified paths for storing configuration and data files
  * across Windows, macOS, and Linux.
  *
  * Paths:
- *   Windows: %LOCALAPPDATA%\UltraScriptTools\
- *   macOS:   ~/Library/Application Support/UltraScriptTools/
- *   Linux:   ~/.config/ultrascript-tools/  (or $XDG_CONFIG_HOME)
+ *   Windows: %LOCALAPPDATA%\UltraCode\
+ *   macOS:   ~/Library/Application Support/UltraCode/
+ *   Linux:   ~/.config/ultracode/  (or $XDG_CONFIG_HOME)
  *
  * Uses runtime-optimized file operations from file-ops.ts
  */
 
 import { homedir, platform } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { log } from "../logging/index.js";
 import { existsSync, mkdirSync, readJSONSync, writeFileSync } from "./file-ops.js";
 
-const APP_NAME = "UltraScriptTools";
+const APP_NAME = "UltraCode";
 
 /**
- * Get the central configuration directory for UltraScript Tools
+ * Get the central configuration directory for UltraCode
  * NOTE: Must match storage-paths.ts getConfigDir() for consistency
  */
 export function getConfigDir(): string {
@@ -29,14 +29,14 @@ export function getConfigDir(): string {
 }
 
 /**
- * Get the logs directory for UltraScript Tools
+ * Get the logs directory for UltraCode
  */
 export function getLogsDir(): string {
   return join(getDataDir(), "logs");
 }
 
 /**
- * Get the central data directory for UltraScript Tools
+ * Get the central data directory for UltraCode
  * (for databases, embeddings, cache, etc.)
  * NOTE: Must match storage-paths.ts getDataDir() for consistency
  */
@@ -47,19 +47,19 @@ export function getDataDir(): string {
 
   switch (os) {
     case "win32": {
-      // Windows: %LOCALAPPDATA%\UltraScriptTools\
+      // Windows: %LOCALAPPDATA%\UltraCode\
       baseDir = process.env["LOCALAPPDATA"] || join(homedir(), "AppData", "Local");
       break;
     }
 
     case "darwin": {
-      // macOS: ~/Library/Application Support/UltraScriptTools/
+      // macOS: ~/Library/Application Support/UltraCode/
       baseDir = join(homedir(), "Library", "Application Support");
       break;
     }
 
     default: {
-      // Linux: ~/.local/share/UltraScriptTools/ (XDG Base Directory)
+      // Linux: ~/.local/share/UltraCode/ (XDG Base Directory)
       baseDir = process.env["XDG_DATA_HOME"] || join(homedir(), ".local", "share");
       break;
     }
@@ -382,7 +382,7 @@ export function getVectorDimensions(): number {
       }
 
       // Try without prefix (e.g., "Xenova/all-MiniLM-L6-v2" -> "all-MiniLM-L6-v2")
-      const shortName = modelName.split("/").pop();
+      const shortName = basename(modelName);
       if (shortName) {
         const shortDims = MODEL_DIMENSIONS[shortName];
         if (shortDims) {

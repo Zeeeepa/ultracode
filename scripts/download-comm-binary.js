@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Download pre-built ultrascript-tools.com binary
+ * Download pre-built ultracode.com binary
  *
  * This script downloads the Cosmopolitan portable binary from GitHub releases.
  * The binary works on Windows, Linux, macOS, FreeBSD, NetBSD, OpenBSD - all from one file!
@@ -13,14 +13,14 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = join(__dirname, "..", "dist");
-const OUTPUT_FILE = join(DIST_DIR, "ultrascript-tools.com");
+const OUTPUT_FILE = join(DIST_DIR, "ultracode.com");
 
 // GitHub release URL (update version as needed)
 const VERSION = "1.0.0";
-const RELEASE_URL = `https://github.com/faxenoff/ultrascript-tools-mcp/releases/download/v${VERSION}/ultrascript-tools.com`;
+const RELEASE_URL = `https://github.com/faxenoff/ultracode/releases/download/v${VERSION}/ultracode.com`;
 
 // Alternative: build from source if binary not available
-const SOURCE_FILE = join(__dirname, "..", "src", "comm", "ultrascript-tools.com");
+const SOURCE_FILE = join(__dirname, "..", "src", "comm", "ultracode.com");
 
 function log(msg) {
   console.log(`[comm-binary] ${msg}`);
@@ -67,7 +67,7 @@ async function main() {
 
   // Check if binary already exists
   if (existsSync(OUTPUT_FILE)) {
-    log("ultrascript-tools.com already exists, skipping download");
+    log("ultracode.com already exists, skipping download");
     return;
   }
 
@@ -82,7 +82,7 @@ async function main() {
   }
 
   // Download from GitHub releases
-  log(`Downloading ultrascript-tools.com v${VERSION}...`);
+  log(`Downloading ultracode.com v${VERSION}...`);
   log(`URL: ${RELEASE_URL}`);
 
   try {

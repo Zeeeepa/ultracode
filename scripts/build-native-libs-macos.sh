@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# UltraScript Tools - macOS Native Library Builder
+# UltraCode - macOS Native Library Builder
 #
 # Interactive script to build native acceleration libraries on macOS.
 # Since CUDA is not available on macOS, this script offers:
@@ -33,7 +33,7 @@ METAL_SRC_DIR="$PROJECT_ROOT/external-tools/native/metal"
 print_header() {
     echo ""
     echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}${BOLD}  UltraScript Tools - macOS Native Library Builder${NC}"
+    echo -e "${CYAN}${BOLD}  UltraCode - macOS Native Library Builder${NC}"
     echo -e "${CYAN}${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
     echo ""
 }
@@ -472,12 +472,12 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     return exports;
 }
 
-NODE_API_MODULE(ultrascript_metal, Init)
+NODE_API_MODULE(ultracode_metal, Init)
 METAL_BINDING
 
         cat > "$METAL_SRC_DIR/CMakeLists.txt" << 'CMAKE_FILE'
 cmake_minimum_required(VERSION 3.18)
-project(ultrascript_metal_addon LANGUAGES CXX OBJCXX)
+project(ultracode_metal_addon LANGUAGES CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OBJCXX_STANDARD 17)
@@ -531,7 +531,7 @@ add_dependencies(${PROJECT_NAME} metal_shaders)
 set_target_properties(${PROJECT_NAME} PROPERTIES
     PREFIX ""
     SUFFIX ".node"
-    OUTPUT_NAME "ultrascript_metal"
+    OUTPUT_NAME "ultracode_metal"
 )
 
 # Link libraries
@@ -557,10 +557,10 @@ CMAKE_FILE
     npx cmake-js compile
 
     # Copy output
-    if [ -f "build/Release/ultrascript_metal.node" ]; then
-        cp build/Release/ultrascript_metal.node "$OUTPUT_PATH/"
+    if [ -f "build/Release/ultracode_metal.node" ]; then
+        cp build/Release/ultracode_metal.node "$OUTPUT_PATH/"
         cp build/*.metallib "$OUTPUT_PATH/" 2>/dev/null || true
-        print_success "Built: $OUTPUT_PATH/ultrascript_metal.node"
+        print_success "Built: $OUTPUT_PATH/ultracode_metal.node"
         return 0
     else
         print_error "Build failed - output not found"
@@ -692,5 +692,5 @@ else
 fi
 
 echo ""
-print_info "UltraScript Tools will automatically detect and use available acceleration."
+print_info "UltraCode will automatically detect and use available acceleration."
 echo ""

@@ -260,7 +260,7 @@ User: "Added rate limiting to AuthService"
 AutoDoc Watcher works automatically when enabled:
 
 ```yaml
-# ultrascript.yaml
+# ultracode.yaml
 mcp:
   autodoc:
     watcherEnabled: true

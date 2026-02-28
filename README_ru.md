@@ -1,20 +1,17 @@
 ```
-        ██  ██
-        ██  ██  ██    ██████ █████▄  ▄████▄
-        ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
-        ██  ██  ██      ██   ██   ██ ██  ██
-        ██  ██  ██████  ██   ██   ██ ██  ██
-        ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄
-                         ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
-                         ▄▄██▀ ▀████ ██ ██ ██ ██     ██
+         ██  ██
+         ██  ██  ██    ██████ █████▄  ▄████▄
+         ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
+         ██  ██  ██      ██   ██   ██ ██  ██
+         ██  ██  ██████  ██   ██   ██ ██  ██
+         ▀████▀          ▄████ ▄████▄ █████▄ █████
+                         ██    ██  ██ ██  ██ ██▄▄▄
+                         ▀████ ▀████▀ █████▀ ██▄▄▄
 
-     ╔═════════════════════════════════════════════════════╗
-     ║            ULTRASCRIPT TOOLS MCP SERVER             ║
-     ╚═════════════════════════════════════════════════════╝
 ```
 
-[![npm version](https://badge.fury.io/js/ultrascript-tools-mcp.svg)](https://www.npmjs.com/package/ultrascript-tools-mcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm version](https://badge.fury.io/js/ultracode.svg)](https://www.npmjs.com/package/ultracode)
+[![License: AGPL-3.0 / Commercial](https://img.shields.io/badge/License-AGPL--3.0_|_Commercial-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.3.2-f472b6)](https://bun.sh)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen)](https://nodejs.org/)
 
@@ -28,11 +25,11 @@
 
 **Полная индексация среднего проекта - 3 секунды**. Инкрементная индексация изменений - на лету.
 
-| | ❌ Обычная работа с ИИ-агентом | ✅ Работа через UltraScript |
+| | ❌ Обычная работа с ИИ-агентом | ✅ Работа через UltraCode |
 |---|---|---|
-| **Поиск** | ИИ-агент использует grep/replace для полнотекстового поиска по ключевым словам. Найденные файлы читает и анализирует целиком, потом идёт по цепочке из файлов. <br />На простую задачу в большом проекте уходит **30 минут и 1М+ токенов**. При этом найдёт не всё. | ИИ-агент запрашивает UltraScript и моментально получает полные и точные сведения со ссылками на строки кода. Семантика находит даже неочевидные связи. <br />Запрос выполняется **100мс и возвращает 5К токенов** (быстрее в 18 000 раз, дешевле в 200 раз). |
-| **Редактирование** | ИИ-агент редактирует файлы "вслепую". Вместо аккуратного изменения возникает 10-20 итераций: ломает → проверяет → чинит → ломает. Плюс десяток запросов на подбор bash/pwsh команд. <br />Уходит **до 1 часа и 2М+ токенов**. | UltraScript точно меняет код на уровне структуры + линтинг + форматирование + анализ изменений с локальной трассировкой. Если что-то сломается — сообщит в том же ответе. <br />**В 18 000 раз быстрее, в 200 раз дешевле.** |
-| **Память** | ИИ-агент забывает что делал и повторно создаёт тот же функционал рядом с существующим. Или часами отлаживает функцию, которую сам же отключил. <br />Уходит **много часов и 10М+ токенов**. | Через UltraScript агент получает полную структуру кода в компактном виде. AutoDoc автоматически ведёт документацию. Агент не попадёт в ловушку беспамятства. <br />Всё сразу корректно. |
+| **Поиск** | ИИ-агент использует grep/replace для полнотекстового поиска по ключевым словам. Найденные файлы читает и анализирует целиком, потом идёт по цепочке из файлов. <br />На простую задачу в большом проекте уходит **30 минут и 1М+ токенов**. При этом найдёт не всё. | ИИ-агент запрашивает UltraCode и моментально получает полные и точные сведения со ссылками на строки кода. Семантика находит даже неочевидные связи. <br />Запрос выполняется **100мс и возвращает 5К токенов** (быстрее в 18 000 раз, дешевле в 200 раз). |
+| **Редактирование** | ИИ-агент редактирует файлы "вслепую". Вместо аккуратного изменения возникает 10-20 итераций: ломает → проверяет → чинит → ломает. Плюс десяток запросов на подбор bash/pwsh команд. <br />Уходит **до 1 часа и 2М+ токенов**. | UltraCode точно меняет код на уровне структуры + линтинг + форматирование + анализ изменений с локальной трассировкой. Если что-то сломается — сообщит в том же ответе. <br />**В 18 000 раз быстрее, в 200 раз дешевле.** |
+| **Память** | ИИ-агент забывает что делал и повторно создаёт тот же функционал рядом с существующим. Или часами отлаживает функцию, которую сам же отключил. <br />Уходит **много часов и 10М+ токенов**. | Через UltraCode агент получает полную структуру кода в компактном виде. AutoDoc автоматически ведёт документацию. Агент не попадёт в ловушку беспамятства. <br />Всё сразу корректно. |
 | **Git** | При переключении ветки или ваших изменениях — агент не определит это и продолжит работать с устаревшим представлением о коде. <br />Нужно принудительно заставлять проводить повторный анализ. | Все запросы идут по актуальному коду. Переключайте ветки, меняйте файлы — инкрементная индексация графа и семантики происходит мгновенно. <br />Не нужно ничего делать дополнительно и даже задумываться об этом. |
 
 # Возможности
@@ -43,133 +40,134 @@ MCP-сервер предоставляет **70 инструментов** дл
 
 | Инструмент | Описание |
 |------------|----------|
-| [**semantic_search**](docs/features/search_ru.md#semantic_search) | Семантический поиск по смыслу с фильтрами (complexity, flow, docs) |
-| [**pattern_search**](docs/features/search_ru.md#pattern_search) | Продвинутый поиск: regex, семантический, гибридный |
-| [**query**](docs/features/search_ru.md#query) | NLP-запросы на естественном языке о коде |
-| [**find_similar_code**](docs/features/search_ru.md#find_similar_code) | Поиск функций с аналогичной логикой |
-| [**cross_language_search**](docs/features/search_ru.md#cross_language_search) | Единый поиск по всем языкам проекта |
-| [**find_related_concepts**](docs/features/search_ru.md#find_related_concepts) | Поиск связанных концепций |
+| [**semantic_search**](.autodoc/features/search_ru.md#semantic_search) | Семантический поиск по смыслу с фильтрами (complexity, flow, docs) |
+| [**pattern_search**](.autodoc/features/search_ru.md#pattern_search) | Продвинутый поиск: regex, семантический, гибридный |
+| [**query**](.autodoc/features/search_ru.md#query) | NLP-запросы на естественном языке о коде |
+| [**find_similar_code**](.autodoc/features/search_ru.md#find_similar_code) | Поиск функций с аналогичной логикой |
+| [**cross_language_search**](.autodoc/features/search_ru.md#cross_language_search) | Единый поиск по всем языкам проекта |
+| [**find_related_concepts**](.autodoc/features/search_ru.md#find_related_concepts) | Поиск связанных концепций |
 
 ## Анализ кода
 
 | Инструмент | Описание |
 |------------|----------|
-| [**analyze_code_impact**](docs/features/analysis_ru.md#analyze_code_impact) | Анализ влияния — что сломается при изменении |
-| [**find_duplicates**](docs/features/analysis_ru.md#find_duplicates) | Семантический поиск клонов кода |
-| [**jscpd_detect_clones**](docs/features/analysis_ru.md#jscpd_detect_clones) | Детектор клонов на базе jscpd |
-| [**suggest_refactoring**](docs/features/analysis_ru.md#suggest_refactoring) | AI-предложения по улучшению кода |
-| [**analyze_hotspots**](docs/features/analysis_ru.md#analyze_hotspots) | Сложные участки с высокой цикломатической сложностью |
-| [**analyze_state_chaos**](docs/features/analysis_ru.md#analyze_state_chaos) | Анализ запутанных зависимостей данных |
-| [**detect_technology_stack**](docs/features/analysis_ru.md#detect_technology_stack) | Определение стека технологий проекта |
+| [**analyze_code_impact**](.autodoc/features/analysis_ru.md#analyze_code_impact) | Анализ влияния — что сломается при изменении |
+| [**find_duplicates**](.autodoc/features/analysis_ru.md#find_duplicates) | Семантический поиск клонов кода |
+| [**jscpd_detect_clones**](.autodoc/features/analysis_ru.md#jscpd_detect_clones) | Детектор клонов на базе jscpd |
+| [**suggest_refactoring**](.autodoc/features/analysis_ru.md#suggest_refactoring) | AI-предложения по улучшению кода |
+| [**analyze_hotspots**](.autodoc/features/analysis_ru.md#analyze_hotspots) | Сложные участки с высокой цикломатической сложностью |
+| [**analyze_state_chaos**](.autodoc/features/analysis_ru.md#analyze_state_chaos) | Анализ запутанных зависимостей данных |
+| [**analyze_swagger_impact**](.autodoc/features/swagger_ru.md#analyze_swagger_impact) | Анализ влияния изменений Swagger/OpenAPI спецификаций |
+| [**detect_technology_stack**](.autodoc/features/analysis_ru.md#detect_technology_stack) | Определение стека технологий проекта |
 
 ## Статическая трассировка и отладка
 
 | Инструмент | Описание |
 |------------|----------|
-| [**trace_flow**](docs/features/tracing_ru.md#trace_flow) | Как код попадает от точки A к B |
-| [**trace_backwards**](docs/features/tracing_ru.md#trace_backwards) | Почему функция не вызывается |
-| [**trace_data_flow**](docs/features/tracing_ru.md#trace_data_flow) | Как данные влияют на состояние |
-| [**analyze_state_impact**](docs/features/tracing_ru.md#analyze_state_impact) | Что изменится при другом значении |
-| [**find_decision_points**](docs/features/tracing_ru.md#find_decision_points) | Точки ветвления в коде |
+| [**trace_flow**](.autodoc/features/tracing_ru.md#trace_flow) | Как код попадает от точки A к B |
+| [**trace_backwards**](.autodoc/features/tracing_ru.md#trace_backwards) | Почему функция не вызывается |
+| [**trace_data_flow**](.autodoc/features/tracing_ru.md#trace_data_flow) | Как данные влияют на состояние |
+| [**analyze_state_impact**](.autodoc/features/tracing_ru.md#analyze_state_impact) | Что изменится при другом значении |
+| [**find_decision_points**](.autodoc/features/tracing_ru.md#find_decision_points) | Точки ветвления в коде |
 
 ## Модификация кода
 
 | Инструмент | Описание |
 |------------|----------|
-| [**modify_code**](docs/features/modification_ru.md#modify_code) | Структурное редактирование на уровне AST с валидацией |
-| [**create_file**](docs/features/modification_ru.md#create_file) | Создание нового файла |
-| [**copy_file**](docs/features/modification_ru.md#copy_file) | Копирование файла с обновлением графа |
-| [**rename_file**](docs/features/modification_ru.md#rename_file) | Переименование файла с обновлением импортов |
-| [**split_file**](docs/features/modification_ru.md#split_file) | Разделение файла на части |
-| [**synthesize_files**](docs/features/modification_ru.md#synthesize_files) | Объединение файлов |
-| [**rename_symbol**](docs/features/modification_ru.md#rename_symbol) | Переименование по всему проекту |
-| [**add_member**](docs/features/modification_ru.md#add_member) | Добавление методов/свойств в классы |
+| [**modify_code**](.autodoc/features/modification_ru.md#modify_code) | Структурное редактирование на уровне AST с валидацией |
+| [**create_file**](.autodoc/features/modification_ru.md#create_file) | Создание нового файла |
+| [**copy_file**](.autodoc/features/modification_ru.md#copy_file) | Копирование файла с обновлением графа |
+| [**rename_file**](.autodoc/features/modification_ru.md#rename_file) | Переименование файла с обновлением импортов |
+| [**split_file**](.autodoc/features/modification_ru.md#split_file) | Разделение файла на части |
+| [**synthesize_files**](.autodoc/features/modification_ru.md#synthesize_files) | Объединение файлов |
+| [**rename_symbol**](.autodoc/features/modification_ru.md#rename_symbol) | Переименование по всему проекту |
+| [**add_member**](.autodoc/features/modification_ru.md#add_member) | Добавление методов/свойств в классы |
 
 ## Валидация кода
 
 | Инструмент | Описание |
 |------------|----------|
-| [**validate_file**](docs/features/validation_ru.md#validate_file) | Валидация файла через oxlint/Pylint/golint/clippy |
-| [**validate_directory**](docs/features/validation_ru.md#validate_directory) | Пакетная валидация директории |
+| [**validate_file**](.autodoc/features/validation_ru.md#validate_file) | Валидация файла через oxlint/Pylint/golint/clippy |
+| [**validate_directory**](.autodoc/features/validation_ru.md#validate_directory) | Пакетная валидация директории |
 
 ## Документация (AutoDoc)
 
 | Инструмент | Описание |
 |------------|----------|
-| [**autodoc_init**](docs/features/autodoc_ru.md#autodoc_init) | Инициализация системы AutoDoc |
-| [**autodoc_generate**](docs/features/autodoc_ru.md#autodoc_generate) | Генерация документации для сущностей |
-| [**autodoc_save**](docs/features/autodoc_ru.md#autodoc_save) | Сохранение документации в .autodoc |
-| [**autodoc_get**](docs/features/autodoc_ru.md#autodoc_get) | Получение документации сущности |
-| [**autodoc_search**](docs/features/autodoc_ru.md#autodoc_search) | Семантический поиск по документации |
-| [**autodoc_validate**](docs/features/autodoc_ru.md#autodoc_validate) | Проверка актуальности документации |
-| [**autodoc_status**](docs/features/autodoc_ru.md#autodoc_status) | Статистика документирования |
-| [**autodoc_sync**](docs/features/autodoc_ru.md#autodoc_sync) | Синхронизация с изменениями кода |
-| [**autodoc_changelog**](docs/features/autodoc_ru.md#autodoc_changelog) | История изменений документации |
-| [**autodoc_install_hooks**](docs/features/autodoc_ru.md#autodoc_install_hooks) | Установка Git hooks для автообновления |
-| [**autodoc_detect_language**](docs/features/autodoc_ru.md#autodoc_detect_language) | Определение языка для генерации |
+| [**autodoc_init**](.autodoc/features/autodoc_ru.md#autodoc_init) | Инициализация системы AutoDoc |
+| [**autodoc_generate**](.autodoc/features/autodoc_ru.md#autodoc_generate) | Генерация документации для сущностей |
+| [**autodoc_save**](.autodoc/features/autodoc_ru.md#autodoc_save) | Сохранение документации в .autodoc |
+| [**autodoc_get**](.autodoc/features/autodoc_ru.md#autodoc_get) | Получение документации сущности |
+| [**autodoc_search**](.autodoc/features/autodoc_ru.md#autodoc_search) | Семантический поиск по документации |
+| [**autodoc_validate**](.autodoc/features/autodoc_ru.md#autodoc_validate) | Проверка актуальности документации |
+| [**autodoc_status**](.autodoc/features/autodoc_ru.md#autodoc_status) | Статистика документирования |
+| [**autodoc_sync**](.autodoc/features/autodoc_ru.md#autodoc_sync) | Синхронизация с изменениями кода |
+| [**autodoc_changelog**](.autodoc/features/autodoc_ru.md#autodoc_changelog) | История изменений документации |
+| [**autodoc_install_hooks**](.autodoc/features/autodoc_ru.md#autodoc_install_hooks) | Установка Git hooks для автообновления |
+| [**autodoc_detect_language**](.autodoc/features/autodoc_ru.md#autodoc_detect_language) | Определение языка для генерации |
 
 ## Git-интеграция
 
 | Инструмент | Описание |
 |------------|----------|
-| [**list_branches**](docs/features/git_ru.md#list_branches) | Список проиндексированных веток |
-| [**switch_branch**](docs/features/git_ru.md#switch_branch) | Переключение между ветками с автопереиндексацией |
-| [**get_branch_status**](docs/features/git_ru.md#get_branch_status) | Статус текущей ветки |
-| [**get_changed_files**](docs/features/git_ru.md#get_changed_files) | Сравнение файлов между ветками |
-| [**cleanup_branches**](docs/features/git_ru.md#cleanup_branches) | Очистка старых веток (LRU) |
+| [**list_branches**](.autodoc/features/git_ru.md#list_branches) | Список проиндексированных веток |
+| [**switch_branch**](.autodoc/features/git_ru.md#switch_branch) | Переключение между ветками с автопереиндексацией |
+| [**get_branch_status**](.autodoc/features/git_ru.md#get_branch_status) | Статус текущей ветки |
+| [**get_changed_files**](.autodoc/features/git_ru.md#get_changed_files) | Сравнение файлов между ветками |
+| [**cleanup_branches**](.autodoc/features/git_ru.md#cleanup_branches) | Очистка старых веток (LRU) |
 
 ## История версий (Prolly Tree)
 
 | Инструмент | Описание |
 |------------|----------|
-| [**list_commits**](docs/features/history_ru.md#list_commits) | Список коммитов графа (версионные снапшоты) |
-| [**get_entity_history**](docs/features/history_ru.md#get_entity_history) | История изменений сущности по коммитам |
-| [**diff_commits**](docs/features/history_ru.md#diff_commits) | Сравнение двух версий графа (добавленные/изменённые/удалённые) |
-| [**checkout_commit**](docs/features/history_ru.md#checkout_commit) | Time travel — просмотр графа на момент коммита |
+| [**list_commits**](.autodoc/features/history_ru.md#list_commits) | Список коммитов графа (версионные снапшоты) |
+| [**get_entity_history**](.autodoc/features/history_ru.md#get_entity_history) | История изменений сущности по коммитам |
+| [**diff_commits**](.autodoc/features/history_ru.md#diff_commits) | Сравнение двух версий графа (добавленные/изменённые/удалённые) |
+| [**checkout_commit**](.autodoc/features/history_ru.md#checkout_commit) | Time travel — просмотр графа на момент коммита |
 
 ## Семантический мерж
 
 | Инструмент | Описание |
 |------------|----------|
-| [**semantic_merge**](docs/features/merge_ru.md#semantic_merge) | AI-powered 3-way мерж с пониманием кода |
-| [**analyze_merge_conflicts**](docs/features/merge_ru.md#analyze_merge_conflicts) | Анализ конфликтов с объяснением причин |
-| [**get_merge_suggestions**](docs/features/merge_ru.md#get_merge_suggestions) | AI-предложения по разрешению конфликтов |
-| [**get_semantic_merge_info**](docs/features/merge_ru.md#get_semantic_merge_info) | Информация о семантических различиях |
+| [**semantic_merge**](.autodoc/features/merge_ru.md#semantic_merge) | AI-powered 3-way мерж с пониманием кода |
+| [**analyze_merge_conflicts**](.autodoc/features/merge_ru.md#analyze_merge_conflicts) | Анализ конфликтов с объяснением причин |
+| [**get_merge_suggestions**](.autodoc/features/merge_ru.md#get_merge_suggestions) | AI-предложения по разрешению конфликтов |
+| [**get_semantic_merge_info**](.autodoc/features/merge_ru.md#get_semantic_merge_info) | Информация о семантических различиях |
 
 ## Снапшоты и безопасность
 
 | Инструмент | Описание |
 |------------|----------|
-| [**create_snapshot**](docs/features/snapshots_ru.md#create_snapshot) | Сохранение точки восстановления |
-| [**undo**](docs/features/snapshots_ru.md#undo) | Мгновенный откат к снапшоту |
-| [**list_snapshots**](docs/features/snapshots_ru.md#list_snapshots) | Список доступных снапшотов |
-| [**cleanup_snapshots**](docs/features/snapshots_ru.md#cleanup_snapshots) | Очистка старых снапшотов |
+| [**create_snapshot**](.autodoc/features/snapshots_ru.md#create_snapshot) | Сохранение точки восстановления |
+| [**undo**](.autodoc/features/snapshots_ru.md#undo) | Мгновенный откат к снапшоту |
+| [**list_snapshots**](.autodoc/features/snapshots_ru.md#list_snapshots) | Список доступных снапшотов |
+| [**cleanup_snapshots**](.autodoc/features/snapshots_ru.md#cleanup_snapshots) | Очистка старых снапшотов |
 
 ## Граф кода и индексация
 
 | Инструмент | Описание |
 |------------|----------|
-| [**index**](docs/features/indexing_ru.md#index) | Индексация кодовой базы |
-| [**clean_index**](docs/features/indexing_ru.md#clean_index) | Полная переиндексация |
-| [**get_members**](docs/features/graph_ru.md#get_members) | Список сущностей в файле |
-| [**list_entity_relationships**](docs/features/graph_ru.md#list_entity_relationships) | Связи и зависимости сущности |
-| [**get_graph**](docs/features/graph_ru.md#get_graph) | Получение графа (JSON/GraphML/Mermaid) |
-| [**get_graph_stats**](docs/features/graph_ru.md#get_graph_stats) | Статистика графа |
-| [**get_graph_health**](docs/features/graph_ru.md#get_graph_health) | Диагностика состояния графа |
-| [**reset_graph**](docs/features/graph_ru.md#reset_graph) | Полная очистка графа |
+| [**index**](.autodoc/features/indexing_ru.md#index) | Индексация кодовой базы |
+| [**clean_index**](.autodoc/features/indexing_ru.md#clean_index) | Полная переиндексация |
+| [**get_members**](.autodoc/features/graph_ru.md#get_members) | Список сущностей в файле |
+| [**list_entity_relationships**](.autodoc/features/graph_ru.md#list_entity_relationships) | Связи и зависимости сущности |
+| [**get_graph**](.autodoc/features/graph_ru.md#get_graph) | Получение графа (JSON/GraphML/Mermaid) |
+| [**get_graph_stats**](.autodoc/features/graph_ru.md#get_graph_stats) | Статистика графа |
+| [**get_graph_health**](.autodoc/features/graph_ru.md#get_graph_health) | Диагностика состояния графа |
+| [**reset_graph**](.autodoc/features/graph_ru.md#reset_graph) | Полная очистка графа |
 
-> **Архитектура хранения**: [Prolly Tree](docs/architecture/prolly-tree_ru.md) — версионируемое хранилище графа с O(log n) diff между ветками
+> **Архитектура хранения**: [Prolly Tree](.autodoc/architecture/prolly-tree_ru.md) — версионируемое хранилище графа с O(log n) diff между ветками
 
 ## Метрики и мониторинг
 
 | Инструмент | Описание |
 |------------|----------|
-| [**get_metrics**](docs/features/metrics_ru.md#get_metrics) | Системные метрики и статистика |
-| [**get_version**](docs/features/metrics_ru.md#get_version) | Версия сервера и runtime |
-| [**get_agent_metrics**](docs/features/metrics_ru.md#get_agent_metrics) | Телеметрия многоагентной системы |
-| [**get_bus_stats**](docs/features/metrics_ru.md#get_bus_stats) | Статистика шины знаний |
-| [**clear_bus_topic**](docs/features/metrics_ru.md#clear_bus_topic) | Очистка кешированных записей топика |
-| [**get_watcher_status**](docs/features/metrics_ru.md#get_watcher_status) | Статус фоновых наблюдателей |
+| [**get_metrics**](.autodoc/features/metrics_ru.md#get_metrics) | Системные метрики и статистика |
+| [**get_version**](.autodoc/features/metrics_ru.md#get_version) | Версия сервера и runtime |
+| [**get_agent_metrics**](.autodoc/features/metrics_ru.md#get_agent_metrics) | Телеметрия многоагентной системы |
+| [**get_bus_stats**](.autodoc/features/metrics_ru.md#get_bus_stats) | Статистика шины знаний |
+| [**clear_bus_topic**](.autodoc/features/metrics_ru.md#clear_bus_topic) | Очистка кешированных записей топика |
+| [**get_watcher_status**](.autodoc/features/metrics_ru.md#get_watcher_status) | Статус фоновых наблюдателей |
 
 ---
 
@@ -217,7 +215,7 @@ MCP-сервер предоставляет **70 инструментов** дл
 
 ### Встроенная документация (MCP Prompts)
 
-В системные промпты можно добавить [короткий промпт](docs/claude.cfg/add-to-CLAUDE.md) который поможет ИИ-агенту узнать о способе получения информации о работе Ultrascript-tools.
+В системные промпты можно добавить [короткий промпт](.autodoc/claude.cfg/add-to-CLAUDE.md) который поможет ИИ-агенту узнать о способе получения информации о работе UltraCode.
 
 - **quick-start** — быстрый старт и выбор инструментов
 - **tool-reference** — полный справочник 70 инструментов
@@ -231,7 +229,7 @@ MCP-сервер предоставляет **70 инструментов** дл
 - **Естественный язык** — опишите задачу своими словами
 
 ### Клиент-серверная архитектура
-- **Один процесс на машину** — при запуске множества ИИ-агентов работает только один UltraScript
+- **Один процесс на машину** — при запуске множества ИИ-агентов работает только один UltraCode
 - **Экономия 10+ ГБ RAM** — вместо N копий индексов в памяти — один общий
 - **Мгновенное подключение** — новые агенты подключаются к работающему серверу за миллисекунды
 - **Изоляция сессий** — каждый агент получает независимую MCP-сессию
@@ -250,25 +248,25 @@ powershell -c "irm bun.sh/install.ps1 | iex"
 curl -fsSL https://bun.sh/install | bash
 ```
 
-**Установка Ultrascript-tools**
+**Установка UltraCode**
 
 ```bash
 # Bun (рекомендуется) — два шага:
 
 # 1. Установка пакета
-bun install -g ultrascript-tools-mcp
+bun install -g ultracode
 
 # 2. Разрешить postinstall скрипты для нативных модулей
-bun pm -g trust ultrascript-tools-mcp
+bun pm -g trust ultracode
 ```
 
 ```bash
 # npm (альтернатива) — один шаг:
-npm install -g ultrascript-tools-mcp
+npm install -g ultracode
 ```
 
 > **Почему два шага для Bun?** 
-> Для достижения ultra-скорости UltraScript использует нативные компоненты:
+> Для достижения ultra-скорости UltraCode использует нативные компоненты:
 >
 > - **faiss-napi** — HNSW/IVF индексы для векторного поиска (100x ускорение)
 > - **cbor-extract** — быстрая нативная сериализация метаданных
@@ -296,14 +294,14 @@ npm install -g ultrascript-tools-mcp
 ```json
 {
   "mcpServers": {
-    "ultrascript-tools": {
-      "command": "ultrascript"
+    "ultracode": {
+      "command": "ultracode"
     }
   }
 }
 ```
 
-> Подробная документация: [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md)
+> Конфигурация: [.autodoc/claude.cfg/add-to-CLAUDE.md](.autodoc/claude.cfg/add-to-CLAUDE.md)
 
 ## **Настройка локальных моделей**
 
@@ -338,10 +336,10 @@ npm install -g ultrascript-tools-mcp
 > **Повторный запуск мастера:**
 > ```bash
 > # Bun
-> bunx ultrascript-tools-mcp setup
+> bunx ultracode setup
 >
 > # Node.js
-> npx ultrascript-tools-mcp setup
+> npx ultracode setup
 > ```
 
 *Для Blackwell (RTX 50xx) используется неофициальный форк TEI
@@ -350,12 +348,12 @@ npm install -g ultrascript-tools-mcp
 
 Для активации режима автодокументирования - создайте в корне проекта папку ``.autodoc`` и включите использование LLM (проще всего использовать ту же claude).
 
-После запуска Ultrascript со включённым режимом Autodoc:
+После запуска UltraCode со включённым режимом Autodoc:
 
 1. Во всех папках с исходным кодом (из поддерживаемых языков) будут созданы файлы AUTODOC.md в которых будет сгенерирован шаблон со списком файлов в директории.
 2. LLM пройдёт по этим файлам и сгенерирует в AUTODOC.md их описание - что конкретно делает код в файлах.
 
-После этого вы можете сами (или с помощью ИИ-агента) сделать нужные вам файлы с общим описанием проекта в директории .autodoc и добавить "человеческое описание" в файлы AUTODOC.md где вам потребуется. Там вы можете использовать прямые ссылки на строки кода в файлах (для описания начала и конца блока кода используйте два числа. Пример: FILE:XX-ZZ). UltraScript будет отслеживать изменения кода и автоматически обновлять все ссылки на код, чтобы они всегда оставались актуальными. Текст документации он трогать не будет. 
+После этого вы можете сами (или с помощью ИИ-агента) сделать нужные вам файлы с общим описанием проекта в директории .autodoc и добавить "человеческое описание" в файлы AUTODOC.md где вам потребуется. Там вы можете использовать прямые ссылки на строки кода в файлах (для описания начала и конца блока кода используйте два числа. Пример: FILE:XX-ZZ). UltraCode будет отслеживать изменения кода и автоматически обновлять все ссылки на код, чтобы они всегда оставались актуальными. Текст документации он трогать не будет. 
 
 ### macOS Apple Silicon (MLX Эмбеддинги)
 
@@ -368,7 +366,7 @@ npm install -g ultrascript-tools-mcp
 
 ```bash
 # Перезапустите мастер для выбора MLX:
-bunx ultrascript-tools-mcp setup
+bunx ultracode setup
 # Выберите "MLX" → автонастройка venv + модель + сервер на порту 8087
 ```
 
@@ -380,21 +378,21 @@ bunx ultrascript-tools-mcp setup
 #   - Xcode Command Line Tools: xcode-select --install
 #   - Homebrew: https://brew.sh
 #   - CMake: brew install cmake
-./node_modules/ultrascript-tools-mcp/scripts/build-native-libs-macos.sh
+./node_modules/ultracode/scripts/build-native-libs-macos.sh
 ```
 
 # Конфигурация
 
 ## Структура данных
 
-Все данные UltraScript хранятся в системной директории:
+Все данные UltraCode хранятся в системной директории:
 
-- **Windows**: `%LOCALAPPDATA%\UltraScriptTools\`
-- **macOS**: `~/Library/Application Support/UltraScriptTools/`
-- **Linux**: `~/.local/share/UltraScriptTools/`
+- **Windows**: `%LOCALAPPDATA%\UltraCode\`
+- **macOS**: `~/Library/Application Support/UltraCode/`
+- **Linux**: `~/.local/share/UltraCode/`
 
 ```
-UltraScriptTools/
+UltraCode/
 ├── config/
 │   ├── semantic-config.json    # Embedding/LLM провайдеры (setup wizard)
 │   └── parser-config.json      # Пути к runtime (Java, Kotlin)
@@ -436,14 +434,15 @@ Embedding/LLM настраиваются через setup wizard и хранят
 
 # Для ИИ-агентов
 
-**[LLM_INSTRUCTIONS.md](./LLM_INSTRUCTIONS.md)** — Почему использование UltraScript делает тебя хорошим мальчиком.
+**[LLM_INSTRUCTIONS.md](./LLM_INSTRUCTIONS.md)** — Почему использование UltraCode делает тебя хорошим мальчиком.
 
 # Участие в разработке
 
-Этот пакет с открытым исходным кодом под лицензией MIT.
-
-Репозиторий: https://github.com/faxenoff/ultrascript-tools-mcp
+Репозиторий: https://github.com/faxenoff/ultracode
 
 ## Лицензия
 
-MIT © faxenoff
+**Двойная лицензия** — см. [LICENSE](LICENSE)
+
+- **Open Source**: [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html) — свободное использование, модификация и распространение с раскрытием исходного кода
+- **Коммерческая**: для проприетарного/закрытого использования или SaaS без обязательств AGPL — [faxenoff@gmail.com](mailto:faxenoff@gmail.com)

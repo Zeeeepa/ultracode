@@ -237,7 +237,7 @@ class GpuSubprocessClient implements IGpuClient {
 
     // Fallback: try npm package resolution
     try {
-      const pkgPath = require.resolve("ultrascript-tools-mcp");
+      const pkgPath = require.resolve("ultracode");
       candidates.push(join(dirname(pkgPath), "semantic/gpu/gpu-worker.js"));
     } catch {}
 
@@ -267,8 +267,8 @@ class GpuSubprocessClient implements IGpuClient {
     if (this.worker) return true;
 
     // Debug: skip subprocess spawning to identify console window source
-    if (process.env["ULTRASCRIPT_NO_SUBPROCESS"] === "1") {
-      log.d("GPU", "SKIPPED (ULTRASCRIPT_NO_SUBPROCESS=1)");
+    if (process.env["ULTRACODE_NO_SUBPROCESS"] === "1") {
+      log.d("GPU", "SKIPPED (ULTRACODE_NO_SUBPROCESS=1)");
       return false;
     }
 
@@ -438,7 +438,7 @@ class GpuSubprocessClient implements IGpuClient {
       try {
         // Extract pipeId from path
         const pipeId =
-          this.namedPipePath.split(/[/\\]/).pop()?.replace("ultrascript-gpu-", "").replace(".sock", "") || "";
+          this.namedPipePath.split(/[/\\]/).pop()?.replace("ultracode-gpu-", "").replace(".sock", "") || "";
 
         this.namedPipeClient = new NamedPipeClient({
           pipeId,

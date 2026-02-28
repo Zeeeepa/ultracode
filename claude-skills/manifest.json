@@ -1,7 +1,7 @@
 {
   "name": "UltraCode",
   "version": "1.0.0",
-  "description": "Claude Code Skills for UltraScript + UltrasharpTools MCP",
+  "description": "Claude Code Skills for UltraCode + UltrasharpTools MCP",
   "skills": [
     {
       "name": "ultracode",

@@ -1,34 +1,79 @@
+---
+module_name: kotlin
+description: "Type definitions for the Kotlin ANTLR parser context and extracted information"
+status: active
+language: typescript
+---
+
 # Kotlin
 
-*Last updated: 2026-01-18*
+> Defines all shared types for the Kotlin parser pipeline, including parser context, call info, control flow, documentation, coroutines, complexity metrics, and framework patterns.
 
-Определения типов для парсера Kotlin с контекстом и извлеченной информацией.
+## Overview
 
-## Exports
+This module provides the foundational type definitions used across all Kotlin parser submodules. It defines the `ParserContext` passed through parsing functions, structural types for calls, annotations, inheritance, parameters, control flow (including Kotlin-specific constructs like `when`, `elvis`, labeled returns), KDoc documentation, coroutine information, complexity metrics, and framework pattern types for Android ViewModel and Ktor routing.
 
-| Name | Type | Description | Location |
-|------|------|-------------|----------|
-| `AnnotationInfo` | interface | Информация об аннотациях, извлеченная из модификаторов | [→ types.ts:75-78] |
-| `AntlrContext` | interface | Обобщенный контекст ANTLR с информацией о расположении | [→ types.ts:274-280] |
-| `AntlrContextWithChildren` | interface | Контекст ANTLR с дочерними узлами дерева | [→ types.ts:285-289] |
-| `AntlrToken` | interface | Интерфейс токена ANTLR с информацией о позиции | [→ types.ts:263-269] |
-| `BranchInfo` | interface | Данные об условных ветвлениях в потоке выполнения | [→ types.ts:114-118] |
-| `CallInfo` | interface | Данные о вызовах функций и методов в коде | [→ types.ts:45-66] |
-| `ComplexityMetrics` | interface | Метрики сложности кода для функций и методов | [→ types.ts:224-232] |
-| `ControlFlowInfo` | interface | Полная структура потока управления с ветвлениями и циклами | [→ types.ts:149-158] |
-| `CoroutineInfo` | interface | Информация о корутинах, сопрограммах и операторах suspend | [→ types.ts:207-215] |
-| `ExceptionInfo` | interface | Данные об обработке исключений и операторах throw | [→ types.ts:131-135] |
-| `InheritanceInfo` | interface | Данные о наследовании для классов и интерфейсов | [→ types.ts:87-90] |
-| `KDocInfo` | interface | Разобранная документация KDoc с параметрами и возвращаемыми значениями | [→ types.ts:176-198] |
-| `KDocParam` | interface | Параметр документации KDoc с типом и описанием | [→ types.ts:167-171] |
-| `KtorRouteInfo` | interface | Информация о маршрутах фреймворка Ktor HTTP API | [→ types.ts:250-254] |
-| `LocationInfo` | type | Информация о расположении узлов в синтаксическом дереве | [→ types.ts:33-36] |
-| `LoopInfo` | interface | Информация о циклах for, while и do-while в коде | [→ types.ts:123-126] |
-| `ParameterInfo` | interface | Информация о параметрах функций и конструкторов | [→ types.ts:99-105] |
-| `ParserContext` | interface | Контекст, передаваемый через все функции парсинга | [→ types.ts:17-24] |
-| `ReturnInfo` | interface | Информация об операторах возврата в функциях | [→ types.ts:140-144] |
-| `ViewModelInfo` | interface | Информация о паттерне Android ViewModel в коде | [→ types.ts:241-245] |
+## Data Flow
+
+- **Inputs**: N/A (type definitions only)
+- **Processing**: Types are consumed by extractors, framework analyzers, and the main Kotlin parser
+- **Outputs**: Type contracts for all Kotlin parser modules
+
+## Public API
+
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `ParserContext` | interface | Context passed through all parsing functions | [`types.ts:17-24`](./types.ts) |
+| `LocationInfo` | type | AST node position information | [`types.ts:33-36`](./types.ts) |
+| `CallInfo` | interface | Function/method call information with Kotlin-specific fields | [`types.ts:45-66`](./types.ts) |
+| `AnnotationInfo` | interface | Annotation information from modifiers | [`types.ts:75-78`](./types.ts) |
+| `InheritanceInfo` | interface | Class/interface inheritance data | [`types.ts:87-90`](./types.ts) |
+| `ParameterInfo` | interface | Function/constructor parameter info | [`types.ts:99-105`](./types.ts) |
+| `BranchInfo` | interface | Branch info including `when` and `elvis` types | [`types.ts:114-118`](./types.ts) |
+| `LoopInfo` | interface | Loop information (for/while/do-while) | [`types.ts:123-126`](./types.ts) |
+| `ExceptionInfo` | interface | Exception handling information | [`types.ts:131-135`](./types.ts) |
+| `ReturnInfo` | interface | Return statement info with label support | [`types.ts:140-144`](./types.ts) |
+| `ControlFlowInfo` | interface | Complete control flow with awaits | [`types.ts:149-158`](./types.ts) |
+| `KDocParam` | interface | KDoc parameter documentation | [`types.ts:167-171`](./types.ts) |
+| `KDocInfo` | interface | Parsed KDoc with Kotlin-specific tags | [`types.ts:176-198`](./types.ts) |
+| `CoroutineInfo` | interface | Coroutine and suspend function info | [`types.ts:207-215`](./types.ts) |
+| `ComplexityMetrics` | interface | Code complexity metrics | [`types.ts:224-232`](./types.ts) |
+| `ViewModelInfo` | interface | Android ViewModel pattern info | [`types.ts:241-245`](./types.ts) |
+| `KtorRouteInfo` | interface | Ktor HTTP route info | [`types.ts:250-254`](./types.ts) |
+| `AntlrToken` | interface | ANTLR token with position info | [`types.ts:263-269`](./types.ts) |
+| `AntlrContext` | interface | Generic ANTLR context | [`types.ts:274-280`](./types.ts) |
+| `AntlrContextWithChildren` | interface | ANTLR context with children | [`types.ts:285-289`](./types.ts) |
+
+## Dependencies
+
+### Internal Modules
+| Module | Purpose |
+|--------|---------|
+| `../../types/parser` | Shared `ParsedEntity` and `EntityRelationship` types |
+
+### External Packages
+
+_None_
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Kotlin-specific branch types | `when`, `when-entry`, `elvis` |
+| Labeled returns | `ReturnInfo.label` for `return@name` |
+| Coroutine awareness | `CallInfo.isAwait`, `CoroutineInfo` with scope/dispatcher tracking |
+
+## Error Handling
+
+N/A (type definitions only).
+
+## Known Limitations
+
+- `CallInfo.isAwait` is set by extractors but not all suspend calls are detectable statically
+- `ViewModelInfo` and `KtorRouteInfo` are simplified representations of complex framework patterns
 
 ## Files
 
-- **types.ts** — Основной файл модуля с экспортами всех типов парсера
+| File | Description |
+|------|-------------|
+| `types.ts` | All shared type definitions for the Kotlin parser pipeline |

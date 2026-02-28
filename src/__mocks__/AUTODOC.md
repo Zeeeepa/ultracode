@@ -1,30 +1,22 @@
-# Автоматическая документация для модуля `__mocks__`
+---
+module_name: __mocks__
+description: "Jest manual mocks for third-party dependencies used in unit tests"
+status: test-infrastructure
+language: typescript
+---
 
-## Описание модуля
+# __mocks__
 
-Модуль `__mocks__` предназначен для хранения моков (подделок) зависимостей, используемых в тестах. Он содержит заглушки для сторонних библиотек и системных модулей, чтобы упростить тестирование и избежать внешних зависимостей во время юнит-тестов. Данный модуль не имеет публичных экспортов и используется исключительно внутри тестовой среды.
+> Jest manual mocks that replace third-party modules with predictable stubs during testing.
 
-## Файлы модуля
+## Overview
 
-| Файл                  | Описание                                                                 |
-|-----------------------|--------------------------------------------------------------------------|
-| `connection-pool.cjs` | Мок для управления подключениями к базе данных. Заменяет реальный пул соединений для тестов. |
-| `nanoid.cjs`          | Мок генератора уникальных идентификаторов. Возвращает предсказуемые значения для тестирования. |
-| `p-limit.cjs`         | Мок для ограничения параллельных выполнений асинхронных задач. Используется для симуляции ограничений на concurrency в тестах. |
+Contains mock implementations automatically loaded by Jest when tests call `jest.mock()` for the corresponding module names. These stubs eliminate external dependencies and return deterministic values.
 
-## Экспорты
+## Files
 
-В данном модуле отсутствуют публичные экспорты. Все файлы являются внутренними моками и используются только в рамках тестовой среды.
-
-## Пример использования
-
-Моки из этого модуля автоматически подключаются Jest при запуске тестов, если в проекте используется стандартная структура `__mocks__`:
-
-```javascript
-// Пример автоматического использования моков в тестах
-jest.mock('connection-pool');
-jest.mock('nanoid');
-jest.mock('p-limit');
-```
-
-Таким образом, при импорте этих модулей в коде тестов будут подставлены заглушки из `__mocks__`.
+| File | Description |
+|------|-------------|
+| `connection-pool.cjs` | Mock for database connection pool management |
+| `nanoid.cjs` | Mock for unique ID generator returning predictable values |
+| `p-limit.cjs` | Mock for async concurrency limiter |

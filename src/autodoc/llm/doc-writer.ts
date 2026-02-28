@@ -231,7 +231,7 @@ function formatResponse(moduleName: string, text: string): string {
   }
 
   // Remove meta-text postamble (after last code block or section)
-  // Common patterns: "---\n\nДокументация готова", "Documentation ready for..."
+  // Common patterns: "---\n\nDocumentation ready", "Documentation ready for..."
   cleanText = cleanText
     .replace(/\n---\n+(?:Документация|Documentation|Для применения|Ready for|This documentation)[\s\S]*$/i, "")
     .replace(/\n+(?:Документация готова|Documentation (?:ready|complete)|Для применения|Ready for use)[\s\S]*$/i, "")

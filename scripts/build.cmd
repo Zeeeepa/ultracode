@@ -2,22 +2,19 @@
 setlocal enabledelayedexpansion
 
 REM ASCII Art Banner - BBS Graffiti Style
+
 echo.
 echo         ██  ██
 echo         ██  ██  ██    ██████ █████▄  ▄████▄
 echo         ██  ██  ██      ██   ██▄▄██▄ ██▄▄██
 echo         ██  ██  ██      ██   ██   ██ ██  ██
 echo         ██  ██  ██████  ██   ██   ██ ██  ██
-echo         ▀████▀            ▄▄▄▄  ▄▄▄▄ ▄▄▄▄  ▄▄ ▄▄▄▄ ▄▄▄▄▄▄
-echo                          ███▄▄ ██▀▀▀ ██▄█▄ ██ ██▄█▀  ██
-echo                          ▄▄██▀ ▀████ ██ ██ ██ ██     ██
-echo.
-echo      ╔═════════════════════════════════════════════════════╗
-echo      ║            ULTRASCRIPT TOOLS MCP SERVER             ║
-echo      ╚═════════════════════════════════════════════════════╝
+echo         ▀████▀          ▄████ ▄████▄ █████▄ █████
+echo                         ██    ██  ██ ██  ██ ██▄▄▄
+echo                         ▀████ ▀████▀ █████▀ ██▄▄▄
 echo.
 
-REM Build script for UltraScript Tools MCP Server using Bun
+REM Build script for UltraCode Server using Bun
 REM Compiles TypeScript to dist/ directory using tsup with Bun runtime
 
 REM Get project root (parent of Dev.Scripts)
@@ -47,9 +44,9 @@ echo.
 REM Check if node_modules exists, install with Bun if not
 if not exist "node_modules\" (
     echo node_modules not found, installing dependencies with Bun...
-    set "ULTRASCRIPT_SKIP_POSTINSTALL=1"
+    set "ULTRACODE_SKIP_POSTINSTALL=1"
     bun install
-    set "ULTRASCRIPT_SKIP_POSTINSTALL="
+    set "ULTRACODE_SKIP_POSTINSTALL="
     echo.
 )
 
@@ -125,20 +122,33 @@ echo Type check passed!
 echo.
 
 REM ============================================================================
+REM STEP 2.5: Build Roslyn C# addon (UltraCode.CSharp)
+REM ============================================================================
+echo [2.5/4] Checking Roslyn C# addon...
+
+call "%PROJECT_ROOT%\scripts\build-roslyn.cmd"
+if errorlevel 1 (
+    echo [WARNING] Roslyn build failed, continuing without C# addon...
+)
+
+:skip_roslyn_build
+echo.
+
+REM ============================================================================
 REM STEP 3: Build/Copy CUDA native module
 REM ============================================================================
 REM Check if CUDA module exists in external-tools (built by dev-setup)
-if exist "%PROJECT_ROOT%\external-tools\native\cuda\build\ultrascript_cuda.node" (
+if exist "%PROJECT_ROOT%\external-tools\native\cuda\build\ultracode_cuda.node" (
     echo [3/4] CUDA module found in external-tools, copying to dist...
     if not exist "%PROJECT_ROOT%\dist\native\cuda" mkdir "%PROJECT_ROOT%\dist\native\cuda"
-    copy /Y "%PROJECT_ROOT%\external-tools\native\cuda\build\ultrascript_cuda.node" "%PROJECT_ROOT%\dist\native\cuda\" >nul
+    copy /Y "%PROJECT_ROOT%\external-tools\native\cuda\build\ultracode_cuda.node" "%PROJECT_ROOT%\dist\native\cuda\" >nul
     echo [OK] CUDA module copied to dist
     echo.
     goto skip_cuda_build
 )
 
 REM Check if CUDA module already in dist
-if exist "%PROJECT_ROOT%\dist\native\cuda\ultrascript_cuda.node" (
+if exist "%PROJECT_ROOT%\dist\native\cuda\ultracode_cuda.node" (
     echo [3/4] CUDA module already in dist, skipping rebuild
     echo.
     goto skip_cuda_build
@@ -328,10 +338,10 @@ if exist "%PROJECT_ROOT%\external-tools\native\cuda\" (
 REM ============================================================================
 REM STEP 3.5: Build Comm proxy (Cosmopolitan binary)
 REM ============================================================================
-echo [3.5/4] Checking Comm proxy (ultrascript-tools.com)...
+echo [3.5/4] Checking Comm proxy (ultracode.com)...
 
 set "COMM_SRC=%PROJECT_ROOT%\src\comm\comm.c"
-set "COMM_OUT=%PROJECT_ROOT%\src\comm\ultrascript-tools.com"
+set "COMM_OUT=%PROJECT_ROOT%\src\comm\ultracode.com"
 
 REM Check if cosmocc is available (APE binary without .exe)
 set "COSMOCC="

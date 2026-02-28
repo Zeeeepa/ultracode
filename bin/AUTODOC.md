@@ -1,29 +1,29 @@
 # AUTODOC.md
 
-## 1. Название и Обзор
+## 1. Title and Overview
 
-Модуль `bin` отвечает за запуск и управление командной строкой приложения. Содержит исполняемый скрипт, который используется для запуска основного функционала проекта из терминала. Этот модуль не предоставляет публичных экспортов и предназначен исключительно для внутреннего использования.
+The `bin` module is responsible for launching and managing the application's command line interface. It contains the executable script used to run the main project functionality from the terminal. This module does not provide public exports and is intended exclusively for internal use.
 
-## 2. Файлы
+## 2. Files
 
-| Файл             | Описание                                                   |
+| File             | Description                                                   |
 |------------------|------------------------------------------------------------|
-| `ultrascript.js` | Основной исполняемый скрипт, запускающий приложение из командной строки |
+| `ultracode.js` | Main executable script that launches the application from the command line |
 
-## 3. Экспорты
+## 3. Exports
 
-Нет публичных экспортов. Модуль предназначен только для внутреннего использования и не предоставляет никаких публичных API.
+No public exports. The module is intended for internal use only and does not provide any public API.
 
-## 4. Использование
+## 4. Usage
 
-Для запуска приложения через командную строку используйте:
+To launch the application via the command line, use:
 
 ```bash
-node bin/ultrascript.js
+node bin/ultracode.js
 ```
 
-или если модуль установлен глобально:
+or if the module is installed globally:
 
 ```bash
-ultrascript
+ultracode
 ```

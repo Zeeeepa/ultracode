@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    UltraScript Tools - Interactive Environment Setup for Windows
+    UltraCode - Interactive Environment Setup for Windows
 
 .DESCRIPTION
     Checks and optionally installs required dependencies for language parsing:
@@ -33,7 +33,7 @@ function Write-Info { Write-Host $args -ForegroundColor Cyan }
 function Write-Header {
     Write-Host ""
     Write-Host "============================================" -ForegroundColor Magenta
-    Write-Host "  UltraScript Tools - Environment Setup" -ForegroundColor Magenta
+    Write-Host "  UltraCode - Environment Setup" -ForegroundColor Magenta
     Write-Host "============================================" -ForegroundColor Magenta
     Write-Host ""
 }
@@ -291,11 +291,11 @@ if ($missing -gt 0) {
     Write-Warning "Some optional dependencies are missing."
     Write-Info "Parsers for those languages will use regex fallback."
     Write-Host ""
-    Write-Success "UltraScript Tools can run with reduced functionality."
+    Write-Success "UltraCode can run with reduced functionality."
 } else {
     Write-Success "All dependencies are installed!"
     Write-Host ""
-    Write-Success "UltraScript Tools is ready to use with full functionality."
+    Write-Success "UltraCode is ready to use with full functionality."
 }
 
 Write-Host ""

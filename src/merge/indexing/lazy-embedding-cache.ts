@@ -2,12 +2,12 @@ import type { CodeUnit } from "../models/code-unit.js";
 import type { VersionedIndex } from "../models/versioned-index.js";
 
 /**
- * Lazy Embedding Cache - Генерация embeddings только для unmatched units.
+ * Lazy Embedding Cache - Generates embeddings only for unmatched units.
  *
- * Кеширует embeddings на диске (SQLite) для повторного использования.
- * Генерирует в batches для эффективности.
+ * Caches embeddings on disk (SQLite) for reuse.
+ * Generates in batches for efficiency.
  *
- * Основано на LazyEmbeddingCache из SharpToolsMCP.
+ * Based on LazyEmbeddingCache from SharpToolsMCP.
  */
 export class LazyEmbeddingCache {
   private embeddingGenerator: EmbeddingGeneratorFn;
@@ -20,12 +20,12 @@ export class LazyEmbeddingCache {
   }
 
   /**
-   * Генерировать embeddings для units в index.
+   * Generate embeddings for units in the index.
    *
-   * Только для units без embeddings (lazy generation).
+   * Only for units without embeddings (lazy generation).
    *
    * @param index - Versioned index
-   * @param unitsNeedingEmbeddings - Units которым нужны embeddings
+   * @param unitsNeedingEmbeddings - Units that need embeddings
    * @returns Promise that resolves when done
    */
   async generateEmbeddings(index: VersionedIndex, unitsNeedingEmbeddings: CodeUnit[]): Promise<void> {
@@ -53,7 +53,7 @@ export class LazyEmbeddingCache {
   }
 
   /**
-   * Получить embedding из cache или сгенерировать.
+   * Get embedding from cache or generate a new one.
    */
   private async getOrGenerateEmbedding(unit: CodeUnit): Promise<Float32Array> {
     // Check in-memory cache first
@@ -73,7 +73,7 @@ export class LazyEmbeddingCache {
   }
 
   /**
-   * Вычислить cache key для unit.
+   * Compute cache key for a unit.
    *
    * Based on contentHash (same content = same embedding).
    */
@@ -82,14 +82,14 @@ export class LazyEmbeddingCache {
   }
 
   /**
-   * Очистить in-memory cache.
+   * Clear in-memory cache.
    */
   clearCache(): void {
     this.cache.clear();
   }
 
   /**
-   * Получить статистику cache.
+   * Get cache statistics.
    */
   getCacheStats(): CacheStats {
     return {
@@ -99,7 +99,7 @@ export class LazyEmbeddingCache {
   }
 
   /**
-   * Оценить использование памяти cache (bytes).
+   * Estimate cache memory usage (bytes).
    */
   private estimateMemoryUsage(): number {
     // Each Float32Array embedding ~384 dimensions * 4 bytes = ~1.5KB
@@ -110,19 +110,19 @@ export class LazyEmbeddingCache {
 }
 
 /**
- * Функция для генерации embedding из кода.
+ * Function for generating an embedding from code.
  */
 export type EmbeddingGeneratorFn = (code: string) => Promise<Float32Array>;
 
 /**
- * Опции для LazyEmbeddingCache.
+ * Options for LazyEmbeddingCache.
  */
 export interface LazyEmbeddingCacheOptions {
   batchSize?: number | undefined; // Batch size for parallel generation (default 32)
 }
 
 /**
- * Статистика cache.
+ * Cache statistics.
  */
 export interface CacheStats {
   size: number; // Number of cached embeddings

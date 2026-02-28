@@ -30,12 +30,12 @@ import { type DiffPreview, PreviewManager } from "./preview-manager.js";
 // =============================================================================
 
 export interface CodeModificationRequest {
-  entityId: string; // ID сущности из graph
-  newCode: string; // Новый код для замены
-  preserveComments?: boolean; // Сохранить комментарии
-  updateImports?: boolean; // Обновить imports если изменилась сигнатура
-  preview?: boolean; // Предпросмотр (default: true)
-  skipValidation?: boolean; // Пропустить валидацию
+  entityId: string; // Entity ID from graph
+  newCode: string; // New code for replacement
+  preserveComments?: boolean; // Preserve comments
+  updateImports?: boolean; // Update imports if signature changed
+  preview?: boolean; // Preview mode (default: true)
+  skipValidation?: boolean; // Skip validation
 }
 
 export interface CodeModificationResult {
@@ -44,9 +44,10 @@ export interface CodeModificationResult {
   entitiesUpdated: string[];
   embeddingsUpdated: number;
   relationshipsUpdated: number;
-  preview?: DiffPreview; // Если preview: true
-  validationReport?: BeforeAfterReport | undefined; // Авто-валидация
-  snapshotId?: string; // ID snapshot для rollback
+  preview?: DiffPreview; // If preview: true
+  validationReport?: BeforeAfterReport | undefined; // Auto-validation
+  snapshotId?: string; // Snapshot ID for rollback
+  swaggerWarning?: string; // Warning if entity is related to swagger contract
 }
 
 // =============================================================================
@@ -150,6 +151,27 @@ export class CodeModifier {
         });
       }
 
+      // Phase 10: Swagger contract check
+      let swaggerWarning: string | undefined;
+      try {
+        const rels = await this.graphStorage.getRelationshipsForEntity(entity.id);
+        const hasProducesApi = rels.some(
+          (r: { type: string; fromId: string }) => r.type === "produces_api" && r.fromId === entity.id,
+        );
+        const hasGeneratedFrom = rels.some(
+          (r: { type: string; fromId: string }) => r.type === "generated_from" && r.fromId === entity.id,
+        );
+
+        if (hasProducesApi) {
+          swaggerWarning = "This entity produces an API contract — swagger spec may need updating";
+        } else if (hasGeneratedFrom) {
+          swaggerWarning =
+            "This file is generated from swagger — manual changes will be overwritten on next generation";
+        }
+      } catch {
+        // Swagger check is non-critical — skip on error
+      }
+
       return {
         success: true,
         filesModified: [entity.filePath],
@@ -158,6 +180,7 @@ export class CodeModifier {
         relationshipsUpdated,
         validationReport,
         snapshotId,
+        swaggerWarning,
       };
     } catch (error) {
       // Rollback on error

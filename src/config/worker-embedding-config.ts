@@ -388,9 +388,8 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
   const dimensions = getModelDimensions(modelName, configDimensions);
 
   // Queue batch size for centralized mode (texts per HTTP request)
-  // Rule: batchSize <= --parallel, smaller batches = better GPU utilization
-  // 64 texts * 8 parallel = 512 texts in flight
-  const queueBatchSize =
+  // Rule: queueBatchSize <= max_client_batch_size (TEI/vLLM server limit)
+  const defaultQueueBatch =
     providerKind === "mlx"
       ? 64
       : providerKind === "llamacpp"
@@ -400,6 +399,10 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
           : providerKind === "tei"
             ? 50
             : undefined;
+  // Ensure queue batch doesn't exceed server's max_client_batch_size
+  const maxBatchFromProvider = providerOptions?.maxBatchSize as number | undefined;
+  const queueBatchSize =
+    defaultQueueBatch && maxBatchFromProvider ? Math.min(defaultQueueBatch, maxBatchFromProvider) : defaultQueueBatch;
 
   const result: WorkerEmbeddingConfig = {
     enabled: true,

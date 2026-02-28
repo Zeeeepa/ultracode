@@ -37,7 +37,7 @@ if [ ! -f ".autodoc/autodoc.json" ]; then
   exit 0
 fi
 
-# Run validation via MCP (requires ultrascript-tools-mcp in PATH)
+# Run validation via MCP (requires ultracode in PATH)
 # For now, just warn about staged .md files
 MD_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\\.md$')
 
