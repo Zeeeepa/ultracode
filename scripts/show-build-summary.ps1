@@ -6,7 +6,7 @@ param(
 $TS_OK = Test-Path "$ProjectRoot\dist\index.js"
 $WASM_DIFF = Test-Path "$ProjectRoot\dist\external-tools\wasm\diff-simd\diff_simd.js"
 $WASM_VECTOR = Test-Path "$ProjectRoot\dist\external-tools\wasm\vector-ops-simd\vector_ops_simd.js"
-$CUDA_OK = Test-Path "$ProjectRoot\dist\native\cuda\ultrascript_cuda.node"
+$CUDA_OK = Test-Path "$ProjectRoot\dist\native\cuda\ultracode_cuda.node"
 
 $WASM_COUNT = 0
 if ($WASM_DIFF) { $WASM_COUNT++ }
@@ -47,8 +47,18 @@ Write-Host "  CUDA Native" -NoNewline
 Write-Host (" "*15) -NoNewline
 if ($CUDA_OK) {
     Write-Host "[OK] Built successfully      100-200x" -ForegroundColor Green
-    $size = (Get-Item "$ProjectRoot\dist\native\cuda\ultrascript_cuda.node").Length
-    Write-Host "    - ultrascript_cuda.node ($size bytes)" -ForegroundColor Gray
+    $size = (Get-Item "$ProjectRoot\dist\native\cuda\ultracode_cuda.node").Length
+    Write-Host "    - ultracode_cuda.node ($size bytes)" -ForegroundColor Gray
+} else {
+    Write-Host "[SKIP] Not built (optional)" -ForegroundColor Yellow
+}
+
+# Roslyn C# Addon
+$ROSLYN_OK = Test-Path "$ProjectRoot\dist\roslyn-addon\UltraCode.CSharp.dll"
+Write-Host "  Roslyn C# Addon" -NoNewline
+Write-Host (" "*10) -NoNewline
+if ($ROSLYN_OK) {
+    Write-Host "[OK] Built successfully      Roslyn analysis" -ForegroundColor Green
 } else {
     Write-Host "[SKIP] Not built (optional)" -ForegroundColor Yellow
 }

@@ -123,7 +123,7 @@ try {
         Write-Success "TypeScript собран в dist/ (минифицирован, без sourcemaps)"
 
         # Копирование WASM diff-simd (единственный используемый WASM модуль)
-        # Примечание: ultrascript-tools.com копируется через tsup.config.ts
+        # Примечание: ultracode.com копируется через tsup.config.ts
         # Примечание: vector-ops-simd НЕ используется (wasm-backend.ts импортирует из другого пути)
         Write-Step "Копирование WASM модулей..."
 

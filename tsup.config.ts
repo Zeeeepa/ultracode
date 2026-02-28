@@ -88,21 +88,21 @@ export default defineConfig([
       }
 
       // Copy Cosmopolitan binary if it exists (built separately)
-      const commSource = join("src", "comm", "ultrascript-tools.com");
-      const commDest = join("dist", "ultrascript-tools.com");
-      const cmdDest = join("dist", "ultrascript-tools.cmd");
+      const commSource = join("src", "comm", "ultracode.com");
+      const commDest = join("dist", "ultracode.com");
+      const cmdDest = join("dist", "ultracode.cmd");
       try {
         await access(commSource);
         await copyFile(commSource, commDest);
         if (process.platform !== "win32") {
           await chmod(commDest, 0o755);
         }
-        console.log("[tsup] Copied ultrascript-tools.com to dist/");
+        console.log("[tsup] Copied ultracode.com to dist/");
 
         // Generate .cmd wrapper for Windows (Claude Code doesn't recognize .com)
         const { writeFile } = await import("node:fs/promises");
-        await writeFile(cmdDest, '@echo off\r\n"%~dp0ultrascript-tools.com" %*\r\n');
-        console.log("[tsup] Generated ultrascript-tools.cmd wrapper");
+        await writeFile(cmdDest, '@echo off\r\n"%~dp0ultracode.com" %*\r\n');
+        console.log("[tsup] Generated ultracode.cmd wrapper");
       } catch {
         // Binary not built yet - that's fine, it's optional
       }
@@ -119,24 +119,28 @@ export default defineConfig([
         console.warn("[tsup] Proto copy warning:", e.message);
       }
 
-      // Copy Roslyn addon if available (built separately by ultrasharp-tools-mcp)
+      // Copy Roslyn addon if available (built by scripts/build-roslyn)
       const { cpSync, existsSync } = await import("node:fs");
       const { resolve } = await import("node:path");
-      const addonSources = [
-        resolve("..", "ultrasharp-tools-mcp", "Run.Publish", "Addon"),
-        resolve("external-libs", "roslyn-addon"),
-      ];
       const addonDst = join("dist", "roslyn-addon");
-      for (const addonSrc of addonSources) {
-        if (existsSync(addonSrc)) {
+      const addonDll = join(addonDst, "UltraCode.CSharp.dll");
+
+      if (existsSync(addonDll)) {
+        // Already built by build-roslyn scripts — nothing to copy
+        console.log("[tsup] Roslyn addon already in dist/roslyn-addon/ (built by build-roslyn)");
+      } else {
+        // Fallback: try external-libs
+        const fallbackSrc = resolve("external-libs", "roslyn-addon");
+        if (existsSync(fallbackSrc)) {
           try {
             await mkdir(addonDst, { recursive: true });
-            cpSync(addonSrc, addonDst, { recursive: true });
-            console.log(`[tsup] Copied Roslyn addon from ${addonSrc} to dist/roslyn-addon/`);
+            cpSync(fallbackSrc, addonDst, { recursive: true });
+            console.log(`[tsup] Copied Roslyn addon from ${fallbackSrc} to dist/roslyn-addon/`);
           } catch (e: any) {
             console.warn("[tsup] Roslyn addon copy warning:", e.message);
           }
-          break;
+        } else {
+          console.log("[tsup] Roslyn addon not found (optional — run scripts/build-roslyn to build)");
         }
       }
     },
@@ -315,7 +319,7 @@ export default defineConfig([
   },
 
   // NOTE: Commer (lightweight proxy) is now built as Cosmopolitan C binary
-  // See src/comm/ for the portable ultrascript-tools.com binary
+  // See src/comm/ for the portable ultracode.com binary
   // Build with: npm run build:comm
 
   // NOTE: Old src/core/index.ts IPC server is deprecated

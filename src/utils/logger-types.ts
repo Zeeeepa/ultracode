@@ -1,20 +1,21 @@
-/**
- * Logger Types and Interfaces
- *
- */
+export const LogLevel = {
+  TRACE: -1,
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+  CRITICAL: 4,
+} as const;
 
-export enum LogLevel {
-  TRACE = -1, // Most verbose - for startup timing and async flow analysis
-  DEBUG = 0,
-  INFO = 1,
-  WARN = 2,
-  ERROR = 3,
-  CRITICAL = 4,
-}
+export type LogLevel = (typeof LogLevel)[keyof typeof LogLevel];
+
+export const LogLevelName: Record<number, string> = Object.fromEntries(
+  Object.entries(LogLevel).map(([k, v]) => [v, k]),
+);
 
 export interface LoggerConfig {
   logDir: string;
-  maxFileSize: number; // bytes
+  maxFileSize: number;
   maxFiles: number;
   logLevel: LogLevel;
   enableRotation: boolean;

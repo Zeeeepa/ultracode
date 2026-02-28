@@ -1,7 +1,7 @@
-function pLimit(_concurrency) {
-  return async (fn, ...args) => {
-    return fn(...args);
-  };
+function pLimit(n) {
+  const run = async (fn, ...a) => fn(...a);
+  run.concurrency = n;
+  return run;
 }
 
 module.exports = pLimit;

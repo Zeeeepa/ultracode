@@ -2,7 +2,7 @@
 # Convert Jina Embedding models to OpenVINO IR format for OVMS
 # Requires: pip install optimum[openvino] transformers
 
-MODELS_DIR="C:/Users/faxen/AppData/Local/UltraScriptTools/models"
+MODELS_DIR="C:/Users/faxen/AppData/Local/UltraCode/models"
 
 echo "=========================================="
 echo "  Jina Embeddings -> OpenVINO Converter"

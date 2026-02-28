@@ -1,49 +1,94 @@
+---
+module_name: setup
+description: "Interactive setup wizard for embedding and LLM provider configuration with hardware detection"
+status: active
+language: typescript
+---
+
 # Setup
 
-*Last updated: 2026-01-15*
+> Interactive setup module that guides users through selecting, configuring, and installing embedding and LLM providers based on detected hardware capabilities.
 
-Модуль установки и конфигурации embedding и LLM провайдеров с интерактивным пользовательским интерфейсом.
+## Overview
+
+The setup module orchestrates the multi-step interactive wizard for configuring semantic embedding and LLM providers. It detects GPU/CPU hardware, recommends providers (vLLM, TEI, llama.cpp, OVMS, Ollama), lets users select models, handles Docker container deployment or native binary installation, and saves the resulting configuration. The module is organized into hardware detection, selection dialogs, UI utilities, type definitions, installer routing, i18n support, and infrastructure utilities.
+
+## Data Flow
+
+- **Inputs:** Hardware detection results (CPU features, GPU architecture/VRAM), user selections via interactive prompts, JSON model configs from `config/` directory.
+- **Processing:** Provider recommendation based on hardware, model filtering by provider/language compatibility, installation via Docker or native binaries, health checks.
+- **Outputs:** `semantic-config.json` with embedding and LLM configuration, installed/running provider services.
+
+## Public API
+
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `detectGPU` | function | Detects NVIDIA GPU via nvidia-smi | [`setup-hardware.ts:11-56`](./setup-hardware.ts) |
+| `printHardwareInfo` | function | Displays CPU and GPU info | [`setup-hardware.ts:58-86`](./setup-hardware.ts) |
+| `installProvider` | function | Routes embedding provider installation | [`setup-installers.ts:35-62`](./setup-installers.ts) |
+| `selectLanguage` | function | Interactive code language selection | [`setup-selection.ts:14-31`](./setup-selection.ts) |
+| `selectProvider` | function | Interactive provider selection with recommendations | [`setup-selection.ts:115-115`](./setup-selection.ts) |
+| `selectModel` | function | Interactive embedding model selection | [`setup-selection.ts:152-286`](./setup-selection.ts) |
+| `askEnableLLM` | function | Asks about enabling LLM for AutoDoc | [`setup-llm.ts:166-166`](./setup-llm.ts) |
+| `selectLLMProvider` | function | Interactive LLM provider selection | [`setup-llm.ts:186-217`](./setup-llm.ts) |
+| `selectLLMModel` | function | Interactive LLM model selection | [`setup-llm.ts:295-295`](./setup-llm.ts) |
+| `installLLMProvider` | function | Installs and launches LLM provider | [`setup-llm.ts:489-489`](./setup-llm.ts) |
+| `EmbeddingModel` | interface | Embedding model configuration | [`setup-types.ts:5-39`](./setup-types.ts) |
+| `ModelsConfig` | interface | All available models and providers config | [`setup-types.ts:41-46`](./setup-types.ts) |
+| `GPUInfo` | interface | GPU availability and architecture info | [`setup-types.ts:48-55`](./setup-types.ts) |
+| `LLMConfig` | interface | LLM models and providers config | [`setup-types.ts:102-110`](./setup-types.ts) |
+| `c` | const | ANSI color codes for console output | [`setup-ui.ts:14-25`](./setup-ui.ts) |
+| `printBanner` | function | Displays setup welcome banner | [`setup-ui.ts:27-42`](./setup-ui.ts) |
+| `printOK` / `printInfo` / `printWarn` / `printError` | functions | Colored status message printing | [`setup-ui.ts:44-46`](./setup-ui.ts) |
+| `prompt` | function | Interactive string input from stdin | [`setup-ui.ts:60-68`](./setup-ui.ts) |
+
+## Dependencies
+
+### Internal Modules
+
+| Module | Purpose |
+|--------|---------|
+| `setup/i18n` | Localized UI strings (English, Russian) |
+| `setup/installers` | Provider-specific installation logic |
+| `setup/utils` | Docker, NVIDIA toolkit, runtime helpers |
+
+### External Packages
+
+| Package | Purpose |
+|---------|---------|
+| `node:readline` | Interactive user prompts |
+| `node:child_process` | Process spawning for nvidia-smi, Docker |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Supported embedding providers | vLLM, TEI, llama.cpp, OVMS, OVMS-native, Ollama |
+| Supported LLM providers | Claude Code, Ollama, TGI, Docker Model Runner |
+| UI languages | English, Russian (auto-detected from system locale) |
+
+## Error Handling
+
+Provider installation failures are reported but do not block config saving. Missing Docker or nvidia-smi produce warning messages with installation hints. Health check timeouts log warnings but allow the setup to complete.
+
+## Known Limitations
+
+- GPU detection only supports NVIDIA via nvidia-smi; AMD and Intel GPUs are detected at a basic level.
+- Interactive prompts require a TTY; non-interactive mode is not fully supported.
+- LLM setup depends on external model config JSON files existing in the `config/` directory.
 
 ## Exports
 
-| Name | Type | Description | Location |
-|------|------|-------------|----------|
-| `detectGPU` | function | Обнаруживает NVIDIA GPU через nvidia-smi и определяет архитектуру | [→ setup-hardware.ts:11-56] |
-| `printHardwareInfo` | function | Выводит информацию о CPU и GPU в форматированном виде | [→ setup-hardware.ts:58-86] |
-| `installProvider` | function | Маршрутизирует установку выбранного embedding провайдера | [→ setup-installers.ts:35-62] |
-| `askEnableLLM` | function | Спрашивает пользователя о включении LLM функции AutoDoc | [→ setup-llm.ts:166-182] |
-| `selectLLMProvider` | function | Интерактивно выбирает провайдер LLM из доступных опций | [→ setup-llm.ts:186-202] |
-| `selectLLMModel` | function | Интерактивно выбирает модель LLM для выбранного провайдера | [→ setup-llm.ts:295-298] |
-| `installLLMProvider` | function | Выполняет установку и запуск выбранного LLM провайдера | [→ setup-llm.ts:489-489] |
-| `selectLanguage` | function | Интерактивно выбирает язык комментариев кода (English или multi) | [→ setup-selection.ts:14-31] |
-| `getProviderRecommendations` | function | Возвращает список рекомендуемых провайдеров на основе аппаратного обеспечения | [→ setup-selection.ts:37-106] |
-| `selectProvider` | function | Интерактивно выбирает embedding провайдер из списка рекомендаций | [→ setup-selection.ts:115-127] |
-| `selectModel` | function | Интерактивно выбирает embedding модель для выбранного провайдера | [→ setup-selection.ts:152-286] |
-| `EmbeddingModel` | interface | Интерфейс конфигурации embedding модели с параметрами и характеристиками | [→ setup-types.ts:5-39] |
-| `ModelsConfig` | interface | Интерфейс конфигурации всех доступных embedding моделей и провайдеров | [→ setup-types.ts:41-46] |
-| `GPUInfo` | interface | Интерфейс информации о GPU (доступность, архитектура, VRAM) | [→ setup-types.ts:48-55] |
-| `LLMModel` | interface | Интерфейс конфигурации LLM модели с контекстом и производительностью | [→ setup-types.ts:57-73] |
-| `TGIModel` | interface | Интерфейс модели для Text Generation Inference с GPU архитектурами | [→ setup-types.ts:75-88] |
-| `OllamaLLMModel` | interface | Интерфейс модели для Ollama провайдера с токенами в секунду | [→ setup-types.ts:90-100] |
-| `LLMConfig` | interface | Интерфейс конфигурации всех доступных LLM моделей и провайдеров | [→ setup-types.ts:102-110] |
-| `ProviderOption` | interface | Интерфейс опции провайдера с рекомендацией и характеристиками | [→ setup-types.ts:112-120] |
-| `InstallResult` | interface | Интерфейс результата установки провайдера с статусом успеха | [→ setup-types.ts:122-134] |
-| `SelectedLLMModel` | interface | Интерфейс выбранной LLM модели с провайдером и параметрами | [→ setup-types.ts:136-144] |
-| `c` | const | Объект с ANSI кодами цветов для форматирования консольного вывода | [→ setup-ui.ts:8-11] |
-| `printBanner` | function | Выводит приветственный баннер setup модуля в консоль | [→ setup-ui.ts:21-27] |
-| `printOK` | function | Выводит зелёное сообщение об успешном выполнении операции | [→ setup-ui.ts:27-42] |
-| `printInfo` | function | Выводит голубое информационное сообщение пользователю | [→ setup-ui.ts:27-42] |
-| `printWarn` | function | Выводит жёлтое предупреждение о потенциальной проблеме | [→ setup-ui.ts:27-42] |
-| `printError` | function | Выводит красное сообщение об ошибке при выполнении | [→ setup-ui.ts:27-42] |
-| `prompt` | function | Интерактивно запрашивает ввод строки у пользователя через консоль | [→ setup-ui.ts:27-42] |
-| `printCompleteBanner` | function | Выводит финальный баннер об успешном завершении setup | [→ setup-ui.ts:44-46] |
+
 
 ## Files
 
-- **index.ts** — Переэкспортирует все публичные функции и типы модуля setup
-- **setup-hardware.ts** — Детектирует GPU и CPU, выводит информацию об аппаратном обеспечении
-- **setup-installers.ts** — Маршрутизирует установку embedding провайдеров (vLLM, TEI, llama.cpp, OVMS)
-- **setup-llm.ts** — Обработка выбора и установки LLM провайдеров для AutoDoc генератора документации
-- **setup-selection.ts** — Интерактивные диалоги выбора языка, провайдера и модели embedding
-- **setup-types.ts** — Определяет интерфейсы для конфигурации моделей и провайдеров
-- **setup-ui.ts** — Цвета ANSI, печать сообщений и функция интерактивного ввода данных
+| File | Description |
+|------|-------------|
+| `index.ts` | Re-exports all public functions and types |
+| `setup-hardware.ts` | GPU and CPU detection, hardware info display |
+| `setup-installers.ts` | Routes embedding provider installation |
+| `setup-llm.ts` | LLM provider selection and installation |
+| `setup-selection.ts` | Interactive dialogs for language, provider, model |
+| `setup-types.ts` | TypeScript interfaces for models and providers |
+| `setup-ui.ts` | ANSI colors, message printing, interactive input |

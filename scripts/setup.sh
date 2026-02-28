@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# UltraScript Tools MCP - Semantic Embedding Setup v2
+# UltraCode - Semantic Embedding Setup v2
 # ==============================================================================
 # Flow:
 #   0. Detect CPU (AVX2/VNNI/AMX) + GPU (NVIDIA arch)

@@ -11,7 +11,7 @@
  * Detects project type from files (package.json, Cargo.toml, etc.)
  */
 
-import { extname, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { existsSync } from "../utils/file-ops.js";
@@ -32,6 +32,7 @@ type BashParserType = typeof import("./bash-native-parser.js").BashNativeParser;
 type PowerShellParserType = typeof import("./powershell-native-parser.js").PowerShellNativeParser;
 type JsonParserType = typeof import("./json-parser.js").JsonParser;
 type ZigParserType = typeof import("./zig-native-parser.js").ZigNativeParser;
+type HelmParserType = typeof import("./helm-parser.js").HelmParser;
 
 // =============================================================================
 // LANGUAGE DETECTION
@@ -81,6 +82,7 @@ const EXTENSION_TO_LANGUAGE: Record<string, SupportedLanguage> = {
   ".bat": "batch",
   ".cmd": "batch",
   ".json": "json",
+  ".tpl": "helm",
 };
 
 const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -95,6 +97,7 @@ const BASH_EXTENSIONS = new Set([".sh", ".bash", ".zsh"]);
 const POWERSHELL_EXTENSIONS = new Set([".ps1", ".psm1", ".psd1"]);
 const JSON_EXTENSIONS = new Set([".json"]);
 const ZIG_EXTENSIONS = new Set([".zig", ".zon"]);
+const HELM_EXTENSIONS = new Set([".tpl"]);
 
 // =============================================================================
 // PROJECT TYPE DETECTION
@@ -110,6 +113,7 @@ export type ProjectType =
   | "cpp" // CMakeLists.txt, Makefile
   | "dotnet" // *.csproj, *.sln
   | "zig" // build.zig
+  | "helm" // Chart.yaml
   | "mixed" // Multiple languages detected
   | "unknown";
 
@@ -144,6 +148,7 @@ export function detectProjectType(workspaceRoot: string): ProjectInfo {
     { file: "CMakeLists.txt", type: "cpp", langs: ["c", "cpp"] },
     { file: "Makefile", type: "cpp", langs: ["c", "cpp"] },
     { file: "build.zig", type: "zig", langs: ["zig"] },
+    { file: "Chart.yaml", type: "helm", langs: ["helm" as SupportedLanguage] },
   ];
 
   const detectedTypes: ProjectType[] = [];
@@ -196,6 +201,7 @@ export class UnifiedParser implements BaseParser {
   private powershellParser: InstanceType<PowerShellParserType> | null = null;
   private jsonParser: InstanceType<JsonParserType> | null = null;
   private zigParser: InstanceType<ZigParserType> | null = null;
+  private helmParser: InstanceType<HelmParserType> | null = null;
 
   // Track which parsers are initialized
   private initializedParsers = new Set<string>();
@@ -261,6 +267,9 @@ export class UnifiedParser implements BaseParser {
           break;
         case "zig":
           initPromises.push(this.ensureZigParser());
+          break;
+        case "helm" as SupportedLanguage:
+          initPromises.push(this.ensureHelmParser());
           break;
       }
     }
@@ -379,6 +388,14 @@ export class UnifiedParser implements BaseParser {
     this.initializedParsers.add("zig");
   }
 
+  private async ensureHelmParser(): Promise<void> {
+    if (this.helmParser) return;
+    const { HelmParser } = await import("./helm-parser.js");
+    this.helmParser = new HelmParser();
+    await this.helmParser.initialize();
+    this.initializedParsers.add("helm");
+  }
+
   // =============================================================================
   // PARSING
   // =============================================================================
@@ -447,6 +464,30 @@ export class UnifiedParser implements BaseParser {
       } else if (ZIG_EXTENSIONS.has(ext)) {
         await this.ensureZigParser();
         result = await this.zigParser!.parse(filePath, content, contentHash);
+      } else if (HELM_EXTENSIONS.has(ext)) {
+        await this.ensureHelmParser();
+        result = await this.helmParser!.parse(filePath, content, contentHash);
+      } else if ((ext === ".yaml" || ext === ".yml") && content.includes("{{")) {
+        // YAML with Go template syntax — check if it's a Helm chart context
+        await this.ensureHelmParser();
+        if (this.helmParser!.isHelmContext(filePath)) {
+          result = await this.helmParser!.parse(filePath, content, contentHash);
+        } else {
+          result = this.fallbackParse(filePath, content, contentHash, startTime);
+        }
+      } else if (
+        (ext === ".yaml" || ext === ".yml") &&
+        (basename(filePath) === "Chart.yaml" ||
+          basename(filePath) === "values.yaml" ||
+          /^values-[\w.-]+\.yaml$/.test(basename(filePath)))
+      ) {
+        // Chart.yaml or values.yaml without {{ — still parse for metadata
+        await this.ensureHelmParser();
+        if (this.helmParser!.isHelmContext(filePath)) {
+          result = await this.helmParser!.parse(filePath, content, contentHash);
+        } else {
+          result = this.fallbackParse(filePath, content, contentHash, startTime);
+        }
       } else {
         // For other languages, use regex-based fallback
         result = this.fallbackParse(filePath, content, contentHash, startTime);
@@ -538,6 +579,11 @@ export class UnifiedParser implements BaseParser {
     if (ZIG_EXTENSIONS.has(ext)) {
       await this.ensureZigParser();
       return this.zigParser!.parseIncremental(filePath, content, contentHash, edits);
+    }
+
+    if (HELM_EXTENSIONS.has(ext)) {
+      await this.ensureHelmParser();
+      return this.helmParser!.parseIncremental(filePath, content, contentHash, edits);
     }
 
     // For other languages, just do full parse
@@ -730,6 +776,7 @@ export class UnifiedParser implements BaseParser {
     if (this.bashParser) allStats.push(this.bashParser.getStats());
     if (this.powershellParser) allStats.push(this.powershellParser.getStats());
     if (this.zigParser) allStats.push(this.zigParser.getStats());
+    if (this.helmParser) allStats.push(this.helmParser.getStats());
 
     return {
       filesParsed: this.stats.filesParsed,
@@ -757,6 +804,7 @@ export class UnifiedParser implements BaseParser {
     this.bashParser?.clearCache();
     this.powershellParser?.clearCache();
     this.zigParser?.clearCache();
+    this.helmParser?.clearCache();
   }
 
   /**

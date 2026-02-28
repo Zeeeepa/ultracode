@@ -1,8 +1,3 @@
-/**
- * Base agent implementation with resource management
- * Provides common functionality for all specialized agents
- */
-
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { log } from "../logging/index.js";
@@ -17,7 +12,6 @@ import {
 } from "../types/agent.js";
 import { type AgentBusyDetails, AgentBusyError } from "../types/errors.js";
 
-// Task with resolver for queue-based processing
 interface QueuedTask {
   task: AgentTask;
   resolve: (result: unknown) => void;
@@ -30,20 +24,18 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   public status: AgentStatus;
   public readonly capabilities: AgentCapabilities;
 
-  protected taskQueue: AgentTask[] = [];
-  protected currentTask: AgentTask | null = null;
+  protected tasks: AgentTask[] = [];
+  protected activeTask: AgentTask | null = null;
   protected metrics: AgentMetrics;
   protected memoryUsage = 0;
   protected cpuUsage = 0;
   private lastRejection: AgentBusyDetails | undefined;
 
-  // Queue for async task processing
-  private pendingQueue: QueuedTask[] = [];
-  private isProcessingQueue = false;
+  private waiting: QueuedTask[] = [];
+  private draining = false;
 
-  // Prevent multiple initializations
-  private initialized = false;
-  private initializePromise: Promise<void> | null = null;
+  private _ready = false;
+  private initGate: Promise<void> | null = null;
 
   constructor(type: AgentType, capabilities: AgentCapabilities) {
     super();
@@ -51,7 +43,6 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
     this.type = type;
     this.status = AgentStatus.IDLE;
     this.capabilities = capabilities;
-
     this.metrics = {
       agentId: this.id,
       tasksProcessed: 0,
@@ -62,103 +53,82 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
       currentCpuPercent: 0,
       lastActivity: Date.now(),
     };
-
-    this.startResourceMonitoring();
   }
 
   async initialize(): Promise<void> {
-    // Prevent multiple initializations - return existing promise if in progress
-    if (this.initializePromise) {
-      return this.initializePromise;
-    }
-    if (this.initialized) {
-      return;
-    }
+    if (this.initGate) return this.initGate;
+    if (this._ready) return;
 
-    this.initializePromise = (async () => {
+    this.initGate = (async () => {
       try {
         log.d("BASEAGENT", "init_start", { id: this.id });
         this.status = AgentStatus.IDLE;
         await this.onInitialize();
-        this.initialized = true;
+        this._ready = true;
         this.emit("initialized", this.id);
       } finally {
-        this.initializePromise = null;
+        this.initGate = null;
       }
     })();
 
-    return this.initializePromise;
+    return this.initGate;
   }
 
   async shutdown(): Promise<void> {
     log.d("BASEAGENT", "shutdown_start", { id: this.id });
     this.status = AgentStatus.SHUTDOWN;
     await this.onShutdown();
-    // Clear resource monitor if set
-    if (this._resourceMonitorInterval !== undefined) {
-      clearInterval(this._resourceMonitorInterval);
-      this._resourceMonitorInterval = undefined;
-    }
     this.emit("shutdown", this.id);
   }
 
   canHandle(task: AgentTask): boolean {
     this.lastRejection = undefined;
-    // Debug logging for indexer agent issues
+
     if (this.type === "indexer") {
       log.t("BASEAGENT", "can_handle_chk", {
         id: task.id,
         type: task.type,
         status: this.status,
-        queue: this.taskQueue.length,
+        queue: this.tasks.length,
       });
     }
 
     if (this.status !== AgentStatus.IDLE) {
-      if (this.type === "indexer") {
-        log.t("BASEAGENT", "reject_not_idle", { status: this.status });
-      }
+      if (this.type === "indexer") log.t("BASEAGENT", "reject_not_idle", { status: this.status });
       this.lastRejection = {
         agentId: this.id,
         status: this.status,
         reason: "not_idle",
-        queueLength: this.taskQueue.length,
+        queueLength: this.tasks.length,
         maxQueue: this.capabilities.maxConcurrency,
         retryAfterMs: 200,
       };
       return false;
     }
-    if (this.taskQueue.length >= this.capabilities.maxConcurrency) {
-      if (this.type === "indexer") {
-        log.t("BASEAGENT", "reject_queue_full", {
-          queue: this.taskQueue.length,
-          max: this.capabilities.maxConcurrency,
-        });
-      }
+
+    if (this.tasks.length >= this.capabilities.maxConcurrency) {
+      if (this.type === "indexer")
+        log.t("BASEAGENT", "reject_queue_full", { queue: this.tasks.length, max: this.capabilities.maxConcurrency });
       this.lastRejection = {
         agentId: this.id,
         status: this.status,
         reason: "queue_full",
-        queueLength: this.taskQueue.length,
+        queueLength: this.tasks.length,
         maxQueue: this.capabilities.maxConcurrency,
         retryAfterMs: 250,
       };
       return false;
     }
-    // Memory limit check disabled - let OS handle memory management
-    // if (this.memoryUsage > this.capabilities.memoryLimit * 0.9) { ... }
 
     const canProcess = this.canProcessTask(task);
-    if (this.type === "indexer" && !canProcess) {
-      log.t("BASEAGENT", "reject_cant_proc");
-    }
+    if (this.type === "indexer" && !canProcess) log.t("BASEAGENT", "reject_cant_proc");
 
     if (!canProcess) {
       this.lastRejection = {
         agentId: this.id,
         status: this.status,
         reason: "unsupported_task",
-        queueLength: this.taskQueue.length,
+        queueLength: this.tasks.length,
         maxQueue: this.capabilities.maxConcurrency,
       };
     }
@@ -179,154 +149,44 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
         memoryUsageMB: this.lastRejection?.memoryUsageMB ?? this.memoryUsage,
         memoryLimitMB: this.lastRejection?.memoryLimitMB ?? this.capabilities.memoryLimit,
       };
-
       throw new AgentBusyError(details);
     }
 
-    this.taskQueue.push(task);
-    this.status = AgentStatus.BUSY;
-    this.currentTask = task;
-    task.startedAt = Date.now();
-
-    try {
-      const result = await this.processTask(task);
-      task.completedAt = Date.now();
-      task.result = result;
-
-      this.metrics.tasksProcessed++;
-      this.metrics.tasksSucceeded++;
-      this.updateAverageProcessingTime(task.completedAt - task.startedAt);
-
-      this.emit("task:completed", { agentId: this.id, task });
-      return result;
-    } catch (error) {
-      task.error = error as Error;
-      task.completedAt = Date.now();
-
-      this.metrics.tasksProcessed++;
-      this.metrics.tasksFailed++;
-
-      this.emit("task:failed", { agentId: this.id, task, error });
-      throw error;
-    } finally {
-      this.taskQueue = this.taskQueue.filter((t) => t.id !== task.id);
-      this.currentTask = null;
-
-      if (this.taskQueue.length === 0) {
-        this.status = AgentStatus.IDLE;
-      }
-
-      this.metrics.lastActivity = Date.now();
-      this.lastRejection = undefined;
-    }
+    return this.runTask(task, true);
   }
 
-  /**
-   * Enqueue a task for processing. Returns a Promise that resolves when the task completes.
-   * Unlike process(), this method accepts tasks even when the agent is busy,
-   * queuing them for later execution. This enables efficient parallel task submission.
-   *
-   * @param task - The task to enqueue
-   * @param maxQueueSize - Maximum queue size before rejecting (default: 1000)
-   * @returns Promise that resolves with the task result
-   */
   async enqueue(task: AgentTask, maxQueueSize = 1000): Promise<unknown> {
-    // Check if task type is supported
     if (!this.canProcessTask(task)) {
       throw new AgentBusyError({
         agentId: this.id,
         status: this.status,
         reason: "unsupported_task",
-        queueLength: this.pendingQueue.length,
+        queueLength: this.waiting.length,
         maxQueue: maxQueueSize,
         taskId: task.id,
       });
     }
 
-    // Reject if queue is too large (backpressure)
-    if (this.pendingQueue.length >= maxQueueSize) {
+    if (this.waiting.length >= maxQueueSize) {
       throw new AgentBusyError({
         agentId: this.id,
         status: this.status,
         reason: "queue_full",
-        queueLength: this.pendingQueue.length,
+        queueLength: this.waiting.length,
         maxQueue: maxQueueSize,
         retryAfterMs: 500,
         taskId: task.id,
       });
     }
 
-    // Create a promise that will be resolved when the task completes
     return new Promise((resolve, reject) => {
-      this.pendingQueue.push({ task, resolve, reject });
-      // Start processing if not already running
-      this.processQueue();
+      this.waiting.push({ task, resolve, reject });
+      this.drainQueue();
     });
   }
 
-  /**
-   * Process tasks from the pending queue one by one
-   */
-  private async processQueue(): Promise<void> {
-    // Prevent concurrent queue processing
-    if (this.isProcessingQueue) {
-      return;
-    }
-
-    this.isProcessingQueue = true;
-
-    try {
-      while (this.pendingQueue.length > 0) {
-        const queued = this.pendingQueue.shift();
-        if (!queued) break;
-
-        const { task, resolve, reject } = queued;
-
-        try {
-          // Process task directly (bypass canHandle since we already checked canProcessTask)
-          this.taskQueue.push(task);
-          this.status = AgentStatus.BUSY;
-          this.currentTask = task;
-          task.startedAt = Date.now();
-
-          const result = await this.processTask(task);
-          task.completedAt = Date.now();
-          task.result = result;
-
-          this.metrics.tasksProcessed++;
-          this.metrics.tasksSucceeded++;
-          this.updateAverageProcessingTime(task.completedAt - task.startedAt);
-
-          this.emit("task:completed", { agentId: this.id, task });
-          resolve(result);
-        } catch (error) {
-          task.error = error as Error;
-          task.completedAt = Date.now();
-
-          this.metrics.tasksProcessed++;
-          this.metrics.tasksFailed++;
-
-          this.emit("task:failed", { agentId: this.id, task, error });
-          reject(error as Error);
-        } finally {
-          this.taskQueue = this.taskQueue.filter((t) => t.id !== task.id);
-          this.currentTask = null;
-          this.metrics.lastActivity = Date.now();
-        }
-      }
-    } finally {
-      this.isProcessingQueue = false;
-      if (this.taskQueue.length === 0) {
-        this.status = AgentStatus.IDLE;
-      }
-    }
-  }
-
-  /**
-   * Get the current pending queue length
-   */
-  getPendingQueueLength(): number {
-    return this.pendingQueue.length;
+  waitingCount(): number {
+    return this.waiting.length;
   }
 
   async send(message: AgentMessage): Promise<void> {
@@ -341,54 +201,83 @@ export abstract class BaseAgent extends EventEmitter implements Agent {
   getMemoryUsage(): number {
     return this.memoryUsage;
   }
-
   getCpuUsage(): number {
     return this.cpuUsage;
   }
-
   getTaskQueue(): AgentTask[] {
-    return [...this.taskQueue];
+    return [...this.tasks];
   }
-
   getMetrics(): AgentMetrics {
     return { ...this.metrics };
   }
 
-  // Abstract methods for subclasses to implement
   protected abstract onInitialize(): Promise<void>;
   protected abstract onShutdown(): Promise<void>;
   protected abstract canProcessTask(task: AgentTask): boolean;
   protected abstract processTask(task: AgentTask): Promise<unknown>;
   protected abstract handleMessage(message: AgentMessage): Promise<void>;
 
-  // Resource monitoring
-  protected _resourceMonitorInterval?: ReturnType<typeof setInterval> | undefined;
-
   protected startResourceMonitoring(): void {
-    // DISABLED: process.memoryUsage() crashes Bun when called during OpenVINO native operations
-    // Resource monitoring is not critical for functionality
-    return;
+    /* no-op: disabled for Bun/OpenVINO compat */
+  }
+  protected stopResourceMonitoring(): void {
+    /* no-op */
   }
 
-  protected stopResourceMonitoring(): void {
-    if (this._resourceMonitorInterval) {
-      clearInterval(this._resourceMonitorInterval);
-      this._resourceMonitorInterval = undefined;
+  private async runTask(task: AgentTask, setIdle: boolean): Promise<unknown> {
+    this.tasks.push(task);
+    this.status = AgentStatus.BUSY;
+    this.activeTask = task;
+    task.startedAt = Date.now();
+
+    try {
+      const result = await this.processTask(task);
+      task.completedAt = Date.now();
+      task.result = result;
+      this.metrics.tasksProcessed++;
+      this.metrics.tasksSucceeded++;
+      this.updateAverageProcessingTime(task.completedAt - task.startedAt);
+      this.emit("task:completed", { agentId: this.id, task });
+      return result;
+    } catch (error) {
+      task.error = error as Error;
+      task.completedAt = Date.now();
+      this.metrics.tasksProcessed++;
+      this.metrics.tasksFailed++;
+      this.emit("task:failed", { agentId: this.id, task, error });
+      throw error;
+    } finally {
+      this.tasks = this.tasks.filter((t) => t.id !== task.id);
+      this.activeTask = null;
+      this.metrics.lastActivity = Date.now();
+      if (setIdle && this.tasks.length === 0) this.status = AgentStatus.IDLE;
+      this.lastRejection = undefined;
     }
   }
 
-  // DISABLED: process.memoryUsage() crashes Bun with OpenVINO native module
-  // private updateResourceUsage(): void {
-  //   const memUsed = process.memoryUsage();
-  //   this.memoryUsage = Math.round(memUsed.heapUsed / 1024 / 1024);
-  //   this.metrics.currentMemoryMB = this.memoryUsage;
-  //   this.cpuUsage = this.status === AgentStatus.BUSY ? 50 : 5;
-  //   this.metrics.currentCpuPercent = this.cpuUsage;
-  // }
+  private async drainQueue(): Promise<void> {
+    if (this.draining) return;
+    this.draining = true;
+
+    try {
+      while (this.waiting.length > 0) {
+        const queued = this.waiting.shift();
+        if (!queued) break;
+        const { task, resolve, reject } = queued;
+        try {
+          resolve(await this.runTask(task, false));
+        } catch (error) {
+          reject(error as Error);
+        }
+      }
+    } finally {
+      this.draining = false;
+      if (this.tasks.length === 0) this.status = AgentStatus.IDLE;
+    }
+  }
 
   private updateAverageProcessingTime(duration: number): void {
-    const prev = this.metrics.averageProcessingTime;
     const count = this.metrics.tasksSucceeded;
-    this.metrics.averageProcessingTime = (prev * (count - 1) + duration) / count;
+    this.metrics.averageProcessingTime += (duration - this.metrics.averageProcessingTime) / count;
   }
 }

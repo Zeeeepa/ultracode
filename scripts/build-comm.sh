@@ -7,9 +7,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 COMM_SRC="$PROJECT_ROOT/src/comm/comm.c"
-OUTPUT="$PROJECT_ROOT/dist/ultrascript-tools.com"
+OUTPUT="$PROJECT_ROOT/dist/ultracode.com"
 
-echo "=== Building UltraScript Comm Proxy ==="
+echo "=== Building UltraCode Comm Proxy ==="
 echo "Source: $COMM_SRC"
 echo "Output: $OUTPUT"
 echo ""

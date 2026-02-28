@@ -1,6 +1,6 @@
 # Benchmarks
 
-Performance benchmarks for UltraScript Tools MCP.
+Performance benchmarks for UltraCode.
 
 ## Available Benchmarks
 

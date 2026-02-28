@@ -1,0 +1,137 @@
+---
+module_name: swagger
+description: "Swagger/OpenAPI specification parser and code linker — connects API specs to controllers, generated clients, and types"
+status: active
+language: typescript
+entry_point: index.ts
+exports:
+  - analyzeSwaggerCodeLinks
+  - buildSwaggerRelationships
+  - getCodegenConfigFiles
+  - getGeneratedCodeMarkers
+  - SwaggerCodeLink
+  - SwaggerAnalysis
+  - SwaggerRelationship
+  - ProducerPattern
+  - CodegenConfig
+  - CodeRoute
+  - SwaggerEndpoint
+dependencies:
+  - src/types/storage.ts
+tags:
+  - swagger
+  - openapi
+  - api-contract
+  - code-generation
+  - linker
+---
+
+# Swagger/OpenAPI Code Linker
+
+> Connects Swagger/OpenAPI specifications to source code — controllers (producers), generated clients (consumers), and generated types. Creates `PRODUCES_API`, `CONSUMES_API`, and `GENERATED_FROM` relationships in the code graph.
+
+## Overview
+
+The swagger module provides post-indexing analysis that links swagger entities (parsed by `json-parser.ts`) to code entities. It detects three kinds of relationships:
+
+1. **Producers** — Controllers/route handlers that implement API endpoints (NestJS, Express, Spring Boot, .NET)
+2. **Consumers** — Generated API clients from codegen tools (openapi-generator, NSwag, Autorest, Refitter, ng-openapi-gen)
+3. **Generated types** — TypeScript/C# interfaces generated from swagger schemas, matched by name and property overlap
+
+All detection is static analysis based on entity metadata (decorators, file paths, codegen markers).
+
+## Data Flow
+
+```
+GraphStorage (all entities after indexing)
+    |
+    +--- analyzeSwaggerCodeLinks(entities)
+    |       |--- separateEntities() -> swagger specs + code entities
+    |       |--- detectProducers() -> match controllers by decorators + route paths
+    |       |--- detectConsumers() -> match by codegen markers + config files
+    |       |--- matchSchemaTypes() -> match by name + suffix + property overlap
+    |       => SwaggerAnalysis { producers, consumers, generatedTypes, codegenConfigs }
+    |
+    +--- buildSwaggerRelationships(analysis)
+            => SwaggerRelationship[] (ready for graph storage)
+```
+
+## Public API
+
+| Export | Kind | Description | Location |
+|--------|------|-------------|----------|
+| `analyzeSwaggerCodeLinks` | function | Main entry: analyzes all swagger↔code links from entity array | [`swagger-code-linker.ts:117-185`](./swagger-code-linker.ts) |
+| `buildSwaggerRelationships` | function | Converts SwaggerAnalysis to graph relationships | [`swagger-code-linker.ts:190-240`](./swagger-code-linker.ts) |
+| `getCodegenConfigFiles` | function | Lists known codegen config filenames | [`swagger-code-linker.ts:693-695`](./swagger-code-linker.ts) |
+| `getGeneratedCodeMarkers` | function | Lists auto-generation file markers | [`swagger-code-linker.ts:686-688`](./swagger-code-linker.ts) |
+| `SwaggerCodeLink` | interface | Single swagger↔code link with confidence and evidence | [`types.ts:13-28`](./types.ts) |
+| `SwaggerAnalysis` | interface | Full analysis result: producers, consumers, generatedTypes | [`types.ts:33-44`](./types.ts) |
+| `SwaggerRelationship` | interface | Graph relationship for storage | [`types.ts:49-63`](./types.ts) |
+| `ProducerPattern` | interface | Framework-specific controller detection pattern | [`types.ts:68-76`](./types.ts) |
+| `CodegenConfig` | interface | Code generator config file definition | [`types.ts:81-88`](./types.ts) |
+| `CodeRoute` | interface | Normalized HTTP route from source code | [`types.ts:93-104`](./types.ts) |
+| `SwaggerEndpoint` | interface | Normalized endpoint from swagger spec | [`types.ts:109-120`](./types.ts) |
+
+## Dependencies
+
+| Dependency | Kind | Purpose |
+|------------|------|---------|
+| `src/types/storage.ts` | internal | `Entity`, `RelationType` types |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Schema↔type matching threshold | 70% property overlap |
+| Type suffix stripping | `Dto`, `Model`, `Response`, `Request`, `Entity`, `ViewModel`, `Payload` |
+| Path normalization | `{id}` → `:id`, prefix stripping, lowercase comparison |
+| Confidence scoring | Exact name match: 0.95, suffix match: 0.8, property overlap: 0.7 |
+
+## Supported Ecosystems
+
+### Producer Detection (Controllers)
+
+| Framework | Decorators / Annotations |
+|-----------|--------------------------|
+| NestJS (TS) | `@Controller`, `@Get`, `@Post`, `@ApiOperation`, `@ApiResponse` |
+| Express/Fastify (TS/JS) | `router.get('/path')`, `app.route('/path')` |
+| Spring Boot (Java/Kotlin) | `@RestController`, `@GetMapping`, `@Operation` |
+| .NET (C#) | `[ApiController]`, `[HttpGet]`, `[ProducesResponseType]`, Swashbuckle |
+
+### Consumer Detection (Generated Clients)
+
+| Generator | Config File | Markers |
+|-----------|-------------|---------|
+| openapi-generator-cli | `openapitools.json` | `/* tslint:disable */`, auto-generated headers |
+| NSwag | `nswag.json` | `// <auto-generated>` |
+| swagger-codegen | `swagger-codegen-config.json` | `@Generated` |
+| Autorest | `autorest.md` | auto-generated comments |
+| Refitter | `.refitter` | `// <auto-generated>` |
+| ng-openapi-gen | `ng-openapi-gen.json` | `// @generated` |
+
+## Error Handling
+
+All detection methods are non-throwing. Failed matches return empty arrays. The module is designed to degrade gracefully — partial detection is better than no detection.
+
+## Known Limitations
+
+1. Only JSON swagger files are supported (YAML support planned).
+2. Producer detection relies on decorator/annotation metadata from parsers; if parsers don't extract decorators, producers won't be detected.
+3. Schema↔type matching is name-based; deeply nested type structures are not compared.
+4. Multi-spec projects (multiple swagger files) may have ambiguous type matches between specs.
+5. Runtime-generated routes (dynamic routing) cannot be detected statically.
+
+## Exports
+
+- `analyzeSwaggerCodeLinks`
+- `buildSwaggerRelationships`
+- `getCodegenConfigFiles`
+- `getGeneratedCodeMarkers`
+
+## Files
+
+| File | Description |
+|------|-------------|
+| [`index.ts`](./index.ts) | Re-exports all swagger module members |
+| [`swagger-code-linker.ts`](./swagger-code-linker.ts) | Main linker: producer/consumer/type detection + relationship building |
+| [`types.ts`](./types.ts) | TypeScript interfaces for swagger analysis results |

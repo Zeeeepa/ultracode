@@ -2,16 +2,16 @@ import { hashText } from "../../utils/fast-hash.js";
 import type { CodeUnit } from "../models/code-unit.js";
 
 /**
- * Генерирует signatures для CodeUnit.
+ * Generates signatures for CodeUnit.
  *
- * Signature = FQN + параметры (для функций) или FQN + type parameters (для классов).
- * Используется для Fast Path Level 3 matching.
+ * Signature = FQN + parameters (for functions) or FQN + type parameters (for classes).
+ * Used for Fast Path Level 3 matching.
  *
- * Основано на SignatureGenerator из SharpToolsMCP.
+ * Based on SignatureGenerator from SharpToolsMCP.
  */
 export class SignatureGenerator {
   /**
-   * Генерировать signature для CodeUnit.
+   * Generate signature for a CodeUnit.
    *
    * @param unit - Code unit to generate signature for
    * @returns Signature string (or undefined if not applicable)
@@ -37,7 +37,7 @@ export class SignatureGenerator {
   }
 
   /**
-   * Генерировать signature для функции/метода.
+   * Generate signature for a function/method.
    *
    * Format: FQN(param1Type, param2Type, ...)
    * Example: "MyClass.getUserById(number)"
@@ -59,7 +59,7 @@ export class SignatureGenerator {
   }
 
   /**
-   * Генерировать signature для класса/интерфейса.
+   * Generate signature for a class/interface.
    *
    * Format: FQN<TypeParam1, TypeParam2, ...>
    * Example: "List<T>"
@@ -78,7 +78,7 @@ export class SignatureGenerator {
   }
 
   /**
-   * Генерировать signature для модуля/файла.
+   * Generate signature for a module/file.
    *
    * Format: module:FQN:exports
    * Example: "module:utils/array:map,filter,reduce"
@@ -93,7 +93,7 @@ export class SignatureGenerator {
   }
 
   /**
-   * Извлечь параметры функции из кода.
+   * Extract function parameters from code.
    */
   private extractParameters(content: string, language: string): string[] {
     // Simple regex-based extraction
@@ -125,7 +125,7 @@ export class SignatureGenerator {
   }
 
   /**
-   * Извлечь тип параметра.
+   * Extract parameter type.
    */
   private extractParameterType(param: string, language: string): string {
     if (language === "typescript") {
@@ -150,7 +150,7 @@ export class SignatureGenerator {
   }
 
   /**
-   * Извлечь type parameters (generics).
+   * Extract type parameters (generics).
    */
   private extractTypeParameters(content: string, language: string): string[] {
     if (language === "typescript" || language === "javascript") {
@@ -179,7 +179,7 @@ export class SignatureGenerator {
   }
 
   /**
-   * Вычислить hash signature (для compact storage).
+   * Compute signature hash (for compact storage).
    *
    * @param signature - Signature string
    * @returns SHA256 hash of signature
@@ -189,7 +189,7 @@ export class SignatureGenerator {
   }
 
   /**
-   * Нормализовать signature для сравнения.
+   * Normalize signature for comparison.
    *
    * Removes whitespace, normalizes casing (for case-insensitive languages).
    */

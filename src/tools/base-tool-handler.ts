@@ -106,7 +106,13 @@ export abstract class BaseToolHandler<TArgs = unknown> {
     }
 
     // Legacy fallback
-    return getProjectContext().getCurrentProject();
+    const current = getProjectContext().getCurrentProject();
+    if (current) {
+      return current;
+    }
+
+    // Ultimate fallback: use CWD
+    return process.cwd();
   }
 
   /**

@@ -413,7 +413,7 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
     score: number;
     changeMetrics?: { changeFrequency: number; changeFrequencyScore: number; changeSource: "prolly" | "git" | "none" };
   } {
-    const metrics = entity.metadata?.metrics || {};
+    const metrics = entity.metadata?.["metrics"] || {};
     let score = 0;
     let changeMetrics:
       | { changeFrequency: number; changeFrequencyScore: number; changeSource: "prolly" | "git" | "none" }
@@ -711,6 +711,79 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
       currentDepth++;
     }
 
+    // Check if impact crosses API contract boundaries (Swagger/OpenAPI)
+    let contractImpact:
+      | {
+          affectsApiContract: boolean;
+          affectedEndpoints: string[];
+          affectedSchemas: string[];
+          breakingChangeRisk: "high" | "medium" | "low";
+          consumers: string[];
+          warning: string;
+        }
+      | undefined;
+
+    {
+      // Batch-fetch all impacted entities to check for swagger metadata
+      const impactedIds = Array.from(impactedEntities);
+      const impactedBatch = await storage.getEntitiesBatch(impactedIds);
+      const affectedEndpoints: string[] = [];
+      const affectedSchemas: string[] = [];
+      const consumers: string[] = [];
+
+      for (const [, impEntity] of impactedBatch) {
+        if (impEntity.metadata?.["isApiContract"]) {
+          const swaggerType = impEntity.metadata["swaggerType"] as string;
+          if (swaggerType === "endpoint") {
+            const sig = `${impEntity.metadata["httpMethod"] || ""} ${impEntity.metadata["path"] || ""}`.trim();
+            affectedEndpoints.push(sig || impEntity.name);
+          } else if (swaggerType === "schema") {
+            affectedSchemas.push(impEntity.name);
+          }
+        }
+      }
+
+      // Also check if the source entity itself produces/consumes API
+      if (entity?.metadata?.["isApiContract"]) {
+        const swaggerType = entity.metadata["swaggerType"] as string;
+        if (swaggerType === "endpoint") {
+          const sig = `${entity.metadata["httpMethod"] || ""} ${entity.metadata["path"] || ""}`.trim();
+          affectedEndpoints.push(sig || entity.name);
+        } else if (swaggerType === "schema") {
+          affectedSchemas.push(entity.name);
+        }
+      }
+
+      // Find consumers through CONSUMES_API relationships
+      for (const rel of relationships) {
+        if (rel.type === "consumes_api" || (rel.metadata?.context as string)?.includes("consumes")) {
+          const consumerId = rel.fromId === entityId ? rel.toId : rel.fromId;
+          const consumer = impactedBatch.get(consumerId);
+          if (consumer) {
+            consumers.push(consumer.name);
+          }
+        }
+      }
+
+      if (affectedEndpoints.length > 0 || affectedSchemas.length > 0) {
+        const risk =
+          affectedEndpoints.length > 3 || affectedSchemas.length > 5
+            ? "high"
+            : affectedEndpoints.length > 0
+              ? "medium"
+              : "low";
+
+        contractImpact = {
+          affectsApiContract: true,
+          affectedEndpoints: [...new Set(affectedEndpoints)],
+          affectedSchemas: [...new Set(affectedSchemas)],
+          breakingChangeRisk: risk,
+          consumers: [...new Set(consumers)],
+          warning: "Changes affect external API contract — consumers may break",
+        };
+      }
+    }
+
     // Annotate with recently-changed status if requested
     let recentlyChangedImpact:
       | {
@@ -757,7 +830,166 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
               totalImpactedEntities: impactedEntities.size,
               impactDepth: args.depth,
               riskLevel: impactedEntities.size > 50 ? "high" : impactedEntities.size > 20 ? "medium" : "low",
+              ...(contractImpact ? { contractImpact } : {}),
               ...(recentlyChangedImpact ? { recentlyChangedImpact } : {}),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+}
+
+// =============================================================================
+// ANALYZE SWAGGER IMPACT
+// =============================================================================
+
+const AnalyzeSwaggerImpactSchema = z.object({
+  projectPath: projectPathParam,
+  swaggerFile: z.string().optional().describe("Path to swagger file (auto-detected if omitted)"),
+  schemaName: z.string().optional().describe("Specific schema name to analyze"),
+  endpointPath: z.string().optional().describe("Specific endpoint like 'GET /api/users'"),
+});
+
+export class AnalyzeSwaggerImpactToolHandler extends BaseToolHandler<z.infer<typeof AnalyzeSwaggerImpactSchema>> {
+  protected parseArgs(args: unknown) {
+    return AnalyzeSwaggerImpactSchema.parse(args);
+  }
+
+  protected async execute(args: z.infer<typeof AnalyzeSwaggerImpactSchema>): Promise<ToolResult> {
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
+    const allEntities = await storage.getAllEntities();
+    const allRelationships = await storage.getAllRelationships();
+
+    // Find swagger entities
+    let swaggerEntities = allEntities.filter((e) => e.metadata?.["isApiContract"]);
+
+    if (swaggerEntities.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error:
+                "No swagger/OpenAPI specifications found in the project graph. Index a project with swagger files first.",
+            }),
+          },
+        ],
+      };
+    }
+
+    // Filter by swagger file if specified
+    if (args.swaggerFile) {
+      const normalizedPath = this.context.normalizeInputPath(args.swaggerFile);
+      swaggerEntities = swaggerEntities.filter((e) =>
+        e.filePath
+          .replace(/\\/g, "/")
+          .toLowerCase()
+          .includes((normalizedPath || "").replace(/\\/g, "/").toLowerCase()),
+      );
+    }
+
+    // Filter by schema name
+    if (args.schemaName) {
+      swaggerEntities = swaggerEntities.filter(
+        (e) => e.metadata?.["swaggerType"] === "schema" && e.name === args.schemaName,
+      );
+    }
+
+    // Filter by endpoint
+    if (args.endpointPath) {
+      const [method, ...pathParts] = args.endpointPath.split(" ");
+      const path = pathParts.join(" ");
+      swaggerEntities = swaggerEntities.filter((e) => {
+        if (e.metadata?.["swaggerType"] !== "endpoint") return false;
+        const entityMethod = ((e.metadata["httpMethod"] as string) || "").toUpperCase();
+        const entityPath = (e.metadata["path"] as string) || "";
+        return (!method || entityMethod === method.toUpperCase()) && (!path || entityPath === path);
+      });
+    }
+
+    // Find related code entities through relationships
+    const producers: Array<{ name: string; file: string; type: string }> = [];
+    const consumers: Array<{ name: string; file: string; type: string }> = [];
+    const generatedTypes: Array<{ name: string; file: string; schemaName: string }> = [];
+
+    const swaggerEntityIds = new Set(swaggerEntities.map((e) => e.id));
+    const entityMap = new Map(allEntities.map((e) => [e.id, e]));
+
+    for (const rel of allRelationships) {
+      if (rel.type === "produces_api") {
+        const from = entityMap.get(rel.fromId);
+        const to = entityMap.get(rel.toId);
+        if (from && to && (swaggerEntityIds.has(rel.toId) || swaggerEntityIds.has(rel.fromId))) {
+          producers.push({ name: from.name, file: from.filePath, type: from.type });
+        }
+      } else if (rel.type === "consumes_api") {
+        const from = entityMap.get(rel.fromId);
+        const to = entityMap.get(rel.toId);
+        if (from && to && (swaggerEntityIds.has(rel.toId) || swaggerEntityIds.has(rel.fromId))) {
+          consumers.push({ name: from.name, file: from.filePath, type: from.type });
+        }
+      } else if (rel.type === "generated_from") {
+        const from = entityMap.get(rel.fromId);
+        const to = entityMap.get(rel.toId);
+        if (from && to && (swaggerEntityIds.has(rel.toId) || swaggerEntityIds.has(rel.fromId))) {
+          generatedTypes.push({
+            name: from.name,
+            file: from.filePath,
+            schemaName: to.name,
+          });
+        }
+      }
+    }
+
+    // Assess risk
+    const totalAffected = producers.length + consumers.length + generatedTypes.length;
+    const breakingChangeRisk: "high" | "medium" | "low" =
+      totalAffected > 10 ? "high" : totalAffected > 3 ? "medium" : "low";
+
+    // Build recommendations
+    const recommendations: string[] = [];
+    if (consumers.length > 0) {
+      recommendations.push(`${consumers.length} generated client(s) may need regeneration after swagger changes`);
+    }
+    if (generatedTypes.length > 0) {
+      recommendations.push(
+        `${generatedTypes.length} generated type(s) are linked to swagger schemas — regenerate after schema changes`,
+      );
+    }
+    if (producers.length > 0) {
+      recommendations.push(
+        `${producers.length} controller(s) produce this API — update swagger spec after changing these`,
+      );
+    }
+
+    const endpoints = swaggerEntities
+      .filter((e) => e.metadata?.["swaggerType"] === "endpoint")
+      .map((e) => ({
+        name: e.name,
+        method: e.metadata?.["httpMethod"] as string,
+        path: e.metadata?.["path"] as string,
+      }));
+
+    const schemas = swaggerEntities.filter((e) => e.metadata?.["swaggerType"] === "schema").map((e) => e.name);
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              swaggerFiles: [...new Set(swaggerEntities.map((e) => e.filePath))],
+              endpoints,
+              schemas,
+              producers,
+              consumers,
+              generatedTypes,
+              breakingChangeRisk,
+              totalAffectedEntities: totalAffected,
+              recommendations,
             },
             null,
             2,

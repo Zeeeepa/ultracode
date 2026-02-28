@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * Semantic Merge Demo - Анализ merge между master и master-beta в fabuza-front
+ * Semantic Merge Demo - Merge analysis between master and master-beta in fabuza-front
  *
- * Демонстрирует:
- * - Fast Path matching (по хешам)
- * - Semantic matching (по embeddings)
+ * Demonstrates:
+ * - Fast Path matching (by hashes)
+ * - Semantic matching (by embeddings)
  * - Intent classification
  * - Conflict detection
  * - AI-assisted resolution
@@ -82,7 +82,7 @@ class SemanticMergeDemo {
       modelName: "Xenova/all-MiniLM-L6-v2",
       quantized: true,
       batchSize: 16,
-      provider: "memory", // Используем memory для быстрого демо
+      provider: "memory", // Use memory for a quick demo
     });
 
     this.aiResolver = new AIConflictResolver({
@@ -112,7 +112,7 @@ class SemanticMergeDemo {
   }
 
   /**
-   * Простая индексация файлов (mock для демо)
+   * Simple file indexing (mock for demo)
    */
   async indexBranch(branch: string): Promise<Map<string, CodeUnit>> {
     console.log(`📚 Indexing branch: ${branch}`);
@@ -120,7 +120,7 @@ class SemanticMergeDemo {
     const files = await this.gitIntegration.getChangedFiles("HEAD", branch);
     const units = new Map<string, CodeUnit>();
 
-    // Для демо: создаём mock CodeUnits на основе файлов
+    // For demo: create mock CodeUnits based on files
     for (const file of files.slice(0, 50)) {
       // Limit to 50 files for demo
       const content = await this.gitIntegration.getFileContent(file, branch);
@@ -151,7 +151,7 @@ class SemanticMergeDemo {
   }
 
   /**
-   * Fast Path matching - по хешам
+   * Fast Path matching - by hashes
    */
   async fastPathMatch(
     baseUnits: Map<string, CodeUnit>,
@@ -204,7 +204,7 @@ class SemanticMergeDemo {
   }
 
   /**
-   * Semantic matching - по embeddings
+   * Semantic matching - by embeddings
    */
   async semanticMatch(
     unmatchedA: CodeUnit[],
@@ -253,7 +253,7 @@ class SemanticMergeDemo {
   }
 
   /**
-   * Анализ конфликтов
+   * Conflict analysis
    */
   async analyzeConflicts(matches: Array<{ baseUnit: CodeUnit; branchAUnit: CodeUnit; branchBUnit: CodeUnit }>) {
     console.log("🔍 Analyzing conflicts...");
@@ -291,7 +291,7 @@ class SemanticMergeDemo {
   }
 
   /**
-   * Запуск полного анализа
+   * Run full analysis
    */
   async run() {
     try {
@@ -332,7 +332,7 @@ class SemanticMergeDemo {
   }
 
   /**
-   * Генерация отчёта
+   * Report generation
    */
   generateReport() {
     const totalTime = (this.metrics.endTime! - this.metrics.startTime) / 1000;

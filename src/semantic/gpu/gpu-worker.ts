@@ -96,7 +96,7 @@ async function loadCuda(): Promise<boolean> {
   // Try loading addon directly - it's compiled for CC 120
 
   // Create require function for ESM compatibility (native modules need require())
-  const { createRequire } = await import("module");
+  const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
 
   // Try to load CUDA addon from multiple locations
@@ -105,12 +105,12 @@ async function loadCuda(): Promise<boolean> {
     // When running from dist/
     join(
       dirname(import.meta.url.replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")),
-      "../../../external-libs/cuda-" + plat + "-x64/ultrascript_cuda.node",
+      "../../../external-libs/cuda-" + plat + "-x64/ultracode_cuda.node",
     ),
     // Direct paths
-    join(process.cwd(), "external-libs/cuda-" + plat + "-x64/ultrascript_cuda.node"),
-    join(process.cwd(), "dist/native/cuda/ultrascript_cuda.node"),
-    join(process.cwd(), "build/Release/ultrascript_cuda.node"),
+    join(process.cwd(), "external-libs/cuda-" + plat + "-x64/ultracode_cuda.node"),
+    join(process.cwd(), "dist/native/cuda/ultracode_cuda.node"),
+    join(process.cwd(), "build/Release/ultracode_cuda.node"),
   ];
 
   for (const addonPath of possiblePaths) {

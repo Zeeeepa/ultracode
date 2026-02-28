@@ -581,8 +581,8 @@ export class LlamaCppLLMProvider implements LLMProvider {
       const { join } = pathModule;
       const { homedir } = osModule;
       const dataDir = process.env["LOCALAPPDATA"]
-        ? join(process.env["LOCALAPPDATA"], "UltraScriptTools")
-        : join(homedir(), ".ultrascript-tools");
+        ? join(process.env["LOCALAPPDATA"], "UltraCode")
+        : join(homedir(), ".ultracode");
 
       // Search for LLM GGUF models (not embedding models)
       const searchDirs = [join(dataDir, "hf-cache"), join(dataDir, "llamacpp", "models"), join(dataDir, "models")];
@@ -1173,8 +1173,8 @@ async function loadLLMConfig(): Promise<{
 
     // Check standard config locations
     const configPaths = [
-      join(process.env["LOCALAPPDATA"] || "", "UltraScriptTools", "config", "semantic-config.json"),
-      join(homedir(), ".ultrascript-tools", "config", "semantic-config.json"),
+      join(process.env["LOCALAPPDATA"] || "", "UltraCode", "config", "semantic-config.json"),
+      join(homedir(), ".ultracode", "config", "semantic-config.json"),
     ].filter((p) => p && !p.startsWith(join(""))); // Filter out empty paths
 
     for (const configPath of configPaths) {

@@ -198,7 +198,7 @@ let _RelationshipBatch: protobuf.Type | null = null;
 
 function getType(name: string): protobuf.Type {
   const root = loadProtoRootSync();
-  return root.lookupType(`ultrascript.${name}`);
+  return root.lookupType(`ultracode.${name}`);
 }
 
 function getEntityType(): protobuf.Type {

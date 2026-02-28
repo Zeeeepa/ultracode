@@ -1,4 +1,4 @@
-# UltraScript Tools — Complete Tool Reference
+# UltraCode — Complete Tool Reference
 
 ## Indexing & Search
 
@@ -31,8 +31,8 @@ Index codebase for analysis. **Run once before using other tools.**
 | `hasDocumentation` | boolean | - | Filter: must have documentation/docstrings |
 | `isDeprecated` | boolean | - | Filter: deprecated entities only |
 | `minCallCount` | number | - | Filter: minimum number of function calls |
-| `changedInLastCommits` | number | - | Filter: only entities changed in last N graph commits (Prolly Tree). **⚡ Dramatically faster** — narrows 500+ results to 10-20 |
-| `changedSinceMs` | number | - | Filter: only entities changed since this Unix timestamp (ms). **⚡ Same speedup** as changedInLastCommits |
+| `changedInLastCommits` | number | - | Filter: only entities changed in last N graph commits (Prolly Tree). **Dramatically faster** — narrows 500+ results to 10-20 |
+| `changedSinceMs` | number | - | Filter: only entities changed since this Unix timestamp (ms). **Same speedup** as changedInLastCommits |
 
 **Returns (enhanced):**
 ```json
@@ -101,8 +101,8 @@ Advanced search with multiple modes.
 | `entityTypes` | string[] | all | Entity types (function, class, interface...) |
 | `files` | string[] | all | Filter by files |
 | `frameworks` | string[] | all | Filter by frameworks (React, Vue...) |
-| `changedInLastCommits` | number | - | Filter: only entities changed in last N graph commits (Prolly Tree). **⚡ Much faster responses** |
-| `changedSinceMs` | number | - | Filter: only entities changed since this Unix timestamp (ms). **⚡ Much faster responses** |
+| `changedInLastCommits` | number | - | Filter: only entities changed in last N graph commits (Prolly Tree). **Much faster responses** |
+| `changedSinceMs` | number | - | Filter: only entities changed since this Unix timestamp (ms). **Much faster responses** |
 
 ### `find_similar_code`
 Find semantically similar code.
@@ -160,6 +160,15 @@ Detect project technology stack.
 |-------|------|---------|-------------|
 | `generateContext` | boolean | false | Generate context for embeddings |
 
+### `find_related_concepts`
+Find semantically related concepts and code patterns across the codebase.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `concept` | string | **required** | Concept or pattern to find relations for |
+| `limit` | number | 10 | Max results |
+| `depth` | number | 2 | Relationship depth |
+
 ---
 
 ## Code Quality
@@ -187,7 +196,7 @@ Clone detector based on jscpd.
 | `minTokens` | number | - | Min tokens |
 
 ### `analyze_code_impact`
-**Change impact analysis** — what breaks when entity changes.
+**Change impact analysis** — what breaks when entity changes. Includes `contractImpact` section when swagger entities are affected.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -197,6 +206,18 @@ Clone detector based on jscpd.
 | `semanticThreshold` | number | 0.7 | Min similarity threshold (0-1) |
 | `highlightRecentChanges` | boolean | false | Annotate impacted entities with recently-changed status (Prolly Tree) |
 | `recentCommitsCount` | number | 10 | Number of recent commits to consider for highlighting |
+
+### `analyze_swagger_impact`
+**Swagger/OpenAPI impact analysis** — what breaks when swagger spec changes.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `swaggerFile` | string | auto | Path to swagger file |
+| `schemaName` | string | - | Specific schema to analyze |
+| `endpointPath` | string | - | Specific endpoint (`GET /api/users`) |
+| `projectPath` | string | current | Project path |
+
+**Returns:** Affected producers (controllers), consumers (generated clients), generated types, breaking change risk.
 
 ### `analyze_hotspots`
 Find complex code areas. Uses Prolly Tree history for change frequency with Git fallback.
@@ -218,6 +239,17 @@ State chaos analysis (mutations, side-effects).
 | `scope` | enum | **required** | `file` / `module` / `project` |
 | `stateIdentifiers` | string[] | - | State identifiers |
 | `autoDetect` | boolean | false | Auto-detect state patterns |
+
+### `suggest_refactoring`
+Suggest refactoring opportunities based on code quality analysis.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scope` | string | "project" | Scope: `file` / `module` / `project` |
+| `filePath` | string | - | File path (when scope is `file`) |
+| `limit` | number | 10 | Max suggestions |
+
+**Returns:** Refactoring suggestions with type (extract, inline, rename, split), risk level, and affected entities.
 
 ### `validate_file`
 Validate file (syntax, types).
@@ -280,6 +312,92 @@ Add member to class/interface.
 | `filePath` | string | **required** | File path |
 | `memberCode` | string | **required** | New member code |
 | `position` | enum | "end" | `start` / `end` / `after` |
+
+---
+
+## File Operations
+
+### `copy_file`
+Copy file or directory with graph updates.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `sourcePath` | string | **required** | Source file/directory path |
+| `targetPath` | string | **required** | Target file/directory path |
+| `updateGraph` | boolean | true | Update graph with new entities |
+
+### `rename_file`
+Rename/move file with automatic import updates across the project.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `oldPath` | string | **required** | Current file path |
+| `newPath` | string | **required** | New file path |
+| `updateImports` | boolean | true | Update import statements in other files |
+
+### `split_file`
+Extract entities from a file into separate files.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `sourcePath` | string | **required** | Source file path |
+| `entities` | string[] | **required** | Entity names to extract |
+| `targetPath` | string | **required** | Target file path |
+| `updateImports` | boolean | true | Update imports across project |
+
+### `synthesize_files`
+Merge multiple files into one.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `sourcePaths` | string[] | **required** | Source file paths to merge |
+| `targetPath` | string | **required** | Target file path |
+| `resolveConflicts` | boolean | true | Auto-resolve naming conflicts |
+| `updateImports` | boolean | true | Update imports across project |
+
+---
+
+## Semantic Merge
+
+### `semantic_merge`
+Merge code changes using semantic understanding. Resolves conflicts by understanding code structure rather than line-by-line diffing.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `basePath` | string | **required** | Base version file path |
+| `oursPath` | string | **required** | Our version file path |
+| `theirsPath` | string | **required** | Their version file path |
+| `outputPath` | string | **required** | Output merged file path |
+| `strategy` | enum | "semantic" | Merge strategy: `semantic` / `ours` / `theirs` / `manual` |
+
+### `analyze_merge_conflicts`
+Analyze merge conflicts and provide resolution suggestions.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `filePath` | string | **required** | File with merge conflicts |
+| `includeContext` | boolean | true | Include surrounding code context |
+
+**Returns:** List of conflicts with type classification (structural, semantic, textual), resolution suggestions, and risk assessment.
+
+### `get_merge_suggestions`
+Get AI-powered merge conflict resolution suggestions.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `conflictId` | string | **required** | Conflict ID from analyze_merge_conflicts |
+| `strategy` | enum | "auto" | Strategy: `auto` / `prefer_ours` / `prefer_theirs` / `combine` |
+
+**Returns:** Suggested resolution code, confidence score, and explanation.
+
+### `get_semantic_merge_info`
+Get information about semantic merge capabilities and status.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `filePath` | string | - | Optional file path to check merge status |
+
+**Returns:** Merge engine status, supported languages, active merge sessions.
 
 ---
 
@@ -347,7 +465,7 @@ Cleanup old branches (LRU).
 
 ---
 
-## Version History (Prolly Tree) — NEW
+## Version History (Prolly Tree)
 
 ### `list_commits`
 List graph commits (version snapshots).
@@ -398,6 +516,95 @@ checkout_commit commitHash="abc123" entityId="xyz789"
 
 ---
 
+## AutoDoc (Documentation System)
+
+### `autodoc_init`
+Initialize AutoDoc for the project.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | true | Enable AutoDoc |
+| `language` | string | "en" | Documentation language: `en` / `ru` / `zh` |
+| `docsDir` | string | ".autodoc" | Documentation directory |
+
+### `autodoc_generate`
+Generate documentation for code entities using LLM.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `filePath` | string | **required** | File path to generate docs for |
+| `scope` | enum | "file" | Scope: `file` / `module` / `project` |
+| `style` | enum | "brief" | Style: `brief` / `detailed` |
+
+### `autodoc_save`
+Save documentation with automatic link parsing, embedding generation, and section extraction.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `filePath` | string | **required** | Documentation file path |
+| `content` | string | **required** | Documentation content |
+
+### `autodoc_get`
+Get documentation by file path, optionally a specific section.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `filePath` | string | **required** | Documentation file path |
+| `section` | string | - | Specific section name |
+
+### `autodoc_search`
+Semantic search across code and documentation.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | string | **required** | Search query |
+| `scope` | enum | "all" | Scope: `all` / `code` / `docs` |
+| `mode` | enum | "hybrid" | Mode: `text` / `semantic` / `hybrid` |
+
+### `autodoc_validate`
+Validate all documentation links, optionally fix broken references.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `fixBrokenRefs` | boolean | false | Auto-fix broken references |
+
+### `autodoc_status`
+Show AutoDoc status: enabled/disabled, statistics (docs, sections, refs).
+
+### `autodoc_sync`
+Synchronize documentation with code changes. Finds outdated documents and invalid links.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scope` | enum | "all" | Scope: `all` / `outdated` / `file` |
+| `filePath` | string | - | File path (when scope is `file`) |
+
+### `autodoc_changelog`
+View documentation change history.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `since` | number | - | Timestamp (ms) |
+| `limit` | number | 10 | Max entries |
+| `branch` | string | current | Branch name |
+
+### `autodoc_install_hooks`
+Install/uninstall pre-commit hooks for documentation validation. **Deprecated** — use Watcher instead.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `action` | enum | **required** | Action: `install` / `uninstall` / `status` |
+
+### `autodoc_detect_language`
+Auto-detect documentation language from code comments and existing docs.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scope` | enum | "all" | Scope: `all` / `comments` / `docs` |
+| `sampleSize` | number | 100 | Number of samples to analyze |
+
+---
+
 ## System & Metrics
 
 ### `get_graph`
@@ -429,9 +636,21 @@ Agent metrics (execution time, memory).
 ### `get_bus_stats`
 Message bus statistics.
 
+### `clear_bus_topic`
+Clear a specific message bus topic.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `topic` | string | **required** | Topic name to clear |
+
+### `get_watcher_status`
+Get GitWatcher and AutoDoc Watcher status.
+
+**Returns:** Watcher state (active/inactive), watched directories, last indexing time, pending changes count.
+
 ---
 
-## Tracing (Static Flow Analysis) — NEW
+## Tracing (Static Flow Analysis)
 
 ### `trace_flow`
 **Trace execution from point A to B.** Finds all possible paths and analyzes state changes, conditions, and async boundaries.
@@ -515,7 +734,7 @@ find_decision_points scenario="user registration" groupBy="type"
 
 ---
 
-## Cross-Project Support — NEW
+## Cross-Project Support
 
 ### Using `projectPath` parameter
 
@@ -533,7 +752,7 @@ index directory="D:\\other\\project"
 
 Each project has isolated databases:
 ```
-%LOCALAPPDATA%\UltraScriptTools\projects\{hash}\
+%LOCALAPPDATA%\UltraCode\projects\{hash}\
 ├── graph.db      # Entity graph
 ├── vectors.db    # Embeddings
 └── meta.json     # Metadata

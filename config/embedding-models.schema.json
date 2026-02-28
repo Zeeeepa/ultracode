@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://ultrascript.dev/schemas/embedding-models.json",
+  "$id": "https://ultracode.dev/schemas/embedding-models.json",
   "title": "Embedding Models Configuration",
   "description": "Configuration file for embedding model providers and available models",
   "type": "object",

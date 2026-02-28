@@ -1,44 +1,94 @@
-# Libsql
+---
+module_name: libsql
+description: "LibSQL graph storage adapter with vector search, entity CRUD, and caching"
+status: active
+language: typescript
+---
 
-*Last updated: 2026-01-12*
+# LibSQL
 
-Адаптер хранилища граф-данных для LibSQL с поддержкой векторных вычислений и кэширования.
+> Provides the LibSQL-based graph storage layer with operations for entities, relationships, vectors, metadata, co-occurrence, and embedding caching, supporting multi-dimensional DiskANN vector indexes.
+
+## Overview
+
+The libsql module implements the persistent storage layer for the code graph using LibSQL (SQLite-compatible). It is decomposed into operation classes: EntityOperations for CRUD on project entities, RelationshipOperations for entity relationships, VectorOperations for DiskANN-powered similarity search across multiple embedding dimensions (384, 768, 1024, 4096), MetadataOperations for file and project metadata tracking, CacheOperations for global embedding cache by content hash, and CooccurrenceOperations for term co-occurrence and PMI-based query expansion. All operations use project context (projectHash + branchName) for multi-tenant isolation.
+
+## Data Flow
+
+- **Inputs**: Entity objects, relationship data, vector embeddings (Float32Array), metadata records, and search queries from the LibSQLGraphAdapter.
+- **Processing**: Operations execute parametrized SQL against LibSQL with LRU caching, CBOR-encoded metadata, and DiskANN vector indexing; batch operations use sequential writes to avoid native crashes.
+- **Outputs**: Entity/relationship objects, SimilarityResult arrays, metadata records, and co-occurrence statistics.
+
+## Public API
+
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `EntityOperations` | class | CRUD operations for project entities with batch optimization | [`entity-ops.ts:22-22`](./entity-ops.ts) |
+| `RowToEntityMapper` | type | Delegate for converting DB rows to entity objects | [`entity-ops.ts:22-22`](./entity-ops.ts) |
+| `RelationshipOperations` | class | CRUD operations for entity relationships | [`relationship-ops.ts:21-21`](./relationship-ops.ts) |
+| `RowToRelationshipMapper` | type | Delegate for converting DB rows to relationship objects | [`relationship-ops.ts:21-21`](./relationship-ops.ts) |
+| `VectorOperations` | class | Embedding search and indexing with DiskANN vector indexes | [`vector-ops.ts:48-549`](./vector-ops.ts) |
+| `VectorOpsContext` | interface | Context for vector operations (client, context, config getters) | [`vector-ops.ts:29-42`](./vector-ops.ts) |
+| `MetadataOperations` | class | File and project metadata operations with indexing tracking | [`metadata-ops.ts:16-470`](./metadata-ops.ts) |
+| `CacheOperations` | class | Global embedding cache operations by content hash | [`cache-ops.ts:24-160`](./cache-ops.ts) |
+| `VectorToStringFn` | type | Function for converting Float32Array to SQL-compatible string | [`cache-ops.ts:18-18`](./cache-ops.ts) |
+| `CooccurrenceOperations` | class | Term co-occurrence tracking and PMI-based related term retrieval | [`cooccurrence-ops.ts:34-393`](./cooccurrence-ops.ts) |
+| `LibSQLGraphConfig` | interface | Adapter configuration with vector dimensions and DiskANN parameters | [`types.ts:15-28`](./types.ts) |
+| `ProjectContext` | interface | Multi-tenant project context (projectHash, branchName, baseBranch) | [`types.ts:73-80`](./types.ts) |
+| `DatabaseCorruptionError` | class | Exception for database corruption detection and recovery | [`types.ts:119-127`](./types.ts) |
+| `SUPPORTED_DIMENSIONS` | const | Array of supported embedding dimensions: [384, 768, 1024, 4096] | [`types.ts:44-44`](./types.ts) |
+| `getEmbeddingColumn` | function | Maps dimension to column name (e.g., 384 -> "embedding_384") | [`types.ts:51-56`](./types.ts) |
+
+## Dependencies
+
+### Internal Modules
+
+| Module | Purpose |
+|--------|---------|
+| `logging` | Structured logging |
+
+### External Packages
+
+| Package | Purpose |
+|---------|---------|
+| `@libsql/client` | LibSQL database client |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Default dimensions | 384 (for all-MiniLM-L6-v2 model) |
+| DiskANN compression | float8 (40-50% less memory than float32) |
+| Batch concurrency | Sequential (1) to prevent libsql native crashes |
+
+## Error Handling
+
+DatabaseCorruptionError is thrown on SQLITE_CORRUPT or malformed database errors, signaling callers to recreate the database. isCorruptionError() utility checks error messages for corruption patterns. All operations use try-catch with structured logging for SQL failures.
+
+## Known Limitations
+
+- Batch write concurrency is set to 1 (sequential) due to libsql native issues with parallel writes.
+- DiskANN maxNeighbors is reduced to 12 (from 24) to lower disk footprint, which may slightly reduce recall.
+- Co-occurrence PMI calculation does not handle zero-frequency edge cases gracefully.
 
 ## Exports
 
-| Name | Type | Description | Location |
-|------|------|-------------|----------|
-| `VectorToStringFn` | type | Функция преобразования Float32Array в SQL-совместимую строку | [→ cache-ops.ts:18] |
-| `CacheOperations` | class | Класс для управления глобальным кэшем встраиваний по хешу | [→ cache-ops.ts:24-160] |
-| `RowToEntityMapper` | type | Тип-делегат преобразования строки БД в сущность | [→ entity-ops.ts:22] |
-| `EntityOperations` | class | Класс для операций CRUD сущностей проекта | [→ entity-ops.ts:22-22] |
-| `MetadataOperations` | class | Класс для операций метаданных файлов и проектов | [→ metadata-ops.ts:16-470] |
-| `RowToRelationshipMapper` | type | Тип-делегат преобразования строки БД в связь | [→ relationship-ops.ts:21] |
-| `RelationshipOperations` | class | Класс для операций CRUD связей между сущностями | [→ relationship-ops.ts:21-21] |
-| `LibSQLGraphConfig` | interface | Интерфейс конфигурации адаптера с параметрами векторов | [→ types.ts:15-28] |
-| `DEFAULT_CONFIG` | const | Конфигурация по умолчанию с оптимизированными параметрами | [→ types.ts:30-37] |
-| `SUPPORTED_DIMENSIONS` | const | Массив поддерживаемых размерностей встраиваний | [→ types.ts:44-56] |
-| `SupportedDimension` | type | Тип размерности встраивания из списка поддерживаемых | [→ types.ts:45] |
-| `getEmbeddingColumn` | function | Функция получения имени столбца по размерности | [→ types.ts:51-56] |
-| `normalizeToSupportedDimension` | function | Функция нормализации размерности к ближайшей поддерживаемой | [→ types.ts:62-67] |
-| `ProjectContext` | interface | Интерфейс контекста проекта с хешем и веткой | [→ types.ts:73-80] |
-| `DEFAULT_PROJECT_CONTEXT` | const | Контекст по умолчанию для легаси-проектов | [→ types.ts:82-85] |
-| `CACHE_CONFIG` | const | Конфигурация LRU-кэшей встраиваний и поисков | [→ types.ts:91-109] |
-| `DatabaseCorruptionError` | class | Исключение для обнаружения повреждения БД | [→ types.ts:116-127] |
-| `isCorruptionError` | function | Функция проверки типа ошибки повреждения БД | [→ types.ts:132-140] |
-| `ClientGetter` | type | Тип-делегат получения клиента LibSQL или null | [→ types.ts:149] |
-| `ContextGetter` | type | Тип-делегат получения контекста проекта | [→ types.ts:154] |
-| `MetadataEncoder` | type | Функция кодирования метаданных в двоичный формат | [→ types.ts:159] |
-| `MetadataDecoder` | type | Функция декодирования метаданных из двоичного формата | [→ types.ts:164] |
-| `VectorOpsContext` | interface | Интерфейс контекста для операций с векторами | [→ vector-ops.ts:29-42] |
-| `VectorOperations` | class | Класс для операций встраиваний поиска и индексирования | [→ vector-ops.ts:48-549] |
+- `CacheOperations`
+- `CooccurrenceOperations`
+- `EntityOperations`
+- `MetadataOperations`
+- `RelationshipOperations`
+- `VectorOperations`
 
 ## Files
 
-- **cache-ops.ts** — Операции кэширования встраиваний с индексацией по хешу контента
-- **entity-ops.ts** — Операции CRUD для сущностей проекта с пакетной оптимизацией
-- **index.ts** — Переэкспорт всех операций и типов модуля
-- **metadata-ops.ts** — Операции метаданных файлов и проектов с отслеживанием индексации
-- **relationship-ops.ts** — Операции CRUD для связей между сущностями с деоптимизацией
-- **types.ts** — Конфигурация, интерфейсы, константы и утилиты модуля
-- **vector-ops.ts** — Операции встраиваний с поиском сходства и управлением индексами
+| File | Description |
+|------|-------------|
+| `cache-ops.ts` | Global embedding cache operations with content hash indexing |
+| `cooccurrence-ops.ts` | Term co-occurrence tracking with PMI scoring and related term retrieval |
+| `entity-ops.ts` | CRUD operations for project entities with batch upsert optimization |
+| `index.ts` | Re-exports all operation classes and types |
+| `metadata-ops.ts` | File and project metadata operations with indexing state tracking |
+| `relationship-ops.ts` | CRUD operations for entity relationships with deoptimization support |
+| `types.ts` | Configuration, ProjectContext, DatabaseCorruptionError, and shared type definitions |
+| `vector-ops.ts` | DiskANN-powered vector similarity search with multi-dimension column support |

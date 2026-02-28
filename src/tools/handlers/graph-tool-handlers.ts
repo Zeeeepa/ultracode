@@ -247,7 +247,51 @@ export class GetGraphHealthToolHandler extends BaseToolHandler<z.infer<typeof Ge
     const stats = await storage.getStatistics();
     const sqliteManager = this.context.getSQLiteManager();
 
-    const health = {
+    // Check for swagger stale entities
+    let swaggerHealth:
+      | {
+          swaggerFilesFound: number;
+          activeContracts: number;
+          staleWarnings: string[];
+        }
+      | undefined;
+
+    try {
+      const allEntities = await storage.getAllEntities();
+      const swaggerSpecs = allEntities.filter((e) => e.metadata?.["swaggerType"] === "api_spec");
+
+      if (swaggerSpecs.length > 0) {
+        const staleWarnings: string[] = [];
+        const relationships = await storage.getAllRelationships();
+        const generatedFromRels = relationships.filter((r) => r.type === "generated_from");
+
+        // Check if swagger files are newer than generated code
+        for (const spec of swaggerSpecs) {
+          const specUpdated = spec.updatedAt;
+          for (const rel of generatedFromRels) {
+            if (rel.metadata?.["toFile"] === spec.filePath || rel.toId.includes(spec.filePath)) {
+              const generatedEntity = allEntities.find((e) => e.id === rel.fromId);
+              if (generatedEntity && specUpdated > generatedEntity.updatedAt) {
+                staleWarnings.push(
+                  `Generated code may be out of sync: ${spec.filePath} updated after ${generatedEntity.filePath}`,
+                );
+              }
+            }
+          }
+        }
+
+        const activeContracts = swaggerSpecs.filter((e) => e.metadata?.["isActiveContract"]).length;
+        swaggerHealth = {
+          swaggerFilesFound: swaggerSpecs.length,
+          activeContracts,
+          staleWarnings,
+        };
+      }
+    } catch {
+      // Swagger health check is non-critical
+    }
+
+    const health: Record<string, unknown> = {
       status: "healthy",
       database: {
         path: (sqliteManager as { getDatabasePath?: () => string })?.getDatabasePath?.() || "unknown",
@@ -256,6 +300,10 @@ export class GetGraphHealthToolHandler extends BaseToolHandler<z.infer<typeof Ge
         files: stats.totalFiles || 0,
       },
     };
+
+    if (swaggerHealth) {
+      health["swagger"] = swaggerHealth;
+    }
 
     return {
       content: [{ type: "text", text: JSON.stringify(health, null, 2) }],

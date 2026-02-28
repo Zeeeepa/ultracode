@@ -13,6 +13,7 @@ import { shutdownFaissProvider } from "../semantic/faiss/faiss-provider.js";
 import { shutdownGpuClient } from "../semantic/gpu/gpu-client.js";
 import { shutdownMlx } from "../semantic/mlx-server-manager.js";
 import { shutdownOVMSNative } from "../semantic/ovms-native-manager.js";
+import { resetGraphStorage } from "../storage/graph-storage-factory.js";
 import type { Agent } from "../types/agent.js";
 import { resourceManager } from "./resource-manager.js";
 
@@ -120,6 +121,14 @@ export async function performGlobalShutdown(signal: string): Promise<void> {
   if (shutdownContext.layeredIndexManager) {
     await shutdownContext.layeredIndexManager.shutdown();
     log.i("SHUTDOWN", "LayeredIndexManager Shutdown Complete");
+  }
+
+  // Close database connections (release file locks before exit)
+  try {
+    await resetGraphStorage();
+    log.i("SHUTDOWN", "GraphStorage closed");
+  } catch (error) {
+    log.e("SHUTDOWN", "GraphStorage close error", { err: String(error) });
   }
 
   resourceManager.stopMonitoring();

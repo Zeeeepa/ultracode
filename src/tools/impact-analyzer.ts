@@ -219,6 +219,73 @@ export class ImpactAnalyzer {
     };
   }
 
+  /**
+   * Detect if a modification breaks swagger API contracts.
+   * Checks if the entity has PRODUCES_API relationships and analyzes the change.
+   */
+  async detectSwaggerContractBreaks(entityId: string): Promise<{
+    affectsContract: boolean;
+    contractBreaks: Array<{
+      rule: string;
+      change: "breaking" | "non-breaking" | "unknown";
+      endpoint?: string;
+      message: string;
+    }>;
+    isGeneratedCode: boolean;
+    generatedFromSwagger: string | null;
+  }> {
+    const result = {
+      affectsContract: false,
+      contractBreaks: [] as Array<{
+        rule: string;
+        change: "breaking" | "non-breaking" | "unknown";
+        endpoint?: string;
+        message: string;
+      }>,
+      isGeneratedCode: false,
+      generatedFromSwagger: null as string | null,
+    };
+
+    const entity = await this.storage.getEntity(entityId);
+    if (!entity) return result;
+
+    const relationships = await this.storage.getRelationshipsForEntity(entityId);
+
+    for (const rel of relationships) {
+      // Check if entity produces API (is a controller/route handler)
+      if (rel.type === RelationType.PRODUCES_API && rel.fromId === entityId) {
+        result.affectsContract = true;
+        const swaggerEntity = await this.storage.getEntity(rel.toId);
+        if (swaggerEntity) {
+          const endpoint =
+            `${swaggerEntity.metadata?.["httpMethod"] || ""} ${swaggerEntity.metadata?.["path"] || ""}`.trim();
+          result.contractBreaks.push({
+            rule: "controller-modified",
+            change: "unknown",
+            endpoint: endpoint || swaggerEntity.name,
+            message: `API contract may be affected: controller produces ${endpoint || swaggerEntity.name}`,
+          });
+        }
+      }
+
+      // Check if entity is generated from swagger (generated code)
+      if (rel.type === RelationType.GENERATED_FROM && rel.fromId === entityId) {
+        result.isGeneratedCode = true;
+        const swaggerEntity = await this.storage.getEntity(rel.toId);
+        result.generatedFromSwagger = swaggerEntity?.filePath || null;
+      }
+
+      // Check if entity consumes API (is a generated client)
+      if (rel.type === RelationType.CONSUMES_API && rel.fromId === entityId) {
+        result.isGeneratedCode = true;
+        const swaggerEntity = await this.storage.getEntity(rel.toId);
+        result.generatedFromSwagger = swaggerEntity?.filePath || null;
+      }
+    }
+
+    return result;
+  }
+
   // ===========================================================================
   // PRIVATE HELPERS
   // ===========================================================================

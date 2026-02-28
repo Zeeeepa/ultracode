@@ -1,14 +1,14 @@
 /**
  * Error Handling Utilities
  *
- * Типизированные утилиты для безопасной обработки unknown в catch блоках.
- * Используется для соответствия tsconfig.json: useUnknownInCatchVariables: true
+ * Typed utilities for safe handling of unknown in catch blocks.
+ * Used for compliance with tsconfig.json: useUnknownInCatchVariables: true
  *
  * @see https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-4.html#useunknownincatchvariables
  */
 
 /**
- * Type guard для проверки Error объектов
+ * Type guard for checking Error objects
  *
  * @example
  * ```typescript
@@ -16,7 +16,7 @@
  *   throw new Error("test");
  * } catch (e: unknown) {
  *   if (isError(e)) {
- *     console.log(e.message); // TypeScript знает что e это Error
+ *     console.log(e.message); // TypeScript knows that e is an Error
  *   }
  * }
  * ```
@@ -26,13 +26,13 @@ export function isError(value: unknown): value is Error {
 }
 
 /**
- * Безопасная конвертация unknown в Error
+ * Safe conversion of unknown to Error
  *
- * Используется в catch блоках для получения Error объекта из unknown.
- * Поддерживает конвертацию из строк, объектов с message, и других типов.
+ * Used in catch blocks to get an Error object from unknown.
+ * Supports conversion from strings, objects with message, and other types.
  *
- * @param value - Значение для конвертации (обычно из catch блока)
- * @returns Error объект
+ * @param value - Value to convert (usually from catch block)
+ * @returns Error object
  *
  * @example
  * ```typescript
@@ -48,27 +48,27 @@ export function isError(value: unknown): value is Error {
  * ```
  */
 export function toError(value: unknown): Error {
-  // Уже Error - вернуть как есть
+  // Already an Error - return as is
   if (isError(value)) {
     return value;
   }
 
-  // Строка - создать Error с этим сообщением
+  // String - create Error with this message
   if (typeof value === "string") {
     return new Error(value);
   }
 
-  // Объект с message - извлечь message
+  // Object with message - extract message
   if (value && typeof value === "object" && "message" in value) {
     const message = String(value.message);
     const error = new Error(message);
 
-    // Если есть stack, сохранить его
+    // If stack exists, preserve it
     if ("stack" in value && typeof value.stack === "string") {
       error.stack = value.stack;
     }
 
-    // Если есть name, сохранить его
+    // If name exists, preserve it
     if ("name" in value && typeof value.name === "string") {
       error.name = value.name;
     }
@@ -76,17 +76,17 @@ export function toError(value: unknown): Error {
     return error;
   }
 
-  // Fallback - конвертировать в строку
+  // Fallback - convert to string
   return new Error(String(value));
 }
 
 /**
- * Получить сообщение об ошибке из unknown
+ * Get error message from unknown
  *
- * Более лёгкая альтернатива toError когда нужно только сообщение.
+ * A lighter alternative to toError when only the message is needed.
  *
- * @param error - Ошибка для извлечения сообщения
- * @returns Сообщение об ошибке
+ * @param error - Error to extract message from
+ * @returns Error message
  *
  * @example
  * ```typescript
@@ -114,10 +114,10 @@ export function getErrorMessage(error: unknown): string {
 }
 
 /**
- * Получить stack trace из unknown
+ * Get stack trace from unknown
  *
- * @param error - Ошибка для извлечения stack trace
- * @returns Stack trace или undefined если не доступен
+ * @param error - Error to extract stack trace from
+ * @returns Stack trace or undefined if not available
  *
  * @example
  * ```typescript
@@ -144,10 +144,10 @@ export function getErrorStack(error: unknown): string | undefined {
 }
 
 /**
- * Получить имя ошибки из unknown
+ * Get error name from unknown
  *
- * @param error - Ошибка для извлечения имени
- * @returns Имя ошибки или "Error" по умолчанию
+ * @param error - Error to extract name from
+ * @returns Error name or "Error" by default
  *
  * @example
  * ```typescript

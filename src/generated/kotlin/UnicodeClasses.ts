@@ -1,4 +1,4 @@
-// Generated from D:/github/ultrascript-tools-mcp/grammar/kotlin/grammar/UnicodeClasses.g4 by ANTLR 4.13.1
+// Generated from D:/github/ultracode/grammar/kotlin/grammar/UnicodeClasses.g4 by ANTLR 4.13.1
 // @ts-nocheck - Auto-generated code
 
 import * as antlr from "antlr4ng";

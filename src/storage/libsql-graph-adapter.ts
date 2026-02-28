@@ -253,6 +253,9 @@ export class LibSQLGraphAdapter {
       await this.client.execute("SELECT 1");
       log.t("STORAGE", `[LibSQLGraphAdapter] ◀ createClient + verify (${Date.now() - clientStart}ms)`);
 
+      // busy_timeout: wait up to 5s for lock release instead of immediate SQLITE_BUSY
+      // Prevents crashes when previous process hasn't released the lock yet (e.g. during restart)
+      await this.client.execute("PRAGMA busy_timeout = 5000");
       // Performance optimization PRAGMAs (aggressive - data is regeneratable)
       // cache_size: negative = KB, -8192 = 8MB page cache (smaller = less RSS)
       await this.client.execute("PRAGMA cache_size = -8192");
@@ -330,6 +333,42 @@ export class LibSQLGraphAdapter {
           log.e("LIBSQLADAPT", "corrupt_db_delete_fail");
           return false;
         }
+      }
+
+      // Retry on SQLITE_BUSY (database locked by another process during restart)
+      const isBusy = errorMessage.includes("SQLITE_BUSY") || errorMessage.includes("database is locked");
+
+      if (isBusy && retryAfterCorruption) {
+        log.w("LIBSQLADAPT", "busy_retry", { err: errorMessage });
+
+        // Close client before retry
+        if (this.client) {
+          try {
+            this.client.close();
+          } catch {
+            /* ignore */
+          }
+          this.client = null;
+        }
+
+        // Wait for lock to be released (3 retries with exponential backoff)
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const delay = attempt * 2000; // 2s, 4s, 6s
+          log.i("LIBSQLADAPT", "busy_wait", { attempt, delay });
+          await new Promise((r) => setTimeout(r, delay));
+
+          try {
+            return await this.initialize(dbPath, false);
+          } catch (retryErr) {
+            const retryMsg = (retryErr as Error).message || "";
+            if (!retryMsg.includes("SQLITE_BUSY") && !retryMsg.includes("database is locked")) {
+              throw retryErr; // Different error, don't retry
+            }
+            log.w("LIBSQLADAPT", "busy_retry_fail", { attempt, err: retryMsg });
+          }
+        }
+        log.e("LIBSQLADAPT", "busy_exhausted", { retries: 3 });
+        return false;
       }
 
       log.e("LIBSQLADAPT", "init_fail", { err: String(error) });

@@ -14,9 +14,9 @@ import { log } from "../logging/index.js";
  */
 export function getPipePath(): string {
   if (process.platform === "win32") {
-    return "\\\\.\\pipe\\UltraScript_Core";
+    return "\\\\.\\pipe\\UltraCode_Core";
   }
-  return "/tmp/ultrascript-core.sock";
+  return "/tmp/ultracode-core.sock";
 }
 
 /**
@@ -65,7 +65,7 @@ export interface Transport {
 /**
  * Prefix for init message containing client's working directory
  */
-export const INIT_MESSAGE_PREFIX = "ULTRASCRIPT_CWD:";
+export const INIT_MESSAGE_PREFIX = "ULTRACODE_CWD:";
 
 /**
  * Pipe-based transport for a single client connection
@@ -81,7 +81,7 @@ export class PipeClientTransport implements Transport {
   constructor(private socket: Socket) {}
 
   /**
-   * Read the init message (ULTRASCRIPT_CWD:path) before MCP handshake.
+   * Read the init message (ULTRACODE_CWD:path) before MCP handshake.
    * Must be called BEFORE start() to intercept the init message.
    * Returns the client's working directory if sent, undefined otherwise.
    *

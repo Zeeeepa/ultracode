@@ -10,6 +10,7 @@ set -e
 # Parse arguments
 model_id=""
 architecture=""
+dtype=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --model-id)
@@ -18,6 +19,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --architecture)
             architecture="$2"
+            shift 2
+            ;;
+        --dtype)
+            dtype="$2"
             shift 2
             ;;
         *)
@@ -43,7 +48,17 @@ container_name="tei-server"
 model="${model_id:-sentence-transformers/all-MiniLM-L6-v2}"
 port=8080
 base_image="ghcr.io/huggingface/text-embeddings-inference"
-version="1.8.3"
+version="1.9.2"
+
+# Auto-detect dtype for models that require specific precision
+if [ -z "$dtype" ]; then
+    case "$model" in
+        *pplx-embed*|*perplexity*)
+            dtype="float32"
+            echo -e "${YELLOW}[INFO] Auto-detected --dtype float32 for model${NC}"
+            ;;
+    esac
+fi
 
 # Check if container already exists
 if docker ps -a --filter "name=$container_name" --format "{{.Names}}" | grep -q "^$container_name$"; then
@@ -121,18 +136,11 @@ if [ -n "$architecture" ]; then
             arch_name="Hopper (H100)"
             ;;
         blackwell)
-            image_tag="${base_image}:cpu-${version}"
-            arch_name="CPU (Blackwell not supported)"
-            use_gpu=false
-            echo ""
-            echo -e "${YELLOW}[WARNING] Blackwell GPU not supported by official TEI. Using CPU mode.${NC}"
-            ;;
-        blackwell-patch)
-            image_tag="hotchpotch/tei-blackwell-testing:latest"
-            arch_name="Blackwell (RTX 5000) - patched TEI"
+            image_tag="${base_image}:120-latest"
+            arch_name="Blackwell (RTX 5000) - TEI 1.9.2+"
             use_gpu=true
             echo ""
-            echo -e "${CYAN}[INFO] Using alternative TEI with Blackwell patch${NC}"
+            echo -e "${CYAN}[INFO] Using TEI 120-latest for Blackwell GPUs${NC}"
             ;;
         *)
             echo -e "${YELLOW}[WARNING] Unknown architecture '$architecture', using default (Ampere)${NC}"
@@ -153,10 +161,9 @@ else
     echo "  4) NVIDIA Ampere A10/A40"
     echo "  5) NVIDIA Ada Lovelace (RTX 4000 series)"
     echo "  6) NVIDIA Hopper (H100)"
-    echo "  7) NVIDIA Blackwell (RTX 5000) - uses CPU"
-    echo "  8) NVIDIA Blackwell with patch - EXPERIMENTAL"
+    echo "  7) NVIDIA Blackwell (RTX 5000) - TEI 1.9.2+"
     echo ""
-    read -p "Enter choice [1-8] (default: 3): " arch_choice
+    read -p "Enter choice [1-7] (default: 3): " arch_choice
     arch_choice=${arch_choice:-3}
 
     case $arch_choice in
@@ -186,13 +193,8 @@ else
             arch_name="Hopper (H100)"
             ;;
         7)
-            image_tag="${base_image}:cpu-${version}"
-            arch_name="CPU (Blackwell not supported)"
-            use_gpu=false
-            ;;
-        8)
-            image_tag="hotchpotch/tei-blackwell-testing:latest"
-            arch_name="Blackwell (RTX 5000) - patched TEI"
+            image_tag="${base_image}:120-latest"
+            arch_name="Blackwell (RTX 5000) - TEI 1.9.2+"
             use_gpu=true
             ;;
         *)
@@ -240,6 +242,12 @@ else
 fi
 
 docker_cmd="$docker_cmd -p $port:80 -v $HOME/.cache/huggingface:/data --restart unless-stopped $image_tag --model-id $model --max-concurrent-requests 512"
+
+# Add --dtype if specified (required for pplx-embed: float32)
+if [ -n "$dtype" ]; then
+    docker_cmd="$docker_cmd --dtype $dtype"
+    echo -e "${CYAN}[INFO] Using dtype: $dtype${NC}"
+fi
 
 if eval $docker_cmd; then
     echo -e "${GREEN}[OK] TEI started${NC}"

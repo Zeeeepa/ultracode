@@ -26,21 +26,28 @@ export interface Subscription {
   handler: (entry: KnowledgeEntry) => void | Promise<void>;
 }
 
+/** Atomic counter for generating unique IDs without relying on Math.random collisions */
+let idSequence = 0;
+
+function generateId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${(++idSequence).toString(36)}`;
+}
+
 export class KnowledgeBus extends EventEmitter {
-  private knowledge: Map<string, KnowledgeEntry[]> = new Map();
-  private subscriptions: Map<string, Subscription[]> = new Map();
-  private messageQueue: AgentMessage[] = [];
-  private maxQueueSize = 1000;
-  private maxKnowledgePerTopic = 100;
+  private topicStore = new Map<string, KnowledgeEntry[]>();
+  private handlersByTopic = new Map<string, Subscription[]>();
+  private msgQueue: AgentMessage[] = [];
+  private readonly queueCap = 1000;
+  private readonly entryCap = 100;
 
   // Bloom filter for O(1) topic existence check
-  private topicBloom = new BloomFilter(1024);
+  private bloom = new BloomFilter(1024);
 
   // RegExp cache for O(1) pattern matching instead of compiling on each call
-  private regexCache = new Map<string, RegExp>();
+  private patternCache = new Map<string, RegExp>();
 
   // Reverse index for O(1) unsubscribe: subscriptionId -> topicKey
-  private subscriptionToTopic = new Map<string, string>();
+  private subIdToKey = new Map<string, string>();
 
   constructor() {
     super();
@@ -51,12 +58,12 @@ export class KnowledgeBus extends EventEmitter {
    * Dispose of the knowledge bus and clear resources
    */
   dispose(): void {
-    this.knowledge.clear();
-    this.subscriptions.clear();
-    this.messageQueue.length = 0;
-    this.topicBloom.clear();
-    this.regexCache.clear();
-    this.subscriptionToTopic.clear();
+    this.topicStore.clear();
+    this.handlersByTopic.clear();
+    this.msgQueue.length = 0;
+    this.bloom.clear();
+    this.patternCache.clear();
+    this.subIdToKey.clear();
     this.removeAllListeners();
   }
 
@@ -65,7 +72,7 @@ export class KnowledgeBus extends EventEmitter {
    */
   publish(topic: string, data: unknown, source: string, ttl?: number): void {
     const entry: KnowledgeEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: generateId("ke"),
       topic,
       data,
       source,
@@ -74,30 +81,30 @@ export class KnowledgeBus extends EventEmitter {
     };
 
     // Add topic to bloom filter for fast existence check
-    this.topicBloom.add(topic);
+    this.bloom.add(topic);
 
-    // Store knowledge
-    let entries = this.knowledge.get(topic);
-    if (!entries) {
-      entries = [];
-      this.knowledge.set(topic, entries);
+    // Store knowledge, evicting oldest if over capacity
+    let bucket = this.topicStore.get(topic);
+    if (!bucket) {
+      bucket = [];
+      this.topicStore.set(topic, bucket);
     }
-    entries.push(entry);
+    bucket.push(entry);
 
     // Limit entries per topic
-    if (entries.length > this.maxKnowledgePerTopic) {
-      entries.shift(); // Remove oldest
+    while (bucket.length > this.entryCap) {
+      bucket.shift();
     }
 
     // Debug logging for index:completed event
     if (topic === "index:completed") {
-      const subs = this.subscriptions.get(topic) || [];
-      log.i("KNOWLEDGEBUS", "index_completed_publish", { source, subsCount: subs.length });
+      const handlers = this.handlersByTopic.get(topic);
+      log.i("KNOWLEDGEBUS", "index_completed_publish", { source, subsCount: handlers ? handlers.length : 0 });
     }
 
     // Notify subscribers (fire-and-forget but log errors)
-    this.notifySubscribers(entry).catch((error) => {
-      log.e("KNOWLEDGEBUS", "notify_fail", { topic, err: String(error) });
+    this.dispatchToSubscribers(entry).catch((err) => {
+      log.e("KNOWLEDGEBUS", "notify_fail", { topic, err: String(err) });
     });
 
     this.emit("knowledge:published", entry);
@@ -107,28 +114,28 @@ export class KnowledgeBus extends EventEmitter {
    * Subscribe to knowledge updates
    */
   subscribe(agentId: string, topic: string | RegExp, handler: (entry: KnowledgeEntry) => void | Promise<void>): string {
-    const subscription: Subscription = {
-      id: `sub-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    const sub: Subscription = {
+      id: generateId("sub"),
       agentId,
       topic,
       handler,
     };
 
-    const topicKey = topic instanceof RegExp ? "*" : topic;
+    const key = topic instanceof RegExp ? "*" : topic;
 
-    let subs = this.subscriptions.get(topicKey);
-    if (!subs) {
-      subs = [];
-      this.subscriptions.set(topicKey, subs);
+    let list = this.handlersByTopic.get(key);
+    if (!list) {
+      list = [];
+      this.handlersByTopic.set(key, list);
     }
-    subs.push(subscription);
+    list.push(sub);
 
     // Track subscription location for O(1) unsubscribe
-    this.subscriptionToTopic.set(subscription.id, topicKey);
+    this.subIdToKey.set(sub.id, key);
 
-    this.emit("subscription:created", subscription);
+    this.emit("subscription:created", sub);
 
-    return subscription.id;
+    return sub.id;
   }
 
   /**
@@ -136,19 +143,19 @@ export class KnowledgeBus extends EventEmitter {
    * O(1) lookup via reverse index instead of O(n*m) iteration
    */
   unsubscribe(subscriptionId: string): void {
-    const topicKey = this.subscriptionToTopic.get(subscriptionId);
-    if (!topicKey) return;
+    const key = this.subIdToKey.get(subscriptionId);
+    if (!key) return;
 
-    const subs = this.subscriptions.get(topicKey);
-    if (subs) {
-      const index = subs.findIndex((s) => s.id === subscriptionId);
-      if (index !== -1) {
-        subs.splice(index, 1);
+    const list = this.handlersByTopic.get(key);
+    if (list) {
+      const idx = list.findIndex((s) => s.id === subscriptionId);
+      if (idx !== -1) {
+        list.splice(idx, 1);
         this.emit("subscription:removed", subscriptionId);
       }
     }
 
-    this.subscriptionToTopic.delete(subscriptionId);
+    this.subIdToKey.delete(subscriptionId);
   }
 
   /**
@@ -158,50 +165,55 @@ export class KnowledgeBus extends EventEmitter {
   query(topic: string | RegExp, limit = 10): KnowledgeEntry[] {
     // Fast path: exact string topic that's definitely not in bloom filter
     if (typeof topic === "string" && !topic.includes("*")) {
-      if (!this.topicBloom.mightContain(topic)) {
+      if (!this.bloom.mightContain(topic)) {
         return []; // Definitely no such topic
       }
     }
 
-    const results: KnowledgeEntry[] = [];
+    const collected: KnowledgeEntry[] = [];
     const now = Date.now();
 
-    for (const [storedTopic, entries] of this.knowledge) {
-      if (this.matchesTopic(storedTopic, topic)) {
-        // Lazy cleanup: filter out expired entries
-        const validEntries = entries.filter((entry) => {
-          if (entry.ttl && now - entry.timestamp > entry.ttl) {
-            return false; // Expired
-          }
-          return true;
-        });
+    for (const [storedTopic, bucket] of this.topicStore) {
+      if (!this.topicMatches(storedTopic, topic)) continue;
 
-        // Update stored entries if any were expired
-        if (validEntries.length !== entries.length) {
-          if (validEntries.length === 0) {
-            this.knowledge.delete(storedTopic);
-          } else {
-            this.knowledge.set(storedTopic, validEntries);
-          }
+      // Lazy cleanup: partition into live and expired
+      let pruned = false;
+      let writeIdx = 0;
+      for (let readIdx = 0; readIdx < bucket.length; readIdx++) {
+        const entry = bucket[readIdx]!;
+        if (entry.ttl && now - entry.timestamp > entry.ttl) {
+          pruned = true;
+          continue; // Skip expired
         }
+        if (writeIdx !== readIdx) {
+          bucket[writeIdx] = entry;
+        }
+        collected.push(entry);
+        writeIdx++;
+      }
 
-        results.push(...validEntries);
+      if (pruned) {
+        bucket.length = writeIdx;
+        if (writeIdx === 0) {
+          this.topicStore.delete(storedTopic);
+        }
       }
     }
 
     // Sort by timestamp descending and limit
-    return results.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+    collected.sort((a, b) => b.timestamp - a.timestamp);
+    return collected.length > limit ? collected.slice(0, limit) : collected;
   }
 
   /**
    * Send a direct message between agents
    */
   async sendMessage(message: AgentMessage): Promise<void> {
-    if (this.messageQueue.length >= this.maxQueueSize) {
-      this.messageQueue.shift(); // Remove oldest message
+    if (this.msgQueue.length >= this.queueCap) {
+      this.msgQueue.shift(); // Remove oldest message
     }
 
-    this.messageQueue.push(message);
+    this.msgQueue.push(message);
     this.emit("message:sent", message);
 
     // If it's a broadcast, publish to knowledge bus
@@ -214,14 +226,14 @@ export class KnowledgeBus extends EventEmitter {
    * Get recent messages
    */
   getRecentMessages(limit = 10): AgentMessage[] {
-    return this.messageQueue.slice(-limit);
+    return this.msgQueue.slice(-limit);
   }
 
   /**
    * Clear knowledge for a specific topic
    */
   clearTopic(topic: string): void {
-    this.knowledge.delete(topic);
+    this.topicStore.delete(topic);
     this.emit("topic:cleared", topic);
   }
 
@@ -234,22 +246,22 @@ export class KnowledgeBus extends EventEmitter {
     subscriptionCount: number;
     messageQueueSize: number;
   } {
-    let entryCount = 0;
-    let subscriptionCount = 0;
+    let totalEntries = 0;
+    let totalSubs = 0;
 
-    for (const entries of this.knowledge.values()) {
-      entryCount += entries.length;
+    for (const bucket of this.topicStore.values()) {
+      totalEntries += bucket.length;
     }
 
-    for (const subs of this.subscriptions.values()) {
-      subscriptionCount += subs.length;
+    for (const list of this.handlersByTopic.values()) {
+      totalSubs += list.length;
     }
 
     return {
-      topicCount: this.knowledge.size,
-      entryCount,
-      subscriptionCount,
-      messageQueueSize: this.messageQueue.length,
+      topicCount: this.topicStore.size,
+      entryCount: totalEntries,
+      subscriptionCount: totalSubs,
+      messageQueueSize: this.msgQueue.length,
     };
   }
 
@@ -258,9 +270,9 @@ export class KnowledgeBus extends EventEmitter {
    * Use when too many false positives accumulate (after many deletions)
    */
   resetBloomFilter(): void {
-    this.topicBloom.clear();
-    for (const topic of this.knowledge.keys()) {
-      this.topicBloom.add(topic);
+    this.bloom.clear();
+    for (const t of this.topicStore.keys()) {
+      this.bloom.add(t);
     }
   }
 
@@ -270,59 +282,58 @@ export class KnowledgeBus extends EventEmitter {
    * Get or create cached RegExp for wildcard pattern
    * O(1) amortized instead of O(pattern) on every call
    */
-  private getOrCreateRegex(pattern: string): RegExp {
-    let regex = this.regexCache.get(pattern);
-    if (!regex) {
-      regex = new RegExp(`^${pattern.replace(/\*/g, ".*")}$`);
-      this.regexCache.set(pattern, regex);
+  private compileWildcard(pattern: string): RegExp {
+    let compiled = this.patternCache.get(pattern);
+    if (!compiled) {
+      compiled = new RegExp(`^${pattern.replace(/\*/g, ".*")}$`);
+      this.patternCache.set(pattern, compiled);
     }
-    return regex;
+    return compiled;
   }
 
-  private matchesTopic(storedTopic: string, pattern: string | RegExp): boolean {
+  private topicMatches(storedTopic: string, pattern: string | RegExp): boolean {
     if (typeof pattern === "string") {
-      // Support wildcards in string patterns
       if (pattern.includes("*")) {
-        return this.getOrCreateRegex(pattern).test(storedTopic);
+        return this.compileWildcard(pattern).test(storedTopic);
       }
       return storedTopic === pattern;
     }
     return pattern.test(storedTopic);
   }
 
-  private async notifySubscribers(entry: KnowledgeEntry): Promise<void> {
+  private async dispatchToSubscribers(entry: KnowledgeEntry): Promise<void> {
     // Notify exact topic subscribers
-    const exactSubs = this.subscriptions.get(entry.topic) || [];
+    const direct = this.handlersByTopic.get(entry.topic) || [];
 
     // Debug logging for semantic events
     if (entry.topic === "semantic:new_entities") {
-      log.d("KNOWLEDGEBUS", "semantic_event", { topic: entry.topic, subs: exactSubs.length });
-      log.d("KNOWLEDGEBUS", "sub_keys", { keys: Array.from(this.subscriptions.keys()).join(",") });
-      for (const sub of exactSubs) {
-        log.d("KNOWLEDGEBUS", "subscriber", { agent: sub.agentId, id: sub.id });
+      log.d("KNOWLEDGEBUS", "semantic_event", { topic: entry.topic, subs: direct.length });
+      log.d("KNOWLEDGEBUS", "sub_keys", { keys: Array.from(this.handlersByTopic.keys()).join(",") });
+      for (const s of direct) {
+        log.d("KNOWLEDGEBUS", "subscriber", { agent: s.agentId, id: s.id });
       }
     }
 
     // Execute handlers sequentially to ensure proper error handling
-    for (const sub of exactSubs) {
-      await this.callHandler(sub, entry);
+    for (const sub of direct) {
+      await this.invokeHandler(sub, entry);
     }
 
     // Notify wildcard/regex subscribers
-    const wildcardSubs = this.subscriptions.get("*") || [];
-    for (const sub of wildcardSubs) {
-      if (this.matchesTopic(entry.topic, sub.topic)) {
-        await this.callHandler(sub, entry);
+    const wildcardList = this.handlersByTopic.get("*") || [];
+    for (const sub of wildcardList) {
+      if (this.topicMatches(entry.topic, sub.topic)) {
+        await this.invokeHandler(sub, entry);
       }
     }
   }
 
-  private async callHandler(subscription: Subscription, entry: KnowledgeEntry): Promise<void> {
+  private async invokeHandler(sub: Subscription, entry: KnowledgeEntry): Promise<void> {
     try {
-      await subscription.handler(entry);
-    } catch (error) {
-      log.e("KNOWLEDGEBUS", "handler_error", { agent: subscription.agentId, err: String(error) });
-      this.emit("subscription:error", { subscription, error });
+      await sub.handler(entry);
+    } catch (err) {
+      log.e("KNOWLEDGEBUS", "handler_error", { agent: sub.agentId, err: String(err) });
+      this.emit("subscription:error", { subscription: sub, error: err });
     }
   }
 

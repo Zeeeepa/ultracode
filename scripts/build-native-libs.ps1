@@ -7,7 +7,7 @@
     - Windows x64 (native)
     - Linux x64 (via WSL)
 
-    Output: external-libs/cuda-{platform}-{arch}/ultrascript_cuda.node
+    Output: external-libs/cuda-{platform}-{arch}/ultracode_cuda.node
 
     Requirements:
     - Windows: CUDA Toolkit 11.x+, Visual Studio 2022 Build Tools (VS 2026 has compatibility issues)
@@ -405,9 +405,9 @@ function Build-WindowsCuda {
     # Try different possible output locations
     $buildNode = $null
     $possiblePaths = @(
-        (Join-Path $CudaSrcDir "build/Release/ultrascript_cuda.node"),
-        (Join-Path $CudaSrcDir "build/Debug/ultrascript_cuda.node"),
-        (Join-Path $CudaSrcDir "build/ultrascript_cuda.node")
+        (Join-Path $CudaSrcDir "build/Release/ultracode_cuda.node"),
+        (Join-Path $CudaSrcDir "build/Debug/ultracode_cuda.node"),
+        (Join-Path $CudaSrcDir "build/ultracode_cuda.node")
     )
     foreach ($path in $possiblePaths) {
         if (Test-Path $path) {
@@ -419,7 +419,7 @@ function Build-WindowsCuda {
     if ($buildNode) {
         Copy-Item $buildNode -Destination $outputPath -Force
         $size = [math]::Round((Get-Item $buildNode).Length / 1KB, 0)
-        Write-Success "Built: $outputPath/ultrascript_cuda.node (${size} KB)"
+        Write-Success "Built: $outputPath/ultracode_cuda.node (${size} KB)"
         return $true
     } else {
         Write-Error "Build output not found"
@@ -460,19 +460,19 @@ function Build-LinuxCuda {
             New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
         }
 
-        $nodeFile = Join-Path $outputPath "ultrascript_cuda.node"
+        $nodeFile = Join-Path $outputPath "ultracode_cuda.node"
         if (Test-Path $nodeFile) {
             $size = [math]::Round((Get-Item $nodeFile).Length / 1KB, 0)
-            Write-Success "Built: $outputPath/ultrascript_cuda.node (${size} KB)"
+            Write-Success "Built: $outputPath/ultracode_cuda.node (${size} KB)"
             return $true
         }
     }
 
     # Check if file exists even if exit code was non-zero
-    $nodeFile = Join-Path $outputPath "ultrascript_cuda.node"
+    $nodeFile = Join-Path $outputPath "ultracode_cuda.node"
     if (Test-Path $nodeFile) {
         $size = [math]::Round((Get-Item $nodeFile).Length / 1KB, 0)
-        Write-Warning "Build reported error but output exists: $outputPath/ultrascript_cuda.node (${size} KB)"
+        Write-Warning "Build reported error but output exists: $outputPath/ultracode_cuda.node (${size} KB)"
         return $true
     }
 
@@ -537,7 +537,7 @@ function New-Archive {
 # =============================================================================
 
 Write-Host "`n$($Colors.Cyan)$($Colors.Bold)═══════════════════════════════════════════════════════════════════$($Colors.Reset)"
-Write-Host "$($Colors.Cyan)$($Colors.Bold)  UltraScript Tools - Native CUDA Library Builder$($Colors.Reset)"
+Write-Host "$($Colors.Cyan)$($Colors.Bold)  UltraCode - Native CUDA Library Builder$($Colors.Reset)"
 Write-Host "$($Colors.Cyan)$($Colors.Bold)═══════════════════════════════════════════════════════════════════$($Colors.Reset)"
 
 # Create output directory

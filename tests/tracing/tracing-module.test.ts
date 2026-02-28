@@ -35,6 +35,20 @@ function createMockStorage(entities: Entity[], relationships: Relationship[]): G
         (r) => (r.fromId === entityId || r.toId === entityId) && (!relType || r.type === relType),
       );
     }),
+    getEntitiesBatch: mock(async (ids: string[]) => {
+      const map = new Map<string, Entity>();
+      for (const id of ids) {
+        const e = entities.find((ent) => ent.id === id);
+        if (e) map.set(id, e);
+      }
+      return map;
+    }),
+    findIncomingRelationshipsByName: mock(async (_name: string, _types?: string[]) => {
+      return [] as Relationship[];
+    }),
+    findEntities: mock(async (_opts: any) => {
+      return [] as Entity[];
+    }),
     // Add other required methods as stubs
     addEntity: mock(async () => {}),
     updateEntity: mock(async () => {}),

@@ -1,11 +1,10 @@
 /// <reference types="@types/bun" />
 
 declare global {
-  var testDb: any | undefined; // bun:sqlite Database for tests
+  var testDb: any | undefined;
 
   namespace NodeJS {
     interface ProcessEnv {
-      // System
       NODE_ENV?: string;
       DEBUG?: string;
       HOME?: string;
@@ -16,7 +15,6 @@ declare global {
       XDG_DATA_HOME?: string;
       BUNDLED?: string;
 
-      // MCP Core
       MCP_DEBUG?: string;
       MCP_DEBUG_MODE?: string;
       MCP_DEBUG_DISABLE_SEMANTIC?: string;
@@ -31,7 +29,6 @@ declare global {
       MCP_SEMANTIC_WARMUP_LIMIT?: string;
       MCP_SEMANTIC_WARMUP_TOPIC?: string;
 
-      // Embedding
       MCP_EMBEDDING_ENABLED?: string;
       MCP_EMBEDDING_PROVIDER?: string;
       MCP_EMBEDDING_MODEL?: string;
@@ -40,7 +37,6 @@ declare global {
       MCP_EMBEDDING_TWO_PHASE?: string;
       EMBEDDING_DEBUG?: string;
 
-      // Ollama
       OLLAMA_BASE_URL?: string;
       OLLAMA_TIMEOUT_MS?: string;
       OLLAMA_CONCURRENCY?: string;
@@ -49,21 +45,18 @@ declare global {
       OLLAMA_CHECK_SERVER?: string;
       OLLAMA_PULL_TIMEOUT_MS?: string;
 
-      // OpenAI
       OPENAI_BASE_URL?: string;
       OPENAI_API_KEY?: string;
       OPENAI_TIMEOUT_MS?: string;
       OPENAI_CONCURRENCY?: string;
       OPENAI_MAX_BATCH_SIZE?: string;
 
-      // CloudRU
       CLOUDRU_BASE_URL?: string;
       CLOUDRU_API_KEY?: string;
       CLOUDRU_TIMEOUT_MS?: string;
       CLOUDRU_CONCURRENCY?: string;
       CLOUDRU_MAX_BATCH_SIZE?: string;
 
-      // HuggingFace
       HUGGINGFACE_BASE_URL?: string;
       HUGGINGFACE_API_KEY?: string;
       HUGGINGFACE_TIMEOUT_MS?: string;
@@ -73,13 +66,11 @@ declare global {
       HF_API_TOKEN?: string;
       HUGGING_FACE_HUB_TOKEN?: string;
 
-      // TEI
       TEI_BASE_URL?: string;
       TEI_TIMEOUT_MS?: string;
       TEI_CONCURRENCY?: string;
       TEI_CHECK_SERVER?: string;
 
-      // Database
       DATABASE_PATH?: string;
       DATABASE_MODE?: string;
       DATABASE_CACHE_SIZE?: string;
@@ -88,13 +79,11 @@ declare global {
       DATABASE_TEMP_STORE?: string;
       SQLITE_LIB_PATH?: string;
 
-      // LibSQL Vector
       LIBSQL_METRIC?: string;
       LIBSQL_COMPRESSION?: string;
       LIBSQL_SEARCH_L?: string;
       LIBSQL_INSERT_L?: string;
 
-      // Logging
       LOG_LEVEL?: string;
       LOG_FORMAT?: string;
       LOG_FILE?: string;
@@ -102,7 +91,6 @@ declare global {
       LOG_MAX_FILES?: string;
       LOG_ENABLE_CONSOLE?: string;
 
-      // Git
       GIT_ENABLED?: string;
       GIT_AUTO_REINDEX?: string;
       GIT_POLL_INTERVAL_MS?: string;
@@ -111,7 +99,6 @@ declare global {
       GIT_UNCOMMITTED_POLL_INTERVAL_MS?: string;
       GIT_INCLUDE_UNTRACKED?: string;
 
-      // Indexing
       INDEXING_BRANCH_AWARE?: string;
       INDEXING_AUTO_SWITCH?: string;
       INDEXING_DATA_DIR?: string;
@@ -120,7 +107,6 @@ declare global {
       INDEXING_CLEANUP_INTERVAL_MS?: string;
       INDEXING_INCREMENTAL_THRESHOLD?: string;
 
-      // Parser
       PARSER_TIMEOUT?: string;
       PARSER_MAX_FILE_SIZE?: string;
       PARSER_BUFFER_SIZE?: string;
@@ -133,7 +119,6 @@ declare global {
       PARSER_USE_WORKERS?: string;
       PARSING_WORKER_ID?: string;
 
-      // Parser Agent
       PARSER_AGENT_MAX_CONCURRENCY?: string;
       PARSER_AGENT_MEMORY_LIMIT?: string;
       PARSER_AGENT_PRIORITY?: string;
@@ -141,14 +126,12 @@ declare global {
       PARSER_AGENT_CACHE_SIZE?: string;
       PARSER_AGENT_WORKER_POOL_SIZE?: string;
 
-      // Semantic Agent
       SEMANTIC_AGENT_MAX_CONCURRENCY?: string;
       SEMANTIC_AGENT_MEMORY_LIMIT?: string;
       SEMANTIC_AGENT_PRIORITY?: string;
       SEMANTIC_AGENT_BATCH_SIZE?: string;
       SEMANTIC_AGENT_MODEL_PATH?: string;
 
-      // Query Agent
       QUERY_AGENT_MAX_CONCURRENCY?: string;
       QUERY_AGENT_MEMORY_LIMIT?: string;
       QUERY_AGENT_PRIORITY?: string;
@@ -156,7 +139,6 @@ declare global {
       QUERY_AGENT_COMPLEX_TIMEOUT?: string;
       QUERY_AGENT_CACHE_WARMUP?: string;
 
-      // Indexer Agent
       INDEXER_AGENT_MAX_CONCURRENCY?: string;
       INDEXER_AGENT_MEMORY_LIMIT?: string;
       INDEXER_AGENT_PRIORITY?: string;
@@ -164,17 +146,14 @@ declare global {
       INDEXER_AGENT_CACHE_SIZE?: string;
       INDEXER_AGENT_CACHE_TTL?: string;
 
-      // Dev Agent
       DEV_AGENT_MAX_CONCURRENCY?: string;
       DEV_AGENT_MEMORY_LIMIT?: string;
       DEV_AGENT_PRIORITY?: string;
 
-      // Dora Agent
       DORA_AGENT_MAX_CONCURRENCY?: string;
       DORA_AGENT_MEMORY_LIMIT?: string;
       DORA_AGENT_PRIORITY?: string;
 
-      // Conductor
       CONDUCTOR_MAX_CONCURRENCY?: string;
       CONDUCTOR_MEMORY_LIMIT?: string;
       CONDUCTOR_PRIORITY?: string;
@@ -187,7 +166,6 @@ declare global {
       CONDUCTOR_MANDATORY_DELEGATION?: string;
       CONDUCTOR_COMPLEXITY_THRESHOLD?: string;
 
-      // Coordinator
       COORDINATOR_MAX_CONCURRENCY?: string;
       COORDINATOR_MEMORY_LIMIT?: string;
       COORDINATOR_PRIORITY?: string;
@@ -198,30 +176,18 @@ declare global {
       COORDINATOR_MAX_CPU_PERCENT?: string;
       COORDINATOR_LOAD_BALANCING_STRATEGY?: string;
 
-      // GPU/Hardware
       CUDA_FORCE_DISABLE?: string;
       WEBGPU_FORCE_ENABLE?: string;
       WEBGPU_FORCE_DISABLE?: string;
-
-      // Vector Store
       VECTOR_STORE_DEBUG?: string;
-
-      // Misc
-      ULTRASCRIPT_NO_SUBPROCESS?: string;
+      ULTRACODE_NO_SUBPROCESS?: string;
       ADAPTIVE_DEBUG?: string;
       OV_DEBUG?: string;
     }
   }
 
-  /**
-   * Bun global object (undefined when running under Node.js)
-   * Types from @types/bun package
-   */
   var Bun: typeof import("bun") | undefined;
 
-  /**
-   * ReadableStream with getReader method
-   */
   interface ReadableStream<R = unknown> {
     readonly locked: boolean;
     cancel(reason?: unknown): Promise<void>;
@@ -243,10 +209,6 @@ declare global {
     value?: T;
   }
 
-  /**
-   * Global fetch API types (Node.js 18+ / Bun)
-   * Explicitly declared to avoid conflicts between @types/node and @types/bun
-   */
   interface Response {
     readonly ok: boolean;
     readonly status: number;

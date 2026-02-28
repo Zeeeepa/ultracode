@@ -33,7 +33,7 @@ import { getDataDir } from "../utils/config-paths.js";
 const K2_CLI_VERSION = "1.1.0";
 
 // GitHub releases API for version checking
-const K2_RELEASES_API = "https://api.github.com/repos/faxenoff/ultrascript-tools-mcp/releases";
+const K2_RELEASES_API = "https://api.github.com/repos/faxenoff/ultracode/releases";
 
 // Cache for latest version check (avoid repeated API calls)
 let latestVersionCache: { version: string; url: string; checkedAt: number } | null = null;
@@ -96,7 +96,7 @@ async function checkLatestVersion(): Promise<{ version: string; url: string } | 
   try {
     const response = await fetch(K2_RELEASES_API, {
       headers: {
-        "User-Agent": "ultrascript-tools-mcp",
+        "User-Agent": "ultracode",
         Accept: "application/vnd.github.v3+json",
       },
     });
@@ -462,7 +462,7 @@ export class KotlinK2Provider {
    */
   private async downloadFromUrl(url: string, jarPath: string, versionFile: string, version?: string): Promise<void> {
     const response = await fetch(url, {
-      headers: { "User-Agent": "ultrascript-tools-mcp" },
+      headers: { "User-Agent": "ultracode" },
     });
 
     if (!response.ok) {

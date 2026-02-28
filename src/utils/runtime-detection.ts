@@ -1,24 +1,24 @@
 /**
  * Runtime Detection Utilities
  *
- * Типизированные утилиты для определения runtime окружения (Bun vs Node.js)
- * и безопасного доступа к runtime-specific функциям.
+ * Typed utilities for detecting the runtime environment (Bun vs Node.js)
+ * and safely accessing runtime-specific functions.
  *
- * Используется вместо небезопасных `(globalThis as any).Bun` конструкций.
+ * Used instead of unsafe `(globalThis as any).Bun` constructs.
  */
 
 /**
- * Типизированный интерфейс для Bun runtime
+ * Typed interface for Bun runtime
  */
 interface BunRuntime {
   /**
-   * Асинхронная sleep функция из Bun
+   * Async sleep function from Bun
    * @see https://bun.sh/docs/api/utils#bun-sleep
    */
   sleep(ms: number): Promise<void>;
 
   /**
-   * Версия Bun runtime
+   * Bun runtime version
    */
   version?: string;
 
@@ -31,19 +31,19 @@ interface BunRuntime {
 }
 
 /**
- * Расширение globalThis с Bun runtime
+ * Extension of globalThis with Bun runtime
  */
 type GlobalWithBun = typeof globalThis & {
   Bun?: BunRuntime;
 };
 
 /**
- * Безопасная проверка наличия Bun runtime
+ * Safe check for Bun runtime availability
  *
- * Проверяет process.versions.bun для определения Bun окружения.
- * Работает как в Bun, так и в Node.js.
+ * Checks process.versions.bun to detect the Bun environment.
+ * Works in both Bun and Node.js.
  *
- * @returns true если код выполняется в Bun, false в Node.js
+ * @returns true if code is running in Bun, false in Node.js
  *
  * @example
  * ```typescript
@@ -64,13 +64,13 @@ export function isBunRuntime(): boolean {
 }
 
 /**
- * Типизированный доступ к Bun.sleep
+ * Typed access to Bun.sleep
  *
- * Безопасно вызывает Bun.sleep с проверкой доступности.
- * Бросает ошибку если Bun.sleep недоступен.
+ * Safely calls Bun.sleep with availability check.
+ * Throws an error if Bun.sleep is unavailable.
  *
- * @param ms - Количество миллисекунд для sleep
- * @throws {Error} Если Bun.sleep недоступен
+ * @param ms - Number of milliseconds to sleep
+ * @throws {Error} If Bun.sleep is unavailable
  *
  * @example
  * ```typescript
@@ -93,42 +93,42 @@ export async function bunSleep(ms: number): Promise<void> {
 }
 
 /**
- * Универсальная sleep функция (Bun или Node.js)
+ * Universal sleep function (Bun or Node.js)
  *
- * Автоматически выбирает Bun.sleep или setTimeout в зависимости от окружения.
- * Это основная функция для использования в кроссплатформенном коде.
+ * Automatically selects Bun.sleep or setTimeout depending on the environment.
+ * This is the main function for use in cross-platform code.
  *
- * - В Bun: использует нативный Bun.sleep (более эффективный)
- * - В Node.js: использует setTimeout с промисификацией
+ * - In Bun: uses native Bun.sleep (more efficient)
+ * - In Node.js: uses setTimeout with promisification
  *
- * @param ms - Количество миллисекунд для ожидания
+ * @param ms - Number of milliseconds to wait
  *
  * @example
  * ```typescript
- * // Работает и в Bun, и в Node.js
- * await sleep(1000); // Ждать 1 секунду
+ * // Works in both Bun and Node.js
+ * await sleep(1000); // Wait 1 second
  *
- * // В цикле с задержкой
+ * // In a loop with delay
  * for (const item of items) {
  *   await processItem(item);
- *   await sleep(100); // Задержка между обработкой
+ *   await sleep(100); // Delay between processing
  * }
  * ```
  */
 export async function sleep(ms: number): Promise<void> {
   try {
-    // Попробовать использовать Bun.sleep
+    // Try to use Bun.sleep
     await bunSleep(ms);
   } catch {
-    // Fallback на setTimeout для Node.js
+    // Fallback to setTimeout for Node.js
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 
 /**
- * Получить версию Bun runtime
+ * Get the Bun runtime version
  *
- * @returns Версия Bun или undefined если запущено в Node.js
+ * @returns Bun version or undefined if running in Node.js
  *
  * @example
  * ```typescript
@@ -148,9 +148,9 @@ export function getBunVersion(): string | undefined {
 }
 
 /**
- * Получить имя текущего runtime
+ * Get the current runtime name
  *
- * @returns "bun" или "node"
+ * @returns "bun" or "node"
  *
  * @example
  * ```typescript

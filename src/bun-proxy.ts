@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Bun Proxy for UltraScript Tools MCP Server
+ * Bun Proxy for UltraCode Server
  *
  * Lightweight proxy that runs under Claude's Bun and spawns the actual
  * MCP server in a separate Bun process. This isolates the server from
@@ -19,9 +19,9 @@
  * }
  */
 
-import { spawn } from "child_process";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Get directory of this script
 const __dirname = dirname(fileURLToPath(import.meta.url));

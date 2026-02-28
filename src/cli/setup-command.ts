@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * UltraScript Tools MCP - Semantic Embedding Setup Command v2
+ * UltraCode - Semantic Embedding Setup Command v2
  *
  * Smart setup with hardware detection and guided recommendations.
  *
@@ -73,7 +73,10 @@ function getPackageRoot(): string {
       const pkgContent = readFileSync(join(current, "package.json"), "utf-8");
       try {
         const pkg = JSON.parse(pkgContent);
-        if (pkg.name === "ultrascript-tools-mcp" && existsSync(join(current, "config", "embedding-models.json"))) {
+        if (
+          (pkg.name === "ultracode" || pkg.name === "ultrascript-tools-mcp") &&
+          existsSync(join(current, "config", "embedding-models.json"))
+        ) {
           return current;
         }
       } catch {
@@ -316,20 +319,25 @@ export async function runSetup(args: string[]): Promise<void> {
         : undefined,
       tei:
         provider === "tei"
-          ? {
-              endpoint: "http://127.0.0.1:8081",
-              // Pure defaults - any tuning reduces performance on small datasets
-              max_batch_tokens: 16384,
-              max_client_batch_size: 500,
-              selected_model: selectedModel.model_id,
-              models: [
-                {
-                  id: selectedModel.model_id,
-                  languages: [selectedModel.language],
-                  vector_size: selectedModel.dimensions,
-                },
-              ],
-            }
+          ? (() => {
+              const teiCfg = (selectedModel as unknown as Record<string, unknown>)["tei_config"] as
+                | { max_batch_tokens?: number; max_client_batch_size?: number; concurrency?: number }
+                | undefined;
+              return {
+                endpoint: "http://127.0.0.1:8081",
+                max_batch_tokens: teiCfg?.max_batch_tokens ?? 16384,
+                max_client_batch_size: teiCfg?.max_client_batch_size ?? 500,
+                concurrency: teiCfg?.concurrency,
+                selected_model: selectedModel.model_id,
+                models: [
+                  {
+                    id: selectedModel.model_id,
+                    languages: [selectedModel.language],
+                    vector_size: selectedModel.dimensions,
+                  },
+                ],
+              };
+            })()
           : undefined,
       vllm:
         provider === "vllm"

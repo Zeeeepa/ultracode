@@ -1,35 +1,29 @@
-// Mock implementation of nanoid for testing (CommonJS)
+const { randomBytes } = require("node:crypto");
 
-function nanoid(size = 21) {
-  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
-  let result = "";
-  for (let i = 0; i < size; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return result;
+const CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-";
+
+function nanoid(len = 21) {
+  const buf = randomBytes(len);
+  let s = "";
+  for (let i = 0; i < len; i++) s += CHARS[buf[i] % CHARS.length];
+  return s;
 }
 
-function customAlphabet(alphabet, defaultSize = 21) {
-  return (size = defaultSize) => {
-    let result = "";
-    for (let i = 0; i < size; i++) {
-      result += alphabet[Math.floor(Math.random() * alphabet.length)];
-    }
-    return result;
+function customAlphabet(chars, defLen = 21) {
+  return (n) => {
+    const sz = n ?? defLen;
+    const buf = randomBytes(sz);
+    let s = "";
+    for (let i = 0; i < sz; i++) s += chars[buf[i] % chars.length];
+    return s;
   };
 }
 
-function urlAlphabet(size = 21) {
-  return nanoid(size);
+function urlAlphabet(n = 21) {
+  return nanoid(n);
+}
+async function nanoidAsync(n = 21) {
+  return nanoid(n);
 }
 
-async function nanoidAsync(size = 21) {
-  return Promise.resolve(nanoid(size));
-}
-
-module.exports = {
-  nanoid,
-  customAlphabet,
-  urlAlphabet,
-  nanoidAsync,
-};
+module.exports = { nanoid, customAlphabet, urlAlphabet, nanoidAsync };

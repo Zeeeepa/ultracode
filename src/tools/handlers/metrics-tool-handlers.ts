@@ -182,7 +182,7 @@ export class GetVersionToolHandler extends BaseToolHandler<z.infer<typeof GetVer
       const projectPath = this.resolveProjectPath({});
       const packagePath = join(projectPath, "package.json");
       let version = "unknown";
-      let name = "ultrascript-tools-mcp";
+      let name = "ultracode";
 
       try {
         const pkg = (await readJSON(packagePath)) as { name?: string | undefined; version?: string };

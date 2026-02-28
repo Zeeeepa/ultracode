@@ -1,4 +1,3 @@
-// Sample Go code for testing analyzer
 package main
 
 import (
@@ -6,123 +5,105 @@ import (
 	"strings"
 )
 
-// Constants
 const (
-	Version = "1.0.0"
-	MaxConnections = 100
+	AppVersion = "2.0.0"
+	PoolLimit  = 64
 )
 
-// User represents a system user
-type User struct {
-	ID       int
-	Name     string
-	Email    string
-	IsActive bool
+type Item struct {
+	ID    int
+	Label string
+	Body  string
+	Done  bool
 }
 
-// UserService interface for user operations
-type UserService interface {
-	GetUser(id int) (*User, error)
-	CreateUser(user User) error
-	UpdateUser(user User) error
-	DeleteUser(id int) error
+type Catalog interface {
+	Lookup(id int) (*Item, error)
+	Add(item Item) error
+	Modify(item Item) error
+	Remove(id int) error
 }
 
-// UserServiceImpl implements UserService
-type UserServiceImpl struct {
-	users map[int]*User
+type MemCatalog struct {
+	data   map[int]*Item
+	serial int
 }
 
-// NewUserService creates a new user service
-func NewUserService() UserService {
-	return &UserServiceImpl{
-		users: make(map[int]*User),
+func NewCatalog() Catalog {
+	return &MemCatalog{data: make(map[int]*Item), serial: 0}
+}
+
+func (c *MemCatalog) Lookup(id int) (*Item, error) {
+	v, ok := c.data[id]
+	if !ok {
+		return nil, fmt.Errorf("item %d missing", id)
 	}
+	return v, nil
 }
 
-// GetUser retrieves a user by ID
-func (s *UserServiceImpl) GetUser(id int) (*User, error) {
-	user, exists := s.users[id]
-	if !exists {
-		return nil, fmt.Errorf("user not found: %d", id)
+func (c *MemCatalog) Add(item Item) error {
+	if _, dup := c.data[item.ID]; dup {
+		return fmt.Errorf("item %d exists", item.ID)
 	}
-	return user, nil
-}
-
-// CreateUser creates a new user
-func (s *UserServiceImpl) CreateUser(user User) error {
-	if _, exists := s.users[user.ID]; exists {
-		return fmt.Errorf("user already exists: %d", user.ID)
-	}
-	s.users[user.ID] = &user
+	cp := item
+	c.data[item.ID] = &cp
 	return nil
 }
 
-// UpdateUser updates an existing user
-func (s *UserServiceImpl) UpdateUser(user User) error {
-	if _, exists := s.users[user.ID]; !exists {
-		return fmt.Errorf("user not found: %d", user.ID)
+func (c *MemCatalog) Modify(item Item) error {
+	if _, ok := c.data[item.ID]; !ok {
+		return fmt.Errorf("item %d absent", item.ID)
 	}
-	s.users[user.ID] = &user
+	cp := item
+	c.data[item.ID] = &cp
 	return nil
 }
 
-// DeleteUser deletes a user by ID
-func (s *UserServiceImpl) DeleteUser(id int) error {
-	delete(s.users, id)
+func (c *MemCatalog) Remove(id int) error {
+	if _, ok := c.data[id]; !ok {
+		return fmt.Errorf("item %d absent", id)
+	}
+	delete(c.data, id)
 	return nil
 }
 
-// ProcessUsers processes a list of users concurrently
-func ProcessUsers(users []User) {
-	ch := make(chan User, len(users))
-
-	// Start goroutines to process users
-	for _, user := range users {
-		go func(u User) {
-			// Process user
-			u.Name = strings.ToUpper(u.Name)
-			ch <- u
-		}(user)
+func RunParallel(items []Item) {
+	ch := make(chan Item, len(items))
+	for _, it := range items {
+		go func(x Item) {
+			x.Label = strings.ToUpper(x.Label)
+			x.Done = true
+			ch <- x
+		}(it)
 	}
-
-	// Collect results
-	for i := 0; i < len(users); i++ {
-		processed := <-ch
-		fmt.Printf("Processed user: %s\n", processed.Name)
+	for range items {
+		r := <-ch
+		fmt.Printf("done: %s (ok=%v)\n", r.Label, r.Done)
 	}
 }
 
-// Embedded type example
-type Admin struct {
-	User // Embedding User struct
-	Permissions []string
+type PriorityItem struct {
+	Item
+	Rank int
 }
 
 func main() {
-	service := NewUserService()
+	cat := NewCatalog()
 
-	user := User{
-		ID:       1,
-		Name:     "John Doe",
-		Email:    "john@example.com",
-		IsActive: true,
-	}
+	first := Item{ID: 1, Label: "Write tests", Body: "Cover parser edge cases", Done: false}
 
-	if err := service.CreateUser(user); err != nil {
-		fmt.Printf("Error creating user: %v\n", err)
+	if err := cat.Add(first); err != nil {
+		fmt.Printf("add failed: %v\n", err)
 		return
 	}
 
-	retrievedUser, err := service.GetUser(1)
+	got, err := cat.Lookup(1)
 	if err != nil {
-		fmt.Printf("Error getting user: %v\n", err)
+		fmt.Printf("lookup failed: %v\n", err)
 		return
 	}
 
-	fmt.Printf("User: %+v\n", retrievedUser)
+	fmt.Printf("item: %+v\n", got)
 
-	// Test goroutines
-	users := []User{user}
-	ProcessUsers(users)
+	RunParallel([]Item{first})
 }

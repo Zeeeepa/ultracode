@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package ultrascript;
+package ultracode;
 
 // Location position (line, column, index)
 message Position {

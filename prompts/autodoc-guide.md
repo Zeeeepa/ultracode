@@ -1,115 +1,122 @@
 # AutoDoc Guide
 
-AutoDoc — система автоматической документации кода с семантическим поиском.
+AutoDoc is an automatic code documentation system with semantic search.
 
-## Концепция
+## Concept
 
-**AutoDoc ≠ комментарии в коде**
+**AutoDoc != code comments**
 
-| Комментарии | AutoDoc |
-|-------------|---------|
-| КАК работает код | ЗАЧЕМ, КЕМ используется, В КАКИХ сценариях |
-| Локальный контекст | Бизнес-контекст + архитектура |
-| Для разработчика в IDE | Для AI + понимания системы |
+| Comments | AutoDoc |
+|----------|---------|
+| HOW code works | WHY, WHO uses it, IN WHICH scenarios |
+| Local context | Business context + architecture |
+| For developer in IDE | For AI + system understanding |
 
-## Структура `.autodoc/`
+## `.autodoc/` Structure
 
 ```
 .autodoc/
-├── ARCHITECTURE.md    # Компоненты системы
-├── FLOW.md            # Бизнес-сценарии (user stories)
-├── PROCESSES.md       # Технические процессы
-├── DEPENDENCIES.md    # Пакеты, API, микросервисы
-├── DEPLOYMENT.md      # Сборка, CI/CD, ENV
-├── GLOSSARY.md        # Термины
+├── ARCHITECTURE.md    # System components
+├── FLOW.md            # Business scenarios (user stories)
+├── PROCESSES.md       # Technical processes
+├── DEPENDENCIES.md    # Packages, APIs, microservices
+├── DEPLOYMENT.md      # Build, CI/CD, ENV
+├── GLOSSARY.md        # Terms
 │
-└── src/               # Зеркалит структуру кода
-    ├── _index.md      # Обзор директории
+└── src/               # Mirrors code structure
+    ├── _index.md      # Directory overview
     ├── module/
-    │   ├── _index.md  # Документация модуля
-    │   └── file.md    # Документация сущности
+    │   ├── _index.md  # Module documentation
+    │   └── file.md    # Entity documentation
     └── ...
 ```
 
 ## MCP Tools
 
-### Инициализация и статус
+### Initialization and Status
 
 ```
 autodoc_init({ enabled: true, language: 'ru' | 'en' | 'zh', docsDir?: string })
 ```
-Инициализирует AutoDoc. Устанавливает язык документации.
+Initializes AutoDoc. Sets documentation language.
 
 ```
 autodoc_status()
 ```
-Статус: включено/выключено, статистика (docs, sections, refs).
+Status: enabled/disabled, statistics (docs, sections, refs).
 
 ```
 autodoc_detect_language({ scope: 'all' | 'comments' | 'docs', sampleSize?: number })
 ```
-Автоматическое определение языка по комментариям в коде и существующей документации.
+Automatic language detection based on code comments and existing documentation.
 
-### Поиск и чтение
+### Search and Reading
 
 ```
 autodoc_search({ query: "...", scope: 'all' | 'code' | 'docs', mode: 'text' | 'semantic' | 'hybrid' })
 ```
-Семантический поиск по коду + документации.
-**Используй вместо обычного поиска** — даёт контекст!
+Semantic search across code + documentation.
+**Use instead of regular search** — provides context!
 
 ```
 autodoc_get({ filePath: "...", section?: "..." })
 ```
-Получить документацию по пути. Если указана секция — только её.
+Get documentation by path. If a section is specified, returns only that section.
 
-### Сохранение
+### Saving
 
 ```
 autodoc_save({ filePath: "...", content: "..." })
 ```
-Сохраняет документ. Автоматически:
-- Парсит ссылки
-- Генерирует embeddings для семантического поиска
-- Извлекает секции
+Saves a document. Automatically:
+- Parses links
+- Generates embeddings for semantic search
+- Extracts sections
 
-### Валидация и синхронизация
+### Generation
+
+```
+autodoc_generate({ filePath: "...", scope?: 'file' | 'module' | 'project', style?: 'brief' | 'detailed' })
+```
+Generates documentation for code entities using LLM. Produces structured AutoDoc content with role descriptions, consumers, and process participation.
+
+### Validation and Synchronization
 
 ```
 autodoc_validate({ fixBrokenRefs: false | true })
 ```
-Проверяет все ссылки, опционально исправляет.
+Validates all links, optionally fixes them.
 
 ```
 autodoc_sync({ scope: 'all' | 'outdated' | 'file', filePath?: string })
 ```
-Синхронизирует документацию с изменениями кода.
-Находит устаревшие документы и невалидные ссылки.
+Synchronizes documentation with code changes.
+Finds outdated documents and invalid links.
 
-### История изменений
+### Change History
 
 ```
 autodoc_changelog({ since?: timestamp, limit?: number, branch?: string })
 ```
-Просмотр истории изменений документации.
-Показывает что изменилось после изменения кода.
+View documentation change history.
+Shows what changed after code modifications.
 
-### Автообновление (Watcher)
+### Auto-update (Watcher)
 
-AutoDoc Watcher автоматически обновляет AUTODOC.md файлы при изменении кода:
-- Добавляет/удаляет экспорты в списке
-- Обновляет номера строк в ссылках
-- Debounce 30-60 секунд (адаптивный)
+AutoDoc Watcher automatically updates AUTODOC.md files when code changes:
+- Adds/removes exports in the list
+- Updates line numbers in links
+- Debounce 30-60 seconds (adaptive)
 
-**Включение в ultrascript.yaml:**
+**Enable in ultracode.yaml:**
 ```yaml
 mcp:
   autodoc:
     watcherEnabled: true
-    debounceMs: 45000      # базовая задержка
-    minDebounceMs: 30000   # минимум
-    maxDebounceMs: 60000   # максимум
-    useLlm: false          # LLM для описаний
+    debounceMs: 45000      # base delay
+    minDebounceMs: 30000   # minimum
+    maxDebounceMs: 60000   # maximum
+    useLlm: false          # LLM for descriptions
 ```
 
 ### Git Hooks (legacy)
@@ -117,53 +124,53 @@ mcp:
 ```
 autodoc_install_hooks({ action: 'install' | 'uninstall' | 'status' })
 ```
-Pre-commit hook для валидации ссылок. **Устарело** — используй Watcher.
+Pre-commit hook for link validation. **Deprecated** — use Watcher instead.
 
 ## Workflows
 
-### 1. Инициализация проекта
+### 1. Project Initialization
 
 ```
-User: "Задокументируй проект"
+User: "Document the project"
 
 1. autodoc_detect_language({ scope: 'comments' })
-   → Определяет язык проекта по комментариям
+   -> Detects project language from comments
 
-2. autodoc_init({ enabled: true, language: 'ru' })
-   → Инициализирует AutoDoc
+2. autodoc_init({ enabled: true, language: 'en' })
+   -> Initializes AutoDoc
 
 3. autodoc_status()
-   → Показывает текущее состояние
+   -> Shows current state
 
-4. Создаёшь .autodoc/ директорию с документацией
+4. Create .autodoc/ directory with documentation
    autodoc_save({ filePath: 'ARCHITECTURE.md', content: '...' })
 ```
 
-### 2. Понимание существующего проекта
+### 2. Understanding an Existing Project
 
 ```
-User: "Как работает авторизация?"
+User: "How does authorization work?"
 
-1. autodoc_search({ query: "авторизация аутентификация", mode: 'semantic' })
-   → Находит документацию + код
+1. autodoc_search({ query: "authorization authentication", mode: 'semantic' })
+   -> Finds documentation + code
 
-2. autodoc_get({ filePath: 'FLOW.md', section: 'регистрация' })
-   → Бизнес-сценарий
+2. autodoc_get({ filePath: 'FLOW.md', section: 'registration' })
+   -> Business scenario
 
 3. autodoc_get({ filePath: 'PROCESSES.md', section: 'auth-flow' })
-   → Техническая реализация
+   -> Technical implementation
 ```
 
-### 3. После изменения кода
+### 3. After Code Changes
 
 ```
-User: "Добавил rate limiting в AuthService"
+User: "Added rate limiting to AuthService"
 
 1. autodoc_sync({ scope: 'outdated' })
-   → Находит устаревшие документы
+   -> Finds outdated documents
 
 2. autodoc_validate()
-   → Проверяет ссылки
+   -> Validates links
 
 3. autodoc_save({
      filePath: 'src/services/auth/auth.service.md',
@@ -171,72 +178,72 @@ User: "Добавил rate limiting в AuthService"
    })
 
 4. autodoc_changelog({ limit: 5 })
-   → Показывает последние изменения
+   -> Shows recent changes
 ```
 
-### 4. Автообновление документации
+### 4. Automatic Documentation Updates
 
-AutoDoc Watcher работает автоматически при включении в конфиге:
+AutoDoc Watcher works automatically when enabled in config:
 ```yaml
-# ultrascript.yaml
+# ultracode.yaml
 mcp:
   autodoc:
     watcherEnabled: true
 ```
 
-При изменении .ts/.js файлов:
-1. Watcher отслеживает изменения через KnowledgeBus
-2. Debounce 30-60 сек (группирует множественные изменения)
-3. Обновляет AUTODOC.md в соответствующем модуле:
-   - Добавляет новые экспорты
-   - Удаляет удалённые экспорты
-   - Обновляет номера строк в ссылках
+When .ts/.js files change:
+1. Watcher tracks changes via KnowledgeBus
+2. Debounce 30-60 sec (groups multiple changes)
+3. Updates AUTODOC.md in the corresponding module:
+   - Adds new exports
+   - Removes deleted exports
+   - Updates line numbers in links
 
-## Формат Entity-level документации
+## Entity-level Documentation Format
 
-**НЕ дублируй комментарии!** Пиши про:
-- Роль в системе (ЗАЧЕМ)
-- Кто использует (КЕМ)
-- Участие в процессах (ГДЕ)
-- Бизнес-инварианты
-- Критические зависимости
+**Do NOT duplicate comments!** Write about:
+- Role in the system (WHY)
+- Who uses it (BY WHOM)
+- Process participation (WHERE)
+- Business invariants
+- Critical dependencies
 - Known issues
 
 ```markdown
 # AuthService
 
-[→ auth.service.ts:15-120](auth.service.ts#L15-L120)
+[-> auth.service.ts:15-120](auth.service.ts#L15-L120)
 
-## Роль в системе
+## Role in the System
 
-**Зачем нужен**: Единая точка управления аутентификацией...
+**Purpose**: Single point for authentication management...
 
-## Кто использует
+## Consumers
 
-| Потребитель | Как использует |
-|-------------|----------------|
-| [→ API Gateway](../../gateway/README.md) | Проверка токенов |
+| Consumer | How It Uses |
+|----------|-------------|
+| [-> API Gateway](../../gateway/README.md) | Token verification |
 
-## Участие в процессах
+## Process Participation
 
-- [→ FLOW.md#регистрация](../../FLOW.md#регистрация)
-- [→ PROCESSES.md#auth-flow](../../PROCESSES.md#auth-flow)
+- [-> FLOW.md#registration](../../FLOW.md#registration)
+- [-> PROCESSES.md#auth-flow](../../PROCESSES.md#auth-flow)
 
-## Бизнес-инварианты
+## Business Invariants
 
-- Один активный токен на пользователя
-- Rate limiting: 5 попыток/мин
+- One active token per user
+- Rate limiting: 5 attempts/min
 ```
 
-## Синтаксис ссылок
+## Link Syntax
 
 ```markdown
-[→ file.ts:25-50](file.ts#L25-L50)     # На строки кода
-[→ ModuleName](./_index.md)             # На документацию
-[→ FLOW.md#сценарий](../../FLOW.md#сценарий)  # На секцию
+[-> file.ts:25-50](file.ts#L25-L50)     # To code lines
+[-> ModuleName](./_index.md)             # To documentation
+[-> FLOW.md#scenario](../../FLOW.md#scenario)  # To section
 ```
 
-В комментариях кода:
+In code comments:
 ```typescript
 /**
  * @see docs://.autodoc/PROCESSES.md#auth-flow

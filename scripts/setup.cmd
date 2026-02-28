@@ -1,6 +1,6 @@
 @echo off
 REM ==============================================================================
-REM UltraScript Tools MCP - Semantic Embedding Setup v2
+REM UltraCode - Semantic Embedding Setup v2
 REM ==============================================================================
 REM Flow:
 REM   0. Detect CPU (AVX2/VNNI/AMX) + GPU (NVIDIA arch)

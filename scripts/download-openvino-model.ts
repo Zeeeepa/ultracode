@@ -69,7 +69,7 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
 
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "ultrascript-tools-mcp/1.0",
+      "User-Agent": "ultracode/1.0",
     },
   });
 

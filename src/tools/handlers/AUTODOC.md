@@ -1,61 +1,157 @@
-# AUTODOC.md
+---
+module_name: handlers
+description: "MCP tool handler implementations for analysis, search, modification, branching, merging, and more"
+status: active
+language: typescript
+---
 
-## 1. Название и Обзор
+# Handlers
 
-Модуль `handlers` предоставляет набор обработчиков инструментов для выполнения различных задач в рамках анализа, управления и визуализации кода. Он включает обработчики для работы с анализом, ветками, сущностями, метриками, графами и другими аспектами проекта. Каждый обработчик реализует конкретную логику для выполнения задачи, связанной с инструментами, используемыми в системе.
+> Complete set of MCP tool handler implementations covering code analysis, semantic search, file modification, branch management, merge operations, snapshots, tracing, validation, documentation, and system metrics.
 
-## 2. Файлы
+## Overview
 
-| Файл                         | Описание                                                                 |
-|------------------------------|--------------------------------------------------------------------------|
-| `analysis-tool-handlers.ts`  | Обработчики для инструментов анализа кода, включая анализ влияния и горячих точек. |
-| `branch-tool-handlers.ts`    | Обработчики для работы с ветками: создание, переключение, получение статуса и т.д. |
-| `entity-tool-handlers.ts`    | Обработчики для работы с сущностями: список связей, список файлов сущностей и т.д. |
-| `file-tool-handlers.ts`      | Обработчики для работы с файлами: получение изменённых файлов, список файлов и т.д. |
-| `graph-tool-handlers.ts`     | Обработчики для работы с графами: построение, анализ и визуализация графов проекта. |
-| `index-tool-handler.ts`      | Обработчик для индексации данных, используемый в инструментах поиска и анализа. |
-| `index.ts`                   | Экспорт всех обработчиков из модуля для удобного использования.           |
-| `merge-tool-handlers.ts`     | Обработчики для работы с мержами: анализ конфликтов, слияния и т.д.       |
-| `metrics-tool-handlers.ts`   | Обработчики для получения и анализа метрик проекта.                       |
-| `semantic-tool-handlers.ts`  | Обработчики для семантического анализа: определение стека технологий, поиск связей. |
-| `snapshot-tool-handlers.ts`  | Обработчики для работы со снимками: создание, восстановление и управление. |
-| `tracing-tool-handlers.ts`   | Обработчики для трассировки: отслеживание изменений, логирование и т.д.  |
-| `validation-tool-handlers.ts`| Обработчики для валидации: проверка корректности данных, структуры и т.д. |
-| `history-tool-handlers.ts`   | Обработчики для истории и time travel: версионирование графа, diff коммитов. |
+The handlers module contains all tool handler classes that implement the business logic behind MCP tools. Each handler extends `BaseToolHandler`, validates input via Zod schemas, and returns structured `ToolResult` responses. The module supports lazy loading: basic handlers (graph, entity, metrics, index) load immediately at startup, while all other handlers are dynamically imported on first use via the `ToolRegistry` for faster startup times.
 
-## 3. Экспорты
+## Data Flow
 
-| Экспорт                             | Описание                                                                 |
-|-------------------------------------|--------------------------------------------------------------------------|
-| `AnalyzeCodeImpactToolHandler`      | Обработчик для анализа влияния изменений в коде.                         |
-| `AnalyzeHotspotsToolHandler`        | Обработчик для поиска горячих точек в коде. Поддерживает `includeHistoricalMetrics` и `lookbackDays` для расчёта changeFrequency через Prolly Tree или Git fallback. |
-| `AnalyzeStateChaosToolHandler`      | Обработчик для анализа состояния хаоса в проекте.                        |
-| `DetectTechnologyStackToolHandler`  | Обработчик для определения стека технологий проекта.                     |
-| `FindRelatedConceptsToolHandler`    | Обработчик для поиска связанных концептов в коде.                        |
-| `LernaProjectGraphToolHandler`      | Обработчик для построения графа проекта с использованием Lerna.          |
-| `SuggestRefactoringToolHandler`     | Обработчик для предложения рефакторинга кода.                            |
-| `CleanupBranchesToolHandler`        | Обработчик для очистки веток.                                            |
-| `GetBranchStatusToolHandler`        | Обработчик для получения статуса ветки.                                  |
-| `GetChangedFilesToolHandler`        | Обработчик для получения списка изменённых файлов.                       |
-| `ListBranchesToolHandler`           | Обработчик для получения списка всех веток.                              |
-| `SwitchBranchToolHandler`           | Обработчик для переключения между ветками.                               |
-| `ListEntityRelationshipsToolHandler`| Обработчик для получения списка связей между сущностями.                 |
-| `ListFileEntitiesToolHandler`       | Обработчик для получения списка сущностей в файле.                       |
-| `QueryToolHandler`                  | Обработчик для выполнения запросов к индексу.                            |
-| `GetEntityHistoryToolHandler`       | Обработчик для получения истории изменений entity.                       |
-| `DiffCommitsToolHandler`            | Обработчик для сравнения версий графа (diff).                            |
-| `CheckoutCommitToolHandler`         | Обработчик для time travel — просмотр графа в прошлом.                   |
-| `ListCommitsToolHandler`            | Обработчик для получения списка версий (commits).                        |
+- **Inputs:** Validated tool arguments from MCP protocol requests, parsed through Zod schemas.
+- **Processing:** Handler-specific logic using GraphStorage, SemanticAgent, ImpactAnalyzer, CodeValidator, etc.
+- **Outputs:** Structured `ToolResult` objects with text content and optional metadata.
 
-## 4. Использование
+## Public API
 
-Пример использования:
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `AnalyzeCodeImpactToolHandler` | class | Analyzes impact of code changes on dependents | [`analysis-tool-handlers.ts`](./analysis-tool-handlers.ts) |
+| `AnalyzeHotspotsToolHandler` | class | Finds complex/frequently-changed code areas | [`analysis-tool-handlers.ts`](./analysis-tool-handlers.ts) |
+| `AnalyzeStateChaosToolHandler` | class | Detects scattered state and race conditions | [`analysis-tool-handlers.ts`](./analysis-tool-handlers.ts) |
+| `DetectTechnologyStackToolHandler` | class | Identifies project technologies and frameworks | [`analysis-tool-handlers.ts`](./analysis-tool-handlers.ts) |
+| `SemanticSearchToolHandler` | class | Natural language code search via embeddings | [`semantic-tool-handlers.ts`](./semantic-tool-handlers.ts) |
+| `FindSimilarCodeToolHandler` | class | Finds semantically similar code fragments | [`semantic-tool-handlers.ts`](./semantic-tool-handlers.ts) |
+| `PatternSearchToolHandler` | class | Regex and framework-aware pattern search | [`semantic-tool-handlers.ts`](./semantic-tool-handlers.ts) |
+| `ModifyEntityCodeToolHandler` | class | Modifies code of an individual entity | [`file-tool-handlers.ts`](./file-tool-handlers.ts) |
+| `RenameSymbolToolHandler` | class | Renames symbols with reference updates | [`file-tool-handlers.ts`](./file-tool-handlers.ts) |
+| `CreateFileToolHandler` | class | Creates new files with content | [`file-tool-handlers.ts`](./file-tool-handlers.ts) |
+| `ListBranchesToolHandler` | class | Lists all git branches | [`branch-tool-handlers.ts`](./branch-tool-handlers.ts) |
+| `SwitchBranchToolHandler` | class | Switches git branches with re-indexing | [`branch-tool-handlers.ts`](./branch-tool-handlers.ts) |
+| `SemanticMergeToolHandler` | class | Semantic branch merging with conflict resolution | [`merge-tool-handlers.ts`](./merge-tool-handlers.ts) |
+| `TraceFlowToolHandler` | class | Traces code execution flow from A to B | [`tracing-tool-handlers.ts`](./tracing-tool-handlers.ts) |
+| `ValidateFileToolHandler` | class | Validates file syntax via linters | [`validation-tool-handlers.ts`](./validation-tool-handlers.ts) |
+| `IndexToolHandler` | class | Triggers project directory indexing | [`index-tool-handler.ts`](./index-tool-handler.ts) |
+| `GetGraphStatsToolHandler` | class | Returns knowledge graph statistics | [`graph-tool-handlers.ts`](./graph-tool-handlers.ts) |
+| `GetHelpToolHandler` | class | Serves documentation from prompts/ directory | [`help-tool-handler.ts`](./help-tool-handler.ts) |
+| `GetToolsForTaskHandler` | class | Recommends tools based on task description | [`get-tools-for-task-handler.ts`](./get-tools-for-task-handler.ts) |
 
-```ts
-import { AnalyzeCodeImpactToolHandler } from './handlers';
+## Dependencies
 
-const handler = new AnalyzeCodeImpactToolHandler();
-const result = await handler.handle({ filePath: 'src/main.ts' });
-```
+### Internal Modules
 
-Этот модуль используется для интеграции различных инструментов в систему анализа и управления проектом. Каждый обработчик может быть использован отдельно или в составе более сложных процессов.
+| Module | Purpose |
+|--------|---------|
+| `tools/base-tool-handler` | `BaseToolHandler` base class and `ToolResult` type |
+| `tools/schemas` | Zod validation schemas for all tools |
+| `tools/tool-definitions` | Tool metadata and descriptions |
+| `tools/impact-analyzer` | Code impact analysis engine |
+| `analysis/chaos` | State chaos and race condition detection |
+| `validation/code-validator` | Linter integration for file validation |
+
+### External Packages
+
+| Package | Purpose |
+|---------|---------|
+| `zod` | Input validation for tool arguments |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Loading strategy | Basic handlers eager, others lazy-loaded on first use |
+| Handler groups | 11 groups: analysis, autodoc, branch, entity, file, graph, merge, metrics, semantic, snapshot, tracing, validation |
+| Total handlers | 50+ tool handler classes |
+
+## Error Handling
+
+Each handler wraps execution in try/catch and returns error details in the `ToolResult` structure. Input validation failures from Zod produce descriptive error messages. Missing dependencies (e.g., no vector store for semantic search) return informative fallback messages.
+
+## Known Limitations
+
+- Lazy loading means first invocation of advanced tools has a small import delay.
+- Some handlers require semantic embedding to be configured (semantic search, find similar code).
+- File modification handlers do not support binary files.
+
+## Exports
+
+- `ListEntityRelationshipsToolHandler`
+- `ListFileEntitiesToolHandler`
+- `QueryToolHandler`
+- `CleanIndexToolHandler`
+- `GetGraphHealthToolHandler`
+- `GetGraphStatsToolHandler`
+- `GetGraphToolHandler`
+- `ResetGraphToolHandler`
+- `IndexToolHandler`
+- `ClearBusTopicToolHandler`
+- `GetAgentMetricsToolHandler`
+- `GetBusStatsToolHandler`
+- `GetMetricsToolHandler`
+- `GetVersionToolHandler`
+- `GetWatcherStatusToolHandler`
+- `AnalyzeCodeImpactToolHandler`
+- `AnalyzeHotspotsToolHandler`
+- `AnalyzeStateChaosToolHandler`
+- `DetectTechnologyStackToolHandler`
+- `FindRelatedConceptsToolHandler`
+- `SuggestRefactoringToolHandler`
+- `AutoDocChangelogToolHandler`
+- `AutoDocDetectLanguageToolHandler`
+- `AutoDocGenerateToolHandler`
+- `AutoDocGetToolHandler`
+- `AutoDocInitToolHandler`
+- `AutoDocInstallHooksToolHandler`
+- `AutoDocSaveToolHandler`
+- `AutoDocSearchToolHandler`
+- `AutoDocStatusToolHandler`
+- `AutoDocSyncToolHandler`
+- `AutoDocValidateToolHandler`
+- `CleanupBranchesToolHandler`
+- `GetBranchStatusToolHandler`
+- `GetChangedFilesToolHandler`
+- `ListBranchesToolHandler`
+- `SwitchBranchToolHandler`
+- `AddMemberToolHandler`
+- `CopyFileToolHandler`
+- `CreateFileToolHandler`
+- `ModifyEntityCodeToolHandler`
+- `RenameFileToolHandler`
+- `RenameSymbolToolHandler`
+- `SplitFileToolHandler`
+- `SynthesizeFilesToolHandler`
+- `AnalyzeMergeConflictsToolHandler`
+- `GetMergeSuggestionsToolHandler`
+- `GetSemanticMergeInfoToolHandler`
+- `SemanticMergeToolHandler`
+- `CrossLanguageSearchToolHandler`
+
+## Files
+
+| File | Description |
+|------|-------------|
+| `index.ts` | Re-exports all handler classes (eager + lazy-loaded) |
+| `analysis-tool-handlers.ts` | Code impact, hotspots, state chaos, tech stack, refactoring |
+| `autodoc-tool-handlers.ts` | AutoDoc init, save, get, search, validate, generate, sync |
+| `branch-tool-handlers.ts` | Branch list, switch, status, cleanup, changed files |
+| `entity-tool-handlers.ts` | Entity listing, relationships, natural language queries |
+| `file-tool-handlers.ts` | File modify, copy, rename, split, synthesize, create, add member |
+| `file-tool-utils.ts` | Shared utilities for file tool handlers |
+| `get-tools-for-task-handler.ts` | Task-based tool recommendation engine |
+| `graph-tool-handlers.ts` | Graph retrieval, stats, health, reset, bus operations |
+| `help-tool-handler.ts` | Documentation serving from prompts/ directory |
+| `history-tool-handlers.ts` | Entity history, commit diffing, time travel |
+| `index-tool-handler.ts` | Project directory indexing trigger |
+| `merge-tool-handlers.ts` | Semantic merge, conflict analysis, suggestions |
+| `metrics-tool-handlers.ts` | System metrics, agent metrics, watcher status, version |
+| `semantic-tool-handlers.ts` | Semantic search, similar code, clones, patterns, cross-language |
+| `snapshot-tool-handlers.ts` | Snapshot create, rollback, list, cleanup |
+| `tracing-tool-handlers.ts` | Flow tracing, backwards tracing, data flow, state impact |
+| `validation-tool-handlers.ts` | File and directory validation via linters |

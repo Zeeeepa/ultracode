@@ -50,6 +50,7 @@ export const LANGUAGE_MAP: Record<string, string> = {
   ".mjs": "javascript",
   ".cjs": "javascript",
   ".json": "json",
+  ".tpl": "helm",
 };
 
 /**
@@ -70,6 +71,7 @@ export const SUPPORTED_LANGUAGES = [
   "javascript",
   "json",
   "zig",
+  "helm",
 ] as const;
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];

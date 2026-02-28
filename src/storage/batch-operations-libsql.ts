@@ -123,6 +123,9 @@ export class BatchOperationsLibSQL {
       [RelationType.HANDLES_ACTION]: null,
       [RelationType.SELECTS_STATE]: null,
       [RelationType.MODIFIES_STATE]: null,
+      [RelationType.PRODUCES_API]: null,
+      [RelationType.CONSUMES_API]: null,
+      [RelationType.GENERATED_FROM]: null,
     };
 
     const reverse: Relationship[] = [];

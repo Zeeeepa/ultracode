@@ -15,14 +15,14 @@ import { ConflictSeverity, ConflictType, type SemanticConflict } from "../models
 import type { VersionedIndex } from "../models/versioned-index.js";
 
 /**
- * Three-Way Merger - Основной 3-way merge engine
+ * Three-Way Merger - Main 3-way merge engine
  *
- * Выполняет semantic merge в 5 фаз:
- * 1. Multi-Version Indexing - индексация base + branchA + branchB
- * 2. Fast Path Matching - O(1) matching через hashes
- * 3. Semantic Matching - vector similarity для unmapped units
- * 4. Intent Classification - определение намерений изменений
- * 5. Conflict Detection - детекция и разрешение конфликтов
+ * Performs semantic merge in 5 phases:
+ * 1. Multi-Version Indexing - indexing base + branchA + branchB
+ * 2. Fast Path Matching - O(1) matching via hashes
+ * 3. Semantic Matching - vector similarity for unmapped units
+ * 4. Intent Classification - determining change intents
+ * 5. Conflict Detection - detecting and resolving conflicts
  */
 
 export interface ThreeWayMergerConfig {
@@ -85,11 +85,11 @@ export class ThreeWayMerger {
   }
 
   /**
-   * Выполнить 3-way merge
+   * Perform 3-way merge
    *
-   * @param branchA - Имя первой ветки для слияния
-   * @param branchB - Имя второй ветки для слияния
-   * @returns MergeResult с matched units, conflicts, и merge actions
+   * @param branchA - Name of the first branch to merge
+   * @param branchB - Name of the second branch to merge
+   * @returns MergeResult with matched units, conflicts, and merge actions
    */
   async performMerge(branchA: string, branchB: string): Promise<MergeResult> {
     log.i("3WAYMERGE", `[ThreeWayMerger] Starting 3-way merge: ${branchA} + ${branchB}`);
@@ -270,7 +270,7 @@ export class ThreeWayMerger {
       }
     }
 
-    // Match units from branchB (только те, что ещё не matched)
+    // Match units from branchB (only those not yet matched)
     const matchedBIds = new Set(matchedUnits.map((m) => m.branchBUnit.id));
     for (const unitB of unitsB) {
       if (!matchedBIds.has(unitB.id)) {

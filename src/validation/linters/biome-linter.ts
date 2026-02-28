@@ -20,23 +20,23 @@ export class BiomeLinter implements Linter {
     try {
       const bin = await this.getBinPath();
 
-      // Dry-run режим: создать временный файл
+      // Dry-run mode: create a temporary file
       if (autofix && dryRun) {
         const tempFile = join(tmpdir(), `biome-dryrun-${Date.now()}.tmp`);
 
         try {
-          // Скопировать в temp
+          // Copy to temp
           await copyFile(filePath, tempFile);
 
-          // Применить автофиксы к копии
+          // Apply autofixes to the copy
           const command = `"${bin}" check --write --reporter=json "${tempFile}"`;
           await exec(command, { timeout: 30000 });
 
-          // Прочитать изменения
+          // Read changes
           const original = await readFile(filePath, "utf-8");
           const fixed = await readFile(tempFile, "utf-8");
 
-          // Вернуть проблемы + информацию о том, что было бы исправлено
+          // Return problems + information about what would be fixed
           const problems = await this.lint(filePath, _content, false);
           if (original !== fixed) {
             problems.push({
@@ -50,12 +50,12 @@ export class BiomeLinter implements Linter {
 
           return problems;
         } finally {
-          // Удалить временный файл
+          // Delete the temporary file
           await unlink(tempFile).catch(() => {});
         }
       }
 
-      // Обычная логика
+      // Normal logic
       const writeFlag = autofix ? "--write" : "";
       const command = `"${bin}" check ${writeFlag} --reporter=json "${filePath}"`;
 
@@ -110,13 +110,13 @@ export class BiomeLinter implements Linter {
       const biomePkg = require.resolve("@biomejs/biome/package.json");
       const biomeDir = dirname(biomePkg);
 
-      // Biome binary обычно в bin/biome
+      // Biome binary is typically in bin/biome
       const binPath = join(biomeDir, "bin", "biome");
       await access(binPath);
       this.binPath = binPath;
       return binPath;
     } catch (error) {
-      // Biome не найден (критическая ошибка, так как в dependencies)
+      // Biome not found (critical error, since it is in dependencies)
       log.e("BIOME", "not_found", {
         err: String(error),
         hint: "Biome should be in dependencies",

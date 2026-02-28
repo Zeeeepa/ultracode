@@ -1,6 +1,6 @@
-# UltraScript Tools MCP — Quick Start
+# UltraCode — Quick Start
 
-## When to Use UltraScript Tools
+## When to Use UltraCode
 
 **USE instead of Grep/Glob** — 5-10x faster, understands meaning.
 
@@ -22,18 +22,20 @@
 
 | Language | Support | Features |
 |----------|---------|----------|
-| TypeScript | ⭐⭐⭐ | Full type analysis, JSX/TSX |
-| JavaScript | ⭐⭐⭐ | ES6+, JSX, CommonJS/ESM |
-| Python | ⭐⭐⭐ | Type hints, async, decorators |
-| Go | ⭐⭐⭐ | Goroutines, interfaces |
-| Rust | ⭐⭐⭐ | Traits, lifetimes, macros |
-| C# | ⭐⭐ | Roslyn, LINQ, async/await, interfaces |
-| Java | ⭐⭐ | Generics, annotations |
-| C++ | ⭐⭐ | Templates, namespaces |
-| Swift | ⭐⭐ | Protocols, extensions |
-| Kotlin | ⭐⭐ | Coroutines, data classes |
-| Zig | ⭐ | Functions, structs, comptime |
-| Bash | ⭐ | Functions, variables |
+| TypeScript | Full | Full type analysis, JSX/TSX |
+| JavaScript | Full | ES6+, JSX, CommonJS/ESM |
+| Python | Full | Type hints, async, decorators |
+| Go | Full | Goroutines, interfaces |
+| Rust | Full | Traits, lifetimes, macros |
+| C# | Good | Roslyn, LINQ, async/await, interfaces |
+| Java | Good | Generics, annotations |
+| C++ | Good | Templates, namespaces |
+| C | Good | Functions, structs, pointers |
+| Swift | Good | Protocols, extensions |
+| Kotlin | Good | Coroutines, data classes |
+| Zig | Basic | Functions, structs, comptime |
+| Bash | Basic | Functions, variables |
+| Helm | Basic | Chart templates, values |
 
 ## Typical Workflow
 
@@ -45,7 +47,9 @@
 5. modify_code — make changes
 ```
 
-## Tracing Tools (NEW)
+> **Note:** GitWatcher provides automatic incremental indexing on file changes and full re-indexing on branch switch. Manual `index` is only needed for the initial indexing or to force a full rescan.
+
+## Tracing Tools
 
 | Question | Tool |
 |----------|------|
@@ -55,7 +59,7 @@
 | "What changes with different values?" | `analyze_state_impact` |
 | "What are all decision points?" | `find_decision_points` |
 
-## Cross-Project Support (NEW)
+## Cross-Project Support
 
 Work with multiple projects, each with isolated databases:
 
@@ -67,24 +71,24 @@ index directory="D:\\other\\project"
 semantic_search query="auth" projectPath="D:\\other\\project"
 ```
 
-Storage: `%LOCALAPPDATA%\UltraScriptTools\projects\{hash}/`
+Storage: `%LOCALAPPDATA%\UltraCode\projects\{hash}/`
 
 ## Advantages Over Built-in Tools
 
-| Operation | Built-in (Grep/Glob) | UltraScript |
+| Operation | Built-in (Grep/Glob) | UltraCode |
 |-----------|----------------------|-------------|
-| Search "auth functions" | ❌ Text only | ✅ Understands meaning |
-| Find duplicates | ❌ Impossible | ✅ Semantic |
-| Change impact analysis | ❌ Impossible | ✅ Dependency graph |
-| Type navigation | ❌ Regex only | ✅ AST parsing |
-| Speed on large projects | 🐌 Slow | 🚀 SIMD/GPU acceleration |
-| Find complex code | ❌ Impossible | ✅ Cyclomatic/cognitive metrics |
-| Find undocumented APIs | ❌ Impossible | ✅ Documentation detection |
-| Find async code patterns | ❌ Impossible | ✅ Control flow analysis |
+| Search "auth functions" | Text only | Understands meaning |
+| Find duplicates | Impossible | Semantic |
+| Change impact analysis | Impossible | Dependency graph |
+| Type navigation | Regex only | AST parsing |
+| Speed on large projects | Slow | SIMD/GPU acceleration |
+| Find complex code | Impossible | Cyclomatic/cognitive metrics |
+| Find undocumented APIs | Impossible | Documentation detection |
+| Find async code patterns | Impossible | Control flow analysis |
 
-## Enhanced Search Filters (NEW)
+## Enhanced Search Filters
 
-`semantic_search` now supports rich filtering:
+`semantic_search` supports rich filtering:
 
 - **Complexity**: `minCyclomatic`, `maxCyclomatic`
 - **Control Flow**: `hasExceptions`, `hasLoops`, `hasAwaits`
@@ -97,8 +101,8 @@ Storage: `%LOCALAPPDATA%\UltraScriptTools\projects\{hash}/`
 semantic_search query="data processing" minCyclomatic=10  # Complex code
 semantic_search query="API" hasAwaits=true hasExceptions=false  # Async without error handling
 semantic_search query="export" hasDocumentation=false  # Undocumented exports
-semantic_search query="auth" changedInLastCommits=5  # ⚡ Only recently changed — much faster response
-pattern_search pattern="handle.*" mode="entity" changedInLastCommits=3  # ⚡ 10x fewer results = 10x faster
+semantic_search query="auth" changedInLastCommits=5  # Only recently changed — much faster response
+pattern_search pattern="handle.*" mode="entity" changedInLastCommits=3  # 10x fewer results = 10x faster
 ```
 
 **Returns enhanced data:**

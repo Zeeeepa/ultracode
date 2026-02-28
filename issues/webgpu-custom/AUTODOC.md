@@ -1,26 +1,26 @@
 # AUTODOC.md
 
-## 1. Название и Обзор
+## 1. Title and Overview
 
-Модуль **webgpu-custom** предназначен для предоставления кастомной реализации взаимодействия с WebGPU API. Он инкапсулирует логику инициализации контекста, управления ресурсами и выполнения графических операций, адаптированных под специфические требования проекта. Модуль не экспортирует публичные API и служит внутренним компонентом системы.
+The **webgpu-custom** module is designed to provide a custom implementation for interacting with the WebGPU API. It encapsulates the logic for context initialization, resource management, and execution of graphics operations adapted to the specific requirements of the project. The module does not export public APIs and serves as an internal system component.
 
-## 2. Файлы
+## 2. Files
 
-| Файл         | Описание                                               |
+| File         | Description                                               |
 |--------------|--------------------------------------------------------|
-| `test.js`    | Содержит тестовые функции и сценарии для проверки работы WebGPU-функциональности. |
+| `test.js`    | Contains test functions and scenarios for verifying WebGPU functionality. |
 
-## 3. Экспорты
+## 3. Exports
 
-В данном модуле отсутствуют публичные экспорты. Все функции и классы предназначены для внутреннего использования и не доступны за пределами модуля.
+This module has no public exports. All functions and classes are intended for internal use and are not accessible outside the module.
 
-## 4. Использование
+## 4. Usage
 
-Данный модуль используется напрямую внутри других частей приложения и не требует прямого импорта или вызова извне. Пример использования:
+This module is used directly within other parts of the application and does not require direct import or external invocation. Usage example:
 
 ```ts
-// Внутреннее использование внутри модуля
+// Internal usage within the module
 import { someInternalFunction } from './webgpu-custom/test.js';
 ```
 
-> Обратите внимание: модуль предназначен исключительно для внутреннего применения и не предназначен для прямого использования в клиентском коде.
+> Note: the module is intended exclusively for internal use and is not meant for direct use in client code.

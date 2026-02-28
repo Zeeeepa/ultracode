@@ -11,24 +11,24 @@ import {
 import type { AIConflictResolver } from "./ai-conflict-resolver.js";
 
 /**
- * Conflict Resolver - Разрешение конфликтов при слиянии
+ * Conflict Resolver - Resolves conflicts during merge
  *
- * Генерирует предложения по разрешению конфликтов:
- * - Автоматическое разрешение для простых случаев
- * - AI-assisted suggestions для сложных конфликтов (через embeddings)
- * - Preview merged code для разных стратегий
- * - Confidence scoring для каждого предложения
+ * Generates conflict resolution suggestions:
+ * - Automatic resolution for simple cases
+ * - AI-assisted suggestions for complex conflicts (via embeddings)
+ * - Preview merged code for different strategies
+ * - Confidence scoring for each suggestion
  */
 
 export interface ConflictResolverConfig {
-  // AI integration (опционально)
+  // AI integration (optional)
   aiEnabled: boolean; // default: false
-  aiResolver?: AIConflictResolver; // AI resolver для semantic analysis
+  aiResolver?: AIConflictResolver; // AI resolver for semantic analysis
 
   // Resolution preferences
-  preferBranchA: boolean; // default: false - приоритет branchA при равных условиях
-  preferNewerCode: boolean; // default: true - приоритет более новому коду
-  minConfidenceThreshold: number; // default: 0.5 - минимальный confidence для auto-resolve
+  preferBranchA: boolean; // default: false - prioritize branchA when conditions are equal
+  preferNewerCode: boolean; // default: true - prioritize newer code
+  minConfidenceThreshold: number; // default: 0.5 - minimum confidence for auto-resolve
 }
 
 export class ConflictResolver {
@@ -48,23 +48,23 @@ export class ConflictResolver {
   }
 
   /**
-   * Разрешить конфликт
+   * Resolve a conflict
    *
-   * @param conflict - Конфликт для разрешения
-   * @returns Resolution с предложенным решением
+   * @param conflict - Conflict to resolve
+   * @returns Resolution with the proposed solution
    */
   async resolveConflict(conflict: SemanticConflict): Promise<Resolution> {
-    // Если AI включен и доступен - используем AI analysis
+    // If AI is enabled and available - use AI analysis
     if (this.config.aiEnabled && this.aiResolver) {
       try {
         const aiAnalysis = await this.aiResolver.analyzeConflict(conflict);
 
-        // Если AI confidence выше порога - используем AI resolution
+        // If AI confidence is above threshold - use AI resolution
         if (aiAnalysis.confidence >= this.config.minConfidenceThreshold) {
           return this.aiResolver.createResolution(aiAnalysis);
         }
 
-        // AI не уверен - продолжаем с fallback логикой
+        // AI is not confident - continue with fallback logic
         log.d("CONFLICTRES", "ai_low_confidence", {
           confidence: aiAnalysis.confidence,
           threshold: this.config.minConfidenceThreshold,
@@ -74,19 +74,19 @@ export class ConflictResolver {
       }
     }
 
-    // Fallback: традиционная логика разрешения
+    // Fallback: traditional resolution logic
 
-    // Если конфликт уже помечен как auto-resolvable
+    // If the conflict is already marked as auto-resolvable
     if (conflict.autoResolvable) {
       return this.autoResolve(conflict);
     }
 
-    // Если конфликт критический - только manual review
+    // If the conflict is critical - manual review only
     if (conflict.severity === ConflictSeverity.Critical) {
       return this.createManualReviewResolution(conflict, "Critical conflict requires manual review");
     }
 
-    // Пытаемся разрешить на основе типа конфликта
+    // Try to resolve based on conflict type
     switch (conflict.type) {
       case ConflictType.OverlappingChanges:
         return this.resolveOverlappingChanges(conflict);
@@ -109,14 +109,14 @@ export class ConflictResolver {
   }
 
   /**
-   * Автоматическое разрешение для auto-resolvable конфликтов
+   * Automatic resolution for auto-resolvable conflicts
    */
   private autoResolve(conflict: SemanticConflict): Resolution {
     const { branchAIntent, branchBIntent } = conflict;
 
-    // Если оба намерения совместимы и Low severity - пробуем слить
+    // If both intents are compatible and Low severity - try to merge
     if (branchAIntent && branchBIntent && conflict.severity === ConflictSeverity.Low) {
-      // Если оба BugFix или оба Refactoring - merge both
+      // If both BugFix or both Refactoring - merge both
       if (
         (branchAIntent.type === "BugFix" && branchBIntent.type === "BugFix") ||
         (branchAIntent.type === "Refactoring" && branchBIntent.type === "Refactoring")
@@ -124,7 +124,7 @@ export class ConflictResolver {
         return this.mergeBothChanges(conflict);
       }
 
-      // BugFix + Refactoring - merge both (обычно совместимы)
+      // BugFix + Refactoring - merge both (usually compatible)
       if (
         (branchAIntent.type === "BugFix" && branchBIntent.type === "Refactoring") ||
         (branchAIntent.type === "Refactoring" && branchBIntent.type === "BugFix")
@@ -138,12 +138,12 @@ export class ConflictResolver {
   }
 
   /**
-   * Разрешение OverlappingChanges
+   * Resolve OverlappingChanges
    */
   private resolveOverlappingChanges(conflict: SemanticConflict): Resolution {
     const { baseUnit, branchAUnit, branchBUnit } = conflict;
 
-    // Если изменения идентичны - take either (учитываем preferBranchA)
+    // If changes are identical - take either (considering preferBranchA)
     if (branchAUnit.contentHash === branchBUnit.contentHash) {
       const strategy = this.config.preferBranchA ? ResolutionStrategy.TakeBranchA : ResolutionStrategy.TakeBranchB;
       const mergedCode = this.config.preferBranchA ? branchAUnit.content : branchBUnit.content;
@@ -156,7 +156,7 @@ export class ConflictResolver {
       };
     }
 
-    // Если один не изменился относительно base - take другой
+    // If one is unchanged relative to base - take the other
     if (baseUnit) {
       const branchAUnchanged = baseUnit.contentHash === branchAUnit.contentHash;
       const branchBUnchanged = baseUnit.contentHash === branchBUnit.contentHash;
@@ -180,7 +180,7 @@ export class ConflictResolver {
       }
     }
 
-    // Оба изменили - попробовать merge или manual review
+    // Both modified - try merge or manual review
     if (conflict.severity === ConflictSeverity.Low) {
       return this.mergeBothChanges(conflict);
     }
@@ -189,17 +189,17 @@ export class ConflictResolver {
   }
 
   /**
-   * Разрешение IncompatibleIntents
+   * Resolve IncompatibleIntents
    */
   private resolveIncompatibleIntents(conflict: SemanticConflict): Resolution {
     const { branchAIntent, branchBIntent } = conflict;
 
-    // APIChange всегда требует manual review
+    // APIChange always requires manual review
     if (branchAIntent?.type === "APIChange" || branchBIntent?.type === "APIChange") {
       return this.createManualReviewResolution(conflict, "API changes require manual review");
     }
 
-    // Если один FeatureAddition, другой BugFix - можно попробовать merge
+    // If one is FeatureAddition, the other BugFix - can try merge
     if (
       (branchAIntent?.type === "FeatureAddition" && branchBIntent?.type === "BugFix") ||
       (branchAIntent?.type === "BugFix" && branchBIntent?.type === "FeatureAddition")
@@ -211,43 +211,43 @@ export class ConflictResolver {
   }
 
   /**
-   * Разрешение APIBreakingChange
+   * Resolve APIBreakingChange
    */
   private resolveAPIBreakingChange(conflict: SemanticConflict): Resolution {
-    // API breaking changes всегда требуют manual review
+    // API breaking changes always require manual review
     return this.createManualReviewResolution(conflict, "API breaking changes require careful manual review");
   }
 
   /**
-   * Разрешение LogicConflict
+   * Resolve LogicConflict
    */
   private resolveLogicConflict(conflict: SemanticConflict): Resolution {
-    // Logic conflicts требуют manual review
+    // Logic conflicts require manual review
     return this.createManualReviewResolution(conflict, "Logic conflicts require domain expertise");
   }
 
   /**
-   * Разрешение MovedAndModified
+   * Resolve MovedAndModified
    */
   private resolveMovedAndModified(conflict: SemanticConflict): Resolution {
-    // Если файл перемещён и изменён - manual review
+    // If the file was moved and modified - manual review
     return this.createManualReviewResolution(conflict, "File was both moved and modified");
   }
 
   /**
-   * Попытка слить обе версии
+   * Attempt to merge both versions
    */
   private mergeBothChanges(conflict: SemanticConflict): Resolution {
     const { branchAUnit, branchBUnit, baseUnit } = conflict;
 
-    // Простая стратегия: пытаемся объединить изменения
-    // Для production можно использовать diff3 или tree-merge
+    // Simple strategy: try to combine changes
+    // For production, diff3 or tree-merge can be used
     const mergedCode = this.attemptSimpleMerge(baseUnit?.content || "", branchAUnit.content, branchBUnit.content);
 
     if (mergedCode) {
       const confidence = 0.7;
 
-      // Проверяем минимальный порог confidence
+      // Check minimum confidence threshold
       if (confidence < this.config.minConfidenceThreshold) {
         return this.createManualReviewResolution(
           conflict,
@@ -263,46 +263,46 @@ export class ConflictResolver {
       };
     }
 
-    // Если простое слияние не удалось - manual review
+    // If simple merge failed - manual review
     return this.createManualReviewResolution(conflict, "Automatic merge failed");
   }
 
   /**
-   * Простой алгоритм слияния
+   * Simple merge algorithm
    *
-   * Пытается объединить изменения из branchA и branchB.
-   * Возвращает null если автоматическое слияние невозможно.
+   * Attempts to combine changes from branchA and branchB.
+   * Returns null if automatic merge is not possible.
    */
   private attemptSimpleMerge(baseContent: string, branchAContent: string, branchBContent: string): string | null {
-    // Если base пустой - выбираем более длинную версию
+    // If base is empty - choose the longer version
     if (!baseContent) {
       return branchAContent.length > branchBContent.length ? branchAContent : branchBContent;
     }
 
-    // Простая эвристика: если изменения не пересекаются по строкам
+    // Simple heuristic: if changes don't overlap by lines
     const baseLines = baseContent.split("\n");
     const branchALines = branchAContent.split("\n");
     const branchBLines = branchBContent.split("\n");
 
-    // Если размеры сильно отличаются - невозможно автоматически слить
+    // If sizes differ significantly - cannot automatically merge
     const maxLen = Math.max(baseLines.length, branchALines.length, branchBLines.length);
     const minLen = Math.min(baseLines.length, branchALines.length, branchBLines.length);
 
     if (maxLen > minLen * 1.5) {
-      // Слишком разные - manual review
+      // Too different - manual review
       return null;
     }
 
-    // Для простоты возвращаем null (требуется более продвинутый diff3)
+    // For simplicity return null (a more advanced diff3 is needed)
     // TODO: implement proper 3-way merge algorithm
     return null;
   }
 
   /**
-   * Создать Resolution для manual review
+   * Create Resolution for manual review
    */
   private createManualReviewResolution(conflict: SemanticConflict, reason: string): Resolution {
-    // Предоставляем preview обеих версий
+    // Provide preview of both versions
     const preview = this.generateConflictMarkers(conflict);
 
     return {
@@ -314,7 +314,7 @@ export class ConflictResolver {
   }
 
   /**
-   * Сгенерировать conflict markers в стиле Git
+   * Generate conflict markers in Git style
    */
   private generateConflictMarkers(conflict: SemanticConflict): string {
     const { branchAUnit, branchBUnit, baseUnit } = conflict;
@@ -340,7 +340,7 @@ export class ConflictResolver {
   }
 
   /**
-   * Batch resolution для нескольких конфликтов
+   * Batch resolution for multiple conflicts
    */
   async resolveConflicts(conflicts: SemanticConflict[]): Promise<Map<string, Resolution>> {
     const resolutions = new Map<string, Resolution>();
@@ -354,10 +354,10 @@ export class ConflictResolver {
   }
 
   /**
-   * Получить preview для разных стратегий
+   * Get preview for different strategies
    *
-   * @param conflict - Конфликт
-   * @param strategy - Стратегия разрешения
+   * @param conflict - Conflict
+   * @param strategy - Resolution strategy
    * @returns Preview merged code
    */
   getPreview(conflict: SemanticConflict, strategy: ResolutionStrategy): string {
@@ -386,14 +386,14 @@ export class ConflictResolver {
   }
 
   /**
-   * Применить resolution к code unit
+   * Apply resolution to code unit
    *
-   * @param conflict - Конфликт
-   * @param resolution - Resolution для применения
+   * @param conflict - Conflict
+   * @param resolution - Resolution to apply
    * @returns Merged code unit
    */
   applyResolution(conflict: SemanticConflict, resolution: Resolution): CodeUnit {
-    const baseUnit = conflict.branchAUnit; // Используем branchA как base для merged unit
+    const baseUnit = conflict.branchAUnit; // Use branchA as base for merged unit
 
     return {
       ...baseUnit,
@@ -411,7 +411,7 @@ export class ConflictResolver {
   }
 
   /**
-   * Вычислить hash
+   * Compute hash
    */
   private computeHash(content: string): string {
     return hashText(content);

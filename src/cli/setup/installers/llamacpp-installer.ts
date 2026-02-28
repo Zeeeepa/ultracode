@@ -39,7 +39,7 @@ async function getLatestVersion(): Promise<string> {
   try {
     const response = await fetch(`https://api.github.com/repos/${LLAMACPP_REPO}/releases/latest`, {
       headers: {
-        "User-Agent": "ultrascript-tools-mcp/1.0",
+        "User-Agent": "ultracode/1.0",
         Accept: "application/vnd.github.v3+json",
       },
     });
@@ -133,7 +133,7 @@ async function getDownloadUrl(backend: Backend): Promise<{ url: string; filename
     const releaseUrl = `https://api.github.com/repos/${LLAMACPP_REPO}/releases/tags/${version}`;
     const response = await fetch(releaseUrl, {
       headers: {
-        "User-Agent": "ultrascript-tools-mcp/1.0",
+        "User-Agent": "ultracode/1.0",
         Accept: "application/vnd.github.v3+json",
       },
     });
@@ -259,7 +259,7 @@ async function downloadFile(url: string, destPath: string): Promise<boolean> {
     printInfo(`Downloading: ${url}`);
 
     const response = await fetch(url, {
-      headers: { "User-Agent": "ultrascript-tools-mcp/1.0" },
+      headers: { "User-Agent": "ultracode/1.0" },
       redirect: "follow",
     });
 
@@ -303,7 +303,7 @@ async function downloadGGUFModel(modelId: string, filename: string, destDir: str
   try {
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "ultrascript-tools-mcp/1.0",
+        "User-Agent": "ultracode/1.0",
         ...(process.env["HF_TOKEN"] ? { Authorization: `Bearer ${process.env["HF_TOKEN"]}` } : {}),
       },
       redirect: "follow",

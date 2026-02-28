@@ -1,30 +1,25 @@
 /**
- * TASK-20251005185121: Rust Analyzer Module
+ * Rust Language Analyzer
  *
- * Comprehensive Rust code analysis following the python-analyzer.ts pattern.
- * Implements multi-layer analysis architecture:
- * Layer 1: Basic entity extraction (structs, functions, traits)
- * Layer 2: Advanced Rust features (ownership, lifetimes, macros)
- * Layer 3: Relationship mapping (trait implementations, module hierarchy)
- * Layer 4: Pattern recognition (design patterns, Rust idioms)
+ * Multi-layer analysis of Rust source code:
+ *   Layer 1 - Entity extraction: structs, enums, traits, functions, modules,
+ *             type aliases, constants, statics, macros
+ *   Layer 2 - Relationship mapping: trait implementations, module hierarchy,
+ *             supertrait inheritance, use-statement imports
+ *   Layer 3 - Impl block analysis: inherent impls and trait impls with method extraction
+ *   Layer 4 - Pattern recognition via external pattern-identifier module
  *
- * Architecture References:
- * - Python Analyzer Pattern: src/parsers/python-analyzer.ts
- * - Enhanced Parser Types: src/types/parser.ts
- * - ADR-002: C# and Rust Language Support
- *
- * @task_id TASK-20251005185121
- * @adr_ref ADR-002
- * @created 2025-10-05
+ * Architecture:
+ *   - Iterative DFS with explicit stack instead of recursive tree walking
+ *   - Map-based dispatch for top-level node types (configured in constructor)
+ *   - RunState struct carries per-analysis mutable context
+ *   - All extraction helpers are stateless functions outside the class
+ *   - Set-based lookups for modifier/attribute matching
  */
 
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
 import type { ASTNode, EntityRelationship, ImportDependency, ParsedEntity, PatternAnalysis } from "../types/parser.js";
 import { getNodeLocation, hasChild } from "./base-parser-utils.js";
 
-// Import from extracted modules
 import {
   countNestedItems,
   extractAliasedType,
@@ -44,7 +39,6 @@ import {
   extractTypeBounds,
   extractUseTree,
   extractVisibility,
-  findNodes,
   getAttributeName,
   getNodeText,
   hasBody,
@@ -55,9 +49,840 @@ import {
 
 import { identifyPatterns } from "./rust/pattern-identifier.js";
 
-// =============================================================================
-// 3. RUST ENTITY EXTRACTION (Layer 1)
-// =============================================================================
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/** Per-analysis mutable context, replaces class-level mutable fields. */
+interface RunState {
+  entities: ParsedEntity[];
+  relationships: EntityRelationship[];
+  imports: ImportDependency[];
+  filePath: string;
+  /** Track struct names seen to attach per-struct impl blocks */
+  structNames: string[];
+  t0: number;
+}
+
+type AnalyzerMetrics = {
+  entitiesExtracted: number;
+  relationshipsFound: number;
+  patternsIdentified: number;
+  parseTime: number;
+};
+
+/** Proc-macro attribute names recognised as defining proc macros (Set for O(1) lookup). */
+const PROC_MACRO_ATTRS: ReadonlySet<string> = new Set(["proc_macro", "proc_macro_derive", "proc_macro_attribute"]);
+
+// ---------------------------------------------------------------------------
+// Iterative DFS - replaces recursive findNodes
+// ---------------------------------------------------------------------------
+
+/**
+ * Find all descendant nodes matching `type` using an iterative DFS with
+ * an explicit stack. Avoids call-stack overflow on deeply nested ASTs.
+ */
+function iterativeFindNodes(root: ASTNode, type: string): ASTNode[] {
+  const results: ASTNode[] = [];
+  const stack: ASTNode[] = [root];
+
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.type === type) {
+      results.push(node);
+    }
+    // Push children in reverse order so leftmost child is processed first
+    for (let i = node.childCount - 1; i >= 0; i--) {
+      const child = node.child(i);
+      if (child) stack.push(child);
+    }
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Stateless entity-building helper
+// ---------------------------------------------------------------------------
+
+/** Build a ParsedEntity with all required fields for Rust */
+function makeEntity(
+  base: Pick<ParsedEntity, "name" | "type" | "location"> &
+    Partial<Pick<ParsedEntity, "id" | "filePath" | "modifiers" | "metadata">>,
+): ParsedEntity {
+  return {
+    name: base.name,
+    type: base.type,
+    location: base.location,
+    id: base.id ?? undefined,
+    path: undefined,
+    signature: undefined,
+    filePath: base.filePath ?? undefined,
+    language: "rust",
+    children: undefined,
+    returnType: undefined,
+    modifiers: base.modifiers,
+    metadata: base.metadata,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Stateless extraction functions (one per node type)
+// ---------------------------------------------------------------------------
+
+function extractModules(root: ASTNode, state: RunState): void {
+  const nodes = iterativeFindNodes(root, "mod_item");
+  for (let i = 0; i < nodes.length; i++) {
+    const modNode = nodes[i]!;
+    const name = resolveName(modNode);
+    if (!name) continue;
+
+    const loc = getNodeLocation(modNode);
+    const vis = extractVisibility(modNode);
+    const inline = hasBody(modNode);
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:module:${name}`,
+        name,
+        type: "module",
+        filePath: state.filePath,
+        location: loc,
+        metadata: { visibility: vis, isInline: inline },
+      }),
+    );
+
+    if (inline) {
+      const body = modNode.childForFieldName("body");
+      if (body) {
+        const nested = countNestedItems(body);
+        state.relationships.push({
+          from: `${state.filePath}:module:${name}`,
+          to: state.filePath,
+          type: "contains",
+          sourceFile: state.filePath,
+          metadata: { line: loc.start.line, nestedItems: nested },
+        });
+      }
+    }
+  }
+}
+
+function collectStructFields(structNode: ASTNode, structName: string, state: RunState): ParsedEntity[] {
+  const collected: ParsedEntity[] = [];
+  const body = structNode.childForFieldName("body");
+  if (!body) return collected;
+
+  const fieldDecls = iterativeFindNodes(body, "field_declaration");
+  for (let i = 0; i < fieldDecls.length; i++) {
+    const fNode = fieldDecls[i]!;
+    const nameNode = fNode.childForFieldName("name");
+    if (!nameNode) continue;
+
+    const fName = getNodeText(nameNode);
+    const fLoc = getNodeLocation(fNode);
+    const fVis = extractVisibility(fNode);
+    const fType = extractFieldType(fNode);
+    const fAttrs = extractAttributes(fNode);
+
+    const entity = makeEntity({
+      id: `${state.filePath}:struct:${structName}:field:${fName}`,
+      name: fName,
+      type: "field",
+      filePath: state.filePath,
+      location: fLoc,
+      metadata: {
+        structName,
+        fieldType: fType,
+        visibility: fVis,
+        attributes: fAttrs,
+        rustType: "field",
+      },
+    });
+
+    collected.push(entity);
+    state.entities.push(entity);
+  }
+
+  return collected;
+}
+
+function extractStructs(root: ASTNode, state: RunState): void {
+  const nodes = iterativeFindNodes(root, "struct_item");
+  for (let i = 0; i < nodes.length; i++) {
+    const sNode = nodes[i]!;
+    const name = resolveName(sNode);
+    if (!name) continue;
+
+    const loc = getNodeLocation(sNode);
+    const vis = extractVisibility(sNode);
+    const gens = extractGenerics(sNode);
+    const lts = extractLifetimes(sNode);
+    const derivs = extractDerives(sNode);
+    const fields = collectStructFields(sNode, name, state);
+
+    const tuple = isTupleStruct(sNode);
+    const unit = fields.length === 0 && !tuple;
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:struct:${name}`,
+        name,
+        type: "struct",
+        filePath: state.filePath,
+        location: loc,
+        metadata: {
+          visibility: vis,
+          generics: gens,
+          lifetimes: lts,
+          derives: derivs,
+          fieldCount: fields.length,
+          isTuple: tuple,
+          isUnit: unit,
+          rustType: "struct",
+        },
+      }),
+    );
+
+    // Remember struct name for per-struct impl block pass
+    state.structNames.push(name);
+
+    // Per-struct impl blocks
+    extractImplBlocksForType(root, name, state);
+  }
+}
+
+function collectEnumVariants(enumNode: ASTNode, enumName: string, state: RunState): string[] {
+  const names: string[] = [];
+  const body = enumNode.childForFieldName("body");
+  if (!body) return names;
+
+  const variantDecls = iterativeFindNodes(body, "enum_variant");
+  for (let i = 0; i < variantDecls.length; i++) {
+    const vNode = variantDecls[i]!;
+    const vName = resolveName(vNode);
+    if (!vName) continue;
+
+    const vLoc = getNodeLocation(vNode);
+    const withFields = hasChild(vNode, "field_declaration_list");
+    const withTuple = hasChild(vNode, "ordered_field_declaration_list");
+    const disc = extractDiscriminant(vNode);
+
+    names.push(vName);
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:enum:${enumName}:variant:${vName}`,
+        name: vName,
+        type: "enum_variant",
+        filePath: state.filePath,
+        location: vLoc,
+        metadata: {
+          enumName,
+          hasFields: withFields,
+          hasTuple: withTuple,
+          discriminant: disc,
+          rustType: "enum_variant",
+        },
+      }),
+    );
+  }
+
+  return names;
+}
+
+function extractEnums(root: ASTNode, state: RunState): void {
+  const nodes = iterativeFindNodes(root, "enum_item");
+  for (let i = 0; i < nodes.length; i++) {
+    const eNode = nodes[i]!;
+    const name = resolveName(eNode);
+    if (!name) continue;
+
+    const loc = getNodeLocation(eNode);
+    const vis = extractVisibility(eNode);
+    const gens = extractGenerics(eNode);
+    const lts = extractLifetimes(eNode);
+    const derivs = extractDerives(eNode);
+    const variants = collectEnumVariants(eNode, name, state);
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:enum:${name}`,
+        name,
+        type: "enum",
+        filePath: state.filePath,
+        location: loc,
+        metadata: {
+          visibility: vis,
+          generics: gens,
+          lifetimes: lts,
+          derives: derivs,
+          variants,
+          variantCount: variants.length,
+          rustType: "enum",
+        },
+      }),
+    );
+  }
+}
+
+function collectTraitMethods(traitNode: ASTNode, traitName: string, state: RunState): ParsedEntity[] {
+  const result: ParsedEntity[] = [];
+  const body = traitNode.childForFieldName("body");
+  if (!body) return result;
+
+  // Signature-only (abstract) methods
+  const sigNodes = iterativeFindNodes(body, "function_signature_item");
+  for (let i = 0; i < sigNodes.length; i++) {
+    const sigNode = sigNodes[i]!;
+    const nameNode = sigNode.childForFieldName("name");
+    if (!nameNode) continue;
+
+    const mName = getNodeText(nameNode);
+    const mLoc = getNodeLocation(sigNode);
+    const mParams = extractFunctionParameters(sigNode);
+    const mRet = extractReturnType(sigNode);
+
+    const method = makeEntity({
+      id: `${state.filePath}:trait:${traitName}:method:${mName}`,
+      name: mName,
+      type: "method",
+      filePath: state.filePath,
+      location: mLoc,
+      metadata: {
+        traitName,
+        parameters: mParams,
+        returnType: mRet,
+        isAbstract: true,
+        hasDefaultImpl: false,
+        rustType: "trait_method",
+      },
+    });
+
+    result.push(method);
+    state.entities.push(method);
+  }
+
+  // Default implementation methods
+  const defNodes = iterativeFindNodes(body, "function_item");
+  for (let i = 0; i < defNodes.length; i++) {
+    const defNode = defNodes[i]!;
+    const nameNode = defNode.childForFieldName("name");
+    if (!nameNode) continue;
+
+    const mName = getNodeText(nameNode);
+    const mLoc = getNodeLocation(defNode);
+    const mParams = extractFunctionParameters(defNode);
+    const mRet = extractReturnType(defNode);
+
+    const method = makeEntity({
+      id: `${state.filePath}:trait:${traitName}:method:${mName}`,
+      name: mName,
+      type: "method",
+      filePath: state.filePath,
+      location: mLoc,
+      metadata: {
+        traitName,
+        parameters: mParams,
+        returnType: mRet,
+        isAbstract: false,
+        hasDefaultImpl: true,
+        rustType: "trait_method",
+      },
+    });
+
+    result.push(method);
+    state.entities.push(method);
+  }
+
+  return result;
+}
+
+function collectAssociatedTypes(traitNode: ASTNode, traitName: string, state: RunState): ParsedEntity[] {
+  const result: ParsedEntity[] = [];
+  const body = traitNode.childForFieldName("body");
+  if (!body) return result;
+
+  const typeDecls = iterativeFindNodes(body, "associated_type");
+  for (let i = 0; i < typeDecls.length; i++) {
+    const tNode = typeDecls[i]!;
+    const nameNode = tNode.childForFieldName("name");
+    if (!nameNode) continue;
+
+    const tName = getNodeText(nameNode);
+    const tLoc = getNodeLocation(tNode);
+    const tBounds = extractTypeBounds(tNode);
+
+    const assocType = makeEntity({
+      id: `${state.filePath}:trait:${traitName}:type:${tName}`,
+      name: tName,
+      type: "typedef",
+      filePath: state.filePath,
+      location: tLoc,
+      metadata: {
+        traitName,
+        bounds: tBounds,
+        rustType: "associated_type",
+      },
+    });
+
+    result.push(assocType);
+    state.entities.push(assocType);
+  }
+
+  return result;
+}
+
+function extractTraits(root: ASTNode, state: RunState): void {
+  const nodes = iterativeFindNodes(root, "trait_item");
+  for (let i = 0; i < nodes.length; i++) {
+    const tNode = nodes[i]!;
+    const name = resolveName(tNode);
+    if (!name) continue;
+
+    const loc = getNodeLocation(tNode);
+    const vis = extractVisibility(tNode);
+    const gens = extractGenerics(tNode);
+    const bounds = extractTraitBounds(tNode);
+    const supers = extractSupertraits(tNode);
+
+    const methods = collectTraitMethods(tNode, name, state);
+    const assocTypes = collectAssociatedTypes(tNode, name, state);
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:trait:${name}`,
+        name,
+        type: "trait",
+        filePath: state.filePath,
+        location: loc,
+        metadata: {
+          visibility: vis,
+          generics: gens,
+          bounds,
+          supertraits: supers,
+          methodCount: methods.length,
+          associatedTypeCount: assocTypes.length,
+          rustType: "trait",
+        },
+      }),
+    );
+
+    // Supertrait relationships
+    for (let j = 0; j < supers.length; j++) {
+      state.relationships.push({
+        from: `${state.filePath}:trait:${name}`,
+        to: `${state.filePath}:trait:${supers[j]}`,
+        type: "inherits",
+        sourceFile: state.filePath,
+      });
+    }
+  }
+}
+
+function extractFunctions(root: ASTNode, state: RunState): void {
+  const nodes = iterativeFindNodes(root, "function_item");
+  for (let i = 0; i < nodes.length; i++) {
+    const fnNode = nodes[i]!;
+    const name = resolveName(fnNode);
+    if (!name) continue;
+
+    const loc = getNodeLocation(fnNode);
+    const vis = extractVisibility(fnNode);
+    const asyncFlag = hasModifier(fnNode, "async");
+    const constFlag = hasModifier(fnNode, "const");
+    const unsafeFlag = hasModifier(fnNode, "unsafe");
+    const gens = extractGenerics(fnNode);
+    const lts = extractLifetimes(fnNode);
+    const params = extractFunctionParameters(fnNode);
+    const retType = extractReturnType(fnNode);
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:function:${name}`,
+        name,
+        type: "function",
+        filePath: state.filePath,
+        location: loc,
+        metadata: {
+          visibility: vis,
+          isAsync: asyncFlag,
+          isConst: constFlag,
+          isUnsafe: unsafeFlag,
+          generics: gens,
+          lifetimes: lts,
+          parameters: params,
+          returnType: retType,
+          rustType: "function",
+        },
+      }),
+    );
+  }
+}
+
+function extractTypeAliases(root: ASTNode, state: RunState): void {
+  const nodes = iterativeFindNodes(root, "type_item");
+  for (let i = 0; i < nodes.length; i++) {
+    const tNode = nodes[i]!;
+    const name = resolveName(tNode);
+    if (!name) continue;
+
+    const loc = getNodeLocation(tNode);
+    const vis = extractVisibility(tNode);
+    const gens = extractGenerics(tNode);
+    const alias = extractAliasedType(tNode);
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:type:${name}`,
+        name,
+        type: "typedef",
+        filePath: state.filePath,
+        location: loc,
+        metadata: {
+          visibility: vis,
+          generics: gens,
+          aliasedType: alias,
+          rustType: "type_alias",
+        },
+      }),
+    );
+  }
+}
+
+function extractConstants(root: ASTNode, state: RunState): void {
+  const constDecls = iterativeFindNodes(root, "const_item");
+  for (let i = 0; i < constDecls.length; i++) {
+    const cNode = constDecls[i]!;
+    const name = resolveName(cNode);
+    if (!name) continue;
+
+    const loc = getNodeLocation(cNode);
+    const vis = extractVisibility(cNode);
+    const cType = extractConstType(cNode);
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:const:${name}`,
+        name,
+        type: "constant",
+        filePath: state.filePath,
+        location: loc,
+        metadata: {
+          visibility: vis,
+          constType: cType,
+          isConst: true,
+          rustType: "const",
+        },
+      }),
+    );
+  }
+
+  const staticDecls = iterativeFindNodes(root, "static_item");
+  for (let i = 0; i < staticDecls.length; i++) {
+    const sNode = staticDecls[i]!;
+    const name = resolveName(sNode);
+    if (!name) continue;
+
+    const loc = getNodeLocation(sNode);
+    const vis = extractVisibility(sNode);
+    const sType = extractStaticType(sNode);
+    const mut = hasModifier(sNode, "mut");
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:static:${name}`,
+        name,
+        type: "variable",
+        filePath: state.filePath,
+        location: loc,
+        metadata: {
+          visibility: vis,
+          staticType: sType,
+          isMutable: mut,
+          isStatic: true,
+          rustType: "static",
+        },
+      }),
+    );
+  }
+}
+
+function extractMacros(root: ASTNode, state: RunState): void {
+  const macroDefs = iterativeFindNodes(root, "macro_definition");
+  for (let i = 0; i < macroDefs.length; i++) {
+    const mNode = macroDefs[i]!;
+    const name = resolveName(mNode);
+    if (!name) continue;
+
+    const loc = getNodeLocation(mNode);
+    const vis = extractVisibility(mNode);
+    const rules = extractMacroRules(mNode);
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:macro:${name}`,
+        name,
+        type: "macro",
+        filePath: state.filePath,
+        location: loc,
+        metadata: {
+          visibility: vis,
+          macroType: "macro_rules",
+          ruleCount: rules.length,
+          rustType: "macro",
+        },
+      }),
+    );
+  }
+
+  const allAttrs = iterativeFindNodes(root, "attribute_item");
+  for (let i = 0; i < allAttrs.length; i++) {
+    const attr = allAttrs[i]!;
+    const attrName = getAttributeName(attr);
+    if (!PROC_MACRO_ATTRS.has(attrName)) continue;
+
+    const parentNode = attr.parent;
+    if (!parentNode) continue;
+
+    const nameNode = parentNode.childForFieldName("name");
+    if (!nameNode) continue;
+
+    const pmName = getNodeText(nameNode);
+    const pmLoc = getNodeLocation(parentNode);
+
+    state.entities.push(
+      makeEntity({
+        id: `${state.filePath}:proc_macro:${pmName}`,
+        name: pmName,
+        type: "function",
+        filePath: state.filePath,
+        location: pmLoc,
+        metadata: {
+          macroType: attrName,
+          isProcMacro: true,
+          rustType: "proc_macro",
+        },
+      }),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Impl block extraction (stateless)
+// ---------------------------------------------------------------------------
+
+function extractImplBlocksForType(root: ASTNode, typeName: string, state: RunState): void {
+  const implDecls = iterativeFindNodes(root, "impl_item");
+  for (let i = 0; i < implDecls.length; i++) {
+    const implNode = implDecls[i]!;
+    const typeField = implNode.childForFieldName("type");
+    if (!typeField) continue;
+
+    const implTypeName = getNodeText(typeField);
+    if (!implTypeName.includes(typeName)) continue;
+
+    const traitField = implNode.childForFieldName("trait");
+    if (traitField) {
+      const traitText = getNodeText(traitField);
+
+      state.relationships.push({
+        from: `${state.filePath}:struct:${typeName}`,
+        to: `${state.filePath}:trait:${traitText}`,
+        type: "implements",
+        sourceFile: state.filePath,
+      });
+
+      const body = implNode.childForFieldName("body");
+      if (body) {
+        const fnItems = iterativeFindNodes(body, "function_item");
+        for (let j = 0; j < fnItems.length; j++) {
+          const fn = fnItems[j]!;
+          const fnNameNode = fn.childForFieldName("name");
+          if (!fnNameNode) continue;
+
+          const methodName = getNodeText(fnNameNode);
+          state.entities.push(
+            makeEntity({
+              id: `${state.filePath}:impl:${typeName}:${traitText}:${methodName}`,
+              name: methodName,
+              type: "method",
+              filePath: state.filePath,
+              location: getNodeLocation(fn),
+              metadata: {
+                implType: typeName,
+                traitName: traitText,
+                isTraitImpl: true,
+                rustType: "impl_method",
+              },
+            }),
+          );
+        }
+      }
+    } else {
+      const body = implNode.childForFieldName("body");
+      if (body) {
+        const fnItems = iterativeFindNodes(body, "function_item");
+        for (let j = 0; j < fnItems.length; j++) {
+          const fn = fnItems[j]!;
+          const fnNameNode = fn.childForFieldName("name");
+          if (!fnNameNode) continue;
+
+          const methodName = getNodeText(fnNameNode);
+          const fnVis = extractVisibility(fn);
+
+          state.entities.push(
+            makeEntity({
+              id: `${state.filePath}:impl:${typeName}:${methodName}`,
+              name: methodName,
+              type: "method",
+              filePath: state.filePath,
+              location: getNodeLocation(fn),
+              metadata: {
+                implType: typeName,
+                visibility: fnVis,
+                isInherent: true,
+                rustType: "impl_method",
+              },
+            }),
+          );
+        }
+      }
+    }
+  }
+}
+
+function extractImplBlocksGlobal(root: ASTNode, state: RunState): void {
+  const implDecls = iterativeFindNodes(root, "impl_item");
+  for (let i = 0; i < implDecls.length; i++) {
+    const implNode = implDecls[i]!;
+    const typeField = implNode.childForFieldName("type");
+    const traitField = implNode.childForFieldName("trait");
+    const typeName = typeField ? getNodeText(typeField) : undefined;
+    const traitName = traitField ? getNodeText(traitField) : undefined;
+
+    if (typeName && traitName) {
+      state.relationships.push({
+        from: `${state.filePath}:struct:${typeName}`,
+        to: `${state.filePath}:trait:${traitName}`,
+        type: "implements",
+        sourceFile: state.filePath,
+      });
+    }
+
+    const body = implNode.childForFieldName("body");
+    if (!body) continue;
+
+    const fnItems = iterativeFindNodes(body, "function_item");
+    for (let j = 0; j < fnItems.length; j++) {
+      const fn = fnItems[j]!;
+      const fnNameNode = fn.childForFieldName("name");
+      if (!fnNameNode) continue;
+
+      const methodName = getNodeText(fnNameNode);
+      const fnLoc = getNodeLocation(fn);
+
+      state.entities.push(
+        makeEntity({
+          id: `${state.filePath}:impl:${typeName || "unknown"}:${traitName || "inherent"}:${methodName}`,
+          name: methodName,
+          type: "method",
+          filePath: state.filePath,
+          location: fnLoc,
+          metadata: {
+            implType: typeName || "",
+            traitName,
+            isTraitImpl: Boolean(traitName),
+            isInherent: !traitName,
+            rustType: "impl_method",
+          },
+        }),
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Use/import extraction (stateless)
+// ---------------------------------------------------------------------------
+
+function extractUseStatements(root: ASTNode, state: RunState): void {
+  const useDecls = iterativeFindNodes(root, "use_declaration");
+  for (let i = 0; i < useDecls.length; i++) {
+    const useNode = useDecls[i]!;
+    const vis = extractVisibility(useNode);
+    const paths = extractUseTree(useNode);
+    const lineNum = useNode.startPosition.row + 1;
+
+    for (let j = 0; j < paths.length; j++) {
+      const fullPath = paths[j]!;
+      const wildcard = fullPath.endsWith("::*");
+      const trimmed = wildcard ? fullPath.slice(0, -3) : fullPath;
+      const segments = trimmed.split("::").filter(Boolean);
+
+      let targetMod: string;
+      let symName: string;
+
+      if (wildcard) {
+        targetMod = trimmed;
+        symName = "*";
+      } else if (segments.length > 1) {
+        symName = segments[segments.length - 1] || "*";
+        targetMod = segments.slice(0, -1).join("::");
+      } else {
+        targetMod = "";
+        symName = segments[0] || "*";
+      }
+
+      const kind: ImportDependency["importType"] =
+        fullPath.startsWith("self::") || fullPath.startsWith("super::") ? "relative" : "absolute";
+
+      state.imports.push({
+        sourceFile: state.filePath,
+        targetModule: targetMod || trimmed,
+        importType: kind,
+        symbols: [{ name: symName }],
+        line: lineNum,
+        isUsed: false,
+        usageLocations: [],
+        type: "use",
+        metadata: { visibility: vis },
+      });
+    }
+  }
+
+  const externDecls = iterativeFindNodes(root, "extern_crate_declaration");
+  for (let i = 0; i < externDecls.length; i++) {
+    const extNode = externDecls[i]!;
+    const nameNode = extNode.childForFieldName("name");
+    if (!nameNode) continue;
+
+    const crateName = getNodeText(nameNode);
+    const lineNum = extNode.startPosition.row + 1;
+
+    state.imports.push({
+      sourceFile: state.filePath,
+      targetModule: crateName,
+      importType: "absolute",
+      symbols: [{ name: crateName }],
+      line: lineNum,
+      isUsed: false,
+      usageLocations: [],
+      type: "extern_crate",
+      metadata: { isExternCrate: true },
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch table type
+// ---------------------------------------------------------------------------
+
+type ExtractionPhase = (root: ASTNode, state: RunState) => void;
+
+// ---------------------------------------------------------------------------
+// Main class
+// ---------------------------------------------------------------------------
 
 export class RustAnalyzer {
   private metrics: AnalyzerMetrics = {
@@ -66,6 +891,26 @@ export class RustAnalyzer {
     patternsIdentified: 0,
     parseTime: 0,
   };
+
+  /** Ordered extraction phases, dispatched via Map in analyze(). */
+  private readonly phases: Map<string, ExtractionPhase>;
+
+  constructor() {
+    // Map-based dispatch: each phase keyed by a readable label.
+    // Insertion order defines execution order (Map preserves it).
+    this.phases = new Map<string, ExtractionPhase>([
+      ["modules", extractModules],
+      ["structs", extractStructs],
+      ["enums", extractEnums],
+      ["traits", extractTraits],
+      ["functions", extractFunctions],
+      ["type_aliases", extractTypeAliases],
+      ["constants", extractConstants],
+      ["macros", extractMacros],
+      ["impl_blocks_global", extractImplBlocksGlobal],
+      ["use_statements", extractUseStatements],
+    ]);
+  }
 
   /**
    * Main entry point for Rust analysis
@@ -80,849 +925,47 @@ export class RustAnalyzer {
     patterns: PatternAnalysis;
     metrics: AnalyzerMetrics;
   }> {
-    const startTime = Date.now();
-    const entities: ParsedEntity[] = [];
-    const relationships: EntityRelationship[] = [];
-    const imports: ImportDependency[] = [];
+    const state: RunState = {
+      entities: [],
+      relationships: [],
+      imports: [],
+      filePath,
+      structNames: [],
+      t0: Date.now(),
+    };
 
-    // Extract all entity types
-    this.extractModules(node, entities, relationships, filePath);
-    this.extractStructs(node, entities, relationships, filePath);
-    this.extractEnums(node, entities, relationships, filePath);
-    this.extractTraits(node, entities, relationships, filePath);
-    this.extractFunctions(node, entities, filePath);
-    this.extractTypeAliases(node, entities, filePath);
-    this.extractConstants(node, entities, filePath);
-    this.extractMacros(node, entities, filePath);
-    // Handle impl blocks even if no struct node was encountered
-    this.extractImplBlocksGlobal(node, entities, relationships, filePath);
-
-    // Extract imports/use statements
-    this.extractUseStatements(node, imports, filePath);
-
-    // Identify patterns (Layer 4)
-    const patterns = identifyPatterns(node, entities);
-
-    // Update metrics
-    this.metrics.entitiesExtracted = entities.length;
-    this.metrics.relationshipsFound = relationships.length;
-    this.metrics.patternsIdentified =
-      patterns.designPatterns.length +
-      patterns.exceptionHandling.length +
-      patterns.contextManagers.length +
-      patterns.pythonIdioms.length +
-      patterns.circularDependencies.length +
-      (patterns.otherPatterns?.length || 0);
-    this.metrics.parseTime = Math.max(1, Date.now() - startTime);
-
-    return { entities, relationships, imports, patterns, metrics: this.metrics };
-  }
-
-  /**
-   * Extract module declarations
-   */
-  private extractModules(
-    node: ASTNode,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    filePath: string,
-  ): void {
-    const moduleNodes = findNodes(node, "mod_item");
-
-    for (const modNode of moduleNodes) {
-      const name = resolveName(modNode);
-      if (!name) continue;
-      const location = getNodeLocation(modNode);
-      const visibility = extractVisibility(modNode);
-      const isInline = hasBody(modNode);
-
-      entities.push({
-        id: `${filePath}:module:${name}`,
-        name,
-        type: "module",
-        filePath,
-        location,
-        metadata: {
-          visibility,
-          isInline,
-        },
-      });
-
-      // If module has a body, extract nested items
-      if (isInline) {
-        const body = modNode.childForFieldName("body");
-        if (body) {
-          const nestedCount = countNestedItems(body);
-          relationships.push({
-            from: `${filePath}:module:${name}`,
-            to: filePath,
-            type: "contains",
-            sourceFile: filePath,
-            metadata: { line: location.start.line, nestedItems: nestedCount },
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Extract struct declarations
-   */
-  private extractStructs(
-    node: ASTNode,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    filePath: string,
-  ): void {
-    const structNodes = findNodes(node, "struct_item");
-
-    for (const structNode of structNodes) {
-      const name = resolveName(structNode);
-      if (!name) continue;
-      const location = getNodeLocation(structNode);
-      const visibility = extractVisibility(structNode);
-      const generics = extractGenerics(structNode);
-      const lifetimes = extractLifetimes(structNode);
-      const derives = extractDerives(structNode);
-      const fields = this.extractStructFields(structNode, name, entities, filePath);
-
-      // Determine struct type
-      const isTuple = isTupleStruct(structNode);
-      const isUnit = fields.length === 0 && !isTuple;
-
-      entities.push({
-        id: `${filePath}:struct:${name}`,
-        name,
-        type: "struct",
-        filePath,
-        location,
-        metadata: {
-          visibility,
-          generics,
-          lifetimes,
-          derives,
-          fieldCount: fields.length,
-          isTuple,
-          isUnit,
-          rustType: "struct",
-        },
-      });
-
-      // Extract trait implementations for this struct
-      this.extractImplBlocks(node, name, entities, relationships, filePath);
-    }
-  }
-
-  /**
-   * Extract enum declarations
-   */
-  private extractEnums(
-    node: ASTNode,
-    entities: ParsedEntity[],
-    _relationships: EntityRelationship[],
-    filePath: string,
-  ): void {
-    const enumNodes = findNodes(node, "enum_item");
-
-    for (const enumNode of enumNodes) {
-      const name = resolveName(enumNode);
-      if (!name) continue;
-      const location = getNodeLocation(enumNode);
-      const visibility = extractVisibility(enumNode);
-      const generics = extractGenerics(enumNode);
-      const lifetimes = extractLifetimes(enumNode);
-      const derives = extractDerives(enumNode);
-      const variants = this.extractEnumVariants(enumNode, name, entities, filePath);
-
-      entities.push({
-        id: `${filePath}:enum:${name}`,
-        name,
-        type: "enum",
-        filePath,
-        location,
-        metadata: {
-          visibility,
-          generics,
-          lifetimes,
-          derives,
-          variants,
-          variantCount: variants.length,
-          rustType: "enum",
-        },
-      });
-    }
-  }
-
-  /**
-   * Extract trait declarations
-   */
-  private extractTraits(
-    node: ASTNode,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    filePath: string,
-  ): void {
-    const traitNodes = findNodes(node, "trait_item");
-
-    for (const traitNode of traitNodes) {
-      const name = resolveName(traitNode);
-      if (!name) continue;
-      const location = getNodeLocation(traitNode);
-      const visibility = extractVisibility(traitNode);
-      const generics = extractGenerics(traitNode);
-      const bounds = extractTraitBounds(traitNode);
-      const supertraits = extractSupertraits(traitNode);
-
-      // Extract trait methods
-      const methods = this.extractTraitMethods(traitNode, name, entities, filePath);
-      const associatedTypes = this.extractAssociatedTypes(traitNode, name, entities, filePath);
-
-      entities.push({
-        id: `${filePath}:trait:${name}`,
-        name,
-        type: "trait",
-        filePath,
-        location,
-        metadata: {
-          visibility,
-          generics,
-          bounds,
-          supertraits,
-          methodCount: methods.length,
-          associatedTypeCount: associatedTypes.length,
-          rustType: "trait",
-        },
-      });
-
-      // Create relationships for supertraits
-      for (const supertrait of supertraits) {
-        relationships.push({
-          from: `${filePath}:trait:${name}`,
-          to: `${filePath}:trait:${supertrait}`,
-          type: "inherits",
-          sourceFile: filePath,
-        });
-      }
-    }
-  }
-
-  /**
-   * Extract function declarations
-   */
-  private extractFunctions(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
-    const functionNodes = findNodes(node, "function_item");
-
-    for (const fnNode of functionNodes) {
-      const name = resolveName(fnNode);
-      if (!name) continue;
-      const location = getNodeLocation(fnNode);
-      const visibility = extractVisibility(fnNode);
-      const isAsync = hasModifier(fnNode, "async");
-      const isConst = hasModifier(fnNode, "const");
-      const isUnsafe = hasModifier(fnNode, "unsafe");
-      const generics = extractGenerics(fnNode);
-      const lifetimes = extractLifetimes(fnNode);
-      const parameters = extractFunctionParameters(fnNode);
-      const returnType = extractReturnType(fnNode);
-
-      entities.push({
-        id: `${filePath}:function:${name}`,
-        name,
-        type: "function",
-        filePath,
-        location,
-        metadata: {
-          visibility,
-          isAsync,
-          isConst,
-          isUnsafe,
-          generics,
-          lifetimes,
-          parameters,
-          returnType,
-          rustType: "function",
-        },
-      });
-    }
-  }
-
-  /**
-   * Extract type aliases
-   */
-  private extractTypeAliases(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
-    const typeNodes = findNodes(node, "type_item");
-
-    for (const typeNode of typeNodes) {
-      const name = resolveName(typeNode);
-      if (!name) continue;
-      const location = getNodeLocation(typeNode);
-      const visibility = extractVisibility(typeNode);
-      const generics = extractGenerics(typeNode);
-      const aliasedType = extractAliasedType(typeNode);
-
-      entities.push({
-        id: `${filePath}:type:${name}`,
-        name,
-        type: "typedef",
-        filePath,
-        location,
-        metadata: {
-          visibility,
-          generics,
-          aliasedType,
-          rustType: "type_alias",
-        },
-      });
-    }
-  }
-
-  /**
-   * Extract constants
-   */
-  private extractConstants(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
-    // Extract const items
-    const constNodes = findNodes(node, "const_item");
-    for (const constNode of constNodes) {
-      const name = resolveName(constNode);
-      if (!name) continue;
-      const location = getNodeLocation(constNode);
-      const visibility = extractVisibility(constNode);
-      const constType = extractConstType(constNode);
-
-      entities.push({
-        id: `${filePath}:const:${name}`,
-        name,
-        type: "constant",
-        filePath,
-        location,
-        metadata: {
-          visibility,
-          constType,
-          isConst: true,
-          rustType: "const",
-        },
-      });
+    // Execute all extraction phases via map-based dispatch
+    for (const phase of this.phases.values()) {
+      phase(node, state);
     }
 
-    // Extract static items
-    const staticNodes = findNodes(node, "static_item");
-    for (const staticNode of staticNodes) {
-      const name = resolveName(staticNode);
-      if (!name) continue;
-      const location = getNodeLocation(staticNode);
-      const visibility = extractVisibility(staticNode);
-      const staticType = extractStaticType(staticNode);
-      const isMutable = hasModifier(staticNode, "mut");
+    // Layer 4: Pattern identification
+    const patterns = identifyPatterns(node, state.entities);
 
-      entities.push({
-        id: `${filePath}:static:${name}`,
-        name,
-        type: "variable", // Map static to variable for compatibility
-        filePath,
-        location,
-        metadata: {
-          visibility,
-          staticType,
-          isMutable,
-          isStatic: true,
-          rustType: "static",
-        },
-      });
-    }
-  }
+    // Compute metrics
+    const elapsed = Date.now() - state.t0;
+    this.metrics = {
+      entitiesExtracted: state.entities.length,
+      relationshipsFound: state.relationships.length,
+      patternsIdentified:
+        patterns.designPatterns.length +
+        patterns.exceptionHandling.length +
+        patterns.contextManagers.length +
+        patterns.pythonIdioms.length +
+        patterns.circularDependencies.length +
+        (patterns.otherPatterns?.length ?? 0),
+      parseTime: Math.max(1, elapsed),
+    };
 
-  /**
-   * Extract macro definitions
-   */
-  private extractMacros(node: ASTNode, entities: ParsedEntity[], filePath: string): void {
-    // Extract macro_rules! definitions
-    const macroRulesNodes = findNodes(node, "macro_definition");
-    for (const macroNode of macroRulesNodes) {
-      const name = resolveName(macroNode);
-      if (!name) continue;
-      const location = getNodeLocation(macroNode);
-      const visibility = extractVisibility(macroNode);
-      const rules = extractMacroRules(macroNode);
-
-      entities.push({
-        id: `${filePath}:macro:${name}`,
-        name,
-        type: "macro",
-        filePath,
-        location,
-        metadata: {
-          visibility,
-          macroType: "macro_rules",
-          ruleCount: rules.length,
-          rustType: "macro",
-        },
-      });
-    }
-
-    // Extract proc macros (attribute, derive, function-like)
-    const procMacroNodes = findNodes(node, "attribute_item").filter((attr) => {
-      const name = getAttributeName(attr);
-      return name === "proc_macro" || name === "proc_macro_derive" || name === "proc_macro_attribute";
-    });
-
-    for (const procMacro of procMacroNodes) {
-      const parent = procMacro.parent;
-      if (!parent) continue;
-
-      const nameNode = parent.childForFieldName("name");
-      if (!nameNode) continue;
-
-      const name = getNodeText(nameNode);
-      const location = getNodeLocation(parent);
-      const macroType = getAttributeName(procMacro);
-
-      entities.push({
-        id: `${filePath}:proc_macro:${name}`,
-        name,
-        type: "macro",
-        filePath,
-        location,
-        metadata: {
-          macroType,
-          isProcMacro: true,
-          rustType: "proc_macro",
-        },
-      });
-    }
-  }
-
-  /**
-   * Extract struct fields
-   */
-  private extractStructFields(
-    structNode: ASTNode,
-    structName: string,
-    entities: ParsedEntity[],
-    filePath: string,
-  ): ParsedEntity[] {
-    const fields: ParsedEntity[] = [];
-    const body = structNode.childForFieldName("body");
-
-    if (body) {
-      const fieldNodes = findNodes(body, "field_declaration");
-      for (const fieldNode of fieldNodes) {
-        const nameNode = fieldNode.childForFieldName("name");
-        if (!nameNode) continue;
-
-        const name = getNodeText(nameNode);
-        const location = getNodeLocation(fieldNode);
-        const visibility = extractVisibility(fieldNode);
-        const fieldType = extractFieldType(fieldNode);
-        const attributes = extractAttributes(fieldNode);
-
-        const field: ParsedEntity = {
-          id: `${filePath}:struct:${structName}:field:${name}`,
-          name,
-          type: "field",
-          filePath,
-          location,
-          metadata: {
-            structName,
-            fieldType,
-            visibility,
-            attributes,
-            rustType: "field",
-          },
-        };
-
-        fields.push(field);
-        entities.push(field);
-      }
-    }
-
-    return fields;
-  }
-
-  /**
-   * Extract enum variants
-   */
-  private extractEnumVariants(
-    enumNode: ASTNode,
-    enumName: string,
-    entities: ParsedEntity[],
-    filePath: string,
-  ): string[] {
-    const variants: string[] = [];
-    const body = enumNode.childForFieldName("body");
-
-    if (body) {
-      const variantNodes = findNodes(body, "enum_variant");
-      for (const variantNode of variantNodes) {
-        const name = resolveName(variantNode);
-        if (!name) continue;
-        const location = getNodeLocation(variantNode);
-
-        // Check variant type
-        const hasFields = hasChild(variantNode, "field_declaration_list");
-        const hasTuple = hasChild(variantNode, "ordered_field_declaration_list");
-        const discriminant = extractDiscriminant(variantNode);
-
-        variants.push(name);
-
-        entities.push({
-          id: `${filePath}:enum:${enumName}:variant:${name}`,
-          name,
-          type: "enum_variant",
-          filePath,
-          location,
-          metadata: {
-            enumName,
-            hasFields,
-            hasTuple,
-            discriminant,
-            rustType: "enum_variant",
-          },
-        });
-      }
-    }
-
-    return variants;
-  }
-
-  /**
-   * Extract trait methods
-   */
-  private extractTraitMethods(
-    traitNode: ASTNode,
-    traitName: string,
-    entities: ParsedEntity[],
-    filePath: string,
-  ): ParsedEntity[] {
-    const methods: ParsedEntity[] = [];
-    const body = traitNode.childForFieldName("body");
-
-    if (body) {
-      const methodNodes = findNodes(body, "function_signature_item");
-      const defaultMethodNodes = findNodes(body, "function_item");
-
-      // Abstract methods (signatures only)
-      for (const methodNode of methodNodes) {
-        const nameNode = methodNode.childForFieldName("name");
-        if (!nameNode) continue;
-
-        const name = getNodeText(nameNode);
-        const location = getNodeLocation(methodNode);
-        const parameters = extractFunctionParameters(methodNode);
-        const returnType = extractReturnType(methodNode);
-
-        const method: ParsedEntity = {
-          id: `${filePath}:trait:${traitName}:method:${name}`,
-          name,
-          type: "method",
-          filePath,
-          location,
-          metadata: {
-            traitName,
-            parameters,
-            returnType,
-            isAbstract: true,
-            hasDefaultImpl: false,
-            rustType: "trait_method",
-          },
-        };
-
-        methods.push(method);
-        entities.push(method);
-      }
-
-      // Default implementations
-      for (const methodNode of defaultMethodNodes) {
-        const nameNode = methodNode.childForFieldName("name");
-        if (!nameNode) continue;
-
-        const name = getNodeText(nameNode);
-        const location = getNodeLocation(methodNode);
-        const parameters = extractFunctionParameters(methodNode);
-        const returnType = extractReturnType(methodNode);
-
-        const method: ParsedEntity = {
-          id: `${filePath}:trait:${traitName}:method:${name}`,
-          name,
-          type: "method",
-          filePath,
-          location,
-          metadata: {
-            traitName,
-            parameters,
-            returnType,
-            isAbstract: false,
-            hasDefaultImpl: true,
-            rustType: "trait_method",
-          },
-        };
-
-        methods.push(method);
-        entities.push(method);
-      }
-    }
-
-    return methods;
-  }
-
-  /**
-   * Extract associated types
-   */
-  private extractAssociatedTypes(
-    traitNode: ASTNode,
-    traitName: string,
-    entities: ParsedEntity[],
-    filePath: string,
-  ): ParsedEntity[] {
-    const types: ParsedEntity[] = [];
-    const body = traitNode.childForFieldName("body");
-
-    if (body) {
-      const typeNodes = findNodes(body, "associated_type");
-      for (const typeNode of typeNodes) {
-        const nameNode = typeNode.childForFieldName("name");
-        if (!nameNode) continue;
-
-        const name = getNodeText(nameNode);
-        const location = getNodeLocation(typeNode);
-        const bounds = extractTypeBounds(typeNode);
-
-        const associatedType: ParsedEntity = {
-          id: `${filePath}:trait:${traitName}:type:${name}`,
-          name,
-          type: "typedef", // Map associated type to typedef for compatibility
-          filePath,
-          location,
-          metadata: {
-            traitName,
-            bounds,
-            rustType: "associated_type",
-          },
-        };
-
-        types.push(associatedType);
-        entities.push(associatedType);
-      }
-    }
-
-    return types;
-  }
-
-  /**
-   * Extract impl blocks for a type
-   */
-  private extractImplBlocks(
-    node: ASTNode,
-    typeName: string,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    filePath: string,
-  ): void {
-    const implNodes = findNodes(node, "impl_item");
-
-    for (const implNode of implNodes) {
-      const typeNode = implNode.childForFieldName("type");
-      if (!typeNode) continue;
-
-      const implType = getNodeText(typeNode);
-      if (!implType.includes(typeName)) continue;
-
-      // Check if it's a trait implementation
-      const traitNode = implNode.childForFieldName("trait");
-      if (traitNode) {
-        const traitName = getNodeText(traitNode);
-
-        relationships.push({
-          from: `${filePath}:struct:${typeName}`,
-          to: `${filePath}:trait:${traitName}`,
-          type: "implements",
-          sourceFile: filePath,
-        });
-
-        // Extract implemented methods
-        const body = implNode.childForFieldName("body");
-        if (body) {
-          const methods = findNodes(body, "function_item");
-          for (const method of methods) {
-            const nameNode = method.childForFieldName("name");
-            if (!nameNode) continue;
-
-            const methodName = getNodeText(nameNode);
-            const location = getNodeLocation(method);
-
-            entities.push({
-              id: `${filePath}:impl:${typeName}:${traitName}:${methodName}`,
-              name: methodName,
-              type: "method",
-              filePath,
-              location,
-              metadata: {
-                implType: typeName,
-                traitName,
-                isTraitImpl: true,
-                rustType: "impl_method",
-              },
-            });
-          }
-        }
-      } else {
-        // Inherent implementation
-        const body = implNode.childForFieldName("body");
-        if (body) {
-          const methods = findNodes(body, "function_item");
-          for (const method of methods) {
-            const nameNode = method.childForFieldName("name");
-            if (!nameNode) continue;
-
-            const methodName = getNodeText(nameNode);
-            const location = getNodeLocation(method);
-            const visibility = extractVisibility(method);
-
-            entities.push({
-              id: `${filePath}:impl:${typeName}:${methodName}`,
-              name: methodName,
-              type: "method",
-              filePath,
-              location,
-              metadata: {
-                implType: typeName,
-                visibility,
-                isInherent: true,
-                rustType: "impl_method",
-              },
-            });
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Extract impl blocks globally (even when no struct node provided)
-   */
-  private extractImplBlocksGlobal(
-    node: ASTNode,
-    entities: ParsedEntity[],
-    relationships: EntityRelationship[],
-    filePath: string,
-  ): void {
-    const implNodes = findNodes(node, "impl_item");
-    for (const implNode of implNodes) {
-      const typeNode = implNode.childForFieldName("type");
-      const traitNode = implNode.childForFieldName("trait");
-      const typeName = typeNode ? getNodeText(typeNode) : undefined;
-      const traitName = traitNode ? getNodeText(traitNode) : undefined;
-
-      // Relationship for trait impl
-      if (typeName && traitName) {
-        relationships.push({
-          from: `${filePath}:struct:${typeName}`,
-          to: `${filePath}:trait:${traitName}`,
-          type: "implements",
-          sourceFile: filePath,
-        });
-      }
-
-      const body = implNode.childForFieldName("body");
-      if (body) {
-        const methods = findNodes(body, "function_item");
-        for (const method of methods) {
-          const nameNode = method.childForFieldName("name");
-          if (!nameNode) continue;
-          const methodName = getNodeText(nameNode);
-          const location = getNodeLocation(method);
-
-          entities.push({
-            id: `${filePath}:impl:${typeName || "unknown"}:${traitName || "inherent"}:${methodName}`,
-            name: methodName,
-            type: "method",
-            filePath,
-            location,
-            metadata: {
-              implType: typeName || "",
-              traitName,
-              isTraitImpl: Boolean(traitName),
-              isInherent: !traitName,
-              rustType: "impl_method",
-            },
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Extract use statements (imports)
-   */
-  private extractUseStatements(node: ASTNode, importsList: ImportDependency[], filePath: string): void {
-    const useNodes = findNodes(node, "use_declaration");
-
-    for (const useNode of useNodes) {
-      const visibility = extractVisibility(useNode);
-      const importPaths = extractUseTree(useNode);
-      const line = useNode.startPosition.row + 1;
-
-      for (const full of importPaths) {
-        const isWildcard = full.endsWith("::*");
-        const path = isWildcard ? full.slice(0, -3) : full;
-        const parts = path.split("::").filter(Boolean);
-
-        let targetModule = path;
-        let symbolName = "*";
-
-        if (!isWildcard && parts.length > 1) {
-          symbolName = parts[parts.length - 1] || "*";
-          targetModule = parts.slice(0, -1).join("::");
-        } else if (!isWildcard && parts.length === 1) {
-          targetModule = "";
-          symbolName = parts[0] || "*";
-        }
-
-        const importType: ImportDependency["importType"] =
-          full.startsWith("self::") || full.startsWith("super::") ? "relative" : "absolute";
-
-        importsList.push({
-          sourceFile: filePath,
-          targetModule: targetModule || path,
-          importType,
-          symbols: [{ name: symbolName }],
-          line,
-          isUsed: false,
-          usageLocations: [],
-          type: "use",
-          metadata: { visibility },
-        });
-      }
-    }
-
-    // Extract extern crate declarations
-    const externNodes = findNodes(node, "extern_crate_declaration");
-    for (const externNode of externNodes) {
-      const nameNode = externNode.childForFieldName("name");
-      if (!nameNode) continue;
-
-      const name = getNodeText(nameNode);
-      const line = externNode.startPosition.row + 1;
-      importsList.push({
-        sourceFile: filePath,
-        targetModule: name,
-        importType: "absolute",
-        symbols: [{ name }],
-        line,
-        isUsed: false,
-        usageLocations: [],
-        type: "extern_crate",
-        metadata: { isExternCrate: true },
-      });
-    }
+    return {
+      entities: state.entities,
+      relationships: state.relationships,
+      imports: state.imports,
+      patterns,
+      metrics: this.metrics,
+    };
   }
 }
 
 // Export default instance
 export default new RustAnalyzer();
-
-type AnalyzerMetrics = {
-  entitiesExtracted: number;
-  relationshipsFound: number;
-  patternsIdentified: number;
-  parseTime: number;
-};

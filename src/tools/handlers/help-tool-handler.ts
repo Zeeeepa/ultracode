@@ -1,7 +1,7 @@
 /**
  * Help Tool Handler
  *
- * Provides access to documentation and guides about UltraScript Tools.
+ * Provides access to documentation and guides about UltraCode.
  * This is a lightweight tool that reads markdown files from the prompts/ directory.
  */
 
@@ -63,7 +63,7 @@ export class GetHelpToolHandler extends BaseToolHandler<HelpArgs> {
                 success: true,
                 topic,
                 documentation: content,
-                message: `📖 ${topic} documentation loaded. Read this guide to understand how to use UltraScript Tools effectively.`,
+                message: `📖 ${topic} documentation loaded. Read this guide to understand how to use UltraCode effectively.`,
               },
               null,
               2,

@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Build script for UltraScript.Comm
+# Build script for UltraCode.Comm
 # Creates a single portable binary that runs on Windows/Linux/macOS
 
 param(
@@ -17,7 +17,7 @@ function Write-Err($msg) { Write-Host "[-] $msg" -ForegroundColor Red }
 
 # Paths
 $SourceFile = Join-Path $ScriptDir "comm.c"
-$OutputCom = Join-Path $ScriptDir "ultrascript-tools.com"
+$OutputCom = Join-Path $ScriptDir "ultracode.com"
 $CosmoDir = "$env:LOCALAPPDATA\cosmocc\bin"
 
 # Git Bash path (needed to run cosmocc shell script on Windows)
@@ -29,7 +29,7 @@ $GitBashPaths = @(
 $GitBash = $GitBashPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 Write-Host ""
-Write-Host "=== UltraScript.Comm Build ===" -ForegroundColor Magenta
+Write-Host "=== UltraCode.Comm Build ===" -ForegroundColor Magenta
 Write-Host ""
 
 # Clean if requested
@@ -70,7 +70,7 @@ try {
     $UnixScriptDir = $ScriptDir -replace '\\', '/' -replace '^([A-Za-z]):', '/$1'
 
     # Run cosmocc via Git Bash
-    $bashCmd = "export PATH='$UnixCosmoDir':`$PATH && cd '$UnixScriptDir' && cosmocc -Os -DNDEBUG -Wall -Wextra -o ultrascript-tools.com comm.c"
+    $bashCmd = "export PATH='$UnixCosmoDir':`$PATH && cd '$UnixScriptDir' && cosmocc -Os -DNDEBUG -Wall -Wextra -o ultracode.com comm.c"
 
     & $GitBash -c $bashCmd 2>&1 | ForEach-Object { Write-Host $_ }
 
@@ -86,7 +86,7 @@ try {
 
     $size = (Get-Item $OutputCom).Length
     $sizeKB = [math]::Round($size / 1024, 1)
-    Write-Success "Built: ultrascript-tools.com ($sizeKB KB)"
+    Write-Success "Built: ultracode.com ($sizeKB KB)"
 
 } finally {
     Pop-Location
@@ -102,8 +102,8 @@ if (-not $NoCopy) {
         Write-Status "Cleaning $FullOutputDir..."
 
         # Handle potentially locked .com file - rename to .blocked first
-        $comFile = Join-Path $FullOutputDir "ultrascript-tools.com"
-        $blockedFile = Join-Path $FullOutputDir "ultrascript-tools.com.blocked"
+        $comFile = Join-Path $FullOutputDir "ultracode.com"
+        $blockedFile = Join-Path $FullOutputDir "ultracode.com.blocked"
         if (Test-Path $comFile) {
             Remove-Item $blockedFile -Force -ErrorAction SilentlyContinue
             Rename-Item $comFile $blockedFile -Force -ErrorAction SilentlyContinue
@@ -118,20 +118,20 @@ if (-not $NoCopy) {
     }
 
     Write-Status "Copying to $FullOutputDir..."
-    Copy-Item $OutputCom (Join-Path $FullOutputDir "ultrascript-tools.com") -Force
-    Write-Success "Copied to: $FullOutputDir\ultrascript-tools.com"
+    Copy-Item $OutputCom (Join-Path $FullOutputDir "ultracode.com") -Force
+    Write-Success "Copied to: $FullOutputDir\ultracode.com"
 }
 
 Write-Host ""
 Write-Host "=== Build Summary ===" -ForegroundColor Magenta
 Write-Host ""
-Write-Host "Output:     ultrascript-tools.com" -ForegroundColor White
+Write-Host "Output:     ultracode.com" -ForegroundColor White
 Write-Host "Size:       $sizeKB KB" -ForegroundColor White
 Write-Host "Platforms:  Windows x64, Linux x64, macOS x64/ARM64, FreeBSD, NetBSD, OpenBSD" -ForegroundColor White
 Write-Host ""
 Write-Host "Usage:" -ForegroundColor Yellow
-Write-Host "  Windows:  .\ultrascript-tools.com --help"
-Write-Host "  Linux:    ./ultrascript-tools.com --help"
-Write-Host "  macOS:    ./ultrascript-tools.com --help"
+Write-Host "  Windows:  .\ultracode.com --help"
+Write-Host "  Linux:    ./ultracode.com --help"
+Write-Host "  macOS:    ./ultracode.com --help"
 Write-Host ""
 Write-Success "Build complete!"

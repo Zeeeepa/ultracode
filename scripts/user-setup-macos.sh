@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# UltraScript Tools - Interactive Environment Setup for macOS
+# UltraCode - Interactive Environment Setup for macOS
 #
 # Checks and optionally installs required dependencies for language parsing:
 # - Node.js (required)
@@ -32,7 +32,7 @@ fi
 print_header() {
     echo ""
     echo -e "${MAGENTA}============================================${NC}"
-    echo -e "${MAGENTA}  UltraScript Tools - Environment Setup${NC}"
+    echo -e "${MAGENTA}  UltraCode - Environment Setup${NC}"
     echo -e "${MAGENTA}============================================${NC}"
     echo ""
 }
@@ -288,11 +288,11 @@ elif [[ $optional -gt 0 ]]; then
     print_warning "Some optional dependencies are missing."
     print_info "Parsers for those languages will use regex fallback."
     echo ""
-    print_success "UltraScript Tools can run with reduced functionality."
+    print_success "UltraCode can run with reduced functionality."
 else
     print_success "All dependencies are installed!"
     echo ""
-    print_success "UltraScript Tools is ready to use with full functionality."
+    print_success "UltraCode is ready to use with full functionality."
 fi
 
 echo ""

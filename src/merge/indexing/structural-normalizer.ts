@@ -1,16 +1,16 @@
 import { hashText } from "../../utils/fast-hash.js";
 
 /**
- * Нормализует AST для structural hash (Fast Path Level 2).
+ * Normalizes AST for structural hash (Fast Path Level 2).
  *
- * Игнорирует: whitespace, comments, formatting, optional semicolons.
- * Сохраняет: structure, identifiers, control flow, logic.
+ * Ignores: whitespace, comments, formatting, optional semicolons.
+ * Preserves: structure, identifiers, control flow, logic.
  *
- * Основано на StructuralNormalizer из SharpToolsMCP.
+ * Based on StructuralNormalizer from SharpToolsMCP.
  */
 export class StructuralNormalizer {
   /**
-   * Нормализовать код для structural comparison.
+   * Normalize code for structural comparison.
    *
    * @param code - Source code to normalize
    * @param language - Programming language
@@ -43,10 +43,10 @@ export class StructuralNormalizer {
   }
 
   /**
-   * Вычислить structural hash.
+   * Compute structural hash.
    *
-   * Structural hash игнорирует formatting но сохраняет логику.
-   * Идентичные структуры дают одинаковый hash.
+   * Structural hash ignores formatting but preserves logic.
+   * Identical structures produce the same hash.
    *
    * @param normalizedCode - Normalized code from normalizeCode()
    * @returns Hex-encoded SHA256 hash
@@ -56,10 +56,10 @@ export class StructuralNormalizer {
   }
 
   /**
-   * Удалить комментарии для заданного языка.
+   * Remove comments for a given language.
    *
-   * Простая regex-based реализация для Fast Path.
-   * Для полного AST анализа использовать ParserAgent.
+   * Simple regex-based implementation for Fast Path.
+   * For full AST analysis use ParserAgent.
    *
    * @param code - Source code
    * @param language - Programming language
@@ -83,14 +83,14 @@ export class StructuralNormalizer {
   }
 
   /**
-   * Проверить поддерживает ли язык C-style комментарии.
+   * Check whether a language supports C-style comments.
    */
   private hasCStyleComments(language: string): boolean {
     return ["typescript", "javascript", "c", "cpp", "go", "rust", "java"].includes(language);
   }
 
   /**
-   * Нормализовать whitespace.
+   * Normalize whitespace.
    *
    * - Multiple spaces → single space
    * - Spaces inside brackets/parens removed
@@ -133,7 +133,7 @@ export class StructuralNormalizer {
   }
 
   /**
-   * Удалить trailing semicolons (опциональны в JS/TS).
+   * Remove trailing semicolons (optional in JS/TS).
    *
    * @param code - Code to process
    * @returns Code without trailing semicolons

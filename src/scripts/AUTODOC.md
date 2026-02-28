@@ -1,25 +1,20 @@
-# Модуль scripts
+---
+module_name: scripts
+description: "Build and setup utility scripts for the project"
+status: active
+language: typescript
+---
 
-## Описание
+# Scripts
 
-Модуль `scripts` содержит утилиты и скрипты для выполнения различных задач в проекте, связанных с миграцией и управлением векторной базой данных. Включает в себя скрипт для миграции данных в векторную базу.
+> Utility scripts for build tasks, data migrations, and project setup operations.
 
-## Файлы
+## Overview
 
-| Файл                     | Описание                                                                 |
-|--------------------------|--------------------------------------------------------------------------|
-| `migrate-vector-db.ts`   | Скрипт для миграции данных в векторную базу данных. Выполняет преобразование и перенос векторных данных из старой структуры в новую. |
+Contains standalone scripts that are executed directly (e.g., via `ts-node`) for one-off or build-time tasks. Currently empty -- previously held a vector-db migration script that has since been removed.
 
-## Экспорты
+## Files
 
-В модуле отсутствуют публичные экспорты. Все функции и классы предназначены для внутреннего использования и вызываются напрямую из скриптов.
-
-## Использование
-
-Скрипт можно запустить напрямую из командной строки:
-
-```bash
-ts-node scripts/migrate-vector-db.ts
-```
-
-Скрипт автоматически выполняет миграцию данных и выводит статус операции в консоль.
+| File | Description |
+|------|-------------|
+| *(none)* | No script files currently present |

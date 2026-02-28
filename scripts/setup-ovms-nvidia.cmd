@@ -6,7 +6,7 @@ REM  OVMS Full Auto-Setup with NVIDIA + ToMe
 REM  For Embeddings (sentence-transformers, E5, BGE)
 REM ============================================
 REM
-REM Installs to: %LOCALAPPDATA%\UltraScriptTools\ovms\
+REM Installs to: %LOCALAPPDATA%\UltraCode\ovms\
 REM ToMe ratio: 0.3 (optimal for embeddings)
 REM
 
@@ -14,12 +14,12 @@ echo.
 echo ============================================
 echo   OVMS Auto-Setup for Embeddings
 echo ============================================
-echo   Target: %LOCALAPPDATA%\UltraScriptTools\ovms\
+echo   Target: %LOCALAPPDATA%\UltraCode\ovms\
 echo   ToMe: 0.3 (30%% merging, 1.5-2x speedup)
 echo ============================================
 echo.
 
-set "INSTALL_DIR=%LOCALAPPDATA%\UltraScriptTools\ovms"
+set "INSTALL_DIR=%LOCALAPPDATA%\UltraCode\ovms"
 set "TEMP_BUILD=C:\opt"
 set "TOME_RATIO=0.3"
 set "OVMS_BRANCH=releases/2025/4"
@@ -269,7 +269,7 @@ if defined CUTENSOR_DIR (
 
 REM Find or Build OpenVINO
 set "OV_DIR="
-set "OV_INSTALL_DIR=%LOCALAPPDATA%\UltraScriptTools\openvino"
+set "OV_INSTALL_DIR=%LOCALAPPDATA%\UltraCode\openvino"
 set "OV_BUILD_DIR=%TEMP_BUILD%\openvino_build"
 set "OV_SOURCE_DIR=%TEMP_BUILD%\openvino_src"
 
@@ -845,7 +845,7 @@ REM ============================================
 echo.
 echo [7/7] Exporting embedding model...
 
-set "MODELS_DIR=%LOCALAPPDATA%\UltraScriptTools\models"
+set "MODELS_DIR=%LOCALAPPDATA%\UltraCode\models"
 set "DEFAULT_MODEL=intfloat/multilingual-e5-base"
 set "EXPORT_SCRIPT=%REPO_DIR%\demos\common\export_models\export_model.py"
 

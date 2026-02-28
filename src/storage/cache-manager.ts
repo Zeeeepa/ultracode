@@ -1,133 +1,126 @@
-/**
- * TASK-001: Cache Manager for Query Results
- *
- * LRU cache implementation for query result caching.
- * Optimized for memory-constrained environments.
- *
- * External Dependencies:
- * - lru-cache: https://github.com/isaacs/node-lru-cache - LRU cache implementation
- *
- * Architecture References:
- * - Storage Types: src/types/storage.ts
- * - Graph Storage: src/storage/graph-storage.ts
- */
-
-// =============================================================================
-// 1. IMPORTS AND DEPENDENCIES
-// =============================================================================
 import { LRUCache } from "lru-cache";
 import { log } from "../logging/index.js";
 import type { CacheEntry, CacheManager } from "../types/storage.js";
 import { hashText } from "../utils/fast-hash.js";
 
-// =============================================================================
-// 2. CONSTANTS AND CONFIGURATION
-// =============================================================================
-// OPTIMIZATION: Increased from 50MB to 100MB for better cache hit rate
-const DEFAULT_MAX_SIZE = 100 * 1024 * 1024; // 100MB
-const DEFAULT_TTL = 5 * 60 * 1000; // 5 minutes
-const DEFAULT_MAX_ENTRIES = 2000; // Increased from 1000
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
 
-// =============================================================================
-// 3. CACHE MANAGER IMPLEMENTATION
-// =============================================================================
+export interface CacheConfig {
+  maxSize?: number;
+  maxEntries?: number;
+  defaultTTL?: number;
+}
+
+const DEFAULTS = {
+  maxBytes: 100 * 1024 * 1024,
+  maxEntries: 2_000,
+  ttlMs: 5 * 60 * 1_000,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Size estimation
+// ---------------------------------------------------------------------------
+
+function byteSize(v: unknown): number {
+  if (v == null) return 0;
+  switch (typeof v) {
+    case "string":
+      return v.length * 2;
+    case "number":
+      return 8;
+    case "boolean":
+      return 4;
+    default:
+      break;
+  }
+  if (v instanceof Date) return 8;
+  if (Array.isArray(v)) {
+    let s = 24;
+    for (let i = 0; i < v.length; i++) s += byteSize(v[i]);
+    return s;
+  }
+  if (typeof v === "object") {
+    let s = 24;
+    const rec = v as Record<string, unknown>;
+    for (const k of Object.keys(rec)) s += k.length * 2 + byteSize(rec[k]);
+    return s;
+  }
+  return 24;
+}
+
+// ---------------------------------------------------------------------------
+// QueryCacheManager
+// ---------------------------------------------------------------------------
 
 export class QueryCacheManager implements CacheManager {
-  private cache: LRUCache<string, CacheEntry>;
-  private stats = {
-    hits: 0,
-    misses: 0,
-    evictions: 0,
-    sets: 0,
-  };
+  private store: LRUCache<string, CacheEntry>;
+  private counters = { hits: 0, misses: 0, evictions: 0, sets: 0 };
 
-  constructor(config: CacheConfig = {}) {
-    this.cache = new LRUCache<string, CacheEntry>({
-      max: config.maxEntries || DEFAULT_MAX_ENTRIES,
-      maxSize: config.maxSize || DEFAULT_MAX_SIZE,
+  constructor(cfg: CacheConfig = {}) {
+    const ttl = cfg.defaultTTL ?? DEFAULTS.ttlMs;
 
-      // Size calculation
-      sizeCalculation: (entry: CacheEntry) => {
-        return entry.size || this.estimateSize(entry.value);
-      },
-
-      // Disposal handler
-      dispose: (_value: CacheEntry, key: string, reason: LRUCache.DisposeReason) => {
+    this.store = new LRUCache<string, CacheEntry>({
+      max: cfg.maxEntries ?? DEFAULTS.maxEntries,
+      maxSize: cfg.maxSize ?? DEFAULTS.maxBytes,
+      sizeCalculation: (entry) => entry.size || byteSize(entry.value),
+      dispose: (_v, key, reason) => {
         if (reason === "evict" || reason === "delete") {
-          this.stats.evictions++;
+          this.counters.evictions++;
           log.d("CACHEMGR", "evicted", { key, reason });
         }
       },
-
-      // TTL based on entry - using function form to allow per-entry TTL
-      ttl: config.defaultTTL || DEFAULT_TTL,
-
-      // Update age on get
+      ttl,
       updateAgeOnGet: true,
       updateAgeOnHas: false,
-
-      // Allow stale entries
       allowStale: false,
     });
   }
 
-  /**
-   * Get cached value
-   */
   get<T>(key: string): T | null {
-    const entry = this.cache.get(key);
-
-    if (entry) {
-      this.stats.hits++;
-
-      // Update hit count
-      entry.hits++;
-      this.cache.set(key, entry);
-
-      return entry.value as T;
+    const entry = this.store.get(key);
+    if (!entry) {
+      this.counters.misses++;
+      return null;
     }
-
-    this.stats.misses++;
-    return null;
+    this.counters.hits++;
+    entry.hits++;
+    this.store.set(key, entry);
+    return entry.value as T;
   }
 
-  /**
-   * Set cache value
-   */
   set<T>(key: string, value: T, ttl?: number): void {
-    const size = this.estimateSize(value);
-
     const entry: CacheEntry<T> = {
       key,
       value,
       timestamp: Date.now(),
-      ttl: ttl || DEFAULT_TTL,
+      ttl: ttl ?? DEFAULTS.ttlMs,
       hits: 0,
-      size,
+      size: byteSize(value),
     };
-
-    this.cache.set(key, entry);
-    this.stats.sets++;
+    this.store.set(key, entry);
+    this.counters.sets++;
   }
 
-  /**
-   * Delete cache entry
-   */
   delete(key: string): void {
-    this.cache.delete(key);
+    this.store.delete(key);
   }
 
-  /**
-   * Clear all cache entries
-   */
   clear(): void {
-    this.cache.clear();
+    this.store.clear();
     log.i("CACHEMGR", "cache_cleared");
   }
 
-  /**
-   * Get cache statistics
-   */
+  has(key: string): boolean {
+    return this.store.has(key);
+  }
+
+  prune(): void {
+    const removed = this.store.purgeStale();
+    if (removed) log.i("CACHEMGR", "pruned_stale");
+  }
+
   getStats(): {
     size: number;
     hits: number;
@@ -137,189 +130,72 @@ export class QueryCacheManager implements CacheManager {
     evictions: number;
     memoryUsage: number;
   } {
-    const totalRequests = this.stats.hits + this.stats.misses;
-    const hitRate = totalRequests > 0 ? this.stats.hits / totalRequests : 0;
-
+    const total = this.counters.hits + this.counters.misses;
     return {
-      size: this.cache.size,
-      hits: this.stats.hits,
-      misses: this.stats.misses,
-      hitRate,
-      entries: this.cache.size,
-      evictions: this.stats.evictions,
-      memoryUsage: this.cache.calculatedSize || 0,
+      size: this.store.size,
+      hits: this.counters.hits,
+      misses: this.counters.misses,
+      hitRate: total > 0 ? this.counters.hits / total : 0,
+      entries: this.store.size,
+      evictions: this.counters.evictions,
+      memoryUsage: this.store.calculatedSize || 0,
     };
   }
 
-  /**
-   * Create cache key from query parameters
-   */
-  static createKey(params: Record<string, any>): string {
-    const sorted = Object.keys(params)
-      .sort()
-      .reduce(
-        (acc, key) => {
-          acc[key] = params[key];
-          return acc;
-        },
-        {} as Record<string, any>,
-      );
-
-    const json = JSON.stringify(sorted);
-    return hashText(json).substring(0, 16);
-  }
-
-  /**
-   * Estimate size of a value in bytes
-   */
-  private estimateSize(value: unknown): number {
-    if (value === null || value === undefined) return 0;
-
-    if (typeof value === "string") {
-      return value.length * 2; // Approximate UTF-16 size
-    }
-
-    if (typeof value === "number") {
-      return 8;
-    }
-
-    if (typeof value === "boolean") {
-      return 4;
-    }
-
-    if (value instanceof Date) {
-      return 8;
-    }
-
-    if (Array.isArray(value)) {
-      return value.reduce((sum, item) => sum + this.estimateSize(item), 24);
-    }
-
-    if (typeof value === "object") {
-      let size = 24; // Object overhead
-      const record = value as Record<string, unknown>;
-      for (const key in record) {
-        if (Object.hasOwn(record, key)) {
-          size += key.length * 2 + this.estimateSize(record[key]);
-        }
-      }
-      return size;
-    }
-
-    return 24; // Default size
-  }
-
-  /**
-   * Prune expired entries
-   */
-  prune(): void {
-    const pruned = this.cache.purgeStale();
-    if (pruned) {
-      log.i("CACHEMGR", "pruned_stale");
-    }
-  }
-
-  /**
-   * Get cache entries (for debugging)
-   */
   getEntries(): Array<{ key: string; value: CacheEntry }> {
-    const entries: Array<{ key: string; value: CacheEntry }> = [];
-
-    for (const [key, value] of this.cache.entries()) {
-      entries.push({ key, value });
-    }
-
-    return entries;
+    return Array.from(this.store.entries()).map(([key, value]) => ({ key, value }));
   }
 
-  /**
-   * Check if key exists in cache
-   */
-  has(key: string): boolean {
-    return this.cache.has(key);
-  }
-
-  /**
-   * Reset statistics
-   */
   resetStats(): void {
-    this.stats = {
-      hits: 0,
-      misses: 0,
-      evictions: 0,
-      sets: 0,
-    };
+    this.counters = { hits: 0, misses: 0, evictions: 0, sets: 0 };
+  }
+
+  static createKey(params: Record<string, unknown>): string {
+    const keys = Object.keys(params).sort();
+    const ordered: Record<string, unknown> = {};
+    for (const k of keys) ordered[k] = params[k];
+    return hashText(JSON.stringify(ordered)).substring(0, 16);
   }
 }
 
-// =============================================================================
-// 4. CONFIGURATION INTERFACE
-// =============================================================================
+// ---------------------------------------------------------------------------
+// Decorator
+// ---------------------------------------------------------------------------
 
-export interface CacheConfig {
-  maxSize?: number; // Maximum cache size in bytes
-  maxEntries?: number; // Maximum number of entries
-  defaultTTL?: number; // Default TTL in milliseconds
-}
-
-// =============================================================================
-// 5. DECORATOR FOR CACHE-ENABLED METHODS
-// =============================================================================
-
-/**
- * Decorator to add caching to a method
- */
 export function Cacheable(ttl?: number) {
   return (_target: object, propertyKey: string, descriptor: PropertyDescriptor) => {
-    const originalMethod = descriptor.value as (...args: unknown[]) => Promise<unknown>;
-    const cacheManager = new QueryCacheManager();
+    const original = descriptor.value as (...args: unknown[]) => Promise<unknown>;
+    const mgr = new QueryCacheManager();
 
     descriptor.value = async function (this: unknown, ...args: unknown[]): Promise<unknown> {
-      // Create cache key from arguments
       const key = QueryCacheManager.createKey({ method: propertyKey, args });
-
-      // Check cache
-      const cached = cacheManager.get(key);
+      const cached = mgr.get(key);
       if (cached !== null) {
         log.d("CACHEMGR", "cache_hit", { key: propertyKey });
         return cached;
       }
-
-      // Execute original method
-      const result = await originalMethod.apply(this, args);
-
-      // Store in cache
-      cacheManager.set(key, result, ttl);
-
+      const result = await original.apply(this, args);
+      mgr.set(key, result, ttl);
       return result;
     };
-
     return descriptor;
   };
 }
 
-// =============================================================================
-// 6. SINGLETON INSTANCE
-// =============================================================================
+// ---------------------------------------------------------------------------
+// Singleton
+// ---------------------------------------------------------------------------
 
-let cacheInstance: QueryCacheManager | null = null;
+let instance: QueryCacheManager | null = null;
 
-/**
- * Get singleton cache manager instance
- */
 export function getCacheManager(config?: CacheConfig): QueryCacheManager {
-  if (!cacheInstance) {
-    cacheInstance = new QueryCacheManager(config);
-  }
-  return cacheInstance;
+  if (!instance) instance = new QueryCacheManager(config);
+  return instance;
 }
 
-/**
- * Reset singleton instance (mainly for testing)
- */
 export function resetCacheManager(): void {
-  if (cacheInstance) {
-    cacheInstance.clear();
-    cacheInstance = null;
+  if (instance) {
+    instance.clear();
+    instance = null;
   }
 }

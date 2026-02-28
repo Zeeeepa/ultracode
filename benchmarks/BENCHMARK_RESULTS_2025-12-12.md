@@ -25,7 +25,7 @@
 - **Hardware**: RTX 5060 (Blackwell), Intel CPU
 - **OS**: Windows
 - **TEI Image**: hotchpotch/tei-blackwell-testing:latest (Blackwell GPU support)
-- **Test dataset**: 100 entities from ultrascript-tools-mcp
+- **Test dataset**: 100 entities from ultracode
 
 ## Performance Results
 

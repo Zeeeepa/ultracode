@@ -164,6 +164,15 @@ export async function buildRelationships(
           case "depends_on":
             relType = RelationType.DEPENDS_ON;
             break;
+          case "produces_api":
+            relType = RelationType.PRODUCES_API;
+            break;
+          case "consumes_api":
+            relType = RelationType.CONSUMES_API;
+            break;
+          case "generated_from":
+            relType = RelationType.GENERATED_FROM;
+            break;
           default:
             relType = RelationType.REFERENCES;
             break;

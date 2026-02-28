@@ -1,10 +1,10 @@
 /**
  * GPU Type Guards
  *
- * Type-safe guards для GPU Worker responses и requests.
- * Используется для безопасной проверки типов вместо небезопасных `(response as any).error`.
+ * Type-safe guards for GPU Worker responses and requests.
+ * Used for safe type checking instead of unsafe `(response as any).error`.
  *
- * @see src/semantic/gpu/types.ts - Определения типов
+ * @see src/semantic/gpu/types.ts - Type definitions
  */
 
 import type {
@@ -41,19 +41,19 @@ import type {
 // =============================================================================
 
 /**
- * Type guard для проверки error response
+ * Type guard for checking error response
  *
- * @param response - GPU worker response для проверки
- * @returns true если response содержит ошибку
+ * @param response - GPU worker response to check
+ * @returns true if response contains an error
  *
  * @example
  * ```typescript
  * const response = await sendRequest({ type: "faiss.search", ... });
  * if (isGpuErrorResponse(response)) {
- *   console.error("GPU error:", response.error); // Типизировано!
+ *   console.error("GPU error:", response.error); // Typed!
  *   return;
  * }
- * // TypeScript автоматически понимает что response.success === true
+ * // TypeScript automatically knows that response.success === true
  * ```
  */
 export function isGpuErrorResponse(response: GpuWorkerResponse): response is GpuErrorResponse {
@@ -61,15 +61,15 @@ export function isGpuErrorResponse(response: GpuWorkerResponse): response is Gpu
 }
 
 /**
- * Type guard для проверки success response
+ * Type guard for checking success response
  *
- * @param response - GPU worker response для проверки
- * @returns true если response успешный
+ * @param response - GPU worker response to check
+ * @returns true if response is successful
  *
  * @example
  * ```typescript
  * if (isGpuSuccessResponse(response)) {
- *   // response.success гарантированно true
+ *   // response.success is guaranteed to be true
  *   console.log("Success!");
  * }
  * ```
@@ -79,19 +79,19 @@ export function isGpuSuccessResponse(response: GpuWorkerResponse): response is G
 }
 
 /**
- * Безопасное извлечение ошибки из response
+ * Safe error extraction from response
  *
- * Извлекает сообщение об ошибке из GPU response с проверкой типа.
- * Используется вместо небезопасного `(response as any).error`.
+ * Extracts error message from GPU response with type checking.
+ * Used instead of unsafe `(response as any).error`.
  *
  * @param response - GPU worker response
- * @returns Сообщение об ошибке или fallback текст
+ * @returns Error message or fallback text
  *
  * @example
  * ```typescript
  * const response = await sendRequest({ type: "faiss.add", ... });
  * if (!response.success) {
- *   throw new Error(extractGpuError(response)); // Типизировано!
+ *   throw new Error(extractGpuError(response)); // Typed!
  * }
  * ```
  */
@@ -107,19 +107,19 @@ export function extractGpuError(response: GpuWorkerResponse): string {
 // =============================================================================
 
 /**
- * Type guard для FaissInitRequest
+ * Type guard for FaissInitRequest
  */
 export function isFaissInitRequest(req: GpuWorkerRequest): req is FaissInitRequest {
   return req.type === "faiss.init";
 }
 
 /**
- * Type guard для FaissAddRequest
+ * Type guard for FaissAddRequest
  *
  * @example
  * ```typescript
  * if (isFaissAddRequest(request)) {
- *   console.log("Adding", request.ids.length, "vectors"); // Типизировано!
+ *   console.log("Adding", request.ids.length, "vectors"); // Typed!
  * }
  * ```
  */
@@ -128,12 +128,12 @@ export function isFaissAddRequest(req: GpuWorkerRequest): req is FaissAddRequest
 }
 
 /**
- * Type guard для FaissSearchRequest
+ * Type guard for FaissSearchRequest
  *
  * @example
  * ```typescript
  * if (isFaissSearchRequest(request)) {
- *   console.log("Searching with k =", request.k); // Типизировано!
+ *   console.log("Searching with k =", request.k); // Typed!
  * }
  * ```
  */
@@ -142,42 +142,42 @@ export function isFaissSearchRequest(req: GpuWorkerRequest): req is FaissSearchR
 }
 
 /**
- * Type guard для FaissBatchSearchRequest
+ * Type guard for FaissBatchSearchRequest
  */
 export function isFaissBatchSearchRequest(req: GpuWorkerRequest): req is FaissBatchSearchRequest {
   return req.type === "faiss.batchSearch";
 }
 
 /**
- * Type guard для FaissRemoveRequest
+ * Type guard for FaissRemoveRequest
  */
 export function isFaissRemoveRequest(req: GpuWorkerRequest): req is FaissRemoveRequest {
   return req.type === "faiss.remove";
 }
 
 /**
- * Type guard для FaissSaveRequest
+ * Type guard for FaissSaveRequest
  */
 export function isFaissSaveRequest(req: GpuWorkerRequest): req is FaissSaveRequest {
   return req.type === "faiss.save";
 }
 
 /**
- * Type guard для FaissLoadRequest
+ * Type guard for FaissLoadRequest
  */
 export function isFaissLoadRequest(req: GpuWorkerRequest): req is FaissLoadRequest {
   return req.type === "faiss.load";
 }
 
 /**
- * Type guard для FaissTrainRequest
+ * Type guard for FaissTrainRequest
  */
 export function isFaissTrainRequest(req: GpuWorkerRequest): req is FaissTrainRequest {
   return req.type === "faiss.train";
 }
 
 /**
- * Type guard для FaissStatsRequest
+ * Type guard for FaissStatsRequest
  */
 export function isFaissStatsRequest(req: GpuWorkerRequest): req is FaissStatsRequest {
   return req.type === "faiss.stats";
@@ -188,19 +188,19 @@ export function isFaissStatsRequest(req: GpuWorkerRequest): req is FaissStatsReq
 // =============================================================================
 
 /**
- * Type guard для CudaInfoRequest
+ * Type guard for CudaInfoRequest
  */
 export function isCudaInfoRequest(req: GpuWorkerRequest): req is CudaInfoRequest {
   return req.type === "cuda.info";
 }
 
 /**
- * Type guard для CudaCosineRequest
+ * Type guard for CudaCosineRequest
  *
  * @example
  * ```typescript
  * if (isCudaCosineRequest(request)) {
- *   console.log("Computing cosine between vectors"); // Типизировано!
+ *   console.log("Computing cosine between vectors"); // Typed!
  * }
  * ```
  */
@@ -209,21 +209,21 @@ export function isCudaCosineRequest(req: GpuWorkerRequest): req is CudaCosineReq
 }
 
 /**
- * Type guard для CudaBatchCosineRequest
+ * Type guard for CudaBatchCosineRequest
  */
 export function isCudaBatchCosineRequest(req: GpuWorkerRequest): req is CudaBatchCosineRequest {
   return req.type === "cuda.batchCosine";
 }
 
 /**
- * Type guard для CudaEuclideanRequest
+ * Type guard for CudaEuclideanRequest
  */
 export function isCudaEuclideanRequest(req: GpuWorkerRequest): req is CudaEuclideanRequest {
   return req.type === "cuda.euclidean";
 }
 
 /**
- * Type guard для CudaNormalizeRequest
+ * Type guard for CudaNormalizeRequest
  */
 export function isCudaNormalizeRequest(req: GpuWorkerRequest): req is CudaNormalizeRequest {
   return req.type === "cuda.normalize";
@@ -234,35 +234,35 @@ export function isCudaNormalizeRequest(req: GpuWorkerRequest): req is CudaNormal
 // =============================================================================
 
 /**
- * Type guard для EmbeddingsAddBatchRequest
+ * Type guard for EmbeddingsAddBatchRequest
  */
 export function isEmbeddingsAddBatchRequest(req: GpuWorkerRequest): req is EmbeddingsAddBatchRequest {
   return req.type === "embeddings.addBatch";
 }
 
 /**
- * Type guard для EmbeddingsSearchRequest
+ * Type guard for EmbeddingsSearchRequest
  */
 export function isEmbeddingsSearchRequest(req: GpuWorkerRequest): req is EmbeddingsSearchRequest {
   return req.type === "embeddings.search";
 }
 
 /**
- * Type guard для EmbeddingsFlushRequest
+ * Type guard for EmbeddingsFlushRequest
  */
 export function isEmbeddingsFlushRequest(req: GpuWorkerRequest): req is EmbeddingsFlushRequest {
   return req.type === "embeddings.flush";
 }
 
 /**
- * Type guard для EmbeddingsStatsRequest
+ * Type guard for EmbeddingsStatsRequest
  */
 export function isEmbeddingsStatsRequest(req: GpuWorkerRequest): req is EmbeddingsStatsRequest {
   return req.type === "embeddings.stats";
 }
 
 /**
- * Type guard для EmbeddingsRemoveRequest
+ * Type guard for EmbeddingsRemoveRequest
  */
 export function isEmbeddingsRemoveRequest(req: GpuWorkerRequest): req is EmbeddingsRemoveRequest {
   return req.type === "embeddings.remove";

@@ -36,8 +36,8 @@ export function getSetupLanguage(): UILanguage {
  * Get translated string by key path
  *
  * @example
- * t("provider.title") // "Выбор провайдера embeddings"
- * t("model.recommended") // "[РЕКОМЕНДУЕТСЯ]"
+ * t("provider.title") // "Embedding provider selection"
+ * t("model.recommended") // "[RECOMMENDED]"
  */
 export function t(keyPath: string): string {
   const keys = keyPath.split(".");
@@ -77,7 +77,7 @@ export function t(keyPath: string): string {
  * Get translated string with interpolation
  *
  * @example
- * ti("provider.selected", { name: "vLLM" }) // "Выбран провайдер: vLLM"
+ * ti("provider.selected", { name: "vLLM" }) // "Selected provider: vLLM"
  * ti("model.no_models", { provider: "tei", language: "en" })
  */
 export function ti(keyPath: string, params: Record<string, string | number>): string {
@@ -94,8 +94,8 @@ export function ti(keyPath: string, params: Record<string, string | number>): st
  * Get translated array by key path
  *
  * @example
- * ta("provider.vllm.pros") // ["Самый быстрый", "NVIDIA GPU ускорение", ...]
- * ta("llm.claude.cons") // ["Платный (Haiku ~$0.04/100 модулей)"]
+ * ta("provider.vllm.pros") // ["Fastest", "NVIDIA GPU acceleration", ...]
+ * ta("llm.claude.cons") // ["Paid (Haiku ~$0.04/100 modules)"]
  */
 export function ta(keyPath: string): string[] {
   const keys = keyPath.split(".");

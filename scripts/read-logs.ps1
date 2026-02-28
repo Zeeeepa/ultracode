@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Quick log reader for UltraScript Tools MCP server logs.
+    Quick log reader for UltraCode server logs.
 
 .DESCRIPTION
     Filters MCP server logs by category: PERFORMANCE, ERROR, TRACE, or custom pattern.
@@ -38,12 +38,12 @@ param(
     [switch]$Stats
 )
 
-$logPath = "$env:LOCALAPPDATA\UltraScriptTools\logs\mcp-server-$Date.log"
+$logPath = "$env:LOCALAPPDATA\UltraCode\logs\mcp-server-$Date.log"
 
 if (-not (Test-Path $logPath)) {
     Write-Host "Log file not found: $logPath" -ForegroundColor Red
     Write-Host "Available logs:" -ForegroundColor Yellow
-    Get-ChildItem "$env:LOCALAPPDATA\UltraScriptTools\logs\*.log" |
+    Get-ChildItem "$env:LOCALAPPDATA\UltraCode\logs\*.log" |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 5 |
         ForEach-Object { Write-Host "  $($_.Name) ($([math]::Round($_.Length/1KB, 1)) KB)" }

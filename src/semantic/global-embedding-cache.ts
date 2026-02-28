@@ -5,9 +5,9 @@
  * These are shared across all projects to avoid redundant embedding generation.
  *
  * Structure (centralized storage):
- * - Windows: %LOCALAPPDATA%/UltraScriptTools/global-embeddings/
- * - macOS: ~/Library/Application Support/UltraScriptTools/global-embeddings/
- * - Linux: ~/.local/share/UltraScriptTools/global-embeddings/
+ * - Windows: %LOCALAPPDATA%/UltraCode/global-embeddings/
+ * - macOS: ~/Library/Application Support/UltraCode/global-embeddings/
+ * - Linux: ~/.local/share/UltraCode/global-embeddings/
  *   - metadata.json (model version, last update)
  *   - javascript.bin (binary embeddings)
  *   - typescript.bin

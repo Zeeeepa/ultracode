@@ -1,27 +1,106 @@
+---
+module_name: dev
+description: "File collection, extension classification, incremental indexing, and heuristic parsing utilities"
+status: active
+language: typescript
+---
+
 # Dev
 
-*Last updated: 2026-01-19*
+> Utilities for collecting, classifying, and processing source code files during indexing, including incremental reindexing and a multi-phase indexing pipeline.
 
-Утилиты для сбора и классификации файлов исходного кода
+## Overview
+
+The dev module provides the file discovery and classification layer for the DevAgent. It recursively scans directories using Bun.Glob or fast-glob (with `.ultracodeignore` support), classifies files by extension into code vs. data categories, and provides heuristic entity creation for unsupported languages. The module also contains the incremental indexer (file separation, vector provider setup, batch processing) and the indexing pipeline (phased initialization, change detection, stale entity cleanup, and result building).
+
+## Data Flow
+
+- **Inputs**: A root directory path, exclude patterns, and agent configuration.
+- **Processing**: Scans directories (async via Bun.Glob/fast-glob or sync via Node.js fs), filters by supported extensions, separates files by language support, processes through parser or heuristic paths, manages incremental change detection.
+- **Outputs**: `CollectFilesResult` with file paths and scan statistics; `IndexingResult` with counts of processed files, entities, and relationships.
+
+## Public API
+
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `collectFiles` | function | Synchronously collects files with extension filtering | [`file-collector.ts:294-358`](./file-collector.ts) |
+| `collectFilesAsync` | function | Async file collection using Bun.Glob or fast-glob | [`file-collector.ts:413-476`](./file-collector.ts) |
+| `CollectFilesOptions` | interface | Options for file collection (patterns, agentId) | [`file-collector.ts:148-151`](./file-collector.ts) |
+| `CollectFilesResult` | interface | Result with files array and scan statistics | [`file-collector.ts:153-161`](./file-collector.ts) |
+| `loadIgnoreFile` | function | Loads patterns from `.ultracodeignore` | [`file-collector.ts:29-29`](./file-collector.ts) |
+| `SUPPORTED_CODE_EXTENSIONS` | const | Extensions with AST parsing support | [`file-extensions.ts:12-77`](./file-extensions.ts) |
+| `SUPPORTED_DATA_EXTENSIONS` | const | Extensions without AST parsing (configs, docs) | [`file-extensions.ts:44-77`](./file-extensions.ts) |
+| `ALL_SUPPORTED_EXTENSIONS` | const | Combined array of all supported extensions | [`file-extensions.ts:72-72`](./file-extensions.ts) |
+| `isCodeExtension` | function | Checks if extension supports AST parsing | [`file-extensions.ts:75-77`](./file-extensions.ts) |
+| `isDataExtension` | function | Checks if extension is a data file | [`file-extensions.ts:80-82`](./file-extensions.ts) |
+| `createHeuristicEntities` | function | Creates module entities for non-parseable files | [`heuristic-parser.ts:35-75`](./heuristic-parser.ts) |
+| `separateFilesBySupport` | function | Separates files into supported and heuristic groups | [`incremental-indexer.ts:74-100`](./incremental-indexer.ts) |
+| `setupVectorProvider` | function | Configures FAISS vector provider for incremental indexing | [`incremental-indexer.ts:120-169`](./incremental-indexer.ts) |
+| `setupEmbeddingGenerator` | function | Configures EmbeddingGenerator for centralized mode | [`incremental-indexer.ts:178-225`](./incremental-indexer.ts) |
+| `processSupportedFiles` | function | Batch-parses supported files through ParserAgent | [`incremental-indexer.ts:239-243`](./incremental-indexer.ts) |
+| `processHeuristicFiles` | function | Processes unsupported files via heuristic parser | [`incremental-indexer.ts:295-298`](./incremental-indexer.ts) |
+| `flushPendingEmbeddings` | function | Flushes accumulated embeddings to FAISS index | [`incremental-indexer.ts:335-366`](./incremental-indexer.ts) |
+| `initializeIndexing` | function | Phase 1: validates params and collects files | [`indexing-pipeline.ts:89-112`](./indexing-pipeline.ts) |
+| `detectChangedFiles` | function | Phase 2: detects changed, new, and deleted files | [`indexing-pipeline.ts:124-195`](./indexing-pipeline.ts) |
+| `cleanStaleEntities` | function | Phase 3: removes entities for changed/deleted files | [`indexing-pipeline.ts:207-239`](./indexing-pipeline.ts) |
+| `applyChangeAnalysis` | function | Phase 4: applies change analysis to indexing context | [`indexing-pipeline.ts:253-279`](./indexing-pipeline.ts) |
+| `separateCodeAndDataFiles` | function | Phase 5: separates files by code vs data extension | [`indexing-pipeline.ts:299-325`](./indexing-pipeline.ts) |
+| `buildIndexingResult` | function | Builds final indexing result summary | [`indexing-pipeline.ts:350-363`](./indexing-pipeline.ts) |
+
+## Dependencies
+
+### Internal Modules
+
+| Module | Purpose |
+|--------|---------|
+| `logging` | Structured logging |
+| `storage/graph-storage-factory` | Graph storage for change detection |
+| `semantic/faiss/*` | FAISS vector provider initialization |
+| `semantic/embedding-generator` | Embedding generation |
+| `config/yaml-config` | Configuration loading |
+| `utils/runtime` | Bun runtime detection |
+
+### External Packages
+
+| Package | Purpose |
+|---------|---------|
+| `fast-glob` | Async glob-based file scanning on Node.js |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| Supported code languages | JS, TS, Python, Go, Rust, Java, C/C++, Kotlin, Swift, C#, CSS, HTML, JSON, Zig |
+| Ignore file | `.ultracodeignore` (gitignore-style syntax) |
+| Async scanning | Bun.Glob on Bun runtime, fast-glob on Node.js |
+
+## Error Handling
+
+File read errors and stat failures are logged and skipped without aborting the scan. Heuristic parser creates minimal module entities as fallback for any file that cannot be AST-parsed.
+
+## Known Limitations
+
+- Synchronous `collectFiles` does not use Bun.Glob (reserved for async path).
+- Heuristic parser only creates a single module-level entity per file with no internal structure.
+- Change detection relies on mtime comparison, which may miss files modified within the same second.
 
 ## Exports
 
-| Name | Type | Description | Location |
-|------|------|-------------|----------|
-| `ALL_SUPPORTED_EXTENSIONS` | const | Объединённый массив всех поддерживаемых расширений | [→ file-extensions.ts:72-77] |
-| `collectFiles` | function | Рекурсивно собирает файлы с фильтрацией по расширениям | [→ file-collector.ts:137-146] |
-| `CollectFilesOptions` | interface | Интерфейс опций сбора файлов из директории | [→ file-collector.ts:112-120] |
-| `CollectFilesResult` | interface | Интерфейс результата сбора файлов исходного кода | [→ file-collector.ts:112-120] |
-| `createHeuristicEntities` | function | Создаёт сущность модуля для непарсируемых файлов | [→ heuristic-parser.ts:35-75] |
-| `isCodeExtension` | function | Проверяет является ли расширение файлом кода | [→ file-extensions.ts:72-77] |
-| `isDataExtension` | function | Проверяет является ли расширение файлом данных | [→ file-extensions.ts:72-77] |
-| `loadIgnoreFile` | function | Загружает паттерны исключения из файла конфигурации | [→ file-collector.ts:20-63] |
-| `SUPPORTED_CODE_EXTENSIONS` | const | Массив расширений файлов с поддержкой AST парсинга | [→ file-extensions.ts:12-77] |
-| `SUPPORTED_DATA_EXTENSIONS` | const | Массив расширений файлов без AST парсинга | [→ file-extensions.ts:44-77] |
+- `collectFiles`
+- `collectFilesAsync`
+- `ALL_SUPPORTED_EXTENSIONS`
+- `isCodeExtension`
+- `isDataExtension`
+- `SUPPORTED_CODE_EXTENSIONS`
+- `SUPPORTED_DATA_EXTENSIONS`
 
 ## Files
 
-- **file-collector.ts** — Рекурсивный сбор файлов с поддержкой паттернов исключения
-- **file-extensions.ts** — Конфигурация поддерживаемых расширений файлов
-- **heuristic-parser.ts** — Создание сущностей для неподдерживаемых языков
-- **index.ts** — Переэкспорт основных утилит модуля
+| File | Description |
+|------|-------------|
+| `file-collector.ts` | Recursive file collection with exclude pattern support and runtime-aware scanning |
+| `file-extensions.ts` | Supported file extension constants and classification functions |
+| `heuristic-parser.ts` | Creates simple module entities for unsupported languages |
+| `incremental-indexer.ts` | Incremental reindexing: file separation, provider setup, batch processing |
+| `indexing-pipeline.ts` | Multi-phase indexing pipeline: init, change detection, cleanup, file separation |
+| `index.ts` | Re-exports file collector and extension utilities |

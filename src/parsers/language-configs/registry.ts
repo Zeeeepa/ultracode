@@ -17,7 +17,7 @@ import {
   SWIFT_CONFIG,
   ZIG_CONFIG,
 } from "./compiled-languages/index.js";
-
+import { HELM_CONFIG } from "./infrastructure/index.js";
 // Import all language configurations
 import { JAVASCRIPT_CONFIG, JSX_CONFIG, TSX_CONFIG, TYPESCRIPT_CONFIG } from "./javascript-family/index.js";
 import { CSS_CONFIG, HTML_CONFIG, JSON_CONFIG, XML_CONFIG } from "./markup-languages/index.js";
@@ -50,6 +50,7 @@ export const LANGUAGE_CONFIGS: Record<SupportedLanguage, LanguageConfig> = {
   batch: BATCH_CONFIG,
   json: JSON_CONFIG,
   zig: ZIG_CONFIG,
+  helm: HELM_CONFIG,
 };
 
 /**

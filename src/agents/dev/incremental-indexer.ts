@@ -1,10 +1,10 @@
 /**
- * Incremental Indexer - Модуль для инкрементальной индексации изменённых файлов
+ * Incremental Indexer - Module for incremental indexing of changed files
  *
- * Упрощает handleIncrementalReindex (224 строки, complexity 31)
- * в понятные модульные функции.
+ * Simplifies handleIncrementalReindex (224 lines, complexity 31)
+ * into understandable modular functions.
  *
- * @see src/agents/dev-agent.ts - оригинальная функция handleIncrementalReindex
+ * @see src/agents/dev-agent.ts - original handleIncrementalReindex function
  */
 
 import { extname } from "node:path";
@@ -20,7 +20,7 @@ import type { ProviderKind } from "../semantic/provider-config.js";
 // =============================================================================
 
 /**
- * Результат разделения файлов
+ * File separation result
  */
 export interface FileSeparationResult {
   supportedFiles: string[];
@@ -28,7 +28,7 @@ export interface FileSeparationResult {
 }
 
 /**
- * Результат обработки файлов
+ * File processing result
  */
 export interface ProcessingResult {
   successCount: number;
@@ -37,7 +37,7 @@ export interface ProcessingResult {
 }
 
 /**
- * Поддерживаемые расширения для полного парсинга
+ * Supported extensions for full parsing
  */
 const SUPPORTED_EXTENSIONS = [
   ".ts",
@@ -59,6 +59,7 @@ const SUPPORTED_EXTENSIONS = [
   ".h",
   ".hpp",
   ".swift",
+  ".tpl",
 ];
 
 // =============================================================================
@@ -66,10 +67,10 @@ const SUPPORTED_EXTENSIONS = [
 // =============================================================================
 
 /**
- * Разделить файлы на поддерживаемые (полный парсинг) и остальные (heuristic)
+ * Separate files into supported (full parsing) and others (heuristic)
  *
- * @param files - Список файлов для обработки
- * @returns Разделённые файлы
+ * @param files - List of files to process
+ * @returns Separated files
  */
 export function separateFilesBySupport(files: string[]): FileSeparationResult {
   const supportedFiles: string[] = [];
@@ -104,7 +105,7 @@ export function separateFilesBySupport(files: string[]): FileSeparationResult {
 // =============================================================================
 
 /**
- * Контекст для настройки embeddings
+ * Context for embedding configuration
  */
 export interface EmbeddingSetupContext {
   parserAgent: ParserAgent;
@@ -112,10 +113,10 @@ export interface EmbeddingSetupContext {
 }
 
 /**
- * Настроить vector provider для инкрементальной индексации
+ * Configure vector provider for incremental indexing
  *
- * @param context - Контекст с parser agent и директорией
- * @returns true если успешно настроено
+ * @param context - Context with parser agent and directory
+ * @returns true if successfully configured
  */
 export async function setupVectorProvider(context: EmbeddingSetupContext): Promise<boolean> {
   try {
@@ -169,11 +170,11 @@ export async function setupVectorProvider(context: EmbeddingSetupContext): Promi
 }
 
 /**
- * Настроить EmbeddingGenerator для централизованного режима
+ * Configure EmbeddingGenerator for centralized mode
  *
- * @param parserAgent - Parser agent для настройки
- * @param embeddingConfig - Конфигурация embeddings
- * @returns true если успешно настроено
+ * @param parserAgent - Parser agent to configure
+ * @param embeddingConfig - Embedding configuration
+ * @returns true if successfully configured
  */
 export async function setupEmbeddingGenerator(
   parserAgent: ParserAgent,
@@ -229,12 +230,12 @@ export async function setupEmbeddingGenerator(
 // =============================================================================
 
 /**
- * Обработать поддерживаемые файлы через parser
+ * Process supported files through parser
  *
- * @param files - Список файлов
+ * @param files - List of files
  * @param parserAgent - Parser agent
  * @param indexerAgent - Indexer agent
- * @returns Количество успехов и ошибок
+ * @returns Success and error counts
  */
 export async function processSupportedFiles(
   files: string[],
@@ -286,11 +287,11 @@ export async function processSupportedFiles(
 }
 
 /**
- * Обработать неподдерживаемые файлы через heuristic parser
+ * Process unsupported files through heuristic parser
  *
- * @param files - Список файлов
+ * @param files - List of files
  * @param indexerAgent - Indexer agent
- * @returns Количество успехов и ошибок
+ * @returns Success and error counts
  */
 export async function processHeuristicFiles(
   files: string[],
@@ -330,7 +331,7 @@ export async function processHeuristicFiles(
  * Flush pending embeddings to FAISS index
  *
  * @param parserAgent - Parser agent with accumulator
- * @returns true если успешно
+ * @returns true if successful
  */
 export async function flushPendingEmbeddings(parserAgent: ParserAgent): Promise<boolean> {
   const accumulator = parserAgent.getAccumulator();
@@ -366,7 +367,7 @@ export async function flushPendingEmbeddings(parserAgent: ParserAgent): Promise<
 }
 
 /**
- * Сохранить FAISS index на диск
+ * Save FAISS index to disk
  */
 async function saveIndexToDisk(): Promise<void> {
   try {

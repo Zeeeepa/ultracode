@@ -70,6 +70,7 @@ export {
 // Semantic Search & Analysis
 export {
   AnalyzeCodeImpactSchema,
+  AnalyzeSwaggerImpactSchema,
   CrossLanguageSearchSchema,
   DetectCodeClonesSchema,
   FindRelatedConceptsSchema,

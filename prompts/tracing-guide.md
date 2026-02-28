@@ -1,41 +1,41 @@
 # Semantic Static Tracing Guide
 
-Статический анализ потока выполнения кода без его запуска.
+Static analysis of code execution flow without running it.
 
-## Когда использовать
+## When to Use
 
-| Вопрос | Инструмент | Что получишь |
-|--------|------------|--------------|
-| "Как код попадает от A к B?" | `trace_flow` | Пути, состояния, условия, Mermaid диаграмма |
-| "Почему метод не вызывается?" | `trace_backwards` | Вызывающие, блокирующие условия, диагноз |
-| "Как данные влияют на состояние?" | `trace_data_flow` | Источники, трансформации, матрица поведения |
-| "Что изменится при другом значении?" | `analyze_state_impact` | Сценарии, конфликты, ripple effects |
-| "Какие условия влияют на сценарий?" | `find_decision_points` | Точки решений с классификацией |
+| Question | Tool | What You Get |
+|----------|------|--------------|
+| "How does code get from A to B?" | `trace_flow` | Paths, states, conditions, Mermaid diagram |
+| "Why isn't the method called?" | `trace_backwards` | Callers, blocking conditions, diagnosis |
+| "How does data affect state?" | `trace_data_flow` | Sources, transformations, behavior matrix |
+| "What changes with a different value?" | `analyze_state_impact` | Scenarios, conflicts, ripple effects |
+| "What conditions affect the scenario?" | `find_decision_points` | Decision points with classification |
 
-## trace_flow — Трассировка от A к B
+## trace_flow — Trace from A to B
 
-Найти все пути выполнения между двумя точками:
+Find all execution paths between two points:
 
 ```typescript
 trace_flow({
   from: "handleLogin",
   to: "redirectToHome",
-  trackStates: true,     // Отслеживать изменения состояний
-  trackConditions: true, // Отслеживать ветвления
+  trackStates: true,     // Track state changes
+  trackConditions: true, // Track branching
   maxDepth: 15,
   format: "mermaid"      // sequence | tree | graph | mermaid
 })
 ```
 
-**Возвращает:**
-- Пути с confidence scores
-- Изменения состояний на каждом шаге
-- Условия и ветвления
+**Returns:**
+- Paths with confidence scores
+- State changes at each step
+- Conditions and branches
 - Mermaid sequence diagram
 
-## trace_backwards — Обратная трассировка
+## trace_backwards — Backward Trace
 
-Понять почему метод не вызывается или что на него влияет:
+Understand why a method is not called or what affects it:
 
 ```typescript
 trace_backwards({
@@ -46,47 +46,47 @@ trace_backwards({
 })
 ```
 
-**Типы вопросов:**
-- `why_not_called` — найти блокирующие условия
-- `what_affects` — все зависимости
-- `dependencies` — полный граф зависимостей
+**Question types:**
+- `why_not_called` — find blocking conditions
+- `what_affects` — all dependencies
+- `dependencies` — full dependency graph
 
-**Возвращает:**
-- Список вызывающих с вероятностями (always/conditional/rare)
-- Блокирующие условия с рекомендациями
-- Зависимости от состояний
-- Цепочки вызовов
-- Диагноз с suggested debug points
+**Returns:**
+- List of callers with probabilities (always/conditional/rare)
+- Blocking conditions with recommendations
+- State dependencies
+- Call chains
+- Diagnosis with suggested debug points
 
-## trace_data_flow — Поток данных
+## trace_data_flow — Data Flow
 
-Проследить как данные влияют на целевое состояние:
+Trace how data affects a target state:
 
 ```typescript
 trace_data_flow({
   entryPoint: "AppInit",
   targetState: "startPage",
-  dataSources: ["config", "api:fetchUser"], // auto-detect если пусто
+  dataSources: ["config", "api:fetchUser"], // auto-detect if empty
   trackTransformations: true
 })
 ```
 
-**Источники данных (auto-detect):**
+**Data sources (auto-detect):**
 - API: fetch, axios, http
 - Storage: localStorage, database
 - Props: props, input, param
 - State: state, store, redux
 - Config: config, settings, env
 
-**Возвращает:**
-- Потоки данных от источников
-- Трансформации (parse, map, validate)
-- Ветвления на основе данных
-- Матрица поведения для разных inputs
+**Returns:**
+- Data flows from sources
+- Transformations (parse, map, validate)
+- Data-based branching
+- Behavior matrix for different inputs
 
-## analyze_state_impact — Влияние состояния
+## analyze_state_impact — State Impact
 
-Понять как состояние влияет на разные сценарии:
+Understand how state affects different scenarios:
 
 ```typescript
 analyze_state_impact({
@@ -98,18 +98,18 @@ analyze_state_impact({
 })
 ```
 
-**Возвращает:**
-- Все использования состояния (read/write/condition)
-- Для каждого сценария:
-  - Доступные пути
-  - Заблокированные пути
-  - Включённые фичи
-- Конфликты (множественные writers, race conditions)
-- Ripple effects (прямое и косвенное влияние)
+**Returns:**
+- All state usages (read/write/condition)
+- For each scenario:
+  - Available paths
+  - Blocked paths
+  - Enabled features
+- Conflicts (multiple writers, race conditions)
+- Ripple effects (direct and indirect impact)
 
-## find_decision_points — Точки решений
+## find_decision_points — Decision Points
 
-Найти все места где код принимает решения:
+Find all places where code makes decisions:
 
 ```typescript
 find_decision_points({
@@ -120,39 +120,39 @@ find_decision_points({
 })
 ```
 
-**Типы точек решений:**
-- `validation` — валидация входных данных
-- `api_response` — обработка ответов API
-- `state_mutation` — изменение состояния
-- `guard` — guard условия (early return)
-- `loop` — контроль цикла
+**Decision point types:**
+- `validation` — input data validation
+- `api_response` — API response handling
+- `state_mutation` — state change
+- `guard` — guard conditions (early return)
+- `loop` — loop control
 - `error_handling` — try-catch
-- `feature_flag` — переключатели фич
+- `feature_flag` — feature toggles
 
-**Уровни влияния:**
-- `critical` — блокирует выполнение
-- `high` — существенно влияет
-- `medium` — умеренное влияние
-- `low` — минимальное влияние
+**Impact levels:**
+- `critical` — blocks execution
+- `high` — significant impact
+- `medium` — moderate impact
+- `low` — minimal impact
 
-**Возвращает:**
-- Список точек решений с классификацией
+**Returns:**
+- List of decision points with classification
 - Mermaid flowchart
 - Summary: total, critical, possible outcomes
 
-## Примеры использования
+## Usage Examples
 
-### Отладка: почему не срабатывает?
+### Debugging: why doesn't it trigger?
 
 ```typescript
-// Шаг 1: Найти блокирующие условия
+// Step 1: Find blocking conditions
 trace_backwards({
   target: "sendNotification",
   question: "why_not_called"
 })
-// → Найдёт: "user.preferences.notifications === false" блокирует
+// -> Finds: "user.preferences.notifications === false" is blocking
 
-// Шаг 2: Проверить влияние настройки
+// Step 2: Check the setting's impact
 analyze_state_impact({
   state: "user.preferences.notifications",
   scenarios: [
@@ -160,49 +160,49 @@ analyze_state_impact({
     { value: false, label: "disabled" }
   ]
 })
-// → Покажет какие пути открыты/закрыты для каждого значения
+// -> Shows which paths are open/closed for each value
 ```
 
-### Понимание: как данные влияют на UI?
+### Understanding: how does data affect UI?
 
 ```typescript
 trace_data_flow({
   entryPoint: "loadDashboard",
   targetState: "dashboardData"
 })
-// → Покажет: API → parse → validate → setState
-// → Матрица: если API error → fallback state
+// -> Shows: API -> parse -> validate -> setState
+// -> Matrix: if API error -> fallback state
 ```
 
-### Рефакторинг: где нужно изменить логику?
+### Refactoring: where does the logic need to change?
 
 ```typescript
 find_decision_points({
   scenario: "user authentication",
   groupBy: "impact"
 })
-// → Список всех if/switch/guards связанных с auth
-// → Сгруппировано по важности
+// -> List of all if/switch/guards related to auth
+// -> Grouped by importance
 ```
 
-## Output форматы
+## Output Formats
 
 ### Text (default)
 ```
-═══ Trace Flow: handleLogin → redirectToHome ═══
+=== Trace Flow: handleLogin -> redirectToHome ===
 
 Found 2 path(s):
 
-─── Path 1 (confidence: 85%) ───
+--- Path 1 (confidence: 85%) ---
 Summary: Login flow via session creation
 
-  1. → handleLogin (/src/auth.ts:10)
-     └─ if: credentials.valid
-  2. → createSession (/src/session.ts:5)
-     └─ isAuthenticated: false → true
-  3. → redirectToHome (/src/router.ts:100)
+  1. -> handleLogin (/src/auth.ts:10)
+     +- if: credentials.valid
+  2. -> createSession (/src/session.ts:5)
+     +- isAuthenticated: false -> true
+  3. -> redirectToHome (/src/router.ts:100)
 
-─── States ───
+--- States ---
 Modified: isAuthenticated, currentSession
 ```
 
@@ -216,16 +216,16 @@ sequenceDiagram
   P1->>P2: session created
 ```
 
-## Интеграция с семантическим поиском
+## Integration with Semantic Search
 
-Трассировка автоматически использует семантический поиск (если доступен) для:
-- Нечёткого поиска entry/exit points по описанию
-- Улучшения качества анализа
-- Естественно-языковых запросов
+Tracing automatically uses semantic search (if available) for:
+- Fuzzy search of entry/exit points by description
+- Improved analysis quality
+- Natural language queries
 
 ```typescript
 trace_flow({
-  from: "user login handler",  // Семантический поиск найдёт handleLogin
-  to: "home page redirect"     // Найдёт redirectToHome
+  from: "user login handler",  // Semantic search will find handleLogin
+  to: "home page redirect"     // Will find redirectToHome
 })
 ```

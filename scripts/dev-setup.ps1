@@ -439,7 +439,7 @@ if ($webgpuInstalled) {
     Write-ColorOutput "  • WebGPU Compute           - ❌ Not installed" "Red"
 }
 
-if (Test-Path "external-tools\native\cuda\build\ultrascript_cuda.node") {
+if (Test-Path "external-tools\native\cuda\build\ultracode_cuda.node") {
     Write-ColorOutput "  • CUDA Native              - ✅ Built (100-200x)" "Green"
 } else {
     Write-ColorOutput "  • CUDA Native              - ⚠️  Not built (optional)" "Yellow"

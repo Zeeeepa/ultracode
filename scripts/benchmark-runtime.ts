@@ -92,7 +92,7 @@ function formatResult(result: BenchmarkResult): string {
 // TEST DATA SETUP
 // =============================================================================
 
-const testDir = join(tmpdir(), `ultrascript-bench-${Date.now()}`);
+const testDir = join(tmpdir(), `ultracode-bench-${Date.now()}`);
 const testFiles: string[] = [];
 
 async function setupTestData(): Promise<void> {
@@ -726,7 +726,7 @@ async function runFetchBenchmarks(): Promise<BenchmarkResult[]> {
 
 async function main(): Promise<void> {
   console.log("═".repeat(60));
-  console.log("🚀 UltraScript Runtime Benchmark");
+  console.log("🚀 UltraCode Runtime Benchmark");
   console.log("═".repeat(60));
 
   // Show runtime info

@@ -671,7 +671,7 @@ function generateReport(results: BenchmarkResult[], entities: CodeEntity[], date
   let md = `# Embedding Models Benchmark Results
 
 **Date:** ${date}
-**Project:** ultrascript-tools-mcp
+**Project:** ultracode
 
 ## Hardware
 
@@ -1040,7 +1040,7 @@ async function main() {
           tokensPerSec: 0,
           throughputChunksPerSec: 0,
           status: "skip",
-          error: `Not installed. Run: bunx ultrascript-tools setup-embedding`,
+          error: `Not installed. Run: bunx ultracode setup-embedding`,
         });
         console.log("");
         continue;

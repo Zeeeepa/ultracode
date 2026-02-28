@@ -4,7 +4,7 @@ plugins {
     application
 }
 
-group = "ultrascript"
+group = "ultracode"
 version = "1.1.0"
 
 repositories {
@@ -30,7 +30,7 @@ dependencies {
 }
 
 application {
-    mainClass.set("ultrascript.K2CliKt")
+    mainClass.set("ultracode.K2CliKt")
 }
 
 kotlin {
@@ -53,7 +53,7 @@ tasks.register<Jar>("fatJar") {
     archiveClassifier.set("all")
 
     manifest {
-        attributes["Main-Class"] = "ultrascript.K2CliKt"
+        attributes["Main-Class"] = "ultracode.K2CliKt"
     }
 
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE

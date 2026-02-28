@@ -1,46 +1,27 @@
-/**
- * Tool for querying the graph database directly via GraphStorage API
- */
-
 import type { Entity, GraphStorage, Relationship } from "../types/storage.js";
 
-function likePattern(input: string): string {
-  // Minimal escaping for LIKE; wrap with % for contains semantics
-  const escaped = input.replace(/[%_]/g, (m) => `\\${m}`);
-  return `%${escaped}%`;
+function likePattern(raw: string): string {
+  return `%${raw.replace(/[%_]/g, (c) => `\\${c}`)}%`;
 }
 
 export async function queryGraphEntities(
   storage: GraphStorage,
   query?: string,
-  limit: number = 100,
+  limit = 100,
 ): Promise<{
   entities: Entity[];
   relationships: Relationship[];
-  stats: {
-    totalEntities: number;
-    totalRelationships: number;
-  };
+  stats: { totalEntities: number; totalRelationships: number };
 }> {
-  // Use the storage’s executeQuery to avoid raw SQL
-  const q = await storage.executeQuery({
+  const result = await storage.executeQuery({
     type: "entity",
     limit,
-    filters: query
-      ? {
-          // Pass LIKE-compatible pattern via RegExp source consumed by storage
-          name: new RegExp(likePattern(query)),
-        }
-      : undefined,
+    filters: query ? { name: new RegExp(likePattern(query)) } : undefined,
   });
-
   return {
-    entities: q.entities,
-    relationships: q.relationships,
-    stats: {
-      totalEntities: q.stats.totalEntities,
-      totalRelationships: q.stats.totalRelationships,
-    },
+    entities: result.entities,
+    relationships: result.relationships,
+    stats: { totalEntities: result.stats.totalEntities, totalRelationships: result.stats.totalRelationships },
   };
 }
 
@@ -49,11 +30,10 @@ export async function getGraphStats(storage: GraphStorage): Promise<{
   relationships: { total: number; byType: Record<string, number> };
   files: { total: number };
 }> {
-  // Use storage metrics for reliable totals; byType left empty to avoid raw SQL
-  const metrics = await storage.getMetrics();
+  const m = await storage.getMetrics();
   return {
-    entities: { total: metrics.totalEntities, byType: {} },
-    relationships: { total: metrics.totalRelationships, byType: {} },
-    files: { total: metrics.totalFiles },
+    entities: { total: m.totalEntities, byType: {} },
+    relationships: { total: m.totalRelationships, byType: {} },
+    files: { total: m.totalFiles },
   };
 }

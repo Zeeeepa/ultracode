@@ -113,7 +113,7 @@ export function getVersionInfo(importMetaUrl: string): VersionInfo {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
 
     return {
-      name: packageJson.name || "@er77/ultrascript-tools-mcp",
+      name: packageJson.name || "ultracode",
       version: packageJson.version || "unknown",
       description: packageJson.description || "",
       homepage: packageJson.homepage || "",
@@ -125,11 +125,11 @@ export function getVersionInfo(importMetaUrl: string): VersionInfo {
   } catch (error) {
     // Fallback if package.json cannot be read
     return {
-      name: "@er77/ultrascript-tools-mcp",
+      name: "ultracode",
       version: "unknown",
       description: "Multi-agent LiteRAG MCP server for advanced code graph analysis",
-      homepage: "https://github.com/er77/ultrascript-tools-mcp",
-      repository: "git+https://github.com/er77/ultrascript-tools-mcp.git",
+      homepage: "https://github.com/faxenoff/ultracode",
+      repository: "git+https://github.com/faxenoff/ultracode.git",
       nodeVersion: process.version,
       platform: process.platform,
       arch: process.arch,

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * ulog - UltraScript Log Query CLI
+ * ulog - UltraCode Log Query CLI
  *
  * Fast log querying without full-text search.
  * Supports filtering by level, module, event, time, and KV pairs.
@@ -34,7 +34,7 @@ import {
 import { parseArgs } from "./query-parser.js";
 
 const HELP = `
-ulog - UltraScript Log Query CLI
+ulog - UltraCode Log Query CLI
 
 Usage: ulog [options] [log-file...]
 

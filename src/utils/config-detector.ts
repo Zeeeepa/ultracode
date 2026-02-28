@@ -24,14 +24,14 @@ const CONFIG_FILES = {
   oxlint: ["oxlint.config.ts", "oxlint.config.js"],
 };
 
-// Кэш на 100 проектов, TTL 5 минут
+// Cache for 100 projects, TTL 5 minutes
 const configCache = new LRUCache<string, LinterConfigInfo>({
   max: 100,
-  ttl: 1000 * 60 * 5, // 5 минут
+  ttl: 1000 * 60 * 5, // 5 minutes
 });
 
 /**
- * Проверяет существование файла
+ * Check if a file exists
  */
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -43,33 +43,33 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 /**
- * Определяет доступные конфигурации линтеров в проекте (без кэша)
+ * Detect available linter configurations in the project (without cache)
  */
 async function detectLinterConfigsUncached(projectPath: string): Promise<LinterConfigInfo> {
-  // Проверка Biome
+  // Check Biome
   const hasBiomeConfig = (await Promise.all(CONFIG_FILES.biome.map((f) => fileExists(join(projectPath, f))))).some(
     (exists) => exists,
   );
 
-  // Проверка ESLint
+  // Check ESLint
   const hasESLintConfig = (await Promise.all(CONFIG_FILES.eslint.map((f) => fileExists(join(projectPath, f))))).some(
     (exists) => exists,
   );
 
-  // Проверка oxlint
+  // Check oxlint
   const hasOxlintConfig = (await Promise.all(CONFIG_FILES.oxlint.map((f) => fileExists(join(projectPath, f))))).some(
     (exists) => exists,
   );
 
-  // Определение предпочтительного линтера
+  // Determine preferred linter
   let preferredFixerForTS: "oxlint" | "biome" | "eslint" = "oxlint";
 
   if (hasBiomeConfig) {
-    preferredFixerForTS = "biome"; // Приоритет - быстрый и уже настроен
+    preferredFixerForTS = "biome"; // Priority - fast and already configured
   } else if (hasESLintConfig) {
-    preferredFixerForTS = "eslint"; // Больше правил
+    preferredFixerForTS = "eslint"; // More rules
   } else if (hasOxlintConfig) {
-    preferredFixerForTS = "oxlint"; // Базовый
+    preferredFixerForTS = "oxlint"; // Basic
   }
 
   return {
@@ -81,30 +81,30 @@ async function detectLinterConfigsUncached(projectPath: string): Promise<LinterC
 }
 
 /**
- * Определяет доступные конфигурации линтеров в проекте (с кэшированием)
+ * Detect available linter configurations in the project (with caching)
  *
- * @param projectPath - Путь к корню проекта
- * @returns Информация о конфигурациях линтеров
+ * @param projectPath - Path to the project root
+ * @returns Linter configuration information
  *
  * @example
  * ```typescript
  * const config = await detectLinterConfigs('/path/to/project');
  * if (config.preferredFixerForTS === 'biome') {
- *   // Использовать Biome для автофиксов
+ *   // Use Biome for autofixes
  * }
  * ```
  */
 export async function detectLinterConfigs(projectPath: string): Promise<LinterConfigInfo> {
-  // Проверка кэша
+  // Check cache
   const cached = configCache.get(projectPath);
   if (cached) {
     return cached;
   }
 
-  // Определение конфигов (основная логика)
+  // Detect configs (main logic)
   const result = await detectLinterConfigsUncached(projectPath);
 
-  // Сохранение в кэш
+  // Save to cache
   configCache.set(projectPath, result);
 
   return result;

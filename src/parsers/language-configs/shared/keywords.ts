@@ -97,6 +97,9 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
   // Zig
   zig: "zig",
   zon: "zig",
+
+  // Helm
+  tpl: "helm",
 };
 
 /**
@@ -291,5 +294,32 @@ export const LANGUAGE_KEYWORDS: Record<
     imports: ["@import"],
     exports: ["pub", "export"],
     types: ["type", "anytype", "comptime_int", "comptime_float", "bool", "void", "noreturn", "anyerror"],
+  },
+
+  helm: {
+    functions: ["define", "template", "tpl"],
+    classes: [],
+    imports: ["include", "template"],
+    exports: [],
+    types: [
+      "toYaml",
+      "nindent",
+      "indent",
+      "quote",
+      "default",
+      "printf",
+      "hasKey",
+      "hasPrefix",
+      "trimPrefix",
+      "list",
+      "append",
+      "dict",
+      "merge",
+      "range",
+      "with",
+      "if",
+      "else",
+      "end",
+    ],
   },
 };

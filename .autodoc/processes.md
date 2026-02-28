@@ -1,29 +1,29 @@
-# Технические процессы
+# Technical Processes
 
-## Обзор
+## Overview
 
-Документ описывает внутренние технические процессы UltraScript Tools MCP: парсинг, индексацию, генерацию эмбеддингов и управление ресурсами.
+This document describes the internal technical processes of UltraCode: parsing, indexing, embedding generation, and resource management.
 
-**Навигация по коду:**
-- [📖 Storage AUTODOC](../src/storage/AUTODOC.md) — детали хранилища
-- [📖 Agents AUTODOC](../src/agents/AUTODOC.md) — агенты и их методы
-- [📖 Semantic AUTODOC](../src/agents/semantic/AUTODOC.md) — эмбеддинги и поиск
+**Code navigation:**
+- [📖 Storage AUTODOC](../src/storage/AUTODOC.md) — storage details
+- [📖 Agents AUTODOC](../src/agents/AUTODOC.md) — agents and their methods
+- [📖 Semantic AUTODOC](../src/agents/semantic/AUTODOC.md) — embeddings and search
 
-## 1. Процесс парсинга
+## 1. Parsing Process
 
-**Реализация:** [ParserAgent](../src/agents/parser-agent.ts) | [📖 Parsers AUTODOC](../src/parsers/AUTODOC.md)
+**Implementation:** [ParserAgent](../src/agents/parser-agent.ts) | [📖 Parsers AUTODOC](../src/parsers/AUTODOC.md)
 
-### Нативные парсеры
+### Native Parsers
 
-Каждый язык обрабатывается собственным парсером для максимальной точности AST:
+Each language is processed by its own parser for maximum AST accuracy:
 
 ```
-Файл (.ts/.py/.go/...)
+File (.ts/.py/.go/...)
         │
         ▼
 ┌───────────────────┐
 │  Language Router  │
-│  (по расширению)  │
+│  (by extension)   │
 └─────────┬─────────┘
           │
     ┌─────┼─────┬─────┬─────┬─────┐
@@ -46,46 +46,46 @@
           └─────────────────┘
 ```
 
-### Извлекаемые сущности
+### Extracted Entities
 
-| Тип | Описание | Языки |
-|-----|----------|-------|
-| `function` | Функции и методы | Все |
-| `class` | Классы | TS, Python, Java, C++, C#, Kotlin |
-| `interface` | Интерфейсы | TS, Java, Go, Kotlin |
-| `type` | Типы/Алиасы | TS, Go, Rust |
-| `enum` | Перечисления | Все |
-| `variable` | Константы/Переменные | Все |
-| `import` | Импорты | Все |
-| `export` | Экспорты | TS, JS |
+| Type | Description | Languages |
+|------|-------------|-----------|
+| `function` | Functions and methods | All |
+| `class` | Classes | TS, Python, Java, C++, C#, Kotlin |
+| `interface` | Interfaces | TS, Java, Go, Kotlin |
+| `type` | Types/Aliases | TS, Go, Rust |
+| `enum` | Enumerations | All |
+| `variable` | Constants/Variables | All |
+| `import` | Imports | All |
+| `export` | Exports | TS, JS |
 
-### Извлекаемые связи
+### Extracted Relationships
 
-| Тип связи | Описание |
-|-----------|----------|
-| `imports` | A импортирует B |
-| `exports` | A экспортирует B |
-| `extends` | A наследует B |
-| `implements` | A реализует B |
-| `calls` | A вызывает B |
-| `uses` | A использует тип B |
-| `contains` | A содержит B (файл → класс → метод) |
+| Relationship Type | Description |
+|-------------------|-------------|
+| `imports` | A imports B |
+| `exports` | A exports B |
+| `extends` | A inherits B |
+| `implements` | A implements B |
+| `calls` | A calls B |
+| `uses` | A uses type B |
+| `contains` | A contains B (file → class → method) |
 
-### Параллельный парсинг через SubprocessPool
+### Parallel Parsing via SubprocessPool
 
-**Реализация:** [ParsingSubprocessPool](../src/agents/workers/parsing-subprocess-pool.ts) | [📖 Workers AUTODOC](../src/agents/workers/AUTODOC.md)
+**Implementation:** [ParsingSubprocessPool](../src/agents/workers/parsing-subprocess-pool.ts) | [📖 Workers AUTODOC](../src/agents/workers/AUTODOC.md)
 
-Для ускорения парсинга больших проектов используется пул подпроцессов:
+A subprocess pool is used to speed up parsing of large projects:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ParsingSubprocessPool                         │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │  Конфигурация:                                             │  │
-│  │  - poolSize: до 8 воркеров (по числу CPU)                 │  │
-│  │  - maxFilesPerChunk: 100 файлов на воркера                │  │
-│  │  - memoryLimitMB: 1500 (рестарт при превышении)           │  │
-│  │  - keepaliveMode: один воркер остаётся для инкремента     │  │
+│  │  Configuration:                                            │  │
+│  │  - poolSize: up to 8 workers (by CPU count)               │  │
+│  │  - maxFilesPerChunk: 100 files per worker                 │  │
+│  │  - memoryLimitMB: 1500 (restart on exceeding)             │  │
+│  │  - keepaliveMode: one worker remains for incremental use  │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────┬───────────────────────────────┘
                                   │
@@ -107,34 +107,34 @@
                     │  pendingTasks: Map      │
                     │  <taskId, {resolve,     │
                     │   reject}>              │
-                    │  (защита от race cond.) │
+                    │  (race cond. protection)│
                     └─────────────────────────┘
 ```
 
-**Ключевые особенности:**
-- **Кроссплатформенность** — поддержка Bun и Node.js через единый интерфейс
-- **IPC с V8 serialization** — эффективная передача данных без JSON
-- **Map-based task tracking** — защита от race condition при быстрой обработке чанков
-- **Динамическое масштабирование** — количество воркеров зависит от объёма файлов
-- **Keepalive режим** — один воркер остаётся для быстрой инкрементальной обработки
+**Key features:**
+- **Cross-platform** — Bun and Node.js support through a unified interface
+- **IPC with V8 serialization** — efficient data transfer without JSON
+- **Map-based task tracking** — race condition protection during fast chunk processing
+- **Dynamic scaling** — worker count depends on file volume
+- **Keepalive mode** — one worker remains for fast incremental processing
 
-## 2. Процесс индексации
+## 2. Indexing Process
 
-**Реализация:** [IndexerAgent](../src/agents/indexer-agent.ts) | [GraphStorageLibSQL](../src/storage/graph-storage-libsql.ts)
+**Implementation:** [IndexerAgent](../src/agents/indexer-agent.ts) | [GraphStorageLibSQL](../src/storage/graph-storage-libsql.ts)
 
-**Ключевые методы:**
-- [`insertEntities():123`](../src/storage/graph-storage-libsql.ts#L123) — batch insert сущностей
-- [`insertRelationships():303`](../src/storage/graph-storage-libsql.ts#L303) — batch insert связей
+**Key methods:**
+- [`insertEntities():123`](../src/storage/graph-storage-libsql.ts#L123) — batch insert of entities
+- [`insertRelationships():303`](../src/storage/graph-storage-libsql.ts#L303) — batch insert of relationships
 
-### Инкрементальная индексация
+### Incremental Indexing
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Detect Changed Files                          │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  1. Git diff (если репозиторий)                         │    │
+│  │  1. Git diff (if repository)                            │    │
 │  │  2. File modification time comparison                   │    │
-│  │  3. Hash comparison для подозрительных файлов           │    │
+│  │  3. Hash comparison for suspicious files                │    │
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────┬───────────────────────────────┘
                                   │
@@ -152,19 +152,19 @@
 
 ### Batch Operations
 
-Для больших кодовых баз используется батчинг:
+Batching is used for large codebases:
 
 ```typescript
-// Конфигурация батчинга
+// Batching configuration
 const BATCH_CONFIG = {
-  entityBatchSize: 500,      // Сущностей за транзакцию
-  relationshipBatchSize: 1000, // Связей за транзакцию
-  embeddingBatchSize: 64,    // Эмбеддингов за запрос
-  commitInterval: 5000,      // ms между коммитами
+  entityBatchSize: 500,      // Entities per transaction
+  relationshipBatchSize: 1000, // Relationships per transaction
+  embeddingBatchSize: 64,    // Embeddings per request
+  commitInterval: 5000,      // ms between commits
 };
 ```
 
-### Управление памятью при индексации
+### Memory Management During Indexing
 
 ```
 ResourceManager
@@ -189,16 +189,16 @@ ResourceManager
    └────────┘    └────────┘    └────────┘
 ```
 
-## 3. Процесс генерации эмбеддингов
+## 3. Embedding Generation Process
 
-**Реализация:** [SemanticAgent](../src/agents/semantic-agent.ts) | [📖 Semantic AUTODOC](../src/agents/semantic/AUTODOC.md)
+**Implementation:** [SemanticAgent](../src/agents/semantic-agent.ts) | [📖 Semantic AUTODOC](../src/agents/semantic/AUTODOC.md)
 
-**Ключевые компоненты:**
-- [EmbeddingProcessor](../src/agents/semantic/embedding-processor.ts) — обработка эмбеддингов
-- [VectorIndexManager](../src/agents/semantic/vector-index-manager.ts) — FAISS индексы
-- [SmartChunker](../src/semantic/smart-chunker.ts) — AST-aware разбиение
+**Key components:**
+- [EmbeddingProcessor](../src/agents/semantic/embedding-processor.ts) — embedding processing
+- [VectorIndexManager](../src/agents/semantic/vector-index-manager.ts) — FAISS indexes
+- [SmartChunker](../src/semantic/smart-chunker.ts) — AST-aware splitting
 
-### Pipeline эмбеддингов
+### Embedding Pipeline
 
 ```
 Entity Code
@@ -207,9 +207,9 @@ Entity Code
 ┌─────────────────────────────────────┐
 │  SmartChunker                        │
 │  ┌─────────────────────────────┐    │
-│  │  1. Разбиение по AST        │    │
-│  │  2. Сохранение контекста    │    │
-│  │  3. Overlap для связности   │    │
+│  │  1. Split by AST            │    │
+│  │  2. Preserve context        │    │
+│  │  3. Overlap for continuity  │    │
 │  └─────────────────────────────┘    │
 └─────────────────────┬───────────────┘
                       │
@@ -235,17 +235,17 @@ Entity Code
 └─────────────────────────────────────┘
 ```
 
-### Провайдеры эмбеддингов
+### Embedding Providers
 
-| Провайдер | Устройство | Скорость | Качество | Установка |
-|-----------|------------|----------|----------|-----------|
-| OVMS | CPU/GPU | 1000+ chunks/s | Высокое | Docker |
-| TEI | GPU (NVIDIA) | 1000+ chunks/s | Высокое | Docker |
-| Ollama | CPU/GPU | 100-300 chunks/s | Высокое | Простая |
-| Transformers | CPU | 200 chunks/s | Высокое | npm |
-| vLLM | GPU | 500+ chunks/s | Высокое | Docker |
+| Provider | Device | Speed | Quality | Setup |
+|----------|--------|-------|---------|-------|
+| OVMS | CPU/GPU | 1000+ chunks/s | High | Docker |
+| TEI | GPU (NVIDIA) | 1000+ chunks/s | High | Docker |
+| Ollama | CPU/GPU | 100-300 chunks/s | High | Easy |
+| Transformers | CPU | 200 chunks/s | High | npm |
+| vLLM | GPU | 500+ chunks/s | High | Docker |
 
-### Выбор модели эмбеддингов
+### Embedding Model Selection
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -274,9 +274,9 @@ Entity Code
     └─────────────────┘                 └─────────────────┘
 ```
 
-## 4. Управление агентами
+## 4. Agent Management
 
-### Жизненный цикл агента
+### Agent Lifecycle
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -303,28 +303,28 @@ Entity Code
       │                  │                                   │
 ```
 
-### Backpressure механизм
+### Backpressure Mechanism
 
 ```typescript
-// ResourceManager отслеживает нагрузку на агентов
+// ResourceManager tracks agent load
 interface AgentMetrics {
-  queueSize: number;      // Задач в очереди
-  processingTime: number; // Среднее время обработки
-  errorRate: number;      // Процент ошибок
+  queueSize: number;      // Tasks in queue
+  processingTime: number; // Average processing time
+  errorRate: number;      // Error percentage
 }
 
-// При перегрузке:
-// 1. Увеличивается приоритет текущих задач
-// 2. Новые задачи ставятся в очередь
-// 3. При критической нагрузке — отклонение новых задач
+// Under overload:
+// 1. Priority of current tasks is increased
+// 2. New tasks are queued
+// 3. Under critical load — new tasks are rejected
 ```
 
-## 5. Процесс поиска
+## 5. Search Process
 
-### Гибридный поиск
+### Hybrid Search
 
 ```
-Query: "обработка ошибок API"
+Query: "API error handling"
               │
               ├─────────────────┬─────────────────┐
               │                 │                 │
@@ -357,30 +357,30 @@ Query: "обработка ошибок API"
                        Final Results
 ```
 
-### Формула ранжирования
+### Ranking Formula
 
 ```
 score = α × vector_score + β × text_score + γ × entity_score
 
-где:
-  α = 0.5  (семантическое сходство)
-  β = 0.3  (текстовое совпадение)
-  γ = 0.2  (точное совпадение имени/типа)
+where:
+  α = 0.5  (semantic similarity)
+  β = 0.3  (text match)
+  γ = 0.2  (exact name/type match)
 ```
 
-## 6. Процесс Branch Layers
+## 6. Branch Layers Process
 
-**Реализация:** [📖 Storage AUTODOC](../src/storage/AUTODOC.md)
+**Implementation:** [📖 Storage AUTODOC](../src/storage/AUTODOC.md)
 
-**Ключевые методы:**
-- [`setProject():92`](../src/storage/graph-storage-libsql.ts#L92) — переключение проекта/ветки
-- [`getEntityFromBranch():180`](../src/storage/graph-storage-libsql.ts#L180) — получение с учётом layers
-- [`findEntitiesInBranch():203`](../src/storage/graph-storage-libsql.ts#L203) — поиск с tombstones
-- [`compareEntitiesBetweenBranches():221`](../src/storage/graph-storage-libsql.ts#L221) — сравнение веток
+**Key methods:**
+- [`setProject():92`](../src/storage/graph-storage-libsql.ts#L92) — switch project/branch
+- [`getEntityFromBranch():180`](../src/storage/graph-storage-libsql.ts#L180) — retrieve accounting for layers
+- [`findEntitiesInBranch():203`](../src/storage/graph-storage-libsql.ts#L203) — search with tombstones
+- [`compareEntitiesBetweenBranches():221`](../src/storage/graph-storage-libsql.ts#L221) — branch comparison
 
-### Layered Storage для Git-веток
+### Layered Storage for Git Branches
 
-При переключении веток система создаёт слоистое хранилище:
+When switching branches, the system creates layered storage:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -400,7 +400,7 @@ score = α × vector_score + β × text_score + γ × entity_score
 ┌─────────────────────────────────────────────────────────────────┐
 │              2. Create layer database                            │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  .ultrascript/branches/feature-auth.db                   │    │
+│  │  .ultracode/branches/feature-auth.db                   │    │
 │  │  Tables: entities, relationships, tombstones             │    │
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────┬───────────────────────────────────┘
@@ -415,16 +415,16 @@ score = α × vector_score + β × text_score + γ × entity_score
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Tombstone механизм
+### Tombstone Mechanism
 
 ```
-Entity в main: { id: "fn_123", name: "processUser" }
+Entity in main: { id: "fn_123", name: "processUser" }
                      │
-                     │ Удалён в feature/auth
+                     │ Deleted in feature/auth
                      ▼
-Tombstone в feature/auth: { entity_id: "fn_123", deleted_at: ... }
+Tombstone in feature/auth: { entity_id: "fn_123", deleted_at: ... }
                      │
-                     │ Query с учётом tombstones
+                     │ Query accounting for tombstones
                      ▼
          ┌─────────────────────────┐
          │ SELECT * FROM entities  │
@@ -438,19 +438,19 @@ Tombstone в feature/auth: { entity_id: "fn_123", deleted_at: ... }
 
 ### LRU Cleanup
 
-Старые ветки автоматически удаляются по LRU:
+Old branches are automatically removed by LRU:
 
 ```typescript
-// Конфигурация
+// Configuration
 const BRANCH_CONFIG = {
-  maxBranches: 20,      // Максимум веток в кэше
-  cleanupDays: 30,      // Удалять ветки старше N дней
+  maxBranches: 20,      // Maximum branches in cache
+  cleanupDays: 30,      // Remove branches older than N days
 };
 ```
 
-## 7. Процесс модификации кода
+## 7. Code Modification Process
 
-### Безопасное редактирование
+### Safe Editing
 
 ```
 modify_code(entityId, newCode)
@@ -493,16 +493,16 @@ modify_code(entityId, newCode)
 
 ## 8. AutoDoc Enrichment
 
-### Обогащение поиска документацией
+### Enriching Search with Documentation
 
-Семантический поиск автоматически обогащается документацией из `.autodoc/`:
+Semantic search is automatically enriched with documentation from `.autodoc/`:
 
 ```
-semantic_search("обработка ошибок")
+semantic_search("error handling")
               │
               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              1. Vector search по коду                            │
+│              1. Vector search over code                          │
 │  ┌─────────────────────────────────────────────────────────┐    │
 │  │  FAISS search → top-K entities                          │    │
 │  └─────────────────────────────────────────────────────────┘    │
@@ -512,9 +512,9 @@ semantic_search("обработка ошибок")
 ┌─────────────────────────────────────────────────────────────────┐
 │              2. AutoDoc lookup                                   │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  Для каждой entity:                                     │    │
-│  │  - Найти связанные docs по entity_id                    │    │
-│  │  - Извлечь descriptions, examples                       │    │
+│  │  For each entity:                                       │    │
+│  │  - Find related docs by entity_id                       │    │
+│  │  - Extract descriptions, examples                       │    │
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
@@ -531,8 +531,8 @@ semantic_search("обработка ошибок")
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Связанные документы
+## Related Documents
 
-- [→ ARCHITECTURE.md](./architecture.md) — архитектура системы
-- [→ FLOW.md](./flow.md) — сценарии использования
-- [→ DEPENDENCIES.md](./dependencies.md) — зависимости
+- [→ ARCHITECTURE.md](./architecture.md) — system architecture
+- [→ FLOW.md](./flow.md) — usage scenarios
+- [→ DEPENDENCIES.md](./dependencies.md) — dependencies

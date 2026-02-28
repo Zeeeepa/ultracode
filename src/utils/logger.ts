@@ -1,20 +1,8 @@
-/**
- * Rotated Debug Logger for MCP Server Activity
- *
- * Provides comprehensive logging with rotation for all MCP server activities
- * Stores logs in logs_llm folder with automatic rotation based on size and time
- */
-
 import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { LoggerConfig } from "./logger-types.js";
-import { LogLevel } from "./logger-types.js";
-// Event-driven architecture: buffer flush triggered by size threshold, not polling
-
-// =============================================================================
-// LOGGING CONFIGURATION
-// =============================================================================
+import { LogLevel, LogLevelName } from "./logger-types.js";
 
 export interface LogEntry {
   timestamp: string;
@@ -27,267 +15,164 @@ export interface LogEntry {
   duration?: number;
 }
 
-// Import centralized configuration
 import { LOGGING_CONFIG } from "../config/logging-config.js";
 
-// Default configuration
 const DEFAULT_CONFIG: LoggerConfig = LOGGING_CONFIG;
-
-// =============================================================================
-// LOGGER CLASS
-// =============================================================================
 
 export class RotatedLogger {
   private config: LoggerConfig;
   private currentLogFile: string;
   private logDir: string;
-
-  // Buffered async logging to reduce CPU usage
-  // Event-driven: flush triggered by BUFFER_SIZE threshold or time elapsed
-  private logBuffer: string[] = [];
-  private readonly BUFFER_SIZE = 50; // Flush every 50 entries
-  private readonly FLUSH_INTERVAL_MS = 500; // Flush every 500ms (lazy, no setTimeout)
-  private lastFlushTime: number = Date.now();
+  private buf: string[] = [];
+  private readonly BUF_CAP = 50;
+  private readonly STALE_MS = 500;
+  private lastDrain: number = Date.now();
 
   constructor(config: Partial<LoggerConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logDir = resolve(this.config.logDir);
-    this.ensureLogDirectory();
-    this.currentLogFile = this.getCurrentLogFile();
-    // Event-driven: flush is triggered by buffer size threshold in writeLog()
+    this.ensureDir();
+    this.currentLogFile = this.logFilePath();
   }
 
-  /**
-   * Synchronously flush buffer to disk (for shutdown/crash scenarios)
-   * Uses appendFileSync to guarantee data is written before process exit
-   */
-  private flushBufferSync(): void {
-    if (this.logBuffer.length === 0) return;
-
-    // Check if we need to rotate
+  private flushSync(): void {
+    if (this.buf.length === 0) return;
     if (this.shouldRotate()) {
-      this.rotateLogFile();
-      this.currentLogFile = this.getCurrentLogFile();
+      this.rotate();
+      this.currentLogFile = this.logFilePath();
     }
-
-    // Take all buffered entries and clear buffer
-    const entries = this.logBuffer.join("");
-    this.logBuffer = [];
-    this.lastFlushTime = Date.now(); // Update flush time
-
-    // Write synchronously - BLOCKS until written to disk
+    const batch = this.buf.join("");
+    this.buf.length = 0;
+    this.lastDrain = Date.now();
     try {
-      appendFileSync(this.currentLogFile, entries, "utf8");
-    } catch (error) {
-      console.error("Failed to write log (sync):", error);
+      appendFileSync(this.currentLogFile, batch, "utf8");
+    } catch (err) {
+      console.error("Failed to write log (sync):", err);
     }
   }
 
-  /**
-   * Final flush on shutdown (for cleanup)
-   */
-  stopFlushLoop(): void {
-    // Flush any remaining entries SYNCHRONOUSLY
-    this.flushBufferSync();
-  }
-
-  /**
-   * Public method to force flush buffer to disk
-   * Call this after critical operations to ensure logs are visible
-   */
-  flush(): void {
-    this.flushBufferSync();
-  }
-
-  /**
-   * Register process exit handlers to flush logs
-   * Call this once during initialization
-   */
-  registerExitHandlers(): void {
-    const flushAndExit = () => {
-      this.flushBufferSync();
-    };
-    process.on("exit", flushAndExit);
-    process.on("SIGINT", flushAndExit);
-    process.on("SIGTERM", flushAndExit);
-    process.on("uncaughtException", (err) => {
-      this.error("PROCESS", "Uncaught exception", { error: err.message, stack: err.stack });
-      this.flushBufferSync();
+  private flushAsync(): void {
+    if (this.buf.length === 0) return;
+    if (this.shouldRotate()) {
+      this.rotate();
+      this.currentLogFile = this.logFilePath();
+    }
+    const batch = this.buf.join("");
+    this.buf.length = 0;
+    this.lastDrain = Date.now();
+    appendFile(this.currentLogFile, batch).catch((err) => {
+      console.error("Failed to write log:", err);
     });
   }
 
-  private ensureLogDirectory(): void {
+  stopFlushLoop(): void {
+    this.flushSync();
+  }
+
+  flush(): void {
+    this.flushSync();
+  }
+
+  registerExitHandlers(): void {
+    const onExit = () => this.flushSync();
+    process.on("exit", onExit);
+    process.on("SIGINT", onExit);
+    process.on("SIGTERM", onExit);
+    process.on("uncaughtException", (err) => {
+      this.error("PROCESS", "Uncaught exception", { error: err.message, stack: err.stack });
+      this.flushSync();
+    });
+  }
+
+  private ensureDir(): void {
     if (!existsSync(this.logDir)) {
       mkdirSync(this.logDir, { recursive: true });
     }
   }
 
-  private getCurrentLogFile(): string {
-    const now = new Date();
-    // Use local date for log file name (not UTC)
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-    const dateStr = `${year}-${month}-${day}`;
-    return join(this.logDir, `mcp-server-${dateStr}.log`);
+  private logFilePath(): string {
+    const datePart = new Date().toLocaleDateString("sv");
+    return join(this.logDir, `mcp-server-${datePart}.log`);
   }
 
   private shouldRotate(): boolean {
-    if (!this.config.enableRotation || !existsSync(this.currentLogFile)) {
-      return false;
-    }
-
-    const stats = statSync(this.currentLogFile);
-    return stats.size >= this.config.maxFileSize;
+    if (!this.config.enableRotation) return false;
+    if (!existsSync(this.currentLogFile)) return false;
+    return statSync(this.currentLogFile).size >= this.config.maxFileSize;
   }
 
-  private rotateLogFile(): void {
+  private rotate(): void {
     if (!existsSync(this.currentLogFile)) return;
-
-    const now = new Date();
-    const timestamp = now.toISOString().replace(/[:.]/g, "-");
-    const rotatedFile = this.currentLogFile.replace(".log", `-${timestamp}.log`);
-
+    const suffix = new Date().toISOString().replace(/[:.]/g, "-");
+    const archived = this.currentLogFile.replace(".log", `-${suffix}.log`);
     try {
-      renameSync(this.currentLogFile, rotatedFile);
-      this.cleanupOldLogs();
-    } catch (error) {
-      console.error("Failed to rotate log file:", error);
+      renameSync(this.currentLogFile, archived);
+      this.pruneOld();
+    } catch (err) {
+      console.error("Failed to rotate log file:", err);
     }
   }
 
-  private cleanupOldLogs(): void {
+  private pruneOld(): void {
     try {
       const files = readdirSync(this.logDir)
-        .filter((f) => f.startsWith("mcp-server-") && f.endsWith(".log"))
-        .map((f) => ({
-          name: f,
-          path: join(this.logDir, f),
-          mtime: statSync(join(this.logDir, f)).mtime,
-        }))
+        .filter((n) => n.startsWith("mcp-server-") && n.endsWith(".log"))
+        .map((n) => {
+          const p = join(this.logDir, n);
+          return { name: n, path: p, mtime: statSync(p).mtime };
+        })
         .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-
-      // Keep only the most recent files
-      const filesToDelete = files.slice(this.config.maxFiles);
-      for (const file of filesToDelete) {
+      for (let i = this.config.maxFiles; i < files.length; i++) {
         try {
-          unlinkSync(file.path);
-        } catch (error) {
-          console.error(`Failed to delete old log file ${file.name}:`, error);
+          unlinkSync(files[i]!.path);
+        } catch (err) {
+          console.error(`Failed to delete old log file ${files[i]!.name}:`, err);
         }
       }
-    } catch (error) {
-      console.error("Failed to cleanup old logs:", error);
+    } catch (err) {
+      console.error("Failed to cleanup old logs:", err);
     }
   }
 
-  private formatLogEntry(entry: LogEntry): string {
-    const parts: string[] = [];
-
-    if (this.config.enableTimestamp) {
-      parts.push(`[${entry.timestamp}]`);
-    }
-
-    parts.push(`[${LogLevel[entry.level]}]`);
-    parts.push(`[${entry.category}]`);
-
-    if (entry.requestId) {
-      parts.push(`[${entry.requestId}]`);
-    }
-
-    parts.push(entry.message);
-
-    if (entry.data) {
-      parts.push(`DATA: ${JSON.stringify(entry.data, null, 2)}`);
-    }
-
-    if (entry.duration !== undefined) {
-      parts.push(`DURATION: ${entry.duration}ms`);
-    }
-
-    if (entry.stackTrace && this.config.enableStackTrace) {
-      parts.push(`STACK: ${entry.stackTrace}`);
-    }
-
-    return `${parts.join(" ")}\n`;
+  private format(entry: LogEntry): string {
+    const ts = this.config.enableTimestamp ? `[${entry.timestamp}] ` : "";
+    const lvl = `[${LogLevelName[entry.level] ?? "UNKNOWN"}]`;
+    const cat = `[${entry.category}]`;
+    const rid = entry.requestId ? ` [${entry.requestId}]` : "";
+    const data = entry.data !== undefined && entry.data !== null ? ` DATA: ${JSON.stringify(entry.data, null, 2)}` : "";
+    const dur = entry.duration !== undefined ? ` DURATION: ${entry.duration}ms` : "";
+    const stack = entry.stackTrace && this.config.enableStackTrace ? ` STACK: ${entry.stackTrace}` : "";
+    return `${ts}${lvl} ${cat}${rid} ${entry.message}${data}${dur}${stack}\n`;
   }
 
   private writeLog(entry: LogEntry): void {
-    if (entry.level < this.config.logLevel) {
-      return; // Skip logs below configured level
-    }
-
-    // Add to buffer instead of writing immediately
-    const logLine = this.formatLogEntry(entry);
-    this.logBuffer.push(logLine);
-
-    // Flush if buffer is full OR time interval exceeded (lazy, no setTimeout)
+    if (entry.level < this.config.logLevel) return;
+    this.buf.push(this.format(entry));
     const now = Date.now();
-    const timeExceeded = now - this.lastFlushTime >= this.FLUSH_INTERVAL_MS;
-    if (this.logBuffer.length >= this.BUFFER_SIZE || timeExceeded) {
-      this.flushBuffer();
-      this.lastFlushTime = now;
+    if (this.buf.length >= this.BUF_CAP || now - this.lastDrain >= this.STALE_MS) {
+      this.flushAsync();
+      this.lastDrain = now;
     }
   }
 
-  /**
-   * Async flush buffer to disk (non-blocking)
-   * Uses appendFile for better Bun compatibility
-   */
-  private flushBuffer(): void {
-    if (this.logBuffer.length === 0) return;
-
-    // Check if we need to rotate
-    if (this.shouldRotate()) {
-      this.rotateLogFile();
-      this.currentLogFile = this.getCurrentLogFile();
-    }
-
-    // Take all buffered entries and clear buffer
-    const entries = this.logBuffer.join("");
-    this.logBuffer = [];
-    this.lastFlushTime = Date.now(); // Update flush time
-
-    // Write async - fire and forget
-    appendFile(this.currentLogFile, entries).catch((error) => {
-      console.error("Failed to write log:", error);
-    });
-  }
-
-  // =============================================================================
-  // PUBLIC LOGGING METHODS
-  // =============================================================================
-
-  /**
-   * TRACE level - for startup timing and async flow analysis
-   * Uses sync flush to ensure visibility before crashes
-   */
   trace(category: string, message: string, data?: unknown, requestId?: string): void {
     this.log(LogLevel.TRACE, category, message, data, requestId);
-    // Sync flush for crash debugging - ensures trace is visible
-    this.flushBufferSync();
   }
 
-  /**
-   * TRACE with timing - logs with delta from a start time
-   */
   traceTime(category: string, message: string, startTime: number, data?: unknown): void {
-    const elapsed = Date.now() - startTime;
-    const uptimeMs = process.uptime() * 1000;
-    this.log(LogLevel.TRACE, category, `[+${uptimeMs.toFixed(0)}ms] ${message} (${elapsed}ms)`, data);
+    const delta = Date.now() - startTime;
+    const up = process.uptime() * 1000;
+    this.log(LogLevel.TRACE, category, `[+${up.toFixed(0)}ms] ${message} (${delta}ms)`, data);
   }
 
-  /**
-   * Start a trace timer, returns a function to end it
-   */
   traceStart(category: string, operation: string): () => void {
-    const startTime = Date.now();
-    const uptimeMs = process.uptime() * 1000;
-    this.log(LogLevel.TRACE, category, `[+${uptimeMs.toFixed(0)}ms] ▶ START: ${operation}`);
+    const t0 = Date.now();
+    const up = process.uptime() * 1000;
+    this.log(LogLevel.TRACE, category, `[+${up.toFixed(0)}ms] ▶ START: ${operation}`);
     return () => {
-      const elapsed = Date.now() - startTime;
-      const endUptimeMs = process.uptime() * 1000;
-      this.log(LogLevel.TRACE, category, `[+${endUptimeMs.toFixed(0)}ms] ◀ END: ${operation} (${elapsed}ms)`);
+      const elapsed = Date.now() - t0;
+      const endUp = process.uptime() * 1000;
+      this.log(LogLevel.TRACE, category, `[+${endUp.toFixed(0)}ms] ◀ END: ${operation} (${elapsed}ms)`);
     };
   }
 
@@ -321,49 +206,36 @@ export class RotatedLogger {
     requestId?: string | undefined,
     stackTrace?: string | undefined,
   ): void {
-    const entry: LogEntry = {
-      timestamp: this.getLocalTimestamp(),
+    this.writeLog({
+      timestamp: this.localIso(),
       level,
       category,
       message,
       data,
       stackTrace,
       requestId,
-    };
-
-    this.writeLog(entry);
+    });
   }
 
-  /**
-   * Get timestamp in local timezone (ISO-like format)
-   * Example: 2025-12-27T22:51:38.090+03:00
-   */
-  private getLocalTimestamp(): string {
+  private localIso(): string {
     const now = new Date();
-    const offsetMs = now.getTimezoneOffset() * 60000;
-    const localTime = new Date(now.getTime() - offsetMs);
-    const iso = localTime.toISOString().slice(0, -1); // Remove 'Z'
-
-    // Format offset as +HH:MM or -HH:MM
-    const offsetMin = -now.getTimezoneOffset();
-    const sign = offsetMin >= 0 ? "+" : "-";
-    const absOffset = Math.abs(offsetMin);
-    const hours = String(Math.floor(absOffset / 60)).padStart(2, "0");
-    const mins = String(absOffset % 60).padStart(2, "0");
-
-    return `${iso}${sign}${hours}:${mins}`;
+    const tzOff = now.getTimezoneOffset();
+    const adjusted = new Date(now.getTime() - tzOff * 60000);
+    const base = adjusted.toISOString().slice(0, -1);
+    const total = -tzOff;
+    const sign = total >= 0 ? "+" : "-";
+    const abs = Math.abs(total);
+    const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+    const mm = String(abs % 60).padStart(2, "0");
+    return `${base}${sign}${hh}:${mm}`;
   }
-
-  // =============================================================================
-  // MCP-SPECIFIC LOGGING METHODS
-  // =============================================================================
 
   mcpRequest(method: string, params: unknown, requestId: string): void {
     this.info("MCP_REQUEST", `Incoming MCP request: ${method}`, { method, params }, requestId);
   }
 
   mcpResponse(method: string, result: unknown, duration: number, requestId: string): void {
-    const entry: LogEntry = {
+    this.writeLog({
       timestamp: new Date().toISOString(),
       level: LogLevel.INFO,
       category: "MCP_RESPONSE",
@@ -371,8 +243,7 @@ export class RotatedLogger {
       data: { method, result },
       requestId,
       duration,
-    };
-    this.writeLog(entry);
+    });
   }
 
   mcpError(method: string, error: Error, requestId: string): void {
@@ -384,30 +255,11 @@ export class RotatedLogger {
   }
 
   parseActivity(filePath: string, language: string, entitiesFound: number, duration: number, requestId?: string): void {
-    this.info(
-      "PARSE_ACTIVITY",
-      `Parsed ${filePath}`,
-      {
-        filePath,
-        language,
-        entitiesFound,
-        duration,
-      },
-      requestId,
-    );
+    this.info("PARSE_ACTIVITY", `Parsed ${filePath}`, { filePath, language, entitiesFound, duration }, requestId);
   }
 
   queryActivity(query: string, results: number, duration: number, requestId?: string): void {
-    this.info(
-      "QUERY_ACTIVITY",
-      `Query executed`,
-      {
-        query: query.substring(0, 200), // Truncate long queries
-        results,
-        duration,
-      },
-      requestId,
-    );
+    this.info("QUERY_ACTIVITY", `Query executed`, { query: query.substring(0, 200), results, duration }, requestId);
   }
 
   performanceMetrics(component: string, metrics: unknown, requestId?: string): void {
@@ -417,10 +269,6 @@ export class RotatedLogger {
   systemEvent(event: string, data?: unknown): void {
     this.info("SYSTEM", event, data);
   }
-
-  // =============================================================================
-  // INCIDENT/RECOVERY LOGGING (for SYSTEM_HANG_RECOVERY_PLAN)
-  // =============================================================================
 
   incident(event: string, data?: Record<string, unknown>, requestId?: string | undefined, error?: Error): void {
     if (error) {
@@ -435,18 +283,8 @@ export class RotatedLogger {
   }
 }
 
-// =============================================================================
-// SINGLETON LOGGER INSTANCE
-// =============================================================================
-
 export const logger = new RotatedLogger();
-
-// Register exit handlers to ensure logs are flushed on shutdown
 logger.registerExitHandlers();
-
-// =============================================================================
-// HELPER FUNCTIONS
-// =============================================================================
 
 export function createRequestId(): string {
   return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -459,13 +297,10 @@ export function logMCPOperation<T>(
 ): Promise<T> {
   const requestId = createRequestId();
   const startTime = Date.now();
-
   logger.mcpRequest(operation, params, requestId);
-
   return fn(requestId)
     .then((result) => {
-      const duration = Date.now() - startTime;
-      logger.mcpResponse(operation, result, duration, requestId);
+      logger.mcpResponse(operation, result, Date.now() - startTime, requestId);
       return result;
     })
     .catch((error) => {
@@ -474,65 +309,38 @@ export function logMCPOperation<T>(
     });
 }
 
-// =============================================================================
-// MEMORY PROFILING
-// =============================================================================
-
-/**
- * Detailed memory profiling for diagnosing memory issues.
- * Logs RSS, heap, external (native), and array buffers separately.
- */
 export function logMemoryProfile(label: string): void {
   const mem = process.memoryUsage();
-  const rss = Math.round(mem.rss / 1024 / 1024);
-  const heapTotal = Math.round(mem.heapTotal / 1024 / 1024);
-  const heapUsed = Math.round(mem.heapUsed / 1024 / 1024);
-  const external = Math.round(mem.external / 1024 / 1024);
-  const arrayBuffers = Math.round(mem.arrayBuffers / 1024 / 1024);
-
-  // Calculate native memory (RSS - heap - external approximation)
+  const toMB = (b: number) => Math.round(b / 1048576);
+  const rss = toMB(mem.rss);
+  const heapTotal = toMB(mem.heapTotal);
+  const heapUsed = toMB(mem.heapUsed);
+  const external = toMB(mem.external);
+  const arrayBuffers = toMB(mem.arrayBuffers);
   const nativeApprox = rss - heapTotal - external;
-
   logger.info("MEMORY_PROFILE", label, {
     rssMB: rss,
     heapTotalMB: heapTotal,
     heapUsedMB: heapUsed,
-    externalMB: external, // C++ objects bound to JS (libsql, faiss bindings)
-    arrayBuffersMB: arrayBuffers, // ArrayBuffer/SharedArrayBuffer
-    nativeApproxMB: nativeApprox, // Rough estimate of other native memory
+    externalMB: external,
+    arrayBuffersMB: arrayBuffers,
+    nativeApproxMB: nativeApprox,
   });
 }
 
-/**
- * Force garbage collection if available (node --expose-gc or bun).
- * Returns true if GC was triggered.
- */
 export function forceGC(): boolean {
-  // Node.js --expose-gc
-  const globalWithGC = globalThis as { gc?: () => void };
-  if (typeof globalWithGC.gc === "function") {
-    globalWithGC.gc();
+  const g = globalThis as { gc?: () => void; Bun?: { gc?: (force?: boolean) => void } };
+  if (typeof g.gc === "function") {
+    g.gc();
     return true;
   }
-  // Bun.gc()
-  const globalWithBun = globalThis as { Bun?: { gc?: (force?: boolean) => void } };
-  if (globalWithBun.Bun && typeof globalWithBun.Bun.gc === "function") {
-    globalWithBun.Bun.gc(true); // true = sync
+  if (g.Bun && typeof g.Bun.gc === "function") {
+    g.Bun.gc(true);
     return true;
   }
   return false;
 }
 
-// Re-export types for backward compatibility
-export type { LoggerConfig } from "./logger-types.js";
-export { LogLevel } from "./logger-types.js";
-
-// =============================================================================
-// NEW FIXED-POSITION LOGGER (for gradual migration)
-// =============================================================================
-
-// Re-export new logger for gradual migration
-// Usage: import { log } from './logger.js'; log.i('MODULE', 'event', { kv });
 export {
   getLogger as getFixedLogger,
   initLogger as initFixedLogger,
@@ -542,26 +350,16 @@ export {
   MODULES,
   setProjectHash,
 } from "../logging/index.js";
+export type { LoggerConfig } from "./logger-types.js";
+export { LogLevel } from "./logger-types.js";
 
 import { getLogger, initLogger } from "../logging/index.js";
 import { getLogsDir } from "../shared/storage-paths.js";
 
-/**
- * Initialize new fixed-position logger
- * Call this once at startup after old logger is configured
- */
 export function initNewLogger(): void {
-  initLogger({
-    logDir: getLogsDir(),
-    minLevel: "I",
-    consoleOutput: false,
-  });
+  initLogger({ logDir: getLogsDir(), minLevel: "I", consoleOutput: false });
 }
 
-/**
- * Set project context for logging
- * Call this when switching projects
- */
 export function setLoggerProject(projectHash: string): void {
   getLogger().setProjectHash(projectHash);
 }

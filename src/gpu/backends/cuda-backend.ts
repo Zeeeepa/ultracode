@@ -65,11 +65,11 @@ export class CUDABackend implements VectorBackend {
       const plat = process.platform === "win32" ? "win32" : "linux";
       const possiblePaths = [
         // Bundled in npm package (external-libs/)
-        `../../../external-libs/cuda-${plat}-x64/ultrascript_cuda.node`,
+        `../../../external-libs/cuda-${plat}-x64/ultracode_cuda.node`,
         // Local development builds
-        "../../../dist/native/cuda/ultrascript_cuda.node",
-        "../../../build/Release/ultrascript_cuda.node",
-        "../../../external-tools/native/cuda/build/Release/ultrascript_cuda.node",
+        "../../../dist/native/cuda/ultracode_cuda.node",
+        "../../../build/Release/ultracode_cuda.node",
+        "../../../external-tools/native/cuda/build/Release/ultracode_cuda.node",
       ];
 
       for (const addonPath of possiblePaths) {

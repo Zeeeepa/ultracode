@@ -4,8 +4,8 @@
  * node test.js  - works
  * bun test.js   - crashes
  *
- * Requires ultrascript_cuda.node in the same directory.
- * Copy from: ../../external-libs/cuda-win32-x64/ultrascript_cuda.node
+ * Requires ultracode_cuda.node in the same directory.
+ * Copy from: ../../external-libs/cuda-win32-x64/ultracode_cuda.node
  */
 
 const path = require('path');
@@ -15,16 +15,16 @@ const runtime = typeof Bun !== 'undefined' ? `Bun ${Bun.version}` : `Node.js ${p
 console.log(`Runtime: ${runtime}`);
 
 // Find CUDA addon
-const cudaPath = path.join(__dirname, 'ultrascript_cuda.node');
-const fallbackPath = path.join(__dirname, '..', '..', 'external-libs', 'cuda-win32-x64', 'ultrascript_cuda.node');
+const cudaPath = path.join(__dirname, 'ultracode_cuda.node');
+const fallbackPath = path.join(__dirname, '..', '..', 'external-libs', 'cuda-win32-x64', 'ultracode_cuda.node');
 
 let addonPath = cudaPath;
 if (!fs.existsSync(cudaPath)) {
   if (fs.existsSync(fallbackPath)) {
     addonPath = fallbackPath;
   } else {
-    console.log('ERROR: ultrascript_cuda.node not found');
-    console.log('Copy from: ../../external-libs/cuda-win32-x64/ultrascript_cuda.node');
+    console.log('ERROR: ultracode_cuda.node not found');
+    console.log('Copy from: ../../external-libs/cuda-win32-x64/ultracode_cuda.node');
     process.exit(1);
   }
 }

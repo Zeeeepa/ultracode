@@ -9,7 +9,7 @@
  * - Entity IDs and metadata as TEXT
  * - Compressed storage for large vector sets
  *
- * Database location: %LOCALAPPDATA%/UltraScriptTools/projects/<hash>/layered/vector-deltas.db
+ * Database location: %LOCALAPPDATA%/UltraCode/projects/<hash>/layered/vector-deltas.db
  *
  * Based on: ultrasharp-tools-mcp VectorCacheManager.cs + LayeredCacheManager.cs
  * @see Dev.Docs/LAYERED_INDEXING_IMPLEMENTATION_PLAN.md

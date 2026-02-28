@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     This script clones the OVMS repository, builds it with NVIDIA plugin enabled,
-    installs Token Merging (ToMe) optimization tools, and installs to UltraScriptTools OVMS directory.
+    installs Token Merging (ToMe) optimization tools, and installs to UltraCode OVMS directory.
 
     ToMe (Token Merging) provides 1.5-2x speedup for embedding models by merging similar tokens
     during inference, with <1% accuracy loss. Works great with sentence-transformers and CLIP models.
@@ -71,7 +71,7 @@ function Write-Warn { param($msg) Write-Host "[WARN] $msg" -ForegroundColor Yell
 function Write-Err { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
 # Target installation directory
-$InstallDir = Join-Path $env:LOCALAPPDATA "UltraScriptTools\ovms"
+$InstallDir = Join-Path $env:LOCALAPPDATA "UltraCode\ovms"
 $TempBuildDir = Join-Path $env:TEMP "ovms-build"
 $OvmsRepoUrl = "https://github.com/openvinotoolkit/model_server.git"
 $OvmsBranch = "releases/2025/0"  # Latest stable release branch
@@ -563,7 +563,7 @@ if ($buildResult -ne 0) {
 Write-Success "Build complete"
 
 # --------------------------------------------------
-# Step 6: Install to UltraScriptTools directory
+# Step 6: Install to UltraCode directory
 # --------------------------------------------------
 Write-Step "Installing to $InstallDir..."
 

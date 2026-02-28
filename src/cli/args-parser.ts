@@ -62,7 +62,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
       const next = argv[++i];
       if (!next) {
         console.error("Error: --config requires a path argument");
-        console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
+        console.error("Usage: ultracode [--config <path>] <directory>");
         process.exit(1);
       }
       result.configPath = next;
@@ -70,7 +70,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
       const value = arg.slice("--config=".length);
       if (!value) {
         console.error("Error: --config requires a non-empty path");
-        console.error("Usage: ultrascript-tools-mcp [--config <path>] <directory>");
+        console.error("Usage: ultracode [--config <path>] <directory>");
         process.exit(1);
       }
       result.configPath = value;
@@ -98,7 +98,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
       }
     } else if (arg.startsWith("-")) {
       console.error(`Unknown option: ${arg}`);
-      console.error("Usage: ultrascript-tools-mcp [--config <path>] [-d] <directory>");
+      console.error("Usage: ultracode [--config <path>] [-d] <directory>");
       process.exit(1);
     } else {
       result.positionalArgs.push(arg);
@@ -112,12 +112,12 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
  * Print help message
  */
 export function printHelp(): void {
-  console.error(`UltraScript Tools MCP Server
+  console.error(`UltraCode Server
 
 Usage:
-  ultrascript-tools-mcp [options] <directory>
-  ultrascript-tools-mcp [options] -d <directory>
-  ultrascript-tools-mcp setup [--provider <tei|ollama|memory>]
+  ultracode [options] <directory>
+  ultracode [options] -d <directory>
+  ultracode setup [--provider <tei|ollama|memory>]
 
 Commands:
   setup             Interactive setup for semantic embedding providers
@@ -136,11 +136,11 @@ Setup Options:
   --model <model-id>      Choose specific model
 
 Examples:
-  ultrascript-tools-mcp /path/to/project
-  ultrascript-tools-mcp --config config/production.yaml /repo
-  ultrascript-tools-mcp setup
-  ultrascript-tools-mcp setup --provider ollama
-  ultrascript-tools-mcp --version
+  ultracode /path/to/project
+  ultracode --config config/production.yaml /repo
+  ultracode setup
+  ultracode setup --provider ollama
+  ultracode --version
 `);
 }
 

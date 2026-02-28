@@ -1,186 +1,186 @@
-# Глоссарий терминов
+# Glossary of Terms
 
 ## A
 
-### Agent (Агент)
-Специализированный компонент системы, выполняющий определённый тип задач. Наследуется от `BaseAgent` и имеет унифицированный жизненный цикл (initialize → process → dispose).
+### Agent
+A specialized system component that performs a specific type of task. Inherits from `BaseAgent` and has a unified lifecycle (initialize → process → dispose).
 
 ### AST (Abstract Syntax Tree)
-Абстрактное синтаксическое дерево — структурированное представление исходного кода, используемое парсерами для извлечения сущностей и связей.
+A structured representation of source code used by parsers to extract entities and relationships.
 
 ### AutoDoc
-Подсистема автоматической генерации документации. Создаёт AUTODOC.md файлы для каждого модуля на основе анализа кода и опционально LLM.
+An automatic documentation generation subsystem. Creates AUTODOC.md files for each module based on code analysis and optionally LLM.
 
 ## B
 
 ### Backpressure
-Механизм защиты от перегрузки. При превышении лимитов (память, очередь задач) система замедляет приём новых запросов или отклоняет их.
+An overload protection mechanism. When limits are exceeded (memory, task queue), the system slows down acceptance of new requests or rejects them.
 
 ### Branch Layers
-Слоистое хранилище для Git-веток. Каждая feature-ветка создаёт свой слой поверх родительской, изменения накапливаются без модификации base layer.
+Layered storage for Git branches. Each feature branch creates its own layer on top of the parent; changes accumulate without modifying the base layer.
 
 ### Batch Operations
-Пакетная обработка — группировка множества операций (INSERT, UPDATE) в одну транзакцию для повышения производительности.
+Grouping multiple operations (INSERT, UPDATE) into a single transaction to improve performance.
 
 ## C
 
-### Chunking (Чанкинг)
-Разбиение текста или кода на части (chunks) для обработки. SmartChunker учитывает AST структуру для сохранения семантической целостности.
+### Chunking
+Splitting text or code into parts (chunks) for processing. SmartChunker takes AST structure into account to preserve semantic integrity.
 
 ### ConductorOrchestrator
-Центральный координатор агентов. Распределяет задачи, управляет приоритетами и обеспечивает backpressure.
+The central agent coordinator. Distributes tasks, manages priorities, and provides backpressure.
 
-### Cosine Distance (Косинусное расстояние)
-Метрика сходства векторов, используемая в семантическом поиске. Значения от 0 (идентичны) до 2 (противоположны).
+### Cosine Distance
+A vector similarity metric used in semantic search. Values range from 0 (identical) to 2 (opposite).
 
 ### CTE (Common Table Expression)
-Общее табличное выражение — SQL конструкция для создания временных именованных результатов. Используется в Branch Layers для эффективной агрегации данных из нескольких слоёв.
+An SQL construct for creating temporary named result sets. Used in Branch Layers for efficient data aggregation across multiple layers.
 
 ## D
 
 ### DIContainer
-Dependency Injection контейнер — паттерн для управления зависимостями между компонентами. Поддерживает singleton и transient lifetimes.
+A Dependency Injection container — a pattern for managing dependencies between components. Supports singleton and transient lifetimes.
 
 ## E
 
-### Embedding (Эмбеддинг)
-Векторное представление текста в многомерном пространстве. Позволяет измерять семантическое сходство между фрагментами кода.
+### Embedding
+A vector representation of text in a multidimensional space. Allows measuring semantic similarity between code fragments.
 
-### Entity (Сущность)
-Базовая единица кодового графа: функция, класс, интерфейс, тип, переменная и т.д. Имеет уникальный ID, тип, имя и код.
+### Entity
+The basic unit of the code graph: a function, class, interface, type, variable, etc. Has a unique ID, type, name, and code.
 
 ## F
 
 ### FQN (Fully Qualified Name)
-Полное квалифицированное имя символа, включающее путь: `MyNamespace.MyClass.myMethod`.
+The fully qualified name of a symbol, including its path: `MyNamespace.MyClass.myMethod`.
 
 ### FTS5
-Full-Text Search 5 — расширение SQLite для полнотекстового поиска с поддержкой токенизации и ранжирования.
+Full-Text Search 5 — an SQLite extension for full-text search with support for tokenization and ranking.
 
 ## G
 
 ### Graph Storage
-Хранилище кодового графа в SQLite. Содержит сущности, связи и метаданные файлов.
+The code graph storage in SQLite. Contains entities, relationships, and file metadata.
 
 ## H
 
-### Hybrid Search (Гибридный поиск)
-Комбинация векторного (семантического) и текстового (FTS) поиска для повышения точности результатов.
+### Hybrid Search
+A combination of vector (semantic) and text (FTS) search to improve result accuracy.
 
 ## I
 
 ### Incremental Indexing
-Инкрементальная индексация — обновление только изменённых файлов вместо полной переиндексации.
+Updating only changed files instead of performing a full re-index.
 
 ### IR Model (Intermediate Representation)
-Промежуточное представление модели в формате OpenVINO (.xml + .bin), оптимизированное для inference на CPU.
+An intermediate model representation in OpenVINO format (.xml + .bin), optimized for CPU inference.
 
 ## K
 
 ### KnowledgeBus
-Pub/Sub шина для асинхронной коммуникации между агентами. Поддерживает топики и подписчиков.
+A Pub/Sub bus for asynchronous communication between agents. Supports topics and subscribers.
 
 ## L
 
 ### LiteRAG
-Lightweight Retrieval-Augmented Generation — архитектурный паттерн для семантического поиска без тяжёлых зависимостей.
+Lightweight Retrieval-Augmented Generation — an architectural pattern for semantic search without heavy dependencies.
 
-### Layer (Слой)
-Изолированный уровень данных в Branch Layers. Каждая Git-ветка создаёт свой layer, который наследует данные от родительского.
+### Layer
+An isolated data level in Branch Layers. Each Git branch creates its own layer, which inherits data from the parent.
 
 ### LibSQL
-Форк SQLite с дополнительными возможностями (репликация, HTTP API). Используется как основное хранилище с поддержкой branch layers.
+A fork of SQLite with additional capabilities (replication, HTTP API). Used as the primary storage with branch layer support.
 
 ### LRU Cache
-Least Recently Used Cache — кэш с вытеснением наименее используемых элементов.
+Least Recently Used Cache — a cache that evicts the least recently used elements.
 
 ## M
 
 ### MCP (Model Context Protocol)
-Протокол взаимодействия между LLM клиентами (Claude, IDE) и серверами инструментов. Основан на JSON-RPC.
+A protocol for communication between LLM clients (Claude, IDE) and tool servers. Based on JSON-RPC.
 
 ## N
 
 ### Native Parser
-Парсер, использующий родной инструментарий языка (TypeScript Compiler API, Python ast, go/parser и т.д.) вместо универсальных парсеров.
+A parser that uses the language's native tooling (TypeScript Compiler API, Python ast, go/parser, etc.) instead of universal parsers.
 
 ## O
 
 ### onMessage Handler
-Обработчик IPC-сообщений от воркера. Получает `ParseResponse` и сопоставляет результаты с задачами через `pendingTasks: Map<taskId, PendingTask>`.
+An IPC message handler from a worker. Receives `ParseResponse` and matches results with tasks via `pendingTasks: Map<taskId, PendingTask>`.
 
 ### OpenVINO
-Intel Open Visual Inference and Neural network Optimization — фреймворк для CPU inference моделей машинного обучения.
+Intel Open Visual Inference and Neural network Optimization — a framework for CPU inference of machine learning models.
 
 ## P
 
 ### ParsingSubprocessPool
-Пул подпроцессов для параллельного парсинга кода. Поддерживает Bun и Node.js рантаймы, IPC коммуникацию через V8 serialization, динамическое масштабирование воркеров.
+A subprocess pool for parallel code parsing. Supports Bun and Node.js runtimes, IPC communication via V8 serialization, and dynamic worker scaling.
 
 ### PendingTask
-Структура `{resolve, reject}` для хранения колбеков незавершённой задачи парсинга. Хранится в `Map<taskId, PendingTask>` для защиты от race condition при конкурентной обработке чанков.
+A `{resolve, reject}` structure for storing callbacks of an incomplete parsing task. Stored in `Map<taskId, PendingTask>` to protect against race conditions during concurrent chunk processing.
 
-### Provider (Провайдер)
-Реализация интерфейса для генерации эмбеддингов: OVMS, TEI, Ollama, Transformers, vLLM.
+### Provider
+An implementation of the embedding generation interface: OVMS, TEI, Ollama, Transformers, vLLM.
 
 ## R
 
-### Relationship (Связь)
-Направленная связь между сущностями в графе: imports, extends, implements, calls, uses, contains.
+### Relationship
+A directed connection between entities in the graph: imports, extends, implements, calls, uses, contains.
 
 ### ResourceManager
-Компонент управления ресурсами системы: память, CPU, лимиты очередей.
+A system resource management component: memory, CPU, queue limits.
 
 ### RRF (Reciprocal Rank Fusion)
-Алгоритм объединения результатов из разных источников поиска с учётом позиций в ранжированных списках.
+An algorithm for combining results from different search sources, taking into account positions in ranked lists.
 
 ## S
 
 ### Semantic Search
-Семантический поиск — поиск по смыслу, а не по точному совпадению текста. Основан на сравнении векторных эмбеддингов.
+Search by meaning rather than exact text match. Based on comparing vector embeddings.
 
 ### SmartChunker
-Компонент интеллектуального разбиения кода на чанки с учётом AST структуры и контекста.
+An intelligent code splitting component that takes AST structure and context into account.
 
 ### Snapshot
-Снимок состояния файлов для возможности отката изменений. Хранится в `.ultrasharp/snapshots/` или через git stash.
+A file state snapshot for the ability to roll back changes. Stored in `.ultrasharp/snapshots/` or via git stash.
 
 ### SubprocessState
-Состояние воркера в ParsingSubprocessPool: ID, процесс, `pendingTasks: Map<taskId, PendingTask>`, статистика (обработано задач, память, время). Ключевой механизм для корректного сопоставления IPC-ответов с задачами.
+The state of a worker in ParsingSubprocessPool: ID, process, `pendingTasks: Map<taskId, PendingTask>`, statistics (tasks processed, memory, time). A key mechanism for correctly matching IPC responses with tasks.
 
 ### sqlite-vec
-Расширение SQLite для хранения и поиска векторов с использованием SIMD оптимизаций.
+An SQLite extension for storing and searching vectors using SIMD optimizations.
 
 ## T
 
 ### TEI (Text Embeddings Inference)
-Сервер HuggingFace для генерации эмбеддингов с поддержкой GPU через Docker.
+A HuggingFace server for generating embeddings with GPU support via Docker.
 
 ### Tombstone
-Маркер удаления в Branch Layers. Вместо физического удаления сущности из родительского слоя, в текущем слое создаётся tombstone-запись, указывающая что сущность удалена.
+A deletion marker in Branch Layers. Instead of physically deleting an entity from the parent layer, a tombstone record is created in the current layer indicating that the entity has been deleted.
 
 ### Tool Handler
-Обработчик MCP инструмента. Наследуется от `BaseToolHandler`, валидирует параметры через Zod и выполняет логику.
+An MCP tool handler. Inherits from `BaseToolHandler`, validates parameters via Zod, and executes the logic.
 
 ## V
 
 ### Vector Store
-Хранилище векторных эмбеддингов. Использует sqlite-vec для эффективного поиска ближайших соседей.
+A vector embedding storage. Uses sqlite-vec for efficient nearest neighbor search.
 
 ### VectorLite
-Альтернативный бэкенд для векторного хранилища с поддержкой различных индексов.
+An alternative backend for vector storage with support for various indexes.
 
 ## Z
 
 ### Zod
-Библиотека валидации схем для TypeScript. Используется для валидации параметров MCP инструментов.
+A schema validation library for TypeScript. Used for validating MCP tool parameters.
 
 ---
 
-## Аббревиатуры
+## Abbreviations
 
-| Аббревиатура | Расшифровка |
-|--------------|-------------|
+| Abbreviation | Definition |
+|--------------|------------|
 | AST | Abstract Syntax Tree |
 | CPU | Central Processing Unit |
 | CTE | Common Table Expression |
@@ -200,8 +200,8 @@ Intel Open Visual Inference and Neural network Optimization — фреймвор
 | SIMD | Single Instruction Multiple Data |
 | TEI | Text Embeddings Inference |
 
-## Связанные документы
+## Related Documents
 
-- [→ ARCHITECTURE.md](./architecture.md) — архитектура системы
-- [→ PROCESSES.md](./processes.md) — технические процессы
-- [→ DEPENDENCIES.md](./dependencies.md) — зависимости
+- [→ ARCHITECTURE.md](./architecture.md) — system architecture
+- [→ PROCESSES.md](./processes.md) — technical processes
+- [→ DEPENDENCIES.md](./dependencies.md) — dependencies

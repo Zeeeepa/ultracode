@@ -1,4 +1,4 @@
-# CUDA Native Addon for UltraScript Tools MCP
+# CUDA Native Addon for UltraCode
 
 GPU-accelerated vector operations using NVIDIA CUDA for **100-200x faster** embedding computations.
 
@@ -55,13 +55,13 @@ npm install
 # Build CUDA addon
 npm run build
 
-# Output: ../../dist/native/cuda/ultrascript_cuda.node
+# Output: ../../dist/native/cuda/ultracode_cuda.node
 ```
 
 ## Usage
 
 ```typescript
-import { cosineSimilarity, batchCosineSimilarity, getDeviceInfo } from './dist/native/cuda/ultrascript_cuda.node';
+import { cosineSimilarity, batchCosineSimilarity, getDeviceInfo } from './dist/native/cuda/ultracode_cuda.node';
 
 // Check CUDA device
 const info = getDeviceInfo();
@@ -207,11 +207,11 @@ If < 7.5, edit `CMakeLists.txt`:
 set(CMAKE_CUDA_ARCHITECTURES 60 61 70)  # Adjust to your GPU
 ```
 
-### "Runtime error: cannot find ultrascript_cuda.node"
+### "Runtime error: cannot find ultracode_cuda.node"
 
 Check build output location:
 ```bash
-ls -la ../../dist/native/cuda/ultrascript_cuda.node
+ls -la ../../dist/native/cuda/ultracode_cuda.node
 ```
 
 If missing, rebuild:
@@ -230,7 +230,7 @@ cd native/cuda
 npm run build
 
 # Test from Node.js
-node -e "const cuda = require('../../dist/native/cuda/ultrascript_cuda.node'); console.log(cuda.getDeviceInfo())"
+node -e "const cuda = require('../../dist/native/cuda/ultracode_cuda.node'); console.log(cuda.getDeviceInfo())"
 ```
 
 ### Profiling

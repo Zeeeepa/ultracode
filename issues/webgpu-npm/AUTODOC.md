@@ -1,19 +1,19 @@
 # webgpu-npm
 
-## Описание модуля
+## Module Description
 
-Модуль `webgpu-npm` предоставляет внутреннюю реализацию для работы с WebGPU API в Node.js окружении. Он предназначен для интеграции WebGPU функциональности в проекты, использующие npm-пакеты и позволяющий выполнять графические операции на уровне GPU. Модуль не предоставляет публичных API и служит вспомогательным компонентом для других частей системы.
+The `webgpu-npm` module provides an internal implementation for working with the WebGPU API in a Node.js environment. It is designed for integrating WebGPU functionality into projects using npm packages, enabling GPU-level graphics operations. The module does not provide public APIs and serves as a helper component for other parts of the system.
 
-## Файлы
+## Files
 
-| Файл         | Описание                                                                 |
+| File         | Description                                                                 |
 |--------------|--------------------------------------------------------------------------|
-| `test.js`    | Скрипт для выполнения тестов модуля WebGPU. Содержит unit-тесты и интеграционные проверки функциональности. |
+| `test.js`    | Script for running module tests. Contains unit tests and integration checks for WebGPU functionality. |
 
-## Экспорты
+## Exports
 
-Модуль не имеет публичных экспортов. Все функции и классы предназначены для внутреннего использования и не доступны за пределами модуля.
+The module has no public exports. All functions and classes are intended for internal use and are not accessible outside the module.
 
-## Использование
+## Usage
 
-Данный модуль используется внутренне и не требует прямого импорта в пользовательском коде. Он автоматически подключается при необходимости при работе с WebGPU в Node.js окружении.
+This module is used internally and does not require direct import in user code. It is automatically loaded when needed for working with WebGPU in a Node.js environment.

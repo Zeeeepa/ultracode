@@ -1,34 +1,29 @@
-# Kotlin Module Documentation
+---
+module_name: kotlin
+description: "ANTLR-generated lexer and parser for Kotlin syntax analysis"
+status: generated
+language: typescript
+---
 
-## Title and Overview
+# Kotlin
 
-Модуль `kotlin` предоставляет инструменты для работы с синтаксическим анализом и парсингом кода на языке Kotlin. Он включает лексер, парсер и вспомогательные компоненты для обработки Unicode-классов, используемые при разборе исходного кода Kotlin.
+> ANTLR-generated lexer, parser, listener, and visitor for parsing Kotlin source code into syntax trees.
+
+## Overview
+
+Provides the full ANTLR toolchain output for Kotlin grammar, enabling tokenization and AST construction of Kotlin source files. Includes a Unicode character class helper required by the lexer.
+
+## Exports
+
+
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `index.ts` | Основной входной файл модуля, экспортирующий основные компоненты для работы с Kotlin-парсером |
-| `KotlinLexer.ts` | Лексер для разбора исходного кода Kotlin, преобразующий текст в последовательность токенов |
-| `KotlinParser.ts` | Парсер для анализа структуры Kotlin-кода, использующий грамматику языка для построения синтаксического дерева |
-| `KotlinParserListener.ts` | Интерфейс для слушателей парсера, позволяющий отслеживать события во время разбора Kotlin-кода |
-| `KotlinParserVisitor.ts` | Интерфейс посетителя парсера, обеспечивающий возможность обхода синтаксического дерева Kotlin-кода |
-| `UnicodeClasses.ts` | Вспомогательный модуль для работы с Unicode-классами, используемыми в лексическом анализе Kotlin |
-
-## Exports
-
-Нет публичных экспортов. Модуль предназначен для внутреннего использования и не предоставляет публичных API для внешнего доступа.
-
-## Usage
-
-Модуль используется внутри проекта для анализа и обработки исходного кода на Kotlin. Пример использования:
-
-```typescript
-import { KotlinParser } from './kotlin';
-
-// Использование парсера для анализа Kotlin-кода
-const parser = new KotlinParser();
-// ... дальнейшая обработка
-```
-
-> **Примечание:** Модуль предназначен для внутреннего использования и не предполагает прямого вызова извне.
+| `index.ts` | Re-exports parser components for internal consumption |
+| `KotlinLexer.ts` | Generated lexer that tokenizes Kotlin source code |
+| `KotlinParser.ts` | Generated parser that builds syntax trees from tokens |
+| `KotlinParserListener.ts` | Listener interface for syntax tree traversal events |
+| `KotlinParserVisitor.ts` | Visitor interface for syntax tree traversal with return values |
+| `UnicodeClasses.ts` | Unicode character class definitions used by the Kotlin lexer |

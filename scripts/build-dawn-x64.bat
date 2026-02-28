@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM UltraScript Tools - Dawn/WebGPU Build Script (x64 Environment)
+REM UltraCode - Dawn/WebGPU Build Script (x64 Environment)
 REM
 REM Builds Dawn with Node.js bindings for Blackwell (RTX 50xx) support.
 REM The official npm webgpu package crashes on Blackwell - this builds from source.
@@ -22,7 +22,7 @@ setlocal enabledelayedexpansion
 
 echo.
 echo ============================================================================
-echo   UltraScript Tools - Dawn/WebGPU Builder for Blackwell
+echo   UltraCode - Dawn/WebGPU Builder for Blackwell
 echo   Builds dawn.node with RTX 50xx (Blackwell CC 12.0) support
 echo ============================================================================
 echo.

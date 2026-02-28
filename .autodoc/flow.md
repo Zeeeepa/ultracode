@@ -1,29 +1,29 @@
-# Потоки данных и сценарии использования
+# Data Flows and Usage Scenarios
 
-## Обзор
+## Overview
 
-Документ описывает основные сценарии использования UltraScript Tools MCP и потоки данных между компонентами системы.
+This document describes the main usage scenarios of UltraCode and data flows between system components.
 
-**Точки входа:**
+**Entry points:**
 - MCP Server: [src/index.ts](../src/index.ts)
 - Tool Handlers: [📖 Tools AUTODOC](../src/tools/AUTODOC.md)
 - Conductor: [📖 Agents AUTODOC](../src/agents/AUTODOC.md)
 
-## Основные сценарии (User Stories)
+## Main Scenarios (User Stories)
 
-### 1. Индексация кодовой базы
+### 1. Codebase Indexing
 
-**Реализация:** [IndexToolHandler](../src/tools/handlers/index-tool-handler.ts) → [IndexerAgent](../src/agents/indexer-agent.ts)
+**Implementation:** [IndexToolHandler](../src/tools/handlers/index-tool-handler.ts) → [IndexerAgent](../src/agents/indexer-agent.ts)
 
-**Сценарий**: Разработчик хочет проиндексировать проект для семантического поиска.
+**Scenario**: A developer wants to index a project for semantic search.
 
 ```
-Пользователь                    MCP Server                     Агенты
+User                            MCP Server                     Agents
     │                               │                              │
     │  index(directory, reset)      │                              │
     │──────────────────────────────>│                              │
-    │                               │  1. Очистка графа (если reset)
-    │                               │  2. Очистка векторов          │
+    │                               │  1. Clear graph (if reset)   │
+    │                               │  2. Clear vectors            │
     │                               │                              │
     │                               │  AgentTask(type="index")     │
     │                               │─────────────────────────────>│
@@ -51,26 +51,26 @@
     │<──────────────────────────────│                              │
 ```
 
-**Шаги**:
-1. MCP клиент вызывает `index` с параметрами
-2. При `reset=true` очищаются граф и векторное хранилище
-3. ConductorOrchestrator создаёт задачу и распределяет по агентам
-4. ParserAgent парсит файлы через нативные парсеры
-5. IndexerAgent сохраняет сущности и связи в SQLite
-6. SemanticAgent генерирует эмбеддинги для семантического поиска
-7. Возвращается статистика индексации
+**Steps**:
+1. MCP client calls `index` with parameters
+2. With `reset=true`, the graph and vector store are cleared
+3. ConductorOrchestrator creates a task and distributes it among agents
+4. ParserAgent parses files through native parsers
+5. IndexerAgent saves entities and relationships to SQLite
+6. SemanticAgent generates embeddings for semantic search
+7. Indexing statistics are returned
 
-### 2. Семантический поиск
+### 2. Semantic Search
 
-**Реализация:** [SemanticToolHandlers](../src/tools/handlers/semantic-tool-handlers.ts) → [SemanticAgent](../src/agents/semantic-agent.ts)
+**Implementation:** [SemanticToolHandlers](../src/tools/handlers/semantic-tool-handlers.ts) → [SemanticAgent](../src/agents/semantic-agent.ts)
 
-**Сценарий**: Разработчик ищет код по смыслу, а не по точному совпадению.
+**Scenario**: A developer searches for code by meaning rather than exact match.
 
 ```
-Пользователь                    MCP Server                     Компоненты
+User                            MCP Server                     Components
     │                               │                              │
     │  semantic_search(             │                              │
-    │    "обработка ошибок API"     │                              │
+    │    "API error handling"       │                              │
     │  )                            │                              │
     │──────────────────────────────>│                              │
     │                               │                              │
@@ -101,18 +101,18 @@
     │<──────────────────────────────│                              │
 ```
 
-**Шаги**:
-1. Запрос преобразуется в вектор через EmbeddingGenerator
-2. VectorStore выполняет косинусный поиск по sqlite-vec
-3. HybridSearch комбинирует векторный и текстовый поиск
-4. Результаты ранжируются и возвращаются клиенту
+**Steps**:
+1. The query is converted to a vector via EmbeddingGenerator
+2. VectorStore performs cosine search via sqlite-vec
+3. HybridSearch combines vector and text search
+4. Results are ranked and returned to the client
 
-### 3. Анализ влияния изменений
+### 3. Change Impact Analysis
 
-**Сценарий**: Разработчик хочет понять, что сломается при изменении функции.
+**Scenario**: A developer wants to understand what will break when modifying a function.
 
 ```
-Пользователь                    MCP Server                     Хранилище
+User                            MCP Server                     Storage
     │                               │                              │
     │  analyze_code_impact(         │                              │
     │    entityId: "UserService",   │                              │
@@ -140,12 +140,12 @@
     │<──────────────────────────────│                              │
 ```
 
-### 4. Генерация документации (AutoDoc)
+### 4. Documentation Generation (AutoDoc)
 
-**Сценарий**: Разработчик хочет автоматически сгенерировать документацию для модулей.
+**Scenario**: A developer wants to automatically generate documentation for modules.
 
 ```
-Пользователь                    MCP Server                     Компоненты
+User                            MCP Server                     Components
     │                               │                              │
     │  autodoc_generate(            │                              │
     │    useLlm: true,              │                              │
@@ -153,25 +153,25 @@
     │  )                            │                              │
     │──────────────────────────────>│                              │
     │                               │                              │
-    │                               │   1. Сканирование модулей    │
+    │                               │   1. Module scanning         │
     │                               │   ┌─────────────────┐        │
-    │                               │   │ Поиск index.ts  │        │
-    │                               │   │ Группировка     │        │
+    │                               │   │ Find index.ts   │        │
+    │                               │   │ Grouping        │        │
     │                               │   └────────┬────────┘        │
     │                               │            │                 │
-    │                               │   2. Анализ экспортов        │
+    │                               │   2. Export analysis          │
     │                               │   ┌─────────────────┐        │
     │                               │   │ GraphStorage    │        │
     │                               │   │ relationships   │        │
     │                               │   └────────┬────────┘        │
     │                               │            │                 │
-    │                               │   3. LLM генерация           │
+    │                               │   3. LLM generation          │
     │                               │   ┌─────────────────┐        │
     │                               │   │ Ollama API      │        │
     │                               │   │ qwen3-coder     │        │
     │                               │   └────────┬────────┘        │
     │                               │            │                 │
-    │                               │   4. Сохранение .md          │
+    │                               │   4. Save .md files          │
     │                               │   ┌─────────────────┐        │
     │                               │   │ AUTODOC.md      │        │
     │                               │   │ per module      │        │
@@ -181,12 +181,12 @@
     │<──────────────────────────────│                              │
 ```
 
-### 5. Обнаружение дубликатов кода
+### 5. Code Duplicate Detection
 
-**Сценарий**: Разработчик ищет повторяющийся код для рефакторинга.
+**Scenario**: A developer searches for duplicate code for refactoring.
 
 ```
-Пользователь                    MCP Server                     Компоненты
+User                            MCP Server                     Components
     │                               │                              │
     │  detect_code_clones(          │                              │
     │    minSimilarity: 0.8         │                              │
@@ -221,14 +221,14 @@
     │<──────────────────────────────│                              │
 ```
 
-### 6. Переключение Git-веток
+### 6. Git Branch Switching
 
-**Реализация:** [BranchToolHandlers](../src/tools/handlers/branch-tool-handlers.ts) → [GraphStorageLibSQL.setProject():92](../src/storage/graph-storage-libsql.ts#L92)
+**Implementation:** [BranchToolHandlers](../src/tools/handlers/branch-tool-handlers.ts) → [GraphStorageLibSQL.setProject():92](../src/storage/graph-storage-libsql.ts#L92)
 
-**Сценарий**: Разработчик переключается на feature-ветку и хочет сохранить актуальный индекс.
+**Scenario**: A developer switches to a feature branch and wants to keep the index up to date.
 
 ```
-Пользователь                    MCP Server                     Storage
+User                            MCP Server                     Storage
     │                               │                              │
     │  switch_branch(               │                              │
     │    "feature/auth"             │                              │
@@ -264,12 +264,12 @@
     │<──────────────────────────────│                              │
 ```
 
-### 7. Multi-Project работа
+### 7. Multi-Project Workflow
 
-**Сценарий**: Разработчик работает с несколькими проектами одновременно.
+**Scenario**: A developer works with multiple projects simultaneously.
 
 ```
-Пользователь                    MCP Server                     Storage
+User                            MCP Server                     Storage
     │                               │                              │
     │  index(                       │                              │
     │    directory: "/project-a"    │                              │
@@ -299,9 +299,9 @@
     │<──────────────────────────────│                              │
 ```
 
-## Потоки данных между агентами
+## Data Flows Between Agents
 
-### Публикация событий через KnowledgeBus
+### Event Publishing via KnowledgeBus
 
 ```
 ParserAgent                    KnowledgeBus                    Subscribers
@@ -333,17 +333,17 @@ SemanticAgent                  KnowledgeBus                    Subscribers
     │                               │─────────────────────────────>│
 ```
 
-### Топики KnowledgeBus
+### KnowledgeBus Topics
 
-| Топик | Издатель | Подписчики | Описание |
-|-------|----------|------------|----------|
-| `entity:parsed` | ParserAgent | IndexerAgent, SemanticAgent | Новая сущность распарсена |
-| `entity:modified` | DevAgent | SemanticAgent | Сущность изменена |
-| `index:completed` | IndexerAgent | SemanticAgent | Индексация завершена |
-| `semantic:embeddings:complete` | SemanticAgent | QueryAgent | Эмбеддинги готовы |
-| `file:changed` | DevAgent | ParserAgent | Файл изменён (инкрементальная индексация) |
+| Topic | Publisher | Subscribers | Description |
+|-------|----------|-------------|-------------|
+| `entity:parsed` | ParserAgent | IndexerAgent, SemanticAgent | New entity parsed |
+| `entity:modified` | DevAgent | SemanticAgent | Entity modified |
+| `index:completed` | IndexerAgent | SemanticAgent | Indexing completed |
+| `semantic:embeddings:complete` | SemanticAgent | QueryAgent | Embeddings ready |
+| `file:changed` | DevAgent | ParserAgent | File changed (incremental indexing) |
 
-## Жизненный цикл запроса
+## Request Lifecycle
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -355,9 +355,9 @@ SemanticAgent                  KnowledgeBus                    Subscribers
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         MCP Server (src/index.ts)                        │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │  1. Валидация JSON-RPC                                          │    │
-│  │  2. Роутинг на tool handler                                     │    │
-│  │  3. Zod валидация параметров                                    │    │
+│  │  1. JSON-RPC validation                                         │    │
+│  │  2. Routing to tool handler                                     │    │
+│  │  3. Zod parameter validation                                    │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────┬───────────────────────────────────────┘
                                   │
@@ -366,8 +366,8 @@ SemanticAgent                  KnowledgeBus                    Subscribers
 │                         Tool Handler Layer                               │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
 │  │  IndexToolHandler / QueryToolHandler / etc.                     │    │
-│  │  - Создание AgentTask                                           │    │
-│  │  - Делегирование ConductorOrchestrator                          │    │
+│  │  - Create AgentTask                                             │    │
+│  │  - Delegate to ConductorOrchestrator                            │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────┬───────────────────────────────────────┘
                                   │
@@ -375,10 +375,10 @@ SemanticAgent                  KnowledgeBus                    Subscribers
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                       ConductorOrchestrator                              │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │  1. Приоритизация задачи                                        │    │
-│  │  2. Выбор агента по типу задачи                                 │    │
-│  │  3. Backpressure контроль (ResourceManager)                     │    │
-│  │  4. Координация параллельного выполнения                        │    │
+│  │  1. Task prioritization                                         │    │
+│  │  2. Agent selection by task type                                │    │
+│  │  3. Backpressure control (ResourceManager)                      │    │
+│  │  4. Parallel execution coordination                             │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────┬───────────────────────────────────────┘
                                   │
@@ -402,8 +402,8 @@ SemanticAgent                  KnowledgeBus                    Subscribers
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Связанные документы
+## Related Documents
 
-- [→ ARCHITECTURE.md](./architecture.md) — архитектура системы
-- [→ PROCESSES.md](./processes.md) — технические процессы
-- [→ DEPENDENCIES.md](./dependencies.md) — зависимости
+- [→ ARCHITECTURE.md](./architecture.md) — system architecture
+- [→ PROCESSES.md](./processes.md) — technical processes
+- [→ DEPENDENCIES.md](./dependencies.md) — dependencies

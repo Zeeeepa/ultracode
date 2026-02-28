@@ -72,13 +72,7 @@ export class FileWatcher extends EventEmitter {
     this.config = {
       rootDir: config.rootDir.replace(/\\/g, "/"),
       include: config.include ?? ["**/*"],
-      exclude: config.exclude ?? [
-        "**/node_modules/**",
-        "**/.git/**",
-        "**/dist/**",
-        "**/build/**",
-        "**/.ultrascript/**",
-      ],
+      exclude: config.exclude ?? ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**", "**/.ultracode/**"],
       debounceMs: config.debounceMs ?? 100,
       bulkThreshold: config.bulkThreshold ?? 1000,
     };

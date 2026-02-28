@@ -3,79 +3,13 @@ export type ProviderKind =
   | "cloudru"
   | "huggingface"
   | "tei"
-  | "ollama" // Ollama local server
-  | "ovms" // Legacy alias for ovms-native
-  | "ovms-native" // OVMS native binary (no Docker)
-  | "vllm" // vLLM Docker container (NVIDIA GPU)
-  | "llamacpp" // llama.cpp native server (GGUF models)
-  | "mlx" // Apple MLX (macOS ARM64 Metal GPU)
+  | "ollama"
+  | "ovms"
+  | "ovms-native"
+  | "vllm"
+  | "llamacpp"
+  | "mlx"
   | "auto";
-
-export interface ProviderInfo {
-  name: ProviderKind | string;
-  model: string;
-  dimension?: number;
-  supportsBatch: boolean;
-  maxBatchSize?: number | undefined;
-  /** Maximum context tokens (512, 8192, etc.) */
-  maxTokens?: number | undefined;
-}
-
-export interface EmbedOptions {
-  signal?: AbortSignal | undefined;
-  requestId?: string | undefined;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Rerank Types - for two-stage retrieval
-// ═══════════════════════════════════════════════════════════════
-
-export interface RerankDocument {
-  /** Document text to rerank */
-  text: string;
-  /** Optional document ID for tracking */
-  id?: string | undefined;
-}
-
-export interface RerankResult {
-  /** Original document index */
-  index: number;
-  /** Document ID if provided */
-  id?: string | undefined;
-  /** Relevance score (0-1, higher = more relevant) */
-  score: number;
-  /** Original text */
-  text: string;
-}
-
-export interface RerankOptions extends EmbedOptions {
-  /** Return top K results (default: all) */
-  topK?: number;
-  /** Return documents with score above threshold */
-  threshold?: number | undefined;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Score Types - for pairwise similarity
-// ═══════════════════════════════════════════════════════════════
-
-export interface ScoreResult {
-  /** Similarity score between query and document */
-  score: number;
-}
-
-export interface ScoreOptions extends EmbedOptions {}
-
-// ═══════════════════════════════════════════════════════════════
-// Provider Capabilities
-// ═══════════════════════════════════════════════════════════════
-
-export interface ProviderCapabilities {
-  embeddings: boolean;
-  rerank: boolean;
-  score: boolean;
-  classify: boolean;
-}
 
 export interface ProviderLogger {
   debug(msg: string, data?: unknown, requestId?: string): void;
@@ -84,6 +18,50 @@ export interface ProviderLogger {
   error(msg: string, data?: unknown, requestId?: string | undefined, err?: Error): void;
 }
 
+export interface ProviderInfo {
+  name: ProviderKind | string;
+  model: string;
+  supportsBatch: boolean;
+  dimension?: number;
+  maxBatchSize?: number | undefined;
+  maxTokens?: number | undefined;
+}
+
+export interface EmbedOptions {
+  signal?: AbortSignal | undefined;
+  requestId?: string | undefined;
+}
+
+export interface ProviderCapabilities {
+  embeddings: boolean;
+  rerank: boolean;
+  score: boolean;
+  classify: boolean;
+}
+
+export interface RerankDocument {
+  text: string;
+  id?: string | undefined;
+}
+
+export interface RerankResult {
+  index: number;
+  score: number;
+  text: string;
+  id?: string | undefined;
+}
+
+export interface RerankOptions extends EmbedOptions {
+  topK?: number;
+  threshold?: number | undefined;
+}
+
+export interface ScoreResult {
+  score: number;
+}
+
+export interface ScoreOptions extends EmbedOptions {}
+
 export interface EmbeddingProvider {
   info: ProviderInfo;
   initialize(): Promise<void>;
@@ -91,28 +69,8 @@ export interface EmbeddingProvider {
   embed(text: string, opts?: EmbedOptions): Promise<Float32Array>;
   embedBatch?(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]>;
   close?(): Promise<void>;
-
-  // ═══════════════════════════════════════════════════════════════
-  // Extended Capabilities (optional)
-  // ═══════════════════════════════════════════════════════════════
-
-  /** Get provider capabilities */
   getCapabilities?(): ProviderCapabilities;
-
-  /**
-   * Rerank documents by relevance to query (two-stage retrieval)
-   * Use after initial embedding search to improve precision
-   */
   rerank?(query: string, documents: RerankDocument[], opts?: RerankOptions): Promise<RerankResult[]>;
-
-  /**
-   * Calculate similarity score between query and single document
-   * More accurate than cosine similarity of embeddings
-   */
   score?(query: string, document: string, opts?: ScoreOptions): Promise<ScoreResult>;
-
-  /**
-   * Batch score: calculate similarity for query vs multiple documents
-   */
   scoreBatch?(query: string, documents: string[], opts?: ScoreOptions): Promise<ScoreResult[]>;
 }

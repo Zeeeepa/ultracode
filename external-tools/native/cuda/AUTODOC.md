@@ -2,29 +2,29 @@
 
 ## Title and Overview
 
-Модуль CUDA предоставляет интерфейсы и типы для работы с GPU-вычислениями через CUDA-совместимые библиотеки. Содержит определения типов для управления ресурсами GPU, выполнения вычислений и взаимодействия с драйвером CUDA. Предназначен для использования в проектах, требующих высокопроизводительных вычислений на графических процессорах.
+The CUDA module provides interfaces and types for working with GPU computations through CUDA-compatible libraries. It contains type definitions for GPU resource management, computation execution, and interaction with the CUDA driver. Intended for use in projects requiring high-performance computations on graphics processors.
 
 ## Files
 
 | File             | Description                                                                 |
 |------------------|-----------------------------------------------------------------------------|
-| `index.d.ts`     | Основной файл определений типов для модуля CUDA, содержит интерфейсы и типы |
+| `index.d.ts`     | Main type definition file for the CUDA module, containing interfaces and types |
 
 ## Exports
 
-Нет публичных экспортов. Модуль предназначен для внутреннего использования и предоставляет только типы для компиляции.
+No public exports. The module is intended for internal use and provides only types for compilation.
 
 ## Usage
 
-Модуль используется в проектах, где требуется типизация для работы с CUDA-функциями:
+The module is used in projects that require typing for CUDA functions:
 
 ```typescript
-// Пример использования в коде
+// Usage example in code
 import { CudaContext, CudaDevice } from 'cuda-module';
 
-// Использование типов для работы с GPU-ресурсами
+// Using types for working with GPU resources
 const context: CudaContext = new CudaContext();
 const device: CudaDevice = context.getDevice(0);
 ```
 
-> Обратите внимание: модуль является внутренним и не предназначен для прямого импорта в пользовательском коде.
+> Note: the module is internal and is not intended for direct import in user code.

@@ -8,7 +8,7 @@
  * - Bun: uses bun:sqlite for persistent storage (fast sync reads)
  * - Node.js: in-memory only (sync SQLite not available, deltas don't persist)
  *
- * Database location (Bun only): %LOCALAPPDATA%/UltraScriptTools/projects/<hash>/layered/deltas.db
+ * Database location (Bun only): %LOCALAPPDATA%/UltraCode/projects/<hash>/layered/deltas.db
  *
  * Based on: ultrasharp-tools-mcp LayeredCacheManager.cs
  * @see Dev.Docs/LAYERED_INDEXING_IMPLEMENTATION_PLAN.md

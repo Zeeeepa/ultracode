@@ -1,37 +1,37 @@
-# Модуль Examples
+# Examples Module
 
-Модуль содержит примеры использования ключевых функций UltraScript Tools MCP для анализа кода, семантического слияния, модификации кода и работы с индексированием.
+The module contains usage examples for key UltraCode features including code analysis, semantic merging, code modification, and indexing.
 
-## Файлы
+## Files
 
-| Файл | Описание |
+| File | Description |
 |------|---------|
-| `analysis-example.ts` | Пустой файл-заглушка для примеров анализа. |
-| `chaos-analysis-example.ts` | Примеры использования анализатора хаоса состояния для обнаружения проблем в управлении состоянием (state management). Демонстрирует анализ переменных состояния, метрики chaos score, обнаружение точек мутации и оценку влияния рефакторинга. |
-| `code-modification-example.ts` | Примеры модификации кода: управление версиями через снимки состояния (snapshots), замена кода на уровне сущностей, операции с файлами (копирование, переименование, разделение, синтез). |
-| `cuda-example.ts` | Примеры GPU-ускоренных векторных операций через CUDA: вычисление косинусного сходства, нормализация векторов, евклидово расстояние и семантический поиск на GPU с ускорением 100-200x. |
-| `demo-merge-simple.mjs` | Демонстрация анализа семантического слияния между двумя ветками: fast path matching по хешам контента, обнаружение конфликтов и рекомендации по стратегии слияния. |
-| `demo-semantic-merge.ts` | Полнофункциональная демонстрация семантического слияния с использованием embeddings, классификацией интентов, обнаружением и разрешением конфликтов с помощью AI. |
-| `layered-indexing-example.ts` | Примеры интеграции многоуровневого индексирования для работы с ветками: переключение между ветками, кэширование, семантический поиск с дельта-изменениями и управление жизненным циклом. |
-| `parser-agent-demo.ts` | Демонстрация агента парсера на основе tree-sitter: обработка одного файла, пакетная обработка, эффективность кэша и анализ производительности парсинга. |
+| `analysis-example.ts` | Empty stub file for analysis examples. |
+| `chaos-analysis-example.ts` | Usage examples for the state chaos analyzer to detect issues in state management. Demonstrates state variable analysis, chaos score metrics, mutation point detection, and refactoring impact assessment. |
+| `code-modification-example.ts` | Code modification examples: version management through state snapshots, entity-level code replacement, file operations (copy, rename, split, synthesize). |
+| `cuda-example.ts` | Examples of GPU-accelerated vector operations via CUDA: cosine similarity computation, vector normalization, Euclidean distance, and semantic search on GPU with 100-200x acceleration. |
+| `demo-merge-simple.mjs` | Demonstration of semantic merge analysis between two branches: fast path matching by content hashes, conflict detection, and merge strategy recommendations. |
+| `demo-semantic-merge.ts` | Full-featured semantic merge demonstration using embeddings, intent classification, conflict detection and resolution with AI. |
+| `layered-indexing-example.ts` | Examples of multi-layered indexing integration for branch management: branch switching, caching, semantic search with delta changes, and lifecycle management. |
+| `parser-agent-demo.ts` | Parser agent demonstration based on tree-sitter: single file processing, batch processing, cache efficiency, and parsing performance analysis. |
 
 ## Exports
 
-Модуль не содержит публичных экспортов. Каждый файл является независимым примером и может быть запущен отдельно.
+The module has no public exports. Each file is an independent example and can be run separately.
 
-## Использование
+## Usage
 
-Примеры выполняются командами вида:
+Examples are executed with commands like:
 
 ```bash
-# Запуск примера через bun
+# Run an example via bun
 bun examples/cuda-example.ts
 
-# Или через Node.js (после компиляции)
+# Or via Node.js (after compilation)
 node dist/examples/cuda-example.js
 
-# Запуск демонстрации семантического слияния
+# Run semantic merge demonstration
 bun examples/demo-semantic-merge.ts
 ```
 
-Каждый пример содержит полный сценарий использования с выводом результатов анализа, метрик производительности и рекомендаций.
+Each example contains a complete usage scenario with output of analysis results, performance metrics, and recommendations.

@@ -100,11 +100,11 @@ export class KotlinNativeParser {
     log.d("KOTLINPARSER", "init_start");
     workerLog("INFO", "KOTLINPARSER init_start", {
       useK2: this.useK2,
-      envAntlr: process.env["ULTRASCRIPT_KOTLIN_ANTLR"],
+      envAntlr: process.env["ULTRACODE_KOTLIN_ANTLR"],
     });
 
     // Try to detect JVM for K2 mode
-    if (this.useK2 && !process.env["ULTRASCRIPT_KOTLIN_ANTLR"]) {
+    if (this.useK2 && !process.env["ULTRACODE_KOTLIN_ANTLR"]) {
       try {
         workerLog("INFO", "KOTLINPARSER detecting compatible JVM for K2...");
         // Uses cached JVM path if available, otherwise scans and caches result
@@ -135,7 +135,7 @@ export class KotlinNativeParser {
     } else {
       workerLog("INFO", "KOTLINPARSER skipping JVM detection", {
         useK2: this.useK2,
-        envAntlr: !!process.env["ULTRASCRIPT_KOTLIN_ANTLR"],
+        envAntlr: !!process.env["ULTRACODE_KOTLIN_ANTLR"],
       });
     }
 

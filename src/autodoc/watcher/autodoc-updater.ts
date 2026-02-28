@@ -188,7 +188,7 @@ function updateExportsSection(content: string, exports: string[], parsed: Parsed
       return content;
     }
 
-    // Check if prose text (not a simple list) - e.g., "Модуль не имеет публичных экспортов..."
+    // Check if prose text (not a simple list) - e.g., "The module has no public exports..."
     const isSimpleList = /^(\s*-\s*`\w+`\s*\n?)+$/m.test(sectionContent.trim());
     if (!isSimpleList && sectionContent.trim().length > 10) {
       // Preserve prose description
@@ -244,7 +244,7 @@ function updateFilesSection(content: string, files: string[], _parsed: ParsedAut
   if (match) {
     const sectionContent = match[1] || "";
 
-    // Check if table format (| Файл | Описание |)
+    // Check if table format (| File | Description |)
     const isTableFormat =
       sectionContent.includes("|---") || sectionContent.includes("| Файл |") || sectionContent.includes("| File |");
 
@@ -942,7 +942,7 @@ export async function updateDescription(
 
   // Try two formats:
   // Format 1: Description between # Title and ## Section
-  // Format 2: Description inside ## Описание модуля or ## Заголовок и описание section
+  // Format 2: Description inside ## Module Description or ## Title and Description section
 
   const titleMatch = content.match(/^# .+\n+/);
   if (!titleMatch) {
@@ -959,7 +959,7 @@ export async function updateDescription(
     const descriptionEnd = afterTitle.indexOf(nextSectionMatch[0]);
     currentDescription = afterTitle.slice(0, descriptionEnd).trim();
 
-    // If no description after title, check for description inside "## Описание" or "## Заголовок" section
+    // If no description after title, check for description inside "## Description" or "## Title" section
     if (currentDescription.length < 10) {
       const descSectionMatch = content.match(
         /## (?:Описание модуля|Заголовок и описание|Description)\s*\n+([\s\S]*?)(?=\n## |\n$|$)/i,

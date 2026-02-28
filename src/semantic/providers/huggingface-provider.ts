@@ -53,7 +53,7 @@ export class HuggingFaceProvider implements EmbeddingProvider {
     });
 
     try {
-      // Динамическая загрузка @huggingface/inference
+      // Dynamic loading of @huggingface/inference
       const { HfInference } = await import("@huggingface/inference");
       this.client = new HfInference(this.apiKey) as HfInferenceClient;
     } catch (error: unknown) {
@@ -65,7 +65,7 @@ export class HuggingFaceProvider implements EmbeddingProvider {
       throw new Error(errorMessage);
     }
 
-    // Warmup call для определения размерности
+    // Warmup call to determine dimensionality
     try {
       const vec = await this.embed(this.warmupText);
       this.info.dimension = vec.length;
@@ -96,10 +96,10 @@ export class HuggingFaceProvider implements EmbeddingProvider {
         inputs: text,
       });
 
-      // Результат может быть массивом или вложенным массивом
+      // Result may be an array or a nested array
       let embedding: number[];
       if (Array.isArray(result)) {
-        // Если вернулся массив массивов (batch), берем первый
+        // If returned an array of arrays (batch), take the first one
         if (Array.isArray(result[0])) {
           embedding = result[0]!; // Safe: checked above
         } else {
@@ -116,7 +116,7 @@ export class HuggingFaceProvider implements EmbeddingProvider {
       const err = toError(error);
       this.log?.error("embed failed", { error: err.message }, opts?.requestId, err);
 
-      // Проверяем специфичные ошибки HF API
+      // Check for HF API-specific errors
       if (err.message.includes("rate limit")) {
         throw new Error(`HuggingFace rate limit exceeded. Consider using a paid API key or retry later.`);
       }
@@ -134,7 +134,7 @@ export class HuggingFaceProvider implements EmbeddingProvider {
   async embedBatch(texts: string[], opts?: EmbedOptions): Promise<Float32Array[]> {
     this.log?.debug("embedBatch()", { count: texts.length }, opts?.requestId);
 
-    // Используем p-limit для контроля конкурентности
+    // Use p-limit for concurrency control
     const pLimit = (await import("p-limit")).default;
     const limit = pLimit(this.concurrency);
     return Promise.all(texts.map((t) => limit(() => this.embed(t, opts))));

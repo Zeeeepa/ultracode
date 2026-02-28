@@ -4,7 +4,7 @@
 #  For Embeddings (sentence-transformers, E5, BGE)
 # ============================================
 #
-# Installs to: ~/.local/share/ultrascript-tools/ovms/
+# Installs to: ~/.local/share/ultracode/ovms/
 # ToMe ratio: 0.3 (optimal for embeddings)
 #
 
@@ -25,12 +25,12 @@ echo ""
 echo "============================================"
 echo "  OVMS Auto-Setup for Embeddings"
 echo "============================================"
-echo "  Target: ~/.local/share/ultrascript-tools/ovms/"
+echo "  Target: ~/.local/share/ultracode/ovms/"
 echo "  ToMe: 0.3 (30% merging, 1.5-2x speedup)"
 echo "============================================"
 echo ""
 
-INSTALL_DIR="$HOME/.local/share/ultrascript-tools/ovms"
+INSTALL_DIR="$HOME/.local/share/ultracode/ovms"
 TEMP_BUILD="/tmp/ovms-build"
 TOME_RATIO="0.3"
 OVMS_BRANCH="releases/2025/0"
@@ -79,7 +79,7 @@ fi
 
 # Find OpenVINO
 OV_DIR=""
-OV_INSTALL_DIR="$HOME/.local/share/ultrascript-tools/openvino"
+OV_INSTALL_DIR="$HOME/.local/share/ultracode/openvino"
 for dir in "$OV_INSTALL_DIR" /opt/intel/openvino_2025 /opt/intel/openvino_2024 /opt/intel/openvino ~/intel/openvino_2025 ~/intel/openvino_2024; do
     if [ -d "$dir/runtime/cmake" ]; then
         OV_DIR="$dir/runtime/cmake"

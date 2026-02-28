@@ -1,10 +1,10 @@
 /**
- * Storage paths management for UltraScript Tools
+ * Storage paths management for UltraCode
  *
  * All data is stored in a central location:
- * - Windows: %LOCALAPPDATA%\UltraScriptTools\
- * - macOS: ~/Library/Application Support/UltraScriptTools/
- * - Linux: ~/.local/share/UltraScriptTools/
+ * - Windows: %LOCALAPPDATA%\UltraCode\
+ * - macOS: ~/Library/Application Support/UltraCode/
+ * - Linux: ~/.local/share/UltraCode/
  */
 
 import { execSync } from "node:child_process";
@@ -19,7 +19,7 @@ import { hashText } from "../utils/fast-hash.js";
 // =============================================================================
 
 /**
- * Get the base data directory for UltraScript Tools
+ * Get the base data directory for UltraCode
  */
 export function getDataDir(): string {
   let baseDir: string;
@@ -36,7 +36,7 @@ export function getDataDir(): string {
       baseDir = process.env["XDG_DATA_HOME"] || join(homedir(), ".local", "share");
   }
 
-  return join(baseDir, "UltraScriptTools");
+  return join(baseDir, "UltraCode");
 }
 
 /**
@@ -59,9 +59,9 @@ export function ensureDataDir(): string {
  */
 export function getIPCSocketPath(): string {
   if (process.platform === "win32") {
-    return "\\\\.\\pipe\\ultrascript-core";
+    return "\\\\.\\pipe\\ultracode-core";
   }
-  return "/tmp/ultrascript-core.sock";
+  return "/tmp/ultracode-core.sock";
 }
 
 // =============================================================================
@@ -113,6 +113,12 @@ export function getCoreLockPath(): string {
  * Uses xxHash (initialized at module load, no fallback race condition)
  */
 export function hashProjectPath(projectPath: string): string {
+  if (!projectPath) {
+    throw new Error(
+      `hashProjectPath: projectPath must not be empty (got ${JSON.stringify(projectPath)}). ` +
+        "Ensure projectPath is provided in tool args or resolved from session/context.",
+    );
+  }
   // Normalize path for consistent hashing
   const normalized = projectPath.toLowerCase().replace(/\\/g, "/").replace(/\/$/, "");
   return hashText(normalized);
@@ -251,6 +257,9 @@ export function isBaseBranch(branchName: string | null): boolean {
  * Caller MUST handle null case explicitly.
  */
 export function getCurrentGitBranch(projectPath: string): string | null {
+  if (!projectPath) {
+    return null;
+  }
   try {
     const gitDir = join(projectPath, ".git");
     if (!existsSync(gitDir)) {

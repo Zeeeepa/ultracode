@@ -48,7 +48,7 @@ export function findSolutionFile(directory: string): string | null {
 // Addon Availability
 // ============================================================================
 
-const ADDON_DLL_NAME = "Ultrasharp.Addon.dll";
+const ADDON_DLL_NAME = "UltraCode.CSharp.dll";
 
 /**
  * Check if the Roslyn addon DLL is available on disk.
@@ -56,14 +56,14 @@ const ADDON_DLL_NAME = "Ultrasharp.Addon.dll";
 export function isRoslynAvailable(): boolean {
   const thisDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    // Built alongside ultrascript dist
+    // Built alongside ultracode dist (produced by build-roslyn scripts)
     join(thisDir, "..", "roslyn-addon", ADDON_DLL_NAME),
-    // External libs
+    // External libs fallback
     join(process.cwd(), "external-libs", "roslyn-addon", ADDON_DLL_NAME),
-    // Development: ultrasharp-tools-mcp build output
-    join(process.cwd(), "..", "ultrasharp-tools-mcp", "Run.Publish", "Addon", ADDON_DLL_NAME),
-    // Development: Droid/Addon bundled
-    join(process.cwd(), "..", "ultrasharp-tools-mcp", "Run.Publish", "Droid", "Addon", ADDON_DLL_NAME),
+    // Development: local dotnet build output
+    join(process.cwd(), "roslyn", "UltraCode.CSharp", "bin", "Release", "net10.0", ADDON_DLL_NAME),
+    // Development: dist/roslyn-addon from build pipeline
+    join(process.cwd(), "dist", "roslyn-addon", ADDON_DLL_NAME),
   ];
 
   for (const candidate of candidates) {
@@ -156,7 +156,7 @@ export async function ensureRoslynStarted(slnPath: string): Promise<CSharpNative
 async function doStart(slnPath: string): Promise<CSharpNativeParser | null> {
   // Check DLL availability
   if (!isRoslynAvailable()) {
-    log.w("ROSLYN", "addon_not_available", { hint: "Ultrasharp.Addon.dll not found" });
+    log.w("ROSLYN", "addon_not_available", { hint: "UltraCode.CSharp.dll not found" });
     return null;
   }
 

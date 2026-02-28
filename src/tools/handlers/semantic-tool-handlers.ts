@@ -15,9 +15,9 @@ import { z } from "zod";
 import { log } from "../../logging/index.js";
 import type { EntityType } from "../../types/storage.js";
 import { toError } from "../../utils/error-handling.js";
-import type { IClone } from "../../vendor/jscpd/index.js";
 import { projectPathParam } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
+import type { IClone } from "../jscpd.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 import { DetectCodeClonesSchema } from "../schemas/semantic-schemas.js";
 
@@ -915,36 +915,22 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
   }
 
   protected async execute(args: z.infer<typeof JscpdDetectClonesSchema>): Promise<ToolResult> {
-    // Use resolveProjectPath for proper path resolution, ensure non-undefined
     const targetDir = args.directory
       ? (this.context.normalizeInputPath(args.directory) ?? this.resolveProjectPath({}))
       : this.resolveProjectPath({});
 
     try {
-      const { InFilesDetector, MemoryStore, Statistic, getDefaultOptions, SimpleTokenizer } = await import(
-        "../../vendor/jscpd/index.js"
-      );
+      const { runJscpdCloneDetection } = await import("../jscpd.js");
 
-      const options = {
-        ...getDefaultOptions(),
-        path: [targetDir] as string[],
+      const result = await runJscpdCloneDetection({
+        paths: [targetDir],
+        formats: args.format || ["javascript", "typescript", "python"],
         minLines: args.minLines,
         minTokens: args.minTokens,
-        threshold: args.threshold,
-        format: args.format || ["javascript", "typescript", "python"],
-        silent: true,
-      };
+      });
 
-      const tokenizer = new SimpleTokenizer();
-      // Note: MemoryStore type from jscpd is not exported, using direct instantiation
-      const store = new MemoryStore();
-      const statistic = new Statistic();
-      // Type assertion needed for vendor code compatibility
-      const inFilesDetector = new InFilesDetector(tokenizer, store as never, options, [statistic]);
-
-      const clones: IClone[] = await inFilesDetector.detectFromOptions(options);
       const safeLimit = Math.min(args.limit, MAX_PAGE_SIZE);
-      const paginatedResult = paginate(clones, args.offset, safeLimit);
+      const paginatedResult = paginate(result.clones, args.offset, safeLimit);
 
       return {
         content: [
@@ -954,8 +940,11 @@ export class JscpdDetectClonesToolHandler extends BaseToolHandler<z.infer<typeof
               {
                 duplicatesFound: paginatedResult.data.length,
                 pagination: paginatedResult.pagination,
-                statistics: statistic.getStatistic(),
-                duplicates: paginatedResult.data.map((c) => ({
+                statistics: {
+                  total: result.statistic.total,
+                  detectionDate: result.statistic.detectionDate,
+                },
+                duplicates: paginatedResult.data.map((c: IClone) => ({
                   format: c.format,
                   foundDate: c.foundDate,
                   duplicationA: {

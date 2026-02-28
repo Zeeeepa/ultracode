@@ -3,7 +3,7 @@
 # Build OpenVINO Model Server (OVMS) from source with NVIDIA GPU plugin and Token Merging support.
 #
 # This script clones the OVMS repository, builds it with NVIDIA plugin enabled,
-# installs Token Merging (ToMe) optimization tools, and installs to UltraScriptTools OVMS directory.
+# installs Token Merging (ToMe) optimization tools, and installs to UltraCode OVMS directory.
 #
 # ToMe (Token Merging) provides 1.5-2x speedup for embedding models by merging similar tokens
 # during inference, with <1% accuracy loss. Works great with sentence-transformers and CLIP models.
@@ -56,7 +56,7 @@ SKIP_TOME=false
 CLEAN_BUILD=false
 
 # Target installation directory
-INSTALL_DIR="$HOME/.local/share/ultrascript-tools/ovms"
+INSTALL_DIR="$HOME/.local/share/ultracode/ovms"
 TEMP_BUILD_DIR="/tmp/ovms-build"
 OVMS_REPO_URL="https://github.com/openvinotoolkit/model_server.git"
 OVMS_BRANCH="releases/2025/0"
@@ -560,7 +560,7 @@ fi
 success "Build complete"
 
 # --------------------------------------------------
-# Step 6: Install to UltraScriptTools directory
+# Step 6: Install to UltraCode directory
 # --------------------------------------------------
 step "Installing to $INSTALL_DIR..."
 

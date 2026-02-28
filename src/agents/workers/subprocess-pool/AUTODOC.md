@@ -1,69 +1,89 @@
-# subprocess-pool
+---
+module_name: subprocess-pool
+description: "Type definitions and subprocess spawning for the parsing subprocess pool"
+status: active
+language: typescript
+---
 
-Модуль управления пулом подпроцессов для распараллеливания задач парсинга кода и встраивания текстов. Поддерживает как Node.js, так и Bun рантаймы с асинхронной IPC коммуникацией между процессами. Включает инструменты для управления жизненным циклом воркеров, обработки потоковых результатов и отслеживания статистики пула.
+# Subprocess Pool
+
+> Provides type definitions for IPC messages, subprocess state, pool configuration, and platform-specific subprocess spawning for Bun and Node.js runtimes.
+
+## Overview
+
+The subprocess-pool submodule defines the foundational types and spawning logic used by `ParsingSubprocessPool`. It provides interfaces for IPC messages (parse requests/responses), subprocess state tracking with concurrent task handling via `Map<taskId, PendingTask>`, pool statistics, embedding callback types, and configuration options (pool size, memory limits, keepalive mode, streaming). The spawner module handles platform-specific subprocess creation: Bun.spawn with native IPC or Node.js fork() with V8 serialization, with wrappers to provide a unified interface.
+
+## Data Flow
+
+- **Inputs**: Worker ID, subprocess state reference, spawn context with runtime info and callbacks.
+- **Processing**: Spawns subprocess using Bun.spawn or Node.js fork(), sets up IPC message handlers, configures stderr logging, registers unexpected exit handlers.
+- **Outputs**: Initialized subprocess with IPC channel, ready for parse request messages.
+
+## Public API
+
+| Export | Type | Description | Location |
+|--------|------|-------------|----------|
+| `spawnProcess` | function | Spawns subprocess based on runtime (Bun or Node.js) | [`spawner.ts:149-155`](./spawner.ts) |
+| `spawnBunProcess` | function | Spawns Bun subprocess with native IPC | [`spawner.ts:57-100`](./spawner.ts) |
+| `spawnNodeProcess` | function | Spawns Node.js subprocess via fork() with IPC | [`spawner.ts:105-144`](./spawner.ts) |
+| `killProcess` | function | Safely terminates a subprocess | [`spawner.ts:160-167`](./spawner.ts) |
+| `SpawnContext` | interface | Context with runtime info, callbacks, and worker script path | [`spawner.ts:25-32`](./spawner.ts) |
+| `BunProcess` | interface | Bun process interface with IPC support | [`types.ts:18-25`](./types.ts) |
+| `PendingTask` | interface | Task resolve/reject callbacks with timing metadata | [`types.ts:30-35`](./types.ts) |
+| `SubprocessState` | interface | Worker state with process, pending tasks map, and flags | [`types.ts:40-60`](./types.ts) |
+| `ParseRequest` | interface | IPC parse request with files, language, and options | [`types.ts:69-76`](./types.ts) |
+| `ParseResponse` | interface | IPC response with results, errors, or streaming data | [`types.ts:81-99`](./types.ts) |
+| `SubprocessPoolStats` | interface | Pool statistics (workers, tasks, timing, restarts) | [`types.ts:108-119`](./types.ts) |
+| `SubprocessPoolOptions` | interface | Pool creation options (size, memory, keepalive, streaming) | [`types.ts:168-199`](./types.ts) |
+| `QueuedTask` | interface | Queued task with files and resolve/reject | [`types.ts:204-210`](./types.ts) |
+| `BinaryEmbedding` | interface | Binary embedding with vector buffer and metadata | [`types.ts:124-129`](./types.ts) |
+| `EmbeddingTextItem` | interface | Text item for centralized embedding generation | [`types.ts:140-147`](./types.ts) |
+| `EmbeddingsCallback` | type | Callback for receiving binary embeddings | [`types.ts:134-134`](./types.ts) |
+| `EmbeddingTextsCallback` | type | Callback for receiving embedding texts | [`types.ts:153-153`](./types.ts) |
+| `StreamingResultCallback` | type | Callback for streaming parse results | [`types.ts:158-199`](./types.ts) |
+
+## Dependencies
+
+### Internal Modules
+
+| Module | Purpose |
+|--------|---------|
+| `types/parser` | ParseResult, ParserOptions types |
+| `types/semantic` | WorkerEmbeddingConfig type |
+| `logging` | Structured logging |
+
+### External Packages
+
+| Package | Purpose |
+|---------|---------|
+| (none) | Uses Node.js built-in `child_process` module |
+
+## Behavioral Properties
+
+| Property | Value |
+|----------|-------|
+| IPC serialization | V8 native `advanced` mode (structured clone) |
+| Concurrent task handling | `Map<taskId, PendingTask>` per worker (no race conditions) |
+| Process types | Bun.spawn or Node.js fork(), auto-detected |
+
+## Error Handling
+
+Subprocess kill errors are silently ignored (process may already be dead). Unexpected exit events are forwarded to the parent pool via `onUnexpectedExit` callback. Bun stderr is read asynchronously with read errors suppressed on process exit.
+
+## Known Limitations
+
+- Bun process wrapper provides only a subset of ChildProcess interface (no full event emitter support).
+- Legacy `pendingResolve`/`pendingReject` fields on SubprocessState are kept for backward compatibility but should not be used.
+- Worker environment variables are the only way to pass initial configuration (language, worker ID).
 
 ## Exports
 
 
 
-## Файлы
+## Files
 
-| Файл | Описание |
-|------|---------|
-| `index.ts` | Точка входа модуля с re-экспортом публичного API из `spawner.ts` и `types.ts` |
-| `spawner.ts` | Платформа-специфичные функции создания подпроцессов с поддержкой Bun и Node.js рантаймов |
-| `types.ts` | Определение типов данных, интерфейсов и конфигурационных структур для работы с пулом |
-
-## Типы и интерфейсы
-
-### Процессы
-- **`BunProcess`** — интерфейс Bun-процесса с поддержкой IPC (`stdin`, `stdout`, `stderr`, `pid`, `kill()`, `exited`)
-- **`PendingTask`** — структура для хранения resolve/reject колбеков задачи по её taskId
-- **`SubprocessState`** — состояние воркера с ID, процессом, `pendingTasks: Map<taskId, PendingTask>` для корректного сопоставления результатов с задачами
-
-### IPC сообщения
-- **`ParseRequest`** — запрос на парсинг с файлами, языком и опциями
-- **`ParseResponse`** — ответ подпроцесса с результатами, ошибками или статусом готовности
-
-### Пул и конфигурация
-- **`SubprocessPoolStats`** — статистика пула (воркеры, активные задачи, ошибки, время обработки)
-- **`SubprocessPoolOptions`** — опции создания пула (размер, таймауты, лимиты, режимы работы)
-- **`QueuedTask`** — задача в очереди с файлами и функциями разрешения/отклонения
-
-### Встраивания (Embeddings)
-- **`BinaryEmbedding`** — двоичное встраивание с вектором и метаданными
-- **`EmbeddingTextItem`** — текстовый элемент для централизованного встраивания
-
-### Callback типы
-- **`EmbeddingsCallback`** — обработчик встраиваний от воркеров
-- **`EmbeddingTextsCallback`** — обработчик текстов для встраивания
-- **`StreamingResultCallback`** — обработчик потоковых результатов парсинга
-
-## Функции
-
-### Создание процессов
-- **`spawnProcess(workerId, state, context)`** — универсальная функция создания подпроцесса на основе рантайма
-- **`spawnBunProcess(workerId, state, context)`** — создание Bun-подпроцесса с оборачиванием для совместимости
-- **`spawnNodeProcess(workerId, state, context)`** — создание Node.js процесса через `fork()` с настройкой IPC
-- **`killProcess(process)`** — безопасное завершение подпроцесса
-
-### Вспомогательные
-- **`SpawnContext`** — контекст для операции создания с параметрами рантайма и обработчиками событий
-
-## Ключевые возможности
-
-- **Кроссплатформенность** — автоматическая поддержка Node.js и Bun рантаймов
-- **Асинхронная IPC** — обмен сообщениями между процессами с типизацией
-- **Потоковые результаты** — поддержка потоковой обработки результатов парсинга
-- **Встраивания** — интеграция с системой встраивания текстов через промис-колбеки
-- **Статистика** — отслеживание метрик использования памяти, времени обработки и количества ошибок
-- **Keepalive режим** — сохранение одного воркера для быстрой инкрементной обработки
-- **Корректная обработка concurrent results** — использование `Map<taskId, PendingTask>` вместо единого `pendingResolve` для защиты от race condition при быстрой обработке нескольких чанков
-
-## Исправленные проблемы
-
-### Race Condition при обработке результатов (2026-01-19)
-
-**Проблема**: При индексации больших проектов (2000+ файлов) воркеры обрабатывали чанки по 100 файлов. Когда воркер быстро завершал несколько чанков подряд, IPC мог доставить результаты близко друг к другу. Старая архитектура использовала один `pendingResolve` на воркера — после первого результата он становился `null`, и последующие результаты не могли вызвать resolve. Promise.all зависал навсегда.
-
-**Решение**: Замена единственного `pendingResolve` на `pendingTasks: Map<string, PendingTask>`, где ключ — уникальный `taskId`. Каждый результат сопоставляется с задачей по `response.id`, что исключает race condition.
+| File | Description |
+|------|-------------|
+| `types.ts` | Type definitions for processes, IPC messages, pool configuration, and embeddings |
+| `spawner.ts` | Platform-specific subprocess creation for Bun and Node.js |
+| `index.ts` | Re-exports spawner functions and all types |

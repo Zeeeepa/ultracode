@@ -153,7 +153,12 @@ import { getGpuClient, shutdownGpuClient } from "./semantic/gpu/gpu-client.js";
 import { initializeOVMSNative, type OVMSNativeConfig, shutdownOVMSNative } from "./semantic/ovms-native-manager.js";
 // Storage initialization
 import { getCurrentGitBranchOrDefault, getProjectHash, initializeStorageDirs } from "./shared/storage-paths.js";
-import { configureGraphStorage, getGraphStorage, initializeGraphStorage } from "./storage/graph-storage-factory.js";
+import {
+  configureGraphStorage,
+  getGraphStorage,
+  initializeGraphStorage,
+  resetGraphStorage,
+} from "./storage/graph-storage-factory.js";
 import type { ToolContext } from "./tools/base-tool-handler.js";
 // Tool list (extracted to separate file)
 import { getToolsList } from "./tools/tool-definitions.js";
@@ -572,7 +577,7 @@ function createMcpServer(session?: ClientSession): Server {
       prompts: [
         {
           name: "quick-start",
-          description: "Quick start guide for UltraScript Tools MCP - when and how to use tools",
+          description: "Quick start guide for UltraCode - when and how to use tools",
         },
         {
           name: "tool-reference",
@@ -615,7 +620,7 @@ function createMcpServer(session?: ClientSession): Server {
     try {
       const content = readFileSync(promptFile, "utf-8");
       return {
-        description: `UltraScript Tools MCP - ${name}`,
+        description: `UltraCode - ${name}`,
         messages: [
           {
             role: "user" as const,
@@ -739,8 +744,8 @@ async function executeToolCall(
 
   // v5: Get target directory from session (if available), args, or fallback to global
   const argsObj = args as Record<string, unknown>;
-  const targetDir =
-    session?.resolvePath(argsObj?.["directory"] as string) ?? (argsObj?.["directory"] as string) ?? directory;
+  const argPath = (argsObj?.["directory"] as string) || (argsObj?.["projectPath"] as string);
+  const targetDir = (argPath ? (session?.resolvePath(argPath) ?? argPath) : session?.projectPath) ?? directory;
 
   // Only block if THIS SPECIFIC project is being indexed
   if (isProjectIndexing(targetDir) && !allowedDuringIndexing.has(name)) {
@@ -785,7 +790,7 @@ async function executeToolCall(
     // ==========================================================================
 
     // v5: Determine project path from session or fallback to global
-    const projectPath = session?.projectPath ?? targetDir;
+    const projectPath = session?.projectPath ?? targetDir ?? directory;
 
     // v5: Mark activity for idle tracking (both session and conductor)
     session?.markActivity();
@@ -1147,7 +1152,16 @@ async function main() {
           log.i("INDEXER", "shutdown_ok", {});
         }
 
-        // 5. Stop resource monitoring
+        // 5. Close database connections (release file locks before exit)
+        try {
+          log.t("STORAGE", "shutdown_start", {});
+          await resetGraphStorage();
+          log.i("STORAGE", "shutdown_ok", {});
+        } catch (error) {
+          log.e("STORAGE", "shutdown_err", { err: String(error) });
+        }
+
+        // 6. Stop resource monitoring
         resourceManager.stopMonitoring();
 
         log.i("PIPE", "shutdown_complete", { exitCode: 0 });
@@ -1201,7 +1215,7 @@ async function main() {
       cancelShutdown();
 
       // v5.1: Read init message to get client's working directory (pre-MCP handshake)
-      // comm.c sends ULTRASCRIPT_CWD:/path/to/project\n immediately after connecting
+      // comm.c sends ULTRACODE_CWD:/path/to/project\n immediately after connecting
       let clientProjectPath = directory; // Default to server's directory
       try {
         const clientCwd = await clientTransport.readInitMessage(2000);
