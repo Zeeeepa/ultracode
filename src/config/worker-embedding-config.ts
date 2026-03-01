@@ -207,6 +207,213 @@ function getModelContextTokens(modelName: string, configValue?: number): number 
 }
 
 /**
+ * Resolve provider-specific configuration from CombinedEmbeddingConfig.
+ * Determines providerKind, providerOptions, modelName, and batchSize based on the
+ * configured provider type (tei/ovms/openai/vllm/llamacpp/mlx).
+ *
+ * Side effect: may set embeddingConfig.vector_dimensions from model's vector_size.
+ * Returns null if no provider is configured.
+ */
+function resolveProviderConfig(embeddingConfig: CombinedEmbeddingConfig): {
+  providerKind: EmbeddingProviderKind;
+  providerOptions: WorkerEmbeddingConfig["providerOptions"];
+  modelName: string;
+  batchSize: number;
+} | null {
+  const defaultModelName = "all-MiniLM-L6-v2";
+  const defaultBatchSize = 64;
+
+  if (embeddingConfig.tei) {
+    const teiConfig = embeddingConfig.tei;
+    const modelName = teiConfig.selected_model || teiConfig.model || defaultModelName;
+    const batchSize = teiConfig.max_client_batch_size || teiConfig.batchSize || defaultBatchSize;
+    // Get vector_size from selected model in models array
+    const selectedModel = teiConfig.models?.find((m: ModelEntry) => m.id === modelName);
+    if (selectedModel?.vector_size) {
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
+    return {
+      providerKind: "tei",
+      modelName,
+      batchSize,
+      providerOptions: {
+        baseUrl: teiConfig.endpoint || teiConfig.baseUrl || "http://127.0.0.1:8081",
+        timeoutMs: teiConfig.timeoutMs,
+        concurrency: teiConfig.concurrency, // default 16 in provider, can override here
+        maxBatchSize: teiConfig.max_client_batch_size, // TEI max_client_batch_size (not max_batch_tokens)
+      },
+    };
+  }
+
+  if (embeddingConfig.ovms || embeddingConfig.platform === "ovms" || embeddingConfig.platform === "ovms-native") {
+    // OVMS or OVMS Native provider
+    const ovmsConfig = embeddingConfig.ovms || {};
+    const endpoints = ovmsConfig.endpoints || [];
+    // Use HuggingFace model id for tokenizer loading (selected_model), not endpoint name
+    // Endpoints are passed separately in providerOptions for round-robin load balancing
+    const selectedModelId = ovmsConfig.selected_model || ovmsConfig.model || "multilingual-e5-small";
+    const batchSize = ovmsConfig.batch_size || ovmsConfig.batchSize || defaultBatchSize;
+    // Get vector_size from selected model in models array
+    const selectedModel = ovmsConfig.models?.find((m: ModelEntry) => m.id === selectedModelId);
+    if (selectedModel?.vector_size) {
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
+    return {
+      providerKind: "ovms",
+      modelName: selectedModelId,
+      batchSize,
+      providerOptions: {
+        baseUrl: ovmsConfig.endpoint || "http://127.0.0.1:8083",
+        timeoutMs: ovmsConfig.timeoutMs || 30000,
+        concurrency: ovmsConfig.concurrency || 8,
+        useEmbeddingsApi: ovmsConfig.useEmbeddingsApi ?? true,
+        encodingFormat: ovmsConfig.encodingFormat ?? "base64",
+        protocol: ovmsConfig.protocol,
+        grpcPort: ovmsConfig.grpcPort,
+        endpoints: endpoints.length > 0 ? endpoints : undefined, // For round-robin GPU/CPU load balancing
+      },
+    };
+    // OVMS uses centralized embedding mode: workers send texts to Main,
+    // Main generates embeddings via gRPC (faster than multiple HTTP clients)
+    // This is set on the result below, not in providerOptions
+  }
+
+  if (embeddingConfig.openai) {
+    const openaiConfig = embeddingConfig.openai;
+    return {
+      providerKind: "openai",
+      modelName: openaiConfig.model || "text-embedding-3-small",
+      batchSize: openaiConfig.batchSize || defaultBatchSize,
+      providerOptions: {
+        baseUrl: openaiConfig.baseUrl,
+        apiKey: openaiConfig.apiKey || process.env["OPENAI_API_KEY"],
+        timeoutMs: openaiConfig.timeoutMs,
+        concurrency: openaiConfig.concurrency,
+      },
+    };
+  }
+
+  if (embeddingConfig.vllm || embeddingConfig.platform === "vllm") {
+    const vllmConfig = embeddingConfig.vllm || {};
+    const modelName = vllmConfig.selected_model || vllmConfig.model || "intfloat/multilingual-e5-large-instruct";
+    // Larger batch = better GPU utilization, default 200 (server supports 256 via --max-num-seqs)
+    const batchSize = vllmConfig.max_batch_size || vllmConfig.batchSize || 200;
+    // Get vector_size from selected model in models array
+    const selectedModel = vllmConfig.models?.find((m: ModelEntry) => m.id === modelName);
+    if (selectedModel?.vector_size) {
+      // Store in embeddingConfig for later use by getModelDimensions
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
+    return {
+      providerKind: "vllm",
+      modelName,
+      batchSize,
+      providerOptions: {
+        baseUrl: vllmConfig.endpoint || vllmConfig.baseUrl || "http://127.0.0.1:8000",
+        timeoutMs: vllmConfig.timeoutMs || 30000,
+        // Higher concurrency for embedding workloads (server handles batching internally)
+        concurrency: vllmConfig.concurrency || 12,
+        maxBatchSize: vllmConfig.max_batch_size || 200,
+        encodingFormat: vllmConfig.encoding_format || "float",
+      },
+    };
+  }
+
+  if (embeddingConfig.llamacpp || embeddingConfig.platform === "llamacpp") {
+    // llama.cpp provider (local GGUF models)
+    // Optimized for throughput: larger batch size, higher concurrency
+    const llamacppConfig = embeddingConfig.llamacpp || {};
+    const modelName = llamacppConfig.selected_model || "multilingual-e5-base";
+    // Larger batch = better GPU utilization, default 256 (up from 100)
+    const batchSize = llamacppConfig.batch_size || 256;
+    // Get vector_size from selected model in models array
+    const selectedModel = llamacppConfig.models?.find((m: ModelEntry) => m.id === modelName);
+    if (selectedModel?.vector_size) {
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
+    return {
+      providerKind: "llamacpp",
+      modelName,
+      batchSize,
+      providerOptions: {
+        baseUrl: llamacppConfig.endpoint || "http://127.0.0.1:8085",
+        timeoutMs: llamacppConfig.timeoutMs || 60000, // 60s timeout for larger batches
+        concurrency: llamacppConfig.concurrency || 8, // Match server's --parallel 8
+        contextSize: llamacppConfig.context_size || 8192,
+        nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
+      },
+    };
+  }
+
+  if (embeddingConfig.mlx || embeddingConfig.platform === "mlx") {
+    // MLX provider (Apple Silicon Metal GPU)
+    const mlxConfig = embeddingConfig.mlx || {};
+    const modelName = mlxConfig.selected_model || "intfloat/multilingual-e5-base";
+    const batchSize = mlxConfig.max_batch_size || 128;
+    // Get vector_size from selected model in models array
+    const selectedModel = mlxConfig.models?.find((m: ModelEntry) => m.id === modelName);
+    if (selectedModel?.vector_size) {
+      embeddingConfig.vector_dimensions = selectedModel.vector_size;
+    }
+    return {
+      providerKind: "mlx",
+      modelName,
+      batchSize,
+      providerOptions: {
+        baseUrl: mlxConfig.endpoint || "http://127.0.0.1:8087",
+        timeoutMs: mlxConfig.timeoutMs || 30000,
+        concurrency: mlxConfig.concurrency || 4,
+        maxBatchSize: mlxConfig.max_batch_size || 128,
+      },
+    };
+  }
+
+  // No embedding provider configured
+  return null;
+}
+
+/**
+ * Resolve model dimensions and context token limit from config and lookup tables.
+ */
+function resolveModelDimensions(
+  embeddingConfig: CombinedEmbeddingConfig,
+  modelName: string,
+): { dimensions: number; contextTokens: number } {
+  const configContextTokens = embeddingConfig.context_tokens || embeddingConfig.contextTokens;
+  const contextTokens = getModelContextTokens(modelName, configContextTokens);
+
+  const configDimensions = embeddingConfig.dimensions || embeddingConfig.vector_dimensions;
+  const dimensions = getModelDimensions(modelName, configDimensions);
+
+  return { dimensions, contextTokens };
+}
+
+/**
+ * Compute queue batch size for centralized embedding mode (texts per HTTP request).
+ * Rule: queueBatchSize <= max_client_batch_size (TEI/vLLM server limit).
+ */
+function computeQueueBatchSize(
+  providerKind: EmbeddingProviderKind,
+  providerOptions: WorkerEmbeddingConfig["providerOptions"],
+): number | undefined {
+  const defaultQueueBatch =
+    providerKind === "mlx"
+      ? 64
+      : providerKind === "llamacpp"
+        ? 72
+        : providerKind === "ovms"
+          ? 200
+          : providerKind === "tei"
+            ? 50
+            : undefined;
+  // Ensure queue batch doesn't exceed server's max_client_batch_size
+  const maxBatchFromProvider = providerOptions?.maxBatchSize as number | undefined;
+  return defaultQueueBatch && maxBatchFromProvider
+    ? Math.min(defaultQueueBatch, maxBatchFromProvider)
+    : defaultQueueBatch;
+}
+
+/**
  * Build WorkerEmbeddingConfig from YAML config files.
  * Returns null if embeddings are disabled or not configured.
  */
@@ -251,158 +458,21 @@ export function buildWorkerEmbeddingConfig(): WorkerEmbeddingConfig | null {
     return null;
   }
 
-  // Determine provider kind
-  let providerKind: EmbeddingProviderKind = "auto";
-  let providerOptions: WorkerEmbeddingConfig["providerOptions"];
-  let modelName = "all-MiniLM-L6-v2";
-  let batchSize = 64;
-
-  if (embeddingConfig.tei) {
-    providerKind = "tei";
-    const teiConfig = embeddingConfig.tei;
-    modelName = teiConfig.selected_model || teiConfig.model || modelName;
-    batchSize = teiConfig.max_client_batch_size || teiConfig.batchSize || batchSize;
-    // Get vector_size from selected model in models array
-    const selectedModel = teiConfig.models?.find((m: ModelEntry) => m.id === modelName);
-    if (selectedModel?.vector_size) {
-      embeddingConfig.vector_dimensions = selectedModel.vector_size;
-    }
-    providerOptions = {
-      baseUrl: teiConfig.endpoint || teiConfig.baseUrl || "http://127.0.0.1:8081",
-      timeoutMs: teiConfig.timeoutMs,
-      concurrency: teiConfig.concurrency, // default 16 in provider, can override here
-      maxBatchSize: teiConfig.max_client_batch_size, // TEI max_client_batch_size (not max_batch_tokens)
-    };
-  } else if (
-    embeddingConfig.ovms ||
-    embeddingConfig.platform === "ovms" ||
-    embeddingConfig.platform === "ovms-native"
-  ) {
-    // OVMS or OVMS Native provider
-    providerKind = "ovms";
-    const ovmsConfig = embeddingConfig.ovms || {};
-    const endpoints = ovmsConfig.endpoints || [];
-    // Use HuggingFace model id for tokenizer loading (selected_model), not endpoint name
-    // Endpoints are passed separately in providerOptions for round-robin load balancing
-    const selectedModelId = ovmsConfig.selected_model || ovmsConfig.model || "multilingual-e5-small";
-    modelName = selectedModelId;
-    batchSize = ovmsConfig.batch_size || ovmsConfig.batchSize || batchSize;
-    // Get vector_size from selected model in models array
-    const selectedModel = ovmsConfig.models?.find((m: ModelEntry) => m.id === selectedModelId);
-    if (selectedModel?.vector_size) {
-      embeddingConfig.vector_dimensions = selectedModel.vector_size;
-    }
-    providerOptions = {
-      baseUrl: ovmsConfig.endpoint || "http://127.0.0.1:8083",
-      timeoutMs: ovmsConfig.timeoutMs || 30000,
-      concurrency: ovmsConfig.concurrency || 8,
-      useEmbeddingsApi: ovmsConfig.useEmbeddingsApi ?? true,
-      encodingFormat: ovmsConfig.encodingFormat ?? "base64",
-      protocol: ovmsConfig.protocol,
-      grpcPort: ovmsConfig.grpcPort,
-      endpoints: endpoints.length > 0 ? endpoints : undefined, // For round-robin GPU/CPU load balancing
-    };
-
-    // OVMS uses centralized embedding mode: workers send texts to Main,
-    // Main generates embeddings via gRPC (faster than multiple HTTP clients)
-    // This is set on the result below, not in providerOptions
-  } else if (embeddingConfig.openai) {
-    providerKind = "openai";
-    const openaiConfig = embeddingConfig.openai;
-    modelName = openaiConfig.model || "text-embedding-3-small";
-    batchSize = openaiConfig.batchSize || batchSize;
-    providerOptions = {
-      baseUrl: openaiConfig.baseUrl,
-      apiKey: openaiConfig.apiKey || process.env["OPENAI_API_KEY"],
-      timeoutMs: openaiConfig.timeoutMs,
-      concurrency: openaiConfig.concurrency,
-    };
-  } else if (embeddingConfig.vllm || embeddingConfig.platform === "vllm") {
-    providerKind = "vllm";
-    const vllmConfig = embeddingConfig.vllm || {};
-    modelName = vllmConfig.selected_model || vllmConfig.model || "intfloat/multilingual-e5-large-instruct";
-    // Larger batch = better GPU utilization, default 200 (server supports 256 via --max-num-seqs)
-    batchSize = vllmConfig.max_batch_size || vllmConfig.batchSize || 200;
-    // Get vector_size from selected model in models array
-    const selectedModel = vllmConfig.models?.find((m: ModelEntry) => m.id === modelName);
-    if (selectedModel?.vector_size) {
-      // Store in embeddingConfig for later use by getModelDimensions
-      embeddingConfig.vector_dimensions = selectedModel.vector_size;
-    }
-    providerOptions = {
-      baseUrl: vllmConfig.endpoint || vllmConfig.baseUrl || "http://127.0.0.1:8000",
-      timeoutMs: vllmConfig.timeoutMs || 30000,
-      // Higher concurrency for embedding workloads (server handles batching internally)
-      concurrency: vllmConfig.concurrency || 12,
-      maxBatchSize: vllmConfig.max_batch_size || 200,
-      encodingFormat: vllmConfig.encoding_format || "float",
-    };
-  } else if (embeddingConfig.llamacpp || embeddingConfig.platform === "llamacpp") {
-    // llama.cpp provider (local GGUF models)
-    // Optimized for throughput: larger batch size, higher concurrency
-    providerKind = "llamacpp";
-    const llamacppConfig = embeddingConfig.llamacpp || {};
-    modelName = llamacppConfig.selected_model || "multilingual-e5-base";
-    // Larger batch = better GPU utilization, default 256 (up from 100)
-    batchSize = llamacppConfig.batch_size || 256;
-    // Get vector_size from selected model in models array
-    const selectedModel = llamacppConfig.models?.find((m: ModelEntry) => m.id === modelName);
-    if (selectedModel?.vector_size) {
-      embeddingConfig.vector_dimensions = selectedModel.vector_size;
-    }
-    providerOptions = {
-      baseUrl: llamacppConfig.endpoint || "http://127.0.0.1:8085",
-      timeoutMs: llamacppConfig.timeoutMs || 60000, // 60s timeout for larger batches
-      concurrency: llamacppConfig.concurrency || 8, // Match server's --parallel 8
-      contextSize: llamacppConfig.context_size || 8192,
-      nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
-    };
-  } else if (embeddingConfig.mlx || embeddingConfig.platform === "mlx") {
-    // MLX provider (Apple Silicon Metal GPU)
-    providerKind = "mlx";
-    const mlxConfig = embeddingConfig.mlx || {};
-    modelName = mlxConfig.selected_model || "intfloat/multilingual-e5-base";
-    batchSize = mlxConfig.max_batch_size || 128;
-    // Get vector_size from selected model in models array
-    const selectedModel = mlxConfig.models?.find((m: ModelEntry) => m.id === modelName);
-    if (selectedModel?.vector_size) {
-      embeddingConfig.vector_dimensions = selectedModel.vector_size;
-    }
-    providerOptions = {
-      baseUrl: mlxConfig.endpoint || "http://127.0.0.1:8087",
-      timeoutMs: mlxConfig.timeoutMs || 30000,
-      concurrency: mlxConfig.concurrency || 4,
-      maxBatchSize: mlxConfig.max_batch_size || 128,
-    };
-  } else {
-    // No embedding provider configured
+  // Resolve provider-specific configuration
+  const providerResult = resolveProviderConfig(embeddingConfig);
+  if (!providerResult) {
+    cacheInitialized = true;
+    cachedConfig = null;
     return null;
   }
 
-  // Get context tokens from config or lookup table
-  const configContextTokens = embeddingConfig.context_tokens || embeddingConfig.contextTokens;
-  const contextTokens = getModelContextTokens(modelName, configContextTokens);
+  const { providerKind, providerOptions, modelName, batchSize } = providerResult;
 
-  // Get dimensions for embeddings
-  const configDimensions = embeddingConfig.dimensions || embeddingConfig.vector_dimensions;
-  const dimensions = getModelDimensions(modelName, configDimensions);
+  // Resolve dimensions and context tokens
+  const { dimensions, contextTokens } = resolveModelDimensions(embeddingConfig, modelName);
 
-  // Queue batch size for centralized mode (texts per HTTP request)
-  // Rule: queueBatchSize <= max_client_batch_size (TEI/vLLM server limit)
-  const defaultQueueBatch =
-    providerKind === "mlx"
-      ? 64
-      : providerKind === "llamacpp"
-        ? 72
-        : providerKind === "ovms"
-          ? 200
-          : providerKind === "tei"
-            ? 50
-            : undefined;
-  // Ensure queue batch doesn't exceed server's max_client_batch_size
-  const maxBatchFromProvider = providerOptions?.maxBatchSize as number | undefined;
-  const queueBatchSize =
-    defaultQueueBatch && maxBatchFromProvider ? Math.min(defaultQueueBatch, maxBatchFromProvider) : defaultQueueBatch;
+  // Compute queue batch size for centralized mode
+  const queueBatchSize = computeQueueBatchSize(providerKind, providerOptions);
 
   const result: WorkerEmbeddingConfig = {
     enabled: true,

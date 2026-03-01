@@ -15,7 +15,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CPUDetector } from "../cpu/cpu-detector.js";
+import { CPUDetector, type CPUInfo } from "../cpu/cpu-detector.js";
 import { detectSystemLocale } from "../i18n/index.js";
 import {
   ensureConfigDir,
@@ -37,6 +37,8 @@ import {
   c,
   detectGPU,
   type EmbeddingModel,
+  type GPUInfo,
+  type InstallResult,
   installLLMProvider,
   installProvider,
   type LLMConfig,
@@ -48,6 +50,7 @@ import {
   printInfo,
   printOK,
   printWarn,
+  type SelectedLLMModel,
   selectLanguage,
   selectLLMModel,
   selectLLMProvider,
@@ -141,16 +144,17 @@ function getDefaultEndpoint(provider: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Main Setup
+// Setup Helpers
 // ═══════════════════════════════════════════════════════════════
 
-export async function runSetup(args: string[]): Promise<void> {
-  printBanner();
+interface SetupArgs {
+  providerArg?: string;
+  modelArg?: string;
+  langArg?: string;
+  llmOnly: boolean;
+}
 
-  const config = loadModelsConfig();
-  if (!config) process.exit(1);
-
-  // Parse args
+function parseSetupArgs(args: string[]): SetupArgs {
   let providerArg: string | undefined;
   let modelArg: string | undefined;
   let langArg: string | undefined;
@@ -171,94 +175,65 @@ export async function runSetup(args: string[]): Promise<void> {
     }
   }
 
-  // Initialize UI language (auto-detect from system or use CLI override)
-  const localeConfig = detectSystemLocale(langArg);
-  setSetupLanguage(localeConfig.language);
+  return { providerArg, modelArg, langArg, llmOnly };
+}
 
-  // Step 0: Detect hardware
-  const cpu = CPUDetector.detect();
-  const gpu = detectGPU();
-  printHardwareInfo(cpu, gpu);
+async function runLlmOnlySetup(cpu: CPUInfo, gpu: GPUInfo): Promise<void> {
+  console.error("");
+  printInfo("Пропускаем embedding setup, переходим к LLM...");
+  console.error("");
 
-  // If --llm-only, skip embedding setup and go directly to LLM
-  if (llmOnly) {
-    console.error("");
-    printInfo("Пропускаем embedding setup, переходим к LLM...");
-    console.error("");
-
-    const llmConfig = loadLLMConfig();
-    if (!llmConfig) {
-      printWarn("LLM config not found");
-      process.exit(1);
-    }
-
-    const llmProvider = await selectLLMProvider(cpu, gpu);
-    if (!llmProvider) {
-      printWarn("LLM setup cancelled");
-      process.exit(0);
-    }
-
-    const llmModel = await selectLLMModel(llmProvider, llmConfig, gpu);
-    if (!llmModel) {
-      printWarn("LLM model selection cancelled");
-      process.exit(0);
-    }
-
-    const llmSuccess = await installLLMProvider(llmProvider, llmModel, gpu);
-    if (llmSuccess) {
-      printOK("LLM setup completed!");
-    } else {
-      printWarn("LLM setup had issues");
-    }
-
-    // Load existing config and update LLM section
-    const existingConfig = loadSemanticConfig();
-    if (existingConfig) {
-      existingConfig.llm = {
-        enabled: true,
-        platform: llmProvider as LLMPlatform,
-        [llmProvider === "claude-code" ? "claude" : llmProvider]: {
-          endpoint: llmProvider === "claude-code" ? undefined : getDefaultEndpoint(llmProvider),
-          model_id: llmModel.model_id,
-          context_tokens: llmModel.context_tokens,
-        },
-      };
-      saveSemanticConfig(existingConfig);
-      printOK("Config saved to semantic-config.json");
-    } else {
-      printWarn("No existing config found. Run full setup first.");
-    }
-    return;
+  const llmConfig = loadLLMConfig();
+  if (!llmConfig) {
+    printWarn("LLM config not found");
+    process.exit(1);
   }
 
-  // Step 1: Language selection
-  const language = await selectLanguage();
+  const llmProvider = await selectLLMProvider(cpu, gpu);
+  if (!llmProvider) {
+    printWarn("LLM setup cancelled");
+    process.exit(0);
+  }
 
-  // Step 2: Provider selection
-  const provider = providerArg || (await selectProvider(cpu, gpu));
+  const llmModel = await selectLLMModel(llmProvider, llmConfig, gpu);
+  if (!llmModel) {
+    printWarn("LLM model selection cancelled");
+    process.exit(0);
+  }
 
-  // Step 3: Model selection
-  let selectedModel: EmbeddingModel;
-
-  if (modelArg) {
-    const found = config.models.find((m) => m.id === modelArg || m.model_id === modelArg);
-    if (!found) {
-      printError(`Model not found: ${modelArg}`);
-      process.exit(1);
-    }
-    selectedModel = found;
-    printInfo(`Using model: ${selectedModel.name}`);
+  const llmSuccess = await installLLMProvider(llmProvider, llmModel, gpu);
+  if (llmSuccess) {
+    printOK("LLM setup completed!");
   } else {
-    selectedModel = await selectModel(provider, language, config, gpu);
+    printWarn("LLM setup had issues");
   }
 
-  // Step 4: Installation
-  const installResult = await installProvider(provider, selectedModel, gpu, cpu);
-
-  if (!installResult.success) {
-    printWarn("Installation had issues, but config will be saved");
+  // Load existing config and update LLM section
+  const existingConfig = loadSemanticConfig();
+  if (existingConfig) {
+    existingConfig.llm = {
+      enabled: true,
+      platform: llmProvider as LLMPlatform,
+      [llmProvider === "claude-code" ? "claude" : llmProvider]: {
+        endpoint: llmProvider === "claude-code" ? undefined : getDefaultEndpoint(llmProvider),
+        model_id: llmModel.model_id,
+        context_tokens: llmModel.context_tokens,
+      },
+    };
+    saveSemanticConfig(existingConfig);
+    printOK("Config saved to semantic-config.json");
+  } else {
+    printWarn("No existing config found. Run full setup first.");
   }
+}
 
+function buildEmbeddingConfig(
+  provider: string,
+  selectedModel: EmbeddingModel,
+  installResult: InstallResult,
+  gpu: GPUInfo,
+  cpu: CPUInfo,
+): SemanticConfig {
   // Keep exact provider name for proper port selection
   const isOVMS = provider === "ovms" || provider === "ovms-native";
   const isOVMSNative = provider === "ovms-native";
@@ -283,8 +258,7 @@ export async function runSetup(args: string[]): Promise<void> {
     }
   }
 
-  // Save config
-  const finalConfig: SemanticConfig = {
+  return {
     enabled: true,
     embedding: {
       platform: provider as "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp",
@@ -383,6 +357,105 @@ export async function runSetup(args: string[]): Promise<void> {
     },
     auto_detection: { gpu_architecture: true, codebase_size: true, language: true },
   };
+}
+
+function buildLlmConfig(llmProvider: string, llmModel: SelectedLLMModel): NonNullable<SemanticConfig["llm"]> {
+  return {
+    enabled: true,
+    platform: llmProvider as LLMPlatform,
+    claude:
+      llmProvider === "claude-code"
+        ? {
+            model_id: llmModel.model_id,
+            context_tokens: llmModel.context_tokens,
+          }
+        : undefined,
+    ollama:
+      llmProvider === "ollama"
+        ? {
+            endpoint: "http://127.0.0.1:11434",
+            model_id: llmModel.model_id,
+            context_tokens: llmModel.context_tokens,
+          }
+        : undefined,
+    tgi:
+      llmProvider === "tgi"
+        ? {
+            endpoint: "http://127.0.0.1:8081",
+            model_id: llmModel.model_id,
+            context_tokens: llmModel.context_tokens,
+            container_name: "tgi-llm-server",
+          }
+        : undefined,
+    docker_model_runner:
+      llmProvider === "docker-model-runner"
+        ? {
+            endpoint: "http://127.0.0.1:12434",
+            model_id: llmModel.model_id,
+            context_tokens: llmModel.context_tokens,
+          }
+        : undefined,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Main Setup
+// ═══════════════════════════════════════════════════════════════
+
+export async function runSetup(args: string[]): Promise<void> {
+  printBanner();
+
+  const config = loadModelsConfig();
+  if (!config) process.exit(1);
+
+  // Parse args
+  const { providerArg, modelArg, langArg, llmOnly } = parseSetupArgs(args);
+
+  // Initialize UI language (auto-detect from system or use CLI override)
+  const localeConfig = detectSystemLocale(langArg);
+  setSetupLanguage(localeConfig.language);
+
+  // Step 0: Detect hardware
+  const cpu = CPUDetector.detect();
+  const gpu = detectGPU();
+  printHardwareInfo(cpu, gpu);
+
+  // If --llm-only, skip embedding setup and go directly to LLM
+  if (llmOnly) {
+    await runLlmOnlySetup(cpu, gpu);
+    return;
+  }
+
+  // Step 1: Language selection
+  const language = await selectLanguage();
+
+  // Step 2: Provider selection
+  const provider = providerArg || (await selectProvider(cpu, gpu));
+
+  // Step 3: Model selection
+  let selectedModel: EmbeddingModel;
+
+  if (modelArg) {
+    const found = config.models.find((m) => m.id === modelArg || m.model_id === modelArg);
+    if (!found) {
+      printError(`Model not found: ${modelArg}`);
+      process.exit(1);
+    }
+    selectedModel = found;
+    printInfo(`Using model: ${selectedModel.name}`);
+  } else {
+    selectedModel = await selectModel(provider, language, config, gpu);
+  }
+
+  // Step 4: Installation
+  const installResult = await installProvider(provider, selectedModel, gpu, cpu);
+
+  if (!installResult.success) {
+    printWarn("Installation had issues, but config will be saved");
+  }
+
+  // Build and save embedding config
+  const finalConfig = buildEmbeddingConfig(provider, selectedModel, installResult, gpu, cpu);
 
   ensureConfigDir();
   saveSemanticConfig(finalConfig);
@@ -406,42 +479,7 @@ export async function runSetup(args: string[]): Promise<void> {
           }
 
           // Update config with LLM settings
-          finalConfig.llm = {
-            enabled: true,
-            platform: llmProvider as LLMPlatform,
-            claude:
-              llmProvider === "claude-code"
-                ? {
-                    model_id: llmModel.model_id,
-                    context_tokens: llmModel.context_tokens,
-                  }
-                : undefined,
-            ollama:
-              llmProvider === "ollama"
-                ? {
-                    endpoint: "http://127.0.0.1:11434",
-                    model_id: llmModel.model_id,
-                    context_tokens: llmModel.context_tokens,
-                  }
-                : undefined,
-            tgi:
-              llmProvider === "tgi"
-                ? {
-                    endpoint: "http://127.0.0.1:8081",
-                    model_id: llmModel.model_id,
-                    context_tokens: llmModel.context_tokens,
-                    container_name: "tgi-llm-server",
-                  }
-                : undefined,
-            docker_model_runner:
-              llmProvider === "docker-model-runner"
-                ? {
-                    endpoint: "http://127.0.0.1:12434",
-                    model_id: llmModel.model_id,
-                    context_tokens: llmModel.context_tokens,
-                  }
-                : undefined,
-          };
+          finalConfig.llm = buildLlmConfig(llmProvider, llmModel);
 
           // auto_start is already set in llamacpp config above
           saveSemanticConfig(finalConfig);
@@ -450,8 +488,6 @@ export async function runSetup(args: string[]): Promise<void> {
     } else {
       printWarn("LLM config not found, skipping LLM setup");
     }
-  } else {
-    // LLM disabled - auto_start is already set in llamacpp config
   }
 
   // Summary

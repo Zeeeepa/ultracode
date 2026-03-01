@@ -402,6 +402,151 @@ function findServerBinary(dir: string): string | null {
 }
 
 /**
+ * Download, extract, and install the llama-server binary + DLLs.
+ * Returns true on success, false on failure.
+ */
+async function downloadAndInstallBinary(
+  binaryPath: string,
+  binDir: string,
+  llamacppDir: string,
+  backend: Backend,
+  isWindows: boolean,
+): Promise<boolean> {
+  const downloadInfo = await getDownloadUrl(backend);
+  if (!downloadInfo) {
+    printError(t("llamacpp.no_download_url"));
+    return false;
+  }
+
+  const archivePath = join(llamacppDir, downloadInfo.filename);
+
+  // Download
+  const downloaded = await downloadFile(downloadInfo.url, archivePath);
+  if (!downloaded) return false;
+
+  // Extract to temp dir first
+  const extractDir = join(llamacppDir, "temp_extract");
+  mkdirSync(extractDir, { recursive: true });
+
+  const extracted = extractArchive(archivePath, extractDir);
+  if (!extracted) return false;
+
+  // Find and move binary + all required DLLs
+  const foundBinary = findServerBinary(extractDir);
+  if (!foundBinary) {
+    printError(t("llamacpp.binary_not_found"));
+    return false;
+  }
+
+  // Get the directory containing the binary (to find DLLs)
+  const sourceDir = dirname(foundBinary);
+
+  // Move llama-server binary
+  renameSync(foundBinary, binaryPath);
+
+  // Copy all DLLs and required files (Windows only)
+  if (isWindows) {
+    try {
+      const files = readdirSync(sourceDir) as string[];
+      const dllFiles = files.filter((f: string) => f.endsWith(".dll") || f.endsWith(".so") || f.endsWith(".dylib"));
+      printInfo(ti("llamacpp.copying_libs", { count: String(dllFiles.length) }));
+      for (const dll of dllFiles) {
+        const src = join(sourceDir, dll);
+        const dst = join(binDir, dll);
+        if (existsSync(src)) {
+          try {
+            renameSync(src, dst);
+          } catch {
+            // If rename fails (cross-device), try copy
+            copyFileSync(src, dst);
+          }
+        }
+      }
+      printOK(ti("llamacpp.copied_dlls", { count: String(dllFiles.length) }));
+    } catch (error: unknown) {
+      printWarn(ti("llamacpp.copy_dlls_failed", { error: toError(error).message }));
+    }
+  }
+
+  // Set executable permission on Unix
+  if (!isWindows) {
+    execSync(`chmod +x "${binaryPath}"`, { stdio: "pipe" });
+  }
+
+  // Cleanup
+  try {
+    execSync(isWindows ? `rmdir /s /q "${extractDir}"` : `rm -rf "${extractDir}"`, {
+      stdio: "pipe",
+      windowsHide: true,
+    });
+    unlinkSync(archivePath);
+  } catch {
+    /* ignore cleanup errors */
+  }
+
+  printOK(ti("llamacpp.installed", { path: binaryPath }));
+  return true;
+}
+
+/**
+ * Download and install CUDA runtime DLLs (Windows only, CUDA backend).
+ */
+async function installCudaDlls(
+  binDir: string,
+  llamacppDir: string,
+  backend: Backend,
+  isWindows: boolean,
+): Promise<void> {
+  if (backend !== "cuda" || !isWindows) return;
+
+  printInfo(t("llamacpp.downloading_cuda"));
+  const cudartInfo = getCudartDownloadUrl();
+  if (!cudartInfo) return;
+
+  const cudartArchivePath = join(llamacppDir, cudartInfo.filename);
+  const cudartDownloaded = await downloadFile(cudartInfo.url, cudartArchivePath);
+  if (!cudartDownloaded) {
+    printWarn(t("llamacpp.cuda_download_failed"));
+    return;
+  }
+
+  const cudartExtractDir = join(llamacppDir, "temp_cudart");
+  mkdirSync(cudartExtractDir, { recursive: true });
+
+  const cudartExtracted = extractArchive(cudartArchivePath, cudartExtractDir);
+  if (cudartExtracted) {
+    // Copy all cudart DLLs to bin directory
+    try {
+      const cudartFiles = readdirSync(cudartExtractDir, { recursive: true }) as string[];
+      const dlls = cudartFiles.filter((f: string) => f.endsWith(".dll"));
+      for (const dll of dlls) {
+        const src = join(cudartExtractDir, dll);
+        const dllName = dll.includes("/") || dll.includes("\\") ? dll.split(/[/\\]/).pop()! : dll;
+        const dst = join(binDir, dllName);
+        if (existsSync(src)) {
+          try {
+            copyFileSync(src, dst);
+          } catch {
+            /* ignore individual copy errors */
+          }
+        }
+      }
+      printOK(t("llamacpp.cuda_installed"));
+    } catch (error: unknown) {
+      printWarn(ti("llamacpp.cuda_copy_failed", { error: toError(error).message }));
+    }
+  }
+
+  // Cleanup cudart temp
+  try {
+    execSync(`rmdir /s /q "${cudartExtractDir}"`, { stdio: "pipe", windowsHide: true });
+    unlinkSync(cudartArchivePath);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * Main installation function
  */
 export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: CPUInfo): Promise<InstallResult> {
@@ -460,129 +605,11 @@ export async function installLlamaCpp(model: EmbeddingModel, gpu: GPUInfo, cpu: 
 
   // Download and install llama-server if needed
   if (!existsSync(binaryPath)) {
-    const downloadInfo = await getDownloadUrl(backend);
-    if (!downloadInfo) {
-      printError(t("llamacpp.no_download_url"));
-      return { success: false };
-    }
-
-    const archivePath = join(llamacppDir, downloadInfo.filename);
-
-    // Download
-    const downloaded = await downloadFile(downloadInfo.url, archivePath);
-    if (!downloaded) {
-      return { success: false };
-    }
-
-    // Extract to temp dir first
-    const extractDir = join(llamacppDir, "temp_extract");
-    mkdirSync(extractDir, { recursive: true });
-
-    const extracted = extractArchive(archivePath, extractDir);
-    if (!extracted) {
-      return { success: false };
-    }
-
-    // Find and move binary + all required DLLs
-    const foundBinary = findServerBinary(extractDir);
-    if (!foundBinary) {
-      printError(t("llamacpp.binary_not_found"));
-      return { success: false };
-    }
-
-    // Get the directory containing the binary (to find DLLs)
-    const sourceDir = dirname(foundBinary);
-
-    // Move llama-server binary
-    renameSync(foundBinary, binaryPath);
-
-    // Copy all DLLs and required files (Windows only)
-    if (isWindows) {
-      try {
-        const files = readdirSync(sourceDir) as string[];
-        const dllFiles = files.filter((f: string) => f.endsWith(".dll") || f.endsWith(".so") || f.endsWith(".dylib"));
-        printInfo(ti("llamacpp.copying_libs", { count: String(dllFiles.length) }));
-        for (const dll of dllFiles) {
-          const src = join(sourceDir, dll);
-          const dst = join(binDir, dll);
-          if (existsSync(src)) {
-            try {
-              renameSync(src, dst);
-            } catch {
-              // If rename fails (cross-device), try copy
-              copyFileSync(src, dst);
-            }
-          }
-        }
-        printOK(ti("llamacpp.copied_dlls", { count: String(dllFiles.length) }));
-      } catch (error: unknown) {
-        printWarn(ti("llamacpp.copy_dlls_failed", { error: toError(error).message }));
-      }
-    }
-
-    // Set executable permission on Unix
-    if (!isWindows) {
-      execSync(`chmod +x "${binaryPath}"`, { stdio: "pipe" });
-    }
-
-    // Cleanup
-    try {
-      execSync(isWindows ? `rmdir /s /q "${extractDir}"` : `rm -rf "${extractDir}"`, {
-        stdio: "pipe",
-        windowsHide: true,
-      });
-      unlinkSync(archivePath);
-    } catch {
-      /* ignore cleanup errors */
-    }
-
-    printOK(ti("llamacpp.installed", { path: binaryPath }));
+    const installed = await downloadAndInstallBinary(binaryPath, binDir, llamacppDir, backend, isWindows);
+    if (!installed) return { success: false };
 
     // For CUDA backend, download cudart DLLs (required for GPU acceleration)
-    if (backend === "cuda" && isWindows) {
-      printInfo(t("llamacpp.downloading_cuda"));
-      const cudartInfo = getCudartDownloadUrl();
-      if (cudartInfo) {
-        const cudartArchivePath = join(llamacppDir, cudartInfo.filename);
-        const cudartDownloaded = await downloadFile(cudartInfo.url, cudartArchivePath);
-        if (cudartDownloaded) {
-          const cudartExtractDir = join(llamacppDir, "temp_cudart");
-          mkdirSync(cudartExtractDir, { recursive: true });
-          const cudartExtracted = extractArchive(cudartArchivePath, cudartExtractDir);
-          if (cudartExtracted) {
-            // Copy all cudart DLLs to bin directory
-            try {
-              const cudartFiles = readdirSync(cudartExtractDir, { recursive: true }) as string[];
-              const dlls = cudartFiles.filter((f: string) => f.endsWith(".dll"));
-              for (const dll of dlls) {
-                const src = join(cudartExtractDir, dll);
-                const dllName = dll.includes("/") || dll.includes("\\") ? dll.split(/[/\\]/).pop()! : dll;
-                const dst = join(binDir, dllName);
-                if (existsSync(src)) {
-                  try {
-                    copyFileSync(src, dst);
-                  } catch {
-                    /* ignore individual copy errors */
-                  }
-                }
-              }
-              printOK(t("llamacpp.cuda_installed"));
-            } catch (error: unknown) {
-              printWarn(ti("llamacpp.cuda_copy_failed", { error: toError(error).message }));
-            }
-          }
-          // Cleanup cudart temp
-          try {
-            execSync(`rmdir /s /q "${cudartExtractDir}"`, { stdio: "pipe", windowsHide: true });
-            unlinkSync(cudartArchivePath);
-          } catch {
-            /* ignore */
-          }
-        } else {
-          printWarn(t("llamacpp.cuda_download_failed"));
-        }
-      }
-    }
+    await installCudaDlls(binDir, llamacppDir, backend, isWindows);
   }
 
   // Download GGUF model

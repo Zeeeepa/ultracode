@@ -85,7 +85,9 @@ export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 ## Step 2: Add File Extension Mappings
 
-There are **5 files** that map file extensions to language identifiers. All must be updated.
+There are **4 files** that map file extensions to language identifiers. All must be updated.
+
+> **Note**: `src/agents/parser-agent.ts` previously had its own duplicated `detectLanguage()` function, but it now imports from `src/agents/workers/language-detection.ts` (single source of truth). No changes needed in parser-agent.ts.
 
 ### 2.1 `src/parsers/language-configs/shared/keywords.ts` (line ~12)
 
@@ -591,12 +593,14 @@ Use this checklist when adding a new language. Replace `<lang>` with your langua
 ### Type Registration
 - [ ] Add `"<lang>"` to `SUPPORTED_LANGUAGES` in `src/types/parser.ts`
 
-### Extension Mappings (5 files)
+### Extension Mappings (4 files)
 - [ ] `src/parsers/language-configs/shared/keywords.ts` → `FILE_EXTENSIONS` (without dot)
 - [ ] `src/agents/workers/language-detection.ts` → `LANGUAGE_MAP` (with dot) + `SUPPORTED_LANGUAGES`
 - [ ] `src/agents/dev/file-extensions.ts` → `SUPPORTED_CODE_EXTENSIONS`
 - [ ] `src/agents/dev/heuristic-parser.ts` → `EXTENSION_LANGUAGE_MAP` (with dot)
 - [ ] `src/parsers/unified-parser.ts` → `EXTENSION_TO_LANGUAGE` (with dot) + `<LANG>_EXTENSIONS` Set
+
+> `src/agents/parser-agent.ts` imports `detectLanguage` from `language-detection.ts` — no separate update needed.
 
 ### Language Configuration
 - [ ] Create `src/parsers/language-configs/<category>/<lang>.ts` with `LanguageConfig`
@@ -634,7 +638,7 @@ Use this checklist when adding a new language. Replace `<lang>` with your langua
 - [ ] Integration test with sample files
 - [ ] Verify indexing works end-to-end
 
-**Total: ~20 registration points across 10+ files.**
+**Total: ~19 registration points across 10+ files.**
 
 ---
 

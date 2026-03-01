@@ -949,48 +949,53 @@ function createAutoIndexContext(): AutoIndexContext {
   };
 }
 
-// Start the server
-async function main() {
-  const mainStartTime = Date.now();
-  log.t("STARTUP", "main_started", { ms: mainStartTime - PROCESS_START_TIME });
-
+/**
+ * Start background services that don't block server readiness.
+ * Fire-and-forget: skills install, ollama check, orphaned embeddings check,
+ * autodoc watcher init, periodic GC loop.
+ */
+async function startBackgroundServices(ctx: {
+  config: ReturnType<ConfigLoader["getConfig"]>;
+  directory: string;
+  pipeServerMode: boolean;
+  processStartTime: number;
+}): Promise<void> {
   // Install Claude Code Skills in background (non-blocking)
   // Skills enable auto-activation when working with TS/JS/Python/etc projects
   installSkillsIfNeeded().catch((err) => {
     log.w("SKILLS", "install_failed", { err: (err as Error).message });
   });
 
-  log.i("STARTUP", "server_starting", { dir: directory });
+  log.i("STARTUP", "server_starting", { dir: ctx.directory });
   log.i("STARTUP", "architecture", { type: "multi_agent_literag" });
   log.i("STARTUP", "constraints", { mem: "1GB", cpu: "80%", agents: 10 });
 
   // Check and auto-start Ollama if embeddings are enabled (non-blocking)
-  const config = ConfigLoader.getInstance().getConfig();
-  const embeddingEnabled = config.mcp?.embedding?.enabled ?? false;
-  const embeddingProvider: string = config.mcp?.embedding?.provider ?? "auto";
+  const embeddingEnabled = ctx.config.mcp?.embedding?.enabled ?? false;
+  const embeddingProvider: string = ctx.config.mcp?.embedding?.provider ?? "auto";
 
   // Run startup checks in background (extracted to startup-checks.ts)
   runOllamaCheck({
     embeddingEnabled,
     embeddingProvider,
-    pipeServerMode,
-    processStartTime: PROCESS_START_TIME,
+    pipeServerMode: ctx.pipeServerMode,
+    processStartTime: ctx.processStartTime,
   });
 
   runOrphanedEmbeddingsCheck({
     embeddingEnabled,
-    pipeServerMode,
-    processStartTime: PROCESS_START_TIME,
+    pipeServerMode: ctx.pipeServerMode,
+    processStartTime: ctx.processStartTime,
     getSemanticAgent,
   });
   // Initialize AutoDoc Watcher for automatic documentation updates
-  log.t("STARTUP", "autodoc_check", { ms: Date.now() - PROCESS_START_TIME });
-  const autodocWatcherEnabled = config.mcp?.autodoc?.watcherEnabled ?? true;
+  log.t("STARTUP", "autodoc_check", { ms: Date.now() - ctx.processStartTime });
+  const autodocWatcherEnabled = ctx.config.mcp?.autodoc?.watcherEnabled ?? true;
   if (autodocWatcherEnabled) {
-    log.t("STARTUP", "autodoc_init", { ms: Date.now() - PROCESS_START_TIME });
+    log.t("STARTUP", "autodoc_init", { ms: Date.now() - ctx.processStartTime });
     try {
       // Auto-detect LLM if not explicitly configured
-      let useLlm = config.mcp?.autodoc?.useLlm;
+      let useLlm = ctx.config.mcp?.autodoc?.useLlm;
       if (useLlm === undefined) {
         try {
           const { detectLLMProviders } = await import("./autodoc/llm/llm-provider.js");
@@ -1005,17 +1010,17 @@ async function main() {
       }
 
       const watcherConfig: AutoDocWatcherConfig = {
-        rootDir: directory,
+        rootDir: ctx.directory,
         enabled: true,
-        debounceMs: config.mcp?.autodoc?.debounceMs ?? 45000,
-        minDebounceMs: config.mcp?.autodoc?.minDebounceMs ?? 30000,
-        maxDebounceMs: config.mcp?.autodoc?.maxDebounceMs ?? 60000,
+        debounceMs: ctx.config.mcp?.autodoc?.debounceMs ?? 45000,
+        minDebounceMs: ctx.config.mcp?.autodoc?.minDebounceMs ?? 30000,
+        maxDebounceMs: ctx.config.mcp?.autodoc?.maxDebounceMs ?? 60000,
         useLlm,
-        llmConfig: config.mcp?.autodoc?.llmConfig,
+        llmConfig: ctx.config.mcp?.autodoc?.llmConfig,
       };
       const watcher = getAutoDocWatcher(watcherConfig);
       watcher.start();
-      log.i("AUTODOC", "watcher_started", { dir: directory, debounce: watcherConfig.debounceMs ?? 0, useLlm });
+      log.i("AUTODOC", "watcher_started", { dir: ctx.directory, debounce: watcherConfig.debounceMs ?? 0, useLlm });
 
       // Background init: trigger AutoDocManager initialization and sync
       // This runs async to not block server startup (Bun-compatible using async sleep)
@@ -1049,6 +1054,22 @@ async function main() {
       }
     }
   })();
+}
+
+// Start the server
+async function main() {
+  const mainStartTime = Date.now();
+  log.t("STARTUP", "main_started", { ms: mainStartTime - PROCESS_START_TIME });
+
+  const config = ConfigLoader.getInstance().getConfig();
+
+  // Start background services (fire-and-forget)
+  startBackgroundServices({
+    config,
+    directory,
+    pipeServerMode,
+    processStartTime: PROCESS_START_TIME,
+  });
 
   // Connect transport FIRST for fast readiness
   let transportType: string;
@@ -1060,6 +1081,7 @@ async function main() {
     let clientCount = 0;
     let activeClients = 0;
     let shutdownScheduled = false; // Flag instead of NodeJS.Timeout (Bun compatibility)
+    let shutdownGeneration = 0; // Monotonic counter to invalidate stale async loops
     let isShuttingDown = false;
 
     // Graceful shutdown delay (ms) - wait briefly before shutdown to allow reconnects
@@ -1179,21 +1201,24 @@ async function main() {
     }
 
     /**
-     * Schedule shutdown after delay (allows for quick reconnects)
+     * Schedule shutdown after delay (allows for quick reconnects).
+     * Uses a monotonic generation counter so that stale async loops
+     * become no-ops even if the flag is re-set by a later call.
      */
     function scheduleShutdown() {
-      shutdownScheduled = false; // Cancel any previous shutdown
-
-      log.i("PIPE", "shutdown_scheduled", { delay: SHUTDOWN_DELAY_MS, clients: 0 });
-
-      // Shutdown delay via polling (no setTimeout for Bun compatibility)
+      // Bump generation — any in-flight async loop with an older generation will exit
+      const gen = ++shutdownGeneration;
       shutdownScheduled = true;
+
+      log.i("PIPE", "shutdown_scheduled", { delay: SHUTDOWN_DELAY_MS, clients: 0, gen });
+
       (async () => {
         const startTime = Date.now();
-        while (shutdownScheduled && Date.now() - startTime < SHUTDOWN_DELAY_MS) {
-          await sleep(50); // Real sleep without busy-wait
+        while (shutdownScheduled && shutdownGeneration === gen && Date.now() - startTime < SHUTDOWN_DELAY_MS) {
+          await sleep(50);
         }
-        if (shutdownScheduled && activeClients === 0) {
+        // Only proceed if THIS generation is still active AND no clients reconnected
+        if (shutdownScheduled && shutdownGeneration === gen && activeClients === 0) {
           performGracefulShutdown();
         }
       })();
@@ -1205,6 +1230,7 @@ async function main() {
     function cancelShutdown() {
       if (shutdownScheduled) {
         shutdownScheduled = false;
+        shutdownGeneration++; // Invalidate any in-flight async loop
         log.i("PIPE", "shutdown_cancelled", { reason: "client_reconnected" });
       }
     }
@@ -1212,6 +1238,13 @@ async function main() {
     log.i("PIPE", "starting", { path: pipeServer.getPath(), mode: "multi-client" });
 
     await pipeServer.start(async (clientTransport) => {
+      // Reject connections if shutdown is already in progress
+      if (isShuttingDown) {
+        log.w("PIPE", "reject_during_shutdown", { reason: "shutdown_in_progress" });
+        clientTransport.close();
+        return;
+      }
+
       clientCount++;
       activeClients++;
       const clientId = clientCount;

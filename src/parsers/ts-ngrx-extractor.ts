@@ -64,6 +64,115 @@ export interface NgRxStoreUsageInfo {
 }
 
 // =============================================================================
+// EFFECT EXTRACTION — HELPERS
+// =============================================================================
+
+/** Helper to check if node is 'this' keyword */
+function isThisKeyword(n: ts.Node): boolean {
+  return n.kind === ts.SyntaxKind.ThisKeyword;
+}
+
+/**
+ * Detect ofType(action1, action2, ...) calls and push to result.listensTo
+ */
+function visitOfTypePattern(n: ts.CallExpression, sourceFile: ts.SourceFile, result: NgRxEffectInfo): void {
+  const calleeExpr = n.expression;
+  if (!ts.isIdentifier(calleeExpr) || calleeExpr.text !== "ofType") return;
+
+  for (const arg of n.arguments) {
+    const actionName = arg.getText(sourceFile);
+    const { line, character } = sourceFile.getLineAndCharacterOfPosition(arg.getStart(sourceFile));
+    result.listensTo.push({
+      actionName,
+      location: { line: line + 1, column: character },
+    });
+  }
+}
+
+/**
+ * Detect map(() => actionName(...)) pattern and push to result.dispatches
+ */
+function visitMapPattern(n: ts.CallExpression, sourceFile: ts.SourceFile, result: NgRxEffectInfo): void {
+  const calleeExpr = n.expression;
+  if (!ts.isIdentifier(calleeExpr) || calleeExpr.text !== "map") return;
+
+  // Look for arrow function that returns action call
+  for (const arg of n.arguments) {
+    if (!ts.isArrowFunction(arg) && !ts.isFunctionExpression(arg)) continue;
+
+    // Find action calls in the function body
+    const findActionCalls = (bodyNode: ts.Node): void => {
+      if (ts.isCallExpression(bodyNode)) {
+        const actionCallee = bodyNode.expression;
+        // Check if it's a direct action call like actionName(...)
+        if (ts.isIdentifier(actionCallee)) {
+          const name = actionCallee.text;
+          // Actions typically end with "Action" or contain "action"
+          if (name.endsWith("Action") || name.includes("action") || name.includes("Actions")) {
+            const { line, character } = sourceFile.getLineAndCharacterOfPosition(bodyNode.getStart(sourceFile));
+            result.dispatches.push({
+              actionName: name,
+              location: { line: line + 1, column: character },
+            });
+          }
+        }
+      }
+      ts.forEachChild(bodyNode, findActionCalls);
+    };
+    findActionCalls(arg.body);
+  }
+}
+
+/**
+ * Detect this.service.method() calls and this.store.dispatch(action) / store.dispatch(action)
+ */
+function visitServiceCallPattern(n: ts.CallExpression, sourceFile: ts.SourceFile, result: NgRxEffectInfo): void {
+  const calleeExpr = n.expression;
+  if (!ts.isPropertyAccessExpression(calleeExpr)) return;
+
+  const objectExpr = calleeExpr.expression;
+  const methodName = calleeExpr.name.text;
+
+  // Check for this.serviceName.method()
+  if (ts.isPropertyAccessExpression(objectExpr) && isThisKeyword(objectExpr.expression)) {
+    const serviceName = objectExpr.name.text;
+    // Filter out common non-service calls
+    if (!["actions$", "store", "pipe", "subscribe"].includes(serviceName)) {
+      const { line, character } = sourceFile.getLineAndCharacterOfPosition(n.getStart(sourceFile));
+      result.servicesCalled.push({
+        serviceName,
+        methodName,
+        location: { line: line + 1, column: character },
+      });
+    }
+  }
+
+  // Check for this.store.dispatch(action) or store.dispatch(action)
+  if (methodName !== "dispatch") return;
+  if (
+    !(
+      (ts.isPropertyAccessExpression(objectExpr) &&
+        isThisKeyword(objectExpr.expression) &&
+        objectExpr.name.text === "store") ||
+      (ts.isIdentifier(objectExpr) && objectExpr.text === "store")
+    )
+  )
+    return;
+
+  for (const arg of n.arguments) {
+    // Get action name from dispatch(actionName(...))
+    if (ts.isCallExpression(arg)) {
+      const actionName = arg.expression.getText(sourceFile);
+      const { line, character } = sourceFile.getLineAndCharacterOfPosition(arg.getStart(sourceFile));
+      result.dispatches.push({
+        actionName,
+        location: { line: line + 1, column: character },
+      });
+    }
+  }
+}
+
+// =============================================================================
 // EFFECT EXTRACTION
 // =============================================================================
 
@@ -102,97 +211,12 @@ export function extractNgRxEffectInfo(node: ts.Node, sourceFile: ts.SourceFile):
     }
   }
 
-  // Helper to check if node is 'this' keyword
-  const isThisKeyword = (n: ts.Node): boolean => n.kind === ts.SyntaxKind.ThisKeyword;
-
   // Recursively search for patterns inside the effect
   function visitNode(n: ts.Node): void {
-    // Look for ofType(action1, action2, ...)
     if (ts.isCallExpression(n)) {
-      const calleeExpr = n.expression;
-
-      // ofType(action) pattern
-      if (ts.isIdentifier(calleeExpr) && calleeExpr.text === "ofType") {
-        for (const arg of n.arguments) {
-          const actionName = arg.getText(sourceFile);
-          const { line, character } = sourceFile.getLineAndCharacterOfPosition(arg.getStart(sourceFile));
-          result.listensTo.push({
-            actionName,
-            location: { line: line + 1, column: character },
-          });
-        }
-      }
-
-      // map(() => actionName(...)) pattern - dispatched actions from effects
-      if (ts.isIdentifier(calleeExpr) && calleeExpr.text === "map") {
-        // Look for arrow function that returns action call
-        for (const arg of n.arguments) {
-          if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) {
-            // Find action calls in the function body
-            const findActionCalls = (bodyNode: ts.Node): void => {
-              if (ts.isCallExpression(bodyNode)) {
-                const actionCallee = bodyNode.expression;
-                // Check if it's a direct action call like actionName(...)
-                if (ts.isIdentifier(actionCallee)) {
-                  const name = actionCallee.text;
-                  // Actions typically end with "Action" or contain "action"
-                  if (name.endsWith("Action") || name.includes("action") || name.includes("Actions")) {
-                    const { line, character } = sourceFile.getLineAndCharacterOfPosition(bodyNode.getStart(sourceFile));
-                    result.dispatches.push({
-                      actionName: name,
-                      location: { line: line + 1, column: character },
-                    });
-                  }
-                }
-              }
-              ts.forEachChild(bodyNode, findActionCalls);
-            };
-            findActionCalls(arg.body);
-          }
-        }
-      }
-
-      // this.service.method() pattern - service calls
-      if (ts.isPropertyAccessExpression(calleeExpr)) {
-        const objectExpr = calleeExpr.expression;
-        const methodName = calleeExpr.name.text;
-
-        // Check for this.serviceName.method()
-        if (ts.isPropertyAccessExpression(objectExpr) && isThisKeyword(objectExpr.expression)) {
-          const serviceName = objectExpr.name.text;
-          // Filter out common non-service calls
-          if (!["actions$", "store", "pipe", "subscribe"].includes(serviceName)) {
-            const { line, character } = sourceFile.getLineAndCharacterOfPosition(n.getStart(sourceFile));
-            result.servicesCalled.push({
-              serviceName,
-              methodName,
-              location: { line: line + 1, column: character },
-            });
-          }
-        }
-
-        // Check for this.store.dispatch(action) or store.dispatch(action)
-        if (methodName === "dispatch") {
-          if (
-            (ts.isPropertyAccessExpression(objectExpr) &&
-              isThisKeyword(objectExpr.expression) &&
-              objectExpr.name.text === "store") ||
-            (ts.isIdentifier(objectExpr) && objectExpr.text === "store")
-          ) {
-            for (const arg of n.arguments) {
-              // Get action name from dispatch(actionName(...))
-              if (ts.isCallExpression(arg)) {
-                const actionName = arg.expression.getText(sourceFile);
-                const { line, character } = sourceFile.getLineAndCharacterOfPosition(arg.getStart(sourceFile));
-                result.dispatches.push({
-                  actionName,
-                  location: { line: line + 1, column: character },
-                });
-              }
-            }
-          }
-        }
-      }
+      visitOfTypePattern(n, sourceFile, result);
+      visitMapPattern(n, sourceFile, result);
+      visitServiceCallPattern(n, sourceFile, result);
     }
 
     ts.forEachChild(n, visitNode);
@@ -308,8 +332,6 @@ export function extractNgRxSelectorInfo(node: ts.Node, sourceFile: ts.SourceFile
  */
 export function extractNgRxStoreUsage(node: ts.Node, sourceFile: ts.SourceFile): NgRxStoreUsageInfo {
   const result: NgRxStoreUsageInfo = { dispatches: [], selects: [] };
-
-  const isThisKeyword = (n: ts.Node): boolean => n.kind === ts.SyntaxKind.ThisKeyword;
 
   function visitNode(n: ts.Node): void {
     if (ts.isCallExpression(n)) {

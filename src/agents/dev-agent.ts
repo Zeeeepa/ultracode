@@ -379,6 +379,416 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     };
   }
 
+  /**
+   * Compare mtime of files against stored index to compute changed/new/deleted sets.
+   * Deletes entities and file info for changed/deleted files in preparation for re-indexing.
+   */
+  private async prepareIncrementalDiff(
+    allFiles: string[],
+    totalCollected: number,
+  ): Promise<{
+    filesToProcess: string[];
+    deletedEntityIds: string[];
+    earlyReturn: IndexingResult | null;
+  }> {
+    const storage = await getGraphStorage();
+    const indexedFiles = await storage.getAllIndexedFiles();
+    const deletedEntityIds: string[] = [];
+
+    if (indexedFiles.size === 0) {
+      return { filesToProcess: allFiles, deletedEntityIds, earlyReturn: null };
+    }
+
+    const changedFiles: string[] = [];
+    const newFiles: string[] = [];
+    const deletedFiles: string[] = [];
+
+    // Find changed and new files
+    for (const file of allFiles) {
+      const normalizedPath = file.replace(/\\/g, "/");
+      const lastIndexed = indexedFiles.get(normalizedPath);
+
+      if (lastIndexed === undefined) {
+        newFiles.push(file);
+      } else {
+        try {
+          const stats = statSync(file);
+          const mtime = stats.mtimeMs;
+          if (mtime > lastIndexed) {
+            changedFiles.push(file);
+          }
+        } catch {
+          // File stat failed, skip
+        }
+      }
+    }
+
+    // Find deleted files (in index but not on disk)
+    const currentFilesSet = new Set(allFiles.map((f) => f.replace(/\\/g, "/")));
+    for (const [indexedPath] of indexedFiles) {
+      if (!currentFilesSet.has(indexedPath)) {
+        deletedFiles.push(indexedPath);
+      }
+    }
+
+    // Delete entities for changed and deleted files (before reindexing)
+    const filesToClean = [...changedFiles, ...deletedFiles];
+    if (filesToClean.length > 0) {
+      log.i("DEVAGENT", "Cleaning entities for changed/deleted files", {
+        changed: changedFiles.length,
+        deleted: deletedFiles.length,
+      });
+
+      for (const file of filesToClean) {
+        try {
+          const ids = await storage.deleteEntitiesByFilePath(file);
+          deletedEntityIds.push(...ids);
+          await storage.deleteFileInfo(file);
+        } catch (error) {
+          log.w("DEVAGENT", "Failed to clean entities for file", {
+            file,
+            error: (error as Error).message,
+          });
+        }
+      }
+
+      log.i("DEVAGENT", "Entities cleaned", {
+        entityCount: deletedEntityIds.length,
+      });
+    }
+
+    const filesToProcess = [...changedFiles, ...newFiles];
+
+    log.i("DEVAGENT", "Smart incremental", {
+      total: totalCollected,
+      changed: changedFiles.length,
+      new: newFiles.length,
+      deleted: deletedFiles.length,
+      toProcess: filesToProcess.length,
+      entitiesDeleted: deletedEntityIds.length,
+    });
+
+    if (filesToProcess.length === 0) {
+      return {
+        filesToProcess: [],
+        deletedEntityIds,
+        earlyReturn: {
+          filesProcessed: 0,
+          entitiesExtracted: 0,
+          relationshipsCreated: 0,
+          incrementalStats: {
+            changedFiles: 0,
+            newFiles: 0,
+            deletedFiles: deletedFiles.length,
+            skippedFiles: totalCollected,
+            deletedEntities: deletedEntityIds.length,
+          },
+        },
+      };
+    }
+
+    return { filesToProcess, deletedEntityIds, earlyReturn: null };
+  }
+
+  /**
+   * Initialize the embedding pipeline: select provider (TEI/OVMS/llamacpp/vLLM),
+   * start llama-server if needed, create centralized EmbeddingGenerator.
+   */
+  private async initEmbeddingPipeline(
+    embeddingConfig: NonNullable<ReturnType<typeof buildWorkerEmbeddingConfig>>,
+    _payload: IndexTaskPayload,
+  ): Promise<void> {
+    // For llamacpp: start server in background
+    if (embeddingConfig.provider === "llamacpp") {
+      const { llamacppEmbeddingManager } = await import("../semantic/llamacpp-server-manager.js");
+      const { loadSemanticConfig, getDataDir } = await import("../utils/config-paths.js");
+      const { existsSync, readdirSync } = await import("node:fs");
+      const { join } = await import("node:path");
+
+      const semanticConfig = loadSemanticConfig();
+      const llamacppConfig = semanticConfig?.embedding?.llamacpp;
+
+      if (llamacppConfig && !llamacppEmbeddingManager.getState().isRunning) {
+        const dataDir = getDataDir();
+        const searchPaths = [
+          join(dataDir, "hf-cache", "multilingual-e5-base-Q8_0.gguf"),
+          join(dataDir, "llamacpp", "models", "multilingual-e5-base-Q8_0.gguf"),
+          join(dataDir, "models", "multilingual-e5-base-Q8_0.gguf"),
+        ];
+
+        let modelPath: string | null = null;
+        for (const p of searchPaths) {
+          if (existsSync(p)) {
+            modelPath = p;
+            break;
+          }
+        }
+
+        if (!modelPath) {
+          const hfCache = join(dataDir, "hf-cache");
+          if (existsSync(hfCache)) {
+            try {
+              const files = readdirSync(hfCache);
+              const gguf = files.find((f) => f.endsWith(".gguf"));
+              if (gguf) modelPath = join(hfCache, gguf);
+            } catch {
+              // Ignore
+            }
+          }
+        }
+
+        if (modelPath) {
+          log.i("DEVAGENT", "Starting llama-server for workers...", { port: 8085, model: modelPath });
+          const started = await llamacppEmbeddingManager.ensureRunning({
+            modelPath,
+            mode: "embedding",
+            port: 8085,
+            contextSize: llamacppConfig.context_size || 512,
+            nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
+          });
+          if (started) {
+            log.i("DEVAGENT", "llama-server ready for workers");
+          } else {
+            log.w("DEVAGENT", "llama-server start failed - embeddings may not work");
+          }
+        }
+      }
+    }
+
+    // For centralized embedding mode (OVMS/llamacpp): create EmbeddingGenerator in Main
+    if (embeddingConfig.centralizedEmbeddings && this.parserAgent) {
+      try {
+        const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
+        const { buildEmbeddingGeneratorOptions } = await import("../agents/semantic/provider-config.js");
+        const { loadSemanticConfig } = await import("../utils/config-paths.js");
+        const { getConfig } = await import("../config/yaml-config.js");
+
+        const semanticConfig = loadSemanticConfig();
+        const yamlConfig = getConfig();
+
+        const generatorOptions = buildEmbeddingGeneratorOptions(
+          embeddingConfig.provider as import("./semantic/provider-config.js").ProviderKind,
+          embeddingConfig.modelName,
+          embeddingConfig.batchSize,
+          semanticConfig,
+          yamlConfig,
+        );
+
+        const embeddingGenerator = new EmbeddingGenerator(generatorOptions);
+        await embeddingGenerator.initialize();
+
+        await this.parserAgent.setEmbeddingGenerator(embeddingGenerator);
+        log.i("DEVAGENT", "Centralized EmbeddingGenerator configured", {
+          provider: embeddingConfig.provider,
+          model: embeddingConfig.modelName,
+        });
+      } catch (error) {
+        log.e("DEVAGENT", "Failed to initialize centralized EmbeddingGenerator", {
+          error: (error as Error).message,
+        });
+      }
+    }
+  }
+
+  /**
+   * Initialize the vector provider (LayeredFaiss or Faiss) and configure it
+   * on the parser agent. Removes old embeddings for deleted entities in incremental mode.
+   */
+  private async initVectorProvider(payload: IndexTaskPayload, deletedEntityIds: string[]): Promise<void> {
+    if (!this.parserAgent) return;
+
+    const { getProjectHash, getCurrentGitBranchOrDefault } = await import("../shared/storage-paths.js");
+    const configLoader = ConfigLoader.getInstance();
+    const embConfig = configLoader.getEmbeddingConfig();
+    const useLayeredIndex = embConfig.useLayeredIndex;
+    const projectHash = getProjectHash(payload.directory);
+    const currentBranch = getCurrentGitBranchOrDefault(payload.directory);
+
+    let vectorProvider: import("../semantic/faiss/types.js").IVectorProvider | null = null;
+
+    try {
+      if (useLayeredIndex) {
+        const { getLayeredFaissProvider } = await import("../semantic/faiss/layered-faiss-provider.js");
+        const provider = getLayeredFaissProvider();
+
+        if ("initialize" in provider && typeof provider.initialize === "function") {
+          log.d("DEVAGENT", "Initializing LayeredFaissProvider", {
+            dir: payload.directory,
+            projectHash,
+            branch: currentBranch,
+          });
+          await provider.initialize(payload.directory, projectHash, currentBranch);
+        }
+        vectorProvider = provider;
+      } else {
+        const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
+        const provider = await initializeFaissProvider();
+        if (provider) {
+          await provider.setProjectContext(projectHash, currentBranch);
+          vectorProvider = provider;
+        }
+      }
+    } catch (e) {
+      log.w("DEVAGENT", "Failed to get vector provider", { error: String(e) });
+    }
+
+    if (vectorProvider) {
+      log.d("DEVAGENT", "vector_provider_branch", {
+        branch: currentBranch,
+        layered: useLayeredIndex,
+      });
+      this.parserAgent.setVectorProvider(vectorProvider);
+      log.i("DEVAGENT", "Vector provider configured", {
+        projectHash,
+        dir: payload.directory,
+        layered: useLayeredIndex,
+      });
+
+      // Smart Incremental: remove embeddings for deleted entities
+      if (deletedEntityIds.length > 0) {
+        try {
+          const embeddingIds = deletedEntityIds.map((id) => (id.startsWith("ent:") ? id : `ent:${id}`));
+          await vectorProvider.remove(embeddingIds);
+          log.i("DEVAGENT", "Removed embeddings for changed/deleted files", {
+            count: embeddingIds.length,
+          });
+        } catch (error) {
+          log.w("DEVAGENT", "Failed to remove embeddings", {
+            error: (error as Error).message,
+          });
+        }
+      }
+    } else {
+      log.w("DEVAGENT", "Vector provider not available - embeddings will not be saved");
+    }
+  }
+
+  /**
+   * Flush pending embeddings to FAISS, create Prolly Tree commit,
+   * switch to keepalive mode, run GC.
+   */
+  private async postIndexingCleanup(
+    _codeFiles: string[],
+    filesProcessed: number,
+    totalEntities: number,
+    perfStart: number,
+    perfTimings: Record<string, number>,
+    _effectiveBatchSize: number,
+    _dataFiles: string[],
+  ): Promise<void> {
+    // Flush any pending embeddings to FAISS
+    perfTimings["embFlush_start"] = Date.now() - perfStart;
+    if (this.parserAgent) {
+      const accumulator = this.parserAgent.getAccumulator();
+      if (accumulator) {
+        const pendingCount = accumulator.getPendingCount();
+        if (pendingCount > 0) {
+          log.i("DEVAGENT", "Flushing pending embeddings to FAISS", { pending: pendingCount });
+          try {
+            const flushed = await accumulator.flush();
+            log.i("DEVAGENT", "Embeddings flushed to FAISS", { flushed });
+          } catch (err) {
+            log.e("DEVAGENT", "Failed to flush embeddings", { error: (err as Error).message });
+          }
+        }
+        const stats = accumulator.getStats();
+        log.i("DEVAGENT", "Embedding accumulator stats", {
+          accumulated: stats.accumulated,
+          flushed: stats.flushed,
+          flushCount: stats.flushCount,
+          totalBytes: stats.totalBytes,
+        });
+      }
+    }
+    perfTimings["embFlush_end"] = Date.now() - perfStart;
+
+    // Create graph commit after indexing (Prolly Tree versioning)
+    perfTimings["commit_start"] = Date.now() - perfStart;
+    try {
+      const storage = await getGraphStorage();
+      const adapter = (storage as any).getLibSQLAdapter?.();
+      if (adapter?.createGraphCommit) {
+        const commitHash = await adapter.createGraphCommit(`Index: ${filesProcessed} files`);
+        if (commitHash) {
+          log.i("DEVAGENT", "graph_commit_created", {
+            commit: commitHash.slice(0, 8),
+            files: filesProcessed,
+            entities: totalEntities,
+          });
+        }
+        // GC: keep last 20 commits per branch, clean orphaned Prolly nodes
+        adapter.pruneAndGC?.(20)?.catch?.((err: unknown) => log.w("DEVAGENT", "prune_gc_fail", { err: String(err) }));
+      }
+    } catch (err) {
+      log.w("DEVAGENT", "graph_commit_failed", { error: (err as Error).message });
+    }
+    perfTimings["commit_end"] = Date.now() - perfStart;
+
+    // Switch to keepalive mode
+    perfTimings["keepalive_start"] = Date.now() - perfStart;
+    if (this.parserAgent) {
+      try {
+        const memoryBeforeMB = this.parserAgent.getTotalMemoryMB();
+        log.i("DEVAGENT", "Switching to keepalive mode (spawning ONE worker for incremental updates)", {
+          memoryMB: memoryBeforeMB,
+        });
+
+        await this.parserAgent.enableKeepaliveMode();
+
+        const memoryAfterMB = this.parserAgent.getTotalMemoryMB();
+        log.i("DEVAGENT", "Keepalive mode enabled, ready for incremental updates", {
+          memoryBeforeMB,
+          memoryAfterMB,
+        });
+        log.flush();
+      } catch (err) {
+        log.w("DEVAGENT", "Failed to enable keepalive mode, falling back to shutdown", {
+          error: (err as Error).message,
+        });
+        try {
+          await this.parserAgent.shutdown();
+          this.parserAgent = null;
+        } catch {
+          // ignore
+        }
+      }
+    }
+    perfTimings["keepalive_end"] = Date.now() - perfStart;
+
+    // Force garbage collection after indexing to reclaim memory
+    if (tryGarbageCollect(true)) {
+      log.i("DEVAGENT", "gc_after_index");
+    }
+  }
+
+  /**
+   * Format 15+ timing measurements into a structured performance summary log.
+   */
+  private buildPerfSummary(
+    perfTimings: Record<string, number>,
+    _codeFiles: string[],
+    _dataFiles: string[],
+    _filesProcessed: number,
+    _totalEntities: number,
+    _totalRelationships: number,
+    _effectiveBatchSize: number,
+    perfStart: number,
+  ): void {
+    perfTimings["total"] = Date.now() - perfStart;
+    log.i("DEVAGENT", "PERF_SUMMARY", {
+      collectFiles: (perfTimings["collectFiles_end"] ?? 0) - (perfTimings["collectFiles_start"] ?? 0),
+      destroyPools: (perfTimings["destroyPools_end"] ?? 0) - (perfTimings["destroyPools_start"] ?? 0),
+      preSpawn: (perfTimings["preSpawn_end"] ?? 0) - (perfTimings["preSpawn_start"] ?? 0),
+      parsing: (perfTimings["parsing_end"] ?? 0) - (perfTimings["parsing_start"] ?? 0),
+      flush: (perfTimings["flush_end"] ?? 0) - (perfTimings["flush_start"] ?? 0),
+      dataFiles: (perfTimings["dataFiles_end"] ?? 0) - (perfTimings["dataFiles_start"] ?? 0),
+      swaggerLink: (perfTimings["swaggerLink_end"] ?? 0) - (perfTimings["swaggerLink_start"] ?? 0),
+      embFlush: (perfTimings["embFlush_end"] ?? 0) - (perfTimings["embFlush_start"] ?? 0),
+      keepalive: (perfTimings["keepalive_end"] ?? 0) - (perfTimings["keepalive_start"] ?? 0),
+      total: perfTimings["total"],
+    });
+  }
+
   private async performRealIndexing(payload: IndexTaskPayload): Promise<IndexingResult> {
     const directory = payload.directory;
     const excludePatterns = payload.excludePatterns || [];
@@ -447,102 +857,16 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         ms: perfTimings["preSpawnPrepare_end"]! - perfTimings["preSpawnPrepare_start"]!,
       });
     }
-    const deletedEntityIds: string[] = [];
+    let deletedEntityIds: string[] = [];
 
     if (isIncremental && allFiles.length > 0) {
-      const storage = await getGraphStorage();
-      const indexedFiles = await storage.getAllIndexedFiles();
-
-      if (indexedFiles.size > 0) {
-        const changedFiles: string[] = [];
-        const newFiles: string[] = [];
-        const deletedFiles: string[] = [];
-
-        // Find changed and new files
-        for (const file of allFiles) {
-          const normalizedPath = file.replace(/\\/g, "/");
-          const lastIndexed = indexedFiles.get(normalizedPath);
-
-          if (lastIndexed === undefined) {
-            // New file
-            newFiles.push(file);
-          } else {
-            // Check if file was modified
-            try {
-              const stats = statSync(file);
-              const mtime = stats.mtimeMs;
-              if (mtime > lastIndexed) {
-                changedFiles.push(file);
-              }
-              // else: file unchanged, skip
-            } catch {
-              // File stat failed, skip
-            }
-          }
-        }
-
-        // Find deleted files (in index but not on disk)
-        const currentFilesSet = new Set(allFiles.map((f) => f.replace(/\\/g, "/")));
-        for (const [indexedPath] of indexedFiles) {
-          if (!currentFilesSet.has(indexedPath)) {
-            deletedFiles.push(indexedPath);
-          }
-        }
-
-        // Delete entities for changed and deleted files (before reindexing)
-        const filesToClean = [...changedFiles, ...deletedFiles];
-        if (filesToClean.length > 0) {
-          log.i("DEVAGENT", "Cleaning entities for changed/deleted files", {
-            changed: changedFiles.length,
-            deleted: deletedFiles.length,
-          });
-
-          for (const file of filesToClean) {
-            try {
-              const ids = await storage.deleteEntitiesByFilePath(file);
-              deletedEntityIds.push(...ids);
-              await storage.deleteFileInfo(file);
-            } catch (error) {
-              log.w("DEVAGENT", "Failed to clean entities for file", {
-                file,
-                error: (error as Error).message,
-              });
-            }
-          }
-
-          log.i("DEVAGENT", "Entities cleaned", {
-            entityCount: deletedEntityIds.length,
-          });
-        }
-
-        // Only process changed and new files
-        allFiles = [...changedFiles, ...newFiles];
-
-        log.i("DEVAGENT", "Smart incremental", {
-          total: collectResult.files.length,
-          changed: changedFiles.length,
-          new: newFiles.length,
-          deleted: deletedFiles.length,
-          toProcess: allFiles.length,
-          entitiesDeleted: deletedEntityIds.length,
-        });
-
-        if (allFiles.length === 0) {
-          log.i("DEVAGENT", "No files changed, skipping indexing");
-          return {
-            filesProcessed: 0,
-            entitiesExtracted: 0,
-            relationshipsCreated: 0,
-            incrementalStats: {
-              changedFiles: 0,
-              newFiles: 0,
-              deletedFiles: deletedFiles.length,
-              skippedFiles: collectResult.files.length,
-              deletedEntities: deletedEntityIds.length,
-            },
-          };
-        }
+      const diff = await this.prepareIncrementalDiff(allFiles, collectResult.files.length);
+      deletedEntityIds = diff.deletedEntityIds;
+      if (diff.earlyReturn) {
+        log.i("DEVAGENT", "No files changed, skipping indexing");
+        return diff.earlyReturn;
       }
+      allFiles = diff.filesToProcess;
     }
 
     // Separate code files (AST parsing) from data files (heuristic entities)
@@ -615,185 +939,20 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         });
       }
 
-      // For llamacpp: start server in background (parallel with worker spawn)
-      let llamacppStartPromise: Promise<void> | null = null;
-      if (embeddingConfig.provider === "llamacpp") {
-        llamacppStartPromise = (async () => {
-          const { llamacppEmbeddingManager } = await import("../semantic/llamacpp-server-manager.js");
-          const { loadSemanticConfig, getDataDir } = await import("../utils/config-paths.js");
-          const { existsSync, readdirSync } = await import("node:fs");
-          const { join } = await import("node:path");
-
-          const semanticConfig = loadSemanticConfig();
-          const llamacppConfig = semanticConfig?.embedding?.llamacpp;
-
-          if (llamacppConfig && !llamacppEmbeddingManager.getState().isRunning) {
-            const dataDir = getDataDir();
-            const searchPaths = [
-              join(dataDir, "hf-cache", "multilingual-e5-base-Q8_0.gguf"),
-              join(dataDir, "llamacpp", "models", "multilingual-e5-base-Q8_0.gguf"),
-              join(dataDir, "models", "multilingual-e5-base-Q8_0.gguf"),
-            ];
-
-            let modelPath: string | null = null;
-            for (const p of searchPaths) {
-              if (existsSync(p)) {
-                modelPath = p;
-                break;
-              }
-            }
-
-            if (!modelPath) {
-              const hfCache = join(dataDir, "hf-cache");
-              if (existsSync(hfCache)) {
-                try {
-                  const files = readdirSync(hfCache);
-                  const gguf = files.find((f) => f.endsWith(".gguf"));
-                  if (gguf) modelPath = join(hfCache, gguf);
-                } catch {
-                  // Ignore
-                }
-              }
-            }
-
-            if (modelPath) {
-              log.i("DEVAGENT", "Starting llama-server for workers...", { port: 8085, model: modelPath });
-              const started = await llamacppEmbeddingManager.ensureRunning({
-                modelPath,
-                mode: "embedding",
-                port: 8085,
-                contextSize: llamacppConfig.context_size || 512,
-                nGpuLayers: llamacppConfig.n_gpu_layers ?? 99,
-              });
-              if (started) {
-                log.i("DEVAGENT", "llama-server ready for workers");
-              } else {
-                log.w("DEVAGENT", "llama-server start failed - embeddings may not work");
-              }
-            }
-          }
-        })();
-      }
-
       // PRE-SPAWN: Start worker pools with embedding config already set
-      // This runs in parallel with llamacpp server start (if applicable)
+      // llamacpp server start + centralized EmbeddingGenerator run in parallel
+      const pipelinePromise = this.initEmbeddingPipeline(embeddingConfig, payload);
+
       if (!isIncremental && codeFiles.length > 0) {
         perfTimings["preSpawn_start"] = Date.now() - perfStart;
         preSpawnPromise = this.parserAgent.preSpawnPools(codeFiles);
       }
 
-      // Wait for llamacpp server if needed (workers need it before generating embeddings)
-      if (llamacppStartPromise) {
-        await llamacppStartPromise;
-      }
+      // Wait for embedding pipeline (llamacpp server, centralized generator)
+      await pipelinePromise;
 
-      // Configure vector provider for embedding accumulator
-      // v6: Get provider directly from singleton (LayeredFaissProvider or FaissProvider)
-      const { getProjectHash, getCurrentGitBranchOrDefault } = await import("../shared/storage-paths.js");
-      const configLoader = ConfigLoader.getInstance();
-      const embConfig = configLoader.getEmbeddingConfig();
-      const useLayeredIndex = embConfig.useLayeredIndex;
-      const projectHash = getProjectHash(payload.directory);
-      const currentBranch = getCurrentGitBranchOrDefault(payload.directory);
-
-      let vectorProvider: import("../semantic/faiss/types.js").IVectorProvider | null = null;
-
-      try {
-        if (useLayeredIndex) {
-          const { getLayeredFaissProvider } = await import("../semantic/faiss/layered-faiss-provider.js");
-          const provider = getLayeredFaissProvider();
-
-          // Check if initialized, initialize if not
-          // Note: isInitialized is private, so we just try to initialize
-          if ("initialize" in provider && typeof provider.initialize === "function") {
-            log.d("DEVAGENT", "Initializing LayeredFaissProvider", {
-              dir: payload.directory,
-              projectHash,
-              branch: currentBranch,
-            });
-            await provider.initialize(payload.directory, projectHash, currentBranch);
-          }
-          vectorProvider = provider;
-        } else {
-          const { initializeFaissProvider } = await import("../semantic/faiss/faiss-provider.js");
-          const provider = await initializeFaissProvider();
-          if (provider) {
-            await provider.setProjectContext(projectHash, currentBranch);
-            vectorProvider = provider;
-          }
-        }
-      } catch (e) {
-        log.w("DEVAGENT", "Failed to get vector provider", { error: String(e) });
-      }
-
-      if (vectorProvider) {
-        log.d("DEVAGENT", "vector_provider_branch", {
-          branch: currentBranch,
-          layered: useLayeredIndex,
-        });
-        this.parserAgent.setVectorProvider(vectorProvider);
-        log.i("DEVAGENT", "Vector provider configured", {
-          projectHash,
-          dir: payload.directory,
-          layered: useLayeredIndex,
-        });
-
-        // Smart Incremental: remove embeddings for deleted entities
-        if (deletedEntityIds.length > 0) {
-          try {
-            // Convert entity IDs to embedding IDs (prefixed with "ent:")
-            const embeddingIds = deletedEntityIds.map((id) => (id.startsWith("ent:") ? id : `ent:${id}`));
-            await vectorProvider.remove(embeddingIds);
-            log.i("DEVAGENT", "Removed embeddings for changed/deleted files", {
-              count: embeddingIds.length,
-            });
-          } catch (error) {
-            log.w("DEVAGENT", "Failed to remove embeddings", {
-              error: (error as Error).message,
-            });
-          }
-        }
-      } else {
-        log.w("DEVAGENT", "Vector provider not available - embeddings will not be saved");
-      }
-
-      // For centralized embedding mode (OVMS/llamacpp): create EmbeddingGenerator in Main
-      // Workers send texts, Main generates embeddings via single connection
-      if (embeddingConfig.centralizedEmbeddings) {
-        try {
-          const { EmbeddingGenerator } = await import("../semantic/embedding-generator.js");
-          const { buildEmbeddingGeneratorOptions } = await import("../agents/semantic/provider-config.js");
-          const { loadSemanticConfig } = await import("../utils/config-paths.js");
-          const { getConfig } = await import("../config/yaml-config.js");
-
-          // Load configs for EmbeddingGenerator
-          const semanticConfig = loadSemanticConfig();
-          const yamlConfig = getConfig();
-
-          // Build options for EmbeddingGenerator (same as SemanticAgent)
-          // Cast provider to ProviderKind (centralized mode only uses ovms/tei/vllm/llamacpp)
-          const generatorOptions = buildEmbeddingGeneratorOptions(
-            embeddingConfig.provider as import("./semantic/provider-config.js").ProviderKind,
-            embeddingConfig.modelName,
-            embeddingConfig.batchSize,
-            semanticConfig,
-            yamlConfig,
-          );
-
-          const embeddingGenerator = new EmbeddingGenerator(generatorOptions);
-          await embeddingGenerator.initialize();
-
-          await this.parserAgent.setEmbeddingGenerator(embeddingGenerator);
-          log.i("DEVAGENT", "Centralized EmbeddingGenerator configured", {
-            provider: embeddingConfig.provider,
-            model: embeddingConfig.modelName,
-          });
-        } catch (error) {
-          log.e("DEVAGENT", "Failed to initialize centralized EmbeddingGenerator", {
-            error: (error as Error).message,
-          });
-        }
-      }
+      // Configure vector provider (LayeredFaiss or Faiss) + remove deleted embeddings
+      await this.initVectorProvider(payload, deletedEntityIds);
     }
 
     // Enable streaming mode: index results as they arrive from workers
@@ -1322,7 +1481,6 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     });
 
     // FULL INDEXING COMPLETE: Switch to keepalive mode for fast incremental processing
-    // Keep one worker alive per language for instant response to file changes
     log.i("DEVAGENT", "=== ALL BATCH PROCESSING COMPLETE ===", {
       totalBatches: Math.ceil(codeFiles.length / effectiveBatchSize),
       codeFiles: codeFiles.length,
@@ -1332,109 +1490,30 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       totalRelationships,
       perfTimings,
     });
-    log.flush(); // Force flush to ensure completion message is visible
+    log.flush();
 
-    // Flush any pending embeddings to FAISS
-    perfTimings["embFlush_start"] = Date.now() - perfStart;
-    if (this.parserAgent) {
-      const accumulator = this.parserAgent.getAccumulator();
-      if (accumulator) {
-        const pendingCount = accumulator.getPendingCount();
-        if (pendingCount > 0) {
-          log.i("DEVAGENT", "Flushing pending embeddings to FAISS", { pending: pendingCount });
-          try {
-            const flushed = await accumulator.flush();
-            log.i("DEVAGENT", "Embeddings flushed to FAISS", { flushed });
-          } catch (err) {
-            log.e("DEVAGENT", "Failed to flush embeddings", { error: (err as Error).message });
-          }
-        }
-        const stats = accumulator.getStats();
-        log.i("DEVAGENT", "Embedding accumulator stats", {
-          accumulated: stats.accumulated,
-          flushed: stats.flushed,
-          flushCount: stats.flushCount,
-          totalBytes: stats.totalBytes,
-        });
-      }
-    }
-    perfTimings["embFlush_end"] = Date.now() - perfStart;
+    // Flush embeddings, create Prolly commit, switch to keepalive, GC
+    await this.postIndexingCleanup(
+      codeFiles,
+      filesProcessed,
+      totalEntities,
+      perfStart,
+      perfTimings,
+      effectiveBatchSize,
+      dataFiles,
+    );
 
-    // Create graph commit after indexing (Prolly Tree versioning)
-    perfTimings["commit_start"] = Date.now() - perfStart;
-    try {
-      const storage = await getGraphStorage();
-      const adapter = (storage as any).getLibSQLAdapter?.();
-      if (adapter?.createGraphCommit) {
-        const commitHash = await adapter.createGraphCommit(`Index: ${filesProcessed} files`);
-        if (commitHash) {
-          log.i("DEVAGENT", "graph_commit_created", {
-            commit: commitHash.slice(0, 8),
-            files: filesProcessed,
-            entities: totalEntities,
-          });
-        }
-        // GC: keep last 20 commits per branch, clean orphaned Prolly nodes
-        adapter.pruneAndGC?.(20)?.catch?.((err: unknown) => log.w("DEVAGENT", "prune_gc_fail", { err: String(err) }));
-      }
-    } catch (err) {
-      log.w("DEVAGENT", "graph_commit_failed", { error: (err as Error).message });
-    }
-    perfTimings["commit_end"] = Date.now() - perfStart;
-
-    perfTimings["keepalive_start"] = Date.now() - perfStart;
-    if (this.parserAgent) {
-      try {
-        const memoryBeforeMB = this.parserAgent.getTotalMemoryMB();
-        log.i("DEVAGENT", "Switching to keepalive mode (spawning ONE worker for incremental updates)", {
-          memoryMB: memoryBeforeMB,
-        });
-
-        // Enable keepalive mode - keeps worker 0 alive in each pool
-        // Other workers are killed to release memory
-        await this.parserAgent.enableKeepaliveMode();
-
-        const memoryAfterMB = this.parserAgent.getTotalMemoryMB();
-        log.i("DEVAGENT", "Keepalive mode enabled, ready for incremental updates", {
-          memoryBeforeMB,
-          memoryAfterMB,
-        });
-        // Force flush to ensure keepalive logs are visible
-        log.flush();
-      } catch (err) {
-        log.w("DEVAGENT", "Failed to enable keepalive mode, falling back to shutdown", {
-          error: (err as Error).message,
-        });
-        // Fallback: kill all workers
-        try {
-          await this.parserAgent.shutdown();
-          this.parserAgent = null;
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    perfTimings["keepalive_end"] = Date.now() - perfStart;
-
-    // Force garbage collection after indexing to reclaim memory
-    if (tryGarbageCollect(true)) {
-      log.i("DEVAGENT", "gc_after_index");
-    }
-
-    perfTimings["total"] = Date.now() - perfStart;
-    log.i("DEVAGENT", "PERF_SUMMARY", {
-      collectFiles: (perfTimings["collectFiles_end"] ?? 0) - (perfTimings["collectFiles_start"] ?? 0),
-      destroyPools: (perfTimings["destroyPools_end"] ?? 0) - (perfTimings["destroyPools_start"] ?? 0),
-      preSpawn: (perfTimings["preSpawn_end"] ?? 0) - (perfTimings["preSpawn_start"] ?? 0),
-      parsing: (perfTimings["parsing_end"] ?? 0) - (perfTimings["parsing_start"] ?? 0),
-      flush: (perfTimings["flush_end"] ?? 0) - (perfTimings["flush_start"] ?? 0),
-      dataFiles: (perfTimings["dataFiles_end"] ?? 0) - (perfTimings["dataFiles_start"] ?? 0),
-      swaggerLink: (perfTimings["swaggerLink_end"] ?? 0) - (perfTimings["swaggerLink_start"] ?? 0),
-      embFlush: (perfTimings["embFlush_end"] ?? 0) - (perfTimings["embFlush_start"] ?? 0),
-      keepalive: (perfTimings["keepalive_end"] ?? 0) - (perfTimings["keepalive_start"] ?? 0),
-      total: perfTimings["total"],
-    });
+    // Build and log performance summary
+    this.buildPerfSummary(
+      perfTimings,
+      codeFiles,
+      dataFiles,
+      filesProcessed,
+      totalEntities,
+      totalRelationships,
+      effectiveBatchSize,
+      perfStart,
+    );
 
     return {
       filesProcessed,

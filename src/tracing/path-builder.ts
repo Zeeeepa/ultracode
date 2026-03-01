@@ -41,6 +41,21 @@ const CONDITION_WEIGHT = 0.3; // Penalty for conditional paths
 const CALL_WEIGHT = 0.1; // Base weight for calls
 const ASYNC_WEIGHT = 0.2; // Penalty for async boundaries
 
+/** Mutable traversal state carried through DFS recursion. */
+interface DFSState {
+  depth: number;
+  weight: number;
+  conditionCount: number;
+}
+
+/** Shared context references for DFS caller traversal. */
+interface PathContext {
+  currentPath: string[];
+  currentRels: string[];
+  graph: AdjacencyGraph;
+  dfs: (nodeId: string, depth: number, weight: number, conditionCount: number) => void;
+}
+
 // =============================================================================
 // 2. PATH BUILDER CLASS
 // =============================================================================
@@ -495,68 +510,21 @@ export class PathBuilder {
           conditionCount,
         });
       } else {
+        const state: DFSState = { depth, weight, conditionCount };
+        const ctx: PathContext = { currentPath, currentRels, graph, dfs };
+
         // Loop unrolling for callers
         const len4 = callers.length - (callers.length % 4);
 
         for (let i = 0; i < len4; i += 4) {
-          this.processCallerDFS(
-            callers[i]!,
-            nodeId,
-            depth,
-            weight,
-            conditionCount,
-            currentPath,
-            currentRels,
-            graph,
-            dfs,
-          );
-          this.processCallerDFS(
-            callers[i + 1]!,
-            nodeId,
-            depth,
-            weight,
-            conditionCount,
-            currentPath,
-            currentRels,
-            graph,
-            dfs,
-          );
-          this.processCallerDFS(
-            callers[i + 2]!,
-            nodeId,
-            depth,
-            weight,
-            conditionCount,
-            currentPath,
-            currentRels,
-            graph,
-            dfs,
-          );
-          this.processCallerDFS(
-            callers[i + 3]!,
-            nodeId,
-            depth,
-            weight,
-            conditionCount,
-            currentPath,
-            currentRels,
-            graph,
-            dfs,
-          );
+          this.processCallerDFS(callers[i]!, nodeId, state, ctx);
+          this.processCallerDFS(callers[i + 1]!, nodeId, state, ctx);
+          this.processCallerDFS(callers[i + 2]!, nodeId, state, ctx);
+          this.processCallerDFS(callers[i + 3]!, nodeId, state, ctx);
         }
 
         for (let i = len4; i < callers.length; i++) {
-          this.processCallerDFS(
-            callers[i]!,
-            nodeId,
-            depth,
-            weight,
-            conditionCount,
-            currentPath,
-            currentRels,
-            graph,
-            dfs,
-          );
+          this.processCallerDFS(callers[i]!, nodeId, state, ctx);
         }
       }
 
@@ -571,31 +539,21 @@ export class PathBuilder {
   /**
    * Process a single caller in DFS
    */
-  private processCallerDFS(
-    callerId: string,
-    currentId: string,
-    depth: number,
-    weight: number,
-    conditionCount: number,
-    currentPath: string[],
-    currentRels: string[],
-    graph: AdjacencyGraph,
-    dfs: (nodeId: string, depth: number, weight: number, conditionCount: number) => void,
-  ): void {
+  private processCallerDFS(callerId: string, currentId: string, state: DFSState, ctx: PathContext): void {
     // Skip cycles
-    if (currentPath.includes(callerId)) return;
+    if (ctx.currentPath.includes(callerId)) return;
 
     const edgeKey = `${callerId}:${currentId}`;
-    const edgeWeight = graph.weights.get(edgeKey) ?? CALL_WEIGHT;
-    const newWeight = weight + edgeWeight;
+    const edgeWeight = ctx.graph.weights.get(edgeKey) ?? CALL_WEIGHT;
+    const newWeight = state.weight + edgeWeight;
 
     // Check if conditional
-    const node = graph.nodes.get(callerId);
+    const node = ctx.graph.nodes.get(callerId);
     const isConditional = node?.controlFlow?.branches && node.controlFlow.branches.length > 0;
 
-    currentRels.push(edgeKey);
-    dfs(callerId, depth + 1, newWeight, conditionCount + (isConditional ? 1 : 0));
-    currentRels.pop();
+    ctx.currentRels.push(edgeKey);
+    ctx.dfs(callerId, state.depth + 1, newWeight, state.conditionCount + (isConditional ? 1 : 0));
+    ctx.currentRels.pop();
   }
 
   // ===========================================================================

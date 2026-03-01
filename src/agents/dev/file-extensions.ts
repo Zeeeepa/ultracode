@@ -13,11 +13,23 @@ export const SUPPORTED_CODE_EXTENSIONS = [
   ".js",
   ".ts",
   ".jsx",
-  ".tsx", // JavaScript/TypeScript
-  ".py", // Python
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".mjs",
+  ".cjs", // JavaScript/TypeScript
+  ".py",
+  ".pyi",
+  ".pyw", // Python
   ".java", // Java
   ".cpp",
-  ".c", // C/C++
+  ".c",
+  ".h",
+  ".hpp",
+  ".cc",
+  ".hh",
+  ".cxx",
+  ".hxx", // C/C++
   ".go", // Go
   ".rs", // Rust
   ".swift", // Swift
@@ -25,6 +37,12 @@ export const SUPPORTED_CODE_EXTENSIONS = [
   ".kts", // Kotlin
   ".cs",
   ".csx", // C#
+  ".sh",
+  ".bash",
+  ".zsh", // Bash/Shell
+  ".ps1",
+  ".psm1",
+  ".psd1", // PowerShell
   ".css",
   ".scss",
   ".sass",

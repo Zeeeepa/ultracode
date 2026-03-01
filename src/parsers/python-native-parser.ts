@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { enhanceWithPyrightTypes, findPyright } from "./pyright-integration.js";
+import { type RegexExtractionRule, runRegexExtractors } from "./regex-entity-extractor.js";
 
 // Get the directory of this module to find the CLI script
 // Note: After bundling, code may be in dist/chunks/ while CLI script is in dist/parsers/
@@ -816,107 +817,129 @@ export class PythonNativeParser {
    * Fallback regex-based parser
    */
   private parseWithRegex(filePath: string, content: string): PythonParseResult {
-    const entities: ParsedEntity[] = [];
-
-    // Classes
-    const classRe = /^class\s+([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*:/gm;
-    let match: RegExpExecArray | null;
-    while ((match = classRe.exec(content))) {
-      const className = match[1];
-      if (!className) continue;
-      entities.push({
-        name: className,
-        type: "class",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Functions
-    const funcRe = /^(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/gm;
-    while ((match = funcRe.exec(content))) {
-      const funcName = match[1];
-      if (!funcName) continue;
-      const isAsync = match[0].startsWith("async");
-      const isMagic = funcName.startsWith("__") && funcName.endsWith("__");
-
-      entities.push({
-        name: funcName,
-        type: isMagic ? "magic_method" : isAsync ? "async_function" : "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: isAsync ? ["async"] : undefined,
-      });
-    }
-
-    // Imports
-    const importRe = /^(?:from\s+([\w.]+)\s+)?import\s+(.+)$/gm;
-    while ((match = importRe.exec(content))) {
-      const fromModule = match[1];
-      const importsStr = match[2];
-      if (!importsStr) continue;
-      const imports = importsStr.split(",").map((s) => s.trim());
-
-      if (fromModule) {
-        entities.push({
-          name: fromModule,
-          type: "import",
-          filePath,
-          location: this.getLocationFromIndex(content, match.index),
-          importData: {
-            source: fromModule,
-            specifiers: imports.map((imp) => {
-              const parts = imp.split(/\s+as\s+/);
-              const imported = parts[0] || imp;
-              return {
-                local: parts[1] || imported,
-                imported: parts.length > 1 ? imported : undefined,
-              };
-            }),
-            isRelative: fromModule.startsWith("."),
-          },
-        });
-      } else {
-        for (const imp of imports) {
-          const parts = imp.split(/\s+as\s+/);
-          const importName = parts[0] || imp;
-          entities.push({
+    const rules: RegexExtractionRule[] = [
+      // Classes
+      {
+        regex: /^class\s+([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*:/gm,
+        mapper: (match, fp, getLocation) => {
+          const className = match[1];
+          if (!className) return null;
+          return {
+            name: className,
+            type: "class",
+            filePath: fp,
+            location: getLocation(match.index),
+          };
+        },
+      },
+      // Functions
+      {
+        regex: /^(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/gm,
+        mapper: (match, fp, getLocation) => {
+          const funcName = match[1];
+          if (!funcName) return null;
+          const isAsync = match[0].startsWith("async");
+          const isMagic = funcName.startsWith("__") && funcName.endsWith("__");
+          return {
+            name: funcName,
+            type: isMagic ? "magic_method" : isAsync ? "async_function" : "function",
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: isAsync ? ["async"] : undefined,
+          };
+        },
+      },
+      // Imports (from X import Y, Z)
+      {
+        regex: /^from\s+([\w.]+)\s+import\s+(.+)$/gm,
+        mapper: (match, fp, getLocation) => {
+          const fromModule = match[1];
+          const importsStr = match[2];
+          if (!fromModule || !importsStr) return null;
+          const imports = importsStr.split(",").map((s) => s.trim());
+          return {
+            name: fromModule,
+            type: "import",
+            filePath: fp,
+            location: getLocation(match.index),
+            importData: {
+              source: fromModule,
+              specifiers: imports.map((imp) => {
+                const parts = imp.split(/\s+as\s+/);
+                const imported = parts[0] || imp;
+                return {
+                  local: parts[1] || imported,
+                  imported: parts.length > 1 ? imported : undefined,
+                };
+              }),
+              isRelative: fromModule.startsWith("."),
+            },
+          };
+        },
+      },
+      // Imports (import X, Y — one entity per name via dedicated regex per match)
+      {
+        regex: /^import\s+(.+)$/gm,
+        mapper: (match, fp, getLocation) => {
+          const importsStr = match[1];
+          if (!importsStr) return null;
+          const imports = importsStr.split(",").map((s) => s.trim());
+          // Return first import; additional imports from the same statement
+          // are appended below via extraBareImports.
+          const firstImp = imports[0];
+          if (!firstImp) return null;
+          const parts = firstImp.split(/\s+as\s+/);
+          const importName = parts[0] || firstImp;
+          return {
             name: importName,
             type: "import",
-            filePath,
-            location: this.getLocationFromIndex(content, match.index),
+            filePath: fp,
+            location: getLocation(match.index),
             importData: {
               source: importName,
               specifiers: [{ local: parts[1] || importName }],
               isNamespace: true,
             },
-          });
-        }
+          };
+        },
+      },
+    ];
+
+    const entities = runRegexExtractors(content, filePath, rules);
+
+    // Bare "import X, Y, Z" — the rule above emits only the first name per match.
+    // Collect remaining names and reuse the location of the already-emitted entity.
+    const bareImportRe = /^import\s+(.+)$/gm;
+    for (const bareMatch of content.matchAll(bareImportRe)) {
+      const importsStr = bareMatch[1];
+      if (!importsStr) continue;
+      const imports = importsStr.split(",").map((s) => s.trim());
+      if (imports.length <= 1) continue;
+      const parentLocation = entities.find((e) => e.type === "import" && e.location.start.index === bareMatch.index)
+        ?.location ?? {
+        start: { line: 1, column: 0, index: bareMatch.index! },
+        end: { line: 1, column: 0, index: bareMatch.index! },
+      };
+      for (let i = 1; i < imports.length; i++) {
+        const imp = imports[i];
+        if (!imp) continue;
+        const parts = imp.split(/\s+as\s+/);
+        const importName = parts[0] || imp;
+        entities.push({
+          name: importName,
+          type: "import",
+          filePath,
+          location: parentLocation,
+          importData: {
+            source: importName,
+            specifiers: [{ local: parts[1] || importName }],
+            isNamespace: true,
+          },
+        });
       }
     }
 
     return { entities, relationships: [], errors: [] };
-  }
-
-  /**
-   * Get location from character index
-   */
-  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
-    let line = 1;
-    let column = 0;
-    for (let i = 0; i < index; i++) {
-      if (content[i] === "\n") {
-        line++;
-        column = 0;
-      } else {
-        column++;
-      }
-    }
-
-    return {
-      start: { line, column, index },
-      end: { line, column: column + 1, index: index + 1 },
-    };
   }
 
   /**

@@ -14,6 +14,7 @@
 import { execSync, spawn } from "node:child_process";
 import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { runRegexExtractors } from "./regex-entity-extractor.js";
 
 // =============================================================================
 // TYPES
@@ -408,126 +409,93 @@ export class PowerShellNativeParser {
    * Regex-based parser for PowerShell
    */
   private parseWithRegex(filePath: string, content: string): PowerShellParseResult {
-    const entities: ParsedEntity[] = [];
-    let match: RegExpExecArray | null;
+    const rules = [
+      // Using statements
+      {
+        regex: /^\s*using\s+(?:module|namespace|assembly)\s+["']?([^"'\s;]+)["']?/gim,
+        mapper: (match: RegExpExecArray, fp: string, getLocation: (i: number) => ParsedEntity["location"]) => {
+          const name = match[1];
+          if (!name) return null;
+          return { name, type: "import" as const, filePath: fp, location: getLocation(match.index) };
+        },
+      },
+      // Functions
+      {
+        regex: /^\s*function\s+([A-Za-z][\w-]*)\s*(?:\([^)]*\))?\s*\{/gim,
+        mapper: (match: RegExpExecArray, fp: string, getLocation: (i: number) => ParsedEntity["location"]) => {
+          const name = match[1];
+          if (!name) return null;
+          return { name, type: "function" as const, filePath: fp, location: getLocation(match.index) };
+        },
+      },
+      // Filters
+      {
+        regex: /^\s*filter\s+([A-Za-z][\w-]*)\s*\{/gim,
+        mapper: (match: RegExpExecArray, fp: string, getLocation: (i: number) => ParsedEntity["location"]) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "function" as const,
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: ["filter"],
+          };
+        },
+      },
+      // Workflows (legacy)
+      {
+        regex: /^\s*workflow\s+([A-Za-z][\w-]*)\s*\{/gim,
+        mapper: (match: RegExpExecArray, fp: string, getLocation: (i: number) => ParsedEntity["location"]) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "function" as const,
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: ["workflow"],
+          };
+        },
+      },
+      // Classes (PS 5.0+)
+      {
+        regex: /^\s*class\s+(\w+)(?:\s*:\s*[\w,\s]+)?\s*\{/gim,
+        mapper: (match: RegExpExecArray, fp: string, getLocation: (i: number) => ParsedEntity["location"]) => {
+          const name = match[1];
+          if (!name) return null;
+          return { name, type: "class" as const, filePath: fp, location: getLocation(match.index) };
+        },
+      },
+      // Enums (PS 5.0+)
+      {
+        regex: /^\s*enum\s+(\w+)\s*\{/gim,
+        mapper: (match: RegExpExecArray, fp: string, getLocation: (i: number) => ParsedEntity["location"]) => {
+          const name = match[1];
+          if (!name) return null;
+          return { name, type: "enum" as const, filePath: fp, location: getLocation(match.index) };
+        },
+      },
+      // Script-level variables ($script: or $global:)
+      {
+        regex: /\$(?:script|global):(\w+)\s*=/gm,
+        mapper: (match: RegExpExecArray, fp: string, getLocation: (i: number) => ParsedEntity["location"]) => {
+          const name = match[1];
+          if (!name) return null;
+          const scope = match[0].includes("global") ? "global" : "script";
+          return {
+            name,
+            type: "variable" as const,
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: [scope],
+          };
+        },
+      },
+    ];
 
-    // Using statements
-    const usingRe = /^\s*using\s+(?:module|namespace|assembly)\s+["']?([^"'\s;]+)["']?/gim;
-    while ((match = usingRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "import",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Functions
-    const funcRe = /^\s*function\s+([A-Za-z][\w-]*)\s*(?:\([^)]*\))?\s*\{/gim;
-    while ((match = funcRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Filters
-    const filterRe = /^\s*filter\s+([A-Za-z][\w-]*)\s*\{/gim;
-    while ((match = filterRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: ["filter"],
-      });
-    }
-
-    // Workflows (legacy)
-    const workflowRe = /^\s*workflow\s+([A-Za-z][\w-]*)\s*\{/gim;
-    while ((match = workflowRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: ["workflow"],
-      });
-    }
-
-    // Classes (PS 5.0+)
-    const classRe = /^\s*class\s+(\w+)(?:\s*:\s*[\w,\s]+)?\s*\{/gim;
-    while ((match = classRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "class",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Enums (PS 5.0+)
-    const enumRe = /^\s*enum\s+(\w+)\s*\{/gim;
-    while ((match = enumRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "enum",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Script-level variables (Set-Variable or $script: or $global:)
-    const varRe = /\$(?:script|global):(\w+)\s*=/gm;
-    while ((match = varRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      const scope = match[0].includes("global") ? "global" : "script";
-      entities.push({
-        name,
-        type: "variable",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: [scope],
-      });
-    }
-
+    const entities = runRegexExtractors(content, filePath, rules);
     return { entities, errors: [] };
-  }
-
-  /**
-   * Get location from character index
-   */
-  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
-    let line = 1;
-    let column = 0;
-    for (let i = 0; i < index; i++) {
-      if (content[i] === "\n") {
-        line++;
-        column = 0;
-      } else {
-        column++;
-      }
-    }
-
-    return {
-      start: { line, column, index },
-      end: { line, column: column + 1, index: index + 1 },
-    };
   }
 
   /**

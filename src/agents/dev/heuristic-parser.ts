@@ -13,19 +13,32 @@ import type { ParsedEntity, ParseResult, SupportedLanguage } from "../../types/p
  */
 const EXTENSION_LANGUAGE_MAP: Record<string, SupportedLanguage> = {
   ".py": "python",
+  ".pyi": "python",
+  ".pyw": "python",
   ".go": "go",
   ".rs": "rust",
   ".java": "java",
   ".kt": "kotlin",
+  ".kts": "kotlin",
   ".cpp": "cpp",
+  ".cxx": "cpp",
+  ".cc": "cpp",
   ".c": "c",
   ".h": "c",
   ".hpp": "cpp",
+  ".hxx": "cpp",
+  ".hh": "cpp",
   ".swift": "swift",
   ".zig": "zig",
   ".zon": "zig",
   ".cs": "csharp",
   ".csx": "csharp",
+  ".sh": "bash",
+  ".bash": "bash",
+  ".zsh": "bash",
+  ".ps1": "powershell",
+  ".psm1": "powershell",
+  ".psd1": "powershell",
 };
 
 /**

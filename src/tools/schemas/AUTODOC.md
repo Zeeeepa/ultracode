@@ -113,13 +113,13 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 - `RenameSymbolSchema`
 - `SplitFileSchema`
 - `SynthesizeFilesSchema`
+- `CheckEntityPatternsSchema`
+- `DetectPatternsSchema`
 - `AnalyzeCodeImpactSchema`
 - `AnalyzeSwaggerImpactSchema`
 - `CrossLanguageSearchSchema`
 - `DetectCodeClonesSchema`
 - `FindRelatedConceptsSchema`
-- `FindSimilarCodeSchema`
-- `PatternSearchSchema`
 
 ## Files
 
