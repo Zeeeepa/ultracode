@@ -1,0 +1,45 @@
+exemplars:
+  - id: "common:god-function:bad1"
+    patternId: "common:god-function"
+    language: "common"
+    code: |
+      function processOrder(order, user, cart, payment, shipping) {
+        // validate order... 50 lines
+        // check inventory... 30 lines
+        // calculate discounts... 40 lines
+        // process payment... 35 lines
+        // update shipping... 25 lines
+        // send notifications... 20 lines
+        // cyclomatic: 25, LOC: 200+
+      }
+    description: "Function handling multiple responsibilities with high complexity"
+
+  - id: "common:deep-nesting:bad1"
+    patternId: "common:deep-nesting"
+    language: "common"
+    code: |
+      function process(data) {
+        if (data) {
+          for (const item of data) {
+            if (item.valid) {
+              for (const sub of item.children) {
+                if (sub.active) {
+                  if (sub.type === 'special') {
+                    // 7 levels deep
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    description: "Code nested 7 levels deep — hard to follow control flow"
+
+  - id: "common:too-many-params:bad1"
+    patternId: "common:too-many-params"
+    language: "common"
+    code: |
+      function createUser(name, email, age, role, dept, phone, address, country, zip, notes) {
+        // 10 parameters
+      }
+    description: "Function with 10 parameters — should use options object"

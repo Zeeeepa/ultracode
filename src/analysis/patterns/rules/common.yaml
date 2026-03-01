@@ -1,0 +1,142 @@
+patterns:
+  # Anti-patterns
+  - id: "common:god-function"
+    category: "code-smell"
+    severity: "high"
+    name: "God Function"
+    description: "Function is too large and complex — hard to understand and test"
+    suggestion: "Decompose into smaller functions with single responsibility"
+    tags: ["complexity", "maintainability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkGodFunction"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "common:deep-nesting"
+    category: "code-smell"
+    severity: "medium"
+    name: "Deep Nesting"
+    description: "Deeply nested code (>5 levels) is hard to read and maintain"
+    suggestion: "Use guard clauses, extract methods, or flatten logic"
+    tags: ["readability", "complexity"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkDeepNesting"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "common:too-many-params"
+    category: "code-smell"
+    severity: "medium"
+    name: "Too Many Parameters"
+    description: "Function with >7 parameters — indicates it does too much"
+    suggestion: "Group parameters into an options object or split into multiple functions"
+    tags: ["maintainability", "api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkTooManyParams"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "common:no-documentation"
+    category: "code-smell"
+    severity: "low"
+    name: "Undocumented Public API"
+    description: "Public entity without documentation — consumers won't know how to use it"
+    suggestion: "Add JSDoc, docstring, or XML doc comment describing purpose and usage"
+    tags: ["documentation", "api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function", "class", "interface"]
+      requiredModifiers: ["public"]
+    customDetector: "checkNoDocumentation"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # Best patterns
+  - id: "common:small-focused-function"
+    category: "best-pattern"
+    severity: "info"
+    name: "Small Focused Function"
+    description: "Well-sized function with low complexity — easy to understand and test"
+    suggestion: "Good pattern! Continue writing focused single-responsibility functions."
+    tags: ["maintainability", "quality"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkSmallFocusedFunction"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "common:documented-public-api"
+    category: "best-pattern"
+    severity: "info"
+    name: "Documented Public API"
+    description: "Public entity with proper documentation"
+    suggestion: "Good pattern! Documentation helps consumers understand your API."
+    tags: ["documentation", "quality"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function", "class", "interface"]
+      requiredModifiers: ["public"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # Code smells
+  - id: "common:large-class"
+    category: "code-smell"
+    severity: "high"
+    name: "Large Class"
+    description: "Class with too much code — violates Single Responsibility Principle"
+    suggestion: "Split into smaller classes, each with a single responsibility"
+    tags: ["complexity", "architecture", "srp"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      minLOC: 500
+    customDetector: "checkLargeClass"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "common:feature-envy"
+    category: "code-smell"
+    severity: "medium"
+    name: "Feature Envy"
+    description: "Method accesses data of another class more than its own"
+    suggestion: "Move the method to the class whose data it primarily uses"
+    tags: ["coupling", "architecture"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      nameNotMatch: "^(constructor|init|dispose|destroy|stop|start|close|open|reset|setup|teardown|toString|toJSON|valueOf|clone|equals|compareTo|hashCode)$"
+      minLOC: 8
+      minCallCount: 2
+      relationships:
+        - type: "references"
+          direction: "outgoing"
+          minCount: 3
+          crossFileRatio:
+            min: 0.5
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "common:shotgun-surgery"
+    category: "code-smell"
+    severity: "medium"
+    name: "Shotgun Surgery"
+    description: "Entity is referenced by many others — changing it requires modifying many files"
+    suggestion: "Consider consolidating related logic or introducing a facade"
+    tags: ["coupling", "maintainability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function", "class"]
+      relationships:
+        - type: "referenced_by"
+          direction: "incoming"
+          minCount: 7
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6

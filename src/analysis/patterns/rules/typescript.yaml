@@ -1,0 +1,227 @@
+patterns:
+  # Anti-patterns
+  - id: "ts:async-void"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Async Void Function"
+    description: "async void function — exceptions cannot be caught by the caller"
+    suggestion: "Change return type to Promise<void> to allow proper error handling"
+    tags: ["async", "error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      requiredModifiers: ["async"]
+      returnTypeMatch: "^(void|undefined)$"
+    customDetector: "checkAsyncVoid"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "ts:empty-catch"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Empty Catch Block"
+    description: "catch block without error handling silently swallows exceptions"
+    suggestion: "Add logging or rethrow the error. Use typed catch blocks."
+    tags: ["error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasExceptions: true
+    customDetector: "checkEmptyCatch"
+    exemplarIds: ["ts:empty-catch:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.6
+
+  - id: "ts:nested-callbacks"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Nested Callbacks (Callback Hell)"
+    description: "Deep nesting without async/await — hard to follow and maintain"
+    suggestion: "Refactor to async/await or extract nested logic into named functions"
+    tags: ["async", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minNesting: 4
+    customDetector: "checkNestedCallbacks"
+    exemplarIds: ["ts:nested-callbacks:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.6
+
+  - id: "ts:any-type-param"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Any Type Parameter"
+    description: "'any' type in parameters bypasses TypeScript type checking"
+    suggestion: "Use specific types, generics, or 'unknown' with type guards"
+    tags: ["type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkAnyTypeParam"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "ts:promise-no-catch"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Promise Without Error Handling"
+    description: "Promise chain without .catch() or try/catch — unhandled rejection"
+    suggestion: "Add .catch() handler or wrap in try/catch with await"
+    tags: ["async", "error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkPromiseNoCatch"
+    exemplarIds: ["ts:promise-no-catch:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  - id: "ts:mutable-export"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Mutable Export"
+    description: "Exported mutable variable — consumers can modify shared state unexpectedly"
+    suggestion: "Use 'export const' or export a function that returns the value"
+    tags: ["state", "architecture"]
+    enabled: true
+    structural:
+      entityTypes: ["variable"]
+      requiredModifiers: ["export"]
+      forbiddenModifiers: ["const", "readonly"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "ts:no-error-typing"
+    category: "anti-pattern"
+    severity: "low"
+    name: "Untyped Error in Catch"
+    description: "catch(e) without typing the error — unknown type at runtime"
+    suggestion: "Use catch(e: unknown) and narrow with instanceof checks"
+    tags: ["error-handling", "type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasExceptions: true
+    exemplarIds: ["ts:no-error-typing:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  # Best patterns
+  - id: "ts:proper-error-handling"
+    category: "best-pattern"
+    severity: "info"
+    name: "Proper Async Error Handling"
+    description: "Async function with proper try/catch — errors are handled gracefully"
+    suggestion: "Good pattern! Continue using structured error handling in async code."
+    tags: ["async", "error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      requiredModifiers: ["async"]
+      hasExceptions: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "ts:proper-async-await"
+    category: "best-pattern"
+    severity: "info"
+    name: "Proper Async/Await Usage"
+    description: "Well-structured async function with await and error handling"
+    suggestion: "Good pattern! Async/await with proper error handling is the way to go."
+    tags: ["async", "quality"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      requiredModifiers: ["async"]
+      hasAwaits: true
+      hasExceptions: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # Optimization
+  - id: "ts:layout-thrashing"
+    category: "optimization"
+    severity: "medium"
+    name: "Layout Thrashing"
+    description: "Interleaved DOM read/write operations force browser to recalculate layout repeatedly"
+    suggestion: "Batch all reads first, then all writes. Use requestAnimationFrame or DocumentFragment."
+    bigO:
+      before: "O(n*layout)"
+      after: "O(1*layout)"
+    benchmark: "10-100x faster for DOM-heavy updates"
+    tags: ["performance", "dom", "frontend"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minCallCount: 3
+      callsInclude: ["(offset|client|scroll|getBounding)(Width|Height|Top|Left|Rect)", "style|className|setAttribute|innerHTML|appendChild|removeChild"]
+    exemplarIds: ["ts:layout-thrashing:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  - id: "ts:angular-default-change-detection"
+    category: "optimization"
+    severity: "medium"
+    name: "Default Change Detection in Angular"
+    description: "Missing OnPush change detection — Angular checks all bindings on every event"
+    suggestion: "Use ChangeDetectionStrategy.OnPush with signals or observables"
+    benchmark: "50-90% fewer change detection cycles"
+    tags: ["performance", "angular", "frontend"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      decoratorMatch: ["Component"]
+    exemplarIds: ["ts:angular-default-cd:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  - id: "ts:rxjs-subscribe-in-loop"
+    category: "optimization"
+    severity: "high"
+    name: "Subscribe in Loop Without Unsubscribe"
+    description: "Creating subscriptions in loops without cleanup causes memory leaks"
+    suggestion: "Use takeUntil, async pipe, or merge/forkJoin to manage subscriptions"
+    tags: ["performance", "memory", "rxjs"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasLoops: true
+      callsInclude: ["subscribe"]
+    exemplarIds: ["ts:rxjs-subscribe-loop:bad1"]
+    minSemanticSimilarity: 0.65
+    minStructuralConfidence: 0.5
+
+  - id: "ts:no-trackby-ngfor"
+    category: "optimization"
+    severity: "medium"
+    name: "ngFor Without trackBy"
+    description: "ngFor without trackBy destroys and recreates all DOM elements on change"
+    suggestion: "Add trackBy function to ngFor to enable efficient DOM updates"
+    benchmark: "5-20x faster list re-renders"
+    tags: ["performance", "angular", "dom"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      decoratorMatch: ["Component"]
+    exemplarIds: ["ts:no-trackby:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.4
+
+  - id: "ts:function-in-template"
+    category: "optimization"
+    severity: "medium"
+    name: "Function Call in Template"
+    description: "Function called in Angular template runs on every change detection cycle"
+    suggestion: "Use a pipe or computed signal instead of function calls in templates"
+    benchmark: "Eliminates redundant recalculations per CD cycle"
+    tags: ["performance", "angular", "frontend"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      maxLOC: 10
+      maxCyclomatic: 2
+      nameNotMatch: "^(ng|constructor|init|destroy|track)"
+    exemplarIds: ["ts:function-in-template:bad1"]
+    minSemanticSimilarity: 0.65
+    minStructuralConfidence: 0.5

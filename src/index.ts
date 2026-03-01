@@ -607,6 +607,11 @@ function createMcpServer(session?: ClientSession): Server {
           name: "modification-guide",
           description: "Modification Agent guide - safe code changes with snapshots, validation, and auto-rollback",
         },
+        {
+          name: "patterns-guide",
+          description:
+            "Pattern detection guide — anti-patterns, best-practices, code smells, optimization with semantic validation",
+        },
       ],
     };
   });

@@ -1,0 +1,73 @@
+exemplars:
+  - id: "py:bare-except:bad1"
+    patternId: "py:bare-except"
+    language: "python"
+    code: |
+      def load_config(path):
+          try:
+              with open(path) as f:
+                  return json.load(f)
+          except:
+              return {}
+    description: "Bare except catches SystemExit, KeyboardInterrupt"
+
+  - id: "py:mutable-default:bad1"
+    patternId: "py:mutable-default-arg"
+    language: "python"
+    code: |
+      def add_item(item, items=[]):
+          items.append(item)
+          return items
+      # add_item(1) -> [1]
+      # add_item(2) -> [1, 2]  # BUG! shared list
+    description: "Mutable default list shared across calls"
+
+  - id: "py:global-state:bad1"
+    patternId: "py:global-state"
+    language: "python"
+    code: |
+      # module level
+      cache = {}
+      current_user = None
+      config = {"debug": False}
+    description: "Module-level mutable state variables"
+
+  - id: "py:context-manager:good1"
+    patternId: "py:context-manager"
+    language: "python"
+    code: |
+      def read_file(path: str) -> str:
+          with open(path, 'r') as f:
+              return f.read()
+    description: "Using with statement for proper resource management"
+
+  - id: "py:generator:good1"
+    patternId: "py:generator-pattern"
+    language: "python"
+    code: |
+      def read_large_file(path: str):
+          with open(path) as f:
+              for line in f:
+                  yield line.strip()
+    description: "Generator for memory-efficient iteration"
+
+  - id: "py:list-comp:bad1"
+    patternId: "py:list-comprehension-over-loop"
+    language: "python"
+    code: |
+      result = []
+      for item in data:
+          if item.is_valid():
+              result.append(item.value)
+    description: "Manual loop to build list — use list comprehension"
+
+  - id: "py:string-concat-loop:bad1"
+    patternId: "py:string-concat-in-loop"
+    language: "python"
+    code: |
+      def build_report(records):
+          result = ""
+          for r in records:
+              result += f"{r.name}: {r.value}\n"
+          return result
+    description: "String concatenation in loop creates O(n^2) copies"

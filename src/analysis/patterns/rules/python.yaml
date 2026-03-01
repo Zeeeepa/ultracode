@@ -1,0 +1,169 @@
+patterns:
+  # Anti-patterns
+  - id: "py:bare-except"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Bare Except Clause"
+    description: "Bare 'except:' catches all exceptions including SystemExit and KeyboardInterrupt"
+    suggestion: "Use 'except Exception:' or catch specific exceptions"
+    tags: ["error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasExceptions: true
+    customDetector: "checkBareExcept"
+    exemplarIds: ["py:bare-except:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.5
+
+  - id: "py:mutable-default-arg"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Mutable Default Argument"
+    description: "Mutable default argument ([], {}) is shared across all calls to the function"
+    suggestion: "Use None as default and create mutable inside function: if arg is None: arg = []"
+    tags: ["correctness", "gotcha"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkMutableDefaultArg"
+    exemplarIds: ["py:mutable-default:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.7
+
+  - id: "py:global-state"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Global Mutable State"
+    description: "Module-level mutable variable — shared state causes hard-to-track bugs"
+    suggestion: "Encapsulate state in a class or use dependency injection"
+    tags: ["state", "architecture"]
+    enabled: true
+    structural:
+      entityTypes: ["variable"]
+      forbiddenModifiers: ["const"]
+    exemplarIds: ["py:global-state:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  - id: "py:no-type-hints"
+    category: "code-smell"
+    severity: "low"
+    name: "Missing Type Hints"
+    description: "Public function without type annotations — reduces IDE support and documentation"
+    suggestion: "Add type hints: def func(x: int) -> str:"
+    tags: ["type-safety", "documentation"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkNoTypeHints"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:star-import"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Star Import"
+    description: "'from module import *' pollutes namespace and makes dependencies unclear"
+    suggestion: "Import specific names: 'from module import Class1, func2'"
+    tags: ["imports", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["import"]
+    customDetector: "checkStarImport"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:no-docstring"
+    category: "code-smell"
+    severity: "low"
+    name: "Missing Docstring"
+    description: "Public function/class without docstring"
+    suggestion: "Add a docstring describing purpose, parameters, and return value"
+    tags: ["documentation"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function", "class"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # Best patterns
+  - id: "py:context-manager"
+    category: "best-pattern"
+    severity: "info"
+    name: "Context Manager Usage"
+    description: "Using 'with' statement for resource management — ensures cleanup"
+    suggestion: "Good pattern! Context managers ensure resources are always released."
+    tags: ["resource-management", "quality"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    exemplarIds: ["py:context-manager:good1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.4
+
+  - id: "py:type-annotations"
+    category: "best-pattern"
+    severity: "info"
+    name: "Fully Typed Function"
+    description: "Function with complete type annotations — excellent for tooling and docs"
+    suggestion: "Good pattern! Type hints improve code quality and IDE support."
+    tags: ["type-safety", "quality"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:generator-pattern"
+    category: "best-pattern"
+    severity: "info"
+    name: "Generator Pattern"
+    description: "Using yield for lazy evaluation — memory-efficient for large datasets"
+    suggestion: "Good pattern! Generators avoid loading entire dataset into memory."
+    tags: ["performance", "memory", "quality"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    exemplarIds: ["py:generator:good1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.4
+
+  # Optimization
+  - id: "py:list-comprehension-over-loop"
+    category: "optimization"
+    severity: "low"
+    name: "Loop Instead of Comprehension"
+    description: "Manual loop to build list can often be replaced with list comprehension"
+    suggestion: "Use [expr for x in iterable if condition] — more Pythonic and 30-50% faster"
+    bigO:
+      before: "O(n)"
+      after: "O(n)"
+    benchmark: "30-50% faster due to C-level optimization"
+    tags: ["performance", "pythonic"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasLoops: true
+    exemplarIds: ["py:list-comp:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.4
+
+  - id: "py:string-concat-in-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "String Concatenation in Loop"
+    description: "String += in loop creates new string on each iteration"
+    suggestion: "Use str.join() or io.StringIO for building strings"
+    bigO:
+      before: "O(n^2)"
+      after: "O(n)"
+    benchmark: "10-100x faster for large strings"
+    tags: ["performance", "memory", "strings"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasLoops: true
+    exemplarIds: ["py:string-concat-loop:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5

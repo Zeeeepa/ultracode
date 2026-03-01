@@ -220,6 +220,11 @@ export class ToolRegistry {
     this.registerLazy("autodoc_install_hooks", async () => (await autodocLoader()).AutoDocInstallHooksToolHandler);
     this.registerLazy("autodoc_detect_language", async () => (await autodocLoader()).AutoDocDetectLanguageToolHandler);
 
+    // --- Pattern detection tools (~20KB) ---
+    const patternLoader = () => import("./handlers/pattern-tool-handlers.js");
+    this.registerLazy("detect_patterns", async () => (await patternLoader()).DetectPatternsToolHandler);
+    this.registerLazy("check_entity_patterns", async () => (await patternLoader()).CheckEntityPatternsToolHandler);
+
     // --- History & Time Travel tools (~15KB) ---
     const historyLoader = () => import("./handlers/history-tool-handlers.js");
     this.registerLazy("get_entity_history", async () => (await historyLoader()).GetEntityHistoryToolHandler);

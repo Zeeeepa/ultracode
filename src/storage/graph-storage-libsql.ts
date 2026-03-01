@@ -35,7 +35,7 @@ import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.
 
 const ID_LENGTH = 12;
 const DEFAULT_QUERY_LIMIT = 100;
-const MAX_QUERY_LIMIT = 1000;
+const MAX_QUERY_LIMIT = 50_000;
 const MAX_SUBGRAPH_DEPTH = 5;
 
 // =============================================================================

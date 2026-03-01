@@ -1,0 +1,64 @@
+exemplars:
+  - id: "go:ignored-error:bad1"
+    patternId: "go:ignored-error"
+    language: "go"
+    code: |
+      func processFile(path string) {
+          data, _ := os.ReadFile(path)
+          result, _ := json.Unmarshal(data, &config)
+          db.Save(result)
+      }
+    description: "Multiple error returns ignored with _"
+
+  - id: "go:goroutine-leak:bad1"
+    patternId: "go:goroutine-leak"
+    language: "go"
+    code: |
+      func startWorkers(urls []string) {
+          for _, url := range urls {
+              go func(u string) {
+                  resp, _ := http.Get(u)
+                  process(resp)
+              }(url)
+          }
+      }
+    description: "Goroutines launched without context or WaitGroup"
+
+  - id: "go:error-wrapping:good1"
+    patternId: "go:error-wrapping"
+    language: "go"
+    code: |
+      func loadConfig(path string) (*Config, error) {
+          data, err := os.ReadFile(path)
+          if err != nil {
+              return nil, fmt.Errorf("load config %s: %w", path, err)
+          }
+          return parseConfig(data)
+      }
+    description: "Error wrapping with context using %w"
+
+  - id: "go:string-concat-loop:bad1"
+    patternId: "go:string-concat-in-loop"
+    language: "go"
+    code: |
+      func buildCSV(records []Record) string {
+          result := ""
+          for _, r := range records {
+              result += r.Name + "," + r.Value + "\n"
+          }
+          return result
+      }
+    description: "String concatenation in range loop"
+
+  - id: "go:slice-no-cap:bad1"
+    patternId: "go:slice-no-capacity"
+    language: "go"
+    code: |
+      func getNames(users []User) []string {
+          var names []string
+          for _, u := range users {
+              names = append(names, u.Name)
+          }
+          return names
+      }
+    description: "Slice growing without pre-allocation"
