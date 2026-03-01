@@ -20,6 +20,8 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { LineOffsetMap } from "./base-parser-utils.js";
+import { type RegexExtractionRule, runRegexExtractors } from "./regex-entity-extractor.js";
 
 // Get the directory of this module to find the CLI script/binary
 const __filename = fileURLToPath(import.meta.url);
@@ -693,43 +695,118 @@ export class GoNativeParser {
    * Fallback regex-based parser
    */
   private parseWithRegex(filePath: string, content: string): GoParseResult {
-    const entities: ParsedEntity[] = [];
-
-    // Package
-    const packageMatch = /^\s*package\s+(\w+)/m.exec(content);
-    if (packageMatch?.[1]) {
-      entities.push({
-        id: `${filePath}:module:${packageMatch[1]}`,
-        name: packageMatch[1],
-        type: "module",
-        filePath,
-        location: this.getLocationFromIndex(content, packageMatch.index),
-      });
-    }
-
-    // Imports
-    const importRe = /import\s+(?:(\w+)\s+)?"([^"]+)"/gm;
-    let match: RegExpExecArray | null;
-    while ((match = importRe.exec(content))) {
-      const alias = match[1];
-      const source = match[2];
-      if (!source) continue;
-      const importName = alias || basename(source) || source;
-      entities.push({
-        id: `${filePath}:import:${importName}`,
-        name: importName,
-        type: "import",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        importData: {
-          source,
-          specifiers: [{ local: importName }],
+    const rules: RegexExtractionRule[] = [
+      // Package
+      {
+        regex: /^\s*package\s+(\w+)/gm,
+        mapper: (m, fp, getLocation) => {
+          const name = m[1];
+          if (!name) return null;
+          return {
+            id: `${fp}:module:${name}`,
+            name,
+            type: "module",
+            filePath: fp,
+            location: getLocation(m.index),
+          };
         },
-      });
-    }
+      },
+      // Single-line imports: import "fmt" or import alias "path"
+      {
+        regex: /import\s+(?:(\w+)\s+)?"([^"]+)"/gm,
+        mapper: (m, fp, getLocation) => {
+          const alias = m[1];
+          const source = m[2];
+          if (!source) return null;
+          const importName = alias || basename(source) || source;
+          return {
+            id: `${fp}:import:${importName}`,
+            name: importName,
+            type: "import",
+            filePath: fp,
+            location: getLocation(m.index),
+            importData: {
+              source,
+              specifiers: [{ local: importName }],
+            },
+          };
+        },
+      },
+      // Functions
+      {
+        regex: /^func\s+(?:\(\s*\w+\s+\*?(\w+)\s*\)\s+)?(\w+)\s*\(/gm,
+        mapper: (m, fp, getLocation) => {
+          const receiver = m[1];
+          const name = m[2];
+          if (!name) return null;
+          const modifiers: string[] = [];
+          if (receiver) modifiers.push("method");
+          const firstChar = name.charAt(0);
+          if (firstChar && firstChar === firstChar.toUpperCase()) modifiers.push("exported");
 
-    // Import blocks
+          const funcFullName = receiver ? `${receiver}.${name}` : name;
+          return {
+            id: `${fp}:function:${funcFullName}`,
+            name: funcFullName,
+            type: "function",
+            filePath: fp,
+            location: getLocation(m.index),
+            ...(modifiers.length > 0 && { modifiers }),
+          };
+        },
+      },
+      // Types (struct, interface)
+      {
+        regex: /^type\s+(\w+)\s+(struct|interface)\s*\{/gm,
+        mapper: (m, fp, getLocation) => {
+          const name = m[1];
+          const kind = m[2];
+          if (!name || !kind) return null;
+          const modifiers: string[] = [];
+          const firstChar = name.charAt(0);
+          if (firstChar && firstChar === firstChar.toUpperCase()) modifiers.push("exported");
+
+          const typeKind = kind === "struct" ? "class" : "interface";
+          return {
+            id: `${fp}:${typeKind}:${name}`,
+            name,
+            type: typeKind,
+            filePath: fp,
+            location: getLocation(m.index),
+            ...(modifiers.length > 0 && { modifiers }),
+          };
+        },
+      },
+      // Constants and variables
+      {
+        regex: /^(?:const|var)\s+(\w+)\s+/gm,
+        mapper: (m, fp, getLocation) => {
+          const name = m[1];
+          if (!name) return null;
+          const isConst = m[0].startsWith("const");
+          const modifiers: string[] = [];
+          const firstChar = name.charAt(0);
+          if (firstChar && firstChar === firstChar.toUpperCase()) modifiers.push("exported");
+
+          const valType = isConst ? "constant" : "variable";
+          return {
+            id: `${fp}:${valType}:${name}`,
+            name,
+            type: valType,
+            filePath: fp,
+            location: getLocation(m.index),
+            ...(modifiers.length > 0 && { modifiers }),
+          };
+        },
+      },
+    ];
+
+    const entities = runRegexExtractors(content, filePath, rules);
+
+    // Import blocks — nested regex loop, handled separately
     const importBlockRe = /import\s*\(\s*([\s\S]*?)\s*\)/gm;
+    const lineMap = new LineOffsetMap(content);
+    let match: RegExpExecArray | null;
     while ((match = importBlockRe.exec(content))) {
       const block = match[1];
       if (!block) continue;
@@ -745,7 +822,7 @@ export class GoNativeParser {
           name: importName,
           type: "import",
           filePath,
-          location: this.getLocationFromIndex(content, match.index),
+          location: lineMap.getEntityLocation(match.index),
           importData: {
             source,
             specifiers: [{ local: importName }],
@@ -754,92 +831,7 @@ export class GoNativeParser {
       }
     }
 
-    // Functions
-    const funcRe = /^func\s+(?:\(\s*\w+\s+\*?(\w+)\s*\)\s+)?(\w+)\s*\(/gm;
-    while ((match = funcRe.exec(content))) {
-      const receiver = match[1];
-      const name = match[2];
-      if (!name) continue;
-      const modifiers: string[] = [];
-      if (receiver) modifiers.push("method");
-      const firstChar = name.charAt(0);
-      if (firstChar && firstChar === firstChar.toUpperCase()) modifiers.push("exported");
-
-      const funcFullName = receiver ? `${receiver}.${name}` : name;
-      entities.push({
-        id: `${filePath}:function:${funcFullName}`,
-        name: funcFullName,
-        type: "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        ...(modifiers.length > 0 && { modifiers: modifiers }),
-      });
-    }
-
-    // Types (struct, interface)
-    const typeRe = /^type\s+(\w+)\s+(struct|interface)\s*\{/gm;
-    while ((match = typeRe.exec(content))) {
-      const name = match[1];
-      const kind = match[2];
-      if (!name || !kind) continue;
-      const modifiers: string[] = [];
-      const firstChar = name.charAt(0);
-      if (firstChar && firstChar === firstChar.toUpperCase()) modifiers.push("exported");
-
-      const typeKind = kind === "struct" ? "class" : "interface";
-      entities.push({
-        id: `${filePath}:${typeKind}:${name}`,
-        name,
-        type: typeKind,
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        ...(modifiers.length > 0 && { modifiers: modifiers }),
-      });
-    }
-
-    // Constants
-    const constRe = /^(?:const|var)\s+(\w+)\s+/gm;
-    while ((match = constRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      const isConst = match[0].startsWith("const");
-      const modifiers: string[] = [];
-      const firstChar = name.charAt(0);
-      if (firstChar && firstChar === firstChar.toUpperCase()) modifiers.push("exported");
-
-      const valType = isConst ? "constant" : "variable";
-      entities.push({
-        id: `${filePath}:${valType}:${name}`,
-        name,
-        type: valType,
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        ...(modifiers.length > 0 && { modifiers: modifiers }),
-      });
-    }
-
     return { entities, relationships: [], errors: [] };
-  }
-
-  /**
-   * Get location from character index
-   */
-  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
-    let line = 1;
-    let column = 0;
-    for (let i = 0; i < index; i++) {
-      if (content[i] === "\n") {
-        line++;
-        column = 0;
-      } else {
-        column++;
-      }
-    }
-
-    return {
-      start: { line, column, index },
-      end: { line, column: column + 1, index: index + 1 },
-    };
   }
 
   /**

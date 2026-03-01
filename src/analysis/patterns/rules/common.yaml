@@ -113,16 +113,21 @@ patterns:
     structural:
       entityTypes: ["method"]
       nameNotMatch: "^(constructor|init|dispose|destroy|stop|start|close|open|reset|setup|teardown|toString|toJSON|valueOf|clone|equals|compareTo|hashCode)$"
+      # Exclude DI constructors: readonly params indicate dependency injection, not feature envy
+      forbiddenModifiers: ["readonly"]
       minLOC: 8
-      minCallCount: 2
+      # Raised from 2→4 to reduce false positives on thin delegates
+      minCallCount: 4
       relationships:
         - type: "references"
           direction: "outgoing"
           minCount: 3
           crossFileRatio:
             min: 0.5
+      # AST body analysis: only flag if method body accesses external fields more than own
+      requireBodyAnalysis: true
     minSemanticSimilarity: 0
-    minStructuralConfidence: 0.6
+    minStructuralConfidence: 0.7
 
   - id: "common:shotgun-surgery"
     category: "code-smell"

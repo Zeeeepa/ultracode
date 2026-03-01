@@ -13,15 +13,15 @@ import type { EmbeddingModel, GPUInfo, InstallResult } from "../setup-types.js";
 import { c, printError, printInfo, printOK, printWarn, prompt } from "../setup-ui.js";
 import { createMultiDeviceConfig, generateEndpointsArray } from "../utils/index.js";
 
-export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu: GPUInfo): Promise<InstallResult> {
-  printInfo(t("ovms.setup"));
-  console.error("");
+interface TargetDeviceResult {
+  targetDevice: string;
+  hasIntelIGPU: boolean;
+  isIntelArc: boolean;
+  isIntelGPU: boolean;
+  isNvidiaGPU: boolean;
+}
 
-  const OVMS_VERSION = "2025.4";
-  const isWindows = process.platform === "win32";
-  const isLinux = process.platform === "linux";
-
-  // Detect hardware
+function detectTargetDevice(cpu: CPUInfo, gpu: GPUInfo): TargetDeviceResult {
   const hasNPU = cpu.model.toLowerCase().includes("ultra");
   const cpuModel = cpu.model.toLowerCase();
   const gpuName = gpu.name?.toLowerCase() || "";
@@ -62,6 +62,303 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
     printInfo(t("ovms.cpu_fallback"));
   }
 
+  return { targetDevice, hasIntelIGPU, isIntelArc, isIntelGPU, isNvidiaGPU };
+}
+
+async function downloadOvmsBinary(ovmsDir: string, isWindows: boolean, _isLinux: boolean): Promise<string | null> {
+  const OVMS_VERSION = "2025.4";
+  printInfo(ti("ovms.downloading", { version: OVMS_VERSION, platform: isWindows ? "Windows" : "Linux" }));
+
+  let downloadUrl: string;
+  let archiveName: string;
+
+  if (isWindows) {
+    downloadUrl = `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2025.4.0.15ce0188/ovms_windows_python_on.zip`;
+    archiveName = "ovms_windows_python_on.zip";
+  } else {
+    let ubuntuVersion = "24";
+    try {
+      const osRelease = execSync("cat /etc/os-release 2>/dev/null || echo ''", { encoding: "utf-8" });
+      if (osRelease.includes("22.04") || osRelease.includes("jammy")) {
+        ubuntuVersion = "22";
+      }
+    } catch {
+      /* default 24 */
+    }
+
+    downloadUrl = `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2025.4.0.15ce0188/ovms_ubuntu${ubuntuVersion}_python_on.tar.gz`;
+    archiveName = `ovms_ubuntu${ubuntuVersion}_python_on.tar.gz`;
+  }
+
+  const archivePath = join(ovmsDir, archiveName);
+
+  try {
+    printInfo(`URL: ${downloadUrl}`);
+    const response = await fetch(downloadUrl, {
+      headers: { "User-Agent": "ultracode/1.0" },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const totalSize = parseInt(response.headers.get("content-length") || "0", 10);
+    printInfo(ti("ovms.size_mb", { size: (totalSize / 1024 / 1024).toFixed(1) }));
+
+    const buffer = await response.arrayBuffer();
+    writeFileSync(archivePath, Buffer.from(buffer));
+    printOK(t("ovms.downloaded"));
+
+    printInfo(t("ovms.extracting"));
+
+    if (isWindows) {
+      execSync(`powershell -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${ovmsDir}' -Force"`, {
+        stdio: "pipe",
+        windowsHide: true,
+      });
+    } else {
+      const ovmsBinPath = join(ovmsDir, "ovms");
+      execSync(`tar -xzf "${archivePath}" -C "${ovmsDir}" --strip-components=1`, { stdio: "pipe" });
+      execSync(`chmod +x "${ovmsBinPath}"`, { stdio: "pipe" });
+    }
+
+    // Cleanup
+    try {
+      require("node:fs").unlinkSync(archivePath);
+    } catch {
+      /* ignore */
+    }
+
+    // Resolve final binary path
+    if (isWindows) {
+      const nestedPath = join(ovmsDir, "ovms", "ovms.exe");
+      const flatPath = join(ovmsDir, "ovms.exe");
+      const result = existsSync(nestedPath) ? nestedPath : flatPath;
+      printOK(t("ovms.installed"));
+      return result;
+    }
+    printOK(t("ovms.installed"));
+    return join(ovmsDir, "ovms");
+  } catch (error: unknown) {
+    const err = toError(error);
+    printError(ti("ovms.download_error", { error: err.message }));
+    return null;
+  }
+}
+
+async function exportModelNative(
+  exportModelPy: string,
+  hfModel: string,
+  modelDirName: string,
+  modelsDir: string,
+  targetDevice: string,
+  weightFormat: string,
+): Promise<boolean> {
+  printInfo(t("ovms.exporting_via_ovms"));
+  printInfo(ti("ovms.source", { source: hfModel }));
+
+  try {
+    const exportArgs = [
+      exportModelPy,
+      "embeddings_ov",
+      "--source_model",
+      hfModel,
+      "--model_name",
+      modelDirName,
+      "--weight-format",
+      weightFormat,
+      "--pooling",
+      "MEAN",
+      "--model_repository_path",
+      modelsDir,
+      "--config_file_path",
+      join(modelsDir, "config.json"),
+      "--target_device",
+      targetDevice,
+      "--overwrite_models",
+    ];
+
+    printInfo(t("ovms.export_time_hint"));
+
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const proc = spawn("python", exportArgs, {
+        stdio: ["ignore", "inherit", "inherit"],
+        windowsHide: true,
+        cwd: dirname(exportModelPy),
+      });
+      proc.on("error", reject);
+      proc.on("close", resolve);
+    });
+
+    const graphPath = join(modelsDir, modelDirName, "graph.pbtxt");
+    if (exitCode === 0 && existsSync(graphPath)) {
+      printOK(t("ovms.export_success"));
+
+      // Create OVMS config.json in models root
+      const ovmsConfigPath = join(modelsDir, "config.json");
+      if (!existsSync(ovmsConfigPath)) {
+        const ovmsConfig = {
+          model_config_list: [
+            {
+              config: {
+                name: modelDirName,
+                base_path: modelDirName,
+              },
+            },
+          ],
+          mediapipe_config_list: [
+            {
+              name: modelDirName,
+              base_path: modelDirName,
+            },
+          ],
+        };
+        writeFileSync(ovmsConfigPath, JSON.stringify(ovmsConfig, null, 2));
+        printOK(ti("ovms.ovms_config_created", { path: ovmsConfigPath }));
+      }
+      return true;
+    }
+    printWarn(ti("ovms.export_exit_code", { code: String(exitCode) }));
+    return false;
+  } catch (error: unknown) {
+    const err = toError(error);
+    printWarn(ti("ovms.export_error", { error: err.message }));
+    return false;
+  }
+}
+
+async function exportModelDocker(
+  hfModel: string,
+  modelId: string,
+  modelsDir: string,
+  modelDirName: string,
+  weightFormat: string,
+): Promise<boolean> {
+  printWarn(t("ovms.docker_fallback"));
+  printInfo(t("ovms.no_mediapipe_note"));
+
+  let hasDocker = false;
+  try {
+    execSync("docker --version", { stdio: "pipe", windowsHide: true });
+    hasDocker = true;
+  } catch {
+    /* no docker */
+  }
+
+  if (!hasDocker) {
+    printError(t("ovms.need_docker_or_ovms"));
+    printInfo(t("ovms.build_ovms_hint"));
+    return false;
+  }
+
+  const modelDir = join(modelsDir, modelId, "1");
+  mkdirSync(modelDir, { recursive: true });
+
+  const irXmlPath = join(modelDir, "openvino_model.xml");
+
+  printInfo(ti("ovms.docker_converting", { model: hfModel }));
+  printInfo(t("ovms.convert_time_hint"));
+
+  const modelDirDocker = modelDir.replace(/\\/g, "/");
+  const pythonImage = "python:3.11-slim";
+
+  try {
+    let pythonImageExists = false;
+    try {
+      const check = execSync(`docker images -q "${pythonImage}"`, { encoding: "utf-8", windowsHide: true });
+      pythonImageExists = check.trim().length > 0;
+    } catch {
+      /* ignore */
+    }
+
+    if (!pythonImageExists) {
+      printInfo(ti("ovms.downloading_image", { image: pythonImage }));
+      execSync(`docker pull "${pythonImage}"`, { stdio: "inherit", timeout: 300000, windowsHide: true });
+    }
+
+    printInfo(ti("ovms.convert_quantization", { format: weightFormat.toUpperCase() }));
+
+    const dockerArgs = [
+      "run",
+      "--rm",
+      "-v",
+      `${modelDirDocker}:/output`,
+      pythonImage,
+      "bash",
+      "-c",
+      `pip install optimum[openvino] sentence-transformers && optimum-cli export openvino --model ${hfModel} --weight-format ${weightFormat} --library sentence_transformers --task feature-extraction /output`,
+    ];
+
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const proc = spawn("docker", dockerArgs, {
+        stdio: ["ignore", "inherit", "inherit"],
+        windowsHide: true,
+      });
+      proc.on("error", reject);
+      proc.on("close", resolve);
+    });
+    if (exitCode !== 0) throw new Error(`Docker exited with code ${exitCode}`);
+
+    if (existsSync(irXmlPath)) {
+      printOK(t("ovms.model_converted_no_mediapipe"));
+
+      // Create simple OVMS config for this model
+      const ovmsConfig = {
+        model_config_list: [
+          {
+            config: {
+              name: modelDirName,
+              base_path: join(modelsDir, modelDirName).replace(/\\/g, "/"),
+            },
+          },
+        ],
+      };
+      writeFileSync(join(modelsDir, "config.json"), JSON.stringify(ovmsConfig, null, 2));
+      return true;
+    }
+    return false;
+  } catch (error: unknown) {
+    const err = toError(error);
+    printError(ti("ovms.convert_error", { error: err.message }));
+    return false;
+  }
+}
+
+function detectModelDimensions(modelsDir: string, modelDirName: string): { dimensions?: number; modelId?: string } {
+  const finalModelConfigPath = join(modelsDir, modelDirName, "config.json");
+  if (!existsSync(finalModelConfigPath)) {
+    return {};
+  }
+  try {
+    const configData = JSON.parse(readFileSync(finalModelConfigPath, "utf-8"));
+    if (configData.hidden_size) {
+      const dimensions = configData.hidden_size as number;
+      let modelId: string | undefined;
+      if (configData.hidden_size === 768) {
+        modelId = "multilingual-e5-base";
+      } else if (configData.hidden_size === 384) {
+        modelId = "multilingual-e5-small";
+      } else if (configData.hidden_size === 1024) {
+        modelId = "multilingual-e5-large";
+      }
+      return { dimensions, modelId };
+    }
+  } catch {
+    /* ignore parse errors */
+  }
+  return {};
+}
+
+export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu: GPUInfo): Promise<InstallResult> {
+  printInfo(t("ovms.setup"));
+  console.error("");
+
+  const isWindows = process.platform === "win32";
+  const isLinux = process.platform === "linux";
+
+  // Detect hardware
+  const { targetDevice, hasIntelIGPU, isIntelArc, isIntelGPU, isNvidiaGPU } = detectTargetDevice(cpu, gpu);
+
   if (!isWindows && !isLinux) {
     printError(t("ovms.platform_not_supported"));
     printInfo(t("ovms.use_alternative"));
@@ -88,10 +385,6 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
 
   let ovmsBin = getOvmsBinPath();
 
-  // Track detected dimensions for return value (may be set when reusing existing installation)
-  let detectedDimensions: number | undefined;
-  let detectedModelId: string | undefined;
-
   // Check if already installed
   if (existsSync(ovmsBin)) {
     printOK(t("ovms.already_installed"));
@@ -108,74 +401,11 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
 
   // Download OVMS binary if needed
   if (!existsSync(ovmsBin)) {
-    printInfo(ti("ovms.downloading", { version: OVMS_VERSION, platform: isWindows ? "Windows" : "Linux" }));
-
-    let downloadUrl: string;
-    let archiveName: string;
-
-    if (isWindows) {
-      downloadUrl = `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2025.4.0.15ce0188/ovms_windows_python_on.zip`;
-      archiveName = "ovms_windows_python_on.zip";
-    } else {
-      let ubuntuVersion = "24";
-      try {
-        const osRelease = execSync("cat /etc/os-release 2>/dev/null || echo ''", { encoding: "utf-8" });
-        if (osRelease.includes("22.04") || osRelease.includes("jammy")) {
-          ubuntuVersion = "22";
-        }
-      } catch {
-        /* default 24 */
-      }
-
-      downloadUrl = `https://storage.openvinotoolkit.org/repositories/openvino_model_server/packages/weekly/2025.4.0.15ce0188/ovms_ubuntu${ubuntuVersion}_python_on.tar.gz`;
-      archiveName = `ovms_ubuntu${ubuntuVersion}_python_on.tar.gz`;
-    }
-
-    const archivePath = join(ovmsDir, archiveName);
-
-    try {
-      printInfo(`URL: ${downloadUrl}`);
-      const response = await fetch(downloadUrl, {
-        headers: { "User-Agent": "ultracode/1.0" },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const totalSize = parseInt(response.headers.get("content-length") || "0", 10);
-      printInfo(ti("ovms.size_mb", { size: (totalSize / 1024 / 1024).toFixed(1) }));
-
-      const buffer = await response.arrayBuffer();
-      writeFileSync(archivePath, Buffer.from(buffer));
-      printOK(t("ovms.downloaded"));
-
-      printInfo(t("ovms.extracting"));
-
-      if (isWindows) {
-        execSync(`powershell -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${ovmsDir}' -Force"`, {
-          stdio: "pipe",
-          windowsHide: true,
-        });
-      } else {
-        execSync(`tar -xzf "${archivePath}" -C "${ovmsDir}" --strip-components=1`, { stdio: "pipe" });
-        execSync(`chmod +x "${ovmsBin}"`, { stdio: "pipe" });
-      }
-
-      // Cleanup
-      try {
-        require("node:fs").unlinkSync(archivePath);
-      } catch {
-        /* ignore */
-      }
-
-      ovmsBin = getOvmsBinPath();
-      printOK(t("ovms.installed"));
-    } catch (error: unknown) {
-      const err = toError(error);
-      printError(ti("ovms.download_error", { error: err.message }));
+    const downloadedBin = await downloadOvmsBinary(ovmsDir, isWindows, isLinux);
+    if (!downloadedBin) {
       return { success: false };
     }
+    ovmsBin = downloadedBin;
   }
 
   // Download and prepare embedding model
@@ -207,169 +437,27 @@ export async function installOVMSNative(model: EmbeddingModel, cpu: CPUInfo, gpu
     const exportModelPy = exportModelPaths.find((p) => existsSync(p));
 
     if (exportModelPy) {
-      printInfo(t("ovms.exporting_via_ovms"));
-      printInfo(ti("ovms.source", { source: hfModel }));
-
       const weightFormat = model.weight_format || "int8";
-
-      try {
-        const exportArgs = [
-          exportModelPy,
-          "embeddings_ov",
-          "--source_model",
-          hfModel,
-          "--model_name",
-          modelDirName,
-          "--weight-format",
-          weightFormat,
-          "--pooling",
-          "MEAN",
-          "--model_repository_path",
-          modelsDir,
-          "--config_file_path",
-          join(modelsDir, "config.json"),
-          "--target_device",
-          targetDevice,
-          "--overwrite_models",
-        ];
-
-        printInfo(t("ovms.export_time_hint"));
-
-        const exitCode = await new Promise<number>((resolve, reject) => {
-          const proc = spawn("python", exportArgs, {
-            stdio: ["ignore", "inherit", "inherit"],
-            windowsHide: true,
-            cwd: dirname(exportModelPy),
-          });
-          proc.on("error", reject);
-          proc.on("close", resolve);
-        });
-
-        if (exitCode === 0 && existsSync(graphPath)) {
-          printOK(t("ovms.export_success"));
-          modelExported = true;
-          hasTokenizer = true;
-
-          // Create OVMS config.json in models root
-          const ovmsConfigPath = join(modelsDir, "config.json");
-          if (!existsSync(ovmsConfigPath)) {
-            const ovmsConfig = {
-              model_config_list: [
-                {
-                  config: {
-                    name: modelDirName,
-                    base_path: modelDirName,
-                  },
-                },
-              ],
-              mediapipe_config_list: [
-                {
-                  name: modelDirName,
-                  base_path: modelDirName,
-                },
-              ],
-            };
-            writeFileSync(ovmsConfigPath, JSON.stringify(ovmsConfig, null, 2));
-            printOK(ti("ovms.ovms_config_created", { path: ovmsConfigPath }));
-          }
-        } else {
-          printWarn(ti("ovms.export_exit_code", { code: String(exitCode) }));
-        }
-      } catch (error: unknown) {
-        const err = toError(error);
-        printWarn(ti("ovms.export_error", { error: err.message }));
+      const nativeSuccess = await exportModelNative(
+        exportModelPy,
+        hfModel,
+        modelDirName,
+        modelsDir,
+        targetDevice,
+        weightFormat,
+      );
+      if (nativeSuccess) {
+        modelExported = true;
+        hasTokenizer = true;
       }
     }
 
     // Strategy 2: Convert using Docker + optimum-cli (fallback - no MediaPipe)
     if (!modelExported) {
-      printWarn(t("ovms.docker_fallback"));
-      printInfo(t("ovms.no_mediapipe_note"));
-
-      let hasDocker = false;
-      try {
-        execSync("docker --version", { stdio: "pipe", windowsHide: true });
-        hasDocker = true;
-      } catch {
-        /* no docker */
-      }
-
-      if (!hasDocker) {
-        printError(t("ovms.need_docker_or_ovms"));
-        printInfo(t("ovms.build_ovms_hint"));
-        return { success: false };
-      }
-
-      const modelDir = join(modelsDir, model.model_id, "1");
-      mkdirSync(modelDir, { recursive: true });
-
-      const irXmlPath = join(modelDir, "openvino_model.xml");
-
-      printInfo(ti("ovms.docker_converting", { model: hfModel }));
-      printInfo(t("ovms.convert_time_hint"));
-
-      const modelDirDocker = modelDir.replace(/\\/g, "/");
-      const pythonImage = "python:3.11-slim";
-
-      try {
-        let pythonImageExists = false;
-        try {
-          const check = execSync(`docker images -q "${pythonImage}"`, { encoding: "utf-8", windowsHide: true });
-          pythonImageExists = check.trim().length > 0;
-        } catch {
-          /* ignore */
-        }
-
-        if (!pythonImageExists) {
-          printInfo(ti("ovms.downloading_image", { image: pythonImage }));
-          execSync(`docker pull "${pythonImage}"`, { stdio: "inherit", timeout: 300000, windowsHide: true });
-        }
-
-        const weightFormat = model.weight_format || "int8";
-        printInfo(ti("ovms.convert_quantization", { format: weightFormat.toUpperCase() }));
-
-        const dockerArgs = [
-          "run",
-          "--rm",
-          "-v",
-          `${modelDirDocker}:/output`,
-          pythonImage,
-          "bash",
-          "-c",
-          `pip install optimum[openvino] sentence-transformers && optimum-cli export openvino --model ${hfModel} --weight-format ${weightFormat} --library sentence_transformers --task feature-extraction /output`,
-        ];
-
-        const exitCode = await new Promise<number>((resolve, reject) => {
-          const proc = spawn("docker", dockerArgs, {
-            stdio: ["ignore", "inherit", "inherit"],
-            windowsHide: true,
-          });
-          proc.on("error", reject);
-          proc.on("close", resolve);
-        });
-        if (exitCode !== 0) throw new Error(`Docker exited with code ${exitCode}`);
-
-        if (existsSync(irXmlPath)) {
-          printOK(t("ovms.model_converted_no_mediapipe"));
-          modelExported = true;
-
-          // Create simple OVMS config for this model
-          const ovmsConfig = {
-            model_config_list: [
-              {
-                config: {
-                  name: modelDirName,
-                  base_path: join(modelsDir, modelDirName).replace(/\\/g, "/"),
-                },
-              },
-            ],
-          };
-          writeFileSync(join(modelsDir, "config.json"), JSON.stringify(ovmsConfig, null, 2));
-        }
-      } catch (error: unknown) {
-        const err = toError(error);
-        printError(ti("ovms.convert_error", { error: err.message }));
-        return { success: false };
+      const weightFormat = model.weight_format || "int8";
+      const dockerSuccess = await exportModelDocker(hfModel, model.model_id, modelsDir, modelDirName, weightFormat);
+      if (dockerSuccess) {
+        modelExported = true;
       }
     }
 
@@ -454,25 +542,7 @@ echo "Starting OpenVINO Model Server..."
   // Final check: Always verify actual model dimensions from file (most reliable)
   // This handles all cases: reuse existing, reinstall, fresh install
   // Works silently - no output, just sets the correct values
-  const finalModelConfigPath = join(modelsDir, modelDirName, "config.json");
-  if (existsSync(finalModelConfigPath)) {
-    try {
-      const configData = JSON.parse(readFileSync(finalModelConfigPath, "utf-8"));
-      if (configData.hidden_size) {
-        detectedDimensions = configData.hidden_size;
-        // Determine model_id based on dimensions
-        if (configData.hidden_size === 768) {
-          detectedModelId = "multilingual-e5-base";
-        } else if (configData.hidden_size === 384) {
-          detectedModelId = "multilingual-e5-small";
-        } else if (configData.hidden_size === 1024) {
-          detectedModelId = "multilingual-e5-large";
-        }
-      }
-    } catch {
-      /* ignore parse errors */
-    }
-  }
+  const { dimensions: detectedDimensions, modelId: detectedModelId } = detectModelDimensions(modelsDir, modelDirName);
 
   return { success: true, endpoints, modelName: modelDirName, detectedDimensions, detectedModelId };
 }

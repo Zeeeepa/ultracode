@@ -15,6 +15,7 @@ import { execSync, spawn } from "node:child_process";
 import { basename } from "node:path";
 import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { type RegexExtractionRule, runRegexExtractors } from "./regex-entity-extractor.js";
 
 // =============================================================================
 // SHFMT AST TYPES
@@ -244,124 +245,115 @@ export class BashNativeParser {
    * Regex-based parser for Bash
    */
   private parseWithRegex(filePath: string, content: string): BashParseResult {
-    const entities: ParsedEntity[] = [];
-    let match: RegExpExecArray | null;
-
-    // Shebang
-    const shebangMatch = /^#!\s*(.+)$/m.exec(content);
-    if (shebangMatch?.[1]) {
-      entities.push({
-        name: shebangMatch[1],
-        type: "module",
-        filePath,
-        location: this.getLocationFromIndex(content, 0),
-        metadata: { shebang: shebangMatch[1] },
-      });
-    }
-
-    // Source/import statements
-    const sourceRe = /^\s*(?:source|\.|\.)\s+["']?([^"'\s]+)["']?/gm;
-    while ((match = sourceRe.exec(content))) {
-      const source = match[1];
-      if (!source) continue;
-      entities.push({
-        name: source,
-        type: "import",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        importData: {
-          source,
-          specifiers: [{ local: basename(source) || source }],
+    const rules: RegexExtractionRule[] = [
+      // Shebang
+      {
+        regex: /^#!\s*(.+)$/gm,
+        mapper: (match, fp, getLocation) => {
+          const shebang = match[1];
+          if (!shebang) return null;
+          return {
+            name: shebang,
+            type: "module",
+            filePath: fp,
+            location: getLocation(match.index),
+            metadata: { shebang },
+          };
         },
-      });
-    }
+      },
+      // Source/import statements
+      {
+        regex: /^\s*(?:source|\.|\.)\s+["']?([^"'\s]+)["']?/gm,
+        mapper: (match, fp, getLocation) => {
+          const source = match[1];
+          if (!source) return null;
+          return {
+            name: source,
+            type: "import",
+            filePath: fp,
+            location: getLocation(match.index),
+            importData: {
+              source,
+              specifiers: [{ local: basename(source) || source }],
+            },
+          };
+        },
+      },
+      // Functions pattern 1: function name { or function name() {
+      {
+        regex: /^\s*function\s+(\w+)\s*(?:\(\s*\))?\s*\{/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "function",
+            filePath: fp,
+            location: getLocation(match.index),
+          };
+        },
+        dedupKey: (match) => {
+          const name = match[1];
+          return name ? `func:${name}` : null;
+        },
+      },
+      // Functions pattern 2: name() {
+      {
+        regex: /^\s*(\w+)\s*\(\s*\)\s*\{/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name || name === "function") return null;
+          return {
+            name,
+            type: "function",
+            filePath: fp,
+            location: getLocation(match.index),
+          };
+        },
+        dedupKey: (match) => {
+          const name = match[1];
+          return name && name !== "function" ? `func:${name}` : null;
+        },
+      },
+      // Variables (exported or readonly)
+      {
+        regex: /^\s*(?:export|readonly|declare(?:\s+-[a-zA-Z]+)*)\s+(\w+)(?:=|$)/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          const isExport = match[0].includes("export");
+          const isReadonly = match[0].includes("readonly");
+          const modifiers: string[] = [];
+          if (isExport) modifiers.push("export");
+          if (isReadonly) modifiers.push("readonly");
+          return {
+            name,
+            type: isReadonly ? "constant" : "variable",
+            filePath: fp,
+            location: getLocation(match.index),
+            ...(modifiers.length > 0 && { modifiers }),
+          };
+        },
+      },
+      // Aliases
+      {
+        regex: /^\s*alias\s+(\w+)=/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "function",
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: ["alias"],
+          };
+        },
+      },
+    ];
 
-    // Functions - multiple patterns
-    // Pattern 1: function name { or function name() {
-    const funcRe1 = /^\s*function\s+(\w+)\s*(?:\(\s*\))?\s*\{/gm;
-    while ((match = funcRe1.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Pattern 2: name() {
-    const funcRe2 = /^\s*(\w+)\s*\(\s*\)\s*\{/gm;
-    while ((match = funcRe2.exec(content))) {
-      const name = match[1];
-      if (!name || name === "function") continue;
-      // Avoid duplicates
-      if (!entities.some((e) => e.name === name && e.type === "function")) {
-        entities.push({
-          name,
-          type: "function",
-          filePath,
-          location: this.getLocationFromIndex(content, match.index),
-        });
-      }
-    }
-
-    // Variables (exported or readonly)
-    const varRe = /^\s*(?:export|readonly|declare(?:\s+-[a-zA-Z]+)*)\s+(\w+)(?:=|$)/gm;
-    while ((match = varRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      const isExport = match[0].includes("export");
-      const isReadonly = match[0].includes("readonly");
-      const modifiers: string[] = [];
-      if (isExport) modifiers.push("export");
-      if (isReadonly) modifiers.push("readonly");
-
-      entities.push({
-        name,
-        type: isReadonly ? "constant" : "variable",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        ...(modifiers.length > 0 && { modifiers }),
-      });
-    }
-
-    // Aliases
-    const aliasRe = /^\s*alias\s+(\w+)=/gm;
-    while ((match = aliasRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: ["alias"],
-      });
-    }
-
+    const entities = runRegexExtractors(content, filePath, rules);
     return { entities, errors: [] };
-  }
-
-  /**
-   * Get location from character index
-   */
-  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
-    let line = 1;
-    let column = 0;
-    for (let i = 0; i < index; i++) {
-      if (content[i] === "\n") {
-        line++;
-        column = 0;
-      } else {
-        column++;
-      }
-    }
-
-    return {
-      start: { line, column, index },
-      end: { line, column: column + 1, index: index + 1 },
-    };
   }
 
   /**

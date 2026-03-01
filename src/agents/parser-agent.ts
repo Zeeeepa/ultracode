@@ -13,7 +13,6 @@
 import { createHash } from "node:crypto";
 import type { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
-import { extname } from "node:path";
 import type { CSharpParsedEntity } from "../addons/csharp-native-parser.js";
 import { ensureRoslynStarted, findSolutionFile, getCSharpParser } from "../addons/index.js";
 // =============================================================================
@@ -36,6 +35,7 @@ import type {
 } from "../types/parser.js";
 import type { EmbeddingPoolStats, WorkerEmbeddingConfig } from "../types/semantic.js";
 import { BaseAgent } from "./base.js";
+import { detectLanguage } from "./workers/language-detection.js";
 import type { BinaryEmbedding } from "./workers/language-worker-pool.js";
 import {
   type EmbeddingTextItem,
@@ -82,53 +82,7 @@ function filterSupportedFiles(files: string[]): string[] {
   return files.filter((file) => isFileSupported(file));
 }
 
-/**
- * Detect programming language from file extension
- */
-function detectLanguage(filePath: string): string {
-  const ext = extname(filePath).toLowerCase();
-
-  const languageMap: Record<string, string> = {
-    ".py": "python",
-    ".pyi": "python",
-    ".pyw": "python",
-    ".rs": "rust",
-    ".cpp": "cpp",
-    ".cxx": "cpp",
-    ".cc": "cpp",
-    ".hpp": "cpp",
-    ".hxx": "cpp",
-    ".java": "java",
-    ".go": "go",
-    ".cs": "csharp",
-    ".csx": "csharp",
-    ".c": "c",
-    ".h": "c",
-    ".kt": "kotlin",
-    ".kts": "kotlin",
-    ".swift": "swift",
-    ".zig": "zig",
-    ".zon": "zig",
-    ".css": "css",
-    ".scss": "css",
-    ".sass": "css",
-    ".less": "css",
-    ".html": "html",
-    ".htm": "html",
-    ".xml": "xml",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".mts": "typescript",
-    ".cts": "typescript",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".json": "json",
-  };
-
-  return languageMap[ext] || "unknown";
-}
+// detectLanguage is imported from workers/language-detection.ts (single source of truth)
 
 /**
  * Group files by programming language
@@ -1279,16 +1233,21 @@ export class ParserAgent extends BaseAgent {
     // Step 1: Group files by programming language
     const languageGroups = groupFilesByLanguage(files);
 
-    // OPTIMIZATION: Skip languages with few files (ANTLR parsers like Kotlin are slow to spawn)
-    const MIN_FILES_FOR_POOL = 10;
+    // OPTIMIZATION: Languages with few files don't get their own pool —
+    // they are routed through a shared universal pool instead.
+    // This avoids spawning heavy ANTLR parsers (Kotlin, Java) for 1-2 files.
+    const MIN_FILES_FOR_DEDICATED_POOL = 10;
     const allLanguages = Array.from(languageGroups.keys());
-    const skippedLowCountLanguages: string[] = [];
+    const belowThresholdFiles: string[] = [];
+    const belowThresholdLanguages: string[] = [];
 
     for (const lang of allLanguages) {
-      const count = languageGroups.get(lang)?.length ?? 0;
-      if (count < MIN_FILES_FOR_POOL) {
-        skippedLowCountLanguages.push(`${lang}:${count}`);
-        languageGroups.delete(lang); // Remove from processing
+      const langFiles = languageGroups.get(lang);
+      const count = langFiles?.length ?? 0;
+      if (count < MIN_FILES_FOR_DEDICATED_POOL) {
+        belowThresholdLanguages.push(`${lang}:${count}`);
+        if (langFiles) belowThresholdFiles.push(...langFiles);
+        languageGroups.delete(lang); // Remove from dedicated pool processing
       }
     }
 
@@ -1297,7 +1256,8 @@ export class ParserAgent extends BaseAgent {
       distribution: Object.fromEntries(
         Array.from(languageGroups.entries()).map(([lang, files]) => [lang, files.length]),
       ),
-      skippedBelowThreshold: skippedLowCountLanguages.length > 0 ? skippedLowCountLanguages.join(",") : "none",
+      belowThresholdToUniversal: belowThresholdLanguages.length > 0 ? belowThresholdLanguages.join(",") : "none",
+      belowThresholdFileCount: belowThresholdFiles.length,
     });
 
     // Step 2: Create all language pools IN PARALLEL (avoid sequential await blocking)
@@ -1327,10 +1287,27 @@ export class ParserAgent extends BaseAgent {
       }
     }
 
-    // Step 4: Wait for ALL subprocess pools to complete (parallel execution)
+    // Step 4: Route below-threshold files through universal pool (instead of dropping them)
+    if (belowThresholdFiles.length > 0) {
+      const universalPool = await this.ensureUniversalPool();
+      if (universalPool) {
+        log.i("PARSER", "Routing below-threshold files to universal pool", {
+          files: belowThresholdFiles.length,
+          languages: belowThresholdLanguages.join(","),
+        });
+        poolPromises.push(universalPool.submitTask(belowThresholdFiles, options));
+      } else {
+        log.w("PARSER", "Cannot create universal pool for below-threshold files, skipping", {
+          files: belowThresholdFiles.length,
+        });
+        skippedFiles.push(...belowThresholdFiles);
+      }
+    }
+
+    // Step 5: Wait for ALL subprocess pools to complete (parallel execution)
     const results = await Promise.all(poolPromises);
 
-    // Step 5: Flatten results from all pools
+    // Step 6: Flatten results from all pools
     const flatResults = results.flat();
 
     // Log pool statistics

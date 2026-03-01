@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { log } from "../logging/index.js";
 import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { type RegexExtractionRule, runRegexExtractors } from "./regex-entity-extractor.js";
 
 // =============================================================================
 // CLANG AST TYPES
@@ -319,146 +320,140 @@ export class CppNativeParser {
    * Regex-based parser for C/C++
    */
   private parseWithRegex(filePath: string, content: string, isCpp: boolean): CppParseResult {
-    const entities: ParsedEntity[] = [];
-    let match: RegExpExecArray | null;
+    const rules: RegexExtractionRule[] = [
+      // Includes
+      {
+        regex: /#include\s*[<"]([^>"]+)[>"]/gm,
+        mapper: (match, fp, getLocation) => {
+          const header = match[1];
+          if (!header) return null;
+          return {
+            name: header,
+            type: "import",
+            filePath: fp,
+            location: getLocation(match.index),
+            importData: {
+              source: header,
+              specifiers: [{ local: header.replace(/[./]/g, "_") }],
+            },
+          };
+        },
+      },
 
-    // Includes
-    const includeRe = /#include\s*[<"]([^>"]+)[>"]/gm;
-    while ((match = includeRe.exec(content))) {
-      const header = match[1];
-      if (!header) continue;
-      entities.push({
-        name: header,
-        type: "import",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        importData: {
-          source: header,
-          specifiers: [{ local: header.replace(/[./]/g, "_") }],
+      // Classes/Structs
+      {
+        regex:
+          /^\s*(?:class|struct)\s+(?:__declspec\([^)]*\)\s+)?(\w+)(?:\s*:\s*(?:public|private|protected)\s+\w+)?/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "class",
+            filePath: fp,
+            location: getLocation(match.index),
+          };
+        },
+      },
+
+      // Enums
+      {
+        regex: /^\s*enum\s+(?:class\s+)?(\w+)/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "enum",
+            filePath: fp,
+            location: getLocation(match.index),
+          };
+        },
+      },
+
+      // Functions (simplified - won't catch all cases)
+      {
+        regex:
+          /^\s*(?:static\s+)?(?:inline\s+)?(?:virtual\s+)?(?:const\s+)?(?:\w+(?:\s*[*&]+)?)\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?(?:noexcept\s*)?(?:=\s*0\s*)?.[{;]/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name || ["if", "while", "for", "switch", "catch"].includes(name)) return null;
+          return {
+            name,
+            type: "function",
+            filePath: fp,
+            location: getLocation(match.index),
+          };
+        },
+      },
+
+      // Typedefs
+      {
+        regex: /^\s*typedef\s+.*?\s+(\w+)\s*;/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "type",
+            filePath: fp,
+            location: getLocation(match.index),
+          };
+        },
+      },
+
+      // Macros/defines
+      {
+        regex: /^\s*#define\s+(\w+)/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "constant",
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: ["macro"],
+          };
+        },
+      },
+    ];
+
+    // C++-only rules
+    if (isCpp) {
+      // Namespaces (C++)
+      rules.push({
+        regex: /^\s*namespace\s+(\w+)/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "module",
+            filePath: fp,
+            location: getLocation(match.index),
+          };
+        },
+      });
+
+      // Using (C++ type aliases)
+      rules.push({
+        regex: /^\s*using\s+(\w+)\s*=/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "type",
+            filePath: fp,
+            location: getLocation(match.index),
+          };
         },
       });
     }
 
-    // Namespaces (C++)
-    if (isCpp) {
-      const namespaceRe = /^\s*namespace\s+(\w+)/gm;
-      while ((match = namespaceRe.exec(content))) {
-        const name = match[1];
-        if (!name) continue;
-        entities.push({
-          name,
-          type: "module",
-          filePath,
-          location: this.getLocationFromIndex(content, match.index),
-        });
-      }
-    }
-
-    // Classes/Structs
-    const classRe =
-      /^\s*(?:class|struct)\s+(?:__declspec\([^)]*\)\s+)?(\w+)(?:\s*:\s*(?:public|private|protected)\s+\w+)?/gm;
-    while ((match = classRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "class",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Enums
-    const enumRe = /^\s*enum\s+(?:class\s+)?(\w+)/gm;
-    while ((match = enumRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "enum",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Functions (simplified - won't catch all cases)
-    const funcRe =
-      /^\s*(?:static\s+)?(?:inline\s+)?(?:virtual\s+)?(?:const\s+)?(?:\w+(?:\s*[*&]+)?)\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?(?:noexcept\s*)?(?:=\s*0\s*)?.[{;]/gm;
-    while ((match = funcRe.exec(content))) {
-      const name = match[1];
-      if (!name || ["if", "while", "for", "switch", "catch"].includes(name)) continue;
-      entities.push({
-        name,
-        type: "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Typedefs
-    const typedefRe = /^\s*typedef\s+.*?\s+(\w+)\s*;/gm;
-    while ((match = typedefRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "type",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-      });
-    }
-
-    // Using (C++ type aliases)
-    if (isCpp) {
-      const usingRe = /^\s*using\s+(\w+)\s*=/gm;
-      while ((match = usingRe.exec(content))) {
-        const name = match[1];
-        if (!name) continue;
-        entities.push({
-          name,
-          type: "type",
-          filePath,
-          location: this.getLocationFromIndex(content, match.index),
-        });
-      }
-    }
-
-    // Macros/defines
-    const defineRe = /^\s*#define\s+(\w+)/gm;
-    while ((match = defineRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "constant",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: ["macro"],
-      });
-    }
-
+    const entities = runRegexExtractors(content, filePath, rules);
     return { entities, errors: [] };
-  }
-
-  /**
-   * Get location from character index
-   */
-  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
-    let line = 1;
-    let column = 0;
-    for (let i = 0; i < index; i++) {
-      if (content[i] === "\n") {
-        line++;
-        column = 0;
-      } else {
-        column++;
-      }
-    }
-
-    return {
-      start: { line, column, index },
-      end: { line, column: column + 1, index: index + 1 },
-    };
   }
 
   /**

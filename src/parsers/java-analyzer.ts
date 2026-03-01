@@ -144,6 +144,16 @@ function javaEntity(
   };
 }
 
+/** Context object passed through Java parse tree expansion to reduce parameter count. */
+interface JavaParseContext {
+  fp: string;
+  pkg: { value: string };
+  ent: ParsedEntity[];
+  rel: EntityRelationship[];
+  depth: { value: number };
+  t0: number;
+}
+
 /** Node types that can represent a package or import path. */
 const ID_TYPES = new Set(["scoped_identifier", "identifier"]);
 
@@ -321,7 +331,7 @@ export class JavaAnalyzer {
         );
         this.addSuperclass(nd, id, fp, rel);
         this.addInterfaces(nd, id, fp, rel);
-        this.expandBody(nd, fp, pkg, cs, qn, ent, rel, depth, t0);
+        this.expandBody(nd, cs, qn, { fp, pkg, ent, rel, depth, t0 });
         break;
       }
       case "interface_declaration": {
@@ -333,7 +343,7 @@ export class JavaAnalyzer {
           }),
         );
         this.addExtendedIfaces(nd, id, fp, rel);
-        this.expandBody(nd, fp, pkg, cs, qn, ent, rel, depth, t0);
+        this.expandBody(nd, cs, qn, { fp, pkg, ent, rel, depth, t0 });
         break;
       }
       case "enum_declaration": {
@@ -345,7 +355,7 @@ export class JavaAnalyzer {
           }),
         );
         this.extractEnumConsts(nd, id, fp, ent, rel);
-        this.expandBody(nd, fp, pkg, cs, qn, ent, rel, depth, t0);
+        this.expandBody(nd, cs, qn, { fp, pkg, ent, rel, depth, t0 });
         break;
       }
       case "record_declaration": {
@@ -362,7 +372,7 @@ export class JavaAnalyzer {
           }),
         );
         this.extractRecordComps(nd, id, fp, ent, rel);
-        this.expandBody(nd, fp, pkg, cs, qn, ent, rel, depth, t0);
+        this.expandBody(nd, cs, qn, { fp, pkg, ent, rel, depth, t0 });
         break;
       }
       case "annotation_type_declaration": {
@@ -621,17 +631,7 @@ export class JavaAnalyzer {
    * to avoid recursion: children are pushed in reverse order and popped
    * one-by-one, dispatching to the handler map or expanding further.
    */
-  private expandBody(
-    typeNd: ASTNode,
-    fp: string,
-    pkg: { value: string },
-    outerCs: string[],
-    qn: string,
-    ent: ParsedEntity[],
-    rel: EntityRelationship[],
-    depth: { value: number },
-    t0: number,
-  ): void {
+  private expandBody(typeNd: ASTNode, outerCs: string[], qn: string, ctx: JavaParseContext): void {
     const body = typeNd.childForFieldName("body");
     if (!body) return;
     const innerCs = [...outerCs, qn];
@@ -642,18 +642,18 @@ export class JavaAnalyzer {
     }
     while (pending.length > 0) {
       const cur = pending.pop()!;
-      depth.value++;
-      checkCircuitBreakers(depth.value, t0, MAX_DEPTH, TIMEOUT_MS);
+      ctx.depth.value++;
+      checkCircuitBreakers(ctx.depth.value, ctx.t0, MAX_DEPTH, TIMEOUT_MS);
       const h = this.handlerMap.get(cur.type);
       if (h) {
-        h(cur, fp, pkg, innerCs, ent, rel, depth, t0);
+        h(cur, ctx.fp, ctx.pkg, innerCs, ctx.ent, ctx.rel, ctx.depth, ctx.t0);
       } else {
         for (let j = cur.childCount - 1; j >= 0; j--) {
           const gc = cur.child(j);
           if (gc) pending.push(gc);
         }
       }
-      depth.value--;
+      ctx.depth.value--;
     }
   }
 

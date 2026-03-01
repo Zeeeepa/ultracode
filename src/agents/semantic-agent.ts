@@ -1053,20 +1053,11 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   }
 
   /**
-   * Process new entities and generate embeddings.
-   * Public method to allow direct calls from index tool handler.
+   * Filter entities to only those whose languages are NOT handled by worker pools.
+   * Workers generate embeddings via IPC; non-worker languages (e.g. csharp via Roslyn) need manual generation.
+   * Returns null if all entities are handled by workers (caller should return early).
    */
-  async handleNewEntities(entities: ParsedEntity[]): Promise<void> {
-    if (!Array.isArray(entities) || entities.length === 0) {
-      return;
-    }
-
-    // Update co-occurrence index BEFORE worker check
-    // Workers skip embedding generation but we still need cooc data for query expansion
-    await this.updateCooccurrenceFromEntities(entities);
-
-    // Workers generate embeddings via IPC for their supported languages.
-    // Non-worker languages (e.g., csharp via Roslyn addon) still need manual generation.
+  private async filterWorkerEntities(entities: ParsedEntity[]): Promise<ParsedEntity[] | null> {
     try {
       const { buildWorkerEmbeddingConfig } = await import("../config/worker-embedding-config.js");
       const workerConfig = buildWorkerEmbeddingConfig();
@@ -1079,18 +1070,541 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
             agentId: this.id,
             entities: entities.length,
           });
-          return;
+          return null;
         }
         log.i("EMBEDDING", "non_worker_entities", {
           workerHandled: entities.length - nonWorkerEntities.length,
           needGeneration: nonWorkerEntities.length,
           languages: [...new Set(nonWorkerEntities.map((e) => e.language))],
         });
-        entities = nonWorkerEntities;
+        return nonWorkerEntities;
       }
     } catch {
       // Config not available, continue with generation
     }
+    return entities;
+  }
+
+  /**
+   * Three-level embedding cache resolution: pre-generated → in-memory GlobalCache → LibSQL persistent cache.
+   * Returns a map of hash→embedding for cached entries, plus arrays of texts/hashes that need generation.
+   */
+  private async resolveEmbeddingCache(texts: string[]): Promise<{
+    cacheHits: Map<string, Float32Array>;
+    originalIndexToHash: string[];
+    uniqueTexts: string[];
+    textsNeedingGeneration: string[];
+    textsNeedingGenerationHashes: string[];
+    dedupeSaved: number;
+    globalCacheHitCount: number;
+    persistentCacheHitCount: number;
+  }> {
+    const seenHashes = new Map<string, number>();
+    const originalIndexToHash: string[] = new Array(texts.length);
+    const uniqueTexts: string[] = [];
+
+    const cacheHits = new Map<string, Float32Array>();
+    const uncachedTexts: string[] = [];
+    const uncachedHashes: string[] = [];
+
+    const textsNeedingGeneration: string[] = [];
+    const textsNeedingGenerationHashes: string[] = [];
+
+    // Single pass: deduplicate AND check in-memory cache
+    for (let i = 0; i < texts.length; i++) {
+      const text = texts[i]!;
+      const textHash = hashText(text).slice(0, 16);
+      originalIndexToHash[i] = textHash;
+
+      if (!seenHashes.has(textHash)) {
+        seenHashes.set(textHash, uniqueTexts.length);
+        uniqueTexts.push(text);
+
+        const globalHit = this.globalCache?.get(text);
+        if (globalHit) {
+          cacheHits.set(textHash, globalHit);
+        } else {
+          uncachedTexts.push(text);
+          uncachedHashes.push(textHash);
+        }
+      }
+    }
+    const globalCacheHitCount = cacheHits.size;
+
+    // Check persistent cache in LibSQL (batch query)
+    let persistentCacheHitCount = 0;
+    const libsqlAdapter = getLibSQLAdapter();
+    if (libsqlAdapter && uncachedHashes.length > 0) {
+      try {
+        const persistentHits = await libsqlAdapter.getEmbeddingsFromCache(uncachedHashes);
+        for (let i = 0; i < uncachedHashes.length; i++) {
+          const hash = uncachedHashes[i]!;
+          const embedding = persistentHits.get(hash);
+          if (embedding) {
+            cacheHits.set(hash, embedding);
+            this.globalCache?.set(uncachedTexts[i]!, embedding);
+            persistentCacheHitCount++;
+          } else {
+            textsNeedingGeneration.push(uncachedTexts[i]!);
+            textsNeedingGenerationHashes.push(hash);
+          }
+        }
+        if (persistentCacheHitCount > 0) {
+          log.i("CACHE", "Batch hits", {
+            checked: uncachedHashes.length,
+            hits: persistentCacheHitCount,
+            remaining: textsNeedingGeneration.length,
+          });
+        }
+      } catch (error) {
+        log.w("CACHE", "Batch lookup failed", { error: (error as Error).message });
+        textsNeedingGeneration.push(...uncachedTexts);
+        textsNeedingGenerationHashes.push(...uncachedHashes);
+      }
+    } else {
+      textsNeedingGeneration.push(...uncachedTexts);
+      textsNeedingGenerationHashes.push(...uncachedHashes);
+    }
+
+    const dedupeSaved = texts.length - uniqueTexts.length;
+
+    return {
+      cacheHits,
+      originalIndexToHash,
+      uniqueTexts,
+      textsNeedingGeneration,
+      textsNeedingGenerationHashes,
+      dedupeSaved,
+      globalCacheHitCount,
+      persistentCacheHitCount,
+    };
+  }
+
+  /**
+   * Build embedding text for a single entity: header + docs + calls + complexity + code + comments.
+   */
+  private buildEntityEmbeddingText(
+    ent: ParsedEntity,
+    fileContentCache: Map<string, string>,
+    associationsByFile: Map<string, Map<string, any[]>>,
+    readTextSync: (path: string) => string,
+    CommentExtractor: any,
+  ): string {
+    const e: any = ent;
+    let code = "";
+    try {
+      if (e.filePath && !e.filePath.startsWith("external://") && !e.filePath.includes("://")) {
+        let fileContent = fileContentCache.get(e.filePath);
+        if (fileContent === undefined) {
+          try {
+            fileContent = readTextSync(e.filePath);
+            fileContentCache.set(e.filePath, fileContent);
+          } catch {
+            fileContent = "";
+          }
+        }
+
+        if (typeof e.location?.start?.index === "number" && typeof e.location?.end?.index === "number") {
+          const s = Math.max(0, e.location.start.index);
+          const t = Math.min(e.location.end.index, s + 10000);
+          code = fileContent.slice(s, t);
+        } else if (typeof e.location?.start?.line === "number" && typeof e.location?.end?.line === "number") {
+          const lines = fileContent.split("\n");
+          const startLine = Math.max(0, e.location.start.line - 1);
+          const endLine = Math.min(lines.length, e.location.end.line);
+          code = lines.slice(startLine, endLine).join("\n").slice(0, 10000);
+        }
+      }
+    } catch {}
+
+    const header = `${e.name ?? ""} ${e.type ?? ""} ${e.signature ?? ""}`.trim();
+    let enhancedText = header;
+
+    if (e.documentation?.description) {
+      enhancedText += `\ndescription: ${e.documentation.description}`;
+    }
+
+    if (e.calls && e.calls.length > 0) {
+      let callStr = "";
+      const callsToProcess = e.calls.length > 20 ? e.calls.slice(0, 20) : e.calls;
+      for (let i = 0; i < callsToProcess.length; i++) {
+        const c = callsToProcess[i];
+        if (i > 0) callStr += ", ";
+        callStr += c.target ? `${c.target}.${c.name}` : c.name;
+      }
+      enhancedText += `\ncalls: ${callStr}`;
+    }
+
+    if (e.complexity) {
+      const cx = e.complexity;
+      if (cx.cyclomatic > 5 || cx.cognitive > 10) {
+        enhancedText += `\ncomplexity: cyclomatic=${cx.cyclomatic} cognitive=${cx.cognitive}`;
+      }
+    }
+
+    if (e.controlFlow) {
+      const cf = e.controlFlow;
+      let flowStr = "";
+      if (cf.branches?.length > 0) flowStr += `branches=${cf.branches.length}`;
+      if (cf.loops?.length > 0) flowStr += (flowStr ? ", " : "") + `loops=${cf.loops.length}`;
+      if (cf.exceptions?.length > 0) flowStr += (flowStr ? ", " : "") + `exceptions=${cf.exceptions.length}`;
+      if (cf.awaits?.length > 0) flowStr += (flowStr ? ", " : "") + `awaits=${cf.awaits.length}`;
+      if (flowStr) {
+        enhancedText += `\nflow: ${flowStr}`;
+      }
+    }
+
+    if (e.returnType) {
+      enhancedText += `\nreturns: ${e.returnType}`;
+    }
+
+    if (e.parameters && e.parameters.length > 0) {
+      let paramStr = "";
+      let count = 0;
+      for (const p of e.parameters) {
+        if (p.type && count < 10) {
+          if (count > 0) paramStr += ", ";
+          paramStr += `${p.name}:${p.type}`;
+          count++;
+        }
+      }
+      if (paramStr) {
+        enhancedText += `\nparams: ${paramStr}`;
+      }
+    }
+
+    if (code) {
+      enhancedText += "\n" + code;
+    }
+
+    // Enhance with comments if available
+    const entityId = e.id || CommentExtractor["generateEntityId"](ent);
+    const associations = associationsByFile.get(e.filePath);
+    const entityComments = associations?.get(entityId) || [];
+
+    if (entityComments.length > 0) {
+      return CommentExtractor.enhanceEntityContentWithComments(enhancedText, header, entityComments);
+    }
+    return enhancedText.trim();
+  }
+
+  /**
+   * Extract comments from source files and associate them with entities.
+   */
+  private async extractFileComments(filteredEntities: ParsedEntity[]): Promise<{
+    commentsByFile: Map<string, any>;
+    associationsByFile: Map<string, Map<string, any[]>>;
+    CommentExtractor: any;
+  }> {
+    const { readTextSync } = await import("../utils/file-ops.js");
+    const { CommentExtractor } = await import("../utils/comment-extractor.js");
+
+    const entitiesByFile = new Map<string, ParsedEntity[]>();
+    for (const entity of filteredEntities) {
+      if (entity.filePath && !entity.filePath.startsWith("external://") && !entity.filePath.includes("://")) {
+        if (!entitiesByFile.has(entity.filePath)) {
+          entitiesByFile.set(entity.filePath, []);
+        }
+        entitiesByFile.get(entity.filePath)!.push(entity);
+      }
+    }
+
+    const commentsByFile = new Map<string, ReturnType<typeof CommentExtractor.extractComments>>();
+    const associationsByFile = new Map<string, Map<string, any[]>>();
+
+    log.d("EMBEDDING", `Extracting comments from files`, {
+      agentId: this.id,
+      fileCount: entitiesByFile.size,
+    });
+    let fileIdx = 0;
+    const mem = process.memoryUsage();
+    log.d("EMBEDDING", "Memory before comment extraction", {
+      heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
+      rssMB: Math.round(mem.rss / 1024 / 1024),
+    });
+    for (const [filePath, fileEntities] of entitiesByFile.entries()) {
+      fileIdx++;
+      log.t("EMBEDDING", "For loop iteration start", { fileIdx, filePath });
+      if (filePath.startsWith("external://") || filePath.includes("://")) {
+        continue;
+      }
+      try {
+        log.d("EMBEDDING", `Reading file ${fileIdx}/${entitiesByFile.size}`, {
+          agentId: this.id,
+          filePath,
+          entityCount: fileEntities.length,
+        });
+        const full = readTextSync(filePath);
+        log.d("EMBEDDING", `File read, extracting comments`, {
+          agentId: this.id,
+          filePath,
+          contentLen: full.length,
+        });
+        const commentsResult = CommentExtractor.extractComments(full, filePath);
+        log.d("EMBEDDING", `Comments extracted`, {
+          agentId: this.id,
+          filePath,
+          commentCount: commentsResult.comments.length,
+        });
+        commentsByFile.set(filePath, commentsResult);
+
+        const associations = CommentExtractor.associateCommentsWithEntities(
+          commentsResult.comments,
+          fileEntities,
+          commentsResult.leadingComments,
+        );
+        associationsByFile.set(filePath, associations);
+        log.d("EMBEDDING", `File ${fileIdx} done`, { agentId: this.id });
+      } catch (error) {
+        log.d("SEMANTIC", "Comment extraction failed", { filePath, error: (error as Error).message });
+      }
+    }
+
+    return { commentsByFile, associationsByFile, CommentExtractor };
+  }
+
+  /**
+   * Generate embeddings via model, store in FAISS + LibSQL, handle two-phase mode.
+   */
+  private async generateAndStoreEmbeddings(
+    filteredEntities: ParsedEntity[],
+    texts: string[],
+    entityToStableId: Map<ParsedEntity, string>,
+    cacheResult: Awaited<ReturnType<typeof this.resolveEmbeddingCache>>,
+    perfLog: (phase: string, count: number) => void,
+  ): Promise<void> {
+    const modelName = this.modelName;
+    const {
+      cacheHits,
+      originalIndexToHash,
+      textsNeedingGeneration,
+      textsNeedingGenerationHashes,
+      globalCacheHitCount,
+      persistentCacheHitCount,
+    } = cacheResult;
+    const totalCacheHits = globalCacheHitCount + persistentCacheHitCount;
+
+    // Log cache efficiency
+    if (totalCacheHits > 0 || cacheResult.dedupeSaved > 0) {
+      log.i("CACHE", "Batch optimization", {
+        total: texts.length,
+        toGenerate: textsNeedingGeneration.length,
+        fromMemory: globalCacheHitCount,
+        fromDisk: persistentCacheHitCount,
+        dedupe: cacheResult.dedupeSaved,
+        cacheHitRate: texts.length > 0 ? `${Math.round((totalCacheHits / texts.length) * 100)}%` : "0%",
+      });
+    }
+
+    log.t("EMBEDDING", "Before mutex wait");
+
+    // Mutex: wait for previous embedding operation to complete
+    let releaseMutex: () => void;
+    const prevMutex = this.embeddingMutex;
+    this.embeddingMutex = new Promise((resolve) => {
+      releaseMutex = resolve;
+    });
+    await prevMutex;
+
+    log.t("EMBEDDING", "Mutex acquired");
+
+    let embeddings: Float32Array[];
+    let storage: Awaited<ReturnType<typeof getGraphStorage>>;
+
+    let profileStart = 0;
+    const profile = (phase: string) => {
+      const elapsed = Date.now() - profileStart;
+      log.i("PERF", phase, { elapsedMs: elapsed, sinceStart: `${elapsed}ms` });
+    };
+
+    try {
+      const hashToEmbedding = new Map<string, Float32Array>(cacheHits);
+
+      if (textsNeedingGeneration.length > 0) {
+        log.t("EMBEDDING", "Before generateBatch", { count: textsNeedingGeneration.length });
+        const generatedEmbeddings = await this.embeddingGen.generateBatch(textsNeedingGeneration);
+        log.t("EMBEDDING", "After generateBatch", { count: generatedEmbeddings.length });
+
+        for (let i = 0; i < textsNeedingGenerationHashes.length; i++) {
+          hashToEmbedding.set(textsNeedingGenerationHashes[i]!, generatedEmbeddings[i]!);
+        }
+
+        // Save to persistent cache (fire-and-forget)
+        const persistAdapter = getLibSQLAdapter();
+        if (persistAdapter) {
+          const cacheEntries = textsNeedingGenerationHashes.map((hash, i) => ({
+            contentHash: hash,
+            model: modelName,
+            embedding: generatedEmbeddings[i]!,
+            textPreview: textsNeedingGeneration[i]?.slice(0, 100),
+          }));
+          persistAdapter.setEmbeddingsInCache(cacheEntries).catch((err) => {
+            log.w("CACHE", "Failed to save embeddings", { error: (err as Error).message });
+          });
+          log.d("CACHE", "Saving new embeddings", { count: cacheEntries.length });
+        }
+      } else {
+        log.i("CACHE", "100% cache hit", { count: totalCacheHits });
+      }
+
+      embeddings = originalIndexToHash.map((hash) => hashToEmbedding.get(hash)!);
+      perfLog("4_EMBEDDING_GEN", embeddings.length);
+
+      profileStart = Date.now();
+
+      storage = await getGraphStorage();
+      profile("5a_GET_STORAGE");
+
+      // Fetch entity data for entities that need it
+      const entityDataMap = new Map();
+      const entitiesToFetch = filteredEntities.filter((e) => e.id && !e.filePath && !e.path);
+      if (entitiesToFetch.length > 0 && entitiesToFetch.length < 100) {
+        const ids = entitiesToFetch.map((e) => e.id).filter((id): id is string => id !== undefined);
+        const CONCURRENCY = 20;
+
+        for (let i = 0; i < ids.length; i += CONCURRENCY) {
+          const batch = ids.slice(i, i + CONCURRENCY);
+          const results = await Promise.all(batch.map((id) => storage.getEntity(id)));
+          for (let j = 0; j < batch.length; j++) {
+            const result = results[j];
+            if (result !== null) {
+              entityDataMap.set(batch[j], result);
+            }
+          }
+        }
+      }
+      profile("5b_FETCH_ENTITIES");
+
+      const vectorEmbeddings: VectorEmbedding[] = filteredEntities.map((entity, i) => {
+        const x: any = entity as any;
+        const stableId = entityToStableId.get(entity) ?? (x.id ? `ent:${x.id}` : `doc:unknown`);
+        const storedEntity = entityDataMap.get(x.id);
+        const filePath = x.filePath ?? x.path ?? storedEntity?.filePath ?? "";
+        const language = x.language ?? storedEntity?.language ?? undefined;
+
+        const metadata: Record<string, unknown> = {
+          path: filePath,
+          type: x.type,
+          name: x.name,
+          language,
+          entityId: x.id ?? undefined,
+          start: x.location?.start?.index ?? undefined,
+          end: x.location?.end?.index ?? undefined,
+          model: modelName,
+        };
+
+        if (x.complexity) {
+          metadata["cyclomatic"] = x.complexity.cyclomatic;
+          metadata["cognitive"] = x.complexity.cognitive;
+          metadata["linesOfCode"] = x.complexity.linesOfCode;
+          metadata["nestingDepth"] = x.complexity.nestingDepth;
+        }
+
+        if (x.calls?.length) {
+          metadata["callCount"] = x.calls.length;
+          metadata["hasAsyncCalls"] = x.calls.some((c: any) => c.isAwait);
+        }
+
+        if (x.controlFlow) {
+          const cf = x.controlFlow;
+          metadata["hasBranches"] = (cf.branches?.length || 0) > 0;
+          metadata["hasLoops"] = (cf.loops?.length || 0) > 0;
+          metadata["hasExceptions"] = (cf.exceptions?.length || 0) > 0;
+          metadata["hasAwaits"] = (cf.awaits?.length || 0) > 0;
+          metadata["branchCount"] = cf.branches?.length || 0;
+          metadata["loopCount"] = cf.loops?.length || 0;
+          metadata["returnCount"] = cf.returns?.length || 0;
+        }
+
+        if (x.documentation) {
+          metadata["hasDocumentation"] = true;
+          metadata["hasParams"] = (x.documentation.params?.length || 0) > 0;
+          metadata["hasExamples"] = (x.documentation.examples?.length || 0) > 0;
+          metadata["isDeprecated"] = !!x.documentation.deprecated;
+        }
+
+        if (x.returnType) {
+          metadata["returnType"] = x.returnType;
+        }
+
+        if (x.parameters?.length) {
+          metadata["paramCount"] = x.parameters.length;
+        }
+
+        return {
+          id: stableId,
+          content: texts[i] ?? "",
+          vector: embeddings[i] ?? new Float32Array(this.embeddingDim),
+          metadata,
+          createdAt: Date.now(),
+        };
+      });
+      profile("5c_BUILD_VECTORS");
+
+      if (this.twoPhaseMode) {
+        const dumpedEmbeddings: DumpedEmbedding[] = vectorEmbeddings.map((ve) => ({
+          id: ve.id,
+          content: ve.content,
+          vector: vectorToArray(ve.vector),
+          metadata: ve.metadata as Record<string, any>,
+          createdAt: ve.createdAt,
+        }));
+
+        saveBatch(dumpedEmbeddings, this.dumpBatchIndex++);
+        this.semanticMetrics.embeddingsGenerated += embeddings.length;
+      } else {
+        if (vectorEmbeddings.length > 0) {
+          log.d("EMBEDDING", `Insert sample IDs`, {
+            sampleIds: vectorEmbeddings.slice(0, 3).map((v) => v.id),
+          });
+        }
+        log.d("EMBEDDING", `Calling adaptiveBulkInsert`, {
+          agentId: this.id,
+          count: vectorEmbeddings.length,
+        });
+        const insertResult = await this.vectorStore.adaptiveBulkInsert(vectorEmbeddings);
+        profile("5d_FAISS_INSERT");
+        log.t("EMBEDDING", "adaptiveBulkInsert returned to caller");
+        perfLog("5_DB_INSERT", vectorEmbeddings.length);
+        log.d("EMBEDDING", `adaptiveBulkInsert done`, {
+          agentId: this.id,
+          usedFaiss: insertResult.usedFaiss,
+          timeMs: insertResult.timeMs.toFixed(1),
+        });
+        this.semanticMetrics.embeddingsGenerated += embeddings.length;
+        this.semanticMetrics.vectorsStored = await this.vectorStore.count();
+        profile("5e_COUNT");
+        knowledgeBus.publish("semantic:embeddings:complete", { count: embeddings.length }, this.id);
+        log.i("EMBEDDING", `Stored embeddings`, {
+          agentId: this.id,
+          count: embeddings.length,
+          total: this.semanticMetrics.vectorsStored,
+        });
+      }
+    } finally {
+      releaseMutex!();
+      profile("5f_MUTEX_RELEASE");
+      log.d("EMBEDDING", `Mutex released, about to process comments`, { agentId: this.id });
+    }
+  }
+
+  /**
+   * Process new entities and generate embeddings.
+   * Public method to allow direct calls from index tool handler.
+   */
+  async handleNewEntities(entities: ParsedEntity[]): Promise<void> {
+    if (!Array.isArray(entities) || entities.length === 0) {
+      return;
+    }
+
+    // Update co-occurrence index BEFORE worker check
+    // Workers skip embedding generation but we still need cooc data for query expansion
+    await this.updateCooccurrenceFromEntities(entities);
+
+    // Filter to non-worker entities (workers generate embeddings via IPC)
+    const filtered = await this.filterWorkerEntities(entities);
+    if (filtered === null) return;
+    entities = filtered;
 
     // PERFORMANCE TRACKING
     const perfStart = Date.now();
@@ -1247,75 +1761,8 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
 
     log.i("EMBEDDING", `Generating embeddings`, { agentId: this.id, count: filteredEntities.length });
 
-    // readTextSync already imported above for content hash computation
-    log.d("EMBEDDING", `Importing comment-extractor`, { agentId: this.id });
-    const { CommentExtractor } = await import("../utils/comment-extractor.js");
-    log.d("EMBEDDING", `Imports done`, { agentId: this.id });
-
-    // Group entities by file for efficient comment extraction
-    const entitiesByFile = new Map<string, ParsedEntity[]>();
-    for (const entity of filteredEntities) {
-      if (entity.filePath && !entity.filePath.startsWith("external://") && !entity.filePath.includes("://")) {
-        if (!entitiesByFile.has(entity.filePath)) {
-          entitiesByFile.set(entity.filePath, []);
-        }
-        entitiesByFile.get(entity.filePath)!.push(entity);
-      }
-    }
-
-    // Extract comments for each file (needs full file content)
-    const commentsByFile = new Map<string, ReturnType<typeof CommentExtractor.extractComments>>();
-    const associationsByFile = new Map<string, Map<string, any[]>>();
-
-    log.d("EMBEDDING", `Extracting comments from files`, {
-      agentId: this.id,
-      fileCount: entitiesByFile.size,
-    });
-    let fileIdx = 0;
-    const mem = process.memoryUsage();
-    log.d("EMBEDDING", "Memory before comment extraction", {
-      heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
-      rssMB: Math.round(mem.rss / 1024 / 1024),
-    });
-    for (const [filePath, fileEntities] of entitiesByFile.entries()) {
-      fileIdx++;
-      log.t("EMBEDDING", "For loop iteration start", { fileIdx, filePath });
-      // Skip external/virtual paths that cannot be read from filesystem
-      if (filePath.startsWith("external://") || filePath.includes("://")) {
-        continue;
-      }
-      try {
-        log.d("EMBEDDING", `Reading file ${fileIdx}/${entitiesByFile.size}`, {
-          agentId: this.id,
-          filePath,
-          entityCount: fileEntities.length,
-        });
-        // Use sync read to avoid Bun event loop hangs with many pending promises
-        const full = readTextSync(filePath);
-        log.d("EMBEDDING", `File read, extracting comments`, {
-          agentId: this.id,
-          filePath,
-          contentLen: full.length,
-        });
-        const commentsResult = CommentExtractor.extractComments(full, filePath);
-        log.d("EMBEDDING", `Comments extracted`, {
-          agentId: this.id,
-          filePath,
-          commentCount: commentsResult.comments.length,
-        });
-        commentsByFile.set(filePath, commentsResult);
-
-        const associations = CommentExtractor.associateCommentsWithEntities(
-          commentsResult.comments,
-          fileEntities,
-          commentsResult.leadingComments,
-        );
-        associationsByFile.set(filePath, associations);
-        log.d("EMBEDDING", `File ${fileIdx} done`, { agentId: this.id });
-      } catch (error) {
-        log.d("SEMANTIC", "Comment extraction failed", { filePath, error: (error as Error).message });
-      }
-    }
+    // Extract comments from source files and associate with entities
+    const { commentsByFile, associationsByFile, CommentExtractor } = await this.extractFileComments(filteredEntities);
 
     perfLog("2_COMMENT_EXTRACT", filteredEntities.length);
 
@@ -1324,118 +1771,12 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
       entityCount: filteredEntities.length,
     });
 
-    // fileContentCache already populated above during content hash computation
-    // Build texts synchronously to avoid Bun event loop hangs
+    // Build embedding texts for each entity
     const texts: string[] = [];
     for (const ent of filteredEntities) {
-      const e: any = ent;
-      let code = "";
-      try {
-        if (e.filePath && !e.filePath.startsWith("external://") && !e.filePath.includes("://")) {
-          // Get file content from cache or read it
-          let fileContent = fileContentCache.get(e.filePath);
-          if (fileContent === undefined) {
-            try {
-              fileContent = readTextSync(e.filePath);
-              fileContentCache.set(e.filePath, fileContent);
-            } catch {
-              fileContent = "";
-            }
-          }
-
-          // Extract range from cached content
-          if (typeof e.location?.start?.index === "number" && typeof e.location?.end?.index === "number") {
-            const s = Math.max(0, e.location.start.index);
-            const t = Math.min(e.location.end.index, s + 10000); // limit to 10KB
-            code = fileContent.slice(s, t);
-          } else if (typeof e.location?.start?.line === "number" && typeof e.location?.end?.line === "number") {
-            const lines = fileContent.split("\n");
-            const startLine = Math.max(0, e.location.start.line - 1);
-            const endLine = Math.min(lines.length, e.location.end.line);
-            code = lines.slice(startLine, endLine).join("\n").slice(0, 10000);
-          }
-        }
-      } catch {}
-
-      const header = `${e.name ?? ""} ${e.type ?? ""} ${e.signature ?? ""}`.trim();
-
-      // Build enhanced text with direct string concatenation (optimization: no array push/join)
-      let enhancedText = header;
-
-      // Add documentation if available (improves semantic search by description)
-      if (e.documentation?.description) {
-        enhancedText += `\ndescription: ${e.documentation.description}`;
-      }
-
-      // Add call information (enables "find functions that call X" queries)
-      if (e.calls && e.calls.length > 0) {
-        let callStr = "";
-        const callsToProcess = e.calls.length > 20 ? e.calls.slice(0, 20) : e.calls;
-        for (let i = 0; i < callsToProcess.length; i++) {
-          const c = callsToProcess[i];
-          if (i > 0) callStr += ", ";
-          callStr += c.target ? `${c.target}.${c.name}` : c.name;
-        }
-        enhancedText += `\ncalls: ${callStr}`;
-      }
-
-      // Add complexity info (enables "find complex functions" queries)
-      if (e.complexity) {
-        const cx = e.complexity;
-        if (cx.cyclomatic > 5 || cx.cognitive > 10) {
-          enhancedText += `\ncomplexity: cyclomatic=${cx.cyclomatic} cognitive=${cx.cognitive}`;
-        }
-      }
-
-      // Add control flow summary (enables "find functions with try-catch" queries)
-      if (e.controlFlow) {
-        const cf = e.controlFlow;
-        let flowStr = "";
-        if (cf.branches?.length > 0) flowStr += `branches=${cf.branches.length}`;
-        if (cf.loops?.length > 0) flowStr += (flowStr ? ", " : "") + `loops=${cf.loops.length}`;
-        if (cf.exceptions?.length > 0) flowStr += (flowStr ? ", " : "") + `exceptions=${cf.exceptions.length}`;
-        if (cf.awaits?.length > 0) flowStr += (flowStr ? ", " : "") + `awaits=${cf.awaits.length}`;
-        if (flowStr) {
-          enhancedText += `\nflow: ${flowStr}`;
-        }
-      }
-
-      // Add return type for better type-based search
-      if (e.returnType) {
-        enhancedText += `\nreturns: ${e.returnType}`;
-      }
-
-      // Add parameter types for signature-based search
-      if (e.parameters && e.parameters.length > 0) {
-        let paramStr = "";
-        let count = 0;
-        for (const p of e.parameters) {
-          if (p.type && count < 10) {
-            if (count > 0) paramStr += ", ";
-            paramStr += `${p.name}:${p.type}`;
-            count++;
-          }
-        }
-        if (paramStr) {
-          enhancedText += `\nparams: ${paramStr}`;
-        }
-      }
-
-      // Add the code
-      if (code) {
-        enhancedText += "\n" + code;
-      }
-
-      // Enhance with comments if available
-      const entityId = e.id || CommentExtractor["generateEntityId"](ent);
-      const associations = associationsByFile.get(e.filePath);
-      const entityComments = associations?.get(entityId) || [];
-
-      if (entityComments.length > 0) {
-        texts.push(CommentExtractor.enhanceEntityContentWithComments(enhancedText, header, entityComments));
-      } else {
-        texts.push(enhancedText.trim());
-      }
+      texts.push(
+        this.buildEntityEmbeddingText(ent, fileContentCache, associationsByFile, readTextSync, CommentExtractor),
+      );
     }
 
     // Clear file cache to free memory
@@ -1448,339 +1789,25 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     commentsByFile.clear();
     associationsByFile.clear();
 
-    // ========================================================================
-    // TEXT DEDUPLICATION: Send each unique text to model only ONCE
-    // Common patterns (imports, getters, boilerplate) appear in many files
-    // This can reduce model calls by 30-50% for typical codebases
-    // Optimization: merged Phase 1+2 into single loop, removed duplicate Map
-    // ========================================================================
-    const seenHashes = new Map<string, number>(); // hash → index in uniqueTexts
-    const originalIndexToHash: string[] = new Array(texts.length); // pre-allocate
-    const uniqueTexts: string[] = [];
-
-    // Track cache hits and misses
-    const cacheHits = new Map<string, Float32Array>(); // hash -> embedding from cache
-    const uncachedTexts: string[] = [];
-    const uncachedHashes: string[] = [];
-
-    // Texts that need actual generation (after all cache checks)
-    const textsNeedingGeneration: string[] = [];
-    const textsNeedingGenerationHashes: string[] = [];
-
-    // Single pass: deduplicate AND check in-memory cache
-    for (let i = 0; i < texts.length; i++) {
-      const text = texts[i]!;
-      const textHash = hashText(text).slice(0, 16);
-      originalIndexToHash[i] = textHash;
-
-      if (!seenHashes.has(textHash)) {
-        seenHashes.set(textHash, uniqueTexts.length);
-        uniqueTexts.push(text);
-
-        // Check in-memory cache immediately
-        const globalHit = this.globalCache?.get(text);
-        if (globalHit) {
-          cacheHits.set(textHash, globalHit);
-        } else {
-          uncachedTexts.push(text);
-          uncachedHashes.push(textHash);
-        }
-      }
-    }
-    const globalCacheHitCount = cacheHits.size;
-
-    // Phase 3: Check persistent cache in LibSQL (batch query - much faster than N queries)
-    let persistentCacheHitCount = 0;
-    const libsqlAdapter = getLibSQLAdapter();
-    if (libsqlAdapter && uncachedHashes.length > 0) {
-      try {
-        const persistentHits = await libsqlAdapter.getEmbeddingsFromCache(uncachedHashes);
-        for (let i = 0; i < uncachedHashes.length; i++) {
-          const hash = uncachedHashes[i]!;
-          const embedding = persistentHits.get(hash);
-          if (embedding) {
-            cacheHits.set(hash, embedding);
-            // Also populate in-memory cache for future lookups
-            this.globalCache?.set(uncachedTexts[i]!, embedding);
-            persistentCacheHitCount++;
-          } else {
-            textsNeedingGeneration.push(uncachedTexts[i]!);
-            textsNeedingGenerationHashes.push(hash);
-          }
-        }
-        if (persistentCacheHitCount > 0) {
-          log.i("CACHE", "Batch hits", {
-            checked: uncachedHashes.length,
-            hits: persistentCacheHitCount,
-            remaining: textsNeedingGeneration.length,
-          });
-        }
-      } catch (error) {
-        log.w("CACHE", "Batch lookup failed", { error: (error as Error).message });
-        // Fallback: all uncached texts need generation
-        textsNeedingGeneration.push(...uncachedTexts);
-        textsNeedingGenerationHashes.push(...uncachedHashes);
-      }
-    } else {
-      // No persistent cache available
-      textsNeedingGeneration.push(...uncachedTexts);
-      textsNeedingGenerationHashes.push(...uncachedHashes);
-    }
-
-    const dedupeSaved = texts.length - uniqueTexts.length;
-    const needsGeneration = textsNeedingGeneration.length;
+    // Resolve embedding cache (3 levels: dedup → in-memory → LibSQL)
+    const cacheResult = await this.resolveEmbeddingCache(texts);
 
     log.t("EMBEDDING", "Text deduplication complete", {
-      unique: uniqueTexts.length,
-      dedupe: dedupeSaved,
-      needsGen: needsGeneration,
+      unique: cacheResult.uniqueTexts.length,
+      dedupe: cacheResult.dedupeSaved,
+      needsGen: cacheResult.textsNeedingGeneration.length,
     });
 
-    // Log cache efficiency
-    const totalCacheHits = globalCacheHitCount + persistentCacheHitCount;
-    if (totalCacheHits > 0 || dedupeSaved > 0) {
-      log.i("CACHE", "Batch optimization", {
-        total: texts.length,
-        toGenerate: needsGeneration,
-        fromMemory: globalCacheHitCount,
-        fromDisk: persistentCacheHitCount,
-        dedupe: dedupeSaved,
-        cacheHitRate: texts.length > 0 ? `${Math.round((totalCacheHits / texts.length) * 100)}%` : "0%",
-      });
-    }
-
-    log.t("EMBEDDING", "Before mutex wait");
-
-    // Mutex: wait for previous embedding operation to complete
-    // OpenVINO native module crashes on concurrent calls
-    let releaseMutex: () => void;
-    const prevMutex = this.embeddingMutex;
-    this.embeddingMutex = new Promise((resolve) => {
-      releaseMutex = resolve;
-    });
-    await prevMutex;
-
-    log.t("EMBEDDING", "Mutex acquired");
-
-    let embeddings: Float32Array[];
-    // Declare storage before try block so it's accessible in processStandaloneComments after finally
-    let storage: Awaited<ReturnType<typeof getGraphStorage>>;
-
-    // ========================================================================
-    // DETAILED PROFILING: Find the bottleneck after embedding generation
-    // Declared before try block so profile() is accessible after finally
-    // ========================================================================
-    let profileStart = 0;
-    const profile = (phase: string) => {
-      const elapsed = Date.now() - profileStart;
-      log.i("PERF", phase, { elapsedMs: elapsed, sinceStart: `${elapsed}ms` });
-    };
-
-    try {
-      // Generate embeddings only for texts NOT in cache
-      const hashToEmbedding = new Map<string, Float32Array>(cacheHits);
-
-      if (textsNeedingGeneration.length > 0) {
-        log.t("EMBEDDING", "Before generateBatch", { count: textsNeedingGeneration.length });
-        const generatedEmbeddings = await this.embeddingGen.generateBatch(textsNeedingGeneration);
-        log.t("EMBEDDING", "After generateBatch", { count: generatedEmbeddings.length });
-
-        // Map generated embeddings by hash
-        for (let i = 0; i < textsNeedingGenerationHashes.length; i++) {
-          hashToEmbedding.set(textsNeedingGenerationHashes[i]!, generatedEmbeddings[i]!);
-        }
-
-        // Save to persistent cache (fire-and-forget, don't block embedding pipeline)
-        const persistAdapter = getLibSQLAdapter();
-        if (persistAdapter) {
-          const cacheEntries = textsNeedingGenerationHashes.map((hash, i) => ({
-            contentHash: hash,
-            model: modelName,
-            embedding: generatedEmbeddings[i]!,
-            textPreview: textsNeedingGeneration[i]?.slice(0, 100),
-          }));
-          // Don't await - save in background
-          persistAdapter.setEmbeddingsInCache(cacheEntries).catch((err) => {
-            log.w("CACHE", "Failed to save embeddings", { error: (err as Error).message });
-          });
-          log.d("CACHE", "Saving new embeddings", { count: cacheEntries.length });
-        }
-      } else {
-        log.i("CACHE", "100% cache hit", { count: totalCacheHits });
-      }
-
-      // Expand back to original order
-      embeddings = originalIndexToHash.map((hash) => hashToEmbedding.get(hash)!);
-      perfLog("4_EMBEDDING_GEN", embeddings.length);
-
-      // Start profiling from here (after embedding generation)
-      profileStart = Date.now();
-
-      // NOTE: Mutex continues - covers all native operations (OpenVINO + LibSQL)
-      // DO NOT release mutex here - it will be released after insertBatch
-
-      storage = await getGraphStorage();
-      profile("5a_GET_STORAGE");
-
-      // MEMORY OPTIMIZATION: Only fetch entity data for entities that need it
-      const entityDataMap = new Map();
-      const entitiesToFetch = filteredEntities.filter((e) => e.id && !e.filePath && !e.path);
-      if (entitiesToFetch.length > 0 && entitiesToFetch.length < 100) {
-        // Parallel fetch with concurrency limit (trade memory for speed)
-        const ids = entitiesToFetch.map((e) => e.id).filter((id): id is string => id !== undefined);
-        const CONCURRENCY = 20; // Balance between parallelism and DB pressure
-
-        for (let i = 0; i < ids.length; i += CONCURRENCY) {
-          const batch = ids.slice(i, i + CONCURRENCY);
-          const results = await Promise.all(batch.map((id) => storage.getEntity(id)));
-          for (let j = 0; j < batch.length; j++) {
-            const result = results[j];
-            if (result !== null) {
-              entityDataMap.set(batch[j], result);
-            }
-          }
-        }
-      }
-      profile("5b_FETCH_ENTITIES");
-
-      const vectorEmbeddings: VectorEmbedding[] = filteredEntities.map((entity, i) => {
-        const x: any = entity as any;
-
-        // Use pre-computed stableId from existence check phase (ensures consistency)
-        const stableId = entityToStableId.get(entity) ?? (x.id ? `ent:${x.id}` : `doc:unknown`);
-
-        const storedEntity = entityDataMap.get(x.id);
-        const filePath = x.filePath ?? x.path ?? storedEntity?.filePath ?? "";
-
-        const language = x.language ?? storedEntity?.language ?? undefined;
-
-        // Build enhanced metadata for filtering and display
-        const metadata: Record<string, unknown> = {
-          path: filePath,
-          type: x.type,
-          name: x.name,
-          language,
-          entityId: x.id ?? undefined,
-          start: x.location?.start?.index ?? undefined,
-          end: x.location?.end?.index ?? undefined,
-          model: modelName,
-        };
-
-        // Add complexity metrics (enables filtering by complexity)
-        if (x.complexity) {
-          metadata["cyclomatic"] = x.complexity.cyclomatic;
-          metadata["cognitive"] = x.complexity.cognitive;
-          metadata["linesOfCode"] = x.complexity.linesOfCode;
-          metadata["nestingDepth"] = x.complexity.nestingDepth;
-        }
-
-        // Add call count (enables "find functions with many calls" queries)
-        if (x.calls?.length) {
-          metadata["callCount"] = x.calls.length;
-          metadata["hasAsyncCalls"] = x.calls.some((c: any) => c.isAwait);
-        }
-
-        // Add control flow flags (enables filtering)
-        if (x.controlFlow) {
-          const cf = x.controlFlow;
-          metadata["hasBranches"] = (cf.branches?.length || 0) > 0;
-          metadata["hasLoops"] = (cf.loops?.length || 0) > 0;
-          metadata["hasExceptions"] = (cf.exceptions?.length || 0) > 0;
-          metadata["hasAwaits"] = (cf.awaits?.length || 0) > 0;
-          metadata["branchCount"] = cf.branches?.length || 0;
-          metadata["loopCount"] = cf.loops?.length || 0;
-          metadata["returnCount"] = cf.returns?.length || 0;
-        }
-
-        // Add documentation flag (enables "find documented functions" queries)
-        if (x.documentation) {
-          metadata["hasDocumentation"] = true;
-          metadata["hasParams"] = (x.documentation.params?.length || 0) > 0;
-          metadata["hasExamples"] = (x.documentation.examples?.length || 0) > 0;
-          metadata["isDeprecated"] = !!x.documentation.deprecated;
-        }
-
-        // Add return type for type-based filtering
-        if (x.returnType) {
-          metadata["returnType"] = x.returnType;
-        }
-
-        // Add parameter count
-        if (x.parameters?.length) {
-          metadata["paramCount"] = x.parameters.length;
-        }
-
-        return {
-          id: stableId,
-          content: texts[i] ?? "",
-          vector: embeddings[i] ?? new Float32Array(this.embeddingDim),
-          metadata,
-          createdAt: Date.now(),
-        };
-      });
-      profile("5c_BUILD_VECTORS");
-
-      // Two-phase mode: save to dump file instead of inserting to DB
-      // This avoids Bun crash when OpenVINO + LibSQL native modules run concurrently
-      if (this.twoPhaseMode) {
-        // NOTE: Removed logger.info here - I/O operations can conflict with OpenVINO in Bun
-
-        // Convert VectorEmbedding to DumpedEmbedding (serialize Float32Array)
-        const dumpedEmbeddings: DumpedEmbedding[] = vectorEmbeddings.map((ve) => ({
-          id: ve.id,
-          content: ve.content,
-          vector: vectorToArray(ve.vector),
-          metadata: ve.metadata as Record<string, any>,
-          createdAt: ve.createdAt,
-        }));
-
-        saveBatch(dumpedEmbeddings, this.dumpBatchIndex++);
-        this.semanticMetrics.embeddingsGenerated += embeddings.length;
-      } else {
-        // Normal mode: insert directly to DB
-        // Debug: log sample IDs being inserted
-        if (vectorEmbeddings.length > 0) {
-          log.d("EMBEDDING", `Insert sample IDs`, {
-            sampleIds: vectorEmbeddings.slice(0, 3).map((v) => v.id),
-          });
-        }
-        log.d("EMBEDDING", `Calling adaptiveBulkInsert`, {
-          agentId: this.id,
-          count: vectorEmbeddings.length,
-        });
-        const insertResult = await this.vectorStore.adaptiveBulkInsert(vectorEmbeddings);
-        profile("5d_FAISS_INSERT");
-        log.t("EMBEDDING", "adaptiveBulkInsert returned to caller");
-        perfLog("5_DB_INSERT", vectorEmbeddings.length);
-        log.d("EMBEDDING", `adaptiveBulkInsert done`, {
-          agentId: this.id,
-          usedFaiss: insertResult.usedFaiss,
-          timeMs: insertResult.timeMs.toFixed(1),
-        });
-        this.semanticMetrics.embeddingsGenerated += embeddings.length;
-        this.semanticMetrics.vectorsStored = await this.vectorStore.count();
-        profile("5e_COUNT");
-        knowledgeBus.publish("semantic:embeddings:complete", { count: embeddings.length }, this.id);
-        log.i("EMBEDDING", `Stored embeddings`, {
-          agentId: this.id,
-          count: embeddings.length,
-          total: this.semanticMetrics.vectorsStored,
-        });
-      }
-    } finally {
-      // Release mutex after all native operations (OpenVINO + LibSQL) complete
-      releaseMutex!();
-      profile("5f_MUTEX_RELEASE");
-      log.d("EMBEDDING", `Mutex released, about to process comments`, { agentId: this.id });
-    }
+    // Generate embeddings, build vectors, store to FAISS/LibSQL
+    await this.generateAndStoreEmbeddings(filteredEntities, texts, entityToStableId, cacheResult, perfLog);
 
     // Process standalone comments (comments not associated with any entity)
+    const storage = await getGraphStorage();
     log.d("EMBEDDING", `Starting processStandaloneComments`, {
       agentId: this.id,
       commentFiles: commentsByFile.size,
     });
     await this.processStandaloneComments(commentsByFile, associationsByFile, storage);
-    profile("6_COMMENTS");
     log.t("EMBEDDING", "processStandaloneComments returned successfully", { agentId: this.id });
 
     // NOTE: Co-occurrence already updated at start of handleNewEntities via updateCooccurrenceFromEntities

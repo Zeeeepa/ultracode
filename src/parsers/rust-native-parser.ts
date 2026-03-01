@@ -14,6 +14,9 @@
 
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import { LineOffsetMap } from "./base-parser-utils.js";
+import type { RegexExtractionRule } from "./regex-entity-extractor.js";
+import { runRegexExtractors } from "./regex-entity-extractor.js";
 import {
   enhanceWithRustAnalyzer,
   findCargoToml,
@@ -241,26 +244,193 @@ export class RustNativeParser {
    * Regex-based parser for Rust
    */
   private parseWithRegex(filePath: string, content: string): RustParseResult {
-    const entities: ParsedEntity[] = [];
+    const rules: RegexExtractionRule[] = [
+      // Modules
+      {
+        regex: /^(?:pub\s+)?mod\s+(\w+)/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          const isPub = match[0].includes("pub");
+          return {
+            name,
+            type: "module",
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: isPub ? ["pub"] : undefined,
+          };
+        },
+      },
+
+      // Structs
+      {
+        regex: /^(?:pub(?:\([^)]*\))?\s+)?struct\s+(\w+)(?:<[^>]+>)?/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          const isPub = match[0].includes("pub");
+          return {
+            name,
+            type: "class",
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: isPub ? ["pub"] : undefined,
+          };
+        },
+      },
+
+      // Enums
+      {
+        regex: /^(?:pub(?:\([^)]*\))?\s+)?enum\s+(\w+)(?:<[^>]+>)?/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          const isPub = match[0].includes("pub");
+          return {
+            name,
+            type: "enum",
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: isPub ? ["pub"] : undefined,
+          };
+        },
+      },
+
+      // Traits (interfaces)
+      {
+        regex: /^(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?trait\s+(\w+)(?:<[^>]+>)?/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          const isPub = match[0].includes("pub");
+          const isUnsafe = match[0].includes("unsafe");
+          const modifiers: string[] = [];
+          if (isPub) modifiers.push("pub");
+          if (isUnsafe) modifiers.push("unsafe");
+          return {
+            name,
+            type: "interface",
+            filePath: fp,
+            location: getLocation(match.index),
+            ...(modifiers.length > 0 && { modifiers: modifiers }),
+          };
+        },
+      },
+
+      // Impl blocks
+      {
+        regex: /^impl(?:<[^>]+>)?\s+(?:(\w+)\s+for\s+)?(\w+)(?:<[^>]+>)?/gm,
+        mapper: (match, fp, getLocation) => {
+          const traitName = match[1];
+          const typeName = match[2];
+          if (!typeName) return null;
+          return {
+            name: traitName ? `${traitName} for ${typeName}` : `impl ${typeName}`,
+            type: "class",
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: ["impl"],
+          };
+        },
+      },
+
+      // Functions
+      {
+        regex:
+          /^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?fn\s+(\w+)(?:<[^>]+>)?\s*\(([^)]*)\)(?:\s*->\s*([^{]+))?/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          const paramsStr = match[2] || "";
+          const returnType = match[3]?.trim();
+
+          const modifiers: string[] = [];
+          if (match[0].includes("pub")) modifiers.push("pub");
+          if (match[0].includes("async")) modifiers.push("async");
+          if (match[0].includes("unsafe")) modifiers.push("unsafe");
+          if (match[0].includes("const")) modifiers.push("const");
+
+          return {
+            name,
+            type: modifiers.includes("async") ? "async_function" : "function",
+            filePath: fp,
+            location: getLocation(match.index),
+            ...(modifiers.length > 0 && { modifiers: modifiers }),
+            parameters: this.parseParameters(paramsStr),
+            ...(returnType && { returnType: returnType }),
+          };
+        },
+      },
+
+      // Constants and statics
+      {
+        regex: /^(?:pub(?:\([^)]*\))?\s+)?(?:static\s+(?:mut\s+)?|const\s+)(\w+)\s*:\s*([^=]+)/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          const typeName = match[2]?.trim();
+          if (!name) return null;
+          const isStatic = match[0].includes("static");
+          const isPub = match[0].includes("pub");
+          const isMut = match[0].includes("mut");
+
+          const modifiers: string[] = [];
+          if (isPub) modifiers.push("pub");
+          if (isStatic) modifiers.push("static");
+          if (isMut) modifiers.push("mut");
+
+          return {
+            name,
+            type: "constant",
+            filePath: fp,
+            location: getLocation(match.index),
+            ...(modifiers.length > 0 && { modifiers: modifiers }),
+            metadata: typeName ? { constType: typeName } : undefined,
+          };
+        },
+      },
+
+      // Type aliases
+      {
+        regex: /^(?:pub(?:\([^)]*\))?\s+)?type\s+(\w+)(?:<[^>]+>)?\s*=/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          const isPub = match[0].includes("pub");
+          return {
+            name,
+            type: "type",
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: isPub ? ["pub"] : undefined,
+          };
+        },
+      },
+
+      // Macros
+      {
+        regex: /^(?:pub(?:\([^)]*\))?\s+)?macro_rules!\s+(\w+)/gm,
+        mapper: (match, fp, getLocation) => {
+          const name = match[1];
+          if (!name) return null;
+          return {
+            name,
+            type: "function",
+            filePath: fp,
+            location: getLocation(match.index),
+            modifiers: ["macro"],
+          };
+        },
+      },
+    ];
+
+    const entities = runRegexExtractors(content, filePath, rules);
+
+    // Use statements (imports) — handled separately because one match can produce multiple entities
+    const useRe = /^(?:pub\s+)?use\s+([\w:]+)(?:::\{([^}]+)\})?(?:\s+as\s+(\w+))?;/gm;
+    const lineMap = new LineOffsetMap(content);
+    const getLocation = (index: number) => lineMap.getEntityLocation(index);
     let match: RegExpExecArray | null;
 
-    // Modules
-    const modRe = /^(?:pub\s+)?mod\s+(\w+)/gm;
-    while ((match = modRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      const isPub = match[0].includes("pub");
-      entities.push({
-        name,
-        type: "module",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: isPub ? ["pub"] : undefined,
-      });
-    }
-
-    // Use statements (imports)
-    const useRe = /^(?:pub\s+)?use\s+([\w:]+)(?:::\{([^}]+)\})?(?:\s+as\s+(\w+))?;/gm;
     while ((match = useRe.exec(content))) {
       const path = match[1];
       const items = match[2];
@@ -276,7 +446,7 @@ export class RustNativeParser {
             name: item,
             type: "import",
             filePath,
-            location: this.getLocationFromIndex(content, match.index),
+            location: getLocation(match.index),
             importData: {
               source: path,
               specifiers: [{ local: item }],
@@ -288,157 +458,13 @@ export class RustNativeParser {
           name: alias || path.split("::").pop() || path,
           type: "import",
           filePath,
-          location: this.getLocationFromIndex(content, match.index),
+          location: getLocation(match.index),
           importData: {
             source: path,
             specifiers: [{ local: alias || path.split("::").pop() || path }],
           },
         });
       }
-    }
-
-    // Structs
-    const structRe = /^(?:pub(?:\([^)]*\))?\s+)?struct\s+(\w+)(?:<[^>]+>)?/gm;
-    while ((match = structRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      const isPub = match[0].includes("pub");
-      entities.push({
-        name,
-        type: "class",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: isPub ? ["pub"] : undefined,
-      });
-    }
-
-    // Enums
-    const enumRe = /^(?:pub(?:\([^)]*\))?\s+)?enum\s+(\w+)(?:<[^>]+>)?/gm;
-    while ((match = enumRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      const isPub = match[0].includes("pub");
-      entities.push({
-        name,
-        type: "enum",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: isPub ? ["pub"] : undefined,
-      });
-    }
-
-    // Traits (interfaces)
-    const traitRe = /^(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?trait\s+(\w+)(?:<[^>]+>)?/gm;
-    while ((match = traitRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      const isPub = match[0].includes("pub");
-      const isUnsafe = match[0].includes("unsafe");
-      const modifiers: string[] = [];
-      if (isPub) modifiers.push("pub");
-      if (isUnsafe) modifiers.push("unsafe");
-      entities.push({
-        name,
-        type: "interface",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        ...(modifiers.length > 0 && { modifiers: modifiers }),
-      });
-    }
-
-    // Impl blocks
-    const implRe = /^impl(?:<[^>]+>)?\s+(?:(\w+)\s+for\s+)?(\w+)(?:<[^>]+>)?/gm;
-    while ((match = implRe.exec(content))) {
-      const traitName = match[1];
-      const typeName = match[2];
-      if (!typeName) continue;
-      entities.push({
-        name: traitName ? `${traitName} for ${typeName}` : `impl ${typeName}`,
-        type: "class",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: ["impl"],
-      });
-    }
-
-    // Functions
-    const fnRe =
-      /^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?fn\s+(\w+)(?:<[^>]+>)?\s*\(([^)]*)\)(?:\s*->\s*([^{]+))?/gm;
-    while ((match = fnRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      const paramsStr = match[2] || "";
-      const returnType = match[3]?.trim();
-
-      const modifiers: string[] = [];
-      if (match[0].includes("pub")) modifiers.push("pub");
-      if (match[0].includes("async")) modifiers.push("async");
-      if (match[0].includes("unsafe")) modifiers.push("unsafe");
-      if (match[0].includes("const")) modifiers.push("const");
-
-      entities.push({
-        name,
-        type: modifiers.includes("async") ? "async_function" : "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        ...(modifiers.length > 0 && { modifiers: modifiers }),
-        parameters: this.parseParameters(paramsStr),
-        ...(returnType && { returnType: returnType }),
-      });
-    }
-
-    // Constants and statics
-    const constRe = /^(?:pub(?:\([^)]*\))?\s+)?(?:static\s+(?:mut\s+)?|const\s+)(\w+)\s*:\s*([^=]+)/gm;
-    while ((match = constRe.exec(content))) {
-      const name = match[1];
-      const typeName = match[2]?.trim();
-      if (!name) continue;
-      const isStatic = match[0].includes("static");
-      const isPub = match[0].includes("pub");
-      const isMut = match[0].includes("mut");
-
-      const modifiers: string[] = [];
-      if (isPub) modifiers.push("pub");
-      if (isStatic) modifiers.push("static");
-      if (isMut) modifiers.push("mut");
-
-      entities.push({
-        name,
-        type: "constant",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        ...(modifiers.length > 0 && { modifiers: modifiers }),
-        metadata: typeName ? { constType: typeName } : undefined,
-      });
-    }
-
-    // Type aliases
-    const typeRe = /^(?:pub(?:\([^)]*\))?\s+)?type\s+(\w+)(?:<[^>]+>)?\s*=/gm;
-    while ((match = typeRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      const isPub = match[0].includes("pub");
-      entities.push({
-        name,
-        type: "type",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: isPub ? ["pub"] : undefined,
-      });
-    }
-
-    // Macros
-    const macroRe = /^(?:pub(?:\([^)]*\))?\s+)?macro_rules!\s+(\w+)/gm;
-    while ((match = macroRe.exec(content))) {
-      const name = match[1];
-      if (!name) continue;
-      entities.push({
-        name,
-        type: "function",
-        filePath,
-        location: this.getLocationFromIndex(content, match.index),
-        modifiers: ["macro"],
-      });
     }
 
     return { entities, errors: [] };
@@ -471,27 +497,6 @@ export class RustNativeParser {
     }
 
     return params;
-  }
-
-  /**
-   * Get location from character index
-   */
-  private getLocationFromIndex(content: string, index: number): ParsedEntity["location"] {
-    let line = 1;
-    let column = 0;
-    for (let i = 0; i < index; i++) {
-      if (content[i] === "\n") {
-        line++;
-        column = 0;
-      } else {
-        column++;
-      }
-    }
-
-    return {
-      start: { line, column, index },
-      end: { line, column: column + 1, index: index + 1 },
-    };
   }
 
   /**
