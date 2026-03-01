@@ -13,7 +13,17 @@ import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
 const GetHelpSchema = z.object({
   topic: z
-    .enum(["quick-start", "tool-reference", "workflows", "tracing", "autodoc", "explore", "planning", "modification"])
+    .enum([
+      "quick-start",
+      "tool-reference",
+      "workflows",
+      "tracing",
+      "autodoc",
+      "explore",
+      "planning",
+      "modification",
+      "patterns",
+    ])
     .describe("Documentation topic"),
 });
 
@@ -44,6 +54,7 @@ export class GetHelpToolHandler extends BaseToolHandler<HelpArgs> {
         explore: "explore-guide.md",
         planning: "planning-guide.md",
         modification: "modification-guide.md",
+        patterns: "patterns-guide.md",
       };
 
       const filename = filenameMap[topic];
@@ -91,6 +102,7 @@ export class GetHelpToolHandler extends BaseToolHandler<HelpArgs> {
                   "explore",
                   "planning",
                   "modification",
+                  "patterns",
                 ],
               },
               null,

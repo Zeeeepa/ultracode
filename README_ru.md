@@ -59,6 +59,8 @@ MCP-сервер предоставляет **70 инструментов** дл
 | [**analyze_state_chaos**](.autodoc/features/analysis_ru.md#analyze_state_chaos) | Анализ запутанных зависимостей данных |
 | [**analyze_swagger_impact**](.autodoc/features/swagger_ru.md#analyze_swagger_impact) | Анализ влияния изменений Swagger/OpenAPI спецификаций |
 | [**detect_technology_stack**](.autodoc/features/analysis_ru.md#detect_technology_stack) | Определение стека технологий проекта |
+| [**detect_patterns**](.autodoc/features/patterns_ru.md#detect_patterns) | Обнаружение анти-паттернов, лучших практик, code smells и возможностей оптимизации с семантической валидацией |
+| [**check_entity_patterns**](.autodoc/features/patterns_ru.md#check_entity_patterns) | Проверка конкретной entity на совпадение с паттернами |
 
 ## Статическая трассировка и отладка
 

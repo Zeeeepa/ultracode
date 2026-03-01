@@ -1,0 +1,190 @@
+patterns:
+  # Anti-patterns
+  - id: "java:raw-types"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Raw Type Usage"
+    description: "Generic type used without type parameter — loses type safety"
+    suggestion: "Add type parameter: List<String> instead of List"
+    tags: ["type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkRawTypes"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "java:empty-catch"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Empty Catch Block"
+    description: "Empty catch block silently swallows exceptions"
+    suggestion: "Log the exception or rethrow. At minimum add a comment explaining why."
+    tags: ["error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasExceptions: true
+    customDetector: "checkJavaEmptyCatch"
+    exemplarIds: ["java:empty-catch:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.5
+
+  - id: "java:mutable-static-field"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Mutable Static Field"
+    description: "Non-final static field — shared mutable state across all instances"
+    suggestion: "Make it final, use AtomicReference, or move to instance field"
+    tags: ["state", "concurrency"]
+    enabled: true
+    structural:
+      entityTypes: ["variable", "constant"]
+      requiredModifiers: ["static"]
+      forbiddenModifiers: ["final"]
+    customDetector: "checkJavaMutableStatic"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "java:god-class"
+    category: "code-smell"
+    severity: "high"
+    name: "God Class"
+    description: "Class with too many methods and lines — SRP violation"
+    suggestion: "Split into smaller classes with focused responsibilities"
+    tags: ["complexity", "architecture"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      minLOC: 500
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # Best patterns
+  - id: "java:builder-pattern"
+    category: "best-pattern"
+    severity: "info"
+    name: "Builder Pattern"
+    description: "Builder pattern for complex object construction"
+    suggestion: "Good pattern! Builders make complex object creation readable."
+    tags: ["design-pattern", "quality"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      nameMatch: "Builder$"
+    exemplarIds: ["java:builder:good1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.6
+
+  - id: "java:proper-resource-handling"
+    category: "best-pattern"
+    severity: "info"
+    name: "Try-With-Resources"
+    description: "Using try-with-resources for automatic resource management"
+    suggestion: "Good pattern! Resources are always closed properly."
+    tags: ["resource-management", "quality"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasExceptions: true
+    exemplarIds: ["java:try-resources:good1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  # Optimization
+  - id: "java:string-concat-in-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "String Concatenation in Loop"
+    description: "String += in loop creates new String on each iteration — O(n^2) copies"
+    suggestion: "Use StringBuilder with estimated capacity"
+    bigO:
+      before: "O(n^2)"
+      after: "O(n)"
+    benchmark: "10-100x faster for large strings"
+    tags: ["performance", "memory", "strings"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasLoops: true
+    customDetector: "checkStringConcatInLoop"
+    exemplarIds: ["java:string-concat-loop:bad1"]
+    minSemanticSimilarity: 0.65
+    minStructuralConfidence: 0.5
+
+  - id: "java:regex-in-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "Regex Compilation in Loop"
+    description: "Pattern.compile() or toRegex() inside loop — compiles on every iteration"
+    suggestion: "Pre-compile regex as static final Pattern outside the loop"
+    benchmark: "10x+ faster for repeated regex operations"
+    tags: ["performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasLoops: true
+    exemplarIds: ["java:regex-loop:bad1"]
+    minSemanticSimilarity: 0.65
+    minStructuralConfidence: 0.5
+
+  - id: "java:list-no-capacity"
+    category: "optimization"
+    severity: "low"
+    name: "ArrayList Without Initial Capacity"
+    description: "ArrayList() without capacity hint — causes repeated array copies as it grows"
+    suggestion: "Use ArrayList(expectedSize) when size is known or estimable"
+    benchmark: "Reduces GC pressure and array copies"
+    tags: ["performance", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    exemplarIds: ["java:list-no-capacity:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.4
+
+  - id: "java:reflection-in-hotpath"
+    category: "optimization"
+    severity: "high"
+    name: "Reflection in Hot Path"
+    description: "Method.invoke() or reflection API in frequently called code — 30-50% penalty"
+    suggestion: "Use direct calls, MethodHandle, or code generation (MapStruct)"
+    benchmark: "30-50% slower than direct calls"
+    tags: ["performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkReflectionInHotpath"
+    exemplarIds: ["java:reflection-hotpath:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  - id: "kotlin:boxing-nullable-primitives"
+    category: "optimization"
+    severity: "medium"
+    name: "Boxing via Nullable Primitives"
+    description: "Int?/Long? or List<Int> causes boxing — uses 4x more memory"
+    suggestion: "Use IntArray, LongArray for performance-critical code"
+    benchmark: "4x memory savings, 10% speed improvement"
+    tags: ["performance", "memory", "kotlin"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function", "variable"]
+    exemplarIds: ["kotlin:boxing:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.4
+
+  - id: "kotlin:sequence-for-large-collections"
+    category: "optimization"
+    severity: "low"
+    name: "Chain Without Sequence"
+    description: ".filter{}.map{} on large collections creates intermediary lists"
+    suggestion: "Use .asSequence() for chains on collections >10K items"
+    benchmark: "Eliminates intermediary list allocations"
+    tags: ["performance", "memory", "kotlin"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    exemplarIds: ["kotlin:sequence:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.4

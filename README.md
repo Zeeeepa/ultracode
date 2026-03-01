@@ -59,6 +59,8 @@ MCP server provides **70 tools** for code analysis and modification.
 | [**analyze_state_chaos**](.autodoc/features/analysis.md#analyze_state_chaos) | Analysis of tangled data dependencies |
 | [**analyze_swagger_impact**](.autodoc/features/swagger.md#analyze_swagger_impact) | Swagger/OpenAPI spec change impact analysis |
 | [**detect_technology_stack**](.autodoc/features/analysis.md#detect_technology_stack) | Project technology stack detection |
+| [**detect_patterns**](.autodoc/features/patterns.md#detect_patterns) | Detect anti-patterns, best-patterns, code smells, and optimization opportunities with semantic validation |
+| [**check_entity_patterns**](.autodoc/features/patterns.md#check_entity_patterns) | Check specific entity for pattern matches with confidence scores |
 
 ## Static Tracing and Debugging
 

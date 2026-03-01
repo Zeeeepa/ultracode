@@ -300,7 +300,7 @@ export class RelationshipOperations {
     if (!client) throw new Error("Client not initialized");
 
     const { projectHash, branchName, baseBranch } = this.getContext();
-    const limit = Math.min(query.limit || 100, 1000);
+    const limit = query.limit || 100;
     const offset = query.offset || 0;
 
     // Simple case: no base branch

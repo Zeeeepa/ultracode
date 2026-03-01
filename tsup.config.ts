@@ -119,6 +119,24 @@ export default defineConfig([
         console.warn("[tsup] Proto copy warning:", e.message);
       }
 
+      // Copy pattern rules and exemplars YAML files
+      const patternsSrc = join("src", "analysis", "patterns");
+      const patternsDstChunks = join("dist", "chunks");
+      for (const subdir of ["rules", "exemplars"]) {
+        const src = join(patternsSrc, subdir);
+        const dst = join(patternsDstChunks, subdir);
+        try {
+          await mkdir(dst, { recursive: true });
+          const { readdirSync } = await import("node:fs");
+          for (const f of readdirSync(src).filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))) {
+            await copyFile(join(src, f), join(dst, f));
+          }
+          console.log(`[tsup] Copied pattern ${subdir}/ to dist/chunks/${subdir}/`);
+        } catch (e: any) {
+          console.warn(`[tsup] Pattern ${subdir} copy warning:`, e.message);
+        }
+      }
+
       // Copy Roslyn addon if available (built by scripts/build-roslyn)
       const { cpSync, existsSync } = await import("node:fs");
       const { resolve } = await import("node:path");

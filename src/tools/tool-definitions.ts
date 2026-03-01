@@ -25,6 +25,7 @@ import {
   AutoDocStatusSchema,
   AutoDocSyncSchema,
   AutoDocValidateSchema,
+  CheckEntityPatternsSchema,
   // History & Time Travel
   CheckoutCommitSchema,
   CleanIndexSchema,
@@ -35,6 +36,7 @@ import {
   CreateSnapshotSchema,
   CrossLanguageSearchSchema,
   DetectCodeClonesSchema,
+  DetectPatternsSchema,
   DetectTechnologyStackSchema,
   DiffCommitsSchema,
   FindRelatedConceptsSchema,
@@ -98,7 +100,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "get_help",
       description:
-        "[INFO] Get detailed documentation and guides about UltraCode. Essential reading before using tools. Topics: 'quick-start', 'tool-reference', 'workflows', 'tracing', 'autodoc'. Agent-specific: 'explore' (fast search), 'planning' (risk assessment), 'modification' (safe code changes). Use category matching your role for optimized guidance.",
+        "[INFO] Get detailed documentation and guides about UltraCode. Essential reading before using tools. Topics: 'quick-start', 'tool-reference', 'workflows', 'tracing', 'autodoc', 'patterns'. Agent-specific: 'explore' (fast search), 'planning' (risk assessment), 'modification' (safe code changes). Use category matching your role for optimized guidance.",
       inputSchema: zodToJsonSchema(
         z.object({
           topic: z
@@ -111,6 +113,7 @@ export function getToolsList(): ToolDefinition[] {
               "explore",
               "planning",
               "modification",
+              "patterns",
             ])
             .describe("Documentation topic to read. Use explore/planning/modification for agent-specific guides."),
         }),
@@ -244,6 +247,30 @@ export function getToolsList(): ToolDefinition[] {
       description:
         "[EXPLORE] Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
       inputSchema: zodToJsonSchema(DetectTechnologyStackSchema),
+    },
+
+    // ==========================================================================
+    // Pattern Detection
+    // ==========================================================================
+    {
+      name: "detect_patterns",
+      description:
+        "[ANALYZE] Detect anti-patterns, best-patterns, code smells, and optimization opportunities. " +
+        "Uses structural analysis + semantic validation (embedding similarity with curated examples) " +
+        "to dramatically reduce false positives. Supports 100+ rules across 6 languages. " +
+        "Filters: category, tags, severity, minConfidence. " +
+        "Categories: anti-pattern (bad practices), best-pattern (good practices), " +
+        "code-smell (structural issues), optimization (performance improvements with Big-O). " +
+        "Example: detect_patterns({category:'optimization', tags:['performance']}). " +
+        "📖 get_help(topic='patterns')",
+      inputSchema: zodToJsonSchema(DetectPatternsSchema),
+    },
+    {
+      name: "check_entity_patterns",
+      description:
+        "[ANALYZE] Check specific entity for anti-patterns, best-patterns, and optimization opportunities. " +
+        "Returns matched patterns with confidence scores, Big-O analysis, and improvement suggestions.",
+      inputSchema: zodToJsonSchema(CheckEntityPatternsSchema),
     },
 
     // ==========================================================================

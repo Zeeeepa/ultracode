@@ -1,0 +1,117 @@
+exemplars:
+  - id: "ts:empty-catch:bad1"
+    patternId: "ts:empty-catch"
+    language: "typescript"
+    code: |
+      async function fetchData(url: string) {
+        try {
+          const response = await fetch(url);
+          return await response.json();
+        } catch (e) {
+          // silently swallowed
+        }
+      }
+    description: "Catch block ignores error completely"
+
+  - id: "ts:nested-callbacks:bad1"
+    patternId: "ts:nested-callbacks"
+    language: "typescript"
+    code: |
+      getUser(id, (err, user) => {
+        if (user) {
+          getOrders(user.id, (err, orders) => {
+            orders.forEach(order => {
+              getDetails(order.id, (err, details) => {
+                processDetails(details);
+              });
+            });
+          });
+        }
+      });
+    description: "Deeply nested callbacks — callback hell pattern"
+
+  - id: "ts:promise-no-catch:bad1"
+    patternId: "ts:promise-no-catch"
+    language: "typescript"
+    code: |
+      function loadData() {
+        fetch('/api/data')
+          .then(res => res.json())
+          .then(data => updateUI(data));
+        // no .catch() — unhandled rejection
+      }
+    description: "Promise chain without error handling"
+
+  - id: "ts:no-error-typing:bad1"
+    patternId: "ts:no-error-typing"
+    language: "typescript"
+    code: |
+      try {
+        await riskyOperation();
+      } catch (e) {
+        console.log(e.message); // e is 'unknown' at runtime
+      }
+    description: "Catch without typing error as unknown"
+
+  - id: "ts:layout-thrashing:bad1"
+    patternId: "ts:layout-thrashing"
+    language: "typescript"
+    code: |
+      function resizeAll(elements: HTMLElement[]) {
+        for (const el of elements) {
+          const height = el.offsetHeight; // read
+          el.style.height = (height * 2) + 'px'; // write
+          // forces layout recalculation on next read!
+        }
+      }
+    description: "Interleaved DOM read and write in loop forces layout recalculation"
+
+  - id: "ts:angular-default-cd:bad1"
+    patternId: "ts:angular-default-change-detection"
+    language: "typescript"
+    code: |
+      @Component({
+        selector: 'app-list',
+        template: `<div *ngFor="let item of items">{{item.name}}</div>`
+      })
+      export class ListComponent {
+        items: Item[] = [];
+      }
+    description: "Component without OnPush — checked on every event"
+
+  - id: "ts:rxjs-subscribe-loop:bad1"
+    patternId: "ts:rxjs-subscribe-in-loop"
+    language: "typescript"
+    code: |
+      for (const id of userIds) {
+        this.http.get(`/api/users/${id}`)
+          .subscribe(user => this.users.push(user));
+        // no unsubscribe — memory leak
+      }
+    description: "Creating subscription in loop without cleanup"
+
+  - id: "ts:no-trackby:bad1"
+    patternId: "ts:no-trackby-ngfor"
+    language: "typescript"
+    code: |
+      @Component({
+        template: `<li *ngFor="let item of items">{{item.name}}</li>`
+      })
+      export class ItemListComponent {
+        items: Item[] = [];
+      }
+    description: "ngFor without trackBy causes full DOM recreation"
+
+  - id: "ts:function-in-template:bad1"
+    patternId: "ts:function-in-template"
+    language: "typescript"
+    code: |
+      @Component({
+        template: `<span>{{ getFullName() }}</span>`
+      })
+      export class UserComponent {
+        getFullName() {
+          return this.firstName + ' ' + this.lastName;
+        }
+      }
+    description: "Function call in template runs on every CD cycle"

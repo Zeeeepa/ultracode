@@ -1,0 +1,84 @@
+exemplars:
+  - id: "cs:string-concat-loop:bad1"
+    patternId: "cs:string-concat-in-loop"
+    language: "csharp"
+    code: |
+      public string BuildReport(List<Record> records) {
+          string result = "";
+          foreach (var r in records) {
+              result += $"{r.Name}: {r.Value}\n";
+          }
+          return result;
+      }
+    description: "String concatenation in foreach loop"
+
+  - id: "cs:proper-di:good1"
+    patternId: "cs:proper-di"
+    language: "csharp"
+    code: |
+      public class OrderService {
+          private readonly IOrderRepository _repo;
+          private readonly ILogger<OrderService> _logger;
+          public OrderService(IOrderRepository repo, ILogger<OrderService> logger) {
+              _repo = repo;
+              _logger = logger;
+          }
+      }
+    description: "Constructor injection with interface dependencies"
+
+  - id: "cs:linq-hotpath:bad1"
+    patternId: "cs:linq-in-hotpath"
+    language: "csharp"
+    code: |
+      public void ProcessItems(List<Item> items) {
+          for (int i = 0; i < 1000; i++) {
+              var active = items.Where(x => x.IsActive)
+                               .Select(x => x.Value)
+                               .ToList();
+              Process(active);
+          }
+      }
+    description: "LINQ chain inside hot loop creates allocations"
+
+  - id: "cs:no-asnotracking:bad1"
+    patternId: "cs:no-asnotracking"
+    language: "csharp"
+    code: |
+      public async Task<List<Product>> GetProducts() {
+          return await _context.Products
+              .Where(p => p.IsActive)
+              .ToListAsync();
+          // Missing .AsNoTracking() for read-only query
+      }
+    description: "EF Core query without AsNoTracking for read-only data"
+
+  - id: "cs:no-arraypool:bad1"
+    patternId: "cs:no-arraypool"
+    language: "csharp"
+    code: |
+      public void ProcessStream(Stream input) {
+          var buffer = new byte[8192];
+          int read;
+          while ((read = input.Read(buffer)) > 0) {
+              ProcessChunk(buffer, read);
+          }
+      }
+    description: "Allocating buffer without ArrayPool"
+
+  - id: "cs:string-interp-log:bad1"
+    patternId: "cs:string-interpolation-in-log"
+    language: "csharp"
+    code: |
+      _logger.LogDebug($"Processing order {order.Id} for user {user.Name}");
+    description: "String interpolation in log call allocates even when debug disabled"
+
+  - id: "cs:ef-n-plus-one:bad1"
+    patternId: "cs:ef-n-plus-one"
+    language: "csharp"
+    code: |
+      var orders = await _context.Orders.ToListAsync();
+      foreach (var order in orders) {
+          var items = order.Items.ToList(); // N+1!
+          ProcessItems(items);
+      }
+    description: "Accessing navigation property in loop triggers N extra queries"

@@ -377,7 +377,7 @@ export class EntityOperations {
 
     const { projectHash, branchName, baseBranch } = this.getContext();
     log.w("ENTITY_OPS", "findEntities", { hash: projectHash, branch: branchName, base: baseBranch || "none" });
-    const limit = Math.min(query.limit || 100, 1000);
+    const limit = query.limit || 100;
     const offset = query.offset || 0;
 
     // Simple case: no base branch

@@ -1,0 +1,98 @@
+exemplars:
+  - id: "java:empty-catch:bad1"
+    patternId: "java:empty-catch"
+    language: "java"
+    code: |
+      try {
+          connection = DriverManager.getConnection(url);
+          statement = connection.createStatement();
+      } catch (SQLException e) {
+          // do nothing
+      }
+    description: "Empty catch block swallows SQL exception"
+
+  - id: "java:builder:good1"
+    patternId: "java:builder-pattern"
+    language: "java"
+    code: |
+      User user = User.builder()
+          .name("John")
+          .email("john@example.com")
+          .role(Role.ADMIN)
+          .build();
+    description: "Builder pattern for clean object construction"
+
+  - id: "java:try-resources:good1"
+    patternId: "java:proper-resource-handling"
+    language: "java"
+    code: |
+      try (var conn = dataSource.getConnection();
+           var stmt = conn.prepareStatement(sql)) {
+          stmt.setString(1, id);
+          return stmt.executeQuery();
+      }
+    description: "Try-with-resources ensures connections are closed"
+
+  - id: "java:string-concat-loop:bad1"
+    patternId: "java:string-concat-in-loop"
+    language: "java"
+    code: |
+      public String buildReport(List<Record> records) {
+          String result = "";
+          for (Record r : records) {
+              result += r.getName() + ": " + r.getValue() + "\n";
+          }
+          return result;
+      }
+    description: "String concatenation with += inside for loop"
+
+  - id: "java:regex-loop:bad1"
+    patternId: "java:regex-in-loop"
+    language: "java"
+    code: |
+      for (String line : lines) {
+          if (Pattern.compile("\\d{3}-\\d{4}").matcher(line).find()) {
+              matches.add(line);
+          }
+      }
+    description: "Pattern.compile inside loop recompiles every iteration"
+
+  - id: "java:list-no-capacity:bad1"
+    patternId: "java:list-no-capacity"
+    language: "java"
+    code: |
+      List<String> names = new ArrayList<>();
+      for (User user : users) {  // users.size() = 10000
+          names.add(user.getName());
+      }
+    description: "ArrayList without capacity for known-size collection"
+
+  - id: "java:reflection-hotpath:bad1"
+    patternId: "java:reflection-in-hotpath"
+    language: "java"
+    code: |
+      for (Object obj : objects) {
+          Method m = obj.getClass().getMethod("process");
+          m.invoke(obj);
+      }
+    description: "Reflection invoke in hot loop"
+
+  - id: "kotlin:boxing:bad1"
+    patternId: "kotlin:boxing-nullable-primitives"
+    language: "kotlin"
+    code: |
+      val numbers: List<Int> = listOf(1, 2, 3)
+      var total: Int? = null
+      for (n in numbers) { total = (total ?: 0) + n }
+    description: "Nullable Int and List<Int> cause boxing"
+
+  - id: "kotlin:sequence:bad1"
+    patternId: "kotlin:sequence-for-large-collections"
+    language: "kotlin"
+    code: |
+      val result = largeList
+          .filter { it.isActive }
+          .map { it.transform() }
+          .filter { it.isValid }
+          .toList()
+    description: "Chain without .asSequence() creates intermediary lists"

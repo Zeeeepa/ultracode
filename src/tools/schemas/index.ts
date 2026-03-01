@@ -67,6 +67,8 @@ export {
   SplitFileSchema,
   SynthesizeFilesSchema,
 } from "./modification-schemas.js";
+// Pattern Detection
+export { CheckEntityPatternsSchema, DetectPatternsSchema } from "./pattern-schemas.js";
 // Semantic Search & Analysis
 export {
   AnalyzeCodeImpactSchema,

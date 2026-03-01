@@ -80,6 +80,18 @@ export class GetToolsForTaskHandler extends BaseToolHandler<GetToolsForTaskArgs>
         keywords: ["complex", "hotspot", "technical debt"],
         tools: ["analyze_hotspots", "semantic_search"],
       },
+      "find anti-patterns": {
+        keywords: ["anti-pattern", "antipattern", "bad practice", "smell", "code smell"],
+        tools: ["detect_patterns", "analyze_hotspots"],
+      },
+      "optimize performance": {
+        keywords: ["optimize", "performance", "slow", "fast", "speed", "memory"],
+        tools: ["detect_patterns", "analyze_hotspots"],
+      },
+      "code quality": {
+        keywords: ["quality", "pattern", "best practice", "review"],
+        tools: ["detect_patterns", "suggest_refactoring", "analyze_hotspots"],
+      },
     };
 
     // Score each tool

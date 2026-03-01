@@ -1,0 +1,230 @@
+patterns:
+  # Anti-patterns (migrated from chaos)
+  - id: "cs:mutable-static"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "Mutable Static Field"
+    description: "Mutable static field shared across all threads without protection"
+    suggestion: "Use readonly, const, ThreadStatic, or ConcurrentDictionary"
+    tags: ["state", "concurrency", "threading"]
+    enabled: true
+    structural:
+      entityTypes: ["variable", "constant"]
+      requiredModifiers: ["static"]
+      forbiddenModifiers: ["readonly", "const"]
+    customDetector: "checkMutableStatic"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "cs:async-void"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Async Void Method"
+    description: "async void method — exceptions crash the process, cannot be awaited"
+    suggestion: "Change to async Task. async void is only for event handlers."
+    tags: ["async", "error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      requiredModifiers: ["async"]
+      returnTypeMatch: "^void$"
+    customDetector: "checkCSharpAsyncVoid"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "cs:god-service"
+    category: "code-smell"
+    severity: "medium"
+    name: "God Service"
+    description: "Constructor with 10+ parameters — likely violating SRP"
+    suggestion: "Split into smaller services or use facade pattern"
+    tags: ["architecture", "di", "srp"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      minParams: 10
+    customDetector: "checkGodService"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:missing-cancellation"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Missing CancellationToken"
+    description: "Async Task method without CancellationToken — cannot be cancelled gracefully"
+    suggestion: "Add CancellationToken parameter and pass it to async calls"
+    tags: ["async", "best-practice"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      requiredModifiers: ["async"]
+      returnTypeMatch: "(Task|ValueTask)"
+      paramTypeAbsent: "CancellationToken"
+    customDetector: "checkMissingCancellation"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:singleton-mutable-state"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Singleton Mutable State"
+    description: "Singleton service with mutable fields — concurrent access causes data races"
+    suggestion: "Use scoped services, immutable state, or thread-safe collections"
+    tags: ["state", "concurrency", "di"]
+    enabled: true
+    structural:
+      entityTypes: ["variable", "constant"]
+      requiredModifiers: ["static"]
+      forbiddenModifiers: ["readonly", "const"]
+    customDetector: "checkSingletonMutableState"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:string-concat-in-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "String Concatenation in Loop"
+    description: "String += in loop creates new String on each iteration"
+    suggestion: "Use StringBuilder with estimated capacity"
+    bigO:
+      before: "O(n^2)"
+      after: "O(n)"
+    benchmark: "10-100x faster for large strings"
+    tags: ["performance", "memory", "strings"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasLoops: true
+    exemplarIds: ["cs:string-concat-loop:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  - id: "cs:empty-interface"
+    category: "code-smell"
+    severity: "low"
+    name: "Empty Interface"
+    description: "Interface without members — consider using attribute/marker instead"
+    suggestion: "Use a custom attribute for marking or add meaningful members"
+    tags: ["architecture", "design"]
+    enabled: true
+    structural:
+      entityTypes: ["interface"]
+      maxLOC: 3
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # Best patterns
+  - id: "cs:proper-di"
+    category: "best-pattern"
+    severity: "info"
+    name: "Proper Dependency Injection"
+    description: "Constructor injection with interface parameters — testable and loosely coupled"
+    suggestion: "Good pattern! Continue using constructor injection with interfaces."
+    tags: ["architecture", "di", "testability"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      minParams: 2
+      paramTypeRequired: "^I[A-Z]"
+    exemplarIds: ["cs:proper-di:good1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.6
+
+  - id: "cs:cancellation-propagation"
+    category: "best-pattern"
+    severity: "info"
+    name: "Cancellation Token Propagation"
+    description: "Async method properly accepts and propagates CancellationToken"
+    suggestion: "Good pattern! Proper cancellation support enables graceful shutdown."
+    tags: ["async", "best-practice"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      requiredModifiers: ["async"]
+      paramTypeRequired: "CancellationToken"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # Optimization
+  - id: "cs:linq-in-hotpath"
+    category: "optimization"
+    severity: "medium"
+    name: "LINQ in Hot Path"
+    description: "LINQ chain in loops or hot paths creates allocations (iterators, delegates)"
+    suggestion: "Replace with manual foreach/for loop. Avoids LINQ allocations."
+    bigO:
+      before: "O(n) + allocs"
+      after: "O(n) zero-alloc"
+    benchmark: "2-5x faster in hot paths, eliminates GC pressure"
+    tags: ["performance", "memory", "dotnet"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkLinqInHotpath"
+    exemplarIds: ["cs:linq-hotpath:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  - id: "cs:no-asnotracking"
+    category: "optimization"
+    severity: "medium"
+    name: "EF Query Without AsNoTracking"
+    description: "Read-only EF Core query without AsNoTracking — unnecessary change tracking overhead"
+    suggestion: "Add .AsNoTracking() for read-only queries or use AsNoTrackingWithIdentityResolution"
+    benchmark: "20-40% faster for read-only queries"
+    tags: ["performance", "ef-core", "database"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    exemplarIds: ["cs:no-asnotracking:bad1"]
+    minSemanticSimilarity: 0.65
+    minStructuralConfidence: 0.4
+
+  - id: "cs:no-arraypool"
+    category: "optimization"
+    severity: "medium"
+    name: "Temporary Buffer Without ArrayPool"
+    description: "new byte[size] for temporary buffers — causes GC pressure"
+    suggestion: "Use ArrayPool<byte>.Shared.Rent(size) and return after use"
+    benchmark: "850x faster for frequent allocations"
+    tags: ["performance", "memory", "dotnet"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    exemplarIds: ["cs:no-arraypool:bad1"]
+    minSemanticSimilarity: 0.65
+    minStructuralConfidence: 0.4
+
+  - id: "cs:string-interpolation-in-log"
+    category: "optimization"
+    severity: "low"
+    name: "String Interpolation in Logger"
+    description: "Logger.LogDebug($\"...\") allocates string even when log level is disabled"
+    suggestion: "Use structured logging: _logger.LogDebug(\"User {Id} logged in\", userId)"
+    benchmark: "Eliminates unnecessary string allocation when level disabled"
+    tags: ["performance", "logging", "dotnet"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    exemplarIds: ["cs:string-interp-log:bad1"]
+    minSemanticSimilarity: 0.65
+    minStructuralConfidence: 0.4
+
+  - id: "cs:ef-n-plus-one"
+    category: "optimization"
+    severity: "high"
+    name: "EF Core N+1 Query"
+    description: "Accessing navigation property in loop triggers N additional queries"
+    suggestion: "Use .Include() or .ThenInclude() for eager loading"
+    bigO:
+      before: "O(N+1) queries"
+      after: "O(1) query"
+    benchmark: "10-100x faster for collections"
+    tags: ["performance", "ef-core", "database"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasLoops: true
+    exemplarIds: ["cs:ef-n-plus-one:bad1"]
+    minSemanticSimilarity: 0.65
+    minStructuralConfidence: 0.5
