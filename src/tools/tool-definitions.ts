@@ -49,6 +49,7 @@ import {
   GetGraphStatsSchema,
   GetMergeSuggestionsSchema,
   GetSemanticMergeInfoSchema,
+  GraphMetricsSchema,
   IndexToolSchema,
   JscpdCloneDetectionSchema,
   ListCommitsSchema,
@@ -66,6 +67,7 @@ import {
   SplitFileSchema,
   SuggestRefactoringSchema,
   SynthesizeFilesSchema,
+  TaintAnalysisSchema,
   ValidateDirectorySchema,
   ValidateFileSchema,
 } from "./schemas/index.js";
@@ -100,7 +102,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "get_help",
       description:
-        "[INFO] Get detailed documentation and guides about UltraCode. Essential reading before using tools. Topics: 'quick-start', 'tool-reference', 'workflows', 'tracing', 'autodoc', 'patterns'. Agent-specific: 'explore' (fast search), 'planning' (risk assessment), 'modification' (safe code changes). Use category matching your role for optimized guidance.",
+        "[INFO] Get detailed documentation and guides about UltraCode. Essential reading before using tools. Topics: 'quick-start', 'tool-reference', 'workflows', 'tracing', 'autodoc', 'patterns', 'security'. Agent-specific: 'explore' (fast search), 'planning' (risk assessment), 'modification' (safe code changes). Use category matching your role for optimized guidance.",
       inputSchema: zodToJsonSchema(
         z.object({
           topic: z
@@ -114,6 +116,7 @@ export function getToolsList(): ToolDefinition[] {
               "planning",
               "modification",
               "patterns",
+              "security",
             ])
             .describe("Documentation topic to read. Use explore/planning/modification for agent-specific guides."),
         }),
@@ -243,6 +246,12 @@ export function getToolsList(): ToolDefinition[] {
       inputSchema: zodToJsonSchema(AnalyzeSwaggerImpactSchema),
     },
     {
+      name: "graph_metrics",
+      description:
+        "[PLAN] Graph-based architecture metrics: PageRank (entity importance), Louvain (community/module detection), centrality (hub/authority/bridge roles), bus factor (knowledge concentration risk). Use persist=true to store PageRank/Louvain in entity metadata for semantic search boosting. Workflow: graph_metrics({metric:'pagerank', topN:10}) → top-10 most important entities.",
+      inputSchema: zodToJsonSchema(GraphMetricsSchema),
+    },
+    {
       name: "detect_technology_stack",
       description:
         "[EXPLORE] Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
@@ -271,6 +280,16 @@ export function getToolsList(): ToolDefinition[] {
         "[ANALYZE] Check specific entity for anti-patterns, best-patterns, and optimization opportunities. " +
         "Returns matched patterns with confidence scores, Big-O analysis, and improvement suggestions.",
       inputSchema: zodToJsonSchema(CheckEntityPatternsSchema),
+    },
+
+    // ==========================================================================
+    // Security Tools
+    // ==========================================================================
+    {
+      name: "taint_analysis",
+      description:
+        "[SECURITY] Interprocedural taint analysis: trace untrusted data from sources (req.body, process.env, fetch) to sinks (eval, exec, innerHTML, db.query) and detect missing sanitization. Categories: sql_injection, xss, command_injection, path_traversal, ssrf, prototype_pollution. Returns vulnerability flows with severity, confidence, and fix suggestions. Supports offset/limit pagination for large results. Example: taint_analysis({category:'sql_injection', offset:0, limit:10}).",
+      inputSchema: zodToJsonSchema(TaintAnalysisSchema),
     },
 
     // ==========================================================================

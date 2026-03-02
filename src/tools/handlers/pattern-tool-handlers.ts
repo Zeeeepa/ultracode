@@ -60,13 +60,32 @@ export class DetectPatternsToolHandler extends BaseToolHandler<z.infer<typeof De
 
       const result = await engine.scan(options, storage);
 
+      const nextSteps: string[] = [];
+      const allMatches = [
+        ...result.antiPatterns,
+        ...result.bestPatterns,
+        ...result.codeSmells,
+        ...result.optimizations,
+      ];
+      const hasSecurityPatterns = allMatches.some((m) =>
+        m.pattern.tags.some((t) => /security|injection|xss|auth/i.test(t)),
+      );
+      if (hasSecurityPatterns) {
+        nextSteps.push("taint_analysis() — deep security analysis of detected vulnerable patterns");
+      }
+      nextSteps.push("graph_metrics({metric:'pagerank'}) — rank affected entities by importance");
+
       let output: string;
       if (args.format === "json") {
-        output = JSON.stringify(PatternFormatter.toJSON(result), null, 2);
+        const json = PatternFormatter.toJSON(result) as Record<string, unknown>;
+        json["nextSteps"] = nextSteps;
+        output = JSON.stringify(json, null, 2);
       } else if (args.format === "detailed") {
         output = PatternFormatter.format(result, "detailed");
+        output += `\n\n---\nNext steps:\n${nextSteps.map((s) => `- ${s}`).join("\n")}`;
       } else {
         output = PatternFormatter.format(result, "summary");
+        output += `\n\n---\nNext steps:\n${nextSteps.map((s) => `- ${s}`).join("\n")}`;
       }
 
       return {

@@ -240,6 +240,18 @@ State chaos analysis (mutations, side-effects).
 | `stateIdentifiers` | string[] | - | State identifiers |
 | `autoDetect` | boolean | false | Auto-detect state patterns |
 
+### `graph_metrics`
+Graph-based architecture metrics for understanding codebase structure.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `metric` | enum | **required** | `pagerank`, `louvain`, `centrality`, `bus_factor` |
+| `topN` | number | 20 | Top results to return (pagerank, centrality) |
+| `minCommunitySize` | number | 2 | Min community size (louvain) |
+| `persist` | boolean | false | Save to entity metadata for search boosting |
+
+**Returns:** Varies by metric — PageRank scores, Louvain communities, centrality roles, or bus factor risk.
+
 ### `suggest_refactoring`
 Suggest refactoring opportunities based on code quality analysis.
 
@@ -649,6 +661,27 @@ Get GitWatcher and AutoDoc Watcher status.
 **Returns:** Watcher state (active/inactive), watched directories, last indexing time, pending changes count.
 
 ---
+
+## Security
+
+### `taint_analysis`
+**Interprocedural taint analysis** — trace untrusted data from sources to sinks, detect missing sanitization. Supports `offset`/`limit` pagination for large result sets.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `category` | enum | `"all"` | `sql_injection`, `xss`, `command_injection`, `path_traversal`, `ssrf`, `prototype_pollution`, `all` |
+| `maxDepth` | number | 15 | Max path depth for flow tracing |
+| `includeTests` | boolean | false | Include test files |
+| `offset` | number | 0 | Skip N vulnerabilities (pagination) |
+| `limit` | number | 20 | Max vulnerabilities to return (max 200) |
+
+**Returns:** Vulnerability flows with severity, confidence, source→sink paths, fix suggestions, and `pagination` metadata (`offset`, `limit`, `total`, `hasMore`, `nextOffset`).
+
+```
+taint_analysis category="all"
+taint_analysis category="sql_injection" offset=0 limit=10
+taint_analysis category="all" offset=20 limit=20
+```
 
 ## Tracing (Static Flow Analysis)
 

@@ -373,3 +373,45 @@ Automatic project technology stack detection.
 ```
 detect_technology_stack({ detailed: true })
 ```
+
+---
+
+## graph_metrics
+
+Graph-based architecture metrics: PageRank, Louvain community detection, degree centrality, and bus factor analysis.
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `projectPath` | string | current project | Project directory path |
+| `metric` | enum | required | `pagerank`, `louvain`, `centrality`, or `bus_factor` |
+| `topN` | number | `20` | Number of top results (for pagerank, centrality) |
+| `minCommunitySize` | number | `2` | Minimum community size (for louvain) |
+| `persist` | boolean | `false` | Save metrics to entity metadata for semantic search boosting |
+
+### Returns (varies by metric)
+
+**PageRank**: Top entities ranked by importance with in/out degree and distribution stats.
+
+**Louvain**: Communities with member entities, main files, cohesion scores, and modularity.
+
+**Centrality**: Top entities by degree centrality with role classification (hub/authority/bridge/leaf).
+
+**Bus Factor**: Overall project bus factor, per-file and per-module analysis with author breakdown and risk levels.
+
+### Examples
+
+```ts
+// Top 10 most important entities
+graph_metrics({ metric: "pagerank", topN: 10 })
+
+// Detect module clusters
+graph_metrics({ metric: "louvain" })
+
+// Knowledge concentration risk
+graph_metrics({ metric: "bus_factor" })
+
+// Persist for search boosting
+graph_metrics({ metric: "pagerank", persist: true })
+```

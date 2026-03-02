@@ -92,6 +92,14 @@ export class GetToolsForTaskHandler extends BaseToolHandler<GetToolsForTaskArgs>
         keywords: ["quality", "pattern", "best practice", "review"],
         tools: ["detect_patterns", "suggest_refactoring", "analyze_hotspots"],
       },
+      "security analysis": {
+        keywords: ["security", "taint", "vulnerability", "injection", "xss", "sanitize"],
+        tools: ["taint_analysis", "detect_patterns"],
+      },
+      "architecture metrics": {
+        keywords: ["pagerank", "community", "bus factor", "centrality", "metric", "important", "architecture"],
+        tools: ["graph_metrics", "analyze_hotspots"],
+      },
     };
 
     // Score each tool

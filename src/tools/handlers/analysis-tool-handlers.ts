@@ -270,6 +270,10 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
               hotspotsFound: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
               hotspots: paginatedResult.data,
+              nextSteps: [
+                "graph_metrics({metric:'pagerank'}) — rank hotspots by architectural importance",
+                "taint_analysis() — check if hotspots contain security vulnerabilities",
+              ],
             },
             null,
             2,
@@ -514,6 +518,62 @@ export class FindRelatedConceptsToolHandler extends BaseToolHandler<z.infer<type
 
     const paginatedResult = paginate(allRelated, args.offset, safeLimit);
 
+    // Enrich with graph metrics from entity metadata in storage
+    // Vector store IDs can be hash-based (ent:HASH) or composite (ent:path:type:name)
+    const enrichedRelated = await Promise.all(
+      paginatedResult.data.map(async (r) => {
+        try {
+          let ent: Awaited<ReturnType<typeof storage.getEntity>> = null;
+          const meta = r.metadata as Record<string, unknown> | undefined;
+
+          // Strategy 1: direct hash ID from metadata or r.id
+          const metaEntityId = meta?.["entityId"] as string | undefined;
+          if (metaEntityId && /^[0-9a-f]{12}$/.test(metaEntityId)) {
+            ent = await storage.getEntity(metaEntityId);
+          }
+          if (!ent && typeof r.id === "string" && r.id.startsWith("ent:")) {
+            const idPart = r.id.slice(4);
+            if (/^[0-9a-f]{12}$/.test(idPart)) {
+              ent = await storage.getEntity(idPart);
+            }
+          }
+
+          // Strategy 2: parse composite ID → search by name, prefer entity with graph metrics
+          if (!ent) {
+            const compositeId =
+              metaEntityId ?? (typeof r.id === "string" && r.id.startsWith("ent:") ? r.id.slice(4) : undefined);
+            if (compositeId && compositeId.includes(":")) {
+              const lastColon = compositeId.lastIndexOf(":");
+              const entityName = compositeId.slice(lastColon + 1);
+              if (entityName) {
+                const found = await storage.searchEntities({ namePattern: entityName });
+                // Prefer entity that has graph metrics in metadata
+                ent =
+                  found.find((e) => e.metadata?.["communityId"] != null || e.metadata?.["pageRank"] != null) ??
+                  found[0] ??
+                  null;
+              }
+            }
+          }
+
+          if (!ent) return r;
+          const entMeta = ent.metadata ?? {};
+          const communityId = entMeta["communityId"];
+          const pageRank = entMeta["pageRank"];
+          if (communityId != null || pageRank != null) {
+            return {
+              ...r,
+              ...(communityId != null ? { communityId } : {}),
+              ...(typeof pageRank === "number" ? { pageRank: Math.round(pageRank * 10000) / 10000 } : {}),
+            };
+          }
+        } catch {
+          // Skip entities that can't be fetched
+        }
+        return r;
+      }),
+    );
+
     return {
       content: [
         {
@@ -522,9 +582,9 @@ export class FindRelatedConceptsToolHandler extends BaseToolHandler<z.infer<type
             {
               entityId: args.entityId,
               concept,
-              relatedCount: paginatedResult.data.length,
+              relatedCount: enrichedRelated.length,
               pagination: paginatedResult.pagination,
-              related: paginatedResult.data,
+              related: enrichedRelated,
             },
             null,
             2,
@@ -570,6 +630,49 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
       excludePatterns: args.excludePatterns,
     });
 
+    // Enrich chaotic entities with graph context (PageRank + Louvain community)
+    const graphContext: Array<{
+      stateIdentifier: string;
+      pageRank: number | null;
+      communityId: number | null;
+      communityRisk: "low" | "medium" | "high";
+    }> = [];
+
+    for (const r of results) {
+      const identifier = r.statePattern.identifier;
+      if (!identifier) continue;
+      // Search for entity by name — pick the first one with graph metrics in metadata
+      try {
+        const entities = await storage.searchEntities({ namePattern: identifier });
+        let pr: unknown = null;
+        let cid: unknown = null;
+        for (const ent of entities) {
+          const meta = ent.metadata ?? {};
+          if (meta["communityId"] != null || meta["pageRank"] != null) {
+            pr = meta["pageRank"];
+            cid = meta["communityId"];
+            break;
+          }
+        }
+        if (entities.length > 0) {
+          graphContext.push({
+            stateIdentifier: identifier,
+            pageRank: typeof pr === "number" ? pr : null,
+            communityId: typeof cid === "number" ? cid : null,
+            communityRisk:
+              typeof pr === "number" && pr > 0.7 ? "high" : typeof pr === "number" && pr > 0.4 ? "medium" : "low",
+          });
+        }
+      } catch {
+        // Skip entities that can't be fetched
+      }
+    }
+
+    const chaosNextSteps = [
+      "graph_metrics({metric:'louvain'}) — cluster chaotic modules by community",
+      "graph_metrics({metric:'pagerank'}) — assess architectural importance of chaotic entities",
+    ];
+
     if (args.format === "json") {
       return {
         content: [
@@ -579,6 +682,8 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
               {
                 statePatterns: results,
                 csharpPatterns: analyzer.csharpPatterns,
+                graphContext,
+                nextSteps: chaosNextSteps,
               },
               null,
               2,
@@ -604,8 +709,9 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
 
     // Default: AI-friendly summary (includes C# anti-patterns)
     const text = analyzer.formatForAI(results);
+    const nextStepsText = `\n\n---\nNext steps:\n${chaosNextSteps.map((s) => `- ${s}`).join("\n")}`;
     return {
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: text + nextStepsText }],
     };
   }
 }
@@ -832,6 +938,10 @@ export class AnalyzeCodeImpactToolHandler extends BaseToolHandler<z.infer<typeof
               riskLevel: impactedEntities.size > 50 ? "high" : impactedEntities.size > 20 ? "medium" : "low",
               ...(contractImpact ? { contractImpact } : {}),
               ...(recentlyChangedImpact ? { recentlyChangedImpact } : {}),
+              nextSteps: [
+                "graph_metrics({metric:'pagerank'}) — assess importance of impacted entities",
+                "taint_analysis() — check if impacted code has security vulnerabilities",
+              ],
             },
             null,
             2,

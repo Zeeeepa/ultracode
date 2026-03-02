@@ -203,6 +203,8 @@ export abstract class BaseToolHandler<TArgs = unknown> {
       }
 
       // Try to parse as JSON and truncate intelligently
+      let newItem: { type: "text"; text: string };
+
       try {
         const data = JSON.parse(item.text);
         const truncated = truncateResponse(data, this.maxResponseSize);
@@ -216,21 +218,39 @@ export abstract class BaseToolHandler<TArgs = unknown> {
             truncatedSizeBytes: truncated.truncatedSize,
             hint: "Response was truncated. Use 'offset' and 'limit' parameters for pagination.",
           };
-          return {
+          newItem = {
             type: "text" as const,
             text: JSON.stringify(parsed, null, 2),
           };
+        } else {
+          newItem = { type: "text" as const, text: truncated.text };
         }
-
-        return { type: "text" as const, text: truncated.text };
       } catch {
         // Not JSON, truncate as plain text
         const truncatedText = item.text.slice(0, this.maxResponseSize);
-        return {
+        newItem = {
           type: "text" as const,
           text: truncatedText + "\n\n[RESPONSE TRUNCATED - original size: " + size + " bytes]",
         };
       }
+
+      // Hard cap: if truncation logic didn't reduce size enough, slice as last resort
+      const finalSize = Buffer.byteLength(newItem.text, "utf8");
+      if (finalSize > this.maxResponseSize) {
+        const sliced = newItem.text.slice(0, this.maxResponseSize - 200);
+        return {
+          type: "text" as const,
+          text:
+            sliced +
+            "\n\n[RESPONSE TRUNCATED — hard cap at " +
+            this.maxResponseSize +
+            " bytes. Original: " +
+            finalSize +
+            " bytes. Use 'offset'/'limit' for pagination.]",
+        };
+      }
+
+      return newItem;
     });
 
     return { content: newContent };

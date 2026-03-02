@@ -27,6 +27,8 @@ export {
 } from "./autodoc-schemas.js";
 // Entity Operations
 export { ListEntitiesToolSchema, ListRelationshipsToolSchema, QueryToolSchema } from "./entity-schemas.js";
+// Graph Metrics
+export { GraphMetricsSchema } from "./graph-metrics-schemas.js";
 // Graph Operations
 export {
   ClearBusTopicSchema,
@@ -87,5 +89,7 @@ export {
   ListSnapshotsSchema,
   RollbackSnapshotSchema,
 } from "./snapshot-schemas.js";
+// Taint Analysis
+export { TaintAnalysisSchema } from "./taint-schemas.js";
 // Validation & Technology Detection
 export { DetectTechnologyStackSchema, ValidateDirectorySchema, ValidateFileSchema } from "./validation-schemas.js";

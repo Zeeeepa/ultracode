@@ -233,6 +233,65 @@ Leverage version history for change tracking and time travel:
 - `get_entity_history` reveals how code evolved over time
 - `checkout_commit` enables viewing any historical state without git checkout
 
+## 16. Security Audit
+
+Comprehensive security analysis of a codebase:
+
+```
+1. Full taint analysis
+   taint_analysis category="all"
+   -> Finds source→sink flows without sanitization
+
+2. Focus on critical categories
+   taint_analysis category="sql_injection"
+   taint_analysis category="command_injection"
+   -> Targeted analysis for specific vulnerability types
+
+3. Check for security patterns
+   detect_patterns category="anti-pattern" tags=["security"]
+   -> Detects insecure coding patterns
+
+4. Trace suspicious data flows
+   trace_data_flow entryPoint="handleRequest" targetState="database"
+   -> Understand how user data reaches the database
+
+5. Review high-risk entities
+   graph_metrics metric="pagerank" topN=10
+   -> Identify most important entities
+   -> Cross-reference with taint results for priority
+```
+
+## 17. Architecture Review
+
+Understand codebase architecture using graph metrics:
+
+```
+1. Identify most important entities
+   graph_metrics metric="pagerank" topN=20
+   -> Shows entities with highest connectivity importance
+
+2. Detect module boundaries
+   graph_metrics metric="louvain"
+   -> Community detection reveals natural module clusters
+
+3. Find architectural roles
+   graph_metrics metric="centrality" topN=20
+   -> Classifies entities as hub/authority/bridge/leaf
+
+4. Knowledge concentration risk
+   graph_metrics metric="bus_factor"
+   -> Shows files/modules with single-author risk
+
+5. Persist metrics for enhanced search
+   graph_metrics metric="pagerank" persist=true
+   graph_metrics metric="louvain" persist=true
+   -> Subsequent semantic_search results boosted by PageRank
+
+6. Combine with hotspot analysis
+   analyze_hotspots metric="complexity" limit=20
+   -> Cross-reference complexity hotspots with PageRank importance
+```
+
 ## Quick Reference
 
 ### Search
@@ -259,6 +318,10 @@ Leverage version history for change tracking and time travel:
 - `analyze_hotspots` — complex areas
 - `find_decision_points` — decision points in execution flow
 - `analyze_state_chaos` — state mutation analysis
+- `graph_metrics` — PageRank, Louvain communities, centrality, bus factor
+
+### Security
+- `taint_analysis` — source→sink flow analysis with vulnerability detection
 
 ### Modification
 - `modify_code` — modify code

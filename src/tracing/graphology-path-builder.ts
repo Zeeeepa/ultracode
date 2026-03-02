@@ -132,6 +132,10 @@ export class GraphologyPathBuilder {
     });
   }
 
+  getGraph(): Graph<GraphNodeAttributes, GraphEdgeAttributes> {
+    return this.graph;
+  }
+
   // ===========================================================================
   // GRAPH LOADING
   // ===========================================================================

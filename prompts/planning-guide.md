@@ -20,6 +20,8 @@ You're the **Plan Agent**. Your job: **assess risks BEFORE changes**. Answer "wh
 | **analyze_hotspots** | Find problem areas | Most complex/changed code |
 | **find_decision_points** | Understanding control flow | What conditions govern a scenario? |
 | **analyze_state_chaos** | State mutation risks | Where are uncontrolled side-effects? |
+| **graph_metrics** | Architecture understanding | PageRank importance, module clusters, bus factor |
+| **taint_analysis** | Security assessment | Untrusted data flows, missing sanitization |
 
 ### Planning Workflow (ALWAYS DO THIS)
 

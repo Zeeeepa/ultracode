@@ -139,6 +139,8 @@ import { installSkillsIfNeeded } from "./skills-installer.js";
 // Make knowledgeBus available globally for tool handlers
 (global as GlobalWithKnowledgeBus).knowledgeBus = knowledgeBus;
 
+// Tool list (extracted to separate file)
+import pLimit from "p-limit";
 // Roslyn addon lifecycle (C# parsing)
 import { ensureRoslynStarted, findSolutionFile, isRoslynAvailable, shutdownRoslynClient } from "./addons/index.js";
 // v5: Per-client session isolation for multi-client support
@@ -160,7 +162,7 @@ import {
   resetGraphStorage,
 } from "./storage/graph-storage-factory.js";
 import type { ToolContext } from "./tools/base-tool-handler.js";
-// Tool list (extracted to separate file)
+import { MAX_RESPONSE_SIZE_BYTES, truncateResponse } from "./tools/response-limits.js";
 import { getToolsList } from "./tools/tool-definitions.js";
 import { toolRegistry } from "./tools/tool-registry.js";
 // Re-export for external consumers
@@ -718,6 +720,70 @@ function briefArgs(args: unknown): string {
 }
 
 /**
+ * Heavy analysis tools that benefit from serialization and response limits.
+ */
+const analysisQueue = pLimit(1);
+
+const HEAVY_ANALYSIS_TOOLS = new Set([
+  "taint_analysis",
+  "graph_metrics",
+  "analyze_hotspots",
+  "analyze_code_impact",
+  "suggest_refactoring",
+  "analyze_state_chaos",
+  "analyze_swagger_impact",
+  "louvain_communities",
+  "pagerank",
+  "centrality_analysis",
+  "bus_factor",
+]);
+
+/**
+ * Transport-level safety net: prevent oversized responses from crashing MCP stdio.
+ * Checks cumulative byte size of all content items BEFORE they reach the transport.
+ * If over limit, truncates and injects a pagination hint.
+ */
+function enforceResponseLimit(
+  toolName: string,
+  result: { content: Array<{ type: "text"; text: string }> },
+): { content: Array<{ type: "text"; text: string }> } {
+  let totalBytes = 0;
+  for (const item of result.content) {
+    totalBytes += Buffer.byteLength(item.text, "utf8");
+  }
+
+  if (totalBytes <= MAX_RESPONSE_SIZE_BYTES) {
+    return result;
+  }
+
+  const newContent = result.content.map((item) => {
+    const size = Buffer.byteLength(item.text, "utf8");
+    if (size <= MAX_RESPONSE_SIZE_BYTES) return item;
+
+    try {
+      const data = JSON.parse(item.text);
+      const truncated = truncateResponse(data, MAX_RESPONSE_SIZE_BYTES);
+      const parsed = JSON.parse(truncated.text);
+      parsed._responseMeta = {
+        truncated: true,
+        originalSizeBytes: truncated.originalSize,
+        truncatedSizeBytes: truncated.truncatedSize,
+        hint: `Response from ${toolName} was truncated. Use 'offset' and 'limit' parameters for pagination.`,
+      };
+      return { type: "text" as const, text: JSON.stringify(parsed, null, 2) };
+    } catch {
+      const sliced = item.text.slice(0, MAX_RESPONSE_SIZE_BYTES);
+      return {
+        type: "text" as const,
+        text: sliced + `\n\n[TRUNCATED by enforceResponseLimit — use offset/limit for ${toolName}]`,
+      };
+    }
+  });
+
+  return { content: newContent };
+}
+
+/**
  * v5: Execute tool call with session-aware context.
  *
  * @param name - Tool name
@@ -838,9 +904,15 @@ async function executeToolCall(
     };
 
     if (toolRegistry.has(name)) {
-      // getHandler is async to support lazy loading of tool handlers
+      if (HEAVY_ANALYSIS_TOOLS.has(name)) {
+        return await analysisQueue(async () => {
+          const handler = await toolRegistry.getHandler(name, toolContext);
+          const result = await handler.handle(args);
+          return enforceResponseLimit(name, result);
+        });
+      }
       const handler = await toolRegistry.getHandler(name, toolContext);
-      return await handler.handle(args);
+      return handler.handle(args);
     }
 
     throw new Error(`Unknown tool: ${name}. Available tools: ${toolRegistry.getRegisteredTools().join(", ")}`);

@@ -23,6 +23,7 @@ const GetHelpSchema = z.object({
       "planning",
       "modification",
       "patterns",
+      "security",
     ])
     .describe("Documentation topic"),
 });
@@ -55,6 +56,7 @@ export class GetHelpToolHandler extends BaseToolHandler<HelpArgs> {
         planning: "planning-guide.md",
         modification: "modification-guide.md",
         patterns: "patterns-guide.md",
+        security: "security-guide.md",
       };
 
       const filename = filenameMap[topic];
@@ -103,6 +105,7 @@ export class GetHelpToolHandler extends BaseToolHandler<HelpArgs> {
                   "planning",
                   "modification",
                   "patterns",
+                  "security",
                 ],
               },
               null,

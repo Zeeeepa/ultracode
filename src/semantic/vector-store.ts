@@ -852,6 +852,15 @@ export class VectorStore {
 
       // Combine and sort by similarity
       const combined = [...enrichedEntities, ...enrichedDocs, ...autodocDerivedResults];
+
+      // PageRank boost: entities with high PageRank get ±10% similarity adjustment
+      for (const result of combined) {
+        const pr = (result.metadata as Record<string, unknown> | undefined)?.["pageRank"];
+        if (typeof pr === "number") {
+          result.similarity = (result.similarity || 0) * (1 + (pr - 0.5) * 0.2);
+        }
+      }
+
       combined.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
 
       log.d("VECTOR", "enrich_complete", {

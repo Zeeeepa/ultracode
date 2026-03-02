@@ -17,6 +17,8 @@
 | Find complex code | `semantic_search minCyclomatic=10` | Complexity filter |
 | Find undocumented code | `semantic_search hasDocumentation=false` | Docs filter |
 | Find async without error handling | `semantic_search hasAwaits=true hasExceptions=false` | Control flow filters |
+| Security vulnerabilities | `taint_analysis` | Source→sink flow tracing |
+| Architecture metrics | `graph_metrics` | PageRank, communities, bus factor |
 
 ## Supported Languages
 
