@@ -137,6 +137,20 @@ export default defineConfig([
         }
       }
 
+      // Copy prompts/ markdown files for get_help tool
+      const promptsSrc = join("prompts");
+      const promptsDst = join("dist", "prompts");
+      try {
+        await mkdir(promptsDst, { recursive: true });
+        const { readdirSync } = await import("node:fs");
+        for (const f of readdirSync(promptsSrc).filter((f) => f.endsWith(".md"))) {
+          await copyFile(join(promptsSrc, f), join(promptsDst, f));
+        }
+        console.log("[tsup] Copied prompts/ to dist/prompts/");
+      } catch (e: any) {
+        console.warn("[tsup] Prompts copy warning:", e.message);
+      }
+
       // Copy Roslyn addon if available (built by scripts/build-roslyn)
       const { cpSync, existsSync } = await import("node:fs");
       const { resolve } = await import("node:path");

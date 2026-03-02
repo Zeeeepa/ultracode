@@ -40,6 +40,8 @@ The handlers module contains all tool handler classes that implement the busines
 | `ValidateFileToolHandler` | class | Validates file syntax via linters | [`validation-tool-handlers.ts`](./validation-tool-handlers.ts) |
 | `IndexToolHandler` | class | Triggers project directory indexing | [`index-tool-handler.ts`](./index-tool-handler.ts) |
 | `GetGraphStatsToolHandler` | class | Returns knowledge graph statistics | [`graph-tool-handlers.ts`](./graph-tool-handlers.ts) |
+| `TaintAnalysisToolHandler` | class | Taint analysis with offset/limit pagination | [`taint-tool-handlers.ts`](./taint-tool-handlers.ts) |
+| `GraphMetricsToolHandler` | class | Graph metrics: pagerank, louvain, centrality, bus_factor | [`graph-metrics-tool-handlers.ts`](./graph-metrics-tool-handlers.ts) |
 | `GetHelpToolHandler` | class | Serves documentation from prompts/ directory | [`help-tool-handler.ts`](./help-tool-handler.ts) |
 | `GetToolsForTaskHandler` | class | Recommends tools based on task description | [`get-tools-for-task-handler.ts`](./get-tools-for-task-handler.ts) |
 
@@ -51,6 +53,7 @@ The handlers module contains all tool handler classes that implement the busines
 |--------|---------|
 | `tools/base-tool-handler` | `BaseToolHandler` base class and `ToolResult` type |
 | `tools/schemas` | Zod validation schemas for all tools |
+| `tools/response-limits` | `paginate()`, `SAFE_LIMITS`, `MAX_PAGE_SIZE` for pagination |
 | `tools/tool-definitions` | Tool metadata and descriptions |
 | `tools/impact-analyzer` | Code impact analysis engine |
 | `analysis/chaos` | State chaos and race condition detection |
@@ -67,8 +70,9 @@ The handlers module contains all tool handler classes that implement the busines
 | Property | Value |
 |----------|-------|
 | Loading strategy | Basic handlers eager, others lazy-loaded on first use |
-| Handler groups | 11 groups: analysis, autodoc, branch, entity, file, graph, merge, metrics, semantic, snapshot, tracing, validation |
+| Handler groups | 13 groups: analysis, autodoc, branch, entity, file, graph, graph-metrics, merge, metrics, security (taint), semantic, snapshot, tracing, validation |
 | Total handlers | 50+ tool handler classes |
+| Paginated handlers | `TaintAnalysisToolHandler`, `AnalyzeHotspotsToolHandler` use `paginate()` with `offset`/`limit` |
 
 ## Error Handling
 
@@ -153,5 +157,7 @@ Each handler wraps execution in try/catch and returns error details in the `Tool
 | `metrics-tool-handlers.ts` | System metrics, agent metrics, watcher status, version |
 | `semantic-tool-handlers.ts` | Semantic search, similar code, clones, patterns, cross-language |
 | `snapshot-tool-handlers.ts` | Snapshot create, rollback, list, cleanup |
+| `taint-tool-handlers.ts` | Taint analysis handler with offset/limit pagination via `paginate()` |
+| `graph-metrics-tool-handlers.ts` | Graph metrics handler: pagerank, louvain, centrality, bus_factor |
 | `tracing-tool-handlers.ts` | Flow tracing, backwards tracing, data flow, state impact |
 | `validation-tool-handlers.ts` | File and directory validation via linters |

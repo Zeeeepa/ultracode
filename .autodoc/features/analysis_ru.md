@@ -373,3 +373,45 @@ analyze_state_chaos({
 ```
 detect_technology_stack({ detailed: true })
 ```
+
+---
+
+## graph_metrics
+
+Граф-метрики архитектуры: PageRank, кластеризация Louvain, степень центральности и bus factor.
+
+### Параметры
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|-------------|----------|
+| `projectPath` | string | текущий проект | Путь к директории проекта |
+| `metric` | enum | обязательный | `pagerank`, `louvain`, `centrality` или `bus_factor` |
+| `topN` | number | `20` | Количество топ-результатов (для pagerank, centrality) |
+| `minCommunitySize` | number | `2` | Минимальный размер кластера (для louvain) |
+| `persist` | boolean | `false` | Сохранить метрики в metadata entity для бустинга семантического поиска |
+
+### Результат (зависит от метрики)
+
+**PageRank**: Топ entity по важности с in/out degree и статистикой распределения.
+
+**Louvain**: Кластеры с entity-участниками, основными файлами, когезией и модулярностью.
+
+**Centrality**: Топ entity по степени центральности с классификацией ролей (hub/authority/bridge/leaf).
+
+**Bus Factor**: Общий bus factor проекта, анализ по файлам и модулям с разбивкой по авторам и уровнями риска.
+
+### Примеры
+
+```ts
+// Топ-10 самых важных entity
+graph_metrics({ metric: "pagerank", topN: 10 })
+
+// Обнаружить кластеры модулей
+graph_metrics({ metric: "louvain" })
+
+// Риск концентрации знаний
+graph_metrics({ metric: "bus_factor" })
+
+// Сохранить для бустинга поиска
+graph_metrics({ metric: "pagerank", persist: true })
+```

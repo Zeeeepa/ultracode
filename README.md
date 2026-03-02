@@ -34,7 +34,7 @@ Reduces time and token costs by up to 90% when working with code through AI agen
 
 # Features
 
-MCP server provides **70 tools** for code analysis and modification.
+MCP server provides **72 tools** for code analysis and modification.
 
 ## Search and Navigation
 
@@ -61,6 +61,8 @@ MCP server provides **70 tools** for code analysis and modification.
 | [**detect_technology_stack**](.autodoc/features/analysis.md#detect_technology_stack) | Project technology stack detection |
 | [**detect_patterns**](.autodoc/features/patterns.md#detect_patterns) | Detect anti-patterns, best-patterns, code smells, and optimization opportunities with semantic validation |
 | [**check_entity_patterns**](.autodoc/features/patterns.md#check_entity_patterns) | Check specific entity for pattern matches with confidence scores |
+| [**graph_metrics**](.autodoc/features/analysis.md#graph_metrics) | PageRank, Louvain community detection, centrality analysis, and bus factor for architecture understanding |
+| [**taint_analysis**](.autodoc/features/security.md#taint_analysis) | Interprocedural taint analysis: trace untrusted data from sources to sinks, detect SQL injection, XSS, command injection |
 
 ## Static Tracing and Debugging
 
@@ -218,7 +220,7 @@ MCP server provides **70 tools** for code analysis and modification.
 You can add a [short prompt](.autodoc/claude.cfg/add-to-CLAUDE.md) to your system prompts that will help the AI agent learn about UltraCode capabilities.
 
 - **quick-start** — quick start and tool selection
-- **tool-reference** — complete reference of 70 tools
+- **tool-reference** — complete reference of 72 tools
 - **workflows** — ready scenarios: analysis, refactoring, duplicate detection
 - **tracing-guide** — tracing and debugging guide
 

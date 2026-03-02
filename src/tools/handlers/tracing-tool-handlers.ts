@@ -342,6 +342,10 @@ export class TraceDataFlowToolHandler extends BaseToolHandler<z.infer<typeof Tra
         success: true,
         ...result,
         formatted: this.formatter.formatDataFlowAsText(result),
+        nextSteps: [
+          "taint_analysis() — security-focused analysis of the same data flows",
+          "analyze_state_chaos() — detect state management issues in traced flow",
+        ],
       },
       null,
       2,

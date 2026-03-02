@@ -35,6 +35,8 @@ The schemas module contains all Zod schema definitions that validate and type-ch
 | `SemanticMergeSchema` | const | Semantic branch merge with conflict resolution | [`merge-schemas.ts:8-21`](./merge-schemas.ts) |
 | `ValidateFileSchema` | const | Single file syntax validation | [`validation-schemas.ts:8-18`](./validation-schemas.ts) |
 | `GetEntityHistorySchema` | const | Entity change history via Prolly Tree | [`history-schemas.ts:8-11`](./history-schemas.ts) |
+| `TaintAnalysisSchema` | const | Taint analysis with category, offset/limit pagination | [`taint-schemas.ts`](./taint-schemas.ts) |
+| `GraphMetricsSchema` | const | Graph metrics: pagerank, louvain, centrality, bus_factor | [`graph-metrics-schemas.ts`](./graph-metrics-schemas.ts) |
 | `DEFAULT_EXCLUDE_PATTERNS` | const | Default file exclusion patterns for indexing | [`index-schemas.ts:9-60`](./index-schemas.ts) |
 
 ## Dependencies
@@ -56,7 +58,7 @@ The schemas module contains all Zod schema definitions that validate and type-ch
 | Property | Value |
 |----------|-------|
 | Total schemas | 60+ validation schemas |
-| Schema groups | 12 domain files (analysis, autodoc, entity, graph, history, index, merge, modification, semantic, snapshot, validation) |
+| Schema groups | 14 domain files (analysis, autodoc, entity, graph, graph-metrics, history, index, merge, modification, semantic, snapshot, taint, validation) |
 | Validation approach | Zod parse with descriptive error messages |
 
 ## Error Handling
@@ -88,6 +90,7 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 - `ListEntitiesToolSchema`
 - `ListRelationshipsToolSchema`
 - `QueryToolSchema`
+- `GraphMetricsSchema`
 - `ClearBusTopicSchema`
 - `GetBusStatsSchema`
 - `GetGraphHealthSchema`
@@ -119,7 +122,6 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 - `AnalyzeSwaggerImpactSchema`
 - `CrossLanguageSearchSchema`
 - `DetectCodeClonesSchema`
-- `FindRelatedConceptsSchema`
 
 ## Files
 
@@ -130,6 +132,8 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 | `autodoc-schemas.ts` | Schemas for documentation generation and management |
 | `entity-schemas.ts` | Schemas for entity listing, relationships, queries |
 | `graph-schemas.ts` | Schemas for knowledge graph and data bus operations |
+| `graph-metrics-schemas.ts` | Schema for graph_metrics tool (metric, topN, minCommunitySize, persist) |
+| `taint-schemas.ts` | Schema for taint_analysis tool (category, maxDepth, includeTests, offset, limit) |
 | `history-schemas.ts` | Schemas for entity history and commit time travel |
 | `index-schemas.ts` | Schemas for indexing and exclude patterns |
 | `merge-schemas.ts` | Schemas for semantic merging and conflict resolution |

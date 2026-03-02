@@ -34,7 +34,7 @@
 
 # Возможности
 
-MCP-сервер предоставляет **70 инструментов** для анализа и модификации кода.
+MCP-сервер предоставляет **72 инструмента** для анализа и модификации кода.
 
 ## Поиск и навигация
 
@@ -61,6 +61,8 @@ MCP-сервер предоставляет **70 инструментов** дл
 | [**detect_technology_stack**](.autodoc/features/analysis_ru.md#detect_technology_stack) | Определение стека технологий проекта |
 | [**detect_patterns**](.autodoc/features/patterns_ru.md#detect_patterns) | Обнаружение анти-паттернов, лучших практик, code smells и возможностей оптимизации с семантической валидацией |
 | [**check_entity_patterns**](.autodoc/features/patterns_ru.md#check_entity_patterns) | Проверка конкретной entity на совпадение с паттернами |
+| [**graph_metrics**](.autodoc/features/analysis_ru.md#graph_metrics) | PageRank, кластеризация Louvain, анализ центральности и bus factor для понимания архитектуры |
+| [**taint_analysis**](.autodoc/features/security_ru.md#taint_analysis) | Межпроцедурный taint-анализ: отслеживание ненадёжных данных от источников до приёмников, детекция SQL-инъекций, XSS, command injection |
 
 ## Статическая трассировка и отладка
 
@@ -220,7 +222,7 @@ MCP-сервер предоставляет **70 инструментов** дл
 В системные промпты можно добавить [короткий промпт](.autodoc/claude.cfg/add-to-CLAUDE.md) который поможет ИИ-агенту узнать о способе получения информации о работе UltraCode.
 
 - **quick-start** — быстрый старт и выбор инструментов
-- **tool-reference** — полный справочник 70 инструментов
+- **tool-reference** — полный справочник 72 инструментов
 - **workflows** — готовые сценарии: анализ, рефакторинг, поиск дубликатов
 - **tracing-guide** — руководство по трассировке и отладке
 

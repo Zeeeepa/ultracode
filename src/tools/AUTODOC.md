@@ -105,6 +105,7 @@ MCP Request → conductor.handleRequest()
 | `SAFE_LIMITS.entities` | 100 | Max entities per response |
 | `SAFE_LIMITS.clones` | 30 | Max clone results per response |
 | `SAFE_LIMITS.hotspots` | 20 | Max hotspot results per response |
+| `SAFE_LIMITS.taintVulnerabilities` | 20 | Max taint vulnerabilities per page |
 | Eager-loaded tools | 17 | Help, Index, Graph, Entity, Metrics handlers |
 | Lazy-loaded groups | 11 | Semantic, Analysis, Branch, File, Validation, Merge, Trace, AutoDoc, History, Snapshot |
 
@@ -115,6 +116,9 @@ MCP Request → conductor.handleRequest()
 - Project path resolves in priority: explicit arg > `session.projectPath` > `context.projectPath` > legacy singleton.
 - Response truncation uses binary-search to find safe array slice count; prioritizes fields `id, name, type, count, error`.
 - `_responseMeta` added when truncated, hinting pagination params.
+- **Heavy analysis tools** (taint_analysis, graph_metrics, analyze_hotspots, etc.) are serialized via `pLimit(1)` queue in `index.ts` to prevent concurrent memory spikes.
+- **Transport-level safety net** (`enforceResponseLimit` in `index.ts`): checks `Buffer.byteLength` of response after handler execution; if over `MAX_RESPONSE_SIZE_BYTES` (50KB), truncates and injects `_responseMeta` with pagination hint.
+- **Handler-level pagination**: tools like `taint_analysis` and `analyze_hotspots` accept `offset`/`limit` and use `paginate()` from `response-limits.ts` to return only a page of results with `PaginationMeta`.
 - Branch operations use `execSync` for git commands (blocking).
 - JSCPD limits: MAX_FILES=500, MAX_FILE_SIZE=500KB.
 
@@ -146,7 +150,7 @@ MCP Request → conductor.handleRequest()
 2. Global singleton `ProjectContextManager` used as fallback in legacy mode.
 3. Response truncation is lossy; may cut important data beyond 50KB.
 4. No request timeout enforcement; `withTimeout` available but not always applied.
-5. No rate limiting; unlimited concurrent handler instances possible.
+5. Heavy analysis tools serialized via `pLimit(1)` queue; non-heavy tools still have no concurrency limit.
 6. Branch switching uses synchronous `execSync`, can block the event loop.
 7. `ImpactAnalyzer` confidence is heuristic-based, not statically proven.
 
@@ -189,6 +193,8 @@ MCP Request → conductor.handleRequest()
 | [`handlers/validation-tool-handlers.ts`](./handlers/validation-tool-handlers.ts) | 542 | Handler | 2 validation handlers: file, directory (lazy) |
 | [`handlers/merge-tool-handlers.ts`](./handlers/merge-tool-handlers.ts) | 330 | Handler | 4 merge handlers (lazy) |
 | [`handlers/tracing-tool-handlers.ts`](./handlers/tracing-tool-handlers.ts) | 739 | Handler | 5 trace handlers: flow, backwards, data_flow (lazy) |
+| [`handlers/taint-tool-handlers.ts`](./handlers/taint-tool-handlers.ts) | 72 | Handler | Taint analysis with pagination (lazy) |
+| [`handlers/graph-metrics-tool-handlers.ts`](./handlers/graph-metrics-tool-handlers.ts) | ~200 | Handler | Graph metrics: pagerank, louvain, centrality, bus_factor (lazy) |
 | [`handlers/autodoc-tool-handlers.ts`](./handlers/autodoc-tool-handlers.ts) | 1105 | Handler | 11 AutoDoc handlers (lazy) |
 | [`handlers/history-tool-handlers.ts`](./handlers/history-tool-handlers.ts) | 275 | Handler | 4 time travel handlers (lazy) |
 | [`handlers/snapshot-tool-handlers.ts`](./handlers/snapshot-tool-handlers.ts) | 258 | Handler | 4 snapshot handlers (lazy) |
@@ -204,4 +210,6 @@ MCP Request → conductor.handleRequest()
 | [`schemas/merge-schemas.ts`](./schemas/merge-schemas.ts) | 34 | Schema | Merge tool arg schemas |
 | [`schemas/snapshot-schemas.ts`](./schemas/snapshot-schemas.ts) | 23 | Schema | Snapshot tool arg schemas |
 | [`schemas/graph-schemas.ts`](./schemas/graph-schemas.ts) | 33 | Schema | Graph tool arg schemas |
+| [`schemas/taint-schemas.ts`](./schemas/taint-schemas.ts) | ~30 | Schema | Taint analysis arg schema (with offset/limit) |
+| [`schemas/graph-metrics-schemas.ts`](./schemas/graph-metrics-schemas.ts) | ~40 | Schema | Graph metrics arg schema |
 | [`schemas/index.ts`](./schemas/index.ts) | 88 | Config | Central schema exports |

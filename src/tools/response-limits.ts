@@ -22,6 +22,7 @@ export const SAFE_LIMITS = {
   searchResults: 20,
   hotspots: 20,
   graphNodes: 200,
+  taintVulnerabilities: 20,
 } as const;
 
 /**
@@ -106,9 +107,11 @@ export function truncateResponse(data: unknown, maxSize: number = MAX_RESPONSE_S
 }
 
 /**
- * Recursively truncate data to fit within size limit
+ * Recursively truncate data to fit within size limit.
+ * @param depth - recursion depth guard (max 5) to prevent stack overflow
  */
-function truncateData(data: unknown, maxSize: number): unknown {
+function truncateData(data: unknown, maxSize: number, depth: number = 0): unknown {
+  if (depth > 5) return "[nested data omitted]";
   if (data === null || data === undefined) return data;
   if (typeof data !== "object") return data;
 
@@ -116,7 +119,7 @@ function truncateData(data: unknown, maxSize: number): unknown {
     return truncateArray(data, maxSize);
   }
 
-  return truncateObject(data as Record<string, unknown>, maxSize);
+  return truncateObject(data as Record<string, unknown>, maxSize, depth);
 }
 
 /**
@@ -150,9 +153,9 @@ function truncateArray(arr: unknown[], maxSize: number): unknown {
 }
 
 /**
- * Truncate object - prioritize certain fields
+ * Truncate object - prioritize certain fields, recurse into nested objects
  */
-function truncateObject(obj: Record<string, unknown>, maxSize: number): Record<string, unknown> {
+function truncateObject(obj: Record<string, unknown>, maxSize: number, depth: number = 0): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   // Priority fields to keep
@@ -168,10 +171,24 @@ function truncateObject(obj: Record<string, unknown>, maxSize: number): Record<s
     }
   }
 
-  // Second pass: add non-array, non-priority fields
+  // Second pass: add non-array, non-priority fields (WITH recursion and string truncation)
   for (const key of Object.keys(obj)) {
     if (!priorityFields.includes(key) && !Array.isArray(obj[key])) {
-      result[key] = obj[key];
+      const value = obj[key];
+      if (typeof value === "string" && value.length > maxSize * 0.2) {
+        // Truncate long strings
+        result[key] = value.slice(0, Math.floor(maxSize * 0.2)) + "... [truncated]";
+      } else if (typeof value === "object" && value !== null) {
+        // Recurse into nested objects
+        const remainingSize = maxSize - JSON.stringify(result).length;
+        if (remainingSize > 100) {
+          result[key] = truncateData(value, remainingSize * 0.8, depth + 1);
+        } else {
+          result[key] = "[object omitted — response too large]";
+        }
+      } else {
+        result[key] = value;
+      }
     }
   }
 
