@@ -11,7 +11,28 @@
 | Manual dependency check | `analyze_code_impact` | Shows what breaks |
 | `Grep` for duplicates | `detect_code_clones` | Semantic similarity |
 
-**⚡ Indexing is automatic** — GitWatcher indexes incrementally on file changes and fully on branch switch. Manual `index()` only needed for force reindex.
+**Indexing is automatic** — GitWatcher indexes incrementally on file changes and fully on branch switch. Manual `index()` only needed for force reindex.
+
+## Subagent Instructions (CRITICAL)
+
+Subagents (Explore, Plan, general-purpose) do **NOT** see this CLAUDE.md file. When spawning any Agent, you MUST prepend to the agent prompt:
+
+```
+IMPORTANT: Use ToolSearch to load UltraCode MCP tools before searching code.
+Run: ToolSearch(query="+ultracode semantic_search") to load search tools.
+Then use mcp__ultracode__semantic_search instead of Grep for code search,
+and mcp__ultracode__get_members instead of Glob+Read for listing file entities.
+These tools understand code semantics and are 5-10x faster than text search.
+```
+
+**Prefer direct MCP calls over spawning agents** for these tasks:
+
+| Task | Don't spawn Agent | Use directly |
+|------|-------------------|-------------|
+| Find code by meaning | Agent(Explore) | `semantic_search` |
+| List file entities | Agent(Explore) | `get_members` |
+| Check what breaks | Agent(Plan) | `analyze_code_impact` |
+| Trace code flow | Agent(general-purpose) | `trace_flow` |
 
 ## Quick Tools
 
@@ -25,19 +46,19 @@
 
 ### Tools by Agent Type
 
-**🔍 Explore Agent** (fast reconnaissance):
+**Explore Agent** (fast reconnaissance):
 - `semantic_search` — search by meaning with filters (complexity, async, docs)
 - `pattern_search` — regex + framework-aware search
 - `get_members` — list file entities
 - `detect_technology_stack` — detect project stack
 
-**📋 Plan Agent** (risk assessment):
+**Plan Agent** (risk assessment):
 - `analyze_code_impact` — what breaks on change
 - `trace_flow` — how code gets from A to B
 - `trace_backwards` — why method isn't called
 - `analyze_hotspots` — complex code areas
 
-**✏️ Modify Agent** (safe changes):
+**Modify Agent** (safe changes):
 - `modify_code` + `create_snapshot` — change with auto-backup
 - `rename_symbol` — rename with reference updates
 - `validate_file` — check before commit
@@ -62,10 +83,10 @@
 ## AutoDoc — If Project Has `.autodoc/`
 
 **Key features:**
-- 🔗 Code references are **auto-updated** — always accurate line numbers
-- 🧠 Find code by **business meaning**, not keywords — even undocumented code
-- 📝 Module `AUTODOC.md` auto-generated, your additions become **project memory**
-- ⚡ `autodoc_search` — instant search across **code + docs simultaneously**
+- Code references are **auto-updated** — always accurate line numbers
+- Find code by **business meaning**, not keywords — even undocumented code
+- Module `AUTODOC.md` auto-generated, your additions become **project memory**
+- `autodoc_search` — instant search across **code + docs simultaneously**
 
 1. **Start with `autodoc_search`** — finds code by meaning, not just keywords
 2. **Read `.autodoc/` files** — business context that links to code
