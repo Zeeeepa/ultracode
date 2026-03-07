@@ -12,7 +12,7 @@
  * - Consistent search results across layers
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { log, logMemory } from "../../logging/index.js";
@@ -745,6 +745,66 @@ export class LayeredFaissProvider {
         deltaIdSetSize: this.deltaIdSet.size,
       });
     }
+  }
+
+  /**
+   * Clear all vectors, reset FAISS index to empty state, and remove persisted files.
+   */
+  async clearAll(): Promise<void> {
+    if (!this.client || !this.isInitialized) {
+      // Just clear in-memory sets
+      this.baseIdSet.clear();
+      this.deltaIdSet.clear();
+      this.tombstones.clear();
+      return;
+    }
+
+    const projectDir = getProjectDir(this.projectPath);
+    const paths = getLayeredPaths(projectDir, this.currentBranch!, this.baseBranch);
+
+    // Delete persisted FAISS files
+    const filesToDelete = [
+      paths.baseIndex,
+      paths.baseIds,
+      paths.baseMeta,
+      paths.deltaIndex,
+      paths.deltaIds,
+      paths.deltaMeta,
+      paths.tombstones,
+    ];
+    for (const file of filesToDelete) {
+      try {
+        if (existsSync(file)) unlinkSync(file);
+      } catch {
+        // Ignore deletion errors
+      }
+    }
+
+    // Clear in-memory state
+    this.baseIdSet.clear();
+    this.deltaIdSet.clear();
+    this.tombstones.clear();
+    this.baseUnsavedCount = 0;
+    this.deltaUnsavedCount = 0;
+
+    // Reinitialize FAISS with empty index (no loadPath = fresh index)
+    const indexConfig: FaissIndexConfig = {
+      dimensions: this.config.dimensions,
+      indexType: this.config.indexType,
+      metric: "l2",
+      hnswM: this.config.hnswM,
+      hnswEfConstruction: this.config.hnswEfConstruction,
+      hnswEfSearch: this.config.hnswEfSearch,
+      ivfNlist: 256,
+      ivfNprobe: 32,
+      sqBits: 8,
+    };
+    await this.client.faissInitialize(this.getProjectKey(), indexConfig, undefined);
+
+    log.i("LAYERED_FAISS", "clearAll_done", {
+      branch: this.currentBranch,
+      deletedFiles: filesToDelete.filter((f) => !existsSync(f)).length,
+    });
   }
 
   /**

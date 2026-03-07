@@ -301,18 +301,30 @@ All DBs: `journal_mode=OFF`, `synchronous=OFF`, `cache_size=-8192` (8 MB per DB)
 
 #### VS Code
 
-[github.com/microsoft/vscode](https://github.com/microsoft/vscode) — 1.9M LOC, 7198 files, 253K entities, 838K rels
+[github.com/microsoft/vscode](https://github.com/microsoft/vscode) — 1.9M LOC, 7082 files, 253K entities, 881K rels
 
-| Metric | v6.4 (staging) | v6.3 (no staging) | Delta |
-|--------|----------------|-------------------|-------|
-| **Total index_done** | **82-97 sec** | 205 sec | **2.1-2.5x faster** |
-| **Parsing (14 workers)** | ~14 sec | ~42 sec | difference in flush overlap |
-| **DB flush (8 batches)** | ~31 sec (4-6s each, stable) | ~159 sec (14→32s, degrading) | **5.1x faster** |
-| **commitStaging** | ~11 sec | — | new |
-| **Total flush+commit** | **~42 sec** | **~159 sec** | **3.8x faster** |
-| **Embedding flush** | ~32 sec | ~32 sec | ~same |
+| Metric | v6.5 (chunked FAISS) | v6.4 (staging) | v6.3 (no staging) |
+|--------|----------------------|----------------|-------------------|
+| **Total** | **82 sec** | 82-97 sec | 205 sec |
+| **collectFiles** | 1.8 sec | — | — |
+| **preSpawn (workers)** | 1.8 sec | — | — |
+| **Parsing (14 workers)** | 10.1 sec | ~14 sec | ~42 sec |
+| **DB flush** | 35.1 sec | ~31 sec | ~159 sec |
+| **Swagger linking** | 2.2 sec | — | — |
+| **= Parsing total** | **51.2 sec** | ~56 sec | ~201 sec |
+| **TEI Embeddings** | 64.4 sec (1004 emb/s) | ~32 sec | ~32 sec |
+| **FAISS addBatch** | **12.9 sec** (chunked 4×16K) | 39.3 sec (timeout+retry) | — |
+| **Timeout errors** | **0** | 1 | — |
+| **Total embeddings** | 74,231 | 64,677 | — |
 
-**Why staging is faster:**
+**v6.5 chunked FAISS improvement:**
+- Large batches (>16K vectors) split into 16,384-vector chunks with adaptive timeout
+- First chunk triggers IVF training (~9.8 sec), subsequent chunks ~1 sec each
+- Eliminated timeout errors: 30s default → 120s for first chunk, 60s for rest
+- FAISS speed: 5,000 vectors/s (vs 1,645/s without chunking — **3x faster**)
+- `reset=true` now clears FAISS index + LibSQL embedding cache (was graph-only)
+
+**Why staging is faster (v6.4):**
 - Staging tables have no PRIMARY KEY → heap append O(1) per row (no B-tree page splits)
 - Main table indexes dropped during indexing → no index maintenance during flush
 - Cross-flush duplicates handled by `INSERT OR REPLACE INTO` during commit

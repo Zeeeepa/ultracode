@@ -1,6 +1,6 @@
 # Taint
 
-Analyzes taint flows to identify security vulnerabilities in code.
+Analyzes taint flows from untrusted data sources to dangerous sinks.
 
 ## Response Handling
 

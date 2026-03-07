@@ -1,6 +1,6 @@
 # Graph Metrics
 
-Analyzes graph metrics including PageRank, Louvain clustering, centrality, and bus factor.
+Analyzes code dependency graphs using PageRank, community detection, centrality measures, and bus factor metrics.
 
 ## Exports
 

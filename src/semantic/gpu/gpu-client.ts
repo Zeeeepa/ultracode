@@ -601,8 +601,8 @@ class GpuSubprocessClient implements IGpuClient {
     // Create binary packet
     const packet = createPacket(headerData, vectors);
 
-    // Send and receive response
-    const responseBuffer = await this.namedPipeClient.send(packet);
+    // Send and receive response (pass current timeout for adaptive operations)
+    const responseBuffer = await this.namedPipeClient.send(packet, this.config.timeout);
     const { header } = parsePacket(responseBuffer);
 
     return header as unknown as GpuWorkerResponse;
@@ -626,6 +626,49 @@ class GpuSubprocessClient implements IGpuClient {
 
   async faissAdd(projectKey: string, ids: string[], vectors: Float32Array | number[]): Promise<FaissAddResponse> {
     const vectorArray = vectors instanceof Float32Array ? Array.from(vectors) : vectors;
+
+    // Chunked add: split large batches to avoid IPC timeout during IVF training
+    const MAX_CHUNK = 16384;
+    if (ids.length > MAX_CHUNK) {
+      const dims = vectorArray.length / ids.length;
+      let totalAdded = 0;
+
+      for (let offset = 0; offset < ids.length; offset += MAX_CHUNK) {
+        const end = Math.min(offset + MAX_CHUNK, ids.length);
+        const chunkIds = ids.slice(offset, end);
+        const chunkVectors = vectorArray.slice(offset * dims, end * dims);
+        const chunkSize = chunkIds.length;
+
+        // Adaptive timeout: first chunk may trigger IVF training (120s), subsequent are fast (60s)
+        const savedTimeout = this.config.timeout;
+        const baseTimeout = savedTimeout ?? 30000;
+        this.config.timeout = offset === 0 ? Math.max(baseTimeout, 120000) : Math.max(baseTimeout, 60000);
+
+        try {
+          const response = await this.sendRequest({
+            type: "faiss.add",
+            projectKey,
+            ids: chunkIds,
+            vectors: chunkVectors,
+          });
+          if (!response.success) throw new Error(extractGpuError(response));
+          totalAdded += chunkSize;
+        } finally {
+          this.config.timeout = savedTimeout;
+        }
+
+        log.d("GPU", "faissAdd_chunk", { offset, chunkSize, totalAdded, total: ids.length });
+      }
+
+      return {
+        success: true,
+        type: "faiss.add",
+        addedCount: totalAdded,
+        totalVectors: totalAdded,
+        addTimeMs: 0,
+      } as FaissAddResponse;
+    }
+
     const response = await this.sendRequest({ type: "faiss.add", projectKey, ids, vectors: vectorArray });
     if (!response.success) throw new Error(extractGpuError(response));
     return response as FaissAddResponse;

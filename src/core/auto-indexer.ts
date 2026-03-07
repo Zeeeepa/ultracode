@@ -333,11 +333,23 @@ export async function performAutoIndex(
   let resultSuccess = true;
 
   try {
-    // Optional reset: clear storage before indexing
+    // Optional reset: clear storage and vectors before indexing
     if (opts.reset) {
       const graphStorage = await ctx.getGraphStorage();
       graphStorage.setProject(targetDir);
       await graphStorage.clear();
+
+      // Clear FAISS vectors + embedding cache (otherwise reset is incomplete)
+      if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
+        try {
+          const semanticAgent = await ctx.getSemanticAgent();
+          await semanticAgent.clearAllVectors();
+          log.d("INDEXER", "vectors_cleared", { dir: targetDir });
+        } catch (err) {
+          log.w("INDEXER", "vectors_clear_fail", { err: (err as Error).message });
+        }
+      }
+
       log.d("INDEXER", "storage_cleared", { dir: targetDir });
     }
 

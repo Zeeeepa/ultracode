@@ -951,6 +951,16 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   }
 
   /**
+   * Clear all vectors, FAISS index, and embedding cache. Full reset.
+   */
+  async clearAllVectors(): Promise<void> {
+    await this.vectorStore.clearAllVectors();
+    this.globalCache?.clear();
+    this.semanticMetrics.vectorsStored = 0;
+    log.i("SEMANTIC", "clearAllVectors_done");
+  }
+
+  /**
    * Rebuild vector index after bulk inserts.
    * Uses FAISS HNSW which supports live updates - no explicit rebuild needed.
    * Falls back to LibSQL DiskANN only if FAISS unavailable.

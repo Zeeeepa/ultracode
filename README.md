@@ -40,7 +40,7 @@ With UltraCode, the same agent makes **one MCP call** and gets back all affected
 
 ### Indexing speed
 
-Full indexing of a medium project (~500 files) completes in **3-5 seconds** (parallel parsing + batch SQL + streaming embeddings). After that, `GitWatcher` indexes only changed files — typically **under 200ms** per change.
+Full indexing of a medium project (~500 files) completes in **3-5 seconds** (parallel parsing + batch SQL + streaming embeddings). Large projects like VS Code (~1.8M LOC, 7000+ files) — **~82 seconds** including full embedding generation. After that, `GitWatcher` indexes only changed files — typically **under 200ms** per change.
 
 # Features
 

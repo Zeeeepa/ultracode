@@ -30,6 +30,8 @@ export interface IVectorProvider {
   remove(ids: string[]): Promise<unknown>;
   /** Save the index to disk */
   save(): Promise<void>;
+  /** Clear all vectors and reset index to empty state */
+  clearAll(): Promise<void>;
 }
 
 export interface FaissIndexConfig {

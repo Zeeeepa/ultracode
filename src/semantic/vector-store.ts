@@ -457,6 +457,27 @@ export class VectorStore {
   }
 
   /**
+   * Clear all vectors, FAISS index, and embedding cache. Used by reset=true.
+   */
+  async clearAllVectors(): Promise<void> {
+    if (this.layeredProvider) {
+      await this.layeredProvider.clearAll();
+      log.i("VECTOR", "clearAllVectors: layered provider cleared");
+    }
+    // Clear LibSQL embedding cache
+    try {
+      const { getLibSQLAdapter } = await import("../storage/graph-storage-factory.js");
+      const adapter = getLibSQLAdapter();
+      if (adapter) {
+        await adapter.clearEmbeddingCache();
+        log.i("VECTOR", "clearAllVectors: embedding_cache cleared");
+      }
+    } catch {
+      // Adapter not initialized or table doesn't exist
+    }
+  }
+
+  /**
    * Rebuild vector index - v5: No-op (Faiss HNSW maintains index automatically)
    */
   async rebuildVectorIndex(): Promise<void> {

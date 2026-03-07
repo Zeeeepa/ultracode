@@ -1062,6 +1062,8 @@ export class LibSQLGraphAdapter {
     entries: Array<{ contentHash: string; model: string; embedding: Float32Array; textPreview?: string }>,
   ): Promise<void> => this.cacheOps.setEmbeddingsInCache(entries);
 
+  clearEmbeddingCache = (): Promise<void> => this.cacheOps.clearEmbeddingCache();
+
   // ===========================================================================
   // METADATA OPERATIONS (delegated to MetadataOperations)
   // ===========================================================================

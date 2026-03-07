@@ -762,6 +762,11 @@ class FaissProvider {
 
     log.d("FAISS", "Removed embeddings", { count: ids.length });
   }
+
+  async clearAll(): Promise<void> {
+    this.idSet.clear();
+    log.i("FAISS", "clearAll (legacy provider)");
+  }
 }
 
 // =============================================================================

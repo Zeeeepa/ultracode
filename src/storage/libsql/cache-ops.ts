@@ -157,4 +157,14 @@ export class CacheOperations {
       // Ignore cache write errors
     }
   }
+
+  async clearEmbeddingCache(): Promise<void> {
+    const client = this.getClient();
+    if (!client) return;
+    try {
+      await client.execute("DELETE FROM embedding_cache");
+    } catch {
+      // Table may not exist yet
+    }
+  }
 }
