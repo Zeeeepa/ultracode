@@ -84,7 +84,7 @@ export function formatModule(module: string): string {
 }
 
 /**
- * Format event name (20 chars, pad right)
+ * Format event name (28 chars, pad right)
  */
 export function formatEvent(event: string): string {
   return event.slice(0, LOG_FIELD_LENGTHS.EVENT).padEnd(LOG_FIELD_LENGTHS.EVENT, " ");
@@ -164,7 +164,7 @@ function parseWorkerLogLine(line: string, lineNumber: number): ParsedLogLine | n
     buildHash: "worker--",
     projectHash: workerId!.slice(0, 8).padEnd(8, "-"),
     module: "WORKER",
-    event: message.slice(0, 20),
+    event: message.slice(0, LOG_FIELD_LENGTHS.EVENT),
     kv,
     raw: line,
     lineNumber,

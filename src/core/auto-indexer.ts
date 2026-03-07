@@ -36,7 +36,11 @@ interface AgentWithEmbeddingStats extends Agent {
     speedPerSec: number;
     workers: number;
     batches: number;
+    avgMsPerEmb?: number | undefined;
+    maxBatchMs?: number | undefined;
+    cacheHits?: number | undefined;
   } | null;
+  getTeiBatchLog?: () => Array<{ n: number; ms: number }>;
 }
 
 /**
@@ -404,6 +408,14 @@ export async function performAutoIndex(
       try {
         const devAgentWithStats = devAgent as AgentWithEmbeddingStats | undefined;
         const embStats = devAgentWithStats?.getEmbeddingStats?.();
+        // Per-batch TEI timing: compact "ms,ms,ms..." + batch sizes if varied
+        const batchLog = devAgentWithStats?.getTeiBatchLog?.() ?? [];
+        if (batchLog.length > 0) {
+          const msValues = batchLog.map((b) => b.ms).join(",");
+          const sizes = new Set(batchLog.map((b) => b.n));
+          const sizeStr = sizes.size === 1 ? `${[...sizes][0]}` : batchLog.map((b) => b.n).join(",");
+          log.i("EMBEDDING", "tei_batches", { cnt: batchLog.length, bsz: sizeStr, ms: msValues });
+        }
         if (embStats && embStats.total > 0) {
           log.i("EMBEDDING", "emb_summary", {
             total: embStats.total,
@@ -411,6 +423,9 @@ export async function performAutoIndex(
             speed: `${embStats.speedPerSec}/s`,
             workers: embStats.workers,
             batches: embStats.batches,
+            avgms: embStats.avgMsPerEmb,
+            maxbatchms: embStats.maxBatchMs,
+            cachehits: embStats.cacheHits,
           });
           resultEmbeddingPerf = {
             totalEmbeddings: embStats.total,
@@ -422,6 +437,7 @@ export async function performAutoIndex(
       } catch {
         // Non-critical
       }
+      log.flush();
 
       // Collect oversized warning synchronously (needed for MCP response)
       if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
@@ -533,6 +549,7 @@ export async function performAutoIndex(
         // 6. Await FAISS save completion (don't orphan the promise)
         await faissSavePromise;
         log.d("INDEXER", "faiss_save_bg_done", { elapsed: Date.now() - postIndexStart });
+        log.flush();
       })();
     } else {
       resultSuccess = false;

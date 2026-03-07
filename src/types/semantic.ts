@@ -264,6 +264,12 @@ export interface EmbeddingPoolStats {
   batches: number;
   /** Name of the provider that was used */
   provider?: string | undefined;
+  /** Average ms per single embedding (TEI inference time) */
+  avgMsPerEmb?: number | undefined;
+  /** Maximum batch inference time (ms) */
+  maxBatchMs?: number | undefined;
+  /** Total cache hits (global cache) */
+  cacheHits?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------

@@ -720,6 +720,29 @@ function briefArgs(args: unknown): string {
 }
 
 /**
+ * Append _elapsedMs to the first JSON text content in a tool result.
+ * Non-JSON results get a trailing metadata line instead.
+ */
+function appendElapsed(result: { content: Array<{ type: string; text?: string }> }, elapsedMs: number) {
+  if (!result?.content?.[0] || result.content[0].type !== "text" || !result.content[0].text) return result;
+  const txt = result.content[0].text;
+  // Try JSON injection
+  if (txt.startsWith("{")) {
+    try {
+      const obj = JSON.parse(txt);
+      obj._elapsedMs = elapsedMs;
+      result.content[0].text = JSON.stringify(obj, null, 2);
+      return result;
+    } catch {
+      // Not valid JSON, fall through
+    }
+  }
+  // Append as metadata line for non-JSON responses
+  result.content[0].text = txt + `\n\n⏱ ${elapsedMs}ms`;
+  return result;
+}
+
+/**
  * Heavy analysis tools that benefit from serialization and response limits.
  */
 const analysisQueue = pLimit(1);
@@ -796,7 +819,7 @@ async function executeToolCall(
   name: string,
   args: unknown,
   requestId: string,
-  _startTime: number,
+  startTime: number,
   session?: ClientSession,
 ) {
   // Check if indexing is in progress for the CURRENT project only
@@ -916,13 +939,18 @@ async function executeToolCall(
           runWithRequestContext(requestCtx, async () => {
             const handler = await toolRegistry.getHandler(name, toolContext);
             const result = await handler.handle(args);
-            return enforceResponseLimit(name, result);
+            const elapsedMs = Date.now() - startTime;
+            log.i("MCP", "tool_done", { tool: name, req: requestId, ms: elapsedMs });
+            return appendElapsed(enforceResponseLimit(name, result), elapsedMs);
           }),
         );
       }
       return runWithRequestContext(requestCtx, async () => {
         const handler = await toolRegistry.getHandler(name, toolContext);
-        return handler.handle(args);
+        const result = await handler.handle(args);
+        const elapsedMs = Date.now() - startTime;
+        log.i("MCP", "tool_done", { tool: name, req: requestId, ms: elapsedMs });
+        return appendElapsed(result, elapsedMs);
       });
     }
 

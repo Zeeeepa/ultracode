@@ -47,6 +47,15 @@ interface EmbeddingsReadyMessage {
   type: "embeddings.ready";
   count: number;
   embeddings: CollectedEmbedding[];
+  /** TEI inference metrics from this worker */
+  teiMetrics?:
+    | {
+        totalGenTimeMs: number;
+        totalGenCount: number;
+        maxBatchMs: number;
+        cacheHits: number;
+      }
+    | undefined;
 }
 
 /**
@@ -102,6 +111,9 @@ const generatedEntityIds = new Set<string>();
 
 /** Collected embeddings for IPC transfer */
 const collectedEmbeddings: CollectedEmbedding[] = [];
+
+/** Accumulated TEI inference metrics across all files in current batch */
+const teiMetricsAcc = { totalGenTimeMs: 0, totalGenCount: 0, maxBatchMs: 0, cacheHits: 0 };
 
 /**
  * Collected texts for centralized embedding generation (OVMS/llamacpp mode).
@@ -389,6 +401,12 @@ export async function generateEmbeddingsForEntities(
   }
 
   let generatedCount = 0;
+  let totalGenTimeMs = 0;
+  let maxBatchTimeMs = 0;
+  let totalGenCount = 0;
+  let cacheHitCount = 0;
+
+  const fileStartTime = performance.now();
 
   workerLog("INFO", "generateEmbeddingsFr: starting batch processing", {
     entities: entityTexts.length,
@@ -415,15 +433,22 @@ export async function generateEmbeddingsForEntities(
       }
     }
 
+    cacheHitCount += cacheHits.size;
+
     // Generate only cache misses
     let generatedEmbeddings: Float32Array[] = [];
     if (missTexts.length > 0) {
+      const batchStart = performance.now();
       try {
         generatedEmbeddings = await embeddingClient!.generateBatch(missTexts);
       } catch (error) {
         workerLog("WARN", `Embedding batch failed: ${(error as Error).message}`, { batchIdx: idx });
         return;
       }
+      const batchMs = performance.now() - batchStart;
+      totalGenTimeMs += batchMs;
+      totalGenCount += missTexts.length;
+      if (batchMs > maxBatchTimeMs) maxBatchTimeMs = batchMs;
     }
 
     // Merge: cache hits + generated
@@ -473,9 +498,24 @@ export async function generateEmbeddingsForEntities(
     await Promise.all(wave.map((batch, j) => processBatch(batch, i + j)));
   }
 
+  const fileElapsedMs = performance.now() - fileStartTime;
+  const avgMsPerEmb = totalGenCount > 0 ? totalGenTimeMs / totalGenCount : 0;
+
+  // Accumulate TEI metrics across files for IPC transfer
+  teiMetricsAcc.totalGenTimeMs += totalGenTimeMs;
+  teiMetricsAcc.totalGenCount += totalGenCount;
+  teiMetricsAcc.cacheHits += cacheHitCount;
+  if (maxBatchTimeMs > teiMetricsAcc.maxBatchMs) teiMetricsAcc.maxBatchMs = maxBatchTimeMs;
+
   workerLog("INFO", "generateEmbeddingsFr: batch processing complete", {
     generatedCount,
     collectedEmbeddingsTotal: collectedEmbeddings.length,
+    cacheHits: cacheHitCount,
+    teiTimeMs: Math.round(totalGenTimeMs),
+    teiCount: totalGenCount,
+    avgMsPerEmb: +avgMsPerEmb.toFixed(2),
+    maxBatchMs: Math.round(maxBatchTimeMs),
+    totalMs: Math.round(fileElapsedMs),
   });
 
   return generatedCount;
@@ -495,11 +535,14 @@ export function sendCollectedEmbeddings(ctx: EmbeddingProcessorContext): void {
 
   const transferList: ArrayBuffer[] = collectedEmbeddings.map((e) => e.vectorBuffer);
 
+  const metrics = teiMetricsAcc.totalGenCount > 0 ? { ...teiMetricsAcc } : undefined;
+
   ctx.postWorkerMessage(
     {
       type: "embeddings.ready",
       count: collectedEmbeddings.length,
       embeddings: collectedEmbeddings,
+      teiMetrics: metrics,
     },
     transferList,
   );
@@ -507,9 +550,15 @@ export function sendCollectedEmbeddings(ctx: EmbeddingProcessorContext): void {
   workerLog("INFO", `Sent embeddings to main process (binary transfer)`, {
     count: collectedEmbeddings.length,
     totalBytes: transferList.reduce((sum, buf) => sum + buf.byteLength, 0),
+    teiAvgMs: metrics ? +(metrics.totalGenTimeMs / metrics.totalGenCount).toFixed(2) : 0,
   });
 
   collectedEmbeddings.length = 0;
+  // Reset TEI metrics for next batch
+  teiMetricsAcc.totalGenTimeMs = 0;
+  teiMetricsAcc.totalGenCount = 0;
+  teiMetricsAcc.maxBatchMs = 0;
+  teiMetricsAcc.cacheHits = 0;
 }
 
 // =============================================================================

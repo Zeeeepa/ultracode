@@ -2031,6 +2031,10 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     return this.parserAgent?.getEmbeddingPoolStats?.() ?? null;
   }
 
+  getTeiBatchLog(): Array<{ n: number; ms: number }> {
+    return this.parserAgent?.getAccumulator()?.getTeiBatchLog() ?? [];
+  }
+
   protected async onShutdown(): Promise<void> {
     log.i("DEVAGENT", "shutdown_start");
 

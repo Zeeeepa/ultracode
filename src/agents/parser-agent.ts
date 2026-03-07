@@ -536,7 +536,7 @@ export class ParserAgent extends BaseAgent {
         // Lazy init accumulator on first texts - use dimensions from config
         const dimensions = this.embeddingConfig?.dimensions ?? 384;
         const queueBatchSize = this.embeddingConfig?.queueBatchSize ?? 128;
-        const parallelBatches = this.embeddingConfig?.provider === "tei" ? 4 : 12;
+        const parallelBatches = this.embeddingConfig?.provider === "tei" ? 1 : 12;
         this.embeddingAccumulator = getEmbeddingAccumulator({ dimensions, queueBatchSize, parallelBatches });
         log.d("PARSER", "Initialized embedding accumulator (centralized mode)", { dimensions, queueBatchSize });
       }
@@ -566,6 +566,12 @@ export class ParserAgent extends BaseAgent {
       batches: 0,
     };
 
+    // TEI inference metrics aggregation
+    let teiTotalGenTimeMs = 0;
+    let teiTotalGenCount = 0;
+    let teiMaxBatchMs = 0;
+    let teiCacheHits = 0;
+
     // Aggregate from all language pools
     for (const pool of this.languagePools.values()) {
       const poolStats = pool.getEmbeddingStats();
@@ -573,6 +579,19 @@ export class ParserAgent extends BaseAgent {
       stats.durationMs = Math.max(stats.durationMs, poolStats.durationMs);
       stats.workers += poolStats.workers;
       stats.batches += poolStats.batches;
+      // TEI metrics
+      if (poolStats.avgMsPerEmb != null && poolStats.avgMsPerEmb > 0) {
+        // Weighted sum for correct avg across pools
+        const count = Math.round(poolStats.avgMsPerEmb > 0 ? poolStats.total || 1 : 0);
+        teiTotalGenTimeMs += poolStats.avgMsPerEmb * count;
+        teiTotalGenCount += count;
+      }
+      if (poolStats.maxBatchMs != null && poolStats.maxBatchMs > teiMaxBatchMs) {
+        teiMaxBatchMs = poolStats.maxBatchMs;
+      }
+      if (poolStats.cacheHits != null) {
+        teiCacheHits += poolStats.cacheHits;
+      }
     }
 
     // Also check accumulator for centralized mode stats
@@ -580,12 +599,30 @@ export class ParserAgent extends BaseAgent {
     if (accStats) {
       // In centralized mode, accumulator has the real totals
       // Pool stats only count texts received, not embeddings generated
+      stats.total += accStats.total;
+      stats.batches += accStats.batches;
+      stats.workers = Math.max(stats.workers, accStats.workers);
       stats.durationMs = Math.max(stats.durationMs, accStats.durationMs);
       stats.provider = accStats.provider;
+      // TEI metrics from centralized mode (accumulator does the actual TEI calls)
+      if (accStats.avgMsPerEmb != null && accStats.avgMsPerEmb > 0) {
+        teiTotalGenTimeMs = accStats.avgMsPerEmb * accStats.total;
+        teiTotalGenCount = accStats.total;
+      }
+      if (accStats.maxBatchMs != null && accStats.maxBatchMs > teiMaxBatchMs) {
+        teiMaxBatchMs = accStats.maxBatchMs;
+      }
     }
 
     // Calculate overall throughput
     stats.speedPerSec = stats.durationMs > 0 ? Math.round((stats.total / stats.durationMs) * 1000) : 0;
+
+    // Set TEI metrics
+    if (teiTotalGenCount > 0) {
+      stats.avgMsPerEmb = +(teiTotalGenTimeMs / teiTotalGenCount).toFixed(2);
+    }
+    if (teiMaxBatchMs > 0) stats.maxBatchMs = Math.round(teiMaxBatchMs);
+    if (teiCacheHits > 0) stats.cacheHits = teiCacheHits;
 
     return stats.total > 0 ? stats : null;
   }
@@ -1584,7 +1621,7 @@ export class ParserAgent extends BaseAgent {
       this.embeddingAccumulator = getEmbeddingAccumulator({
         dimensions: config.dimensions ?? 384,
         queueBatchSize: config.queueBatchSize ?? 128,
-        parallelBatches: config.provider === "tei" ? 4 : 12,
+        parallelBatches: config.provider === "tei" ? 1 : 12,
       });
       log.i("PARSER", "Accumulator configured for centralized mode", {
         dimensions: config.dimensions,
