@@ -1,6 +1,6 @@
 {
   "name": "ultracode",
-  "version": "5.9.0",
+  "version": "5.9.1",
   "description": "Codebase RAG MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/C#/Go/Rust/Java/C++/Kotlin/Swift/Zig/Bash",
   "license": "AGPL-3.0-only OR Commercial",
   "author": "faxenoff",
@@ -67,7 +67,7 @@
     "dist/semantic/global-cache-prebuilt/**"
   ],
   "scripts": {
-    "prebuild": "node -e \"const fs=require('fs');const p=require('path');const d='dist';if(fs.existsSync(d)){fs.readdirSync(d).filter(f=>f.endsWith('.js')||f.endsWith('.js.map')).forEach(f=>fs.unlinkSync(p.join(d,f)));console.log('[prebuild] Cleaned old JS chunks from dist/')}\"",
+    "prebuild": "node -e \"const fs=require('fs');const p=require('path');const d='dist';if(fs.existsSync(d)){fs.readdirSync(d).filter(f=>f.endsWith('.js')||f.endsWith('.js.map')||f.endsWith('.d.ts')||f.endsWith('.d.mts')).forEach(f=>fs.unlinkSync(p.join(d,f)));const chunks=p.join(d,'chunks');if(fs.existsSync(chunks)){fs.rmSync(chunks,{recursive:true,force:true})}const subdirs=['agents','utils','semantic','cli'];subdirs.forEach(s=>{const sp=p.join(d,s);if(fs.existsSync(sp))fs.rmSync(sp,{recursive:true,force:true})});console.log('[prebuild] Cleaned old build artifacts from dist/')}\"",
     "build": "tsup && node -e \"const fs=require('fs');const p=require('path');const d='dist/parsers';fs.mkdirSync(d,{recursive:true});fs.copyFileSync('src/parsers/python-ast-cli.py',p.join(d,'python-ast-cli.py'));fs.copyFileSync('src/parsers/go-ast-cli.go',p.join(d,'go-ast-cli.go'))\"",
     "build:watch": "tsup --watch",
     "build:wasm": "bash scripts/build-wasm.sh",

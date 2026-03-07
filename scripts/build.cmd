@@ -407,12 +407,19 @@ if exist "!COMM_OUT!" (
 :comm_done
 echo.
 
-REM Clean TypeScript artifacts before build (preserve WASM and native modules)
-if exist "%PROJECT_ROOT%\dist\index.js" del /q "%PROJECT_ROOT%\dist\index.js" >nul 2>&1
-if exist "%PROJECT_ROOT%\dist\index.js.map" del /q "%PROJECT_ROOT%\dist\index.js.map" >nul 2>&1
-if exist "%PROJECT_ROOT%\dist\index.d.ts" del /q "%PROJECT_ROOT%\dist\index.d.ts" >nul 2>&1
-if exist "%PROJECT_ROOT%\dist\agents" rmdir /s /q "%PROJECT_ROOT%\dist\agents" >nul 2>&1
-if exist "%PROJECT_ROOT%\dist\utils" rmdir /s /q "%PROJECT_ROOT%\dist\utils" >nul 2>&1
+REM Clean TypeScript artifacts before build (preserve WASM, native modules, roslyn-addon, global-cache)
+echo [INFO] Cleaning old build artifacts from dist...
+if exist "%PROJECT_ROOT%\dist" (
+    REM Clean JS/map/dts files from dist root
+    for %%f in ("%PROJECT_ROOT%\dist\*.js" "%PROJECT_ROOT%\dist\*.js.map" "%PROJECT_ROOT%\dist\*.d.ts" "%PROJECT_ROOT%\dist\*.d.mts") do del /q "%%f" >nul 2>&1
+    REM Clean code-split chunks (accumulate old hashed files across versions)
+    if exist "%PROJECT_ROOT%\dist\chunks" rmdir /s /q "%PROJECT_ROOT%\dist\chunks" >nul 2>&1
+    REM Clean TS output subdirectories (rebuilt by tsup)
+    for %%d in (agents utils semantic cli) do (
+        if exist "%PROJECT_ROOT%\dist\%%d" rmdir /s /q "%PROJECT_ROOT%\dist\%%d" >nul 2>&1
+    )
+    REM Preserved: external-tools (WASM), native (CUDA), roslyn-addon, parsers, prompts, global-cache
+)
 
 REM Run build with Bun
 echo [4/4] Building with tsup (Bun runtime)...
