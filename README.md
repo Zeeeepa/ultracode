@@ -343,6 +343,19 @@ Local models are used for intelligent tasks: embedding model for semantic search
 | **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), universal |
 | **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Can help if main VRAM is occupied by local LLM. |
 
+> **Note for GTX xx50/xx60 laptops (GPU thermal throttling)**
+>
+> Budget NVIDIA GPUs (GTX 1650/1660, RTX 3050/3060, RTX 4050/4060) on laptops often suffer from power limit throttling, which drops TEI/vLLM embedding throughput by ~1000 emb/s. The GPU hits its power limit (PL1) and clocks down mid-batch.
+>
+> **Fix via [ThrottleStop](https://www.techpowerup.com/download/techpowerup-throttlestop/)** (Windows):
+> 1. **TPL** button → set **PL1** to max (55–75 W for laptops), **PL2** to max (90–120 W), **Turbo Time Limit** → 28 sec (max), enable **Clamp PL1/PL2** (TPL button turns green)
+> 2. Main window → **Speed Shift - EPP** → `0` (max performance, reduces CPU throttle)
+> 3. **BD PROCHOT Offset** → `0` (disables CPU thermal trigger for GPU)
+> 4. **Limit Reasons** → check what's blocking (if "MS Platform" — ignore)
+> 5. **Apply** → save profile. CPU yields thermal budget to GPU, TEI batches stabilize.
+>
+> This typically gives **+1000 emb/s** on affected hardware.
+
 **Step 2: LLM Provider** (AutoDoc, refactoring)
 
 | Provider | Models | Recommendation |

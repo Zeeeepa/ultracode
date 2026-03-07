@@ -9,7 +9,7 @@ Comparison of embedding providers by speed, configuration, and GPU requirements.
 | Provider | Speed | GPU | Protocol | Batch | Notes |
 |----------|-------|-----|----------|-------|-------|
 | **vLLM** | **1352 emb/s** | NVIDIA CUDA | OpenAI API (`/v1/embeddings`) | Yes | Highest throughput, continuous batching, paged attention |
-| **TEI** | **1800 emb/s** (peak 2500) | NVIDIA CUDA | `/embed` | Yes | HuggingFace models, Blackwell requires `120-latest` image |
+| **TEI** | **2800 emb/s** | NVIDIA CUDA | `/embed` | Yes | HuggingFace models, Blackwell requires `120-latest` image |
 | **llama.cpp** | **441 emb/s** | CUDA/Vulkan/CPU | OpenAI API (`/v1/embeddings`) | Yes | Native GGUF, low VRAM (0.4 GB dedicated) |
 | **OVMS Native** | **260-326 emb/s** | Intel iGPU/CPU | OpenAI V3 API (`/v3/embeddings`) | Yes | Intel optimized, MediaPipe graph, auto lifecycle |
 | **Ollama** | varies (55-71 chunks/s) | CUDA/CPU | `/api/embeddings` | No | Simplest setup, no batch support |

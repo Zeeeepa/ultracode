@@ -345,6 +345,19 @@ npm install -g ultracode
 | **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), универсальный |
 | **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Может выручить, если основная VRAM будет занята локальной LLM. |
 
+> **Примечание для ноутбуков с GTX xx50/xx60 (троттлинг GPU)**
+>
+> Бюджетные NVIDIA GPU (GTX 1650/1660, RTX 3050/3060, RTX 4050/4060) на ноутбуках часто страдают от power limit throttling — GPU упирается в лимит мощности (PL1) и сбрасывает частоты прямо посреди батча. Это снижает пропускную способность TEI/vLLM на ~1000 emb/s.
+>
+> **Решение через [ThrottleStop](https://www.techpowerup.com/download/techpowerup-throttlestop/)** (Windows):
+> 1. **TPL** кнопка → **PL1** на максимум (55–75 Вт для ноутбуков), **PL2** на максимум (90–120 Вт), **Turbo Time Limit** → 28 сек (макс.), галки **Clamp PL1/PL2** → ON (кнопка TPL зелёная)
+> 2. Главное окно → **Speed Shift - EPP** → `0` (макс. производительность, снижает CPU throttle)
+> 3. **BD PROCHOT Offset** → `0` (отключает CPU thermal trigger для GPU)
+> 4. **Limit Reasons** → смотрите, что блокирует (если "MS Platform" — игнорируйте)
+> 5. **Apply** → сохраните профиль. CPU отдаст тепловой бюджет GPU, батчи TEI стабилизируются.
+>
+> Это даёт примерно **+1000 emb/s** на затронутом железе.
+
 **Шаг 2: LLM-провайдер** (AutoDoc, рефакторинг)
 
 | Провайдер | Модели | Рекомендация |
