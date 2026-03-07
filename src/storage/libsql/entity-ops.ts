@@ -14,6 +14,46 @@ import type { GenerationManager } from "./generation-ops.js";
 import type { ClientGetter, ContextGetter } from "./types.js";
 
 // =============================================================================
+// COMPACT LOCATION SERIALIZATION
+// =============================================================================
+
+/**
+ * Serialize SourceSpan to compact string: "startLine:startCol:startIdx-endLine:endCol:endIdx"
+ * ~11 chars vs ~80 chars for JSON.stringify. Backwards-compatible: reader handles both.
+ */
+function compactLocation(loc: unknown): string {
+  if (!loc || typeof loc !== "object") return "{}";
+  const l = loc as {
+    start?: { line?: number; column?: number; index?: number };
+    end?: { line?: number; column?: number; index?: number };
+  };
+  if (l.start && l.end) {
+    return `${l.start.line ?? 0}:${l.start.column ?? 0}:${l.start.index ?? 0}-${l.end.line ?? 0}:${l.end.column ?? 0}:${l.end.index ?? 0}`;
+  }
+  return JSON.stringify(loc);
+}
+
+/**
+ * Deserialize location string — handles both compact format and legacy JSON.
+ */
+export function parseLocation(s: string): unknown {
+  if (!s) return {};
+  // Compact format: "line:col:idx-line:col:idx"
+  if (/^\d+:\d+:\d+-\d+:\d+:\d+$/.test(s)) {
+    const [startPart, endPart] = s.split("-");
+    const [sl, sc, si] = startPart!.split(":").map(Number);
+    const [el, ec, ei] = endPart!.split(":").map(Number);
+    return { start: { line: sl, column: sc, index: si }, end: { line: el, column: ec, index: ei } };
+  }
+  // Legacy JSON format
+  try {
+    return JSON.parse(s);
+  } catch {
+    return {};
+  }
+}
+
+// =============================================================================
 // TOKEN UTILITIES
 // =============================================================================
 
@@ -192,8 +232,8 @@ export class EntityOperations {
 
     // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
     // Much faster than N separate INSERT statements (reduces parsing overhead)
-    // SQLite limit: ~32767 params, 17 fields per entity → batch 900 = 15300 params (safe)
-    const batchSize = 900;
+    // SQLite limit: ~32767 params, 17 fields per entity → batch 1500 = 25500 params (safe, max 1928)
+    const batchSize = 1500;
 
     let processed = 0;
 
@@ -223,7 +263,7 @@ export class EntityOperations {
           entity.name,
           entity.type,
           entity.filePath,
-          JSON.stringify(entity.location),
+          compactLocation(entity.location),
           JSON.stringify(entity.metadata),
           entity.hash || null,
           entity.createdAt || now,
@@ -246,10 +286,11 @@ export class EntityOperations {
       });
     }
 
-    // Batch-insert name tokens for all entities (after entity inserts complete)
+    // Batch-insert name tokens for all entities (skip vendored — not useful for text search)
     const tokenRows: [string, string][] = []; // [token, entity_id]
     for (const entity of unique) {
       if (!entity.id) continue;
+      if (entity.metadata && (entity.metadata as Record<string, unknown>)["vendored"]) continue;
       for (const token of splitToTokens(entity.name)) {
         tokenRows.push([token, entity.id]);
       }

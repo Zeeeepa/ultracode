@@ -112,6 +112,56 @@ const generatedEntityIds = new Set<string>();
 /** Collected embeddings for IPC transfer */
 const collectedEmbeddings: CollectedEmbedding[] = [];
 
+/** Count of files skipped due to vendored detection */
+let vendoredSkipCount = 0;
+
+/**
+ * Check if a file belongs to a vendored/generated directory.
+ * Uses prefixes from WorkerEmbeddingConfig set by main process.
+ */
+export function isVendoredFile(filePath: string): boolean {
+  if (!embeddingConfig?.vendoredPrefixes?.length || !embeddingConfig.projectRoot) {
+    return false;
+  }
+  // Compute relative path from project root
+  const root = embeddingConfig.projectRoot.replace(/\\/g, "/");
+  const normalized = filePath.replace(/\\/g, "/");
+  let rel: string;
+  if (normalized.startsWith(root)) {
+    rel = normalized.slice(root.length).replace(/^\//, "");
+  } else {
+    return false;
+  }
+
+  const lower = rel.toLowerCase();
+  for (const prefix of embeddingConfig.vendoredPrefixes) {
+    const lowerPrefix = prefix.toLowerCase();
+    if (lower.startsWith(lowerPrefix + "/") || lower === lowerPrefix) {
+      vendoredSkipCount++;
+      return true;
+    }
+  }
+
+  // Also skip .def/.inc files (always low-value for embeddings)
+  const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
+  if (ext === ".def" || ext === ".inc") {
+    vendoredSkipCount++;
+    return true;
+  }
+
+  return false;
+}
+
+/** Get vendored skip count for metrics */
+export function getVendoredSkipCount(): number {
+  return vendoredSkipCount;
+}
+
+/** Reset vendored skip count (between indexing runs) */
+export function resetVendoredSkipCount(): void {
+  vendoredSkipCount = 0;
+}
+
 /** Accumulated TEI inference metrics across all files in current batch */
 const teiMetricsAcc = { totalGenTimeMs: 0, totalGenCount: 0, maxBatchMs: 0, cacheHits: 0 };
 
@@ -328,6 +378,11 @@ export async function generateEmbeddingsForEntities(
   filePath: string,
 ): Promise<number> {
   if (!embeddingConfig?.enabled) {
+    return 0;
+  }
+
+  // Skip embedding generation for vendored/generated files
+  if (isVendoredFile(filePath)) {
     return 0;
   }
 

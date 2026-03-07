@@ -26,6 +26,7 @@ import {
   getEmbeddingClient,
   getEmbeddingConfig,
   initEmbeddingClient,
+  isVendoredFile,
   sendCollectedEmbeddings,
   sendCollectedTexts,
   setEmbeddingConfig,
@@ -547,8 +548,24 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
         analyzer = sharedAnalyzer;
       }
 
-      const result: ParseResult = await analyzer.parse(file, content, hash);
+      // Use fast regex-only parsing for vendored C/C++ files (skip clang process spawn)
+      const fileIsVendored = isVendoredFile(file);
+      const parseFastFn = (analyzer as unknown as { parseFast?: typeof analyzer.parse }).parseFast;
+      const usefast = fileIsVendored && typeof parseFastFn === "function";
+      const result: ParseResult = usefast
+        ? await parseFastFn!.call(analyzer, file, content, hash)
+        : await analyzer.parse(file, content, hash);
       parseTime += Date.now() - parseStart;
+
+      // For vendored files: filter out low-value entities (#define constants)
+      // and mark remaining entities so name_tokens are skipped in DB
+      if (fileIsVendored && result.entities) {
+        result.entities = result.entities.filter((e) => e.type !== "constant");
+        for (const e of result.entities) {
+          if (!e.metadata) e.metadata = {};
+          (e.metadata as Record<string, unknown>)["vendored"] = true;
+        }
+      }
 
       // Add language field to all entities that don't have it
       // This ensures all parsers (not just Kotlin) produce entities with language

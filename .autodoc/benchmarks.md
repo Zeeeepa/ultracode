@@ -9,7 +9,7 @@ Comparison of embedding providers by speed, configuration, and GPU requirements.
 | Provider | Speed | GPU | Protocol | Batch | Notes |
 |----------|-------|-----|----------|-------|-------|
 | **vLLM** | **1352 emb/s** | NVIDIA CUDA | OpenAI API (`/v1/embeddings`) | Yes | Highest throughput, continuous batching, paged attention |
-| **TEI** | **2800 emb/s** | NVIDIA CUDA | `/embed` | Yes | HuggingFace models, Blackwell requires `120-latest` image |
+| **TEI** | **2800-5500 emb/s** | NVIDIA CUDA | `/embed` | Yes | HuggingFace models, Blackwell requires `120-latest` image |
 | **llama.cpp** | **441 emb/s** | CUDA/Vulkan/CPU | OpenAI API (`/v1/embeddings`) | Yes | Native GGUF, low VRAM (0.4 GB dedicated) |
 | **OVMS Native** | **260-326 emb/s** | Intel iGPU/CPU | OpenAI V3 API (`/v3/embeddings`) | Yes | Intel optimized, MediaPipe graph, auto lifecycle |
 | **Ollama** | varies (55-71 chunks/s) | CUDA/CPU | `/api/embeddings` | No | Simplest setup, no batch support |
@@ -299,6 +299,41 @@ All DBs: `journal_mode=OFF`, `synchronous=OFF`, `cache_size=-8192` (8 MB per DB)
 | **Total flush+commit** | **4.2 sec** | **5.2 sec** | **-19%** |
 | **Embedding flush** | 0.8 sec | 0.7 sec | ~same |
 
+#### Zig Compiler
+
+[github.com/ziglang/zig](https://github.com/ziglang/zig) — 17K files, 325K entities (after vendored filter), 94K embeddings
+
+| Metric | v6.6 (vendored+flush opt) | v6.5 (vendored, no flush opt) | v6.4 (no vendored) | Delta (v6.4→v6.6) |
+|--------|---------------------------|-------------------------------|---------------------|--------------------|
+| **Total** | **47 sec** | 88 sec | 643 sec | **13.7x faster** |
+| **collectFiles** | 2.4 sec | 2.5 sec | ~2 sec | ~same |
+| **preSpawn** | 1.2 sec | 1.2 sec | ~1 sec | ~same |
+| **Parsing (14 workers)** | 7.4 sec (2296 files/sec) | 7.5 sec | ~8 sec | ~same |
+| **Graph flush** | 4.2 sec | 50 sec | ~50 sec | **12x faster** |
+| **commitStaging** | 4.2 sec | — | — | new |
+| **TEI Embeddings** | 15.8 sec (5513/sec) | 18.3 sec (140/sec¹) | — | **37x TEI** |
+| **Swagger linking** | 1.8 sec | 1.8 sec | — | ~same |
+
+¹ TEI with `parallelBatches=1` was bottlenecked by HTTP round-trip on short texts (C headers avg ~30 tokens). Changed to `parallelBatches=4`.
+
+**Vendored detection (automatic):**
+- 9 prefixes detected: `lib/libc`, `lib/libc/musl`, `lib/libc/mingw`, `lib/libc/glibc`, `lib/libcxx`, `lib/libc/wasi/*`, `src/codegen`
+- 13,464 files (78.9%) skipped for embeddings, still parsed for graph
+- Detection time: <50ms (runs after collectFiles)
+
+**Graph flush optimizations (v6.6):**
+- Entity count: 890K → 325K (-63%) by filtering `#define` constants from vendored headers
+- `compactLocation`: 80 chars → 11 chars per entity (`"line:col:idx-line:col:idx"` vs JSON)
+- `batchSize`: 900 → 1500 (SQLite limit 32767 params / 17 columns = 1928 max)
+- Skip `name_tokens` for entities with `metadata.vendored=true`
+- Result: 50 sec → 4.2 sec flush (-92%)
+
+**TEI pipelining fix (v6.6):**
+- `parallelBatches`: 1 → 4 for TEI provider
+- Short texts (C headers, ~30 tokens) dominated by HTTP round-trip, not GPU compute
+- GPU was idle during HTTP latency; 4 parallel batches keep GPU saturated
+- Result: 140 emb/s → 5513 emb/s on Zig (37x), no regression on long texts
+
 #### VS Code
 
 [github.com/microsoft/vscode](https://github.com/microsoft/vscode) — 1.9M LOC, 7082 files, 253K entities, 881K rels
@@ -324,11 +359,18 @@ All DBs: `journal_mode=OFF`, `synchronous=OFF`, `cache_size=-8192` (8 MB per DB)
 - FAISS speed: 5,000 vectors/s (vs 1,645/s without chunking — **3x faster**)
 - `reset=true` now clears FAISS index + LibSQL embedding cache (was graph-only)
 
-**Why staging is faster (v6.4):**
+**Why staging is faster (v6.4+):**
 - Staging tables have no PRIMARY KEY → heap append O(1) per row (no B-tree page splits)
 - Main table indexes dropped during indexing → no index maintenance during flush
 - Cross-flush duplicates handled by `INSERT OR REPLACE INTO` during commit
 - Stable per-batch times (4-6s vs 14→32s degradation in v6.3)
+
+**Additional flush optimizations (v6.6):**
+- `compactLocation()` serializes `SourceSpan` as `"line:col:idx-line:col:idx"` (~11 chars vs ~80 chars JSON) — reduces INSERT payload ~7x per entity
+- `parseLocation()` deserializes both compact and legacy JSON formats (backwards-compatible)
+- `batchSize` increased from 900 to 1500 (within SQLite 32767 param limit: 1500 × 17 = 25500)
+- Skip `name_tokens` INSERT for vendored entities (`metadata.vendored=true`) — reduces token table writes significantly for large C/C++ projects
+- Filter `#define` constants from vendored C headers at parse time — 63% entity reduction on Zig
 
 ### Previous (v6.3, 843 files, 12.0K entities, IVF,SQ8, .ultracodeignore)
 

@@ -96,6 +96,8 @@ export class EmbeddingAccumulator {
 
   // Async flush state - track in-flight flush operation (only 1 concurrent flush to FAISS)
   private inFlightFlush: Promise<number> | null = null;
+  // Sync flush guard - prevents concurrent flush() calls from duplicating work
+  private syncFlushPromise: Promise<unknown> | null = null;
 
   // Debounce for accumulating texts before processing
   private debounceAbort: AbortController | null = null;
@@ -569,6 +571,13 @@ export class EmbeddingAccumulator {
       flushed: this.stats.flushed,
     });
 
+    // Guard against concurrent flush: if another flush is in progress, wait for it
+    if (this.syncFlushPromise) {
+      log.i("ACCUMULATOR", "flush() waiting for concurrent flush");
+      await this.syncFlushPromise;
+      return 0;
+    }
+
     // If nothing pending (all flushed by async), just return
     if (this.pending.length === 0) {
       return 0;
@@ -579,7 +588,10 @@ export class EmbeddingAccumulator {
       return 0;
     }
 
-    const count = this.pending.length;
+    // Take ownership of pending array atomically
+    const toFlush = this.pending;
+    this.pending = [];
+    const count = toFlush.length;
     const startTime = performance.now();
 
     try {
@@ -588,7 +600,8 @@ export class EmbeddingAccumulator {
         type: this.vectorProvider.constructor.name,
         count,
       });
-      await this.vectorProvider.addBatch(this.pending);
+      this.syncFlushPromise = this.vectorProvider.addBatch(toFlush);
+      await this.syncFlushPromise;
 
       const elapsed = performance.now() - startTime;
       this.stats.flushed += count;
@@ -601,13 +614,14 @@ export class EmbeddingAccumulator {
         totalFlushed: this.stats.flushed,
       });
 
-      // Clear pending
-      this.pending = [];
-
       return count;
     } catch (error) {
+      // Put failed embeddings back
+      this.pending.unshift(...toFlush);
       log.e("ACCUMULATOR", "Flush failed", { error: (error as Error).message });
       throw error;
+    } finally {
+      this.syncFlushPromise = null;
     }
   }
 

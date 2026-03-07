@@ -36,7 +36,7 @@ import type {
 } from "../types/storage.js";
 import { CacheOperations } from "./libsql/cache-ops.js";
 import { CooccurrenceOperations } from "./libsql/cooccurrence-ops.js";
-import { EntityOperations } from "./libsql/entity-ops.js";
+import { EntityOperations, parseLocation } from "./libsql/entity-ops.js";
 import { GenerationManager } from "./libsql/generation-ops.js";
 import { MetadataOperations } from "./libsql/metadata-ops.js";
 import { RelationshipOperations } from "./libsql/relationship-ops.js";
@@ -1306,7 +1306,7 @@ export class LibSQLGraphAdapter {
       name: row.name,
       type: row.type as EntityType,
       filePath: row.file_path,
-      location: JSON.parse(row.location),
+      location: parseLocation(row.location) as Entity["location"],
       metadata: row.metadata ? JSON.parse(row.metadata) : {},
       hash: row.hash || "",
       createdAt: row.created_at,

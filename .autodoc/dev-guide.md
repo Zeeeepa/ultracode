@@ -139,11 +139,113 @@ Polyglot projects work seamlessly — cross-language relationship analysis inclu
 - **DevAgent** — Incremental indexing, file operations
 - **MergeAgent** — Semantic 3-way merge
 
-**Storage**: Unified libSQL (SQLite-compatible) with aggressive pragmas for write speed (11,300 entities/sec).
+**Storage**: Multi-DB libSQL (SQLite-compatible) with staging tables for bulk indexing. See Storage Internals below.
 
 **70+ MCP tools** across categories: search, analysis, tracing, modification, validation, autodoc, git, history, merge, snapshots, metrics.
 
 See [architecture.md](architecture.md) for full details.
+
+---
+
+## Storage Internals (libSQL)
+
+### Multi-DB Architecture (v6)
+
+4 independent databases for parallel I/O: `graph.db`, `semantic.db`, `versioning.db`, `cache.db`.
+All DBs: `journal_mode=OFF`, `synchronous=OFF`, `cache_size=-8192` (8 MB per DB).
+
+### Staging Tables for Bulk Indexing
+
+For bulk indexing (>500 files), entity inserts use **append-only staging tables** without PRIMARY KEY or indexes:
+
+```
+1. DROP indexes on main tables
+2. CREATE staging_entities (no PK, no indexes) — heap table
+3. INSERT into staging — O(1) per row, no B-tree page splits
+4. ... repeat for all batches ...
+5. INSERT OR REPLACE INTO entities SELECT * FROM staging_entities — merge
+6. DROP staging tables
+7. RECREATE indexes in one pass
+```
+
+**Key**: staging tables are heap-only (no B-tree), so INSERT is always O(1) regardless of table size. Main table indexes are rebuilt once at commit, not maintained during each INSERT.
+
+### compactLocation
+
+Entity `location` (SourceSpan) is serialized as compact string instead of JSON:
+
+```
+Compact: "12:4:156-25:1:380"    (~11 chars)
+JSON:    {"start":{"line":12,"column":4,"index":156},"end":{"line":25,"column":1,"index":380}}  (~80 chars)
+```
+
+`parseLocation()` in `src/storage/libsql/entity-ops.ts` deserializes both formats (backwards-compatible). ~7x reduction in INSERT payload per entity.
+
+### Batch Parameters
+
+| Parameter | Value | Limit |
+|-----------|-------|-------|
+| `batchSize` | 1500 | SQLite max 32767 params / 17 columns = 1928 |
+| `parallelBatches` (TEI) | 4 | Keeps GPU saturated during HTTP round-trip |
+
+### Vendored Token Skip
+
+Entities with `metadata.vendored=true` skip `name_tokens` table insertion. This significantly reduces token table writes for large C/C++ projects (e.g., Zig: 890K→325K entities, most vendored).
+
+---
+
+## Vendored/Generated Directory Detection
+
+### Purpose
+
+Large projects (Zig, LLVM, Chromium) contain vendored libraries with thousands of headers (libc, musl, glibc). These files should be **parsed** (for graph entity extraction) but **skip embedding generation** (to save TEI/GPU resources).
+
+### How It Works
+
+File: `src/agents/dev/vendored-detector.ts`
+
+Detection runs automatically after `collectFiles` for projects with >500 files. Three heuristics:
+
+**1. Known vendored path segments** — case-insensitive match against: `libc`, `libcxx`, `libcxxabi`, `libunwind`, `musl`, `glibc`, `ucrt`, `mingw`, `msvc`, `wasi-libc`, `compiler-rt`, `newlib`, `bionic`. Requires ≥50 files under the prefix.
+
+**2. Architecture mirrors** — parent directory with 8+ subdirectories sharing 3+ common filenames across 50%+ of children. Detects patterns like `lib/libc/musl/{arch1,arch2,...}` where each arch has the same `.h` files.
+
+**3. Mass headers** — 2-level directory prefix with >400 `.h`/`.hpp`/`.hxx` files and average LOC < 150 (sampled from 30 files). Catches auto-generated or bulk-imported header collections.
+
+### Pipeline Integration
+
+```
+collectFiles → detectVendoredDirectories → vendoredPrefixes[]
+                                              ↓
+                            embeddingConfig.vendoredPrefixes (IPC to workers)
+                                              ↓
+                    Worker: isVendoredFile() → skip embedding generation
+                    Worker: parseFast() for C/C++ vendored (regex-only, no clang)
+                    Worker: filter out "constant" entities (#define)
+                    Worker: mark remaining entities metadata.vendored=true
+                                              ↓
+                    entity-ops: skip name_tokens for vendored entities
+```
+
+### Key Functions
+
+| Function | File | Purpose |
+|----------|------|---------|
+| `detectVendoredDirectories()` | `vendored-detector.ts` | Main detection, returns prefixes |
+| `isVendoredPath()` | `vendored-detector.ts` | Check relative path against prefixes |
+| `isVendoredFile()` | `embedding-processor.ts` | Check absolute path, uses IPC config |
+| `isSkipEmbeddingExtension()` | `vendored-detector.ts` | Always skip `.def`, `.inc` files |
+| `parseFast()` | `cpp-native-parser.ts` | Regex-only C/C++ parsing (no clang spawn) |
+
+### Impact (Zig benchmark)
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Files for embedding | 17,061 | 3,597 | -78.9% |
+| Entities | 890,000 | 325,000 | -63% |
+| Graph flush | 50 sec | 4.2 sec | -92% |
+| TEI throughput | 140 emb/s | 5,513 emb/s | +37x |
+| **Total indexing** | **643 sec** | **47 sec** | **13.7x** |
 
 ---
 

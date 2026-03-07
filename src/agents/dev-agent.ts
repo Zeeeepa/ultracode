@@ -887,6 +887,23 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         ms: perfTimings["preSpawnPrepare_end"]! - perfTimings["preSpawnPrepare_start"]!,
       });
     }
+
+    // Detect vendored/generated directories (skip embeddings, keep parsing)
+    if (!isIncremental && allFiles.length > 500) {
+      const { detectVendoredDirectories } = await import("./dev/vendored-detector.js");
+      const vendored = detectVendoredDirectories(allFiles, directory);
+      if (vendored.vendoredPrefixes.length > 0 && preSpawnPrepareResult?.embeddingConfig) {
+        preSpawnPrepareResult.embeddingConfig.vendoredPrefixes = vendored.vendoredPrefixes;
+        preSpawnPrepareResult.embeddingConfig.projectRoot = directory;
+        // Re-push config to parser so workers pick up vendored prefixes
+        this.parserAgent?.setEmbeddingConfig(preSpawnPrepareResult.embeddingConfig);
+        log.i("DEVAGENT", "Vendored prefixes applied to embedding config", {
+          prefixes: vendored.vendoredPrefixes.length,
+          skippedFiles: vendored.stats.totalSkippedFiles,
+        });
+      }
+    }
+
     let deletedEntityIds: string[] = [];
 
     if (isIncremental && allFiles.length > 0) {
