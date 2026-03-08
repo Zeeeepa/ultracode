@@ -65,7 +65,9 @@ trace_flow({
 })
 ```
 
-**API Contract Boundary Annotations**: When trace paths cross Swagger/OpenAPI entities, steps are annotated with `crossesApiContract: true` and `contractInfo` (type, endpoint, schemaName). A path-level warning is added: "Path crosses API contract boundary." See [swagger.md](swagger.md).
+**API Contract Boundary Annotations**: When trace paths cross API contract entities (Swagger/OpenAPI, Protobuf/gRPC, or GraphQL), steps are annotated with `crossesApiContract: true` and `contractInfo` (type, endpoint, schemaName). A path-level warning is added: "Path crosses API contract boundary." See [api-contracts.md](api-contracts.md).
+
+**Database Boundary Annotations**: When trace paths cross database operations, steps are annotated with `crossesDbBoundary: true` and `dbInfo` (type: sql/orm/redis, operation: read/write, tableName). See [database-schema.md](database-schema.md).
 
 ---
 

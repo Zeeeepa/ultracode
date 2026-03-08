@@ -1,6 +1,6 @@
 # Renderers
 
-Converts diagram intermediate representation into multiple text format renderers
+Converts diagram intermediate representation to multiple text-based diagram formats.
 
 ## Exports
 
@@ -10,7 +10,7 @@ Converts diagram intermediate representation into multiple text format renderers
 | `D2Renderer` | class | Implements DiagramRenderer to generate D2 diagram language output | [→ d2-renderer.ts:66-164] |
 | `DiagramRenderer` | interface | Interface contract specifying render method for all renderers | [→ index.ts:12-14] |
 | `GraphvizRenderer` | class | Implements DiagramRenderer to generate Graphviz DOT language output | [→ graphviz-renderer.ts:64-172] |
-| `MermaidRenderer` | class | Implements DiagramRenderer to generate Mermaid syntax diagrams | [→ mermaid-renderer.ts:26-37] |
+| `MermaidRenderer` | class | Implements DiagramRenderer to generate Mermaid syntax diagrams | [→ mermaid-renderer.ts:25-40] |
 
 ## Files
 

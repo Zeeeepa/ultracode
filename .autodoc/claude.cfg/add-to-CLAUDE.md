@@ -40,6 +40,8 @@ These tools understand code semantics and are 5-10x faster than text search.
 - **Search**: `semantic_search`, `pattern_search`, `find_similar_code`
 - **Navigate**: `get_members`, `list_entity_relationships`
 - **Analyze**: `analyze_code_impact`, `detect_code_clones`, `analyze_hotspots`
+- **API Contracts**: `analyze_api_impact` (Swagger + Protobuf + GraphQL), `analyze_swagger_impact`
+- **Database**: `get_database_schema` (SQL/Prisma/ORM/Redis + migration drift)
 - **Trace**: `trace_flow`, `trace_backwards`, `trace_data_flow`
 - **Visualize**: `get_architecture_diagram` (Mermaid/Graphviz/D2 from code graph)
 - **History**: `list_commits`, `diff_commits`, `checkout_commit`, `get_entity_history`

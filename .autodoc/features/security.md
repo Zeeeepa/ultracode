@@ -9,7 +9,7 @@ Interprocedural taint analysis that traces untrusted data from sources to sinks 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `projectPath` | string | current project | Project directory path |
-| `category` | enum | `"all"` | `sql_injection`, `xss`, `command_injection`, `path_traversal`, `ssrf`, `prototype_pollution`, or `all` |
+| `category` | enum | `"all"` | `sql_injection`, `xss`, `command_injection`, `path_traversal`, `ssrf`, `prototype_pollution`, `missing_auth`, or `all` |
 | `maxDepth` | number | `15` | Maximum path depth for flow tracing |
 | `includeTests` | boolean | `false` | Include test files in analysis |
 | `offset` | number | `0` | Number of vulnerabilities to skip (for pagination) |
@@ -74,3 +74,4 @@ taint_analysis({ category: "all", offset: 0, limit: 10 })
 | `path_traversal` | req.params | fs.writeFile, path.join | User input -> file path |
 | `ssrf` | req.body | fetch, http.request | User input -> outbound URL |
 | `prototype_pollution` | req.body | Object.assign, spread | User input -> object merge |
+| `missing_auth` | API endpoints (REST, gRPC, GraphQL) | DB writes, file access, external calls | API endpoint -> sensitive operation without auth check |

@@ -68,11 +68,13 @@ MCP-сервер предоставляет **78 инструментов** дл
 | [**analyze_hotspots**](.autodoc/features/analysis_ru.md#analyze_hotspots) | Сложные участки с высокой цикломатической сложностью |
 | [**analyze_state_chaos**](.autodoc/features/analysis_ru.md#analyze_state_chaos) | Анализ запутанных зависимостей данных |
 | [**analyze_swagger_impact**](.autodoc/features/swagger_ru.md#analyze_swagger_impact) | Анализ влияния изменений Swagger/OpenAPI спецификаций |
+| [**analyze_api_impact**](.autodoc/features/api-contracts_ru.md#analyze_api_impact) | Унифицированный анализ влияния API-контрактов (Swagger + Protobuf + GraphQL) |
+| [**get_database_schema**](.autodoc/features/database-schema_ru.md#get_database_schema) | Схема БД из SQL/Prisma/ORM/Redis с анализом миграций и обнаружением дрифта |
 | [**detect_technology_stack**](.autodoc/features/analysis_ru.md#detect_technology_stack) | Определение стека технологий проекта |
 | [**detect_patterns**](.autodoc/features/patterns_ru.md#detect_patterns) | Обнаружение анти-паттернов, лучших практик, code smells и возможностей оптимизации с семантической валидацией |
 | [**check_entity_patterns**](.autodoc/features/patterns_ru.md#check_entity_patterns) | Проверка конкретной entity на совпадение с паттернами |
 | [**graph_metrics**](.autodoc/features/analysis_ru.md#graph_metrics) | PageRank, кластеризация Louvain, анализ центральности и bus factor для понимания архитектуры |
-| [**taint_analysis**](.autodoc/features/security_ru.md#taint_analysis) | Межпроцедурный taint-анализ: отслеживание ненадёжных данных от источников до приёмников, детекция SQL-инъекций, XSS, command injection |
+| [**taint_analysis**](.autodoc/features/security_ru.md#taint_analysis) | Межпроцедурный taint-анализ: отслеживание ненадёжных данных от источников до приёмников, детекция SQL-инъекций, XSS, command injection, missing auth |
 
 ## Статическая трассировка и отладка
 
@@ -220,6 +222,10 @@ MCP-сервер предоставляет **78 инструментов** дл
 | **Bash** | shfmt + tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
 | **PowerShell** | tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
 | **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
+| **Protobuf** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
+| **GraphQL** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
+| **SQL** | Text + определение диалекта | ⭐⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
+| **Prisma** | Text parser | ⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
 
 **Легенда:**
 - **Сущности** — функции, классы, интерфейсы, типы, enums, переменные

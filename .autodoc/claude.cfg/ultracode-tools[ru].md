@@ -239,6 +239,37 @@ analyze_swagger_impact schemaName="User"
 analyze_swagger_impact endpointPath="GET /api/users"
 ```
 
+### `analyze_api_impact`
+**Унифицированный анализ влияния API-контрактов** — работает со Swagger/OpenAPI, Protobuf/gRPC и GraphQL. Авто-определяет тип контракта.
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `contractType` | enum | "auto" | `swagger`, `protobuf`, `graphql` или `auto` |
+| `specFile` | string | авто | Путь к файлу спецификации |
+| `schemaName` | string | - | Конкретная schema/message/тип для анализа |
+| `endpointPath` | string | - | Конкретный endpoint или имя rpc |
+| `projectPath` | string | текущий | Путь к проекту |
+
+```
+analyze_api_impact contractType="protobuf" schemaName="UserService"
+analyze_api_impact contractType="graphql" schemaName="User"
+```
+
+### `get_database_schema`
+**Реконструкция схемы БД** из SQL-файлов, Prisma-схем, ORM-моделей (TypeORM, Sequelize, JPA, EF Core, Django, SQLAlchemy, GORM, Dapper, linq2db) и паттернов Redis-ключей. Включает анализ миграций (11 фреймворков) и обнаружение дрифта схемы.
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `projectPath` | string | текущий | Путь к проекту |
+| `tableName` | string | - | Фильтр по имени таблицы (частичное совпадение) |
+| `dbEngine` | string | - | Фильтр: `postgres`, `mysql`, `clickhouse`, `redis`, `sqlite`, `mssql` |
+| `includeRelationships` | boolean | false | Включить FK и связи с кодом |
+
+```
+get_database_schema tableName="users"
+get_database_schema dbEngine="postgres" includeRelationships=true
+```
+
 ### `analyze_state_chaos`
 Анализ хаоса состояния (мутации, side-effects).
 

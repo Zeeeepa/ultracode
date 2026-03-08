@@ -68,11 +68,13 @@ MCP server provides **78 tools** for code analysis and modification.
 | [**analyze_hotspots**](.autodoc/features/analysis.md#analyze_hotspots) | Complex areas with high cyclomatic complexity |
 | [**analyze_state_chaos**](.autodoc/features/analysis.md#analyze_state_chaos) | Analysis of tangled data dependencies |
 | [**analyze_swagger_impact**](.autodoc/features/swagger.md#analyze_swagger_impact) | Swagger/OpenAPI spec change impact analysis |
+| [**analyze_api_impact**](.autodoc/features/api-contracts.md#analyze_api_impact) | Unified API contract impact analysis (Swagger + Protobuf + GraphQL) |
+| [**get_database_schema**](.autodoc/features/database-schema.md#get_database_schema) | Database schema from SQL/Prisma/ORM/Redis with migration analysis and drift detection |
 | [**detect_technology_stack**](.autodoc/features/analysis.md#detect_technology_stack) | Project technology stack detection |
 | [**detect_patterns**](.autodoc/features/patterns.md#detect_patterns) | Detect anti-patterns, best-patterns, code smells, and optimization opportunities with semantic validation |
 | [**check_entity_patterns**](.autodoc/features/patterns.md#check_entity_patterns) | Check specific entity for pattern matches with confidence scores |
 | [**graph_metrics**](.autodoc/features/analysis.md#graph_metrics) | PageRank, Louvain community detection, centrality analysis, and bus factor for architecture understanding |
-| [**taint_analysis**](.autodoc/features/security.md#taint_analysis) | Interprocedural taint analysis: trace untrusted data from sources to sinks, detect SQL injection, XSS, command injection |
+| [**taint_analysis**](.autodoc/features/security.md#taint_analysis) | Interprocedural taint analysis: trace untrusted data from sources to sinks, detect SQL injection, XSS, command injection, missing auth |
 
 ## Static Tracing and Debugging
 
@@ -218,6 +220,10 @@ MCP server provides **78 tools** for code analysis and modification.
 | **Bash** | shfmt + tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
 | **PowerShell** | tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
 | **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
+| **Protobuf** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
+| **GraphQL** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
+| **SQL** | Text + dialect detect | ⭐⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
+| **Prisma** | Text parser | ⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
 
 **Legend:**
 - **Entities** — functions, classes, interfaces, types, enums, variables

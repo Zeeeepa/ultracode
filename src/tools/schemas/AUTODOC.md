@@ -37,6 +37,9 @@ The schemas module contains all Zod schema definitions that validate and type-ch
 | `GetEntityHistorySchema` | const | Entity change history via Prolly Tree | [`history-schemas.ts:8-11`](./history-schemas.ts) |
 | `TaintAnalysisSchema` | const | Taint analysis with category, offset/limit pagination | [`taint-schemas.ts`](./taint-schemas.ts) |
 | `GraphMetricsSchema` | const | Graph metrics: pagerank, louvain, centrality, bus_factor | [`graph-metrics-schemas.ts`](./graph-metrics-schemas.ts) |
+| `AnalyzeApiImpactSchema` | const | Unified API impact analysis across Swagger, Protobuf, GraphQL | [`semantic-schemas.ts:29-39`](./semantic-schemas.ts) |
+| `AnalyzeSwaggerImpactSchema` | const | Swagger/OpenAPI spec change impact analysis | [`semantic-schemas.ts:22-27`](./semantic-schemas.ts) |
+| `GetDatabaseSchemaSchema` | const | Database schema reconstruction with ORM, migrations, drift detection | [`semantic-schemas.ts:73-78`](./semantic-schemas.ts) |
 | `DEFAULT_EXCLUDE_PATTERNS` | const | Default file exclusion patterns for indexing | [`index-schemas.ts:9-60`](./index-schemas.ts) |
 
 ## Dependencies
@@ -57,7 +60,7 @@ The schemas module contains all Zod schema definitions that validate and type-ch
 
 | Property | Value |
 |----------|-------|
-| Total schemas | 60+ validation schemas |
+| Total schemas | 65+ validation schemas |
 | Schema groups | 14 domain files (analysis, autodoc, entity, graph, graph-metrics, history, index, merge, modification, semantic, snapshot, taint, validation) |
 | Validation approach | Zod parse with descriptive error messages |
 
@@ -72,7 +75,6 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 
 ## Exports
 
-- `GetArchitectureDiagramSchema`
 - `AnalyzeHotspotsSchema`
 - `AnalyzeStateChaosSchema`
 - `JscpdCloneDetectionSchema`
@@ -88,6 +90,7 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 - `AutoDocStatusSchema`
 - `AutoDocSyncSchema`
 - `AutoDocValidateSchema`
+- `GetArchitectureDiagramSchema`
 - `ListEntitiesToolSchema`
 - `ListRelationshipsToolSchema`
 - `QueryToolSchema`
@@ -122,6 +125,7 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 - `AnalyzeApiImpactSchema`
 - `AnalyzeCodeImpactSchema`
 - `AnalyzeSwaggerImpactSchema`
+- `GetDatabaseSchemaSchema`
 
 ## Files
 

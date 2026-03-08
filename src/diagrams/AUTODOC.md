@@ -36,9 +36,9 @@ Renderer (format-specific)
 
 | Name | Type | Description | Location |
 |------|------|-------------|----------|
-| `DiagramIR` | interface | Root IR structure: nodes, edges, groups, stats | [→ diagram-ir.ts:76-90](./diagram-ir.ts) |
+| `DiagramIR` | interface | Root IR structure: nodes, edges, groups, stats | [→ diagram-ir.ts:71-71](./diagram-ir.ts) |
 | `DiagramNode` | interface | Node: id, label, type, inputTypes, outputType, fieldMappings | [→ diagram-ir.ts:31-43](./diagram-ir.ts) |
-| `DiagramEdge` | interface | Edge: fromId, toId, type, style, dataAnnotation | [→ diagram-ir.ts:49-56](./diagram-ir.ts) |
+| `DiagramEdge` | interface | Edge: fromId, toId, type, style, dataAnnotation | [→ diagram-ir.ts:47-47](./diagram-ir.ts) |
 | `DiagramGroup` | interface | Group: id, label, nodeIds, filePath | [→ diagram-ir.ts:60-66](./diagram-ir.ts) |
 | `DataAnnotation` | interface | Flow annotation: inputTypes, outputType, transformation, conditionalHint, sourceFields | [→ diagram-ir.ts:20-27](./diagram-ir.ts) |
 | `FieldMapping` | interface | Field-level mapping: sourceParam, sourceField, targetField, operation | [→ diagram-ir.ts:11-16](./diagram-ir.ts) |

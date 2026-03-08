@@ -65,7 +65,9 @@ trace_flow({
 })
 ```
 
-**Аннотации границ API-контрактов**: Когда пути трассировки пересекают сущности Swagger/OpenAPI, шаги аннотируются `crossesApiContract: true` и `contractInfo` (type, endpoint, schemaName). Добавляется предупреждение на уровне пути: "Путь пересекает границу API-контракта." См. [swagger_ru.md](swagger_ru.md).
+**Аннотации границ API-контрактов**: Когда пути трассировки пересекают сущности API-контрактов (Swagger/OpenAPI, Protobuf/gRPC или GraphQL), шаги аннотируются `crossesApiContract: true` и `contractInfo` (type, endpoint, schemaName). Добавляется предупреждение на уровне пути: "Путь пересекает границу API-контракта." См. [api-contracts_ru.md](api-contracts_ru.md).
+
+**Аннотации границ баз данных**: Когда пути трассировки пересекают операции с базами данных, шаги аннотируются `crossesDbBoundary: true` и `dbInfo` (type: sql/orm/redis, operation: read/write, tableName). См. [database-schema_ru.md](database-schema_ru.md).
 
 ---
 

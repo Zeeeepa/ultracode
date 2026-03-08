@@ -204,6 +204,37 @@ analyze_swagger_impact schemaName="User"
 analyze_swagger_impact endpointPath="GET /api/users"
 ```
 
+### `analyze_api_impact`
+**Unified API contract impact analysis** — works across Swagger/OpenAPI, Protobuf/gRPC, and GraphQL. Auto-detects contract type.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `contractType` | enum | "auto" | `swagger`, `protobuf`, `graphql`, or `auto` |
+| `specFile` | string | auto | Path to spec file |
+| `schemaName` | string | - | Specific schema/message/type to analyze |
+| `endpointPath` | string | - | Specific endpoint or rpc name |
+| `projectPath` | string | current | Project path |
+
+```
+analyze_api_impact contractType="protobuf" schemaName="UserService"
+analyze_api_impact contractType="graphql" schemaName="User"
+```
+
+### `get_database_schema`
+**Database schema reconstruction** from SQL files, Prisma schemas, ORM models (TypeORM, Sequelize, JPA, EF Core, Django, SQLAlchemy, GORM, Dapper, linq2db), and Redis key patterns. Includes migration analysis (11 frameworks) and schema drift detection.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `projectPath` | string | current | Project path |
+| `tableName` | string | - | Filter by table name (partial match) |
+| `dbEngine` | string | - | Filter: `postgres`, `mysql`, `clickhouse`, `redis`, `sqlite`, `mssql` |
+| `includeRelationships` | boolean | false | Include FK and code relationships |
+
+```
+get_database_schema tableName="users"
+get_database_schema dbEngine="postgres" includeRelationships=true
+```
+
 ### `analyze_state_chaos`
 State chaos analysis (mutations, side-effects).
 
