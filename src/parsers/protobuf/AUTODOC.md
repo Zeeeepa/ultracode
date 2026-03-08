@@ -1,6 +1,6 @@
 # Protobuf
 
-Parses protobuf files and links gRPC service definitions to code implementations.
+Parses protobuf definitions and analyzes links to gRPC server/client implementations
 
 ## Exports
 

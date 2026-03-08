@@ -1,6 +1,6 @@
 # Graphql
 
-Analyzes GraphQL schema-to-code relationships and resolver implementations
+Links GraphQL schemas to source code implementations and analyzes relationships
 
 ## Exports
 
