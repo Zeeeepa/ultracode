@@ -1,6 +1,6 @@
 # Taint
 
-Security analysis module detecting data flow vulnerabilities from untrusted sources to dangerous operations.
+Detects security vulnerabilities through taint analysis of data flows.
 
 ## Response Handling
 

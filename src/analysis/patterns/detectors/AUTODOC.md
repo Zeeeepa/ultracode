@@ -1,6 +1,6 @@
 # Detectors
 
-Custom code quality detectors for identifying problematic patterns across multiple programming languages
+Custom detectors for code quality anti-patterns across multiple programming languages
 
 ## Exports
 

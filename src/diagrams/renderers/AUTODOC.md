@@ -1,6 +1,6 @@
 # Renderers
 
-Converts diagram intermediate representation to multiple text-based diagram formats.
+Converts DiagramIR into multiple diagram language formats
 
 ## Exports
 

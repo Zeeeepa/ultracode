@@ -497,16 +497,36 @@ export class EntityOperations {
 
       if (filters.filePath) {
         const paths = Array.isArray(filters.filePath) ? filters.filePath : [filters.filePath];
-        // Normalize paths for cross-platform
-        const normalized: string[] = [];
+        // Separate exact paths from directory prefixes (trailing / or \)
+        const exactPaths: string[] = [];
+        const prefixPaths: string[] = [];
         for (const p of paths) {
-          normalized.push(p);
-          if (p.includes("/")) normalized.push(p.replace(/\//g, "\\"));
-          if (p.includes("\\")) normalized.push(p.replace(/\\/g, "/"));
+          if (p.endsWith("/") || p.endsWith("\\")) {
+            // Directory prefix — use LIKE for subtree match
+            const base = p.replace(/[/\\]+$/, "");
+            prefixPaths.push(base + "/");
+            prefixPaths.push(base + "\\");
+          } else {
+            // Exact file path — normalize for cross-platform
+            exactPaths.push(p);
+            if (p.includes("/")) exactPaths.push(p.replace(/\//g, "\\"));
+            if (p.includes("\\")) exactPaths.push(p.replace(/\\/g, "/"));
+          }
         }
-        const unique = [...new Set(normalized)];
-        sql += ` AND e.file_path IN (${unique.map(() => "?").join(",")})`;
-        args.push(...unique);
+
+        const conditions: string[] = [];
+        if (exactPaths.length > 0) {
+          const unique = [...new Set(exactPaths)];
+          conditions.push(`e.file_path IN (${unique.map(() => "?").join(",")})`);
+          args.push(...unique);
+        }
+        for (const prefix of [...new Set(prefixPaths)]) {
+          conditions.push("e.file_path LIKE ?");
+          args.push(prefix + "%");
+        }
+        if (conditions.length > 0) {
+          sql += ` AND (${conditions.join(" OR ")})`;
+        }
       }
 
       if (filters.name) {

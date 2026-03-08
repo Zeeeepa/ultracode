@@ -1,15 +1,15 @@
 # Stacktrace
 
-Parses stacktraces, classifies errors, resolves frames to entities.
+Parses, classifies, and diagnoses stacktrace errors with code graph integration.
 
 ## Exports
 
 | Name | Type | Description | Location |
 |------|------|-------------|----------|
 | `classifyError` | function | Classifies error by type and severity | [→ error-classifier.ts:252-288] |
-| `diagnose` | function | Analyzes stacktrace and generates diagnosis with fixes | [→ diagnosis-engine.ts:51-56] |
+| `diagnose` | function | Analyzes stacktrace and generates diagnosis with fixes | [→ diagnosis-engine.ts:48-56] |
 | `DiagnosisOptions` | interface | Configuration options for diagnosis function | [→ diagnosis-engine.ts:39-43] |
-| `DiagnosisTraceEngine` | interface | Interface for optional backwards tracing dependency | [→ diagnosis-engine.ts:24-26] |
+| `DiagnosisTraceEngine` | interface | Interface for optional backwards tracing dependency | [→ diagnosis-engine.ts:20-26] |
 | `ErrorCategory` | type | Type for classifiable error categories | [→ types.ts:47-61] |
 | `ErrorClassification` | interface | Error category with severity and hints | [→ types.ts:63-63] |
 | `FrameResolverStorage` | interface | Interface for code graph storage operations | [→ frame-resolver.ts:17-37] |

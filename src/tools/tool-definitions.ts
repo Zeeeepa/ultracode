@@ -162,7 +162,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "get_members",
       description:
-        "[EXPLORE] List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
+        "[EXPLORE] List parsed entities within a single file or directory (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries. Accepts both file paths and directory paths — when a directory is given, returns entities from all files in the subtree.",
       inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
     },
     {
