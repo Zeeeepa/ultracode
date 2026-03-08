@@ -222,6 +222,7 @@ The server supports working with multiple projects simultaneously:
 - **config**: 3 files — configuration
 - **core**: 8 files — system core (DI, Bus, Resource Manager)
 - **cpu**: 1 file — CPU detection
+- **diagrams**: 7 files — architecture diagram pipeline (IR, renderers, collector)
 - **gpu**: 1 file — GPU detection and backends
 - **layered**: 12 files — layered branch indexing
 - **merge**: 3 files — semantic merge
@@ -572,6 +573,70 @@ If the DLL is not found, the addon does not start, and C# parsing is unavailable
 | 1 active solution | 1 | 300-500 MB |
 | Solution idle (5 min) | 0 | 0 MB |
 | Addon not found | 0 | 0 MB |
+
+## Architecture Diagram Pipeline
+
+[→ src/diagrams/](../src/diagrams/) | [📖 AUTODOC](../src/diagrams/AUTODOC.md) | [📖 Tool docs](.autodoc/features/diagrams.md)
+
+The diagram module generates visual architecture representations from the code graph in Mermaid, Graphviz DOT, and D2 formats.
+
+### Pipeline
+
+```
+GraphStorage (entities + relationships)
+    │
+    ▼
+SchemaCollector (BFS + enrichment)
+    │  Phase 1: Structural BFS via CONTAINS
+    │  Phase 2: Inter-node edges with relationship lifting
+    │  Phase 3: Data flow via TraceEngine.getBatchNodeContext()
+    │  Phase 4: Field mapping via regex (L3)
+    │
+    ▼
+DiagramIR (format-agnostic)
+    │
+    ├── MermaidRenderer  → flowchart / classDiagram
+    ├── GraphvizRenderer → digraph DOT (record shapes, clusters)
+    └── D2Renderer       → D2 language (native nesting)
+```
+
+### Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **DiagramIR** | [→ diagram-ir.ts](../src/diagrams/diagram-ir.ts) | Format-agnostic types: nodes, edges, groups, data annotations |
+| **SchemaCollector** | [→ schema-collector.ts](../src/diagrams/schema-collector.ts) | BFS graph traversal, data flow enrichment, LRU caching |
+| **FieldMapper** | [→ field-mapper.ts](../src/diagrams/field-mapper.ts) | Regex source code analysis for field-level mapping (L3) |
+| **MermaidRenderer** | [→ mermaid-renderer.ts](../src/diagrams/renderers/mermaid-renderer.ts) | Mermaid flowchart + classDiagram |
+| **GraphvizRenderer** | [→ graphviz-renderer.ts](../src/diagrams/renderers/graphviz-renderer.ts) | Graphviz DOT with record shapes |
+| **D2Renderer** | [→ d2-renderer.ts](../src/diagrams/renderers/d2-renderer.ts) | D2 with native nesting |
+| **DiagramToolHandler** | [→ diagram-tool-handler.ts](../src/tools/handlers/diagram-tool-handler.ts) | MCP tool handler |
+
+### Data Flow Levels
+
+| Level | Enrichment | SQL Queries |
+|-------|-----------|-------------|
+| **0** | Structure only | 0 extra |
+| **1** | Basic types + conditional hints | +2 (entities batch + relationships) |
+| **2** | L1 + dashed edges for conditionals | +2 (same as L1) |
+| **3** | L2 + field mapping via source regex | +2 + file reads |
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Own BFS, not `getSubgraph()` | `getSubgraph` follows ALL relationship types, pulling in too many unrelated nodes |
+| Relationship lifting | At depth=2, CALLS exist between methods (depth=3), not classes — lifting makes class-level diagrams useful |
+| `getBatchNodeContext()` (2 SQL) | Avoids N+1 query pattern for data flow enrichment |
+| DiagramIR as intermediate | One collection pass serves all 3 renderers; enables LRU caching |
+| Source entity filtering | Excludes scripts/, tests/, generated/, docs/ to show only architectural code |
+
+### Performance
+
+- Max 500 nodes, 1000 edges per diagram
+- 10-second timeout via `context.withTimeout()`
+- LRU cache: TTL 5min, max 20 entries — repeat calls <200ms
+- Typical first-call latency: 1-2 seconds
 
 ## Related Documents
 

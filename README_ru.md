@@ -44,7 +44,7 @@ MCP-сервер для ИИ-агентов, работающих с кодом.
 
 # Возможности
 
-MCP-сервер предоставляет **77 инструментов** для анализа и модификации кода.
+MCP-сервер предоставляет **78 инструментов** для анализа и модификации кода.
 
 ## Поиск и навигация
 
@@ -83,6 +83,12 @@ MCP-сервер предоставляет **77 инструментов** дл
 | [**trace_data_flow**](.autodoc/features/tracing_ru.md#trace_data_flow) | Как данные влияют на состояние |
 | [**analyze_state_impact**](.autodoc/features/tracing_ru.md#analyze_state_impact) | Что изменится при другом значении |
 | [**find_decision_points**](.autodoc/features/tracing_ru.md#find_decision_points) | Точки ветвления в коде |
+
+## Архитектурные диаграммы
+
+| Инструмент | Описание |
+|------------|----------|
+| [**get_architecture_diagram**](.autodoc/features/diagrams_ru.md#get_architecture_diagram) | Генерация архитектурных диаграмм в Mermaid, Graphviz DOT или D2 из графа кода |
 
 ## Модификация кода
 

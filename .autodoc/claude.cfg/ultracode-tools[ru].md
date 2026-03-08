@@ -481,6 +481,22 @@ get_changed_files fromBranch="main" toBranch="feature/auth"
 
 ---
 
+## Архитектурные диаграммы
+
+### `get_architecture_diagram`
+Генерация архитектурных диаграмм из графа кода. Поддержка Mermaid, Graphviz DOT, D2.
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `entryPoint` | string | - | Точка входа (файл, класс, модуль). Без указания — обзор проекта |
+| `depth` | number | 2 | 1=файлы, 2=классы, 3=методы, 4+=глубже |
+| `dataFlowLevel` | number | 1 | 0=структура, 1=типы, 2=условия, 3=маппинг полей |
+| `format` | string | mermaid | `mermaid`, `graphviz`, `d2` |
+| `direction` | string | TD | `TD` (сверху вниз) или `LR` (слева направо) |
+| `diagramType` | string | авто | `flowchart`, `class`, `component` |
+
+---
+
 ## Метрики и отладка
 
 ### `get_metrics`

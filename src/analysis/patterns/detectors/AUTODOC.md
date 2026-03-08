@@ -1,6 +1,6 @@
 # Detectors
 
-Language-agnostic and language-specific code quality detectors identifying common anti-patterns
+Custom code quality detectors for identifying problematic patterns across multiple programming languages
 
 ## Exports
 

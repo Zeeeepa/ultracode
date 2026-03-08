@@ -19,6 +19,7 @@
 | Find async without error handling | `semantic_search hasAwaits=true hasExceptions=false` | Control flow filters |
 | Security vulnerabilities | `taint_analysis` | Source→sink flow tracing |
 | Architecture metrics | `graph_metrics` | PageRank, communities, bus factor |
+| Architecture diagram | `get_architecture_diagram` | Mermaid/Graphviz/D2 from code graph |
 
 ## Supported Languages
 

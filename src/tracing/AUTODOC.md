@@ -53,7 +53,8 @@ Results: TraceFlowResult, TraceBackwardsResult, TraceDataFlowResult,
 
 | Export | Kind | Description | Location |
 |--------|------|-------------|----------|
-| `TraceEngine` | class | Main engine: `traceFlow()`, `traceBackwards()`, `getGraphStats()` | [`trace-engine.ts:48-48`](./trace-engine.ts) |
+| `TraceEngine` | class | Main engine: `traceFlow()`, `traceBackwards()`, `getGraphStats()`, `getNodeFlowContext()`, `getBatchNodeContext()` | [`trace-engine.ts:48-48`](./trace-engine.ts) |
+| `NodeFlowContext` | interface | Per-entity flow context: inputTypes, outputType, hasTransformation, conditionalHint, callers, callees | [`trace-engine.ts:53-62`](./trace-engine.ts) |
 | `PathBuilder` | class | BFS/DFS traversal: `findPathsForward()`, `findPathsBackward()`, `getCallers()` | [`path-builder.ts:48-732`](./path-builder.ts) |
 | `GraphologyPathBuilder` | class | Optimized graph: `loadGraph()`, `traceLinearFlow()`, `findPaths()` | [`graphology-path-builder.ts:118-894`](./graphology-path-builder.ts) |
 | `ConditionAnalyzer` | class | Decision points: `findDecisionPoints()`, `analyzeConditions()` | [`condition-analyzer.ts:35-35`](./condition-analyzer.ts) |
@@ -103,6 +104,17 @@ Entity resolution supports file-qualified format (`src/file.ts:symbol`), falling
 ## Observability
 
 `TraceFlowResult` includes a `_debug` field with `sourceEntityId`, `targetEntityId`, `graphStats` (`nodes`, `edges`, `loadTimeMs`, `memoryMB`), `nodesVisited`, `found`, and `timeMs`. Info-level logs emit `"graph_loaded"` (load time, node/edge counts) and `"trace_done"` / `"back_trace_done"` (completion time, nodes visited). Debug-level logs emit `"resolved"` (entity resolution details) and `"multiple_suffix_matches"` (disambiguation warnings). `GraphologyPathBuilder.getStats()` returns live graph statistics.
+
+## Diagram Integration
+
+`TraceEngine` provides two methods for diagram data flow enrichment:
+
+| Method | Description |
+|--------|-------------|
+| `getNodeFlowContext(entityId)` | Single entity: extract inputTypes, outputType, hasTransformation, conditionalHint from metadata |
+| `getBatchNodeContext(entityIds[])` | Batch version: 2 SQL queries (`getEntitiesBatch` + `findRelationships`) for all nodes, O(N) in memory |
+
+These methods are used by `SchemaCollector` ([→ src/diagrams/schema-collector.ts](../diagrams/schema-collector.ts)) to enrich diagram edges with data flow annotations without running expensive full-trace operations (O(N) vs O(N²) for trace_flow between all pairs).
 
 ## Known Limitations
 

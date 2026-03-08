@@ -72,6 +72,7 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 
 ## Exports
 
+- `GetArchitectureDiagramSchema`
 - `AnalyzeHotspotsSchema`
 - `AnalyzeStateChaosSchema`
 - `JscpdCloneDetectionSchema`
@@ -121,7 +122,6 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 - `AnalyzeApiImpactSchema`
 - `AnalyzeCodeImpactSchema`
 - `AnalyzeSwaggerImpactSchema`
-- `CrossLanguageSearchSchema`
 
 ## Files
 

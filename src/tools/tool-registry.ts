@@ -229,6 +229,13 @@ export class ToolRegistry {
     const taintLoader = () => import("./handlers/taint-tool-handlers.js");
     this.registerLazy("taint_analysis", async () => (await taintLoader()).TaintAnalysisToolHandler);
 
+    // --- Diagram tools (~20KB) ---
+    const diagramLoader = () => import("./handlers/diagram-tool-handler.js");
+    this.registerLazy(
+      "get_architecture_diagram",
+      async () => (await diagramLoader()).GetArchitectureDiagramToolHandler,
+    );
+
     // --- Graph metrics tools (~15KB) ---
     const graphMetricsLoader = () => import("./handlers/graph-metrics-tool-handlers.js");
     this.registerLazy("graph_metrics", async () => (await graphMetricsLoader()).GraphMetricsToolHandler);

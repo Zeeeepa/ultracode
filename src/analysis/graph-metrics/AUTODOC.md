@@ -1,6 +1,6 @@
 # Graph Metrics
 
-Computes and formats code graph metrics including PageRank, community detection, and bus factor analysis.
+Computes graph metrics on code dependency structures for analysis.
 
 ## Exports
 

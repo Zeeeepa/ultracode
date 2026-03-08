@@ -1,6 +1,6 @@
 # Db
 
-Database schema parsing, ORM detection, migration analysis, and code linking.
+Parses database schemas and migrations, detects ORM patterns, links database entities to code
 
 ## Exports
 
@@ -13,11 +13,11 @@ Database schema parsing, ORM detection, migration analysis, and code linking.
 | `DbIndex` | interface | Type representing a database index definition | [→ types.ts:21-26] |
 | `DbRelationship` | interface | Type representing relationships between database entities | [→ types.ts:54-61] |
 | `DbSchemaAnalysis` | interface | Type for comprehensive database schema analysis results | [→ types.ts:47-52] |
-| `detectOrmSchemas` | function | Identifies ORM models from indexed code entities | [→ orm-detector.ts:22-39] |
+| `detectOrmSchemas` | function | Identifies ORM models from indexed code entities | [→ orm-detector.ts:23-47] |
 | `detectRedisPatterns` | function | Extracts Redis key patterns from code usage | [→ redis-detector.ts:18-38] |
-| `LinqParser` | class | Parser class for extracting LINQ queries from .linq files | [→ linq-parser.ts:15-84] |
-| `PrismaParser` | class | Parser class for Prisma schema file analysis | [→ prisma-parser.ts:16-108] |
-| `SqlParser` | class | Parser class for SQL files with dialect detection | [→ sql-parser.ts:18-100] |
+| `LinqParser` | class | Parser class for extracting LINQ queries from .linq files | [→ linq-parser.ts:15-92] |
+| `PrismaParser` | class | Parser class for Prisma schema file analysis | [→ prisma-parser.ts:16-116] |
+| `SqlParser` | class | Parser class for SQL files with dialect detection | [→ sql-parser.ts:18-108] |
 
 ## Files
 

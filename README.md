@@ -44,7 +44,7 @@ Full indexing of a medium project (~500 files) completes in **3-5 seconds** (par
 
 # Features
 
-MCP server provides **77 tools** for code analysis and modification.
+MCP server provides **78 tools** for code analysis and modification.
 
 ## Search and Navigation
 
@@ -83,6 +83,12 @@ MCP server provides **77 tools** for code analysis and modification.
 | [**trace_data_flow**](.autodoc/features/tracing.md#trace_data_flow) | How data affects state |
 | [**analyze_state_impact**](.autodoc/features/tracing.md#analyze_state_impact) | What changes with different values |
 | [**find_decision_points**](.autodoc/features/tracing.md#find_decision_points) | Branching points in code |
+
+## Architecture Diagrams
+
+| Tool | Description |
+|------|-------------|
+| [**get_architecture_diagram**](.autodoc/features/diagrams.md#get_architecture_diagram) | Generate architecture diagrams in Mermaid, Graphviz DOT, or D2 from code graph |
 
 ## Code Modification
 

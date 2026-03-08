@@ -43,6 +43,7 @@ import {
   FindRelatedConceptsSchema,
   FindSimilarCodeSchema,
   GetAgentMetricsSchema,
+  GetArchitectureDiagramSchema,
   GetBusStatsSchema,
   GetDatabaseSchemaSchema,
   GetEntityHistorySchema,
@@ -270,6 +271,21 @@ export function getToolsList(): ToolDefinition[] {
       description:
         "[EXPLORE] Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
       inputSchema: zodToJsonSchema(DetectTechnologyStackSchema),
+    },
+
+    // ==========================================================================
+    // Architecture Diagrams
+    // ==========================================================================
+    {
+      name: "get_architecture_diagram",
+      description:
+        "[EXPLORE] Generate architecture diagrams in Mermaid, Graphviz DOT, or D2 format. " +
+        "Specify entryPoint (file/class/module) or omit for project overview. " +
+        "depth controls detail level (1=files, 2=classes, 3=methods). " +
+        "dataFlowLevel adds type annotations (0=none, 1=basic types, 2=params+conditionals, 3=field mapping). " +
+        "Auto-detects diagramType (flowchart/class/component) from code structure. " +
+        "Example: get_architecture_diagram({depth:2, dataFlowLevel:1, format:'mermaid'}).",
+      inputSchema: zodToJsonSchema(GetArchitectureDiagramSchema),
     },
 
     // ==========================================================================

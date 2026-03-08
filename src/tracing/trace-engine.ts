@@ -48,6 +48,42 @@ const DEFAULT_MAX_PATHS = 5;
 // Entity types that represent real code (not imports/stubs)
 const REAL_CODE_TYPES = new Set(["method", "function", "async_function", "class", "interface", "property"]);
 
+// -- Node Flow Context (used by diagram enrichment) -------------------------
+
+export interface NodeFlowContext {
+  entityId: string;
+  inputTypes: string[];
+  outputType?: string | undefined;
+  hasTransformation: boolean;
+  hasConditionalLogic: boolean;
+  conditionalHint?: string | undefined;
+  callers: string[];
+  callees: string[];
+}
+
+function buildNodeContext(entity: Entity, callerIds: string[], calleeIds: string[]): NodeFlowContext {
+  type Param = NonNullable<Entity["metadata"]["parameters"]>[number];
+  const params = entity.metadata.parameters || [];
+  const inputTypes = params.map((p: Param) => p.type || "any");
+  const outputType = entity.metadata.returnType || undefined;
+  const hasTransformation = outputType != null && inputTypes.length > 0 && inputTypes.some((t) => t !== outputType);
+  const branches = (entity.metadata as any).controlFlow?.branches;
+  const hasConditionalLogic = Array.isArray(branches) && branches.length > 0;
+  const conditionalHint = hasConditionalLogic
+    ? String(branches[0]?.condition ?? "").slice(0, 40) || undefined
+    : undefined;
+  return {
+    entityId: entity.id,
+    inputTypes,
+    outputType,
+    hasTransformation,
+    hasConditionalLogic,
+    conditionalHint,
+    callers: callerIds,
+    callees: calleeIds,
+  };
+}
+
 /** Check if an entity is a real code entity (not an external stub or import) */
 function isRealEntity(entity: Entity): boolean {
   if (entity.id.startsWith("external:")) return false;
@@ -1087,7 +1123,108 @@ export class TraceEngine {
   }
 
   // ===========================================================================
-  // 10. CACHE MANAGEMENT
+  // 10. NODE FLOW CONTEXT (for diagram enrichment)
+  // ===========================================================================
+
+  /**
+   * Lightweight flow context for a single entity.
+   * Used by diagram SchemaCollector to annotate edges with data flow info
+   * without running expensive full-trace operations.
+   */
+  async getNodeFlowContext(entityId: string): Promise<NodeFlowContext> {
+    const entity = await this.storage.getEntity(entityId);
+    if (!entity) {
+      return {
+        entityId,
+        inputTypes: [],
+        hasTransformation: false,
+        hasConditionalLogic: false,
+        callers: [],
+        callees: [],
+      };
+    }
+    const rels = await this.storage.getRelationshipsForEntity(entityId);
+    const callers: string[] = [];
+    const callees: string[] = [];
+    for (const r of rels) {
+      if (r.type === "calls" && r.fromId === entityId) callees.push(r.toId);
+      if (r.type === "calls" && r.toId === entityId) callers.push(r.fromId);
+      if (r.type === "called_by" && r.fromId === entityId) callers.push(r.toId);
+    }
+    return buildNodeContext(entity, callers.slice(0, 5), callees.slice(0, 5));
+  }
+
+  /**
+   * Batch version of getNodeFlowContext — 2 SQL queries for the entire diagram.
+   * Uses getEntitiesBatch() for O(1) entity lookup and findRelationships() for
+   * batch relationship retrieval, avoiding N+1 query pattern.
+   */
+  async getBatchNodeContext(entityIds: string[]): Promise<Map<string, NodeFlowContext>> {
+    if (entityIds.length === 0) return new Map();
+
+    // 1. Batch entity lookup (chunked internally for >1000 IDs)
+    const entities = await this.storage.getEntitiesBatch(entityIds);
+
+    // 2. Batch CALLS relationship lookup
+    const relLimit = Math.min(entityIds.length * 10, 5000);
+    const allRels = await this.storage.findRelationships({
+      filters: {
+        fromId: entityIds,
+        relationshipType: "calls" as any,
+      },
+      limit: relLimit,
+    });
+
+    // Also fetch called_by for incoming edges
+    const incomingRels = await this.storage.findRelationships({
+      filters: {
+        toId: entityIds,
+        relationshipType: "calls" as any,
+      },
+      limit: relLimit,
+    });
+
+    // 3. Build O(1) lookup maps
+    const nodeSet = new Set(entityIds);
+    const outgoingMap = new Map<string, string[]>();
+    const incomingMap = new Map<string, string[]>();
+
+    for (const rel of allRels) {
+      if (!outgoingMap.has(rel.fromId)) outgoingMap.set(rel.fromId, []);
+      outgoingMap.get(rel.fromId)!.push(rel.toId);
+    }
+    for (const rel of incomingRels) {
+      if (nodeSet.has(rel.toId)) {
+        if (!incomingMap.has(rel.toId)) incomingMap.set(rel.toId, []);
+        incomingMap.get(rel.toId)!.push(rel.fromId);
+      }
+    }
+
+    // 4. Build context map
+    const result = new Map<string, NodeFlowContext>();
+    for (const id of entityIds) {
+      const entity = entities.get(id);
+      if (entity) {
+        result.set(
+          id,
+          buildNodeContext(entity, (incomingMap.get(id) || []).slice(0, 5), (outgoingMap.get(id) || []).slice(0, 5)),
+        );
+      } else {
+        result.set(id, {
+          entityId: id,
+          inputTypes: [],
+          hasTransformation: false,
+          hasConditionalLogic: false,
+          callers: [],
+          callees: [],
+        });
+      }
+    }
+    return result;
+  }
+
+  // ===========================================================================
+  // 11. CACHE MANAGEMENT
   // ===========================================================================
 
   /**

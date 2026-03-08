@@ -252,6 +252,20 @@ Graph-based architecture metrics for understanding codebase structure.
 
 **Returns:** Varies by metric — PageRank scores, Louvain communities, centrality roles, or bus factor risk.
 
+### `get_architecture_diagram`
+Generate architecture diagrams from code graph in Mermaid, Graphviz DOT, or D2 format.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `entryPoint` | string | - | Entry point (file/class/module). Omit for project-wide |
+| `depth` | number | 2 | 1=files, 2=classes, 3=methods, 4+=deeper |
+| `dataFlowLevel` | number | 1 | 0=structure, 1=types, 2=conditionals, 3=field mapping |
+| `format` | enum | mermaid | `mermaid`, `graphviz`, `d2` |
+| `direction` | enum | TD | `TD` (top-down), `LR` (left-right) |
+| `diagramType` | enum | auto | `flowchart`, `class`, `component` |
+
+**Returns:** Diagram text + stats (nodes, edges, groups, truncated, collectionTimeMs).
+
 ### `suggest_refactoring`
 Suggest refactoring opportunities based on code quality analysis.
 

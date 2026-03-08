@@ -25,6 +25,8 @@ export {
   AutoDocSyncSchema,
   AutoDocValidateSchema,
 } from "./autodoc-schemas.js";
+// Architecture Diagrams
+export { GetArchitectureDiagramSchema } from "./diagram-schemas.js";
 // Entity Operations
 export { ListEntitiesToolSchema, ListRelationshipsToolSchema, QueryToolSchema } from "./entity-schemas.js";
 // Graph Metrics

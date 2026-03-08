@@ -432,6 +432,22 @@ Lerna monorepo graph.
 
 ---
 
+## Architecture Diagrams
+
+### `get_architecture_diagram`
+Generate architecture diagrams from code graph. Supports Mermaid, Graphviz DOT, D2.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `entryPoint` | string | - | Entry point (file, class, module). Omit for project overview |
+| `depth` | number | 2 | 1=files, 2=classes, 3=methods, 4+=deeper |
+| `dataFlowLevel` | number | 1 | 0=structure, 1=types, 2=conditionals, 3=field mapping |
+| `format` | string | mermaid | `mermaid`, `graphviz`, `d2` |
+| `direction` | string | TD | `TD` (top-down) or `LR` (left-right) |
+| `diagramType` | string | auto | `flowchart`, `class`, `component` |
+
+---
+
 ## Metrics & Debug
 
 ### `get_metrics`
