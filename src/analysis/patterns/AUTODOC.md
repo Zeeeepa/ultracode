@@ -11,7 +11,7 @@ Pattern Detection System for analyzing code across multiple programming language
 | `ExemplarStore` | class | Loads curated code examples with lazy embedding caching | [→ exemplar-store.ts:36-231] |
 | `PatternCategory` | type | Union type for pattern categories and classifications | [→ types.ts:9] |
 | `PatternDefinition` | interface | Interface for complete pattern rule definition | [→ types.ts:74-102] |
-| `PatternEngine` | class | Orchestrates structural detection and semantic validation pipeline | [→ pattern-engine.ts:44-351] |
+| `PatternEngine` | class | Orchestrates structural detection and semantic validation pipeline | [→ pattern-engine.ts:41-50] |
 | `PatternExemplar` | interface | Interface for curated code example with metadata | [→ types.ts:101-136] |
 | `PatternFormatter` | class | Formats scan results as summary, detailed, or JSON | [→ pattern-formatter.ts:7-166] |
 | `PatternMatch` | interface | Interface for detected pattern match result | [→ types.ts:114-120] |

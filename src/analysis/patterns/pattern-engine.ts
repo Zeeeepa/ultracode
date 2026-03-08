@@ -16,11 +16,24 @@ import { log } from "../../logging/index.js";
 import type { EmbeddingGenerator } from "../../semantic/embedding-generator.js";
 import type { Entity, GraphStorage } from "../../types/storage.js";
 import * as commonDetectors from "./detectors/common.js";
+import * as csharpDetectors from "./detectors/csharp.js";
+import * as goDetectors from "./detectors/go.js";
+import * as javaDetectors from "./detectors/java.js";
+import * as pythonDetectors from "./detectors/python.js";
+import * as typescriptDetectors from "./detectors/typescript.js";
+import * as zigDetectors from "./detectors/zig.js";
 import { ExemplarStore } from "./exemplar-store.js";
 import { PatternRegistry } from "./pattern-registry.js";
 import { SemanticValidator } from "./semantic-validator.js";
 import { registerDetectors, StructuralDetector } from "./structural-detector.js";
-import type { PatternCategory, PatternMatch, PatternScanOptions, PatternScanResult, PatternSeverity } from "./types.js";
+import type {
+  CustomDetectorFn,
+  PatternCategory,
+  PatternMatch,
+  PatternScanOptions,
+  PatternScanResult,
+  PatternSeverity,
+} from "./types.js";
 
 const SEVERITY_WEIGHTS: Record<PatternSeverity, number> = {
   critical: 4,
@@ -30,15 +43,17 @@ const SEVERITY_WEIGHTS: Record<PatternSeverity, number> = {
   info: 0,
 };
 
-/** Maps language keys to detector module paths */
-const LANGUAGE_DETECTOR_MAP: Record<string, string> = {
-  typescript: "./detectors/typescript.js",
-  javascript: "./detectors/typescript.js", // JS uses same detectors as TS
-  python: "./detectors/python.js",
-  csharp: "./detectors/csharp.js",
-  java: "./detectors/java.js",
-  kotlin: "./detectors/java.js", // Kotlin uses same detectors as Java
-  go: "./detectors/go.js",
+/** Maps language keys to statically imported detector modules */
+// biome-ignore lint/complexity/noBannedTypes: detector modules export heterogeneous function shapes
+const LANGUAGE_DETECTOR_MAP: Record<string, Record<string, Function>> = {
+  typescript: typescriptDetectors,
+  javascript: typescriptDetectors,
+  python: pythonDetectors,
+  csharp: csharpDetectors,
+  java: javaDetectors,
+  kotlin: javaDetectors,
+  go: goDetectors,
+  zig: zigDetectors,
 };
 
 export class PatternEngine {
@@ -80,20 +95,18 @@ export class PatternEngine {
   /**
    * Load language-specific detectors on demand (cached — each module loaded only once)
    */
-  private async ensureDetectorsForLanguage(language: string | undefined): Promise<void> {
+  private ensureDetectorsForLanguage(language: string | undefined): void {
     if (!language) return;
 
-    const modulePath = LANGUAGE_DETECTOR_MAP[language.toLowerCase()];
-    if (!modulePath || this.loadedDetectorModules.has(modulePath)) return;
+    const langKey = language.toLowerCase();
+    if (this.loadedDetectorModules.has(langKey)) return;
 
-    try {
-      const detectors = await import(modulePath);
-      registerDetectors(detectors);
-      this.loadedDetectorModules.add(modulePath);
-      log.i("PATTERN_ENGINE", "loaded_detectors", { language, module: modulePath });
-    } catch {
-      /* optional — detector module may not exist */
-    }
+    const detectors = LANGUAGE_DETECTOR_MAP[langKey];
+    if (!detectors) return;
+
+    registerDetectors(detectors as unknown as Record<string, CustomDetectorFn>);
+    this.loadedDetectorModules.add(langKey);
+    log.i("PATTERN_ENGINE", "loaded_detectors", { language });
   }
 
   /**
@@ -139,7 +152,7 @@ export class PatternEngine {
     const detectedLanguage = language ?? this.detectLanguage(entities);
 
     // 3. Load detectors for detected language (lazy, cached)
-    await this.ensureDetectorsForLanguage(detectedLanguage);
+    this.ensureDetectorsForLanguage(detectedLanguage);
 
     // 4. Get applicable patterns
     let patterns = this.registry.getPatterns({
@@ -247,7 +260,7 @@ export class PatternEngine {
     if (!entity) return [];
 
     const language = entity.language ?? (entity.metadata?.language as string | undefined);
-    await this.ensureDetectorsForLanguage(language);
+    this.ensureDetectorsForLanguage(language);
     const patterns = this.registry.getPatterns({
       ...(language != null ? { language } : {}),
       category,

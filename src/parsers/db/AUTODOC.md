@@ -1,6 +1,6 @@
 # Db
 
-Database schema parsing, ORM detection, and code-to-database entity linking framework.
+Database schema parsing, ORM detection, and code-to-database entity linking system
 
 ## Exports
 

@@ -1,6 +1,6 @@
 # Stacktrace
 
-Parses, classifies, and diagnoses stacktrace errors with code graph integration.
+Analyzes and diagnoses errors from stacktraces across eight programming languages.
 
 ## Exports
 

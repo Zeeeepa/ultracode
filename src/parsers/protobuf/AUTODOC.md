@@ -1,6 +1,6 @@
 # Protobuf
 
-Analyzes .proto files and links protobuf services to source code implementations.
+Analyzes relationships between protobuf service definitions and source code implementations across multiple languages.
 
 ## Exports
 
