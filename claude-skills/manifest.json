@@ -1,15 +1,15 @@
 {
   "name": "UltraCode",
-  "version": "1.0.0",
-  "description": "Claude Code Skills for UltraCode + UltrasharpTools MCP",
+  "version": "1.1.0",
+  "description": "Claude Code Skills for UltraCode + UltrasharpTools MCP — code analysis, tracing, diagnostics, documentation",
   "skills": [
     {
       "name": "ultracode",
-      "description": "TS/JS/Python/Go/Rust/Java/C++/Swift/Kotlin code analysis with semantic search, impact analysis, refactoring"
+      "description": "TS/JS/Python/Go/Rust/Java/C++/Swift/Kotlin code analysis with semantic search, impact analysis, refactoring, stacktrace diagnosis, security, architecture diagrams"
     },
     {
       "name": "ultracode-trace",
-      "description": "Code tracing, debugging, 'why not called', flow analysis, state dependencies"
+      "description": "Code tracing, debugging, stacktrace analysis, 'why not called', flow analysis, state dependencies"
     },
     {
       "name": "ultracode-autodoc",
@@ -17,5 +17,5 @@
     }
   ],
   "minClaudeCodeVersion": "1.0.0",
-  "updatedAt": "2025-01-16"
+  "updatedAt": "2026-03-08"
 }

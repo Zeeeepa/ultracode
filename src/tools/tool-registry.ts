@@ -225,6 +225,10 @@ export class ToolRegistry {
     this.registerLazy("autodoc_install_hooks", async () => (await autodocLoader()).AutoDocInstallHooksToolHandler);
     this.registerLazy("autodoc_detect_language", async () => (await autodocLoader()).AutoDocDetectLanguageToolHandler);
 
+    // --- Stacktrace analysis tools (~20KB) ---
+    const stacktraceLoader = () => import("./handlers/stacktrace-tool-handler.js");
+    this.registerLazy("analyze_stacktrace", async () => (await stacktraceLoader()).AnalyzeStacktraceToolHandler);
+
     // --- Taint analysis tools (~15KB) ---
     const taintLoader = () => import("./handlers/taint-tool-handlers.js");
     this.registerLazy("taint_analysis", async () => (await taintLoader()).TaintAnalysisToolHandler);

@@ -759,6 +759,7 @@ const HEAVY_ANALYSIS_TOOLS = new Set([
   "pagerank",
   "centrality_analysis",
   "bus_factor",
+  "analyze_stacktrace",
 ]);
 
 /**

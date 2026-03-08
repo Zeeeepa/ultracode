@@ -13,6 +13,7 @@ import {
   AnalyzeCodeImpactSchema,
   AnalyzeHotspotsSchema,
   AnalyzeMergeConflictsSchema,
+  AnalyzeStacktraceSchema,
   AnalyzeStateChaosSchema,
   AnalyzeSwaggerImpactSchema,
   AutoDocChangelogSchema,
@@ -310,6 +311,20 @@ export function getToolsList(): ToolDefinition[] {
         "[ANALYZE] Check specific entity for anti-patterns, best-patterns, and optimization opportunities. " +
         "Returns matched patterns with confidence scores, Big-O analysis, and improvement suggestions.",
       inputSchema: zodToJsonSchema(CheckEntityPatternsSchema),
+    },
+
+    // ==========================================================================
+    // Stacktrace Analysis
+    // ==========================================================================
+    {
+      name: "analyze_stacktrace",
+      description:
+        "[ANALYZE] Parse and diagnose stacktraces from any language (JS/TS, Python, Java/Kotlin, C#, Go, Rust, C/C++, Zig). " +
+        "Auto-detects language, resolves frames to code graph entities, classifies errors, " +
+        "runs backwards trace and impact analysis on crash point. " +
+        "Returns crash location, call chain, severity, suggested fixes, and Mermaid diagram. " +
+        "Example: analyze_stacktrace({stacktrace: '...error text...', format: 'text'}).",
+      inputSchema: zodToJsonSchema(AnalyzeStacktraceSchema),
     },
 
     // ==========================================================================

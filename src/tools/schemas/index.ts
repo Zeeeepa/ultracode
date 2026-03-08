@@ -93,6 +93,8 @@ export {
   ListSnapshotsSchema,
   RollbackSnapshotSchema,
 } from "./snapshot-schemas.js";
+// Stacktrace Analysis
+export { AnalyzeStacktraceSchema } from "./stacktrace-schemas.js";
 // Taint Analysis
 export { TaintAnalysisSchema } from "./taint-schemas.js";
 // Validation & Technology Detection

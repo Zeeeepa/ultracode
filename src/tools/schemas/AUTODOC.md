@@ -125,7 +125,6 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 - `AnalyzeApiImpactSchema`
 - `AnalyzeCodeImpactSchema`
 - `AnalyzeSwaggerImpactSchema`
-- `GetDatabaseSchemaSchema`
 
 ## Files
 
