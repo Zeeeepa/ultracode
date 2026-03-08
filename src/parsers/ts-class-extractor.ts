@@ -12,6 +12,7 @@ import { type CallInfo, extractCalls, extractTypeReferences, type TypeReference 
 import { extractComplexity } from "./ts-complexity-analyzer.js";
 import { extractControlFlow } from "./ts-control-flow-extractor.js";
 import { extractDocumentation } from "./ts-doc-extractor.js";
+import { extractJitHints } from "./ts-jit-hints-extractor.js";
 import { extractNgRxEffectInfo, extractNgRxStoreUsage, type NgRxEffectInfo } from "./ts-ngrx-extractor.js";
 
 export interface ClassExtractorContext {
@@ -244,6 +245,7 @@ function extractMethod(member: ts.MethodDeclaration, ctx: MemberContext): void {
   const methodDoc = extractDocumentation(member, sourceFile);
   const methodTypeRefs = extractTypeReferences(member, sourceFile);
   const methodComplexity = extractComplexity(member, sourceFile);
+  const methodJitHints = extractJitHints(member, sourceFile);
   const methodLocation = getLocation(sourceFile, member);
   const methodDecorators = getDecorators(member, sourceFile);
 
@@ -264,6 +266,7 @@ function extractMethod(member: ts.MethodDeclaration, ctx: MemberContext): void {
     documentation: methodDoc,
     typeReferences: methodTypeRefs,
     complexity: methodComplexity,
+    ...(methodJitHints && { jitHints: methodJitHints }),
     metadata:
       ngrxStoreUsage.dispatches.length > 0 || ngrxStoreUsage.selects.length > 0
         ? {

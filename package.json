@@ -1,6 +1,6 @@
 {
   "name": "ultracode",
-  "version": "5.10.0",
+  "version": "5.11.0",
   "description": "Codebase RAG MCP server for code understanding - semantic search, duplicate detection, impact analysis for TS/JS/Python/C#/Go/Rust/Java/C++/Kotlin/Swift/Zig/Bash",
   "license": "AGPL-3.0-only OR Commercial",
   "author": "faxenoff",
@@ -147,7 +147,7 @@
     "@lenml/tokenizers": "^3.7.2",
     "@libsql/client": "^0.17.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "cbor-x": "^1.6.0",
+    "cbor-x": "^1.6.3",
     "fast-glob": "^3.3.3",
     "fast-json-stringify": "^6.3.0",
     "graphology": "^0.26.0",

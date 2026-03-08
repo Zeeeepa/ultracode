@@ -1,6 +1,6 @@
 # Renderers
 
-Converts diagram intermediate representation into multiple text-based diagram formats.
+Converts diagram intermediate representation to multiple text formats
 
 ## Exports
 

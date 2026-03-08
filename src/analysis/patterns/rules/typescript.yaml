@@ -225,3 +225,146 @@ patterns:
     exemplarIds: ["ts:function-in-template:bad1"]
     minSemanticSimilarity: 0.65
     minStructuralConfidence: 0.5
+
+  # ─── JIT Optimization ───────────────────────────────────────
+
+  - id: "ts:jit-eval"
+    category: "optimization"
+    severity: "critical"
+    name: "eval() Prevents JIT Optimization"
+    description: "eval() forces the engine to abandon all speculative optimizations in the containing function"
+    suggestion: "Replace with Function constructor, JSON.parse(), or Map-based dispatch"
+    benchmark: "2-100x slower — entire function stays in interpreter"
+    tags: ["jit", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["\\.eval$"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "ts:jit-holey-array"
+    category: "optimization"
+    severity: "medium"
+    name: "Holey Array via new Array(n)"
+    description: "new Array(n) creates a HOLEY array that never becomes PACKED — each access requires prototype chain lookup"
+    suggestion: "Use Array.from({length: n}, (_, i) => i) or [] with .push() to keep PACKED element kind"
+    benchmark: "Up to 6x slower element access on holey vs packed arrays"
+    tags: ["jit", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["Array"]
+    customDetector: "checkHoleyArray"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "ts:jit-delete-operator"
+    category: "optimization"
+    severity: "high"
+    name: "delete Operator Kills Inline Caching"
+    description: "delete transitions object to dictionary mode permanently — inline caching disabled for that object"
+    suggestion: "Set property to undefined instead: obj.prop = undefined. Use Map for dynamic key-value storage"
+    benchmark: "35-40% throughput loss measured in production Node.js services"
+    tags: ["jit", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasDeleteExpression: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "ts:jit-arguments-object"
+    category: "optimization"
+    severity: "medium"
+    name: "arguments Object Prevents Optimization"
+    description: "The arguments object prevents V8 from applying key optimizations — function stays in slower execution tier"
+    suggestion: "Use rest parameters (...args) instead of arguments object"
+    tags: ["jit", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      hasArgumentsReference: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "ts:jit-with-statement"
+    category: "optimization"
+    severity: "critical"
+    name: "with Statement Deoptimizes Scope Chain"
+    description: "with completely prevents scope chain optimization — the engine cannot statically resolve any variable in scope"
+    suggestion: "Remove with statement entirely. Use destructuring or local variables"
+    tags: ["jit", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasWithStatement: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 1.0
+
+  - id: "ts:jit-spread-in-hot-path"
+    category: "optimization"
+    severity: "medium"
+    name: "Spread Operator in Hot Path"
+    description: "Spread creates new objects/arrays every iteration and propagates shape polymorphism from the source"
+    suggestion: "Use explicit property assignment {id: item.id, name: item.name} for consistent shapes in loops"
+    benchmark: "~1.4x slower polymorphic, up to 3.5x slower megamorphic access"
+    tags: ["jit", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minSpreadInCalls: 4
+      hasLoops: true
+    customDetector: "checkSpreadInHotPath"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:jit-dynamic-property-access"
+    category: "optimization"
+    severity: "low"
+    name: "Dynamic Property Access in Loop"
+    description: "obj[variable] is inherently megamorphic — the JIT cannot cache a fixed offset when the property name varies"
+    suggestion: "Use Map for dynamic key-value storage. Reserve plain objects for static, known shapes"
+    benchmark: "~3.5x slower megamorphic vs monomorphic property access"
+    tags: ["jit", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minDynamicPropertyAccess: 5
+      hasLoops: true
+    customDetector: "checkDynamicPropertyInLoop"
+    exemplarIds: ["ts:jit-dynamic-prop:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.5
+
+  - id: "ts:jit-megamorphic-interface"
+    category: "optimization"
+    severity: "low"
+    name: "Megamorphic Interface (5+ Implementations)"
+    description: "Interface with 5+ implementations causes megamorphic dispatch at call sites — IC falls back to global hash table"
+    suggestion: "Split into type-specific batches or use discriminated unions with switch for monomorphic branches"
+    benchmark: "~3.5x slower megamorphic dispatch, up to 60x with IC overflow"
+    tags: ["jit", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["interface"]
+      relationships:
+        - type: "implements"
+          direction: "incoming"
+          minCount: 5
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "ts:jit-optional-chaining-hot"
+    category: "optimization"
+    severity: "low"
+    name: "Excessive Optional Chaining"
+    description: "Many optional chaining accesses (?.) imply multiple possible object shapes at each level — polymorphic IC"
+    suggestion: "Normalize data at the boundary into fully-populated structures before entering hot code paths"
+    tags: ["jit", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkExcessiveOptionalChaining"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5

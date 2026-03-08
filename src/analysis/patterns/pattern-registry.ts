@@ -58,6 +58,11 @@ const StructuralCriteriaSchema = z.object({
   filePathNotMatch: z.string().optional(),
   nameMatch: z.string().optional(),
   nameNotMatch: z.string().optional(),
+  hasDeleteExpression: z.boolean().optional(),
+  hasArgumentsReference: z.boolean().optional(),
+  hasWithStatement: z.boolean().optional(),
+  minSpreadInCalls: z.number().optional(),
+  minDynamicPropertyAccess: z.number().optional(),
   relationships: z.array(RelationshipCriteriaSchema).optional(),
 });
 

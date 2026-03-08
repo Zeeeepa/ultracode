@@ -301,7 +301,10 @@ export function getToolsList(): ToolDefinition[] {
         "Filters: category, tags, severity, minConfidence. " +
         "Categories: anti-pattern (bad practices), best-pattern (good practices), " +
         "code-smell (structural issues), optimization (performance improvements with Big-O). " +
-        "Example: detect_patterns({category:'optimization', tags:['performance']}). " +
+        "Includes JIT deoptimization detectors for JS/TS: hidden class violations (delete, with), " +
+        "holey arrays, megamorphic dispatch, spread in hot paths, dynamic property access in loops. " +
+        "Use tags=['jit'] to filter JIT-specific rules. " +
+        "Example: detect_patterns({category:'optimization', tags:['jit']}). " +
         "📖 get_help(topic='patterns')",
       inputSchema: zodToJsonSchema(DetectPatternsSchema),
     },

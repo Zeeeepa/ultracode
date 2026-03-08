@@ -347,7 +347,7 @@ export async function deduplicateAndCheckCaches(
   getLibSQLAdapter: () => any,
 ): Promise<DeduplicationResult> {
   const seenHashes = new Map<string, number>();
-  const originalIndexToHash: string[] = new Array(texts.length);
+  const originalIndexToHash: string[] = Array.from({ length: texts.length }, () => "");
   const uniqueTexts: string[] = [];
 
   const cacheHits = new Map<string, Float32Array>();

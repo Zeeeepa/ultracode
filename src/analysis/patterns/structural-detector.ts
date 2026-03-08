@@ -85,6 +85,13 @@ interface EntityMeta {
   callNames: string[];
   decoratorNames: string[];
   hasInheritance: boolean;
+  jitHints: {
+    deleteCount: number;
+    argumentsRefCount: number;
+    hasWithStatement: boolean;
+    spreadInCallCount: number;
+    dynamicPropAccessCount: number;
+  } | null;
 }
 
 const metaCache = new WeakMap<Entity, EntityMeta>();
@@ -119,6 +126,7 @@ function getMeta(entity: Entity): EntityMeta {
     callNames: callsRaw.map((c) => `${c.target ?? ""}.${c.name ?? ""}`),
     decoratorNames: decsRaw.map((d) => d.name),
     hasInheritance: (inheritanceRaw?.baseClasses?.length ?? 0) > 0 || (inheritanceRaw?.interfaces?.length ?? 0) > 0,
+    jitHints: (md?.["jitHints"] as EntityMeta["jitHints"]) ?? null,
   };
   metaCache.set(entity, meta);
   return meta;
@@ -506,6 +514,43 @@ export class StructuralDetector {
       }
     }
 
+    // JIT Hints
+    if (criteria.hasDeleteExpression != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.deleteCount > 0) {
+        optionalPassed++;
+        matched.push("hasDeleteExpression");
+      }
+    }
+    if (criteria.hasArgumentsReference != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.argumentsRefCount > 0) {
+        optionalPassed++;
+        matched.push("hasArgumentsReference");
+      }
+    }
+    if (criteria.hasWithStatement != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.hasWithStatement) {
+        optionalPassed++;
+        matched.push("hasWithStatement");
+      }
+    }
+    if (criteria.minSpreadInCalls != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.spreadInCallCount >= criteria.minSpreadInCalls) {
+        optionalPassed++;
+        matched.push(`spreadInCalls>=${criteria.minSpreadInCalls}`);
+      }
+    }
+    if (criteria.minDynamicPropertyAccess != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.dynamicPropAccessCount >= criteria.minDynamicPropertyAccess) {
+        optionalPassed++;
+        matched.push(`dynamicPropAccess>=${criteria.minDynamicPropertyAccess}`);
+      }
+    }
+
     // Name
     if (compiled.nameMatchRe) {
       optionalTotal++;
@@ -679,6 +724,11 @@ function countTotalCriteria(criteria: StructuralCriteria): number {
   if (criteria.filePathNotMatch) count++;
   if (criteria.nameMatch) count++;
   if (criteria.nameNotMatch) count++;
+  if (criteria.hasDeleteExpression != null) count++;
+  if (criteria.hasArgumentsReference != null) count++;
+  if (criteria.hasWithStatement != null) count++;
+  if (criteria.minSpreadInCalls != null) count++;
+  if (criteria.minDynamicPropertyAccess != null) count++;
   if (criteria.relationships) count += criteria.relationships.length;
   return count;
 }

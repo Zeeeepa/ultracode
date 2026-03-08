@@ -1104,7 +1104,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     persistentCacheHitCount: number;
   }> {
     const seenHashes = new Map<string, number>();
-    const originalIndexToHash: string[] = new Array(texts.length);
+    const originalIndexToHash: string[] = Array.from({ length: texts.length }, () => "");
     const uniqueTexts: string[] = [];
 
     const cacheHits = new Map<string, Float32Array>();

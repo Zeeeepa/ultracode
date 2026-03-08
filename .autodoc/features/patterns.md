@@ -87,6 +87,17 @@ Structural issues detectable by metrics. Examples: god-function, deep-nesting, l
 ### Optimization
 Performance improvement opportunities with Big-O and benchmarks. Examples: string-concat-in-loop, linq-in-hotpath, n+1-queries.
 
+#### JIT Deoptimization (JS/TS, tag: `jit`)
+9 rules detecting V8/JSC JIT-unfriendly patterns that cause hidden class transitions, megamorphic dispatch, and deoptimization bailouts:
+- **jit-delete-operator** — kills inline caching (35-40% throughput loss)
+- **jit-with-statement**, **jit-eval** — disable JIT entirely (critical)
+- **jit-holey-array** — `new Array(n)` creates holey arrays (6x slower access)
+- **jit-arguments-object** — prevents function optimization
+- **jit-megamorphic-interface** — 5+ implementations cause ~3.5x slower dispatch
+- **jit-spread-in-hot-path**, **jit-dynamic-property-access**, **jit-optional-chaining-hot** — hot loop patterns
+
+Filter: `detect_patterns({category: "optimization", tags: ["jit"]})`
+
 ## Scoring
 
 - **structuralConfidence** (0-1): Metadata match quality

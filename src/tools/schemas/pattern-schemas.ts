@@ -33,7 +33,7 @@ export const DetectPatternsSchema = z.object({
     .describe("Output format: summary (AI-friendly), detailed (human-readable), json (raw data)"),
   offset: z.number().optional().default(0).describe("Pagination offset"),
   limit: z.number().optional().default(50).describe("Maximum results per category"),
-  entityLimit: z.number().optional().default(10000).describe("Max entities to scan from DB (default: 10000)"),
+  entityLimit: z.number().optional().default(50000).describe("Max entities to scan from DB (default: 50000)"),
   suppressPatterns: z
     .array(z.string())
     .optional()

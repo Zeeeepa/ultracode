@@ -63,7 +63,7 @@ class SnapshotRing {
   private len = 0;
 
   constructor(private readonly capacity: number) {
-    this.buf = new Array<ResourceSnapshot | undefined>(capacity);
+    this.buf = new Array<ResourceSnapshot | undefined>(capacity).fill(undefined);
   }
 
   push(snap: ResourceSnapshot): void {

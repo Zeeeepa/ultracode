@@ -316,7 +316,7 @@ class FaissProvider {
     const count = embeddings.length;
 
     // Pre-allocate flat vector array (optimization: avoid push/spread overhead)
-    const ids: string[] = new Array(count);
+    const ids: string[] = Array.from({ length: count }, () => "");
     const vectors = new Float32Array(count * dim);
 
     for (let i = 0; i < count; i++) {

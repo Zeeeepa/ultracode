@@ -71,6 +71,13 @@ export interface StructuralCriteria {
   nameMatch?: string | undefined;
   nameNotMatch?: string | undefined;
 
+  // JIT hints (from parser)
+  hasDeleteExpression?: boolean | undefined;
+  hasArgumentsReference?: boolean | undefined;
+  hasWithStatement?: boolean | undefined;
+  minSpreadInCalls?: number | undefined;
+  minDynamicPropertyAccess?: number | undefined;
+
   // Graph-based (require relationship queries)
   relationships?: RelationshipCriteria[] | undefined;
 }

@@ -1,18 +1,18 @@
 # Parsers
 
-Collection of language-specific stacktrace parsers for eight programming languages with standardized frame extraction
+Multi-language stacktrace parser suite for normalized error trace extraction
 
 ## Exports
 
 | Name | Type | Description | Location |
 |------|------|-------------|----------|
 | `DotNetStacktraceParser` | class | Detects and parses .NET exception stacktraces into frames | [→ dotnet-parser.ts:12-77] |
-| `GoStacktraceParser` | class | Extracts goroutine context and panic frames from Go dumps | [→ go-parser.ts:23-101] |
-| `JavaScriptStacktraceParser` | class | Parses V8-style async-aware frames with positions | [→ javascript-parser.ts:17-83] |
+| `GoStacktraceParser` | class | Extracts goroutine context and panic frames from Go dumps | [→ go-parser.ts:10-13] |
+| `JavaScriptStacktraceParser` | class | Parses V8-style async-aware frames with positions | [→ javascript-parser.ts:12-83] |
 | `JvmStacktraceParser` | class | Parses Java frames with recursive exception chain handling | [→ jvm-parser.ts:15-92] |
-| `NativeStacktraceParser` | class | Detects GDB, ASAN, and macOS formats for native code | [→ native-parser.ts:21-110] |
+| `NativeStacktraceParser` | class | Detects GDB, ASAN, and macOS formats for native code | [→ native-parser.ts:13-110] |
 | `PythonStacktraceParser` | class | Parses Python exception frames with inverted index ordering | [→ python-parser.ts:15-67] |
-| `RustStacktraceParser` | class | Extracts backtrace frames with crate and type information | [→ rust-parser.ts:15-122] |
+| `RustStacktraceParser` | class | Extracts backtrace frames with crate and type information | [→ rust-parser.ts:14-122] |
 | `ZigStacktraceParser` | class | Parses Zig error traces with thread and function context | [→ zig-parser.ts:16-68] |
 
 ## Files

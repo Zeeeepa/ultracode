@@ -98,3 +98,98 @@ export function checkAnyTypeParam(entity: Entity): CustomDetectorResult {
     matchedCriteria: [`any-params=${anyParams.length}`],
   };
 }
+
+// ─── JIT Optimization Detectors ─────────────────────────────────────
+
+/**
+ * Holey array via new Array(n) — HOLEY element kind never becomes PACKED
+ */
+export function checkHoleyArray(entity: Entity): CustomDetectorResult {
+  const calls = entity.metadata?.["calls"] as
+    | Array<{
+        name?: string;
+        target?: string;
+        isNew?: boolean;
+        argumentCount?: number;
+      }>
+    | undefined;
+  if (!calls) return { match: false, confidence: 0 };
+
+  const holeyCall = calls.find((c) => c.name === "Array" && c.isNew === true && c.argumentCount === 1);
+  if (!holeyCall) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: 0.9,
+    matchedCriteria: ["new-Array(n)-holey"],
+  };
+}
+
+/**
+ * Excessive optional chaining — polymorphic IC at each ?. access
+ */
+export function checkExcessiveOptionalChaining(entity: Entity): CustomDetectorResult {
+  const calls = entity.metadata?.["calls"] as Array<{ isOptional?: boolean }> | undefined;
+  if (!calls) return { match: false, confidence: 0 };
+
+  const optionalCount = calls.filter((c) => c.isOptional === true).length;
+  if (optionalCount < 4) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: Math.min(0.5 + optionalCount * 0.05, 0.85),
+    matchedCriteria: [`optional-chaining=${optionalCount}`],
+  };
+}
+
+/**
+ * Spread operator in hot path — creates new objects/arrays every iteration
+ */
+export function checkSpreadInHotPath(entity: Entity): CustomDetectorResult {
+  const jitHints = entity.metadata?.["jitHints"] as
+    | {
+        spreadInCallCount?: number;
+      }
+    | undefined;
+  // Require 4+ spread operations to filter out trivial [...path, name] patterns
+  if (!jitHints || !jitHints.spreadInCallCount || jitHints.spreadInCallCount < 4) {
+    return { match: false, confidence: 0 };
+  }
+
+  const cf = entity.metadata?.["controlFlow"] as { loops?: Array<unknown> } | undefined;
+  const metrics = entity.metadata?.["metrics"] as { linesOfCode?: number } | undefined;
+  const hasLoop = (cf?.loops?.length ?? 0) > 0;
+  const isLargeFunction = (metrics?.linesOfCode ?? 0) > 50;
+
+  if (!hasLoop && !isLargeFunction) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: hasLoop ? 0.75 : 0.6,
+    matchedCriteria: [`spread-count=${jitHints.spreadInCallCount}`, hasLoop ? "in-loop" : "large-function"],
+  };
+}
+
+/**
+ * Dynamic property access in loop — megamorphic IC
+ */
+export function checkDynamicPropertyInLoop(entity: Entity): CustomDetectorResult {
+  const jitHints = entity.metadata?.["jitHints"] as
+    | {
+        dynamicPropAccessCount?: number;
+      }
+    | undefined;
+  // Require 5+ dynamic accesses — filters out normal arr[i] indexing
+  if (!jitHints || !jitHints.dynamicPropAccessCount || jitHints.dynamicPropAccessCount < 5) {
+    return { match: false, confidence: 0 };
+  }
+
+  const cf = entity.metadata?.["controlFlow"] as { loops?: Array<unknown> } | undefined;
+  if (!cf?.loops?.length) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: 0.7,
+    matchedCriteria: [`dynamic-prop-access=${jitHints.dynamicPropAccessCount}`, "in-loop"],
+  };
+}

@@ -507,7 +507,7 @@ export async function generateEmbeddingsForEntities(
     }
 
     // Merge: cache hits + generated
-    const embeddings: (Float32Array | undefined)[] = new Array(batch.length);
+    const embeddings = new Array<Float32Array | undefined>(batch.length).fill(undefined);
     for (const [j, emb] of cacheHits) embeddings[j] = emb;
     for (let k = 0; k < missIndices.length; k++) embeddings[missIndices[k]!] = generatedEmbeddings[k];
 

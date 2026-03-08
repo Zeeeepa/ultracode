@@ -412,7 +412,7 @@ export class EmbeddingAccumulator {
     }
 
     // Restore original order for correct id mapping
-    const reorderedEmbeddings = new Array<Float32Array>(filteredBatch.length);
+    const reorderedEmbeddings: Float32Array[] = Array.from({ length: filteredBatch.length }, () => new Float32Array(0));
     for (let i = 0; i < sortedBatch.length; i++) {
       reorderedEmbeddings[sortedBatch[i]!.idx] = embeddings[i]!;
     }

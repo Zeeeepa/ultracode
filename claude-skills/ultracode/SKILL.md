@@ -139,12 +139,12 @@ taint_analysis({
 ## Code Quality
 
 #### `detect_patterns`
-Detect anti-patterns, best-patterns, code smells, and optimization opportunities. 100+ rules across 6 languages.
+Detect anti-patterns, best-patterns, code smells, and optimization opportunities. 100+ rules across 6 languages. Includes JIT deoptimization detectors for JS/TS (tag: `jit`): hidden class violations, holey arrays, megamorphic dispatch, spread/dynamic access in hot paths.
 
 ```typescript
 detect_patterns({
   category: "anti-pattern",    // anti-pattern | best-pattern | code-smell | optimization
-  tags: ["performance"],
+  tags: ["performance"],       // use tags: ["jit"] for JIT deoptimization rules
   severity: "high"
 })
 ```
@@ -317,7 +317,7 @@ semantic_search hasDocumentation=false       # Undocumented
 | `analyze_state_chaos` | State management issues |
 | `analyze_api_impact` | API contract change impact |
 | `analyze_stacktrace` | Stacktrace diagnosis |
-| `detect_patterns` | Anti-patterns, code smells, optimizations |
+| `detect_patterns` | Anti-patterns, code smells, optimizations, JIT deopt |
 | `graph_metrics` | PageRank, Louvain, centrality, bus factor |
 | `taint_analysis` | Security vulnerability detection |
 | `get_database_schema` | Reconstructed DB schema |

@@ -387,6 +387,7 @@ export function parsedEntityToEntity(
     calls: parsed.calls,
     controlFlow: parsed.controlFlow,
     metrics: complexityMeta,
+    ...(parsed.jitHints && { jitHints: parsed.jitHints }),
   };
 
   return {

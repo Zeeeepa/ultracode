@@ -380,6 +380,16 @@ export interface ParsedEntity {
       }
     | undefined;
 
+  jitHints?:
+    | {
+        deleteCount: number;
+        argumentsRefCount: number;
+        hasWithStatement: boolean;
+        spreadInCallCount: number;
+        dynamicPropAccessCount: number;
+      }
+    | undefined;
+
   embeddingBase64?: string | undefined;
   embeddingText?: string | undefined;
   metadata?: Record<string, any> | undefined;

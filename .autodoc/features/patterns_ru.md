@@ -66,6 +66,17 @@ detect_patterns({filePath: "src/services/auth.ts", severity: "high"})
 ### Optimization
 Возможности оптимизации производительности с Big-O и бенчмарками. Примеры: string-concat-in-loop, linq-in-hotpath, ef-n-plus-one.
 
+#### JIT-деоптимизация (JS/TS, тег: `jit`)
+9 правил для обнаружения паттернов, вызывающих деоптимизацию V8/JSC JIT:
+- **jit-delete-operator** — убивает inline caching (потеря 35-40% пропускной способности)
+- **jit-with-statement**, **jit-eval** — полностью отключают JIT (critical)
+- **jit-holey-array** — `new Array(n)` создаёт «дырявые» массивы (доступ в 6x медленнее)
+- **jit-arguments-object** — предотвращает оптимизацию функций
+- **jit-megamorphic-interface** — 5+ реализаций → мегаморфный dispatch (~3.5x медленнее)
+- **jit-spread-in-hot-path**, **jit-dynamic-property-access**, **jit-optional-chaining-hot** — паттерны в горячих циклах
+
+Фильтр: `detect_patterns({category: "optimization", tags: ["jit"]})`
+
 ## Скоринг
 
 - **structuralConfidence** (0-1): Качество совпадения по метаданным
