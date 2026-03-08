@@ -211,6 +211,62 @@ async function createAnalyzer(language: string): Promise<BaseParser> {
       break;
     }
 
+    case "sql": {
+      const { workerLog } = await import("./worker-logging.js");
+      workerLog("INFO", `Loading SqlParser`);
+      const { SqlParser } = await import("../../parsers/db/sql-parser.js");
+      const sqlParser = new SqlParser();
+      await sqlParser.initialize();
+      analyzer = {
+        initialize: async () => sqlParser.initialize(),
+        supportsFile: (filePath: string) => sqlParser.supportsFile(filePath),
+        parse: (filePath: string, content: string, hash: string) => sqlParser.parse(filePath, content, hash),
+        parseIncremental: (filePath: string, content: string, hash: string) => sqlParser.parse(filePath, content, hash),
+        getStats: () => sqlParser.getStats(),
+        clearCache: () => {},
+      };
+      workerLog("INFO", `SqlParser initialized OK`);
+      break;
+    }
+
+    case "linq": {
+      const { workerLog } = await import("./worker-logging.js");
+      workerLog("INFO", `Loading LinqParser`);
+      const { LinqParser } = await import("../../parsers/db/linq-parser.js");
+      const linqParser = new LinqParser();
+      await linqParser.initialize();
+      analyzer = {
+        initialize: async () => linqParser.initialize(),
+        supportsFile: (filePath: string) => linqParser.supportsFile(filePath),
+        parse: (filePath: string, content: string, hash: string) => linqParser.parse(filePath, content, hash),
+        parseIncremental: (filePath: string, content: string, hash: string) =>
+          linqParser.parse(filePath, content, hash),
+        getStats: () => linqParser.getStats(),
+        clearCache: () => {},
+      };
+      workerLog("INFO", `LinqParser initialized OK`);
+      break;
+    }
+
+    case "prisma": {
+      const { workerLog } = await import("./worker-logging.js");
+      workerLog("INFO", `Loading PrismaParser`);
+      const { PrismaParser } = await import("../../parsers/db/prisma-parser.js");
+      const prismaParser = new PrismaParser();
+      await prismaParser.initialize();
+      analyzer = {
+        initialize: async () => prismaParser.initialize(),
+        supportsFile: (filePath: string) => prismaParser.supportsFile(filePath),
+        parse: (filePath: string, content: string, hash: string) => prismaParser.parse(filePath, content, hash),
+        parseIncremental: (filePath: string, content: string, hash: string) =>
+          prismaParser.parse(filePath, content, hash),
+        getStats: () => prismaParser.getStats(),
+        clearCache: () => {},
+      };
+      workerLog("INFO", `PrismaParser initialized OK`);
+      break;
+    }
+
     case "json": {
       const { workerLog } = await import("./worker-logging.js");
       workerLog("INFO", `Loading JsonParser`);
@@ -335,6 +391,9 @@ export const SUPPORTED_WORKER_LANGUAGES = [
   "json",
   "protobuf",
   "graphql",
+  "sql",
+  "linq",
+  "prisma",
   "zig",
   "helm",
 ] as const;

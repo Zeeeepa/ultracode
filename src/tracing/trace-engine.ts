@@ -280,14 +280,24 @@ export class TraceEngine {
       for (const step of path.steps) {
         if (!step.entityId) continue;
         const entity = entityBatch.get(step.entityId);
-        if (entity?.metadata?.["isApiContract"]) {
+        if (entity?.metadata?.["isApiContract"] || entity?.metadata?.["isDbSchema"]) {
           const swaggerType = entity.metadata["swaggerType"] as string | undefined;
           const protoType = entity.metadata["protoType"] as string | undefined;
           const graphqlType = entity.metadata["graphqlType"] as string | undefined;
+          const dbType = entity.metadata["dbType"] as string | undefined;
 
           let contractInfo: Record<string, unknown> = {};
 
-          if (protoType) {
+          if (dbType) {
+            contractInfo = {
+              type: "database",
+              dbType,
+              dbEngine: entity.metadata["dbEngine"],
+              tableName: dbType === "table" ? entity.metadata["tableName"] || entity.name : undefined,
+              viewName: dbType === "view" ? entity.name : undefined,
+              procedureName: dbType === "procedure" || dbType === "function" ? entity.name : undefined,
+            };
+          } else if (protoType) {
             contractInfo = {
               type: "protobuf",
               protoType,

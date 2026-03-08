@@ -58,6 +58,10 @@ export enum RelationType {
   PRODUCES_API = "produces_api",
   CONSUMES_API = "consumes_api",
   GENERATED_FROM = "generated_from",
+
+  READS_TABLE = "reads_table",
+  WRITES_TABLE = "writes_table",
+  MAPS_TO_TABLE = "maps_to_table",
 }
 
 // -- Core data models -------------------------------------------------------

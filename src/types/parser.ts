@@ -48,6 +48,9 @@ export const SUPPORTED_LANGUAGES = [
   "json",
   "protobuf",
   "graphql",
+  "sql",
+  "linq",
+  "prisma",
   "zig",
   "helm",
 ] as const;

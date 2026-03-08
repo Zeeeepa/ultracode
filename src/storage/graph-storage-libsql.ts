@@ -389,6 +389,9 @@ export class GraphStorageLibSQL implements GraphStorage {
       [RelationType.PRODUCES_API]: null,
       [RelationType.CONSUMES_API]: null,
       [RelationType.GENERATED_FROM]: null,
+      [RelationType.READS_TABLE]: null,
+      [RelationType.WRITES_TABLE]: null,
+      [RelationType.MAPS_TO_TABLE]: null,
     };
 
     const reverse: Relationship[] = [];

@@ -80,6 +80,7 @@ export {
   DetectCodeClonesSchema,
   FindRelatedConceptsSchema,
   FindSimilarCodeSchema,
+  GetDatabaseSchemaSchema,
   PatternSearchSchema,
   SemanticSearchSchema,
 } from "./semantic-schemas.js";

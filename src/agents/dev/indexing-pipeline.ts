@@ -637,6 +637,170 @@ export async function resolveGraphQLLinks(): Promise<number> {
 }
 
 // =============================================================================
+// PHASE 6d: POST-INDEXING DB SCHEMA LINKING
+// =============================================================================
+
+/**
+ * Post-indexing step: Link DB schemas to code entities.
+ * Detects ORM models, Redis patterns, and SQL code links.
+ * Creates READS_TABLE, WRITES_TABLE, MAPS_TO_TABLE relationships.
+ */
+export async function resolveDbSchemaLinks(): Promise<number> {
+  const storage = await getGraphStorage();
+
+  const allEntities = await storage.getAllEntities();
+  const hasDbEntities = allEntities.some((e) => e.metadata?.["isDbSchema"] || e.metadata?.["dbType"]);
+  const hasCodeEntities = allEntities.some((e) => e.type === "class" || e.type === "function");
+
+  if (!hasDbEntities && !hasCodeEntities) {
+    return 0; // No DB entities and no code entities — nothing to link
+  }
+
+  log.i("DEVAGENT", "db_link_start", { totalEntities: allEntities.length, hasDbEntities });
+
+  try {
+    const { detectOrmSchemas } = await import("../../parsers/db/orm-detector.js");
+    const { detectRedisPatterns } = await import("../../parsers/db/redis-detector.js");
+    const { analyzeDbCodeLinks, buildDbRelationships } = await import("../../parsers/db/db-code-linker.js");
+
+    // 1. Detect ORM models → virtual DB entities
+    const ormLinks = detectOrmSchemas(allEntities);
+
+    // 2. Detect Redis patterns
+    const redisLinks = detectRedisPatterns(allEntities);
+
+    // 3. Analyze DB ↔ code links (repositories, SQL strings, migrations)
+    const analysis = analyzeDbCodeLinks(allEntities);
+    analysis.ormModels = ormLinks;
+    analysis.redisPatterns = redisLinks;
+
+    const totalLinks =
+      analysis.tableLinks.length +
+      analysis.ormModels.length +
+      analysis.repositories.length +
+      analysis.redisPatterns.length;
+
+    if (totalLinks === 0) {
+      log.i("DEVAGENT", "db_link_none");
+      return 0;
+    }
+
+    // 4. Build relationships
+    const dbRelationships = buildDbRelationships(analysis);
+
+    // 5. Create relationship objects with IDs
+    const { nanoid } = await import("nanoid");
+    const relationships = dbRelationships.map((rel) => ({
+      id: nanoid(12),
+      fromId: `db:${rel.fromName}`,
+      toId: `db:${rel.toName}`,
+      type: rel.type,
+      metadata: {
+        ...rel.metadata,
+        fromFile: rel.fromFile,
+        toFile: rel.toFile,
+      },
+    }));
+
+    // 6. Resolve db: prefixed IDs to actual entity IDs
+    const entityByName = new Map<string, string>();
+    for (const e of allEntities) {
+      entityByName.set(e.name, e.id);
+      entityByName.set(`${e.filePath}:${e.name}`, e.id);
+      // Also map by tableName for DB entities
+      if (e.metadata?.["tableName"]) {
+        entityByName.set(e.metadata["tableName"] as string, e.id);
+      }
+    }
+
+    for (const rel of relationships) {
+      const fromName = rel.fromId.replace("db:", "");
+      const toName = rel.toId.replace("db:", "");
+
+      const fromFile = rel.metadata?.fromFile as string | undefined;
+      const toFile = rel.metadata?.toFile as string | undefined;
+
+      if (fromFile) {
+        const fileKey = `${fromFile}:${fromName}`;
+        if (entityByName.has(fileKey)) {
+          rel.fromId = entityByName.get(fileKey)!;
+        }
+      }
+      if (rel.fromId.startsWith("db:") && entityByName.has(fromName)) {
+        rel.fromId = entityByName.get(fromName)!;
+      }
+
+      if (toFile) {
+        const fileKey = `${toFile}:${toName}`;
+        if (entityByName.has(fileKey)) {
+          rel.toId = entityByName.get(fileKey)!;
+        }
+      }
+      if (rel.toId.startsWith("db:") && entityByName.has(toName)) {
+        rel.toId = entityByName.get(toName)!;
+      }
+    }
+
+    const result = await storage.insertRelationships(relationships);
+
+    // 7. Migration analysis + schema drift detection
+    try {
+      const { classifyMigrations } = await import("../../parsers/db/migration-detector.js");
+      const { buildMigrationSchema } = await import("../../parsers/db/migration-schema-builder.js");
+      const { detectSchemaDrift } = await import("../../parsers/db/schema-drift-detector.js");
+
+      const migrations = classifyMigrations(allEntities);
+      if (migrations.length > 0) {
+        const dbEntities = allEntities.filter((e) => e.metadata?.["isDbSchema"]);
+        const migrationSchema = buildMigrationSchema(migrations, dbEntities);
+        const drift = detectSchemaDrift(ormLinks, migrationSchema, allEntities);
+
+        // Mark migration entities with isMigration metadata
+        for (const mig of migrations) {
+          const migEntity = allEntities.find((e) => e.filePath === mig.filePath);
+          if (migEntity && !migEntity.metadata?.["isMigration"]) {
+            await storage.updateEntity(migEntity.id, {
+              metadata: {
+                ...migEntity.metadata,
+                isMigration: true,
+                migrationFramework: mig.framework,
+                migrationOrder: mig.order,
+                migrationLabel: mig.label,
+              },
+            });
+          }
+        }
+
+        log.i("DEVAGENT", "db_migration_analysis", {
+          migrations: migrations.length,
+          migrationTables: migrationSchema.tables.size,
+          driftScore: drift.driftScore,
+          missingMigrations: drift.missingMigrations.length,
+          orphanedTables: drift.orphanedTables.length,
+          columnDrifts: drift.columnDrifts.length,
+          warnings: migrationSchema.warnings.length,
+        });
+      }
+    } catch (migError) {
+      log.w("DEVAGENT", "db_migration_analysis_error", { error: (migError as Error).message });
+    }
+
+    log.i("DEVAGENT", "db_link_done", {
+      ormModels: ormLinks.length,
+      redisPatterns: redisLinks.length,
+      tableLinks: analysis.tableLinks.length,
+      repositories: analysis.repositories.length,
+      relationshipsCreated: result.processed,
+    });
+
+    return result.processed;
+  } catch (error) {
+    log.w("DEVAGENT", "db_link_error", { error: (error as Error).message });
+    return 0;
+  }
+}
+
+// =============================================================================
 // UTILITIES
 // =============================================================================
 

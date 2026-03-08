@@ -1572,6 +1572,20 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
     perfTimings["graphqlLink_end"] = Date.now() - perfStart;
 
+    // Post-indexing: Resolve DB Schema ↔ Code links (SQL, ORM, Redis)
+    perfTimings["dbSchemaLink_start"] = Date.now() - perfStart;
+    try {
+      const { resolveDbSchemaLinks } = await import("./dev/indexing-pipeline.js");
+      const dbRels = await resolveDbSchemaLinks();
+      if (dbRels > 0) {
+        totalRelationships += dbRels;
+        log.i("DEVAGENT", "db_schema_links_created", { count: dbRels });
+      }
+    } catch (err) {
+      log.w("DEVAGENT", "db_schema_link_skip", { error: (err as Error).message });
+    }
+    perfTimings["dbSchemaLink_end"] = Date.now() - perfStart;
+
     perfTimings["indexing_end"] = Date.now() - perfStart;
     log.i("DEVAGENT", "index_done", {
       files: filesProcessed,

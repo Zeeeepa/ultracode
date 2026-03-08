@@ -161,6 +161,10 @@ export class ToolRegistry {
     this.registerLazy("analyze_api_impact", async () => (await analysisLoader()).AnalyzeApiImpactToolHandler);
     this.registerLazy("detect_technology_stack", async () => (await analysisLoader()).DetectTechnologyStackToolHandler);
 
+    // --- DB Schema tools (~15KB) ---
+    const dbSchemaLoader = () => import("./handlers/db-schema-tool-handlers.js");
+    this.registerLazy("get_database_schema", async () => (await dbSchemaLoader()).GetDatabaseSchemaToolHandler);
+
     // --- Branch tools (~15KB) ---
     const branchLoader = () => import("./handlers/branch-tool-handlers.js");
     this.registerLazy("list_branches", async () => (await branchLoader()).ListBranchesToolHandler);

@@ -70,6 +70,13 @@ export const CrossLanguageSearchSchema = z.object({
   languages: z.array(z.string()).optional().describe("Languages to search in"),
 });
 
+export const GetDatabaseSchemaSchema = z.object({
+  projectPath: z.string().optional().describe("Project directory path"),
+  tableName: z.string().optional().describe("Filter by table name (partial match)"),
+  dbEngine: z.string().optional().describe("Filter: postgres, mysql, clickhouse, redis, sqlite, mssql"),
+  includeRelationships: z.boolean().optional().describe("Include FK and code relationships"),
+});
+
 export const PatternSearchSchema = z.object({
   pattern: z.string().describe("Regex pattern or semantic query"),
   mode: z

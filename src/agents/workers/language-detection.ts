@@ -59,6 +59,9 @@ export const LANGUAGE_MAP: Record<string, string> = {
   ".proto": "protobuf",
   ".graphql": "graphql",
   ".gql": "graphql",
+  ".sql": "sql",
+  ".linq": "linq",
+  ".prisma": "prisma",
   ".tpl": "helm",
 };
 
@@ -85,6 +88,9 @@ export const SUPPORTED_LANGUAGES = [
   "json",
   "protobuf",
   "graphql",
+  "sql",
+  "linq",
+  "prisma",
   "zig",
   "helm",
 ] as const;

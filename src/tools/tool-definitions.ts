@@ -44,6 +44,7 @@ import {
   FindSimilarCodeSchema,
   GetAgentMetricsSchema,
   GetBusStatsSchema,
+  GetDatabaseSchemaSchema,
   GetEntityHistorySchema,
   GetGraphHealthSchema,
   GetGraphSchema,
@@ -251,6 +252,12 @@ export function getToolsList(): ToolDefinition[] {
       description:
         "[PLAN] Analyze impact of API contract changes across Swagger/OpenAPI, Protobuf/gRPC, and GraphQL schemas. Shows affected producers (servers/resolvers), consumers (clients/hooks), and generated types. Auto-detects contract type or filter with contractType parameter. Use before modifying any API spec.",
       inputSchema: zodToJsonSchema(AnalyzeApiImpactSchema),
+    },
+    {
+      name: "get_database_schema",
+      description:
+        "[EXPLORE] Show database schema reconstructed from SQL files, Prisma schemas, ORM models (TypeORM, Sequelize, JPA, EF Core, Django, SQLAlchemy, GORM, Dapper, linq2db), and Redis key patterns. Filters: tableName (partial match), dbEngine (postgres/mysql/clickhouse/redis/sqlite/mssql). Use includeRelationships=true for FK and code links.",
+      inputSchema: zodToJsonSchema(GetDatabaseSchemaSchema),
     },
     {
       name: "graph_metrics",
