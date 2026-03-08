@@ -73,6 +73,7 @@ export {
 export { CheckEntityPatternsSchema, DetectPatternsSchema } from "./pattern-schemas.js";
 // Semantic Search & Analysis
 export {
+  AnalyzeApiImpactSchema,
   AnalyzeCodeImpactSchema,
   AnalyzeSwaggerImpactSchema,
   CrossLanguageSearchSchema,

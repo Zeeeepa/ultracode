@@ -1544,6 +1544,34 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
     }
     perfTimings["swaggerLink_end"] = Date.now() - perfStart;
 
+    // Post-indexing: Resolve Protobuf ↔ Code links (only if proto entities exist)
+    perfTimings["protobufLink_start"] = Date.now() - perfStart;
+    try {
+      const { resolveProtobufLinks } = await import("./dev/indexing-pipeline.js");
+      const protoRels = await resolveProtobufLinks();
+      if (protoRels > 0) {
+        totalRelationships += protoRels;
+        log.i("DEVAGENT", "protobuf_links_created", { count: protoRels });
+      }
+    } catch (err) {
+      log.w("DEVAGENT", "protobuf_link_skip", { error: (err as Error).message });
+    }
+    perfTimings["protobufLink_end"] = Date.now() - perfStart;
+
+    // Post-indexing: Resolve GraphQL ↔ Code links (only if graphql entities exist)
+    perfTimings["graphqlLink_start"] = Date.now() - perfStart;
+    try {
+      const { resolveGraphQLLinks } = await import("./dev/indexing-pipeline.js");
+      const graphqlRels = await resolveGraphQLLinks();
+      if (graphqlRels > 0) {
+        totalRelationships += graphqlRels;
+        log.i("DEVAGENT", "graphql_links_created", { count: graphqlRels });
+      }
+    } catch (err) {
+      log.w("DEVAGENT", "graphql_link_skip", { error: (err as Error).message });
+    }
+    perfTimings["graphqlLink_end"] = Date.now() - perfStart;
+
     perfTimings["indexing_end"] = Date.now() - perfStart;
     log.i("DEVAGENT", "index_done", {
       files: filesProcessed,

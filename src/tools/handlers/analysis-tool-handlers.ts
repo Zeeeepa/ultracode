@@ -1148,6 +1148,203 @@ export class AnalyzeSwaggerImpactToolHandler extends BaseToolHandler<z.infer<typ
 }
 
 // =============================================================================
+// ANALYZE API IMPACT (unified: swagger + protobuf + graphql)
+// =============================================================================
+
+const AnalyzeApiImpactSchema = z.object({
+  projectPath: projectPathParam,
+  contractType: z
+    .enum(["swagger", "protobuf", "graphql", "auto"])
+    .optional()
+    .default("auto")
+    .describe("API contract type to analyze (auto-detected if omitted)"),
+  specFile: z.string().optional().describe("Path to spec file (auto-detected if omitted)"),
+  schemaName: z.string().optional().describe("Specific schema/message/type name"),
+  endpointPath: z.string().optional().describe("Specific endpoint or rpc name"),
+});
+
+export class AnalyzeApiImpactToolHandler extends BaseToolHandler<z.infer<typeof AnalyzeApiImpactSchema>> {
+  protected parseArgs(args: unknown) {
+    return AnalyzeApiImpactSchema.parse(args);
+  }
+
+  protected async execute(args: z.infer<typeof AnalyzeApiImpactSchema>): Promise<ToolResult> {
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
+    const allEntities = await storage.getAllEntities();
+    const allRelationships = await storage.getAllRelationships();
+
+    // Find API contract entities matching the requested type
+    let apiEntities = allEntities.filter((e) => e.metadata?.["isApiContract"]);
+
+    if (apiEntities.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error:
+                "No API contract specifications found (Swagger, Protobuf, or GraphQL). Index a project with API spec files first.",
+            }),
+          },
+        ],
+      };
+    }
+
+    // Filter by contract type
+    if (args.contractType !== "auto") {
+      apiEntities = apiEntities.filter((e) => {
+        switch (args.contractType) {
+          case "swagger":
+            return !!e.metadata?.["swaggerType"];
+          case "protobuf":
+            return !!e.metadata?.["protoType"];
+          case "graphql":
+            return !!e.metadata?.["graphqlType"];
+          default:
+            return true;
+        }
+      });
+    }
+
+    // Filter by spec file
+    if (args.specFile) {
+      const normalizedPath = this.context.normalizeInputPath(args.specFile);
+      apiEntities = apiEntities.filter((e) =>
+        e.filePath
+          .replace(/\\/g, "/")
+          .toLowerCase()
+          .includes((normalizedPath || "").replace(/\\/g, "/").toLowerCase()),
+      );
+    }
+
+    // Filter by schema name
+    if (args.schemaName) {
+      apiEntities = apiEntities.filter((e) => {
+        const st = e.metadata?.["swaggerType"];
+        const pt = e.metadata?.["protoType"];
+        const gt = e.metadata?.["graphqlType"];
+        const isSchemaLike =
+          st === "schema" ||
+          pt === "message" ||
+          pt === "enum" ||
+          gt === "type" ||
+          gt === "interface" ||
+          gt === "input" ||
+          gt === "enum";
+        return isSchemaLike && e.name === args.schemaName;
+      });
+    }
+
+    // Filter by endpoint/rpc
+    if (args.endpointPath) {
+      const [method, ...pathParts] = args.endpointPath.split(" ");
+      const path = pathParts.join(" ");
+      apiEntities = apiEntities.filter((e) => {
+        // Swagger endpoint
+        if (e.metadata?.["swaggerType"] === "endpoint") {
+          const entityMethod = ((e.metadata["httpMethod"] as string) || "").toUpperCase();
+          const entityPath = (e.metadata["path"] as string) || "";
+          return (!method || entityMethod === method.toUpperCase()) && (!path || entityPath === path);
+        }
+        // Protobuf rpc
+        if (e.metadata?.["protoType"] === "rpc") {
+          return e.name === args.endpointPath || e.name === method;
+        }
+        // GraphQL field (query/mutation)
+        if (e.metadata?.["graphqlType"] === "field") {
+          return e.name === args.endpointPath || e.name === method;
+        }
+        return false;
+      });
+    }
+
+    // Collect related entities through relationships
+    const producers: Array<{ name: string; file: string; type: string }> = [];
+    const consumers: Array<{ name: string; file: string; type: string }> = [];
+    const generatedTypes: Array<{ name: string; file: string; schemaName: string }> = [];
+
+    const apiEntityIds = new Set(apiEntities.map((e) => e.id));
+    const entityMap = new Map(allEntities.map((e) => [e.id, e]));
+
+    for (const rel of allRelationships) {
+      if (rel.type === "produces_api") {
+        const from = entityMap.get(rel.fromId);
+        const to = entityMap.get(rel.toId);
+        if (from && to && (apiEntityIds.has(rel.toId) || apiEntityIds.has(rel.fromId))) {
+          producers.push({ name: from.name, file: from.filePath, type: from.type });
+        }
+      } else if (rel.type === "consumes_api") {
+        const from = entityMap.get(rel.fromId);
+        const to = entityMap.get(rel.toId);
+        if (from && to && (apiEntityIds.has(rel.toId) || apiEntityIds.has(rel.fromId))) {
+          consumers.push({ name: from.name, file: from.filePath, type: from.type });
+        }
+      } else if (rel.type === "generated_from") {
+        const from = entityMap.get(rel.fromId);
+        const to = entityMap.get(rel.toId);
+        if (from && to && (apiEntityIds.has(rel.toId) || apiEntityIds.has(rel.fromId))) {
+          generatedTypes.push({ name: from.name, file: from.filePath, schemaName: to.name });
+        }
+      }
+    }
+
+    // Assess risk
+    const totalAffected = producers.length + consumers.length + generatedTypes.length;
+    const breakingChangeRisk: "high" | "medium" | "low" =
+      totalAffected > 10 ? "high" : totalAffected > 3 ? "medium" : "low";
+
+    // Build recommendations
+    const recommendations: string[] = [];
+    if (consumers.length > 0) {
+      recommendations.push(
+        `${consumers.length} generated client(s)/consumer(s) may need regeneration after spec changes`,
+      );
+    }
+    if (generatedTypes.length > 0) {
+      recommendations.push(
+        `${generatedTypes.length} generated type(s) are linked to API schemas — regenerate after schema changes`,
+      );
+    }
+    if (producers.length > 0) {
+      recommendations.push(
+        `${producers.length} producer(s)/resolver(s) implement this API — update spec after changing these`,
+      );
+    }
+
+    // Categorize by contract type
+    const contractTypes = new Set<string>();
+    for (const e of apiEntities) {
+      if (e.metadata?.["swaggerType"]) contractTypes.add("swagger");
+      if (e.metadata?.["protoType"]) contractTypes.add("protobuf");
+      if (e.metadata?.["graphqlType"]) contractTypes.add("graphql");
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              contractTypes: [...contractTypes],
+              specFiles: [...new Set(apiEntities.map((e) => e.filePath))],
+              apiEntities: apiEntities.length,
+              producers,
+              consumers,
+              generatedTypes,
+              breakingChangeRisk,
+              totalAffectedEntities: totalAffected,
+              recommendations,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+}
+
+// =============================================================================
 // DETECT TECHNOLOGY STACK
 // =============================================================================
 

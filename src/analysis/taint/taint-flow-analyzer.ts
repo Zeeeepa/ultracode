@@ -386,6 +386,36 @@ export class TaintFlowAnalyzer {
         continue;
       }
 
+      // API contract entities as sources for missing_auth detection
+      if (entity.metadata?.["isApiContract"]) {
+        const protoType = entity.metadata["protoType"] as string | undefined;
+        const graphqlType = entity.metadata["graphqlType"] as string | undefined;
+        const swaggerType = entity.metadata["swaggerType"] as string | undefined;
+
+        const isEndpoint =
+          protoType === "rpc" ||
+          (graphqlType === "field" &&
+            ((entity.metadata["parentType"] as string) === "Query" ||
+              (entity.metadata["parentType"] as string) === "Mutation")) ||
+          swaggerType === "endpoint" ||
+          graphqlType === "query" ||
+          graphqlType === "mutation";
+
+        if (isEndpoint) {
+          newlyClassified.add(entity.id);
+          sources.push({
+            id: entity.id,
+            name: entity.name,
+            file: entity.filePath,
+            line: entity.location?.start?.line ?? 0,
+            sourceType: "api_endpoint",
+            description: `API endpoint: ${entity.name}`,
+            priority: 1,
+          });
+          continue;
+        }
+      }
+
       // Fallback: regex classification
       const code = (entity.metadata?.signature as string | undefined) ?? entity.name;
 
@@ -549,6 +579,7 @@ export class TaintFlowAnalyzer {
       path_traversal: "high",
       ssrf: "high",
       prototype_pollution: "medium",
+      missing_auth: "high",
     };
 
     const base = categorySeverity[category];
@@ -597,6 +628,12 @@ export class TaintFlowAnalyzer {
         "Use Object.create(null) for maps",
         "Validate property names",
         "Use Map instead of plain objects",
+      ],
+      missing_auth: [
+        "Add @Authorize/@Auth decorator to endpoint",
+        "Add authentication middleware (requireAuth, isAuthenticated)",
+        "Add gRPC auth interceptor",
+        "Add GraphQL @auth directive",
       ],
     };
 

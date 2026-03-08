@@ -281,17 +281,48 @@ export class TraceEngine {
         if (!step.entityId) continue;
         const entity = entityBatch.get(step.entityId);
         if (entity?.metadata?.["isApiContract"]) {
-          const swaggerType = entity.metadata["swaggerType"] as string;
+          const swaggerType = entity.metadata["swaggerType"] as string | undefined;
+          const protoType = entity.metadata["protoType"] as string | undefined;
+          const graphqlType = entity.metadata["graphqlType"] as string | undefined;
+
+          let contractInfo: Record<string, unknown> = {};
+
+          if (protoType) {
+            contractInfo = {
+              type: "protobuf",
+              protoType,
+              serviceName: protoType === "service" ? entity.name : undefined,
+              rpcName: protoType === "rpc" ? entity.name : undefined,
+              endpoint:
+                protoType === "rpc" && entity.metadata["httpPath"]
+                  ? `${entity.metadata["httpMethod"] || ""} ${entity.metadata["httpPath"] || ""}`.trim()
+                  : undefined,
+              messageName: protoType === "message" ? entity.name : undefined,
+            };
+          } else if (graphqlType) {
+            contractInfo = {
+              type: "graphql",
+              graphqlType,
+              typeName: entity.name,
+              operation:
+                graphqlType === "query" || graphqlType === "mutation" || graphqlType === "subscription"
+                  ? graphqlType
+                  : undefined,
+            };
+          } else {
+            contractInfo = {
+              type: "swagger",
+              swaggerType,
+              endpoint:
+                swaggerType === "endpoint"
+                  ? `${entity.metadata["httpMethod"] || ""} ${entity.metadata["path"] || ""}`.trim()
+                  : undefined,
+              schemaName: swaggerType === "schema" ? entity.name : undefined,
+            };
+          }
+
           (step as unknown as Record<string, unknown>)["crossesApiContract"] = true;
-          (step as unknown as Record<string, unknown>)["contractInfo"] = {
-            type: "swagger",
-            swaggerType,
-            endpoint:
-              swaggerType === "endpoint"
-                ? `${entity.metadata["httpMethod"] || ""} ${entity.metadata["path"] || ""}`.trim()
-                : undefined,
-            schemaName: swaggerType === "schema" ? entity.name : undefined,
-          };
+          (step as unknown as Record<string, unknown>)["contractInfo"] = contractInfo;
           annotated++;
         }
       }

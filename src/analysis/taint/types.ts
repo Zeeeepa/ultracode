@@ -4,7 +4,8 @@ export type TaintCategory =
   | "command_injection"
   | "path_traversal"
   | "ssrf"
-  | "prototype_pollution";
+  | "prototype_pollution"
+  | "missing_auth";
 
 export type TaintSeverity = "critical" | "high" | "medium" | "low";
 

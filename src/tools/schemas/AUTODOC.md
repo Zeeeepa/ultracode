@@ -118,10 +118,10 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 - `SynthesizeFilesSchema`
 - `CheckEntityPatternsSchema`
 - `DetectPatternsSchema`
+- `AnalyzeApiImpactSchema`
 - `AnalyzeCodeImpactSchema`
 - `AnalyzeSwaggerImpactSchema`
 - `CrossLanguageSearchSchema`
-- `DetectCodeClonesSchema`
 
 ## Files
 

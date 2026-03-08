@@ -1,6 +1,6 @@
 # Taint
 
-Identifies security vulnerabilities by tracking untrusted data flows to dangerous operations.
+Detects and analyzes data taint flows from untrusted sources to dangerous sinks.
 
 ## Response Handling
 
@@ -33,18 +33,18 @@ Response structure:
 | `SinkPattern` | interface | Interface for dangerous operation patterns and categories | [→ catalogs.ts:10-16] |
 | `SOURCE_PATTERNS` | const | Array of regex patterns detecting untrusted data | [→ catalogs.ts:28-30] |
 | `SourcePattern` | interface | Interface for untrusted data entry point patterns | [→ catalogs.ts:3-8] |
-| `TaintAnalysisParams` | interface | Interface for taint analysis parameters and options | [→ types.ts:62-67] |
-| `TaintAnalysisResult` | interface | Interface for complete taint analysis report results | [→ types.ts:62-67] |
-| `TaintCategory` | type | Type for vulnerability categories SQL injection XSS command | [→ types.ts:1-7] |
-| `TaintFlowAnalyzer` | class | Class analyzing data flow paths source to sink | [→ taint-flow-analyzer.ts:19-605] |
-| `TaintFlowRole` | type | Type for role in taint analysis flow | [→ types.ts:40] |
-| `TaintFlowStep` | interface | Interface for single step in vulnerability flow | [→ types.ts:40-40] |
+| `TaintAnalysisParams` | interface | Interface for taint analysis parameters and options | [→ types.ts:63-68] |
+| `TaintAnalysisResult` | interface | Interface for complete taint analysis report results | [→ types.ts:63-68] |
+| `TaintCategory` | type | Type for vulnerability categories SQL injection XSS command | [→ types.ts:1-8] |
+| `TaintFlowAnalyzer` | class | Class analyzing data flow paths source to sink | [→ taint-flow-analyzer.ts:19-642] |
+| `TaintFlowRole` | type | Type for role in taint analysis flow | [→ types.ts:41] |
+| `TaintFlowStep` | interface | Interface for single step in vulnerability flow | [→ types.ts:41-41] |
 | `TaintFormatter` | class | Class formatting taint analysis results into reports | [→ taint-formatter.ts:3-90] |
-| `TaintSanitizer` | interface | Interface for protective function with protections offered | [→ types.ts:31-38] |
-| `TaintSeverity` | type | Type for vulnerability severity critical high medium low | [→ types.ts:9] |
-| `TaintSink` | interface | Interface for dangerous operation sink and categories | [→ types.ts:21-29] |
-| `TaintSource` | interface | Interface for discovered taint source with location | [→ types.ts:9-9] |
-| `TaintVulnerability` | interface | Interface for detected vulnerability with flow details | [→ types.ts:51-60] |
+| `TaintSanitizer` | interface | Interface for protective function with protections offered | [→ types.ts:32-39] |
+| `TaintSeverity` | type | Type for vulnerability severity critical high medium low | [→ types.ts:10] |
+| `TaintSink` | interface | Interface for dangerous operation sink and categories | [→ types.ts:22-30] |
+| `TaintSource` | interface | Interface for discovered taint source with location | [→ types.ts:10-10] |
+| `TaintVulnerability` | interface | Interface for detected vulnerability with flow details | [→ types.ts:52-61] |
 
 ## Files
 

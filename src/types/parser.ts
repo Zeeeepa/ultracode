@@ -46,6 +46,8 @@ export const SUPPORTED_LANGUAGES = [
   "powershell",
   "batch",
   "json",
+  "protobuf",
+  "graphql",
   "zig",
   "helm",
 ] as const;

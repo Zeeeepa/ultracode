@@ -322,4 +322,20 @@ export const LANGUAGE_KEYWORDS: Record<
       "end",
     ],
   },
+
+  protobuf: {
+    functions: ["rpc"],
+    classes: ["service"],
+    imports: ["import"],
+    exports: [],
+    types: ["message", "enum", "oneof", "map"],
+  },
+
+  graphql: {
+    functions: ["query", "mutation", "subscription"],
+    classes: ["type", "interface", "input"],
+    imports: [],
+    exports: ["extend"],
+    types: ["enum", "union", "scalar", "directive"],
+  },
 };

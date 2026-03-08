@@ -158,6 +158,7 @@ export class ToolRegistry {
     this.registerLazy("analyze_state_chaos", async () => (await analysisLoader()).AnalyzeStateChaosToolHandler);
     this.registerLazy("analyze_code_impact", async () => (await analysisLoader()).AnalyzeCodeImpactToolHandler);
     this.registerLazy("analyze_swagger_impact", async () => (await analysisLoader()).AnalyzeSwaggerImpactToolHandler);
+    this.registerLazy("analyze_api_impact", async () => (await analysisLoader()).AnalyzeApiImpactToolHandler);
     this.registerLazy("detect_technology_stack", async () => (await analysisLoader()).DetectTechnologyStackToolHandler);
 
     // --- Branch tools (~15KB) ---

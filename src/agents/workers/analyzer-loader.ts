@@ -173,6 +173,44 @@ async function createAnalyzer(language: string): Promise<BaseParser> {
       break;
     }
 
+    case "protobuf": {
+      const { workerLog } = await import("./worker-logging.js");
+      workerLog("INFO", `Loading ProtobufParser`);
+      const { ProtobufParser } = await import("../../parsers/protobuf/protobuf-parser.js");
+      const protobufParser = new ProtobufParser();
+      await protobufParser.initialize();
+      analyzer = {
+        initialize: async () => protobufParser.initialize(),
+        supportsFile: (filePath: string) => protobufParser.supportsFile(filePath),
+        parse: (filePath: string, content: string, hash: string) => protobufParser.parse(filePath, content, hash),
+        parseIncremental: (filePath: string, content: string, hash: string) =>
+          protobufParser.parse(filePath, content, hash),
+        getStats: () => protobufParser.getStats(),
+        clearCache: () => {},
+      };
+      workerLog("INFO", `ProtobufParser initialized OK`);
+      break;
+    }
+
+    case "graphql": {
+      const { workerLog } = await import("./worker-logging.js");
+      workerLog("INFO", `Loading GraphQLSchemaParser`);
+      const { GraphQLSchemaParser } = await import("../../parsers/graphql/graphql-parser.js");
+      const graphqlParser = new GraphQLSchemaParser();
+      await graphqlParser.initialize();
+      analyzer = {
+        initialize: async () => graphqlParser.initialize(),
+        supportsFile: (filePath: string) => graphqlParser.supportsFile(filePath),
+        parse: (filePath: string, content: string, hash: string) => graphqlParser.parse(filePath, content, hash),
+        parseIncremental: (filePath: string, content: string, hash: string) =>
+          graphqlParser.parse(filePath, content, hash),
+        getStats: () => graphqlParser.getStats(),
+        clearCache: () => {},
+      };
+      workerLog("INFO", `GraphQLSchemaParser initialized OK`);
+      break;
+    }
+
     case "json": {
       const { workerLog } = await import("./worker-logging.js");
       workerLog("INFO", `Loading JsonParser`);
@@ -295,6 +333,8 @@ export const SUPPORTED_WORKER_LANGUAGES = [
   "javascript",
   "jsx",
   "json",
+  "protobuf",
+  "graphql",
   "zig",
   "helm",
 ] as const;

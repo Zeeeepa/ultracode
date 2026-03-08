@@ -9,6 +9,7 @@ import { z } from "zod";
 import { branchToolDefinitions } from "./branch-schemas.js";
 import {
   AddMemberSchema,
+  AnalyzeApiImpactSchema,
   AnalyzeCodeImpactSchema,
   AnalyzeHotspotsSchema,
   AnalyzeMergeConflictsSchema,
@@ -246,6 +247,12 @@ export function getToolsList(): ToolDefinition[] {
       inputSchema: zodToJsonSchema(AnalyzeSwaggerImpactSchema),
     },
     {
+      name: "analyze_api_impact",
+      description:
+        "[PLAN] Analyze impact of API contract changes across Swagger/OpenAPI, Protobuf/gRPC, and GraphQL schemas. Shows affected producers (servers/resolvers), consumers (clients/hooks), and generated types. Auto-detects contract type or filter with contractType parameter. Use before modifying any API spec.",
+      inputSchema: zodToJsonSchema(AnalyzeApiImpactSchema),
+    },
+    {
       name: "graph_metrics",
       description:
         "[PLAN] Graph-based architecture metrics: PageRank (entity importance), Louvain (community/module detection), centrality (hub/authority/bridge roles), bus factor (knowledge concentration risk). Use persist=true to store PageRank/Louvain in entity metadata for semantic search boosting. Workflow: graph_metrics({metric:'pagerank', topN:10}) → top-10 most important entities.",
@@ -288,7 +295,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "taint_analysis",
       description:
-        "[SECURITY] Interprocedural taint analysis: trace untrusted data from sources (req.body, process.env, fetch) to sinks (eval, exec, innerHTML, db.query) and detect missing sanitization. Categories: sql_injection, xss, command_injection, path_traversal, ssrf, prototype_pollution. Returns vulnerability flows with severity, confidence, and fix suggestions. Supports offset/limit pagination for large results. Example: taint_analysis({category:'sql_injection', offset:0, limit:10}).",
+        "[SECURITY] Interprocedural taint analysis: trace untrusted data from sources (req.body, process.env, fetch) to sinks (eval, exec, innerHTML, db.query) and detect missing sanitization. Categories: sql_injection, xss, command_injection, path_traversal, ssrf, prototype_pollution, missing_auth. The missing_auth category detects API endpoints (REST, gRPC, GraphQL) without authorization checks reaching sensitive operations. Returns vulnerability flows with severity, confidence, and fix suggestions. Supports offset/limit pagination for large results. Example: taint_analysis({category:'missing_auth', offset:0, limit:10}).",
       inputSchema: zodToJsonSchema(TaintAnalysisSchema),
     },
 

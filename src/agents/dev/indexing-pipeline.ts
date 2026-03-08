@@ -437,6 +437,206 @@ export async function resolveSwaggerLinks(): Promise<number> {
 }
 
 // =============================================================================
+// PHASE 6b: POST-INDEXING PROTOBUF LINKING
+// =============================================================================
+
+/**
+ * Post-indexing step: Link protobuf specifications to code entities.
+ * Creates PRODUCES_API, CONSUMES_API, GENERATED_FROM relationships.
+ */
+export async function resolveProtobufLinks(): Promise<number> {
+  const storage = await getGraphStorage();
+
+  const allEntities = await storage.getAllEntities();
+  const hasProtobuf = allEntities.some((e) => e.metadata?.["protoType"]);
+
+  if (!hasProtobuf) {
+    return 0;
+  }
+
+  log.i("DEVAGENT", "protobuf_link_start", { totalEntities: allEntities.length });
+
+  try {
+    const { analyzeProtobufCodeLinks, buildProtobufRelationships } = await import(
+      "../../parsers/protobuf/protobuf-code-linker.js"
+    );
+
+    const analysis = analyzeProtobufCodeLinks(allEntities);
+    const totalLinks = analysis.producers.length + analysis.consumers.length + analysis.generatedTypes.length;
+
+    if (totalLinks === 0) {
+      log.i("DEVAGENT", "protobuf_link_none");
+      return 0;
+    }
+
+    const protoRelationships = buildProtobufRelationships(analysis);
+
+    const { nanoid } = await import("nanoid");
+    const relationships = protoRelationships.map((rel) => ({
+      id: nanoid(12),
+      fromId: `proto:${rel.fromName}`,
+      toId: `proto:${rel.toName}`,
+      type: rel.type,
+      metadata: {
+        ...rel.metadata,
+        fromFile: rel.fromFile,
+        toFile: rel.toFile,
+      },
+    }));
+
+    // Resolve proto: prefixed IDs to actual entity IDs
+    const entityByName = new Map<string, string>();
+    for (const e of allEntities) {
+      entityByName.set(e.name, e.id);
+      entityByName.set(`${e.filePath}:${e.name}`, e.id);
+    }
+
+    for (const rel of relationships) {
+      const fromName = rel.fromId.replace("proto:", "");
+      const toName = rel.toId.replace("proto:", "");
+
+      const fromFile = rel.metadata?.fromFile as string | undefined;
+      const toFile = rel.metadata?.toFile as string | undefined;
+
+      if (fromFile) {
+        const fileKey = `${fromFile}:${fromName}`;
+        if (entityByName.has(fileKey)) {
+          rel.fromId = entityByName.get(fileKey)!;
+        }
+      }
+      if (rel.fromId.startsWith("proto:") && entityByName.has(fromName)) {
+        rel.fromId = entityByName.get(fromName)!;
+      }
+
+      if (toFile) {
+        const fileKey = `${toFile}:${toName}`;
+        if (entityByName.has(fileKey)) {
+          rel.toId = entityByName.get(fileKey)!;
+        }
+      }
+      if (rel.toId.startsWith("proto:") && entityByName.has(toName)) {
+        rel.toId = entityByName.get(toName)!;
+      }
+    }
+
+    const result = await storage.insertRelationships(relationships);
+
+    log.i("DEVAGENT", "protobuf_link_done", {
+      producers: analysis.producers.length,
+      consumers: analysis.consumers.length,
+      generatedTypes: analysis.generatedTypes.length,
+      relationshipsCreated: result.processed,
+      configs: analysis.codegenConfigs,
+    });
+
+    return result.processed;
+  } catch (error) {
+    log.w("DEVAGENT", "protobuf_link_error", { error: (error as Error).message });
+    return 0;
+  }
+}
+
+// =============================================================================
+// PHASE 6c: POST-INDEXING GRAPHQL LINKING
+// =============================================================================
+
+/**
+ * Post-indexing step: Link GraphQL schemas to code entities.
+ * Creates PRODUCES_API, CONSUMES_API, GENERATED_FROM relationships.
+ */
+export async function resolveGraphQLLinks(): Promise<number> {
+  const storage = await getGraphStorage();
+
+  const allEntities = await storage.getAllEntities();
+  const hasGraphQL = allEntities.some((e) => e.metadata?.["graphqlType"]);
+
+  if (!hasGraphQL) {
+    return 0;
+  }
+
+  log.i("DEVAGENT", "graphql_link_start", { totalEntities: allEntities.length });
+
+  try {
+    const { analyzeGraphQLCodeLinks, buildGraphQLRelationships } = await import(
+      "../../parsers/graphql/graphql-code-linker.js"
+    );
+
+    const analysis = analyzeGraphQLCodeLinks(allEntities);
+    const totalLinks = analysis.resolvers.length + analysis.consumers.length + analysis.generatedTypes.length;
+
+    if (totalLinks === 0) {
+      log.i("DEVAGENT", "graphql_link_none");
+      return 0;
+    }
+
+    const graphqlRelationships = buildGraphQLRelationships(analysis);
+
+    const { nanoid } = await import("nanoid");
+    const relationships = graphqlRelationships.map((rel) => ({
+      id: nanoid(12),
+      fromId: `graphql:${rel.fromName}`,
+      toId: `graphql:${rel.toName}`,
+      type: rel.type,
+      metadata: {
+        ...rel.metadata,
+        fromFile: rel.fromFile,
+        toFile: rel.toFile,
+      },
+    }));
+
+    // Resolve graphql: prefixed IDs to actual entity IDs
+    const entityByName = new Map<string, string>();
+    for (const e of allEntities) {
+      entityByName.set(e.name, e.id);
+      entityByName.set(`${e.filePath}:${e.name}`, e.id);
+    }
+
+    for (const rel of relationships) {
+      const fromName = rel.fromId.replace("graphql:", "");
+      const toName = rel.toId.replace("graphql:", "");
+
+      const fromFile = rel.metadata?.fromFile as string | undefined;
+      const toFile = rel.metadata?.toFile as string | undefined;
+
+      if (fromFile) {
+        const fileKey = `${fromFile}:${fromName}`;
+        if (entityByName.has(fileKey)) {
+          rel.fromId = entityByName.get(fileKey)!;
+        }
+      }
+      if (rel.fromId.startsWith("graphql:") && entityByName.has(fromName)) {
+        rel.fromId = entityByName.get(fromName)!;
+      }
+
+      if (toFile) {
+        const fileKey = `${toFile}:${toName}`;
+        if (entityByName.has(fileKey)) {
+          rel.toId = entityByName.get(fileKey)!;
+        }
+      }
+      if (rel.toId.startsWith("graphql:") && entityByName.has(toName)) {
+        rel.toId = entityByName.get(toName)!;
+      }
+    }
+
+    const result = await storage.insertRelationships(relationships);
+
+    log.i("DEVAGENT", "graphql_link_done", {
+      resolvers: analysis.resolvers.length,
+      consumers: analysis.consumers.length,
+      generatedTypes: analysis.generatedTypes.length,
+      relationshipsCreated: result.processed,
+      configs: analysis.codegenConfigs,
+    });
+
+    return result.processed;
+  } catch (error) {
+    log.w("DEVAGENT", "graphql_link_error", { error: (error as Error).message });
+    return 0;
+  }
+}
+
+// =============================================================================
 // UTILITIES
 // =============================================================================
 
