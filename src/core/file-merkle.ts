@@ -14,9 +14,9 @@
  */
 
 import { dirname, relative } from "node:path";
-import type { Client } from "@libsql/client";
 import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
+import type { Client } from "../storage/libsql/types.js";
 import type { FileChange, FileDiff, FileMerkleNode, MerkleFileInfo } from "../storage/prolly/types.js";
 
 // =============================================================================

@@ -1,6 +1,6 @@
 # Stacktrace
 
-Analyzes stacktraces by parsing, classifying errors, resolving frames to code entities, and generating diagnostics with suggested fixes.
+Analyzes stacktraces, classifies errors, and resolves frames to code entities
 
 ## Exports
 

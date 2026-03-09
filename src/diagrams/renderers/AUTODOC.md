@@ -1,6 +1,6 @@
 # Renderers
 
-Converts intermediate diagram representation into multiple text-based diagram formats.
+Converts DiagramIR to multiple text-based diagram formats (D2, Graphviz, Mermaid).
 
 ## Exports
 

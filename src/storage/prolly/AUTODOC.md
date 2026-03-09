@@ -45,13 +45,13 @@ The prolly module provides a complete versioned storage system built on content-
 | Module | Purpose |
 |--------|---------|
 | `logging` | Structured logging |
-| `storage/libsql-graph-adapter` | LibSQLGraphAdapter reference for recently-changed utility |
+| `storage/libsql-graph-adapter` | GraphAdapter reference for recently-changed utility |
 
 ### External Packages
 
 | Package | Purpose |
 |---------|---------|
-| `@libsql/client` | LibSQL database client for node and commit persistence |
+| `better-sqlite3` / `bun:sqlite` | Native SQLite via NativeSQLiteClient for node and commit persistence |
 | `cbor-x` | CBOR serialization for compact binary node storage |
 | `xxhash-wasm` | xxHash64 for fast content-based hashing |
 | `lru-cache` | LRU cache for hot node access in ProllyNodeStore |
@@ -109,7 +109,7 @@ CommitManager validates client initialization before operations. ProllyNodeStore
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           LibSQL Database                                │
+│                           SQLite Database                                 │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │
 │  │prolly_nodes │  │graph_commits│  │branch_heads │  │ file_merkle │    │
 │  │ hash (PK)   │  │ commitHash  │  │ branchName  │  │ (future)    │    │

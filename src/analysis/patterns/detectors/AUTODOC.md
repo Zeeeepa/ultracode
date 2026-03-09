@@ -1,6 +1,6 @@
 # Detectors
 
-Multi-language custom code pattern detectors identifying antipatterns and best-practices violations.
+Custom code anti-pattern detectors for TypeScript, JavaScript, C#, Go, Java, Python, and Zig
 
 ## Exports
 

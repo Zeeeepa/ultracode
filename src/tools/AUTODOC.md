@@ -50,7 +50,7 @@ MCP Request → conductor.handleRequest()
       → handle(args)
         ├─ parseArgs(args)       → Zod schema validation
         ├─ execute(args)         → business logic
-        │   ├─ ensureGraphStorage()  → GraphStorage (libsql)
+        │   ├─ ensureGraphStorage()  → GraphStorage (native SQLite)
         │   ├─ getSemanticAgent()    → SemanticAgent / VectorStore
         │   └─ resolveProjectPath()  → session-aware resolution
         ├─ applyResponseLimits() → 50KB soft truncation

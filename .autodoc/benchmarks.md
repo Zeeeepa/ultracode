@@ -357,7 +357,7 @@ All DBs: `journal_mode=OFF`, `synchronous=OFF`, `cache_size=-8192` (8 MB per DB)
 - First chunk triggers IVF training (~9.8 sec), subsequent chunks ~1 sec each
 - Eliminated timeout errors: 30s default → 120s for first chunk, 60s for rest
 - FAISS speed: 5,000 vectors/s (vs 1,645/s without chunking — **3x faster**)
-- `reset=true` now clears FAISS index + LibSQL embedding cache (was graph-only)
+- `reset=true` now clears FAISS index + SQLite embedding cache (was graph-only)
 
 **Why staging is faster (v6.4+):**
 - Staging tables have no PRIMARY KEY → heap append O(1) per row (no B-tree page splits)
@@ -420,7 +420,57 @@ All DBs: `journal_mode=OFF`, `synchronous=OFF`, `cache_size=-8192` (8 MB per DB)
 
 ## MCP Tool Performance
 
-### Current (v6.4, staging tables, multi-DB)
+### Current (v6.5, native SQLite, multi-DB)
+
+Migrated from `@libsql/client` to native SQLite (`better-sqlite3` / `bun:sqlite`) via `NativeSQLiteClient`.
+Key improvements: prepared statement cache (2-5x), `db.transaction()` instead of IPC `batch()` (3-10x), no async IPC overhead.
+
+Benchmarked on UltraCode project. All server-side `_elapsedMs` from MCP tool response.
+
+**UltraCode**: 275K LOC, 704 files, 27K entities, 53K rels
+
+#### v6.5 Search Tools
+
+| Tool | Mode | v6.5 | v6.4 | Δ | Notes |
+|------|------|------|------|---|-------|
+| `find_similar_code` | vector | **86 ms** | 61 ms | +41% | FAISS noise, within variance |
+| `get_members` | AST | **110 ms** | 82 ms | +34% | Single file, 19 entities |
+| `pattern_search` | entity (regex) | **157 ms** | 238 ms | **-34%** | SIMD regex + SQLite lookup |
+| `semantic_search` | FAISS | **217 ms** | 461 ms | **-53%** | Prepared stmt cache for cooccurrence + enrichment |
+
+#### v6.5 Analysis Tools
+
+| Tool | v6.5 | v6.4 | Δ | Notes |
+|------|------|------|---|-------|
+| `analyze_hotspots` | **137 ms** | 134 ms | ~same | Top-5 complexity |
+| `analyze_code_impact` | **179 ms** | 510 ms | **-65%** | batch BFS, `db.transaction()` vs IPC |
+
+#### v6.5 Tracing Tools
+
+| Tool | v6.5 | v6.4 | Δ | Notes |
+|------|------|------|---|-------|
+| `trace_flow` | **383 ms** | 557 ms | **-31%** | 27K nodes, graph load from SQLite faster |
+
+#### v6.5 Info Tools
+
+| Tool | v6.5 | v6.4 | Notes |
+|------|------|------|-------|
+| `get_graph_stats` | **298 ms** | 226 ms | First call (cold), within variance |
+
+#### Performance Tiers (v6.5) — UltraCode (27K entities)
+
+| Tier | Time | Tools |
+|------|------|-------|
+| **Instant** (<100 ms) | 2-86 ms | `get_version`, `find_similar_code`, `cross_language_search` |
+| **Fast** (100-200 ms) | 100-179 ms | `get_members`, `analyze_hotspots`, `pattern_search(entity)`, `analyze_code_impact`, `list_entity_relationships`, `detect_technology_stack` |
+| **Medium** (200-600 ms) | 217-383 ms | `semantic_search`, `get_graph_stats`, `pattern_search(semantic)`, `detect_patterns`, `get_graph_health`, `trace_flow`, `trace_backwards` |
+| **Heavy** (600+ ms) | 600+ ms | `graph_metrics(pagerank)`, `graph_metrics(louvain)`, `analyze_state_impact`, `taint_analysis`, `jscpd_detect_clones` |
+
+**Key win**: SQL-heavy tools (`semantic_search`, `analyze_code_impact`, `pattern_search`) improved **30-65%** due to prepared statement cache and sync transactions.
+
+---
+
+### Previous (v6.4, staging tables, multi-DB)
 
 Benchmarked on two projects. All server-side `durationms` from log.
 

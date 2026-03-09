@@ -1,6 +1,6 @@
 # Parsers
 
-Multi-language stacktrace parser implementations for error trace analysis
+Collection of language-specific stacktrace parsers for error analysis
 
 ## Exports
 

@@ -1,6 +1,6 @@
 # Graphql
 
-Links GraphQL schema definitions to source code implementations and generated types.
+Analyzes GraphQL schema definitions and links them to resolver implementations and generated code
 
 ## Exports
 

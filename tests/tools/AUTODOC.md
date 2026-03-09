@@ -1,6 +1,6 @@
 # Tools
 
-Test helper factories creating mock dependencies for MCP tool handler tests
+Provides factory functions for creating mock objects in tool handler tests.
 
 ## Exports
 

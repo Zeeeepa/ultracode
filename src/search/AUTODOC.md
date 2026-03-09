@@ -24,7 +24,7 @@ The module provides four search modes through a single `PatternSearch` class: **
 |--------|------|------|
 | MCP tool handler | `PatternSearchQuery` (pattern, mode, scope, contentFilter, limit) | Structured query |
 | `GraphStorage` | Indexed entities with locations and metadata | Database |
-| `VectorStore` | Pre-computed embedding vectors | In-memory FAISS / libsql |
+| `VectorStore` | Pre-computed embedding vectors | In-memory FAISS |
 
 ### Processing
 1. Route query to mode-specific handler (entity / content / semantic / hybrid)
@@ -120,7 +120,7 @@ The module provides four search modes through a single `PatternSearch` class: **
 ## Implementation Notes
 
 ### Semantic Search — Batch Entity Resolution
-`searchSemantic()` receives `SimilarityResult[]` from `VectorStore.search()`, which are already enriched with entity metadata (`filePath`, `name`, `type`) from LibSQL. However, vector store IDs use `"ent:filePath:type:name"` format while GraphStorage expects 16-char hash IDs.
+`searchSemantic()` receives `SimilarityResult[]` from `VectorStore.search()`, which are already enriched with entity metadata (`filePath`, `name`, `type`) from SQLite. However, vector store IDs use `"ent:filePath:type:name"` format while GraphStorage expects 16-char hash IDs.
 
 **Resolution strategy** (avoids 200+ individual `getEntity()` calls):
 1. Extract `filePath`/`name`/`type` from enriched metadata (or parse from vector ID as fallback)

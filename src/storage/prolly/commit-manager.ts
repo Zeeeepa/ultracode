@@ -11,9 +11,9 @@
  * - Time travel (checkout previous commits)
  */
 
-import type { Client } from "@libsql/client";
 import xxhash from "xxhash-wasm";
 import { log } from "../../logging/index.js";
+import type { Client } from "../libsql/types.js";
 import type { BranchHead, GraphCommit } from "./types.js";
 
 // =============================================================================

@@ -11,11 +11,11 @@
  * - GC for orphaned nodes
  */
 
-import type { Client } from "@libsql/client";
 import * as cbor from "cbor-x";
 import { LRUCache } from "lru-cache";
 import xxhash from "xxhash-wasm";
 import { log } from "../../logging/index.js";
+import type { Client } from "../libsql/types.js";
 import type { InternalNodeData, LeafNodeData, ProllyNode, ProllyNodeType } from "./types.js";
 
 // =============================================================================

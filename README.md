@@ -312,7 +312,7 @@ npm install -g ultracode
 >
 > Bun blocks postinstall scripts by default. The `bun pm trust` command allows their execution — no reinstall needed.
 >
-> Other native components (oxc-parser, xxhash-wasm, @libsql/client) ship prebuilt binaries and work without trust.
+> Other native components (oxc-parser, xxhash-wasm, better-sqlite3) ship prebuilt binaries and work without trust.
 
 > **Note**: For full code analysis on different languages, runtimes are required:
 >
@@ -478,8 +478,8 @@ Main parameters:
 |---------|-----------|---------|-------------|
 | **logging** | `level` | `info` | Log level: debug, info, warn, error |
 | | `maxFiles` | `5` | Number of log files for rotation |
-| **database** | `mode` | `WAL` | libSQL mode: WAL, DELETE, TRUNCATE |
-| | `cacheSize` | `10000` | libSQL cache size |
+| **database** | `mode` | `WAL` | SQLite journal mode: WAL, DELETE, TRUNCATE |
+| | `cacheSize` | `10000` | SQLite cache size |
 | **indexing** | `autoSwitchOnBranchChange` | `true` | Auto-switch DB on branch change |
 | | `maxBranchesPerRepo` | `10` | Max branches per repository |
 | | `incrementalThreshold` | `20` | File threshold for full reindexing |

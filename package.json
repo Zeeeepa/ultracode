@@ -121,6 +121,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
     "@oxc-project/types": "^0.116.0",
     "@types/bun": "latest",
     "@types/node": "^25.3.5",
@@ -145,7 +146,7 @@
     "@grpc/proto-loader": "^0.8.0",
     "@huggingface/inference": "^4.13.15",
     "@lenml/tokenizers": "^3.7.2",
-    "@libsql/client": "^0.17.0",
+    "better-sqlite3": "^11.7.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "cbor-x": "^1.6.3",
     "fast-glob": "^3.3.3",
@@ -185,10 +186,12 @@
   "notes": {
     "boolean@3.2.0": "Deprecated transitive dependency. Package is unmaintained but functional.",
     "lenml-tokenizers": "@lenml/tokenizers - lightweight tokenizer (~2MB) without ONNX runtime. Inference is done by external services (OVMS, TEI, vLLM).",
-    "faiss-napi": "REMOVED — replaced by native FAISS addon in ultracode_cuda.node (ENABLE_FAISS_CPU). faiss-napi v0.10.3 train() crashes on IVF indexes."
+    "faiss-napi": "REMOVED — replaced by native FAISS addon in ultracode_cuda.node (ENABLE_FAISS_CPU). faiss-napi v0.10.3 train() crashes on IVF indexes.",
+    "libsql-client": "REMOVED — replaced by better-sqlite3 (Node) / bun:sqlite (Bun). Local-only project, async IPC overhead was unnecessary."
   },
   "trustedDependencies": [
     "@biomejs/biome",
+    "better-sqlite3",
     "cbor-extract",
     "protobufjs",
     "webgpu"

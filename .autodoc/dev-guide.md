@@ -139,7 +139,7 @@ Polyglot projects work seamlessly — cross-language relationship analysis inclu
 - **DevAgent** — Incremental indexing, file operations
 - **MergeAgent** — Semantic 3-way merge
 
-**Storage**: Multi-DB libSQL (SQLite-compatible) with staging tables for bulk indexing. See Storage Internals below.
+**Storage**: Multi-DB native SQLite (better-sqlite3 / bun:sqlite) with staging tables for bulk indexing. See Storage Internals below.
 
 **70+ MCP tools** across categories: search, analysis, tracing, modification, validation, autodoc, git, history, merge, snapshots, metrics.
 
@@ -147,7 +147,7 @@ See [architecture.md](architecture.md) for full details.
 
 ---
 
-## Storage Internals (libSQL)
+## Storage Internals (Native SQLite)
 
 ### Multi-DB Architecture (v6)
 

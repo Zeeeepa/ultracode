@@ -17,7 +17,7 @@ The semantic module is the embedding and vector search layer for the SemanticAge
 
 - **Inputs**: Parsed entities with location data, file content, embedding configuration, semantic-config.json settings.
 - **Processing**: Filters entities by exclude patterns, builds embedding text from code + metadata, deduplicates against global cache, generates embeddings in batches via EmbeddingGenerator, stores vectors in VectorStore.
-- **Outputs**: Vector embeddings stored in FAISS/LibSQL, cache-warmed semantic cache, comment entities with documentation relationships.
+- **Outputs**: Vector embeddings stored in FAISS, cache-warmed semantic cache, comment entities with documentation relationships.
 
 ## Public API
 
@@ -77,7 +77,7 @@ The semantic module is the embedding and vector search layer for the SemanticAge
 
 ## Error Handling
 
-Embedding generation failures for individual batches are logged and skipped, allowing remaining batches to proceed. Cache warmup failures are non-fatal. The VectorIndexManager falls back to LibSQL DiskANN if FAISS is unavailable.
+Embedding generation failures for individual batches are logged and skipped, allowing remaining batches to proceed. Cache warmup failures are non-fatal. The VectorIndexManager requires FAISS for vector search (LibSQL DiskANN fallback removed in v5).
 
 ## Known Limitations
 

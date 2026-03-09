@@ -108,9 +108,9 @@ New embeddings ──► Faiss (hot, in-memory)
                          │
                          │ periodic flush (every N minutes)
                          ▼
-Old embeddings ──► LibSQL DiskANN (cold, persistent)
+Old embeddings ──► Faiss on disk (cold, persistent)
 
-Search = merge(Faiss results, DiskANN results) by score
+Search = Faiss results → enrich metadata from SQLite
 ```
 
 ## Performance Targets

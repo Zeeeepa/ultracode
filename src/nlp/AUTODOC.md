@@ -46,7 +46,7 @@ query ──► tokenize() ──► QueryExpander.expand()
 | Raw text | `string` | Source code comments, docstrings, markdown chunks |
 | Search queries | `string` | User natural language queries |
 | Top search results | `Array<{ content: string }>` | Initial search results for PRF extraction |
-| Storage backend | `CooccurrenceOperations` | LibSQL persistence for co-occurrence pairs |
+| Storage backend | `CooccurrenceOperations` | SQLite persistence for co-occurrence pairs |
 
 ### Processing
 
@@ -118,7 +118,7 @@ None. The module is dependency-free beyond Node.js/Bun built-ins.
 
 ### Async
 
-`CooccurrenceIndex.updateFromChunk()` and `getRelatedTerms()` are async (LibSQL I/O). `QueryExpander.expand()` is async due to co-occurrence lookup. `TfIdfExtractor` and `tokenize()` are synchronous (pure computation). `updateFromChunks()` aggregates pairs in memory before a single batch write.
+`CooccurrenceIndex.updateFromChunk()` and `getRelatedTerms()` are async (SQLite I/O). `QueryExpander.expand()` is async due to co-occurrence lookup. `TfIdfExtractor` and `tokenize()` are synchronous (pure computation). `updateFromChunks()` aggregates pairs in memory before a single batch write.
 
 ### Idempotency
 
@@ -126,15 +126,15 @@ None. The module is dependency-free beyond Node.js/Bun built-ins.
 
 ### Side Effects
 
-`CooccurrenceIndex` writes to LibSQL via `CooccurrenceOperations` (pair counts, term frequencies, PMI scores). `clear()` deletes all co-occurrence data. `pruneRarePairs()` removes low-count pairs. No file I/O, no network calls, no subprocess spawning.
+`CooccurrenceIndex` writes to SQLite via `CooccurrenceOperations` (pair counts, term frequencies, PMI scores). `clear()` deletes all co-occurrence data. `pruneRarePairs()` removes low-count pairs. No file I/O, no network calls, no subprocess spawning.
 
 ### State
 
-`CooccurrenceIndex` is stateless in memory; all state persisted in LibSQL. `TfIdfExtractor` holds immutable config only. `QueryExpander` holds config and a `TfIdfExtractor` instance. `STOP_WORDS` is a module-level frozen constant.
+`CooccurrenceIndex` is stateless in memory; all state persisted in SQLite. `TfIdfExtractor` holds immutable config only. `QueryExpander` holds config and a `TfIdfExtractor` instance. `STOP_WORDS` is a module-level frozen constant.
 
 ## Error Handling
 
-No explicit try/catch blocks in this module. Errors from `CooccurrenceOperations` (LibSQL failures) propagate to callers as unhandled rejections. `tokenize()` guards against null/non-string input (returns `[]`). `extractTopTerms()` returns `[]` for empty document arrays. `updateFromChunk()` short-circuits on fewer than 2 tokens. `QueryExpander` gracefully handles null `coocIndex` (skips co-occurrence stage).
+No explicit try/catch blocks in this module. Errors from `CooccurrenceOperations` (SQLite failures) propagate to callers as unhandled rejections. `tokenize()` guards against null/non-string input (returns `[]`). `extractTopTerms()` returns `[]` for empty document arrays. `updateFromChunk()` short-circuits on fewer than 2 tokens. `QueryExpander` gracefully handles null `coocIndex` (skips co-occurrence stage).
 
 ## Observability
 
@@ -152,7 +152,7 @@ No structured logging in this module. Debugging relies on `ExpandedQuery.allTerm
 1. **No stemming/lemmatization:** Tokens are lowercased but not stemmed. "running" and "run" are treated as different terms.
 2. **Stop words are static:** English + Russian only. No support for adding custom stop words at runtime.
 3. **CamelCase heuristic:** Acronym splitting (`XMLParser` -> `xml`, `parser`) uses regex heuristics that may mishandle edge cases.
-4. **No error recovery:** LibSQL failures in `CooccurrenceIndex` propagate unhandled; callers must wrap in try/catch.
+4. **No error recovery:** SQLite failures in `CooccurrenceIndex` propagate unhandled; callers must wrap in try/catch.
 5. **Memory on large batches:** `updateFromChunks()` accumulates all pairs in memory before flushing; very large batch inputs may spike memory.
 
 ## TypeScript Notes
@@ -186,5 +186,5 @@ Key imported types: `CooccurrenceOperations` (class, `../storage/libsql/cooccurr
 | `index.ts` | Barrel re-export of all module components |
 | `tokenizer.ts` | Unicode-aware tokenization with camelCase/snake_case splitting and bilingual stop words |
 | `tfidf.ts` | TF-IDF scoring for pseudo-relevance feedback term extraction |
-| `cooccurrence-index.ts` | Sliding-window term co-occurrence index with PMI scoring via LibSQL |
+| `cooccurrence-index.ts` | Sliding-window term co-occurrence index with PMI scoring via SQLite |
 | `query-expander.ts` | Two-stage query expansion combining co-occurrence and PRF signals |

@@ -15,7 +15,7 @@ tags: [mcp-server, entry-point, multi-agent, pipe-transport, lifecycle]
 
 ## Overview
 
-`src/index.ts` is a 1500+ line orchestrator that bootstraps the entire MCP server. It supports two transport modes: **stdio** (single client, default) and **pipe** (multi-client with per-session isolation). The startup sequence initializes configuration, libsql graph storage, GPU/embedding workers, a DI container with multi-agent architecture (Conductor, Semantic, Dev, Dora agents), and 47+ MCP tools with lazy handler loading. Auto-indexing runs in the background after server ready.
+`src/index.ts` is a 1500+ line orchestrator that bootstraps the entire MCP server. It supports two transport modes: **stdio** (single client, default) and **pipe** (multi-client with per-session isolation). The startup sequence initializes configuration, SQLite graph storage, GPU/embedding workers, a DI container with multi-agent architecture (Conductor, Semantic, Dev, Dora agents), and 47+ MCP tools with lazy handler loading. Auto-indexing runs in the background after server ready.
 
 ## Data Flow
 
@@ -31,7 +31,7 @@ tags: [mcp-server, entry-point, multi-agent, pipe-transport, lifecycle]
 1. Early console override and safe environment creation (protect JSON-RPC stdout)
 2. xxHash WASM init, storage directories, CLI args parsing
 3. Config YAML loading, validation, logger initialization
-4. libsql GraphStorage init, GPU/OVMS/Roslyn workers start (non-blocking)
+4. SQLite GraphStorage init, GPU/OVMS/Roslyn workers start (non-blocking)
 5. DI Container setup, agent registration, Conductor lazy init
 6. MCP server connect (stdio or pipe), tool registry ready
 7. Auto-indexing check and background execution via `setImmediate`
@@ -66,7 +66,7 @@ All 8 exports are re-exported from `core/indexing-state.js` and `shared/indexing
 | `agents` | ConductorOrchestrator, Dev/Semantic/Dora agents | Agent lifecycle, tool delegation |
 | `config` | YAML config, constants, validation | `initializeConfig()`, `getConfig()` |
 | `core` | KnowledgeBus, DI container, agent registry, resource manager | Singleton infrastructure |
-| `storage` | GraphStorage factory (libsql) | Database initialization |
+| `storage` | GraphStorage factory (native SQLite) | Database initialization |
 | `tools` | ToolRegistry, tool definitions | Tool lookup and execution |
 | `logging` | Structured logger | All logging throughout |
 | `semantic` | Embedding warmup, GPU client, FAISS, OVMS | Background initialization |
@@ -97,7 +97,7 @@ All 8 exports are re-exported from `core/indexing-state.js` and `shared/indexing
 | Property | Value |
 |----------|-------|
 | Async | Yes — heavy async/await throughout; GPU/Roslyn/embedding start non-blocking |
-| Thread Safety | Per-project indexing lock via Map; libsql WAL mode for storage; singletons via DI |
+| Thread Safety | Per-project indexing lock via Map; SQLite journal_mode=OFF for storage; singletons via DI |
 | Idempotency | `setIndexingState` is idempotent; `performAutoIndex` is not (mutates storage) |
 | Side Effects | Console override, global env setup, child process spawn, DB writes, log files |
 | State | Multiple singletons: knowledgeBus, resourceManager, GraphStorage, conductor |

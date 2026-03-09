@@ -18,7 +18,6 @@
  * @see https://docs.turso.tech/features/ai-and-embeddings
  */
 
-import type { Client } from "@libsql/client";
 import * as cbor from "cbor-x";
 import { LRUCache } from "lru-cache";
 import { log } from "../logging/index.js";
@@ -44,6 +43,7 @@ import { getRequestContext } from "./libsql/request-context.js";
 // Import shared types and operation classes from libsql/ modules
 import {
   CACHE_CONFIG,
+  type Client,
   DatabaseCorruptionError,
   DEFAULT_CONFIG,
   getEmbeddingColumn,
@@ -55,6 +55,7 @@ import {
 } from "./libsql/types.js";
 import { VectorOperations, type VectorOpsContext } from "./libsql/vector-ops.js";
 import type { MultiDbManager } from "./multi-db-manager.js";
+import { NativeSQLiteClient } from "./native-sqlite-client.js";
 // Prolly Tree components for versioned storage
 import { BranchDiffCache, CommitManager, ProllyNodeStore, ProllyTree, serializeEntity } from "./prolly/index.js";
 
@@ -191,7 +192,7 @@ export class LibSQLGraphAdapter {
     };
     this.vectorOps = new VectorOperations(vectorOpsContext);
 
-    this.cacheOps = new CacheOperations(getCacheClient, (v) => this.vectorToString(v));
+    this.cacheOps = new CacheOperations(getCacheClient);
     this.metadataOps = new MetadataOperations(getGraphClient, getContext, getCacheClient, getStagingMode);
     this.cooccurrenceOps = new CooccurrenceOperations(getSemanticClient, getContext);
   }
@@ -268,16 +269,9 @@ export class LibSQLGraphAdapter {
         await this.cleanupStaleLocks(dbPath);
         log.t("STORAGE", `[LibSQLGraphAdapter] ◀ cleanupStaleLocks (${Date.now() - startTime}ms)`);
 
-        log.t("STORAGE", `[LibSQLGraphAdapter] ▶ import @libsql/client`);
-        const importStart = Date.now();
-        const { createClient } = await import("@libsql/client");
-        log.t("STORAGE", `[LibSQLGraphAdapter] ◀ import @libsql/client (${Date.now() - importStart}ms)`);
-
         log.t("STORAGE", `[LibSQLGraphAdapter] ▶ createClient`);
         const clientStart = Date.now();
-        this.client = createClient({
-          url: `file:${dbPath}`,
-        });
+        this.client = new NativeSQLiteClient(dbPath);
 
         // Verify connection
         await this.client.execute("SELECT 1");
@@ -1246,8 +1240,7 @@ export class LibSQLGraphAdapter {
     this.client.close();
     this.client = null;
 
-    const { createClient } = await import("@libsql/client");
-    this.client = createClient({ url: `file:${this.dbPath}` });
+    this.client = new NativeSQLiteClient(this.dbPath);
 
     await this.client!.execute("PRAGMA cache_size = -8192");
     await this.client!.execute("PRAGMA temp_store = MEMORY");

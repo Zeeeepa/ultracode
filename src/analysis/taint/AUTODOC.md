@@ -1,6 +1,6 @@
 # Taint
 
-Analyzes code for security vulnerabilities by tracking untrusted data flow paths.
+Detects taint flow vulnerabilities from untrusted data sources to dangerous sinks.
 
 ## Response Handling
 

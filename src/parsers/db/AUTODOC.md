@@ -1,6 +1,6 @@
 # Db
 
-Database schema parsing, ORM detection, and migration analysis system.
+Parses database schemas, detects ORM patterns, analyzes migrations, and links code to database entities.
 
 ## Exports
 

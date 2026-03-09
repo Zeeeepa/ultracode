@@ -230,7 +230,7 @@ The server supports working with multiple projects simultaneously:
 - **parsers**: 37 files — language parsers
 - **query**: 4 files — graph queries
 - **semantic**: 9 files — semantic layer
-- **storage**: ~10 files — LibSQL storage with branch layers
+- **storage**: ~10 files — Native SQLite storage with branch layers
 - **tools**: ~25 files — MCP tool handlers
 - **types**: 11 files — TypeScript types
 - **utils**: 15 files — utilities

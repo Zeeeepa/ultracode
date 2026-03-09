@@ -243,16 +243,16 @@ npx ultracode setup
 
 **Multi-agent system** with coordination through ConductorOrchestrator:
 - **ParserAgent** — AST parsing via native parsers (14 languages)
-- **IndexerAgent** — Indexing into libSQL with batching
+- **IndexerAgent** — Indexing into SQLite with batching
 - **SemanticAgent** — Vector embeddings, semantic search
 - **DevAgent** — Incremental indexing, file watcher
 - **QueryAgent** — Graph query execution
 - **DoraAgent** — Complexity metrics and analysis
 
-**Storage**: libSQL unified database:
-- Entities, relationships, vectors in a single DB
+**Storage**: Native SQLite (better-sqlite3 / bun:sqlite):
+- Multi-DB architecture: graph.db, semantic.db, versioning.db, cache.db
 - Prolly Trees for graph versioning
-- Support for libSQL/Turso, Bun native SQLite
+- Prepared statement cache for 2-5x speedup on repeated queries
 
 **Parsers** — native, without tree-sitter:
 - TypeScript Compiler API (TS/JS)

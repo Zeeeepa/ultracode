@@ -12,11 +12,10 @@
  * Uses libsql for cross-runtime compatibility (Bun + Node.js)
  */
 
-import type { Client, InStatement, ResultSet } from "@libsql/client";
-import { createClient } from "@libsql/client";
 import { nanoid } from "nanoid";
 import type { ProjectContext } from "../../storage/libsql/types.js";
 import { DEFAULT_PROJECT_CONTEXT } from "../../storage/libsql/types.js";
+import { type InStatement, NativeSQLiteClient, type ResultSet } from "../../storage/native-sqlite-client.js";
 import type { AutoDocStatus, AutoDocTodo, ChangeLogEntry, DocEntity, DocEntityType, OutdatedDoc } from "../types.js";
 
 // =============================================================================
@@ -31,7 +30,7 @@ const OUTDATED_CONFIDENCE_THRESHOLD = 0.7;
 // =============================================================================
 
 export class DocStorage {
-  private client: Client | null = null;
+  private client: NativeSQLiteClient | null = null;
   private dbPath: string;
   private initialized = false;
   private currentContext: ProjectContext = DEFAULT_PROJECT_CONTEXT;
@@ -60,10 +59,8 @@ export class DocStorage {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    // Create libsql client
-    this.client = createClient({
-      url: `file:${this.dbPath}`,
-    });
+    // Create native SQLite client
+    this.client = new NativeSQLiteClient(this.dbPath);
 
     await this.createTables();
     this.initialized = true;

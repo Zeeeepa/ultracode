@@ -314,7 +314,7 @@ npm install -g ultracode
 >
 > Bun блокирует postinstall скрипты по умолчанию. Команда `bun pm trust` разрешает их выполнение — повторная установка не нужна.
 >
-> Остальные нативные компоненты (oxc-parser, xxhash-wasm, @libsql/client) поставляются с готовыми бинарниками и работают без trust.
+> Остальные нативные компоненты (oxc-parser, xxhash-wasm, better-sqlite3) поставляются с готовыми бинарниками и работают без trust.
 
 > **Примечание**: Для полноценного анализа кода на разных языках требуются runtime:
 > 
@@ -480,8 +480,8 @@ Embedding/LLM настраиваются через setup wizard и хранят
 |--------|----------|--------------|----------|
 | **logging** | `level` | `info` | Уровень логов: debug, info, warn, error |
 | | `maxFiles` | `5` | Количество файлов логов для ротации |
-| **database** | `mode` | `WAL` | Режим libSQL: WAL, DELETE, TRUNCATE |
-| | `cacheSize` | `10000` | Размер кеша libSQL |
+| **database** | `mode` | `WAL` | Режим SQLite journal: WAL, DELETE, TRUNCATE |
+| | `cacheSize` | `10000` | Размер кеша SQLite |
 | **indexing** | `autoSwitchOnBranchChange` | `true` | Автопереключение БД при смене ветки |
 | | `maxBranchesPerRepo` | `10` | Макс. веток на репозиторий |
 | | `incrementalThreshold` | `20` | Порог файлов для полной переиндексации |

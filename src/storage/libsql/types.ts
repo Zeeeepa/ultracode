@@ -5,7 +5,10 @@
  * and utility functions used by the libsql operations modules.
  */
 
-import type { Client } from "@libsql/client";
+import type { NativeSQLiteClient } from "../native-sqlite-client.js";
+
+/** Alias for libsql Client compatibility — all consumers use this type */
+export type Client = NativeSQLiteClient;
 // Note: No DEFAULT_BRANCH import - branch must be explicitly provided
 
 // =============================================================================

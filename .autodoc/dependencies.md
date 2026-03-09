@@ -11,7 +11,7 @@ This document describes all dependencies of UltraCode v3.1+, their purpose, and 
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `@modelcontextprotocol/sdk` | ^1.25.2 | MCP protocol, JSON-RPC server |
-| `@libsql/client` | ^0.17.0 | LibSQL/Turso driver for graph storage |
+| `better-sqlite3` | ^11.7.0 | Native SQLite driver (Node.js); Bun uses built-in bun:sqlite |
 | `zod` | ^4.3.5 | Schema validation, JSON Schema generation |
 | `lru-cache` | ^11.2.4 | LRU cache for parsers and embeddings |
 | `nanoid` | ^5.1.6 | Unique ID generation |
@@ -133,7 +133,7 @@ Backend selection order (`backend-selector.ts`):
 ultracode
 ├── Core
 │   ├── @modelcontextprotocol/sdk ── JSON-RPC, MCP protocol
-│   ├── @libsql/client ───────────── LibSQL/Turso database
+│   ├── better-sqlite3 ───────────── Native SQLite (Node.js) / bun:sqlite (Bun)
 │   ├── graphology ───────────────── In-memory graph + algorithms
 │   └── zod ──────────────────────── Schema validation
 │
@@ -222,7 +222,7 @@ npm audit fix
 
 Full testing is required when updating the following packages:
 
-1. **@libsql/client** — DB driver, verify migrations
+1. **better-sqlite3** — Native SQLite driver, verify prebuilt binaries
 2. **@modelcontextprotocol/sdk** — API changes, verify MCP compatibility
 3. **zod** — breaking changes in v4, verify validation
 4. **faiss-napi** — native extension, verify HNSW indexes

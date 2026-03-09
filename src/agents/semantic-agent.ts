@@ -9,7 +9,7 @@
  *
  * External Dependencies:
  * - @xenova/transformers: https://github.com/xenova/transformers.js - Hugging Face Transformers
- * - @libsql/client: https://github.com/tursodatabase/libsql-client-ts - LibSQL DiskANN
+ * - better-sqlite3 / bun:sqlite: Native SQLite for storage operations
  * - onnxruntime-node: https://onnxruntime.ai/ - ONNX Runtime optimization
  *
  * Architecture References:

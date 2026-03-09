@@ -13,8 +13,8 @@
 
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import type { Client } from "@libsql/client";
 import { log } from "../logging/index.js";
+import type { Client } from "../storage/libsql/types.js";
 import type { MerkleFileInfo } from "../storage/prolly/types.js";
 import { FileMerkleTree } from "./file-merkle.js";
 import { type FileChangeEvent, FileWatcher, type FileWatcherConfig } from "./file-watcher.js";
