@@ -9,6 +9,7 @@
  */
 
 import type { BatchResult, Relationship, RelationType } from "../../types/storage.js";
+import { encodeMetadata } from "./cbor-utils.js";
 import type { ClientGetter, ContextGetter } from "./types.js";
 
 // =============================================================================
@@ -77,7 +78,7 @@ export class RelationshipOperations {
         relationship.fromId,
         relationship.toId,
         relationship.type,
-        relationship.metadata ? JSON.stringify(relationship.metadata) : null,
+        relationship.metadata ? encodeMetadata(relationship.metadata as Record<string, unknown>) : null,
         relationship.weight ?? 1.0,
         relationship.createdAt ?? now,
       ],
@@ -120,7 +121,7 @@ export class RelationshipOperations {
     const insertVerb = staging ? "INSERT INTO" : "INSERT OR REPLACE INTO";
 
     // Collect all statements for single transaction
-    const allStatements: Array<{ sql: string; args: (string | number | null)[] }> = [];
+    const allStatements: Array<{ sql: string; args: (string | number | Buffer | null)[] }> = [];
 
     for (let i = 0; i < unique.length; i += batchSize) {
       const batch = unique.slice(i, i + batchSize);
@@ -129,7 +130,7 @@ export class RelationshipOperations {
       const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
 
       // Flatten all args into single array
-      const args: (string | number | null)[] = [];
+      const args: (string | number | Buffer | null)[] = [];
       for (const r of batch) {
         args.push(
           r.id,
@@ -138,7 +139,7 @@ export class RelationshipOperations {
           r.fromId,
           r.toId,
           r.type,
-          r.metadata ? JSON.stringify(r.metadata) : null,
+          r.metadata ? encodeMetadata(r.metadata as Record<string, unknown>) : null,
           r.weight ?? 1.0,
           r.createdAt ?? now,
         );
@@ -193,8 +194,11 @@ export class RelationshipOperations {
         args.push(type);
       }
 
-      const result = await client.execute({ sql, args });
-      return result.rows.map((row) => this.rowToRelationship(row));
+      const rels: Relationship[] = [];
+      for (const row of client.executeIterator({ sql, args })) {
+        rels.push(this.rowToRelationship(row));
+      }
+      return rels;
     }
 
     // Layered case
@@ -211,8 +215,10 @@ export class RelationshipOperations {
       deltaArgs.push(type);
     }
 
-    const deltaResult = await client.execute({ sql: deltaSql, args: deltaArgs });
-    const deltaRels = deltaResult.rows.map((row) => this.rowToRelationship(row));
+    const deltaRels: Relationship[] = [];
+    for (const row of client.executeIterator({ sql: deltaSql, args: deltaArgs })) {
+      deltaRels.push(this.rowToRelationship(row));
+    }
     const deltaIds = new Set(deltaRels.map((r) => r.id));
 
     // Get from base
@@ -226,10 +232,11 @@ export class RelationshipOperations {
       baseArgs.push(type);
     }
 
-    const baseResult = await client.execute({ sql: baseSql, args: baseArgs });
-    const baseRels = baseResult.rows
-      .map((row) => this.rowToRelationship(row))
-      .filter((r) => !deltaIds.has(r.id) && !tombstones.has(r.id));
+    const baseRels: Relationship[] = [];
+    for (const row of client.executeIterator({ sql: baseSql, args: baseArgs })) {
+      const r = this.rowToRelationship(row);
+      if (!deltaIds.has(r.id) && !tombstones.has(r.id)) baseRels.push(r);
+    }
 
     return [...deltaRels, ...baseRels];
   }
@@ -316,27 +323,54 @@ export class RelationshipOperations {
     const limit = query.limit || 100;
     const offset = query.offset || 0;
 
-    // Simple case: no base branch
-    if (!baseBranch) {
-      const args: (string | number)[] = [projectHash, branchName];
-      let sql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
-      sql += this.buildTypeFilter(query.filters?.relationshipType, args);
-      sql += this.buildFromIdFilter(query.filters?.fromId, args);
-      sql += this.buildToIdFilter(query.filters?.toId, args);
-      sql += " LIMIT ? OFFSET ?";
-      args.push(limit, offset);
+    // Chunked reads via executeIterator to prevent bun:sqlite JSC GC crash
+    const CHUNK = 5000;
 
-      const result = await client.execute({ sql, args });
-      return result.rows.map((row) => this.rowToRelationship(row));
+    // Simple case: no base branch — chunked if limit > CHUNK
+    if (!baseBranch) {
+      const filterArgs: (string | number)[] = [projectHash, branchName];
+      let filterSql = "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?";
+      filterSql += this.buildTypeFilter(query.filters?.relationshipType, filterArgs);
+      filterSql += this.buildFromIdFilter(query.filters?.fromId, filterArgs);
+      filterSql += this.buildToIdFilter(query.filters?.toId, filterArgs);
+
+      if (limit <= CHUNK) {
+        const relationships: Relationship[] = [];
+        for (const row of client.executeIterator({
+          sql: filterSql + " LIMIT ? OFFSET ?",
+          args: [...filterArgs, limit, offset],
+        })) {
+          relationships.push(this.rowToRelationship(row));
+        }
+        return relationships;
+      }
+      // Chunked read for large limits
+      const relationships: Relationship[] = [];
+      let chunkOffset = offset;
+      while (relationships.length < limit) {
+        const chunkLimit = Math.min(CHUNK, limit - relationships.length);
+        let count = 0;
+        for (const row of client.executeIterator({
+          sql: filterSql + " LIMIT ? OFFSET ?",
+          args: [...filterArgs, chunkLimit, chunkOffset],
+        })) {
+          relationships.push(this.rowToRelationship(row));
+          count++;
+        }
+        if (count === 0) break;
+        chunkOffset += count;
+        if (count < chunkLimit) break;
+      }
+      return relationships;
     }
 
-    // Layered case: use CTE for efficient query with SQL-level LIMIT/OFFSET
+    // Layered case: CTE — chunked if limit > CHUNK
     const typeFilter = this.buildTypeFilterForCTE(query.filters?.relationshipType);
     const fromIdFilter = this.buildFromIdFilterForCTE(query.filters?.fromId);
     const toIdFilter = this.buildToIdFilterForCTE(query.filters?.toId);
     const combinedFilters = `${typeFilter} ${fromIdFilter} ${toIdFilter}`;
 
-    const sql = `
+    const cteSql = `
       WITH
         delta AS (
           SELECT * FROM relationships
@@ -361,12 +395,34 @@ export class RelationshipOperations {
       LIMIT ?4 OFFSET ?5
     `;
 
-    const result = await client.execute({
-      sql,
-      args: [projectHash, branchName, baseBranch, limit, offset],
-    });
+    if (limit <= CHUNK) {
+      const relationships: Relationship[] = [];
+      for (const row of client.executeIterator({
+        sql: cteSql,
+        args: [projectHash, branchName, baseBranch, limit, offset],
+      })) {
+        relationships.push(this.rowToRelationship(row));
+      }
+      return relationships;
+    }
 
-    return result.rows.map((row) => this.rowToRelationship(row));
+    const relationships: Relationship[] = [];
+    let chunkOffset = offset;
+    while (relationships.length < limit) {
+      const chunkLimit = Math.min(CHUNK, limit - relationships.length);
+      let count = 0;
+      for (const row of client.executeIterator({
+        sql: cteSql,
+        args: [projectHash, branchName, baseBranch, chunkLimit, chunkOffset],
+      })) {
+        relationships.push(this.rowToRelationship(row));
+        count++;
+      }
+      if (count === 0) break;
+      chunkOffset += count;
+      if (count < chunkLimit) break;
+    }
+    return relationships;
   }
 
   /**
@@ -400,18 +456,31 @@ export class RelationshipOperations {
     if (!client) throw new Error("Client not initialized");
 
     const { projectHash, branchName, baseBranch } = this.getContext();
+    // Chunked reads via executeIterator to prevent bun:sqlite JSC GC crash
+    const CHUNK = 5000;
 
-    // Simple case: no base branch - single query
+    // Simple case: no base branch — chunked
     if (!baseBranch) {
-      const result = await client.execute({
-        sql: "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
-      });
-      return result.rows.map((row) => this.rowToRelationship(row));
+      const relationships: Relationship[] = [];
+      let offset = 0;
+      while (true) {
+        let count = 0;
+        for (const row of client.executeIterator({
+          sql: "SELECT * FROM relationships WHERE project_hash = ? AND branch_name = ? LIMIT ? OFFSET ?",
+          args: [projectHash, branchName, CHUNK, offset],
+        })) {
+          relationships.push(this.rowToRelationship(row));
+          count++;
+        }
+        if (count === 0) break;
+        offset += count;
+        if (count < CHUNK) break;
+      }
+      return relationships;
     }
 
-    // Layered case: single CTE query for delta + base - tombstones
-    const sql = `
+    // Layered case: CTE query — chunked via wrapping with LIMIT/OFFSET
+    const cteSql = `
       WITH
         delta AS (
           SELECT * FROM relationships
@@ -426,17 +495,30 @@ export class RelationshipOperations {
           WHERE project_hash = ?1 AND branch_name = ?3
             AND id NOT IN (SELECT id FROM delta)
             AND id NOT IN (SELECT entity_id FROM tombstone_ids)
+        ),
+        combined AS (
+          SELECT * FROM delta
+          UNION ALL
+          SELECT * FROM base_filtered
         )
-      SELECT * FROM delta
-      UNION ALL
-      SELECT * FROM base_filtered
+      SELECT * FROM combined LIMIT ?4 OFFSET ?5
     `;
 
-    const result = await client.execute({
-      sql,
-      args: [projectHash, branchName, baseBranch],
-    });
-
-    return result.rows.map((row) => this.rowToRelationship(row));
+    const relationships: Relationship[] = [];
+    let offset = 0;
+    while (true) {
+      let count = 0;
+      for (const row of client.executeIterator({
+        sql: cteSql,
+        args: [projectHash, branchName, baseBranch, CHUNK, offset],
+      })) {
+        relationships.push(this.rowToRelationship(row));
+        count++;
+      }
+      if (count === 0) break;
+      offset += count;
+      if (count < CHUNK) break;
+    }
+    return relationships;
   }
 }

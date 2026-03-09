@@ -68,9 +68,21 @@ export class KnowledgeBus extends EventEmitter {
   }
 
   /**
-   * Publish knowledge to a topic
+   * Publish knowledge to a topic (fire-and-forget dispatch)
    */
   publish(topic: string, data: unknown, source: string, ttl?: number): void {
+    this._publishInternal(topic, data, source, ttl);
+  }
+
+  /**
+   * Publish knowledge and await ALL subscriber handlers to complete.
+   * Use when caller needs to know all post-processing is done (e.g., after indexing).
+   */
+  publishAsync(topic: string, data: unknown, source: string, ttl?: number): Promise<void> {
+    return this._publishInternal(topic, data, source, ttl);
+  }
+
+  private _publishInternal(topic: string, data: unknown, source: string, ttl?: number): Promise<void> {
     const entry: KnowledgeEntry = {
       id: generateId("ke"),
       topic,
@@ -102,12 +114,13 @@ export class KnowledgeBus extends EventEmitter {
       log.i("KNOWLEDGEBUS", "index_completed_publish", { source, subsCount: handlers ? handlers.length : 0 });
     }
 
-    // Notify subscribers (fire-and-forget but log errors)
-    this.dispatchToSubscribers(entry).catch((err) => {
+    // Dispatch to subscribers
+    const dispatchPromise = this.dispatchToSubscribers(entry).catch((err) => {
       log.e("KNOWLEDGEBUS", "notify_fail", { topic, err: String(err) });
     });
 
     this.emit("knowledge:published", entry);
+    return dispatchPromise;
   }
 
   /**

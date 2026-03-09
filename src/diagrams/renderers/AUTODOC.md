@@ -1,6 +1,6 @@
 # Renderers
 
-Converts DiagramIR to multiple text-based diagram formats (D2, Graphviz, Mermaid).
+Converts DiagramIR to multiple diagram output formats
 
 ## Exports
 

@@ -145,7 +145,11 @@ export abstract class BaseToolHandler<TArgs = unknown> {
     storage.setProject(resolved);
 
     log.d("BASETOOL", "storage_set", { resolved });
-    return storage;
+
+    // Return a scoped proxy that re-asserts project context before each query.
+    // Prevents race conditions where background processes (AUTODOCWATCH, etc.)
+    // call setProject on the shared storage instance between our setProject and query.
+    return createScopedStorage(storage, resolved);
   }
 
   /**
@@ -336,4 +340,37 @@ export abstract class BaseToolHandler<TArgs = unknown> {
       };
     }
   }
+}
+
+/**
+ * Creates a Proxy around GraphStorage that re-asserts project context before each async query.
+ * Solves race condition where background processes (AUTODOCWATCH, PMI) call setProject()
+ * on the shared storage instance, switching context away from the tool's target project.
+ */
+function createScopedStorage(storage: GraphStorage, projectPath: string): GraphStorage {
+  const queryMethods = new Set([
+    "findEntities",
+    "getEntity",
+    "findRelationships",
+    "getRelationship",
+    "searchEntitiesInDirectory",
+    "findEntitiesByName",
+    "getEntityByName",
+    "recordIncrementalChanges",
+    "resetIncrementalTracking",
+  ]);
+
+  return new Proxy(storage, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === "function" && typeof prop === "string" && queryMethods.has(prop)) {
+        return (...args: unknown[]) => {
+          // Re-assert project context right before the query
+          target.setProject(projectPath);
+          return (value as Function).apply(target, args);
+        };
+      }
+      return value;
+    },
+  });
 }

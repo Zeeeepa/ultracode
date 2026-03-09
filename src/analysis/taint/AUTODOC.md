@@ -1,6 +1,6 @@
 # Taint
 
-Detects taint flow vulnerabilities from untrusted data sources to dangerous sinks.
+Security taint analysis engine detecting data flow vulnerabilities from untrusted sources to dangerous operations.
 
 ## Response Handling
 

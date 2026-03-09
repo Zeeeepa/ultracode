@@ -76,6 +76,20 @@ export class NativeSQLiteClient {
   }
 
   /**
+   * Execute a read query and return an iterator over rows.
+   * Memory-efficient: rows are yielded one-by-one via stmt.iterate().
+   *
+   * NOTE: On Bun, this currently falls back to stmt.all() + yield
+   * due to Bun lacking native streaming iterate() with parameters.
+   * See issues/bun-iterate-todo.md
+   */
+  executeIterator<R = Row>(stmtOrSql: string | { sql: string; args: unknown[] }): IterableIterator<R> {
+    const { sql, args } = typeof stmtOrSql === "string" ? { sql: stmtOrSql, args: [] as unknown[] } : stmtOrSql;
+    const stmt = this.getOrPrepare(sql);
+    return stmt.iterate<R>(...args);
+  }
+
+  /**
    * Execute a batch of statements in a transaction.
    * Compatible with libsql client.batch().
    *

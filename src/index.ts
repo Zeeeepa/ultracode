@@ -125,10 +125,13 @@ import {
   areTimersSuspended,
   getIndexingStatus,
   isIndexing,
+  isPostIndexing,
   isProjectIndexing,
   registerAsyncLoopStarter,
   resumeTimers,
   setIndexingState,
+  suspendTimers,
+  waitForPostIndexing,
 } from "./core/indexing-state.js";
 import { knowledgeBus } from "./core/knowledge-bus.js";
 // Skills auto-installer for Claude Code
@@ -170,10 +173,12 @@ export {
   areTimersSuspended,
   getIndexingStatus,
   isIndexing,
+  isPostIndexing,
   isProjectIndexing,
   registerAsyncLoopStarter,
   resumeTimers,
   setIndexingState,
+  waitForPostIndexing,
 };
 
 import { expandHome, getVersionInfo } from "./core/environment-setup.js";
@@ -748,6 +753,8 @@ function appendElapsed(result: { content: Array<{ type: string; text?: string }>
 const analysisQueue = pLimit(1);
 
 const HEAVY_ANALYSIS_TOOLS = new Set([
+  "detect_patterns",
+  "check_entity_patterns",
   "taint_analysis",
   "graph_metrics",
   "analyze_hotspots",
@@ -878,14 +885,45 @@ async function executeToolCall(
     };
   }
 
+  // Heavy analysis tools that should wait for post-indexing background work
+  // (embedding generation, FAISS save) to complete before running
+  const WAIT_FOR_POST_INDEXING = new Set([
+    "detect_patterns",
+    "check_entity_patterns",
+    "graph_metrics",
+    "analyze_hotspots",
+    "taint_analysis",
+    "find_duplicates",
+    "find_similar_code",
+    "analyze_code_impact",
+    "analyze_state_impact",
+    "analyze_state_chaos",
+  ]);
+
+  if (WAIT_FOR_POST_INDEXING.has(name)) {
+    const checkDir = targetDir ?? directory;
+    const postActive = isPostIndexing(checkDir);
+    if (postActive) {
+      log.i("TOOL_DISPATCH", "waiting_post_indexing", { tool: name, dir: checkDir });
+      const waited = await waitForPostIndexing(checkDir);
+      if (waited) {
+        log.i("TOOL_DISPATCH", "post_indexing_done", { tool: name, waitedMs: Date.now() - startTime });
+      }
+    }
+  }
+
   try {
     // ==========================================================================
     // All tools handled by ToolRegistry (O(1) lookup, cleaner architecture)
     // Handlers are in src/tools/handlers/*-tool-handlers.ts
     // ==========================================================================
 
-    // v5: Determine project path from session or fallback to global
-    const projectPath = session?.projectPath ?? targetDir ?? directory;
+    // v5: Determine project path — prefer tool's targetDir over session default
+    // CRITICAL: targetDir comes from args.projectPath/args.directory (user intent),
+    // session.projectPath is the MCP client's CWD (may differ from target project).
+    // AsyncLocalStorage context is set from projectPath, so wrong value here
+    // causes ALL storage queries to hit the wrong project.
+    const projectPath = targetDir ?? session?.projectPath ?? directory;
 
     // v5: Mark activity for idle tracking (both session and conductor)
     session?.markActivity();
@@ -936,15 +974,23 @@ async function executeToolCall(
       const requestCtx = createProjectContext(projectPath);
 
       if (HEAVY_ANALYSIS_TOOLS.has(name)) {
-        return await analysisQueue(() =>
-          runWithRequestContext(requestCtx, async () => {
-            const handler = await toolRegistry.getHandler(name, toolContext);
-            const result = await handler.handle(args);
-            const elapsedMs = Date.now() - startTime;
-            log.i("MCP", "tool_done", { tool: name, req: requestId, ms: elapsedMs });
-            return appendElapsed(enforceResponseLimit(name, result), elapsedMs);
-          }),
-        );
+        // Suspend background watchers during heavy analysis to prevent
+        // bun:sqlite concurrent access crashes (AutoDoc/File/Git watchers
+        // can fire callbacks that access SQLite during async yields).
+        suspendTimers();
+        try {
+          return await analysisQueue(() =>
+            runWithRequestContext(requestCtx, async () => {
+              const handler = await toolRegistry.getHandler(name, toolContext);
+              const result = await handler.handle(args);
+              const elapsedMs = Date.now() - startTime;
+              log.i("MCP", "tool_done", { tool: name, req: requestId, ms: elapsedMs });
+              return appendElapsed(enforceResponseLimit(name, result), elapsedMs);
+            }),
+          );
+        } finally {
+          resumeTimers();
+        }
       }
       return runWithRequestContext(requestCtx, async () => {
         const handler = await toolRegistry.getHandler(name, toolContext);

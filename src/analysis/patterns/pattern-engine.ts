@@ -129,27 +129,30 @@ export class PatternEngine {
       suppressPatterns,
     } = options;
 
-    // 1. Get entities
-    const dbLimit = entityLimit;
-    let entities: Entity[];
+    // 1. DB-level paginated scan — load and process entities in small pages (DB_PAGE entities at a time).
+    // This prevents JSC GC SEGFAULT: instead of loading 15K+ entities with ~63MB metadata JSON
+    // into one array (causing ~150MB JS heap spike), each page is loaded, processed, and GC'd
+    // before the next page is fetched. Maximum ~2000 Entity objects live at any time.
+    const DB_PAGE = 5000;
+
+    // 1a. First page — needed for language detection
+    let firstPage: Entity[];
     if (filePath) {
-      // Directory path (no file extension or ends with / or \) → use directory search
       const isDirectory = /[\\/]$/.test(filePath) || !/\.\w+$/.test(filePath.split(/[\\/]/).pop() ?? "");
       if (isDirectory && typeof (storage as any).searchEntitiesInDirectory === "function") {
-        entities = await (storage as any).searchEntitiesInDirectory(filePath);
+        firstPage = await (storage as any).searchEntitiesInDirectory(filePath);
       } else {
-        entities = await storage.findEntities({ filters: { filePath }, limit: dbLimit });
+        firstPage = await storage.findEntities({ filters: { filePath }, limit: DB_PAGE, offset: 0, lightweight: true });
       }
     } else {
-      entities = await storage.findEntities({ limit: dbLimit });
+      firstPage = await storage.findEntities({ limit: DB_PAGE, offset: 0, lightweight: true });
     }
-
-    if (entities.length === 0) {
+    if (firstPage.length === 0) {
       return this.emptyResult();
     }
 
-    // 2. Auto-detect language from entities
-    const detectedLanguage = language ?? this.detectLanguage(entities);
+    // 2. Auto-detect language from first page
+    const detectedLanguage = language ?? this.detectLanguage(firstPage);
 
     // 3. Load detectors for detected language (lazy, cached)
     this.ensureDetectorsForLanguage(detectedLanguage);
@@ -169,32 +172,115 @@ export class PatternEngine {
     }
 
     if (patterns.length === 0) {
-      return this.emptyResult(entities.length);
+      return this.emptyResult(firstPage.length);
     }
 
-    // 5. Structural detection (fast)
-    const candidates = await this.structuralDetector.detect(entities, patterns, storage);
+    // 5. Paginated structural detection — fetch pages from DB, detect, strip, GC
+    let totalEntityCount = 0;
+    let candidates: import("./types.js").StructuralCandidate[] = [];
+
+    const stripCandidates = (cs: import("./types.js").StructuralCandidate[]) => {
+      for (const c of cs) {
+        c.entity = {
+          id: c.entity.id,
+          name: c.entity.name,
+          type: c.entity.type,
+          filePath: c.entity.filePath,
+          location: c.entity.location ? { start: c.entity.location.start } : undefined,
+          language: c.entity.language,
+        } as import("../../types/storage.js").Entity;
+      }
+    };
+
+    // Helper: load a page of entities from DB
+    const loadPage = async (pageOffset: number): Promise<Entity[]> => {
+      if (filePath) {
+        const isDirectory = /[\\/]$/.test(filePath) || !/\.\w+$/.test(filePath.split(/[\\/]/).pop() ?? "");
+        if (isDirectory && typeof (storage as any).searchEntitiesInDirectory === "function") {
+          // Directory search doesn't support pagination — already loaded all
+          return [];
+        }
+        return storage.findEntities({ filters: { filePath }, limit: DB_PAGE, offset: pageOffset, lightweight: true });
+      }
+      return storage.findEntities({ limit: DB_PAGE, offset: pageOffset, lightweight: true });
+    };
+
+    try {
+      // Process first page (already loaded)
+      let pageIdx = 0;
+      let currentPage = firstPage;
+
+      while (currentPage.length > 0) {
+        pageIdx++;
+        totalEntityCount += currentPage.length;
+        log.i("PATTERN_ENGINE", "detect_page", {
+          page: pageIdx,
+          size: currentPage.length,
+          totalSoFar: totalEntityCount,
+        });
+
+        const pageCandidates = await this.structuralDetector.detect(currentPage, patterns, storage);
+        stripCandidates(pageCandidates);
+        candidates.push(...pageCandidates);
+
+        // Release page reference and force GC before loading next page
+        const wasFullPage = currentPage.length >= DB_PAGE;
+        currentPage = null!;
+        if (typeof globalThis["Bun"]?.["gc"] === "function") {
+          globalThis["Bun"]["gc"](true);
+        }
+
+        // Stop if last page was partial (no more data) or we hit entityLimit
+        if (!wasFullPage || totalEntityCount >= entityLimit) break;
+
+        // Load next page from DB — previous page's entities are now GC-eligible
+        currentPage = await loadPage(totalEntityCount);
+      }
+    } catch (err) {
+      log.e("PATTERN_ENGINE", "structural_detect_crash", { error: String(err), stack: (err as Error)?.stack });
+      return this.emptyResult(totalEntityCount);
+    }
+
+    // 5b. Cap candidates to prevent overload (keep top by confidence)
+    log.i("PATTERN_ENGINE", "post_structural", { candidates: candidates.length, ms: Date.now() - startMs });
+    const MAX_CANDIDATES = 2000;
+    if (candidates.length > MAX_CANDIDATES) {
+      log.w("PATTERN_ENGINE", "candidates_capped", {
+        original: candidates.length,
+        capped: MAX_CANDIDATES,
+      });
+      candidates.sort((a, b) => b.confidence - a.confidence);
+      candidates = candidates.slice(0, MAX_CANDIDATES);
+    }
 
     // 6. Semantic validation
+    log.i("PATTERN_ENGINE", "pre_semantic", { candidates: candidates.length });
     const patternMap = new Map(patterns.map((p) => [p.id, p]));
-    const confirmed = this.semanticValidator
-      ? await this.semanticValidator.validate(candidates, patternMap)
-      : candidates.map(
-          (c) =>
-            ({
-              patternId: c.pattern.id,
-              pattern: c.pattern,
-              entityId: c.entity.id,
-              entityName: c.entity.name,
-              entityType: c.entity.type,
-              filePath: c.entity.filePath,
-              line: c.entity.location?.start?.line ?? 0,
-              structuralConfidence: c.confidence,
-              semanticSimilarity: 1.0,
-              combinedScore: c.confidence,
-              matchedCriteria: c.matchedCriteria,
-            }) as PatternMatch,
-        );
+    let confirmed: import("./types.js").PatternMatch[];
+    try {
+      confirmed = this.semanticValidator
+        ? await this.semanticValidator.validate(candidates, patternMap)
+        : candidates.map(
+            (c) =>
+              ({
+                patternId: c.pattern.id,
+                pattern: c.pattern,
+                entityId: c.entity.id,
+                entityName: c.entity.name,
+                entityType: c.entity.type,
+                filePath: c.entity.filePath,
+                line: c.entity.location?.start?.line ?? 0,
+                structuralConfidence: c.confidence,
+                semanticSimilarity: 1.0,
+                combinedScore: c.confidence,
+                matchedCriteria: c.matchedCriteria,
+              }) as PatternMatch,
+          );
+    } catch (err) {
+      log.e("PATTERN_ENGINE", "semantic_validate_crash", { error: String(err), stack: (err as Error)?.stack });
+      return this.emptyResult(totalEntityCount);
+    }
+    log.i("PATTERN_ENGINE", "post_semantic", { confirmed: confirmed.length, ms: Date.now() - startMs });
 
     // 7. Filter by minConfidence and severity
     let filtered = confirmed.filter((m) => m.combinedScore >= minConfidence);
@@ -211,11 +297,19 @@ export class PatternEngine {
     const codeSmells = filtered.filter((m) => m.pattern.category === "code-smell");
     const optimizations = filtered.filter((m) => m.pattern.category === "optimization");
 
-    // 9. Compute health score + top issues
+    // 9. Compute health score + top issues (use full counts before truncation)
     const healthScore = this.computeHealthScore(antiPatterns, bestPatterns, codeSmells);
     const topIssues = this.computeTopIssues([...antiPatterns, ...codeSmells, ...optimizations]);
+    log.i("PATTERN_ENGINE", "post_grouping", {
+      anti: antiPatterns.length,
+      best: bestPatterns.length,
+      smells: codeSmells.length,
+      opts: optimizations.length,
+      health: healthScore,
+      ms: Date.now() - startMs,
+    });
 
-    // 10. Apply pagination
+    // 10. Apply pagination — keep only page slice to limit response size
     const applyPagination = <T>(arr: T[]): T[] => arr.slice(offset, offset + limit);
 
     const result: PatternScanResult = {
@@ -224,7 +318,7 @@ export class PatternEngine {
       codeSmells: applyPagination(codeSmells),
       optimizations: applyPagination(optimizations),
       summary: {
-        totalEntitiesScanned: entities.length,
+        totalEntitiesScanned: totalEntityCount,
         antiPatternCount: antiPatterns.length,
         bestPatternCount: bestPatterns.length,
         codeSmellCount: codeSmells.length,
@@ -235,7 +329,7 @@ export class PatternEngine {
     };
 
     log.i("PATTERN_ENGINE", "scan_complete", {
-      entities: entities.length,
+      entities: totalEntityCount,
       patterns: patterns.length,
       candidates: candidates.length,
       confirmed: confirmed.length,

@@ -109,6 +109,17 @@ interface EntityMeta {
     unsafeCastCount: number;
     unreachableCount: number;
   } | null;
+  csharpHints: {
+    syncOverAsyncCount: number;
+    nullForgivingCount: number;
+    lockOnThisCount: number;
+    stringConcatInLoopCount: number;
+    newHttpClientCount: number;
+    newDisposableNoUsingCount: number;
+    hasParallelForEachAsync: boolean;
+    throwExCount: number;
+    emptyCatchCount: number;
+  } | null;
 }
 
 const metaCache = new WeakMap<Entity, EntityMeta>();
@@ -146,6 +157,8 @@ function getMeta(entity: Entity): EntityMeta {
     jitHints: (md?.["jitHints"] as EntityMeta["jitHints"]) ?? null,
     antipatternHints: (md?.["antipatternHints"] as EntityMeta["antipatternHints"]) ?? null,
     zigOps: (md?.["zigOps"] as EntityMeta["zigOps"]) ?? null,
+    csharpHints:
+      (md?.["_csharpHints"] as EntityMeta["csharpHints"]) ?? (md?.["csharpHints"] as EntityMeta["csharpHints"]) ?? null,
   };
   metaCache.set(entity, meta);
   return meta;
@@ -171,9 +184,17 @@ export class StructuralDetector {
     entities: Entity[],
     patterns: PatternDefinition[],
     storage?: GraphStorage,
+    allEntities?: Entity[],
   ): Promise<StructuralCandidate[]> {
+    // Clear caches from previous scan to prevent unbounded memory growth
+    this.evalCache.clear();
+
+    const detectStartMs = Date.now();
+    log.i("STRUCTURAL_DETECT", "start", { entities: entities.length, patterns: patterns.length });
+
     const candidates: StructuralCandidate[] = [];
-    this.currentEntities = entities;
+    // Cross-entity detectors see allEntities (full set) even when processing batches
+    this.currentEntities = allEntities ?? entities;
 
     // Pre-index entities by type for O(1) lookup
     const entitiesByType = new Map<string, Entity[]>();
@@ -184,6 +205,7 @@ export class StructuralDetector {
     }
 
     // Phase 1: Fast metadata-only pass (type-indexed)
+    // Entity count capped by PatternEngine (default 5000) to avoid JSC GC segfault on Bun.
     const metadataCandidates: Array<{
       entity: Entity;
       pattern: PatternDefinition;
@@ -191,8 +213,15 @@ export class StructuralDetector {
       matched: string[];
     }> = [];
 
-    for (const pattern of patterns) {
-      const compiled = getCompiled(pattern);
+    for (let _ri = 0; _ri < patterns.length; _ri++) {
+      const pattern = patterns[_ri]!;
+      let compiled: CompiledCriteria;
+      try {
+        compiled = getCompiled(pattern);
+      } catch (err) {
+        log.e("STRUCTURAL_DETECTOR", "compile_pattern_error", { pattern: pattern.id, error: String(err) });
+        continue;
+      }
 
       // Determine which entities to check based on entityTypes
       let entitiesToCheck: Entity[];
@@ -205,15 +234,28 @@ export class StructuralDetector {
       } else {
         entitiesToCheck = entities;
       }
-
+      const MAX_PER_RULE = 200;
+      let _ruleHits = 0;
       for (const entity of entitiesToCheck) {
-        const result = this.evaluateMetadataCriteria(entity, pattern, compiled);
-        if (result.confidence > 0) {
-          metadataCandidates.push({
-            entity,
-            pattern,
-            confidence: result.confidence,
-            matched: result.matchedCriteria,
+        try {
+          const result = this.evaluateMetadataCriteria(entity, pattern, compiled);
+          if (result.confidence > 0) {
+            metadataCandidates.push({
+              entity,
+              pattern,
+              confidence: result.confidence,
+              matched: result.matchedCriteria,
+            });
+            _ruleHits++;
+            if (_ruleHits >= MAX_PER_RULE) {
+              break;
+            }
+          }
+        } catch (err) {
+          log.w("STRUCTURAL_DETECTOR", "evaluate_entity_error", {
+            entity: entity.id,
+            pattern: pattern.id,
+            error: String(err),
           });
         }
       }
@@ -251,7 +293,8 @@ export class StructuralDetector {
           storage.findRelationships({ filters: { toId: entityIds }, limit: 10000 }),
         ]);
         allRels = [...outgoing, ...incoming];
-      } catch {
+      } catch (err) {
+        log.w("STRUCTURAL_DETECTOR", "graph_batch_error", { error: String(err) });
         // Fallback: no relationships available
       }
 
@@ -305,7 +348,14 @@ export class StructuralDetector {
       entities: entities.length,
       patterns: patterns.length,
       candidates: candidates.length,
+      elapsed: Date.now() - detectStartMs,
     });
+
+    // Release references to allow GC of entity objects between chunked detect() calls.
+    // Without this, detector instance retains the entire chunk array, preventing GC
+    // and causing JSC SEGFAULT on large codebases (>10K entities).
+    this.currentEntities = [];
+    this.evalCache.clear();
 
     return candidates;
   }
@@ -313,14 +363,8 @@ export class StructuralDetector {
   // ─── Metadata Evaluation (hot path — optimized) ─────────────────
 
   private evaluateMetadataCriteria(entity: Entity, pattern: PatternDefinition, compiled: CompiledCriteria): EvalResult {
-    // 3B: Check cache first
-    const cacheKey = `${entity.id}::${pattern.id}`;
-    const cached = this.evalCache.get(cacheKey);
-    if (cached) return cached;
-
-    const result = this.evaluateMetadataUncached(entity, pattern, compiled);
-    this.evalCache.set(cacheKey, result);
-    return result;
+    // Cache disabled — structural eval is fast enough without it, and cache caused memory pressure on large codebases
+    return this.evaluateMetadataUncached(entity, pattern, compiled);
   }
 
   // 3A: Mandatory checks separated for fast bail-out
@@ -367,6 +411,22 @@ export class StructuralDetector {
     // nameNotMatch is mandatory: if entity name matches exclusion, bail out (blocks custom detectors too)
     if (compiled.nameNotMatchRe) {
       if (compiled.nameNotMatchRe.test(entity.name)) return null; // bail-out
+    }
+
+    // callsInclude is mandatory: entity MUST have at least one call matching each pattern
+    if (compiled.callsIncludeRe) {
+      for (let i = 0; i < compiled.callsIncludeRe.length; i++) {
+        if (!em.callNames.some((c) => compiled.callsIncludeRe![i]!.test(c))) return null; // bail-out
+      }
+      matched.push(`calls:include`);
+    }
+
+    // callsExclude is mandatory: entity must NOT have any call matching exclusion patterns
+    if (compiled.callsExcludeRe) {
+      for (let i = 0; i < compiled.callsExcludeRe.length; i++) {
+        if (em.callNames.some((c) => compiled.callsExcludeRe![i]!.test(c))) return null; // bail-out
+      }
+      matched.push(`calls:exclude`);
     }
 
     return matched;
@@ -503,30 +563,12 @@ export class StructuralDetector {
       }
     }
 
-    // Calls
+    // Calls — minCallCount remains optional; callsInclude/callsExclude are mandatory (in evaluateRequired)
     if (criteria.minCallCount != null) {
       optionalTotal++;
       if (em.callNames.length >= criteria.minCallCount) {
         optionalPassed++;
         matched.push(`calls>=${criteria.minCallCount}`);
-      }
-    }
-    if (compiled.callsIncludeRe) {
-      for (let i = 0; i < compiled.callsIncludeRe.length; i++) {
-        optionalTotal++;
-        if (em.callNames.some((c) => compiled.callsIncludeRe![i]!.test(c))) {
-          optionalPassed++;
-          matched.push(`calls:~/${criteria.callsInclude![i]}/`);
-        }
-      }
-    }
-    if (compiled.callsExcludeRe) {
-      for (let i = 0; i < compiled.callsExcludeRe.length; i++) {
-        optionalTotal++;
-        if (!em.callNames.some((c) => compiled.callsExcludeRe![i]!.test(c))) {
-          optionalPassed++;
-          matched.push(`calls:!~/${criteria.callsExclude![i]}/`);
-        }
       }
     }
 
@@ -652,6 +694,71 @@ export class StructuralDetector {
       }
     }
 
+    // C#-specific hints
+    if (criteria.minSyncOverAsync != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.syncOverAsyncCount >= criteria.minSyncOverAsync) {
+        optionalPassed++;
+        matched.push(`syncOverAsync>=${criteria.minSyncOverAsync}`);
+      }
+    }
+    if (criteria.minNullForgiving != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.nullForgivingCount >= criteria.minNullForgiving) {
+        optionalPassed++;
+        matched.push(`nullForgiving>=${criteria.minNullForgiving}`);
+      }
+    }
+    if (criteria.hasLockOnThis != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.lockOnThisCount > 0) {
+        optionalPassed++;
+        matched.push("hasLockOnThis");
+      }
+    }
+    if (criteria.hasNewHttpClient != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.newHttpClientCount > 0) {
+        optionalPassed++;
+        matched.push("hasNewHttpClient");
+      }
+    }
+    if (criteria.hasNewDisposableNoUsing != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.newDisposableNoUsingCount > 0) {
+        optionalPassed++;
+        matched.push("hasNewDisposableNoUsing");
+      }
+    }
+    if (criteria.hasParallelForEachAsync != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.hasParallelForEachAsync) {
+        optionalPassed++;
+        matched.push("hasParallelForEachAsync");
+      }
+    }
+    if (criteria.minThrowEx != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.throwExCount >= criteria.minThrowEx) {
+        optionalPassed++;
+        matched.push(`throwEx>=${criteria.minThrowEx}`);
+      }
+    }
+    if (criteria.minEmptyCatch != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.emptyCatchCount >= criteria.minEmptyCatch) {
+        optionalPassed++;
+        matched.push(`emptyCatch>=${criteria.minEmptyCatch}`);
+      }
+    }
+    if (criteria.hasStringConcatInLoop != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.stringConcatInLoopCount > 0) {
+        optionalPassed++;
+        matched.push("hasStringConcatInLoop");
+      }
+    }
+
     // Name
     if (compiled.nameMatchRe) {
       optionalTotal++;
@@ -699,6 +806,10 @@ export class StructuralDetector {
         const conf = optionalPassed / optionalTotal;
         if ((conf > 0 || matched.length > mandatoryCount) && !pattern.customDetector) {
           return { confidence: conf, matchedCriteria: matched };
+        }
+        // All optional criteria failed — no structural match (custom detector may still run below)
+        if (!pattern.customDetector) {
+          return EVAL_ZERO;
         }
       }
     }
@@ -818,8 +929,9 @@ function countTotalCriteria(criteria: StructuralCriteria): number {
   if (criteria.hasAwaits != null) count++;
   if (criteria.minBranches != null) count++;
   if (criteria.minCallCount != null) count++;
-  if (criteria.callsInclude) count += criteria.callsInclude.length;
-  if (criteria.callsExclude) count += criteria.callsExclude.length;
+  // callsInclude/callsExclude are now mandatory (bail-out), counted as 1 each
+  if (criteria.callsInclude) count++;
+  if (criteria.callsExclude) count++;
   if (criteria.decoratorMatch) count += criteria.decoratorMatch.length;
   if (criteria.hasNoInheritance) count++;
   if (criteria.filePathMatch) count++;
@@ -841,6 +953,16 @@ function countTotalCriteria(criteria: StructuralCriteria): number {
   if (criteria.minForceUnwraps != null) count++;
   if (criteria.minUnsafeCasts != null) count++;
   if (criteria.minUnreachable != null) count++;
+  // C#-specific hints
+  if (criteria.minSyncOverAsync != null) count++;
+  if (criteria.minNullForgiving != null) count++;
+  if (criteria.hasLockOnThis != null) count++;
+  if (criteria.hasNewHttpClient != null) count++;
+  if (criteria.hasNewDisposableNoUsing != null) count++;
+  if (criteria.hasParallelForEachAsync != null) count++;
+  if (criteria.minThrowEx != null) count++;
+  if (criteria.minEmptyCatch != null) count++;
+  if (criteria.hasStringConcatInLoop != null) count++;
   if (criteria.relationships) count += criteria.relationships.length;
   return count;
 }

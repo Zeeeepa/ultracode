@@ -227,19 +227,57 @@ function convertCSharpResult(filePath: string, entities: CSharpParsedEntity[]): 
       }));
     }
 
-    // Control flow (basic mapping from Roslyn metadata)
+    // Control flow (mapped from Roslyn ExtractControlFlow)
     if (mappedType === "method" || mappedType === "function") {
       const loc = (line: number) => ({
         start: { line, column: 0, index: 0 },
         end: { line, column: 0, index: 0 },
       });
-      parsed.controlFlow = {
-        branches: [],
-        loops: [],
-        exceptions: [],
-        returns: [],
-        awaits: meta?.isAsync ? [{ expression: "await", location: loc(entity.startLine) }] : [],
-      };
+
+      if (meta?.controlFlow) {
+        const LOOP_KIND_MAP: Record<string, "for" | "for-of" | "for-in" | "while" | "do-while"> = {
+          for: "for",
+          foreach: "for-of",
+          while: "while",
+          do: "do-while",
+        };
+        parsed.controlFlow = {
+          branches: (meta.controlFlow.branches ?? []).map((b) => ({
+            type: "if" as const,
+            location: loc(b.line),
+          })),
+          loops: (meta.controlFlow.loops ?? []).map((l) => ({
+            type: LOOP_KIND_MAP[l.kind] ?? ("for" as const),
+            location: loc(l.line),
+          })),
+          exceptions: (meta.controlFlow.exceptions ?? []).map((e) => ({
+            type: "catch" as const,
+            catchType: e.catchType,
+            location: loc(e.line),
+          })),
+          returns: (meta.controlFlow.returns ?? []).map((r) => ({
+            hasValue: true,
+            location: loc(r.line),
+          })),
+          awaits: (meta.controlFlow.awaits ?? []).map((a) => ({
+            expression: a.expression,
+            location: loc(a.line),
+          })),
+        };
+      } else {
+        parsed.controlFlow = {
+          branches: [],
+          loops: [],
+          exceptions: [],
+          returns: [],
+          awaits: meta?.isAsync ? [{ expression: "await", location: loc(entity.startLine) }] : [],
+        };
+      }
+    }
+
+    // C# antipattern hints (from Roslyn ExtractCSharpHints) → stored in metadata for structural detector
+    if (meta?.csharpHints) {
+      parsed.metadata = { ...(parsed.metadata ?? {}), _csharpHints: meta.csharpHints };
     }
 
     // NOTE: Don't set parsed.children here — we flatten manually below

@@ -9,19 +9,24 @@ import { existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { log } from "../logging/index.js";
 import { getCurrentGitBranchOrDefault, getGlobalDbPaths } from "../shared/storage-paths.js";
+import {
+  DatabaseCorruptionError,
+  GraphAdapter,
+  type LibSQLGraphAdapter,
+  type LibSQLGraphConfig,
+} from "./graph-adapter.js";
 import { GraphStorageLibSQL } from "./graph-storage-libsql.js";
-import { DatabaseCorruptionError, LibSQLGraphAdapter, type LibSQLGraphConfig } from "./libsql-graph-adapter.js";
 import { MultiDbManager } from "./multi-db-manager.js";
 
 // Re-export types and helpers for compatibility
-export type { ProjectContext } from "./libsql-graph-adapter.js";
+export type { ProjectContext } from "./graph-adapter.js";
 export {
   DatabaseCorruptionError,
   getEmbeddingColumn,
   normalizeToSupportedDimension,
   SUPPORTED_DIMENSIONS,
   type SupportedDimension,
-} from "./libsql-graph-adapter.js";
+} from "./graph-adapter.js";
 
 // Singleton instances
 let graphStorage: GraphStorageLibSQL | null = null;
@@ -106,7 +111,7 @@ export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
       await multiDbManager.initialize(basePath);
 
       // Create adapter with multi-db manager
-      libsqlAdapter = new LibSQLGraphAdapter(globalConfig, multiDbManager);
+      libsqlAdapter = new GraphAdapter(globalConfig, multiDbManager);
 
       // Use graph.db path as the "primary" path for adapter
       const graphDbPath = join(basePath, "graph.db");

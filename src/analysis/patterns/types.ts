@@ -93,6 +93,17 @@ export interface StructuralCriteria {
   minUnsafeCasts?: number | undefined;
   minUnreachable?: number | undefined;
 
+  // C#-specific antipattern hints (from Roslyn parser)
+  minSyncOverAsync?: number | undefined;
+  minNullForgiving?: number | undefined;
+  hasLockOnThis?: boolean | undefined;
+  hasNewHttpClient?: boolean | undefined;
+  hasNewDisposableNoUsing?: boolean | undefined;
+  hasParallelForEachAsync?: boolean | undefined;
+  minThrowEx?: number | undefined;
+  minEmptyCatch?: number | undefined;
+  hasStringConcatInLoop?: boolean | undefined;
+
   // Graph-based (require relationship queries)
   relationships?: RelationshipCriteria[] | undefined;
 }

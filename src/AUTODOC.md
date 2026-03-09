@@ -155,10 +155,12 @@ Knowledge Bus uses dynamic string topics (no typed event map):
 - `areTimersSuspended`
 - `getIndexingStatus`
 - `isIndexing`
+- `isPostIndexing`
 - `isProjectIndexing`
 - `registerAsyncLoopStarter`
 - `resumeTimers`
 - `setIndexingState`
+- `waitForPostIndexing`
 - `getCurrentIndexingDirectory`
 
 ## Files

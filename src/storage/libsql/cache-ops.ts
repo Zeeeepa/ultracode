@@ -58,17 +58,17 @@ export class CacheOperations {
     const now = Date.now();
 
     try {
-      // Batch query for efficiency
+      // Batch query for efficiency via executeIterator
       const placeholders = contentHashes.map(() => "?").join(",");
-      const queryResult = await client.execute({
-        sql: `SELECT content_hash, embedding FROM embedding_cache WHERE content_hash IN (${placeholders})`,
-        args: contentHashes,
-      });
 
       const foundHashes: string[] = [];
-      for (const row of queryResult.rows) {
-        const hash = row["content_hash"] as string;
-        const embeddingBlob = row["embedding"] as ArrayBuffer;
+      for (const row of client.executeIterator({
+        sql: `SELECT content_hash, embedding FROM embedding_cache WHERE content_hash IN (${placeholders})`,
+        args: contentHashes,
+      })) {
+        const r = row as Record<string, unknown>;
+        const hash = r["content_hash"] as string;
+        const embeddingBlob = r["embedding"] as ArrayBuffer;
         result.set(hash, new Float32Array(embeddingBlob));
         foundHashes.push(hash);
       }

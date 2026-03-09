@@ -74,6 +74,16 @@ const StructuralCriteriaSchema = z.object({
   minForceUnwraps: z.number().optional(),
   minUnsafeCasts: z.number().optional(),
   minUnreachable: z.number().optional(),
+  // C#-specific antipattern hints (from Roslyn parser)
+  minSyncOverAsync: z.number().optional(),
+  minNullForgiving: z.number().optional(),
+  hasLockOnThis: z.boolean().optional(),
+  hasNewHttpClient: z.boolean().optional(),
+  hasNewDisposableNoUsing: z.boolean().optional(),
+  hasParallelForEachAsync: z.boolean().optional(),
+  minThrowEx: z.number().optional(),
+  minEmptyCatch: z.number().optional(),
+  hasStringConcatInLoop: z.boolean().optional(),
   relationships: z.array(RelationshipCriteriaSchema).optional(),
 });
 

@@ -369,6 +369,8 @@ import { getConfigDir, getLogsDir } from "../shared/storage-paths.js";
 interface LogConfig {
   minLevel?: LogLevelChar;
   teiBatchDump?: boolean;
+  /** When true, logs are written synchronously (no buffering). Useful for crash debugging. */
+  syncWrite?: boolean;
 }
 
 let logConfig: LogConfig = {};
@@ -389,6 +391,9 @@ function loadLogConfig(): LogConfig {
     if (typeof parsed?.teiBatchDump === "boolean") {
       cfg.teiBatchDump = parsed.teiBatchDump;
     }
+    if (typeof parsed?.syncWrite === "boolean") {
+      cfg.syncWrite = parsed.syncWrite;
+    }
     return cfg;
   } catch {
     return {};
@@ -402,7 +407,12 @@ export function isTeiBatchDumpEnabled(): boolean {
 
 export function initNewLogger(): void {
   logConfig = loadLogConfig();
-  initLogger({ logDir: getLogsDir(), minLevel: logConfig.minLevel ?? "I", consoleOutput: false });
+  initLogger({
+    logDir: getLogsDir(),
+    minLevel: logConfig.minLevel ?? "I",
+    consoleOutput: false,
+    ...(logConfig.syncWrite ? { bufferSize: 0, flushInterval: 0 } : {}),
+  });
 }
 
 export function setLoggerProject(projectHash: string): void {

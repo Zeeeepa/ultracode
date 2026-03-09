@@ -1,7 +1,7 @@
 /**
  * Graph Storage LibSQL Implementation
  *
- * Implements the GraphStorage interface using LibSQLGraphAdapter.
+ * Implements the GraphStorage interface using GraphAdapter.
  * Provides async API for all operations, replacing the synchronous better-sqlite3 version.
  *
  * This is the new unified storage implementation that handles both
@@ -27,7 +27,7 @@ import {
   RelationType,
   type StorageMetrics,
 } from "../types/storage.js";
-import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.js";
+import type { GraphAdapter, ProjectContext } from "./graph-adapter.js";
 
 // =============================================================================
 // CONSTANTS
@@ -61,10 +61,10 @@ export function createProjectContext(projectPath: string, branchName?: string | 
 // =============================================================================
 
 export class GraphStorageLibSQL implements GraphStorage {
-  private adapter: LibSQLGraphAdapter;
+  private adapter: GraphAdapter;
   private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
 
-  constructor(adapter: LibSQLGraphAdapter) {
+  constructor(adapter: GraphAdapter) {
     this.adapter = adapter;
   }
 
@@ -210,6 +210,7 @@ export class GraphStorageLibSQL implements GraphStorage {
       filters: query.filters,
       limit: Math.min(query.limit || DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT),
       offset: query.offset || 0,
+      lightweight: query.lightweight,
     });
   }
 
@@ -738,7 +739,7 @@ export class GraphStorageLibSQL implements GraphStorage {
   /**
    * Get the underlying adapter for direct vector operations
    */
-  getAdapter(): LibSQLGraphAdapter {
+  getAdapter(): GraphAdapter {
     return this.adapter;
   }
 
@@ -746,7 +747,7 @@ export class GraphStorageLibSQL implements GraphStorage {
    * Get the LibSQL adapter for Prolly Tree operations.
    * Alias for getAdapter() - used by history tools.
    */
-  getLibSQLAdapter(): LibSQLGraphAdapter {
+  getLibSQLAdapter(): GraphAdapter {
     return this.adapter;
   }
 

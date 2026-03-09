@@ -1,6 +1,6 @@
 # Detectors
 
-Custom code anti-pattern detectors for TypeScript, JavaScript, C#, Go, Java, Python, and Zig
+Language-agnostic and language-specific pattern detectors for identifying code quality issues across TypeScript, C#, Go, Java, Python, and Zig projects.
 
 ## Exports
 
@@ -20,7 +20,7 @@ Custom code anti-pattern detectors for TypeScript, JavaScript, C#, Go, Java, Pyt
 | `checkJavaMutableStatic` | function | Detects unprotected mutable static fields causing race conditions | [→ java.ts:50-63] |
 | `checkLargeClass` | function | Detects classes with excessive methods and code size | [→ common.ts:109-113] |
 | `checkLinqInHotpath` | function | Detects LINQ queries in performance-critical code paths | [→ csharp.ts:121-143] |
-| `checkMissingCancellation` | function | Detects async tasks lacking cancellation token support | [→ csharp.ts:73-74] |
+| `checkMissingCancellation` | function | Detects async tasks lacking cancellation token support | [→ csharp.ts:71-89] |
 | `checkMutableDefaultArg` | function | Detects mutable default arguments shared across multiple calls | [→ python.ts:26] |
 | `checkMutableStatic` | function | Detects unprotected mutable static fields causing thread issues | [→ csharp.ts:11-25] |
 | `checkNakedReturn` | function | Detects unnamed returns in long functions reducing readability | [→ go.ts:74-74] |
@@ -30,7 +30,7 @@ Custom code anti-pattern detectors for TypeScript, JavaScript, C#, Go, Java, Pyt
 | `checkPromiseNoCatch` | function | Detects promises lacking catch or try-catch error handlers | [→ typescript.ts:66-84] |
 | `checkRawTypes` | function | Detects generic types used without type parameter specification | [→ java.ts:11-31] |
 | `checkReflectionInHotpath` | function | Detects reflection calls in performance-critical code paths | [→ java.ts:86-106] |
-| `checkSingletonMutableState` | function | Detects mutable static state in singleton class context | [→ csharp.ts:95-100] |
+| `checkSingletonMutableState` | function | Detects mutable static state in singleton class context | [→ csharp.ts:96-100] |
 | `checkSmallFocusedFunction` | function | Detects well-structured short focused function pattern | [→ common.ts:81-84] |
 | `checkStarImport` | function | Detects wildcard imports polluting module namespace and dependencies | [→ python.ts:52-68] |
 | `checkStringConcatInLoop` | function | Detects inefficient string concatenation in loop constructs | [→ java.ts:73-80] |

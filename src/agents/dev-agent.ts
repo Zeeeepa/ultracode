@@ -1530,61 +1530,71 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       });
     }
 
-    // Post-indexing: Resolve Swagger ↔ Code links (only if swagger entities exist)
+    // Post-indexing: Cross-domain linking (swagger, protobuf, graphql, db schema)
+    // Load entities once and check which linkers are needed
     perfTimings["swaggerLink_start"] = Date.now() - perfStart;
     try {
-      const { resolveSwaggerLinks } = await import("./dev/indexing-pipeline.js");
-      const swaggerRels = await resolveSwaggerLinks();
-      if (swaggerRels > 0) {
-        totalRelationships += swaggerRels;
-        log.i("DEVAGENT", "swagger_links_created", { count: swaggerRels });
-      }
-    } catch (err) {
-      log.w("DEVAGENT", "swagger_link_skip", { error: (err as Error).message });
-    }
-    perfTimings["swaggerLink_end"] = Date.now() - perfStart;
+      const { resolveSwaggerLinks, resolveProtobufLinks, resolveGraphQLLinks, resolveDbSchemaLinks } = await import(
+        "./dev/indexing-pipeline.js"
+      );
+      const graphStorage = await (await import("../storage/graph-storage-factory.js")).getGraphStorage();
+      const allEntities = await graphStorage.getAllEntities();
 
-    // Post-indexing: Resolve Protobuf ↔ Code links (only if proto entities exist)
-    perfTimings["protobufLink_start"] = Date.now() - perfStart;
-    try {
-      const { resolveProtobufLinks } = await import("./dev/indexing-pipeline.js");
-      const protoRels = await resolveProtobufLinks();
-      if (protoRels > 0) {
-        totalRelationships += protoRels;
-        log.i("DEVAGENT", "protobuf_links_created", { count: protoRels });
-      }
-    } catch (err) {
-      log.w("DEVAGENT", "protobuf_link_skip", { error: (err as Error).message });
-    }
-    perfTimings["protobufLink_end"] = Date.now() - perfStart;
+      const hasSwagger = allEntities.some((e) => e.metadata?.["swaggerType"]);
+      const hasProtobuf = allEntities.some((e) => e.metadata?.["protoType"]);
+      const hasGraphQL = allEntities.some((e) => e.metadata?.["graphqlType"]);
+      const hasDbEntities = allEntities.some((e) => e.metadata?.["isDbSchema"] || e.metadata?.["dbType"]);
 
-    // Post-indexing: Resolve GraphQL ↔ Code links (only if graphql entities exist)
-    perfTimings["graphqlLink_start"] = Date.now() - perfStart;
-    try {
-      const { resolveGraphQLLinks } = await import("./dev/indexing-pipeline.js");
-      const graphqlRels = await resolveGraphQLLinks();
-      if (graphqlRels > 0) {
-        totalRelationships += graphqlRels;
-        log.i("DEVAGENT", "graphql_links_created", { count: graphqlRels });
-      }
-    } catch (err) {
-      log.w("DEVAGENT", "graphql_link_skip", { error: (err as Error).message });
-    }
-    perfTimings["graphqlLink_end"] = Date.now() - perfStart;
+      log.i("DEVAGENT", "cross_domain_check", { hasSwagger, hasProtobuf, hasGraphQL, hasDbEntities });
 
-    // Post-indexing: Resolve DB Schema ↔ Code links (SQL, ORM, Redis)
-    perfTimings["dbSchemaLink_start"] = Date.now() - perfStart;
-    try {
-      const { resolveDbSchemaLinks } = await import("./dev/indexing-pipeline.js");
-      const dbRels = await resolveDbSchemaLinks();
-      if (dbRels > 0) {
-        totalRelationships += dbRels;
-        log.i("DEVAGENT", "db_schema_links_created", { count: dbRels });
+      if (hasSwagger) {
+        const swaggerRels = await resolveSwaggerLinks(allEntities);
+        if (swaggerRels > 0) {
+          totalRelationships += swaggerRels;
+          log.i("DEVAGENT", "swagger_links_created", { count: swaggerRels });
+        }
       }
+      perfTimings["swaggerLink_end"] = Date.now() - perfStart;
+
+      perfTimings["protobufLink_start"] = Date.now() - perfStart;
+      if (hasProtobuf) {
+        const protoRels = await resolveProtobufLinks(allEntities);
+        if (protoRels > 0) {
+          totalRelationships += protoRels;
+          log.i("DEVAGENT", "protobuf_links_created", { count: protoRels });
+        }
+      }
+      perfTimings["protobufLink_end"] = Date.now() - perfStart;
+
+      perfTimings["graphqlLink_start"] = Date.now() - perfStart;
+      if (hasGraphQL) {
+        const graphqlRels = await resolveGraphQLLinks(allEntities);
+        if (graphqlRels > 0) {
+          totalRelationships += graphqlRels;
+          log.i("DEVAGENT", "graphql_links_created", { count: graphqlRels });
+        }
+      }
+      perfTimings["graphqlLink_end"] = Date.now() - perfStart;
+
+      perfTimings["dbSchemaLink_start"] = Date.now() - perfStart;
+      if (hasDbEntities) {
+        const dbRels = await resolveDbSchemaLinks(allEntities);
+        if (dbRels > 0) {
+          totalRelationships += dbRels;
+          log.i("DEVAGENT", "db_schema_links_created", { count: dbRels });
+        }
+      }
+      perfTimings["dbSchemaLink_end"] = Date.now() - perfStart;
     } catch (err) {
-      log.w("DEVAGENT", "db_schema_link_skip", { error: (err as Error).message });
+      log.w("DEVAGENT", "cross_domain_link_error", { error: (err as Error).message });
+      perfTimings["swaggerLink_end"] ??= Date.now() - perfStart;
+      perfTimings["protobufLink_start"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["protobufLink_end"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["graphqlLink_start"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["graphqlLink_end"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["dbSchemaLink_start"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["dbSchemaLink_end"] ??= perfTimings["swaggerLink_end"];
     }
-    perfTimings["dbSchemaLink_end"] = Date.now() - perfStart;
 
     perfTimings["indexing_end"] = Date.now() - perfStart;
     log.i("DEVAGENT", "index_done", {

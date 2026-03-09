@@ -151,6 +151,8 @@ export interface EntityQuery {
     | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
+  /** When true, exclude heavy columns (embedding_text, embedding_base64) to reduce memory */
+  lightweight?: boolean | undefined;
 }
 
 export interface RelationshipQuery {

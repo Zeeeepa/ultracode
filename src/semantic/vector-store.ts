@@ -22,7 +22,7 @@ import { log } from "../logging/index.js";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
-import type { ProjectContext } from "../storage/libsql-graph-adapter.js";
+import type { ProjectContext } from "../storage/graph-adapter.js";
 import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
 import type { Entity } from "../types/storage.js";
 import { type FaissProvider, initializeFaissProvider } from "./faiss/faiss-provider.js";

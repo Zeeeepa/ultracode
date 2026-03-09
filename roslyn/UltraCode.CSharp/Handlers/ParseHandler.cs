@@ -347,6 +347,8 @@ public sealed class ParseHandler
                 Complexity = CalculateCyclomaticComplexity(method),
                 Attributes = method.AttributeLists.SelectMany(a => a.Attributes.Select(attr => attr.ToString())).ToList() is { Count: > 0 } attrs ? attrs : null,
                 DocComment = ExtractDocComment(method),
+                ControlFlow = ExtractControlFlow(method),
+                CSharpHints = ExtractCSharpHints(method),
             },
         };
     }
@@ -381,6 +383,8 @@ public sealed class ParseHandler
                 }).ToList(),
                 Calls = ExtractCalls(ctor),
                 Complexity = CalculateCyclomaticComplexity(ctor),
+                ControlFlow = ExtractControlFlow(ctor),
+                CSharpHints = ExtractCSharpHints(ctor),
             },
         };
     }
@@ -601,6 +605,333 @@ public sealed class ParseHandler
 
         return complexity;
     }
+
+    /// <summary>
+    /// Extract control flow information from a method/constructor body in a single pass.
+    /// </summary>
+    private static ControlFlowDto? ExtractControlFlow(SyntaxNode node)
+    {
+        List<LocationDto>? branches = null;
+        List<LoopDto>? loops = null;
+        List<ExceptionInfoDto>? exceptions = null;
+        List<LocationDto>? returns = null;
+        List<AwaitInfoDto>? awaits = null;
+
+        foreach (var descendant in node.DescendantNodes())
+        {
+            switch (descendant)
+            {
+                case IfStatementSyntax ifStmt:
+                    branches ??= [];
+                    branches.Add(new LocationDto { Line = ifStmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1 });
+                    break;
+
+                case SwitchStatementSyntax switchStmt:
+                    branches ??= [];
+                    branches.Add(new LocationDto { Line = switchStmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1 });
+                    break;
+
+                case ConditionalExpressionSyntax ternary:
+                    branches ??= [];
+                    branches.Add(new LocationDto { Line = ternary.GetLocation().GetLineSpan().StartLinePosition.Line + 1 });
+                    break;
+
+                case ForStatementSyntax forStmt:
+                    loops ??= [];
+                    loops.Add(new LoopDto
+                    {
+                        Kind = "for",
+                        Line = forStmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+                        InnerCalls = ExtractInnerCalls(forStmt.Statement),
+                    });
+                    break;
+
+                case ForEachStatementSyntax forEachStmt:
+                    loops ??= [];
+                    loops.Add(new LoopDto
+                    {
+                        Kind = "foreach",
+                        Line = forEachStmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+                        InnerCalls = ExtractInnerCalls(forEachStmt.Statement),
+                    });
+                    break;
+
+                case WhileStatementSyntax whileStmt:
+                    loops ??= [];
+                    loops.Add(new LoopDto
+                    {
+                        Kind = "while",
+                        Line = whileStmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+                        InnerCalls = ExtractInnerCalls(whileStmt.Statement),
+                    });
+                    break;
+
+                case DoStatementSyntax doStmt:
+                    loops ??= [];
+                    loops.Add(new LoopDto
+                    {
+                        Kind = "do",
+                        Line = doStmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+                        InnerCalls = ExtractInnerCalls(doStmt.Statement),
+                    });
+                    break;
+
+                case TryStatementSyntax tryStmt:
+                    foreach (var catchClause in tryStmt.Catches)
+                    {
+                        exceptions ??= [];
+                        var catchBody = catchClause.Block;
+                        var hasThrow = false;
+                        var hasThrowEx = false;
+                        foreach (var stmt in catchBody.DescendantNodes().OfType<ThrowStatementSyntax>())
+                        {
+                            if (stmt.Expression == null)
+                                hasThrow = true; // bare "throw;"
+                            else
+                                hasThrowEx = true; // "throw ex;" or "throw new ..."
+                        }
+
+                        var statementsCount = catchBody.Statements.Count;
+                        var isEmpty = statementsCount == 0 || (statementsCount == 1 && !hasThrow && !hasThrowEx);
+
+                        exceptions.Add(new ExceptionInfoDto
+                        {
+                            Line = catchClause.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+                            CatchType = catchClause.Declaration?.Type.ToString(),
+                            HasRethrow = hasThrow,
+                            IsEmpty = isEmpty,
+                            HasThrowEx = hasThrowEx,
+                        });
+                    }
+                    break;
+
+                case ReturnStatementSyntax retStmt:
+                    returns ??= [];
+                    returns.Add(new LocationDto { Line = retStmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1 });
+                    break;
+
+                case AwaitExpressionSyntax awaitExpr:
+                    awaits ??= [];
+                    var exprText = awaitExpr.Expression.ToString();
+                    if (exprText.Length > 100) exprText = exprText[..100];
+                    awaits.Add(new AwaitInfoDto
+                    {
+                        Expression = exprText,
+                        Line = awaitExpr.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+                    });
+                    break;
+            }
+        }
+
+        if (branches == null && loops == null && exceptions == null && returns == null && awaits == null)
+            return null;
+
+        return new ControlFlowDto
+        {
+            Branches = branches,
+            Loops = loops,
+            Exceptions = exceptions,
+            Returns = returns,
+            Awaits = awaits,
+        };
+    }
+
+    /// <summary>
+    /// Extract inner invocation calls from a loop body.
+    /// </summary>
+    private static List<string>? ExtractInnerCalls(SyntaxNode? body)
+    {
+        if (body == null) return null;
+
+        var calls = new List<string>();
+        foreach (var inv in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            var name = inv.Expression switch
+            {
+                MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
+                IdentifierNameSyntax id => id.Identifier.Text,
+                _ => inv.Expression.ToString(),
+            };
+            if (!calls.Contains(name))
+                calls.Add(name);
+        }
+        return calls.Count > 0 ? calls : null;
+    }
+
+    /// <summary>
+    /// Extract C#-specific antipattern hints from a method/constructor body in a single pass.
+    /// </summary>
+    private static CSharpHintsDto? ExtractCSharpHints(SyntaxNode node)
+    {
+        int syncOverAsync = 0;
+        int nullForgiving = 0;
+        int lockOnThis = 0;
+        int stringConcatInLoop = 0;
+        int newHttpClient = 0;
+        int newDisposableNoUsing = 0;
+        bool hasParallelForEachAsync = false;
+        int throwEx = 0;
+        int emptyCatch = 0;
+
+        // Collect loop bodies for string concat detection
+        var loopBodies = new HashSet<SyntaxNode>();
+        foreach (var d in node.DescendantNodes())
+        {
+            SyntaxNode? loopBody = d switch
+            {
+                ForStatementSyntax f => f.Statement,
+                ForEachStatementSyntax fe => fe.Statement,
+                WhileStatementSyntax w => w.Statement,
+                DoStatementSyntax ds => ds.Statement,
+                _ => null,
+            };
+            if (loopBody != null)
+                loopBodies.Add(loopBody);
+        }
+
+        foreach (var descendant in node.DescendantNodes())
+        {
+            switch (descendant)
+            {
+                // sync-over-async: .Result, .Wait(), .GetAwaiter().GetResult()
+                case MemberAccessExpressionSyntax memberAccess:
+                    var memberName = memberAccess.Name.Identifier.Text;
+                    if (memberName is "Result" or "Wait")
+                        syncOverAsync++;
+                    break;
+
+                case InvocationExpressionSyntax invocation:
+                {
+                    var invName = invocation.Expression switch
+                    {
+                        MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
+                        IdentifierNameSyntax id => id.Identifier.Text,
+                        _ => null,
+                    };
+                    if (invName == "GetAwaiter")
+                        syncOverAsync++;
+
+                    // Parallel.ForEach with async lambda
+                    if (invocation.Expression is MemberAccessExpressionSyntax maParallel &&
+                        maParallel.Expression.ToString() == "Parallel" &&
+                        maParallel.Name.Identifier.Text == "ForEach")
+                    {
+                        // Check if any argument is an async lambda
+                        foreach (var arg in invocation.ArgumentList.Arguments)
+                        {
+                            if (arg.Expression is ParenthesizedLambdaExpressionSyntax lambda && lambda.AsyncKeyword.IsKind(SyntaxKind.AsyncKeyword))
+                                hasParallelForEachAsync = true;
+                            else if (arg.Expression is SimpleLambdaExpressionSyntax simpleLambda && simpleLambda.AsyncKeyword.IsKind(SyntaxKind.AsyncKeyword))
+                                hasParallelForEachAsync = true;
+                        }
+                    }
+                    break;
+                }
+
+                // Null-forgiving operator (!)
+                case PostfixUnaryExpressionSyntax postfix when postfix.IsKind(SyntaxKind.SuppressNullableWarningExpression):
+                    nullForgiving++;
+                    break;
+
+                // lock(this) or lock(typeof(...))
+                case LockStatementSyntax lockStmt:
+                    if (lockStmt.Expression is ThisExpressionSyntax || lockStmt.Expression is TypeOfExpressionSyntax)
+                        lockOnThis++;
+                    break;
+
+                // String += in loop body
+                case AssignmentExpressionSyntax assignment when assignment.IsKind(SyntaxKind.AddAssignmentExpression):
+                    // Check if inside a loop body
+                    foreach (var loopBody in loopBodies)
+                    {
+                        if (loopBody.Span.Contains(assignment.Span))
+                        {
+                            // Check if left side is string-like (heuristic: identifier, not numeric)
+                            var leftType = assignment.Left.ToString();
+                            if (!leftType.Contains('[') && !leftType.Contains('.'))
+                                stringConcatInLoop++;
+                            break;
+                        }
+                    }
+                    break;
+
+                // new HttpClient()
+                case ObjectCreationExpressionSyntax objCreation:
+                {
+                    var typeName = objCreation.Type.ToString();
+                    if (typeName is "HttpClient")
+                        newHttpClient++;
+
+                    // IDisposable types without using — check common disposable types
+                    if (IsKnownDisposableType(typeName))
+                    {
+                        var parent = objCreation.Parent;
+                        bool hasUsing = false;
+                        while (parent != null)
+                        {
+                            if (parent is UsingStatementSyntax || parent is LocalDeclarationStatementSyntax localDecl && localDecl.UsingKeyword.IsKind(SyntaxKind.UsingKeyword))
+                            {
+                                hasUsing = true;
+                                break;
+                            }
+                            if (parent is MethodDeclarationSyntax || parent is ConstructorDeclarationSyntax)
+                                break;
+                            parent = parent.Parent;
+                        }
+                        if (!hasUsing)
+                            newDisposableNoUsing++;
+                    }
+                    break;
+                }
+
+                // throw ex; (re-throw with variable — loses stack trace)
+                case ThrowStatementSyntax throwStmt when throwStmt.Expression is IdentifierNameSyntax:
+                {
+                    // Check if the identifier matches a catch variable
+                    var throwIdent = ((IdentifierNameSyntax)throwStmt.Expression).Identifier.Text;
+                    var catchClause = throwStmt.Ancestors().OfType<CatchClauseSyntax>().FirstOrDefault();
+                    if (catchClause?.Declaration?.Identifier.Text == throwIdent)
+                        throwEx++;
+                    break;
+                }
+
+                // Empty catch
+                case CatchClauseSyntax catchClause:
+                {
+                    var body = catchClause.Block;
+                    var hasAnyThrow = body.DescendantNodes().OfType<ThrowStatementSyntax>().Any();
+                    if (body.Statements.Count == 0 || (body.Statements.Count == 1 && !hasAnyThrow))
+                        emptyCatch++;
+                    break;
+                }
+            }
+        }
+
+        if (syncOverAsync == 0 && nullForgiving == 0 && lockOnThis == 0 && stringConcatInLoop == 0 &&
+            newHttpClient == 0 && newDisposableNoUsing == 0 && !hasParallelForEachAsync &&
+            throwEx == 0 && emptyCatch == 0)
+            return null;
+
+        return new CSharpHintsDto
+        {
+            SyncOverAsyncCount = syncOverAsync,
+            NullForgivingCount = nullForgiving,
+            LockOnThisCount = lockOnThis,
+            StringConcatInLoopCount = stringConcatInLoop,
+            NewHttpClientCount = newHttpClient,
+            NewDisposableNoUsingCount = newDisposableNoUsing,
+            HasParallelForEachAsync = hasParallelForEachAsync,
+            ThrowExCount = throwEx,
+            EmptyCatchCount = emptyCatch,
+        };
+    }
+
+    private static bool IsKnownDisposableType(string typeName) =>
+        typeName is "HttpClient" or "SqlConnection" or "SqlCommand" or "StreamReader"
+            or "StreamWriter" or "FileStream" or "MemoryStream" or "BinaryReader"
+            or "BinaryWriter" or "TcpClient" or "UdpClient" or "WebClient"
+            or "HttpResponseMessage" or "DbConnection" or "DbCommand"
+            or "NpgsqlConnection" or "MySqlConnection";
 
     private static string? ExtractDocComment(SyntaxNode node)
     {

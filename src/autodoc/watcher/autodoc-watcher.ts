@@ -13,6 +13,7 @@
  */
 
 import path, { join } from "node:path";
+import { areTimersSuspended } from "../../core/indexing-state.js";
 import { type KnowledgeEntry, knowledgeBus } from "../../core/knowledge-bus.js";
 import { log } from "../../logging/index.js";
 import { fileExists, readdir, readText, setFileChangeHook, writeFile } from "../../utils/file-ops.js";
@@ -390,6 +391,12 @@ export class AutoDocWatcher {
    */
   private async handleFileChange(filePath: string): Promise<void> {
     if (!filePath) return;
+
+    // Defer if heavy analysis is running (prevents bun:sqlite concurrent access crash)
+    if (areTimersSuspended()) {
+      log.d("AUTODOCWATCH", "deferred_suspended", { file: filePath });
+      return;
+    }
 
     // Skip non-code files
     const ext = path.extname(filePath).toLowerCase();

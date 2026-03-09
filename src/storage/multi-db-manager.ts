@@ -42,7 +42,7 @@ const PRAGMA_STATEMENTS = [
   "PRAGMA synchronous = OFF",
   "PRAGMA cache_size = -262144", // 256MB cache — keep all B-tree pages in memory
   "PRAGMA temp_store = MEMORY",
-  "PRAGMA mmap_size = 268435456", // 256MB mmap — OS page cache for reads
+  "PRAGMA mmap_size = 268435456", // 256MB mmap for fast reads
 ];
 
 export class MultiDbManager {

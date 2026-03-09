@@ -8,6 +8,7 @@ import type { z } from "zod";
 import { PatternEngine } from "../../analysis/patterns/pattern-engine.js";
 import { PatternFormatter } from "../../analysis/patterns/pattern-formatter.js";
 import type { PatternCategory, PatternScanOptions } from "../../analysis/patterns/types.js";
+import { waitForPostIndexing } from "../../core/indexing-state.js";
 import { log } from "../../logging/index.js";
 import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
@@ -32,6 +33,10 @@ export class DetectPatternsToolHandler extends BaseToolHandler<z.infer<typeof De
 
   protected async execute(args: z.infer<typeof DetectPatternsSchema>): Promise<ToolResult> {
     try {
+      // Explicit wait for post-indexing bgPromise (FAISS save, embeddings, watchers, flush)
+      const resolvedPath = this.resolveProjectPath(args);
+      await waitForPostIndexing(resolvedPath, 180_000);
+
       const storage = await this.ensureGraphStorageForProject(args.projectPath);
 
       // Try to get embedding generator for semantic validation
@@ -60,6 +65,12 @@ export class DetectPatternsToolHandler extends BaseToolHandler<z.infer<typeof De
       };
 
       const result = await engine.scan(options, storage);
+      log.i("DETECT_PATTERNS", "scan_returned", {
+        anti: result.antiPatterns.length,
+        best: result.bestPatterns.length,
+        smells: result.codeSmells.length,
+        opts: result.optimizations.length,
+      });
 
       const nextSteps: string[] = [];
       const allMatches = [
@@ -68,8 +79,8 @@ export class DetectPatternsToolHandler extends BaseToolHandler<z.infer<typeof De
         ...result.codeSmells,
         ...result.optimizations,
       ];
-      const hasSecurityPatterns = allMatches.some((m) =>
-        m.pattern.tags.some((t) => /security|injection|xss|auth/i.test(t)),
+      const hasSecurityPatterns = allMatches.some((m: any) =>
+        m.pattern.tags.some((t: string) => /security|injection|xss|auth/i.test(t)),
       );
       if (hasSecurityPatterns) {
         nextSteps.push("taint_analysis() — deep security analysis of detected vulnerable patterns");
@@ -88,6 +99,7 @@ export class DetectPatternsToolHandler extends BaseToolHandler<z.infer<typeof De
         output = PatternFormatter.format(result, "summary");
         output += `\n\n---\nNext steps:\n${nextSteps.map((s) => `- ${s}`).join("\n")}`;
       }
+      log.i("DETECT_PATTERNS", "format_done", { outputLen: output.length });
 
       return {
         content: [{ type: "text", text: output }],

@@ -43,26 +43,38 @@ export class SemanticValidator {
     if (needsSemantic.length > 0) {
       // Ensure exemplar embeddings are ready
       if (this.embeddingGen) {
-        await this.exemplarStore.ensureEmbeddings(this.embeddingGen);
+        try {
+          await this.exemplarStore.ensureEmbeddings(this.embeddingGen);
+        } catch (err) {
+          log.e("SEMANTIC_VALIDATOR", "ensure_embeddings_error", { error: String(err) });
+        }
       }
 
       for (const c of needsSemantic) {
-        const entityEmbedding = await this.getEntityEmbedding(c);
-        if (!entityEmbedding) {
-          // Can't get embedding — use structural confidence without semantic penalty
-          if (c.confidence >= c.pattern.minStructuralConfidence) {
-            results.push(this.createMatch(c, -1, undefined));
+        try {
+          const entityEmbedding = await this.getEntityEmbedding(c);
+          if (!entityEmbedding) {
+            // Can't get embedding — use structural confidence without semantic penalty
+            if (c.confidence >= c.pattern.minStructuralConfidence) {
+              results.push(this.createMatch(c, -1, undefined));
+            }
+            continue;
           }
-          continue;
-        }
 
-        const exemplarResults = this.exemplarStore.findSimilarExemplars(entityEmbedding, c.pattern.id, 1);
+          const exemplarResults = this.exemplarStore.findSimilarExemplars(entityEmbedding, c.pattern.id, 1);
 
-        const topExemplar = exemplarResults[0];
-        const similarity = topExemplar?.similarity ?? 0;
+          const topExemplar = exemplarResults[0];
+          const similarity = topExemplar?.similarity ?? 0;
 
-        if (similarity >= c.pattern.minSemanticSimilarity) {
-          results.push(this.createMatch(c, similarity, topExemplar));
+          if (similarity >= c.pattern.minSemanticSimilarity) {
+            results.push(this.createMatch(c, similarity, topExemplar));
+          }
+        } catch (err) {
+          log.w("SEMANTIC_VALIDATOR", "candidate_validation_error", {
+            entity: c.entity.id,
+            pattern: c.pattern.id,
+            error: String(err),
+          });
         }
       }
     }
@@ -114,9 +126,19 @@ export class SemanticValidator {
     if (base64) {
       try {
         const buffer = Buffer.from(base64, "base64");
-        return new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
-      } catch {
-        // Fallback to generation
+        // Safety: ensure alignment and valid length for Float32Array
+        const byteLen = buffer.byteLength;
+        if (byteLen < 4 || byteLen % 4 !== 0) {
+          log.w("SEMANTIC_VALIDATOR", "invalid_embedding_size", { entity: candidate.entity.id, byteLen });
+          return null;
+        }
+        // Copy to aligned buffer to avoid potential SIGBUS on unaligned access
+        const aligned = new ArrayBuffer(byteLen);
+        new Uint8Array(aligned).set(new Uint8Array(buffer.buffer, buffer.byteOffset, byteLen));
+        return new Float32Array(aligned);
+      } catch (err) {
+        log.w("SEMANTIC_VALIDATOR", "embedding_decode_error", { entity: candidate.entity.id, error: String(err) });
+        return null;
       }
     }
 

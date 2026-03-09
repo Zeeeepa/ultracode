@@ -203,9 +203,13 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
           get: <R = T>(...params: unknown[]): R | undefined => stmt.get(...params) as R | undefined,
           all: <R = T>(...params: unknown[]): R[] => stmt.all(...params) as R[],
           iterate: function* <R = T>(...params: unknown[]): IterableIterator<R> {
-            // Bun's iterate returns iterator directly
-            const iter = stmt.values(...params);
-            for (const row of iter) {
+            // TODO: Bun lacks native streaming iterate() with bound parameters.
+            // stmt.values() returns positional arrays (not named objects).
+            // Fallback: stmt.all() + yield gives correct named objects but no streaming benefit.
+            // With LIMIT/OFFSET chunking (5000 rows per page), memory impact is acceptable.
+            // Tracking: see issues/bun-iterate-todo.md
+            const rows = stmt.all(...params);
+            for (const row of rows) {
               yield row as R;
             }
           },

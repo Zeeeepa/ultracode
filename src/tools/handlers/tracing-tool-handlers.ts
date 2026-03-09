@@ -167,7 +167,7 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
     if (args.highlightRecentChanges) {
       const { getRecentlyChangedEntities } = await import("../../storage/prolly/recently-changed.js");
       type StorageWithAdapter = typeof storage & {
-        getLibSQLAdapter?: () => import("../../storage/libsql-graph-adapter.js").LibSQLGraphAdapter | null;
+        getLibSQLAdapter?: () => import("../../storage/graph-adapter.js").GraphAdapter | null;
       };
       const adapter = (storage as StorageWithAdapter).getLibSQLAdapter?.();
       if (adapter) {
@@ -270,7 +270,7 @@ export class TraceBackwardsToolHandler extends BaseToolHandler<z.infer<typeof Tr
     if (args.highlightRecentChanges) {
       const { getRecentlyChangedEntities } = await import("../../storage/prolly/recently-changed.js");
       type StorageWithAdapter = typeof storage & {
-        getLibSQLAdapter?: () => import("../../storage/libsql-graph-adapter.js").LibSQLGraphAdapter | null;
+        getLibSQLAdapter?: () => import("../../storage/graph-adapter.js").GraphAdapter | null;
       };
       const adapter = (storage as StorageWithAdapter).getLibSQLAdapter?.();
       if (adapter) {

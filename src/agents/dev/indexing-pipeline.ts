@@ -10,6 +10,7 @@
 import { statSync } from "node:fs";
 import { log } from "../../logging/index.js";
 import { getGraphStorage } from "../../storage/graph-storage-factory.js";
+import type { Entity } from "../../types/storage.js";
 import { toError } from "../../utils/error-handling.js";
 import { collectFilesAsync } from "./file-collector.js";
 
@@ -336,15 +337,14 @@ export function separateCodeAndDataFiles(files: string[]): FileSeparationResult 
  *
  * @returns Number of swagger relationships created, or 0 if no swagger entities found
  */
-export async function resolveSwaggerLinks(): Promise<number> {
+export async function resolveSwaggerLinks(entities?: Entity[]): Promise<number> {
   const storage = await getGraphStorage();
 
-  // Check if any swagger entities exist in the graph
-  const allEntities = await storage.getAllEntities();
+  const allEntities = entities ?? (await storage.getAllEntities());
   const hasSwagger = allEntities.some((e) => e.metadata?.["swaggerType"]);
 
   if (!hasSwagger) {
-    return 0; // No swagger entities — zero overhead for non-swagger projects
+    return 0;
   }
 
   log.i("DEVAGENT", "swagger_link_start", { totalEntities: allEntities.length });
@@ -444,10 +444,10 @@ export async function resolveSwaggerLinks(): Promise<number> {
  * Post-indexing step: Link protobuf specifications to code entities.
  * Creates PRODUCES_API, CONSUMES_API, GENERATED_FROM relationships.
  */
-export async function resolveProtobufLinks(): Promise<number> {
+export async function resolveProtobufLinks(entities?: Entity[]): Promise<number> {
   const storage = await getGraphStorage();
 
-  const allEntities = await storage.getAllEntities();
+  const allEntities = entities ?? (await storage.getAllEntities());
   const hasProtobuf = allEntities.some((e) => e.metadata?.["protoType"]);
 
   if (!hasProtobuf) {
@@ -544,10 +544,10 @@ export async function resolveProtobufLinks(): Promise<number> {
  * Post-indexing step: Link GraphQL schemas to code entities.
  * Creates PRODUCES_API, CONSUMES_API, GENERATED_FROM relationships.
  */
-export async function resolveGraphQLLinks(): Promise<number> {
+export async function resolveGraphQLLinks(entities?: Entity[]): Promise<number> {
   const storage = await getGraphStorage();
 
-  const allEntities = await storage.getAllEntities();
+  const allEntities = entities ?? (await storage.getAllEntities());
   const hasGraphQL = allEntities.some((e) => e.metadata?.["graphqlType"]);
 
   if (!hasGraphQL) {
@@ -645,15 +645,15 @@ export async function resolveGraphQLLinks(): Promise<number> {
  * Detects ORM models, Redis patterns, and SQL code links.
  * Creates READS_TABLE, WRITES_TABLE, MAPS_TO_TABLE relationships.
  */
-export async function resolveDbSchemaLinks(): Promise<number> {
+export async function resolveDbSchemaLinks(entities?: Entity[]): Promise<number> {
   const storage = await getGraphStorage();
 
-  const allEntities = await storage.getAllEntities();
+  const allEntities = entities ?? (await storage.getAllEntities());
   const hasDbEntities = allEntities.some((e) => e.metadata?.["isDbSchema"] || e.metadata?.["dbType"]);
   const hasCodeEntities = allEntities.some((e) => e.type === "class" || e.type === "function");
 
   if (!hasDbEntities && !hasCodeEntities) {
-    return 0; // No DB entities and no code entities — nothing to link
+    return 0;
   }
 
   log.i("DEVAGENT", "db_link_start", { totalEntities: allEntities.length, hasDbEntities });

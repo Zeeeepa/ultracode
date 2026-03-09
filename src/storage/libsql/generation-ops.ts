@@ -40,15 +40,14 @@ export class GenerationManager {
 
     const { projectHash, branchName } = this.getContext();
 
-    const result = await client.execute({
+    this.cache.clear();
+    for (const row of client.executeIterator({
       sql: `SELECT file_path, active_gen FROM file_generations
             WHERE project_hash = ? AND branch_name = ?`,
       args: [projectHash, branchName],
-    });
-
-    this.cache.clear();
-    for (const row of result.rows) {
-      this.cache.set(row["file_path"] as string, Number(row["active_gen"]));
+    })) {
+      const r = row as Record<string, unknown>;
+      this.cache.set(r["file_path"] as string, Number(r["active_gen"]));
     }
     this.cacheLoaded = true;
     log.d("GEN_OPS", "cache_loaded", { entries: this.cache.size });
