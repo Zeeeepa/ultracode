@@ -445,6 +445,35 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
       // Too many parameters
       const paramCount = metrics.parameterCount || 0;
       score += paramCount > 4 ? (paramCount - 4) * 2 : 0;
+
+      // Antipattern hints boost — fragile/insecure code is a hotspot
+      const apHints = entity.metadata?.["antipatternHints"] as
+        | { typeAssertionCount?: number; nonNullAssertionCount?: number; innerHtmlAssignCount?: number }
+        | undefined;
+      if (apHints) {
+        if ((apHints.typeAssertionCount ?? 0) > 3) score += 5;
+        if ((apHints.nonNullAssertionCount ?? 0) > 2) score += 3;
+        if ((apHints.innerHtmlAssignCount ?? 0) > 0) score += 8;
+      }
+
+      // Zig-specific: zigOps boost
+      const zigOps = entity.metadata?.["zigOps"] as
+        | {
+            forceUnwrapCount?: number;
+            unsafeCastCount?: number;
+            unreachableCount?: number;
+            allocCallCount?: number;
+            freeCallCount?: number;
+          }
+        | undefined;
+      if (zigOps) {
+        if ((zigOps.forceUnwrapCount ?? 0) > 2) score += 4; // force unwrap = potential panic
+        if ((zigOps.unsafeCastCount ?? 0) > 0) score += 6; // unsafe cast = UB risk
+        if ((zigOps.unreachableCount ?? 0) > 1) score += 3; // excessive unreachable
+        const allocs = zigOps.allocCallCount ?? 0;
+        const frees = zigOps.freeCallCount ?? 0;
+        if (allocs > 0 && frees === 0) score += 5; // alloc without free = leak risk
+      }
     }
 
     if (metric === "changes" || metric === "all") {

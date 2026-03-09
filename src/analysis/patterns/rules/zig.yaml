@@ -87,7 +87,52 @@ patterns:
     minSemanticSimilarity: 0.6
     minStructuralConfidence: 0.5
 
+  - id: "zig:unsafe-cast-abuse"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Unsafe Cast Abuse"
+    description: "Excessive use of @ptrCast/@intFromPtr/@alignCast — high risk of undefined behavior"
+    suggestion: "Reduce unsafe casts: use typed pointers, @as(), or restructure data layout to avoid reinterpretation"
+    tags: ["safety", "ub", "pointers"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkUnsafeCastAbuse"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "zig:alloc-without-free"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Alloc Without Free"
+    description: "Allocator call without matching free/destroy and no defer cleanup — memory leak"
+    suggestion: "Add 'defer allocator.free(ptr)' or ensure free/destroy is called on all paths"
+    tags: ["memory", "safety", "leak"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkAllocWithoutFree"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
   # ─── Code Smells ─────────────────────────────────────────────────
+
+  - id: "zig:unreachable-abuse"
+    category: "code-smell"
+    severity: "medium"
+    name: "Unreachable Abuse"
+    description: "Excessive use of unreachable keyword — may hide real error paths"
+    suggestion: "Replace unreachable with proper error handling or @panic with descriptive message"
+    tags: ["error-handling", "safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkUnreachableAbuse"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
 
   - id: "zig:swallowed-error"
     category: "code-smell"

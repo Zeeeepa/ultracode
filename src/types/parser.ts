@@ -390,6 +390,19 @@ export interface ParsedEntity {
       }
     | undefined;
 
+  antipatternHints?:
+    | {
+        typeAssertionCount: number;
+        doubleAssertionCount: number;
+        nonNullAssertionCount: number;
+        throwNonErrorCount: number;
+        innerHtmlAssignCount: number;
+        orWithDefaultCount: number;
+        paramMutationCount: number;
+        regexLiterals: string[];
+      }
+    | undefined;
+
   embeddingBase64?: string | undefined;
   embeddingText?: string | undefined;
   metadata?: Record<string, any> | undefined;

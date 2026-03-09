@@ -264,6 +264,25 @@ export function buildVectorMetadata(entity: ParsedEntity, modelName: string): Re
     metadata["paramCount"] = entity.parameters.length;
   }
 
+  // Add antipattern hint signals for security/quality filtering
+  const apHints = entity.antipatternHints;
+  if (apHints) {
+    if (apHints.typeAssertionCount > 0) metadata["hasTypeAssertions"] = true;
+    if (apHints.regexLiterals.length > 0) metadata["hasRegexLiterals"] = true;
+    if (apHints.innerHtmlAssignCount > 0 || apHints.regexLiterals.length > 0) {
+      metadata["hasSecurityHints"] = true;
+    }
+  }
+
+  // Zig-specific metadata signals
+  const zigOps = entity.metadata?.["zigOps"] as Record<string, number> | undefined;
+  if (zigOps) {
+    if ((zigOps["forceUnwrapCount"] ?? 0) > 0) metadata["hasForceUnwrap"] = true;
+    if ((zigOps["unsafeCastCount"] ?? 0) > 0) metadata["hasUnsafeCast"] = true;
+    if ((zigOps["allocCallCount"] ?? 0) > 0) metadata["hasAllocations"] = true;
+    if ((zigOps["unreachableCount"] ?? 0) > 0) metadata["hasUnreachable"] = true;
+  }
+
   return metadata;
 }
 

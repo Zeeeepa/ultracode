@@ -451,6 +451,46 @@ export class ImpactAnalyzer {
       });
     }
 
+    // Antipattern hints: type assertions make code fragile to type changes
+    const apHints = meta["antipatternHints"] as
+      | { typeAssertionCount?: number; paramMutationCount?: number }
+      | undefined;
+    if (apHints) {
+      if ((apHints.typeAssertionCount ?? 0) > 0) {
+        changes.push({
+          description: `${apHints.typeAssertionCount} type assertion(s) - 'as' casts bypass type checking and may silently break on type changes`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+      if ((apHints.paramMutationCount ?? 0) > 0 && callers.length > 0) {
+        changes.push({
+          description: `Mutates ${apHints.paramMutationCount} parameter(s) in-place - changes may cascade to ${callers.length} callers' data`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+    }
+
+    // Zig-specific: unsafe casts make API changes more dangerous
+    const zigOps = meta?.["zigOps"] as { unsafeCastCount?: number; forceUnwrapCount?: number } | undefined;
+    if (zigOps) {
+      if ((zigOps.unsafeCastCount ?? 0) > 0) {
+        changes.push({
+          description: `${zigOps.unsafeCastCount} unsafe cast(s) (@ptrCast/@intFromPtr) — type changes may cause undefined behavior`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+      if ((zigOps.forceUnwrapCount ?? 0) > 2) {
+        changes.push({
+          description: `${zigOps.forceUnwrapCount} force unwrap(s) (.?) — null propagation changes may cause panics`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+    }
+
     return changes;
   }
 

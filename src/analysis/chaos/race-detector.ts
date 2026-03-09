@@ -405,8 +405,42 @@ export class RaceDetector {
     }
     const sharedConditions = Array.from(conditionCounts.values()).filter((c) => c > 1).length;
 
+    // Check for antipattern signals that increase race risk:
+    // - paramMutation in async context = shared data modified in-place
+    // - orWithDefault (||) = possible TOCTOU pattern
+    let antipatternBoost = 0;
+    if (this._entityCache) {
+      for (const m of mutations) {
+        if (m.isAsync && m.entityId) {
+          const entity = this._entityCache.get(m.entityId);
+          const apHints = entity?.metadata?.["antipatternHints"] as
+            | { paramMutationCount?: number; orWithDefaultCount?: number }
+            | undefined;
+          if (apHints) {
+            if ((apHints.paramMutationCount ?? 0) > 0) antipatternBoost += 2;
+            if ((apHints.orWithDefaultCount ?? 0) > 0) antipatternBoost += 1;
+          }
+
+          // Zig-specific race signals
+          const zigOps = entity?.metadata?.["zigOps"] as
+            | { forceUnwrapCount?: number; allocCallCount?: number; freeCallCount?: number }
+            | undefined;
+          if (zigOps) {
+            // Alloc+free in async/threaded context = use-after-free risk
+            if ((zigOps.allocCallCount ?? 0) > 0 && (zigOps.freeCallCount ?? 0) > 0) {
+              antipatternBoost += 2;
+            }
+            // Force unwrap in concurrent code = panic risk
+            if ((zigOps.forceUnwrapCount ?? 0) > 0) {
+              antipatternBoost += 1;
+            }
+          }
+        }
+      }
+    }
+
     return {
-      writerCount: mutations.length,
+      writerCount: mutations.length + antipatternBoost,
       asyncBoundaries: mutations.filter((m) => m.isAsync).length,
       sharedConditions,
       oppositeConditions: oppositeConditions / 2, // Pairs

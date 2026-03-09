@@ -65,6 +65,7 @@ export interface StructuralCriteria {
   hasNoInheritance?: boolean | undefined; // Must NOT have base classes/interfaces
 
   // File path filter (regex)
+  filePathMatch?: string | undefined; // Only match entities whose filePath matches this regex
   filePathNotMatch?: string | undefined; // Skip entities whose filePath matches this regex
 
   // Name (regex)
@@ -77,6 +78,20 @@ export interface StructuralCriteria {
   hasWithStatement?: boolean | undefined;
   minSpreadInCalls?: number | undefined;
   minDynamicPropertyAccess?: number | undefined;
+
+  // Antipattern hints (from parser)
+  minTypeAssertions?: number | undefined;
+  minNonNullAssertions?: number | undefined;
+  hasInnerHtmlAssign?: boolean | undefined;
+  hasParamMutation?: boolean | undefined;
+  hasOrWithDefault?: boolean | undefined;
+  hasThrowNonError?: boolean | undefined;
+  hasRegexLiterals?: boolean | undefined;
+
+  // Zig-specific criteria (from zigOps in metadata)
+  minForceUnwraps?: number | undefined;
+  minUnsafeCasts?: number | undefined;
+  minUnreachable?: number | undefined;
 
   // Graph-based (require relationship queries)
   relationships?: RelationshipCriteria[] | undefined;
@@ -188,7 +203,11 @@ export interface CustomDetectorResult {
   matchedCriteria?: string[];
 }
 
-export type CustomDetectorFn = (entity: import("../../types/storage.js").Entity) => CustomDetectorResult;
+export type CustomDetectorFn = (
+  entity: import("../../types/storage.js").Entity,
+  /** Optional: all entities in current scan batch — enables cross-entity detectors (e.g., declaration merging, circular deps) */
+  allEntities?: import("../../types/storage.js").Entity[],
+) => CustomDetectorResult;
 
 // ─── Structural Candidate (internal) ──────────────────────────────
 

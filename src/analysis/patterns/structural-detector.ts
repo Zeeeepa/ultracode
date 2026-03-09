@@ -45,6 +45,7 @@ interface CompiledCriteria {
   decoratorMatchRe: RegExp[] | null;
   nameMatchRe: RegExp | null;
   nameNotMatchRe: RegExp | null;
+  filePathMatchRe: RegExp | null;
   filePathNotMatchRe: RegExp | null;
   totalCriteriaCount: number;
 }
@@ -67,6 +68,7 @@ function getCompiled(pattern: PatternDefinition): CompiledCriteria {
     decoratorMatchRe: c?.decoratorMatch ? c.decoratorMatch.map((p) => new RegExp(p, "i")) : null,
     nameMatchRe: c?.nameMatch ? new RegExp(c.nameMatch, "i") : null,
     nameNotMatchRe: c?.nameNotMatch ? new RegExp(c.nameNotMatch, "i") : null,
+    filePathMatchRe: c?.filePathMatch ? new RegExp(c.filePathMatch, "i") : null,
     filePathNotMatchRe: c?.filePathNotMatch ? new RegExp(c.filePathNotMatch, "i") : null,
     totalCriteriaCount: countTotalCriteria(c ?? {}),
   };
@@ -91,6 +93,21 @@ interface EntityMeta {
     hasWithStatement: boolean;
     spreadInCallCount: number;
     dynamicPropAccessCount: number;
+  } | null;
+  antipatternHints: {
+    typeAssertionCount: number;
+    doubleAssertionCount: number;
+    nonNullAssertionCount: number;
+    throwNonErrorCount: number;
+    innerHtmlAssignCount: number;
+    orWithDefaultCount: number;
+    paramMutationCount: number;
+    regexLiterals: string[];
+  } | null;
+  zigOps: {
+    forceUnwrapCount: number;
+    unsafeCastCount: number;
+    unreachableCount: number;
   } | null;
 }
 
@@ -127,6 +144,8 @@ function getMeta(entity: Entity): EntityMeta {
     decoratorNames: decsRaw.map((d) => d.name),
     hasInheritance: (inheritanceRaw?.baseClasses?.length ?? 0) > 0 || (inheritanceRaw?.interfaces?.length ?? 0) > 0,
     jitHints: (md?.["jitHints"] as EntityMeta["jitHints"]) ?? null,
+    antipatternHints: (md?.["antipatternHints"] as EntityMeta["antipatternHints"]) ?? null,
+    zigOps: (md?.["zigOps"] as EntityMeta["zigOps"]) ?? null,
   };
   metaCache.set(entity, meta);
   return meta;
@@ -140,6 +159,8 @@ const EVAL_ZERO: EvalResult = { confidence: 0, matchedCriteria: [] };
 export class StructuralDetector {
   // Cache: entityId:patternId -> evaluation result (3B)
   private evalCache = new Map<string, EvalResult>();
+  // Current scan batch — available to cross-entity custom detectors
+  private currentEntities: Entity[] = [];
 
   /** Clear evaluation cache (call when entities or patterns change) */
   clearEvalCache(): void {
@@ -152,6 +173,7 @@ export class StructuralDetector {
     storage?: GraphStorage,
   ): Promise<StructuralCandidate[]> {
     const candidates: StructuralCandidate[] = [];
+    this.currentEntities = entities;
 
     // Pre-index entities by type for O(1) lookup
     const entitiesByType = new Map<string, Entity[]>();
@@ -331,6 +353,11 @@ export class StructuralDetector {
     if (criteria.hasNoInheritance) {
       if (em.hasInheritance) return null; // bail-out: has base types
       matched.push("no-inheritance");
+    }
+
+    if (compiled.filePathMatchRe) {
+      if (!entity.filePath || !compiled.filePathMatchRe.test(entity.filePath)) return null; // bail-out: filePath must match
+      matched.push(`filePath:~/${criteria.filePathMatch}/`);
     }
 
     if (compiled.filePathNotMatchRe) {
@@ -551,6 +578,80 @@ export class StructuralDetector {
       }
     }
 
+    // Antipattern Hints
+    if (criteria.minTypeAssertions != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.typeAssertionCount >= criteria.minTypeAssertions) {
+        optionalPassed++;
+        matched.push(`typeAssertions>=${criteria.minTypeAssertions}`);
+      }
+    }
+    if (criteria.minNonNullAssertions != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.nonNullAssertionCount >= criteria.minNonNullAssertions) {
+        optionalPassed++;
+        matched.push(`nonNullAssertions>=${criteria.minNonNullAssertions}`);
+      }
+    }
+    if (criteria.hasInnerHtmlAssign != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.innerHtmlAssignCount > 0) {
+        optionalPassed++;
+        matched.push("hasInnerHtmlAssign");
+      }
+    }
+    if (criteria.hasParamMutation != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.paramMutationCount > 0) {
+        optionalPassed++;
+        matched.push("hasParamMutation");
+      }
+    }
+    if (criteria.hasOrWithDefault != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.orWithDefaultCount > 0) {
+        optionalPassed++;
+        matched.push("hasOrWithDefault");
+      }
+    }
+    if (criteria.hasThrowNonError != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.throwNonErrorCount > 0) {
+        optionalPassed++;
+        matched.push("hasThrowNonError");
+      }
+    }
+    if (criteria.hasRegexLiterals != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.regexLiterals.length > 0) {
+        optionalPassed++;
+        matched.push("hasRegexLiterals");
+      }
+    }
+
+    // Zig-specific criteria
+    if (criteria.minForceUnwraps != null) {
+      optionalTotal++;
+      if (em.zigOps && em.zigOps.forceUnwrapCount >= criteria.minForceUnwraps) {
+        optionalPassed++;
+        matched.push(`forceUnwraps>=${criteria.minForceUnwraps}`);
+      }
+    }
+    if (criteria.minUnsafeCasts != null) {
+      optionalTotal++;
+      if (em.zigOps && em.zigOps.unsafeCastCount >= criteria.minUnsafeCasts) {
+        optionalPassed++;
+        matched.push(`unsafeCasts>=${criteria.minUnsafeCasts}`);
+      }
+    }
+    if (criteria.minUnreachable != null) {
+      optionalTotal++;
+      if (em.zigOps && em.zigOps.unreachableCount >= criteria.minUnreachable) {
+        optionalPassed++;
+        matched.push(`unreachable>=${criteria.minUnreachable}`);
+      }
+    }
+
     // Name
     if (compiled.nameMatchRe) {
       optionalTotal++;
@@ -607,7 +708,7 @@ export class StructuralDetector {
       const detector = detectorRegistry.get(pattern.customDetector);
       if (detector) {
         try {
-          const result = detector(entity);
+          const result = detector(entity, this.currentEntities);
           if (result.match) {
             const customMatched = result.matchedCriteria ?? [`custom:${pattern.customDetector}`];
             const allMatched = [...matched, ...customMatched];
@@ -721,6 +822,7 @@ function countTotalCriteria(criteria: StructuralCriteria): number {
   if (criteria.callsExclude) count += criteria.callsExclude.length;
   if (criteria.decoratorMatch) count += criteria.decoratorMatch.length;
   if (criteria.hasNoInheritance) count++;
+  if (criteria.filePathMatch) count++;
   if (criteria.filePathNotMatch) count++;
   if (criteria.nameMatch) count++;
   if (criteria.nameNotMatch) count++;
@@ -729,6 +831,16 @@ function countTotalCriteria(criteria: StructuralCriteria): number {
   if (criteria.hasWithStatement != null) count++;
   if (criteria.minSpreadInCalls != null) count++;
   if (criteria.minDynamicPropertyAccess != null) count++;
+  if (criteria.minTypeAssertions != null) count++;
+  if (criteria.minNonNullAssertions != null) count++;
+  if (criteria.hasInnerHtmlAssign != null) count++;
+  if (criteria.hasParamMutation != null) count++;
+  if (criteria.hasOrWithDefault != null) count++;
+  if (criteria.hasThrowNonError != null) count++;
+  if (criteria.hasRegexLiterals != null) count++;
+  if (criteria.minForceUnwraps != null) count++;
+  if (criteria.minUnsafeCasts != null) count++;
+  if (criteria.minUnreachable != null) count++;
   if (criteria.relationships) count += criteria.relationships.length;
   return count;
 }

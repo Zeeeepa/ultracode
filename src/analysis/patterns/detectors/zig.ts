@@ -219,6 +219,56 @@ export function checkMutexNotDeferred(entity: Entity): CustomDetectorResult {
 }
 
 /**
+ * Unsafe cast abuse: excessive @ptrCast/@intFromPtr/@alignCast usage
+ */
+export function checkUnsafeCastAbuse(entity: Entity): CustomDetectorResult {
+  const zigOps = entity.metadata?.["zigOps"] as { unsafeCastCount?: number } | undefined;
+  const count = zigOps?.unsafeCastCount ?? 0;
+  if (count <= 2) return NO_MATCH;
+
+  return {
+    match: true,
+    confidence: Math.min(0.6 + count * 0.05, 0.85),
+    matchedCriteria: [`unsafeCasts=${count}`],
+  };
+}
+
+/**
+ * Alloc without free: allocator calls with no corresponding free/destroy and no defer cleanup
+ */
+export function checkAllocWithoutFree(entity: Entity): CustomDetectorResult {
+  const zigOps = entity.metadata?.["zigOps"] as
+    | { allocCallCount?: number; freeCallCount?: number; deferCount?: number }
+    | undefined;
+  if (!zigOps || (zigOps.allocCallCount ?? 0) === 0) return NO_MATCH;
+  if ((zigOps.freeCallCount ?? 0) > 0) return NO_MATCH;
+
+  // Check if defer is present (likely handles cleanup)
+  if ((zigOps.deferCount ?? 0) > 0) return NO_MATCH;
+
+  return {
+    match: true,
+    confidence: 0.7,
+    matchedCriteria: [`allocs=${zigOps.allocCallCount}`, "noFree", "noDefer"],
+  };
+}
+
+/**
+ * Unreachable abuse: excessive unreachable keywords suggesting error swallowing
+ */
+export function checkUnreachableAbuse(entity: Entity): CustomDetectorResult {
+  const zigOps = entity.metadata?.["zigOps"] as { unreachableCount?: number } | undefined;
+  const count = zigOps?.unreachableCount ?? 0;
+  if (count <= 2) return NO_MATCH;
+
+  return {
+    match: true,
+    confidence: Math.min(0.65 + (count - 2) * 0.05, 0.85),
+    matchedCriteria: [`unreachable=${count}`],
+  };
+}
+
+/**
  * Has deinit: verifies deinit actually performs cleanup (not just empty)
  */
 export function checkHasDeinit(entity: Entity): CustomDetectorResult {

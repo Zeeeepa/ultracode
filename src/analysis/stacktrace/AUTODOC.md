@@ -1,6 +1,6 @@
 # Stacktrace
 
-Analyzes stacktraces across 8 languages, resolves frames to code graph, classifies errors, and generates diagnostics.
+Analyzes stacktraces by parsing, classifying errors, resolving frames to code entities, and generating diagnostics with suggested fixes.
 
 ## Exports
 

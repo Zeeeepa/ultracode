@@ -94,6 +94,12 @@ const RETURN_RE = /\breturn\s*([^;\n}]+)?/g;
 const ORELSE_RE = /\borelse\b/g;
 const OPTIONAL_UNWRAP_RE = /\.\?/g;
 const BARE_CATCH_RE = /\bcatch\s*(?:\w+\s*)?\{/g;
+
+// Zig-specific safety/risk patterns
+const UNSAFE_CAST_RE = /@(?:ptrCast|intFromPtr|alignCast|ptrFromInt|intFromFloat)/g;
+const UNREACHABLE_RE = /\bunreachable\b/g;
+const ALLOC_CALL_RE = /\.(?:alloc|create|realloc|allocSentinel)\s*\(/g;
+const FREE_CALL_RE = /\.(?:free|destroy|deinit)\s*\(/g;
 const IF_UNWRAP_RE = /\bif\s*\([^)]*\)\s*\|([^|]*)\|/g;
 
 // Function with body pattern (for second-pass call extraction)
@@ -1040,7 +1046,17 @@ export class ZigNativeParser {
    * Extract Zig-specific optional unwrap operations from body.
    * .? = force unwrap (unsafe), if(x) |val| = safe unwrap
    */
-  private extractZigSpecificOps(body: string): { forceUnwrapCount: number; safeUnwrapCount: number } {
+  private extractZigSpecificOps(body: string): {
+    forceUnwrapCount: number;
+    safeUnwrapCount: number;
+    deferCount: number;
+    errdeferCount: number;
+    tryCount: number;
+    unsafeCastCount: number;
+    unreachableCount: number;
+    allocCallCount: number;
+    freeCallCount: number;
+  } {
     this.resetRegex(OPTIONAL_UNWRAP_RE);
     let forceUnwrapCount = 0;
     while (OPTIONAL_UNWRAP_RE.exec(body)) forceUnwrapCount++;
@@ -1049,7 +1065,45 @@ export class ZigNativeParser {
     let safeUnwrapCount = 0;
     while (IF_UNWRAP_RE.exec(body)) safeUnwrapCount++;
 
-    return { forceUnwrapCount, safeUnwrapCount };
+    this.resetRegex(DEFER_RE);
+    let deferCount = 0;
+    while (DEFER_RE.exec(body)) deferCount++;
+
+    this.resetRegex(ERRDEFER_RE);
+    let errdeferCount = 0;
+    while (ERRDEFER_RE.exec(body)) errdeferCount++;
+
+    this.resetRegex(TRY_RE);
+    let tryCount = 0;
+    while (TRY_RE.exec(body)) tryCount++;
+
+    this.resetRegex(UNSAFE_CAST_RE);
+    let unsafeCastCount = 0;
+    while (UNSAFE_CAST_RE.exec(body)) unsafeCastCount++;
+
+    this.resetRegex(UNREACHABLE_RE);
+    let unreachableCount = 0;
+    while (UNREACHABLE_RE.exec(body)) unreachableCount++;
+
+    this.resetRegex(ALLOC_CALL_RE);
+    let allocCallCount = 0;
+    while (ALLOC_CALL_RE.exec(body)) allocCallCount++;
+
+    this.resetRegex(FREE_CALL_RE);
+    let freeCallCount = 0;
+    while (FREE_CALL_RE.exec(body)) freeCallCount++;
+
+    return {
+      forceUnwrapCount,
+      safeUnwrapCount,
+      deferCount,
+      errdeferCount,
+      tryCount,
+      unsafeCastCount,
+      unreachableCount,
+      allocCallCount,
+      freeCallCount,
+    };
   }
 
   // ===========================================================================

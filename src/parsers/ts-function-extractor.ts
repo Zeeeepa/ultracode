@@ -6,6 +6,7 @@
 
 import ts from "typescript";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
+import { extractAntipatternHints } from "./ts-antipattern-hints-extractor.js";
 import { getDecorators, getLocation, getModifiers, getParameters, getReturnType } from "./ts-ast-helpers.js";
 import { type CallInfo, extractCalls, extractTypeReferences, type TypeReference } from "./ts-call-extractor.js";
 import { extractComplexity } from "./ts-complexity-analyzer.js";
@@ -94,6 +95,7 @@ export function extractFunctionDeclaration(node: ts.FunctionDeclaration, ctx: Fu
   const typeRefs = extractTypeReferences(node, sourceFile);
   const complexity = extractComplexity(node, sourceFile);
   const jitHints = extractJitHints(node, sourceFile);
+  const antipatternHints = extractAntipatternHints(node, sourceFile);
 
   entities.push({
     name: functionName,
@@ -110,6 +112,7 @@ export function extractFunctionDeclaration(node: ts.FunctionDeclaration, ctx: Fu
     typeReferences: typeRefs,
     complexity,
     ...(jitHints && { jitHints }),
+    ...(antipatternHints && { antipatternHints }),
   });
 
   if (calls.length > 0) {
@@ -139,6 +142,7 @@ export function extractArrowFunctionOrExpression(node: ts.VariableStatement, ctx
       const typeRefs = extractTypeReferences(decl.initializer, sourceFile);
       const complexity = extractComplexity(decl.initializer, sourceFile);
       const jitHints = extractJitHints(decl.initializer, sourceFile);
+      const antipatternHints = extractAntipatternHints(decl.initializer, sourceFile);
 
       entities.push({
         name,
@@ -154,6 +158,7 @@ export function extractArrowFunctionOrExpression(node: ts.VariableStatement, ctx
         typeReferences: typeRefs,
         complexity,
         ...(jitHints && { jitHints }),
+        ...(antipatternHints && { antipatternHints }),
       });
 
       if (calls.length > 0) {

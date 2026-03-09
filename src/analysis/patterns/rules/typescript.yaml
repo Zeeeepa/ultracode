@@ -368,3 +368,480 @@ patterns:
     customDetector: "checkExcessiveOptionalChaining"
     minSemanticSimilarity: 0
     minStructuralConfidence: 0.5
+
+  # ─── Phase 1: Pure Metadata Detectors ────────────────────────
+
+  - id: "ts:boolean-trap"
+    category: "code-smell"
+    severity: "medium"
+    name: "Boolean Trap"
+    description: "Function with 2+ boolean parameters — call sites like foo(true, false, true) are unreadable"
+    suggestion: "Replace booleans with an options object: foo({ verbose: true, strict: false })"
+    tags: ["readability", "api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minParams: 2
+    customDetector: "checkBooleanTrap"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "ts:inconsistent-return-type"
+    category: "code-smell"
+    severity: "medium"
+    name: "Inconsistent Return Type"
+    description: "Function returns a union of 4+ types — callers must handle too many cases"
+    suggestion: "Narrow the return type or use discriminated union with a shared 'type' field"
+    tags: ["type-safety", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkInconsistentReturn"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:async-constructor"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Async Constructor"
+    description: "Constructor with await — constructors cannot return Promises, await is silently ignored"
+    suggestion: "Use a static async factory method: static async create() { ... }"
+    tags: ["async", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      nameMatch: "^constructor$"
+      hasAwaits: true
+    customDetector: "checkAsyncConstructor"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "ts:quadratic-array-ops"
+    category: "optimization"
+    severity: "medium"
+    name: "Quadratic Array Operations"
+    description: "Nested array iteration + lookup (filter+includes, map+indexOf) creates O(n²) complexity"
+    suggestion: "Use Set/Map for O(1) lookups: const set = new Set(arr); items.filter(x => set.has(x))"
+    bigO:
+      before: "O(n²)"
+      after: "O(n)"
+    tags: ["performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkQuadraticArrayOps"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:event-listener-leak"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Event Listener Leak"
+    description: "addEventListener/subscribe without corresponding cleanup — causes memory leaks"
+    suggestion: "Store the reference and call removeEventListener/unsubscribe in cleanup (ngOnDestroy, useEffect return, etc.)"
+    tags: ["memory", "lifecycle"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkEventListenerLeak"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:json-deep-clone"
+    category: "optimization"
+    severity: "medium"
+    name: "JSON Deep Clone"
+    description: "JSON.parse(JSON.stringify(obj)) loses Date, RegExp, undefined, Map, Set, functions, and circular references"
+    suggestion: "Use structuredClone() (Node 17+/all modern browsers) or a targeted clone utility"
+    tags: ["correctness", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["JSON\\.parse", "JSON\\.stringify"]
+    customDetector: "checkJsonDeepClone"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "ts:accumulating-spread"
+    category: "optimization"
+    severity: "medium"
+    name: "Accumulating Spread in Reduce"
+    description: "Using {...acc, ...item} in reduce creates a new object each iteration — O(n²) total copies"
+    suggestion: "Use a mutable accumulator: reduce((acc, item) => { acc[key] = val; return acc; }, {})"
+    bigO:
+      before: "O(n²)"
+      after: "O(n)"
+    tags: ["performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["reduce"]
+    customDetector: "checkAccumulatingSpread"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "ts:barrel-file"
+    category: "code-smell"
+    severity: "medium"
+    name: "Barrel File"
+    description: "index.ts re-exporting everything — forces bundlers to load all modules even when only one is needed"
+    suggestion: "Import directly from source files or use tree-shakeable exports"
+    tags: ["bundling", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["export"]
+      filePathMatch: "index\\.(ts|js|tsx|jsx)$"
+      nameMatch: "\\*"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # ─── Phase 2: AntipatternHints-based Detectors ───────────────
+
+  - id: "ts:unsafe-type-assertion"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Unsafe Type Assertion"
+    description: "'as Type' bypasses type checking — the compiler trusts you blindly"
+    suggestion: "Use type guards (instanceof, in, typeof) or unknown with narrowing"
+    tags: ["type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minTypeAssertions: 1
+    customDetector: "checkUnsafeTypeAssertion"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:non-null-assertion-abuse"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Non-null Assertion Abuse"
+    description: "Excessive use of postfix ! — suppresses null/undefined errors that should be handled"
+    suggestion: "Use optional chaining (?.) or explicit null checks"
+    tags: ["type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minNonNullAssertions: 3
+    customDetector: "checkNonNullAssertionAbuse"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:nullish-vs-or-confusion"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Nullish vs OR Confusion"
+    description: "Using || with falsy defaults (0, '', false) — || treats all falsy values as missing, not just null/undefined"
+    suggestion: "Use ?? (nullish coalescing) to only default on null/undefined"
+    tags: ["correctness", "type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasOrWithDefault: true
+    customDetector: "checkNullishVsOrConfusion"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:throw-non-error"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Throw Non-Error Object"
+    description: "Throwing a string or plain object loses the stack trace — harder to debug"
+    suggestion: "Always throw new Error('message') or a custom Error subclass"
+    tags: ["error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasThrowNonError: true
+    customDetector: "checkThrowNonError"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "ts:parameter-mutation"
+    category: "code-smell"
+    severity: "medium"
+    name: "Parameter Mutation"
+    description: "Modifying function arguments (push, splice, assignment) — callers don't expect their data to change"
+    suggestion: "Clone the parameter first or return a new value instead of mutating"
+    tags: ["side-effects", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasParamMutation: true
+    customDetector: "checkParameterMutation"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:unsafe-innerhtml"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "Unsafe innerHTML Assignment"
+    description: "Direct innerHTML assignment — XSS vulnerability if content includes user input"
+    suggestion: "Use textContent for text, DOMPurify for HTML, or framework-safe APIs (React JSX, Angular [innerHTML] with sanitizer)"
+    tags: ["security", "xss"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasInnerHtmlAssign: true
+    customDetector: "checkUnsafeInnerHtml"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "ts:redos-vulnerability"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "ReDoS Vulnerability"
+    description: "Regular expression with nested quantifiers — exponential backtracking on crafted input"
+    suggestion: "Simplify the regex, use atomic groups, or validate input length before matching"
+    tags: ["security", "regex"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasRegexLiterals: true
+    customDetector: "checkRedosVulnerability"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "ts:missing-generic-constraint"
+    category: "code-smell"
+    severity: "low"
+    name: "Missing Generic Constraint"
+    description: "Generic type parameter without constraint — consumers can pass any type, defeating the purpose"
+    suggestion: "Add a constraint: <T extends Base> or <T extends Record<string, unknown>>"
+    tags: ["type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkMissingGenericConstraint"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── Phase 3: Module/Type Level Detectors ────────────────────
+
+  - id: "ts:enum-pitfalls"
+    category: "code-smell"
+    severity: "medium"
+    name: "Enum Pitfalls"
+    description: "Numeric enum without string initializers — adding/removing members silently changes values"
+    suggestion: "Use string enums: enum Status { Active = 'active', Inactive = 'inactive' }"
+    tags: ["type-safety", "maintenance"]
+    enabled: true
+    structural:
+      entityTypes: ["enum"]
+    customDetector: "checkEnumPitfalls"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:namespace-antipattern"
+    category: "code-smell"
+    severity: "low"
+    name: "Namespace Declaration"
+    description: "TypeScript namespace is a legacy pattern — ES modules provide better encapsulation"
+    suggestion: "Convert to ES module with named exports"
+    tags: ["modernization"]
+    enabled: true
+    structural:
+      entityTypes: ["namespace"]
+    customDetector: "checkNamespaceAntipattern"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "ts:conditional-type-abuse"
+    category: "code-smell"
+    severity: "info"
+    name: "Conditional Type Abuse"
+    description: "Deeply nested conditional types (4+ levels) — hard to read and slow for the type checker"
+    suggestion: "Break into smaller helper types or use mapped types / template literal types"
+    tags: ["type-safety", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["type"]
+    customDetector: "checkConditionalTypeAbuse"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── Phase 4: Test & Heuristic Detectors ─────────────────────
+
+  - id: "ts:any-in-tests"
+    category: "code-smell"
+    severity: "low"
+    name: "Any Type in Tests"
+    description: "'any' in test files — tests should validate types too, not bypass them"
+    suggestion: "Use proper mock types or 'as unknown as Type' with type-safe mocks"
+    tags: ["testing", "type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      filePathMatch: "\\.(spec|test)\\.(ts|tsx)$"
+    customDetector: "checkAnyTypeParam"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:snapshot-abuse"
+    category: "code-smell"
+    severity: "low"
+    name: "Snapshot Test Abuse"
+    description: "3+ snapshot assertions in one test — snapshots become noise that gets approved blindly"
+    suggestion: "Use targeted assertions (toEqual, toContain) for specific values you care about"
+    tags: ["testing"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      filePathMatch: "\\.(spec|test)\\.(ts|tsx|js|jsx)$"
+    customDetector: "checkSnapshotAbuse"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "ts:implementation-testing"
+    category: "code-smell"
+    severity: "low"
+    name: "Implementation Testing"
+    description: "Spying on private methods couples tests to implementation details"
+    suggestion: "Test behavior through public API — assert outputs and side effects, not internal calls"
+    tags: ["testing"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      filePathMatch: "\\.(spec|test)\\.(ts|tsx|js|jsx)$"
+    customDetector: "checkImplementationTesting"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "ts:stringly-typed-api"
+    category: "code-smell"
+    severity: "low"
+    name: "Stringly-Typed API"
+    description: "Exported function with 2+ string parameters — easy to mix up argument order"
+    suggestion: "Use branded types, enums, or an options object for better type safety"
+    tags: ["api-design", "type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      requiredModifiers: ["export"]
+      minParams: 2
+    customDetector: "checkStringlyTypedApi"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "ts:await-in-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "Await in Loop"
+    description: "Sequential await in loop — each iteration waits for the previous one to complete"
+    suggestion: "Use Promise.all() or Promise.allSettled() for parallel execution"
+    tags: ["async", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasLoops: true
+      hasAwaits: true
+    customDetector: "checkAwaitInLoop"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ─── Remaining Detectors (Group 1: Heuristic) ─────────────────
+
+  - id: "ts:unsafe-index-access"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Unsafe Index Access"
+    description: "Array/object indexing without bounds or null check — result may be undefined at runtime"
+    suggestion: "Use optional chaining (arr[i]?.prop), Array.at(), or add explicit bounds checking"
+    tags: ["type-safety", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minDynamicPropertyAccess: 1
+    customDetector: "checkUnsafeIndexAccess"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.4
+
+  - id: "ts:missing-null-check"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Missing Null Check"
+    description: "Function with nullable parameters but no narrowing branches — may dereference null at runtime"
+    suggestion: "Add explicit null/undefined checks or use optional chaining before accessing properties"
+    tags: ["type-safety", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minParams: 1
+    customDetector: "checkMissingNullCheck"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.4
+
+  - id: "ts:missing-readonly"
+    category: "code-smell"
+    severity: "low"
+    name: "Missing Readonly on Class Property"
+    description: "Public class property without readonly — can be mutated from outside, breaking encapsulation"
+    suggestion: "Add 'readonly' modifier if the property is only set in the constructor"
+    tags: ["encapsulation", "immutability"]
+    enabled: true
+    structural:
+      entityTypes: ["property", "field", "variable"]
+    customDetector: "checkMissingReadonly"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.4
+
+  - id: "ts:missing-input-validation"
+    category: "code-smell"
+    severity: "low"
+    name: "Missing Input Validation"
+    description: "Exported function with multiple parameters but no validation branches — trusts all callers blindly"
+    suggestion: "Add parameter validation at the boundary: type guards, assertions, or schema validation (Zod, io-ts)"
+    tags: ["correctness", "api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      requiredModifiers: ["export"]
+      minParams: 2
+      minLOC: 5
+    customDetector: "checkMissingInputValidation"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.4
+
+  # ─── Remaining Detectors (Group 2: Cross-Entity) ──────────────
+
+  - id: "ts:side-effect-import"
+    category: "code-smell"
+    severity: "low"
+    name: "Side-Effect Import"
+    description: "Import with no bindings (import './module') — side effects are implicit and hard to track"
+    suggestion: "Make the dependency explicit by importing a named export, or document why the side effect is needed"
+    tags: ["imports", "maintainability"]
+    enabled: true
+    structural:
+      entityTypes: ["import"]
+    customDetector: "checkSideEffectImport"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "ts:declaration-merging-trap"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Declaration Merging Trap"
+    description: "Multiple interface declarations with the same name in the same file — TypeScript silently merges them"
+    suggestion: "Consolidate into a single interface declaration or use type intersection (&) for clarity"
+    tags: ["type-safety", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["interface"]
+    customDetector: "checkDeclarationMergingTrap"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "ts:circular-dependency"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Circular Dependency"
+    description: "Mutual import between files — causes initialization order issues and breaks tree-shaking"
+    suggestion: "Extract shared types/interfaces into a separate file, or use dependency injection"
+    tags: ["architecture", "imports"]
+    enabled: true
+    structural:
+      entityTypes: ["import"]
+    customDetector: "checkCircularDependency"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7

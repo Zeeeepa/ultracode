@@ -216,6 +216,32 @@ export class DataFlowAnalyzer {
         }
       }
 
+      // Check for parameter mutation (data modified in-place, flow continues)
+      const apHints = meta["antipatternHints"] as { paramMutationCount?: number } | undefined;
+      if (apHints && (apHints.paramMutationCount ?? 0) > 0) {
+        flow.push({
+          step: stepOrder++,
+          location: `${currentEntity.filePath}:${currentEntity.location.start.line}`,
+          action: "transform" as DataFlowActionType,
+          input: currentData,
+          output: `mutated(${currentData})`,
+          transformation: `param-mutation(×${apHints.paramMutationCount})`,
+        });
+      }
+
+      // Zig-specific: unsafe casts create type-breaking data flow steps
+      const zigOps = meta?.["zigOps"] as { unsafeCastCount?: number } | undefined;
+      if (zigOps && (zigOps.unsafeCastCount ?? 0) > 0) {
+        flow.push({
+          step: stepOrder++,
+          location: `${currentEntity.filePath}:${currentEntity.location.start.line}`,
+          action: "transform" as DataFlowActionType,
+          input: currentData,
+          output: "reinterpreted_ptr",
+          transformation: `unsafe_cast(×${zigOps.unsafeCastCount})`,
+        });
+      }
+
       // Check for branching based on data
       if (meta["controlFlow"]?.branches && Array.isArray(meta["controlFlow"].branches)) {
         for (const branch of meta["controlFlow"].branches) {

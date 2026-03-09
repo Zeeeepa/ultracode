@@ -63,6 +63,10 @@ interface SemanticResultMetadata {
   // Types
   returnType?: string;
   paramCount?: number;
+  // Antipattern signals
+  hasTypeAssertions?: boolean;
+  hasRegexLiterals?: boolean;
+  hasSecurityHints?: boolean;
 }
 
 /**
