@@ -13,6 +13,11 @@ import { log } from "../../logging/index.js";
 import { toError } from "../../utils/error-handling.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { CheckEntityPatternsSchema, DetectPatternsSchema } from "../schemas/pattern-schemas.js";
+import {
+  buildRecentChangeSummary,
+  type EntityInfoInput,
+  formatRecentChangesSection,
+} from "../utils/recent-changes-enrichment.js";
 
 // Shared lazy PatternEngine instance
 let sharedEngine: PatternEngine | null = null;
@@ -87,16 +92,43 @@ export class DetectPatternsToolHandler extends BaseToolHandler<z.infer<typeof De
       }
       nextSteps.push("graph_metrics({metric:'pagerank'}) — rank affected entities by importance");
 
+      // Enrich with recently-changed status if requested
+      let recentChangeSummary: import("../utils/recent-changes-enrichment.js").RecentChangeSummary | null = null;
+      if (args.highlightRecentChanges && allMatches.length > 0) {
+        const entityInfos: EntityInfoInput[] = allMatches.map((m: any) => ({
+          entityId: m.entityId as string,
+          significance: (m.pattern.severity === "critical" || m.pattern.severity === "high" ? "high" : "medium") as
+            | "high"
+            | "medium",
+          entityName: m.entityName as string | undefined,
+          filePath: m.filePath as string | undefined,
+        }));
+        recentChangeSummary = await buildRecentChangeSummary(storage, entityInfos, args.recentCommitsCount);
+
+        // Mark individual matches
+        if (recentChangeSummary) {
+          const changedSet = new Set(recentChangeSummary.recentlyChangedEntities.map((e) => e.entityId));
+          for (const m of allMatches) {
+            if (changedSet.has((m as any).entityId)) {
+              (m as any).recentlyChanged = true;
+            }
+          }
+        }
+      }
+
       let output: string;
       if (args.format === "json") {
         const json = PatternFormatter.toJSON(result) as Record<string, unknown>;
         json["nextSteps"] = nextSteps;
+        if (recentChangeSummary) json["recentChangeSummary"] = recentChangeSummary;
         output = JSON.stringify(json, null, 2);
       } else if (args.format === "detailed") {
         output = PatternFormatter.format(result, "detailed");
+        if (recentChangeSummary) output += formatRecentChangesSection(recentChangeSummary);
         output += `\n\n---\nNext steps:\n${nextSteps.map((s) => `- ${s}`).join("\n")}`;
       } else {
         output = PatternFormatter.format(result, "summary");
+        if (recentChangeSummary) output += formatRecentChangesSection(recentChangeSummary);
         output += `\n\n---\nNext steps:\n${nextSteps.map((s) => `- ${s}`).join("\n")}`;
       }
       log.i("DETECT_PATTERNS", "format_done", { outputLen: output.length });

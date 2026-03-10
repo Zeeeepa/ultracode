@@ -557,3 +557,188 @@ export function checkAsyncioRunInLoop(entity: Entity): CustomDetectorResult {
     matchedCriteria: ["asyncio-run-in-async"],
   };
 }
+
+// ─── Class-level Detectors (use classMeta) ──────────────────────────
+
+type ClassMeta = {
+  hasSlots?: boolean;
+  dunderMethods?: string[];
+  properties?: Record<string, { hasSetter: boolean }>;
+  initCallCount?: number;
+  methodCount?: number;
+};
+
+function getClassMeta(entity: Entity): ClassMeta | null {
+  return (entity.metadata?.["classMeta"] as ClassMeta) ?? null;
+}
+
+/**
+ * Class missing __slots__ — higher memory per instance
+ */
+export function checkMissingSlots(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "class") return NO_MATCH;
+  const cm = getClassMeta(entity);
+  if (!cm) return NO_MATCH;
+  if (cm.hasSlots) return NO_MATCH;
+  // Only flag classes with several attributes / methods (not tiny helper classes)
+  if ((cm.methodCount ?? 0) < 3) return NO_MATCH;
+  return {
+    match: true,
+    confidence: 0.6,
+    matchedCriteria: ["class-no-slots"],
+  };
+}
+
+/**
+ * Class missing __repr__ — poor debuggability
+ */
+export function checkMissingRepr(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "class") return NO_MATCH;
+  const cm = getClassMeta(entity);
+  if (!cm) return NO_MATCH;
+  const dunders = cm.dunderMethods ?? [];
+  if (dunders.includes("__repr__")) return NO_MATCH;
+  // Only flag non-trivial classes
+  if ((cm.methodCount ?? 0) < 2) return NO_MATCH;
+  return {
+    match: true,
+    confidence: 0.55,
+    matchedCriteria: ["class-no-repr"],
+  };
+}
+
+/**
+ * @property without @x.setter — immutability confusion
+ */
+export function checkPropertyNoSetter(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "class") return NO_MATCH;
+  const cm = getClassMeta(entity);
+  if (!cm?.properties) return NO_MATCH;
+  const readOnly = Object.entries(cm.properties).filter(([, v]) => !v.hasSetter);
+  if (readOnly.length === 0) return NO_MATCH;
+  return {
+    match: true,
+    confidence: 0.5,
+    matchedCriteria: readOnly.map(([name]) => `property-no-setter:${name}`),
+  };
+}
+
+/**
+ * __init__ does too much — complex constructor
+ */
+export function checkInitTooComplex(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "class") return NO_MATCH;
+  const cm = getClassMeta(entity);
+  if (!cm || (cm.initCallCount ?? 0) < 10) return NO_MATCH;
+  return {
+    match: true,
+    confidence: Math.min(0.5 + (cm.initCallCount! - 10) * 0.05, 0.9),
+    matchedCriteria: [`init-calls:${cm.initCallCount}`],
+  };
+}
+
+/**
+ * God class: too many methods (>20)
+ */
+export function checkGodClass(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "class") return NO_MATCH;
+  const cm = getClassMeta(entity);
+  if (!cm || (cm.methodCount ?? 0) < 20) return NO_MATCH;
+  return {
+    match: true,
+    confidence: Math.min(0.5 + (cm.methodCount! - 20) * 0.03, 0.9),
+    matchedCriteria: [`method-count:${cm.methodCount}`],
+  };
+}
+
+// ─── Function Complexity Detectors ──────────────────────────────────
+
+interface PyCfExt {
+  returnCount: number;
+  nestingDepth: number;
+  cyclomaticComplexity: number;
+  isinstanceCount: number;
+  reRaiseDifferentType: boolean;
+}
+
+function getPyCfExt(entity: Entity): PyCfExt | null {
+  const cf = entity.metadata?.["controlFlow"] as Record<string, unknown> | undefined;
+  if (!cf) return null;
+  return {
+    returnCount: (cf["returnCount"] as number) ?? 0,
+    nestingDepth: (cf["nestingDepth"] as number) ?? 0,
+    cyclomaticComplexity: (cf["cyclomaticComplexity"] as number) ?? 0,
+    isinstanceCount: (cf["isinstanceCount"] as number) ?? 0,
+    reRaiseDifferentType: !!cf["reRaiseDifferentType"],
+  };
+}
+
+/**
+ * Too many return statements (>5) — complex control flow
+ */
+export function checkTooManyReturns(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "function" && entity.type !== "method") return NO_MATCH;
+  const cf = getPyCfExt(entity);
+  if (!cf || (cf.returnCount ?? 0) <= 5) return NO_MATCH;
+  return {
+    match: true,
+    confidence: Math.min(0.5 + (cf.returnCount! - 5) * 0.1, 0.9),
+    matchedCriteria: [`return-count:${cf.returnCount}`],
+  };
+}
+
+/**
+ * Deep nesting (>4 levels) — hard to read/maintain
+ */
+export function checkDeepNesting(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "function" && entity.type !== "method") return NO_MATCH;
+  const cf = getPyCfExt(entity);
+  if (!cf || (cf.nestingDepth ?? 0) <= 4) return NO_MATCH;
+  return {
+    match: true,
+    confidence: Math.min(0.6 + (cf.nestingDepth! - 4) * 0.1, 0.95),
+    matchedCriteria: [`nesting-depth:${cf.nestingDepth}`],
+  };
+}
+
+/**
+ * High cyclomatic complexity (>10) — too many branches
+ */
+export function checkHighComplexity(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "function" && entity.type !== "method") return NO_MATCH;
+  const cf = getPyCfExt(entity);
+  if (!cf || (cf.cyclomaticComplexity ?? 0) <= 10) return NO_MATCH;
+  return {
+    match: true,
+    confidence: Math.min(0.5 + (cf.cyclomaticComplexity! - 10) * 0.04, 0.9),
+    matchedCriteria: [`cyclomatic:${cf.cyclomaticComplexity}`],
+  };
+}
+
+/**
+ * isinstance chain (>3) — consider match/case or dispatch
+ */
+export function checkIsinstanceChain(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "function" && entity.type !== "method") return NO_MATCH;
+  const cf = getPyCfExt(entity);
+  if (!cf || (cf.isinstanceCount ?? 0) <= 3) return NO_MATCH;
+  return {
+    match: true,
+    confidence: Math.min(0.5 + (cf.isinstanceCount! - 3) * 0.1, 0.85),
+    matchedCriteria: [`isinstance-count:${cf.isinstanceCount}`],
+  };
+}
+
+/**
+ * Re-raise different exception type — loses original traceback
+ */
+export function checkReRaiseDifferent(entity: Entity): CustomDetectorResult {
+  if (entity.type !== "function" && entity.type !== "method") return NO_MATCH;
+  const cf = getPyCfExt(entity);
+  if (!cf?.reRaiseDifferentType) return NO_MATCH;
+  return {
+    match: true,
+    confidence: 0.75,
+    matchedCriteria: ["re-raise-different-type"],
+  };
+}

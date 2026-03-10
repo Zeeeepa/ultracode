@@ -1,6 +1,6 @@
 # Stacktrace
 
-Analyzes and diagnoses stacktraces across multiple programming languages
+Analyzes stacktraces, resolves frames to entities, classifies errors
 
 ## Exports
 

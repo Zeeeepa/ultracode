@@ -132,6 +132,20 @@ interface EntityMeta {
     openWithoutWithCount: number;
     asyncNoAwaitCount: number;
   } | null;
+  pythonCfExt: {
+    returnCount: number;
+    nestingDepth: number;
+    cyclomaticComplexity: number;
+    isinstanceCount: number;
+    reRaiseDifferentType: boolean;
+  } | null;
+  classMeta: {
+    hasSlots: boolean;
+    dunderMethods: string[];
+    properties: Record<string, { hasSetter: boolean }>;
+    initCallCount: number;
+    methodCount: number;
+  } | null;
 }
 
 const metaCache = new WeakMap<Entity, EntityMeta>();
@@ -172,6 +186,16 @@ function getMeta(entity: Entity): EntityMeta {
     csharpHints:
       (md?.["_csharpHints"] as EntityMeta["csharpHints"]) ?? (md?.["csharpHints"] as EntityMeta["csharpHints"]) ?? null,
     pythonHints: (md?.["pythonHints"] as EntityMeta["pythonHints"]) ?? null,
+    pythonCfExt: cfRaw
+      ? {
+          returnCount: ((cfRaw as Record<string, unknown>)?.["returnCount"] as number) ?? 0,
+          nestingDepth: ((cfRaw as Record<string, unknown>)?.["nestingDepth"] as number) ?? 0,
+          cyclomaticComplexity: ((cfRaw as Record<string, unknown>)?.["cyclomaticComplexity"] as number) ?? 0,
+          isinstanceCount: ((cfRaw as Record<string, unknown>)?.["isinstanceCount"] as number) ?? 0,
+          reRaiseDifferentType: !!(cfRaw as Record<string, unknown>)?.["reRaiseDifferentType"],
+        }
+      : null,
+    classMeta: (md?.["classMeta"] as EntityMeta["classMeta"]) ?? null,
   };
   metaCache.set(entity, meta);
   return meta;
@@ -844,6 +868,97 @@ export class StructuralDetector {
       }
     }
 
+    // Python controlFlow extended fields
+    if (criteria.minReturnCount != null) {
+      optionalTotal++;
+      if (em.pythonCfExt && em.pythonCfExt.returnCount >= criteria.minReturnCount) {
+        optionalPassed++;
+        matched.push(`returnCount>=${criteria.minReturnCount}`);
+      }
+    }
+    if (criteria.minNestingDepth != null) {
+      optionalTotal++;
+      if (em.pythonCfExt && em.pythonCfExt.nestingDepth >= criteria.minNestingDepth) {
+        optionalPassed++;
+        matched.push(`nestingDepth>=${criteria.minNestingDepth}`);
+      }
+    }
+    if (criteria.minCyclomaticPy != null) {
+      optionalTotal++;
+      if (em.pythonCfExt && em.pythonCfExt.cyclomaticComplexity >= criteria.minCyclomaticPy) {
+        optionalPassed++;
+        matched.push(`cyclomaticPy>=${criteria.minCyclomaticPy}`);
+      }
+    }
+    if (criteria.minIsinstanceCount != null) {
+      optionalTotal++;
+      if (em.pythonCfExt && em.pythonCfExt.isinstanceCount >= criteria.minIsinstanceCount) {
+        optionalPassed++;
+        matched.push(`isinstance>=${criteria.minIsinstanceCount}`);
+      }
+    }
+    if (criteria.hasPyReRaiseDifferent != null) {
+      optionalTotal++;
+      if (em.pythonCfExt?.reRaiseDifferentType) {
+        optionalPassed++;
+        matched.push("reRaiseDifferentType");
+      }
+    }
+
+    // Python class metadata
+    if (criteria.hasPySlots != null) {
+      optionalTotal++;
+      if (em.classMeta?.hasSlots) {
+        optionalPassed++;
+        matched.push("hasSlots");
+      }
+    }
+    if (criteria.missingPySlots != null) {
+      optionalTotal++;
+      if (em.classMeta && !em.classMeta.hasSlots) {
+        optionalPassed++;
+        matched.push("missingSlots");
+      }
+    }
+    if (criteria.missingPyRepr != null) {
+      optionalTotal++;
+      if (em.classMeta && !em.classMeta.dunderMethods?.includes("__repr__")) {
+        optionalPassed++;
+        matched.push("missingRepr");
+      }
+    }
+    if (criteria.missingPyStr != null) {
+      optionalTotal++;
+      if (em.classMeta && !em.classMeta.dunderMethods?.includes("__str__")) {
+        optionalPassed++;
+        matched.push("missingStr");
+      }
+    }
+    if (criteria.minPyInitCalls != null) {
+      optionalTotal++;
+      if (em.classMeta && em.classMeta.initCallCount >= criteria.minPyInitCalls) {
+        optionalPassed++;
+        matched.push(`initCalls>=${criteria.minPyInitCalls}`);
+      }
+    }
+    if (criteria.minPyMethodCount != null) {
+      optionalTotal++;
+      if (em.classMeta && em.classMeta.methodCount >= criteria.minPyMethodCount) {
+        optionalPassed++;
+        matched.push(`methodCount>=${criteria.minPyMethodCount}`);
+      }
+    }
+    if (criteria.hasPyPropertyNoSetter != null) {
+      optionalTotal++;
+      if (em.classMeta?.properties) {
+        const hasReadOnly = Object.values(em.classMeta.properties).some((p) => !p.hasSetter);
+        if (hasReadOnly) {
+          optionalPassed++;
+          matched.push("propertyNoSetter");
+        }
+      }
+    }
+
     // Name
     if (compiled.nameMatchRe) {
       optionalTotal++;
@@ -1059,6 +1174,20 @@ function countTotalCriteria(criteria: StructuralCriteria): number {
   if (criteria.hasPyStringConcatInLoop != null) count++;
   if (criteria.hasPyOpenWithoutWith != null) count++;
   if (criteria.hasPyAsyncNoAwait != null) count++;
+  // Python controlFlow extended
+  if (criteria.minReturnCount != null) count++;
+  if (criteria.minNestingDepth != null) count++;
+  if (criteria.minCyclomaticPy != null) count++;
+  if (criteria.minIsinstanceCount != null) count++;
+  if (criteria.hasPyReRaiseDifferent != null) count++;
+  // Python class metadata
+  if (criteria.hasPySlots != null) count++;
+  if (criteria.missingPySlots != null) count++;
+  if (criteria.missingPyRepr != null) count++;
+  if (criteria.missingPyStr != null) count++;
+  if (criteria.minPyInitCalls != null) count++;
+  if (criteria.minPyMethodCount != null) count++;
+  if (criteria.hasPyPropertyNoSetter != null) count++;
   if (criteria.relationships) count += criteria.relationships.length;
   return count;
 }

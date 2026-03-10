@@ -29,6 +29,8 @@ Scan a project or file for patterns across all categories.
 | format | string? | "summary" | summary, detailed, json |
 | offset | number? | 0 | Pagination offset |
 | limit | number? | 50 | Max results per category |
+| highlightRecentChanges | boolean? | false | Annotate matched entities with recently-changed status (Prolly Tree) |
+| recentCommitsCount | number? | 10 | Number of recent commits to consider for highlighting |
 
 **Examples:**
 ```
@@ -107,6 +109,17 @@ Each match has three scores:
 - **combinedScore**: `structural * 0.4 + semantic * 0.6` (for hybrid rules)
 
 Rules with `minSemanticSimilarity: 0` use only structural checks (metrics-based rules like god-function).
+
+## Recent Changes Highlighting
+
+When `highlightRecentChanges=true`, each detected pattern match is cross-referenced with Prolly Tree commit history. Entities modified in the last N commits are annotated with `recentlyChanged: true` and a `recentChangeSummary` section is added to the output.
+
+This helps prioritize fixes: a critical anti-pattern in recently-changed code is more likely to be the root cause of a new bug.
+
+```
+# Find anti-patterns in recently modified code
+detect_patterns({category: "anti-pattern", highlightRecentChanges: true, recentCommitsCount: 5})
+```
 
 ## Workflow
 

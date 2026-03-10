@@ -1,6 +1,6 @@
 # Protobuf
 
-Links protobuf specifications to gRPC server and client implementations.
+Analyzes relationships between protobuf service definitions and source code implementations.
 
 ## Exports
 

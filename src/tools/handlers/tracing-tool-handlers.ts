@@ -31,8 +31,14 @@ import type {
   TraceDataFlowParams,
   TraceFlowParams,
 } from "../../tracing/types.js";
-import { projectPathParam } from "../base-schemas.js";
+import { projectPathParam, recentChangesParams } from "../base-schemas.js";
 import { BaseToolHandler, type ToolContext, type ToolResult } from "../base-tool-handler.js";
+import {
+  buildRecentChangeSummary,
+  type EntityInfoInput,
+  type RecentChangeSummary,
+  resolveLocationsToEntities,
+} from "../utils/recent-changes-enrichment.js";
 
 // =============================================================================
 // 1. SCHEMAS
@@ -85,6 +91,7 @@ const TraceDataFlowSchema = z.object({
   projectPath: projectPathParam,
   dataSources: z.array(z.string()).optional().describe("Data sources to analyze (auto-detected if not specified)"),
   trackTransformations: z.boolean().optional().default(true).describe("Track data transformations"),
+  ...recentChangesParams,
 });
 
 const AnalyzeStateImpactSchema = z.object({
@@ -100,6 +107,7 @@ const AnalyzeStateImpactSchema = z.object({
     .describe("Scenarios to analyze"),
   projectPath: projectPathParam,
   scope: z.string().optional().describe("Scope of analysis (semantic query)"),
+  ...recentChangesParams,
 });
 
 const FindDecisionPointsSchema = z.object({
@@ -108,6 +116,7 @@ const FindDecisionPointsSchema = z.object({
   includeGuards: z.boolean().optional().default(true).describe("Include guard conditions"),
   includeEffects: z.boolean().optional().default(true).describe("Include side effects"),
   groupBy: z.enum(["impact", "location", "type"]).optional().default("impact").describe("How to group results"),
+  ...recentChangesParams,
 });
 
 const TraceNgRxFlowSchema = z.object({
@@ -157,41 +166,44 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
     const result = await this.traceEngine.traceFlow(params);
 
     // Annotate nodes with recently-changed status if requested
-    let recentlyChangedAnnotation:
-      | {
-          recentlyChangedNodes: string[];
-          totalAnnotated: number;
-          commitsAnalyzed: number;
-        }
-      | undefined;
+    let recentChangeSummary: RecentChangeSummary | null = null;
     if (args.highlightRecentChanges) {
-      const { getRecentlyChangedEntities } = await import("../../storage/prolly/recently-changed.js");
-      type StorageWithAdapter = typeof storage & {
-        getLibSQLAdapter?: () => import("../../storage/graph-adapter.js").GraphAdapter | null;
-      };
-      const adapter = (storage as StorageWithAdapter).getLibSQLAdapter?.();
-      if (adapter) {
-        const recentlyChanged = await getRecentlyChangedEntities(adapter, {
-          lastCommits: args.recentCommitsCount,
-        });
-        if (recentlyChanged) {
-          const changedNodes: string[] = [];
+      const entityInfos: EntityInfoInput[] = [];
+      for (const path of result.paths) {
+        for (const step of path.steps) {
+          if (step.entityId) {
+            entityInfos.push({
+              entityId: step.entityId,
+              significance: "high",
+              entityName: (step as unknown as Record<string, unknown>)["name"] as string | undefined,
+            });
+          }
+        }
+      }
+      if (entityInfos.length > 0) {
+        recentChangeSummary = await buildRecentChangeSummary(storage, entityInfos, args.recentCommitsCount);
+        // Annotate steps in-place
+        if (recentChangeSummary) {
+          const changedSet = new Set(recentChangeSummary.recentlyChangedEntities.map((e) => e.entityId));
           for (const path of result.paths) {
             for (const step of path.steps) {
-              if (step.entityId && recentlyChanged.changedIds.has(step.entityId)) {
-                changedNodes.push(step.entityId);
+              if (step.entityId && changedSet.has(step.entityId)) {
                 (step as unknown as Record<string, unknown>)["recentlyChanged"] = true;
               }
             }
           }
-          recentlyChangedAnnotation = {
-            recentlyChangedNodes: [...new Set(changedNodes)],
-            totalAnnotated: new Set(changedNodes).size,
-            commitsAnalyzed: recentlyChanged.commitsAnalyzed,
-          };
         }
       }
     }
+
+    // Build backward-compatible annotation for existing consumers
+    const recentlyChangedAnnotation = recentChangeSummary
+      ? {
+          recentlyChangedNodes: recentChangeSummary.recentlyChangedEntities.map((e) => e.entityId),
+          totalAnnotated: recentChangeSummary.totalAnnotated,
+          commitsAnalyzed: recentChangeSummary.commitsAnalyzed,
+        }
+      : undefined;
 
     // Format output
     let output: string;
@@ -201,6 +213,7 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
           success: true,
           ...result,
           ...(recentlyChangedAnnotation ? { recentlyChangedAnnotation } : {}),
+          ...(recentChangeSummary ? { recentChangeSummary } : {}),
           formatted: result.mermaid || this.formatter.formatTraceFlowAsMermaid(result),
         },
         null,
@@ -213,6 +226,7 @@ export class TraceFlowToolHandler extends BaseToolHandler<z.infer<typeof TraceFl
           success: true,
           ...result,
           ...(recentlyChangedAnnotation ? { recentlyChangedAnnotation } : {}),
+          ...(recentChangeSummary ? { recentChangeSummary } : {}),
           formatted: this.formatter.formatTraceFlowAsText(result),
           // Include debug info if present
           _debug: (result as ResultWithDebug)._debug,
@@ -260,45 +274,46 @@ export class TraceBackwardsToolHandler extends BaseToolHandler<z.infer<typeof Tr
     const result = await this.traceEngine.traceBackwards(params);
 
     // Annotate callers with recently-changed status if requested
-    let recentlyChangedAnnotation:
-      | {
-          recentlyChangedNodes: string[];
-          totalAnnotated: number;
-          commitsAnalyzed: number;
-        }
-      | undefined;
+    let recentChangeSummaryBw: RecentChangeSummary | null = null;
     if (args.highlightRecentChanges) {
-      const { getRecentlyChangedEntities } = await import("../../storage/prolly/recently-changed.js");
-      type StorageWithAdapter = typeof storage & {
-        getLibSQLAdapter?: () => import("../../storage/graph-adapter.js").GraphAdapter | null;
-      };
-      const adapter = (storage as StorageWithAdapter).getLibSQLAdapter?.();
-      if (adapter) {
-        const recentlyChanged = await getRecentlyChangedEntities(adapter, {
-          lastCommits: args.recentCommitsCount,
-        });
-        if (recentlyChanged) {
-          const changedNodes: string[] = [];
+      const entityInfos: EntityInfoInput[] = [];
+      for (const caller of result.callers) {
+        if (caller.entityId) {
+          entityInfos.push({
+            entityId: caller.entityId,
+            significance: "high",
+            entityName: (caller as unknown as Record<string, unknown>)["name"] as string | undefined,
+          });
+        }
+      }
+      if (entityInfos.length > 0) {
+        recentChangeSummaryBw = await buildRecentChangeSummary(storage, entityInfos, args.recentCommitsCount);
+        if (recentChangeSummaryBw) {
+          const changedSet = new Set(recentChangeSummaryBw.recentlyChangedEntities.map((e) => e.entityId));
           for (const caller of result.callers) {
-            if (caller.entityId && recentlyChanged.changedIds.has(caller.entityId)) {
-              changedNodes.push(caller.entityId);
+            if (caller.entityId && changedSet.has(caller.entityId)) {
               (caller as unknown as Record<string, unknown>)["recentlyChanged"] = true;
             }
           }
-          recentlyChangedAnnotation = {
-            recentlyChangedNodes: [...new Set(changedNodes)],
-            totalAnnotated: new Set(changedNodes).size,
-            commitsAnalyzed: recentlyChanged.commitsAnalyzed,
-          };
         }
       }
     }
+
+    // Build backward-compatible annotation for existing consumers
+    const recentlyChangedAnnotationBw = recentChangeSummaryBw
+      ? {
+          recentlyChangedNodes: recentChangeSummaryBw.recentlyChangedEntities.map((e) => e.entityId),
+          totalAnnotated: recentChangeSummaryBw.totalAnnotated,
+          commitsAnalyzed: recentChangeSummaryBw.commitsAnalyzed,
+        }
+      : undefined;
 
     const output = JSON.stringify(
       {
         success: true,
         ...result,
-        ...(recentlyChangedAnnotation ? { recentlyChangedAnnotation } : {}),
+        ...(recentlyChangedAnnotationBw ? { recentlyChangedAnnotation: recentlyChangedAnnotationBw } : {}),
+        ...(recentChangeSummaryBw ? { recentChangeSummary: recentChangeSummaryBw } : {}),
         formatted: this.formatter.formatTraceBackwardsAsText(result),
       },
       null,
@@ -340,6 +355,45 @@ export class TraceDataFlowToolHandler extends BaseToolHandler<z.infer<typeof Tra
 
     const result = await this.dataFlowAnalyzer.traceDataFlow(params);
 
+    // Enrich with recently-changed status if requested
+    let recentChangeSummary: RecentChangeSummary | null = null;
+    if (args.highlightRecentChanges) {
+      // Collect locations from data flow steps
+      const locations: string[] = [];
+      for (const df of result.dataFlows ?? []) {
+        for (const step of df.flow ?? []) {
+          if (step.location) locations.push(step.location);
+        }
+      }
+
+      if (locations.length > 0) {
+        const resolved = await resolveLocationsToEntities(storage, locations);
+        const entityInfos: EntityInfoInput[] = [];
+
+        for (const [loc, info] of resolved) {
+          entityInfos.push({
+            entityId: info.entityId,
+            significance: "high",
+            entityName: info.entityName,
+            filePath: info.filePath,
+          });
+          // Annotate the step in-place
+          for (const df of result.dataFlows ?? []) {
+            for (const step of df.flow ?? []) {
+              if (step.location === loc) {
+                (step as unknown as Record<string, unknown>)["recentlyChanged"] = true;
+                (step as unknown as Record<string, unknown>)["entityId"] = info.entityId;
+              }
+            }
+          }
+        }
+
+        if (entityInfos.length > 0) {
+          recentChangeSummary = await buildRecentChangeSummary(storage, entityInfos, args.recentCommitsCount);
+        }
+      }
+    }
+
     const output = JSON.stringify(
       {
         success: true,
@@ -349,6 +403,7 @@ export class TraceDataFlowToolHandler extends BaseToolHandler<z.infer<typeof Tra
           "taint_analysis() — security-focused analysis of the same data flows",
           "analyze_state_chaos() — detect state management issues in traced flow",
         ],
+        ...(recentChangeSummary ? { recentChangeSummary } : {}),
       },
       null,
       2,
@@ -385,11 +440,42 @@ export class AnalyzeStateImpactToolHandler extends BaseToolHandler<z.infer<typeo
 
     const result = await this.stateTracker.analyzeStateImpact(params);
 
+    // Enrich with recently-changed status if requested
+    let recentChangeSummary: RecentChangeSummary | null = null;
+    if (args.highlightRecentChanges) {
+      const locations: string[] = [];
+      for (const usage of result.usages ?? []) {
+        if (usage.location) locations.push(usage.location);
+      }
+      for (const conflict of result.conflicts ?? []) {
+        if (conflict.location) locations.push(conflict.location);
+      }
+
+      if (locations.length > 0) {
+        const resolved = await resolveLocationsToEntities(storage, locations);
+        const entityInfos: EntityInfoInput[] = [];
+
+        for (const [, info] of resolved) {
+          entityInfos.push({
+            entityId: info.entityId,
+            significance: "high",
+            entityName: info.entityName,
+            filePath: info.filePath,
+          });
+        }
+
+        if (entityInfos.length > 0) {
+          recentChangeSummary = await buildRecentChangeSummary(storage, entityInfos, args.recentCommitsCount);
+        }
+      }
+    }
+
     const output = JSON.stringify(
       {
         success: true,
         ...result,
         formatted: this.formatter.formatStateImpactAsText(result),
+        ...(recentChangeSummary ? { recentChangeSummary } : {}),
       },
       null,
       2,
@@ -427,11 +513,48 @@ export class FindDecisionPointsToolHandler extends BaseToolHandler<z.infer<typeo
 
     const result = await this.conditionAnalyzer.findDecisionPoints(params);
 
+    // Enrich with recently-changed status if requested
+    let recentChangeSummary: RecentChangeSummary | null = null;
+    if (args.highlightRecentChanges) {
+      const locations: string[] = [];
+      for (const dp of result.decisionPoints ?? []) {
+        if (dp.location) locations.push(dp.location);
+      }
+
+      if (locations.length > 0) {
+        const resolved = await resolveLocationsToEntities(storage, locations);
+        const entityInfos: EntityInfoInput[] = [];
+        const resolvedLocSet = new Set<string>();
+
+        for (const [loc, info] of resolved) {
+          entityInfos.push({
+            entityId: info.entityId,
+            significance: "medium",
+            entityName: info.entityName,
+            filePath: info.filePath,
+          });
+          resolvedLocSet.add(loc);
+        }
+
+        // Annotate decision points in-place
+        for (const dp of result.decisionPoints ?? []) {
+          if (dp.location && resolvedLocSet.has(dp.location)) {
+            (dp as unknown as Record<string, unknown>)["recentlyChanged"] = true;
+          }
+        }
+
+        if (entityInfos.length > 0) {
+          recentChangeSummary = await buildRecentChangeSummary(storage, entityInfos, args.recentCommitsCount);
+        }
+      }
+    }
+
     const output = JSON.stringify(
       {
         success: true,
         ...result,
         formatted: this.formatter.formatDecisionPointsAsText(result),
+        ...(recentChangeSummary ? { recentChangeSummary } : {}),
       },
       null,
       2,
@@ -628,6 +751,16 @@ Returns data flows, critical conditions, and behavior combinations.`,
         },
         trackTransformations: { type: "boolean", description: "Track data transformations", default: true },
         projectPath: { type: "string", description: "Project directory path. If not specified, uses current project." },
+        highlightRecentChanges: {
+          type: "boolean",
+          description: "Annotate entities with recently-changed status (Prolly Tree)",
+          default: false,
+        },
+        recentCommitsCount: {
+          type: "number",
+          description: "Number of recent commits to consider for highlighting",
+          default: 10,
+        },
       },
       required: ["entryPoint", "targetState"],
     },
@@ -665,6 +798,16 @@ Returns usage analysis, scenario comparisons, and conflict detection.`,
         },
         scope: { type: "string", description: "Scope of analysis (semantic query)" },
         projectPath: { type: "string", description: "Project directory path. If not specified, uses current project." },
+        highlightRecentChanges: {
+          type: "boolean",
+          description: "Annotate entities with recently-changed status (Prolly Tree)",
+          default: false,
+        },
+        recentCommitsCount: {
+          type: "number",
+          description: "Number of recent commits to consider for highlighting",
+          default: 10,
+        },
       },
       required: ["state", "scenarios"],
     },
@@ -698,6 +841,16 @@ Returns decision points grouped by impact with Mermaid flowchart.`,
           default: "impact",
         },
         projectPath: { type: "string", description: "Project directory path. If not specified, uses current project." },
+        highlightRecentChanges: {
+          type: "boolean",
+          description: "Annotate entities with recently-changed status (Prolly Tree)",
+          default: false,
+        },
+        recentCommitsCount: {
+          type: "number",
+          description: "Number of recent commits to consider for highlighting",
+          default: 10,
+        },
       },
       required: ["scenario"],
     },

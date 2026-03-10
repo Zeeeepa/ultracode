@@ -12,6 +12,13 @@ import type { StacktraceDiagnosis } from "../../analysis/stacktrace/types.js";
 import { TraceEngine } from "../../tracing/trace-engine.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { AnalyzeStacktraceSchema } from "../schemas/stacktrace-schemas.js";
+import {
+  buildRecentChangeSummary,
+  type EntityInfoInput,
+  formatRecentChangesSection,
+  getAdapterFromStorage,
+  type RecentChangeSummary,
+} from "../utils/recent-changes-enrichment.js";
 
 type Args = z.infer<typeof AnalyzeStacktraceSchema>;
 
@@ -59,8 +66,64 @@ export class AnalyzeStacktraceToolHandler extends BaseToolHandler<Args> {
       projectPath: args.projectPath,
     });
 
+    // Enrich with recently-changed status if requested
+    let recentChangeSummary: RecentChangeSummary | null = null;
+    let crashPointHistory: unknown[] | null = null;
+    if (args.highlightRecentChanges) {
+      const entityInfos: EntityInfoInput[] = [];
+
+      // Crash location — critical significance
+      if (diagnosis.crashLocation.frame.entityId) {
+        entityInfos.push({
+          entityId: diagnosis.crashLocation.frame.entityId,
+          significance: "critical",
+          entityName: diagnosis.crashLocation.frame.functionName,
+          filePath: diagnosis.crashLocation.frame.filePath,
+        });
+
+        // Get entity history for crash point
+        try {
+          const adapter = getAdapterFromStorage(storage);
+          if (adapter) {
+            const commitManager = adapter.getCommitManager?.();
+            const nodeStore = adapter.getProllyNodeStore?.();
+            if (commitManager && nodeStore) {
+              const { TimeTravelManager } = await import("../../storage/prolly/time-travel.js");
+              const timeTravel = new TimeTravelManager(nodeStore, commitManager);
+              const history = await timeTravel.getEntityHistory(diagnosis.crashLocation.frame.entityId, 3);
+              if (history.length > 0) {
+                crashPointHistory = history.map((h) => ({
+                  commitHash: h.commitHash,
+                  changeType: h.changeType,
+                  timestamp: h.timestamp,
+                }));
+              }
+            }
+          }
+        } catch {
+          // Entity history unavailable — non-critical
+        }
+      }
+
+      // Call chain entities — high significance
+      for (const frame of diagnosis.callChain) {
+        if (frame.resolved && frame.entityId) {
+          entityInfos.push({
+            entityId: frame.entityId,
+            significance: "high",
+            entityName: frame.functionName,
+            filePath: frame.filePath,
+          });
+        }
+      }
+
+      if (entityInfos.length > 0) {
+        recentChangeSummary = await buildRecentChangeSummary(storage, entityInfos, args.recentCommitsCount);
+      }
+    }
+
     // Format output based on requested format
-    const output = formatOutput(diagnosis, args.format);
+    const output = formatOutput(diagnosis, args.format, recentChangeSummary, crashPointHistory);
 
     return {
       content: [
@@ -73,7 +136,12 @@ export class AnalyzeStacktraceToolHandler extends BaseToolHandler<Args> {
   }
 }
 
-function formatOutput(diagnosis: StacktraceDiagnosis, format: string): string {
+function formatOutput(
+  diagnosis: StacktraceDiagnosis,
+  format: string,
+  recentChangeSummary: RecentChangeSummary | null,
+  crashPointHistory: unknown[] | null,
+): string {
   switch (format) {
     case "mermaid":
       return diagnosis.mermaidDiagram || "No diagram available (no frames parsed)";
@@ -109,13 +177,26 @@ function formatOutput(diagnosis: StacktraceDiagnosis, format: string): string {
           impactAnalysis: diagnosis.impactAnalysis,
           relatedPatterns: diagnosis.relatedPatterns,
           suggestedFixes: diagnosis.suggestedFixes,
+          ...(recentChangeSummary ? { recentChangeSummary } : {}),
+          ...(crashPointHistory ? { crashPointHistory } : {}),
         },
         null,
         2,
       );
 
     case "text":
-    default:
-      return diagnosis.formatted;
+    default: {
+      let text = diagnosis.formatted;
+      if (recentChangeSummary) {
+        text += formatRecentChangesSection(recentChangeSummary);
+      }
+      if (crashPointHistory) {
+        text += `\n\nCrash Point History (last ${(crashPointHistory as Array<{ commitHash: string; changeType: string }>).length} commits):\n`;
+        for (const h of crashPointHistory as Array<{ commitHash: string; changeType: string }>) {
+          text += `  ${h.commitHash.substring(0, 8)} — ${h.changeType}\n`;
+        }
+      }
+      return text;
+    }
   }
 }

@@ -976,3 +976,160 @@ patterns:
     customDetector: "checkTestFloatEq"
     minSemanticSimilarity: 0
     minStructuralConfidence: 0.6
+
+  # ─── Class design rules (Wave 2) ──────────────────────────────────
+
+  - id: "py:missing-slots"
+    category: "optimization"
+    severity: "medium"
+    name: "Class Missing __slots__"
+    description: "Class without __slots__ uses dict per instance — higher memory"
+    suggestion: "Add __slots__ = ('attr1', 'attr2') for fixed-attribute classes"
+    tags: ["performance", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      missingPySlots: true
+      minPyMethodCount: 3
+    customDetector: "checkMissingSlots"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:missing-repr"
+    category: "code-smell"
+    severity: "low"
+    name: "Class Missing __repr__"
+    description: "Class without __repr__ prints as <ClassName object at 0x...> — poor debuggability"
+    suggestion: "Add __repr__ returning a readable string representation"
+    tags: ["debuggability", "api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      missingPyRepr: true
+      minPyMethodCount: 2
+    customDetector: "checkMissingRepr"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:property-no-setter"
+    category: "code-smell"
+    severity: "info"
+    name: "Read-only @property Without Documentation"
+    description: "@property without @x.setter may confuse users expecting mutability"
+    suggestion: "If intentionally read-only, add docstring explaining why; otherwise add setter"
+    tags: ["api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      hasPyPropertyNoSetter: true
+    customDetector: "checkPropertyNoSetter"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.4
+
+  - id: "py:init-too-complex"
+    category: "code-smell"
+    severity: "medium"
+    name: "__init__ Does Too Much"
+    description: "Constructor with many calls (>10) — hard to test, violates SRP"
+    suggestion: "Move complex logic to factory methods or setup methods"
+    tags: ["architecture", "testability"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      minPyInitCalls: 10
+    customDetector: "checkInitTooComplex"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:god-class"
+    category: "code-smell"
+    severity: "high"
+    name: "God Class"
+    description: "Class with >20 methods — too many responsibilities"
+    suggestion: "Split into smaller, focused classes using composition"
+    tags: ["architecture", "srp"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      minPyMethodCount: 20
+    customDetector: "checkGodClass"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── Function complexity rules (Wave 2) ────────────────────────────
+
+  - id: "py:too-many-returns"
+    category: "code-smell"
+    severity: "medium"
+    name: "Too Many Return Statements"
+    description: "Function with >5 return statements — complex control flow"
+    suggestion: "Refactor using early returns, extract helper functions, or use dict dispatch"
+    tags: ["complexity", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minReturnCount: 6
+    customDetector: "checkTooManyReturns"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:deep-nesting"
+    category: "code-smell"
+    severity: "high"
+    name: "Deeply Nested Code"
+    description: "Nesting depth >4 — hard to read and maintain"
+    suggestion: "Use guard clauses (early return), extract nested blocks into functions"
+    tags: ["complexity", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minNestingDepth: 5
+    customDetector: "checkDeepNesting"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:high-complexity"
+    category: "code-smell"
+    severity: "high"
+    name: "High Cyclomatic Complexity"
+    description: "Cyclomatic complexity >10 — too many execution paths, hard to test"
+    suggestion: "Break into smaller functions, use strategy/dispatch patterns"
+    tags: ["complexity", "testability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minCyclomaticPy: 11
+    customDetector: "checkHighComplexity"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:isinstance-chain"
+    category: "code-smell"
+    severity: "medium"
+    name: "isinstance Chain"
+    description: "Multiple isinstance() checks (>3) — consider match/case or singledispatch"
+    suggestion: "Use match/case (Python 3.10+), functools.singledispatch, or visitor pattern"
+    tags: ["design-pattern", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minIsinstanceCount: 4
+    customDetector: "checkIsinstanceChain"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:re-raise-different"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Re-raise Different Exception Type"
+    description: "except X: raise Y() loses original traceback and exception context"
+    suggestion: "Use 'raise Y() from e' to chain exceptions, or re-raise with 'raise'"
+    tags: ["error-handling", "debugging"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasExceptions: true
+      hasPyReRaiseDifferent: true
+    customDetector: "checkReRaiseDifferent"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5

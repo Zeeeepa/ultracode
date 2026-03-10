@@ -3,6 +3,7 @@
  */
 
 import { z } from "zod";
+import { recentChangesParams } from "../base-schemas.js";
 
 export const DetectPatternsSchema = z.object({
   projectPath: z.string().optional().describe("Project directory path"),
@@ -40,6 +41,7 @@ export const DetectPatternsSchema = z.object({
     .describe(
       "Pattern IDs to suppress (skip). Use for known false positives, e.g. ['cs:empty-interface', 'cs:no-asnotracking']",
     ),
+  ...recentChangesParams,
 });
 
 export const CheckEntityPatternsSchema = z.object({

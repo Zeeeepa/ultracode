@@ -111,7 +111,8 @@ trace_backwards(
 ```
 trace_data_flow(
   entryPoint="handleSubmit",
-  targetState="form.errors"
+  targetState="form.errors",
+  highlightRecentChanges=true
 )
 ```
 
@@ -120,6 +121,7 @@ trace_data_flow(
 - Transformations
 - Branching logic
 - Behavior matrix (different inputs -> outputs)
+- Recently-changed entities in the data flow (with `highlightRecentChanges`)
 
 ### find_decision_points - "What conditions govern a scenario?"
 
@@ -301,7 +303,7 @@ GOOD (with planning):
 - Create snapshots before risky changes
 - Use tracing to understand data flow
 - Check complexity before refactoring
-- Use `highlightRecentChanges` to detect active conflict zones
+- Use `highlightRecentChanges=true` on all diagnostic tools to detect active conflict zones and recently-introduced regressions
 
 **DON'T:**
 - Skip impact analysis for "small" changes

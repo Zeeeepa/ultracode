@@ -86,8 +86,10 @@ analyze_stacktrace({
 | `includeImpactAnalysis` | boolean | true | Run impact analysis |
 | `includeBackwardsTrace` | boolean | true | Run backwards trace |
 | `format` | enum | "text" | `text` / `json` / `mermaid` |
+| `highlightRecentChanges` | boolean | false | Annotate crash/call chain with recently-changed status + crash point history |
+| `recentCommitsCount` | number | 10 | Recent commits to consider |
 
-**Returns**: error category, severity, crash location, call chain, callers, suggested fixes, Mermaid diagram.
+**Returns**: error category, severity, crash location, call chain, callers, suggested fixes, Mermaid diagram. With `highlightRecentChanges`: `recentChangeSummary` + `crashPointHistory`.
 
 ---
 
@@ -139,13 +141,14 @@ taint_analysis({
 ## Code Quality
 
 #### `detect_patterns`
-Detect anti-patterns, best-patterns, code smells, and optimization opportunities. 100+ rules across 6 languages. Includes JIT deoptimization detectors for JS/TS (tag: `jit`): hidden class violations, holey arrays, megamorphic dispatch, spread/dynamic access in hot paths.
+Detect anti-patterns, best-patterns, code smells, and optimization opportunities. 100+ rules across 6 languages. Supports `highlightRecentChanges` to annotate matches with recently-changed entity status.
 
 ```typescript
 detect_patterns({
   category: "anti-pattern",    // anti-pattern | best-pattern | code-smell | optimization
-  tags: ["performance"],       // use tags: ["jit"] for JIT deoptimization rules
-  severity: "high"
+  tags: ["performance"],
+  severity: "high",
+  highlightRecentChanges: true  // annotate matches with Prolly Tree status
 })
 ```
 
@@ -153,7 +156,7 @@ detect_patterns({
 Check specific entity for patterns with Big-O analysis.
 
 #### `analyze_state_chaos`
-Detect scattered state, race conditions, C# anti-patterns (async-void, mutable-static, god-service).
+Detect scattered state, race conditions, C# anti-patterns (async-void, mutable-static, god-service). Supports `highlightRecentChanges` to identify recently modified chaotic entities.
 
 #### `graph_metrics`
 Graph-based architecture metrics.
@@ -273,9 +276,9 @@ diff_commits({ from: "abc123", to: "def456" })
 ### 2. Diagnosing an Error
 
 ```
-1. analyze_stacktrace stacktrace="..."      # Parse & diagnose
+1. analyze_stacktrace stacktrace="..." highlightRecentChanges=true  # Parse, diagnose, show recent changes
 2. get_members filePath="crash_file.ts"     # Explore crash location
-3. analyze_code_impact entityId="..."       # What depends on crash point
+3. analyze_code_impact entityId="..." highlightRecentChanges=true   # What depends on crash point + recent changes
 ```
 
 ### 3. Security Audit
@@ -317,7 +320,7 @@ semantic_search hasDocumentation=false       # Undocumented
 | `analyze_state_chaos` | State management issues |
 | `analyze_api_impact` | API contract change impact |
 | `analyze_stacktrace` | Stacktrace diagnosis |
-| `detect_patterns` | Anti-patterns, code smells, optimizations, JIT deopt |
+| `detect_patterns` | Anti-patterns, code smells, optimizations |
 | `graph_metrics` | PageRank, Louvain, centrality, bus factor |
 | `taint_analysis` | Security vulnerability detection |
 | `get_database_schema` | Reconstructed DB schema |

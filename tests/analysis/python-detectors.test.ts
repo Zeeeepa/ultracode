@@ -10,9 +10,16 @@ import {
   checkAsyncioRunInLoop,
   checkBareExcept,
   checkBoolTrap,
+  checkDeepNesting,
   checkDelFinalizer,
   checkGilThread,
+  checkGodClass,
+  checkHighComplexity,
+  checkInitTooComplex,
+  checkIsinstanceChain,
   checkManyPosArgs,
+  checkMissingRepr,
+  checkMissingSlots,
   checkMutableDefaultArg,
   checkNoSeed,
   checkNpFloatCmp,
@@ -25,6 +32,8 @@ import {
   checkPdNanComparison,
   checkPltNoClose,
   checkPltStateConfusion,
+  checkPropertyNoSetter,
+  checkReRaiseDifferent,
   checkSkCvLeakage,
   checkSkDataLeakage,
   checkSkNoPipeline,
@@ -33,6 +42,7 @@ import {
   checkSubprocessShell,
   checkTestFloatEq,
   checkThreadpoolNoMax,
+  checkTooManyReturns,
 } from "../../src/analysis/patterns/detectors/python.js";
 import type { Entity, EntityType } from "../../src/types/storage.js";
 
@@ -459,5 +469,242 @@ describe("Misc detectors", () => {
       },
     });
     expect(checkMutableDefaultArg(entity).match).toBe(false);
+  });
+});
+
+// ─── Class-level Detectors (Wave 2) ─────────────────────────────
+
+describe("Class-level detectors", () => {
+  test("checkMissingSlots: class without __slots__ and >=3 methods", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: { methodCount: 5, dunderMethods: ["__init__"] },
+      },
+    });
+    expect(checkMissingSlots(entity).match).toBe(true);
+  });
+
+  test("checkMissingSlots: class with __slots__ — no match", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: { hasSlots: true, methodCount: 5 },
+      },
+    });
+    expect(checkMissingSlots(entity).match).toBe(false);
+  });
+
+  test("checkMissingSlots: tiny class (<3 methods) — no match", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: { methodCount: 2 },
+      },
+    });
+    expect(checkMissingSlots(entity).match).toBe(false);
+  });
+
+  test("checkMissingRepr: class without __repr__", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: { methodCount: 4, dunderMethods: ["__init__", "__str__"] },
+      },
+    });
+    expect(checkMissingRepr(entity).match).toBe(true);
+  });
+
+  test("checkMissingRepr: class with __repr__ — no match", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: { methodCount: 3, dunderMethods: ["__init__", "__repr__"] },
+      },
+    });
+    expect(checkMissingRepr(entity).match).toBe(false);
+  });
+
+  test("checkPropertyNoSetter: @property without setter", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: {
+          properties: { name: { hasSetter: false }, age: { hasSetter: true } },
+        },
+      },
+    });
+    const result = checkPropertyNoSetter(entity);
+    expect(result.match).toBe(true);
+    expect(result.matchedCriteria).toContain("property-no-setter:name");
+  });
+
+  test("checkPropertyNoSetter: all properties have setters — no match", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: {
+          properties: { name: { hasSetter: true } },
+        },
+      },
+    });
+    expect(checkPropertyNoSetter(entity).match).toBe(false);
+  });
+
+  test("checkInitTooComplex: __init__ with many calls", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: { initCallCount: 15, methodCount: 5 },
+      },
+    });
+    const result = checkInitTooComplex(entity);
+    expect(result.match).toBe(true);
+    expect(result.confidence).toBeGreaterThan(0.5);
+  });
+
+  test("checkInitTooComplex: simple __init__ — no match", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: { initCallCount: 3, methodCount: 5 },
+      },
+    });
+    expect(checkInitTooComplex(entity).match).toBe(false);
+  });
+
+  test("checkGodClass: class with >20 methods", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: { methodCount: 25 },
+      },
+    });
+    const result = checkGodClass(entity);
+    expect(result.match).toBe(true);
+    expect(result.matchedCriteria?.[0]).toContain("method-count:25");
+  });
+
+  test("checkGodClass: small class — no match", () => {
+    const entity = makeEntity({
+      type: "class" as EntityType,
+      metadata: {
+        classMeta: { methodCount: 10 },
+      },
+    });
+    expect(checkGodClass(entity).match).toBe(false);
+  });
+});
+
+// ─── Function Complexity Detectors (Wave 2) ─────────────────────
+
+describe("Function complexity detectors", () => {
+  test("checkTooManyReturns: >5 returns", () => {
+    const entity = makeEntity({
+      type: "function" as EntityType,
+      metadata: {
+        controlFlow: { returnCount: 8, branches: [{}] },
+      },
+    });
+    const result = checkTooManyReturns(entity);
+    expect(result.match).toBe(true);
+    expect(result.matchedCriteria?.[0]).toContain("return-count:8");
+  });
+
+  test("checkTooManyReturns: <=5 returns — no match", () => {
+    const entity = makeEntity({
+      type: "function" as EntityType,
+      metadata: {
+        controlFlow: { returnCount: 3 },
+      },
+    });
+    expect(checkTooManyReturns(entity).match).toBe(false);
+  });
+
+  test("checkDeepNesting: depth >4", () => {
+    const entity = makeEntity({
+      type: "method" as EntityType,
+      metadata: {
+        controlFlow: { nestingDepth: 6 },
+      },
+    });
+    const result = checkDeepNesting(entity);
+    expect(result.match).toBe(true);
+    expect(result.confidence).toBeGreaterThanOrEqual(0.6);
+  });
+
+  test("checkDeepNesting: depth <=4 — no match", () => {
+    const entity = makeEntity({
+      type: "method" as EntityType,
+      metadata: {
+        controlFlow: { nestingDepth: 3 },
+      },
+    });
+    expect(checkDeepNesting(entity).match).toBe(false);
+  });
+
+  test("checkHighComplexity: cyclomatic >10", () => {
+    const entity = makeEntity({
+      type: "function" as EntityType,
+      metadata: {
+        controlFlow: { cyclomaticComplexity: 15 },
+      },
+    });
+    const result = checkHighComplexity(entity);
+    expect(result.match).toBe(true);
+  });
+
+  test("checkHighComplexity: cyclomatic <=10 — no match", () => {
+    const entity = makeEntity({
+      type: "function" as EntityType,
+      metadata: {
+        controlFlow: { cyclomaticComplexity: 8 },
+      },
+    });
+    expect(checkHighComplexity(entity).match).toBe(false);
+  });
+
+  test("checkIsinstanceChain: >3 isinstance calls", () => {
+    const entity = makeEntity({
+      type: "function" as EntityType,
+      metadata: {
+        controlFlow: { isinstanceCount: 5 },
+      },
+    });
+    const result = checkIsinstanceChain(entity);
+    expect(result.match).toBe(true);
+    expect(result.matchedCriteria?.[0]).toContain("isinstance-count:5");
+  });
+
+  test("checkIsinstanceChain: <=3 — no match", () => {
+    const entity = makeEntity({
+      type: "function" as EntityType,
+      metadata: {
+        controlFlow: { isinstanceCount: 2 },
+      },
+    });
+    expect(checkIsinstanceChain(entity).match).toBe(false);
+  });
+
+  test("checkReRaiseDifferent: except X: raise Y()", () => {
+    const entity = makeEntity({
+      type: "function" as EntityType,
+      metadata: {
+        controlFlow: { exceptions: [{}], reRaiseDifferentType: true },
+      },
+    });
+    const result = checkReRaiseDifferent(entity);
+    expect(result.match).toBe(true);
+    expect(result.matchedCriteria).toContain("re-raise-different-type");
+  });
+
+  test("checkReRaiseDifferent: no re-raise — no match", () => {
+    const entity = makeEntity({
+      type: "function" as EntityType,
+      metadata: {
+        controlFlow: { exceptions: [{}] },
+      },
+    });
+    expect(checkReRaiseDifferent(entity).match).toBe(false);
   });
 });

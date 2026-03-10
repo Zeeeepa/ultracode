@@ -67,7 +67,8 @@ trace_data_flow({
   entryPoint: "AppInit",
   targetState: "startPage",
   dataSources: ["config", "api:fetchUser"], // auto-detect if empty
-  trackTransformations: true
+  trackTransformations: true,
+  highlightRecentChanges: true  // annotate steps with recently-changed entities
 })
 ```
 
@@ -83,6 +84,7 @@ trace_data_flow({
 - Transformations (parse, map, validate)
 - Data-based branching
 - Behavior matrix for different inputs
+- `recentChangeSummary` — which entities in the flow were recently modified (when `highlightRecentChanges=true`)
 
 ## analyze_state_impact — State Impact
 
@@ -94,7 +96,8 @@ analyze_state_impact({
   scenarios: [
     { value: true, label: "logged in" },
     { value: false, label: "logged out" }
-  ]
+  ],
+  highlightRecentChanges: true  // annotate usages/conflicts with recently-changed status
 })
 ```
 
@@ -106,6 +109,7 @@ analyze_state_impact({
   - Enabled features
 - Conflicts (multiple writers, race conditions)
 - Ripple effects (direct and indirect impact)
+- `recentChangeSummary` — which entities were recently modified (when `highlightRecentChanges=true`)
 
 ## find_decision_points — Decision Points
 
@@ -116,7 +120,8 @@ find_decision_points({
   scenario: "checkout flow",
   includeGuards: true,
   includeEffects: true,
-  groupBy: "impact" // | "location" | "type"
+  groupBy: "impact", // | "location" | "type"
+  highlightRecentChanges: true  // annotate decision points with recently-changed status
 })
 ```
 
@@ -139,6 +144,20 @@ find_decision_points({
 - List of decision points with classification
 - Mermaid flowchart
 - Summary: total, critical, possible outcomes
+
+## Recent Changes Context (Prolly Tree)
+
+All 6 tracing tools support `highlightRecentChanges=true` + `recentCommitsCount=N` parameters. When enabled, the tool cross-references found entities with Prolly Tree commit history and adds:
+
+- **`recentChangeSummary`** — list of entities that were recently modified/added, sorted by significance
+- **`recentlyChanged: true`** — annotation on individual steps/callers/decision points
+- **Significance levels:** critical (crash point), high (call chain, state usages), medium (decision points)
+- **Graceful degradation** — if Prolly Tree is unavailable, tools work as before without errors
+
+This is most useful for:
+- **Debugging** — recently changed code is the most likely root cause
+- **Impact analysis** — see if entities in the impact zone are being actively modified
+- **Code review** — focus on decision points that were recently changed
 
 ## Usage Examples
 

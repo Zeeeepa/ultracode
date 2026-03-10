@@ -66,6 +66,8 @@ analyze_stacktrace({
 | `includeImpactAnalysis` | boolean | true | Run impact analysis on crash entity |
 | `includeBackwardsTrace` | boolean | true | Run backwards trace from crash point |
 | `format` | enum | "text" | `text` / `json` / `mermaid` |
+| `highlightRecentChanges` | boolean | false | Annotate crash/call chain entities with recently-changed status + entity history for crash point |
+| `recentCommitsCount` | number | 10 | Number of recent commits to consider |
 
 ### Error Categories
 
@@ -143,7 +145,8 @@ trace_data_flow({
   entryPoint: "AppInit",
   targetState: "startPage",
   dataSources: ["config", "api:fetchUser"],
-  trackTransformations: true
+  trackTransformations: true,
+  highlightRecentChanges: true  // annotate steps with recently-changed entities
 })
 ```
 
@@ -152,6 +155,7 @@ trace_data_flow({
 - Transformations (parse, map, validate)
 - Branches based on data
 - Behavior matrix for different inputs
+- `recentChangeSummary` — recently modified entities in the flow (with `highlightRecentChanges`)
 
 ---
 
@@ -165,7 +169,8 @@ analyze_state_impact({
   scenarios: [
     { value: true, label: "logged in" },
     { value: false, label: "logged out" }
-  ]
+  ],
+  highlightRecentChanges: true  // annotate usages with recently-changed status
 })
 ```
 
@@ -174,6 +179,7 @@ analyze_state_impact({
 - Available and blocked paths per scenario
 - Conflicts (multiple writers, race conditions)
 - Ripple effects (direct and indirect)
+- `recentChangeSummary` — recently modified entities (with `highlightRecentChanges`)
 
 ---
 
@@ -185,7 +191,8 @@ Find all places where code makes decisions:
 find_decision_points({
   scenario: "checkout flow",
   includeGuards: true,
-  groupBy: "impact"
+  groupBy: "impact",
+  highlightRecentChanges: true  // annotate with recently-changed status
 })
 ```
 
@@ -279,16 +286,24 @@ flowchart TD
 
 ---
 
+## Recent Changes Context (Prolly Tree)
+
+All 6 tracing tools support `highlightRecentChanges=true` to cross-reference results with Prolly Tree commit history:
+- **`recentChangeSummary`** added to output with recently modified/added entities
+- **`recentlyChanged: true`** annotated on individual steps/callers/decision points
+- **`analyze_stacktrace`** additionally retrieves `crashPointHistory` — last 3 commits for the crash entity
+- **Graceful degradation** — works without errors if Prolly Tree is unavailable
+
 ## Tool Reference
 
 | Tool | Key Params |
 |------|-----------|
-| `analyze_stacktrace` | `stacktrace` (required), `language`, `format`, `depth` |
-| `trace_flow` | `from` + `to` (required), `format`, `maxDepth`, `trackStates` |
-| `trace_backwards` | `target` + `question` (required), `depth`, `includeStates` |
-| `trace_data_flow` | `entryPoint` + `targetState` (required), `dataSources` |
-| `analyze_state_impact` | `state` + `scenarios` (required), `scope` |
-| `find_decision_points` | `scenario` (required), `groupBy`, `includeGuards` |
+| `analyze_stacktrace` | `stacktrace` (required), `language`, `format`, `depth`, `highlightRecentChanges` |
+| `trace_flow` | `from` + `to` (required), `format`, `maxDepth`, `trackStates`, `highlightRecentChanges` |
+| `trace_backwards` | `target` + `question` (required), `depth`, `includeStates`, `highlightRecentChanges` |
+| `trace_data_flow` | `entryPoint` + `targetState` (required), `dataSources`, `highlightRecentChanges` |
+| `analyze_state_impact` | `state` + `scenarios` (required), `scope`, `highlightRecentChanges` |
+| `find_decision_points` | `scenario` (required), `groupBy`, `includeGuards`, `highlightRecentChanges` |
 
 ---
 

@@ -178,6 +178,12 @@ def get_function_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[di
                 pass
         if i >= defaults_start:
             param["optional"] = True
+            default_idx = i - defaults_start
+            if default_idx < len(args.defaults):
+                try:
+                    param["defaultValue"] = ast.unparse(args.defaults[default_idx]) if hasattr(ast, "unparse") else repr(args.defaults[default_idx])
+                except:
+                    param["defaultValue"] = "..."
         params.append(param)
 
     # *args
@@ -188,6 +194,24 @@ def get_function_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[di
                 param["type"] = ast.unparse(args.vararg.annotation)
             except:
                 pass
+        params.append(param)
+
+    # keyword-only args
+    kw_defaults_start = len(args.kwonlyargs) - len(args.kw_defaults)
+    for i, arg in enumerate(args.kwonlyargs):
+        param = {"name": arg.arg}
+        if arg.annotation:
+            try:
+                param["type"] = ast.unparse(arg.annotation) if hasattr(ast, "unparse") else str(arg.annotation)
+            except:
+                pass
+        default_idx = i - kw_defaults_start
+        if default_idx >= 0 and default_idx < len(args.kw_defaults) and args.kw_defaults[default_idx] is not None:
+            param["optional"] = True
+            try:
+                param["defaultValue"] = ast.unparse(args.kw_defaults[default_idx]) if hasattr(ast, "unparse") else repr(args.kw_defaults[default_idx])
+            except:
+                param["defaultValue"] = "..."
         params.append(param)
 
     # **kwargs
@@ -227,11 +251,14 @@ def get_bases(node: ast.ClassDef) -> dict | None:
 
 
 def extract_control_flow(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict | None:
-    """Extract control flow info: loops, exceptions, awaits, branches."""
+    """Extract control flow info: loops, exceptions, awaits, branches, returns, nesting, complexity."""
     loops = []
     exceptions = []
     awaits = []
     branches = []
+    return_count = 0
+    isinstance_count = 0
+    re_raise_different = False
 
     for child in ast.walk(node):
         if isinstance(child, (ast.For, ast.While, ast.AsyncFor)):
@@ -242,6 +269,34 @@ def extract_control_flow(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict |
             awaits.append({"line": getattr(child, "lineno", 0)})
         elif isinstance(child, (ast.If, ast.IfExp)):
             branches.append({"line": getattr(child, "lineno", 0)})
+        elif isinstance(child, ast.Return):
+            return_count += 1
+
+        # isinstance() calls
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "isinstance":
+            isinstance_count += 1
+
+        # Re-raise different exception type: except X: raise Y
+        if isinstance(child, ast.ExceptHandler) and child.type is not None:
+            caught_name = None
+            if isinstance(child.type, ast.Name):
+                caught_name = child.type.id
+            for stmt in ast.walk(child):
+                if isinstance(stmt, ast.Raise) and stmt.exc:
+                    raised = stmt.exc
+                    raised_name = None
+                    if isinstance(raised, ast.Call) and isinstance(raised.func, ast.Name):
+                        raised_name = raised.func.id
+                    elif isinstance(raised, ast.Name):
+                        raised_name = raised.id
+                    if raised_name and caught_name and raised_name != caught_name:
+                        re_raise_different = True
+
+    # Nesting depth: max depth of nested control structures
+    nesting_depth = _calc_nesting_depth(node.body, 0)
+
+    # Cyclomatic complexity: edges - nodes + 2 ≈ 1 + decisions
+    cyclomatic = 1 + len(branches) + len(loops) + len(exceptions)
 
     result = {}
     if loops:
@@ -252,8 +307,40 @@ def extract_control_flow(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict |
         result["awaits"] = awaits
     if branches:
         result["branches"] = branches
+    if return_count > 0:
+        result["returnCount"] = return_count
+    if nesting_depth > 0:
+        result["nestingDepth"] = nesting_depth
+    if cyclomatic > 1:
+        result["cyclomaticComplexity"] = cyclomatic
+    if isinstance_count > 0:
+        result["isinstanceCount"] = isinstance_count
+    if re_raise_different:
+        result["reRaiseDifferentType"] = True
 
     return result if result else None
+
+
+def _calc_nesting_depth(body: list[ast.stmt], current: int) -> int:
+    """Calculate max nesting depth of control structures."""
+    max_depth = current
+    for node in body:
+        child_body = []
+        if isinstance(node, (ast.If, ast.For, ast.While, ast.AsyncFor, ast.With, ast.AsyncWith)):
+            child_body = node.body + getattr(node, "orelse", [])
+            depth = _calc_nesting_depth(child_body, current + 1)
+            max_depth = max(max_depth, depth)
+        elif isinstance(node, ast.Try):
+            parts = node.body + node.handlers + node.orelse + node.finalbody
+            depth = _calc_nesting_depth(parts, current + 1)
+            max_depth = max(max_depth, depth)
+        elif isinstance(node, ast.ExceptHandler):
+            depth = _calc_nesting_depth(node.body, current)
+            max_depth = max(max_depth, depth)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # Nested function — count as +1 but don't recurse into it
+            max_depth = max(max_depth, current + 1)
+    return max_depth
 
 
 def extract_python_hints(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict | None:
@@ -398,6 +485,66 @@ def process_function(node: ast.FunctionDef | ast.AsyncFunctionDef, file_path: st
     return entity
 
 
+def _extract_class_meta(node: ast.ClassDef) -> dict | None:
+    """Extract class-level metadata: __slots__, dunder methods, properties with setters."""
+    has_slots = False
+    dunder_methods = []
+    properties = {}  # name -> {"hasSetter": bool}
+    init_call_count = 0
+    method_count = 0
+
+    for item in node.body:
+        # __slots__
+        if isinstance(item, ast.Assign):
+            for target in item.targets:
+                if isinstance(target, ast.Name) and target.id == "__slots__":
+                    has_slots = True
+
+        # Methods
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            method_count += 1
+            name = item.name
+
+            # Dunder methods
+            if name.startswith("__") and name.endswith("__"):
+                dunder_methods.append(name)
+
+            # __init__ call count
+            if name == "__init__" and item.body:
+                for child in ast.walk(item):
+                    if isinstance(child, ast.Call):
+                        init_call_count += 1
+
+            # @property detection
+            if item.decorator_list:
+                for dec in item.decorator_list:
+                    if isinstance(dec, ast.Name) and dec.id == "property":
+                        properties[name] = properties.get(name, {"hasSetter": False})
+                    elif isinstance(dec, ast.Attribute) and dec.attr == "setter":
+                        # @X.setter
+                        prop_name = None
+                        if isinstance(dec.value, ast.Name):
+                            prop_name = dec.value.id
+                        if prop_name and prop_name in properties:
+                            properties[prop_name]["hasSetter"] = True
+                        elif prop_name:
+                            properties[prop_name] = {"hasSetter": True}
+
+    result = {}
+    if has_slots:
+        result["hasSlots"] = True
+    if dunder_methods:
+        result["dunderMethods"] = dunder_methods
+    if properties:
+        result["properties"] = properties
+    if init_call_count > 0:
+        result["initCallCount"] = init_call_count
+    if method_count > 0:
+        result["methodCount"] = method_count
+
+    return result if result else None
+
+
 def process_class(node: ast.ClassDef, file_path: str) -> list[dict]:
     """Process a class definition and its members."""
     entities = []
@@ -429,6 +576,11 @@ def process_class(node: ast.ClassDef, file_path: str) -> list[dict]:
                 modifiers.append("abstract")
         if modifiers:
             class_entity["modifiers"] = modifiers
+
+    # Class-level analysis: __slots__, dunder methods, properties
+    class_meta = _extract_class_meta(node)
+    if class_meta:
+        class_entity["classMeta"] = class_meta
 
     entities.append(class_entity)
 

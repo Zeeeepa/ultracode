@@ -78,6 +78,8 @@ MCP server provides **78 tools** for code analysis and modification.
 
 ## Static Tracing and Debugging
 
+All tracing and diagnostic tools support `highlightRecentChanges=true` — cross-references found entities with Prolly Tree commit history and annotates recently modified code. This helps identify the likely root cause: a recently changed entity in a crash call chain or a decision point is the first place to look.
+
 | Tool | Description |
 |------|-------------|
 | [**trace_flow**](.autodoc/features/tracing.md#trace_flow) | How code flows from point A to B |
@@ -139,6 +141,8 @@ MCP server provides **78 tools** for code analysis and modification.
 | [**cleanup_branches**](.autodoc/features/git.md#cleanup_branches) | Clean up old branches (LRU) |
 
 ## Version History (Prolly Tree)
+
+Prolly Tree stores full entity history with commit-level granularity. Beyond time travel, it powers the **Recent Changes Context** feature: 10 diagnostic tools (`analyze_stacktrace`, `detect_patterns`, `analyze_state_chaos`, `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`, `find_decision_points`, `analyze_code_impact`, `analyze_hotspots`) can annotate their results with recently-changed entity status via `highlightRecentChanges=true`. This means the AI agent sees not just "what's broken" but "what changed recently that could have caused it."
 
 | Tool | Description |
 |------|-------------|

@@ -84,7 +84,7 @@ const StructuralCriteriaSchema = z.object({
   minThrowEx: z.number().optional(),
   minEmptyCatch: z.number().optional(),
   hasStringConcatInLoop: z.boolean().optional(),
-  // Python-specific antipattern hints (from tree-sitter parser)
+  // Python-specific antipattern hints (from python-ast-cli.py)
   minBareExcept: z.number().optional(),
   minExceptPass: z.number().optional(),
   minGenericRaise: z.number().optional(),
@@ -95,6 +95,20 @@ const StructuralCriteriaSchema = z.object({
   hasPyStringConcatInLoop: z.boolean().optional(),
   hasPyOpenWithoutWith: z.boolean().optional(),
   hasPyAsyncNoAwait: z.boolean().optional(),
+  // Python controlFlow extended fields
+  minReturnCount: z.number().optional(),
+  minNestingDepth: z.number().optional(),
+  minCyclomaticPy: z.number().optional(),
+  minIsinstanceCount: z.number().optional(),
+  hasPyReRaiseDifferent: z.boolean().optional(),
+  // Python class metadata
+  hasPySlots: z.boolean().optional(),
+  missingPySlots: z.boolean().optional(),
+  missingPyRepr: z.boolean().optional(),
+  missingPyStr: z.boolean().optional(),
+  minPyInitCalls: z.number().optional(),
+  minPyMethodCount: z.number().optional(),
+  hasPyPropertyNoSetter: z.boolean().optional(),
   relationships: z.array(RelationshipCriteriaSchema).optional(),
 });
 

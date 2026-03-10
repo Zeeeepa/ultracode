@@ -104,7 +104,7 @@ export interface StructuralCriteria {
   minEmptyCatch?: number | undefined;
   hasStringConcatInLoop?: boolean | undefined;
 
-  // Python-specific antipattern hints (from tree-sitter parser)
+  // Python-specific antipattern hints (from python-ast-cli.py)
   minBareExcept?: number | undefined;
   minExceptPass?: number | undefined;
   minGenericRaise?: number | undefined;
@@ -115,6 +115,22 @@ export interface StructuralCriteria {
   hasPyStringConcatInLoop?: boolean | undefined;
   hasPyOpenWithoutWith?: boolean | undefined;
   hasPyAsyncNoAwait?: boolean | undefined;
+
+  // Python controlFlow extended fields
+  minReturnCount?: number | undefined;
+  minNestingDepth?: number | undefined;
+  minCyclomaticPy?: number | undefined;
+  minIsinstanceCount?: number | undefined;
+  hasPyReRaiseDifferent?: boolean | undefined;
+
+  // Python class metadata (from classMeta)
+  hasPySlots?: boolean | undefined; // class has __slots__
+  missingPySlots?: boolean | undefined; // class does NOT have __slots__
+  missingPyRepr?: boolean | undefined; // class missing __repr__
+  missingPyStr?: boolean | undefined; // class missing __str__
+  minPyInitCalls?: number | undefined; // __init__ does too much
+  minPyMethodCount?: number | undefined; // God class
+  hasPyPropertyNoSetter?: boolean | undefined; // @property without @x.setter
 
   // Graph-based (require relationship queries)
   relationships?: RelationshipCriteria[] | undefined;

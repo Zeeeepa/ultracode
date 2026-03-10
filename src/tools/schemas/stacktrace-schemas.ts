@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { projectPathParam } from "../base-schemas.js";
+import { projectPathParam, recentChangesParams } from "../base-schemas.js";
 
 export const AnalyzeStacktraceSchema = z.object({
   stacktrace: z.string().min(10).describe("Full stacktrace text (error message + frames)"),
@@ -20,4 +20,5 @@ export const AnalyzeStacktraceSchema = z.object({
     .default("text")
     .describe("Output format: text (human-readable), json (structured), mermaid (diagram)"),
   projectPath: projectPathParam,
+  ...recentChangesParams,
 });

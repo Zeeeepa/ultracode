@@ -19,9 +19,14 @@ import { TimeTravelManager } from "../../storage/prolly/index.js";
 import type { RefactoringSuggestion } from "../../types/semantic.js";
 import type { Entity } from "../../types/storage.js";
 import { toError } from "../../utils/error-handling.js";
-import { projectPathParam } from "../base-schemas.js";
+import { projectPathParam, recentChangesParams } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
+import {
+  buildRecentChangeSummary,
+  type EntityInfoInput,
+  formatRecentChangesSection,
+} from "../utils/recent-changes-enrichment.js";
 
 // =============================================================================
 // TYPE DEFINITIONS
@@ -689,6 +694,7 @@ const AnalyzeStateChaosSchema = z.object({
   maxDepth: z.number().optional(),
   excludePatterns: z.array(z.string()).optional(),
   format: z.enum(["summary", "detailed", "json"]).optional().default("summary"),
+  ...recentChangesParams,
 });
 
 export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof AnalyzeStateChaosSchema>> {
@@ -755,6 +761,32 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
       "graph_metrics({metric:'pagerank'}) — assess architectural importance of chaotic entities",
     ];
 
+    // Enrich with recently-changed status if requested
+    let recentChangeSummary: import("../utils/recent-changes-enrichment.js").RecentChangeSummary | null = null;
+    if (args.highlightRecentChanges) {
+      const entityInfos: EntityInfoInput[] = [];
+      for (const r of results) {
+        const identifier = r.statePattern.identifier;
+        if (!identifier) continue;
+        try {
+          const entities = await storage.searchEntities({ namePattern: identifier });
+          for (const ent of entities) {
+            entityInfos.push({
+              entityId: ent.id,
+              significance: "high",
+              entityName: ent.name,
+              filePath: ent.filePath,
+            });
+          }
+        } catch {
+          // Skip
+        }
+      }
+      if (entityInfos.length > 0) {
+        recentChangeSummary = await buildRecentChangeSummary(storage, entityInfos, args.recentCommitsCount);
+      }
+    }
+
     if (args.format === "json") {
       return {
         content: [
@@ -766,6 +798,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
                 csharpPatterns: analyzer.csharpPatterns,
                 graphContext,
                 nextSteps: chaosNextSteps,
+                ...(recentChangeSummary ? { recentChangeSummary } : {}),
               },
               null,
               2,
@@ -784,6 +817,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
       if (analyzer.csharpPatterns.length > 0 && results.length === 0) {
         parts.push(analyzer.formatForAI(results));
       }
+      if (recentChangeSummary) parts.push(formatRecentChangesSection(recentChangeSummary));
       return {
         content: [{ type: "text", text: parts.join("\n\n") }],
       };
@@ -791,9 +825,11 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
 
     // Default: AI-friendly summary (includes C# anti-patterns)
     const text = analyzer.formatForAI(results);
-    const nextStepsText = `\n\n---\nNext steps:\n${chaosNextSteps.map((s) => `- ${s}`).join("\n")}`;
+    let suffixText = "";
+    if (recentChangeSummary) suffixText += formatRecentChangesSection(recentChangeSummary);
+    suffixText += `\n\n---\nNext steps:\n${chaosNextSteps.map((s) => `- ${s}`).join("\n")}`;
     return {
-      content: [{ type: "text", text: text + nextStepsText }],
+      content: [{ type: "text", text: text + suffixText }],
     };
   }
 }

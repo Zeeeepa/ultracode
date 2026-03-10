@@ -1,6 +1,6 @@
 # Db
 
-Database schema parsing, linking, and analysis module.
+Comprehensive database schema parsing, ORM detection, and migration analysis system.
 
 ## Exports
 
