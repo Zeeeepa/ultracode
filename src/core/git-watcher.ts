@@ -14,6 +14,7 @@ import { execSync } from "node:child_process";
 import { existsSync, type FSWatcher, watch } from "node:fs";
 import { join } from "node:path";
 import { log } from "../logging/index.js";
+import { resolveGitHeadPath } from "../shared/git-worktree.js";
 import { areTimersSuspended } from "./indexing-state.js";
 
 // Event-driven architecture: git polling uses setInterval for Node.js, disabled for Bun
@@ -122,7 +123,9 @@ export class GitWatcher {
     }
 
     this.repoPath = repoPath;
-    const gitHeadPath = join(repoPath, ".git", "HEAD");
+
+    // Resolve correct HEAD path (works for both main repos and linked worktrees)
+    const gitHeadPath = resolveGitHeadPath(repoPath) ?? join(repoPath, ".git", "HEAD");
 
     if (!existsSync(gitHeadPath)) {
       log.i("GITWATCHER", "no_git_dir");

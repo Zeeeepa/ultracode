@@ -99,3 +99,10 @@ export { AnalyzeStacktraceSchema } from "./stacktrace-schemas.js";
 export { TaintAnalysisSchema } from "./taint-schemas.js";
 // Validation & Technology Detection
 export { DetectTechnologyStackSchema, ValidateDirectorySchema, ValidateFileSchema } from "./validation-schemas.js";
+// Worktree & Multi-Agent
+export {
+  CleanupWorktreeSchema,
+  GetWorktreeInfoSchema,
+  ListWorktreeAgentsSchema,
+  SpawnAgentWorktreeSchema,
+} from "./worktree-schemas.js";

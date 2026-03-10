@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { hashText } from "../utils/fast-hash.js";
+import { getRepoIdentity } from "./git-worktree.js";
 
 // =============================================================================
 // Base Directory
@@ -109,8 +110,13 @@ export function getCoreLockPath(): string {
 // =============================================================================
 
 /**
- * Generate a stable hash for a project path
- * Uses xxHash (initialized at module load, no fallback race condition)
+ * Generate a stable hash for a project path.
+ *
+ * For git repositories: uses repoIdentity (xxHash of git-common-dir),
+ * which is the SAME for all worktrees of the same repo. This enables
+ * shared indexing across worktrees.
+ *
+ * For non-git projects: falls back to xxHash of the normalized path.
  */
 export function hashProjectPath(projectPath: string): string {
   if (!projectPath) {
@@ -119,7 +125,12 @@ export function hashProjectPath(projectPath: string): string {
         "Ensure projectPath is provided in tool args or resolved from session/context.",
     );
   }
-  // Normalize path for consistent hashing
+
+  // Try repoIdentity first (stable across all worktrees of the same repo)
+  const repoId = getRepoIdentity(projectPath);
+  if (repoId) return repoId;
+
+  // Fallback for non-git projects: hash the path directly
   const normalized = projectPath.toLowerCase().replace(/\\/g, "/").replace(/\/$/, "");
   return hashText(normalized);
 }

@@ -1,6 +1,6 @@
 # Db
 
-Comprehensive database schema parsing, ORM detection, and migration analysis system.
+Database schema analysis module linking code to SQL/ORM models and detecting schema drift.
 
 ## Exports
 

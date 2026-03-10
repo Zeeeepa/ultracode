@@ -140,6 +140,128 @@ MCP-сервер предоставляет **78 инструментов** дл
 | [**get_changed_files**](.autodoc/features/git_ru.md#get_changed_files) | Сравнение файлов между ветками |
 | [**cleanup_branches**](.autodoc/features/git_ru.md#cleanup_branches) | Очистка старых веток (LRU) |
 
+## Мульти-агентная работа через Worktree
+
+Несколько AI-агентов могут работать параллельно, каждый в своём git worktree на отдельной ветке. UltraCode определяет, что все worktree принадлежат одному репозиторию через `repoIdentity` — стабильный хеш `git-common-dir`. Все worktree делят один индекс, одну базу данных и один серверный процесс.
+
+| Инструмент | Описание |
+|------------|----------|
+| [**spawn_agent_worktree**](.autodoc/features/worktree_ru.md#spawn_agent_worktree) | Создать worktree для нового агента |
+| [**list_worktree_agents**](.autodoc/features/worktree_ru.md#list_worktree_agents) | Список активных worktree-сессий |
+| [**cleanup_worktree**](.autodoc/features/worktree_ru.md#cleanup_worktree) | Удалить worktree |
+| [**get_worktree_info**](.autodoc/features/worktree_ru.md#get_worktree_info) | Информация о worktree/submodule/subtree |
+
+### Запуск из оркестратора агентов
+
+Любой оркестратор (Claude Code, собственные скрипты, CI/CD) может запустить параллельных агентов с полным code intelligence. Каждый агент получает своё MCP-соединение через легковесный прокси `ultracode.com` (~700KB, кросс-платформенный).
+
+**Шаг 1: Создать worktree**
+
+```bash
+cd /path/to/your/project
+
+# Создаём worktree для каждого агента (каждый на своей ветке)
+git worktree add ../wt-auth   -b feature/auth   main
+git worktree add ../wt-pay    -b feature/payments main
+git worktree add ../wt-tests  -b feature/tests    main
+```
+
+**Шаг 2: Запустить агентов с UltraCode MCP**
+
+Каждый агент подключается к **одному работающему серверу UltraCode** через Named Pipe (Windows) или Unix-сокет (Linux/macOS). Прокси-бинарник обрабатывает подключение, автозапуск и init-хэндшейк.
+
+```bash
+# Агент 1: фича авторизации
+ultracode.com --pipe \
+  --directory ../wt-auth \
+  --branch feature/auth \
+  --agent-id auth-agent
+
+# Агент 2: фича платежей
+ultracode.com --pipe \
+  --directory ../wt-pay \
+  --branch feature/payments \
+  --agent-id pay-agent
+
+# Агент 3: написание тестов
+ultracode.com --pipe \
+  --directory ../wt-tests \
+  --branch feature/tests \
+  --agent-id test-agent
+```
+
+| CLI аргумент | Обязателен | Описание |
+|-------------|------------|----------|
+| `--pipe` | Да | Использовать Named Pipe IPC (подключение к работающему серверу) |
+| `--directory PATH` | Да | Путь к worktree агента |
+| `--branch NAME` | Рекомендуется | Имя ветки (пропускает `git`-детекцию на сервере) |
+| `--agent-id ID` | Рекомендуется | Уникальный идентификатор агента для координации |
+
+**Шаг 3: Настройка в `claude_desktop_config.json` или MCP-клиенте**
+
+```json
+{
+  "mcpServers": {
+    "ultracode-auth": {
+      "command": "ultracode.com",
+      "args": ["--pipe", "--directory", "/path/to/wt-auth",
+               "--branch", "feature/auth", "--agent-id", "auth-agent"]
+    },
+    "ultracode-pay": {
+      "command": "ultracode.com",
+      "args": ["--pipe", "--directory", "/path/to/wt-pay",
+               "--branch", "feature/payments", "--agent-id", "pay-agent"]
+    }
+  }
+}
+```
+
+### Как это работает
+
+```
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  Агент #1   │   │  Агент #2   │   │  Агент #3   │
+│  wt-auth    │   │  wt-pay     │   │  wt-tests   │
+└──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+       │                 │                 │
+       │ stdin/stdout    │ stdin/stdout    │ stdin/stdout
+       ▼                 ▼                 ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│ ultracode.com│ │ ultracode.com│ │ ultracode.com│
+│   (прокси)   │ │   (прокси)   │ │   (прокси)   │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+       │                │                │
+       └────────┬───────┘────────┬───────┘
+                │  Named Pipe    │
+                ▼                ▼
+        ┌───────────────────────────────┐
+        │     UltraCode MCP Server      │
+        │    (один процесс, общий)      │
+        │                               │
+        │  repoIdentity: одинаков       │
+        │  Индекс: общая база + дельты  │
+        │  Блокировки: по веткам        │
+        └───────────────────────────────┘
+```
+
+- **Общий индекс**: все worktree используют один `repoIdentity` — одна БД, один пул FAISS-индексов
+- **Изоляция веток**: каждый агент индексирует дельту своей ветки; параллельная индексация разных веток безопасна
+- **Координация блокировок**: если два агента на одной ветке — индексирует только один, второй ждёт и пропускает
+- **Обнаружение сессий**: агенты видят друг друга через `list_worktree_agents` — полезно для передачи задач
+- **Submodule/subtree**: submodules получают собственный `repoIdentity`; subtrees определяются как часть родительского репо
+
+### Очистка
+
+```bash
+# Удалить worktree после завершения
+git worktree remove ../wt-auth
+git worktree remove ../wt-pay
+git worktree remove ../wt-tests
+
+# Или через MCP-инструмент (из любого агента):
+# cleanup_worktree({ branch: "feature/auth" })
+```
+
 ## История версий (Prolly Tree)
 
 Prolly Tree хранит полную историю сущностей с гранулярностью до коммита. Помимо time travel, поддерживает **контекст недавних изменений**: 10 диагностических инструментов (`analyze_stacktrace`, `detect_patterns`, `analyze_state_chaos`, `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`, `find_decision_points`, `analyze_code_impact`, `analyze_hotspots`) могут аннотировать результаты статусом «недавно изменён» через `highlightRecentChanges=true`. AI-агент видит не только «что сломано», но и «что менялось недавно и могло это вызвать».

@@ -1,6 +1,6 @@
 # Parsers
 
-Multi-language stacktrace parser collection supporting eight programming languages
+Language-specific stacktrace parsers that extract structured frame data from error traces.
 
 ## Exports
 

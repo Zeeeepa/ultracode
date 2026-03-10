@@ -13,6 +13,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { normalize, resolve } from "node:path";
 import { log } from "../logging/index.js";
+import { clearWorktreeCache, resolveWorktreeInfo, type WorktreeInfo } from "../shared/git-worktree.js";
 import {
   ensureProjectDir,
   getCurrentGitBranchOrDefault,
@@ -34,6 +35,12 @@ export interface ClientSessionConfig {
 
   /** Client identifier from transport (e.g., client #1, #2) */
   clientId?: number;
+
+  /** Explicit branch name from comm.c --branch (skips git detection) */
+  branch?: string;
+
+  /** Agent identifier from comm.c --agent-id (for multi-agent coordination) */
+  agentId?: string;
 }
 
 export interface SessionProjectInfo {
@@ -61,30 +68,50 @@ export class ClientSession {
   readonly clientId: number;
   readonly createdAt: number;
 
+  /** Agent identifier for multi-agent coordination (from comm.c --agent-id) */
+  readonly agentId: string | null;
+
   private _projectPath: string;
   private _branch: string;
   private _indexingInProgress: boolean = false;
   private _lastActivityAt: number;
 
+  /** Worktree detection info (cached, null for non-git projects) */
+  private _worktreeInfo: WorktreeInfo | null = null;
+
   constructor(config: ClientSessionConfig) {
     this.sessionId = config.sessionId ?? generateSessionId();
     this.clientId = config.clientId ?? 0;
+    this.agentId = config.agentId ?? null;
     this.createdAt = Date.now();
     this._lastActivityAt = this.createdAt;
 
     // Normalize and resolve project path
     this._projectPath = normalize(resolve(config.projectPath));
-    this._branch = getCurrentGitBranchOrDefault(this._projectPath);
+
+    // Use explicit branch from comm.c if provided, else detect from git
+    this._branch = config.branch ?? getCurrentGitBranchOrDefault(this._projectPath);
+
+    // Detect worktree info for this project
+    this._worktreeInfo = resolveWorktreeInfo(this._projectPath);
 
     // Ensure project directory exists immediately (not lazily!)
     // This prevents the "missing directory" bug when server crashes early
     this.ensureProjectInitialized();
 
+    // Register in repo-based index
+    if (this._worktreeInfo) {
+      addSessionToRepoIndex(this._worktreeInfo.repoIdentity, this.sessionId);
+    }
+
     log.i("SESSION", "created", {
       sid: this.sessionId,
       cid: this.clientId,
+      agentId: this.agentId,
       proj: this._projectPath,
       branch: this._branch,
+      isWorktree: this._worktreeInfo?.isWorktree ?? false,
+      repoIdentity: this._worktreeInfo?.repoIdentity ?? null,
     });
   }
 
@@ -107,10 +134,33 @@ export class ClientSession {
   }
 
   /**
-   * Get project hash for database operations
+   * Get project hash for database operations.
+   * For worktrees, this returns the same hash as the main repo (repoIdentity).
    */
   get projectHash(): string {
     return getProjectHash(this._projectPath);
+  }
+
+  /**
+   * Stable repository identity (same for all worktrees of the same repo).
+   * Null for non-git projects.
+   */
+  get repoIdentity(): string | null {
+    return this._worktreeInfo?.repoIdentity ?? null;
+  }
+
+  /**
+   * Whether this session's project is a linked git worktree (not main).
+   */
+  get isWorktree(): boolean {
+    return this._worktreeInfo?.isWorktree ?? false;
+  }
+
+  /**
+   * Get worktree detection info. Null for non-git projects.
+   */
+  get worktreeInfo(): WorktreeInfo | null {
+    return this._worktreeInfo;
   }
 
   /**
@@ -146,9 +196,23 @@ export class ClientSession {
     const oldPath = this._projectPath;
     const oldBranch = this._branch;
 
+    // Remove from old repo index
+    if (this._worktreeInfo) {
+      removeSessionFromRepoIndex(this._worktreeInfo.repoIdentity, this.sessionId);
+    }
+
     this._projectPath = resolved;
     this._branch = newBranch ?? getCurrentGitBranchOrDefault(resolved);
     this._lastActivityAt = Date.now();
+
+    // Re-detect worktree info for new project
+    clearWorktreeCache();
+    this._worktreeInfo = resolveWorktreeInfo(this._projectPath);
+
+    // Add to new repo index
+    if (this._worktreeInfo) {
+      addSessionToRepoIndex(this._worktreeInfo.repoIdentity, this.sessionId);
+    }
 
     // Ensure new project directory exists
     this.ensureProjectInitialized();
@@ -157,6 +221,7 @@ export class ClientSession {
       sid: this.sessionId,
       from: `${oldPath}@${oldBranch}`,
       to: `${this._projectPath}@${this._branch}`,
+      isWorktree: this._worktreeInfo?.isWorktree ?? false,
     });
   }
 
@@ -284,6 +349,30 @@ const activeSessions = new Map<string, ClientSession>();
 // Index for O(k) lookup by project path instead of O(n) filter
 const sessionsByProject = new Map<string, Set<string>>();
 
+// Index for O(k) lookup by repoIdentity (all worktrees of the same repo)
+const sessionsByRepo = new Map<string, Set<string>>();
+
+/** @internal Add session to repo index */
+function addSessionToRepoIndex(repoIdentity: string, sessionId: string): void {
+  let sessions = sessionsByRepo.get(repoIdentity);
+  if (!sessions) {
+    sessions = new Set();
+    sessionsByRepo.set(repoIdentity, sessions);
+  }
+  sessions.add(sessionId);
+}
+
+/** @internal Remove session from repo index */
+function removeSessionFromRepoIndex(repoIdentity: string, sessionId: string): void {
+  const sessions = sessionsByRepo.get(repoIdentity);
+  if (sessions) {
+    sessions.delete(sessionId);
+    if (sessions.size === 0) {
+      sessionsByRepo.delete(repoIdentity);
+    }
+  }
+}
+
 /**
  * Register a new session
  */
@@ -317,6 +406,11 @@ export function unregisterSession(sessionId: string): void {
         sessionsByProject.delete(session.projectPath);
       }
     }
+
+    // Remove from repo index
+    if (session.repoIdentity) {
+      removeSessionFromRepoIndex(session.repoIdentity, sessionId);
+    }
   }
 
   activeSessions.delete(sessionId);
@@ -344,6 +438,22 @@ export function getActiveSessions(): ClientSession[] {
 export function getSessionsForProject(projectPath: string): ClientSession[] {
   const normalized = normalize(resolve(projectPath));
   const sessionIds = sessionsByProject.get(normalized);
+  if (!sessionIds) return [];
+
+  const result: ClientSession[] = [];
+  for (const sessionId of sessionIds) {
+    const session = activeSessions.get(sessionId);
+    if (session) result.push(session);
+  }
+  return result;
+}
+
+/**
+ * Get sessions for a repository identity (all worktrees of the same repo).
+ * O(k) lookup via repo index.
+ */
+export function getSessionsForRepo(repoIdentity: string): ClientSession[] {
+  const sessionIds = sessionsByRepo.get(repoIdentity);
   if (!sessionIds) return [];
 
   const result: ClientSession[] = [];

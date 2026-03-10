@@ -72,6 +72,17 @@ On long coding sessions, this compounds to **18,000%+ efficiency gain**.
 | Pattern detection | `detect_patterns` | Anti-patterns, best practices, code smells, JIT deopt |
 | Documentation | `autodoc_generate`, `autodoc_search` | Generate and search docs with LLM |
 | Getting started | `get_help`, `get_tools_for_task` | Guides and tool recommendations |
+| Multi-agent worktree | `spawn_agent_worktree`, `list_worktree_agents` | Parallel development across branches |
+| Worktree info | `get_worktree_info` | Repo topology: worktrees, submodules, subtrees |
+
+### Worktree-aware recommendations
+
+When working in a git worktree (linked worktree, not the main working tree):
+- UltraCode automatically detects worktrees and shares the base index
+- Use `get_worktree_info()` to see sibling worktrees and active agents
+- Use `spawn_agent_worktree({ branch: "feature-x" })` to create a new worktree for a parallel agent
+- All worktrees of the same repo share a single `repoIdentity` — no index duplication
+- Indexing locks prevent duplicate indexing of the same branch across worktrees
 
 ### DON'T waste resources on:
 

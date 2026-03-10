@@ -75,7 +75,32 @@ gcc -Os -o ultracode comm.c
 
 # Normal usage (called by Claude Desktop)
 ./ultracode.com [PROJECT_PATH]
+
+# Multi-agent worktree mode
+./ultracode.com --pipe --directory /path/to/worktree --branch feature-x --agent-id agent-1
 ```
+
+### CLI Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--stdio` | Direct child process proxy (default, Bun compatible) |
+| `--pipe` | Named Pipe IPC (Node.js, faster) |
+| `--directory PATH` | Override working directory (e.g., worktree path) |
+| `--branch NAME` | Explicit branch name (skip git detection on server) |
+| `--agent-id ID` | Agent identifier for multi-agent coordination |
+| `-h`, `--help` | Show help |
+| `-v`, `--version` | Show version |
+
+### Init Protocol (v3.0)
+
+comm.c sends a JSON init message to the server immediately after connecting:
+
+```
+ULTRACODE_INIT:{"cwd":"D:\\myproject","branch":"feature-x","agentId":"agent-1"}\n
+```
+
+This replaces the legacy `ULTRACODE_CWD:path\n` format. The server supports both for backward compatibility.
 
 ## Claude Desktop Configuration
 
@@ -88,6 +113,18 @@ gcc -Os -o ultracode comm.c
     }
   }
 }
+```
+
+### Multi-Agent Setup
+
+```bash
+# Create worktrees for parallel agents
+git worktree add ../agent-auth feature/auth
+git worktree add ../agent-payments feature/payments
+
+# Each agent connects to the SAME server via Named Pipe
+ultracode.com --pipe --directory ../agent-auth --branch feature/auth --agent-id auth-agent
+ultracode.com --pipe --directory ../agent-payments --branch feature/payments --agent-id pay-agent
 ```
 
 ## File locations

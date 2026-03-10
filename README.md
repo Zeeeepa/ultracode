@@ -140,6 +140,128 @@ All tracing and diagnostic tools support `highlightRecentChanges=true` — cross
 | [**get_changed_files**](.autodoc/features/git.md#get_changed_files) | Compare files between branches |
 | [**cleanup_branches**](.autodoc/features/git.md#cleanup_branches) | Clean up old branches (LRU) |
 
+## Multi-Agent Worktree Support
+
+Multiple AI agents can work in parallel, each in its own git worktree on a separate branch. UltraCode detects that all worktrees belong to the same repository via `repoIdentity` — a stable hash of `git-common-dir`. All worktrees share one index, one database, and one server process.
+
+| Tool | Description |
+|------|-------------|
+| [**spawn_agent_worktree**](.autodoc/features/worktree.md#spawn_agent_worktree) | Create a git worktree for a new agent |
+| [**list_worktree_agents**](.autodoc/features/worktree.md#list_worktree_agents) | List active worktree sessions |
+| [**cleanup_worktree**](.autodoc/features/worktree.md#cleanup_worktree) | Remove a worktree |
+| [**get_worktree_info**](.autodoc/features/worktree.md#get_worktree_info) | Detailed worktree/submodule/subtree info |
+
+### Launching from an Agent Orchestrator
+
+Any orchestrator (Claude Code, custom scripts, CI/CD) can spin up parallel agents with full code intelligence. Each agent gets its own MCP connection via the lightweight `ultracode.com` proxy (~700KB, cross-platform).
+
+**Step 1: Create worktrees**
+
+```bash
+cd /path/to/your/project
+
+# Create a worktree per agent (each on its own branch)
+git worktree add ../wt-auth   -b feature/auth   main
+git worktree add ../wt-pay    -b feature/payments main
+git worktree add ../wt-tests  -b feature/tests    main
+```
+
+**Step 2: Launch agents with UltraCode MCP**
+
+Each agent connects to the **same running UltraCode server** via Named Pipe (Windows) or Unix socket (Linux/macOS). The proxy binary handles connection, auto-start, and init handshake.
+
+```bash
+# Agent 1: auth feature
+ultracode.com --pipe \
+  --directory ../wt-auth \
+  --branch feature/auth \
+  --agent-id auth-agent
+
+# Agent 2: payments feature
+ultracode.com --pipe \
+  --directory ../wt-pay \
+  --branch feature/payments \
+  --agent-id pay-agent
+
+# Agent 3: test writing
+ultracode.com --pipe \
+  --directory ../wt-tests \
+  --branch feature/tests \
+  --agent-id test-agent
+```
+
+| CLI Argument | Required | Description |
+|-------------|----------|-------------|
+| `--pipe` | Yes | Use Named Pipe IPC (connects to running server) |
+| `--directory PATH` | Yes | Path to the agent's worktree |
+| `--branch NAME` | Recommended | Branch name (skips `git` detection on server) |
+| `--agent-id ID` | Recommended | Unique agent identifier for coordination |
+
+**Step 3: Configure in `claude_desktop_config.json` or MCP client**
+
+```json
+{
+  "mcpServers": {
+    "ultracode-auth": {
+      "command": "ultracode.com",
+      "args": ["--pipe", "--directory", "/path/to/wt-auth",
+               "--branch", "feature/auth", "--agent-id", "auth-agent"]
+    },
+    "ultracode-pay": {
+      "command": "ultracode.com",
+      "args": ["--pipe", "--directory", "/path/to/wt-pay",
+               "--branch", "feature/payments", "--agent-id", "pay-agent"]
+    }
+  }
+}
+```
+
+### How It Works
+
+```
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  Agent #1   │   │  Agent #2   │   │  Agent #3   │
+│  wt-auth    │   │  wt-pay     │   │  wt-tests   │
+└──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+       │                 │                 │
+       │ stdin/stdout    │ stdin/stdout    │ stdin/stdout
+       ▼                 ▼                 ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│ ultracode.com│ │ ultracode.com│ │ ultracode.com│
+│   (proxy)    │ │   (proxy)    │ │   (proxy)    │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+       │                │                │
+       └────────┬───────┘────────┬───────┘
+                │  Named Pipe    │
+                ▼                ▼
+        ┌───────────────────────────────┐
+        │     UltraCode MCP Server      │
+        │   (single process, shared)    │
+        │                               │
+        │  repoIdentity: same for all   │
+        │  Index: shared base + deltas  │
+        │  Locks: per branch            │
+        └───────────────────────────────┘
+```
+
+- **Shared index**: all worktrees use one `repoIdentity` → one database, one FAISS index pool
+- **Branch isolation**: each agent indexes its own branch delta; parallel indexing of different branches is safe
+- **Lock coordination**: if two agents are on the same branch, only one indexes — the other waits and skips
+- **Session discovery**: agents can see each other via `list_worktree_agents` — useful for task handoff
+- **Submodule/subtree aware**: submodules get their own `repoIdentity`; subtrees are detected as part of the parent repo
+
+### Cleanup
+
+```bash
+# Remove worktrees when done
+git worktree remove ../wt-auth
+git worktree remove ../wt-pay
+git worktree remove ../wt-tests
+
+# Or via MCP tool (from any agent):
+# cleanup_worktree({ branch: "feature/auth" })
+```
+
 ## Version History (Prolly Tree)
 
 Prolly Tree stores full entity history with commit-level granularity. Beyond time travel, it powers the **Recent Changes Context** feature: 10 diagnostic tools (`analyze_stacktrace`, `detect_patterns`, `analyze_state_chaos`, `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`, `find_decision_points`, `analyze_code_impact`, `analyze_hotspots`) can annotate their results with recently-changed entity status via `highlightRecentChanges=true`. This means the AI agent sees not just "what's broken" but "what changed recently that could have caused it."

@@ -75,6 +75,12 @@ import {
   ValidateDirectorySchema,
   ValidateFileSchema,
 } from "./schemas/index.js";
+import {
+  CleanupWorktreeSchema,
+  GetWorktreeInfoSchema,
+  ListWorktreeAgentsSchema,
+  SpawnAgentWorktreeSchema,
+} from "./schemas/worktree-schemas.js";
 import { traceToolDefinitions } from "./trace-schemas.js";
 
 /**
@@ -618,6 +624,40 @@ export function getToolsList(): ToolDefinition[] {
       description:
         "[HISTORY] List graph commits (version history). Shows commit hashes, messages, entity counts, and timestamps.",
       inputSchema: zodToJsonSchema(ListCommitsSchema),
+    },
+
+    // ==========================================================================
+    // Worktree & Multi-Agent Tools
+    // ==========================================================================
+    {
+      name: "spawn_agent_worktree",
+      description:
+        "[WORKTREE] Create a git worktree for a new branch and prepare for agent connection. " +
+        "Returns the worktree path and connection instructions. Use for multi-agent parallel development " +
+        "where each agent works on a separate branch in its own worktree.",
+      inputSchema: zodToJsonSchema(SpawnAgentWorktreeSchema),
+    },
+    {
+      name: "list_worktree_agents",
+      description:
+        "[WORKTREE] List all worktrees and active agent sessions for the current repository. " +
+        "Shows which worktrees have connected agents and their branches.",
+      inputSchema: zodToJsonSchema(ListWorktreeAgentsSchema),
+    },
+    {
+      name: "cleanup_worktree",
+      description:
+        "[WORKTREE] Remove a git worktree by branch name. The associated agent session " +
+        "will be disconnected automatically.",
+      inputSchema: zodToJsonSchema(CleanupWorktreeSchema),
+    },
+    {
+      name: "get_worktree_info",
+      description:
+        "[WORKTREE] Get detailed information about worktrees, submodules, and subtrees " +
+        "for the current repository. Shows repo identity, sibling worktrees, active sessions, " +
+        "and detected submodules/subtrees.",
+      inputSchema: zodToJsonSchema(GetWorktreeInfoSchema),
     },
   ];
 }
