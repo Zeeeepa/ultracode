@@ -897,3 +897,112 @@ patterns:
     customDetector: "checkMixedAsyncSync"
     minSemanticSimilarity: 0
     minStructuralConfidence: 0.8
+
+  # ── Wave 4: Dapper ──────────────────────────────────────────────
+
+  - id: "cs:dapper-implicit-nvarchar"
+    category: "optimization"
+    severity: "high"
+    name: "Dapper Implicit nvarchar(4000) Conversion"
+    description: "String params via anonymous objects become nvarchar(4000). If DB column is varchar, SQL Server performs CONVERT_IMPLICIT on every index row — Index Seek degrades to Index Scan"
+    suggestion: "Use DynamicParameters with DbType.AnsiString for varchar columns, or new DbString { Value = x, IsAnsi = true, Length = N }"
+    bigO:
+      before: "Index Scan O(N)"
+      after: "Index Seek O(log N)"
+    benchmark: "10-1000x faster on large tables with varchar indexes"
+    tags: ["performance", "database", "dapper", "sql-server"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["Query|QueryAsync|QueryFirst|QueryFirstOrDefault|QuerySingle|QuerySingleOrDefault|Execute|ExecuteAsync|ExecuteScalar|ExecuteScalarAsync|QueryMultiple|QueryMultipleAsync"]
+      callsExclude: ["DynamicParameters|DbString|DbType"]
+    customDetector: "checkDapperImplicitNvarchar"
+    exemplarIds: ["cs:dapper-nvarchar:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.5
+
+  - id: "cs:dapper-query-then-first"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Dapper Query().First() — Fetches All Rows"
+    description: "Query<T>() loads ALL rows into List<T> (buffered=true by default), then LINQ takes first. On large tables causes massive memory allocation and network traffic"
+    suggestion: "Use QueryFirstOrDefault<T>() / QuerySingleOrDefault<T>() — reads only one row from the server"
+    bigO:
+      before: "O(N) rows fetched + O(N) memory"
+      after: "O(1) row fetched"
+    benchmark: "100-10000x less memory on large tables"
+    tags: ["performance", "database", "dapper", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["Query|QueryAsync"]
+    customDetector: "checkDapperQueryThenFirst"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:dapper-sql-injection"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "SQL Injection via Dapper String Interpolation"
+    description: "String interpolation ($\"\") or concatenation (+) in SQL passed to Dapper — Dapper does NOT parameterize raw strings, unlike EF FromSqlInterpolated"
+    suggestion: "Use @param placeholders in SQL and pass values via anonymous object or DynamicParameters"
+    tags: ["security", "injection", "dapper", "database"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["Query|QueryAsync|QueryFirst|QueryFirstOrDefault|QuerySingle|QuerySingleOrDefault|Execute|ExecuteAsync|ExecuteScalar|ExecuteScalarAsync|QueryMultiple|QueryMultipleAsync"]
+    customDetector: "checkDapperSqlInjection"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "cs:dapper-n-plus-one"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Dapper Query Inside Loop (N+1)"
+    description: "Dapper query executed inside a loop — sends N separate SQL queries instead of one batch query"
+    suggestion: "Fetch all data with WHERE IN (@ids) before the loop, or use QueryMultiple for batch loading"
+    bigO:
+      before: "O(N) round-trips"
+      after: "O(1) round-trip"
+    benchmark: "10-100x faster, eliminates N network round-trips"
+    tags: ["performance", "database", "dapper"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasLoops: true
+      callsInclude: ["Query|QueryAsync|QueryFirst|QueryFirstOrDefault|QuerySingle|QuerySingleOrDefault|Execute|ExecuteAsync"]
+    customDetector: "checkDapperNPlusOne"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:dapper-no-commandtimeout"
+    category: "code-smell"
+    severity: "medium"
+    name: "Dapper Call Without CommandTimeout"
+    description: "Dapper query without explicit commandTimeout — defaults to 30s which may be too long (hides stuck queries) or too short (times out reports)"
+    suggestion: "Pass commandTimeout parameter: QueryAsync<T>(sql, param, commandTimeout: 10) — tune per query type"
+    tags: ["reliability", "database", "dapper", "timeout"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["Query|QueryAsync|QueryFirst|QueryFirstOrDefault|QuerySingle|QuerySingleOrDefault|Execute|ExecuteAsync|ExecuteScalar|ExecuteScalarAsync"]
+    customDetector: "checkDapperNoCommandTimeout"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "cs:dapper-buffered-large-query"
+    category: "optimization"
+    severity: "medium"
+    name: "Dapper Buffered Query for Bulk/Export Operations"
+    description: "Query<T>() with buffered=true (default) in bulk/export/report methods — loads entire result set into memory"
+    suggestion: "Pass buffered: false for large result sets: Query<T>(sql, param, buffered: false). Process rows as IEnumerable<T> stream"
+    benchmark: "Constant O(1) memory instead of O(N) for large result sets"
+    tags: ["performance", "memory", "dapper", "database"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["Query|QueryAsync"]
+      callsExclude: ["buffered"]
+    customDetector: "checkDapperBufferedLargeQuery"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5

@@ -1,6 +1,6 @@
 # Stacktrace
 
-Analyzes and diagnoses stack traces with entity resolution and error classification.
+Parses stacktraces, classifies errors, resolves frames to code entities, and generates diagnoses.
 
 ## Exports
 

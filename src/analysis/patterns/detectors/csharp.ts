@@ -1074,3 +1074,274 @@ export function checkHardcodedConnection(entity: Entity): CustomDetectorResult {
 
   return { match: false, confidence: 0 };
 }
+
+// ── Wave 4: Dapper Custom Detectors ─────────────────────────────
+
+/** Dapper method name regex (reused across detectors) */
+const DAPPER_METHODS_RE =
+  /^(Query|QueryAsync|QueryFirst|QueryFirstAsync|QueryFirstOrDefault|QueryFirstOrDefaultAsync|QuerySingle|QuerySingleAsync|QuerySingleOrDefault|QuerySingleOrDefaultAsync|Execute|ExecuteAsync|ExecuteScalar|ExecuteScalarAsync|QueryMultiple|QueryMultipleAsync)$/;
+
+/**
+ * Dapper implicit nvarchar(4000): anonymous object params without DynamicParameters/DbString.
+ * Verifies: (1) has Dapper call, (2) has `new {` near Dapper call, (3) no DynamicParameters/DbString/DbType
+ */
+export function checkDapperImplicitNvarchar(entity: Entity): CustomDetectorResult {
+  const calls = (entity.metadata?.["calls"] ?? []) as Array<{ name?: string; target?: string }>;
+  const dapperCalls = calls.filter((c) => DAPPER_METHODS_RE.test(c.name ?? ""));
+  if (dapperCalls.length === 0) return { match: false, confidence: 0 };
+
+  // Exclude if DynamicParameters/DbString/DbType is used anywhere
+  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  if (/DynamicParameters|DbString|DbType\.AnsiString|DbType\.AnsiStringFixedLength/.test(content)) {
+    return { match: false, confidence: 0 };
+  }
+
+  // Check for anonymous object pattern near Dapper calls: `new {` or `, new {`
+  const lines = content.split("\n");
+  let hasDapperWithAnonymous = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    // Look for Dapper method call
+    if (DAPPER_METHODS_RE.test(line.replace(/.*\./, "").replace(/[<(].*/s, ""))) {
+      // Check this line and next 3 lines for `new {`
+      for (let j = i; j < Math.min(i + 4, lines.length); j++) {
+        if (/new\s*\{/.test(lines[j]!)) {
+          hasDapperWithAnonymous = true;
+          break;
+        }
+      }
+      if (hasDapperWithAnonymous) break;
+    }
+  }
+
+  if (!hasDapperWithAnonymous) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: 0.75,
+    matchedCriteria: ["dapper-anonymous-params", "implicit-nvarchar(4000)", `dapper-calls=${dapperCalls.length}`],
+  };
+}
+
+/**
+ * Dapper Query().First/FirstOrDefault/Single/etc — fetches ALL rows then takes one.
+ * Should use QueryFirstOrDefault directly.
+ */
+export function checkDapperQueryThenFirst(entity: Entity): CustomDetectorResult {
+  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+
+  // Line-by-line: find Query<T>(...) or QueryAsync<T>(...) followed by .First/.FirstOrDefault/.Single/.Last/.Take(1)
+  const lines = content.split("\n");
+  const found: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    // Pattern 1: same line — .Query<T>(...).FirstOrDefault()
+    if (
+      /\.(Query|QueryAsync)\s*(<[^>]*>)?\s*\([^)]*\)\s*\.\s*(First|FirstOrDefault|Single|SingleOrDefault|Last|LastOrDefault|Take|ElementAt)/i.test(
+        line,
+      )
+    ) {
+      found.push("same-line-chain");
+      continue;
+    }
+    // Pattern 2: Query result assigned, then LINQ on next lines
+    if (/\.(Query|QueryAsync)\s*(<[^>]*>)?\s*\(/.test(line)) {
+      for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+        if (
+          /^\s*\.\s*(First|FirstOrDefault|Single|SingleOrDefault|Last|LastOrDefault|Take|ElementAt)\s*\(/.test(
+            lines[j]!,
+          )
+        ) {
+          found.push("next-line-chain");
+          break;
+        }
+      }
+    }
+  }
+
+  if (found.length === 0) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: 0.85,
+    matchedCriteria: ["query-then-first", ...found],
+  };
+}
+
+/**
+ * Dapper SQL injection: string interpolation ($"") or concatenation (+) in SQL passed to Dapper.
+ * Unlike EF's FromSqlInterpolated, Dapper does NOT auto-parameterize interpolated strings.
+ */
+export function checkDapperSqlInjection(entity: Entity): CustomDetectorResult {
+  const calls = (entity.metadata?.["calls"] ?? []) as Array<{ name?: string }>;
+  const dapperCalls = calls.filter((c) => DAPPER_METHODS_RE.test(c.name ?? ""));
+  if (dapperCalls.length === 0) return { match: false, confidence: 0 };
+
+  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  const lines = content.split("\n");
+  let found = false;
+  const criteria: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    // Check for Dapper call with interpolated string: Query($"SELECT ...")
+    for (const call of dapperCalls) {
+      const name = call.name ?? "";
+      // Direct interpolation: .Query($"SELECT...{var}...")
+      if (line.includes(name)) {
+        if (new RegExp(`${name}\\s*(<[^>]*>)?\\s*\\(\\s*\\$"`).test(line)) {
+          found = true;
+          criteria.push("interpolated-sql-direct");
+          break;
+        }
+        // String concat: .Query("SELECT..." + var + "...")
+        if (new RegExp(`${name}\\s*(<[^>]*>)?\\s*\\([^)]*\\+`).test(line)) {
+          found = true;
+          criteria.push("concatenated-sql");
+          break;
+        }
+      }
+    }
+    if (found) break;
+
+    // Also check: var sql = $"SELECT..."; ... Query(sql, ...)
+    if (
+      /=\s*\$"[^"]*SELECT\b/i.test(line) ||
+      /=\s*\$"[^"]*INSERT\b/i.test(line) ||
+      /=\s*\$"[^"]*UPDATE\b/i.test(line) ||
+      /=\s*\$"[^"]*DELETE\b/i.test(line)
+    ) {
+      // Check if this variable is used in a Dapper call within next 10 lines
+      const varMatch = line.match(/(?:var|string)\s+(\w+)\s*=/);
+      if (varMatch) {
+        const varName = varMatch[1];
+        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+          for (const call of dapperCalls) {
+            if (lines[j]!.includes(call.name ?? "") && lines[j]!.includes(varName!)) {
+              found = true;
+              criteria.push("interpolated-sql-variable");
+              break;
+            }
+          }
+          if (found) break;
+        }
+      }
+    }
+    if (found) break;
+  }
+
+  if (!found) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: 0.9,
+    matchedCriteria: ["dapper-sql-injection", ...criteria],
+  };
+}
+
+/**
+ * Dapper N+1: Query/Execute inside a loop body.
+ * Uses controlFlow.loops.innerCalls for precise detection.
+ */
+export function checkDapperNPlusOne(entity: Entity): CustomDetectorResult {
+  const cf = (entity.metadata?.["controlFlow"] as ControlFlowData | undefined) ?? null;
+  if (!cf?.loops?.length) return { match: false, confidence: 0 };
+
+  let matchedLoops = 0;
+  const matchedCalls: string[] = [];
+
+  for (const loop of cf.loops) {
+    if (!loop.innerCalls) continue;
+    const dapperInLoop = loop.innerCalls.filter((c) => DAPPER_METHODS_RE.test(c));
+    if (dapperInLoop.length > 0) {
+      matchedLoops++;
+      matchedCalls.push(...dapperInLoop);
+    }
+  }
+
+  if (matchedLoops === 0) {
+    // Fallback: check embeddingText line-by-line
+    const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+    const lines = content.split("\n");
+    let inLoop = 0;
+    for (const line of lines) {
+      const trimmed = line.trimStart();
+      if (/^(for|foreach|while|do)\b/.test(trimmed)) inLoop++;
+      if (inLoop > 0 && DAPPER_METHODS_RE.test(trimmed.replace(/.*\./, "").replace(/[<(].*/s, ""))) {
+        matchedLoops++;
+        break;
+      }
+      if (trimmed === "}" && inLoop > 0) inLoop = Math.max(0, inLoop - 1);
+    }
+  }
+
+  if (matchedLoops === 0) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: Math.min(0.75 + matchedLoops * 0.1, 0.95),
+    matchedCriteria: [`dapper-in-loop=${matchedLoops}`, `calls=${[...new Set(matchedCalls)].join(",")}`],
+  };
+}
+
+/**
+ * Dapper call without commandTimeout — defaults to 30s.
+ * Only flags methods with name suggesting heavy operations (report, export, bulk, batch, migration).
+ */
+export function checkDapperNoCommandTimeout(entity: Entity): CustomDetectorResult {
+  const calls = (entity.metadata?.["calls"] ?? []) as Array<{ name?: string }>;
+  const dapperCalls = calls.filter((c) => DAPPER_METHODS_RE.test(c.name ?? ""));
+  if (dapperCalls.length === 0) return { match: false, confidence: 0 };
+
+  // Only warn for methods likely to be slow — name heuristic
+  const name = (entity.name ?? "").toLowerCase();
+  const filePath = (entity.filePath ?? "").toLowerCase();
+  const isHeavy =
+    /report|export|import|bulk|batch|migrate|migration|sync|synchronize|load|seed|aggregate|etl|dump/.test(name) ||
+    /report|export|import|bulk|batch|migrate|migration|sync|seed|etl/.test(filePath);
+
+  if (!isHeavy) return { match: false, confidence: 0 };
+
+  // Check if commandTimeout is specified
+  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  if (/commandTimeout/i.test(content)) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: 0.6,
+    matchedCriteria: ["dapper-no-timeout", `method=${entity.name}`],
+  };
+}
+
+/**
+ * Dapper buffered query for large/bulk operations.
+ * Query<T>() is buffered=true by default. For bulk/export/report methods this loads everything into memory.
+ */
+export function checkDapperBufferedLargeQuery(entity: Entity): CustomDetectorResult {
+  const calls = (entity.metadata?.["calls"] ?? []) as Array<{ name?: string }>;
+  // Only Query/QueryAsync (not QueryFirst etc — those return single rows)
+  const queryCalls = calls.filter((c) => /^(Query|QueryAsync)$/.test(c.name ?? ""));
+  if (queryCalls.length === 0) return { match: false, confidence: 0 };
+
+  // Only warn for methods that suggest large result processing
+  const name = (entity.name ?? "").toLowerCase();
+  const filePath = (entity.filePath ?? "").toLowerCase();
+  const isLargeResult =
+    /report|export|dump|getall|listall|bulk|batch|stream|download|csv|excel|migrate|seed|load|sync|aggregate|fetchall/.test(
+      name,
+    ) || /report|export|dump|bulk|batch|stream|download|csv|excel|migrate|seed/.test(filePath);
+
+  if (!isLargeResult) return { match: false, confidence: 0 };
+
+  // Check if buffered: false is already specified
+  const content = ((entity.embeddingText ?? "") as string).slice(0, 8000);
+  if (/buffered\s*:\s*false/i.test(content)) return { match: false, confidence: 0 };
+  // Also skip if QueryUnbufferedAsync is used
+  if (/QueryUnbuffered/i.test(content)) return { match: false, confidence: 0 };
+
+  return {
+    match: true,
+    confidence: 0.6,
+    matchedCriteria: ["dapper-buffered-large-query", `method=${entity.name}`, `query-calls=${queryCalls.length}`],
+  };
+}

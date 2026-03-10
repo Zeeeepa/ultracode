@@ -1,6 +1,6 @@
 # Parsers
 
-Language-specific stacktrace parsers that extract structured frame data from error traces.
+Multi-language stacktrace parser module with language-specific frame extraction and error detection
 
 ## Exports
 
