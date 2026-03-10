@@ -1,6 +1,6 @@
 # Protobuf
 
-Analyzes relationships between protobuf service definitions and source code implementations.
+Analyzes and links protobuf service definitions to source code implementations.
 
 ## Exports
 

@@ -1,6 +1,6 @@
 # Parsers
 
-Multi-language stacktrace parser collection supporting eight programming languages
+Provides language-specific stacktrace parsers for multiple programming languages
 
 ## Exports
 

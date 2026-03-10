@@ -1,6 +1,6 @@
 # Taint
 
-Detects security vulnerabilities by tracing taint flows from data sources to dangerous sinks.
+Detects and analyzes data taint flows for security vulnerabilities
 
 ## Response Handling
 

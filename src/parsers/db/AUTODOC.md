@@ -1,6 +1,6 @@
 # Db
 
-Comprehensive database schema parsing, ORM detection, and migration analysis system.
+Database parsing, ORM detection, and schema analysis integration layer
 
 ## Exports
 
