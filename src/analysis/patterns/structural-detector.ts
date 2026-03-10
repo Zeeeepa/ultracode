@@ -120,6 +120,18 @@ interface EntityMeta {
     throwExCount: number;
     emptyCatchCount: number;
   } | null;
+  pythonHints: {
+    bareExceptCount: number;
+    exceptPassCount: number;
+    genericRaiseCount: number;
+    wideTryBlockCount: number;
+    typeIgnoreCount: number;
+    anyTypeCount: number;
+    evalExecCount: number;
+    stringConcatInLoopCount: number;
+    openWithoutWithCount: number;
+    asyncNoAwaitCount: number;
+  } | null;
 }
 
 const metaCache = new WeakMap<Entity, EntityMeta>();
@@ -159,6 +171,7 @@ function getMeta(entity: Entity): EntityMeta {
     zigOps: (md?.["zigOps"] as EntityMeta["zigOps"]) ?? null,
     csharpHints:
       (md?.["_csharpHints"] as EntityMeta["csharpHints"]) ?? (md?.["csharpHints"] as EntityMeta["csharpHints"]) ?? null,
+    pythonHints: (md?.["pythonHints"] as EntityMeta["pythonHints"]) ?? null,
   };
   metaCache.set(entity, meta);
   return meta;
@@ -759,6 +772,78 @@ export class StructuralDetector {
       }
     }
 
+    // Python-specific hints
+    if (criteria.minBareExcept != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.bareExceptCount >= criteria.minBareExcept) {
+        optionalPassed++;
+        matched.push(`bareExcept>=${criteria.minBareExcept}`);
+      }
+    }
+    if (criteria.minExceptPass != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.exceptPassCount >= criteria.minExceptPass) {
+        optionalPassed++;
+        matched.push(`exceptPass>=${criteria.minExceptPass}`);
+      }
+    }
+    if (criteria.minGenericRaise != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.genericRaiseCount >= criteria.minGenericRaise) {
+        optionalPassed++;
+        matched.push(`genericRaise>=${criteria.minGenericRaise}`);
+      }
+    }
+    if (criteria.minWideTryBlock != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.wideTryBlockCount >= criteria.minWideTryBlock) {
+        optionalPassed++;
+        matched.push(`wideTryBlock>=${criteria.minWideTryBlock}`);
+      }
+    }
+    if (criteria.minTypeIgnore != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.typeIgnoreCount >= criteria.minTypeIgnore) {
+        optionalPassed++;
+        matched.push(`typeIgnore>=${criteria.minTypeIgnore}`);
+      }
+    }
+    if (criteria.minAnyType != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.anyTypeCount >= criteria.minAnyType) {
+        optionalPassed++;
+        matched.push(`anyType>=${criteria.minAnyType}`);
+      }
+    }
+    if (criteria.minEvalExec != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.evalExecCount >= criteria.minEvalExec) {
+        optionalPassed++;
+        matched.push(`evalExec>=${criteria.minEvalExec}`);
+      }
+    }
+    if (criteria.hasPyStringConcatInLoop != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.stringConcatInLoopCount > 0) {
+        optionalPassed++;
+        matched.push("hasPyStringConcatInLoop");
+      }
+    }
+    if (criteria.hasPyOpenWithoutWith != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.openWithoutWithCount > 0) {
+        optionalPassed++;
+        matched.push("hasPyOpenWithoutWith");
+      }
+    }
+    if (criteria.hasPyAsyncNoAwait != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.asyncNoAwaitCount > 0) {
+        optionalPassed++;
+        matched.push("hasPyAsyncNoAwait");
+      }
+    }
+
     // Name
     if (compiled.nameMatchRe) {
       optionalTotal++;
@@ -963,6 +1048,17 @@ function countTotalCriteria(criteria: StructuralCriteria): number {
   if (criteria.minThrowEx != null) count++;
   if (criteria.minEmptyCatch != null) count++;
   if (criteria.hasStringConcatInLoop != null) count++;
+  // Python-specific hints
+  if (criteria.minBareExcept != null) count++;
+  if (criteria.minExceptPass != null) count++;
+  if (criteria.minGenericRaise != null) count++;
+  if (criteria.minWideTryBlock != null) count++;
+  if (criteria.minTypeIgnore != null) count++;
+  if (criteria.minAnyType != null) count++;
+  if (criteria.minEvalExec != null) count++;
+  if (criteria.hasPyStringConcatInLoop != null) count++;
+  if (criteria.hasPyOpenWithoutWith != null) count++;
+  if (criteria.hasPyAsyncNoAwait != null) count++;
   if (criteria.relationships) count += criteria.relationships.length;
   return count;
 }

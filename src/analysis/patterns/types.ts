@@ -104,6 +104,18 @@ export interface StructuralCriteria {
   minEmptyCatch?: number | undefined;
   hasStringConcatInLoop?: boolean | undefined;
 
+  // Python-specific antipattern hints (from tree-sitter parser)
+  minBareExcept?: number | undefined;
+  minExceptPass?: number | undefined;
+  minGenericRaise?: number | undefined;
+  minWideTryBlock?: number | undefined;
+  minTypeIgnore?: number | undefined;
+  minAnyType?: number | undefined;
+  minEvalExec?: number | undefined;
+  hasPyStringConcatInLoop?: boolean | undefined;
+  hasPyOpenWithoutWith?: boolean | undefined;
+  hasPyAsyncNoAwait?: boolean | undefined;
+
   // Graph-based (require relationship queries)
   relationships?: RelationshipCriteria[] | undefined;
 }

@@ -144,6 +144,18 @@ def extract_calls_from_body(body: list[ast.stmt], container_name: str) -> list[d
                 except:
                     continue
 
+            # Extract keyword arguments (e.g., inplace=True, shell=True)
+            if node.keywords:
+                kwargs = {}
+                for kw in node.keywords:
+                    if kw.arg is not None:
+                        try:
+                            kwargs[kw.arg] = ast.unparse(kw.value) if hasattr(ast, "unparse") else repr(kw.value)
+                        except:
+                            kwargs[kw.arg] = "..."
+                if kwargs:
+                    call_info["kwargs"] = kwargs
+
             call_info["container"] = container_name
             calls.append(call_info)
 
@@ -212,6 +224,127 @@ def get_bases(node: ast.ClassDef) -> dict | None:
         return None
 
     return {"baseClasses": base_classes, "interfaces": []}
+
+
+def extract_control_flow(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict | None:
+    """Extract control flow info: loops, exceptions, awaits, branches."""
+    loops = []
+    exceptions = []
+    awaits = []
+    branches = []
+
+    for child in ast.walk(node):
+        if isinstance(child, (ast.For, ast.While, ast.AsyncFor)):
+            loops.append({"line": getattr(child, "lineno", 0)})
+        elif isinstance(child, ast.Try):
+            exceptions.append({"line": getattr(child, "lineno", 0)})
+        elif isinstance(child, ast.Await):
+            awaits.append({"line": getattr(child, "lineno", 0)})
+        elif isinstance(child, (ast.If, ast.IfExp)):
+            branches.append({"line": getattr(child, "lineno", 0)})
+
+    result = {}
+    if loops:
+        result["loops"] = loops
+    if exceptions:
+        result["exceptions"] = exceptions
+    if awaits:
+        result["awaits"] = awaits
+    if branches:
+        result["branches"] = branches
+
+    return result if result else None
+
+
+def extract_python_hints(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict | None:
+    """Extract Python-specific antipattern hints from AST."""
+    hints = {
+        "bareExceptCount": 0,
+        "exceptPassCount": 0,
+        "genericRaiseCount": 0,
+        "wideTryBlockCount": 0,
+        "typeIgnoreCount": 0,
+        "anyTypeCount": 0,
+        "evalExecCount": 0,
+        "stringConcatInLoopCount": 0,
+        "openWithoutWithCount": 0,
+        "asyncNoAwaitCount": 0,
+    }
+
+    is_async = isinstance(node, ast.AsyncFunctionDef)
+    has_await = False
+    with_targets = set()  # Track variables from 'with' statements
+
+    for child in ast.walk(node):
+        # Bare except / swallowed exception
+        if isinstance(child, ast.ExceptHandler):
+            if child.type is None:
+                hints["bareExceptCount"] += 1
+            # except ...: pass
+            if len(child.body) == 1 and isinstance(child.body[0], ast.Pass):
+                hints["exceptPassCount"] += 1
+
+        # Wide try block (>10 statements)
+        if isinstance(child, ast.Try):
+            body_lines = getattr(child.body[-1], "end_lineno", 0) - getattr(child.body[0], "lineno", 0) if child.body else 0
+            if body_lines > 10:
+                hints["wideTryBlockCount"] += 1
+
+        # Generic raise: raise Exception(...) / raise BaseException(...)
+        if isinstance(child, ast.Raise) and child.exc:
+            exc = child.exc
+            if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+                if exc.func.id in ("Exception", "BaseException"):
+                    hints["genericRaiseCount"] += 1
+
+        # eval/exec calls
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+            if child.func.id in ("eval", "exec"):
+                hints["evalExecCount"] += 1
+
+        # open() without with
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "open":
+            # Check if this open is inside a 'with' statement
+            if child.func.id not in with_targets:
+                # Heuristic: check if parent is a withitem (not perfect but good enough)
+                pass  # Will check via with_targets below
+
+        # Track 'with' targets
+        if isinstance(child, ast.With) or isinstance(child, ast.AsyncWith):
+            for item in child.items:
+                if isinstance(item.context_expr, ast.Call) and isinstance(item.context_expr.func, ast.Name):
+                    with_targets.add(item.context_expr.func.id)
+
+        # Await tracking
+        if isinstance(child, ast.Await):
+            has_await = True
+
+        # Any type annotations
+        if isinstance(child, ast.Name) and child.id == "Any":
+            hints["anyTypeCount"] += 1
+
+        # String concat in loop: result += str_val
+        if isinstance(child, (ast.For, ast.While, ast.AsyncFor)):
+            for loop_child in ast.walk(child):
+                if isinstance(loop_child, ast.AugAssign) and isinstance(loop_child.op, ast.Add):
+                    hints["stringConcatInLoopCount"] += 1
+
+    # open() without with: check calls not under 'with'
+    for child in ast.walk(node):
+        if isinstance(child, ast.Assign):
+            if isinstance(child.value, ast.Call) and isinstance(child.value.func, ast.Name):
+                if child.value.func.id == "open":
+                    hints["openWithoutWithCount"] += 1
+
+    # async def without await
+    if is_async and not has_await:
+        hints["asyncNoAwaitCount"] = 1
+
+    # Return None if all zeros
+    if all(v == 0 for v in hints.values()):
+        return None
+
+    return hints
 
 
 def process_function(node: ast.FunctionDef | ast.AsyncFunctionDef, file_path: str, class_name: str | None = None) -> dict:
@@ -403,27 +536,48 @@ def parse_file(file_path: str, content: str) -> dict:
             "location": {"start": {"line": 1, "column": 0, "index": 0}, "end": {"line": 1, "column": 0, "index": 0}},
         })
 
-        # Helper to collect calls from function body
-        def collect_function_calls(func_node, func_name: str):
+        # Helper to collect calls from function body and attach to entity
+        def collect_function_calls(func_node, func_name: str, entity: dict):
             if func_node.body:
                 calls = extract_calls_from_body(func_node.body, func_name)
                 all_calls.extend(calls)
+                # Attach calls to entity metadata for structural detection
+                if calls:
+                    entity["calls"] = [
+                        {k: v for k, v in c.items() if k in ("name", "target", "argumentCount", "kwargs")}
+                        for c in calls
+                    ]
+                # Extract controlFlow hints
+                cf = extract_control_flow(func_node)
+                if cf:
+                    entity["controlFlow"] = cf
+                # Extract pythonHints for antipattern detection
+                hints = extract_python_hints(func_node)
+                if hints:
+                    entity["pythonHints"] = hints
 
         # Process top-level nodes
         for node in ast.walk(tree):
             if isinstance(node, ast.Module):
                 for item in node.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        entities.append(process_function(item, file_path))
-                        # Extract calls from top-level function
-                        collect_function_calls(item, item.name)
+                        ent = process_function(item, file_path)
+                        collect_function_calls(item, item.name, ent)
+                        entities.append(ent)
                     elif isinstance(item, ast.ClassDef):
-                        entities.extend(process_class(item, file_path))
+                        class_entities = process_class(item, file_path)
+                        entities.extend(class_entities)
                         # Extract calls from class methods
                         for class_item in item.body:
                             if isinstance(class_item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                                 method_name = f"{item.name}.{class_item.name}"
-                                collect_function_calls(class_item, method_name)
+                                # Find matching entity to attach calls
+                                method_ent = next((e for e in class_entities if e["name"] == method_name), None)
+                                if method_ent:
+                                    collect_function_calls(class_item, method_name, method_ent)
+                                else:
+                                    if class_item.body:
+                                        all_calls.extend(extract_calls_from_body(class_item.body, method_name))
                     elif isinstance(item, (ast.Import, ast.ImportFrom)):
                         entities.extend(process_import(item, file_path))
                     elif isinstance(item, ast.Assign):

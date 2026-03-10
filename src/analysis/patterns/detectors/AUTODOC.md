@@ -1,6 +1,6 @@
 # Detectors
 
-Language-agnostic and language-specific custom detectors for identifying anti-patterns, performance issues, and code quality problems across multiple programming languages.
+Language-specific custom detectors for code antipatterns and code smell checks.
 
 ## Exports
 
@@ -26,7 +26,7 @@ Language-agnostic and language-specific custom detectors for identifying anti-pa
 | `checkNakedReturn` | function | Detects unnamed returns in long functions reducing readability | [→ go.ts:74-74] |
 | `checkNestedCallbacks` | function | Detects callback hell pattern with excessive nesting levels | [→ typescript.ts:47-61] |
 | `checkNoDocumentation` | function | Detects public entities lacking documentation blocks | [→ common.ts:64-68] |
-| `checkNoTypeHints` | function | Detects functions lacking type annotations and hints | [→ python.ts:76-76] |
+| `checkNoTypeHints` | function | Detects functions lacking type annotations and hints | [→ python.ts:73-95] |
 | `checkPromiseNoCatch` | function | Detects promises lacking catch or try-catch error handlers | [→ typescript.ts:66-84] |
 | `checkRawTypes` | function | Detects generic types used without type parameter specification | [→ java.ts:11-31] |
 | `checkReflectionInHotpath` | function | Detects reflection calls in performance-critical code paths | [→ java.ts:86-106] |

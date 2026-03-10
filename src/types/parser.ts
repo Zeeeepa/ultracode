@@ -403,6 +403,21 @@ export interface ParsedEntity {
       }
     | undefined;
 
+  pythonHints?:
+    | {
+        bareExceptCount: number;
+        exceptPassCount: number;
+        genericRaiseCount: number;
+        wideTryBlockCount: number;
+        typeIgnoreCount: number;
+        anyTypeCount: number;
+        evalExecCount: number;
+        stringConcatInLoopCount: number;
+        openWithoutWithCount: number;
+        asyncNoAwaitCount: number;
+      }
+    | undefined;
+
   embeddingBase64?: string | undefined;
   embeddingText?: string | undefined;
   metadata?: Record<string, any> | undefined;

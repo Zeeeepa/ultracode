@@ -391,6 +391,8 @@ export function parsedEntityToEntity(
     controlFlow: parsed.controlFlow,
     metrics: complexityMeta,
     ...(parsed.jitHints && { jitHints: parsed.jitHints }),
+    ...(parsed.antipatternHints && { antipatternHints: parsed.antipatternHints }),
+    ...(parsed.pythonHints && { pythonHints: parsed.pythonHints }),
   };
 
   return {

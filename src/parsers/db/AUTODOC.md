@@ -1,6 +1,6 @@
 # Db
 
-Parses database files and detects code-to-schema links, migrations, ORM models, and schema drift.
+Database schema parsing, linking, and analysis module.
 
 ## Exports
 

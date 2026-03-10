@@ -725,6 +725,22 @@ function briefArgs(args: unknown): string {
 }
 
 /**
+ * Strip unpaired UTF-16 surrogates that break JSON serialization over MCP.
+ * Replaces orphaned \uD800-\uDFFF with U+FFFD (replacement character).
+ * Applied as final barrier before MCP SDK serializes the response.
+ */
+// biome-ignore lint/suspicious/noMisleadingCharacterClass: intentional surrogate matching
+const ORPHAN_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+function sanitizeResponseSurrogates<T extends { content: Array<{ type: string; text?: string }> }>(result: T): T {
+  for (const item of result.content) {
+    if (item.type === "text" && item.text) {
+      item.text = item.text.replace(ORPHAN_SURROGATE_RE, "\uFFFD");
+    }
+  }
+  return result;
+}
+
+/**
  * Append _elapsedMs to the first JSON text content in a tool result.
  * Non-JSON results get a trailing metadata line instead.
  */
@@ -984,7 +1000,7 @@ async function executeToolCall(
               const result = await handler.handle(args);
               const elapsedMs = Date.now() - startTime;
               log.i("MCP", "tool_done", { tool: name, req: requestId, ms: elapsedMs });
-              return appendElapsed(enforceResponseLimit(name, result), elapsedMs);
+              return sanitizeResponseSurrogates(appendElapsed(enforceResponseLimit(name, result), elapsedMs));
             }),
           );
         } finally {
@@ -996,7 +1012,7 @@ async function executeToolCall(
         const result = await handler.handle(args);
         const elapsedMs = Date.now() - startTime;
         log.i("MCP", "tool_done", { tool: name, req: requestId, ms: elapsedMs });
-        return appendElapsed(result, elapsedMs);
+        return sanitizeResponseSurrogates(appendElapsed(result, elapsedMs));
       });
     }
 

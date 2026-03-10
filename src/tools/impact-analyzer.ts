@@ -472,6 +472,27 @@ export class ImpactAnalyzer {
       }
     }
 
+    // Python hints: eval/exec, bare except, open without with
+    const pyHints = meta["pythonHints"] as
+      | { evalExecCount?: number; bareExceptCount?: number; openWithoutWithCount?: number }
+      | undefined;
+    if (pyHints) {
+      if ((pyHints.evalExecCount ?? 0) > 0) {
+        changes.push({
+          description: `${pyHints.evalExecCount} eval/exec call(s) - dynamic code execution is a security risk and breaks static analysis`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "error",
+        });
+      }
+      if ((pyHints.bareExceptCount ?? 0) > 0) {
+        changes.push({
+          description: `${pyHints.bareExceptCount} bare except clause(s) - catches SystemExit/KeyboardInterrupt, may hide bugs on code changes`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+    }
+
     // Zig-specific: unsafe casts make API changes more dangerous
     const zigOps = meta?.["zigOps"] as { unsafeCastCount?: number; forceUnwrapCount?: number } | undefined;
     if (zigOps) {

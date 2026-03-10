@@ -84,6 +84,17 @@ const StructuralCriteriaSchema = z.object({
   minThrowEx: z.number().optional(),
   minEmptyCatch: z.number().optional(),
   hasStringConcatInLoop: z.boolean().optional(),
+  // Python-specific antipattern hints (from tree-sitter parser)
+  minBareExcept: z.number().optional(),
+  minExceptPass: z.number().optional(),
+  minGenericRaise: z.number().optional(),
+  minWideTryBlock: z.number().optional(),
+  minTypeIgnore: z.number().optional(),
+  minAnyType: z.number().optional(),
+  minEvalExec: z.number().optional(),
+  hasPyStringConcatInLoop: z.boolean().optional(),
+  hasPyOpenWithoutWith: z.boolean().optional(),
+  hasPyAsyncNoAwait: z.boolean().optional(),
   relationships: z.array(RelationshipCriteriaSchema).optional(),
 });
 

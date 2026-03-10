@@ -274,6 +274,17 @@ export function buildVectorMetadata(entity: ParsedEntity, modelName: string): Re
     }
   }
 
+  // Python-specific hint signals
+  const pyHints = entity.metadata?.["pythonHints"] as
+    | { bareExceptCount?: number; evalExecCount?: number; openWithoutWithCount?: number; asyncNoAwaitCount?: number }
+    | undefined;
+  if (pyHints) {
+    if ((pyHints.bareExceptCount ?? 0) > 0) metadata["hasBareExcept"] = true;
+    if ((pyHints.evalExecCount ?? 0) > 0) metadata["hasSecurityHints"] = true;
+    if ((pyHints.openWithoutWithCount ?? 0) > 0) metadata["hasResourceLeak"] = true;
+    if ((pyHints.asyncNoAwaitCount ?? 0) > 0) metadata["hasAsyncIssue"] = true;
+  }
+
   // Zig-specific metadata signals
   const zigOps = entity.metadata?.["zigOps"] as Record<string, number> | undefined;
   if (zigOps) {

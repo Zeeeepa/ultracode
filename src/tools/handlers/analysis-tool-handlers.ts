@@ -456,6 +456,22 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
         if ((apHints.innerHtmlAssignCount ?? 0) > 0) score += 8;
       }
 
+      // Python-specific: pythonHints boost
+      const pyHints = entity.metadata?.["pythonHints"] as
+        | {
+            evalExecCount?: number;
+            bareExceptCount?: number;
+            openWithoutWithCount?: number;
+            wideTryBlockCount?: number;
+          }
+        | undefined;
+      if (pyHints) {
+        if ((pyHints.evalExecCount ?? 0) > 0) score += 10; // eval/exec = critical security risk
+        if ((pyHints.bareExceptCount ?? 0) > 0) score += 4; // bare except hides bugs
+        if ((pyHints.openWithoutWithCount ?? 0) > 0) score += 3; // resource leak
+        if ((pyHints.wideTryBlockCount ?? 0) > 0) score += 2; // wide try = masked errors
+      }
+
       // Zig-specific: zigOps boost
       const zigOps = entity.metadata?.["zigOps"] as
         | {
