@@ -100,6 +100,15 @@ export const FILE_EXTENSIONS: Record<string, SupportedLanguage> = {
 
   // Helm
   tpl: "helm",
+
+  // SQL
+  sql: "sql",
+
+  // LINQ (LINQPad)
+  linq: "linq",
+
+  // Prisma
+  prisma: "prisma",
 };
 
 /**
@@ -321,5 +330,45 @@ export const LANGUAGE_KEYWORDS: Record<
       "else",
       "end",
     ],
+  },
+
+  protobuf: {
+    functions: ["rpc"],
+    classes: ["service"],
+    imports: ["import"],
+    exports: [],
+    types: ["message", "enum", "oneof", "map"],
+  },
+
+  graphql: {
+    functions: ["query", "mutation", "subscription"],
+    classes: ["type", "interface", "input"],
+    imports: [],
+    exports: ["extend"],
+    types: ["enum", "union", "scalar", "directive"],
+  },
+
+  sql: {
+    functions: ["procedure", "function", "trigger"],
+    classes: ["table"],
+    imports: [],
+    exports: [],
+    types: ["table", "view", "index", "sequence", "schema"],
+  },
+
+  linq: {
+    functions: ["from", "where", "select", "orderby", "group"],
+    classes: [],
+    imports: [],
+    exports: [],
+    types: ["var", "Query"],
+  },
+
+  prisma: {
+    functions: [],
+    classes: ["model"],
+    imports: [],
+    exports: [],
+    types: ["model", "enum", "datasource", "generator"],
   },
 };

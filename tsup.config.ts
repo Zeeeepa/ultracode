@@ -107,6 +107,24 @@ export default defineConfig([
         // Binary not built yet - that's fine, it's optional
       }
 
+      // Copy native parser CLI scripts (Python, Go)
+      const parsersDir = join("dist", "parsers");
+      try {
+        await mkdir(parsersDir, { recursive: true });
+        for (const cli of ["python-ast-cli.py", "go-ast-cli.go"]) {
+          const src = join("src", "parsers", cli);
+          try {
+            await access(src);
+            await copyFile(src, join(parsersDir, cli));
+          } catch {
+            // CLI not present — optional
+          }
+        }
+        console.log("[tsup] Copied native parser CLI scripts to dist/parsers/");
+      } catch (e: any) {
+        console.warn("[tsup] Parser CLI copy warning:", e.message);
+      }
+
       // Copy gRPC proto files for OVMS provider
       const protoDir = join("dist", "semantic", "providers", "proto");
       const protoSource = join("src", "semantic", "providers", "proto", "grpc_predict_v2.proto");

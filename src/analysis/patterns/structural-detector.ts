@@ -45,6 +45,7 @@ interface CompiledCriteria {
   decoratorMatchRe: RegExp[] | null;
   nameMatchRe: RegExp | null;
   nameNotMatchRe: RegExp | null;
+  filePathMatchRe: RegExp | null;
   filePathNotMatchRe: RegExp | null;
   totalCriteriaCount: number;
 }
@@ -67,6 +68,7 @@ function getCompiled(pattern: PatternDefinition): CompiledCriteria {
     decoratorMatchRe: c?.decoratorMatch ? c.decoratorMatch.map((p) => new RegExp(p, "i")) : null,
     nameMatchRe: c?.nameMatch ? new RegExp(c.nameMatch, "i") : null,
     nameNotMatchRe: c?.nameNotMatch ? new RegExp(c.nameNotMatch, "i") : null,
+    filePathMatchRe: c?.filePathMatch ? new RegExp(c.filePathMatch, "i") : null,
     filePathNotMatchRe: c?.filePathNotMatch ? new RegExp(c.filePathNotMatch, "i") : null,
     totalCriteriaCount: countTotalCriteria(c ?? {}),
   };
@@ -85,6 +87,65 @@ interface EntityMeta {
   callNames: string[];
   decoratorNames: string[];
   hasInheritance: boolean;
+  jitHints: {
+    deleteCount: number;
+    argumentsRefCount: number;
+    hasWithStatement: boolean;
+    spreadInCallCount: number;
+    dynamicPropAccessCount: number;
+  } | null;
+  antipatternHints: {
+    typeAssertionCount: number;
+    doubleAssertionCount: number;
+    nonNullAssertionCount: number;
+    throwNonErrorCount: number;
+    innerHtmlAssignCount: number;
+    orWithDefaultCount: number;
+    paramMutationCount: number;
+    regexLiterals: string[];
+  } | null;
+  zigOps: {
+    forceUnwrapCount: number;
+    unsafeCastCount: number;
+    unreachableCount: number;
+  } | null;
+  csharpHints: {
+    syncOverAsyncCount: number;
+    nullForgivingCount: number;
+    lockOnThisCount: number;
+    stringConcatInLoopCount: number;
+    newHttpClientCount: number;
+    newDisposableNoUsingCount: number;
+    hasParallelForEachAsync: boolean;
+    throwExCount: number;
+    emptyCatchCount: number;
+  } | null;
+  pythonHints: {
+    bareExceptCount: number;
+    exceptPassCount: number;
+    genericRaiseCount: number;
+    wideTryBlockCount: number;
+    typeIgnoreCount: number;
+    anyTypeCount: number;
+    evalExecCount: number;
+    stringConcatInLoopCount: number;
+    openWithoutWithCount: number;
+    asyncNoAwaitCount: number;
+  } | null;
+  pythonCfExt: {
+    returnCount: number;
+    nestingDepth: number;
+    cyclomaticComplexity: number;
+    isinstanceCount: number;
+    reRaiseDifferentType: boolean;
+  } | null;
+  classMeta: {
+    hasSlots: boolean;
+    dunderMethods: string[];
+    properties: Record<string, { hasSetter: boolean }>;
+    initCallCount: number;
+    methodCount: number;
+  } | null;
 }
 
 const metaCache = new WeakMap<Entity, EntityMeta>();
@@ -119,6 +180,22 @@ function getMeta(entity: Entity): EntityMeta {
     callNames: callsRaw.map((c) => `${c.target ?? ""}.${c.name ?? ""}`),
     decoratorNames: decsRaw.map((d) => d.name),
     hasInheritance: (inheritanceRaw?.baseClasses?.length ?? 0) > 0 || (inheritanceRaw?.interfaces?.length ?? 0) > 0,
+    jitHints: (md?.["jitHints"] as EntityMeta["jitHints"]) ?? null,
+    antipatternHints: (md?.["antipatternHints"] as EntityMeta["antipatternHints"]) ?? null,
+    zigOps: (md?.["zigOps"] as EntityMeta["zigOps"]) ?? null,
+    csharpHints:
+      (md?.["_csharpHints"] as EntityMeta["csharpHints"]) ?? (md?.["csharpHints"] as EntityMeta["csharpHints"]) ?? null,
+    pythonHints: (md?.["pythonHints"] as EntityMeta["pythonHints"]) ?? null,
+    pythonCfExt: cfRaw
+      ? {
+          returnCount: ((cfRaw as Record<string, unknown>)?.["returnCount"] as number) ?? 0,
+          nestingDepth: ((cfRaw as Record<string, unknown>)?.["nestingDepth"] as number) ?? 0,
+          cyclomaticComplexity: ((cfRaw as Record<string, unknown>)?.["cyclomaticComplexity"] as number) ?? 0,
+          isinstanceCount: ((cfRaw as Record<string, unknown>)?.["isinstanceCount"] as number) ?? 0,
+          reRaiseDifferentType: !!(cfRaw as Record<string, unknown>)?.["reRaiseDifferentType"],
+        }
+      : null,
+    classMeta: (md?.["classMeta"] as EntityMeta["classMeta"]) ?? null,
   };
   metaCache.set(entity, meta);
   return meta;
@@ -132,6 +209,8 @@ const EVAL_ZERO: EvalResult = { confidence: 0, matchedCriteria: [] };
 export class StructuralDetector {
   // Cache: entityId:patternId -> evaluation result (3B)
   private evalCache = new Map<string, EvalResult>();
+  // Current scan batch — available to cross-entity custom detectors
+  private currentEntities: Entity[] = [];
 
   /** Clear evaluation cache (call when entities or patterns change) */
   clearEvalCache(): void {
@@ -142,8 +221,17 @@ export class StructuralDetector {
     entities: Entity[],
     patterns: PatternDefinition[],
     storage?: GraphStorage,
+    allEntities?: Entity[],
   ): Promise<StructuralCandidate[]> {
+    // Clear caches from previous scan to prevent unbounded memory growth
+    this.evalCache.clear();
+
+    const detectStartMs = Date.now();
+    log.i("STRUCTURAL_DETECT", "start", { entities: entities.length, patterns: patterns.length });
+
     const candidates: StructuralCandidate[] = [];
+    // Cross-entity detectors see allEntities (full set) even when processing batches
+    this.currentEntities = allEntities ?? entities;
 
     // Pre-index entities by type for O(1) lookup
     const entitiesByType = new Map<string, Entity[]>();
@@ -154,6 +242,7 @@ export class StructuralDetector {
     }
 
     // Phase 1: Fast metadata-only pass (type-indexed)
+    // Entity count capped by PatternEngine (default 5000) to avoid JSC GC segfault on Bun.
     const metadataCandidates: Array<{
       entity: Entity;
       pattern: PatternDefinition;
@@ -161,8 +250,15 @@ export class StructuralDetector {
       matched: string[];
     }> = [];
 
-    for (const pattern of patterns) {
-      const compiled = getCompiled(pattern);
+    for (let _ri = 0; _ri < patterns.length; _ri++) {
+      const pattern = patterns[_ri]!;
+      let compiled: CompiledCriteria;
+      try {
+        compiled = getCompiled(pattern);
+      } catch (err) {
+        log.e("STRUCTURAL_DETECTOR", "compile_pattern_error", { pattern: pattern.id, error: String(err) });
+        continue;
+      }
 
       // Determine which entities to check based on entityTypes
       let entitiesToCheck: Entity[];
@@ -175,15 +271,28 @@ export class StructuralDetector {
       } else {
         entitiesToCheck = entities;
       }
-
+      const MAX_PER_RULE = 200;
+      let _ruleHits = 0;
       for (const entity of entitiesToCheck) {
-        const result = this.evaluateMetadataCriteria(entity, pattern, compiled);
-        if (result.confidence > 0) {
-          metadataCandidates.push({
-            entity,
-            pattern,
-            confidence: result.confidence,
-            matched: result.matchedCriteria,
+        try {
+          const result = this.evaluateMetadataCriteria(entity, pattern, compiled);
+          if (result.confidence > 0) {
+            metadataCandidates.push({
+              entity,
+              pattern,
+              confidence: result.confidence,
+              matched: result.matchedCriteria,
+            });
+            _ruleHits++;
+            if (_ruleHits >= MAX_PER_RULE) {
+              break;
+            }
+          }
+        } catch (err) {
+          log.w("STRUCTURAL_DETECTOR", "evaluate_entity_error", {
+            entity: entity.id,
+            pattern: pattern.id,
+            error: String(err),
           });
         }
       }
@@ -221,7 +330,8 @@ export class StructuralDetector {
           storage.findRelationships({ filters: { toId: entityIds }, limit: 10000 }),
         ]);
         allRels = [...outgoing, ...incoming];
-      } catch {
+      } catch (err) {
+        log.w("STRUCTURAL_DETECTOR", "graph_batch_error", { error: String(err) });
         // Fallback: no relationships available
       }
 
@@ -275,7 +385,14 @@ export class StructuralDetector {
       entities: entities.length,
       patterns: patterns.length,
       candidates: candidates.length,
+      elapsed: Date.now() - detectStartMs,
     });
+
+    // Release references to allow GC of entity objects between chunked detect() calls.
+    // Without this, detector instance retains the entire chunk array, preventing GC
+    // and causing JSC SEGFAULT on large codebases (>10K entities).
+    this.currentEntities = [];
+    this.evalCache.clear();
 
     return candidates;
   }
@@ -283,14 +400,8 @@ export class StructuralDetector {
   // ─── Metadata Evaluation (hot path — optimized) ─────────────────
 
   private evaluateMetadataCriteria(entity: Entity, pattern: PatternDefinition, compiled: CompiledCriteria): EvalResult {
-    // 3B: Check cache first
-    const cacheKey = `${entity.id}::${pattern.id}`;
-    const cached = this.evalCache.get(cacheKey);
-    if (cached) return cached;
-
-    const result = this.evaluateMetadataUncached(entity, pattern, compiled);
-    this.evalCache.set(cacheKey, result);
-    return result;
+    // Cache disabled — structural eval is fast enough without it, and cache caused memory pressure on large codebases
+    return this.evaluateMetadataUncached(entity, pattern, compiled);
   }
 
   // 3A: Mandatory checks separated for fast bail-out
@@ -325,6 +436,11 @@ export class StructuralDetector {
       matched.push("no-inheritance");
     }
 
+    if (compiled.filePathMatchRe) {
+      if (!entity.filePath || !compiled.filePathMatchRe.test(entity.filePath)) return null; // bail-out: filePath must match
+      matched.push(`filePath:~/${criteria.filePathMatch}/`);
+    }
+
     if (compiled.filePathNotMatchRe) {
       if (entity.filePath && compiled.filePathNotMatchRe.test(entity.filePath)) return null; // bail-out
     }
@@ -332,6 +448,22 @@ export class StructuralDetector {
     // nameNotMatch is mandatory: if entity name matches exclusion, bail out (blocks custom detectors too)
     if (compiled.nameNotMatchRe) {
       if (compiled.nameNotMatchRe.test(entity.name)) return null; // bail-out
+    }
+
+    // callsInclude is mandatory: entity MUST have at least one call matching each pattern
+    if (compiled.callsIncludeRe) {
+      for (let i = 0; i < compiled.callsIncludeRe.length; i++) {
+        if (!em.callNames.some((c) => compiled.callsIncludeRe![i]!.test(c))) return null; // bail-out
+      }
+      matched.push(`calls:include`);
+    }
+
+    // callsExclude is mandatory: entity must NOT have any call matching exclusion patterns
+    if (compiled.callsExcludeRe) {
+      for (let i = 0; i < compiled.callsExcludeRe.length; i++) {
+        if (em.callNames.some((c) => compiled.callsExcludeRe![i]!.test(c))) return null; // bail-out
+      }
+      matched.push(`calls:exclude`);
     }
 
     return matched;
@@ -468,30 +600,12 @@ export class StructuralDetector {
       }
     }
 
-    // Calls
+    // Calls — minCallCount remains optional; callsInclude/callsExclude are mandatory (in evaluateRequired)
     if (criteria.minCallCount != null) {
       optionalTotal++;
       if (em.callNames.length >= criteria.minCallCount) {
         optionalPassed++;
         matched.push(`calls>=${criteria.minCallCount}`);
-      }
-    }
-    if (compiled.callsIncludeRe) {
-      for (let i = 0; i < compiled.callsIncludeRe.length; i++) {
-        optionalTotal++;
-        if (em.callNames.some((c) => compiled.callsIncludeRe![i]!.test(c))) {
-          optionalPassed++;
-          matched.push(`calls:~/${criteria.callsInclude![i]}/`);
-        }
-      }
-    }
-    if (compiled.callsExcludeRe) {
-      for (let i = 0; i < compiled.callsExcludeRe.length; i++) {
-        optionalTotal++;
-        if (!em.callNames.some((c) => compiled.callsExcludeRe![i]!.test(c))) {
-          optionalPassed++;
-          matched.push(`calls:!~/${criteria.callsExclude![i]}/`);
-        }
       }
     }
 
@@ -502,6 +616,345 @@ export class StructuralDetector {
         if (em.decoratorNames.some((d) => compiled.decoratorMatchRe![i]!.test(d))) {
           optionalPassed++;
           matched.push(`decorator:~/${criteria.decoratorMatch![i]}/`);
+        }
+      }
+    }
+
+    // JIT Hints
+    if (criteria.hasDeleteExpression != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.deleteCount > 0) {
+        optionalPassed++;
+        matched.push("hasDeleteExpression");
+      }
+    }
+    if (criteria.hasArgumentsReference != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.argumentsRefCount > 0) {
+        optionalPassed++;
+        matched.push("hasArgumentsReference");
+      }
+    }
+    if (criteria.hasWithStatement != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.hasWithStatement) {
+        optionalPassed++;
+        matched.push("hasWithStatement");
+      }
+    }
+    if (criteria.minSpreadInCalls != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.spreadInCallCount >= criteria.minSpreadInCalls) {
+        optionalPassed++;
+        matched.push(`spreadInCalls>=${criteria.minSpreadInCalls}`);
+      }
+    }
+    if (criteria.minDynamicPropertyAccess != null) {
+      optionalTotal++;
+      if (em.jitHints && em.jitHints.dynamicPropAccessCount >= criteria.minDynamicPropertyAccess) {
+        optionalPassed++;
+        matched.push(`dynamicPropAccess>=${criteria.minDynamicPropertyAccess}`);
+      }
+    }
+
+    // Antipattern Hints
+    if (criteria.minTypeAssertions != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.typeAssertionCount >= criteria.minTypeAssertions) {
+        optionalPassed++;
+        matched.push(`typeAssertions>=${criteria.minTypeAssertions}`);
+      }
+    }
+    if (criteria.minNonNullAssertions != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.nonNullAssertionCount >= criteria.minNonNullAssertions) {
+        optionalPassed++;
+        matched.push(`nonNullAssertions>=${criteria.minNonNullAssertions}`);
+      }
+    }
+    if (criteria.hasInnerHtmlAssign != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.innerHtmlAssignCount > 0) {
+        optionalPassed++;
+        matched.push("hasInnerHtmlAssign");
+      }
+    }
+    if (criteria.hasParamMutation != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.paramMutationCount > 0) {
+        optionalPassed++;
+        matched.push("hasParamMutation");
+      }
+    }
+    if (criteria.hasOrWithDefault != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.orWithDefaultCount > 0) {
+        optionalPassed++;
+        matched.push("hasOrWithDefault");
+      }
+    }
+    if (criteria.hasThrowNonError != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.throwNonErrorCount > 0) {
+        optionalPassed++;
+        matched.push("hasThrowNonError");
+      }
+    }
+    if (criteria.hasRegexLiterals != null) {
+      optionalTotal++;
+      if (em.antipatternHints && em.antipatternHints.regexLiterals.length > 0) {
+        optionalPassed++;
+        matched.push("hasRegexLiterals");
+      }
+    }
+
+    // Zig-specific criteria
+    if (criteria.minForceUnwraps != null) {
+      optionalTotal++;
+      if (em.zigOps && em.zigOps.forceUnwrapCount >= criteria.minForceUnwraps) {
+        optionalPassed++;
+        matched.push(`forceUnwraps>=${criteria.minForceUnwraps}`);
+      }
+    }
+    if (criteria.minUnsafeCasts != null) {
+      optionalTotal++;
+      if (em.zigOps && em.zigOps.unsafeCastCount >= criteria.minUnsafeCasts) {
+        optionalPassed++;
+        matched.push(`unsafeCasts>=${criteria.minUnsafeCasts}`);
+      }
+    }
+    if (criteria.minUnreachable != null) {
+      optionalTotal++;
+      if (em.zigOps && em.zigOps.unreachableCount >= criteria.minUnreachable) {
+        optionalPassed++;
+        matched.push(`unreachable>=${criteria.minUnreachable}`);
+      }
+    }
+
+    // C#-specific hints
+    if (criteria.minSyncOverAsync != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.syncOverAsyncCount >= criteria.minSyncOverAsync) {
+        optionalPassed++;
+        matched.push(`syncOverAsync>=${criteria.minSyncOverAsync}`);
+      }
+    }
+    if (criteria.minNullForgiving != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.nullForgivingCount >= criteria.minNullForgiving) {
+        optionalPassed++;
+        matched.push(`nullForgiving>=${criteria.minNullForgiving}`);
+      }
+    }
+    if (criteria.hasLockOnThis != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.lockOnThisCount > 0) {
+        optionalPassed++;
+        matched.push("hasLockOnThis");
+      }
+    }
+    if (criteria.hasNewHttpClient != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.newHttpClientCount > 0) {
+        optionalPassed++;
+        matched.push("hasNewHttpClient");
+      }
+    }
+    if (criteria.hasNewDisposableNoUsing != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.newDisposableNoUsingCount > 0) {
+        optionalPassed++;
+        matched.push("hasNewDisposableNoUsing");
+      }
+    }
+    if (criteria.hasParallelForEachAsync != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.hasParallelForEachAsync) {
+        optionalPassed++;
+        matched.push("hasParallelForEachAsync");
+      }
+    }
+    if (criteria.minThrowEx != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.throwExCount >= criteria.minThrowEx) {
+        optionalPassed++;
+        matched.push(`throwEx>=${criteria.minThrowEx}`);
+      }
+    }
+    if (criteria.minEmptyCatch != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.emptyCatchCount >= criteria.minEmptyCatch) {
+        optionalPassed++;
+        matched.push(`emptyCatch>=${criteria.minEmptyCatch}`);
+      }
+    }
+    if (criteria.hasStringConcatInLoop != null) {
+      optionalTotal++;
+      if (em.csharpHints && em.csharpHints.stringConcatInLoopCount > 0) {
+        optionalPassed++;
+        matched.push("hasStringConcatInLoop");
+      }
+    }
+
+    // Python-specific hints
+    if (criteria.minBareExcept != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.bareExceptCount >= criteria.minBareExcept) {
+        optionalPassed++;
+        matched.push(`bareExcept>=${criteria.minBareExcept}`);
+      }
+    }
+    if (criteria.minExceptPass != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.exceptPassCount >= criteria.minExceptPass) {
+        optionalPassed++;
+        matched.push(`exceptPass>=${criteria.minExceptPass}`);
+      }
+    }
+    if (criteria.minGenericRaise != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.genericRaiseCount >= criteria.minGenericRaise) {
+        optionalPassed++;
+        matched.push(`genericRaise>=${criteria.minGenericRaise}`);
+      }
+    }
+    if (criteria.minWideTryBlock != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.wideTryBlockCount >= criteria.minWideTryBlock) {
+        optionalPassed++;
+        matched.push(`wideTryBlock>=${criteria.minWideTryBlock}`);
+      }
+    }
+    if (criteria.minTypeIgnore != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.typeIgnoreCount >= criteria.minTypeIgnore) {
+        optionalPassed++;
+        matched.push(`typeIgnore>=${criteria.minTypeIgnore}`);
+      }
+    }
+    if (criteria.minAnyType != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.anyTypeCount >= criteria.minAnyType) {
+        optionalPassed++;
+        matched.push(`anyType>=${criteria.minAnyType}`);
+      }
+    }
+    if (criteria.minEvalExec != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.evalExecCount >= criteria.minEvalExec) {
+        optionalPassed++;
+        matched.push(`evalExec>=${criteria.minEvalExec}`);
+      }
+    }
+    if (criteria.hasPyStringConcatInLoop != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.stringConcatInLoopCount > 0) {
+        optionalPassed++;
+        matched.push("hasPyStringConcatInLoop");
+      }
+    }
+    if (criteria.hasPyOpenWithoutWith != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.openWithoutWithCount > 0) {
+        optionalPassed++;
+        matched.push("hasPyOpenWithoutWith");
+      }
+    }
+    if (criteria.hasPyAsyncNoAwait != null) {
+      optionalTotal++;
+      if (em.pythonHints && em.pythonHints.asyncNoAwaitCount > 0) {
+        optionalPassed++;
+        matched.push("hasPyAsyncNoAwait");
+      }
+    }
+
+    // Python controlFlow extended fields
+    if (criteria.minReturnCount != null) {
+      optionalTotal++;
+      if (em.pythonCfExt && em.pythonCfExt.returnCount >= criteria.minReturnCount) {
+        optionalPassed++;
+        matched.push(`returnCount>=${criteria.minReturnCount}`);
+      }
+    }
+    if (criteria.minNestingDepth != null) {
+      optionalTotal++;
+      if (em.pythonCfExt && em.pythonCfExt.nestingDepth >= criteria.minNestingDepth) {
+        optionalPassed++;
+        matched.push(`nestingDepth>=${criteria.minNestingDepth}`);
+      }
+    }
+    if (criteria.minCyclomaticPy != null) {
+      optionalTotal++;
+      if (em.pythonCfExt && em.pythonCfExt.cyclomaticComplexity >= criteria.minCyclomaticPy) {
+        optionalPassed++;
+        matched.push(`cyclomaticPy>=${criteria.minCyclomaticPy}`);
+      }
+    }
+    if (criteria.minIsinstanceCount != null) {
+      optionalTotal++;
+      if (em.pythonCfExt && em.pythonCfExt.isinstanceCount >= criteria.minIsinstanceCount) {
+        optionalPassed++;
+        matched.push(`isinstance>=${criteria.minIsinstanceCount}`);
+      }
+    }
+    if (criteria.hasPyReRaiseDifferent != null) {
+      optionalTotal++;
+      if (em.pythonCfExt?.reRaiseDifferentType) {
+        optionalPassed++;
+        matched.push("reRaiseDifferentType");
+      }
+    }
+
+    // Python class metadata
+    if (criteria.hasPySlots != null) {
+      optionalTotal++;
+      if (em.classMeta?.hasSlots) {
+        optionalPassed++;
+        matched.push("hasSlots");
+      }
+    }
+    if (criteria.missingPySlots != null) {
+      optionalTotal++;
+      if (em.classMeta && !em.classMeta.hasSlots) {
+        optionalPassed++;
+        matched.push("missingSlots");
+      }
+    }
+    if (criteria.missingPyRepr != null) {
+      optionalTotal++;
+      if (em.classMeta && !em.classMeta.dunderMethods?.includes("__repr__")) {
+        optionalPassed++;
+        matched.push("missingRepr");
+      }
+    }
+    if (criteria.missingPyStr != null) {
+      optionalTotal++;
+      if (em.classMeta && !em.classMeta.dunderMethods?.includes("__str__")) {
+        optionalPassed++;
+        matched.push("missingStr");
+      }
+    }
+    if (criteria.minPyInitCalls != null) {
+      optionalTotal++;
+      if (em.classMeta && em.classMeta.initCallCount >= criteria.minPyInitCalls) {
+        optionalPassed++;
+        matched.push(`initCalls>=${criteria.minPyInitCalls}`);
+      }
+    }
+    if (criteria.minPyMethodCount != null) {
+      optionalTotal++;
+      if (em.classMeta && em.classMeta.methodCount >= criteria.minPyMethodCount) {
+        optionalPassed++;
+        matched.push(`methodCount>=${criteria.minPyMethodCount}`);
+      }
+    }
+    if (criteria.hasPyPropertyNoSetter != null) {
+      optionalTotal++;
+      if (em.classMeta?.properties) {
+        const hasReadOnly = Object.values(em.classMeta.properties).some((p) => !p.hasSetter);
+        if (hasReadOnly) {
+          optionalPassed++;
+          matched.push("propertyNoSetter");
         }
       }
     }
@@ -554,6 +1007,10 @@ export class StructuralDetector {
         if ((conf > 0 || matched.length > mandatoryCount) && !pattern.customDetector) {
           return { confidence: conf, matchedCriteria: matched };
         }
+        // All optional criteria failed — no structural match (custom detector may still run below)
+        if (!pattern.customDetector) {
+          return EVAL_ZERO;
+        }
       }
     }
 
@@ -562,7 +1019,7 @@ export class StructuralDetector {
       const detector = detectorRegistry.get(pattern.customDetector);
       if (detector) {
         try {
-          const result = detector(entity);
+          const result = detector(entity, this.currentEntities);
           if (result.match) {
             const customMatched = result.matchedCriteria ?? [`custom:${pattern.customDetector}`];
             const allMatched = [...matched, ...customMatched];
@@ -672,13 +1129,65 @@ function countTotalCriteria(criteria: StructuralCriteria): number {
   if (criteria.hasAwaits != null) count++;
   if (criteria.minBranches != null) count++;
   if (criteria.minCallCount != null) count++;
-  if (criteria.callsInclude) count += criteria.callsInclude.length;
-  if (criteria.callsExclude) count += criteria.callsExclude.length;
+  // callsInclude/callsExclude are now mandatory (bail-out), counted as 1 each
+  if (criteria.callsInclude) count++;
+  if (criteria.callsExclude) count++;
   if (criteria.decoratorMatch) count += criteria.decoratorMatch.length;
   if (criteria.hasNoInheritance) count++;
+  if (criteria.filePathMatch) count++;
   if (criteria.filePathNotMatch) count++;
   if (criteria.nameMatch) count++;
   if (criteria.nameNotMatch) count++;
+  if (criteria.hasDeleteExpression != null) count++;
+  if (criteria.hasArgumentsReference != null) count++;
+  if (criteria.hasWithStatement != null) count++;
+  if (criteria.minSpreadInCalls != null) count++;
+  if (criteria.minDynamicPropertyAccess != null) count++;
+  if (criteria.minTypeAssertions != null) count++;
+  if (criteria.minNonNullAssertions != null) count++;
+  if (criteria.hasInnerHtmlAssign != null) count++;
+  if (criteria.hasParamMutation != null) count++;
+  if (criteria.hasOrWithDefault != null) count++;
+  if (criteria.hasThrowNonError != null) count++;
+  if (criteria.hasRegexLiterals != null) count++;
+  if (criteria.minForceUnwraps != null) count++;
+  if (criteria.minUnsafeCasts != null) count++;
+  if (criteria.minUnreachable != null) count++;
+  // C#-specific hints
+  if (criteria.minSyncOverAsync != null) count++;
+  if (criteria.minNullForgiving != null) count++;
+  if (criteria.hasLockOnThis != null) count++;
+  if (criteria.hasNewHttpClient != null) count++;
+  if (criteria.hasNewDisposableNoUsing != null) count++;
+  if (criteria.hasParallelForEachAsync != null) count++;
+  if (criteria.minThrowEx != null) count++;
+  if (criteria.minEmptyCatch != null) count++;
+  if (criteria.hasStringConcatInLoop != null) count++;
+  // Python-specific hints
+  if (criteria.minBareExcept != null) count++;
+  if (criteria.minExceptPass != null) count++;
+  if (criteria.minGenericRaise != null) count++;
+  if (criteria.minWideTryBlock != null) count++;
+  if (criteria.minTypeIgnore != null) count++;
+  if (criteria.minAnyType != null) count++;
+  if (criteria.minEvalExec != null) count++;
+  if (criteria.hasPyStringConcatInLoop != null) count++;
+  if (criteria.hasPyOpenWithoutWith != null) count++;
+  if (criteria.hasPyAsyncNoAwait != null) count++;
+  // Python controlFlow extended
+  if (criteria.minReturnCount != null) count++;
+  if (criteria.minNestingDepth != null) count++;
+  if (criteria.minCyclomaticPy != null) count++;
+  if (criteria.minIsinstanceCount != null) count++;
+  if (criteria.hasPyReRaiseDifferent != null) count++;
+  // Python class metadata
+  if (criteria.hasPySlots != null) count++;
+  if (criteria.missingPySlots != null) count++;
+  if (criteria.missingPyRepr != null) count++;
+  if (criteria.missingPyStr != null) count++;
+  if (criteria.minPyInitCalls != null) count++;
+  if (criteria.minPyMethodCount != null) count++;
+  if (criteria.hasPyPropertyNoSetter != null) count++;
   if (criteria.relationships) count += criteria.relationships.length;
   return count;
 }

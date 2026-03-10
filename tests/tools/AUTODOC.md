@@ -1,6 +1,6 @@
 # Tools
 
-Provides mock factory functions for MCP tool handler unit tests.
+Provides mock factory functions for testing MCP tool handlers and their dependencies.
 
 ## Exports
 

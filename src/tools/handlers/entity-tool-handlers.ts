@@ -7,6 +7,7 @@
  * - query
  */
 
+import { statSync } from "node:fs";
 import { z } from "zod";
 import { log } from "../../logging/index.js";
 import type { Entity, EntityType, Relationship } from "../../types/storage.js";
@@ -61,16 +62,41 @@ export class ListFileEntitiesToolHandler extends BaseToolHandler<z.infer<typeof 
   }
 
   protected async execute(args: z.infer<typeof ListFileEntitiesSchema>): Promise<ToolResult> {
-    const normalizedPath = this.context.normalizeInputPath(args.filePath);
+    let normalizedPath = this.context.normalizeInputPath(args.filePath);
     // v3: Ensure correct project context for GraphStorage queries
     const storage = await this.ensureGraphStorageForProject(args.projectPath);
+
+    // Detect directory: append trailing slash for prefix-match in storage layer
+    let isDirectory = false;
+    if (normalizedPath) {
+      try {
+        const stat = statSync(normalizedPath);
+        if (stat.isDirectory()) {
+          isDirectory = true;
+          // Trailing slash signals prefix-match to buildFilterClause
+          if (!normalizedPath.endsWith("/") && !normalizedPath.endsWith("\\")) {
+            normalizedPath += "/";
+          }
+        }
+      } catch {
+        // Path doesn't exist on disk — could be a relative path in the index
+        // Heuristic: no extension and no dot in last segment → likely a directory
+        const lastSegment = normalizedPath.split(/[/\\]/).pop() || "";
+        if (!lastSegment.includes(".")) {
+          isDirectory = true;
+          if (!normalizedPath.endsWith("/") && !normalizedPath.endsWith("\\")) {
+            normalizedPath += "/";
+          }
+        }
+      }
+    }
 
     const filters: EntityFilters = { filePath: normalizedPath };
     if (args.entityTypes) {
       filters.entityType = args.entityTypes as EntityType[];
     }
 
-    // Fetch all entities for this file (storage handles its own limit)
+    // Fetch all entities for this file/directory (storage handles its own limit)
     const allEntities = await storage.findEntities({ filters, limit: 5000 });
 
     // Apply pagination
@@ -84,12 +110,14 @@ export class ListFileEntitiesToolHandler extends BaseToolHandler<z.infer<typeof 
           text: JSON.stringify(
             {
               file: normalizedPath,
+              ...(isDirectory ? { directory: true } : {}),
               count: paginatedResult.data.length,
               pagination: paginatedResult.pagination,
               entities: paginatedResult.data.map((e: any) => ({
                 id: e.id,
                 name: e.name,
                 type: e.type,
+                ...(isDirectory ? { filePath: e.filePath } : {}),
                 location: e.location,
                 signature: e.metadata?.signature,
               })),

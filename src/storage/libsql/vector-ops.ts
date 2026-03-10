@@ -5,10 +5,10 @@
  * Uses delegates for accessing shared client, context, and helper methods.
  */
 
-import type { InStatement, ResultSet } from "@libsql/client";
 import type { LRUCache } from "lru-cache";
 import { log } from "../../logging/index.js";
 import type { SimilarityResult, VectorEmbedding } from "../../types/semantic.js";
+import type { InStatement, ResultSet } from "../native-sqlite-client.js";
 import type {
   ClientGetter,
   ContextGetter,

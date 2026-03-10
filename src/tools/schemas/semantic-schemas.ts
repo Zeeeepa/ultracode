@@ -26,6 +26,18 @@ export const AnalyzeSwaggerImpactSchema = z.object({
   projectPath: z.string().optional().describe("Project directory path"),
 });
 
+export const AnalyzeApiImpactSchema = z.object({
+  contractType: z
+    .enum(["swagger", "protobuf", "graphql", "auto"])
+    .optional()
+    .default("auto")
+    .describe("API contract type to analyze (auto-detected if omitted)"),
+  specFile: z.string().optional().describe("Path to spec file (auto-detected if omitted)"),
+  schemaName: z.string().optional().describe("Specific schema/message/type name to analyze"),
+  endpointPath: z.string().optional().describe("Specific endpoint like 'GET /api/users' or rpc name"),
+  projectPath: z.string().optional().describe("Project directory path"),
+});
+
 export const AnalyzeCodeImpactSchema = z.object({
   entityId: z.string().describe("Entity ID or name to analyze impact for"),
   filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
@@ -56,6 +68,13 @@ export const FindRelatedConceptsSchema = z.object({
 export const CrossLanguageSearchSchema = z.object({
   query: z.string().describe("Search query"),
   languages: z.array(z.string()).optional().describe("Languages to search in"),
+});
+
+export const GetDatabaseSchemaSchema = z.object({
+  projectPath: z.string().optional().describe("Project directory path"),
+  tableName: z.string().optional().describe("Filter by table name (partial match)"),
+  dbEngine: z.string().optional().describe("Filter: postgres, mysql, clickhouse, redis, sqlite, mssql"),
+  includeRelationships: z.boolean().optional().describe("Include FK and code relationships"),
 });
 
 export const PatternSearchSchema = z.object({

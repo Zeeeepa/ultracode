@@ -239,6 +239,8 @@ State chaos analysis (mutations, side-effects).
 | `scope` | enum | **required** | `file` / `module` / `project` |
 | `stateIdentifiers` | string[] | - | State identifiers |
 | `autoDetect` | boolean | false | Auto-detect state patterns |
+| `highlightRecentChanges` | boolean | false | Annotate chaotic entities with recently-changed status (Prolly Tree) |
+| `recentCommitsCount` | number | 10 | Number of recent commits to consider |
 
 ### `graph_metrics`
 Graph-based architecture metrics for understanding codebase structure.
@@ -251,6 +253,20 @@ Graph-based architecture metrics for understanding codebase structure.
 | `persist` | boolean | false | Save to entity metadata for search boosting |
 
 **Returns:** Varies by metric — PageRank scores, Louvain communities, centrality roles, or bus factor risk.
+
+### `get_architecture_diagram`
+Generate architecture diagrams from code graph in Mermaid, Graphviz DOT, or D2 format.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `entryPoint` | string | - | Entry point (file/class/module). Omit for project-wide |
+| `depth` | number | 2 | 1=files, 2=classes, 3=methods, 4+=deeper |
+| `dataFlowLevel` | number | 1 | 0=structure, 1=types, 2=conditionals, 3=field mapping |
+| `format` | enum | mermaid | `mermaid`, `graphviz`, `d2` |
+| `direction` | enum | TD | `TD` (top-down), `LR` (left-right) |
+| `diagramType` | enum | auto | `flowchart`, `class`, `component` |
+
+**Returns:** Diagram text + stats (nodes, edges, groups, truncated, collectionTimeMs).
 
 ### `suggest_refactoring`
 Suggest refactoring opportunities based on code quality analysis.
@@ -731,9 +747,12 @@ trace_backwards target="sendNotification" question="why_not_called" highlightRec
 | `targetState` | string | **required** | Target state to trace |
 | `dataSources` | string[] | auto | Data sources to analyze |
 | `trackTransformations` | boolean | true | Track data transformations |
+| `highlightRecentChanges` | boolean | false | Annotate data flow steps with recently-changed entity status (Prolly Tree) |
+| `recentCommitsCount` | number | 10 | Number of recent commits to consider |
 
 ```
 trace_data_flow entryPoint="processOrder" targetState="orderTotal"
+trace_data_flow entryPoint="processOrder" targetState="orderTotal" highlightRecentChanges=true
 ```
 
 ### `analyze_state_impact`
@@ -744,9 +763,12 @@ trace_data_flow entryPoint="processOrder" targetState="orderTotal"
 | `state` | string | **required** | State variable to analyze |
 | `scenarios` | object[] | **required** | Scenarios: `[{value: ..., label: "..."}]` |
 | `scope` | string | - | Scope of analysis (semantic query) |
+| `highlightRecentChanges` | boolean | false | Annotate state usages/conflicts with recently-changed entity status (Prolly Tree) |
+| `recentCommitsCount` | number | 10 | Number of recent commits to consider |
 
 ```
 analyze_state_impact state="isAuthenticated" scenarios=[{value: true, label: "Logged in"}, {value: false, label: "Guest"}]
+analyze_state_impact state="isAuthenticated" scenarios=[...] highlightRecentChanges=true
 ```
 
 ### `find_decision_points`
@@ -758,11 +780,14 @@ analyze_state_impact state="isAuthenticated" scenarios=[{value: true, label: "Lo
 | `groupBy` | enum | "impact" | `impact` / `location` / `type` |
 | `includeGuards` | boolean | true | Include guard conditions |
 | `includeEffects` | boolean | true | Include side effects |
+| `highlightRecentChanges` | boolean | false | Annotate decision points with recently-changed entity status (Prolly Tree) |
+| `recentCommitsCount` | number | 10 | Number of recent commits to consider |
 
 **Decision point types:** validation, api_response, state_mutation, guard, loop, error_handling, feature_flag
 
 ```
 find_decision_points scenario="user registration" groupBy="type"
+find_decision_points scenario="checkout flow" highlightRecentChanges=true
 ```
 
 ---

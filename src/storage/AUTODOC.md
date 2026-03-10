@@ -1,21 +1,21 @@
 ---
 module_name: storage
-description: "Unified async data storage for code graph and vector embeddings using LibSQL with DiskANN vector index"
+description: "Unified async data storage for code graph and vector embeddings using native SQLite (better-sqlite3 / bun:sqlite)"
 status: active
 language: typescript
 entry_point: ./graph-storage-factory.ts
 exports: [getGraphStorage, configureGraphStorage, setGlobalProjectContext, GraphStorageLibSQL, LibSQLGraphAdapter, BatchOperationsLibSQL, QueryCacheManager]
 dependencies: [logging, types/storage, types/semantic, shared/storage-paths, semantic/faiss]
-tags: [unified-storage, libsql, vectors, versioning, composite-keys, branching, cache-management]
+tags: [unified-storage, sqlite, vectors, versioning, composite-keys, branching, cache-management]
 ---
 
 # Storage
 
-> Unified async data storage for the code graph and vector embeddings, built on LibSQL (Turso SQLite fork) with DiskANN vector index and Prolly Tree versioning. Provides multi-project, multi-branch isolation through composite primary keys.
+> Unified async data storage for the code graph and vector embeddings, built on native SQLite (better-sqlite3 / bun:sqlite) via NativeSQLiteClient with Prolly Tree versioning. Provides multi-project, multi-branch isolation through composite primary keys. Migrated from LibSQL in v6.5 for performance (prepared statement cache, sync FFI, no IPC overhead).
 
 ## Overview
 
-The storage module is the persistence backbone of the system. It stores code entities, relationships, file metadata, and vector embeddings in a single `unified-storage.db` file using LibSQL. Data isolation across projects and branches is achieved via composite primary keys `(id, project_hash, branch_name)`. The module uses a singleton factory pattern with mutex-protected initialization, LRU caches for hot data, CBOR binary serialization for metadata, and DiskANN for efficient vector similarity search. Prolly Tree provides content-addressed graph versioning with time travel and branch diffs.
+The storage module is the persistence backbone of the system. It stores code entities, relationships, file metadata, and vector embeddings across 4 database files (graph.db, semantic.db, versioning.db, cache.db) using native SQLite. Data isolation across projects and branches is achieved via composite primary keys `(id, project_hash, branch_name)`. The module uses a singleton factory pattern with mutex-protected initialization, LRU caches for hot data, CBOR binary serialization for metadata, and DiskANN for efficient vector similarity search. Prolly Tree provides content-addressed graph versioning with time travel and branch diffs.
 
 ## Architecture
 
@@ -139,7 +139,7 @@ The storage module is the persistence backbone of the system. It stores code ent
 
 | Package | Purpose |
 |---------|---------|
-| `@libsql/client` | Async SQLite client (Turso LibSQL) |
+| `better-sqlite3` / `bun:sqlite` | Native SQLite driver (via NativeSQLiteClient) |
 | `lru-cache` | LRU cache implementation for embedding/search/metadata |
 | `cbor-x` | Binary metadata serialization (faster than JSON) |
 | `xxhash-wasm` | Fast hashing for stable entity/relationship ID generation |
@@ -204,12 +204,12 @@ The module uses `DatabaseCorruptionError` for detecting and recovering from SQLi
 2. **DiskANN rebuild** -- must rebuild index on large bulk inserts (performance hit)
 3. **Tombstone filtering** -- branch deletes create tombstones rather than true deletes; filtering at operation layer
 4. **Conservative cache invalidation** -- search cache cleared on any write, no fine-grained invalidation
-5. **Sequential batches** -- batchConcurrency: 1 to avoid native libsql crashes; limits throughput
+5. **Sequential batches** -- batchConcurrency: 1 for safety with native SQLite transactions
 6. **Fixed dimensions** -- only [384, 768, 1024, 4096] supported; no automatic conversion
 7. **Unbounded history** -- Prolly Tree stores all versions; no built-in pruning of old commits
 8. **Global singleton context** -- must call setGlobalProjectContext() before switching projects
 9. **CBOR type limits** -- Symbols and BigInt not serializable; fallback to JSON possible
-10. **Bun-only sync adapter** -- sqlite-adapter.ts works only under Bun runtime
+10. **Dual runtime** -- sqlite-adapter.ts supports both Bun (bun:sqlite) and Node.js (better-sqlite3)
 
 ## TypeScript Notes
 

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { projectPathParam } from "../base-schemas.js";
 
 export const ListEntitiesToolSchema = z.object({
-  filePath: z.string().describe("Path to the file to list entities from"),
+  filePath: z.string().describe("Path to the file or directory to list entities from"),
   entityTypes: z.array(z.string()).describe("Types of entities to list").optional(),
   projectPath: projectPathParam,
 });

@@ -22,7 +22,8 @@ import { log } from "../logging/index.js";
 // 1. IMPORTS AND DEPENDENCIES
 // =============================================================================
 import { getProjectHash, normalizeBranchName } from "../shared/storage-paths.js";
-import type { ProjectContext } from "../storage/libsql-graph-adapter.js";
+import type { ProjectContext } from "../storage/graph-adapter.js";
+import { getRequestContext } from "../storage/libsql/request-context.js";
 import type { SimilarityResult, VectorEmbedding, VectorStoreConfig } from "../types/semantic.js";
 import type { Entity } from "../types/storage.js";
 import { type FaissProvider, initializeFaissProvider } from "./faiss/faiss-provider.js";
@@ -316,6 +317,23 @@ export class VectorStore {
   }
 
   /**
+   * Warn if ALS request context doesn't match the local VectorStore context.
+   * Indicates a potential cross-project contamination bug.
+   */
+  private checkContextMismatch(operation: string): void {
+    const reqCtx = getRequestContext();
+    if (reqCtx && this.currentContext) {
+      if (reqCtx.projectHash !== this.currentContext.projectHash) {
+        log.w("VECTOR", "context_mismatch", {
+          op: operation,
+          als: reqCtx.projectHash,
+          local: this.currentContext.projectHash,
+        });
+      }
+    }
+  }
+
+  /**
    * Get recommended strategy based on current data characteristics
    */
   getStrategy(vectorCount: number, isRebuild = false, queryBatchSize = 1): StrategyRecommendation {
@@ -457,6 +475,27 @@ export class VectorStore {
   }
 
   /**
+   * Clear all vectors, FAISS index, and embedding cache. Used by reset=true.
+   */
+  async clearAllVectors(): Promise<void> {
+    if (this.layeredProvider) {
+      await this.layeredProvider.clearAll();
+      log.i("VECTOR", "clearAllVectors: layered provider cleared");
+    }
+    // Clear LibSQL embedding cache
+    try {
+      const { getLibSQLAdapter } = await import("../storage/graph-storage-factory.js");
+      const adapter = getLibSQLAdapter();
+      if (adapter) {
+        await adapter.clearEmbeddingCache();
+        log.i("VECTOR", "clearAllVectors: embedding_cache cleared");
+      }
+    } catch {
+      // Adapter not initialized or table doesn't exist
+    }
+  }
+
+  /**
    * Rebuild vector index - v5: No-op (Faiss HNSW maintains index automatically)
    */
   async rebuildVectorIndex(): Promise<void> {
@@ -496,6 +535,9 @@ export class VectorStore {
    * v6: Uses Faiss HNSW search or LayeredFaissProvider, enriches results from LibSQL
    */
   async search(queryVector: Float32Array, limit = 10): Promise<SimilarityResult[]> {
+    // Safety: warn if ALS context doesn't match local context
+    this.checkContextMismatch("search");
+
     const rawResults = await this.searchRaw(queryVector, limit);
 
     // Enrich results with entity data from LibSQL

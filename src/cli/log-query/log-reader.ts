@@ -281,6 +281,12 @@ export interface EmbeddingSession {
   workers: number;
   batches: number;
   provider?: string | undefined;
+  /** Average ms per single embedding (TEI inference) */
+  avgMsPerEmb?: number | undefined;
+  /** Maximum single batch inference time (ms) */
+  maxBatchMs?: number | undefined;
+  /** Global cache hits */
+  cacheHits?: number | undefined;
 }
 
 /**
@@ -305,6 +311,9 @@ export function collectEmbeddingSessions(entries: ParsedLogLine[]): EmbeddingSes
           workers: Number(e.kv["workers"]) || 0,
           batches: Number(e.kv["batches"]) || 0,
           provider: e.kv["provider"] ? String(e.kv["provider"]) : undefined,
+          avgMsPerEmb: e.kv["avgms"] != null ? Number(e.kv["avgms"]) : undefined,
+          maxBatchMs: e.kv["maxbatchms"] != null ? Number(e.kv["maxbatchms"]) : undefined,
+          cacheHits: e.kv["cachehits"] != null ? Number(e.kv["cachehits"]) : undefined,
         };
       })
       .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
@@ -409,6 +418,15 @@ export function formatEmbeddingStats(sessions: EmbeddingSession[], noColor: bool
     lines.push(`  Workers:   ${session.workers}`);
     if (session.batches > 0) {
       lines.push(`  Batches:   ${session.batches}`);
+    }
+    if (session.avgMsPerEmb != null) {
+      lines.push(`  Avg/emb:   ${cyan}${session.avgMsPerEmb.toFixed(2)}ms${reset}`);
+    }
+    if (session.maxBatchMs != null) {
+      lines.push(`  Max batch: ${session.maxBatchMs}ms`);
+    }
+    if (session.cacheHits != null && session.cacheHits > 0) {
+      lines.push(`  Cache:     ${session.cacheHits} hits`);
     }
     if (session.provider) {
       lines.push(`  Provider:  ${session.provider}`);

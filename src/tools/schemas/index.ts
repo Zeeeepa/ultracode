@@ -25,6 +25,8 @@ export {
   AutoDocSyncSchema,
   AutoDocValidateSchema,
 } from "./autodoc-schemas.js";
+// Architecture Diagrams
+export { GetArchitectureDiagramSchema } from "./diagram-schemas.js";
 // Entity Operations
 export { ListEntitiesToolSchema, ListRelationshipsToolSchema, QueryToolSchema } from "./entity-schemas.js";
 // Graph Metrics
@@ -73,12 +75,14 @@ export {
 export { CheckEntityPatternsSchema, DetectPatternsSchema } from "./pattern-schemas.js";
 // Semantic Search & Analysis
 export {
+  AnalyzeApiImpactSchema,
   AnalyzeCodeImpactSchema,
   AnalyzeSwaggerImpactSchema,
   CrossLanguageSearchSchema,
   DetectCodeClonesSchema,
   FindRelatedConceptsSchema,
   FindSimilarCodeSchema,
+  GetDatabaseSchemaSchema,
   PatternSearchSchema,
   SemanticSearchSchema,
 } from "./semantic-schemas.js";
@@ -89,6 +93,8 @@ export {
   ListSnapshotsSchema,
   RollbackSnapshotSchema,
 } from "./snapshot-schemas.js";
+// Stacktrace Analysis
+export { AnalyzeStacktraceSchema } from "./stacktrace-schemas.js";
 // Taint Analysis
 export { TaintAnalysisSchema } from "./taint-schemas.js";
 // Validation & Technology Detection

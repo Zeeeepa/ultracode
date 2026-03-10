@@ -11,7 +11,7 @@ language: typescript
 
 ## Overview
 
-The storage module is the persistence layer of AutoDoc. `AutoDocManager` is the central orchestrator that integrates `DocStorage` (documentation sections), `RefStorage` (references between docs/code/comments), and optionally `GraphStorage` (code entity lookups). It provides high-level operations: saving documents with automatic reference extraction, building documentation context for entities, validating all references, handling code moves/renames, and tracking changes via a changelog. Both storage classes use libsql for cross-runtime Bun/Node.js compatibility, support branch isolation via project context, and optimize bulk operations with batch SQL statements.
+The storage module is the persistence layer of AutoDoc. `AutoDocManager` is the central orchestrator that integrates `DocStorage` (documentation sections), `RefStorage` (references between docs/code/comments), and optionally `GraphStorage` (code entity lookups). It provides high-level operations: saving documents with automatic reference extraction, building documentation context for entities, validating all references, handling code moves/renames, and tracking changes via a changelog. Both storage classes use native SQLite (better-sqlite3 / bun:sqlite via NativeSQLiteClient) for cross-runtime Bun/Node.js compatibility, support branch isolation via project context, and optimize bulk operations with batch SQL statements.
 
 ## Data Flow
 
@@ -45,7 +45,7 @@ The storage module is the persistence layer of AutoDoc. `AutoDocManager` is the 
 
 | Package | Purpose |
 |---------|---------|
-| `@libsql/client` | SQLite database client for cross-runtime (Bun + Node.js) compatibility |
+| `better-sqlite3` / `bun:sqlite` | Native SQLite via NativeSQLiteClient for cross-runtime compatibility |
 | `nanoid` | Short unique ID generation for refs, changelog, and todos |
 
 ## Behavioral Properties
@@ -55,11 +55,11 @@ The storage module is the persistence layer of AutoDoc. `AutoDocManager` is the 
 | Branch isolation | CTE-based queries with priority (current branch > base branch) |
 | Outdated threshold | Confidence < 0.7 marks docs as outdated |
 | Validation concurrency | Up to 8 parallel reference validations |
-| Batch operations | Uses libsql `batch()` for bulk upserts and inserts |
+| Batch operations | Uses `NativeSQLiteClient.batch()` for bulk upserts and inserts |
 
 ## Error Handling
 
-Both storage classes require explicit `initialize()` before use and throw if accessed before initialization. Database operations propagate libsql errors. `AutoDocManager.validateReferences` catches per-reference validation failures and records them as `validationError` on the reference record. `saveDocument` transactionally deletes old refs before inserting new ones.
+Both storage classes require explicit `initialize()` before use and throw if accessed before initialization. Database operations propagate SQLite errors. `AutoDocManager.validateReferences` catches per-reference validation failures and records them as `validationError` on the reference record. `saveDocument` transactionally deletes old refs before inserting new ones.
 
 ## Known Limitations
 

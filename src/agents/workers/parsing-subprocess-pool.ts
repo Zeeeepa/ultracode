@@ -69,6 +69,12 @@ interface EmbeddingsReadyResponse {
   type: "embeddings.ready";
   count?: number;
   embeddings?: BinaryEmbedding[];
+  teiMetrics?: {
+    totalGenTimeMs: number;
+    totalGenCount: number;
+    maxBatchMs: number;
+    cacheHits: number;
+  };
 }
 
 /**
@@ -145,6 +151,11 @@ export class ParsingSubprocessPool {
     totalVectors: 0,
     totalBatches: 0,
     workersUsed: new Set<string>(),
+    // TEI inference metrics
+    teiTotalGenTimeMs: 0,
+    teiTotalGenCount: 0,
+    teiMaxBatchMs: 0,
+    teiCacheHits: 0,
   };
 
   private isShuttingDown = false;
@@ -343,6 +354,16 @@ export class ParsingSubprocessPool {
         this.embeddingStatsAgg.totalVectors += count;
         this.embeddingStatsAgg.totalBatches += 1;
         this.embeddingStatsAgg.workersUsed.add(String(workerId));
+      }
+
+      // Aggregate TEI inference metrics from worker
+      if (response.teiMetrics) {
+        this.embeddingStatsAgg.teiTotalGenTimeMs += response.teiMetrics.totalGenTimeMs;
+        this.embeddingStatsAgg.teiTotalGenCount += response.teiMetrics.totalGenCount;
+        this.embeddingStatsAgg.teiCacheHits += response.teiMetrics.cacheHits;
+        if (response.teiMetrics.maxBatchMs > this.embeddingStatsAgg.teiMaxBatchMs) {
+          this.embeddingStatsAgg.teiMaxBatchMs = response.teiMetrics.maxBatchMs;
+        }
       }
 
       if (this.onEmbeddings && response.embeddings && response.embeddings.length > 0) {
@@ -1215,6 +1236,10 @@ export class ParsingSubprocessPool {
   getEmbeddingStats(): EmbeddingPoolStats {
     const dur = this.embeddingStatsAgg.startTime > 0 ? Date.now() - this.embeddingStatsAgg.startTime : 0;
     const speed = dur > 0 ? Math.round((this.embeddingStatsAgg.totalVectors / dur) * 1000) : 0;
+    const avgMs =
+      this.embeddingStatsAgg.teiTotalGenCount > 0
+        ? this.embeddingStatsAgg.teiTotalGenTimeMs / this.embeddingStatsAgg.teiTotalGenCount
+        : undefined;
 
     return {
       total: this.embeddingStatsAgg.totalVectors,
@@ -1222,6 +1247,9 @@ export class ParsingSubprocessPool {
       speedPerSec: speed,
       workers: this.embeddingStatsAgg.workersUsed.size,
       batches: this.embeddingStatsAgg.totalBatches,
+      avgMsPerEmb: avgMs != null ? +avgMs.toFixed(2) : undefined,
+      maxBatchMs: this.embeddingStatsAgg.teiMaxBatchMs || undefined,
+      cacheHits: this.embeddingStatsAgg.teiCacheHits || undefined,
     };
   }
 
@@ -1238,6 +1266,10 @@ export class ParsingSubprocessPool {
       totalVectors: 0,
       totalBatches: 0,
       workersUsed: new Set<string>(),
+      teiTotalGenTimeMs: 0,
+      teiTotalGenCount: 0,
+      teiMaxBatchMs: 0,
+      teiCacheHits: 0,
     };
 
     log.d("SUBPROCESS", "embedding_stats_reset", { language: this.language });

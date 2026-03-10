@@ -125,6 +125,7 @@ export class ProjectContextManager {
 
   /**
    * Switch to a different project context
+   * @deprecated Use runWithRequestContext() for per-call scoping. This mutates global state.
    * Returns true if switch was successful
    */
   async switchProject(projectPath: string): Promise<boolean> {
@@ -270,8 +271,9 @@ export function getCurrentIndexingDirectory(): string | undefined {
   return getProjectContext().getCurrentProject();
 }
 
-export function setCurrentIndexingDirectory(directory: string | undefined): void {
-  if (directory) {
-    getProjectContext().switchProject(directory);
-  }
+/**
+ * @deprecated No-op. Use runWithRequestContext() for per-call project scoping.
+ */
+export function setCurrentIndexingDirectory(_directory: string | undefined): void {
+  // No-op: project context is now set via ALS
 }

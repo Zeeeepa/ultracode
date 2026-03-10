@@ -1,17 +1,17 @@
 ---
 module_name: libsql
-description: "LibSQL graph storage adapter with vector search, entity CRUD, and caching"
+description: "SQLite graph storage operations with entity CRUD, caching, and co-occurrence (historically named libsql)"
 status: active
 language: typescript
 ---
 
-# LibSQL
+# LibSQL (storage operations)
 
-> Provides the LibSQL-based graph storage layer with operations for entities, relationships, vectors, metadata, co-occurrence, and embedding caching, supporting multi-dimensional DiskANN vector indexes.
+> Provides the SQLite-based graph storage layer with operations for entities, relationships, vectors, metadata, co-occurrence, and embedding caching. Directory named `libsql/` for historical reasons — actual storage uses native SQLite (better-sqlite3 / bun:sqlite) via `NativeSQLiteClient` since v6.5.
 
 ## Overview
 
-The libsql module implements the persistent storage layer for the code graph using LibSQL (SQLite-compatible). It is decomposed into operation classes: EntityOperations for CRUD on project entities, RelationshipOperations for entity relationships, VectorOperations for DiskANN-powered similarity search across multiple embedding dimensions (384, 768, 1024, 4096), MetadataOperations for file and project metadata tracking, CacheOperations for global embedding cache by content hash, and CooccurrenceOperations for term co-occurrence and PMI-based query expansion. All operations use project context (projectHash + branchName) for multi-tenant isolation.
+The libsql module implements the persistent storage layer for the code graph using native SQLite. It is decomposed into operation classes: EntityOperations for CRUD on project entities, RelationshipOperations for entity relationships, VectorOperations for DiskANN-powered similarity search across multiple embedding dimensions (384, 768, 1024, 4096), MetadataOperations for file and project metadata tracking, CacheOperations for global embedding cache by content hash, and CooccurrenceOperations for term co-occurrence and PMI-based query expansion. All operations use project context (projectHash + branchName) for multi-tenant isolation.
 
 ## Data Flow
 
@@ -51,7 +51,7 @@ The libsql module implements the persistent storage layer for the code graph usi
 
 | Package | Purpose |
 |---------|---------|
-| `@libsql/client` | LibSQL database client |
+| `better-sqlite3` / `bun:sqlite` | Native SQLite driver (via NativeSQLiteClient) |
 
 ## Behavioral Properties
 
@@ -59,7 +59,7 @@ The libsql module implements the persistent storage layer for the code graph usi
 |----------|-------|
 | Default dimensions | 384 (for all-MiniLM-L6-v2 model) |
 | DiskANN compression | float8 (40-50% less memory than float32) |
-| Batch concurrency | Sequential (1) to prevent libsql native crashes |
+| Batch concurrency | Sequential (1) for safety with native SQLite |
 
 ## Error Handling
 
@@ -67,7 +67,7 @@ DatabaseCorruptionError is thrown on SQLITE_CORRUPT or malformed database errors
 
 ## Known Limitations
 
-- Batch write concurrency is set to 1 (sequential) due to libsql native issues with parallel writes.
+- Batch write concurrency is set to 1 (sequential) for safety with native SQLite transactions.
 - DiskANN maxNeighbors is reduced to 12 (from 24) to lower disk footprint, which may slightly reduce recall.
 - Co-occurrence PMI calculation does not handle zero-frequency edge cases gracefully.
 

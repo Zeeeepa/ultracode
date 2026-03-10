@@ -14,6 +14,7 @@ import { execSync } from "node:child_process";
 import { existsSync, type FSWatcher, watch } from "node:fs";
 import { join } from "node:path";
 import { log } from "../logging/index.js";
+import { areTimersSuspended } from "./indexing-state.js";
 
 // Event-driven architecture: git polling uses setInterval for Node.js, disabled for Bun
 
@@ -358,6 +359,14 @@ export class GitWatcher {
    */
   private flushPendingChanges(): void {
     if (this.pendingChanges.size === 0) return;
+
+    // Defer if heavy analysis is running (prevents bun:sqlite concurrent access crash)
+    if (areTimersSuspended()) {
+      log.d("GITWATCHER", "flush_deferred_suspended", { pending: this.pendingChanges.size });
+      // Re-schedule after a short delay
+      setTimeout(() => this.flushPendingChanges(), 2000);
+      return;
+    }
 
     const files = Array.from(this.pendingChanges);
     const bulkMode = files.length >= this.bulkModeThreshold;

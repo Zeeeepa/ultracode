@@ -9,9 +9,11 @@ import { z } from "zod";
 import { branchToolDefinitions } from "./branch-schemas.js";
 import {
   AddMemberSchema,
+  AnalyzeApiImpactSchema,
   AnalyzeCodeImpactSchema,
   AnalyzeHotspotsSchema,
   AnalyzeMergeConflictsSchema,
+  AnalyzeStacktraceSchema,
   AnalyzeStateChaosSchema,
   AnalyzeSwaggerImpactSchema,
   AutoDocChangelogSchema,
@@ -42,7 +44,9 @@ import {
   FindRelatedConceptsSchema,
   FindSimilarCodeSchema,
   GetAgentMetricsSchema,
+  GetArchitectureDiagramSchema,
   GetBusStatsSchema,
+  GetDatabaseSchemaSchema,
   GetEntityHistorySchema,
   GetGraphHealthSchema,
   GetGraphSchema,
@@ -158,7 +162,7 @@ export function getToolsList(): ToolDefinition[] {
     {
       name: "get_members",
       description:
-        "[EXPLORE] List parsed entities within a single file (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries.",
+        "[EXPLORE] List parsed entities within a single file or directory (imports, functions, classes, etc.); use as the entry point to discover stable entity identifiers before running relationship queries. Accepts both file paths and directory paths — when a directory is given, returns entities from all files in the subtree.",
       inputSchema: zodToJsonSchema(ListEntitiesToolSchema),
     },
     {
@@ -246,6 +250,18 @@ export function getToolsList(): ToolDefinition[] {
       inputSchema: zodToJsonSchema(AnalyzeSwaggerImpactSchema),
     },
     {
+      name: "analyze_api_impact",
+      description:
+        "[PLAN] Analyze impact of API contract changes across Swagger/OpenAPI, Protobuf/gRPC, and GraphQL schemas. Shows affected producers (servers/resolvers), consumers (clients/hooks), and generated types. Auto-detects contract type or filter with contractType parameter. Use before modifying any API spec.",
+      inputSchema: zodToJsonSchema(AnalyzeApiImpactSchema),
+    },
+    {
+      name: "get_database_schema",
+      description:
+        "[EXPLORE] Show database schema reconstructed from SQL files, Prisma schemas, ORM models (TypeORM, Sequelize, JPA, EF Core, Django, SQLAlchemy, GORM, Dapper, linq2db), and Redis key patterns. Filters: tableName (partial match), dbEngine (postgres/mysql/clickhouse/redis/sqlite/mssql). Use includeRelationships=true for FK and code links.",
+      inputSchema: zodToJsonSchema(GetDatabaseSchemaSchema),
+    },
+    {
       name: "graph_metrics",
       description:
         "[PLAN] Graph-based architecture metrics: PageRank (entity importance), Louvain (community/module detection), centrality (hub/authority/bridge roles), bus factor (knowledge concentration risk). Use persist=true to store PageRank/Louvain in entity metadata for semantic search boosting. Workflow: graph_metrics({metric:'pagerank', topN:10}) → top-10 most important entities.",
@@ -256,6 +272,21 @@ export function getToolsList(): ToolDefinition[] {
       description:
         "[EXPLORE] Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",
       inputSchema: zodToJsonSchema(DetectTechnologyStackSchema),
+    },
+
+    // ==========================================================================
+    // Architecture Diagrams
+    // ==========================================================================
+    {
+      name: "get_architecture_diagram",
+      description:
+        "[EXPLORE] Generate architecture diagrams in Mermaid, Graphviz DOT, or D2 format. " +
+        "Specify entryPoint (file/class/module) or omit for project overview. " +
+        "depth controls detail level (1=files, 2=classes, 3=methods). " +
+        "dataFlowLevel adds type annotations (0=none, 1=basic types, 2=params+conditionals, 3=field mapping). " +
+        "Auto-detects diagramType (flowchart/class/component) from code structure. " +
+        "Example: get_architecture_diagram({depth:2, dataFlowLevel:1, format:'mermaid'}).",
+      inputSchema: zodToJsonSchema(GetArchitectureDiagramSchema),
     },
 
     // ==========================================================================
@@ -270,7 +301,10 @@ export function getToolsList(): ToolDefinition[] {
         "Filters: category, tags, severity, minConfidence. " +
         "Categories: anti-pattern (bad practices), best-pattern (good practices), " +
         "code-smell (structural issues), optimization (performance improvements with Big-O). " +
-        "Example: detect_patterns({category:'optimization', tags:['performance']}). " +
+        "Includes JIT deoptimization detectors for JS/TS: hidden class violations (delete, with), " +
+        "holey arrays, megamorphic dispatch, spread in hot paths, dynamic property access in loops. " +
+        "Use tags=['jit'] to filter JIT-specific rules. " +
+        "Example: detect_patterns({category:'optimization', tags:['jit']}). " +
         "📖 get_help(topic='patterns')",
       inputSchema: zodToJsonSchema(DetectPatternsSchema),
     },
@@ -283,12 +317,26 @@ export function getToolsList(): ToolDefinition[] {
     },
 
     // ==========================================================================
+    // Stacktrace Analysis
+    // ==========================================================================
+    {
+      name: "analyze_stacktrace",
+      description:
+        "[ANALYZE] Parse and diagnose stacktraces from any language (JS/TS, Python, Java/Kotlin, C#, Go, Rust, C/C++, Zig). " +
+        "Auto-detects language, resolves frames to code graph entities, classifies errors, " +
+        "runs backwards trace and impact analysis on crash point. " +
+        "Returns crash location, call chain, severity, suggested fixes, and Mermaid diagram. " +
+        "Example: analyze_stacktrace({stacktrace: '...error text...', format: 'text'}).",
+      inputSchema: zodToJsonSchema(AnalyzeStacktraceSchema),
+    },
+
+    // ==========================================================================
     // Security Tools
     // ==========================================================================
     {
       name: "taint_analysis",
       description:
-        "[SECURITY] Interprocedural taint analysis: trace untrusted data from sources (req.body, process.env, fetch) to sinks (eval, exec, innerHTML, db.query) and detect missing sanitization. Categories: sql_injection, xss, command_injection, path_traversal, ssrf, prototype_pollution. Returns vulnerability flows with severity, confidence, and fix suggestions. Supports offset/limit pagination for large results. Example: taint_analysis({category:'sql_injection', offset:0, limit:10}).",
+        "[SECURITY] Interprocedural taint analysis: trace untrusted data from sources (req.body, process.env, fetch) to sinks (eval, exec, innerHTML, db.query) and detect missing sanitization. Categories: sql_injection, xss, command_injection, path_traversal, ssrf, prototype_pollution, missing_auth. The missing_auth category detects API endpoints (REST, gRPC, GraphQL) without authorization checks reaching sensitive operations. Returns vulnerability flows with severity, confidence, and fix suggestions. Supports offset/limit pagination for large results. Example: taint_analysis({category:'missing_auth', offset:0, limit:10}).",
       inputSchema: zodToJsonSchema(TaintAnalysisSchema),
     },
 

@@ -887,6 +887,23 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
         ms: perfTimings["preSpawnPrepare_end"]! - perfTimings["preSpawnPrepare_start"]!,
       });
     }
+
+    // Detect vendored/generated directories (skip embeddings, keep parsing)
+    if (!isIncremental && allFiles.length > 500) {
+      const { detectVendoredDirectories } = await import("./dev/vendored-detector.js");
+      const vendored = detectVendoredDirectories(allFiles, directory);
+      if (vendored.vendoredPrefixes.length > 0 && preSpawnPrepareResult?.embeddingConfig) {
+        preSpawnPrepareResult.embeddingConfig.vendoredPrefixes = vendored.vendoredPrefixes;
+        preSpawnPrepareResult.embeddingConfig.projectRoot = directory;
+        // Re-push config to parser so workers pick up vendored prefixes
+        this.parserAgent?.setEmbeddingConfig(preSpawnPrepareResult.embeddingConfig);
+        log.i("DEVAGENT", "Vendored prefixes applied to embedding config", {
+          prefixes: vendored.vendoredPrefixes.length,
+          skippedFiles: vendored.stats.totalSkippedFiles,
+        });
+      }
+    }
+
     let deletedEntityIds: string[] = [];
 
     if (isIncremental && allFiles.length > 0) {
@@ -1513,19 +1530,71 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
       });
     }
 
-    // Post-indexing: Resolve Swagger ↔ Code links (only if swagger entities exist)
+    // Post-indexing: Cross-domain linking (swagger, protobuf, graphql, db schema)
+    // Load entities once and check which linkers are needed
     perfTimings["swaggerLink_start"] = Date.now() - perfStart;
     try {
-      const { resolveSwaggerLinks } = await import("./dev/indexing-pipeline.js");
-      const swaggerRels = await resolveSwaggerLinks();
-      if (swaggerRels > 0) {
-        totalRelationships += swaggerRels;
-        log.i("DEVAGENT", "swagger_links_created", { count: swaggerRels });
+      const { resolveSwaggerLinks, resolveProtobufLinks, resolveGraphQLLinks, resolveDbSchemaLinks } = await import(
+        "./dev/indexing-pipeline.js"
+      );
+      const graphStorage = await (await import("../storage/graph-storage-factory.js")).getGraphStorage();
+      const allEntities = await graphStorage.getAllEntities();
+
+      const hasSwagger = allEntities.some((e) => e.metadata?.["swaggerType"]);
+      const hasProtobuf = allEntities.some((e) => e.metadata?.["protoType"]);
+      const hasGraphQL = allEntities.some((e) => e.metadata?.["graphqlType"]);
+      const hasDbEntities = allEntities.some((e) => e.metadata?.["isDbSchema"] || e.metadata?.["dbType"]);
+
+      log.i("DEVAGENT", "cross_domain_check", { hasSwagger, hasProtobuf, hasGraphQL, hasDbEntities });
+
+      if (hasSwagger) {
+        const swaggerRels = await resolveSwaggerLinks(allEntities);
+        if (swaggerRels > 0) {
+          totalRelationships += swaggerRels;
+          log.i("DEVAGENT", "swagger_links_created", { count: swaggerRels });
+        }
       }
+      perfTimings["swaggerLink_end"] = Date.now() - perfStart;
+
+      perfTimings["protobufLink_start"] = Date.now() - perfStart;
+      if (hasProtobuf) {
+        const protoRels = await resolveProtobufLinks(allEntities);
+        if (protoRels > 0) {
+          totalRelationships += protoRels;
+          log.i("DEVAGENT", "protobuf_links_created", { count: protoRels });
+        }
+      }
+      perfTimings["protobufLink_end"] = Date.now() - perfStart;
+
+      perfTimings["graphqlLink_start"] = Date.now() - perfStart;
+      if (hasGraphQL) {
+        const graphqlRels = await resolveGraphQLLinks(allEntities);
+        if (graphqlRels > 0) {
+          totalRelationships += graphqlRels;
+          log.i("DEVAGENT", "graphql_links_created", { count: graphqlRels });
+        }
+      }
+      perfTimings["graphqlLink_end"] = Date.now() - perfStart;
+
+      perfTimings["dbSchemaLink_start"] = Date.now() - perfStart;
+      if (hasDbEntities) {
+        const dbRels = await resolveDbSchemaLinks(allEntities);
+        if (dbRels > 0) {
+          totalRelationships += dbRels;
+          log.i("DEVAGENT", "db_schema_links_created", { count: dbRels });
+        }
+      }
+      perfTimings["dbSchemaLink_end"] = Date.now() - perfStart;
     } catch (err) {
-      log.w("DEVAGENT", "swagger_link_skip", { error: (err as Error).message });
+      log.w("DEVAGENT", "cross_domain_link_error", { error: (err as Error).message });
+      perfTimings["swaggerLink_end"] ??= Date.now() - perfStart;
+      perfTimings["protobufLink_start"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["protobufLink_end"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["graphqlLink_start"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["graphqlLink_end"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["dbSchemaLink_start"] ??= perfTimings["swaggerLink_end"];
+      perfTimings["dbSchemaLink_end"] ??= perfTimings["swaggerLink_end"];
     }
-    perfTimings["swaggerLink_end"] = Date.now() - perfStart;
 
     perfTimings["indexing_end"] = Date.now() - perfStart;
     log.i("DEVAGENT", "index_done", {
@@ -2029,6 +2098,10 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
    */
   getEmbeddingStats(): import("../types/semantic.js").EmbeddingPoolStats | null {
     return this.parserAgent?.getEmbeddingPoolStats?.() ?? null;
+  }
+
+  getTeiBatchLog(): Array<{ n: number; ms: number }> {
+    return this.parserAgent?.getAccumulator()?.getTeiBatchLog() ?? [];
   }
 
   protected async onShutdown(): Promise<void> {

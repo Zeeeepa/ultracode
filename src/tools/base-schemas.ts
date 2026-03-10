@@ -45,3 +45,20 @@ export const PaginationParams = z.object({
  * Branch parameter for branch-aware operations
  */
 export const branchParam = z.string().optional().describe("Git branch name. If not specified, uses current branch.");
+
+/**
+ * Recent changes highlighting parameters (Prolly Tree)
+ * Spread into tool schemas that support recently-changed annotation.
+ */
+export const recentChangesParams = {
+  highlightRecentChanges: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Annotate problem entities with recently-changed status (Prolly Tree)"),
+  recentCommitsCount: z
+    .number()
+    .optional()
+    .default(10)
+    .describe("Number of recent commits to consider for highlighting"),
+};

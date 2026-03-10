@@ -7,11 +7,13 @@
 import ts from "typescript";
 import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
+import { extractAntipatternHints } from "./ts-antipattern-hints-extractor.js";
 import { getDecorators, getLocation, getModifiers, getParameters, getReturnType } from "./ts-ast-helpers.js";
 import { type CallInfo, extractCalls, extractTypeReferences, type TypeReference } from "./ts-call-extractor.js";
 import { extractComplexity } from "./ts-complexity-analyzer.js";
 import { extractControlFlow } from "./ts-control-flow-extractor.js";
 import { extractDocumentation } from "./ts-doc-extractor.js";
+import { extractJitHints } from "./ts-jit-hints-extractor.js";
 import { extractNgRxEffectInfo, extractNgRxStoreUsage, type NgRxEffectInfo } from "./ts-ngrx-extractor.js";
 
 export interface ClassExtractorContext {
@@ -244,6 +246,8 @@ function extractMethod(member: ts.MethodDeclaration, ctx: MemberContext): void {
   const methodDoc = extractDocumentation(member, sourceFile);
   const methodTypeRefs = extractTypeReferences(member, sourceFile);
   const methodComplexity = extractComplexity(member, sourceFile);
+  const methodJitHints = extractJitHints(member, sourceFile);
+  const methodAntipatternHints = extractAntipatternHints(member, sourceFile);
   const methodLocation = getLocation(sourceFile, member);
   const methodDecorators = getDecorators(member, sourceFile);
 
@@ -264,6 +268,8 @@ function extractMethod(member: ts.MethodDeclaration, ctx: MemberContext): void {
     documentation: methodDoc,
     typeReferences: methodTypeRefs,
     complexity: methodComplexity,
+    ...(methodJitHints && { jitHints: methodJitHints }),
+    ...(methodAntipatternHints && { antipatternHints: methodAntipatternHints }),
     metadata:
       ngrxStoreUsage.dispatches.length > 0 || ngrxStoreUsage.selects.length > 0
         ? {
@@ -436,6 +442,7 @@ function extractConstructor(member: ts.ConstructorDeclaration, ctx: MemberContex
   const constructorDoc = extractDocumentation(member, sourceFile);
   const constructorTypeRefs = extractTypeReferences(member, sourceFile);
   const constructorComplexity = extractComplexity(member, sourceFile);
+  const constructorAntipatternHints = extractAntipatternHints(member, sourceFile);
   const constructorLocation = getLocation(sourceFile, member);
 
   classEntity.children!.push({
@@ -450,6 +457,7 @@ function extractConstructor(member: ts.ConstructorDeclaration, ctx: MemberContex
     documentation: constructorDoc,
     typeReferences: constructorTypeRefs,
     complexity: constructorComplexity,
+    ...(constructorAntipatternHints && { antipatternHints: constructorAntipatternHints }),
   });
 
   ctx.addMemberRelationships("constructor", constructorLocation, constructorCalls);

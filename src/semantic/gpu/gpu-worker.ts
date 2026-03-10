@@ -547,7 +547,7 @@ async function handleNamedPipeRequest(packet: Buffer): Promise<Buffer> {
 
     await handleRequest(request);
 
-    delete globalWithCapture._captureResponse;
+    globalWithCapture._captureResponse = undefined!;
 
     if (capturedResponse) {
       type ResponseWithVectors = GpuWorkerResponse & {
@@ -556,7 +556,7 @@ async function handleNamedPipeRequest(packet: Buffer): Promise<Buffer> {
       const responseWithVectors = capturedResponse as ResponseWithVectors;
       if (responseWithVectors.vectors && Array.isArray(responseWithVectors.vectors)) {
         const vectorData = new Float32Array(responseWithVectors.vectors.flat());
-        delete responseWithVectors.vectors;
+        responseWithVectors.vectors = undefined!;
         return createPacket(capturedResponse, vectorData);
       }
       return createPacket(capturedResponse);

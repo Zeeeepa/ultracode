@@ -65,11 +65,72 @@ export interface StructuralCriteria {
   hasNoInheritance?: boolean | undefined; // Must NOT have base classes/interfaces
 
   // File path filter (regex)
+  filePathMatch?: string | undefined; // Only match entities whose filePath matches this regex
   filePathNotMatch?: string | undefined; // Skip entities whose filePath matches this regex
 
   // Name (regex)
   nameMatch?: string | undefined;
   nameNotMatch?: string | undefined;
+
+  // JIT hints (from parser)
+  hasDeleteExpression?: boolean | undefined;
+  hasArgumentsReference?: boolean | undefined;
+  hasWithStatement?: boolean | undefined;
+  minSpreadInCalls?: number | undefined;
+  minDynamicPropertyAccess?: number | undefined;
+
+  // Antipattern hints (from parser)
+  minTypeAssertions?: number | undefined;
+  minNonNullAssertions?: number | undefined;
+  hasInnerHtmlAssign?: boolean | undefined;
+  hasParamMutation?: boolean | undefined;
+  hasOrWithDefault?: boolean | undefined;
+  hasThrowNonError?: boolean | undefined;
+  hasRegexLiterals?: boolean | undefined;
+
+  // Zig-specific criteria (from zigOps in metadata)
+  minForceUnwraps?: number | undefined;
+  minUnsafeCasts?: number | undefined;
+  minUnreachable?: number | undefined;
+
+  // C#-specific antipattern hints (from Roslyn parser)
+  minSyncOverAsync?: number | undefined;
+  minNullForgiving?: number | undefined;
+  hasLockOnThis?: boolean | undefined;
+  hasNewHttpClient?: boolean | undefined;
+  hasNewDisposableNoUsing?: boolean | undefined;
+  hasParallelForEachAsync?: boolean | undefined;
+  minThrowEx?: number | undefined;
+  minEmptyCatch?: number | undefined;
+  hasStringConcatInLoop?: boolean | undefined;
+
+  // Python-specific antipattern hints (from python-ast-cli.py)
+  minBareExcept?: number | undefined;
+  minExceptPass?: number | undefined;
+  minGenericRaise?: number | undefined;
+  minWideTryBlock?: number | undefined;
+  minTypeIgnore?: number | undefined;
+  minAnyType?: number | undefined;
+  minEvalExec?: number | undefined;
+  hasPyStringConcatInLoop?: boolean | undefined;
+  hasPyOpenWithoutWith?: boolean | undefined;
+  hasPyAsyncNoAwait?: boolean | undefined;
+
+  // Python controlFlow extended fields
+  minReturnCount?: number | undefined;
+  minNestingDepth?: number | undefined;
+  minCyclomaticPy?: number | undefined;
+  minIsinstanceCount?: number | undefined;
+  hasPyReRaiseDifferent?: boolean | undefined;
+
+  // Python class metadata (from classMeta)
+  hasPySlots?: boolean | undefined; // class has __slots__
+  missingPySlots?: boolean | undefined; // class does NOT have __slots__
+  missingPyRepr?: boolean | undefined; // class missing __repr__
+  missingPyStr?: boolean | undefined; // class missing __str__
+  minPyInitCalls?: number | undefined; // __init__ does too much
+  minPyMethodCount?: number | undefined; // God class
+  hasPyPropertyNoSetter?: boolean | undefined; // @property without @x.setter
 
   // Graph-based (require relationship queries)
   relationships?: RelationshipCriteria[] | undefined;
@@ -181,7 +242,11 @@ export interface CustomDetectorResult {
   matchedCriteria?: string[];
 }
 
-export type CustomDetectorFn = (entity: import("../../types/storage.js").Entity) => CustomDetectorResult;
+export type CustomDetectorFn = (
+  entity: import("../../types/storage.js").Entity,
+  /** Optional: all entities in current scan batch — enables cross-entity detectors (e.g., declaration merging, circular deps) */
+  allEntities?: import("../../types/storage.js").Entity[],
+) => CustomDetectorResult;
 
 // ─── Structural Candidate (internal) ──────────────────────────────
 

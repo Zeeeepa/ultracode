@@ -4,7 +4,7 @@
  * Re-exports all operation classes and types for the LibSQL graph adapter.
  */
 
-export { CacheOperations, type VectorToStringFn } from "./cache-ops.js";
+export { CacheOperations } from "./cache-ops.js";
 export { CooccurrenceOperations, type CooccurrenceStats, type RelatedTerm } from "./cooccurrence-ops.js";
 
 // Operation classes

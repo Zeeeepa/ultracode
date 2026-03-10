@@ -226,6 +226,15 @@ export interface WorkerEmbeddingConfig {
    * via centralized queue (useful for OVMS gRPC throughput).
    */
   centralizedEmbeddings?: boolean | undefined;
+  /**
+   * Relative directory prefixes detected as vendored/generated code.
+   * Files under these prefixes are parsed (for graph) but skip embedding generation.
+   */
+  vendoredPrefixes?: string[] | undefined;
+  /**
+   * Root directory of the project (needed to compute relative paths for vendored check).
+   */
+  projectRoot?: string | undefined;
   /** Provider-level transport and auth options (must be serializable) */
   providerOptions?:
     | {
@@ -264,6 +273,12 @@ export interface EmbeddingPoolStats {
   batches: number;
   /** Name of the provider that was used */
   provider?: string | undefined;
+  /** Average ms per single embedding (TEI inference time) */
+  avgMsPerEmb?: number | undefined;
+  /** Maximum batch inference time (ms) */
+  maxBatchMs?: number | undefined;
+  /** Total cache hits (global cache) */
+  cacheHits?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------

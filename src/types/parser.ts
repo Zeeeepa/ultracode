@@ -46,6 +46,11 @@ export const SUPPORTED_LANGUAGES = [
   "powershell",
   "batch",
   "json",
+  "protobuf",
+  "graphql",
+  "sql",
+  "linq",
+  "prisma",
   "zig",
   "helm",
 ] as const;
@@ -372,6 +377,44 @@ export interface ParsedEntity {
           expression: string;
           location: SourceSpan;
         }>;
+      }
+    | undefined;
+
+  jitHints?:
+    | {
+        deleteCount: number;
+        argumentsRefCount: number;
+        hasWithStatement: boolean;
+        spreadInCallCount: number;
+        dynamicPropAccessCount: number;
+      }
+    | undefined;
+
+  antipatternHints?:
+    | {
+        typeAssertionCount: number;
+        doubleAssertionCount: number;
+        nonNullAssertionCount: number;
+        throwNonErrorCount: number;
+        innerHtmlAssignCount: number;
+        orWithDefaultCount: number;
+        paramMutationCount: number;
+        regexLiterals: string[];
+      }
+    | undefined;
+
+  pythonHints?:
+    | {
+        bareExceptCount: number;
+        exceptPassCount: number;
+        genericRaiseCount: number;
+        wideTryBlockCount: number;
+        typeIgnoreCount: number;
+        anyTypeCount: number;
+        evalExecCount: number;
+        stringConcatInLoopCount: number;
+        openWithoutWithCount: number;
+        asyncNoAwaitCount: number;
       }
     | undefined;
 

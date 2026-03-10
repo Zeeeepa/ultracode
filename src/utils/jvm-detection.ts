@@ -271,13 +271,15 @@ export function clearCachedKlsJvmPath(): void {
       return;
     }
 
-    const config: ParserConfig = JSON.parse(readFileSync(configPath, "utf-8"));
-    delete config.klsJavaPath;
-    delete config.klsJavaVersion;
-    delete config.klsJavaMajorVersion;
-    delete config.lastUpdated;
+    const {
+      klsJavaPath: _,
+      klsJavaVersion: _2,
+      klsJavaMajorVersion: _3,
+      lastUpdated: _4,
+      ...rest
+    } = JSON.parse(readFileSync(configPath, "utf-8")) as ParserConfig;
 
-    writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    writeFileSync(configPath, JSON.stringify(rest, null, 2), "utf-8");
     workerLog("INFO", "JVMDETECT cleared KLS JVM cache");
   } catch {
     // Ignore errors

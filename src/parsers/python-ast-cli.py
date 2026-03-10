@@ -144,6 +144,18 @@ def extract_calls_from_body(body: list[ast.stmt], container_name: str) -> list[d
                 except:
                     continue
 
+            # Extract keyword arguments (e.g., inplace=True, shell=True)
+            if node.keywords:
+                kwargs = {}
+                for kw in node.keywords:
+                    if kw.arg is not None:
+                        try:
+                            kwargs[kw.arg] = ast.unparse(kw.value) if hasattr(ast, "unparse") else repr(kw.value)
+                        except:
+                            kwargs[kw.arg] = "..."
+                if kwargs:
+                    call_info["kwargs"] = kwargs
+
             call_info["container"] = container_name
             calls.append(call_info)
 
@@ -166,6 +178,12 @@ def get_function_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[di
                 pass
         if i >= defaults_start:
             param["optional"] = True
+            default_idx = i - defaults_start
+            if default_idx < len(args.defaults):
+                try:
+                    param["defaultValue"] = ast.unparse(args.defaults[default_idx]) if hasattr(ast, "unparse") else repr(args.defaults[default_idx])
+                except:
+                    param["defaultValue"] = "..."
         params.append(param)
 
     # *args
@@ -176,6 +194,24 @@ def get_function_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[di
                 param["type"] = ast.unparse(args.vararg.annotation)
             except:
                 pass
+        params.append(param)
+
+    # keyword-only args
+    kw_defaults_start = len(args.kwonlyargs) - len(args.kw_defaults)
+    for i, arg in enumerate(args.kwonlyargs):
+        param = {"name": arg.arg}
+        if arg.annotation:
+            try:
+                param["type"] = ast.unparse(arg.annotation) if hasattr(ast, "unparse") else str(arg.annotation)
+            except:
+                pass
+        default_idx = i - kw_defaults_start
+        if default_idx >= 0 and default_idx < len(args.kw_defaults) and args.kw_defaults[default_idx] is not None:
+            param["optional"] = True
+            try:
+                param["defaultValue"] = ast.unparse(args.kw_defaults[default_idx]) if hasattr(ast, "unparse") else repr(args.kw_defaults[default_idx])
+            except:
+                param["defaultValue"] = "..."
         params.append(param)
 
     # **kwargs
@@ -212,6 +248,190 @@ def get_bases(node: ast.ClassDef) -> dict | None:
         return None
 
     return {"baseClasses": base_classes, "interfaces": []}
+
+
+def extract_control_flow(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict | None:
+    """Extract control flow info: loops, exceptions, awaits, branches, returns, nesting, complexity."""
+    loops = []
+    exceptions = []
+    awaits = []
+    branches = []
+    return_count = 0
+    isinstance_count = 0
+    re_raise_different = False
+
+    for child in ast.walk(node):
+        if isinstance(child, (ast.For, ast.While, ast.AsyncFor)):
+            loops.append({"line": getattr(child, "lineno", 0)})
+        elif isinstance(child, ast.Try):
+            exceptions.append({"line": getattr(child, "lineno", 0)})
+        elif isinstance(child, ast.Await):
+            awaits.append({"line": getattr(child, "lineno", 0)})
+        elif isinstance(child, (ast.If, ast.IfExp)):
+            branches.append({"line": getattr(child, "lineno", 0)})
+        elif isinstance(child, ast.Return):
+            return_count += 1
+
+        # isinstance() calls
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "isinstance":
+            isinstance_count += 1
+
+        # Re-raise different exception type: except X: raise Y
+        if isinstance(child, ast.ExceptHandler) and child.type is not None:
+            caught_name = None
+            if isinstance(child.type, ast.Name):
+                caught_name = child.type.id
+            for stmt in ast.walk(child):
+                if isinstance(stmt, ast.Raise) and stmt.exc:
+                    raised = stmt.exc
+                    raised_name = None
+                    if isinstance(raised, ast.Call) and isinstance(raised.func, ast.Name):
+                        raised_name = raised.func.id
+                    elif isinstance(raised, ast.Name):
+                        raised_name = raised.id
+                    if raised_name and caught_name and raised_name != caught_name:
+                        re_raise_different = True
+
+    # Nesting depth: max depth of nested control structures
+    nesting_depth = _calc_nesting_depth(node.body, 0)
+
+    # Cyclomatic complexity: edges - nodes + 2 ≈ 1 + decisions
+    cyclomatic = 1 + len(branches) + len(loops) + len(exceptions)
+
+    result = {}
+    if loops:
+        result["loops"] = loops
+    if exceptions:
+        result["exceptions"] = exceptions
+    if awaits:
+        result["awaits"] = awaits
+    if branches:
+        result["branches"] = branches
+    if return_count > 0:
+        result["returnCount"] = return_count
+    if nesting_depth > 0:
+        result["nestingDepth"] = nesting_depth
+    if cyclomatic > 1:
+        result["cyclomaticComplexity"] = cyclomatic
+    if isinstance_count > 0:
+        result["isinstanceCount"] = isinstance_count
+    if re_raise_different:
+        result["reRaiseDifferentType"] = True
+
+    return result if result else None
+
+
+def _calc_nesting_depth(body: list[ast.stmt], current: int) -> int:
+    """Calculate max nesting depth of control structures."""
+    max_depth = current
+    for node in body:
+        child_body = []
+        if isinstance(node, (ast.If, ast.For, ast.While, ast.AsyncFor, ast.With, ast.AsyncWith)):
+            child_body = node.body + getattr(node, "orelse", [])
+            depth = _calc_nesting_depth(child_body, current + 1)
+            max_depth = max(max_depth, depth)
+        elif isinstance(node, ast.Try):
+            parts = node.body + node.handlers + node.orelse + node.finalbody
+            depth = _calc_nesting_depth(parts, current + 1)
+            max_depth = max(max_depth, depth)
+        elif isinstance(node, ast.ExceptHandler):
+            depth = _calc_nesting_depth(node.body, current)
+            max_depth = max(max_depth, depth)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # Nested function — count as +1 but don't recurse into it
+            max_depth = max(max_depth, current + 1)
+    return max_depth
+
+
+def extract_python_hints(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict | None:
+    """Extract Python-specific antipattern hints from AST."""
+    hints = {
+        "bareExceptCount": 0,
+        "exceptPassCount": 0,
+        "genericRaiseCount": 0,
+        "wideTryBlockCount": 0,
+        "typeIgnoreCount": 0,
+        "anyTypeCount": 0,
+        "evalExecCount": 0,
+        "stringConcatInLoopCount": 0,
+        "openWithoutWithCount": 0,
+        "asyncNoAwaitCount": 0,
+    }
+
+    is_async = isinstance(node, ast.AsyncFunctionDef)
+    has_await = False
+    with_targets = set()  # Track variables from 'with' statements
+
+    for child in ast.walk(node):
+        # Bare except / swallowed exception
+        if isinstance(child, ast.ExceptHandler):
+            if child.type is None:
+                hints["bareExceptCount"] += 1
+            # except ...: pass
+            if len(child.body) == 1 and isinstance(child.body[0], ast.Pass):
+                hints["exceptPassCount"] += 1
+
+        # Wide try block (>10 statements)
+        if isinstance(child, ast.Try):
+            body_lines = getattr(child.body[-1], "end_lineno", 0) - getattr(child.body[0], "lineno", 0) if child.body else 0
+            if body_lines > 10:
+                hints["wideTryBlockCount"] += 1
+
+        # Generic raise: raise Exception(...) / raise BaseException(...)
+        if isinstance(child, ast.Raise) and child.exc:
+            exc = child.exc
+            if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+                if exc.func.id in ("Exception", "BaseException"):
+                    hints["genericRaiseCount"] += 1
+
+        # eval/exec calls
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+            if child.func.id in ("eval", "exec"):
+                hints["evalExecCount"] += 1
+
+        # open() without with
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "open":
+            # Check if this open is inside a 'with' statement
+            if child.func.id not in with_targets:
+                # Heuristic: check if parent is a withitem (not perfect but good enough)
+                pass  # Will check via with_targets below
+
+        # Track 'with' targets
+        if isinstance(child, ast.With) or isinstance(child, ast.AsyncWith):
+            for item in child.items:
+                if isinstance(item.context_expr, ast.Call) and isinstance(item.context_expr.func, ast.Name):
+                    with_targets.add(item.context_expr.func.id)
+
+        # Await tracking
+        if isinstance(child, ast.Await):
+            has_await = True
+
+        # Any type annotations
+        if isinstance(child, ast.Name) and child.id == "Any":
+            hints["anyTypeCount"] += 1
+
+        # String concat in loop: result += str_val
+        if isinstance(child, (ast.For, ast.While, ast.AsyncFor)):
+            for loop_child in ast.walk(child):
+                if isinstance(loop_child, ast.AugAssign) and isinstance(loop_child.op, ast.Add):
+                    hints["stringConcatInLoopCount"] += 1
+
+    # open() without with: check calls not under 'with'
+    for child in ast.walk(node):
+        if isinstance(child, ast.Assign):
+            if isinstance(child.value, ast.Call) and isinstance(child.value.func, ast.Name):
+                if child.value.func.id == "open":
+                    hints["openWithoutWithCount"] += 1
+
+    # async def without await
+    if is_async and not has_await:
+        hints["asyncNoAwaitCount"] = 1
+
+    # Return None if all zeros
+    if all(v == 0 for v in hints.values()):
+        return None
+
+    return hints
 
 
 def process_function(node: ast.FunctionDef | ast.AsyncFunctionDef, file_path: str, class_name: str | None = None) -> dict:
@@ -265,6 +485,66 @@ def process_function(node: ast.FunctionDef | ast.AsyncFunctionDef, file_path: st
     return entity
 
 
+def _extract_class_meta(node: ast.ClassDef) -> dict | None:
+    """Extract class-level metadata: __slots__, dunder methods, properties with setters."""
+    has_slots = False
+    dunder_methods = []
+    properties = {}  # name -> {"hasSetter": bool}
+    init_call_count = 0
+    method_count = 0
+
+    for item in node.body:
+        # __slots__
+        if isinstance(item, ast.Assign):
+            for target in item.targets:
+                if isinstance(target, ast.Name) and target.id == "__slots__":
+                    has_slots = True
+
+        # Methods
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            method_count += 1
+            name = item.name
+
+            # Dunder methods
+            if name.startswith("__") and name.endswith("__"):
+                dunder_methods.append(name)
+
+            # __init__ call count
+            if name == "__init__" and item.body:
+                for child in ast.walk(item):
+                    if isinstance(child, ast.Call):
+                        init_call_count += 1
+
+            # @property detection
+            if item.decorator_list:
+                for dec in item.decorator_list:
+                    if isinstance(dec, ast.Name) and dec.id == "property":
+                        properties[name] = properties.get(name, {"hasSetter": False})
+                    elif isinstance(dec, ast.Attribute) and dec.attr == "setter":
+                        # @X.setter
+                        prop_name = None
+                        if isinstance(dec.value, ast.Name):
+                            prop_name = dec.value.id
+                        if prop_name and prop_name in properties:
+                            properties[prop_name]["hasSetter"] = True
+                        elif prop_name:
+                            properties[prop_name] = {"hasSetter": True}
+
+    result = {}
+    if has_slots:
+        result["hasSlots"] = True
+    if dunder_methods:
+        result["dunderMethods"] = dunder_methods
+    if properties:
+        result["properties"] = properties
+    if init_call_count > 0:
+        result["initCallCount"] = init_call_count
+    if method_count > 0:
+        result["methodCount"] = method_count
+
+    return result if result else None
+
+
 def process_class(node: ast.ClassDef, file_path: str) -> list[dict]:
     """Process a class definition and its members."""
     entities = []
@@ -296,6 +576,11 @@ def process_class(node: ast.ClassDef, file_path: str) -> list[dict]:
                 modifiers.append("abstract")
         if modifiers:
             class_entity["modifiers"] = modifiers
+
+    # Class-level analysis: __slots__, dunder methods, properties
+    class_meta = _extract_class_meta(node)
+    if class_meta:
+        class_entity["classMeta"] = class_meta
 
     entities.append(class_entity)
 
@@ -403,27 +688,48 @@ def parse_file(file_path: str, content: str) -> dict:
             "location": {"start": {"line": 1, "column": 0, "index": 0}, "end": {"line": 1, "column": 0, "index": 0}},
         })
 
-        # Helper to collect calls from function body
-        def collect_function_calls(func_node, func_name: str):
+        # Helper to collect calls from function body and attach to entity
+        def collect_function_calls(func_node, func_name: str, entity: dict):
             if func_node.body:
                 calls = extract_calls_from_body(func_node.body, func_name)
                 all_calls.extend(calls)
+                # Attach calls to entity metadata for structural detection
+                if calls:
+                    entity["calls"] = [
+                        {k: v for k, v in c.items() if k in ("name", "target", "argumentCount", "kwargs")}
+                        for c in calls
+                    ]
+                # Extract controlFlow hints
+                cf = extract_control_flow(func_node)
+                if cf:
+                    entity["controlFlow"] = cf
+                # Extract pythonHints for antipattern detection
+                hints = extract_python_hints(func_node)
+                if hints:
+                    entity["pythonHints"] = hints
 
         # Process top-level nodes
         for node in ast.walk(tree):
             if isinstance(node, ast.Module):
                 for item in node.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        entities.append(process_function(item, file_path))
-                        # Extract calls from top-level function
-                        collect_function_calls(item, item.name)
+                        ent = process_function(item, file_path)
+                        collect_function_calls(item, item.name, ent)
+                        entities.append(ent)
                     elif isinstance(item, ast.ClassDef):
-                        entities.extend(process_class(item, file_path))
+                        class_entities = process_class(item, file_path)
+                        entities.extend(class_entities)
                         # Extract calls from class methods
                         for class_item in item.body:
                             if isinstance(class_item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                                 method_name = f"{item.name}.{class_item.name}"
-                                collect_function_calls(class_item, method_name)
+                                # Find matching entity to attach calls
+                                method_ent = next((e for e in class_entities if e["name"] == method_name), None)
+                                if method_ent:
+                                    collect_function_calls(class_item, method_name, method_ent)
+                                else:
+                                    if class_item.body:
+                                        all_calls.extend(extract_calls_from_body(class_item.body, method_name))
                     elif isinstance(item, (ast.Import, ast.ImportFrom)):
                         entities.extend(process_import(item, file_path))
                     elif isinstance(item, ast.Assign):

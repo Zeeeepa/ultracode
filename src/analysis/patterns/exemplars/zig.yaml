@@ -1,0 +1,110 @@
+exemplars:
+  - id: "zig:missing-defer-free:bad1"
+    patternId: "zig:missing-defer-free"
+    language: "zig"
+    code: |
+      fn process(allocator: std.mem.Allocator) !void {
+          const buffer = try allocator.alloc(u8, 1024);
+          const result = doWork(buffer);
+          sendResult(result);
+      }
+    description: "Alloc without matching defer free — leaks on any error path"
+
+  - id: "zig:missing-errdefer:bad1"
+    patternId: "zig:missing-errdefer"
+    language: "zig"
+    code: |
+      fn init(allocator: std.mem.Allocator, n: usize) !State {
+          var items = try allocator.alloc(Item, n);
+          var cache = try allocator.alloc(u8, n * 64);
+          return .{ .items = items, .cache = cache, .allocator = allocator };
+      }
+    description: "Multiple allocs without errdefer — first leaks if second fails"
+
+  - id: "zig:hardcoded-allocator:bad1"
+    patternId: "zig:hardcoded-allocator"
+    language: "zig"
+    code: |
+      fn loadData() ![]u8 {
+          const allocator = std.heap.page_allocator;
+          const buf = try allocator.alloc(u8, 4096);
+          const n = try readFile(buf);
+          return buf[0..n];
+      }
+    description: "Hardcoded page_allocator instead of accepting Allocator param"
+
+  - id: "zig:empty-catch:bad1"
+    patternId: "zig:empty-catch"
+    language: "zig"
+    code: |
+      fn tryConnect(host: []const u8) void {
+          const conn = std.net.tcpConnectTo(host, 8080) catch {
+              return;
+          };
+          sendData(conn);
+      }
+    description: "Error caught with empty block — failure silently ignored"
+
+  - id: "zig:mutex-not-deferred:bad1"
+    patternId: "zig:mutex-not-deferred"
+    language: "zig"
+    code: |
+      fn updateShared(mutex: *std.Thread.Mutex, data: *Data) void {
+          mutex.lock();
+          data.count += 1;
+          data.timestamp = std.time.milliTimestamp();
+          mutex.unlock();
+      }
+    description: "Lock without defer unlock — deadlocks on panic or early return"
+
+  - id: "zig:unsafe-optional-unwrap:bad1"
+    patternId: "zig:unsafe-optional-unwrap"
+    language: "zig"
+    code: |
+      fn getLength(maybe_slice: ?[]const u8) usize {
+          return maybe_slice.?.len;
+      }
+      fn first(items: ?[]const Item) Item {
+          return items orelse unreachable;
+      }
+    description: "Unwrap optional with .? or orelse unreachable without check"
+
+  - id: "zig:has-deinit:good1"
+    patternId: "zig:has-deinit"
+    language: "zig"
+    code: |
+      pub fn deinit(self: *Self) void {
+          self.allocator.free(self.buffer);
+          self.map.deinit();
+          self.file.close();
+          self.* = undefined;
+      }
+    description: "Proper deinit releasing all owned resources"
+
+  - id: "zig:allocation-in-loop:bad1"
+    patternId: "zig:allocation-in-loop"
+    language: "zig"
+    code: |
+      fn processItems(allocator: std.mem.Allocator, items: []const Item) !void {
+          for (items) |item| {
+              const buf = try allocator.alloc(u8, item.size);
+              defer allocator.free(buf);
+              transform(item, buf);
+          }
+      }
+    description: "Allocating inside loop — repeated alloc/free overhead per iteration"
+
+  - id: "zig:string-concat-in-loop:bad1"
+    patternId: "zig:string-concat-in-loop"
+    language: "zig"
+    code: |
+      fn buildOutput(allocator: std.mem.Allocator, parts: []const []const u8) ![]u8 {
+          var result = try allocator.alloc(u8, 0);
+          for (parts) |part| {
+              const new = try std.mem.concat(allocator, u8, &.{ result, part });
+              allocator.free(result);
+              result = new;
+          }
+          return result;
+      }
+    description: "String concat in loop via realloc — O(n^2) total copies"

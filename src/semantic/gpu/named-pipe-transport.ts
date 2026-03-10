@@ -346,7 +346,7 @@ export class NamedPipeClient {
     }
   }
 
-  async send(packet: Buffer): Promise<Buffer> {
+  async send(packet: Buffer, overrideTimeoutMs?: number): Promise<Buffer> {
     if (!this.socket || !this.connected) {
       throw new Error("Not connected");
     }
@@ -356,6 +356,7 @@ export class NamedPipeClient {
     }
 
     const abortController = new AbortController();
+    const timeoutMs = overrideTimeoutMs ?? this.options.timeout ?? 30000;
 
     // Response promise
     const responsePromise = new Promise<Buffer>((resolve, reject) => {
@@ -379,7 +380,7 @@ export class NamedPipeClient {
 
     // Timeout promise (Bun-compatible using async sleep)
     const timeoutPromise = (async (): Promise<Buffer> => {
-      await sleep(this.options.timeout ?? 30000);
+      await sleep(timeoutMs);
       if (abortController.signal.aborted) {
         // Response already received, return never-resolving promise
         return new Promise<Buffer>(() => {});

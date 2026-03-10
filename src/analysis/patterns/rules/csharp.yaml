@@ -95,6 +95,7 @@ patterns:
     structural:
       entityTypes: ["method"]
       hasLoops: true
+      hasStringConcatInLoop: true
     exemplarIds: ["cs:string-concat-loop:bad1"]
     minSemanticSimilarity: 0.6
     minStructuralConfidence: 0.5
@@ -177,7 +178,7 @@ patterns:
     enabled: true
     structural:
       entityTypes: ["method"]
-      callsInclude: ["DbContext|DbSet|\.ToList|\.FirstOrDefault|\.SingleOrDefault|\.Where"]
+      callsInclude: ["DbContext|DbSet|\\.ToList|\\.FirstOrDefault|\\.SingleOrDefault|\\.Where"]
       callsExclude: ["AsNoTracking"]
     exemplarIds: ["cs:no-asnotracking:bad1"]
     minSemanticSimilarity: 0.65
@@ -194,9 +195,11 @@ patterns:
     enabled: true
     structural:
       entityTypes: ["method"]
+      callsInclude: ["new byte\\[|new Byte\\["]
+      callsExclude: ["ArrayPool"]
     exemplarIds: ["cs:no-arraypool:bad1"]
     minSemanticSimilarity: 0.65
-    minStructuralConfidence: 0.4
+    minStructuralConfidence: 0.5
 
   - id: "cs:string-interpolation-in-log"
     category: "optimization"
@@ -209,9 +212,10 @@ patterns:
     enabled: true
     structural:
       entityTypes: ["method"]
+      callsInclude: ["Log(Debug|Information|Warning|Error|Trace|Critical)"]
     exemplarIds: ["cs:string-interp-log:bad1"]
     minSemanticSimilarity: 0.65
-    minStructuralConfidence: 0.4
+    minStructuralConfidence: 0.5
 
   - id: "cs:ef-n-plus-one"
     category: "optimization"
@@ -228,6 +232,668 @@ patterns:
     structural:
       entityTypes: ["method"]
       hasLoops: true
+      callsInclude: ["DbContext|DbSet|\\.Include|\\.Where|\\.Select|\\.FirstOrDefault"]
+      callsExclude: ["\\.Include\\("]
     exemplarIds: ["cs:ef-n-plus-one:bad1"]
     minSemanticSimilarity: 0.65
     minStructuralConfidence: 0.5
+
+  # ── Wave 1: EF Core ──────────────────────────────────────────────
+
+  - id: "cs:ef-dbcontext-singleton"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "DbContext Registered as Singleton"
+    description: "DbContext is not thread-safe; singleton registration causes data corruption and concurrency bugs"
+    suggestion: "Use AddDbContext or AddScoped instead of AddSingleton for DbContext"
+    tags: ["ef-core", "di", "concurrency"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["AddSingleton.*DbContext|AddSingleton<.*DbContext"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "cs:ef-cartesian-explosion"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "EF Core Cartesian Explosion"
+    description: "Multiple Include() without AsSplitQuery causes cartesian product explosion"
+    suggestion: "Add .AsSplitQuery() or restructure into separate queries"
+    tags: ["ef-core", "performance", "database"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkEfCartesianExplosion"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:ef-load-entire-table"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "EF Core Load Entire Table"
+    description: "ToList/ToArray on DbSet without Where/Take/Skip loads entire table into memory"
+    suggestion: "Add filtering (Where), pagination (Take/Skip), or projection (Select) before materializing"
+    tags: ["ef-core", "performance", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkEfLoadEntireTable"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "cs:ef-entity-as-api-response"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "EF Entity Exposed in API Response"
+    description: "Returning EF entity directly from API endpoint leaks internal schema and navigation properties"
+    suggestion: "Map to a DTO/ViewModel before returning from the endpoint"
+    tags: ["ef-core", "api", "security"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      decoratorMatch: ["Http(Get|Post|Put|Delete|Patch)"]
+    customDetector: "checkEfEntityAsApiResponse"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ── Wave 1: Async ────────────────────────────────────────────────
+
+  - id: "cs:async-sync-over-async"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "Sync-over-Async (.Result / .Wait())"
+    description: "Blocking on async code with .Result or .Wait() causes deadlocks in ASP.NET and UI apps"
+    suggestion: "Use await instead of .Result/.Wait(). Propagate async all the way up."
+    tags: ["async", "deadlock", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      minSyncOverAsync: 1
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "cs:async-fire-and-forget"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Fire-and-Forget Async Call"
+    description: "Calling async method without await — exceptions are silently swallowed"
+    suggestion: "Await the Task, or use a background task queue (IHostedService)"
+    tags: ["async", "error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkAsyncFireAndForget"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:async-task-run-in-aspnet"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Task.Run in ASP.NET Controller/Handler"
+    description: "Task.Run in ASP.NET wastes thread pool threads — ASP.NET is already async"
+    suggestion: "Use async/await directly instead of Task.Run in web request handlers"
+    tags: ["async", "aspnet", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["Task\\.Run"]
+    customDetector: "checkTaskRunInAspnet"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # ── Wave 1: DI ───────────────────────────────────────────────────
+
+  - id: "cs:di-service-locator"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Service Locator Anti-Pattern"
+    description: "Calling GetService/GetRequiredService outside DI registration hides dependencies"
+    suggestion: "Use constructor injection instead of resolving from IServiceProvider"
+    tags: ["di", "architecture", "testability"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["GetService|GetRequiredService"]
+    customDetector: "checkDiServiceLocator"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:di-too-many-deps"
+    category: "code-smell"
+    severity: "low"
+    name: "Too Many Constructor Dependencies"
+    description: "Constructor with more than 5 non-infrastructure dependencies — violates SRP"
+    suggestion: "Apply facade pattern or split the service into focused smaller services"
+    tags: ["di", "architecture", "srp"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      minParams: 6
+    customDetector: "checkDiTooManyDeps"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ── Wave 1: Memory ───────────────────────────────────────────────
+
+  - id: "cs:mem-httpclient-new"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "new HttpClient() — Socket Exhaustion"
+    description: "Creating new HttpClient per request causes socket exhaustion (TIME_WAIT)"
+    suggestion: "Use IHttpClientFactory or a static/singleton HttpClient"
+    tags: ["memory", "network", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasNewHttpClient: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "cs:mem-static-collection-leak"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Static Collection Memory Leak"
+    description: "Static List/Dictionary that grows but never clears — unbounded memory growth"
+    suggestion: "Use ConcurrentDictionary with eviction, or bounded collection with size limit"
+    tags: ["memory", "static", "leak"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkStaticCollectionLeak"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # ── Wave 1: Concurrency ──────────────────────────────────────────
+
+  - id: "cs:conc-lock-on-this"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "lock(this) or lock(typeof(...))"
+    description: "Locking on publicly accessible objects allows external code to cause deadlocks"
+    suggestion: "Use a private readonly object field: private readonly object _lock = new();"
+    tags: ["concurrency", "deadlock", "threading"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasLockOnThis: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  # ── Wave 1: Error Handling ───────────────────────────────────────
+
+  - id: "cs:err-swallowed-exception"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "Swallowed Exception (Empty Catch)"
+    description: "Empty catch block silently swallows exceptions — hides bugs and failures"
+    suggestion: "Log the exception, rethrow, or handle specifically. Never ignore exceptions."
+    tags: ["error-handling", "reliability"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      minEmptyCatch: 1
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "cs:err-throw-ex"
+    category: "anti-pattern"
+    severity: "high"
+    name: "throw ex — Stack Trace Lost"
+    description: "'throw ex' resets the stack trace, making debugging impossible"
+    suggestion: "Use 'throw;' (without variable) to preserve the original stack trace"
+    tags: ["error-handling", "debugging"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      minThrowEx: 1
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  # ── Wave 1: Security ─────────────────────────────────────────────
+
+  - id: "cs:aspnet-wildcard-cors"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "Wildcard CORS (AllowAnyOrigin)"
+    description: "AllowAnyOrigin disables CORS protection — any site can make requests to your API"
+    suggestion: "Specify allowed origins explicitly with WithOrigins(\"https://example.com\")"
+    tags: ["security", "cors", "aspnet"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["AllowAnyOrigin"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "cs:aspnet-pii-in-logs"
+    category: "anti-pattern"
+    severity: "high"
+    name: "PII Object Destructuring in Logs"
+    description: "Using {@Object} destructuring in logs exposes entire objects including PII"
+    suggestion: "Log specific fields instead of destructuring entire objects: Log(\"{Name}\", user.Name)"
+    tags: ["security", "logging", "pii"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkPiiInLogs"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # ── Wave 1: Minimal API ──────────────────────────────────────────
+
+  - id: "cs:minimal-api-no-validation"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Minimal API Endpoint Without Validation"
+    description: "Endpoint handler accepting complex input without validation — allows invalid data"
+    suggestion: "Add FluentValidation, MiniValidation, or manual validation for input DTOs"
+    tags: ["minimal-api", "validation", "aspnet"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkMinimalApiNoValidation"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "cs:minimal-api-results-not-typed"
+    category: "code-smell"
+    severity: "low"
+    name: "Minimal API Using Results Instead of TypedResults"
+    description: "Results.Ok() doesn't include type info in OpenAPI — use TypedResults for proper docs"
+    suggestion: "Replace Results.Ok() with TypedResults.Ok() for OpenAPI/Swagger metadata"
+    tags: ["minimal-api", "openapi", "aspnet"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["Results\\.(Ok|NotFound|BadRequest|Created|NoContent)"]
+      callsExclude: ["TypedResults"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:minimal-api-fat-lambda"
+    category: "code-smell"
+    severity: "medium"
+    name: "Fat Lambda in Minimal API Endpoint"
+    description: "Inline endpoint handler with high complexity — hard to test and maintain"
+    suggestion: "Extract handler logic to a named method or a dedicated handler class"
+    tags: ["minimal-api", "architecture", "testability"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      minLOC: 20
+      minCyclomatic: 4
+    customDetector: "checkMinimalApiFatLambda"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ── Wave 1: gRPC ─────────────────────────────────────────────────
+
+  - id: "cs:grpc-missing-deadline"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "gRPC Call Without Deadline"
+    description: "gRPC call without deadline can hang indefinitely if server is unresponsive"
+    suggestion: "Set CallOptions with deadline: new CallOptions(deadline: DateTime.UtcNow.AddSeconds(30))"
+    tags: ["grpc", "reliability", "timeout"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkGrpcMissingDeadline"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "cs:grpc-channel-per-call"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "New gRPC Channel Per Call"
+    description: "Creating GrpcChannel per request wastes connections — channels should be reused"
+    suggestion: "Register GrpcChannel as singleton in DI: services.AddSingleton(GrpcChannel.ForAddress(...))"
+    tags: ["grpc", "performance", "network"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkGrpcChannelPerCall"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  # ── Wave 2: Async (controlFlow-dependent) ──────────────────────
+
+  - id: "cs:async-lock-with-await"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "lock() with await Inside"
+    description: "lock/Monitor with await inside — lock is released during await, allowing concurrent access"
+    suggestion: "Replace lock with SemaphoreSlim(1,1) and use await semaphore.WaitAsync()"
+    tags: ["async", "concurrency", "deadlock"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasAwaits: true
+    customDetector: "checkAsyncLockWithAwait"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "cs:async-parallel-foreach-async"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Parallel.ForEach with Async Delegate"
+    description: "Parallel.ForEach with async lambda creates fire-and-forget tasks — use Parallel.ForEachAsync"
+    suggestion: "Replace with await Parallel.ForEachAsync() (available since .NET 6)"
+    tags: ["async", "concurrency", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasParallelForEachAsync: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  # ── Wave 2: EF Core (controlFlow-dependent) ───────────────────
+
+  - id: "cs:ef-find-in-loop"
+    category: "anti-pattern"
+    severity: "high"
+    name: "EF Query Inside Loop"
+    description: "Database query inside loop body causes N+1 round-trips to the database"
+    suggestion: "Fetch all needed data before the loop with .Include() or batch query"
+    bigO:
+      before: "O(N) queries"
+      after: "O(1) query"
+    tags: ["ef-core", "performance", "database"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasLoops: true
+    customDetector: "checkEfFindInLoop"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:ef-client-side-eval"
+    category: "anti-pattern"
+    severity: "high"
+    name: "EF Core Client-Side Evaluation"
+    description: "AsEnumerable()/ToList() before LINQ forces client-side evaluation — loads entire table"
+    suggestion: "Keep LINQ operators before materialization to execute them on the database"
+    tags: ["ef-core", "performance", "database"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["AsEnumerable|ToList|ToArray"]
+    customDetector: "checkEfClientSideEval"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:ef-savechanges-no-transaction"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Multiple SaveChanges Without Transaction"
+    description: "Multiple SaveChanges calls without explicit transaction — partial commit on failure"
+    suggestion: "Wrap in using var tx = await _context.Database.BeginTransactionAsync()"
+    tags: ["ef-core", "database", "reliability"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["SaveChanges|SaveChangesAsync"]
+    customDetector: "checkEfSaveChangesNoTransaction"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # ── Wave 2: Error Handling ─────────────────────────────────────
+
+  - id: "cs:err-catch-generic"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "catch(Exception) Without Specific Catches"
+    description: "Catching base Exception without specific catches hides the actual error type"
+    suggestion: "Catch specific exceptions first (IOException, ArgumentException, etc.), then Exception as fallback"
+    tags: ["error-handling", "reliability"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasExceptions: true
+    customDetector: "checkCatchGeneric"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "cs:err-exception-flow-control"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Exception as Flow Control"
+    description: "try/catch inside loop uses exceptions for flow control — expensive and hard to debug"
+    suggestion: "Use conditional checks (TryParse, TryGetValue, null checks) instead of catching exceptions"
+    tags: ["error-handling", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasLoops: true
+      hasExceptions: true
+    customDetector: "checkExceptionFlowControl"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # ── Wave 2: Memory ─────────────────────────────────────────────
+
+  - id: "cs:mem-missing-dispose"
+    category: "anti-pattern"
+    severity: "high"
+    name: "IDisposable Created Without using/Dispose"
+    description: "IDisposable object created without using statement — resource leak (file handles, connections)"
+    suggestion: "Wrap in using statement: using var stream = new FileStream(...)"
+    tags: ["memory", "resource-leak", "reliability"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasNewDisposableNoUsing: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "cs:mem-event-handler-leak"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Event Handler Without Unsubscribe"
+    description: "Event subscription with += without corresponding -= causes memory leaks via strong references"
+    suggestion: "Unsubscribe in Dispose() or when handler is no longer needed"
+    tags: ["memory", "event", "leak"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkEventHandlerLeak"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ── Wave 2: Concurrency ────────────────────────────────────────
+
+  - id: "cs:conc-dict-check-then-act"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Dictionary Check-Then-Act (TOCTOU)"
+    description: "ContainsKey then Add is a time-of-check/time-of-use race condition in concurrent code"
+    suggestion: "Use ConcurrentDictionary.TryAdd() or ConcurrentDictionary.GetOrAdd()"
+    tags: ["concurrency", "race-condition", "threading"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["ContainsKey"]
+    customDetector: "checkDictCheckThenAct"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  # ── Wave 2: ASP.NET ────────────────────────────────────────────
+
+  - id: "cs:aspnet-captive-dependency"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Captive Dependency (Singleton → Scoped)"
+    description: "Singleton service resolving scoped service — the scoped service lives forever, leaking state"
+    suggestion: "Use IServiceScopeFactory to create scopes, or change registration lifetime"
+    tags: ["di", "aspnet", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["AddSingleton"]
+    customDetector: "checkCaptiveDependency"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ── Wave 2: LINQ ───────────────────────────────────────────────
+
+  - id: "cs:linq-premature-materialization"
+    category: "optimization"
+    severity: "medium"
+    name: "LINQ Premature Materialization"
+    description: "ToList()/ToArray() before further LINQ operations — loads all data then filters in memory"
+    suggestion: "Move materialization to the end of the LINQ chain"
+    bigO:
+      before: "O(n) memory + O(n) CPU"
+      after: "O(k) memory (filtered)"
+    benchmark: "Reduces memory by filtering before materialization"
+    tags: ["performance", "linq", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkLinqPrematureMaterialization"
+    exemplarIds: ["cs:linq-premature:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  # ── Wave 3: Security ───────────────────────────────────────────
+
+  - id: "cs:ef-raw-sql-injection"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "SQL Injection in FromSqlRaw"
+    description: "String interpolation/concatenation in FromSqlRaw — SQL injection vulnerability"
+    suggestion: "Use FromSqlInterpolated or parameterized queries: FromSqlRaw(\"SELECT ... WHERE id = {0}\", id)"
+    tags: ["security", "injection", "ef-core"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      callsInclude: ["FromSqlRaw|ExecuteSqlRaw|ExecuteSqlRawAsync"]
+    customDetector: "checkEfRawSqlInjection"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "cs:hardcoded-connection"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Hardcoded Connection String"
+    description: "Database connection string embedded in source code — exposed in version control"
+    suggestion: "Use appsettings.json, environment variables, or Azure Key Vault"
+    tags: ["security", "configuration", "secrets"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkHardcodedConnection"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "cs:regex-no-timeout"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Regex Without Timeout"
+    description: "new Regex() without timeout — malicious input can cause ReDoS (catastrophic backtracking)"
+    suggestion: "Add timeout: new Regex(pattern, RegexOptions.None, TimeSpan.FromSeconds(5))"
+    tags: ["security", "regex", "dos"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+    customDetector: "checkRegexNoTimeout"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ── Wave 3: Error Handling ─────────────────────────────────────
+
+  - id: "cs:catch-rethrow-only"
+    category: "code-smell"
+    severity: "low"
+    name: "Catch That Only Rethrows"
+    description: "try { ... } catch (Exception) { throw; } — the try/catch is completely redundant"
+    suggestion: "Remove the useless try/catch wrapper entirely"
+    tags: ["error-handling", "code-smell"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasExceptions: true
+    customDetector: "checkCatchRethrowOnly"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "cs:large-try-block"
+    category: "code-smell"
+    severity: "low"
+    name: "Overly Large Try Block"
+    description: "Try block wrapping 20+ lines — too broad exception handling hides the actual failure point"
+    suggestion: "Narrow the try block to only the statements that can throw"
+    tags: ["error-handling", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasExceptions: true
+      minLOC: 25
+    customDetector: "checkLargeTryBlock"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ── Wave 3: Code Quality ───────────────────────────────────────
+
+  - id: "cs:deep-nesting"
+    category: "code-smell"
+    severity: "medium"
+    name: "Excessive Nesting Depth"
+    description: "Method has 5+ levels of nesting — hard to read, test, and maintain"
+    suggestion: "Use guard clauses (early return), extract methods, or apply strategy pattern"
+    tags: ["readability", "complexity", "maintainability"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      minNesting: 5
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "cs:boolean-blindness"
+    category: "code-smell"
+    severity: "medium"
+    name: "Boolean Blindness (3+ bool Parameters)"
+    description: "Method with 3+ boolean parameters — callers can't tell which is which at the call site"
+    suggestion: "Replace bool params with an enum, options object, or use named arguments"
+    tags: ["readability", "api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      minParams: 3
+    customDetector: "checkBooleanBlindness"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ── Wave 3: Async ──────────────────────────────────────────────
+
+  - id: "cs:no-configureawait"
+    category: "code-smell"
+    severity: "low"
+    name: "Missing ConfigureAwait in Library Code"
+    description: "Library code without ConfigureAwait(false) — may deadlock when consumed from synchronization context"
+    suggestion: "Add .ConfigureAwait(false) to await calls in library code"
+    tags: ["async", "library", "deadlock"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasAwaits: true
+    customDetector: "checkNoConfigureAwait"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "cs:mixed-async-sync"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Mixed Async and Sync-over-Async in Same Method"
+    description: "Method uses both await AND .Result/.Wait() — inconsistent and likely indicates a bug"
+    suggestion: "Use await consistently throughout the method. Remove .Result/.Wait() calls."
+    tags: ["async", "consistency", "deadlock"]
+    enabled: true
+    structural:
+      entityTypes: ["method"]
+      hasAwaits: true
+      minSyncOverAsync: 1
+    customDetector: "checkMixedAsyncSync"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8

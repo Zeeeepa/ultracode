@@ -1,0 +1,276 @@
+patterns:
+  # ─── Anti-patterns ───────────────────────────────────────────────
+
+  - id: "zig:missing-defer-free"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Missing defer free"
+    description: "Allocator call without matching defer free/destroy — memory leaks on error paths"
+    suggestion: "Add 'defer allocator.free(ptr)' immediately after each allocation"
+    tags: ["memory", "safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      callsInclude: ["alloc|create|dupe"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkMissingDeferFree"
+    exemplarIds: ["zig:missing-defer-free:bad1"]
+    minSemanticSimilarity: 0.5
+    minStructuralConfidence: 0.5
+
+  - id: "zig:missing-errdefer"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Missing errdefer"
+    description: "Multiple allocations in error-returning function without errdefer — partial leak on failure"
+    suggestion: "Add 'errdefer allocator.free(ptr)' after each intermediate allocation"
+    tags: ["memory", "safety", "error-handling"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      callsInclude: ["alloc|create"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkMissingErrdefer"
+    exemplarIds: ["zig:missing-errdefer:bad1"]
+    minSemanticSimilarity: 0.5
+    minStructuralConfidence: 0.5
+
+  - id: "zig:hardcoded-allocator"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Hardcoded Allocator"
+    description: "Using page_allocator or c_allocator directly instead of accepting Allocator parameter"
+    suggestion: "Accept std.mem.Allocator as parameter for flexibility and testability"
+    tags: ["api-design", "testability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      callsInclude: ["page_allocator|c_allocator"]
+      paramTypeAbsent: "Allocator"
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    exemplarIds: ["zig:hardcoded-allocator:bad1"]
+    minSemanticSimilarity: 0.5
+    minStructuralConfidence: 0.6
+
+  - id: "zig:empty-catch"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Empty Catch"
+    description: "Catching error with empty block or discarding — silently swallows failures"
+    suggestion: "Handle errors explicitly: log, propagate, or return meaningful default"
+    tags: ["error-handling", "safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      hasExceptions: true
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkEmptyCatch"
+    exemplarIds: ["zig:empty-catch:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.5
+
+  - id: "zig:mutex-not-deferred"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Mutex Not Deferred"
+    description: "Mutex lock without defer unlock — may deadlock on error or early return"
+    suggestion: "Always use 'mutex.lock(); defer mutex.unlock();' pattern"
+    tags: ["concurrency", "safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      callsInclude: ["lock|mutex"]
+      minCallCount: 2
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkMutexNotDeferred"
+    exemplarIds: ["zig:mutex-not-deferred:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  - id: "zig:unsafe-cast-abuse"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Unsafe Cast Abuse"
+    description: "Excessive use of @ptrCast/@intFromPtr/@alignCast — high risk of undefined behavior"
+    suggestion: "Reduce unsafe casts: use typed pointers, @as(), or restructure data layout to avoid reinterpretation"
+    tags: ["safety", "ub", "pointers"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkUnsafeCastAbuse"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "zig:alloc-without-free"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Alloc Without Free"
+    description: "Allocator call without matching free/destroy and no defer cleanup — memory leak"
+    suggestion: "Add 'defer allocator.free(ptr)' or ensure free/destroy is called on all paths"
+    tags: ["memory", "safety", "leak"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkAllocWithoutFree"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── Code Smells ─────────────────────────────────────────────────
+
+  - id: "zig:unreachable-abuse"
+    category: "code-smell"
+    severity: "medium"
+    name: "Unreachable Abuse"
+    description: "Excessive use of unreachable keyword — may hide real error paths"
+    suggestion: "Replace unreachable with proper error handling or @panic with descriptive message"
+    tags: ["error-handling", "safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkUnreachableAbuse"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "zig:swallowed-error"
+    category: "code-smell"
+    severity: "medium"
+    name: "Swallowed Error"
+    description: "Error replaced with unreachable or default value — hides real failures"
+    suggestion: "Propagate errors with 'try' or handle explicitly with meaningful fallback"
+    tags: ["error-handling", "reliability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      hasExceptions: true
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkSwallowedError"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "zig:unsafe-optional-unwrap"
+    category: "code-smell"
+    severity: "medium"
+    name: "Unsafe Optional Unwrap"
+    description: "Using .? or orelse unreachable on optional without null check — undefined behavior"
+    suggestion: "Use 'if (opt) |val|' pattern or provide meaningful orelse default"
+    tags: ["safety", "optional"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkUnsafeOptionalUnwrap"
+    exemplarIds: ["zig:unsafe-optional-unwrap:bad1"]
+    minSemanticSimilarity: 0.55
+    minStructuralConfidence: 0.5
+
+  - id: "zig:wrong-naming-convention"
+    category: "code-smell"
+    severity: "low"
+    name: "Wrong Naming Convention"
+    description: "Entity name does not follow Zig naming conventions (camelCase for functions, PascalCase for types)"
+    suggestion: "Follow Zig style guide: camelCase for functions/variables, PascalCase for types"
+    tags: ["style", "convention"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "class", "interface", "type"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    customDetector: "checkWrongNaming"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── Best Patterns ──────────────────────────────────────────────
+
+  - id: "zig:has-deinit"
+    category: "best-pattern"
+    severity: "info"
+    name: "Has deinit"
+    description: "Type has a deinit method for proper resource cleanup"
+    suggestion: "Good pattern! deinit ensures deterministic cleanup of owned resources."
+    tags: ["memory", "quality", "raii"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      nameMatch: "^deinit$"
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    exemplarIds: ["zig:has-deinit:good1"]
+    minSemanticSimilarity: 0.5
+    minStructuralConfidence: 0.6
+
+  - id: "zig:allocator-param"
+    category: "best-pattern"
+    severity: "info"
+    name: "Allocator Parameter"
+    description: "Function accepts Allocator parameter — enables injection and testing"
+    suggestion: "Good pattern! Allocator injection is the idiomatic Zig approach."
+    tags: ["api-design", "testability", "best-practice"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      paramTypeRequired: "Allocator"
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "zig:proper-error-handling"
+    category: "best-pattern"
+    severity: "info"
+    name: "Proper Error Handling"
+    description: "Function returns error union and has structured error handling branches"
+    suggestion: "Good pattern! Error union + branching shows proper error propagation."
+    tags: ["error-handling", "quality"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      returnTypeMatch: "!"
+      hasExceptions: true
+      minBranches: 2
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ─── Optimizations ──────────────────────────────────────────────
+
+  - id: "zig:allocation-in-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "Allocation in Loop"
+    description: "Allocating memory inside a loop — causes repeated alloc/free overhead"
+    suggestion: "Pre-allocate buffer before loop or use FixedBufferAllocator"
+    bigO:
+      before: "O(n)"
+      after: "O(1)"
+    benchmark: "Reduces allocations and GC pressure significantly"
+    tags: ["performance", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      hasLoops: true
+      callsInclude: ["alloc"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    exemplarIds: ["zig:allocation-in-loop:bad1"]
+    minSemanticSimilarity: 0.6
+    minStructuralConfidence: 0.5
+
+  - id: "zig:string-concat-in-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "String Concatenation in Loop"
+    description: "Building string by appending in loop — quadratic reallocations"
+    suggestion: "Use ArrayList(u8) writer or pre-calculate total size"
+    bigO:
+      before: "O(n^2)"
+      after: "O(n)"
+    benchmark: "10-100x faster for large strings"
+    tags: ["performance", "memory", "strings"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      hasLoops: true
+      callsInclude: ["concat|append"]
+      filePathNotMatch: "\\.(hpp|cpp|c|h|cc|cxx)$"
+    exemplarIds: ["zig:string-concat-in-loop:bad1"]
+    minSemanticSimilarity: 0.65
+    minStructuralConfidence: 0.5

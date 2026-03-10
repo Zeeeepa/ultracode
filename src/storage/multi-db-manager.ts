@@ -1,7 +1,7 @@
 /**
  * Multi-Database Manager
  *
- * Manages 4 independent libsql database clients to eliminate write-blocking:
+ * Manages 4 independent database clients to eliminate write-blocking:
  * - graph.db: entities, relationships, files, file_generations, tombstones, name_tokens, project_metadata
  * - semantic.db: cooccurrence, term_frequency
  * - versioning.db: prolly_nodes, graph_commits, branch_heads
@@ -13,8 +13,8 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Client } from "@libsql/client";
 import { log } from "../logging/index.js";
+import { NativeSQLiteClient } from "./native-sqlite-client.js";
 
 export interface MultiDbPaths {
   graph: string;
@@ -42,15 +42,15 @@ const PRAGMA_STATEMENTS = [
   "PRAGMA synchronous = OFF",
   "PRAGMA cache_size = -262144", // 256MB cache — keep all B-tree pages in memory
   "PRAGMA temp_store = MEMORY",
-  "PRAGMA mmap_size = 268435456", // 256MB mmap — OS page cache for reads
+  "PRAGMA mmap_size = 268435456", // 256MB mmap for fast reads
 ];
 
 export class MultiDbManager {
   private clients: {
-    graph: Client | null;
-    semantic: Client | null;
-    versioning: Client | null;
-    cache: Client | null;
+    graph: NativeSQLiteClient | null;
+    semantic: NativeSQLiteClient | null;
+    versioning: NativeSQLiteClient | null;
+    cache: NativeSQLiteClient | null;
   } = { graph: null, semantic: null, versioning: null, cache: null };
 
   private paths: MultiDbPaths | null = null;
@@ -72,24 +72,16 @@ export class MultiDbManager {
     // Remove stale lock files for all DBs
     await this.cleanupStaleLocks();
 
-    const { createClient } = await import("@libsql/client");
-
-    // Create all 4 clients in parallel
+    // Create all 4 clients
     const entries = Object.entries(this.paths) as [keyof MultiDbPaths, string][];
-    const results = await Promise.all(
-      entries.map(async ([key, dbPath]) => {
-        const client = createClient({ url: `file:${dbPath}` });
-        // Verify connection
-        await client.execute("SELECT 1");
-        // Apply PRAGMAs
-        for (const pragma of PRAGMA_STATEMENTS) {
-          await client.execute(pragma);
-        }
-        return [key, client] as const;
-      }),
-    );
-
-    for (const [key, client] of results) {
+    for (const [key, dbPath] of entries) {
+      const client = new NativeSQLiteClient(dbPath);
+      // Verify connection
+      await client.execute("SELECT 1");
+      // Apply PRAGMAs
+      for (const pragma of PRAGMA_STATEMENTS) {
+        await client.execute(pragma);
+      }
       this.clients[key] = client;
     }
 
@@ -102,19 +94,19 @@ export class MultiDbManager {
     });
   }
 
-  getGraphClient(): Client | null {
+  getGraphClient(): NativeSQLiteClient | null {
     return this.clients.graph;
   }
 
-  getSemanticClient(): Client | null {
+  getSemanticClient(): NativeSQLiteClient | null {
     return this.clients.semantic;
   }
 
-  getVersioningClient(): Client | null {
+  getVersioningClient(): NativeSQLiteClient | null {
     return this.clients.versioning;
   }
 
-  getCacheClient(): Client | null {
+  getCacheClient(): NativeSQLiteClient | null {
     return this.clients.cache;
   }
 
@@ -126,15 +118,14 @@ export class MultiDbManager {
    * Flush a specific database by closing and reopening its client.
    * With journal_mode=OFF, this ensures OS buffers are flushed.
    */
-  async flushClient(which: keyof MultiDbPaths): Promise<Client | null> {
+  async flushClient(which: keyof MultiDbPaths): Promise<NativeSQLiteClient | null> {
     const client = this.clients[which];
     const path = this.paths?.[which];
     if (!client || !path) return null;
 
     client.close();
 
-    const { createClient } = await import("@libsql/client");
-    const newClient = createClient({ url: `file:${path}` });
+    const newClient = new NativeSQLiteClient(path);
     for (const pragma of PRAGMA_STATEMENTS) {
       await newClient.execute(pragma);
     }
@@ -155,7 +146,7 @@ export class MultiDbManager {
     for (const [key, client] of Object.entries(this.clients)) {
       if (client) {
         try {
-          (client as Client).close();
+          (client as NativeSQLiteClient).close();
         } catch {
           // Ignore close errors
         }

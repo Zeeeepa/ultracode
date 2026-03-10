@@ -78,7 +78,7 @@ TOTAL                               6 653 ms
 
 | Tool | Args | Total (ms) | Notes |
 |------|------|-----------|-------|
-| `semantic_search` | `query=…, limit=20` | **328** | Includes embedding of query (TEI, ~20 ms) + FAISS ANN search + LibSQL enrichment. Returns 20/200 results. |
+| `semantic_search` | `query=…, limit=20` | **328** | Includes embedding of query (TEI, ~20 ms) + FAISS ANN search + SQLite enrichment. Returns 20/200 results. |
 | `pattern_search` | `mode=regex, limit=20` | **~80*** | Regex-only mode via DB `LIKE`. Estimated from hybrid split. |
 | `pattern_search` | `mode=hybrid, semanticQuery=…, limit=20` | **597** | Regex match + embedding generation for semantic reranking. ~270 ms for embedding init (`embgen_init`). |
 | `pattern_search` | `mode=semantic, limit=20` | **~350*** | Semantic-only: embedding + FAISS. Estimated. |
@@ -89,14 +89,14 @@ TOTAL                               6 653 ms
 | `jscpd_detect_clones` | `paths=[src], formats=[ts], minLines=8, minTokens=50` | **1 418** | Token-based clone detection across all 581 TS source files. 0 duplicates found (clean codebase). |
 | `get_members` | `filePath=src/core/pipe-transport.ts` | **78–80** | AST entity listing; 34 entities returned. |
 | `check_entity_patterns` | default args | **114** | Pattern check for single entity. |
-| `query` | natural language query | **117** | LibSQL structured query with NL parsing. |
+| `query` | natural language query | **117** | SQLite structured query with NL parsing. |
 | `detect_technology_stack` | default args | **127** | Stack detection from file extensions + imports. |
 
 *Estimated by subtracting embedding cost from hybrid timing.
 
 ### Tracing
 
-Tracing tools load a Graphology in-memory directed graph from LibSQL on each call.
+Tracing tools load a Graphology in-memory directed graph from SQLite on each call.
 Graph load dominates total time, especially on the first call.
 
 | Tool | Args | Total (ms) | Graph load (ms) | BFS / logic (ms) | Nodes visited |
@@ -121,13 +121,13 @@ Graph load dominates total time, especially on the first call.
 |------|------|-----------|-------------------|
 | `detect_patterns` | `category=all, minConfidence=0.6, entityLimit=5000` | **422** | Pattern registry load ~213 ms (1st call) + `STRUCTURAL_DETECTOR` 218 ms (5000 entities × 23 patterns → 2358 candidates) + `SEMANTIC_VALIDATOR` 4 ms (1565 semantic confirmations) |
 | `detect_patterns` | subsequent call (registry cached) | **~209*** | Only structural + semantic scan |
-| `analyze_code_impact` | `depth=3` | **2 645** | Graph traversal to depth 3; found 2548 impacted entities. Dominated by multi-hop LibSQL lookups. |
+| `analyze_code_impact` | `depth=3` | **2 645** | Graph traversal to depth 3; found 2548 impacted entities. Dominated by multi-hop SQLite lookups. |
 | `analyze_hotspots` | `metric=all, limit=20, includeHistoricalMetrics=true, lookbackDays=30` | **1 274** | Loads git history via Prolly Tree + complexity metrics for top-20 of 5000 entities |
 | `suggest_refactoring` | default args | **110** | Fast heuristic analysis; no deep graph traversal. |
 | `analyze_state_chaos` | default args | **31 771** | Exhaustive cross-entity state dependency scan; O(entities²). |
 | `analyze_swagger_impact` | default args | **549** | Swagger/OpenAPI endpoint impact analysis. |
 | `taint_analysis` | `category=sql_injection, maxDepth=5, limit=5` | **1 076** | Fixed (no crash). 0 vulnerabilities found — clean codebase. |
-| `list_entity_relationships` | `entityId=…, depth=1` | **94** | Single-hop relationship lookup from LibSQL. |
+| `list_entity_relationships` | `entityId=…, depth=1` | **94** | Single-hop relationship lookup from SQLite. |
 
 *Estimated by subtracting one-time registry load from first-call time.
 
@@ -175,7 +175,7 @@ Graph load dominates total time, especially on the first call.
 
 | Tool | Total (ms) | Notes |
 |------|-----------|-------|
-| `list_branches` | **39** | `git branch` wrapper via LibSQL metadata. |
+| `list_branches` | **39** | `git branch` wrapper via SQLite metadata. |
 | `get_branch_status` | **39** | Current branch + uncommitted changes summary. |
 | `list_commits` | **85** | `git log` with metadata; default 20 commits. |
 | `diff_commits` | **185** | Unified diff between two commit SHAs. |
@@ -279,9 +279,9 @@ These tools perform write operations; not benchmarked in read-only sessions.
 
 - **`analyze_state_chaos` is the slowest query tool** (31.8 s). It performs an exhaustive O(entities²) cross-entity state dependency scan — avoid on large codebases without `filePath` filter.
 - `taint_analysis`  runs at 1 076 ms with bounded depth (`maxDepth=5`). 
-- **Graph load is the dominant cost** for all tracing tools (85% of cold-call time). Graphology loads the full 37 k node / 75 k edge graph from LibSQL on every call — there is no cross-call graph cache in the current process. OS page cache reduces this from ~1 250 ms (cold) to ~640 ms (warm) on subsequent calls.
+- **Graph load is the dominant cost** for all tracing tools (85% of cold-call time). Graphology loads the full 37 k node / 75 k edge graph from SQLite on every call — there is no cross-call graph cache in the current process. OS page cache reduces this from ~1 250 ms (cold) to ~640 ms (warm) on subsequent calls.
 - **`detect_patterns`** is fast because the `evalCache` (keyed by `entityId::patternId`) eliminates redundant structural evaluations. 5000 entities × 23 patterns in 224 ms internal time.
-- **`analyze_code_impact` at depth=3** is the slowest query tool (2.6 s) because it performs multi-hop graph traversal and resolves 2548 impacted entities with LibSQL lookups at each level.
+- **`analyze_code_impact` at depth=3** is the slowest query tool (2.6 s) because it performs multi-hop graph traversal and resolves 2548 impacted entities with SQLite lookups at each level.
 - **`jscpd_detect_clones`** takes 1.4 s to tokenize 581 TS files regardless of duplicate count — the cost is O(files × avg_tokens).
 - **`index` (auto startup, optimized)** takes **6 653 ms** (down from 9 223 ms baseline, −28%). TypeScript parsed with 10 workers; FAISS flush and graph commit run in parallel (`Promise.all`); TEI batch size raised to 128; DB flush threshold raised to 270 files. Parsing phase (4 034 ms, 90% CPU-bound on workers) is now the dominant cost.
 - **`graph_metrics` bus_factor** is 2× slower than other metrics (2 035 ms vs 802–899 ms) because it requires loading git contributor history per file in addition to graph topology.

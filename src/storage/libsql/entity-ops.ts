@@ -10,8 +10,49 @@
 
 import { log } from "../../logging/index.js";
 import type { BatchResult, Entity, EntityType } from "../../types/storage.js";
+import { encodeMetadata } from "./cbor-utils.js";
 import type { GenerationManager } from "./generation-ops.js";
 import type { ClientGetter, ContextGetter } from "./types.js";
+
+// =============================================================================
+// COMPACT LOCATION SERIALIZATION
+// =============================================================================
+
+/**
+ * Serialize SourceSpan to compact string: "startLine:startCol:startIdx-endLine:endCol:endIdx"
+ * ~11 chars vs ~80 chars for JSON.stringify. Backwards-compatible: reader handles both.
+ */
+function compactLocation(loc: unknown): string {
+  if (!loc || typeof loc !== "object") return "{}";
+  const l = loc as {
+    start?: { line?: number; column?: number; index?: number };
+    end?: { line?: number; column?: number; index?: number };
+  };
+  if (l.start && l.end) {
+    return `${l.start.line ?? 0}:${l.start.column ?? 0}:${l.start.index ?? 0}-${l.end.line ?? 0}:${l.end.column ?? 0}:${l.end.index ?? 0}`;
+  }
+  return JSON.stringify(loc);
+}
+
+/**
+ * Deserialize location string — handles both compact format and legacy JSON.
+ */
+export function parseLocation(s: string): unknown {
+  if (!s) return {};
+  // Compact format: "line:col:idx-line:col:idx"
+  if (/^\d+:\d+:\d+-\d+:\d+:\d+$/.test(s)) {
+    const [startPart, endPart] = s.split("-");
+    const [sl, sc, si] = startPart!.split(":").map(Number);
+    const [el, ec, ei] = endPart!.split(":").map(Number);
+    return { start: { line: sl, column: sc, index: si }, end: { line: el, column: ec, index: ei } };
+  }
+  // Legacy JSON format
+  try {
+    return JSON.parse(s);
+  } catch {
+    return {};
+  }
+}
 
 // =============================================================================
 // TOKEN UTILITIES
@@ -116,7 +157,7 @@ export class EntityOperations {
         entity.type,
         entity.filePath,
         JSON.stringify(entity.location),
-        JSON.stringify(entity.metadata),
+        encodeMetadata(entity.metadata as Record<string, unknown>),
         entity.hash || null,
         entity.createdAt || now,
         entity.updatedAt || now,
@@ -192,8 +233,8 @@ export class EntityOperations {
 
     // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
     // Much faster than N separate INSERT statements (reduces parsing overhead)
-    // SQLite limit: ~32767 params, 17 fields per entity → batch 900 = 15300 params (safe)
-    const batchSize = 900;
+    // SQLite limit: ~32767 params, 17 fields per entity → batch 1500 = 25500 params (safe, max 1928)
+    const batchSize = 1500;
 
     let processed = 0;
 
@@ -204,7 +245,7 @@ export class EntityOperations {
     const insertVerb = staging ? "INSERT INTO" : "INSERT OR REPLACE INTO";
 
     // Collect ALL statements (entities + tokens) into single batch for one transaction
-    const allStatements: Array<{ sql: string; args: (string | number | null)[] }> = [];
+    const allStatements: Array<{ sql: string; args: (string | number | Buffer | null)[] }> = [];
 
     for (let i = 0; i < unique.length; i += batchSize) {
       const batch = unique.slice(i, i + batchSize);
@@ -213,7 +254,7 @@ export class EntityOperations {
       const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
 
       // Flatten all args into single array
-      const args: (string | number | null)[] = [];
+      const args: (string | number | Buffer | null)[] = [];
       for (const entity of batch) {
         const fileGen = genMap.get(entity.filePath) ?? 1;
         args.push(
@@ -223,8 +264,8 @@ export class EntityOperations {
           entity.name,
           entity.type,
           entity.filePath,
-          JSON.stringify(entity.location),
-          JSON.stringify(entity.metadata),
+          compactLocation(entity.location),
+          encodeMetadata(entity.metadata as Record<string, unknown>),
           entity.hash || null,
           entity.createdAt || now,
           entity.updatedAt || now,
@@ -246,10 +287,11 @@ export class EntityOperations {
       });
     }
 
-    // Batch-insert name tokens for all entities (after entity inserts complete)
+    // Batch-insert name tokens for all entities (skip vendored — not useful for text search)
     const tokenRows: [string, string][] = []; // [token, entity_id]
     for (const entity of unique) {
       if (!entity.id) continue;
+      if (entity.metadata && (entity.metadata as Record<string, unknown>)["vendored"]) continue;
       for (const token of splitToTokens(entity.name)) {
         tokenRows.push([token, entity.id]);
       }
@@ -456,16 +498,36 @@ export class EntityOperations {
 
       if (filters.filePath) {
         const paths = Array.isArray(filters.filePath) ? filters.filePath : [filters.filePath];
-        // Normalize paths for cross-platform
-        const normalized: string[] = [];
+        // Separate exact paths from directory prefixes (trailing / or \)
+        const exactPaths: string[] = [];
+        const prefixPaths: string[] = [];
         for (const p of paths) {
-          normalized.push(p);
-          if (p.includes("/")) normalized.push(p.replace(/\//g, "\\"));
-          if (p.includes("\\")) normalized.push(p.replace(/\\/g, "/"));
+          if (p.endsWith("/") || p.endsWith("\\")) {
+            // Directory prefix — use LIKE for subtree match
+            const base = p.replace(/[/\\]+$/, "");
+            prefixPaths.push(base + "/");
+            prefixPaths.push(base + "\\");
+          } else {
+            // Exact file path — normalize for cross-platform
+            exactPaths.push(p);
+            if (p.includes("/")) exactPaths.push(p.replace(/\//g, "\\"));
+            if (p.includes("\\")) exactPaths.push(p.replace(/\\/g, "/"));
+          }
         }
-        const unique = [...new Set(normalized)];
-        sql += ` AND e.file_path IN (${unique.map(() => "?").join(",")})`;
-        args.push(...unique);
+
+        const conditions: string[] = [];
+        if (exactPaths.length > 0) {
+          const unique = [...new Set(exactPaths)];
+          conditions.push(`e.file_path IN (${unique.map(() => "?").join(",")})`);
+          args.push(...unique);
+        }
+        for (const prefix of [...new Set(prefixPaths)]) {
+          conditions.push("e.file_path LIKE ?");
+          args.push(prefix + "%");
+        }
+        if (conditions.length > 0) {
+          sql += ` AND (${conditions.join(" OR ")})`;
+        }
       }
 
       if (filters.name) {
@@ -531,79 +593,127 @@ export class EntityOperations {
       | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
+    lightweight?: boolean | undefined;
   }): Promise<Entity[]> {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
     const { projectHash, branchName, baseBranch } = this.getContext();
-    log.w("ENTITY_OPS", "findEntities", { hash: projectHash, branch: branchName, base: baseBranch || "none" });
+    log.w("ENTITY_OPS", "findEntities", {
+      hash: projectHash,
+      branch: branchName,
+      base: baseBranch || "none",
+      lightweight: !!query.lightweight,
+    });
     const limit = query.limit || 100;
     const offset = query.offset || 0;
 
+    // Lightweight mode: exclude heavy columns (embedding_text ~60MB, embedding_base64 ~60MB for 15K entities)
+    const selectCols = query.lightweight
+      ? `e.id, e.name, e.type, e.file_path, e.location, e.metadata, e.hash,
+         e.created_at, e.updated_at, e.complexity_score, e.language,
+         e.size_bytes, e.file_gen, e.project_hash, e.branch_name,
+         NULL as embedding_base64, NULL as embedding_text`
+      : "e.*";
+
     // Simple case: no base branch
+    // Chunked reads: bun:sqlite stmt.all() with large result sets triggers JSC GC
+    // segfault. Reading in 5000-row chunks via executeIterator keeps memory pressure low.
     if (!baseBranch) {
-      const args: (string | number)[] = [projectHash, branchName];
-      let sql = `SELECT e.* FROM entities e
+      const baseArgs: (string | number)[] = [projectHash, branchName];
+      let baseSql = `SELECT ${selectCols} FROM entities e
                  JOIN file_generations fg
                    ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
                  WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
-      sql += this.buildFilterClause(query.filters, args, { projectHash, branchName });
-      sql += " LIMIT ? OFFSET ?";
-      args.push(limit, offset);
+      baseSql += this.buildFilterClause(query.filters, baseArgs, { projectHash, branchName });
 
-      const result = await client.execute({ sql, args });
-      // DEBUG: Check raw language values from DB
-      const withLang = result.rows.filter((r) => r["language"]).length;
-      const sample = result.rows.slice(0, 3).map((r) => ({ n: r["name"], l: r["language"] }));
-      log.w("ENTITY_OPS", "findEntities_raw", { total: result.rows.length, withLang, sample: JSON.stringify(sample) });
-      return result.rows.map((row) => this.rowToEntity(row));
+      const CHUNK_SIZE = 5000;
+      if (limit <= CHUNK_SIZE) {
+        const args = [...baseArgs, limit, offset];
+        const entities: Entity[] = [];
+        for (const row of client.executeIterator({ sql: baseSql + " LIMIT ? OFFSET ?", args })) {
+          entities.push(this.rowToEntity(row));
+        }
+        return entities;
+      }
+
+      const entities: Entity[] = [];
+      let chunkOffset = offset;
+      while (entities.length < limit) {
+        const chunkLimit = Math.min(CHUNK_SIZE, limit - entities.length);
+        const chunkArgs = [...baseArgs, chunkLimit, chunkOffset];
+        let count = 0;
+        for (const row of client.executeIterator({ sql: baseSql + " LIMIT ? OFFSET ?", args: chunkArgs })) {
+          entities.push(this.rowToEntity(row));
+          count++;
+        }
+        if (count === 0) break;
+        chunkOffset += count;
+        if (count < chunkLimit) break;
+      }
+      return entities;
     }
 
     // Layered case: delta + base - tombstones
+    // CHUNKED reads via executeIterator to prevent bun:sqlite JSC GC crash
+    const LAYER_CHUNK = 5000;
     const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
 
-    // Get from delta (active gen only)
+    // Get from delta (active gen only) — CHUNKED
     const deltaArgs: (string | number)[] = [projectHash, branchName];
-    let deltaSql = `SELECT e.* FROM entities e
+    let deltaSql = `SELECT ${selectCols} FROM entities e
                     JOIN file_generations fg
                       ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
                     WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
     deltaSql += this.buildFilterClause(query.filters, deltaArgs, { projectHash, branchName });
 
-    const deltaResult = await client.execute({ sql: deltaSql, args: deltaArgs });
-    // DEBUG: Check delta raw
-    const deltaWithLang = deltaResult.rows.filter((r) => r["language"]).length;
-    log.w("ENTITY_OPS", "findEntities_layered", { delta: deltaResult.rows.length, deltaWithLang, branch: branchName });
-    const deltaEntities = deltaResult.rows.map((row) => this.rowToEntity(row));
-    const deltaIds = new Set(deltaEntities.map((e) => e.id));
+    const deltaEntities: Entity[] = [];
+    const deltaIds = new Set<string>();
+    let deltaOffset = 0;
+    while (true) {
+      const chunkArgs = [...deltaArgs, LAYER_CHUNK, deltaOffset];
+      let count = 0;
+      for (const row of client.executeIterator({ sql: deltaSql + " LIMIT ? OFFSET ?", args: chunkArgs })) {
+        const e = this.rowToEntity(row);
+        deltaEntities.push(e);
+        deltaIds.add(e.id);
+        count++;
+      }
+      if (count === 0) break;
+      deltaOffset += count;
+      if (count < LAYER_CHUNK) break;
+    }
+    log.w("ENTITY_OPS", "findEntities_layered", { delta: deltaEntities.length, branch: branchName });
 
-    // Get from base (active gen only)
+    // Get from base (active gen only) — CHUNKED
     const baseArgs: (string | number)[] = [projectHash, baseBranch];
-    let baseSql = `SELECT e.* FROM entities e
+    let baseSql = `SELECT ${selectCols} FROM entities e
                    JOIN file_generations fg
                      ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
                    WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
     baseSql += this.buildFilterClause(query.filters, baseArgs, { projectHash, branchName: baseBranch });
 
-    const baseResult = await client.execute({ sql: baseSql, args: baseArgs });
-    // DEBUG: Check base raw
-    log.w("ENTITY_OPS", "findEntities_base", { base: baseResult.rows.length, baseBranch });
-    const baseEntities = baseResult.rows
-      .map((row) => this.rowToEntity(row))
-      .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
+    const baseEntities: Entity[] = [];
+    let baseOffset = 0;
+    while (true) {
+      const chunkArgs = [...baseArgs, LAYER_CHUNK, baseOffset];
+      let count = 0;
+      for (const row of client.executeIterator({ sql: baseSql + " LIMIT ? OFFSET ?", args: chunkArgs })) {
+        const e = this.rowToEntity(row);
+        if (!deltaIds.has(e.id) && !tombstones.has(e.id)) {
+          baseEntities.push(e);
+        }
+        count++;
+      }
+      if (count === 0) break;
+      baseOffset += count;
+      if (count < LAYER_CHUNK) break;
+    }
+    log.w("ENTITY_OPS", "findEntities_base", { base: baseEntities.length, baseBranch });
 
     // Combine and apply limit/offset
     const combined = [...deltaEntities, ...baseEntities];
-    const result = combined.slice(offset, offset + limit);
-    // DEBUG: Check returned entities
-    const retWithLang = result.filter((e) => e.language).length;
-    const retSample = result.slice(0, 3).map((e) => ({ n: e.name, l: e.language }));
-    log.w("ENTITY_OPS", "findEntities_result", {
-      total: result.length,
-      withLang: retWithLang,
-      sample: JSON.stringify(retSample),
-    });
-    return result;
+    return combined.slice(offset, offset + limit);
   }
 
   /**
@@ -685,14 +795,18 @@ export class EntityOperations {
       sql += " LIMIT ?";
       args.push(limit);
 
-      const result = await client.execute({ sql, args });
-      return result.rows.map((row) => this.rowToEntity(row));
+      const entities: Entity[] = [];
+      for (const row of client.executeIterator({ sql, args })) {
+        entities.push(this.rowToEntity(row));
+      }
+      return entities;
     }
 
-    // Layered case
+    // Layered case — CHUNKED reads via executeIterator
+    const SEARCH_CHUNK = 5000;
     const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
 
-    // Get from delta (active gen only)
+    // Get from delta (active gen only) — chunked
     const deltaArgs: (string | number)[] = [projectHash, branchName];
     let deltaSql = `SELECT e.* FROM entities e
                     JOIN file_generations fg
@@ -700,11 +814,24 @@ export class EntityOperations {
                     WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
     deltaSql += this.buildSearchClause(options, deltaArgs, { projectHash, branchName });
 
-    const deltaResult = await client.execute({ sql: deltaSql, args: deltaArgs });
-    const deltaEntities = deltaResult.rows.map((row) => this.rowToEntity(row));
+    const deltaEntities: Entity[] = [];
+    let deltaOffset = 0;
+    while (true) {
+      let count = 0;
+      for (const row of client.executeIterator({
+        sql: deltaSql + " LIMIT ? OFFSET ?",
+        args: [...deltaArgs, SEARCH_CHUNK, deltaOffset],
+      })) {
+        deltaEntities.push(this.rowToEntity(row));
+        count++;
+      }
+      if (count === 0) break;
+      deltaOffset += count;
+      if (count < SEARCH_CHUNK) break;
+    }
     const deltaIds = new Set(deltaEntities.map((e) => e.id));
 
-    // Get from base (active gen only)
+    // Get from base (active gen only) — chunked
     const baseArgs: (string | number)[] = [projectHash, baseBranch];
     let baseSql = `SELECT e.* FROM entities e
                    JOIN file_generations fg
@@ -712,10 +839,22 @@ export class EntityOperations {
                    WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
     baseSql += this.buildSearchClause(options, baseArgs, { projectHash, branchName: baseBranch });
 
-    const baseResult = await client.execute({ sql: baseSql, args: baseArgs });
-    const baseEntities = baseResult.rows
-      .map((row) => this.rowToEntity(row))
-      .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
+    const baseEntities: Entity[] = [];
+    let baseOffset = 0;
+    while (true) {
+      let count = 0;
+      for (const row of client.executeIterator({
+        sql: baseSql + " LIMIT ? OFFSET ?",
+        args: [...baseArgs, SEARCH_CHUNK, baseOffset],
+      })) {
+        const e = this.rowToEntity(row);
+        if (!deltaIds.has(e.id) && !tombstones.has(e.id)) baseEntities.push(e);
+        count++;
+      }
+      if (count === 0) break;
+      baseOffset += count;
+      if (count < SEARCH_CHUNK) break;
+    }
 
     // Combine and limit
     return [...deltaEntities, ...baseEntities].slice(0, limit);
@@ -729,62 +868,50 @@ export class EntityOperations {
     if (!client) throw new Error("Client not initialized");
 
     const { projectHash, branchName, baseBranch } = this.getContext();
+    const CHUNK = 5000;
 
     // Normalize path separators for cross-platform search
     const forwardPath = directoryPath.replace(/\\/g, "/");
     const backPath = directoryPath.replace(/\//g, "\\");
 
+    const dirSql = `
+      SELECT e.* FROM entities e
+      JOIN file_generations fg
+        ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+      WHERE e.project_hash = ? AND e.branch_name = ?
+      AND (e.file_path LIKE ? OR e.file_path LIKE ?)
+      AND e.file_gen = fg.active_gen`;
+
+    // Chunked read helper using executeIterator
+    const chunkedDirRead = async (branch: string): Promise<Entity[]> => {
+      const entities: Entity[] = [];
+      let offset = 0;
+      while (true) {
+        let count = 0;
+        for (const row of client.executeIterator({
+          sql: dirSql + " LIMIT ? OFFSET ?",
+          args: [projectHash, branch, `${forwardPath}%`, `${backPath}%`, CHUNK, offset],
+        })) {
+          entities.push(this.rowToEntity(row));
+          count++;
+        }
+        if (count === 0) break;
+        offset += count;
+        if (count < CHUNK) break;
+      }
+      return entities;
+    };
+
     // Simple case: no base branch
     if (!baseBranch) {
-      const sql = `
-        SELECT e.* FROM entities e
-        JOIN file_generations fg
-          ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-        WHERE e.project_hash = ? AND e.branch_name = ?
-        AND (e.file_path LIKE ? OR e.file_path LIKE ?)
-        AND e.file_gen = fg.active_gen
-      `;
-      const args = [projectHash, branchName, `${forwardPath}%`, `${backPath}%`];
-
-      const result = await client.execute({ sql, args });
-      return result.rows.map((row) => this.rowToEntity(row));
+      return chunkedDirRead(branchName);
     }
 
     // Layered case
     const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
-
-    // Get from delta (active gen only)
-    const deltaSql = `
-      SELECT e.* FROM entities e
-      JOIN file_generations fg
-        ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-      WHERE e.project_hash = ? AND e.branch_name = ?
-      AND (e.file_path LIKE ? OR e.file_path LIKE ?)
-      AND e.file_gen = fg.active_gen
-    `;
-    const deltaResult = await client.execute({
-      sql: deltaSql,
-      args: [projectHash, branchName, `${forwardPath}%`, `${backPath}%`],
-    });
-    const deltaEntities = deltaResult.rows.map((row) => this.rowToEntity(row));
+    const deltaEntities = await chunkedDirRead(branchName);
     const deltaIds = new Set(deltaEntities.map((e) => e.id));
-
-    // Get from base (active gen only)
-    const baseSql = `
-      SELECT e.* FROM entities e
-      JOIN file_generations fg
-        ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-      WHERE e.project_hash = ? AND e.branch_name = ?
-      AND (e.file_path LIKE ? OR e.file_path LIKE ?)
-      AND e.file_gen = fg.active_gen
-    `;
-    const baseResult = await client.execute({
-      sql: baseSql,
-      args: [projectHash, baseBranch, `${forwardPath}%`, `${backPath}%`],
-    });
-    const baseEntities = baseResult.rows
-      .map((row) => this.rowToEntity(row))
-      .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
+    const baseEntities = (await chunkedDirRead(baseBranch)).filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
 
     return [...deltaEntities, ...baseEntities];
   }
@@ -906,48 +1033,44 @@ export class EntityOperations {
     if (!client) throw new Error("Client not initialized");
 
     const { projectHash, branchName, baseBranch } = this.getContext();
+    // Chunked reads via executeIterator to prevent bun:sqlite JSC GC crash
+    const CHUNK = 5000;
 
-    // Simple case: no base branch (on base or no layering) — active generation only
+    const baseSqlStr = `SELECT e.* FROM entities e
+          JOIN file_generations fg
+            ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
+          WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`;
+
+    const chunkedRead = async (branch: string): Promise<Entity[]> => {
+      const entities: Entity[] = [];
+      let offset = 0;
+      while (true) {
+        let count = 0;
+        for (const row of client.executeIterator({
+          sql: baseSqlStr + " LIMIT ? OFFSET ?",
+          args: [projectHash, branch, CHUNK, offset],
+        })) {
+          entities.push(this.rowToEntity(row));
+          count++;
+        }
+        if (count === 0) break;
+        offset += count;
+        if (count < CHUNK) break;
+      }
+      return entities;
+    };
+
+    // Simple case: no base branch
     if (!baseBranch) {
-      const result = await client.execute({
-        sql: `SELECT e.* FROM entities e
-              JOIN file_generations fg
-                ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-              WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`,
-        args: [projectHash, branchName],
-      });
-      return result.rows.map((row) => this.rowToEntity(row));
+      return chunkedRead(branchName);
     }
 
-    // Layered case: UNION delta + base, excluding tombstones and overrides
-    // 1. Get tombstones for current branch
+    // Layered case: delta + base - tombstones
     const tombstones = this.tombstoneGetter ? await this.tombstoneGetter("entity") : new Set<string>();
-
-    // 2. Get entities from delta (current branch, active gen only)
-    const deltaResult = await client.execute({
-      sql: `SELECT e.* FROM entities e
-            JOIN file_generations fg
-              ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-            WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`,
-      args: [projectHash, branchName],
-    });
-    const deltaEntities = deltaResult.rows.map((row) => this.rowToEntity(row));
+    const deltaEntities = await chunkedRead(branchName);
     const deltaIds = new Set(deltaEntities.map((e) => e.id));
+    const baseEntities = (await chunkedRead(baseBranch)).filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
 
-    // 3. Get entities from base (active gen only), excluding overridden or tombstoned
-    const baseResult = await client.execute({
-      sql: `SELECT e.* FROM entities e
-            JOIN file_generations fg
-              ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
-            WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`,
-      args: [projectHash, baseBranch],
-    });
-
-    const baseEntities = baseResult.rows
-      .map((row) => this.rowToEntity(row))
-      .filter((e) => !deltaIds.has(e.id) && !tombstones.has(e.id));
-
-    // 4. Combine: delta first (priority), then filtered base
     return [...deltaEntities, ...baseEntities];
   }
 

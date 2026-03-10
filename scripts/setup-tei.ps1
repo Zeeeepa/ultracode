@@ -245,8 +245,19 @@ else {
 $dockerArgs += $imageTag
 $dockerArgs += "--model-id"
 $dockerArgs += $model
+$dockerArgs += "--dtype"
+$dockerArgs += "float16"
 $dockerArgs += "--max-concurrent-requests"
-$dockerArgs += "512"
+$dockerArgs += "256"
+$dockerArgs += "--max-batch-tokens"
+$dockerArgs += "16384"
+$dockerArgs += "--max-batch-requests"
+$dockerArgs += "64"
+$dockerArgs += "--max-client-batch-size"
+$dockerArgs += "256"
+$dockerArgs += "--tokenization-workers"
+$dockerArgs += "4"
+$dockerArgs += "--auto-truncate"
 
 docker @dockerArgs
 

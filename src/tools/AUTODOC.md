@@ -50,7 +50,7 @@ MCP Request → conductor.handleRequest()
       → handle(args)
         ├─ parseArgs(args)       → Zod schema validation
         ├─ execute(args)         → business logic
-        │   ├─ ensureGraphStorage()  → GraphStorage (libsql)
+        │   ├─ ensureGraphStorage()  → GraphStorage (native SQLite)
         │   ├─ getSemanticAgent()    → SemanticAgent / VectorStore
         │   └─ resolveProjectPath()  → session-aware resolution
         ├─ applyResponseLimits() → 50KB soft truncation
@@ -107,7 +107,7 @@ MCP Request → conductor.handleRequest()
 | `SAFE_LIMITS.hotspots` | 20 | Max hotspot results per response |
 | `SAFE_LIMITS.taintVulnerabilities` | 20 | Max taint vulnerabilities per page |
 | Eager-loaded tools | 17 | Help, Index, Graph, Entity, Metrics handlers |
-| Lazy-loaded groups | 11 | Semantic, Analysis, Branch, File, Validation, Merge, Trace, AutoDoc, History, Snapshot |
+| Lazy-loaded groups | 12 | Semantic, Analysis, Branch, File, Validation, Merge, Trace, AutoDoc, History, Snapshot, Diagram |
 
 ## Behavioral Properties
 
@@ -198,6 +198,7 @@ MCP Request → conductor.handleRequest()
 | [`handlers/autodoc-tool-handlers.ts`](./handlers/autodoc-tool-handlers.ts) | 1105 | Handler | 11 AutoDoc handlers (lazy) |
 | [`handlers/history-tool-handlers.ts`](./handlers/history-tool-handlers.ts) | 275 | Handler | 4 time travel handlers (lazy) |
 | [`handlers/snapshot-tool-handlers.ts`](./handlers/snapshot-tool-handlers.ts) | 258 | Handler | 4 snapshot handlers (lazy) |
+| [`handlers/diagram-tool-handler.ts`](./handlers/diagram-tool-handler.ts) | 67 | Handler | Architecture diagram generation (lazy) |
 | [`handlers/index.ts`](./handlers/index.ts) | 131 | Config | Re-exports for backward compatibility |
 | [`schemas/analysis-schemas.ts`](./schemas/analysis-schemas.ts) | 74 | Schema | Analysis tool arg schemas |
 | [`schemas/semantic-schemas.ts`](./schemas/semantic-schemas.ts) | 66 | Schema | Semantic tool arg schemas |
@@ -212,4 +213,5 @@ MCP Request → conductor.handleRequest()
 | [`schemas/graph-schemas.ts`](./schemas/graph-schemas.ts) | 33 | Schema | Graph tool arg schemas |
 | [`schemas/taint-schemas.ts`](./schemas/taint-schemas.ts) | ~30 | Schema | Taint analysis arg schema (with offset/limit) |
 | [`schemas/graph-metrics-schemas.ts`](./schemas/graph-metrics-schemas.ts) | ~40 | Schema | Graph metrics arg schema |
+| [`schemas/diagram-schemas.ts`](./schemas/diagram-schemas.ts) | ~30 | Schema | Architecture diagram arg schema (entryPoint, depth, dataFlowLevel, format, direction, diagramType) |
 | [`schemas/index.ts`](./schemas/index.ts) | 88 | Config | Central schema exports |

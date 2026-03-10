@@ -9,7 +9,7 @@ import xxhash from "xxhash-wasm";
 import { log } from "../logging/index.js";
 import { getCurrentGitBranchOrDefault, getProjectHash } from "../shared/storage-paths.js";
 import { type BatchResult, type Entity, type Relationship, RelationType } from "../types/storage.js";
-import type { LibSQLGraphAdapter, ProjectContext } from "./libsql-graph-adapter.js";
+import type { GraphAdapter, ProjectContext } from "./graph-adapter.js";
 
 // =============================================================================
 // CONSTANTS
@@ -27,7 +27,7 @@ const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmedi
 
 export class BatchOperationsLibSQL {
   private batchSize: number;
-  private adapter: LibSQLGraphAdapter;
+  private adapter: GraphAdapter;
   private xxhashInstance: Awaited<ReturnType<typeof xxhash>> | null = null;
 
   private currentContext: ProjectContext = {
@@ -35,7 +35,7 @@ export class BatchOperationsLibSQL {
     branchName: "_unset_",
   };
 
-  constructor(adapter: LibSQLGraphAdapter, batchSize = DEFAULT_BATCH_SIZE) {
+  constructor(adapter: GraphAdapter, batchSize = DEFAULT_BATCH_SIZE) {
     this.adapter = adapter;
     this.batchSize = Math.min(batchSize, MAX_BATCH_SIZE);
   }
@@ -126,6 +126,9 @@ export class BatchOperationsLibSQL {
       [RelationType.PRODUCES_API]: null,
       [RelationType.CONSUMES_API]: null,
       [RelationType.GENERATED_FROM]: null,
+      [RelationType.READS_TABLE]: null,
+      [RelationType.WRITES_TABLE]: null,
+      [RelationType.MAPS_TO_TABLE]: null,
     };
 
     const reverse: Relationship[] = [];

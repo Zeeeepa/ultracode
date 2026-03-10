@@ -19,9 +19,14 @@ import { TimeTravelManager } from "../../storage/prolly/index.js";
 import type { RefactoringSuggestion } from "../../types/semantic.js";
 import type { Entity } from "../../types/storage.js";
 import { toError } from "../../utils/error-handling.js";
-import { projectPathParam } from "../base-schemas.js";
+import { projectPathParam, recentChangesParams } from "../base-schemas.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
+import {
+  buildRecentChangeSummary,
+  type EntityInfoInput,
+  formatRecentChangesSection,
+} from "../utils/recent-changes-enrichment.js";
 
 // =============================================================================
 // TYPE DEFINITIONS
@@ -445,6 +450,51 @@ export class AnalyzeHotspotsToolHandler extends BaseToolHandler<z.infer<typeof A
       // Too many parameters
       const paramCount = metrics.parameterCount || 0;
       score += paramCount > 4 ? (paramCount - 4) * 2 : 0;
+
+      // Antipattern hints boost — fragile/insecure code is a hotspot
+      const apHints = entity.metadata?.["antipatternHints"] as
+        | { typeAssertionCount?: number; nonNullAssertionCount?: number; innerHtmlAssignCount?: number }
+        | undefined;
+      if (apHints) {
+        if ((apHints.typeAssertionCount ?? 0) > 3) score += 5;
+        if ((apHints.nonNullAssertionCount ?? 0) > 2) score += 3;
+        if ((apHints.innerHtmlAssignCount ?? 0) > 0) score += 8;
+      }
+
+      // Python-specific: pythonHints boost
+      const pyHints = entity.metadata?.["pythonHints"] as
+        | {
+            evalExecCount?: number;
+            bareExceptCount?: number;
+            openWithoutWithCount?: number;
+            wideTryBlockCount?: number;
+          }
+        | undefined;
+      if (pyHints) {
+        if ((pyHints.evalExecCount ?? 0) > 0) score += 10; // eval/exec = critical security risk
+        if ((pyHints.bareExceptCount ?? 0) > 0) score += 4; // bare except hides bugs
+        if ((pyHints.openWithoutWithCount ?? 0) > 0) score += 3; // resource leak
+        if ((pyHints.wideTryBlockCount ?? 0) > 0) score += 2; // wide try = masked errors
+      }
+
+      // Zig-specific: zigOps boost
+      const zigOps = entity.metadata?.["zigOps"] as
+        | {
+            forceUnwrapCount?: number;
+            unsafeCastCount?: number;
+            unreachableCount?: number;
+            allocCallCount?: number;
+            freeCallCount?: number;
+          }
+        | undefined;
+      if (zigOps) {
+        if ((zigOps.forceUnwrapCount ?? 0) > 2) score += 4; // force unwrap = potential panic
+        if ((zigOps.unsafeCastCount ?? 0) > 0) score += 6; // unsafe cast = UB risk
+        if ((zigOps.unreachableCount ?? 0) > 1) score += 3; // excessive unreachable
+        const allocs = zigOps.allocCallCount ?? 0;
+        const frees = zigOps.freeCallCount ?? 0;
+        if (allocs > 0 && frees === 0) score += 5; // alloc without free = leak risk
+      }
     }
 
     if (metric === "changes" || metric === "all") {
@@ -644,6 +694,7 @@ const AnalyzeStateChaosSchema = z.object({
   maxDepth: z.number().optional(),
   excludePatterns: z.array(z.string()).optional(),
   format: z.enum(["summary", "detailed", "json"]).optional().default("summary"),
+  ...recentChangesParams,
 });
 
 export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof AnalyzeStateChaosSchema>> {
@@ -710,6 +761,32 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
       "graph_metrics({metric:'pagerank'}) — assess architectural importance of chaotic entities",
     ];
 
+    // Enrich with recently-changed status if requested
+    let recentChangeSummary: import("../utils/recent-changes-enrichment.js").RecentChangeSummary | null = null;
+    if (args.highlightRecentChanges) {
+      const entityInfos: EntityInfoInput[] = [];
+      for (const r of results) {
+        const identifier = r.statePattern.identifier;
+        if (!identifier) continue;
+        try {
+          const entities = await storage.searchEntities({ namePattern: identifier });
+          for (const ent of entities) {
+            entityInfos.push({
+              entityId: ent.id,
+              significance: "high",
+              entityName: ent.name,
+              filePath: ent.filePath,
+            });
+          }
+        } catch {
+          // Skip
+        }
+      }
+      if (entityInfos.length > 0) {
+        recentChangeSummary = await buildRecentChangeSummary(storage, entityInfos, args.recentCommitsCount);
+      }
+    }
+
     if (args.format === "json") {
       return {
         content: [
@@ -721,6 +798,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
                 csharpPatterns: analyzer.csharpPatterns,
                 graphContext,
                 nextSteps: chaosNextSteps,
+                ...(recentChangeSummary ? { recentChangeSummary } : {}),
               },
               null,
               2,
@@ -739,6 +817,7 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
       if (analyzer.csharpPatterns.length > 0 && results.length === 0) {
         parts.push(analyzer.formatForAI(results));
       }
+      if (recentChangeSummary) parts.push(formatRecentChangesSection(recentChangeSummary));
       return {
         content: [{ type: "text", text: parts.join("\n\n") }],
       };
@@ -746,9 +825,11 @@ export class AnalyzeStateChaosToolHandler extends BaseToolHandler<z.infer<typeof
 
     // Default: AI-friendly summary (includes C# anti-patterns)
     const text = analyzer.formatForAI(results);
-    const nextStepsText = `\n\n---\nNext steps:\n${chaosNextSteps.map((s) => `- ${s}`).join("\n")}`;
+    let suffixText = "";
+    if (recentChangeSummary) suffixText += formatRecentChangesSection(recentChangeSummary);
+    suffixText += `\n\n---\nNext steps:\n${chaosNextSteps.map((s) => `- ${s}`).join("\n")}`;
     return {
-      content: [{ type: "text", text: text + nextStepsText }],
+      content: [{ type: "text", text: text + suffixText }],
     };
   }
 }
@@ -1148,6 +1229,203 @@ export class AnalyzeSwaggerImpactToolHandler extends BaseToolHandler<z.infer<typ
 }
 
 // =============================================================================
+// ANALYZE API IMPACT (unified: swagger + protobuf + graphql)
+// =============================================================================
+
+const AnalyzeApiImpactSchema = z.object({
+  projectPath: projectPathParam,
+  contractType: z
+    .enum(["swagger", "protobuf", "graphql", "auto"])
+    .optional()
+    .default("auto")
+    .describe("API contract type to analyze (auto-detected if omitted)"),
+  specFile: z.string().optional().describe("Path to spec file (auto-detected if omitted)"),
+  schemaName: z.string().optional().describe("Specific schema/message/type name"),
+  endpointPath: z.string().optional().describe("Specific endpoint or rpc name"),
+});
+
+export class AnalyzeApiImpactToolHandler extends BaseToolHandler<z.infer<typeof AnalyzeApiImpactSchema>> {
+  protected parseArgs(args: unknown) {
+    return AnalyzeApiImpactSchema.parse(args);
+  }
+
+  protected async execute(args: z.infer<typeof AnalyzeApiImpactSchema>): Promise<ToolResult> {
+    const storage = await this.ensureGraphStorageForProject(args.projectPath);
+    const allEntities = await storage.getAllEntities();
+    const allRelationships = await storage.getAllRelationships();
+
+    // Find API contract entities matching the requested type
+    let apiEntities = allEntities.filter((e) => e.metadata?.["isApiContract"]);
+
+    if (apiEntities.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error:
+                "No API contract specifications found (Swagger, Protobuf, or GraphQL). Index a project with API spec files first.",
+            }),
+          },
+        ],
+      };
+    }
+
+    // Filter by contract type
+    if (args.contractType !== "auto") {
+      apiEntities = apiEntities.filter((e) => {
+        switch (args.contractType) {
+          case "swagger":
+            return !!e.metadata?.["swaggerType"];
+          case "protobuf":
+            return !!e.metadata?.["protoType"];
+          case "graphql":
+            return !!e.metadata?.["graphqlType"];
+          default:
+            return true;
+        }
+      });
+    }
+
+    // Filter by spec file
+    if (args.specFile) {
+      const normalizedPath = this.context.normalizeInputPath(args.specFile);
+      apiEntities = apiEntities.filter((e) =>
+        e.filePath
+          .replace(/\\/g, "/")
+          .toLowerCase()
+          .includes((normalizedPath || "").replace(/\\/g, "/").toLowerCase()),
+      );
+    }
+
+    // Filter by schema name
+    if (args.schemaName) {
+      apiEntities = apiEntities.filter((e) => {
+        const st = e.metadata?.["swaggerType"];
+        const pt = e.metadata?.["protoType"];
+        const gt = e.metadata?.["graphqlType"];
+        const isSchemaLike =
+          st === "schema" ||
+          pt === "message" ||
+          pt === "enum" ||
+          gt === "type" ||
+          gt === "interface" ||
+          gt === "input" ||
+          gt === "enum";
+        return isSchemaLike && e.name === args.schemaName;
+      });
+    }
+
+    // Filter by endpoint/rpc
+    if (args.endpointPath) {
+      const [method, ...pathParts] = args.endpointPath.split(" ");
+      const path = pathParts.join(" ");
+      apiEntities = apiEntities.filter((e) => {
+        // Swagger endpoint
+        if (e.metadata?.["swaggerType"] === "endpoint") {
+          const entityMethod = ((e.metadata["httpMethod"] as string) || "").toUpperCase();
+          const entityPath = (e.metadata["path"] as string) || "";
+          return (!method || entityMethod === method.toUpperCase()) && (!path || entityPath === path);
+        }
+        // Protobuf rpc
+        if (e.metadata?.["protoType"] === "rpc") {
+          return e.name === args.endpointPath || e.name === method;
+        }
+        // GraphQL field (query/mutation)
+        if (e.metadata?.["graphqlType"] === "field") {
+          return e.name === args.endpointPath || e.name === method;
+        }
+        return false;
+      });
+    }
+
+    // Collect related entities through relationships
+    const producers: Array<{ name: string; file: string; type: string }> = [];
+    const consumers: Array<{ name: string; file: string; type: string }> = [];
+    const generatedTypes: Array<{ name: string; file: string; schemaName: string }> = [];
+
+    const apiEntityIds = new Set(apiEntities.map((e) => e.id));
+    const entityMap = new Map(allEntities.map((e) => [e.id, e]));
+
+    for (const rel of allRelationships) {
+      if (rel.type === "produces_api") {
+        const from = entityMap.get(rel.fromId);
+        const to = entityMap.get(rel.toId);
+        if (from && to && (apiEntityIds.has(rel.toId) || apiEntityIds.has(rel.fromId))) {
+          producers.push({ name: from.name, file: from.filePath, type: from.type });
+        }
+      } else if (rel.type === "consumes_api") {
+        const from = entityMap.get(rel.fromId);
+        const to = entityMap.get(rel.toId);
+        if (from && to && (apiEntityIds.has(rel.toId) || apiEntityIds.has(rel.fromId))) {
+          consumers.push({ name: from.name, file: from.filePath, type: from.type });
+        }
+      } else if (rel.type === "generated_from") {
+        const from = entityMap.get(rel.fromId);
+        const to = entityMap.get(rel.toId);
+        if (from && to && (apiEntityIds.has(rel.toId) || apiEntityIds.has(rel.fromId))) {
+          generatedTypes.push({ name: from.name, file: from.filePath, schemaName: to.name });
+        }
+      }
+    }
+
+    // Assess risk
+    const totalAffected = producers.length + consumers.length + generatedTypes.length;
+    const breakingChangeRisk: "high" | "medium" | "low" =
+      totalAffected > 10 ? "high" : totalAffected > 3 ? "medium" : "low";
+
+    // Build recommendations
+    const recommendations: string[] = [];
+    if (consumers.length > 0) {
+      recommendations.push(
+        `${consumers.length} generated client(s)/consumer(s) may need regeneration after spec changes`,
+      );
+    }
+    if (generatedTypes.length > 0) {
+      recommendations.push(
+        `${generatedTypes.length} generated type(s) are linked to API schemas — regenerate after schema changes`,
+      );
+    }
+    if (producers.length > 0) {
+      recommendations.push(
+        `${producers.length} producer(s)/resolver(s) implement this API — update spec after changing these`,
+      );
+    }
+
+    // Categorize by contract type
+    const contractTypes = new Set<string>();
+    for (const e of apiEntities) {
+      if (e.metadata?.["swaggerType"]) contractTypes.add("swagger");
+      if (e.metadata?.["protoType"]) contractTypes.add("protobuf");
+      if (e.metadata?.["graphqlType"]) contractTypes.add("graphql");
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              contractTypes: [...contractTypes],
+              specFiles: [...new Set(apiEntities.map((e) => e.filePath))],
+              apiEntities: apiEntities.length,
+              producers,
+              consumers,
+              generatedTypes,
+              breakingChangeRisk,
+              totalAffectedEntities: totalAffected,
+              recommendations,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+}
+
+// =============================================================================
 // DETECT TECHNOLOGY STACK
 // =============================================================================
 
@@ -1170,8 +1448,7 @@ export class DetectTechnologyStackToolHandler extends BaseToolHandler<z.infer<ty
     try {
       const { TechnologyDetector } = await import("../../analysis/technology-detector.js");
       const graphStorage = await this.context.getGraphStorage();
-      // CRITICAL: Set project context to target directory before querying
-      graphStorage.setProject(targetDir);
+      // Project context is set via ALS (runWithRequestContext in index.ts)
       const detector = new TechnologyDetector(graphStorage, targetDir);
       const stack: TechnologyStack = await detector.detectStack();
 

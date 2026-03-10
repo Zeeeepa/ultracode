@@ -9,7 +9,7 @@ Comparison of embedding providers by speed, configuration, and GPU requirements.
 | Provider | Speed | GPU | Protocol | Batch | Notes |
 |----------|-------|-----|----------|-------|-------|
 | **vLLM** | **1352 emb/s** | NVIDIA CUDA | OpenAI API (`/v1/embeddings`) | Yes | Highest throughput, continuous batching, paged attention |
-| **TEI** | **1169 emb/s** (peak 2442) | NVIDIA CUDA | `/embed` | Yes | HuggingFace models, Blackwell requires `120-latest` image |
+| **TEI** | **2800-5500 emb/s** | NVIDIA CUDA | `/embed` | Yes | HuggingFace models, Blackwell requires `120-latest` image |
 | **llama.cpp** | **441 emb/s** | CUDA/Vulkan/CPU | OpenAI API (`/v1/embeddings`) | Yes | Native GGUF, low VRAM (0.4 GB dedicated) |
 | **OVMS Native** | **260-326 emb/s** | Intel iGPU/CPU | OpenAI V3 API (`/v3/embeddings`) | Yes | Intel optimized, MediaPipe graph, auto lifecycle |
 | **Ollama** | varies (55-71 chunks/s) | CUDA/CPU | `/api/embeddings` | No | Simplest setup, no batch support |
@@ -266,7 +266,7 @@ Index writes to `graph.db` no longer block reads from `semantic.db`/`cache.db`.
 | **semantic.db** | cooccurrence, term_frequency | 12 MB | Query expansion (read-heavy) |
 | **versioning.db** | prolly_nodes, graph_commits, branch_heads | 277 MB | Content-addressed versioning |
 | **cache.db** | embedding_cache, query_cache, performance_metrics | 28 KB | Global caches, TTL-based |
-| **Total** | | **353 MB** | 26.7K entities, 68.9K rels, 841 files |
+| **Total** | | **353 MB** | 27.3K entities, 53.2K rels, 703 files |
 
 **Initialization timings (cold start):**
 
@@ -282,41 +282,110 @@ All DBs: `journal_mode=OFF`, `synchronous=OFF`, `cache_size=-8192` (8 MB per DB)
 
 ## Indexing Performance
 
-### Current (v6.4, staging tables, multi-DB, IVF,SQ8)
+### Current (v6.6, CBOR metadata, executeIterator, chunk 5000)
 
-**Append-only staging tables** for bulk indexing (>500 files): heap INSERT O(1), no B-tree PK lookup. Commit via `INSERT OR REPLACE INTO main SELECT FROM staging` + recreate indexes in one pass.
+**CBOR binary metadata** replaces JSON TEXT in SQLite — smaller BLOBs, faster serialize/deserialize. **executeIterator()** yields rows one-by-one instead of `stmt.all()` (reduces JSC GC pressure). SQL chunk size 2000→5000. Cross-domain linkers skip when no relevant entities.
 
 #### UltraCode (self-indexing)
 
-[github.com/anthropics/ultracode](https://github.com/anthropics/ultracode) — 275K LOC, 832 files, 27K entities, 69K rels
+[github.com/anthropics/ultracode](https://github.com/anthropics/ultracode) — 275K LOC, 929 files, 27K entities, 53K rels
 
-| Metric | v6.4 (staging) | v6.3 (no staging) | Delta |
-|--------|----------------|-------------------|-------|
-| **Total index_done** | **8.6 sec** | 9.8 sec | **-12%** |
-| **Parsing** | 3.1 sec | 3.5 sec | ~same |
-| **DB flush (2 batches)** | 3.6 sec (2.9s + 0.7s) | 5.2 sec (4.1s + 1.1s) | **-31%** |
-| **commitStaging** | 0.65 sec | — | new |
-| **Total flush+commit** | **4.2 sec** | **5.2 sec** | **-19%** |
-| **Embedding flush** | 0.8 sec | 0.7 sec | ~same |
+| Metric | v6.6 (CBOR+iterator) | v6.4 (staging) | v6.3 (no staging) | Δ (v6.4→v6.6) |
+|--------|-----------------------|----------------|-------------------|----------------|
+| **Total index_done** | **7.6 sec** | 8.6 sec | 9.8 sec | **-12%** |
+| **collectFiles** | 430 ms | ~450 ms | — | ~same |
+| **preSpawn** | 745 ms | ~750 ms | — | ~same |
+| **Parsing (10 workers)** | 4342 ms (170 files/s) | 3.1 sec | 3.5 sec | +40%¹ |
+| **DB flush** | **1820 ms** | 3.6 sec | 5.2 sec | **-49%** |
+| **Cross-domain linking** | **257 ms** | ~550 ms | — | **-53%** |
+| **Embedding flush** | 484 ms | 0.8 sec | 0.7 sec | ~same |
+| **Total PERF_SUMMARY** | **8154 ms** | ~9500 ms | — | **-14%** |
+
+¹ v6.6 parses 760 code files (was 683 in v6.4 — more files indexed now). Per-file speed ~same.
+
+**Cross-domain linking breakdown (v6.6):**
+
+| Linker | Time | Skipped? | Why |
+|--------|------|----------|-----|
+| Swagger | 178 ms | Yes (check only) | `hasSwagger=false` — one `getAllEntities()` + `.some()` |
+| Protobuf | 0 ms | Fully skipped | `hasProtobuf=false` |
+| GraphQL | 0 ms | Fully skipped | `hasGraphQL=false` |
+| DB Schema | 79 ms | Ran (has entities) | `hasDbEntities=true` — SQLite code detected |
+
+**Incremental reindex:** 5 files (git-watcher uncommitted), **99 ms**. GC removed 8046 stale entities + 22951 stale tokens.
+
+#### Zig Compiler
+
+[github.com/ziglang/zig](https://github.com/ziglang/zig) — 17K files, 325K entities (after vendored filter), 94K embeddings
+
+| Metric | v6.6 (vendored+flush opt) | v6.5 (vendored, no flush opt) | v6.4 (no vendored) | Delta (v6.4→v6.6) |
+|--------|---------------------------|-------------------------------|---------------------|--------------------|
+| **Total** | **47 sec** | 88 sec | 643 sec | **13.7x faster** |
+| **collectFiles** | 2.4 sec | 2.5 sec | ~2 sec | ~same |
+| **preSpawn** | 1.2 sec | 1.2 sec | ~1 sec | ~same |
+| **Parsing (14 workers)** | 7.4 sec (2296 files/sec) | 7.5 sec | ~8 sec | ~same |
+| **Graph flush** | 4.2 sec | 50 sec | ~50 sec | **12x faster** |
+| **commitStaging** | 4.2 sec | — | — | new |
+| **TEI Embeddings** | 15.8 sec (5513/sec) | 18.3 sec (140/sec¹) | — | **37x TEI** |
+| **Swagger linking** | 1.8 sec | 1.8 sec | — | ~same |
+
+¹ TEI with `parallelBatches=1` was bottlenecked by HTTP round-trip on short texts (C headers avg ~30 tokens). Changed to `parallelBatches=4`.
+
+**Vendored detection (automatic):**
+- 9 prefixes detected: `lib/libc`, `lib/libc/musl`, `lib/libc/mingw`, `lib/libc/glibc`, `lib/libcxx`, `lib/libc/wasi/*`, `src/codegen`
+- 13,464 files (78.9%) skipped for embeddings, still parsed for graph
+- Detection time: <50ms (runs after collectFiles)
+
+**Graph flush optimizations (v6.6):**
+- Entity count: 890K → 325K (-63%) by filtering `#define` constants from vendored headers
+- `compactLocation`: 80 chars → 11 chars per entity (`"line:col:idx-line:col:idx"` vs JSON)
+- `batchSize`: 900 → 1500 (SQLite limit 32767 params / 17 columns = 1928 max)
+- Skip `name_tokens` for entities with `metadata.vendored=true`
+- Result: 50 sec → 4.2 sec flush (-92%)
+
+**TEI pipelining fix (v6.6):**
+- `parallelBatches`: 1 → 4 for TEI provider
+- Short texts (C headers, ~30 tokens) dominated by HTTP round-trip, not GPU compute
+- GPU was idle during HTTP latency; 4 parallel batches keep GPU saturated
+- Result: 140 emb/s → 5513 emb/s on Zig (37x), no regression on long texts
 
 #### VS Code
 
-[github.com/microsoft/vscode](https://github.com/microsoft/vscode) — 1.9M LOC, 7198 files, 253K entities, 838K rels
+[github.com/microsoft/vscode](https://github.com/microsoft/vscode) — 1.9M LOC, 7082 files, 253K entities, 881K rels
 
-| Metric | v6.4 (staging) | v6.3 (no staging) | Delta |
-|--------|----------------|-------------------|-------|
-| **Total index_done** | **82-97 sec** | 205 sec | **2.1-2.5x faster** |
-| **Parsing (14 workers)** | ~14 sec | ~42 sec | difference in flush overlap |
-| **DB flush (8 batches)** | ~31 sec (4-6s each, stable) | ~159 sec (14→32s, degrading) | **5.1x faster** |
-| **commitStaging** | ~11 sec | — | new |
-| **Total flush+commit** | **~42 sec** | **~159 sec** | **3.8x faster** |
-| **Embedding flush** | ~32 sec | ~32 sec | ~same |
+| Metric | v6.5 (chunked FAISS) | v6.4 (staging) | v6.3 (no staging) |
+|--------|----------------------|----------------|-------------------|
+| **Total** | **82 sec** | 82-97 sec | 205 sec |
+| **collectFiles** | 1.8 sec | — | — |
+| **preSpawn (workers)** | 1.8 sec | — | — |
+| **Parsing (14 workers)** | 10.1 sec | ~14 sec | ~42 sec |
+| **DB flush** | 35.1 sec | ~31 sec | ~159 sec |
+| **Swagger linking** | 2.2 sec | — | — |
+| **= Parsing total** | **51.2 sec** | ~56 sec | ~201 sec |
+| **TEI Embeddings** | 64.4 sec (1004 emb/s) | ~32 sec | ~32 sec |
+| **FAISS addBatch** | **12.9 sec** (chunked 4×16K) | 39.3 sec (timeout+retry) | — |
+| **Timeout errors** | **0** | 1 | — |
+| **Total embeddings** | 74,231 | 64,677 | — |
 
-**Why staging is faster:**
+**v6.5 chunked FAISS improvement:**
+- Large batches (>16K vectors) split into 16,384-vector chunks with adaptive timeout
+- First chunk triggers IVF training (~9.8 sec), subsequent chunks ~1 sec each
+- Eliminated timeout errors: 30s default → 120s for first chunk, 60s for rest
+- FAISS speed: 5,000 vectors/s (vs 1,645/s without chunking — **3x faster**)
+- `reset=true` now clears FAISS index + SQLite embedding cache (was graph-only)
+
+**Why staging is faster (v6.4+):**
 - Staging tables have no PRIMARY KEY → heap append O(1) per row (no B-tree page splits)
 - Main table indexes dropped during indexing → no index maintenance during flush
 - Cross-flush duplicates handled by `INSERT OR REPLACE INTO` during commit
 - Stable per-batch times (4-6s vs 14→32s degradation in v6.3)
+
+**Additional flush optimizations (v6.6):**
+- `compactLocation()` serializes `SourceSpan` as `"line:col:idx-line:col:idx"` (~11 chars vs ~80 chars JSON) — reduces INSERT payload ~7x per entity
+- `parseLocation()` deserializes both compact and legacy JSON formats (backwards-compatible)
+- `batchSize` increased from 900 to 1500 (within SQLite 32767 param limit: 1500 × 17 = 25500)
+- Skip `name_tokens` INSERT for vendored entities (`metadata.vendored=true`) — reduces token table writes significantly for large C/C++ projects
+- Filter `#define` constants from vendored C headers at parse time — 63% entity reduction on Zig
 
 ### Previous (v6.3, 843 files, 12.0K entities, IVF,SQ8, .ultracodeignore)
 
@@ -366,7 +435,106 @@ All DBs: `journal_mode=OFF`, `synchronous=OFF`, `cache_size=-8192` (8 MB per DB)
 
 ## MCP Tool Performance
 
-### Current (v6.4, staging tables, multi-DB)
+### Current (v6.6, CBOR metadata, executeIterator, cross-domain skip)
+
+Storage refactor: monolithic `libsql-graph-adapter.ts` split into 5 modules, metadata serialization JSON→CBOR (BLOB), SELECT hot paths use `executeIterator()` (row-by-row yield), SQL chunk size 2000→5000. Cross-domain linkers (swagger/protobuf/graphql/db) skip when no relevant entities exist.
+
+Benchmarked on UltraCode project. All server-side `_elapsedMs` from MCP tool response.
+
+**UltraCode**: 275K LOC, 703 files, 27K entities, 53K rels
+
+#### v6.6 Search Tools
+
+| Tool | Mode | v6.6 | v6.5 | Δ | Notes |
+|------|------|------|------|---|-------|
+| `find_similar_code` | vector | **140 ms** | 86 ms | +63% | FAISS variance, 5 results threshold=0.5 |
+| `cross_language_search` | vector | **85 ms** | — | new | 10 languages, 20 results |
+| `get_members` | AST | **139 ms** | 110 ms | +26% | Single file (graph-adapter.ts), 129 entities |
+| `pattern_search` | entity (regex) | **189 ms** | 157 ms | +20% | `handle.*Error`, within variance |
+| `pattern_search` | semantic | **205 ms** | — | — | TEI embed + FAISS, 10 results |
+| `semantic_search` | FAISS | **191 ms** | 217 ms | **-12%** | Query expansion + enrichment |
+
+#### v6.6 Analysis Tools
+
+| Tool | v6.6 | v6.5 | Δ | Notes |
+|------|------|------|---|-------|
+| `suggest_refactoring` | **123 ms** | — | — | 4 suggestions |
+| `get_metrics` | **128 ms** | — | — | Memory, uptime, graph stats |
+| `detect_technology_stack` | **132 ms** | — | — | Languages, frameworks, deps |
+| `get_entity_history` | **149 ms** | — | — | Prolly Tree, 1 change |
+| `list_entity_relationships` | **152 ms** | — | — | depth=1, 109 rels |
+| `analyze_hotspots` | **162 ms** | 137 ms | +18% | Top-10 complexity, within variance |
+| `find_related_concepts` | **186 ms** | — | — | FAISS-based, 10 results |
+| `analyze_code_impact` | **206 ms** | 179 ms | +15% | depth=2, 112 impacted entities |
+| `check_entity_patterns` | **217 ms** | — | — | All categories, single entity |
+| `get_database_schema` | **284 ms** | — | — | 5 tables, 22 indexes |
+| `find_decision_points` | **372 ms** | — | — | Scenario analysis |
+| `taint_analysis` | **533 ms** | — | — | 15 sources, 7 sinks, 0 vulns |
+| `find_duplicates` | **796 ms** | — | — | Semantic, minSimilarity=0.8 |
+| `jscpd_detect_clones` | **683 ms** | — | — | Token-based, src/ TS files |
+| `detect_patterns` | **1120 ms** | — | — | 24553 entities, entityLimit=50000 |
+
+#### v6.6 Tracing Tools
+
+| Tool | v6.6 | v6.5 | Δ | Notes |
+|------|------|------|---|-------|
+| `trace_data_flow` | **108 ms** | — | — | handleRequest → response |
+| `trace_backwards` | **122 ms** | — | — | what_affects (entity not found = fast exit) |
+| `trace_flow` | **369 ms** | 383 ms | **-4%** | 27K nodes, graph load |
+
+#### v6.6 Info Tools
+
+| Tool | v6.6 | v6.5 | Notes |
+|------|------|------|-------|
+| `get_version` | **41 ms** | 2 ms | Warm (includes session overhead) |
+| `get_graph_stats` | **172 ms** | 298 ms | **-42%**, CBOR decode + iterator |
+| `get_graph_health` | **257 ms** | — | entities + rels + sample |
+| `get_metrics` | **128 ms** | — | Memory + graph stats |
+
+#### v6.6 Graph Metrics
+
+| Tool | v6.6 | v6.5 | Δ | Notes |
+|------|------|------|---|-------|
+| `graph_metrics(pagerank)` | **413 ms** | 684 ms | **-40%** | 26494 nodes |
+| `graph_metrics(louvain)` | **—** | 742 ms | — | 259 communities, modularity=0.734 (output >51KB) |
+| `analyze_state_impact` | **—** | 823 ms | — | 2 scenarios (output >51KB) |
+
+#### Performance Tiers (v6.6) — UltraCode (27K entities)
+
+| Tier | Time | Tools |
+|------|------|-------|
+| **Instant** (<100 ms) | 41-85 ms | `get_version`, `cross_language_search` |
+| **Fast** (100-200 ms) | 108-206 ms | `trace_data_flow`, `suggest_refactoring`, `get_metrics`, `detect_technology_stack`, `find_similar_code`, `get_members`, `get_entity_history`, `list_entity_relationships`, `analyze_hotspots`, `get_graph_stats`, `find_related_concepts`, `pattern_search(entity)`, `semantic_search`, `pattern_search(semantic)`, `analyze_code_impact` |
+| **Medium** (200-600 ms) | 217-533 ms | `check_entity_patterns`, `get_graph_health`, `get_database_schema`, `trace_flow`, `trace_backwards`, `find_decision_points`, `graph_metrics(pagerank)`, `taint_analysis` |
+| **Heavy** (600+ ms) | 683-1120 ms | `jscpd_detect_clones`, `find_duplicates`, `graph_metrics(louvain)`, `analyze_state_impact`, `detect_patterns` |
+
+**Key wins v6.5→v6.6**: `get_graph_stats` **-42%** (CBOR + iterator), `graph_metrics(pagerank)` **-40%** (faster graph load from CBOR metadata), `semantic_search` **-12%**. Cross-domain linkers skip saves ~300ms on non-swagger/proto/graphql projects.
+
+---
+
+### Previous (v6.5, native SQLite, multi-DB)
+
+Migrated from `@libsql/client` to native SQLite (`better-sqlite3` / `bun:sqlite`) via `NativeSQLiteClient`.
+Key improvements: prepared statement cache (2-5x), `db.transaction()` instead of IPC `batch()` (3-10x), no async IPC overhead.
+
+**UltraCode**: 275K LOC, 704 files, 27K entities, 53K rels
+
+| Tool | v6.5 | v6.4 | Δ | Notes |
+|------|------|------|---|-------|
+| `find_similar_code` | **86 ms** | 61 ms | +41% | FAISS noise, within variance |
+| `get_members` | **110 ms** | 82 ms | +34% | Single file, 19 entities |
+| `pattern_search(entity)` | **157 ms** | 238 ms | **-34%** | SIMD regex + SQLite lookup |
+| `semantic_search` | **217 ms** | 461 ms | **-53%** | Prepared stmt cache |
+| `analyze_hotspots` | **137 ms** | 134 ms | ~same | Top-5 complexity |
+| `analyze_code_impact` | **179 ms** | 510 ms | **-65%** | batch BFS, `db.transaction()` |
+| `trace_flow` | **383 ms** | 557 ms | **-31%** | 27K nodes |
+| `get_graph_stats` | **298 ms** | 226 ms | +32% | First call (cold) |
+| `graph_metrics(pagerank)` | **684 ms** | — | — | 27K nodes |
+| `graph_metrics(louvain)` | **742 ms** | — | — | 227 communities |
+
+---
+
+### Previous (v6.4, staging tables, multi-DB)
 
 Benchmarked on two projects. All server-side `durationms` from log.
 

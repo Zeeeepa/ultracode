@@ -50,6 +50,12 @@ export const SUPPORTED_CODE_EXTENSIONS = [
   ".html",
   ".htm", // HTML
   ".json", // JSON with AST parsing (swagger, package.json, tsconfig.json)
+  ".proto", // Protocol Buffers with AST parsing
+  ".graphql",
+  ".gql", // GraphQL schemas with AST parsing
+  ".sql", // SQL schema parsing (tables, views, procedures)
+  ".linq", // LINQPad queries
+  ".prisma", // Prisma schema
   ".zig",
   ".zon", // Zig
   ".tpl", // Helm templates
@@ -74,10 +80,7 @@ export const SUPPORTED_DATA_EXTENSIONS = [
   ".mdx", // Documentation
   ".txt", // Plain text
   ".svg", // Vector graphics (often in code)
-  ".graphql",
-  ".gql", // GraphQL schemas
-  ".proto", // Protocol Buffers
-  ".sql", // SQL scripts
+  // ".sql" moved to SUPPORTED_CODE_EXTENSIONS for DB schema parsing
   ".env",
   ".env.example", // Environment configs
   ".gitignore",

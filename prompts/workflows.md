@@ -229,7 +229,9 @@ Leverage version history for change tracking and time travel:
 
 **Key benefits of Prolly Tree history:**
 - `changedInLastCommits` / `changedSinceMs` filters dramatically speed up search
-- `highlightRecentChanges` on impact analysis shows active conflict zones
+- `highlightRecentChanges` available on **10 diagnostic tools** — shows which entities in the analysis results were recently modified:
+  - `analyze_code_impact`, `analyze_hotspots`, `trace_flow`, `trace_backwards` (existed before)
+  - `analyze_stacktrace`, `detect_patterns`, `analyze_state_chaos`, `trace_data_flow`, `analyze_state_impact`, `find_decision_points` (new)
 - `get_entity_history` reveals how code evolved over time
 - `checkout_commit` enables viewing any historical state without git checkout
 

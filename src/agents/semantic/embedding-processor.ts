@@ -264,6 +264,36 @@ export function buildVectorMetadata(entity: ParsedEntity, modelName: string): Re
     metadata["paramCount"] = entity.parameters.length;
   }
 
+  // Add antipattern hint signals for security/quality filtering
+  const apHints = entity.antipatternHints;
+  if (apHints) {
+    if (apHints.typeAssertionCount > 0) metadata["hasTypeAssertions"] = true;
+    if (apHints.regexLiterals.length > 0) metadata["hasRegexLiterals"] = true;
+    if (apHints.innerHtmlAssignCount > 0 || apHints.regexLiterals.length > 0) {
+      metadata["hasSecurityHints"] = true;
+    }
+  }
+
+  // Python-specific hint signals
+  const pyHints = entity.metadata?.["pythonHints"] as
+    | { bareExceptCount?: number; evalExecCount?: number; openWithoutWithCount?: number; asyncNoAwaitCount?: number }
+    | undefined;
+  if (pyHints) {
+    if ((pyHints.bareExceptCount ?? 0) > 0) metadata["hasBareExcept"] = true;
+    if ((pyHints.evalExecCount ?? 0) > 0) metadata["hasSecurityHints"] = true;
+    if ((pyHints.openWithoutWithCount ?? 0) > 0) metadata["hasResourceLeak"] = true;
+    if ((pyHints.asyncNoAwaitCount ?? 0) > 0) metadata["hasAsyncIssue"] = true;
+  }
+
+  // Zig-specific metadata signals
+  const zigOps = entity.metadata?.["zigOps"] as Record<string, number> | undefined;
+  if (zigOps) {
+    if ((zigOps["forceUnwrapCount"] ?? 0) > 0) metadata["hasForceUnwrap"] = true;
+    if ((zigOps["unsafeCastCount"] ?? 0) > 0) metadata["hasUnsafeCast"] = true;
+    if ((zigOps["allocCallCount"] ?? 0) > 0) metadata["hasAllocations"] = true;
+    if ((zigOps["unreachableCount"] ?? 0) > 0) metadata["hasUnreachable"] = true;
+  }
+
   return metadata;
 }
 
@@ -347,7 +377,7 @@ export async function deduplicateAndCheckCaches(
   getLibSQLAdapter: () => any,
 ): Promise<DeduplicationResult> {
   const seenHashes = new Map<string, number>();
-  const originalIndexToHash: string[] = new Array(texts.length);
+  const originalIndexToHash: string[] = Array.from({ length: texts.length }, () => "");
   const uniqueTexts: string[] = [];
 
   const cacheHits = new Map<string, Float32Array>();

@@ -157,7 +157,8 @@ export class CooccurrenceOperations {
 
     // Query co-occurrences where term appears as either term1 or term2
     // Prioritize by PMI if available, otherwise by count
-    const result = await client.execute({
+    const results: RelatedTerm[] = [];
+    for (const row of client.executeIterator({
       sql: `
         SELECT
           CASE WHEN term1 = ? THEN term2 ELSE term1 END as related_term,
@@ -171,13 +172,16 @@ export class CooccurrenceOperations {
         LIMIT ?
       `,
       args: [normalizedTerm, projectHash, branchName, normalizedTerm, normalizedTerm, limit],
-    });
+    })) {
+      const r = row as Record<string, unknown>;
+      results.push({
+        term: r["related_term"] as string,
+        score: (r["pmi_score"] as number) || (r["count"] as number) * 0.01,
+        count: r["count"] as number,
+      });
+    }
 
-    return result.rows.map((row) => ({
-      term: row["related_term"] as string,
-      score: (row["pmi_score"] as number) || (row["count"] as number) * 0.01,
-      count: row["count"] as number,
-    }));
+    return results;
   }
 
   /**
@@ -198,7 +202,14 @@ export class CooccurrenceOperations {
 
     // Single query for all terms
     const placeholders = normalizedTerms.map(() => "?").join(", ");
-    const result = await client.execute({
+
+    // Group by source term and limit
+    const grouped = new Map<string, RelatedTerm[]>();
+    for (const term of normalizedTerms) {
+      grouped.set(term, []);
+    }
+
+    for (const row of client.executeIterator({
       sql: `
         SELECT
           CASE WHEN term1 IN (${placeholders}) THEN term1 ELSE term2 END as source_term,
@@ -210,26 +221,20 @@ export class CooccurrenceOperations {
           AND (term1 IN (${placeholders}) OR term2 IN (${placeholders}))
         ORDER BY
           CASE WHEN pmi IS NOT NULL THEN pmi ELSE count * 0.01 END DESC
+        LIMIT 2000
       `,
       args: [...normalizedTerms, ...normalizedTerms, projectHash, branchName, ...normalizedTerms, ...normalizedTerms],
-    });
-
-    // Group by source term and limit
-    const grouped = new Map<string, RelatedTerm[]>();
-    for (const term of normalizedTerms) {
-      grouped.set(term, []);
-    }
-
-    for (const row of result.rows) {
-      const sourceTerm = row["source_term"] as string;
-      const relatedTerm = row["related_term"] as string;
+    })) {
+      const r = row as Record<string, unknown>;
+      const sourceTerm = r["source_term"] as string;
+      const relatedTerm = r["related_term"] as string;
       const arr = grouped.get(sourceTerm);
 
       if (arr && arr.length < limitPerTerm) {
         arr.push({
           term: relatedTerm,
-          score: (row["pmi_score"] as number) || (row["count"] as number) * 0.01,
-          count: row["count"] as number,
+          score: (r["pmi_score"] as number) || (r["count"] as number) * 0.01,
+          count: r["count"] as number,
         });
       }
     }

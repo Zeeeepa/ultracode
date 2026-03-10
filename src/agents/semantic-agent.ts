@@ -9,7 +9,7 @@
  *
  * External Dependencies:
  * - @xenova/transformers: https://github.com/xenova/transformers.js - Hugging Face Transformers
- * - @libsql/client: https://github.com/tursodatabase/libsql-client-ts - LibSQL DiskANN
+ * - better-sqlite3 / bun:sqlite: Native SQLite for storage operations
  * - onnxruntime-node: https://onnxruntime.ai/ - ONNX Runtime optimization
  *
  * Architecture References:
@@ -57,7 +57,12 @@ import { HybridSearchEngine } from "../semantic/hybrid-search.js";
 import { SemanticCache } from "../semantic/semantic-cache.js";
 import { VectorStore } from "../semantic/vector-store.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
-import { getCurrentGitBranchOrDefault, getGlobalDbPaths, getProjectHash } from "../shared/storage-paths.js";
+import {
+  getCurrentGitBranchOrDefault,
+  getGlobalDbPaths,
+  getProjectHash,
+  normalizeBranchName,
+} from "../shared/storage-paths.js";
 import {
   DatabaseCorruptionError,
   getGraphStorage,
@@ -573,8 +578,23 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   }
 
   /**
+   * Execute a function with the VectorStore scoped to a specific project.
+   * Ensures correct FAISS index is loaded before the callback runs.
+   */
+  async withProject<T>(projectPath: string, branch: string, fn: (vs: VectorStore) => Promise<T>): Promise<T> {
+    const currentContext = this.vectorStore?.getProjectContext?.();
+    const targetHash = getProjectHash(projectPath);
+    const targetBranch = normalizeBranchName(branch);
+
+    if (currentContext?.projectHash !== targetHash || currentContext?.branchName !== targetBranch) {
+      await this.vectorStore.setProject(projectPath, branch);
+    }
+    return fn(this.vectorStore);
+  }
+
+  /**
    * Switch VectorStore to a new project context.
-   * v3: With unified database, we just change the project context instead of recreating VectorStore.
+   * @deprecated Use withProject() for scoped operations, or let ALS handle graph context.
    *
    * @param projectPath - The project directory path
    * @param branchName - Optional branch name (defaults to 'main')
@@ -951,6 +971,16 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   }
 
   /**
+   * Clear all vectors, FAISS index, and embedding cache. Full reset.
+   */
+  async clearAllVectors(): Promise<void> {
+    await this.vectorStore.clearAllVectors();
+    this.globalCache?.clear();
+    this.semanticMetrics.vectorsStored = 0;
+    log.i("SEMANTIC", "clearAllVectors_done");
+  }
+
+  /**
    * Rebuild vector index after bulk inserts.
    * Uses FAISS HNSW which supports live updates - no explicit rebuild needed.
    * Falls back to LibSQL DiskANN only if FAISS unavailable.
@@ -1094,7 +1124,7 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
     persistentCacheHitCount: number;
   }> {
     const seenHashes = new Map<string, number>();
-    const originalIndexToHash: string[] = new Array(texts.length);
+    const originalIndexToHash: string[] = Array.from({ length: texts.length }, () => "");
     const uniqueTexts: string[] = [];
 
     const cacheHits = new Map<string, Float32Array>();

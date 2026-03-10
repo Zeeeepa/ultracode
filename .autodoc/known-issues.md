@@ -2,7 +2,7 @@
 
 ## 1. Bun + Native Modules
 
-**Problem:** Segfault at ~600-800 embeddings when using Bun with native N-API modules (OpenVINO, LibSQL). Combining two native modules (OpenVINO + LibSQL) makes it worse — crashes drop from ~800 to ~450 embeddings.
+**Problem:** Segfault at ~600-800 embeddings when using Bun with native N-API modules (OpenVINO, better-sqlite3). Combining two native modules (OpenVINO + SQLite) makes it worse — crashes drop from ~800 to ~450 embeddings. (Originally observed with LibSQL, confirmed persists with better-sqlite3.)
 
 **What We Did:**
 
@@ -19,7 +19,7 @@
 panic(thread 21800): Segmentation fault at address 0xFFFFFFFE
 oh no: Bun has crashed. This indicates a bug in Bun, not your code.
 
-# With LibSQL:
+# With SQLite native module:
 panic(main thread): Segmentation fault at address 0xFFFFFFFFFFFFFFFF
 ```
 

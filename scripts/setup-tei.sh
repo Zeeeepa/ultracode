@@ -241,13 +241,24 @@ else
     echo -e "${CYAN}[INFO] Starting in CPU mode...${NC}"
 fi
 
-docker_cmd="$docker_cmd -p $port:80 -v $HOME/.cache/huggingface:/data --restart unless-stopped $image_tag --model-id $model --max-concurrent-requests 512"
+docker_cmd="$docker_cmd -p $port:80 -v $HOME/.cache/huggingface:/data --restart unless-stopped $image_tag --model-id $model"
 
-# Add --dtype if specified (required for pplx-embed: float32)
+# Add --dtype: use provided or default to float16 for GPU performance
 if [ -n "$dtype" ]; then
     docker_cmd="$docker_cmd --dtype $dtype"
     echo -e "${CYAN}[INFO] Using dtype: $dtype${NC}"
+elif [ "$use_gpu" = true ]; then
+    docker_cmd="$docker_cmd --dtype float16"
+    echo -e "${CYAN}[INFO] Using dtype: float16 (GPU optimized)${NC}"
 fi
+
+# Performance-tuned TEI parameters
+docker_cmd="$docker_cmd --max-concurrent-requests 256"
+docker_cmd="$docker_cmd --max-batch-tokens 16384"
+docker_cmd="$docker_cmd --max-batch-requests 64"
+docker_cmd="$docker_cmd --max-client-batch-size 256"
+docker_cmd="$docker_cmd --tokenization-workers 4"
+docker_cmd="$docker_cmd --auto-truncate"
 
 if eval $docker_cmd; then
     echo -e "${GREEN}[OK] TEI started${NC}"

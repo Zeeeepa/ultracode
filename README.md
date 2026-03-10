@@ -40,11 +40,11 @@ With UltraCode, the same agent makes **one MCP call** and gets back all affected
 
 ### Indexing speed
 
-Full indexing of a medium project (~500 files) completes in **3-5 seconds** (parallel parsing + batch SQL + streaming embeddings). After that, `GitWatcher` indexes only changed files — typically **under 200ms** per change.
+Full indexing of a medium project (~500 files) completes in **3-5 seconds** (parallel parsing + batch SQL + streaming embeddings). Large projects like VS Code (~1.8M LOC, 7000+ files) — **~82 seconds** including full embedding generation. After that, `GitWatcher` indexes only changed files — typically **under 200ms** per change.
 
 # Features
 
-MCP server provides **77 tools** for code analysis and modification.
+MCP server provides **78 tools** for code analysis and modification.
 
 ## Search and Navigation
 
@@ -68,13 +68,17 @@ MCP server provides **77 tools** for code analysis and modification.
 | [**analyze_hotspots**](.autodoc/features/analysis.md#analyze_hotspots) | Complex areas with high cyclomatic complexity |
 | [**analyze_state_chaos**](.autodoc/features/analysis.md#analyze_state_chaos) | Analysis of tangled data dependencies |
 | [**analyze_swagger_impact**](.autodoc/features/swagger.md#analyze_swagger_impact) | Swagger/OpenAPI spec change impact analysis |
+| [**analyze_api_impact**](.autodoc/features/api-contracts.md#analyze_api_impact) | Unified API contract impact analysis (Swagger + Protobuf + GraphQL) |
+| [**get_database_schema**](.autodoc/features/database-schema.md#get_database_schema) | Database schema from SQL/Prisma/ORM/Redis with migration analysis and drift detection |
 | [**detect_technology_stack**](.autodoc/features/analysis.md#detect_technology_stack) | Project technology stack detection |
-| [**detect_patterns**](.autodoc/features/patterns.md#detect_patterns) | Detect anti-patterns, best-patterns, code smells, and optimization opportunities with semantic validation |
+| [**detect_patterns**](.autodoc/features/patterns.md#detect_patterns) | Detect anti-patterns, best-patterns, code smells, and optimization opportunities with semantic validation. Includes JIT deoptimization detectors for JS/TS (hidden classes, holey arrays, megamorphic dispatch) |
 | [**check_entity_patterns**](.autodoc/features/patterns.md#check_entity_patterns) | Check specific entity for pattern matches with confidence scores |
 | [**graph_metrics**](.autodoc/features/analysis.md#graph_metrics) | PageRank, Louvain community detection, centrality analysis, and bus factor for architecture understanding |
-| [**taint_analysis**](.autodoc/features/security.md#taint_analysis) | Interprocedural taint analysis: trace untrusted data from sources to sinks, detect SQL injection, XSS, command injection |
+| [**taint_analysis**](.autodoc/features/security.md#taint_analysis) | Interprocedural taint analysis: trace untrusted data from sources to sinks, detect SQL injection, XSS, command injection, missing auth |
 
 ## Static Tracing and Debugging
+
+All tracing and diagnostic tools support `highlightRecentChanges=true` — cross-references found entities with Prolly Tree commit history and annotates recently modified code. This helps identify the likely root cause: a recently changed entity in a crash call chain or a decision point is the first place to look.
 
 | Tool | Description |
 |------|-------------|
@@ -83,6 +87,12 @@ MCP server provides **77 tools** for code analysis and modification.
 | [**trace_data_flow**](.autodoc/features/tracing.md#trace_data_flow) | How data affects state |
 | [**analyze_state_impact**](.autodoc/features/tracing.md#analyze_state_impact) | What changes with different values |
 | [**find_decision_points**](.autodoc/features/tracing.md#find_decision_points) | Branching points in code |
+
+## Architecture Diagrams
+
+| Tool | Description |
+|------|-------------|
+| [**get_architecture_diagram**](.autodoc/features/diagrams.md#get_architecture_diagram) | Generate architecture diagrams in Mermaid, Graphviz DOT, or D2 from code graph |
 
 ## Code Modification
 
@@ -131,6 +141,8 @@ MCP server provides **77 tools** for code analysis and modification.
 | [**cleanup_branches**](.autodoc/features/git.md#cleanup_branches) | Clean up old branches (LRU) |
 
 ## Version History (Prolly Tree)
+
+Prolly Tree stores full entity history with commit-level granularity. Beyond time travel, it powers the **Recent Changes Context** feature: 10 diagnostic tools (`analyze_stacktrace`, `detect_patterns`, `analyze_state_chaos`, `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`, `find_decision_points`, `analyze_code_impact`, `analyze_hotspots`) can annotate their results with recently-changed entity status via `highlightRecentChanges=true`. This means the AI agent sees not just "what's broken" but "what changed recently that could have caused it."
 
 | Tool | Description |
 |------|-------------|
@@ -212,6 +224,10 @@ MCP server provides **77 tools** for code analysis and modification.
 | **Bash** | shfmt + tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
 | **PowerShell** | tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
 | **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
+| **Protobuf** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
+| **GraphQL** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
+| **SQL** | Text + dialect detect | ⭐⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
+| **Prisma** | Text parser | ⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
 
 **Legend:**
 - **Entities** — functions, classes, interfaces, types, enums, variables
@@ -300,7 +316,7 @@ npm install -g ultracode
 >
 > Bun blocks postinstall scripts by default. The `bun pm trust` command allows their execution — no reinstall needed.
 >
-> Other native components (oxc-parser, xxhash-wasm, @libsql/client) ship prebuilt binaries and work without trust.
+> Other native components (oxc-parser, xxhash-wasm, better-sqlite3) ship prebuilt binaries and work without trust.
 
 > **Note**: For full code analysis on different languages, runtimes are required:
 >
@@ -342,6 +358,19 @@ Local models are used for intelligent tasks: embedding model for semantic search
 | **MLX** | ~500 emb/s | ⭐ macOS Apple Silicon (Metal GPU) |
 | **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), universal |
 | **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Can help if main VRAM is occupied by local LLM. |
+
+> **Note for GTX xx50/xx60 laptops (GPU thermal throttling)**
+>
+> Budget NVIDIA GPUs (GTX 1650/1660, RTX 3050/3060, RTX 4050/4060) on laptops often suffer from power limit throttling, which drops TEI/vLLM embedding throughput by ~1000 emb/s. The GPU hits its power limit (PL1) and clocks down mid-batch.
+>
+> **Fix via [ThrottleStop](https://www.techpowerup.com/download/techpowerup-throttlestop/)** (Windows):
+> 1. **TPL** button → set **PL1** to max (55–75 W for laptops), **PL2** to max (90–120 W), **Turbo Time Limit** → 28 sec (max), enable **Clamp PL1/PL2** (TPL button turns green)
+> 2. Main window → **Speed Shift - EPP** → `0` (max performance, reduces CPU throttle)
+> 3. **BD PROCHOT Offset** → `0` (disables CPU thermal trigger for GPU)
+> 4. **Limit Reasons** → check what's blocking (if "MS Platform" — ignore)
+> 5. **Apply** → save profile. CPU yields thermal budget to GPU, TEI batches stabilize.
+>
+> This typically gives **+1000 emb/s** on affected hardware.
 
 **Step 2: LLM Provider** (AutoDoc, refactoring)
 
@@ -453,8 +482,8 @@ Main parameters:
 |---------|-----------|---------|-------------|
 | **logging** | `level` | `info` | Log level: debug, info, warn, error |
 | | `maxFiles` | `5` | Number of log files for rotation |
-| **database** | `mode` | `WAL` | libSQL mode: WAL, DELETE, TRUNCATE |
-| | `cacheSize` | `10000` | libSQL cache size |
+| **database** | `mode` | `WAL` | SQLite journal mode: WAL, DELETE, TRUNCATE |
+| | `cacheSize` | `10000` | SQLite cache size |
 | **indexing** | `autoSwitchOnBranchChange` | `true` | Auto-switch DB on branch change |
 | | `maxBranchesPerRepo` | `10` | Max branches per repository |
 | | `incrementalThreshold` | `20` | File threshold for full reindexing |

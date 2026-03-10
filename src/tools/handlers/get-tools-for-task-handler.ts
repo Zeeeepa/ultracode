@@ -97,8 +97,12 @@ export class GetToolsForTaskHandler extends BaseToolHandler<GetToolsForTaskArgs>
         tools: ["taint_analysis", "detect_patterns"],
       },
       "architecture metrics": {
-        keywords: ["pagerank", "community", "bus factor", "centrality", "metric", "important", "architecture"],
+        keywords: ["pagerank", "community", "bus factor", "centrality", "metric", "important"],
         tools: ["graph_metrics", "analyze_hotspots"],
+      },
+      "architecture diagram": {
+        keywords: ["diagram", "architecture", "visualize", "mermaid", "graphviz", "d2", "flowchart", "class diagram"],
+        tools: ["get_architecture_diagram", "get_graph"],
       },
     };
 

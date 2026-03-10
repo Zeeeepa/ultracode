@@ -1,12 +1,12 @@
 /**
- * SQLite Adapter - Sync SQLite for Bun runtime only
+ * SQLite Adapter - Sync SQLite for all runtimes
  *
  * Architecture:
- * - Bun: uses bun:sqlite for fast sync cache operations
- * - Node.js: sync SQLite NOT available, use libsql (async) instead
+ * - Bun: uses bun:sqlite for fast sync operations
+ * - Node.js: uses better-sqlite3 for fast sync operations
  *
- * This adapter is used for LayeredCacheManager and VectorCacheManager
- * which need fast sync reads for delta lookups.
+ * This adapter is used for LayeredCacheManager, VectorCacheManager,
+ * and NativeSQLiteClient (libsql replacement).
  */
 
 import { log } from "../logging/index.js";
@@ -98,8 +98,7 @@ export function isBunRuntime(): boolean {
 }
 
 /**
- * Load SQLite module - only available under Bun runtime
- * @throws Error if running under Node.js (use libsql instead)
+ * Load SQLite module - Bun uses bun:sqlite, Node.js uses better-sqlite3
  */
 export function loadSQLiteModule(): SQLiteDatabaseConstructor {
   if (isBunRuntime()) {
@@ -107,18 +106,15 @@ export function loadSQLiteModule(): SQLiteDatabaseConstructor {
     return loadBunSQLite();
   }
 
-  throw new Error(
-    "[SQLiteAdapter] Sync SQLite not available under Node.js. " +
-      "Use libsql (async) for storage operations. " +
-      "Sync cache (LayeredCacheManager) is only available under Bun runtime.",
-  );
+  log.i("SQLITEADAPT", "node_detected", { msg: "using better-sqlite3" });
+  return loadBetterSqlite3();
 }
 
 /**
- * Check if sync SQLite is available (only under Bun)
+ * Check if sync SQLite is available (always true — Bun has bun:sqlite, Node has better-sqlite3)
  */
 export function isSyncSQLiteAvailable(): boolean {
-  return isBunRuntime();
+  return true;
 }
 
 /**
@@ -207,9 +203,13 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
           get: <R = T>(...params: unknown[]): R | undefined => stmt.get(...params) as R | undefined,
           all: <R = T>(...params: unknown[]): R[] => stmt.all(...params) as R[],
           iterate: function* <R = T>(...params: unknown[]): IterableIterator<R> {
-            // Bun's iterate returns iterator directly
-            const iter = stmt.values(...params);
-            for (const row of iter) {
+            // TODO: Bun lacks native streaming iterate() with bound parameters.
+            // stmt.values() returns positional arrays (not named objects).
+            // Fallback: stmt.all() + yield gives correct named objects but no streaming benefit.
+            // With LIMIT/OFFSET chunking (5000 rows per page), memory impact is acceptable.
+            // Tracking: see issues/bun-iterate-todo.md
+            const rows = stmt.all(...params);
+            for (const row of rows) {
               yield row as R;
             }
           },
@@ -314,5 +314,16 @@ function loadBunSQLite(): SQLiteDatabaseConstructor {
   }
 }
 
-// better-sqlite3 removed - only bun:sqlite is supported for sync operations
-// Under Node.js, use libsql (async) instead
+/**
+ * Load better-sqlite3 module (for Node.js runtime)
+ * better-sqlite3 API is already compatible with our SQLiteDatabase interface.
+ */
+function loadBetterSqlite3(): SQLiteDatabaseConstructor {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require("better-sqlite3");
+    return Database as SQLiteDatabaseConstructor;
+  } catch (error) {
+    throw new Error(`Failed to load better-sqlite3: ${(error as Error).message}`, { cause: error });
+  }
+}

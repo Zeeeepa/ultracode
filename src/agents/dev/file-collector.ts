@@ -83,6 +83,10 @@ const DEFAULT_EXCLUDED_DIR_NAMES = new Set([
   "archive",
   "backups",
   "backup",
+  // Vendored third-party directories (full skip — not parsed, not indexed)
+  "third_party",
+  "3rdparty",
+  "vendor",
 ]);
 
 /**

@@ -91,6 +91,16 @@ const CATCH_RE = /\bcatch\s*\|([^|]*)\|/g;
 const DEFER_RE = /\bdefer\s+/g;
 const ERRDEFER_RE = /\berrdefer\s+/g;
 const RETURN_RE = /\breturn\s*([^;\n}]+)?/g;
+const ORELSE_RE = /\borelse\b/g;
+const OPTIONAL_UNWRAP_RE = /\.\?/g;
+const BARE_CATCH_RE = /\bcatch\s*(?:\w+\s*)?\{/g;
+
+// Zig-specific safety/risk patterns
+const UNSAFE_CAST_RE = /@(?:ptrCast|intFromPtr|alignCast|ptrFromInt|intFromFloat)/g;
+const UNREACHABLE_RE = /\bunreachable\b/g;
+const ALLOC_CALL_RE = /\.(?:alloc|create|realloc|allocSentinel)\s*\(/g;
+const FREE_CALL_RE = /\.(?:free|destroy|deinit)\s*\(/g;
+const IF_UNWRAP_RE = /\bif\s*\([^)]*\)\s*\|([^|]*)\|/g;
 
 // Function with body pattern (for second-pass call extraction)
 const FUNC_WITH_BODY_RE = /\bfn\s+(\w+)\s*\([^)]*\)[^{]*\{/g;
@@ -615,6 +625,11 @@ export class ZigNativeParser {
           if (controlFlow.branches.length > 0 || controlFlow.loops.length > 0 || controlFlow.exceptions.length > 0) {
             childEntity.controlFlow = controlFlow;
           }
+
+          const zigOps = this.extractZigSpecificOps(methodBody);
+          if (zigOps.forceUnwrapCount > 0 || zigOps.safeUnwrapCount > 0) {
+            childEntity.metadata = { ...(childEntity.metadata ?? {}), zigOps };
+          }
         }
       }
     }
@@ -827,6 +842,11 @@ export class ZigNativeParser {
       if (controlFlow.branches.length > 0 || controlFlow.loops.length > 0 || controlFlow.exceptions.length > 0) {
         funcEntity.controlFlow = controlFlow;
       }
+
+      const zigOps = this.extractZigSpecificOps(body);
+      if (zigOps.forceUnwrapCount > 0 || zigOps.safeUnwrapCount > 0) {
+        funcEntity.metadata = { ...(funcEntity.metadata ?? {}), zigOps };
+      }
     }
 
     if (functionsProcessed > 0) {
@@ -983,10 +1003,16 @@ export class ZigNativeParser {
       exceptions.push({ type: "try", location: dummyLocation });
     }
 
-    // catch
+    // catch |err| (handled catch with captured error variable)
     this.resetRegex(CATCH_RE);
     while ((match = CATCH_RE.exec(body))) {
-      exceptions.push({ type: "catch", location: dummyLocation });
+      exceptions.push({ type: "catch", catchType: match[1]?.trim(), location: dummyLocation });
+    }
+
+    // bare catch (catch {} or catch unreachable — empty/swallowed catch)
+    this.resetRegex(BARE_CATCH_RE);
+    while ((match = BARE_CATCH_RE.exec(body))) {
+      exceptions.push({ type: "catch", catchType: "bare", location: dummyLocation });
     }
 
     // defer (similar to finally)
@@ -995,10 +1021,16 @@ export class ZigNativeParser {
       exceptions.push({ type: "finally", location: dummyLocation });
     }
 
-    // errdefer (catch-like)
+    // errdefer (error cleanup — semantically closer to finally than catch)
     this.resetRegex(ERRDEFER_RE);
     while ((match = ERRDEFER_RE.exec(body))) {
-      exceptions.push({ type: "catch", location: dummyLocation });
+      exceptions.push({ type: "finally", catchType: "errdefer", location: dummyLocation });
+    }
+
+    // orelse (optional/error unwrap operator)
+    this.resetRegex(ORELSE_RE);
+    while ((match = ORELSE_RE.exec(body))) {
+      exceptions.push({ type: "catch", catchType: "orelse", location: dummyLocation });
     }
 
     // returns
@@ -1008,6 +1040,70 @@ export class ZigNativeParser {
     }
 
     return { branches, loops, exceptions, returns, awaits };
+  }
+
+  /**
+   * Extract Zig-specific optional unwrap operations from body.
+   * .? = force unwrap (unsafe), if(x) |val| = safe unwrap
+   */
+  private extractZigSpecificOps(body: string): {
+    forceUnwrapCount: number;
+    safeUnwrapCount: number;
+    deferCount: number;
+    errdeferCount: number;
+    tryCount: number;
+    unsafeCastCount: number;
+    unreachableCount: number;
+    allocCallCount: number;
+    freeCallCount: number;
+  } {
+    this.resetRegex(OPTIONAL_UNWRAP_RE);
+    let forceUnwrapCount = 0;
+    while (OPTIONAL_UNWRAP_RE.exec(body)) forceUnwrapCount++;
+
+    this.resetRegex(IF_UNWRAP_RE);
+    let safeUnwrapCount = 0;
+    while (IF_UNWRAP_RE.exec(body)) safeUnwrapCount++;
+
+    this.resetRegex(DEFER_RE);
+    let deferCount = 0;
+    while (DEFER_RE.exec(body)) deferCount++;
+
+    this.resetRegex(ERRDEFER_RE);
+    let errdeferCount = 0;
+    while (ERRDEFER_RE.exec(body)) errdeferCount++;
+
+    this.resetRegex(TRY_RE);
+    let tryCount = 0;
+    while (TRY_RE.exec(body)) tryCount++;
+
+    this.resetRegex(UNSAFE_CAST_RE);
+    let unsafeCastCount = 0;
+    while (UNSAFE_CAST_RE.exec(body)) unsafeCastCount++;
+
+    this.resetRegex(UNREACHABLE_RE);
+    let unreachableCount = 0;
+    while (UNREACHABLE_RE.exec(body)) unreachableCount++;
+
+    this.resetRegex(ALLOC_CALL_RE);
+    let allocCallCount = 0;
+    while (ALLOC_CALL_RE.exec(body)) allocCallCount++;
+
+    this.resetRegex(FREE_CALL_RE);
+    let freeCallCount = 0;
+    while (FREE_CALL_RE.exec(body)) freeCallCount++;
+
+    return {
+      forceUnwrapCount,
+      safeUnwrapCount,
+      deferCount,
+      errdeferCount,
+      tryCount,
+      unsafeCastCount,
+      unreachableCount,
+      allocCallCount,
+      freeCallCount,
+    };
   }
 
   // ===========================================================================

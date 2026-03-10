@@ -359,10 +359,10 @@ Requirements: CUDA Toolkit 12.x, cmake-js, node-addon-api
 
 ## Storage Layer
 
-**libSQL-based unified storage** (`src/storage/`):
+**Native SQLite storage** (`src/storage/`) — uses better-sqlite3 (Node) / bun:sqlite (Bun) via `NativeSQLiteClient`:
 
 - **GraphStorageLibSQL** (`graph-storage-libsql.ts`) - main interface for entities/relationships/vectors
-- **LibSQLGraphAdapter** (`libsql-graph-adapter.ts`) - adapter for libSQL/Turso
+- **LibSQLGraphAdapter** (`libsql-graph-adapter.ts`) - adapter with multi-DB support
 - **BunSQLiteAdapter** (`bun-sqlite-adapter.ts`) - adapter for Bun native SQLite
 - **VectorStore** (`src/semantic/vector-store.ts`) - integration for semantic search
 - **GraphStorageFactory** (`graph-storage-factory.ts`) - factory for creating storage
@@ -373,7 +373,7 @@ Requirements: CUDA Toolkit 12.x, cmake-js, node-addon-api
 - **Aggressive pragmas** for maximum write speed:
   - `journal_mode = OFF` - no journal (data can be regenerated)
   - `synchronous = OFF` - no fsync (11,300 entities/sec)
-- Turso edge database support
+- Prepared statement cache via `NativeSQLiteClient` (2-5x speedup)
 
 ## Semantic Search & Embeddings
 

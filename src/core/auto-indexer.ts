@@ -9,7 +9,7 @@ import { log } from "../logging/index.js";
 import type { Agent, AgentTask } from "../types/agent.js";
 import { AgentType } from "../types/agent.js";
 import { createRequestId } from "../utils/logger.js";
-import { setIndexingState } from "./indexing-state.js";
+import { setIndexingState, setPostIndexingPromise } from "./indexing-state.js";
 import { knowledgeBus } from "./knowledge-bus.js";
 
 /**
@@ -36,7 +36,11 @@ interface AgentWithEmbeddingStats extends Agent {
     speedPerSec: number;
     workers: number;
     batches: number;
+    avgMsPerEmb?: number | undefined;
+    maxBatchMs?: number | undefined;
+    cacheHits?: number | undefined;
   } | null;
+  getTeiBatchLog?: () => Array<{ n: number; ms: number }>;
 }
 
 /**
@@ -329,11 +333,23 @@ export async function performAutoIndex(
   let resultSuccess = true;
 
   try {
-    // Optional reset: clear storage before indexing
+    // Optional reset: clear storage and vectors before indexing
     if (opts.reset) {
       const graphStorage = await ctx.getGraphStorage();
-      graphStorage.setProject(targetDir);
+      // Project context is set via ALS (callers must use runWithRequestContext)
       await graphStorage.clear();
+
+      // Clear FAISS vectors + embedding cache (otherwise reset is incomplete)
+      if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
+        try {
+          const semanticAgent = await ctx.getSemanticAgent();
+          await semanticAgent.clearAllVectors();
+          log.d("INDEXER", "vectors_cleared", { dir: targetDir });
+        } catch (err) {
+          log.w("INDEXER", "vectors_clear_fail", { err: (err as Error).message });
+        }
+      }
+
       log.d("INDEXER", "storage_cleared", { dir: targetDir });
     }
 
@@ -404,6 +420,14 @@ export async function performAutoIndex(
       try {
         const devAgentWithStats = devAgent as AgentWithEmbeddingStats | undefined;
         const embStats = devAgentWithStats?.getEmbeddingStats?.();
+        // Per-batch TEI timing: compact "ms,ms,ms..." + batch sizes if varied
+        const batchLog = devAgentWithStats?.getTeiBatchLog?.() ?? [];
+        if (batchLog.length > 0) {
+          const msValues = batchLog.map((b) => b.ms).join(",");
+          const sizes = new Set(batchLog.map((b) => b.n));
+          const sizeStr = sizes.size === 1 ? `${[...sizes][0]}` : batchLog.map((b) => b.n).join(",");
+          log.i("EMBEDDING", "tei_batches", { cnt: batchLog.length, bsz: sizeStr, ms: msValues });
+        }
         if (embStats && embStats.total > 0) {
           log.i("EMBEDDING", "emb_summary", {
             total: embStats.total,
@@ -411,6 +435,9 @@ export async function performAutoIndex(
             speed: `${embStats.speedPerSec}/s`,
             workers: embStats.workers,
             batches: embStats.batches,
+            avgms: embStats.avgMsPerEmb,
+            maxbatchms: embStats.maxBatchMs,
+            cachehits: embStats.cacheHits,
           });
           resultEmbeddingPerf = {
             totalEmbeddings: embStats.total,
@@ -422,6 +449,7 @@ export async function performAutoIndex(
       } catch {
         // Non-critical
       }
+      log.flush();
 
       // Collect oversized warning synchronously (needed for MCP response)
       if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
@@ -441,13 +469,14 @@ export async function performAutoIndex(
       }
 
       // Fire-and-forget: all post-indexing work runs in background
-      // MCP response returns immediately — tools are already usable
+      // MCP response returns immediately — but heavy tools (detect_patterns etc.)
+      // will automatically await this promise before running via waitForPostIndexing()
       const postIndexCtx = ctx;
       const postIndexDir = targetDir;
       const postIndexIncremental = incremental;
       const postIndexEntityCount = resultEntityCount;
       const postIndexStart = startTime;
-      void (async () => {
+      const bgPromise = (async () => {
         // OPTIMIZATION: Run FAISS save in parallel with watcher/tracking/PMI.
         // FAISS save (~5s) is I/O-bound and independent from graph operations.
         // Watcher + PMI don't need FAISS to be persisted — they work with in-memory data.
@@ -516,9 +545,9 @@ export async function performAutoIndex(
           log.w("INDEXER", "storage_flush_fail", { err: (error as Error).message });
         }
 
-        // 5. Publish index:completed event (triggers PMI, AutoDoc, etc.)
-        // Don't wait for FAISS save — PMI and AutoDoc work with graph data, not vectors
-        knowledgeBus.publish(
+        // 5. Publish index:completed and AWAIT all subscribers (PMI, AutoDoc, etc.)
+        // This ensures heavy tools (detect_patterns) don't start while subscribers are busy
+        await knowledgeBus.publishAsync(
           "index:completed",
           {
             directory: postIndexDir,
@@ -528,12 +557,25 @@ export async function performAutoIndex(
           },
           "auto-indexer",
         );
-        log.d("INDEXER", "post_index_bg_done", { elapsed: Date.now() - postIndexStart });
+        log.i("INDEXER", "post_index_bg_done", { elapsed: Date.now() - postIndexStart });
 
         // 6. Await FAISS save completion (don't orphan the promise)
         await faissSavePromise;
-        log.d("INDEXER", "faiss_save_bg_done", { elapsed: Date.now() - postIndexStart });
+
+        // 7. Force full GC to reclaim indexing garbage (AST nodes, embedding vectors,
+        // intermediate entity objects). Without this, detect_patterns in the same session
+        // crashes with JSC GC segfault (SlotVisitor::drainFromShared) because the heap
+        // is full of stale objects from indexing that haven't been collected yet.
+        if (typeof globalThis["Bun"]?.["gc"] === "function") {
+          globalThis["Bun"]["gc"](true); // true = full synchronous GC
+          log.i("INDEXER", "post_index_gc", { msg: "forced full GC after indexing" });
+        }
+
+        log.i("INDEXER", "all_bg_done", { elapsed: Date.now() - postIndexStart });
+        log.flush();
       })();
+      // Register background promise so heavy tools can await it
+      setPostIndexingPromise(targetDir, bgPromise);
     } else {
       resultSuccess = false;
       log.w("INDEXER", "auto_index_warn", { dur: duration, req: requestId });

@@ -40,7 +40,10 @@
 - **Поиск**: `semantic_search`, `pattern_search`, `find_similar_code`
 - **Навигация**: `get_members`, `list_entity_relationships`
 - **Анализ**: `analyze_code_impact`, `detect_code_clones`, `analyze_hotspots`
+- **API-контракты**: `analyze_api_impact` (Swagger + Protobuf + GraphQL), `analyze_swagger_impact`
+- **База данных**: `get_database_schema` (SQL/Prisma/ORM/Redis + дрифт миграций)
 - **Трассировка**: `trace_flow`, `trace_backwards`, `trace_data_flow`
+- **Визуализация**: `get_architecture_diagram` (Mermaid/Graphviz/D2 из графа кода)
 - **История**: `list_commits`, `diff_commits`, `checkout_commit`, `get_entity_history`
 - **Модификация**: `modify_code`, `rename_symbol`, `create_file`, `add_member` *(авто-валидация)*
 
@@ -51,6 +54,7 @@
 - `pattern_search` — regex + framework-aware поиск
 - `get_members` — список сущностей файла
 - `detect_technology_stack` — определение стека проекта
+- `get_architecture_diagram` — генерация архитектурных диаграмм (Mermaid/Graphviz/D2)
 
 **Plan Agent** (оценка рисков):
 - `analyze_code_impact` — что сломается при изменении

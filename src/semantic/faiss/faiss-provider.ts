@@ -316,7 +316,7 @@ class FaissProvider {
     const count = embeddings.length;
 
     // Pre-allocate flat vector array (optimization: avoid push/spread overhead)
-    const ids: string[] = new Array(count);
+    const ids: string[] = Array.from({ length: count }, () => "");
     const vectors = new Float32Array(count * dim);
 
     for (let i = 0; i < count; i++) {
@@ -761,6 +761,11 @@ class FaissProvider {
     }
 
     log.d("FAISS", "Removed embeddings", { count: ids.length });
+  }
+
+  async clearAll(): Promise<void> {
+    this.idSet.clear();
+    log.i("FAISS", "clearAll (legacy provider)");
   }
 }
 

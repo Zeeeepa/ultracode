@@ -7,7 +7,7 @@
  */
 
 import { log } from "../../logging/index.js";
-import type { LibSQLGraphAdapter } from "../libsql-graph-adapter.js";
+import type { GraphAdapter } from "../graph-adapter.js";
 import { TimeTravelManager } from "./time-travel.js";
 import type { GraphCommit } from "./types.js";
 
@@ -35,7 +35,7 @@ export interface RecentChangeResult {
  * Returns null if Prolly Tree is unavailable or insufficient commits exist.
  */
 export async function getRecentlyChangedEntities(
-  adapter: LibSQLGraphAdapter,
+  adapter: GraphAdapter,
   filter: RecentChangeFilter,
 ): Promise<RecentChangeResult | null> {
   const start = performance.now();

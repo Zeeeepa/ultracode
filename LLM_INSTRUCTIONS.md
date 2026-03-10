@@ -69,7 +69,7 @@ On long coding sessions, this compounds to **18,000%+ efficiency gain**.
 | Merging branches | `semantic_merge` | AI-powered 3-way merge with diff3 |
 | Security analysis | `taint_analysis` | SQL injection, XSS, command injection detection |
 | Architecture metrics | `graph_metrics` | PageRank, Louvain, centrality, bus factor |
-| Pattern detection | `detect_patterns` | Anti-patterns, best practices, code smells |
+| Pattern detection | `detect_patterns` | Anti-patterns, best practices, code smells, JIT deopt |
 | Documentation | `autodoc_generate`, `autodoc_search` | Generate and search docs with LLM |
 | Getting started | `get_help`, `get_tools_for_task` | Guides and tool recommendations |
 

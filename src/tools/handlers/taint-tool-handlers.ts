@@ -5,7 +5,16 @@ import { MAX_PAGE_SIZE, paginate, SAFE_LIMITS } from "../response-limits.js";
 const TaintAnalysisSchema = z.object({
   projectPath: z.string().optional(),
   category: z
-    .enum(["sql_injection", "xss", "command_injection", "path_traversal", "ssrf", "prototype_pollution", "all"])
+    .enum([
+      "sql_injection",
+      "xss",
+      "command_injection",
+      "path_traversal",
+      "ssrf",
+      "prototype_pollution",
+      "missing_auth",
+      "all",
+    ])
     .optional()
     .default("all"),
   maxDepth: z.number().optional().default(15),

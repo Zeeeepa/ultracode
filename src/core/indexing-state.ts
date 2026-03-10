@@ -14,6 +14,9 @@ interface IndexingState {
 /** Per-project indexing state tracking */
 const indexingProjects = new Map<string, IndexingState>();
 
+/** Post-indexing background work (embedding generation, FAISS save, etc.) */
+const postIndexingPromises = new Map<string, { promise: Promise<void>; startTime: number }>();
+
 /** Legacy global state for backward compatibility */
 let legacyIndexingDirectory: string | null = null;
 
@@ -24,13 +27,27 @@ let legacyIndexingDirectory: string | null = null;
 /** Legacy export for compatibility (no-op now) */
 export const registerAsyncLoopStarter = (_starter: () => void): void => {};
 
-/** Legacy export for compatibility (always returns false) */
+/**
+ * Heavy analysis guard — suspends background watchers (AutoDoc, FileWatcher, GitWatcher)
+ * during CPU-intensive tool execution to prevent bun:sqlite concurrent access crashes.
+ *
+ * Usage:
+ *   suspendTimers();
+ *   try { ... heavy work ... } finally { resumeTimers(); }
+ */
+let _timersSuspended = false;
+
 export function areTimersSuspended(): boolean {
-  return false;
+  return _timersSuspended;
 }
 
-/** Legacy export for compatibility (no-op now) */
-export function resumeTimers(): void {}
+export function suspendTimers(): void {
+  _timersSuspended = true;
+}
+
+export function resumeTimers(): void {
+  _timersSuspended = false;
+}
 
 /**
  * Check if indexing is currently in progress for ANY project
@@ -73,6 +90,80 @@ export function getIndexingStatus(): {
     elapsedSeconds: firstState ? Math.round((Date.now() - firstState.startTime) / 1000) : null,
     allProjects: Array.from(indexingProjects.keys()),
   };
+}
+
+// =============================================================================
+// POST-INDEXING STATE (background work: embeddings, FAISS, PMI, AutoDoc, etc.)
+// The bgPromise now covers ALL background work including knowledgeBus subscribers.
+// No hardcoded cooldown — we await the actual completion of all subscribers.
+// =============================================================================
+
+function normalizeDir(dir: string): string {
+  return dir.toLowerCase().replace(/\\/g, "/");
+}
+
+/**
+ * Register a post-indexing background promise.
+ * The promise should resolve when ALL background work is done
+ * (embeddings, FAISS save, PMI, AutoDoc, etc.).
+ * Heavy tools (detect_patterns, graph_metrics, etc.) will await this before running.
+ */
+export function setPostIndexingPromise(directory: string, promise: Promise<void>): void {
+  const key = normalizeDir(directory);
+  postIndexingPromises.set(key, { promise, startTime: Date.now() });
+
+  // Auto-cleanup when promise completes
+  promise.finally(() => {
+    postIndexingPromises.delete(key);
+  });
+}
+
+/**
+ * Check if post-indexing background work is active for a project
+ */
+export function isPostIndexing(directory: string): boolean {
+  return postIndexingPromises.has(normalizeDir(directory));
+}
+
+/**
+ * Wait for post-indexing background work to complete (with timeout).
+ * Returns true if waited, false if nothing to wait for.
+ */
+export async function waitForPostIndexing(directory: string, timeoutMs = 120_000): Promise<boolean> {
+  const key = normalizeDir(directory);
+  const entry = postIndexingPromises.get(key);
+  if (!entry) return false;
+
+  // Race: actual completion vs safety timeout
+  await Promise.race([
+    entry.promise,
+    new Promise<void>((resolve) => {
+      if (typeof globalThis.Bun !== "undefined") {
+        (globalThis.Bun as any).sleep(timeoutMs).then(resolve);
+      } else {
+        setTimeout(resolve, timeoutMs);
+      }
+    }),
+  ]);
+
+  postIndexingPromises.delete(key);
+  return true;
+}
+
+/**
+ * Get post-indexing status for diagnostics
+ */
+export function getPostIndexingStatus(): { active: boolean; directories: string[]; elapsedSeconds: number[] } {
+  if (postIndexingPromises.size === 0) {
+    return { active: false, directories: [], elapsedSeconds: [] };
+  }
+  const dirs: string[] = [];
+  const elapsed: number[] = [];
+  for (const [dir, entry] of postIndexingPromises) {
+    dirs.push(dir);
+    elapsed.push(Math.round((Date.now() - entry.startTime) / 1000));
+  }
+  return { active: dirs.length > 0, directories: dirs, elapsedSeconds: elapsed };
 }
 
 /**

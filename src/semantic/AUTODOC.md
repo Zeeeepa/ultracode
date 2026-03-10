@@ -46,7 +46,7 @@ Full pipeline for semantic code analysis: embedding generation via pluggable pro
 │  hybrid-search.ts         gpu/ (CUDA + Faiss via subprocess)   │
 │         │                                                       │
 │         ▼                                                       │
-│  libsql-adapter.ts ────► LibSQL DiskANN (cold storage)         │
+│  (legacy cold storage path — now FAISS-only in v5+)            │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -110,7 +110,7 @@ Full pipeline for semantic code analysis: embedding generation via pluggable pro
 | `../types/semantic` | `VectorEmbedding`, `SimilarityResult`, `HybridResult` |
 | `../types/parser` | `ParsedEntity` for code analysis |
 | `../types/storage` | `Entity`, `ProjectContext` |
-| `../storage/libsql-graph-adapter` | `GraphStorage` for entity metadata persistence |
+| `../storage/libsql-graph-adapter` | GraphAdapter for entity metadata persistence (SQLite) |
 | `../utils/simd-vector-ops` | SIMD-accelerated `cosineSimilarity`, `normalize` |
 | `../utils/fast-hash` | `hashText` for cache keys |
 | `../agents/query-agent` | `QueryAgent` for structural search in hybrid mode |
@@ -156,7 +156,7 @@ Single-threaded (Node.js/Bun event loop). GPU worker runs as a subprocess for CU
 
 ### Side Effects
 
-Faiss index persisted to disk on flush. LibSQL metadata written on context switch. OVMS/TEI/Ollama HTTP calls to external services. Subprocess spawned for GPU worker. Embedding dump files written to data directory.
+Faiss index persisted to disk on flush. SQLite metadata written on context switch. OVMS/TEI/Ollama HTTP calls to external services. Subprocess spawned for GPU worker. Embedding dump files written to data directory.
 
 ### State (Hot/Cold Paths)
 
@@ -165,9 +165,9 @@ New embeddings ──► Faiss (hot, in-memory, HNSW)
                          │
                          │ periodic flush
                          ▼
-Old embeddings ──► LibSQL DiskANN (cold, persistent)
+Old embeddings ──► Faiss on disk (cold, persistent)
 
-Search = Faiss results + DiskANN results → merge by score
+Search = Faiss results → enrich from SQLite entity metadata
 ```
 
 **Hot path:** New embeddings indexed in Faiss HNSW (O(log n) search, <1ms). **Cold path:** Periodic flush to disk; on restart, Faiss index rebuilt from persistent storage. **Layered (v6):** Base index (read-only, loaded on context switch) + delta index (writable, merged on flush).

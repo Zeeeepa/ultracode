@@ -158,7 +158,12 @@ export class ToolRegistry {
     this.registerLazy("analyze_state_chaos", async () => (await analysisLoader()).AnalyzeStateChaosToolHandler);
     this.registerLazy("analyze_code_impact", async () => (await analysisLoader()).AnalyzeCodeImpactToolHandler);
     this.registerLazy("analyze_swagger_impact", async () => (await analysisLoader()).AnalyzeSwaggerImpactToolHandler);
+    this.registerLazy("analyze_api_impact", async () => (await analysisLoader()).AnalyzeApiImpactToolHandler);
     this.registerLazy("detect_technology_stack", async () => (await analysisLoader()).DetectTechnologyStackToolHandler);
+
+    // --- DB Schema tools (~15KB) ---
+    const dbSchemaLoader = () => import("./handlers/db-schema-tool-handlers.js");
+    this.registerLazy("get_database_schema", async () => (await dbSchemaLoader()).GetDatabaseSchemaToolHandler);
 
     // --- Branch tools (~15KB) ---
     const branchLoader = () => import("./handlers/branch-tool-handlers.js");
@@ -220,9 +225,20 @@ export class ToolRegistry {
     this.registerLazy("autodoc_install_hooks", async () => (await autodocLoader()).AutoDocInstallHooksToolHandler);
     this.registerLazy("autodoc_detect_language", async () => (await autodocLoader()).AutoDocDetectLanguageToolHandler);
 
+    // --- Stacktrace analysis tools (~20KB) ---
+    const stacktraceLoader = () => import("./handlers/stacktrace-tool-handler.js");
+    this.registerLazy("analyze_stacktrace", async () => (await stacktraceLoader()).AnalyzeStacktraceToolHandler);
+
     // --- Taint analysis tools (~15KB) ---
     const taintLoader = () => import("./handlers/taint-tool-handlers.js");
     this.registerLazy("taint_analysis", async () => (await taintLoader()).TaintAnalysisToolHandler);
+
+    // --- Diagram tools (~20KB) ---
+    const diagramLoader = () => import("./handlers/diagram-tool-handler.js");
+    this.registerLazy(
+      "get_architecture_diagram",
+      async () => (await diagramLoader()).GetArchitectureDiagramToolHandler,
+    );
 
     // --- Graph metrics tools (~15KB) ---
     const graphMetricsLoader = () => import("./handlers/graph-metrics-tool-handlers.js");

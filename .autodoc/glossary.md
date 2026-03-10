@@ -88,8 +88,8 @@ Lightweight Retrieval-Augmented Generation — an architectural pattern for sema
 ### Layer
 An isolated data level in Branch Layers. Each Git branch creates its own layer, which inherits data from the parent.
 
-### LibSQL
-A fork of SQLite with additional capabilities (replication, HTTP API). Used as the primary storage with branch layer support.
+### LibSQL (legacy)
+A fork of SQLite by Turso. Was used as primary storage in v1-v6.4. Replaced by native SQLite (better-sqlite3 / bun:sqlite) in v6.5 for performance (prepared statement cache, sync FFI, no IPC overhead). Class names like `LibSQLGraphAdapter` remain for backwards compatibility.
 
 ### LRU Cache
 Least Recently Used Cache — a cache that evicts the least recently used elements.

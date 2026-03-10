@@ -38,7 +38,7 @@ tags:
 
 ## Overview
 
-The `autodoc` module provides a full documentation lifecycle: initialization, storage in SQLite via libsql, markdown parsing, reference extraction, bidirectional file sync, LLM-powered doc generation, i18n support (en/ru/zh), git pre-commit validation, and live file watching with incremental updates.
+The `autodoc` module provides a full documentation lifecycle: initialization, storage in native SQLite, markdown parsing, reference extraction, bidirectional file sync, LLM-powered doc generation, i18n support (en/ru/zh), git pre-commit validation, and live file watching with incremental updates.
 
 It is organized into seven submodules: **storage** (DocStorage, RefStorage, AutoDocManager), **parser** (markdown and link extraction), **sync** (disk-DB bidirectional), **generator** (module scanning and doc generation), **llm** (Ollama/TGI/OpenAI/LlamaCpp/ClaudeCode providers), **hooks** (git pre-commit validation), **i18n** (language detection and section names), and **watcher** (KnowledgeBus-driven incremental updates).
 
@@ -48,7 +48,7 @@ Entry point `index.ts` re-exports the full public API from all submodules.
 
 1. `autodoc_init` creates `.autodoc/` directory with config and templates.
 2. `scanModules` discovers modules; `generateDocs` produces AUTODOC.md per module.
-3. `DocStorage` and `RefStorage` persist entities and references in SQLite (libsql).
+3. `DocStorage` and `RefStorage` persist entities and references in SQLite.
 4. `parseMarkdown` parses `.md` into `ParsedDocument`; `extractReferences` extracts typed refs.
 5. `syncBidirectional` reconciles disk files with DB state in both directions.
 6. `AutoDocWatcher` listens to `KnowledgeBus` events, debounces, and calls `updateAutodocContent`.
@@ -163,7 +163,7 @@ Entry point `index.ts` re-exports the full public API from all submodules.
 
 | Dependency | Purpose |
 |------------|---------|
-| `@libsql/client` | SQLite database driver for DocStorage and RefStorage |
+| `better-sqlite3` / `bun:sqlite` | Native SQLite driver via NativeSQLiteClient |
 | `nanoid` | Unique ID generation for entities and references |
 | `../../core/knowledge-bus` | Event bus for watcher file-change notifications |
 | `../../logging` | Structured logging |
@@ -198,7 +198,7 @@ Entry point `index.ts` re-exports the full public API from all submodules.
 
 ## Error Handling
 
-- Storage operations catch libsql errors and return `success: false` with `error` messages.
+- Storage operations catch SQLite errors and return `success: false` with `error` messages.
 - `validateReference` returns `valid: false` with `validationError` for broken refs.
 - Pre-commit check collects all broken refs and reports them; does not throw.
 - LLM providers return empty text on timeout (default 120s) or connection failure.

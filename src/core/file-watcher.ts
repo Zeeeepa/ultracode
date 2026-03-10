@@ -20,6 +20,7 @@ import { dirname, join } from "node:path";
 import fg from "fast-glob";
 import { log } from "../logging/index.js";
 import { sleep } from "../utils/runtime-detection.js";
+import { areTimersSuspended } from "./indexing-state.js";
 
 // =============================================================================
 // TYPES
@@ -357,6 +358,13 @@ export class FileWatcher extends EventEmitter {
     }
 
     if (this.pendingChanges.size === 0) return;
+
+    // Defer if heavy analysis is running
+    if (areTimersSuspended()) {
+      log.d("FILEWATCHER", "deferred_suspended", { pending: this.pendingChanges.size });
+      setTimeout(() => this.flush(), 2000);
+      return;
+    }
 
     const events = Array.from(this.pendingChanges.values());
     this.pendingChanges.clear();

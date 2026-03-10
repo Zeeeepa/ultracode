@@ -47,6 +47,15 @@ interface EmbeddingsReadyMessage {
   type: "embeddings.ready";
   count: number;
   embeddings: CollectedEmbedding[];
+  /** TEI inference metrics from this worker */
+  teiMetrics?:
+    | {
+        totalGenTimeMs: number;
+        totalGenCount: number;
+        maxBatchMs: number;
+        cacheHits: number;
+      }
+    | undefined;
 }
 
 /**
@@ -102,6 +111,59 @@ const generatedEntityIds = new Set<string>();
 
 /** Collected embeddings for IPC transfer */
 const collectedEmbeddings: CollectedEmbedding[] = [];
+
+/** Count of files skipped due to vendored detection */
+let vendoredSkipCount = 0;
+
+/**
+ * Check if a file belongs to a vendored/generated directory.
+ * Uses prefixes from WorkerEmbeddingConfig set by main process.
+ */
+export function isVendoredFile(filePath: string): boolean {
+  if (!embeddingConfig?.vendoredPrefixes?.length || !embeddingConfig.projectRoot) {
+    return false;
+  }
+  // Compute relative path from project root
+  const root = embeddingConfig.projectRoot.replace(/\\/g, "/");
+  const normalized = filePath.replace(/\\/g, "/");
+  let rel: string;
+  if (normalized.startsWith(root)) {
+    rel = normalized.slice(root.length).replace(/^\//, "");
+  } else {
+    return false;
+  }
+
+  const lower = rel.toLowerCase();
+  for (const prefix of embeddingConfig.vendoredPrefixes) {
+    const lowerPrefix = prefix.toLowerCase();
+    if (lower.startsWith(lowerPrefix + "/") || lower === lowerPrefix) {
+      vendoredSkipCount++;
+      return true;
+    }
+  }
+
+  // Also skip .def/.inc files (always low-value for embeddings)
+  const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
+  if (ext === ".def" || ext === ".inc") {
+    vendoredSkipCount++;
+    return true;
+  }
+
+  return false;
+}
+
+/** Get vendored skip count for metrics */
+export function getVendoredSkipCount(): number {
+  return vendoredSkipCount;
+}
+
+/** Reset vendored skip count (between indexing runs) */
+export function resetVendoredSkipCount(): void {
+  vendoredSkipCount = 0;
+}
+
+/** Accumulated TEI inference metrics across all files in current batch */
+const teiMetricsAcc = { totalGenTimeMs: 0, totalGenCount: 0, maxBatchMs: 0, cacheHits: 0 };
 
 /**
  * Collected texts for centralized embedding generation (OVMS/llamacpp mode).
@@ -319,6 +381,11 @@ export async function generateEmbeddingsForEntities(
     return 0;
   }
 
+  // Skip embedding generation for vendored/generated files
+  if (isVendoredFile(filePath)) {
+    return 0;
+  }
+
   // Centralized mode: collect texts instead of generating embeddings
   // Main generates embeddings via single connection (optimal batching)
   if (embeddingConfig.centralizedEmbeddings) {
@@ -389,6 +456,12 @@ export async function generateEmbeddingsForEntities(
   }
 
   let generatedCount = 0;
+  let totalGenTimeMs = 0;
+  let maxBatchTimeMs = 0;
+  let totalGenCount = 0;
+  let cacheHitCount = 0;
+
+  const fileStartTime = performance.now();
 
   workerLog("INFO", "generateEmbeddingsFr: starting batch processing", {
     entities: entityTexts.length,
@@ -415,19 +488,26 @@ export async function generateEmbeddingsForEntities(
       }
     }
 
+    cacheHitCount += cacheHits.size;
+
     // Generate only cache misses
     let generatedEmbeddings: Float32Array[] = [];
     if (missTexts.length > 0) {
+      const batchStart = performance.now();
       try {
         generatedEmbeddings = await embeddingClient!.generateBatch(missTexts);
       } catch (error) {
         workerLog("WARN", `Embedding batch failed: ${(error as Error).message}`, { batchIdx: idx });
         return;
       }
+      const batchMs = performance.now() - batchStart;
+      totalGenTimeMs += batchMs;
+      totalGenCount += missTexts.length;
+      if (batchMs > maxBatchTimeMs) maxBatchTimeMs = batchMs;
     }
 
     // Merge: cache hits + generated
-    const embeddings: (Float32Array | undefined)[] = new Array(batch.length);
+    const embeddings = new Array<Float32Array | undefined>(batch.length).fill(undefined);
     for (const [j, emb] of cacheHits) embeddings[j] = emb;
     for (let k = 0; k < missIndices.length; k++) embeddings[missIndices[k]!] = generatedEmbeddings[k];
 
@@ -473,9 +553,24 @@ export async function generateEmbeddingsForEntities(
     await Promise.all(wave.map((batch, j) => processBatch(batch, i + j)));
   }
 
+  const fileElapsedMs = performance.now() - fileStartTime;
+  const avgMsPerEmb = totalGenCount > 0 ? totalGenTimeMs / totalGenCount : 0;
+
+  // Accumulate TEI metrics across files for IPC transfer
+  teiMetricsAcc.totalGenTimeMs += totalGenTimeMs;
+  teiMetricsAcc.totalGenCount += totalGenCount;
+  teiMetricsAcc.cacheHits += cacheHitCount;
+  if (maxBatchTimeMs > teiMetricsAcc.maxBatchMs) teiMetricsAcc.maxBatchMs = maxBatchTimeMs;
+
   workerLog("INFO", "generateEmbeddingsFr: batch processing complete", {
     generatedCount,
     collectedEmbeddingsTotal: collectedEmbeddings.length,
+    cacheHits: cacheHitCount,
+    teiTimeMs: Math.round(totalGenTimeMs),
+    teiCount: totalGenCount,
+    avgMsPerEmb: +avgMsPerEmb.toFixed(2),
+    maxBatchMs: Math.round(maxBatchTimeMs),
+    totalMs: Math.round(fileElapsedMs),
   });
 
   return generatedCount;
@@ -495,11 +590,14 @@ export function sendCollectedEmbeddings(ctx: EmbeddingProcessorContext): void {
 
   const transferList: ArrayBuffer[] = collectedEmbeddings.map((e) => e.vectorBuffer);
 
+  const metrics = teiMetricsAcc.totalGenCount > 0 ? { ...teiMetricsAcc } : undefined;
+
   ctx.postWorkerMessage(
     {
       type: "embeddings.ready",
       count: collectedEmbeddings.length,
       embeddings: collectedEmbeddings,
+      teiMetrics: metrics,
     },
     transferList,
   );
@@ -507,9 +605,15 @@ export function sendCollectedEmbeddings(ctx: EmbeddingProcessorContext): void {
   workerLog("INFO", `Sent embeddings to main process (binary transfer)`, {
     count: collectedEmbeddings.length,
     totalBytes: transferList.reduce((sum, buf) => sum + buf.byteLength, 0),
+    teiAvgMs: metrics ? +(metrics.totalGenTimeMs / metrics.totalGenCount).toFixed(2) : 0,
   });
 
   collectedEmbeddings.length = 0;
+  // Reset TEI metrics for next batch
+  teiMetricsAcc.totalGenTimeMs = 0;
+  teiMetricsAcc.totalGenCount = 0;
+  teiMetricsAcc.maxBatchMs = 0;
+  teiMetricsAcc.cacheHits = 0;
 }
 
 // =============================================================================

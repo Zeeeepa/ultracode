@@ -108,6 +108,8 @@ semantic_search(query="config", changedSinceMs=1709164800000)
 | Find code without docs | `semantic_search(query="export", hasDocumentation=false)` |
 | List file contents | `get_members(filePath="...")` |
 | What depends on X? | `list_entity_relationships(entityId="...")` |
+| Project architecture overview | `get_architecture_diagram(depth=2, dataFlowLevel=1, format="mermaid", direction="TD")` |
+| Class diagram for module | `get_architecture_diagram(entryPoint="ClassName", depth=3, dataFlowLevel=1, format="mermaid", direction="LR")` |
 
 ## Tips for Speed
 

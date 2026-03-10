@@ -29,6 +29,8 @@ Scan a project or file for patterns across all categories.
 | format | string? | "summary" | summary, detailed, json |
 | offset | number? | 0 | Pagination offset |
 | limit | number? | 50 | Max results per category |
+| highlightRecentChanges | boolean? | false | Annotate matched entities with recently-changed status (Prolly Tree) |
+| recentCommitsCount | number? | 10 | Number of recent commits to consider for highlighting |
 
 **Examples:**
 ```
@@ -82,6 +84,23 @@ Check a specific entity for pattern matches.
 - Severity: medium/low
 - Action: Optimize in hot paths
 
+#### JIT Deoptimization Detectors (JS/TS)
+Tag: `jit` — 9 rules detecting V8/JSC JIT-unfriendly patterns:
+- **jit-delete-operator** (high) — `delete obj.prop` kills hidden classes and inline caching
+- **jit-with-statement** (critical) — `with(obj)` disables all JIT optimizations
+- **jit-eval** (critical) — `eval()` prevents scope analysis and optimization
+- **jit-holey-array** (medium) — `new Array(n)` creates holey arrays (6x slower element access)
+- **jit-arguments-object** (medium) — `arguments` object prevents function optimization
+- **jit-megamorphic-interface** (low) — interfaces with 5+ implementations cause megamorphic dispatch (~3.5x slower)
+- **jit-spread-in-hot-path** (medium) — excessive spread in loops forces repeated object allocation
+- **jit-dynamic-property-access** (low) — `obj[variable]` in loops prevents inline caching
+- **jit-optional-chaining-hot** (low) — excessive `?.` chains in hot paths add branching overhead
+
+```
+# Find all JIT deoptimization issues
+detect_patterns({category: "optimization", tags: ["jit"]})
+```
+
 ## Understanding Scores
 
 Each match has three scores:
@@ -90,6 +109,17 @@ Each match has three scores:
 - **combinedScore**: `structural * 0.4 + semantic * 0.6` (for hybrid rules)
 
 Rules with `minSemanticSimilarity: 0` use only structural checks (metrics-based rules like god-function).
+
+## Recent Changes Highlighting
+
+When `highlightRecentChanges=true`, each detected pattern match is cross-referenced with Prolly Tree commit history. Entities modified in the last N commits are annotated with `recentlyChanged: true` and a `recentChangeSummary` section is added to the output.
+
+This helps prioritize fixes: a critical anti-pattern in recently-changed code is more likely to be the root cause of a new bug.
+
+```
+# Find anti-patterns in recently modified code
+detect_patterns({category: "anti-pattern", highlightRecentChanges: true, recentCommitsCount: 5})
+```
 
 ## Workflow
 
@@ -106,11 +136,11 @@ Rules with `minSemanticSimilarity: 0` use only structural checks (metrics-based 
 | Language | Anti-patterns | Best-patterns | Code Smells | Optimizations | Total |
 |----------|:---:|:---:|:---:|:---:|:---:|
 | Common | 0 | 2 | 7 | 0 | 9 |
-| TypeScript | 7 | 2 | 0 | 5 | 14 |
+| TypeScript | 7 | 2 | 0 | 14 | 23 |
 | Python | 3 | 3 | 2 | 2 | 10 |
 | C# | 4 | 2 | 2 | 6 | 14 |
 | Java/Kotlin | 3 | 2 | 1 | 7 | 13 |
 | Go | 2 | 3 | 2 | 2 | 9 |
-| **Total** | **19** | **14** | **14** | **22** | **~69** |
+| **Total** | **19** | **14** | **14** | **31** | **~78** |
 
 Rules are extensible — add new YAML files to `rules/` and `exemplars/` directories.

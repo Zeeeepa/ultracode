@@ -17,8 +17,11 @@
  * - No HTTP connection contention (single sequential processing)
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { log } from "../logging/index.js";
 import type { EmbeddingPoolStats, VectorEmbedding } from "../types/semantic.js";
+import { isTeiBatchDumpEnabled } from "../utils/logger.js";
 import { sleep } from "../utils/runtime-detection.js";
 import type { EmbeddingGenerator } from "./embedding-generator.js";
 import type { IVectorProvider } from "./faiss/types.js";
@@ -93,6 +96,8 @@ export class EmbeddingAccumulator {
 
   // Async flush state - track in-flight flush operation (only 1 concurrent flush to FAISS)
   private inFlightFlush: Promise<number> | null = null;
+  // Sync flush guard - prevents concurrent flush() calls from duplicating work
+  private syncFlushPromise: Promise<unknown> | null = null;
 
   // Debounce for accumulating texts before processing
   private debounceAbort: AbortController | null = null;
@@ -114,6 +119,11 @@ export class EmbeddingAccumulator {
     batchCount: 0,
     workerIds: new Set<string>(),
     provider: "",
+    // TEI inference metrics
+    teiTotalGenTimeMs: 0,
+    teiTotalGenCount: 0,
+    teiMaxBatchMs: 0,
+    teiBatchLog: [] as Array<{ n: number; ms: number }>,
   };
 
   constructor(config: Partial<AccumulatorConfig> = {}) {
@@ -388,10 +398,21 @@ export class EmbeddingAccumulator {
     );
 
     // Generate embeddings for sorted batch
+    const batchStart = performance.now();
     const embeddings = await this.embeddingGenerator!.generateBatch(textStrings);
+    const batchMs = performance.now() - batchStart;
+    this.embeddingStats.teiTotalGenTimeMs += batchMs;
+    this.embeddingStats.teiTotalGenCount += textStrings.length;
+    if (batchMs > this.embeddingStats.teiMaxBatchMs) this.embeddingStats.teiMaxBatchMs = batchMs;
+    this.embeddingStats.teiBatchLog.push({ n: textStrings.length, ms: Math.round(batchMs) });
+
+    // Dump batch data to disk for latency analysis (enable via log-config.json: teiBatchDump=true)
+    if (isTeiBatchDumpEnabled()) {
+      this.dumpBatchToDisk(filteredBatch, textStrings, sortedBatch, batchMs);
+    }
 
     // Restore original order for correct id mapping
-    const reorderedEmbeddings = new Array<Float32Array>(filteredBatch.length);
+    const reorderedEmbeddings: Float32Array[] = Array.from({ length: filteredBatch.length }, () => new Float32Array(0));
     for (let i = 0; i < sortedBatch.length; i++) {
       reorderedEmbeddings[sortedBatch[i]!.idx] = embeddings[i]!;
     }
@@ -550,6 +571,13 @@ export class EmbeddingAccumulator {
       flushed: this.stats.flushed,
     });
 
+    // Guard against concurrent flush: if another flush is in progress, wait for it
+    if (this.syncFlushPromise) {
+      log.i("ACCUMULATOR", "flush() waiting for concurrent flush");
+      await this.syncFlushPromise;
+      return 0;
+    }
+
     // If nothing pending (all flushed by async), just return
     if (this.pending.length === 0) {
       return 0;
@@ -560,7 +588,10 @@ export class EmbeddingAccumulator {
       return 0;
     }
 
-    const count = this.pending.length;
+    // Take ownership of pending array atomically
+    const toFlush = this.pending;
+    this.pending = [];
+    const count = toFlush.length;
     const startTime = performance.now();
 
     try {
@@ -569,7 +600,8 @@ export class EmbeddingAccumulator {
         type: this.vectorProvider.constructor.name,
         count,
       });
-      await this.vectorProvider.addBatch(this.pending);
+      this.syncFlushPromise = this.vectorProvider.addBatch(toFlush);
+      await this.syncFlushPromise;
 
       const elapsed = performance.now() - startTime;
       this.stats.flushed += count;
@@ -582,13 +614,14 @@ export class EmbeddingAccumulator {
         totalFlushed: this.stats.flushed,
       });
 
-      // Clear pending
-      this.pending = [];
-
       return count;
     } catch (error) {
+      // Put failed embeddings back
+      this.pending.unshift(...toFlush);
       log.e("ACCUMULATOR", "Flush failed", { error: (error as Error).message });
       throw error;
+    } finally {
+      this.syncFlushPromise = null;
     }
   }
 
@@ -632,7 +665,76 @@ export class EmbeddingAccumulator {
       batchCount: 0,
       workerIds: new Set<string>(),
       provider: "",
+      teiTotalGenTimeMs: 0,
+      teiTotalGenCount: 0,
+      teiMaxBatchMs: 0,
+      teiBatchLog: [],
     };
+    this.batchDumpIndex = 0;
+  }
+
+  /**
+   * Get per-batch TEI timing log: compact array of {n, ms} per batch.
+   */
+  getTeiBatchLog(): Array<{ n: number; ms: number }> {
+    return this.embeddingStats.teiBatchLog;
+  }
+
+  // Batch dump counter (reset with stats)
+  private batchDumpIndex = 0;
+  private batchDumpDir: string | null = null;
+
+  /**
+   * Dump batch data to disk for latency analysis.
+   * Saves JSON per batch: timing, text lengths, char stats, ids.
+   */
+  private dumpBatchToDisk(
+    batch: Array<{ id: string; text: string }>,
+    textStrings: string[],
+    sortedBatch: Array<{ item: { id: string; text: string }; idx: number; len: number }>,
+    batchMs: number,
+  ): void {
+    try {
+      if (!this.batchDumpDir) {
+        const dataDir =
+          process.env["LOCALAPPDATA"] ||
+          (process.platform === "darwin"
+            ? join(process.env["HOME"] || "", "Library", "Application Support")
+            : join(process.env["HOME"] || "", ".local", "share"));
+        this.batchDumpDir = join(dataDir, "UltraCode", "logs", "tei-batches");
+        mkdirSync(this.batchDumpDir, { recursive: true });
+      }
+
+      const idx = this.batchDumpIndex++;
+      const data = {
+        batch: idx,
+        ms: Math.round(batchMs),
+        count: textStrings.length,
+        totalChars: textStrings.reduce((s, t) => s + t.length, 0),
+        avgChars: Math.round(textStrings.reduce((s, t) => s + t.length, 0) / textStrings.length),
+        maxChars: Math.max(...textStrings.map((t) => t.length)),
+        minChars: Math.min(...textStrings.map((t) => t.length)),
+        // Distribution: how many texts in each length bucket (0-100, 100-500, 500-1000, 1000-2000)
+        lenBuckets: {
+          "0-100": textStrings.filter((t) => t.length <= 100).length,
+          "101-500": textStrings.filter((t) => t.length > 100 && t.length <= 500).length,
+          "501-1000": textStrings.filter((t) => t.length > 500 && t.length <= 1000).length,
+          "1001-2000": textStrings.filter((t) => t.length > 1000).length,
+        },
+        // Per-text: id, charLen, first 80 chars preview
+        texts: batch.map((t, i) => ({
+          id: t.id,
+          chars: t.text.length,
+          truncatedChars: textStrings[sortedBatch.findIndex((s) => s.idx === i)]?.length ?? t.text.length,
+          preview: t.text.slice(0, 80).replace(/\n/g, "\\n"),
+        })),
+      };
+
+      const filename = `batch-${String(idx).padStart(3, "0")}-${Math.round(batchMs)}ms.json`;
+      writeFileSync(join(this.batchDumpDir, filename), JSON.stringify(data, null, 2));
+    } catch {
+      // Non-critical — don't break embedding pipeline
+    }
   }
 
   /**
@@ -648,6 +750,11 @@ export class EmbeddingAccumulator {
 
     const speedPerSec = durationMs > 0 ? Math.round(this.embeddingStats.totalGenerated / (durationMs / 1000)) : 0;
 
+    const avgMs =
+      this.embeddingStats.teiTotalGenCount > 0
+        ? this.embeddingStats.teiTotalGenTimeMs / this.embeddingStats.teiTotalGenCount
+        : undefined;
+
     return {
       total: this.embeddingStats.totalGenerated,
       durationMs,
@@ -655,6 +762,8 @@ export class EmbeddingAccumulator {
       workers: this.embeddingStats.workerIds.size,
       batches: this.embeddingStats.batchCount,
       provider: this.embeddingStats.provider || undefined,
+      avgMsPerEmb: avgMs != null ? +avgMs.toFixed(2) : undefined,
+      maxBatchMs: this.embeddingStats.teiMaxBatchMs > 0 ? Math.round(this.embeddingStats.teiMaxBatchMs) : undefined,
     };
   }
 

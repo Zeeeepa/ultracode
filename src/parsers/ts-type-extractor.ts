@@ -4,7 +4,7 @@
  * Extracts type alias and enum declarations.
  */
 
-import type ts from "typescript";
+import ts from "typescript";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { getLocation, getModifiers } from "./ts-ast-helpers.js";
 import { extractTypeReferences, type TypeReference } from "./ts-call-extractor.js";
@@ -51,6 +51,9 @@ export function extractTypeAliasDeclaration(node: ts.TypeAliasDeclaration, ctx: 
   const typeDoc = extractDocumentation(node, sourceFile);
   const typeRefs = extractTypeReferences(node, sourceFile);
 
+  // Measure conditional type nesting depth
+  const conditionalTypeDepth = measureConditionalTypeDepth(node.type);
+
   entities.push({
     name: typeName,
     type: "type",
@@ -59,6 +62,9 @@ export function extractTypeAliasDeclaration(node: ts.TypeAliasDeclaration, ctx: 
     modifiers: getModifiers(node),
     documentation: typeDoc,
     typeReferences: typeRefs,
+    ...(conditionalTypeDepth > 0 && {
+      metadata: { conditionalTypeDepth },
+    }),
   });
 
   // Add type references relationships for type alias
@@ -71,15 +77,30 @@ export function extractTypeAliasDeclaration(node: ts.TypeAliasDeclaration, ctx: 
 export function extractEnumDeclaration(node: ts.EnumDeclaration, ctx: TypeExtractorContext): void {
   const { sourceFile, filePath, entities } = ctx;
   const enumDoc = extractDocumentation(node, sourceFile);
+  const modifiers = getModifiers(node);
+
+  // Detect const enum and string initializers
+  const isConstEnum = modifiers.includes("const");
+  let hasStringInit = false;
+  for (const member of node.members) {
+    if (member.initializer && ts.isStringLiteral(member.initializer)) {
+      hasStringInit = true;
+      break;
+    }
+  }
 
   const enumEntity: ParsedEntity = {
     name: node.name.text,
     type: "enum",
     filePath,
     location: getLocation(sourceFile, node),
-    modifiers: getModifiers(node),
+    modifiers,
     documentation: enumDoc,
     children: [],
+    metadata: {
+      isConstEnum,
+      hasStringInit,
+    },
   };
 
   for (const member of node.members) {
@@ -92,4 +113,46 @@ export function extractEnumDeclaration(node: ts.EnumDeclaration, ctx: TypeExtrac
   }
 
   entities.push(enumEntity);
+}
+
+/**
+ * Extract namespace/module declaration
+ */
+export function extractNamespaceDeclaration(node: ts.ModuleDeclaration, ctx: TypeExtractorContext): void {
+  const { sourceFile, filePath, entities } = ctx;
+  const nameDoc = extractDocumentation(node, sourceFile);
+
+  entities.push({
+    name: node.name.getText(sourceFile),
+    type: "namespace",
+    filePath,
+    location: getLocation(sourceFile, node),
+    modifiers: getModifiers(node),
+    documentation: nameDoc,
+  });
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+/**
+ * Measure the maximum nesting depth of conditional types (A extends B ? C : D)
+ */
+function measureConditionalTypeDepth(typeNode: ts.TypeNode): number {
+  let maxDepth = 0;
+
+  function walk(node: ts.Node, depth: number): void {
+    if (ts.isConditionalTypeNode(node)) {
+      const newDepth = depth + 1;
+      if (newDepth > maxDepth) maxDepth = newDepth;
+      walk(node.trueType, newDepth);
+      walk(node.falseType, newDepth);
+      walk(node.checkType, depth);
+      walk(node.extendsType, depth);
+      return;
+    }
+    ts.forEachChild(node, (child) => walk(child, depth));
+  }
+
+  walk(typeNode, 0);
+  return maxDepth;
 }

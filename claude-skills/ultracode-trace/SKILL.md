@@ -1,18 +1,22 @@
 ---
 name: UltraCode Trace
-version: 1.0.0
-description: Code tracing, debugging, "why not called", flow analysis, state dependencies
+version: 1.1.0
+description: Code tracing, debugging, stacktrace analysis, "why not called", flow analysis, state dependencies
 triggers:
   - debugging
   - why not called
   - flow analysis
   - trace
   - state dependencies
+  - stacktrace
+  - error trace
+  - crash
+  - backtrace
 ---
 
 # UltraCode Tracing — Claude Code Skill
 
-**Auto-activated for**: Debugging, "why not called", flow analysis, state dependencies
+**Auto-activated for**: Debugging, "why not called", flow analysis, state dependencies, stacktrace diagnosis
 
 Static analysis of code execution flow without running the code.
 
@@ -20,11 +24,65 @@ Static analysis of code execution flow without running the code.
 
 | Question | Tool | Returns |
 |----------|------|---------|
+| "Parse this stacktrace / crash log" | `analyze_stacktrace` | Error category, crash location, call chain, fixes |
 | "How does code get from A to B?" | `trace_flow` | Paths, states, conditions, Mermaid |
 | "Why isn't this method called?" | `trace_backwards` | Callers, blocking conditions, diagnosis |
 | "How does data affect state?" | `trace_data_flow` | Sources, transformations, behavior matrix |
 | "What changes with different values?" | `analyze_state_impact` | Scenarios, conflicts, ripple effects |
 | "What conditions affect this scenario?" | `find_decision_points` | Decision points with classification |
+
+---
+
+## analyze_stacktrace — Diagnose Errors
+
+Parse and diagnose stacktraces from **8 languages**. Auto-detects language, resolves frames to code graph entities, classifies errors, runs backwards trace and impact analysis.
+
+```typescript
+analyze_stacktrace({
+  stacktrace: `TypeError: Cannot read property 'name' of undefined
+    at processUser (src/users.ts:42:15)
+    at handleRequest (src/server.ts:100:5)`,
+  format: "text"
+})
+```
+
+**Supported**: JS/TS (V8/Node), Python traceback, Java/Kotlin (Caused by chains), C#/.NET, Go goroutine panics, Rust panic/RUST_BACKTRACE, C/C++ (GDB/ASAN/macOS), Zig error traces.
+
+**Returns:**
+- Error category (null_reference, type_error, io_error, memory_error, concurrency_error, etc.)
+- Severity (critical/high/medium/low)
+- Crash location with entity binding
+- Call chain with resolved/unresolved status
+- Backwards trace (callers, blocking conditions)
+- Impact analysis (affected entities, risk score)
+- Missing checks and suggested fixes
+- Mermaid flowchart of call chain
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `stacktrace` | string | **required** | Full stacktrace text |
+| `language` | enum | auto | `javascript` / `python` / `java` / `csharp` / `go` / `rust` / `c/c++` / `zig` |
+| `depth` | number | 10 | Max backwards trace depth |
+| `includeImpactAnalysis` | boolean | true | Run impact analysis on crash entity |
+| `includeBackwardsTrace` | boolean | true | Run backwards trace from crash point |
+| `format` | enum | "text" | `text` / `json` / `mermaid` |
+| `highlightRecentChanges` | boolean | false | Annotate crash/call chain entities with recently-changed status + entity history for crash point |
+| `recentCommitsCount` | number | 10 | Number of recent commits to consider |
+
+### Error Categories
+
+| Category | Examples |
+|----------|---------|
+| `null_reference` | TypeError, NullPointerException, nil pointer dereference |
+| `type_error` | ClassCastException, type assertion failed |
+| `index_out_of_bounds` | IndexError, slice bounds out of range |
+| `io_error` | ENOENT, FileNotFoundError |
+| `network_error` | ECONNREFUSED, fetch failed |
+| `memory_error` | OutOfMemoryError, SIGSEGV, stack overflow |
+| `concurrency_error` | deadlock, ConcurrentModificationException |
+| `timeout_error` | ETIMEDOUT, deadline exceeded |
+| `import_error` | ModuleNotFoundError, cannot find module |
+| `permission_error` | EPERM, access denied |
 
 ---
 
@@ -36,10 +94,10 @@ Find all execution paths between two points:
 trace_flow({
   from: "handleLogin",
   to: "redirectToHome",
-  trackStates: true,     // Track state changes
-  trackConditions: true, // Track branches
+  trackStates: true,
+  trackConditions: true,
   maxDepth: 15,
-  format: "mermaid"      // sequence | tree | graph | mermaid
+  format: "mermaid"
 })
 ```
 
@@ -58,7 +116,7 @@ Understand why a method isn't being called:
 ```typescript
 trace_backwards({
   target: "FinishTask",
-  question: "why_not_called", // | "what_affects" | "dependencies"
+  question: "why_not_called",
   depth: 15,
   includeStates: true
 })
@@ -70,7 +128,7 @@ trace_backwards({
 - `dependencies` — full dependency graph
 
 **Returns:**
-- List of callers with probability (always/conditional/rare)
+- Callers with probability (always/conditional/rare)
 - Blocking conditions with recommendations
 - State dependencies
 - Call chains
@@ -86,23 +144,18 @@ Trace how data affects target state:
 trace_data_flow({
   entryPoint: "AppInit",
   targetState: "startPage",
-  dataSources: ["config", "api:fetchUser"], // auto-detect if empty
-  trackTransformations: true
+  dataSources: ["config", "api:fetchUser"],
+  trackTransformations: true,
+  highlightRecentChanges: true  // annotate steps with recently-changed entities
 })
 ```
-
-**Data sources (auto-detect):**
-- API: fetch, axios, http
-- Storage: localStorage, database
-- Props: props, input, param
-- State: state, store, redux
-- Config: config, settings, env
 
 **Returns:**
 - Data flows from sources
 - Transformations (parse, map, validate)
 - Branches based on data
 - Behavior matrix for different inputs
+- `recentChangeSummary` — recently modified entities in the flow (with `highlightRecentChanges`)
 
 ---
 
@@ -116,18 +169,17 @@ analyze_state_impact({
   scenarios: [
     { value: true, label: "logged in" },
     { value: false, label: "logged out" }
-  ]
+  ],
+  highlightRecentChanges: true  // annotate usages with recently-changed status
 })
 ```
 
 **Returns:**
 - All state usages (read/write/condition)
-- For each scenario:
-  - Available paths
-  - Blocked paths
-  - Enabled features
+- Available and blocked paths per scenario
 - Conflicts (multiple writers, race conditions)
 - Ripple effects (direct and indirect)
+- `recentChangeSummary` — recently modified entities (with `highlightRecentChanges`)
 
 ---
 
@@ -139,46 +191,51 @@ Find all places where code makes decisions:
 find_decision_points({
   scenario: "checkout flow",
   includeGuards: true,
-  includeEffects: true,
-  groupBy: "impact" // | "location" | "type"
+  groupBy: "impact",
+  highlightRecentChanges: true  // annotate with recently-changed status
 })
 ```
 
-**Decision point types:**
-- `validation` — input validation
-- `api_response` — API response handling
-- `state_mutation` — state changes
-- `guard` — guard conditions (early return)
-- `loop` — loop control
-- `error_handling` — try-catch
-- `feature_flag` — feature toggles
+**Decision types:** validation, api_response, state_mutation, guard, loop, error_handling, feature_flag
 
-**Impact levels:**
-- `critical` — blocks execution
-- `high` — significant impact
-- `medium` — moderate impact
-- `low` — minimal impact
-
-**Returns:**
-- Decision points with classification
-- Mermaid flowchart
-- Summary: total, critical, possible outcomes
+**Impact levels:** critical, high, medium, low
 
 ---
 
 ## Usage Examples
 
+### Diagnosing a Crash
+
+```typescript
+// Step 1: Parse the stacktrace
+analyze_stacktrace({
+  stacktrace: `NullPointerException: ...
+    at com.app.UserService.getProfile(UserService.java:42)
+    at com.app.Controller.handle(Controller.java:15)`,
+  format: "text"
+})
+// -> Category: null_reference, Severity: high
+// -> Crash: UserService.getProfile at line 42
+// -> Fix: Add null check before accessing property
+
+// Step 2: Trace backwards from crash point
+trace_backwards({
+  target: "UserService.getProfile",
+  question: "what_affects"
+})
+// -> Callers: Controller.handle, ScheduledJob.run
+// -> Blocking: user == null when called from ScheduledJob
+```
+
 ### Debugging: Why Doesn't It Fire?
 
 ```typescript
-// Step 1: Find blocking conditions
 trace_backwards({
   target: "sendNotification",
   question: "why_not_called"
 })
-// → Finds: "user.preferences.notifications === false" blocks
+// -> Finds: "user.preferences.notifications === false" blocks
 
-// Step 2: Check setting impact
 analyze_state_impact({
   state: "user.preferences.notifications",
   scenarios: [
@@ -186,29 +243,17 @@ analyze_state_impact({
     { value: false, label: "disabled" }
   ]
 })
-// → Shows which paths are open/closed for each value
 ```
 
-### Understanding: How Does Data Affect UI?
+### Understanding Data Flow
 
 ```typescript
 trace_data_flow({
   entryPoint: "loadDashboard",
   targetState: "dashboardData"
 })
-// → Shows: API → parse → validate → setState
-// → Matrix: if API error → fallback state
-```
-
-### Refactoring: Where to Change Logic?
-
-```typescript
-find_decision_points({
-  scenario: "user authentication",
-  groupBy: "impact"
-})
-// → List of all if/switch/guards related to auth
-// → Grouped by importance
+// -> Shows: API -> parse -> validate -> setState
+// -> Matrix: if API error -> fallback state
 ```
 
 ---
@@ -217,103 +262,52 @@ find_decision_points({
 
 ### Text (default)
 ```
-═══ Trace Flow: handleLogin → redirectToHome ═══
+=== Stacktrace Diagnosis ===
+HIGH: TypeError: Cannot read property 'name' of undefined
+Category: null_reference
+Frames: 5 total, 3 resolved
 
-Found 2 path(s):
+--- Crash Point ---
+  processUser (src/users.ts:42)
 
-─── Path 1 (confidence: 85%) ───
-Summary: Login flow via session creation
-
-  1. → handleLogin (/src/auth.ts:10)
-     └─ if: credentials.valid
-  2. → createSession (/src/session.ts:5)
-     └─ isAuthenticated: false → true
-  3. → redirectToHome (/src/router.ts:100)
-
-─── States ───
-Modified: isAuthenticated, currentSession
+--- Suggested Fixes ---
+  [high] Add null/undefined check before accessing property
 ```
 
 ### Mermaid
 ```mermaid
-sequenceDiagram
-  participant P0 as handleLogin
-  participant P1 as createSession
-  participant P2 as redirectToHome
-  P0->>P1: credentials.valid
-  P1->>P2: session created
+flowchart TD
+  F0["processUser:42"]:::crash
+  F1["handleRequest:100"]:::resolved
+  F1 --> F0
+  classDef crash fill:#ff4444,color:#fff
+  classDef resolved fill:#4488ff,color:#fff
 ```
 
 ---
 
-## Semantic Integration
+## Recent Changes Context (Prolly Tree)
 
-Tracing automatically uses semantic search (if available) for:
-- Fuzzy search of entry/exit points by description
-- Improved analysis quality
-- Natural language queries
-
-```typescript
-trace_flow({
-  from: "user login handler",  // Semantic search finds handleLogin
-  to: "home page redirect"     // Finds redirectToHome
-})
-```
-
----
+All 6 tracing tools support `highlightRecentChanges=true` to cross-reference results with Prolly Tree commit history:
+- **`recentChangeSummary`** added to output with recently modified/added entities
+- **`recentlyChanged: true`** annotated on individual steps/callers/decision points
+- **`analyze_stacktrace`** additionally retrieves `crashPointHistory` — last 3 commits for the crash entity
+- **Graceful degradation** — works without errors if Prolly Tree is unavailable
 
 ## Tool Reference
 
-### `trace_flow`
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `from` | string | **required** | Starting point (function or semantic query) |
-| `to` | string | **required** | Ending point |
-| `format` | enum | "sequence" | `sequence` / `tree` / `graph` / `mermaid` |
-| `maxDepth` | number | 15 | Maximum traversal depth |
-| `trackStates` | boolean | true | Track state changes |
-| `trackConditions` | boolean | true | Track conditions/branches |
-
-### `trace_backwards`
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `target` | string | **required** | Target method |
-| `question` | enum | **required** | `why_not_called` / `what_affects` / `dependencies` |
-| `depth` | number | 15 | Backward traversal depth |
-| `includeStates` | boolean | true | Include state dependencies |
-| `includeEffects` | boolean | true | Include side effects |
-
-### `trace_data_flow`
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `entryPoint` | string | **required** | Entry point function |
-| `targetState` | string | **required** | Target state to trace |
-| `dataSources` | string[] | auto | Data sources to analyze |
-| `trackTransformations` | boolean | true | Track data transformations |
-
-### `analyze_state_impact`
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `state` | string | **required** | State variable |
-| `scenarios` | object[] | **required** | `[{value, label}]` |
-| `scope` | string | - | Analysis scope (semantic query) |
-
-### `find_decision_points`
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `scenario` | string | **required** | Scenario to analyze |
-| `groupBy` | enum | "impact" | `impact` / `location` / `type` |
-| `includeGuards` | boolean | true | Include guard conditions |
-| `includeEffects` | boolean | true | Include side effects |
+| Tool | Key Params |
+|------|-----------|
+| `analyze_stacktrace` | `stacktrace` (required), `language`, `format`, `depth`, `highlightRecentChanges` |
+| `trace_flow` | `from` + `to` (required), `format`, `maxDepth`, `trackStates`, `highlightRecentChanges` |
+| `trace_backwards` | `target` + `question` (required), `depth`, `includeStates`, `highlightRecentChanges` |
+| `trace_data_flow` | `entryPoint` + `targetState` (required), `dataSources`, `highlightRecentChanges` |
+| `analyze_state_impact` | `state` + `scenarios` (required), `scope`, `highlightRecentChanges` |
+| `find_decision_points` | `scenario` (required), `groupBy`, `includeGuards`, `highlightRecentChanges` |
 
 ---
 
 ## Related Skills
 
-- **`ultracode`** — Code analysis, semantic search, refactoring, code modification
+- **`ultracode`** — Code analysis, semantic search, refactoring, code modification, security
 - **`ultracode-autodoc`** — Working with `.autodoc/` directory

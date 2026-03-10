@@ -282,7 +282,7 @@ export class DIContainer {
   clearTransients(): void {
     for (const descriptor of this.services.values()) {
       if (descriptor.lifetime === ServiceLifetime.TRANSIENT) {
-        delete descriptor.instance;
+        descriptor.instance = undefined;
       }
     }
     log.i("DICONTAINER", "transients_cleared");
@@ -296,7 +296,7 @@ export class DIContainer {
     let cleared = 0;
     for (const [name, descriptor] of this.services) {
       if (name.startsWith("Agent:") && descriptor.instance !== undefined) {
-        delete descriptor.instance;
+        descriptor.instance = undefined;
         cleared++;
       }
     }

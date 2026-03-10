@@ -473,6 +473,34 @@ vectorBackend:
 
 ---
 
+## Vendored File Exclusion
+
+### Automatic Skip for Embeddings
+
+Vendored/generated directories (libc, musl, glibc, etc.) are automatically detected and excluded from embedding generation. Files are still parsed for graph entities.
+
+Detection is automatic for projects with >500 files. See [dev-guide.md](dev-guide.md#vendoredgenerated-directory-detection) for heuristic details.
+
+### Config Propagation
+
+`WorkerEmbeddingConfig` (in `src/types/semantic.ts`) carries vendored info to worker processes via IPC:
+
+```typescript
+interface WorkerEmbeddingConfig {
+  // ... existing fields ...
+  vendoredPrefixes?: string[];  // Directory prefixes to skip
+  projectRoot?: string;         // For relative path calculation
+}
+```
+
+Workers check `isVendoredFile(filePath)` before calling TEI/vLLM. Extensions `.def` and `.inc` are always skipped.
+
+### TEI Pipelining
+
+For TEI provider, `parallelBatches=4` (was 1) ensures GPU stays saturated during HTTP round-trips. This is critical for short texts (C headers ~30 tokens) where network latency dominates over GPU compute. Impact: 140 → 5513 emb/s on vendored-heavy projects.
+
+---
+
 ## Troubleshooting
 
 ### Low Throughput

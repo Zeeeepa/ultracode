@@ -102,18 +102,12 @@ export abstract class BaseToolHandler<TArgs = unknown> {
       return this.context.session.projectPath;
     }
 
-    // Use context.projectPath (always set in v5)
+    // Use context.projectPath (always set in v5+)
     if (this.context.projectPath) {
       return this.context.projectPath;
     }
 
-    // Legacy fallback
-    const current = getProjectContext().getCurrentProject();
-    if (current) {
-      return current;
-    }
-
-    // Ultimate fallback: use CWD
+    // Ultimate fallback: use CWD (no global singleton dependency)
     return process.cwd();
   }
 
@@ -137,15 +131,11 @@ export abstract class BaseToolHandler<TArgs = unknown> {
    * v5: Get GraphStorage with project context automatically set.
    * Uses session-aware project resolution.
    */
-  protected async ensureGraphStorageForProject(projectPath?: string): Promise<GraphStorage> {
-    const resolved = this.resolveProjectPath({ projectPath });
-    log.d("BASETOOL", "ensure_storage", { resolved, hasSession: !!this.context.session });
-
-    const storage = await this.context.getGraphStorage();
-    storage.setProject(resolved);
-
-    log.d("BASETOOL", "storage_set", { resolved });
-    return storage;
+  protected async ensureGraphStorageForProject(_projectPath?: string): Promise<GraphStorage> {
+    // ALS context (set by runWithRequestContext in index.ts) takes priority
+    // in graph-adapter.ts getContext(). No need for setProject() or scoped proxy.
+    log.d("BASETOOL", "ensure_storage", { hasSession: !!this.context.session });
+    return await this.context.getGraphStorage();
   }
 
   /**
@@ -189,6 +179,15 @@ export abstract class BaseToolHandler<TArgs = unknown> {
   protected abstract execute(args: TArgs): Promise<ToolResult>;
 
   /**
+   * Strip unpaired UTF-16 surrogates that break JSON serialization.
+   * Replaces orphaned \uD800-\uDFFF with U+FFFD (replacement character).
+   */
+  private static sanitizeUtf(text: string): string {
+    // biome-ignore lint/suspicious/noMisleadingCharacterClass: intentional surrogate matching
+    return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
+  }
+
+  /**
    * Apply response size limits and truncation if needed
    */
   protected applyResponseLimits(result: ToolResult): ToolResult {
@@ -198,6 +197,9 @@ export abstract class BaseToolHandler<TArgs = unknown> {
 
     const newContent = result.content.map((item) => {
       if (item.type !== "text") return item;
+
+      // Sanitize orphaned surrogates before any JSON/size processing
+      item = { type: "text", text: BaseToolHandler.sanitizeUtf(item.text) };
 
       const size = Buffer.byteLength(item.text, "utf8");
       if (size <= this.maxResponseSize) {
@@ -337,3 +339,7 @@ export abstract class BaseToolHandler<TArgs = unknown> {
     }
   }
 }
+
+// createScopedStorage() removed — ALS context via runWithRequestContext()
+// makes the scoped Proxy unnecessary. graph-adapter.ts getContext() checks
+// AsyncLocalStorage first, so each tool call is automatically scoped.

@@ -66,6 +66,25 @@ export const SOURCE_PATTERNS: SourcePattern[] = [
   // Form data — priority 4
   { pattern: /FormData/i, type: "form_data", description: "Form data", priority: 4 },
   { pattern: /event\.target\.value/i, type: "dom_event", description: "DOM event value", priority: 4 },
+  // API entry points — priority 1 (for missing_auth detection)
+  {
+    pattern: /\brpc\s+\w+\s*\(/i,
+    type: "api_endpoint",
+    description: "gRPC RPC method",
+    priority: 1,
+  },
+  {
+    pattern: /@(Get|Post|Put|Patch|Delete|Head|Options)\b/i,
+    type: "api_endpoint",
+    description: "REST controller method",
+    priority: 1,
+  },
+  {
+    pattern: /@(Query|Mutation|Subscription|ResolveField)\b/i,
+    type: "api_endpoint",
+    description: "GraphQL resolver",
+    priority: 1,
+  },
 ];
 
 // ===========================================================================
@@ -233,6 +252,28 @@ export const SINK_PATTERNS: SinkPattern[] = [
     description: "HTTP redirect",
     priority: 2,
   },
+  // Sensitive operations behind API (for missing_auth) — priority 2
+  {
+    pattern: /\.(save|create|update|delete|remove|destroy|insert)\s*\(/i,
+    type: "data_write",
+    categories: ["missing_auth"],
+    description: "Database write operation",
+    priority: 2,
+  },
+  {
+    pattern: /sendEmail|sendNotification|sendMessage|publishEvent/i,
+    type: "notification",
+    categories: ["missing_auth"],
+    description: "Notification/email sending",
+    priority: 2,
+  },
+  {
+    pattern: /transfer|charge|payment|refund|withdraw|deposit/i,
+    type: "financial",
+    categories: ["missing_auth"],
+    description: "Financial operation",
+    priority: 2,
+  },
 ];
 
 // ===========================================================================
@@ -307,6 +348,85 @@ export const SANITIZER_PATTERNS: SanitizerPattern[] = [
     type: "path_basename",
     protectsAgainst: ["path_traversal"],
     description: "Path basename extraction",
+  },
+  // Authorization patterns (for missing_auth)
+  {
+    pattern: /@Authorize\b/i,
+    type: "auth_decorator",
+    protectsAgainst: ["missing_auth"],
+    description: "Authorization decorator",
+  },
+  {
+    pattern: /@Auth\b/i,
+    type: "auth_decorator",
+    protectsAgainst: ["missing_auth"],
+    description: "Auth decorator",
+  },
+  {
+    pattern: /@UseGuards\b/i,
+    type: "auth_guard",
+    protectsAgainst: ["missing_auth"],
+    description: "Guard decorator (NestJS)",
+  },
+  {
+    pattern: /@Roles\b/i,
+    type: "auth_roles",
+    protectsAgainst: ["missing_auth"],
+    description: "Roles decorator",
+  },
+  {
+    pattern: /@RequiresPermission\b/i,
+    type: "auth_permission",
+    protectsAgainst: ["missing_auth"],
+    description: "Permission decorator",
+  },
+  {
+    pattern: /@PreAuthorize\b/i,
+    type: "auth_spring",
+    protectsAgainst: ["missing_auth"],
+    description: "Spring PreAuthorize",
+  },
+  {
+    pattern: /@Secured\b/i,
+    type: "auth_spring",
+    protectsAgainst: ["missing_auth"],
+    description: "Spring Secured",
+  },
+  {
+    pattern: /@RolesAllowed\b/i,
+    type: "auth_roles",
+    protectsAgainst: ["missing_auth"],
+    description: "RolesAllowed annotation",
+  },
+  {
+    pattern: /\[Authorize\]/i,
+    type: "auth_dotnet",
+    protectsAgainst: ["missing_auth"],
+    description: ".NET Authorize attribute",
+  },
+  {
+    pattern: /\[AllowAnonymous\]/i,
+    type: "auth_anonymous",
+    protectsAgainst: ["missing_auth"],
+    description: ".NET AllowAnonymous attribute",
+  },
+  {
+    pattern: /authenticate\s*\(|authorize\s*\(|requireAuth|isAuthenticated/i,
+    type: "auth_middleware",
+    protectsAgainst: ["missing_auth"],
+    description: "Authentication middleware",
+  },
+  {
+    pattern: /AuthInterceptor|grpc\.UnaryInterceptor/i,
+    type: "auth_interceptor",
+    protectsAgainst: ["missing_auth"],
+    description: "gRPC auth interceptor",
+  },
+  {
+    pattern: /@hasRole\b|@requireAuth\b/i,
+    type: "auth_directive",
+    protectsAgainst: ["missing_auth"],
+    description: "GraphQL auth directive",
   },
 ];
 

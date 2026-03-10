@@ -105,6 +105,30 @@ export class CppNativeParser {
   }
 
   /**
+   * Force regex-only parsing (skip clang). Used for vendored/mass headers
+   * where spawning clang per-file is too expensive.
+   */
+  async parseFast(filePath: string, content: string, contentHash: string): Promise<ParseResult> {
+    const startTime = Date.now();
+    const isCpp = this.isCppFile(filePath);
+    const result = this.parseWithRegex(filePath, content, isCpp);
+    const parseTimeMs = Date.now() - startTime;
+    this.stats.filesParsed++;
+    this.stats.totalParseTimeMs += parseTimeMs;
+    this.stats.avgParseTimeMs = this.stats.totalParseTimeMs / this.stats.filesParsed;
+
+    return {
+      filePath,
+      language: (isCpp ? "cpp" : "c") as SupportedLanguage,
+      entities: result.entities,
+      contentHash,
+      timestamp: Date.now(),
+      parseTimeMs,
+      ...(result.errors.length > 0 && { errors: result.errors }),
+    };
+  }
+
+  /**
    * Parse a C/C++ file
    */
   async parse(filePath: string, content: string, contentHash: string): Promise<ParseResult> {

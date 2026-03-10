@@ -153,6 +153,14 @@ public sealed class EntityMetadataDto
     [JsonPropertyName("docComment")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? DocComment { get; set; }
+
+    [JsonPropertyName("controlFlow")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ControlFlowDto? ControlFlow { get; set; }
+
+    [JsonPropertyName("csharpHints")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CSharpHintsDto? CSharpHints { get; set; }
 }
 
 public sealed class ParameterDto
@@ -205,4 +213,116 @@ public sealed class DiagnosticDto
 
     [JsonPropertyName("column")]
     public int Column { get; set; }
+}
+
+public sealed class ControlFlowDto
+{
+    [JsonPropertyName("branches")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<LocationDto>? Branches { get; set; }
+
+    [JsonPropertyName("loops")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<LoopDto>? Loops { get; set; }
+
+    [JsonPropertyName("exceptions")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<ExceptionInfoDto>? Exceptions { get; set; }
+
+    [JsonPropertyName("returns")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<LocationDto>? Returns { get; set; }
+
+    [JsonPropertyName("awaits")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<AwaitInfoDto>? Awaits { get; set; }
+}
+
+public sealed class LoopDto
+{
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+
+    [JsonPropertyName("line")]
+    public int Line { get; set; }
+
+    [JsonPropertyName("innerCalls")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? InnerCalls { get; set; }
+}
+
+public sealed class ExceptionInfoDto
+{
+    [JsonPropertyName("line")]
+    public int Line { get; set; }
+
+    [JsonPropertyName("catchType")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CatchType { get; set; }
+
+    [JsonPropertyName("hasRethrow")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HasRethrow { get; set; }
+
+    [JsonPropertyName("isEmpty")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool IsEmpty { get; set; }
+
+    [JsonPropertyName("hasThrowEx")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HasThrowEx { get; set; }
+}
+
+public sealed class AwaitInfoDto
+{
+    [JsonPropertyName("expression")]
+    public string Expression { get; set; } = "";
+
+    [JsonPropertyName("line")]
+    public int Line { get; set; }
+}
+
+public sealed class LocationDto
+{
+    [JsonPropertyName("line")]
+    public int Line { get; set; }
+}
+
+public sealed class CSharpHintsDto
+{
+    [JsonPropertyName("syncOverAsyncCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int SyncOverAsyncCount { get; set; }
+
+    [JsonPropertyName("nullForgivingCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int NullForgivingCount { get; set; }
+
+    [JsonPropertyName("lockOnThisCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int LockOnThisCount { get; set; }
+
+    [JsonPropertyName("stringConcatInLoopCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int StringConcatInLoopCount { get; set; }
+
+    [JsonPropertyName("newHttpClientCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int NewHttpClientCount { get; set; }
+
+    [JsonPropertyName("newDisposableNoUsingCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int NewDisposableNoUsingCount { get; set; }
+
+    [JsonPropertyName("hasParallelForEachAsync")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool HasParallelForEachAsync { get; set; }
+
+    [JsonPropertyName("throwExCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int ThrowExCount { get; set; }
+
+    [JsonPropertyName("emptyCatchCount")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int EmptyCatchCount { get; set; }
 }

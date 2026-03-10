@@ -40,11 +40,11 @@ MCP-сервер для ИИ-агентов, работающих с кодом.
 
 ### Скорость индексации
 
-Полная индексация среднего проекта (~500 файлов) завершается за **3-5 секунд** (параллельный парсинг + batch SQL + streaming embeddings). После этого `GitWatcher` индексирует только изменённые файлы — обычно **менее 200мс** на изменение.
+Полная индексация среднего проекта (~500 файлов) завершается за **3-5 секунд** (параллельный парсинг + batch SQL + streaming embeddings). Крупные проекты вроде VS Code (~1.8M LOC, 7000+ файлов) — **~82 секунды** включая полную генерацию эмбеддингов. После этого `GitWatcher` индексирует только изменённые файлы — обычно **менее 200мс** на изменение.
 
 # Возможности
 
-MCP-сервер предоставляет **77 инструментов** для анализа и модификации кода.
+MCP-сервер предоставляет **78 инструментов** для анализа и модификации кода.
 
 ## Поиск и навигация
 
@@ -68,13 +68,17 @@ MCP-сервер предоставляет **77 инструментов** дл
 | [**analyze_hotspots**](.autodoc/features/analysis_ru.md#analyze_hotspots) | Сложные участки с высокой цикломатической сложностью |
 | [**analyze_state_chaos**](.autodoc/features/analysis_ru.md#analyze_state_chaos) | Анализ запутанных зависимостей данных |
 | [**analyze_swagger_impact**](.autodoc/features/swagger_ru.md#analyze_swagger_impact) | Анализ влияния изменений Swagger/OpenAPI спецификаций |
+| [**analyze_api_impact**](.autodoc/features/api-contracts_ru.md#analyze_api_impact) | Унифицированный анализ влияния API-контрактов (Swagger + Protobuf + GraphQL) |
+| [**get_database_schema**](.autodoc/features/database-schema_ru.md#get_database_schema) | Схема БД из SQL/Prisma/ORM/Redis с анализом миграций и обнаружением дрифта |
 | [**detect_technology_stack**](.autodoc/features/analysis_ru.md#detect_technology_stack) | Определение стека технологий проекта |
-| [**detect_patterns**](.autodoc/features/patterns_ru.md#detect_patterns) | Обнаружение анти-паттернов, лучших практик, code smells и возможностей оптимизации с семантической валидацией |
+| [**detect_patterns**](.autodoc/features/patterns_ru.md#detect_patterns) | Обнаружение анти-паттернов, лучших практик, code smells и возможностей оптимизации с семантической валидацией. Включает JIT-деоптимизацию для JS/TS (hidden classes, holey arrays, megamorphic dispatch) |
 | [**check_entity_patterns**](.autodoc/features/patterns_ru.md#check_entity_patterns) | Проверка конкретной entity на совпадение с паттернами |
 | [**graph_metrics**](.autodoc/features/analysis_ru.md#graph_metrics) | PageRank, кластеризация Louvain, анализ центральности и bus factor для понимания архитектуры |
-| [**taint_analysis**](.autodoc/features/security_ru.md#taint_analysis) | Межпроцедурный taint-анализ: отслеживание ненадёжных данных от источников до приёмников, детекция SQL-инъекций, XSS, command injection |
+| [**taint_analysis**](.autodoc/features/security_ru.md#taint_analysis) | Межпроцедурный taint-анализ: отслеживание ненадёжных данных от источников до приёмников, детекция SQL-инъекций, XSS, command injection, missing auth |
 
 ## Статическая трассировка и отладка
+
+Все инструменты трассировки и диагностики поддерживают `highlightRecentChanges=true` — перекрёстная проверка найденных сущностей с историей коммитов Prolly Tree. Недавно изменённые сущности аннотируются в результатах, что помогает быстро найти вероятную причину проблемы: недавно изменённый код в цепочке вызовов или точке ветвления — первое место для проверки.
 
 | Инструмент | Описание |
 |------------|----------|
@@ -83,6 +87,12 @@ MCP-сервер предоставляет **77 инструментов** дл
 | [**trace_data_flow**](.autodoc/features/tracing_ru.md#trace_data_flow) | Как данные влияют на состояние |
 | [**analyze_state_impact**](.autodoc/features/tracing_ru.md#analyze_state_impact) | Что изменится при другом значении |
 | [**find_decision_points**](.autodoc/features/tracing_ru.md#find_decision_points) | Точки ветвления в коде |
+
+## Архитектурные диаграммы
+
+| Инструмент | Описание |
+|------------|----------|
+| [**get_architecture_diagram**](.autodoc/features/diagrams_ru.md#get_architecture_diagram) | Генерация архитектурных диаграмм в Mermaid, Graphviz DOT или D2 из графа кода |
 
 ## Модификация кода
 
@@ -131,6 +141,8 @@ MCP-сервер предоставляет **77 инструментов** дл
 | [**cleanup_branches**](.autodoc/features/git_ru.md#cleanup_branches) | Очистка старых веток (LRU) |
 
 ## История версий (Prolly Tree)
+
+Prolly Tree хранит полную историю сущностей с гранулярностью до коммита. Помимо time travel, поддерживает **контекст недавних изменений**: 10 диагностических инструментов (`analyze_stacktrace`, `detect_patterns`, `analyze_state_chaos`, `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`, `find_decision_points`, `analyze_code_impact`, `analyze_hotspots`) могут аннотировать результаты статусом «недавно изменён» через `highlightRecentChanges=true`. AI-агент видит не только «что сломано», но и «что менялось недавно и могло это вызвать».
 
 | Инструмент | Описание |
 |------------|----------|
@@ -214,6 +226,10 @@ MCP-сервер предоставляет **77 инструментов** дл
 | **Bash** | shfmt + tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
 | **PowerShell** | tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
 | **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
+| **Protobuf** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
+| **GraphQL** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
+| **SQL** | Text + определение диалекта | ⭐⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
+| **Prisma** | Text parser | ⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
 
 **Легенда:**
 - **Сущности** — функции, классы, интерфейсы, типы, enums, переменные
@@ -302,7 +318,7 @@ npm install -g ultracode
 >
 > Bun блокирует postinstall скрипты по умолчанию. Команда `bun pm trust` разрешает их выполнение — повторная установка не нужна.
 >
-> Остальные нативные компоненты (oxc-parser, xxhash-wasm, @libsql/client) поставляются с готовыми бинарниками и работают без trust.
+> Остальные нативные компоненты (oxc-parser, xxhash-wasm, better-sqlite3) поставляются с готовыми бинарниками и работают без trust.
 
 > **Примечание**: Для полноценного анализа кода на разных языках требуются runtime:
 > 
@@ -344,6 +360,19 @@ npm install -g ultracode
 | **MLX** | ~500 emb/s | ⭐ macOS Apple Silicon (Metal GPU) |
 | **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), универсальный |
 | **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Может выручить, если основная VRAM будет занята локальной LLM. |
+
+> **Примечание для ноутбуков с GTX xx50/xx60 (троттлинг GPU)**
+>
+> Бюджетные NVIDIA GPU (GTX 1650/1660, RTX 3050/3060, RTX 4050/4060) на ноутбуках часто страдают от power limit throttling — GPU упирается в лимит мощности (PL1) и сбрасывает частоты прямо посреди батча. Это снижает пропускную способность TEI/vLLM на ~1000 emb/s.
+>
+> **Решение через [ThrottleStop](https://www.techpowerup.com/download/techpowerup-throttlestop/)** (Windows):
+> 1. **TPL** кнопка → **PL1** на максимум (55–75 Вт для ноутбуков), **PL2** на максимум (90–120 Вт), **Turbo Time Limit** → 28 сек (макс.), галки **Clamp PL1/PL2** → ON (кнопка TPL зелёная)
+> 2. Главное окно → **Speed Shift - EPP** → `0` (макс. производительность, снижает CPU throttle)
+> 3. **BD PROCHOT Offset** → `0` (отключает CPU thermal trigger для GPU)
+> 4. **Limit Reasons** → смотрите, что блокирует (если "MS Platform" — игнорируйте)
+> 5. **Apply** → сохраните профиль. CPU отдаст тепловой бюджет GPU, батчи TEI стабилизируются.
+>
+> Это даёт примерно **+1000 emb/s** на затронутом железе.
 
 **Шаг 2: LLM-провайдер** (AutoDoc, рефакторинг)
 
@@ -455,8 +484,8 @@ Embedding/LLM настраиваются через setup wizard и хранят
 |--------|----------|--------------|----------|
 | **logging** | `level` | `info` | Уровень логов: debug, info, warn, error |
 | | `maxFiles` | `5` | Количество файлов логов для ротации |
-| **database** | `mode` | `WAL` | Режим libSQL: WAL, DELETE, TRUNCATE |
-| | `cacheSize` | `10000` | Размер кеша libSQL |
+| **database** | `mode` | `WAL` | Режим SQLite journal: WAL, DELETE, TRUNCATE |
+| | `cacheSize` | `10000` | Размер кеша SQLite |
 | **indexing** | `autoSwitchOnBranchChange` | `true` | Автопереключение БД при смене ветки |
 | | `maxBranchesPerRepo` | `10` | Макс. веток на репозиторий |
 | | `incrementalThreshold` | `20` | Порог файлов для полной переиндексации |

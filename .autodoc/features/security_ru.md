@@ -9,7 +9,7 @@
 | Параметр | Тип | По умолчанию | Описание |
 |----------|-----|-------------|----------|
 | `projectPath` | string | текущий проект | Путь к директории проекта |
-| `category` | enum | `"all"` | `sql_injection`, `xss`, `command_injection`, `path_traversal`, `ssrf`, `prototype_pollution` или `all` |
+| `category` | enum | `"all"` | `sql_injection`, `xss`, `command_injection`, `path_traversal`, `ssrf`, `prototype_pollution`, `missing_auth` или `all` |
 | `maxDepth` | number | `15` | Максимальная глубина трассировки путей |
 | `includeTests` | boolean | `false` | Включать тестовые файлы в анализ |
 | `offset` | number | `0` | Количество уязвимостей для пропуска (пагинация) |
@@ -74,3 +74,4 @@ taint_analysis({ category: "all", offset: 0, limit: 10 })
 | `path_traversal` | req.params | fs.writeFile, path.join | Пользовательский ввод -> путь к файлу |
 | `ssrf` | req.body | fetch, http.request | Пользовательский ввод -> исходящий URL |
 | `prototype_pollution` | req.body | Object.assign, spread | Пользовательский ввод -> слияние объектов |
+| `missing_auth` | API-эндпоинты (REST, gRPC, GraphQL) | Запись в БД, доступ к файлам, внешние вызовы | API-эндпоинт -> чувствительная операция без проверки авторизации |

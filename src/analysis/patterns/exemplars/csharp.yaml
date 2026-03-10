@@ -82,3 +82,404 @@ exemplars:
           ProcessItems(items);
       }
     description: "Accessing navigation property in loop triggers N extra queries"
+
+  # ── Wave 1 Exemplars ──────────────────────────────────────────────
+
+  - id: "cs:ef-dbcontext-singleton:bad1"
+    patternId: "cs:ef-dbcontext-singleton"
+    language: "csharp"
+    code: |
+      services.AddSingleton<AppDbContext>();
+      // DbContext is NOT thread-safe — will corrupt data
+    description: "Registering DbContext as singleton causes concurrency issues"
+
+  - id: "cs:ef-cartesian:bad1"
+    patternId: "cs:ef-cartesian-explosion"
+    language: "csharp"
+    code: |
+      var orders = await _context.Orders
+          .Include(o => o.Items)
+          .Include(o => o.Payments)
+          .Include(o => o.Shipments)
+          .ToListAsync();
+    description: "Multiple Include without AsSplitQuery causes cartesian product"
+
+  - id: "cs:ef-load-all:bad1"
+    patternId: "cs:ef-load-entire-table"
+    language: "csharp"
+    code: |
+      public async Task<List<User>> GetAllUsers() {
+          return await _context.Users.ToListAsync();
+      }
+    description: "ToListAsync on entire DbSet without filtering"
+
+  - id: "cs:ef-entity-api:bad1"
+    patternId: "cs:ef-entity-as-api-response"
+    language: "csharp"
+    code: |
+      [HttpGet("{id}")]
+      public async Task<User> GetUser(int id) {
+          return await _context.Users.FindAsync(id);
+      }
+    description: "Returning EF entity directly from API endpoint"
+
+  - id: "cs:sync-over-async:bad1"
+    patternId: "cs:async-sync-over-async"
+    language: "csharp"
+    code: |
+      public string GetData() {
+          var result = _httpClient.GetStringAsync("/api/data").Result;
+          return result;
+      }
+    description: "Blocking on async with .Result causes deadlocks"
+
+  - id: "cs:fire-forget:bad1"
+    patternId: "cs:async-fire-and-forget"
+    language: "csharp"
+    code: |
+      public void ProcessOrder(Order order) {
+          SendEmailAsync(order.Email);  // not awaited!
+          _logger.LogInformation("Order processed");
+      }
+    description: "Async call without await silently swallows exceptions"
+
+  - id: "cs:task-run-asp:bad1"
+    patternId: "cs:async-task-run-in-aspnet"
+    language: "csharp"
+    code: |
+      [HttpPost]
+      public async Task<IActionResult> Process([FromBody] Request req) {
+          await Task.Run(() => HeavyComputation(req));
+          return Ok();
+      }
+    description: "Task.Run in ASP.NET wastes ThreadPool threads"
+
+  - id: "cs:service-locator:bad1"
+    patternId: "cs:di-service-locator"
+    language: "csharp"
+    code: |
+      public class OrderService {
+          private readonly IServiceProvider _sp;
+          public void Process() {
+              var repo = _sp.GetRequiredService<IOrderRepo>();
+              repo.Save();
+          }
+      }
+    description: "Using GetRequiredService instead of constructor injection"
+
+  - id: "cs:too-many-deps:bad1"
+    patternId: "cs:di-too-many-deps"
+    language: "csharp"
+    code: |
+      public OrderService(IOrderRepo repo, IUserService users,
+          IPaymentService pay, IShippingService ship,
+          INotificationService notify, IDiscountService disc,
+          IAuditService audit) { }
+    description: "Constructor with too many dependencies violates SRP"
+
+  - id: "cs:new-httpclient:bad1"
+    patternId: "cs:mem-httpclient-new"
+    language: "csharp"
+    code: |
+      public async Task<string> FetchData(string url) {
+          using var client = new HttpClient();
+          return await client.GetStringAsync(url);
+      }
+    description: "new HttpClient per request causes socket exhaustion"
+
+  - id: "cs:static-leak:bad1"
+    patternId: "cs:mem-static-collection-leak"
+    language: "csharp"
+    code: |
+      private static readonly List<LogEntry> _logs = new();
+      public void Log(string msg) {
+          _logs.Add(new LogEntry(msg)); // never cleared!
+      }
+    description: "Static list grows unbounded — memory leak"
+
+  - id: "cs:lock-this:bad1"
+    patternId: "cs:conc-lock-on-this"
+    language: "csharp"
+    code: |
+      public void Increment() {
+          lock (this) { _counter++; }
+      }
+    description: "lock(this) allows external deadlocks"
+
+  - id: "cs:empty-catch:bad1"
+    patternId: "cs:err-swallowed-exception"
+    language: "csharp"
+    code: |
+      try { await ProcessAsync(); }
+      catch (Exception) { /* silently swallowed */ }
+    description: "Empty catch silently hides failures"
+
+  - id: "cs:throw-ex:bad1"
+    patternId: "cs:err-throw-ex"
+    language: "csharp"
+    code: |
+      try { Process(); }
+      catch (Exception ex) {
+          _logger.LogError(ex, "Failed");
+          throw ex; // resets stack trace!
+      }
+    description: "throw ex loses original stack trace"
+
+  - id: "cs:wildcard-cors:bad1"
+    patternId: "cs:aspnet-wildcard-cors"
+    language: "csharp"
+    code: |
+      builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
+          p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+    description: "AllowAnyOrigin disables CORS protection"
+
+  - id: "cs:pii-logs:bad1"
+    patternId: "cs:aspnet-pii-in-logs"
+    language: "csharp"
+    code: |
+      _logger.LogInformation("User logged in: {@User}", user);
+    description: "Destructuring entire User object may expose PII"
+
+  - id: "cs:minimal-no-valid:bad1"
+    patternId: "cs:minimal-api-no-validation"
+    language: "csharp"
+    code: |
+      app.MapPost("/orders", (CreateOrderRequest req) => {
+          var order = new Order(req.ProductId, req.Qty);
+          db.Orders.Add(order);
+          return Results.Created($"/orders/{order.Id}", order);
+      });
+    description: "Minimal API endpoint without input validation"
+
+  - id: "cs:minimal-untyped:bad1"
+    patternId: "cs:minimal-api-results-not-typed"
+    language: "csharp"
+    code: |
+      app.MapGet("/products/{id}", (int id) => {
+          var p = db.Products.Find(id);
+          return p is null ? Results.NotFound() : Results.Ok(p);
+      });
+    description: "Results.Ok lacks type info for OpenAPI"
+
+  - id: "cs:minimal-fat:bad1"
+    patternId: "cs:minimal-api-fat-lambda"
+    language: "csharp"
+    code: |
+      app.MapPost("/orders", async (AppDb db, OrderDto dto) => {
+          // 30+ lines of validation, mapping, saving, notifications...
+          if (dto.Items == null) return Results.BadRequest();
+          var order = new Order();
+          foreach (var i in dto.Items) { order.Items.Add(Map(i)); }
+          db.Orders.Add(order); await db.SaveChangesAsync();
+          await _notify.SendAsync(order);
+          return Results.Created($"/orders/{order.Id}", order);
+      });
+    description: "Fat inline lambda handler — extract to named method"
+
+  - id: "cs:grpc-no-deadline:bad1"
+    patternId: "cs:grpc-missing-deadline"
+    language: "csharp"
+    code: |
+      var response = await _grpcClient.GetOrderAsync(
+          new GetOrderRequest { Id = orderId });
+    description: "gRPC call without deadline can hang indefinitely"
+
+  - id: "cs:grpc-channel:bad1"
+    patternId: "cs:grpc-channel-per-call"
+    language: "csharp"
+    code: |
+      public async Task<Order> GetOrder(int id) {
+          var channel = GrpcChannel.ForAddress("https://orders:5001");
+          var client = new OrderService.OrderServiceClient(channel);
+          return await client.GetOrderAsync(new() { Id = id });
+      }
+    description: "Creating GrpcChannel per call wastes connections"
+
+  # ── Wave 2 Exemplars ──────────────────────────────────────────
+
+  - id: "cs:lock-await:bad1"
+    patternId: "cs:async-lock-with-await"
+    language: "csharp"
+    code: |
+      private readonly object _lock = new();
+      public async Task UpdateCache() {
+          lock (_lock) {
+              var data = await _api.FetchAsync(); // BAD: await in lock
+              _cache = data;
+          }
+      }
+    description: "await inside lock releases the lock during suspension"
+
+  - id: "cs:parallel-foreach-async:bad1"
+    patternId: "cs:async-parallel-foreach-async"
+    language: "csharp"
+    code: |
+      Parallel.ForEach(items, async item => {
+          await ProcessItemAsync(item); // fire-and-forget!
+      });
+    description: "Parallel.ForEach with async lambda creates fire-and-forget tasks"
+
+  - id: "cs:ef-find-loop:bad1"
+    patternId: "cs:ef-find-in-loop"
+    language: "csharp"
+    code: |
+      foreach (var id in orderIds) {
+          var order = await _context.Orders.FindAsync(id); // N queries
+          Process(order);
+      }
+    description: "EF query inside loop causes N round-trips"
+
+  - id: "cs:ef-client-eval:bad1"
+    patternId: "cs:ef-client-side-eval"
+    language: "csharp"
+    code: |
+      var users = _context.Users.ToList()
+          .Where(u => u.IsActive) // client-side!
+          .OrderBy(u => u.Name);
+    description: "ToList() before Where forces client-side evaluation"
+
+  - id: "cs:ef-save-notx:bad1"
+    patternId: "cs:ef-savechanges-no-transaction"
+    language: "csharp"
+    code: |
+      public async Task TransferFunds(int from, int to, decimal amount) {
+          var src = await _context.Accounts.FindAsync(from);
+          src.Balance -= amount;
+          await _context.SaveChangesAsync(); // partial commit risk
+          var dst = await _context.Accounts.FindAsync(to);
+          dst.Balance += amount;
+          await _context.SaveChangesAsync();
+      }
+    description: "Two SaveChanges without transaction — partial commit on failure"
+
+  - id: "cs:catch-generic:bad1"
+    patternId: "cs:err-catch-generic"
+    language: "csharp"
+    code: |
+      try { var data = JsonSerializer.Deserialize<Order>(json); }
+      catch (Exception ex) { _logger.LogError(ex, "Failed"); return null; }
+    description: "Catching base Exception hides specific error types"
+
+  - id: "cs:exception-flow:bad1"
+    patternId: "cs:err-exception-flow-control"
+    language: "csharp"
+    code: |
+      foreach (var input in inputs) {
+          try {
+              var parsed = int.Parse(input); // use TryParse instead!
+              Process(parsed);
+          } catch (FormatException) { continue; }
+      }
+    description: "try/catch in loop for flow control — use TryParse"
+
+  - id: "cs:missing-dispose:bad1"
+    patternId: "cs:mem-missing-dispose"
+    language: "csharp"
+    code: |
+      var stream = new FileStream(path, FileMode.Open);
+      var data = ReadAll(stream);
+      // stream never disposed — file handle leak
+    description: "FileStream created without using statement"
+
+  - id: "cs:event-leak:bad1"
+    patternId: "cs:mem-event-handler-leak"
+    language: "csharp"
+    code: |
+      public void Subscribe() {
+          _bus.OnMessage += HandleMessage; // never unsubscribed
+      }
+    description: "Event subscription without -= causes memory leak"
+
+  - id: "cs:dict-toctou:bad1"
+    patternId: "cs:conc-dict-check-then-act"
+    language: "csharp"
+    code: |
+      if (!_cache.ContainsKey(key)) {
+          _cache.Add(key, ComputeValue(key)); // race condition!
+      }
+    description: "ContainsKey then Add is TOCTOU race condition"
+
+  - id: "cs:captive-dep:bad1"
+    patternId: "cs:aspnet-captive-dependency"
+    language: "csharp"
+    code: |
+      services.AddSingleton<ICacheService>(sp => {
+          var db = sp.GetRequiredService<AppDbContext>(); // scoped!
+          return new CacheService(db);
+      });
+    description: "Singleton capturing scoped DbContext — lives forever"
+
+  - id: "cs:linq-premature:bad1"
+    patternId: "cs:linq-premature-materialization"
+    language: "csharp"
+    code: |
+      var all = _context.Products.ToList(); // loads all products!
+      var active = all.Where(p => p.IsActive).Take(10);
+    description: "ToList() loads everything, then filters in memory"
+
+  # ── Wave 3 Exemplars ──────────────────────────────────────────
+
+  - id: "cs:raw-sql:bad1"
+    patternId: "cs:ef-raw-sql-injection"
+    language: "csharp"
+    code: |
+      var users = _context.Users
+          .FromSqlRaw($"SELECT * FROM Users WHERE Name = '{name}'")
+          .ToList();
+    description: "String interpolation in FromSqlRaw — SQL injection"
+
+  - id: "cs:hardcoded-conn:bad1"
+    patternId: "cs:hardcoded-connection"
+    language: "csharp"
+    code: |
+      var conn = new SqlConnection("Server=prod-db;Database=App;User=sa;Password=secret123");
+    description: "Connection string hardcoded in source code"
+
+  - id: "cs:regex-timeout:bad1"
+    patternId: "cs:regex-no-timeout"
+    language: "csharp"
+    code: |
+      var regex = new Regex(@"^(a+)+$"); // ReDoS vulnerable
+      if (regex.IsMatch(userInput)) { ... }
+    description: "Regex without timeout is vulnerable to ReDoS"
+
+  - id: "cs:catch-rethrow:bad1"
+    patternId: "cs:catch-rethrow-only"
+    language: "csharp"
+    code: |
+      try { await ProcessAsync(); }
+      catch (Exception) { throw; } // completely useless wrapper
+    description: "Catch that only rethrows adds no value"
+
+  - id: "cs:bool-blindness:bad1"
+    patternId: "cs:boolean-blindness"
+    language: "csharp"
+    code: |
+      public void SendEmail(string to, bool isHtml, bool addFooter,
+          bool trackOpens, bool async) { ... }
+      // Call: SendEmail(addr, true, false, true, false) — unreadable
+    description: "Multiple bool params make call sites unreadable"
+
+  - id: "cs:mixed-async:bad1"
+    patternId: "cs:mixed-async-sync"
+    language: "csharp"
+    code: |
+      public async Task<Data> GetData() {
+          var cached = _cache.GetAsync(key).Result; // sync-over-async
+          if (cached != null) return cached;
+          return await _api.FetchAsync(key); // proper await
+      }
+    description: "Same method uses both .Result and await — inconsistent"
+
+  - id: "cs:large-try:bad1"
+    patternId: "cs:large-try-block"
+    language: "csharp"
+    code: |
+      try {
+          var user = await GetUser(id);
+          var orders = await GetOrders(user.Id);
+          var payments = await GetPayments(orders);
+          // ... 20+ more lines of business logic ...
+          await SendNotification(user, summary);
+      } catch (Exception ex) { _logger.LogError(ex, "Failed"); }
+    description: "Try block wrapping too much code — narrow the scope"

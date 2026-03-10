@@ -56,6 +56,30 @@ export interface CSharpEntityMetadata {
   diagnostics?: Array<{ id: string; message: string; severity: string; line: number; column: number }>;
   complexity?: number;
   docComment?: string;
+  controlFlow?: {
+    branches?: Array<{ line: number }>;
+    loops?: Array<{ kind: string; line: number; innerCalls?: string[] }>;
+    exceptions?: Array<{
+      line: number;
+      catchType?: string;
+      hasRethrow?: boolean;
+      isEmpty?: boolean;
+      hasThrowEx?: boolean;
+    }>;
+    returns?: Array<{ line: number }>;
+    awaits?: Array<{ expression: string; line: number }>;
+  };
+  csharpHints?: {
+    syncOverAsyncCount?: number;
+    nullForgivingCount?: number;
+    lockOnThisCount?: number;
+    stringConcatInLoopCount?: number;
+    newHttpClientCount?: number;
+    newDisposableNoUsingCount?: number;
+    hasParallelForEachAsync?: boolean;
+    throwExCount?: number;
+    emptyCatchCount?: number;
+  };
 }
 
 // ============================================================================

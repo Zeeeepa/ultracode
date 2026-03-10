@@ -227,19 +227,57 @@ function convertCSharpResult(filePath: string, entities: CSharpParsedEntity[]): 
       }));
     }
 
-    // Control flow (basic mapping from Roslyn metadata)
+    // Control flow (mapped from Roslyn ExtractControlFlow)
     if (mappedType === "method" || mappedType === "function") {
       const loc = (line: number) => ({
         start: { line, column: 0, index: 0 },
         end: { line, column: 0, index: 0 },
       });
-      parsed.controlFlow = {
-        branches: [],
-        loops: [],
-        exceptions: [],
-        returns: [],
-        awaits: meta?.isAsync ? [{ expression: "await", location: loc(entity.startLine) }] : [],
-      };
+
+      if (meta?.controlFlow) {
+        const LOOP_KIND_MAP: Record<string, "for" | "for-of" | "for-in" | "while" | "do-while"> = {
+          for: "for",
+          foreach: "for-of",
+          while: "while",
+          do: "do-while",
+        };
+        parsed.controlFlow = {
+          branches: (meta.controlFlow.branches ?? []).map((b) => ({
+            type: "if" as const,
+            location: loc(b.line),
+          })),
+          loops: (meta.controlFlow.loops ?? []).map((l) => ({
+            type: LOOP_KIND_MAP[l.kind] ?? ("for" as const),
+            location: loc(l.line),
+          })),
+          exceptions: (meta.controlFlow.exceptions ?? []).map((e) => ({
+            type: "catch" as const,
+            catchType: e.catchType,
+            location: loc(e.line),
+          })),
+          returns: (meta.controlFlow.returns ?? []).map((r) => ({
+            hasValue: true,
+            location: loc(r.line),
+          })),
+          awaits: (meta.controlFlow.awaits ?? []).map((a) => ({
+            expression: a.expression,
+            location: loc(a.line),
+          })),
+        };
+      } else {
+        parsed.controlFlow = {
+          branches: [],
+          loops: [],
+          exceptions: [],
+          returns: [],
+          awaits: meta?.isAsync ? [{ expression: "await", location: loc(entity.startLine) }] : [],
+        };
+      }
+    }
+
+    // C# antipattern hints (from Roslyn ExtractCSharpHints) → stored in metadata for structural detector
+    if (meta?.csharpHints) {
+      parsed.metadata = { ...(parsed.metadata ?? {}), _csharpHints: meta.csharpHints };
     }
 
     // NOTE: Don't set parsed.children here — we flatten manually below
@@ -566,6 +604,12 @@ export class ParserAgent extends BaseAgent {
       batches: 0,
     };
 
+    // TEI inference metrics aggregation
+    let teiTotalGenTimeMs = 0;
+    let teiTotalGenCount = 0;
+    let teiMaxBatchMs = 0;
+    let teiCacheHits = 0;
+
     // Aggregate from all language pools
     for (const pool of this.languagePools.values()) {
       const poolStats = pool.getEmbeddingStats();
@@ -573,6 +617,19 @@ export class ParserAgent extends BaseAgent {
       stats.durationMs = Math.max(stats.durationMs, poolStats.durationMs);
       stats.workers += poolStats.workers;
       stats.batches += poolStats.batches;
+      // TEI metrics
+      if (poolStats.avgMsPerEmb != null && poolStats.avgMsPerEmb > 0) {
+        // Weighted sum for correct avg across pools
+        const count = Math.round(poolStats.avgMsPerEmb > 0 ? poolStats.total || 1 : 0);
+        teiTotalGenTimeMs += poolStats.avgMsPerEmb * count;
+        teiTotalGenCount += count;
+      }
+      if (poolStats.maxBatchMs != null && poolStats.maxBatchMs > teiMaxBatchMs) {
+        teiMaxBatchMs = poolStats.maxBatchMs;
+      }
+      if (poolStats.cacheHits != null) {
+        teiCacheHits += poolStats.cacheHits;
+      }
     }
 
     // Also check accumulator for centralized mode stats
@@ -580,12 +637,30 @@ export class ParserAgent extends BaseAgent {
     if (accStats) {
       // In centralized mode, accumulator has the real totals
       // Pool stats only count texts received, not embeddings generated
+      stats.total += accStats.total;
+      stats.batches += accStats.batches;
+      stats.workers = Math.max(stats.workers, accStats.workers);
       stats.durationMs = Math.max(stats.durationMs, accStats.durationMs);
       stats.provider = accStats.provider;
+      // TEI metrics from centralized mode (accumulator does the actual TEI calls)
+      if (accStats.avgMsPerEmb != null && accStats.avgMsPerEmb > 0) {
+        teiTotalGenTimeMs = accStats.avgMsPerEmb * accStats.total;
+        teiTotalGenCount = accStats.total;
+      }
+      if (accStats.maxBatchMs != null && accStats.maxBatchMs > teiMaxBatchMs) {
+        teiMaxBatchMs = accStats.maxBatchMs;
+      }
     }
 
     // Calculate overall throughput
     stats.speedPerSec = stats.durationMs > 0 ? Math.round((stats.total / stats.durationMs) * 1000) : 0;
+
+    // Set TEI metrics
+    if (teiTotalGenCount > 0) {
+      stats.avgMsPerEmb = +(teiTotalGenTimeMs / teiTotalGenCount).toFixed(2);
+    }
+    if (teiMaxBatchMs > 0) stats.maxBatchMs = Math.round(teiMaxBatchMs);
+    if (teiCacheHits > 0) stats.cacheHits = teiCacheHits;
 
     return stats.total > 0 ? stats : null;
   }

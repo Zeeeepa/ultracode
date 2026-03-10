@@ -39,8 +39,8 @@ export const LOG_FIELD_POSITIONS = {
   MODULE_START: 46,
   MODULE_END: 65, // 20 chars: module name
   EVENT_START: 67,
-  EVENT_END: 86, // 20 chars: event name
-  KV_START: 88, // variable: key=value pairs
+  EVENT_END: 94, // 28 chars: event name
+  KV_START: 96, // variable: key=value pairs
 } as const;
 
 /** Field lengths */
@@ -51,14 +51,14 @@ export const LOG_FIELD_LENGTHS = {
   HASH: 8,
   PROJ: 8,
   MODULE: 20,
-  EVENT: 20,
+  EVENT: 28,
 } as const;
 
 /** KV pair constraints */
 export const KV_CONSTRAINTS = {
-  MAX_KEY_LENGTH: 16,
-  MAX_VALUE_LENGTH: 64,
-  MAX_TOTAL_LENGTH: 512,
+  MAX_KEY_LENGTH: 20,
+  MAX_VALUE_LENGTH: 512,
+  MAX_TOTAL_LENGTH: 2048,
 } as const;
 
 /** Primitive value types allowed in KV pairs */

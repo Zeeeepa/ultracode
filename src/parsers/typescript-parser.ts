@@ -44,7 +44,11 @@ import {
   extractPrototypeMethod,
   markConstructorFunction,
 } from "./ts-js-patterns-extractor.js";
-import { extractEnumDeclaration, extractTypeAliasDeclaration } from "./ts-type-extractor.js";
+import {
+  extractEnumDeclaration,
+  extractNamespaceDeclaration,
+  extractTypeAliasDeclaration,
+} from "./ts-type-extractor.js";
 
 // =============================================================================
 // ENTITY EXTRACTION
@@ -109,6 +113,11 @@ export function extractEntities(ctx: ExtractorContext, node: ts.Node): void {
   if (ts.isEnumDeclaration(node)) {
     extractEnumDeclaration(node, ctx);
     return;
+  }
+
+  // Namespace/module declarations
+  if (ts.isModuleDeclaration(node) && node.name) {
+    extractNamespaceDeclaration(node, ctx);
   }
 
   // Import declarations

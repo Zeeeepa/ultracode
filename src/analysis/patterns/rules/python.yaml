@@ -167,3 +167,969 @@ patterns:
     exemplarIds: ["py:string-concat-loop:bad1"]
     minSemanticSimilarity: 0.6
     minStructuralConfidence: 0.5
+
+  # ─── pythonHints-based rules ─────────────────────────────────────────
+
+  - id: "py:swallowed-exception"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Swallowed Exception"
+    description: "except X: pass silently swallows exceptions, hiding real bugs"
+    suggestion: "At minimum log the exception: except X as e: logger.exception(e)"
+    tags: ["error-handling", "debugging"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasExceptions: true
+      minExceptPass: 1
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:generic-raise"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Generic Exception Raise"
+    description: "raise Exception(...) / raise BaseException — callers cannot selectively catch"
+    suggestion: "Define domain-specific exceptions: raise UserNotFoundError(...)"
+    tags: ["error-handling", "api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minGenericRaise: 1
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:wide-try"
+    category: "code-smell"
+    severity: "medium"
+    name: "Wide Try Block"
+    description: "Try block >10 lines — catches unrelated exceptions, masks real errors"
+    suggestion: "Wrap only the specific line(s) that can raise, not the whole function"
+    tags: ["error-handling", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasExceptions: true
+      minWideTryBlock: 1
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:type-ignore-no-code"
+    category: "code-smell"
+    severity: "low"
+    name: "Blanket type: ignore"
+    description: "'# type: ignore' without error code suppresses ALL mypy errors on the line"
+    suggestion: "Use specific code: # type: ignore[assignment] or fix the type error"
+    tags: ["type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minTypeIgnore: 1
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:any-abuse"
+    category: "code-smell"
+    severity: "medium"
+    name: "Excessive Any Type Usage"
+    description: "Multiple 'Any' annotations — defeats the purpose of type checking"
+    suggestion: "Use specific types, TypeVar, Protocol, or Union instead of Any"
+    tags: ["type-safety"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minAnyType: 2
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:eval-exec"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "eval/exec Usage"
+    description: "eval() and exec() execute arbitrary code — major security risk"
+    suggestion: "Use ast.literal_eval for data parsing, or refactor to avoid dynamic execution"
+    tags: ["security", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minEvalExec: 1
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "py:string-concat-loop-hint"
+    category: "optimization"
+    severity: "medium"
+    name: "String Concatenation in Loop (parser-detected)"
+    description: "str += in loop detected by parser — O(n²) memory allocation"
+    suggestion: "Use parts = []; parts.append(x); ''.join(parts)"
+    bigO:
+      before: "O(n²)"
+      after: "O(n)"
+    tags: ["performance", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasPyStringConcatInLoop: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:open-without-with"
+    category: "anti-pattern"
+    severity: "high"
+    name: "open() Without Context Manager"
+    description: "open() without 'with' risks resource leak if exception occurs"
+    suggestion: "Use 'with open(path) as f:' to ensure file is always closed"
+    tags: ["resource-management", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasPyOpenWithoutWith: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:async-no-await"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Async Function Without Await"
+    description: "async def without await — adds coroutine overhead for no benefit"
+    suggestion: "Remove 'async' keyword or add proper await calls"
+    tags: ["concurrency", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["async_function"]
+      hasPyAsyncNoAwait: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  # ─── Pandas rules (YAML-only + custom detector) ─────────────────────
+
+  - id: "py:pd-iterrows"
+    category: "optimization"
+    severity: "high"
+    name: "DataFrame.iterrows() Usage"
+    description: "iterrows() is extremely slow — 100-1000x slower than vectorized ops"
+    suggestion: "Use df.apply(), df.itertuples(), or vectorized operations"
+    bigO:
+      before: "O(n) with Python overhead per row"
+      after: "O(n) vectorized (C-level)"
+    benchmark: "100-1000x faster with vectorized operations"
+    tags: ["pandas", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["\\.iterrows"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:pd-apply"
+    category: "optimization"
+    severity: "medium"
+    name: "DataFrame.apply() Anti-pattern"
+    description: "apply() is slow — often a hidden Python loop over rows"
+    suggestion: "Use vectorized pandas/numpy operations: df['col'].str.*, np.where, etc."
+    benchmark: "10-100x faster with vectorized ops"
+    tags: ["pandas", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["\\.apply"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:pd-append-in-loop"
+    category: "anti-pattern"
+    severity: "high"
+    name: "DataFrame.append() in Loop"
+    description: "append() in loop creates new DataFrame each iteration — O(n²)"
+    suggestion: "Collect as list of dicts, then pd.DataFrame(rows) or pd.concat()"
+    bigO:
+      before: "O(n²)"
+      after: "O(n)"
+    benchmark: "100x+ faster for large datasets"
+    tags: ["pandas", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["\\.append"]
+      hasLoops: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:pd-concat-in-loop"
+    category: "anti-pattern"
+    severity: "high"
+    name: "pd.concat() in Loop"
+    description: "concat() in loop copies entire DataFrame each time — O(n²)"
+    suggestion: "Collect DataFrames in list, then single pd.concat(dfs)"
+    bigO:
+      before: "O(n²)"
+      after: "O(n)"
+    tags: ["pandas", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["concat"]
+      hasLoops: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:pd-dot-values"
+    category: "code-smell"
+    severity: "low"
+    name: "DataFrame.values Usage"
+    description: ".values returns numpy array with potential dtype conversion — use .to_numpy()"
+    suggestion: "Use df.to_numpy() or df['col'].to_numpy() for explicit conversion"
+    tags: ["pandas", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["\\.values$"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:pd-groupby-apply"
+    category: "optimization"
+    severity: "medium"
+    name: "groupby().apply() Pattern"
+    description: "groupby().apply() runs Python function per group — slow for simple aggregations"
+    suggestion: "Use built-in aggregations: df.groupby('col').agg({'val': 'sum'})"
+    tags: ["pandas", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["\\.groupby"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:pd-merge-no-validate"
+    category: "code-smell"
+    severity: "medium"
+    name: "merge() Without validate"
+    description: "merge() without validate= silently creates duplicates on key collision"
+    suggestion: "Add validate='one_to_one' or validate='many_to_one' to catch key issues"
+    tags: ["pandas", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["\\.merge"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:pd-chained-indexing"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Chained Indexing Assignment"
+    description: "df['a']['b'] = val — SettingWithCopyWarning, may not update original"
+    suggestion: "Use df.loc[row, 'col'] = val for reliable assignment"
+    tags: ["pandas", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkPdChainedIndexing"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:pd-inplace-true"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "inplace=True Parameter"
+    description: "inplace=True returns None, breaks method chaining, harder to debug"
+    suggestion: "Use df = df.dropna() instead of df.dropna(inplace=True)"
+    tags: ["pandas", "api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkPdInplaceTrue"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:pd-missing-copy"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "DataFrame Slice Without .copy()"
+    description: "Assigning DataFrame slice without .copy() — SettingWithCopyWarning"
+    suggestion: "Use df_new = df[mask].copy() to create independent DataFrame"
+    tags: ["pandas", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkPdMissingCopy"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:pd-nan-comparison"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "NaN Equality Comparison"
+    description: "== None or == np.nan always returns False — NaN != NaN by IEEE 754"
+    suggestion: "Use pd.isna(), pd.notna(), or np.isnan() for NaN checks"
+    tags: ["pandas", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkPdNanComparison"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:pd-csv-no-dtype"
+    category: "code-smell"
+    severity: "low"
+    name: "read_csv Without dtype"
+    description: "read_csv() without dtype= — auto-inference is slow and may pick wrong types"
+    suggestion: "Specify dtype={'col': 'int32'} or dtype={'col': 'category'} for efficiency"
+    tags: ["pandas", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["read_csv"]
+    customDetector: "checkPdCsvNoDtype"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:pd-itertuples"
+    category: "optimization"
+    severity: "low"
+    name: "DataFrame.itertuples() Usage"
+    description: "itertuples() is faster than iterrows but still slower than vectorized ops"
+    suggestion: "Consider vectorized operations or numpy for best performance"
+    tags: ["pandas", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["\\.itertuples"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── NumPy rules ────────────────────────────────────────────────────
+
+  - id: "py:np-append-in-loop"
+    category: "anti-pattern"
+    severity: "high"
+    name: "np.append() in Loop"
+    description: "np.append() copies entire array each time — O(n²)"
+    suggestion: "Pre-allocate with np.empty() or collect in list then np.array()"
+    bigO:
+      before: "O(n²)"
+      after: "O(n)"
+    tags: ["numpy", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["np\\.append"]
+      hasLoops: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:np-deprecated-alias"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "NumPy Deprecated Type Alias"
+    description: "np.bool, np.int, np.float etc. are deprecated since NumPy 1.24"
+    suggestion: "Use Python builtins: bool, int, float or np.bool_, np.int64, np.float64"
+    tags: ["numpy", "deprecation"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["np\\.(bool|int|float|complex|object|str)$"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:np-matrix"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "np.matrix Usage"
+    description: "np.matrix is deprecated — use np.ndarray with @ operator instead"
+    suggestion: "Replace np.matrix(x) with np.array(x) and use @ for matrix multiplication"
+    tags: ["numpy", "deprecation"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["np\\.matrix"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:np-loop"
+    category: "optimization"
+    severity: "high"
+    name: "Python Loop Over NumPy Array"
+    description: "Accessing numpy arrays element-by-element in Python loop defeats vectorization"
+    suggestion: "Use numpy vectorized operations: arr * 2 instead of for i in range(len(arr)): arr[i] * 2"
+    bigO:
+      before: "O(n) with Python overhead per element"
+      after: "O(n) vectorized (C-level)"
+    benchmark: "10-100x faster with vectorized ops"
+    tags: ["numpy", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasLoops: true
+    customDetector: "checkNpLoop"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:np-float-cmp"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Float Equality Comparison"
+    description: "== on floating-point values — fails due to IEEE 754 precision"
+    suggestion: "Use np.isclose(a, b) or np.allclose(a, b) for float comparisons"
+    tags: ["numpy", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkNpFloatCmp"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ─── Scikit-learn rules ─────────────────────────────────────────────
+
+  - id: "py:sk-data-leakage"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "Data Leakage: fit_transform Before Split"
+    description: "Fitting scaler/encoder on full dataset before train_test_split leaks test info"
+    suggestion: "Split first, then fit_transform on train only: scaler.fit(X_train); scaler.transform(X_test)"
+    tags: ["sklearn", "correctness", "ml"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["fit_transform", "train_test_split"]
+    customDetector: "checkSkDataLeakage"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:sk-no-pipeline"
+    category: "code-smell"
+    severity: "medium"
+    name: "Multiple fit_transform Without Pipeline"
+    description: "Sequential fit_transform calls without Pipeline — error-prone and hard to maintain"
+    suggestion: "Use sklearn.pipeline.Pipeline or make_pipeline for reproducible workflows"
+    tags: ["sklearn", "architecture", "ml"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkSkNoPipeline"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:sk-no-random-state"
+    category: "code-smell"
+    severity: "medium"
+    name: "sklearn Without random_state"
+    description: "ML estimator/splitter without random_state — non-reproducible results"
+    suggestion: "Always set random_state=42 (or any fixed seed) for reproducibility"
+    tags: ["sklearn", "reproducibility", "ml"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkSkNoRandomState"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:sk-cv-leakage"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "Cross-validation Leakage"
+    description: "fit_transform before cross_val_score — preprocessing leaks into validation folds"
+    suggestion: "Use Pipeline to ensure preprocessing is inside CV: make_pipeline(scaler, model)"
+    tags: ["sklearn", "correctness", "ml"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["fit_transform", "cross_val_score"]
+    customDetector: "checkSkCvLeakage"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:sk-accuracy"
+    category: "code-smell"
+    severity: "medium"
+    name: "accuracy_score on Imbalanced Data"
+    description: "accuracy_score misleads on imbalanced datasets — 95% accuracy may mean 'predict majority class'"
+    suggestion: "Use classification_report, f1_score, roc_auc_score, or precision_recall_curve"
+    tags: ["sklearn", "correctness", "ml"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["accuracy_score"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:sk-predict-no-fit"
+    category: "anti-pattern"
+    severity: "high"
+    name: "predict() Without fit()"
+    description: "Calling predict() without fit() in scope — model may be unfitted"
+    suggestion: "Ensure model.fit(X_train, y_train) before model.predict(X_test)"
+    tags: ["sklearn", "correctness", "ml"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["\\.predict"]
+      callsExclude: ["\\.fit"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ─── Matplotlib rules ───────────────────────────────────────────────
+
+  - id: "py:plt-show-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "plt.show() in Loop"
+    description: "plt.show() in loop blocks execution — creates separate windows per iteration"
+    suggestion: "Use subplots or save to files: fig.savefig(f'plot_{i}.png')"
+    tags: ["matplotlib", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["plt\\.show"]
+      hasLoops: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:plt-no-close"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Figure Without plt.close()"
+    description: "Creating figures in loop without plt.close() — memory leak"
+    suggestion: "Add plt.close(fig) after saving/showing, or use plt.close('all')"
+    tags: ["matplotlib", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasLoops: true
+    customDetector: "checkPltNoClose"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:plt-state-confusion"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "Mixed pyplot/OO API"
+    description: "Mixing plt.title() (stateful) with ax.set_xlabel() (OO) — confusing and error-prone"
+    suggestion: "Use OO API consistently: fig, ax = plt.subplots(); ax.set_title(); ax.set_xlabel()"
+    tags: ["matplotlib", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkPltStateConfusion"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ─── Security rules ────────────────────────────────────────────────
+
+  - id: "py:subprocess-shell"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "subprocess with shell=True"
+    description: "shell=True with user input enables command injection attacks"
+    suggestion: "Use subprocess.run(['cmd', arg], shell=False) with list of arguments"
+    tags: ["security", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["subprocess"]
+    customDetector: "checkSubprocessShell"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:sql-injection"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "SQL String Interpolation"
+    description: "f-string or .format() with SQL — SQL injection vulnerability"
+    suggestion: "Use parameterized queries: cursor.execute('SELECT * WHERE id=?', (user_id,))"
+    tags: ["security", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkSqlInjection"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:pickle-load"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "pickle.load() on Untrusted Data"
+    description: "pickle.load() can execute arbitrary code — never use on untrusted input"
+    suggestion: "Use JSON, MessagePack, or Protobuf for data interchange. For ML, use joblib/ONNX."
+    tags: ["security"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["pickle\\.load"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  - id: "py:yaml-load-unsafe"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "yaml.load() Without SafeLoader"
+    description: "yaml.load() without Loader= executes arbitrary Python — use yaml.safe_load()"
+    suggestion: "Use yaml.safe_load(data) or yaml.load(data, Loader=yaml.SafeLoader)"
+    tags: ["security"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["yaml\\.load"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.7
+
+  - id: "py:open-no-encoding"
+    category: "code-smell"
+    severity: "low"
+    name: "open() Without encoding"
+    description: "open() without encoding= uses platform default — different behavior on Win/Mac/Linux"
+    suggestion: "Specify encoding='utf-8' explicitly: open(path, encoding='utf-8')"
+    tags: ["correctness", "portability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["open"]
+    customDetector: "checkOpenNoEncoding"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── Performance rules ─────────────────────────────────────────────
+
+  - id: "py:re-compile-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "Regex Compile in Loop"
+    description: "re.compile/search/match/findall inside loop recompiles pattern each iteration"
+    suggestion: "Compile regex once before the loop: pattern = re.compile(...); pattern.search(text)"
+    tags: ["performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["re\\.(compile|search|match|findall)"]
+      hasLoops: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:sorted-loop"
+    category: "optimization"
+    severity: "medium"
+    name: "sorted() in Loop"
+    description: "Calling sorted() inside loop — re-sorts on every iteration"
+    suggestion: "Sort once before the loop or use a sorted data structure (SortedList)"
+    tags: ["performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["sorted"]
+      hasLoops: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:date-parse-loop"
+    category: "optimization"
+    severity: "low"
+    name: "Date Parsing in Loop"
+    description: "strptime() in loop is slow — Python's date parsing is not optimized"
+    suggestion: "Use pd.to_datetime() for batch conversion or ciso8601/dateutil for speed"
+    tags: ["performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["strptime"]
+      hasLoops: true
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── API Design rules ──────────────────────────────────────────────
+
+  - id: "py:many-pos-args"
+    category: "code-smell"
+    severity: "medium"
+    name: "Too Many Positional Arguments"
+    description: "Function with >5 positional parameters — confusing at call site"
+    suggestion: "Use keyword-only args (after *): def f(a, b, *, option1, option2)"
+    tags: ["api-design", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minParams: 6
+    customDetector: "checkManyPosArgs"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:bool-trap"
+    category: "code-smell"
+    severity: "medium"
+    name: "Boolean Trap"
+    description: "Multiple boolean positional params — f(True, False, True) is unreadable"
+    suggestion: "Use keyword-only booleans: def f(*, verbose: bool = False, force: bool = False)"
+    tags: ["api-design", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkBoolTrap"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:del-finalizer"
+    category: "anti-pattern"
+    severity: "medium"
+    name: "__del__ Finalizer"
+    description: "__del__ is unreliable — GC timing is non-deterministic, may cause reference cycles"
+    suggestion: "Use context managers (__enter__/__exit__) or explicit close() methods"
+    tags: ["resource-management", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      nameMatch: "^__del__$"
+    customDetector: "checkDelFinalizer"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.8
+
+  # ─── Concurrency rules ─────────────────────────────────────────────
+
+  - id: "py:asyncio-run"
+    category: "code-smell"
+    severity: "medium"
+    name: "asyncio.run() Usage"
+    description: "asyncio.run() creates new event loop — cannot be called inside existing loop"
+    suggestion: "Use 'await' in async functions, asyncio.run() only at top-level entry point"
+    tags: ["concurrency"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["asyncio\\.run"]
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:asyncio-run-in-loop"
+    category: "anti-pattern"
+    severity: "critical"
+    name: "asyncio.run() Inside Async Function"
+    description: "asyncio.run() inside async def raises RuntimeError — event loop already running"
+    suggestion: "Use 'await coroutine()' instead of asyncio.run(coroutine())"
+    tags: ["concurrency", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["async_function"]
+      callsInclude: ["asyncio\\.run"]
+    customDetector: "checkAsyncioRunInLoop"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.9
+
+  - id: "py:gil-thread"
+    category: "anti-pattern"
+    severity: "high"
+    name: "ThreadPoolExecutor for CPU-bound Work"
+    description: "GIL prevents true parallelism for CPU-bound tasks in threads"
+    suggestion: "Use ProcessPoolExecutor for CPU-bound work, ThreadPoolExecutor for I/O-bound"
+    tags: ["concurrency", "performance"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["ThreadPoolExecutor"]
+    customDetector: "checkGilThread"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  - id: "py:threadpool-no-max"
+    category: "code-smell"
+    severity: "medium"
+    name: "ThreadPoolExecutor Without max_workers"
+    description: "No max_workers limit — unbounded thread creation can exhaust system resources"
+    suggestion: "Set explicit max_workers: ThreadPoolExecutor(max_workers=10)"
+    tags: ["concurrency", "resource-management"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      callsInclude: ["ThreadPoolExecutor"]
+    customDetector: "checkThreadpoolNoMax"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ─── Reproducibility rules ─────────────────────────────────────────
+
+  - id: "py:no-seed"
+    category: "code-smell"
+    severity: "medium"
+    name: "Random Without Seed"
+    description: "Using random/numpy random without seed setting — non-reproducible results"
+    suggestion: "Set seed at start: random.seed(42) or np.random.seed(42) or rng = np.random.default_rng(42)"
+    tags: ["reproducibility"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+    customDetector: "checkNoSeed"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── Testing rules ─────────────────────────────────────────────────
+
+  - id: "py:test-float-eq"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Float Equality in Tests"
+    description: "assertEqual(a, 0.3) fails due to float precision — flaky test"
+    suggestion: "Use assertAlmostEqual(a, 0.3, places=7) or pytest.approx(0.3)"
+    tags: ["testing", "correctness"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function"]
+      filePathMatch: "test"
+    customDetector: "checkTestFloatEq"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.6
+
+  # ─── Class design rules (Wave 2) ──────────────────────────────────
+
+  - id: "py:missing-slots"
+    category: "optimization"
+    severity: "medium"
+    name: "Class Missing __slots__"
+    description: "Class without __slots__ uses dict per instance — higher memory"
+    suggestion: "Add __slots__ = ('attr1', 'attr2') for fixed-attribute classes"
+    tags: ["performance", "memory"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      missingPySlots: true
+      minPyMethodCount: 3
+    customDetector: "checkMissingSlots"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:missing-repr"
+    category: "code-smell"
+    severity: "low"
+    name: "Class Missing __repr__"
+    description: "Class without __repr__ prints as <ClassName object at 0x...> — poor debuggability"
+    suggestion: "Add __repr__ returning a readable string representation"
+    tags: ["debuggability", "api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      missingPyRepr: true
+      minPyMethodCount: 2
+    customDetector: "checkMissingRepr"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:property-no-setter"
+    category: "code-smell"
+    severity: "info"
+    name: "Read-only @property Without Documentation"
+    description: "@property without @x.setter may confuse users expecting mutability"
+    suggestion: "If intentionally read-only, add docstring explaining why; otherwise add setter"
+    tags: ["api-design"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      hasPyPropertyNoSetter: true
+    customDetector: "checkPropertyNoSetter"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.4
+
+  - id: "py:init-too-complex"
+    category: "code-smell"
+    severity: "medium"
+    name: "__init__ Does Too Much"
+    description: "Constructor with many calls (>10) — hard to test, violates SRP"
+    suggestion: "Move complex logic to factory methods or setup methods"
+    tags: ["architecture", "testability"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      minPyInitCalls: 10
+    customDetector: "checkInitTooComplex"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:god-class"
+    category: "code-smell"
+    severity: "high"
+    name: "God Class"
+    description: "Class with >20 methods — too many responsibilities"
+    suggestion: "Split into smaller, focused classes using composition"
+    tags: ["architecture", "srp"]
+    enabled: true
+    structural:
+      entityTypes: ["class"]
+      minPyMethodCount: 20
+    customDetector: "checkGodClass"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  # ─── Function complexity rules (Wave 2) ────────────────────────────
+
+  - id: "py:too-many-returns"
+    category: "code-smell"
+    severity: "medium"
+    name: "Too Many Return Statements"
+    description: "Function with >5 return statements — complex control flow"
+    suggestion: "Refactor using early returns, extract helper functions, or use dict dispatch"
+    tags: ["complexity", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minReturnCount: 6
+    customDetector: "checkTooManyReturns"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:deep-nesting"
+    category: "code-smell"
+    severity: "high"
+    name: "Deeply Nested Code"
+    description: "Nesting depth >4 — hard to read and maintain"
+    suggestion: "Use guard clauses (early return), extract nested blocks into functions"
+    tags: ["complexity", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minNestingDepth: 5
+    customDetector: "checkDeepNesting"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:high-complexity"
+    category: "code-smell"
+    severity: "high"
+    name: "High Cyclomatic Complexity"
+    description: "Cyclomatic complexity >10 — too many execution paths, hard to test"
+    suggestion: "Break into smaller functions, use strategy/dispatch patterns"
+    tags: ["complexity", "testability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minCyclomaticPy: 11
+    customDetector: "checkHighComplexity"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:isinstance-chain"
+    category: "code-smell"
+    severity: "medium"
+    name: "isinstance Chain"
+    description: "Multiple isinstance() checks (>3) — consider match/case or singledispatch"
+    suggestion: "Use match/case (Python 3.10+), functools.singledispatch, or visitor pattern"
+    tags: ["design-pattern", "readability"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      minIsinstanceCount: 4
+    customDetector: "checkIsinstanceChain"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5
+
+  - id: "py:re-raise-different"
+    category: "anti-pattern"
+    severity: "high"
+    name: "Re-raise Different Exception Type"
+    description: "except X: raise Y() loses original traceback and exception context"
+    suggestion: "Use 'raise Y() from e' to chain exceptions, or re-raise with 'raise'"
+    tags: ["error-handling", "debugging"]
+    enabled: true
+    structural:
+      entityTypes: ["method", "function", "async_function"]
+      hasExceptions: true
+      hasPyReRaiseDifferent: true
+    customDetector: "checkReRaiseDifferent"
+    minSemanticSimilarity: 0
+    minStructuralConfidence: 0.5

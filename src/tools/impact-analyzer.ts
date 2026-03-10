@@ -451,6 +451,67 @@ export class ImpactAnalyzer {
       });
     }
 
+    // Antipattern hints: type assertions make code fragile to type changes
+    const apHints = meta["antipatternHints"] as
+      | { typeAssertionCount?: number; paramMutationCount?: number }
+      | undefined;
+    if (apHints) {
+      if ((apHints.typeAssertionCount ?? 0) > 0) {
+        changes.push({
+          description: `${apHints.typeAssertionCount} type assertion(s) - 'as' casts bypass type checking and may silently break on type changes`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+      if ((apHints.paramMutationCount ?? 0) > 0 && callers.length > 0) {
+        changes.push({
+          description: `Mutates ${apHints.paramMutationCount} parameter(s) in-place - changes may cascade to ${callers.length} callers' data`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+    }
+
+    // Python hints: eval/exec, bare except, open without with
+    const pyHints = meta["pythonHints"] as
+      | { evalExecCount?: number; bareExceptCount?: number; openWithoutWithCount?: number }
+      | undefined;
+    if (pyHints) {
+      if ((pyHints.evalExecCount ?? 0) > 0) {
+        changes.push({
+          description: `${pyHints.evalExecCount} eval/exec call(s) - dynamic code execution is a security risk and breaks static analysis`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "error",
+        });
+      }
+      if ((pyHints.bareExceptCount ?? 0) > 0) {
+        changes.push({
+          description: `${pyHints.bareExceptCount} bare except clause(s) - catches SystemExit/KeyboardInterrupt, may hide bugs on code changes`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+    }
+
+    // Zig-specific: unsafe casts make API changes more dangerous
+    const zigOps = meta?.["zigOps"] as { unsafeCastCount?: number; forceUnwrapCount?: number } | undefined;
+    if (zigOps) {
+      if ((zigOps.unsafeCastCount ?? 0) > 0) {
+        changes.push({
+          description: `${zigOps.unsafeCastCount} unsafe cast(s) (@ptrCast/@intFromPtr) — type changes may cause undefined behavior`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+      if ((zigOps.forceUnwrapCount ?? 0) > 2) {
+        changes.push({
+          description: `${zigOps.forceUnwrapCount} force unwrap(s) (.?) — null propagation changes may cause panics`,
+          location: `${entity.filePath}:${entity.location.start.line}`,
+          severity: "warning",
+        });
+      }
+    }
+
     return changes;
   }
 

@@ -12,11 +12,10 @@
  * Uses libsql for cross-runtime compatibility (Bun + Node.js)
  */
 
-import type { Client, InStatement } from "@libsql/client";
-import { createClient } from "@libsql/client";
 import { nanoid } from "nanoid";
 import type { ProjectContext } from "../../storage/libsql/types.js";
 import { DEFAULT_PROJECT_CONTEXT } from "../../storage/libsql/types.js";
+import { type InStatement, NativeSQLiteClient } from "../../storage/native-sqlite-client.js";
 import type { CommentRef, Reference, RefSourceType, RefTargetType, RefType } from "../types.js";
 
 // =============================================================================
@@ -30,7 +29,7 @@ const ID_LENGTH = 12;
 // =============================================================================
 
 export class RefStorage {
-  private client: Client | null = null;
+  private client: NativeSQLiteClient | null = null;
   private dbPath: string;
   private initialized = false;
   private currentContext: ProjectContext = DEFAULT_PROJECT_CONTEXT;
@@ -59,10 +58,8 @@ export class RefStorage {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    // Create libsql client
-    this.client = createClient({
-      url: `file:${this.dbPath}`,
-    });
+    // Create native SQLite client
+    this.client = new NativeSQLiteClient(this.dbPath);
 
     await this.createTables();
     this.initialized = true;

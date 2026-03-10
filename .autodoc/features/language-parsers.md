@@ -242,7 +242,79 @@
 
 ---
 
-## Infrastructure Languages
+## Infrastructure & Schema Languages
+
+### Protobuf
+
+**Парсер:** `protobuf/protobuf-parser.ts` + `protobuf-code-linker.ts`
+**Технология:** Text-based parser
+**Файлы:** `.proto`
+
+| Возможность | Поддержка |
+|------------|-----------|
+| Entities | services, rpcs (unary, server/client/bidi streaming), messages (nested, oneof, map), enums, packages |
+| Relationships | produces_api, consumes_api, generated_from (via code linker) |
+| Features | HTTP annotations (`google.api.http`), streaming detection, code generation config detection |
+
+**Уникальное:** Code linker обнаруживает gRPC серверы (@grpc/grpc-js, grpc-go, tonic и др.), клиенты и сгенерированные типы с confidence scoring.
+
+---
+
+### GraphQL
+
+**Парсер:** `graphql/graphql-parser.ts` + `graphql-code-linker.ts`
+**Технология:** Text-based parser
+**Файлы:** `.graphql`, `.gql`
+
+| Возможность | Поддержка |
+|------------|-----------|
+| Entities | types, interfaces, inputs, enums, unions, scalars, directives, Query/Mutation/Subscription |
+| Relationships | produces_api, consumes_api, generated_from (via code linker) |
+| Features | `extend type`, field arguments, directive detection (@auth, @deprecated, @cacheControl) |
+
+**Уникальное:** Code linker обнаруживает Apollo Server/Client, type-graphql, Nexus, Pothos, graphql-codegen и другие фреймворки.
+
+---
+
+### SQL
+
+**Парсер:** `db/sql-parser.ts` (1015 LOC)
+**Технология:** Text-based parser with dialect detection
+**Файлы:** `.sql`
+
+| Возможность | Поддержка |
+|------------|-----------|
+| Entities | tables, views, indexes, procedures, functions, triggers |
+| Features | CREATE/ALTER TABLE, dialect detection (PostgreSQL/MySQL/ClickHouse/SQLite/MSSQL), column types, constraints, FK |
+| Metadata | dbEngine, dbType, tableName, fields, indexes, foreignKeys |
+
+---
+
+### Prisma
+
+**Парсер:** `db/prisma-parser.ts` (358 LOC)
+**Технология:** Text-based parser
+**Файлы:** `.prisma`
+
+| Возможность | Поддержка |
+|------------|-----------|
+| Entities | models, enums, datasources, generators |
+| Features | Field types, relations (@relation), attributes (@id, @unique, @default, @map), @@index, @@unique |
+
+---
+
+### LINQ
+
+**Парсер:** `db/linq-parser.ts` (322 LOC)
+**Технология:** Text-based parser
+**Файлы:** `.linq`
+
+| Возможность | Поддержка |
+|------------|-----------|
+| Entities | LINQ queries, Dapper queries, raw SQL expressions |
+| Features | LINQPad XML headers, C# LINQ syntax, table reference extraction |
+
+---
 
 ### Helm Charts
 
@@ -287,8 +359,13 @@
 | Bash | shfmt/regex + tree-sitter | Functions + vars | Calls + source | Via analyzer | — | — |
 | PowerShell | tree-sitter | Functions + cmdlets | Imports + calls | Via analyzer | — | — |
 | Batch | Regex | Labels + vars | GOTO + CALL | — | — | — |
+| Protobuf | Text parser | Services + messages | Code linking | — | Proto types | — |
+| GraphQL | Text parser | Types + resolvers | Code linking | — | GQL types | — |
+| SQL | Text parser + dialect | Tables + views + procs | FK + code linking | — | SQL types | — |
+| Prisma | Text parser | Models + enums | Relations | — | Prisma types | — |
+| LINQ | Text parser | Queries | Table refs | — | — | — |
 
 ---
 
-**Version:** 6.3.0
-**Updated:** 2026-03-06
+**Version:** 6.4.0
+**Updated:** 2026-03-08

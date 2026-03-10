@@ -63,6 +63,10 @@ interface SemanticResultMetadata {
   // Types
   returnType?: string;
   paramCount?: number;
+  // Antipattern signals
+  hasTypeAssertions?: boolean;
+  hasRegexLiterals?: boolean;
+  hasSecurityHints?: boolean;
 }
 
 /**
@@ -269,8 +273,13 @@ export class SemanticSearchToolHandler extends BaseToolHandler<z.infer<typeof Se
     log.d("SEMSEARCH", "proj_paths", { arg: args.projectPath, resolved: resolvedPath, current: currentProject });
 
     if (args.projectPath && resolvedPath !== currentProject) {
-      // Check if requested project is indexed
-      if (!this.isProjectIndexed(resolvedPath)) {
+      // Check if requested project is indexed via graph storage (unified DB)
+      // Note: isProjectIndexed() checks for per-project graph.db file which is
+      // deprecated — we now use a single global DB with project_hash scoping.
+      // Instead, query the storage directly (ALS context is already set).
+      const graphStorage = await this.ensureGraphStorageForProject(resolvedPath);
+      const stats = await graphStorage.getStatistics();
+      if ((stats.totalEntities ?? 0) === 0) {
         return {
           content: [
             {

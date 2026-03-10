@@ -1,4 +1,13 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
 import { appendFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { LoggerConfig } from "./logger-types.js";
@@ -353,11 +362,57 @@ export {
 export type { LoggerConfig } from "./logger-types.js";
 export { LogLevel } from "./logger-types.js";
 
-import { getLogger, initLogger } from "../logging/index.js";
-import { getLogsDir } from "../shared/storage-paths.js";
+import { getLogger, initLogger, type LogLevelChar } from "../logging/index.js";
+import { getConfigDir, getLogsDir } from "../shared/storage-paths.js";
+
+/** Parsed log-config.json */
+interface LogConfig {
+  minLevel?: LogLevelChar;
+  teiBatchDump?: boolean;
+  /** When true, logs are written synchronously (no buffering). Useful for crash debugging. */
+  syncWrite?: boolean;
+}
+
+let logConfig: LogConfig = {};
+
+/**
+ * Load log-config.json from config directory.
+ * File format: { "minLevel": "D", "teiBatchDump": true }
+ */
+function loadLogConfig(): LogConfig {
+  try {
+    const configPath = join(getConfigDir(), "log-config.json");
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    const cfg: LogConfig = {};
+    if (parsed?.minLevel && "TDIWE".includes(parsed.minLevel)) {
+      cfg.minLevel = parsed.minLevel as LogLevelChar;
+    }
+    if (typeof parsed?.teiBatchDump === "boolean") {
+      cfg.teiBatchDump = parsed.teiBatchDump;
+    }
+    if (typeof parsed?.syncWrite === "boolean") {
+      cfg.syncWrite = parsed.syncWrite;
+    }
+    return cfg;
+  } catch {
+    return {};
+  }
+}
+
+/** Check if TEI batch dumping is enabled via log-config.json */
+export function isTeiBatchDumpEnabled(): boolean {
+  return logConfig.teiBatchDump === true;
+}
 
 export function initNewLogger(): void {
-  initLogger({ logDir: getLogsDir(), minLevel: "I", consoleOutput: false });
+  logConfig = loadLogConfig();
+  initLogger({
+    logDir: getLogsDir(),
+    minLevel: logConfig.minLevel ?? "I",
+    consoleOutput: false,
+    ...(logConfig.syncWrite ? { bufferSize: 0, flushInterval: 0 } : {}),
+  });
 }
 
 export function setLoggerProject(projectHash: string): void {

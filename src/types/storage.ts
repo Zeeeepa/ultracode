@@ -58,6 +58,10 @@ export enum RelationType {
   PRODUCES_API = "produces_api",
   CONSUMES_API = "consumes_api",
   GENERATED_FROM = "generated_from",
+
+  READS_TABLE = "reads_table",
+  WRITES_TABLE = "writes_table",
+  MAPS_TO_TABLE = "maps_to_table",
 }
 
 // -- Core data models -------------------------------------------------------
@@ -147,6 +151,8 @@ export interface EntityQuery {
     | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
+  /** When true, exclude heavy columns (embedding_text, embedding_base64) to reduce memory */
+  lightweight?: boolean | undefined;
 }
 
 export interface RelationshipQuery {
@@ -330,6 +336,7 @@ export interface GraphStorage {
   analyze(): Promise<void>;
   getMetrics(): Promise<StorageMetrics>;
 
+  /** @deprecated Use runWithRequestContext() for tool calls. Only for background/init. */
   setProject(projectPath: string, branchName?: string): void;
   clear(): Promise<void>;
   getStatistics(): Promise<{ totalEntities: number; totalRelationships: number; totalFiles: number }>;
@@ -383,6 +390,9 @@ export function parsedEntityToEntity(
     calls: parsed.calls,
     controlFlow: parsed.controlFlow,
     metrics: complexityMeta,
+    ...(parsed.jitHints && { jitHints: parsed.jitHints }),
+    ...(parsed.antipatternHints && { antipatternHints: parsed.antipatternHints }),
+    ...(parsed.pythonHints && { pythonHints: parsed.pythonHints }),
   };
 
   return {
