@@ -46,17 +46,26 @@
 // GetExitCodeProcess - not in standard Cosmopolitan headers
 bool32 GetExitCodeProcess(int64_t hProcess, uint32_t *lpExitCode);
 
-#define VERSION "2.3.0"
+#define VERSION "3.0.0"
 #define APP_NAME "UltraCode.Comm"
 #define BUFFER_SIZE 8192
 #define PIPE_NAME "\\\\.\\pipe\\UltraCode_Core"
-#define INIT_PREFIX "ULTRACODE_CWD:"
+#define INIT_PREFIX "ULTRACODE_INIT:"
 
 // Transport mode
 typedef enum {
     MODE_STDIO,  // Direct child process (default, Bun compatible)
     MODE_PIPE    // Named Pipe IPC (Node.js, faster)
 } TransportMode;
+
+// Parsed CLI arguments
+typedef struct {
+    TransportMode mode;
+    int mode_arg_idx;
+    const char *directory;   // --directory PATH (override CWD)
+    const char *branch;      // --branch NAME (explicit branch)
+    const char *agent_id;    // --agent-id ID (agent identifier)
+} CommArgs;
 
 static volatile int g_running = 1;
 
@@ -72,6 +81,10 @@ static void print_help(void) {
     printf("Transport modes:\n");
     printf("  --stdio         Direct child process proxy (default, Bun compatible)\n");
     printf("  --pipe          Named Pipe IPC (Node.js, faster)\n\n");
+    printf("Worktree/agent options:\n");
+    printf("  --directory PATH  Override working directory (e.g., worktree path)\n");
+    printf("  --branch NAME     Explicit branch name (skip git detection)\n");
+    printf("  --agent-id ID     Agent identifier for multi-agent coordination\n\n");
     printf("Other options:\n");
     printf("  -h, --help      Show this help\n");
     printf("  -v, --version   Show version\n");
@@ -99,25 +112,65 @@ static void convert_unix_to_win_path(char *path) {
     }
 }
 
-// Send client's current working directory to MCP server (Windows only)
-// This is a pre-MCP handshake that allows the server to know the client's cwd
-static int win_send_init_cwd(int64_t pipe_handle) {
+// Escape a string for JSON (handles backslashes and quotes)
+static int json_escape(const char *src, char *dst, size_t dst_size) {
+    size_t j = 0;
+    for (size_t i = 0; src[i] && j < dst_size - 2; i++) {
+        if (src[i] == '\\' || src[i] == '"') {
+            dst[j++] = '\\';
+        }
+        dst[j++] = src[i];
+    }
+    dst[j] = '\0';
+    return (int)j;
+}
+
+// Build JSON init message and write it to a buffer
+// Format: ULTRACODE_INIT:{"cwd":"...","branch":"...","agentId":"..."}\n
+static int build_init_message(char *buf, size_t buf_size,
+                              const char *cwd, const char *branch,
+                              const char *agent_id) {
+    char esc_cwd[4096];
+    json_escape(cwd, esc_cwd, sizeof(esc_cwd));
+
+    int n = snprintf(buf, buf_size, "%s{\"cwd\":\"%s\"", INIT_PREFIX, esc_cwd);
+
+    if (branch) {
+        char esc_branch[512];
+        json_escape(branch, esc_branch, sizeof(esc_branch));
+        n += snprintf(buf + n, buf_size - n, ",\"branch\":\"%s\"", esc_branch);
+    }
+    if (agent_id) {
+        char esc_id[512];
+        json_escape(agent_id, esc_id, sizeof(esc_id));
+        n += snprintf(buf + n, buf_size - n, ",\"agentId\":\"%s\"", esc_id);
+    }
+
+    n += snprintf(buf + n, buf_size - n, "}\n");
+    return n;
+}
+
+// Send JSON init message to MCP server (Windows Named Pipe)
+static int win_send_init_message(int64_t pipe_handle, const CommArgs *args) {
     char cwd[2048];
-    char init_msg[2200];
+    char init_msg[8192];
     uint32_t bytes_written;
 
-    // Get current working directory
-    if (getcwd(cwd, sizeof(cwd)) == NULL) {
-        return -1;
+    // Determine working directory
+    if (args->directory) {
+        strncpy(cwd, args->directory, sizeof(cwd) - 1);
+        cwd[sizeof(cwd) - 1] = '\0';
+    } else {
+        if (getcwd(cwd, sizeof(cwd)) == NULL) {
+            return -1;
+        }
     }
 
     // Convert to Windows path format
     convert_unix_to_win_path(cwd);
 
-    // Build init message: ULTRACODE_CWD:/path/to/project\n
-    snprintf(init_msg, sizeof(init_msg), "%s%s\n", INIT_PREFIX, cwd);
+    build_init_message(init_msg, sizeof(init_msg), cwd, args->branch, args->agent_id);
 
-    // Send to server
     if (!WriteFile(pipe_handle, init_msg, strlen(init_msg), &bytes_written, NULL)) {
         return -1;
     }
@@ -125,20 +178,52 @@ static int win_send_init_cwd(int64_t pipe_handle) {
     return 0;
 }
 
-// Parse command line for transport mode
-static TransportMode parse_mode(int argc, char **argv, int *mode_arg_idx) {
-    *mode_arg_idx = -1;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--stdio") == 0) {
-            *mode_arg_idx = i;
-            return MODE_STDIO;
-        }
-        if (strcmp(argv[i], "--pipe") == 0) {
-            *mode_arg_idx = i;
-            return MODE_PIPE;
+// Send JSON init message via Unix pipe (write to child's stdin fd)
+static int unix_send_init_message(int fd, const CommArgs *args) {
+    char cwd[2048];
+    char init_msg[8192];
+
+    if (args->directory) {
+        strncpy(cwd, args->directory, sizeof(cwd) - 1);
+        cwd[sizeof(cwd) - 1] = '\0';
+    } else {
+        if (getcwd(cwd, sizeof(cwd)) == NULL) {
+            return -1;
         }
     }
-    return MODE_STDIO;  // Default
+
+    int len = build_init_message(init_msg, sizeof(init_msg), cwd, args->branch, args->agent_id);
+
+    if (write(fd, init_msg, len) < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+// Parse all command line arguments
+static CommArgs parse_args(int argc, char **argv) {
+    CommArgs args = {0};
+    args.mode = MODE_STDIO;
+    args.mode_arg_idx = -1;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--stdio") == 0) {
+            args.mode = MODE_STDIO;
+            args.mode_arg_idx = i;
+        } else if (strcmp(argv[i], "--pipe") == 0) {
+            args.mode = MODE_PIPE;
+            args.mode_arg_idx = i;
+        } else if (strcmp(argv[i], "--directory") == 0 && i + 1 < argc) {
+            args.directory = argv[++i];
+        } else if (strcmp(argv[i], "--branch") == 0 && i + 1 < argc) {
+            args.branch = argv[++i];
+        } else if (strcmp(argv[i], "--agent-id") == 0 && i + 1 < argc) {
+            args.agent_id = argv[++i];
+        }
+    }
+
+    return args;
 }
 
 // ============================================================================
@@ -201,7 +286,8 @@ static const char* find_runtime(char *bun_path, size_t bun_path_size) {
 // Windows - STDIO mode (single-instance via Named Pipe IPC)
 // ============================================================================
 
-static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
+static int win_stdio_main(int argc, char **argv, const CommArgs *args) {
+    int mode_arg_idx = args->mode_arg_idx;
     char exe_path[1024];
     char core_path[1100];
     char cmd_line[4096];
@@ -328,7 +414,7 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
     fprintf(stderr, "Comm: connected to server pipe\n");
 
     // Send client's cwd to server (pre-MCP handshake)
-    win_send_init_cwd(pipe_handle);
+    win_send_init_message(pipe_handle, args);
 
     // Proxy loop: stdin <-> Named Pipe <-> stdout
     char buf[BUFFER_SIZE];
@@ -410,7 +496,8 @@ static int win_stdio_main(int argc, char **argv, int mode_arg_idx) {
 // Windows - PIPE mode (Named Pipe IPC, faster but requires --pipe on server)
 // ============================================================================
 
-static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
+static int win_pipe_main(int argc, char **argv, const CommArgs *args) {
+    int mode_arg_idx = args->mode_arg_idx;
     char exe_path[1024];
     char core_path[1100];
     char cmd_line[4096];
@@ -534,7 +621,7 @@ static int win_pipe_main(int argc, char **argv, int mode_arg_idx) {
     fprintf(stderr, "Comm: connected to server pipe\n");
 
     // Send client's cwd to server (pre-MCP handshake)
-    win_send_init_cwd(pipe_handle);
+    win_send_init_message(pipe_handle, args);
 
     // Proxy loop: stdin <-> Named Pipe <-> stdout
     char buf[BUFFER_SIZE];
@@ -619,13 +706,12 @@ static int win_main(int argc, char **argv) {
         }
     }
 
-    int mode_arg_idx;
-    TransportMode mode = parse_mode(argc, argv, &mode_arg_idx);
+    CommArgs args = parse_args(argc, argv);
 
-    if (mode == MODE_PIPE) {
-        return win_pipe_main(argc, argv, mode_arg_idx);
+    if (args.mode == MODE_PIPE) {
+        return win_pipe_main(argc, argv, &args);
     } else {
-        return win_stdio_main(argc, argv, mode_arg_idx);
+        return win_stdio_main(argc, argv, &args);
     }
 }
 
@@ -656,7 +742,8 @@ static int unix_get_exe_dir(char *buf, size_t buf_size) {
 // Unix - STDIO mode (fork/exec with pipe proxy)
 // ============================================================================
 
-static int unix_stdio_main(int argc, char **argv, int mode_arg_idx) {
+static int unix_stdio_main(int argc, char **argv, const CommArgs *args) {
+    int mode_arg_idx = args->mode_arg_idx;
     char exe_path[2048];
     char core_path[2200];
 
@@ -721,6 +808,9 @@ static int unix_stdio_main(int argc, char **argv, int mode_arg_idx) {
     int child_stdin = stdin_pipe[1];
     int child_stdout = stdout_pipe[0];
 
+    // Send JSON init message to child (pre-MCP handshake)
+    unix_send_init_message(child_stdin, args);
+
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
     fcntl(child_stdout, F_SETFL, O_NONBLOCK);
 
@@ -769,7 +859,8 @@ static int unix_stdio_main(int argc, char **argv, int mode_arg_idx) {
 // On Unix, --pipe just passes the flag to server; transport is still pipes
 // ============================================================================
 
-static int unix_pipe_main(int argc, char **argv, int mode_arg_idx) {
+static int unix_pipe_main(int argc, char **argv, const CommArgs *args) {
+    int mode_arg_idx = args->mode_arg_idx;
     char exe_path[2048];
     char core_path[2200];
 
@@ -833,6 +924,9 @@ static int unix_pipe_main(int argc, char **argv, int mode_arg_idx) {
     int child_stdin = stdin_pipe[1];
     int child_stdout = stdout_pipe[0];
 
+    // Send JSON init message to child (pre-MCP handshake)
+    unix_send_init_message(child_stdin, args);
+
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
     fcntl(child_stdout, F_SETFL, O_NONBLOCK);
 
@@ -895,13 +989,12 @@ static int unix_main(int argc, char **argv) {
         }
     }
 
-    int mode_arg_idx;
-    TransportMode mode = parse_mode(argc, argv, &mode_arg_idx);
+    CommArgs args = parse_args(argc, argv);
 
-    if (mode == MODE_PIPE) {
-        return unix_pipe_main(argc, argv, mode_arg_idx);
+    if (args.mode == MODE_PIPE) {
+        return unix_pipe_main(argc, argv, &args);
     } else {
-        return unix_stdio_main(argc, argv, mode_arg_idx);
+        return unix_stdio_main(argc, argv, &args);
     }
 }
 

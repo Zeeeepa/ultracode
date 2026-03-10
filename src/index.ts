@@ -1425,25 +1425,36 @@ async function main() {
       // Cancel any pending shutdown
       cancelShutdown();
 
-      // v5.1: Read init message to get client's working directory (pre-MCP handshake)
-      // comm.c sends ULTRACODE_CWD:/path/to/project\n immediately after connecting
+      // v6: Read init message (JSON protocol v3.0 or legacy v2.x)
+      // comm.c sends ULTRACODE_INIT:{"cwd":"...","branch":"...","agentId":"..."}\n
       let clientProjectPath = directory; // Default to server's directory
+      let initBranch: string | undefined;
+      let initAgentId: string | undefined;
       try {
-        const clientCwd = await clientTransport.readInitMessage(2000);
-        if (clientCwd) {
-          clientProjectPath = normalize(resolve(clientCwd));
-          log.i("PIPE", "client_cwd", { client: clientId, cwd: clientProjectPath });
+        const initMsg = await clientTransport.readInitMessage(2000);
+        if (initMsg) {
+          clientProjectPath = normalize(resolve(initMsg.cwd));
+          initBranch = initMsg.branch;
+          initAgentId = initMsg.agentId;
+          log.i("PIPE", "client_init", {
+            client: clientId,
+            cwd: clientProjectPath,
+            branch: initBranch ?? "-",
+            agentId: initAgentId ?? "-",
+          });
         }
       } catch (err) {
         log.w("PIPE", "init_msg_fail", { client: clientId, err: (err as Error).message });
       }
 
-      // v5: Create isolated session for this client
-      // The session ensures all operations are scoped to this client's project
-      const clientSession = new ClientSession({
-        projectPath: clientProjectPath, // Use client's cwd if provided, else server default
+      // v6: Create isolated session with worktree awareness
+      const sessionConfig: import("./core/client-session.js").ClientSessionConfig = {
+        projectPath: clientProjectPath,
         clientId,
-      });
+      };
+      if (initBranch) sessionConfig.branch = initBranch;
+      if (initAgentId) sessionConfig.agentId = initAgentId;
+      const clientSession = new ClientSession(sessionConfig);
 
       // Register session for tracking
       registerSession(clientSession);

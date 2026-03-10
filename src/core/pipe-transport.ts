@@ -63,9 +63,28 @@ export interface Transport {
 }
 
 /**
- * Prefix for init message containing client's working directory
+ * Prefix for JSON init message (v3.0 protocol)
+ * Format: ULTRACODE_INIT:{"cwd":"...","branch":"...","agentId":"..."}\n
  */
-export const INIT_MESSAGE_PREFIX = "ULTRACODE_CWD:";
+export const INIT_MESSAGE_PREFIX = "ULTRACODE_INIT:";
+
+/**
+ * Legacy prefix for v2.x protocol (plain text CWD)
+ * @deprecated Kept for backward compatibility with older comm.c binaries
+ */
+export const LEGACY_INIT_PREFIX = "ULTRACODE_CWD:";
+
+/**
+ * Parsed init message from comm.c client
+ */
+export interface InitMessage {
+  /** Client's working directory */
+  cwd: string;
+  /** Explicit branch name (skips git detection on server) */
+  branch?: string;
+  /** Agent identifier for multi-agent coordination */
+  agentId?: string;
+}
 
 /**
  * Pipe-based transport for a single client connection
@@ -81,21 +100,23 @@ export class PipeClientTransport implements Transport {
   constructor(private socket: Socket) {}
 
   /**
-   * Read the init message (ULTRACODE_CWD:path) before MCP handshake.
+   * Read the init message before MCP handshake.
+   * Supports both v3.0 JSON protocol (ULTRACODE_INIT:{...}) and
+   * legacy v2.x plain text protocol (ULTRACODE_CWD:path).
+   *
    * Must be called BEFORE start() to intercept the init message.
-   * Returns the client's working directory if sent, undefined otherwise.
+   * Returns parsed InitMessage if sent, undefined otherwise.
    *
    * @param timeoutMs - Timeout in milliseconds (default 2000)
    */
-  async readInitMessage(timeoutMs = 2000): Promise<string | undefined> {
+  async readInitMessage(timeoutMs = 2000): Promise<InitMessage | undefined> {
     if (this.started) {
       throw new Error("readInitMessage must be called before start()");
     }
 
-    // eslint-disable-next-line no-console
-    console.error(`[pipe-transport] readInitMessage started, timeout=${timeoutMs}ms`);
+    log.d("PIPE", "read_init_start", { timeout: timeoutMs });
 
-    return new Promise<string | undefined>((resolve) => {
+    return new Promise<InitMessage | undefined>((resolve) => {
       let resolved = false;
 
       const cleanup = (timer: NodeJS.Timeout) => {
@@ -103,7 +124,7 @@ export class PipeClientTransport implements Transport {
         this.socket.removeListener("data", dataHandler);
       };
 
-      const doResolve = (value: string | undefined, timer: NodeJS.Timeout) => {
+      const doResolve = (value: InitMessage | undefined, timer: NodeJS.Timeout) => {
         if (resolved) return;
         resolved = true;
         cleanup(timer);
@@ -123,30 +144,48 @@ export class PipeClientTransport implements Transport {
         const firstLine = (this.readBuffer as any).buffer.slice(0, newlineIndex);
         const remaining = (this.readBuffer as any).buffer.slice(newlineIndex + 1);
 
-        // Check if this is an init message
+        // v3.0 JSON protocol: ULTRACODE_INIT:{"cwd":"...","branch":"...","agentId":"..."}
         if (firstLine.startsWith(INIT_MESSAGE_PREFIX)) {
-          const clientCwd = firstLine.slice(INIT_MESSAGE_PREFIX.length).trim();
-          // eslint-disable-next-line no-console
-          console.error(`[pipe-transport] Got init message, cwd=${clientCwd}, remaining=${remaining.length} bytes`);
+          const jsonStr = firstLine.slice(INIT_MESSAGE_PREFIX.length).trim();
+          try {
+            const parsed = JSON.parse(jsonStr) as InitMessage;
+            log.d("PIPE", "init_json", {
+              cwd: parsed.cwd,
+              branch: parsed.branch ?? "-",
+              agentId: parsed.agentId ?? "-",
+              remaining: remaining.length,
+            });
 
-          // Keep remaining data in buffer for MCP protocol
-          (this.readBuffer as any).buffer = remaining;
-
-          doResolve(clientCwd || undefined, timer);
-        } else {
-          // Not an init message - leave data in buffer for MCP
-          // eslint-disable-next-line no-console
-          console.error(`[pipe-transport] First line is not init message: ${firstLine.slice(0, 50)}...`);
-          doResolve(undefined, timer);
+            (this.readBuffer as any).buffer = remaining;
+            doResolve(parsed, timer);
+          } catch {
+            log.w("PIPE", "init_json_parse_fail", { json: jsonStr.slice(0, 100) });
+            (this.readBuffer as any).buffer = remaining;
+            doResolve(undefined, timer);
+          }
+          return;
         }
+
+        // Legacy v2.x protocol: ULTRACODE_CWD:path
+        if (firstLine.startsWith(LEGACY_INIT_PREFIX)) {
+          const clientCwd = firstLine.slice(LEGACY_INIT_PREFIX.length).trim();
+          log.d("PIPE", "init_legacy", { cwd: clientCwd, remaining: remaining.length });
+
+          (this.readBuffer as any).buffer = remaining;
+          doResolve(clientCwd ? { cwd: clientCwd } : undefined, timer);
+          return;
+        }
+
+        // Not an init message - leave data in buffer for MCP
+        log.d("PIPE", "init_not_found", { firstLine: firstLine.slice(0, 50) });
+        doResolve(undefined, timer);
       };
 
       this.socket.on("data", dataHandler);
 
       // Timeout - proceed without init message
       const timer = setTimeout(() => {
-        // eslint-disable-next-line no-console
-        console.error(`[pipe-transport] readInitMessage timeout after ${timeoutMs}ms`);
+        log.w("PIPE", "init_timeout", { timeoutMs });
         doResolve(undefined, timer);
       }, timeoutMs);
     });

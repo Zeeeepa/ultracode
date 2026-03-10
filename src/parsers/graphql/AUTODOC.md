@@ -1,6 +1,6 @@
 # Graphql
 
-Provides GraphQL schema parsing and code-to-schema linking analysis.
+Analyzes relationships between GraphQL schemas and implementation code.
 
 ## Exports
 

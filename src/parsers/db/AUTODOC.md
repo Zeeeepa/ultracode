@@ -1,6 +1,6 @@
 # Db
 
-Database parsing, ORM detection, and schema analysis integration layer
+Database schema analysis module linking code to SQL/ORM models and detecting schema drift.
 
 ## Exports
 

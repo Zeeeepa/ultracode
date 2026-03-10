@@ -77,10 +77,24 @@ export async function registerAllAgents(
     } catch {
       // Config not registered, use defaults
     }
+    // Get BranchManager from IndexerAgent (via DevAgent) — it's the canonical source.
+    // BranchManager is never registered as a standalone service in the DI container.
     try {
-      branchManager = await _c.resolve<BranchManager>("BranchManager");
+      const { IndexerAgent } = await import("../agents/indexer-agent.js");
+      const indexerAgent = await _c.resolveAgent(AgentType.INDEXER);
+      if (indexerAgent instanceof IndexerAgent) {
+        branchManager = indexerAgent.getBranchManager() ?? undefined;
+      }
     } catch {
-      // BranchManager not registered
+      // IndexerAgent not available yet
+    }
+    // Fallback: try DI resolve (in case someone registers BranchManager explicitly)
+    if (!branchManager) {
+      try {
+        branchManager = await _c.resolve<BranchManager>("BranchManager");
+      } catch {
+        // BranchManager not registered
+      }
     }
     return new MergeAgent({
       repoPath,

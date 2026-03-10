@@ -255,6 +255,13 @@ export class ToolRegistry {
     this.registerLazy("diff_commits", async () => (await historyLoader()).DiffCommitsToolHandler);
     this.registerLazy("checkout_commit", async () => (await historyLoader()).CheckoutCommitToolHandler);
     this.registerLazy("list_commits", async () => (await historyLoader()).ListCommitsToolHandler);
+
+    // --- Worktree tools (~10KB) ---
+    const worktreeLoader = () => import("./handlers/worktree-tool-handlers.js");
+    this.registerLazy("spawn_agent_worktree", async () => (await worktreeLoader()).SpawnAgentWorktreeHandler);
+    this.registerLazy("list_worktree_agents", async () => (await worktreeLoader()).ListWorktreeAgentsHandler);
+    this.registerLazy("cleanup_worktree", async () => (await worktreeLoader()).CleanupWorktreeHandler);
+    this.registerLazy("get_worktree_info", async () => (await worktreeLoader()).GetWorktreeInfoHandler);
   }
 }
 

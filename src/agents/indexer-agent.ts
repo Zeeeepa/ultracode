@@ -21,6 +21,7 @@ import { createFileWatcher, type FileChangeEvent, type FileWatcher } from "../co
 import { GitWatcher } from "../core/git-watcher.js";
 import { knowledgeBus } from "../core/knowledge-bus.js";
 import { log, logMemory } from "../logging/index.js";
+import { getRepoIdentity } from "../shared/git-worktree.js";
 import { getDataDir } from "../shared/storage-paths.js";
 import { BatchOperationsLibSQL } from "../storage/batch-operations-libsql.js";
 import { getCacheManager, QueryCacheManager } from "../storage/cache-manager.js";
@@ -102,6 +103,57 @@ export interface IndexerTask extends AgentTask {
 // =============================================================================
 // 4. INDEXER AGENT IMPLEMENTATION
 // =============================================================================
+
+/**
+ * Indexing lock coordination per repoIdentity:branch.
+ * Prevents duplicate indexing when multiple worktrees of the same repo
+ * try to index the same branch simultaneously.
+ */
+const indexingLocks = new Map<string, Promise<void>>();
+
+/**
+ * Acquire an indexing lock for a project path + branch combination.
+ * Uses repoIdentity (from git-common-dir) for worktree-aware locking.
+ * If another indexing operation is in progress for the same repo:branch,
+ * waits for it to complete and returns false (skip — data is already fresh).
+ * Returns true if the lock was acquired (caller should proceed with indexing).
+ */
+export async function acquireIndexLockForProject(
+  projectPath: string,
+  branch: string,
+): Promise<{ acquired: boolean; release: () => void }> {
+  const repoId = getRepoIdentity(projectPath) ?? projectPath;
+  return acquireIndexLock(repoId, branch);
+}
+
+/** @internal Lock by explicit repoIdentity:branch key */
+export async function acquireIndexLock(
+  repoIdentity: string,
+  branch: string,
+): Promise<{ acquired: boolean; release: () => void }> {
+  const key = `${repoIdentity}:${branch}`;
+  const existing = indexingLocks.get(key);
+
+  if (existing) {
+    // Another worktree is already indexing this branch — wait and skip
+    log.i("INDEXER", "lock_wait", { key });
+    await existing;
+    return { acquired: false, release: () => {} };
+  }
+
+  // Acquire lock
+  let releaseFn: () => void;
+  const lockPromise = new Promise<void>((resolve) => {
+    releaseFn = () => {
+      indexingLocks.delete(key);
+      resolve();
+    };
+  });
+  indexingLocks.set(key, lockPromise);
+  log.t("INDEXER", "lock_acquired", { key });
+
+  return { acquired: true, release: releaseFn! };
+}
 
 export class IndexerAgent extends BaseAgent {
   private graphStorage!: GraphStorage;

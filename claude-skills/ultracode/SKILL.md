@@ -16,6 +16,9 @@ triggers:
   - anti-pattern
   - code quality
   - duplicate detection
+  - worktree
+  - multi-agent
+  - submodule
 ---
 
 # UltraCode — Claude Code Skill
@@ -340,6 +343,32 @@ semantic_search hasDocumentation=false       # Undocumented
 
 - **`ultracode-trace`** — Debugging, flow analysis, "why not called", stacktrace backwards trace
 - **`ultracode-autodoc`** — Project memory with auto-updated code refs, find code by business meaning
+
+---
+
+## Multi-Agent Worktree
+
+Multiple AI agents can work in parallel on different branches using git worktrees.
+
+| Tool | Purpose |
+|------|---------|
+| `spawn_agent_worktree` | Create worktree + prepare agent connection |
+| `list_worktree_agents` | List active worktree sessions for current repo |
+| `cleanup_worktree` | Remove worktree by branch name |
+| `get_worktree_info` | Worktree/submodule/subtree detection info |
+
+```typescript
+// Create worktree for a new agent
+spawn_agent_worktree({ branch: "feature/auth", baseBranch: "main" })
+
+// Check active agents
+list_worktree_agents({ includeInactive: true })
+
+// Get full repo topology
+get_worktree_info()
+```
+
+**Key**: All worktrees of the same repo share a single `repoIdentity` — no index duplication.
 
 ---
 
