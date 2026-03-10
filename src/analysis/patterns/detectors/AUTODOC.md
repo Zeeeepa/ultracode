@@ -1,6 +1,6 @@
 # Detectors
 
-Language-agnostic and language-specific pattern detectors for identifying code quality issues across TypeScript, C#, Go, Java, Python, and Zig projects.
+Language-agnostic and language-specific custom detectors for identifying anti-patterns, performance issues, and code quality problems across multiple programming languages.
 
 ## Exports
 

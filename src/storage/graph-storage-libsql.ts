@@ -89,6 +89,7 @@ export class GraphStorageLibSQL implements GraphStorage {
     this.adapter.setProjectContext(context);
   }
 
+  /** @deprecated Use runWithRequestContext() for tool calls. Only for background/init. */
   setProject(projectPath: string, branchName?: string | null): void {
     const ctx = createProjectContext(projectPath, branchName);
     log.w("STORAGE", "setProject", {

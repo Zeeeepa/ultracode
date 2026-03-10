@@ -1,6 +1,6 @@
 # Protobuf
 
-Protobuf parsing and gRPC service-to-code linking analysis
+Parses protobuf service definitions and links them to gRPC implementations.
 
 ## Exports
 

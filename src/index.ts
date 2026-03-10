@@ -939,10 +939,9 @@ async function executeToolCall(
       // v6: CRITICAL FIX - Set project context when returning storage!
       // Without this, queries would use the last-set project context (wrong project).
       getGraphStorage: async () => {
-        const storage = await getGraphStorage();
-        const branch = getCurrentGitBranchOrDefault(projectPath);
-        storage.setProject(projectPath, branch);
-        return storage;
+        // Context is already set via runWithRequestContext() (line 974).
+        // ALS context takes priority in graph-adapter.ts getContext().
+        return await getGraphStorage();
       },
       getSQLiteManager: () => null, // Legacy - now using libsql via getGraphStorage()
       getSemanticAgent: getSemanticAgent as () => Promise<any>,
@@ -1485,58 +1484,60 @@ async function main() {
               return;
             }
 
-            // Check if this project is already indexed
-            const graphStorage = await getGraphStorage();
-            const projectHash = getProjectHash(clientProjectPath);
-            const currentBranch = getCurrentGitBranchOrDefault(clientProjectPath);
-            graphStorage.setProject(clientProjectPath, currentBranch);
-            const stats = await graphStorage.getStatistics();
-            const entityCount = stats.totalEntities ?? 0;
+            // Wrap background auto-index in request context (no tool-level ALS here)
+            const bgCtx = createProjectContext(clientProjectPath);
+            await runWithRequestContext(bgCtx, async () => {
+              // Check if this project is already indexed
+              const graphStorage = await getGraphStorage();
+              const projectHash = getProjectHash(clientProjectPath);
+              const stats = await graphStorage.getStatistics();
+              const entityCount = stats.totalEntities ?? 0;
 
-            if (entityCount > 0) {
-              log.i("INDEXER", "client_project_indexed", {
+              if (entityCount > 0) {
+                log.i("INDEXER", "client_project_indexed", {
+                  client: clientId,
+                  proj: projectHash,
+                  entities: entityCount,
+                });
+                return;
+              }
+
+              // Detect and index the new project
+              const extensions = indexingConfig?.autoIndexExtensions ?? [
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".py",
+                ".go",
+                ".rs",
+                ".kt",
+                ".swift",
+                ".c",
+                ".cpp",
+                ".java",
+                ".cs",
+              ];
+
+              const detection = await detectSupportedProject(clientProjectPath, extensions);
+              if (!detection.supported) {
+                log.i("INDEXER", "client_no_files", { client: clientId, dir: clientProjectPath });
+                return;
+              }
+
+              log.i("INDEXER", "client_autoindex_start", {
                 client: clientId,
-                proj: projectHash,
-                entities: entityCount,
+                dir: clientProjectPath,
+                ext: detection.detectedExt,
               });
-              return;
-            }
 
-            // Detect and index the new project
-            const extensions = indexingConfig?.autoIndexExtensions ?? [
-              ".ts",
-              ".tsx",
-              ".js",
-              ".jsx",
-              ".py",
-              ".go",
-              ".rs",
-              ".kt",
-              ".swift",
-              ".c",
-              ".cpp",
-              ".java",
-              ".cs",
-            ];
+              // Set indexing directory for this project
+              setCurrentIndexingDirectory(clientProjectPath);
 
-            const detection = await detectSupportedProject(clientProjectPath, extensions);
-            if (!detection.supported) {
-              log.i("INDEXER", "client_no_files", { client: clientId, dir: clientProjectPath });
-              return;
-            }
+              await performAutoIndex(clientProjectPath, extensions, createAutoIndexContext(), false);
 
-            log.i("INDEXER", "client_autoindex_start", {
-              client: clientId,
-              dir: clientProjectPath,
-              ext: detection.detectedExt,
+              log.i("INDEXER", "client_autoindex_done", { client: clientId, dir: clientProjectPath });
             });
-
-            // Set indexing directory for this project
-            setCurrentIndexingDirectory(clientProjectPath);
-
-            await performAutoIndex(clientProjectPath, extensions, createAutoIndexContext(), false);
-
-            log.i("INDEXER", "client_autoindex_done", { client: clientId, dir: clientProjectPath });
           } catch (error) {
             log.e("INDEXER", "client_autoindex_fail", {
               client: clientId,
@@ -1613,128 +1614,130 @@ async function main() {
 
     // Run detection and indexing in background (don't block MCP ready state)
     setImmediate(async () => {
-      try {
-        // Check if we already have entities for THIS directory (not global count)
-        // v4: Use libsql unified storage instead of better-sqlite3
-        const graphStorage = await getGraphStorage();
-        const projectHash = getProjectHash(directory);
-        const currentBranch = getCurrentGitBranchOrDefault(directory);
-        log.t("INDEXER", "check_index", { dir: directory, hash: projectHash, branch: currentBranch });
-        graphStorage.setProject(directory, currentBranch);
-        const stats = await graphStorage.getStatistics();
-        const entityCount = stats.totalEntities ?? 0;
-        log.t("INDEXER", "stats", { entities: entityCount, rels: stats.totalRelationships, files: stats.totalFiles });
+      // Wrap background indexing in request context (no tool-level ALS here)
+      const bgCtx = createProjectContext(directory);
+      await runWithRequestContext(bgCtx, async () => {
+        try {
+          // Check if we already have entities for THIS directory (not global count)
+          // v4: Use libsql unified storage instead of better-sqlite3
+          const graphStorage = await getGraphStorage();
+          const projectHash = getProjectHash(directory);
+          log.t("INDEXER", "check_index", { dir: directory, hash: projectHash, branch: bgCtx.branchName });
+          const stats = await graphStorage.getStatistics();
+          const entityCount = stats.totalEntities ?? 0;
+          log.t("INDEXER", "stats", { entities: entityCount, rels: stats.totalRelationships, files: stats.totalFiles });
 
-        // Track whether we need incremental vs full indexing
-        let useIncrementalMode = false;
-        // Threshold for cumulative changes to trigger full rebuild (40% of total files)
-        const CUMULATIVE_REBUILD_THRESHOLD = 0.4;
+          // Track whether we need incremental vs full indexing
+          let useIncrementalMode = false;
+          // Threshold for cumulative changes to trigger full rebuild (40% of total files)
+          const CUMULATIVE_REBUILD_THRESHOLD = 0.4;
 
-        if (entityCount > 0) {
-          // Quick consistency check: compare file count on disk vs indexed files
-          const diskFileCount = await countSourceFiles(directory, extensions);
-          const indexedFileCount = stats.totalFiles ?? 0;
+          if (entityCount > 0) {
+            // Quick consistency check: compare file count on disk vs indexed files
+            const diskFileCount = await countSourceFiles(directory, extensions);
+            const indexedFileCount = stats.totalFiles ?? 0;
 
-          // Check cumulative incremental changes
-          const trackingInfo = await graphStorage.getIncrementalTrackingInfo();
-          const cumulativeChanges = trackingInfo.incrementalChangesCount;
-          const cumulativePercent = indexedFileCount > 0 ? cumulativeChanges / indexedFileCount : 0;
+            // Check cumulative incremental changes
+            const trackingInfo = await graphStorage.getIncrementalTrackingInfo();
+            const cumulativeChanges = trackingInfo.incrementalChangesCount;
+            const cumulativePercent = indexedFileCount > 0 ? cumulativeChanges / indexedFileCount : 0;
 
-          // If cumulative changes exceed threshold, force full rebuild
-          if (cumulativePercent > CUMULATIVE_REBUILD_THRESHOLD) {
-            log.i("INDEXER", "cumulative_threshold", {
-              changes: cumulativeChanges,
-              files: indexedFileCount,
-              pct: (cumulativePercent * 100).toFixed(1),
-              threshold: (CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0),
-            });
-            // Full rebuild - don't use incremental mode
-            useIncrementalMode = false;
-          } else {
-            // If disk has significantly more files (>20% or >10 files), run incremental index
-            const missingFiles = diskFileCount - indexedFileCount;
-            const mismatchPercent = indexedFileCount > 0 ? (missingFiles / indexedFileCount) * 100 : 0;
-
-            if (diskFileCount > 0 && (missingFiles > 10 || mismatchPercent > 20)) {
-              log.i("INDEXER", "index_incomplete", {
-                indexed: indexedFileCount,
-                disk: diskFileCount,
-                missing: missingFiles,
+            // If cumulative changes exceed threshold, force full rebuild
+            if (cumulativePercent > CUMULATIVE_REBUILD_THRESHOLD) {
+              log.i("INDEXER", "cumulative_threshold", {
                 changes: cumulativeChanges,
-              });
-              // Use incremental mode - only index new/changed files
-              useIncrementalMode = true;
-            } else {
-              log.i("INDEXER", "index_exists", {
-                entities: entityCount,
                 files: indexedFileCount,
-                disk: diskFileCount,
-                changes: cumulativeChanges,
+                pct: (cumulativePercent * 100).toFixed(1),
+                threshold: (CUMULATIVE_REBUILD_THRESHOLD * 100).toFixed(0),
               });
+              // Full rebuild - don't use incremental mode
+              useIncrementalMode = false;
+            } else {
+              // If disk has significantly more files (>20% or >10 files), run incremental index
+              const missingFiles = diskFileCount - indexedFileCount;
+              const mismatchPercent = indexedFileCount > 0 ? (missingFiles / indexedFileCount) * 100 : 0;
 
-              // IMPORTANT: Start watchers and agents even when skipping re-indexing
-              // This ensures incremental parsing and embedding generation works after restart
-              try {
-                // Initialize DevAgent for incremental parsing (subscribes to file:changed events)
-                const devAgent = await getDevAgent();
-                log.i("DEVAGENT", "init_for_incremental", { hasAgent: !!devAgent });
+              if (diskFileCount > 0 && (missingFiles > 10 || mismatchPercent > 20)) {
+                log.i("INDEXER", "index_incomplete", {
+                  indexed: indexedFileCount,
+                  disk: diskFileCount,
+                  missing: missingFiles,
+                  changes: cumulativeChanges,
+                });
+                // Use incremental mode - only index new/changed files
+                useIncrementalMode = true;
+              } else {
+                log.i("INDEXER", "index_exists", {
+                  entities: entityCount,
+                  files: indexedFileCount,
+                  disk: diskFileCount,
+                  changes: cumulativeChanges,
+                });
 
-                // Initialize SemanticAgent for embedding generation
-                const semanticAgent = await getSemanticAgent();
-                log.i("SEMANTIC", "init_for_incremental", { hasAgent: !!semanticAgent });
+                // IMPORTANT: Start watchers and agents even when skipping re-indexing
+                // This ensures incremental parsing and embedding generation works after restart
+                try {
+                  // Initialize DevAgent for incremental parsing (subscribes to file:changed events)
+                  const devAgent = await getDevAgent();
+                  log.i("DEVAGENT", "init_for_incremental", { hasAgent: !!devAgent });
 
-                // Use DevAgent's IndexerAgent for watchers (consistent with index tool handler)
-                // NOTE: Do NOT use getIndexerAgent() - that creates a SEPARATE IndexerAgent
-                // registered with conductor, which is different from DevAgent's internal one.
-                // All tools use devAgent.getIndexerAgent(), so we must use the same instance.
-                type DevAgentWithIndexer = {
-                  getIndexerAgent?: () => {
-                    setProjectContext?: (path: string) => void;
-                    setRepositoryPath?: (path: string) => Promise<void>;
-                  } | null;
-                };
-                const devAgentWithIndexer = devAgent as DevAgentWithIndexer;
-                const indexerAgent = devAgentWithIndexer?.getIndexerAgent?.() ?? null;
-                if (indexerAgent?.setRepositoryPath) {
-                  // Set project context before starting watchers
-                  if (indexerAgent.setProjectContext) {
-                    indexerAgent.setProjectContext(directory);
+                  // Initialize SemanticAgent for embedding generation
+                  const semanticAgent = await getSemanticAgent();
+                  log.i("SEMANTIC", "init_for_incremental", { hasAgent: !!semanticAgent });
+
+                  // Use DevAgent's IndexerAgent for watchers (consistent with index tool handler)
+                  // NOTE: Do NOT use getIndexerAgent() - that creates a SEPARATE IndexerAgent
+                  // registered with conductor, which is different from DevAgent's internal one.
+                  // All tools use devAgent.getIndexerAgent(), so we must use the same instance.
+                  type DevAgentWithIndexer = {
+                    getIndexerAgent?: () => {
+                      setProjectContext?: (path: string) => void;
+                      setRepositoryPath?: (path: string) => Promise<void>;
+                    } | null;
+                  };
+                  const devAgentWithIndexer = devAgent as DevAgentWithIndexer;
+                  const indexerAgent = devAgentWithIndexer?.getIndexerAgent?.() ?? null;
+                  if (indexerAgent?.setRepositoryPath) {
+                    // Set project context before starting watchers
+                    if (indexerAgent.setProjectContext) {
+                      indexerAgent.setProjectContext(directory);
+                    }
+                    await indexerAgent.setRepositoryPath(directory);
+                    log.i("INDEXER", "watcher_started_existing", { dir: directory });
+                  } else {
+                    log.w("INDEXER", "watcher_no_agent", {
+                      hasAgent: !!indexerAgent,
+                      reason: "DevAgent.getIndexerAgent() returned null",
+                    });
                   }
-                  await indexerAgent.setRepositoryPath(directory);
-                  log.i("INDEXER", "watcher_started_existing", { dir: directory });
-                } else {
-                  log.w("INDEXER", "watcher_no_agent", {
-                    hasAgent: !!indexerAgent,
-                    reason: "DevAgent.getIndexerAgent() returned null",
-                  });
+                } catch (watcherError) {
+                  log.w("INDEXER", "watcher_start_fail", { err: (watcherError as Error).message });
                 }
-              } catch (watcherError) {
-                log.w("INDEXER", "watcher_start_fail", { err: (watcherError as Error).message });
-              }
 
-              return;
+                return;
+              }
             }
           }
+
+          // Detect if project has supported files
+          const detection = await detectSupportedProject(directory, extensions);
+          if (!detection.supported) {
+            log.i("INDEXER", "no_files", { dir: directory });
+            return;
+          }
+
+          log.i("INDEXER", "project_detected", {
+            ext: detection.detectedExt ?? "unknown",
+            sample: detection.sampleFile ?? "none",
+          });
+
+          // Perform indexing with extension filter
+          // Use incremental mode when resuming incomplete index
+          await performAutoIndex(directory, extensions, createAutoIndexContext(), useIncrementalMode);
+        } catch (error) {
+          log.e("INDEXER", "autoindex_failed", { err: (error as Error).message });
         }
-
-        // Detect if project has supported files
-        const detection = await detectSupportedProject(directory, extensions);
-        if (!detection.supported) {
-          log.i("INDEXER", "no_files", { dir: directory });
-          return;
-        }
-
-        log.i("INDEXER", "project_detected", {
-          ext: detection.detectedExt ?? "unknown",
-          sample: detection.sampleFile ?? "none",
-        });
-
-        // Perform indexing with extension filter
-        // Use incremental mode when resuming incomplete index
-        await performAutoIndex(directory, extensions, createAutoIndexContext(), useIncrementalMode);
-      } catch (error) {
-        log.e("INDEXER", "autoindex_failed", { err: (error as Error).message });
-      }
+      }); // end runWithRequestContext
     });
   }
 }

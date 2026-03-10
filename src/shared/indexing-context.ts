@@ -19,10 +19,10 @@ export function getCurrentIndexingDirectory(): string | undefined {
 
 /**
  * Set the current directory being indexed
- * @deprecated Use getProjectContext().switchProject()
+ * @deprecated No-op. Use runWithRequestContext() for per-call project scoping.
+ * Global project switching is being phased out to prevent race conditions.
  */
-export function setCurrentIndexingDirectory(directory: string | undefined): void {
-  if (directory) {
-    getProjectContext().switchProject(directory);
-  }
+export function setCurrentIndexingDirectory(_directory: string | undefined): void {
+  // No-op: project context is now set via AsyncLocalStorage (runWithRequestContext)
+  // Kept for backward compatibility — callers should migrate to ALS.
 }

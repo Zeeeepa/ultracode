@@ -1,6 +1,6 @@
 # Db
 
-Comprehensive database schema parsing, ORM detection, and schema drift analysis
+Parses database files and detects code-to-schema links, migrations, ORM models, and schema drift.
 
 ## Exports
 

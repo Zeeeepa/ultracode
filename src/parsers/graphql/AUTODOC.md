@@ -1,6 +1,6 @@
 # Graphql
 
-Analyzes links between GraphQL schemas and TypeScript source code implementations.
+Parses GraphQL schemas and links them to source code implementations.
 
 ## Exports
 

@@ -1,6 +1,6 @@
 # Graph Metrics
 
-Analyzes code graphs using PageRank, community detection, centrality, and bus factor metrics to characterize codebase structure and knowledge distribution.
+Analyzes code dependency graphs using network metrics algorithms including PageRank, Louvain clustering, centrality, and bus factor analysis.
 
 ## Exports
 

@@ -102,18 +102,12 @@ export abstract class BaseToolHandler<TArgs = unknown> {
       return this.context.session.projectPath;
     }
 
-    // Use context.projectPath (always set in v5)
+    // Use context.projectPath (always set in v5+)
     if (this.context.projectPath) {
       return this.context.projectPath;
     }
 
-    // Legacy fallback
-    const current = getProjectContext().getCurrentProject();
-    if (current) {
-      return current;
-    }
-
-    // Ultimate fallback: use CWD
+    // Ultimate fallback: use CWD (no global singleton dependency)
     return process.cwd();
   }
 
@@ -137,19 +131,11 @@ export abstract class BaseToolHandler<TArgs = unknown> {
    * v5: Get GraphStorage with project context automatically set.
    * Uses session-aware project resolution.
    */
-  protected async ensureGraphStorageForProject(projectPath?: string): Promise<GraphStorage> {
-    const resolved = this.resolveProjectPath({ projectPath });
-    log.d("BASETOOL", "ensure_storage", { resolved, hasSession: !!this.context.session });
-
-    const storage = await this.context.getGraphStorage();
-    storage.setProject(resolved);
-
-    log.d("BASETOOL", "storage_set", { resolved });
-
-    // Return a scoped proxy that re-asserts project context before each query.
-    // Prevents race conditions where background processes (AUTODOCWATCH, etc.)
-    // call setProject on the shared storage instance between our setProject and query.
-    return createScopedStorage(storage, resolved);
+  protected async ensureGraphStorageForProject(_projectPath?: string): Promise<GraphStorage> {
+    // ALS context (set by runWithRequestContext in index.ts) takes priority
+    // in graph-adapter.ts getContext(). No need for setProject() or scoped proxy.
+    log.d("BASETOOL", "ensure_storage", { hasSession: !!this.context.session });
+    return await this.context.getGraphStorage();
   }
 
   /**
@@ -342,35 +328,6 @@ export abstract class BaseToolHandler<TArgs = unknown> {
   }
 }
 
-/**
- * Creates a Proxy around GraphStorage that re-asserts project context before each async query.
- * Solves race condition where background processes (AUTODOCWATCH, PMI) call setProject()
- * on the shared storage instance, switching context away from the tool's target project.
- */
-function createScopedStorage(storage: GraphStorage, projectPath: string): GraphStorage {
-  const queryMethods = new Set([
-    "findEntities",
-    "getEntity",
-    "findRelationships",
-    "getRelationship",
-    "searchEntitiesInDirectory",
-    "findEntitiesByName",
-    "getEntityByName",
-    "recordIncrementalChanges",
-    "resetIncrementalTracking",
-  ]);
-
-  return new Proxy(storage, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (typeof value === "function" && typeof prop === "string" && queryMethods.has(prop)) {
-        return (...args: unknown[]) => {
-          // Re-assert project context right before the query
-          target.setProject(projectPath);
-          return (value as Function).apply(target, args);
-        };
-      }
-      return value;
-    },
-  });
-}
+// createScopedStorage() removed — ALS context via runWithRequestContext()
+// makes the scoped Proxy unnecessary. graph-adapter.ts getContext() checks
+// AsyncLocalStorage first, so each tool call is automatically scoped.

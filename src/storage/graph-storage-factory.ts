@@ -199,7 +199,7 @@ export async function resetGraphStorage(): Promise<void> {
 
 /**
  * Set project context on the global GraphStorage singleton.
- * Must be called before operations to ensure correct project_hash.
+ * @deprecated Use runWithRequestContext() for tool calls. Only needed for initial startup.
  * If branchName is null/undefined, detects from git or uses "main" fallback.
  */
 export function setGlobalProjectContext(projectPath: string, branchName?: string | null): void {

@@ -1,6 +1,6 @@
 # Stacktrace
 
-Orchestrates stacktrace parsing, classification, resolution, and diagnosis generation
+Analyzes stacktraces, classifies errors, resolves frames to code entities
 
 ## Exports
 

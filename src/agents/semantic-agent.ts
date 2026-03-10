@@ -57,7 +57,12 @@ import { HybridSearchEngine } from "../semantic/hybrid-search.js";
 import { SemanticCache } from "../semantic/semantic-cache.js";
 import { VectorStore } from "../semantic/vector-store.js";
 import { getCurrentIndexingDirectory } from "../shared/indexing-context.js";
-import { getCurrentGitBranchOrDefault, getGlobalDbPaths, getProjectHash } from "../shared/storage-paths.js";
+import {
+  getCurrentGitBranchOrDefault,
+  getGlobalDbPaths,
+  getProjectHash,
+  normalizeBranchName,
+} from "../shared/storage-paths.js";
 import {
   DatabaseCorruptionError,
   getGraphStorage,
@@ -573,8 +578,23 @@ export class SemanticAgent extends BaseAgent implements SemanticOperations, Reso
   }
 
   /**
+   * Execute a function with the VectorStore scoped to a specific project.
+   * Ensures correct FAISS index is loaded before the callback runs.
+   */
+  async withProject<T>(projectPath: string, branch: string, fn: (vs: VectorStore) => Promise<T>): Promise<T> {
+    const currentContext = this.vectorStore?.getProjectContext?.();
+    const targetHash = getProjectHash(projectPath);
+    const targetBranch = normalizeBranchName(branch);
+
+    if (currentContext?.projectHash !== targetHash || currentContext?.branchName !== targetBranch) {
+      await this.vectorStore.setProject(projectPath, branch);
+    }
+    return fn(this.vectorStore);
+  }
+
+  /**
    * Switch VectorStore to a new project context.
-   * v3: With unified database, we just change the project context instead of recreating VectorStore.
+   * @deprecated Use withProject() for scoped operations, or let ALS handle graph context.
    *
    * @param projectPath - The project directory path
    * @param branchName - Optional branch name (defaults to 'main')

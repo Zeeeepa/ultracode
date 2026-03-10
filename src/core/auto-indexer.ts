@@ -336,7 +336,7 @@ export async function performAutoIndex(
     // Optional reset: clear storage and vectors before indexing
     if (opts.reset) {
       const graphStorage = await ctx.getGraphStorage();
-      graphStorage.setProject(targetDir);
+      // Project context is set via ALS (callers must use runWithRequestContext)
       await graphStorage.clear();
 
       // Clear FAISS vectors + embedding cache (otherwise reset is incomplete)

@@ -83,8 +83,9 @@ export class GraphAdapter {
   private isInitialized = false;
   private dbPath: string = "";
 
-  // Current project context
-  private currentContext: ProjectContext = {
+  // Fallback project context (used when no ALS request context is available)
+  // ALS context from runWithRequestContext() takes priority via getContext()
+  private _fallbackContext: ProjectContext = {
     projectHash: "_unset_",
     branchName: "_unset_",
   };
@@ -120,7 +121,7 @@ export class GraphAdapter {
     const getGraphClient = () => this.dbManager?.getGraphClient() ?? this.client;
     const getSemanticClient = () => this.dbManager?.getSemanticClient() ?? this.client;
     const getCacheClient = () => this.dbManager?.getCacheClient() ?? this.client;
-    const getContext = () => getRequestContext() ?? this.currentContext;
+    const getContext = () => getRequestContext() ?? this._fallbackContext;
     const getStagingMode = () => this.versioningOps.stagingMode;
 
     this.generationManager = new GenerationManager(getGraphClient, getContext);
@@ -330,8 +331,9 @@ export class GraphAdapter {
   // PROJECT CONTEXT
   // ===========================================================================
 
+  /** @deprecated Sets fallback context. ALS via runWithRequestContext() takes priority. */
   setProjectContext(context: ProjectContext): void {
-    this.currentContext = {
+    this._fallbackContext = {
       projectHash: context.projectHash,
       branchName: normalizeBranchName(context.branchName),
       baseBranch: context.baseBranch,
@@ -339,17 +341,17 @@ export class GraphAdapter {
     };
     this.generationManager.clearCache();
     log.d("LIBSQLADAPT", "setProjectContext", {
-      branch: this.currentContext.branchName,
+      branch: this._fallbackContext.branchName,
       base: context.baseBranch || "none",
     });
   }
 
   getProjectContext(): ProjectContext {
-    return { ...this.currentContext };
+    return { ...this._fallbackContext };
   }
 
   getEffectiveDimensions(): SupportedDimension {
-    return this.currentContext.dimensions ?? normalizeToSupportedDimension(this.config.dimensions);
+    return this._fallbackContext.dimensions ?? normalizeToSupportedDimension(this.config.dimensions);
   }
 
   getEmbeddingColumnName(): string {
@@ -358,7 +360,7 @@ export class GraphAdapter {
 
   async ensureProjectVectorIndex(): Promise<void> {
     if (!this.client) return;
-    const { projectHash } = this.currentContext;
+    const { projectHash } = this._fallbackContext;
     const dims = this.getEffectiveDimensions();
     const colName = getEmbeddingColumn(dims);
     const indexName = `idx_emb_${dims}_${projectHash.substring(0, 8)}`;
@@ -556,7 +558,7 @@ export class GraphAdapter {
 
   async addTombstone(entityId: string, entityType: "entity" | "relationship" = "entity"): Promise<void> {
     if (!this.client) throw new Error("Client not initialized");
-    const { projectHash, branchName } = this.currentContext;
+    const { projectHash, branchName } = this._fallbackContext;
 
     await this.client.execute({
       sql: `INSERT OR REPLACE INTO tombstones (entity_id, project_hash, branch_name, entity_type, deleted_at)
@@ -567,7 +569,7 @@ export class GraphAdapter {
 
   async removeTombstone(entityId: string, entityType: "entity" | "relationship" = "entity"): Promise<void> {
     if (!this.client) throw new Error("Client not initialized");
-    const { projectHash, branchName } = this.currentContext;
+    const { projectHash, branchName } = this._fallbackContext;
 
     await this.client.execute({
       sql: `DELETE FROM tombstones WHERE entity_id = ? AND project_hash = ? AND branch_name = ? AND entity_type = ?`,
@@ -577,7 +579,7 @@ export class GraphAdapter {
 
   async isTombstoned(entityId: string, entityType: "entity" | "relationship" = "entity"): Promise<boolean> {
     if (!this.client) throw new Error("Client not initialized");
-    const { projectHash, branchName } = this.currentContext;
+    const { projectHash, branchName } = this._fallbackContext;
 
     const result = await this.client.execute({
       sql: `SELECT 1 FROM tombstones WHERE entity_id = ? AND project_hash = ? AND branch_name = ? AND entity_type = ? LIMIT 1`,
@@ -589,7 +591,7 @@ export class GraphAdapter {
 
   async getTombstonedIds(entityType: "entity" | "relationship" = "entity"): Promise<Set<string>> {
     if (!this.client) throw new Error("Client not initialized");
-    const { projectHash, branchName } = this.currentContext;
+    const { projectHash, branchName } = this._fallbackContext;
 
     const result = await this.client.execute({
       sql: `SELECT entity_id FROM tombstones WHERE project_hash = ? AND branch_name = ? AND entity_type = ?`,
@@ -601,7 +603,7 @@ export class GraphAdapter {
 
   async clearTombstones(): Promise<void> {
     if (!this.client) throw new Error("Client not initialized");
-    const { projectHash, branchName } = this.currentContext;
+    const { projectHash, branchName } = this._fallbackContext;
 
     await this.client.execute({
       sql: `DELETE FROM tombstones WHERE project_hash = ? AND branch_name = ?`,
@@ -730,7 +732,7 @@ export class GraphAdapter {
   }
 
   async initBranchDiff(baseBranch: string): Promise<void> {
-    const { branchName } = this.currentContext;
+    const { branchName } = this._fallbackContext;
     return this.versioningOps.initBranchDiff(baseBranch, branchName);
   }
 

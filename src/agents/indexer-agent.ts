@@ -330,12 +330,13 @@ export class IndexerAgent extends BaseAgent {
 
   /**
    * Set the project context for GraphStorage and BatchOperations.
-   * v3: Must be called before indexing to ensure correct project_hash.
+   * @deprecated Prefer runWithRequestContext() for scoped operations.
+   * Still needed for watcher setup (getOrCreateWatcher) and initial context.
    */
   setProjectContext(projectPath: string, branchName?: string): void {
     log.i("INDEXER", "set_project_ctx", { path: projectPath });
 
-    // Set context on GraphStorage
+    // Set fallback context on GraphStorage (ALS takes priority when available)
     if (this.graphStorage && typeof this.graphStorage.setProject === "function") {
       this.graphStorage.setProject(projectPath, branchName);
       log.d("INDEXER", "gs_ctx_set", { path: projectPath, branch: branchName || "main" });
@@ -343,7 +344,7 @@ export class IndexerAgent extends BaseAgent {
       log.w("INDEXER", "gs_ctx_not_ready");
     }
 
-    // v3: Set context on BatchOperations too!
+    // Set fallback context on BatchOperations (ALS takes priority when available)
     if (this.batchOps && typeof this.batchOps.setProject === "function") {
       this.batchOps.setProject(projectPath, branchName);
       log.d("INDEXER", "batch_ctx_set", { path: projectPath, branch: branchName || "main" });

@@ -336,6 +336,7 @@ export interface GraphStorage {
   analyze(): Promise<void>;
   getMetrics(): Promise<StorageMetrics>;
 
+  /** @deprecated Use runWithRequestContext() for tool calls. Only for background/init. */
   setProject(projectPath: string, branchName?: string): void;
   clear(): Promise<void>;
   getStatistics(): Promise<{ totalEntities: number; totalRelationships: number; totalFiles: number }>;
