@@ -12,6 +12,7 @@
 import { exec } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
+import { SUPPORTED_CODE_EXTENSIONS_SET } from "../../agents/dev/file-extensions.js";
 import { fileExists, readText } from "../../utils/file-ops.js";
 import { collectParallel, mapParallel } from "../../utils/parallel.js";
 
@@ -49,10 +50,13 @@ export async function getStagedMdFiles(cwd: string): Promise<string[]> {
 export async function getStagedCodeFiles(cwd: string): Promise<string[]> {
   try {
     const { stdout } = await execAsync("git diff --cached --name-only --diff-filter=ACM", { cwd, windowsHide: true });
-    const codeExtensions = [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".java", ".rs"];
     return stdout
       .split("\n")
-      .filter((f) => f.trim() && codeExtensions.some((ext) => f.endsWith(ext)))
+      .filter((f) => {
+        if (!f.trim()) return false;
+        const ext = path.extname(f).toLowerCase();
+        return SUPPORTED_CODE_EXTENSIONS_SET.has(ext);
+      })
       .map((f) => path.join(cwd, f));
   } catch {
     return [];

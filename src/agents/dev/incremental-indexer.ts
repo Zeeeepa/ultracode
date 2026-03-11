@@ -11,6 +11,7 @@ import { extname } from "node:path";
 import type { EmbeddingConfigResolved } from "../../config/yaml-config.js";
 import { log } from "../../logging/index.js";
 import { toError } from "../../utils/error-handling.js";
+import { SUPPORTED_CODE_EXTENSIONS_SET } from "../dev/file-extensions.js";
 import type { IndexerAgent } from "../indexer-agent.js";
 import type { ParserAgent } from "../parser-agent.js";
 import type { ProviderKind } from "../semantic/provider-config.js";
@@ -37,32 +38,9 @@ export interface ProcessingResult {
 }
 
 /**
- * Supported extensions for full parsing
+ * Supported extensions for full parsing — derived from canonical SUPPORTED_CODE_EXTENSIONS
  */
-const SUPPORTED_EXTENSIONS = [
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  ".py",
-  ".go",
-  ".rs",
-  ".java",
-  ".kt",
-  ".kts",
-  ".cs",
-  ".csx",
-  ".c",
-  ".cpp",
-  ".cc",
-  ".cxx",
-  ".h",
-  ".hpp",
-  ".swift",
-  ".tpl",
-];
+const SUPPORTED_EXTENSIONS = SUPPORTED_CODE_EXTENSIONS_SET;
 
 // =============================================================================
 // FILE SEPARATION
@@ -80,7 +58,7 @@ export function separateFilesBySupport(files: string[]): FileSeparationResult {
 
   for (const file of files) {
     const ext = extname(file).toLowerCase();
-    if (SUPPORTED_EXTENSIONS.includes(ext)) {
+    if (SUPPORTED_EXTENSIONS.has(ext)) {
       supportedFiles.push(file);
     } else {
       otherFiles.push(file);

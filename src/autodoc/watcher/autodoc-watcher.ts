@@ -13,6 +13,7 @@
  */
 
 import path, { join } from "node:path";
+import { TS_JS_EXTENSIONS } from "../../agents/dev/file-extensions.js";
 import { areTimersSuspended } from "../../core/indexing-state.js";
 import { type KnowledgeEntry, knowledgeBus } from "../../core/knowledge-bus.js";
 import { log } from "../../logging/index.js";
@@ -211,7 +212,7 @@ export class AutoDocWatcher {
       if (operation === "write") {
         // Only handle code files
         const ext = path.extname(filePath).toLowerCase();
-        if ([".ts", ".js", ".tsx", ".jsx", ".mjs", ".cjs"].includes(ext)) {
+        if (TS_JS_EXTENSIONS.has(ext)) {
           this.handleFileChange(filePath);
         }
       }
@@ -400,7 +401,7 @@ export class AutoDocWatcher {
 
     // Skip non-code files
     const ext = path.extname(filePath).toLowerCase();
-    if (![".ts", ".js", ".tsx", ".jsx", ".mjs", ".cjs"].includes(ext)) {
+    if (!TS_JS_EXTENSIONS.has(ext)) {
       return;
     }
 

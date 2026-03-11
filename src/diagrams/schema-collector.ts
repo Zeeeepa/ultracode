@@ -43,40 +43,9 @@ const INTER_NODE_REL_TYPES: string[] = ["calls", "imports", "extends", "implemen
 const STRUCTURAL_REL_TYPE = "contains";
 
 // Code file extensions (filter out docs, config, assets)
-const CODE_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  ".py",
-  ".pyi",
-  ".go",
-  ".rs",
-  ".java",
-  ".kt",
-  ".kts",
-  ".cs",
-  ".cpp",
-  ".cc",
-  ".cxx",
-  ".c",
-  ".h",
-  ".hpp",
-  ".swift",
-  ".zig",
-  ".sh",
-  ".bash",
-  ".rb",
-  ".php",
-  ".scala",
-  ".ex",
-  ".exs",
-  ".proto",
-  ".graphql",
-  ".gql",
-]);
+import { SUPPORTED_CODE_EXTENSIONS_SET } from "../agents/dev/file-extensions.js";
+
+const CODE_EXTENSIONS = SUPPORTED_CODE_EXTENSIONS_SET;
 
 function isCodeFile(filePath: string): boolean {
   const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();

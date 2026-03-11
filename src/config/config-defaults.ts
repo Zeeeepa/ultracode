@@ -5,6 +5,7 @@
  * Extracted from yaml-config.ts for better modularity.
  */
 
+import { SUPPORTED_CODE_EXTENSIONS } from "../agents/dev/file-extensions.js";
 import type { AppConfig } from "./config-types.js";
 
 // =============================================================================
@@ -91,32 +92,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     incrementalThreshold: 20, // If >20 files changed, do full reindex
     dataDir: "", // Empty = use centralized storage (AppData/UltraCode/projects/<hash>/branches/)
     autoIndex: false, // Disabled: tree-sitter parsing blocks UI 25+ sec. Use `index` command.
-    autoIndexExtensions: [
-      ".ts",
-      ".tsx",
-      ".js",
-      ".jsx",
-      ".mjs",
-      ".cjs", // JavaScript/TypeScript
-      ".py",
-      ".pyw", // Python
-      ".go", // Go
-      ".rs", // Rust
-      ".kt",
-      ".kts", // Kotlin
-      ".swift", // Swift
-      ".c",
-      ".h",
-      ".cpp",
-      ".hpp",
-      ".cc",
-      ".cxx", // C/C++
-      ".java", // Java
-      ".rb", // Ruby
-      ".php", // PHP
-      ".sh",
-      ".bash", // Shell
-    ],
+    autoIndexExtensions: [...SUPPORTED_CODE_EXTENSIONS],
   },
   git: {
     enabled: true, // Enabled by default for git repositories

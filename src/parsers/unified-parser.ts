@@ -85,18 +85,21 @@ const EXTENSION_TO_LANGUAGE: Record<string, SupportedLanguage> = {
   ".tpl": "helm",
 };
 
-const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
+import {
+  BASH_EXTENSIONS,
+  CPP_EXTENSIONS,
+  GO_EXTENSIONS,
+  JAVA_EXTENSIONS,
+  KOTLIN_EXTENSIONS,
+  POWERSHELL_EXTENSIONS,
+  PYTHON_EXTENSIONS,
+  RUST_EXTENSIONS,
+  TS_JS_EXTENSIONS,
+  ZIG_EXTENSIONS,
+} from "../agents/dev/file-extensions.js";
 
-const PYTHON_EXTENSIONS = new Set([".py", ".pyi", ".pyw"]);
-const JAVA_EXTENSIONS = new Set([".java"]);
-const KOTLIN_EXTENSIONS = new Set([".kt", ".kts"]);
-const GO_EXTENSIONS = new Set([".go"]);
-const RUST_EXTENSIONS = new Set([".rs"]);
-const CPP_EXTENSIONS = new Set([".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx", ".c++", ".h++"]);
-const BASH_EXTENSIONS = new Set([".sh", ".bash", ".zsh"]);
-const POWERSHELL_EXTENSIONS = new Set([".ps1", ".psm1", ".psd1"]);
+const TYPESCRIPT_EXTENSIONS = TS_JS_EXTENSIONS;
 const JSON_EXTENSIONS = new Set([".json"]);
-const ZIG_EXTENSIONS = new Set([".zig", ".zon"]);
 const HELM_EXTENSIONS = new Set([".tpl"]);
 
 // =============================================================================

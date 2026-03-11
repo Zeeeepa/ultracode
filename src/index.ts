@@ -105,6 +105,7 @@ import {
 import type { z } from "zod";
 // Import our multi-agent components
 import { ConductorOrchestrator } from "./agents/conductor-orchestrator.js";
+import { SUPPORTED_CODE_EXTENSIONS } from "./agents/dev/file-extensions.js";
 // AutoDoc: Semantic documentation layer
 import { type AutoDocWatcherConfig, getAutoDocWatcher } from "./autodoc/index.js";
 // CLI argument parsing
@@ -1229,6 +1230,75 @@ async function startBackgroundServices(ctx: {
   })();
 }
 
+// =============================================================================
+// DEFERRED AUTO-INDEX: Poll for files appearing in initially-empty projects
+// =============================================================================
+
+/** Track active deferred polls to avoid duplicates */
+const deferredAutoIndexDirs = new Set<string>();
+
+/**
+ * When a project directory has 0 supported files at startup, schedule periodic
+ * checks. Files may appear later (git clone in progress, user creating files, etc.).
+ * Uses exponential backoff: 10s, 20s, 40s, 60s, 60s... up to 5 minutes total.
+ */
+function scheduleDeferredAutoIndex(dir: string, extensions: string[]): void {
+  const normalizedDir = dir.replace(/\\/g, "/").toLowerCase();
+  if (deferredAutoIndexDirs.has(normalizedDir)) {
+    log.d("INDEXER", "deferred_already_scheduled", { dir });
+    return;
+  }
+  deferredAutoIndexDirs.add(normalizedDir);
+  log.i("INDEXER", "deferred_scheduled", { dir });
+
+  const INTERVALS = [10_000, 20_000, 40_000, 60_000, 60_000, 60_000]; // ~4 min total
+  let attempt = 0;
+
+  const poll = async () => {
+    if (attempt >= INTERVALS.length) {
+      deferredAutoIndexDirs.delete(normalizedDir);
+      log.i("INDEXER", "deferred_gave_up", { dir, attempts: attempt });
+      return;
+    }
+
+    const delay = INTERVALS[attempt]!;
+    attempt++;
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
+
+    try {
+      const detection = await detectSupportedProject(dir, extensions);
+      if (!detection.supported) {
+        log.d("INDEXER", "deferred_still_empty", { dir, attempt, nextMs: INTERVALS[attempt] ?? 0 });
+        // Schedule next check
+        poll();
+        return;
+      }
+
+      log.i("INDEXER", "deferred_files_found", {
+        dir,
+        attempt,
+        ext: detection.detectedExt ?? "unknown",
+        sample: detection.sampleFile ?? "none",
+      });
+
+      // Files appeared — run auto-index
+      deferredAutoIndexDirs.delete(normalizedDir);
+      const bgCtx = createProjectContext(dir);
+      await runWithRequestContext(bgCtx, async () => {
+        await performAutoIndex(dir, extensions, createAutoIndexContext(), false);
+      });
+    } catch (error) {
+      log.w("INDEXER", "deferred_poll_error", { dir, attempt, err: (error as Error).message });
+      // Continue polling despite error
+      poll();
+    }
+  };
+
+  // Start first poll
+  poll();
+}
+
 // Start the server
 async function main() {
   const mainStartTime = Date.now();
@@ -1530,25 +1600,12 @@ async function main() {
               }
 
               // Detect and index the new project
-              const extensions = indexingConfig?.autoIndexExtensions ?? [
-                ".ts",
-                ".tsx",
-                ".js",
-                ".jsx",
-                ".py",
-                ".go",
-                ".rs",
-                ".kt",
-                ".swift",
-                ".c",
-                ".cpp",
-                ".java",
-                ".cs",
-              ];
+              const extensions = indexingConfig?.autoIndexExtensions ?? [...SUPPORTED_CODE_EXTENSIONS];
 
               const detection = await detectSupportedProject(clientProjectPath, extensions);
               if (!detection.supported) {
                 log.i("INDEXER", "client_no_files", { client: clientId, dir: clientProjectPath });
+                scheduleDeferredAutoIndex(clientProjectPath, extensions);
                 return;
               }
 
@@ -1623,21 +1680,7 @@ async function main() {
   log.t("INDEXER", "autoindex_config", { shouldAutoIndex, noAutoIndex });
 
   if (shouldAutoIndex) {
-    const extensions = indexingConfig?.autoIndexExtensions ?? [
-      ".ts",
-      ".tsx",
-      ".js",
-      ".jsx",
-      ".py",
-      ".go",
-      ".rs",
-      ".kt",
-      ".swift",
-      ".c",
-      ".cpp",
-      ".java",
-      ".cs",
-    ];
+    const extensions = indexingConfig?.autoIndexExtensions ?? [...SUPPORTED_CODE_EXTENSIONS];
 
     // Run detection and indexing in background (don't block MCP ready state)
     setImmediate(async () => {
@@ -1750,6 +1793,10 @@ async function main() {
           const detection = await detectSupportedProject(directory, extensions);
           if (!detection.supported) {
             log.i("INDEXER", "no_files", { dir: directory });
+
+            // Schedule deferred detection: poll for files appearing later
+            // (e.g., git clone in progress, files being copied, new project init)
+            scheduleDeferredAutoIndex(directory, extensions);
             return;
           }
 

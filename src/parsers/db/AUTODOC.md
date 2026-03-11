@@ -1,6 +1,6 @@
 # Db
 
-Database schema analysis module linking code to SQL/ORM models and detecting schema drift.
+Links database schemas to code entities and detects ORM patterns.
 
 ## Exports
 

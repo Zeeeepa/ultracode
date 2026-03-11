@@ -29,7 +29,9 @@ export const SUPPORTED_CODE_EXTENSIONS = [
   ".cc",
   ".hh",
   ".cxx",
-  ".hxx", // C/C++
+  ".hxx",
+  ".c++",
+  ".h++", // C/C++
   ".go", // Go
   ".rs", // Rust
   ".swift", // Swift
@@ -93,9 +95,56 @@ export const SUPPORTED_DATA_EXTENSIONS = [
 /** All supported extensions for indexing */
 export const ALL_SUPPORTED_EXTENSIONS = [...SUPPORTED_CODE_EXTENSIONS, ...SUPPORTED_DATA_EXTENSIONS] as const;
 
+// =============================================================================
+// LANGUAGE-GROUP SUBSETS (derived from SUPPORTED_CODE_EXTENSIONS)
+// =============================================================================
+
+/** TypeScript and JavaScript extensions */
+export const TS_JS_EXTENSIONS = new Set([".js", ".ts", ".jsx", ".tsx", ".mts", ".cts", ".mjs", ".cjs"]);
+
+/** Python extensions */
+export const PYTHON_EXTENSIONS = new Set([".py", ".pyi", ".pyw"]);
+
+/** C/C++ extensions */
+export const CPP_EXTENSIONS = new Set([".cpp", ".c", ".h", ".hpp", ".cc", ".hh", ".cxx", ".hxx", ".c++", ".h++"]);
+
+/** Java extensions */
+export const JAVA_EXTENSIONS = new Set([".java"]);
+
+/** Kotlin extensions */
+export const KOTLIN_EXTENSIONS = new Set([".kt", ".kts"]);
+
+/** C# extensions */
+export const CSHARP_EXTENSIONS = new Set([".cs", ".csx"]);
+
+/** Go extensions */
+export const GO_EXTENSIONS = new Set([".go"]);
+
+/** Rust extensions */
+export const RUST_EXTENSIONS = new Set([".rs"]);
+
+/** Swift extensions */
+export const SWIFT_EXTENSIONS = new Set([".swift"]);
+
+/** Zig extensions */
+export const ZIG_EXTENSIONS = new Set([".zig", ".zon"]);
+
+/** Bash/Shell extensions */
+export const BASH_EXTENSIONS = new Set([".sh", ".bash", ".zsh"]);
+
+/** PowerShell extensions */
+export const POWERSHELL_EXTENSIONS = new Set([".ps1", ".psm1", ".psd1"]);
+
+/** Set version of SUPPORTED_CODE_EXTENSIONS for O(1) lookup */
+export const SUPPORTED_CODE_EXTENSIONS_SET = new Set<string>(SUPPORTED_CODE_EXTENSIONS);
+
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
+
 /** Checks if extension is a code file (requires AST parsing) */
 export function isCodeExtension(ext: string): boolean {
-  return SUPPORTED_CODE_EXTENSIONS.includes(ext as (typeof SUPPORTED_CODE_EXTENSIONS)[number]);
+  return SUPPORTED_CODE_EXTENSIONS_SET.has(ext);
 }
 
 /** Checks if extension is a data file (no AST parsing) */

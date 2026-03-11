@@ -6,26 +6,13 @@
  */
 
 import { z } from "zod";
+import { SUPPORTED_CODE_EXTENSIONS } from "../../agents/dev/file-extensions.js";
 import { type AutoIndexResult, performAutoIndex } from "../../core/auto-indexer.js";
 import { getIndexingStatus, isIndexing } from "../../core/indexing-state.js";
 import { log } from "../../logging/index.js";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 
-const DEFAULT_EXTENSIONS = [
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".py",
-  ".go",
-  ".rs",
-  ".kt",
-  ".swift",
-  ".c",
-  ".cpp",
-  ".java",
-  ".cs",
-];
+const DEFAULT_EXTENSIONS: string[] = [...SUPPORTED_CODE_EXTENSIONS];
 
 /**
  * Index tool response structure

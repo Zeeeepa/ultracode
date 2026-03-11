@@ -7,6 +7,7 @@
  */
 
 import type { z } from "zod";
+import { SUPPORTED_CODE_EXTENSIONS } from "../../agents/dev/file-extensions.js";
 import { log } from "../../logging/index.js";
 import { detectLinterConfigs } from "../../utils/config-detector.js";
 import { toError } from "../../utils/error-handling.js";
@@ -451,7 +452,7 @@ export class ValidateDirectoryToolHandler extends BaseToolHandler<z.infer<typeof
     const { glob } = await import("../../utils/glob.js");
 
     const directory = this.resolveProjectPath(args);
-    const extensions = args.extensions || [".ts", ".tsx", ".js", ".jsx", ".py"];
+    const extensions = args.extensions || [...SUPPORTED_CODE_EXTENSIONS];
 
     try {
       // Find files

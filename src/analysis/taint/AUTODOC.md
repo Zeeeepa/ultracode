@@ -1,6 +1,6 @@
 # Taint
 
-Performs static taint analysis detecting vulnerable data flows from sources to sinks.
+Data flow taint analysis system for detecting security vulnerabilities like SQL injection and XSS
 
 ## Response Handling
 

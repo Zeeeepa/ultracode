@@ -1,6 +1,6 @@
 # Parsers
 
-Multi-language stacktrace parser module with language-specific frame extraction and error detection
+Language-agnostic stacktrace parsers supporting 8+ programming language formats.
 
 ## Exports
 

@@ -16,6 +16,7 @@
  */
 
 import { extname, join } from "node:path";
+import { SUPPORTED_CODE_EXTENSIONS } from "../agents/dev/file-extensions.js";
 import { log } from "../logging/index.js";
 import { readdir, readText } from "../utils/file-ops.js";
 
@@ -125,7 +126,7 @@ export class CodeValidator {
    */
   async validateDirectory(
     dirPath: string,
-    extensions: string[] = [".ts", ".tsx", ".js", ".jsx", ".py"],
+    extensions: string[] = [...SUPPORTED_CODE_EXTENSIONS],
   ): Promise<ValidationReport[]> {
     const files = await this.findFiles(dirPath, extensions);
     const reports: ValidationReport[] = [];

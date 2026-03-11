@@ -1,6 +1,6 @@
 # Protobuf
 
-Text parser linking protobuf definitions to gRPC implementations and generated code
+Protobuf parsing and gRPC code linking analysis framework
 
 ## Exports
 

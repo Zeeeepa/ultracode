@@ -1,6 +1,7 @@
 import { extname } from "node:path";
 import { LRUCache } from "lru-cache";
 import xxhash from "xxhash-wasm";
+import { TS_JS_EXTENSIONS } from "../agents/dev/file-extensions.js";
 import { log } from "../logging/index.js";
 import type {
   CacheEntry,
@@ -20,7 +21,7 @@ const DEFAULT_CACHE_BYTES = 100 * 1024 * 1024;
 const DEFAULT_BATCH_SIZE = 50;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MULTIPASS_THRESHOLD = 20;
-const TS_JS_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
+// TS_JS_EXTENSIONS imported from file-extensions.ts
 
 const EXTENSION_TO_LANGUAGE: Record<string, SupportedLanguage> = {
   ".ts": "typescript",

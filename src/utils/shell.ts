@@ -489,34 +489,9 @@ export async function getDirSize(dir: string): Promise<number> {
 // =============================================================================
 
 /** Supported source file extensions for indexing */
-const SOURCE_EXTENSIONS = new Set([
-  ".js",
-  ".ts",
-  ".jsx",
-  ".tsx",
-  ".mjs",
-  ".cjs",
-  ".py",
-  ".java",
-  ".cpp",
-  ".c",
-  ".cc",
-  ".cxx",
-  ".h",
-  ".hpp",
-  ".go",
-  ".rs",
-  ".kt",
-  ".kts",
-  ".swift",
-  ".css",
-  ".scss",
-  ".sass",
-  ".less",
-  ".html",
-  ".htm",
-  ".xml",
-]);
+import { SUPPORTED_CODE_EXTENSIONS_SET } from "../agents/dev/file-extensions.js";
+
+const SOURCE_EXTENSIONS = SUPPORTED_CODE_EXTENSIONS_SET;
 
 /** Directories to skip when counting source files */
 const SKIP_DIRS = new Set([
