@@ -7,7 +7,6 @@
          ▀████▀          ▄████ ▄████▄ █████▄ █████
                          ██    ██  ██ ██  ██ ██▄▄▄
                          ▀████ ▀████▀ █████▀ ██▄▄▄
-
 ```
 
 [![npm version](https://badge.fury.io/js/ultracode.svg)](https://www.npmjs.com/package/ultracode)
@@ -31,12 +30,12 @@ MCP-сервер для ИИ-агентов, работающих с кодом.
 
 ### Что меняется на практике
 
-| | Без UltraCode | С UltraCode |
-|---|---|---|
-| **Поиск** | Агент грепает по ключевым словам, читает файлы по одному, вручную идёт по цепочкам импортов. В большом проекте поиск всех использований паттерна занимает **десятки ходов агента** и **1М+ токенов**. Косвенные ссылки часто пропускаются. | Агент вызывает `semantic_search` или `query` — получает все совпадения (включая семантические: похожая логика, связанные концепции) в **одном ответе, ~100мс, ~5К токенов**. Обход графа находит то, что grep не может: непрямых вызывающих, реализации интерфейсов, пути потока данных. |
+|                    | Без UltraCode                                                                                                                                                                                                                                               | С UltraCode                                                                                                                                                                                                                                                                                                   |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Поиск**          | Агент грепает по ключевым словам, читает файлы по одному, вручную идёт по цепочкам импортов. В большом проекте поиск всех использований паттерна занимает **десятки ходов агента** и **1М+ токенов**. Косвенные ссылки часто пропускаются.                  | Агент вызывает `semantic_search` или `query` — получает все совпадения (включая семантические: похожая логика, связанные концепции) в **одном ответе, ~100мс, ~5К токенов**. Обход графа находит то, что grep не может: непрямых вызывающих, реализации интерфейсов, пути потока данных.                      |
 | **Редактирование** | Агент модифицирует файлы, не зная полного дерева зависимостей. Типичный цикл: правка → сборка падает → читает ошибку → чинит → новая ошибка → чинит → ... Этот «цикл починки» занимает **10-20 итераций, до 1 часа и 2М+ токенов** для сквозного изменения. | Агент вызывает `analyze_code_impact` перед правкой, чтобы увидеть что сломается. `modify_code` применяет изменения на уровне сущностей с авто-валидацией (lint до/после). Impact analysis + tracing ловят поломки **до** компиляции. Крупные рефакторинги компилируются с первого раза в большинстве случаев. |
-| **Память** | Агент забывает предыдущий контекст и заново создаёт функциональность, которая уже существует. Или часами дебажит функцию, которую сам случайно отключил. Расход токенов растёт с длиной сессии. | Граф предоставляет полный структурный контекст при каждом вызове. `AutoDoc` поддерживает актуальную документацию автоматически. Агент всегда видит текущее состояние — никаких проблем с «амнезией». |
-| **Git** | Переключение ветки и внешние изменения файлов инвалидируют ментальную модель агента. Устаревшие данные приводят к скрытым ошибкам. Агенту нужно явно говорить о повторном анализе. | `GitWatcher` определяет изменения файлов и переключение веток в реальном времени. Инкрементная переиндексация графа и эмбеддингов происходит автоматически. Каждый запрос возвращает актуальные данные — никакого ручного вмешательства. |
+| **Память**         | Агент забывает предыдущий контекст и заново создаёт функциональность, которая уже существует. Или часами дебажит функцию, которую сам случайно отключил. Расход токенов растёт с длиной сессии.                                                             | Граф предоставляет полный структурный контекст при каждом вызове. `AutoDoc` поддерживает актуальную документацию автоматически. Агент всегда видит текущее состояние — никаких проблем с «амнезией».                                                                                                          |
+| **Git**            | Переключение ветки и внешние изменения файлов инвалидируют ментальную модель агента. Устаревшие данные приводят к скрытым ошибкам. Агенту нужно явно говорить о повторном анализе.                                                                          | `GitWatcher` определяет изменения файлов и переключение веток в реальном времени. Инкрементная переиндексация графа и эмбеддингов происходит автоматически. Каждый запрос возвращает актуальные данные — никакого ручного вмешательства.                                                                      |
 
 ### Скорость индексации
 
@@ -48,108 +47,108 @@ MCP-сервер предоставляет **78 инструментов** дл
 
 ## Поиск и навигация
 
-| Инструмент | Описание |
-|------------|----------|
-| [**semantic_search**](.autodoc/features/search_ru.md#semantic_search) | Семантический поиск по смыслу с фильтрами (complexity, flow, docs) |
-| [**pattern_search**](.autodoc/features/search_ru.md#pattern_search) | Продвинутый поиск: regex, семантический, гибридный |
-| [**query**](.autodoc/features/search_ru.md#query) | NLP-запросы на естественном языке о коде |
-| [**find_similar_code**](.autodoc/features/search_ru.md#find_similar_code) | Поиск функций с аналогичной логикой |
-| [**cross_language_search**](.autodoc/features/search_ru.md#cross_language_search) | Единый поиск по всем языкам проекта |
-| [**find_related_concepts**](.autodoc/features/search_ru.md#find_related_concepts) | Поиск связанных концепций |
+| Инструмент                                                                        | Описание                                                           |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [**semantic_search**](.autodoc/features/search_ru.md#semantic_search)             | Семантический поиск по смыслу с фильтрами (complexity, flow, docs) |
+| [**pattern_search**](.autodoc/features/search_ru.md#pattern_search)               | Продвинутый поиск: regex, семантический, гибридный                 |
+| [**query**](.autodoc/features/search_ru.md#query)                                 | NLP-запросы на естественном языке о коде                           |
+| [**find_similar_code**](.autodoc/features/search_ru.md#find_similar_code)         | Поиск функций с аналогичной логикой                                |
+| [**cross_language_search**](.autodoc/features/search_ru.md#cross_language_search) | Единый поиск по всем языкам проекта                                |
+| [**find_related_concepts**](.autodoc/features/search_ru.md#find_related_concepts) | Поиск связанных концепций                                          |
 
 ## Анализ кода
 
-| Инструмент | Описание |
-|------------|----------|
-| [**analyze_code_impact**](.autodoc/features/analysis_ru.md#analyze_code_impact) | Анализ влияния — что сломается при изменении |
-| [**find_duplicates**](.autodoc/features/analysis_ru.md#find_duplicates) | Семантический поиск клонов кода |
-| [**jscpd_detect_clones**](.autodoc/features/analysis_ru.md#jscpd_detect_clones) | Детектор клонов на базе jscpd |
-| [**suggest_refactoring**](.autodoc/features/analysis_ru.md#suggest_refactoring) | AI-предложения по улучшению кода |
-| [**analyze_hotspots**](.autodoc/features/analysis_ru.md#analyze_hotspots) | Сложные участки с высокой цикломатической сложностью |
-| [**analyze_state_chaos**](.autodoc/features/analysis_ru.md#analyze_state_chaos) | Анализ запутанных зависимостей данных |
-| [**analyze_swagger_impact**](.autodoc/features/swagger_ru.md#analyze_swagger_impact) | Анализ влияния изменений Swagger/OpenAPI спецификаций |
-| [**analyze_api_impact**](.autodoc/features/api-contracts_ru.md#analyze_api_impact) | Унифицированный анализ влияния API-контрактов (Swagger + Protobuf + GraphQL) |
-| [**get_database_schema**](.autodoc/features/database-schema_ru.md#get_database_schema) | Схема БД из SQL/Prisma/ORM/Redis с анализом миграций и обнаружением дрифта |
-| [**detect_technology_stack**](.autodoc/features/analysis_ru.md#detect_technology_stack) | Определение стека технологий проекта |
-| [**detect_patterns**](.autodoc/features/patterns_ru.md#detect_patterns) | Обнаружение анти-паттернов, лучших практик, code smells и возможностей оптимизации с семантической валидацией. Включает JIT-деоптимизацию для JS/TS (hidden classes, holey arrays, megamorphic dispatch) |
-| [**check_entity_patterns**](.autodoc/features/patterns_ru.md#check_entity_patterns) | Проверка конкретной entity на совпадение с паттернами |
-| [**graph_metrics**](.autodoc/features/analysis_ru.md#graph_metrics) | PageRank, кластеризация Louvain, анализ центральности и bus factor для понимания архитектуры |
-| [**taint_analysis**](.autodoc/features/security_ru.md#taint_analysis) | Межпроцедурный taint-анализ: отслеживание ненадёжных данных от источников до приёмников, детекция SQL-инъекций, XSS, command injection, missing auth |
+| Инструмент                                                                              | Описание                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [**analyze_code_impact**](.autodoc/features/analysis_ru.md#analyze_code_impact)         | Анализ влияния — что сломается при изменении                                                                                                                                                             |
+| [**find_duplicates**](.autodoc/features/analysis_ru.md#find_duplicates)                 | Семантический поиск клонов кода                                                                                                                                                                          |
+| [**jscpd_detect_clones**](.autodoc/features/analysis_ru.md#jscpd_detect_clones)         | Детектор клонов на базе jscpd                                                                                                                                                                            |
+| [**suggest_refactoring**](.autodoc/features/analysis_ru.md#suggest_refactoring)         | AI-предложения по улучшению кода                                                                                                                                                                         |
+| [**analyze_hotspots**](.autodoc/features/analysis_ru.md#analyze_hotspots)               | Сложные участки с высокой цикломатической сложностью                                                                                                                                                     |
+| [**analyze_state_chaos**](.autodoc/features/analysis_ru.md#analyze_state_chaos)         | Анализ запутанных зависимостей данных                                                                                                                                                                    |
+| [**analyze_swagger_impact**](.autodoc/features/swagger_ru.md#analyze_swagger_impact)    | Анализ влияния изменений Swagger/OpenAPI спецификаций                                                                                                                                                    |
+| [**analyze_api_impact**](.autodoc/features/api-contracts_ru.md#analyze_api_impact)      | Унифицированный анализ влияния API-контрактов (Swagger + Protobuf + GraphQL)                                                                                                                             |
+| [**get_database_schema**](.autodoc/features/database-schema_ru.md#get_database_schema)  | Схема БД из SQL/Prisma/ORM/Redis с анализом миграций и обнаружением дрифта                                                                                                                               |
+| [**detect_technology_stack**](.autodoc/features/analysis_ru.md#detect_technology_stack) | Определение стека технологий проекта                                                                                                                                                                     |
+| [**detect_patterns**](.autodoc/features/patterns_ru.md#detect_patterns)                 | Обнаружение анти-паттернов, лучших практик, code smells и возможностей оптимизации с семантической валидацией. Включает JIT-деоптимизацию для JS/TS (hidden classes, holey arrays, megamorphic dispatch) |
+| [**check_entity_patterns**](.autodoc/features/patterns_ru.md#check_entity_patterns)     | Проверка конкретной entity на совпадение с паттернами                                                                                                                                                    |
+| [**graph_metrics**](.autodoc/features/analysis_ru.md#graph_metrics)                     | PageRank, кластеризация Louvain, анализ центральности и bus factor для понимания архитектуры                                                                                                             |
+| [**taint_analysis**](.autodoc/features/security_ru.md#taint_analysis)                   | Межпроцедурный taint-анализ: отслеживание ненадёжных данных от источников до приёмников, детекция SQL-инъекций, XSS, command injection, missing auth                                                     |
 
 ## Статическая трассировка и отладка
 
 Все инструменты трассировки и диагностики поддерживают `highlightRecentChanges=true` — перекрёстная проверка найденных сущностей с историей коммитов Prolly Tree. Недавно изменённые сущности аннотируются в результатах, что помогает быстро найти вероятную причину проблемы: недавно изменённый код в цепочке вызовов или точке ветвления — первое место для проверки.
 
-| Инструмент | Описание |
-|------------|----------|
-| [**trace_flow**](.autodoc/features/tracing_ru.md#trace_flow) | Как код попадает от точки A к B |
-| [**trace_backwards**](.autodoc/features/tracing_ru.md#trace_backwards) | Почему функция не вызывается |
-| [**trace_data_flow**](.autodoc/features/tracing_ru.md#trace_data_flow) | Как данные влияют на состояние |
+| Инструмент                                                                       | Описание                          |
+| -------------------------------------------------------------------------------- | --------------------------------- |
+| [**trace_flow**](.autodoc/features/tracing_ru.md#trace_flow)                     | Как код попадает от точки A к B   |
+| [**trace_backwards**](.autodoc/features/tracing_ru.md#trace_backwards)           | Почему функция не вызывается      |
+| [**trace_data_flow**](.autodoc/features/tracing_ru.md#trace_data_flow)           | Как данные влияют на состояние    |
 | [**analyze_state_impact**](.autodoc/features/tracing_ru.md#analyze_state_impact) | Что изменится при другом значении |
-| [**find_decision_points**](.autodoc/features/tracing_ru.md#find_decision_points) | Точки ветвления в коде |
+| [**find_decision_points**](.autodoc/features/tracing_ru.md#find_decision_points) | Точки ветвления в коде            |
 
 ## Архитектурные диаграммы
 
-| Инструмент | Описание |
-|------------|----------|
+| Инструмент                                                                                | Описание                                                                      |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | [**get_architecture_diagram**](.autodoc/features/diagrams_ru.md#get_architecture_diagram) | Генерация архитектурных диаграмм в Mermaid, Graphviz DOT или D2 из графа кода |
 
 ## Модификация кода
 
-| Инструмент | Описание |
-|------------|----------|
-| [**modify_code**](.autodoc/features/modification_ru.md#modify_code) | Структурное редактирование на уровне AST с валидацией |
-| [**create_file**](.autodoc/features/modification_ru.md#create_file) | Создание нового файла |
-| [**copy_file**](.autodoc/features/modification_ru.md#copy_file) | Копирование файла с обновлением графа |
-| [**rename_file**](.autodoc/features/modification_ru.md#rename_file) | Переименование файла с обновлением импортов |
-| [**split_file**](.autodoc/features/modification_ru.md#split_file) | Разделение файла на части |
-| [**synthesize_files**](.autodoc/features/modification_ru.md#synthesize_files) | Объединение файлов |
-| [**rename_symbol**](.autodoc/features/modification_ru.md#rename_symbol) | Переименование по всему проекту |
-| [**add_member**](.autodoc/features/modification_ru.md#add_member) | Добавление методов/свойств в классы |
+| Инструмент                                                                    | Описание                                              |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------- |
+| [**modify_code**](.autodoc/features/modification_ru.md#modify_code)           | Структурное редактирование на уровне AST с валидацией |
+| [**create_file**](.autodoc/features/modification_ru.md#create_file)           | Создание нового файла                                 |
+| [**copy_file**](.autodoc/features/modification_ru.md#copy_file)               | Копирование файла с обновлением графа                 |
+| [**rename_file**](.autodoc/features/modification_ru.md#rename_file)           | Переименование файла с обновлением импортов           |
+| [**split_file**](.autodoc/features/modification_ru.md#split_file)             | Разделение файла на части                             |
+| [**synthesize_files**](.autodoc/features/modification_ru.md#synthesize_files) | Объединение файлов                                    |
+| [**rename_symbol**](.autodoc/features/modification_ru.md#rename_symbol)       | Переименование по всему проекту                       |
+| [**add_member**](.autodoc/features/modification_ru.md#add_member)             | Добавление методов/свойств в классы                   |
 
 ## Валидация кода
 
-| Инструмент | Описание |
-|------------|----------|
-| [**validate_file**](.autodoc/features/validation_ru.md#validate_file) | Валидация файла через oxlint/Pylint/golint/clippy |
-| [**validate_directory**](.autodoc/features/validation_ru.md#validate_directory) | Пакетная валидация директории |
+| Инструмент                                                                      | Описание                                          |
+| ------------------------------------------------------------------------------- | ------------------------------------------------- |
+| [**validate_file**](.autodoc/features/validation_ru.md#validate_file)           | Валидация файла через oxlint/Pylint/golint/clippy |
+| [**validate_directory**](.autodoc/features/validation_ru.md#validate_directory) | Пакетная валидация директории                     |
 
 ## Документация (AutoDoc)
 
-| Инструмент | Описание |
-|------------|----------|
-| [**autodoc_init**](.autodoc/features/autodoc_ru.md#autodoc_init) | Инициализация системы AutoDoc |
-| [**autodoc_generate**](.autodoc/features/autodoc_ru.md#autodoc_generate) | Генерация документации для сущностей |
-| [**autodoc_save**](.autodoc/features/autodoc_ru.md#autodoc_save) | Сохранение документации в .autodoc |
-| [**autodoc_get**](.autodoc/features/autodoc_ru.md#autodoc_get) | Получение документации сущности |
-| [**autodoc_search**](.autodoc/features/autodoc_ru.md#autodoc_search) | Семантический поиск по документации |
-| [**autodoc_validate**](.autodoc/features/autodoc_ru.md#autodoc_validate) | Проверка актуальности документации |
-| [**autodoc_status**](.autodoc/features/autodoc_ru.md#autodoc_status) | Статистика документирования |
-| [**autodoc_sync**](.autodoc/features/autodoc_ru.md#autodoc_sync) | Синхронизация с изменениями кода |
-| [**autodoc_changelog**](.autodoc/features/autodoc_ru.md#autodoc_changelog) | История изменений документации |
-| [**autodoc_install_hooks**](.autodoc/features/autodoc_ru.md#autodoc_install_hooks) | Установка Git hooks для автообновления |
-| [**autodoc_detect_language**](.autodoc/features/autodoc_ru.md#autodoc_detect_language) | Определение языка для генерации |
+| Инструмент                                                                             | Описание                               |
+| -------------------------------------------------------------------------------------- | -------------------------------------- |
+| [**autodoc_init**](.autodoc/features/autodoc_ru.md#autodoc_init)                       | Инициализация системы AutoDoc          |
+| [**autodoc_generate**](.autodoc/features/autodoc_ru.md#autodoc_generate)               | Генерация документации для сущностей   |
+| [**autodoc_save**](.autodoc/features/autodoc_ru.md#autodoc_save)                       | Сохранение документации в .autodoc     |
+| [**autodoc_get**](.autodoc/features/autodoc_ru.md#autodoc_get)                         | Получение документации сущности        |
+| [**autodoc_search**](.autodoc/features/autodoc_ru.md#autodoc_search)                   | Семантический поиск по документации    |
+| [**autodoc_validate**](.autodoc/features/autodoc_ru.md#autodoc_validate)               | Проверка актуальности документации     |
+| [**autodoc_status**](.autodoc/features/autodoc_ru.md#autodoc_status)                   | Статистика документирования            |
+| [**autodoc_sync**](.autodoc/features/autodoc_ru.md#autodoc_sync)                       | Синхронизация с изменениями кода       |
+| [**autodoc_changelog**](.autodoc/features/autodoc_ru.md#autodoc_changelog)             | История изменений документации         |
+| [**autodoc_install_hooks**](.autodoc/features/autodoc_ru.md#autodoc_install_hooks)     | Установка Git hooks для автообновления |
+| [**autodoc_detect_language**](.autodoc/features/autodoc_ru.md#autodoc_detect_language) | Определение языка для генерации        |
 
 ## Git-интеграция
 
-| Инструмент | Описание |
-|------------|----------|
-| [**list_branches**](.autodoc/features/git_ru.md#list_branches) | Список проиндексированных веток |
-| [**switch_branch**](.autodoc/features/git_ru.md#switch_branch) | Переключение между ветками с автопереиндексацией |
-| [**get_branch_status**](.autodoc/features/git_ru.md#get_branch_status) | Статус текущей ветки |
-| [**get_changed_files**](.autodoc/features/git_ru.md#get_changed_files) | Сравнение файлов между ветками |
-| [**cleanup_branches**](.autodoc/features/git_ru.md#cleanup_branches) | Очистка старых веток (LRU) |
+| Инструмент                                                             | Описание                                         |
+| ---------------------------------------------------------------------- | ------------------------------------------------ |
+| [**list_branches**](.autodoc/features/git_ru.md#list_branches)         | Список проиндексированных веток                  |
+| [**switch_branch**](.autodoc/features/git_ru.md#switch_branch)         | Переключение между ветками с автопереиндексацией |
+| [**get_branch_status**](.autodoc/features/git_ru.md#get_branch_status) | Статус текущей ветки                             |
+| [**get_changed_files**](.autodoc/features/git_ru.md#get_changed_files) | Сравнение файлов между ветками                   |
+| [**cleanup_branches**](.autodoc/features/git_ru.md#cleanup_branches)   | Очистка старых веток (LRU)                       |
 
 ## Мульти-агентная работа через Worktree
 
 Несколько AI-агентов могут работать параллельно, каждый в своём git worktree на отдельной ветке. UltraCode определяет, что все worktree принадлежат одному репозиторию через `repoIdentity` — стабильный хеш `git-common-dir`. Все worktree делят один индекс, одну базу данных и один серверный процесс.
 
-| Инструмент | Описание |
-|------------|----------|
-| [**spawn_agent_worktree**](.autodoc/features/worktree_ru.md#spawn_agent_worktree) | Создать worktree для нового агента |
-| [**list_worktree_agents**](.autodoc/features/worktree_ru.md#list_worktree_agents) | Список активных worktree-сессий |
-| [**cleanup_worktree**](.autodoc/features/worktree_ru.md#cleanup_worktree) | Удалить worktree |
-| [**get_worktree_info**](.autodoc/features/worktree_ru.md#get_worktree_info) | Информация о worktree/submodule/subtree |
+| Инструмент                                                                        | Описание                                |
+| --------------------------------------------------------------------------------- | --------------------------------------- |
+| [**spawn_agent_worktree**](.autodoc/features/worktree_ru.md#spawn_agent_worktree) | Создать worktree для нового агента      |
+| [**list_worktree_agents**](.autodoc/features/worktree_ru.md#list_worktree_agents) | Список активных worktree-сессий         |
+| [**cleanup_worktree**](.autodoc/features/worktree_ru.md#cleanup_worktree)         | Удалить worktree                        |
+| [**get_worktree_info**](.autodoc/features/worktree_ru.md#get_worktree_info)       | Информация о worktree/submodule/subtree |
 
 ### Запуск из оркестратора агентов
 
@@ -190,12 +189,12 @@ ultracode.com --pipe \
   --agent-id test-agent
 ```
 
-| CLI аргумент | Обязателен | Описание |
-|-------------|------------|----------|
-| `--pipe` | Да | Использовать Named Pipe IPC (подключение к работающему серверу) |
-| `--directory PATH` | Да | Путь к worktree агента |
-| `--branch NAME` | Рекомендуется | Имя ветки (пропускает `git`-детекцию на сервере) |
-| `--agent-id ID` | Рекомендуется | Уникальный идентификатор агента для координации |
+| CLI аргумент       | Обязателен    | Описание                                                        |
+| ------------------ | ------------- | --------------------------------------------------------------- |
+| `--pipe`           | Да            | Использовать Named Pipe IPC (подключение к работающему серверу) |
+| `--directory PATH` | Да            | Путь к worktree агента                                          |
+| `--branch NAME`    | Рекомендуется | Имя ветки (пропускает `git`-детекцию на сервере)                |
+| `--agent-id ID`    | Рекомендуется | Уникальный идентификатор агента для координации                 |
 
 **Шаг 3: Настройка в `claude_desktop_config.json` или MCP-клиенте**
 
@@ -266,64 +265,65 @@ git worktree remove ../wt-tests
 
 Prolly Tree хранит полную историю сущностей с гранулярностью до коммита. Помимо time travel, поддерживает **контекст недавних изменений**: 10 диагностических инструментов (`analyze_stacktrace`, `detect_patterns`, `analyze_state_chaos`, `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`, `find_decision_points`, `analyze_code_impact`, `analyze_hotspots`) могут аннотировать результаты статусом «недавно изменён» через `highlightRecentChanges=true`. AI-агент видит не только «что сломано», но и «что менялось недавно и могло это вызвать».
 
-| Инструмент | Описание |
-|------------|----------|
-| [**list_commits**](.autodoc/features/history_ru.md#list_commits) | Список коммитов графа (версионные снапшоты) |
-| [**get_entity_history**](.autodoc/features/history_ru.md#get_entity_history) | История изменений сущности по коммитам |
-| [**diff_commits**](.autodoc/features/history_ru.md#diff_commits) | Сравнение двух версий графа (добавленные/изменённые/удалённые) |
-| [**checkout_commit**](.autodoc/features/history_ru.md#checkout_commit) | Time travel — просмотр графа на момент коммита |
+| Инструмент                                                                   | Описание                                                       |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| [**list_commits**](.autodoc/features/history_ru.md#list_commits)             | Список коммитов графа (версионные снапшоты)                    |
+| [**get_entity_history**](.autodoc/features/history_ru.md#get_entity_history) | История изменений сущности по коммитам                         |
+| [**diff_commits**](.autodoc/features/history_ru.md#diff_commits)             | Сравнение двух версий графа (добавленные/изменённые/удалённые) |
+| [**checkout_commit**](.autodoc/features/history_ru.md#checkout_commit)       | Time travel — просмотр графа на момент коммита                 |
 
 ## Семантический мерж
 
-| Инструмент | Описание |
-|------------|----------|
-| [**semantic_merge**](.autodoc/features/merge_ru.md#semantic_merge) | AI-powered 3-way мерж с пониманием кода |
-| [**analyze_merge_conflicts**](.autodoc/features/merge_ru.md#analyze_merge_conflicts) | Анализ конфликтов с объяснением причин |
-| [**get_merge_suggestions**](.autodoc/features/merge_ru.md#get_merge_suggestions) | AI-предложения по разрешению конфликтов |
-| [**get_semantic_merge_info**](.autodoc/features/merge_ru.md#get_semantic_merge_info) | Информация о семантических различиях |
+| Инструмент                                                                           | Описание                                |
+| ------------------------------------------------------------------------------------ | --------------------------------------- |
+| [**semantic_merge**](.autodoc/features/merge_ru.md#semantic_merge)                   | AI-powered 3-way мерж с пониманием кода |
+| [**analyze_merge_conflicts**](.autodoc/features/merge_ru.md#analyze_merge_conflicts) | Анализ конфликтов с объяснением причин  |
+| [**get_merge_suggestions**](.autodoc/features/merge_ru.md#get_merge_suggestions)     | AI-предложения по разрешению конфликтов |
+| [**get_semantic_merge_info**](.autodoc/features/merge_ru.md#get_semantic_merge_info) | Информация о семантических различиях    |
 
 ## Снапшоты и безопасность
 
-| Инструмент | Описание |
-|------------|----------|
-| [**create_snapshot**](.autodoc/features/snapshots_ru.md#create_snapshot) | Сохранение точки восстановления |
-| [**undo**](.autodoc/features/snapshots_ru.md#undo) | Мгновенный откат к снапшоту |
-| [**list_snapshots**](.autodoc/features/snapshots_ru.md#list_snapshots) | Список доступных снапшотов |
-| [**cleanup_snapshots**](.autodoc/features/snapshots_ru.md#cleanup_snapshots) | Очистка старых снапшотов |
+| Инструмент                                                                   | Описание                        |
+| ---------------------------------------------------------------------------- | ------------------------------- |
+| [**create_snapshot**](.autodoc/features/snapshots_ru.md#create_snapshot)     | Сохранение точки восстановления |
+| [**undo**](.autodoc/features/snapshots_ru.md#undo)                           | Мгновенный откат к снапшоту     |
+| [**list_snapshots**](.autodoc/features/snapshots_ru.md#list_snapshots)       | Список доступных снапшотов      |
+| [**cleanup_snapshots**](.autodoc/features/snapshots_ru.md#cleanup_snapshots) | Очистка старых снапшотов        |
 
 ## Граф кода и индексация
 
-| Инструмент | Описание |
-|------------|----------|
-| [**index**](.autodoc/features/indexing_ru.md#index) | Индексация кодовой базы |
-| [**clean_index**](.autodoc/features/indexing_ru.md#clean_index) | Полная переиндексация |
-| [**get_members**](.autodoc/features/graph_ru.md#get_members) | Список сущностей в файле |
-| [**list_entity_relationships**](.autodoc/features/graph_ru.md#list_entity_relationships) | Связи и зависимости сущности |
-| [**get_graph**](.autodoc/features/graph_ru.md#get_graph) | Получение графа (JSON/GraphML/Mermaid) |
-| [**get_graph_stats**](.autodoc/features/graph_ru.md#get_graph_stats) | Статистика графа |
-| [**get_graph_health**](.autodoc/features/graph_ru.md#get_graph_health) | Диагностика состояния графа |
-| [**reset_graph**](.autodoc/features/graph_ru.md#reset_graph) | Полная очистка графа |
+| Инструмент                                                                               | Описание                               |
+| ---------------------------------------------------------------------------------------- | -------------------------------------- |
+| [**index**](.autodoc/features/indexing_ru.md#index)                                      | Индексация кодовой базы                |
+| [**clean_index**](.autodoc/features/indexing_ru.md#clean_index)                          | Полная переиндексация                  |
+| [**get_members**](.autodoc/features/graph_ru.md#get_members)                             | Список сущностей в файле               |
+| [**list_entity_relationships**](.autodoc/features/graph_ru.md#list_entity_relationships) | Связи и зависимости сущности           |
+| [**get_graph**](.autodoc/features/graph_ru.md#get_graph)                                 | Получение графа (JSON/GraphML/Mermaid) |
+| [**get_graph_stats**](.autodoc/features/graph_ru.md#get_graph_stats)                     | Статистика графа                       |
+| [**get_graph_health**](.autodoc/features/graph_ru.md#get_graph_health)                   | Диагностика состояния графа            |
+| [**reset_graph**](.autodoc/features/graph_ru.md#reset_graph)                             | Полная очистка графа                   |
 
 > **Архитектура хранения**: [Prolly Tree](.autodoc/architecture/prolly-tree_ru.md) — версионируемое хранилище графа с O(log n) diff между ветками
 
 ## Метрики и мониторинг
 
-| Инструмент | Описание |
-|------------|----------|
-| [**get_metrics**](.autodoc/features/metrics_ru.md#get_metrics) | Системные метрики и статистика |
-| [**get_version**](.autodoc/features/metrics_ru.md#get_version) | Версия сервера и runtime |
-| [**get_agent_metrics**](.autodoc/features/metrics_ru.md#get_agent_metrics) | Телеметрия многоагентной системы |
-| [**get_bus_stats**](.autodoc/features/metrics_ru.md#get_bus_stats) | Статистика шины знаний |
-| [**clear_bus_topic**](.autodoc/features/metrics_ru.md#clear_bus_topic) | Очистка кешированных записей топика |
-| [**get_watcher_status**](.autodoc/features/metrics_ru.md#get_watcher_status) | Статус фоновых наблюдателей |
-| [**get_help**](.autodoc/features/metrics_ru.md#get_help) | Документация и руководства (quick-start, workflows, tracing и др.) |
-| [**get_tools_for_task**](.autodoc/features/metrics_ru.md#get_tools_for_task) | Рекомендации инструментов для задачи |
+| Инструмент                                                                   | Описание                                                           |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [**get_metrics**](.autodoc/features/metrics_ru.md#get_metrics)               | Системные метрики и статистика                                     |
+| [**get_version**](.autodoc/features/metrics_ru.md#get_version)               | Версия сервера и runtime                                           |
+| [**get_agent_metrics**](.autodoc/features/metrics_ru.md#get_agent_metrics)   | Телеметрия многоагентной системы                                   |
+| [**get_bus_stats**](.autodoc/features/metrics_ru.md#get_bus_stats)           | Статистика шины знаний                                             |
+| [**clear_bus_topic**](.autodoc/features/metrics_ru.md#clear_bus_topic)       | Очистка кешированных записей топика                                |
+| [**get_watcher_status**](.autodoc/features/metrics_ru.md#get_watcher_status) | Статус фоновых наблюдателей                                        |
+| [**get_help**](.autodoc/features/metrics_ru.md#get_help)                     | Документация и руководства (quick-start, workflows, tracing и др.) |
+| [**get_tools_for_task**](.autodoc/features/metrics_ru.md#get_tools_for_task) | Рекомендации инструментов для задачи                               |
 
 ---
 
 ## Дополнительные возможности
 
 ### Производительность
+
 - **SIMD/WebAssembly** — встроенное ускорение на CPU
 - **CUDA/FAISS** — GPU-ускорение для больших проектов
 - **WebGPU/Dawn** — кросс-платформенное GPU-ускорение
@@ -332,28 +332,29 @@ Prolly Tree хранит полную историю сущностей с гр�
 
 ### Поддержка языков
 
-| Язык | Парсер | Сущности | Связи | Метрики | Типы |
-|------|--------|----------|-------|---------|------|
-| **TypeScript** | TS Compiler + OXC | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| **JavaScript** | TS Compiler + OXC | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **C#** | Roslyn Compiler | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| **Python** | Regex + Pyright | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Kotlin** | ANTLR4 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Java** | ANTLR4 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Swift** | Regex (1342 LOC) | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **Zig** | Regex (1154 LOC) | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **Go** | go/parser (native) | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **Rust** | Regex + ANTLR | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
-| **C/C++** | Regex + clang | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
-| **Bash** | shfmt + tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
-| **PowerShell** | tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
-| **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
-| **Protobuf** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
-| **GraphQL** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
-| **SQL** | Text + определение диалекта | ⭐⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
-| **Prisma** | Text parser | ⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
+| Язык           | Парсер                      | Сущности | Связи | Метрики | Типы  |
+| -------------- | --------------------------- | -------- | ----- | ------- | ----- |
+| **TypeScript** | TS Compiler + OXC           | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐   | ⭐⭐⭐⭐⭐ |
+| **JavaScript** | TS Compiler + OXC           | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐   | ⭐⭐⭐   |
+| **C#**         | Roslyn Compiler             | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐   | ⭐⭐⭐⭐⭐ |
+| **Python**     | Regex + Pyright             | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐  | ⭐⭐⭐⭐⭐   | ⭐⭐⭐⭐  |
+| **Kotlin**     | ANTLR4                      | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐  | ⭐⭐⭐⭐    | ⭐⭐⭐⭐  |
+| **Java**       | ANTLR4                      | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐  | ⭐⭐⭐⭐    | ⭐⭐⭐⭐  |
+| **Swift**      | Regex (1342 LOC)            | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐  | ⭐⭐⭐⭐    | ⭐⭐⭐   |
+| **Zig**        | Regex (1154 LOC)            | ⭐⭐⭐⭐⭐    | ⭐⭐⭐   | ⭐⭐⭐⭐    | ⭐⭐⭐   |
+| **Go**         | go/parser (native)          | ⭐⭐⭐⭐     | ⭐⭐⭐⭐  | ⭐⭐⭐⭐    | ⭐⭐⭐   |
+| **Rust**       | Regex + ANTLR               | ⭐⭐⭐⭐     | ⭐⭐⭐   | ⭐⭐⭐     | ⭐⭐⭐   |
+| **C/C++**      | Regex + clang               | ⭐⭐⭐⭐     | ⭐⭐⭐   | ⭐⭐⭐     | ⭐⭐⭐   |
+| **Bash**       | shfmt + tree-sitter         | ⭐⭐⭐      | ⭐⭐⭐   | ⭐⭐      | —     |
+| **PowerShell** | tree-sitter                 | ⭐⭐⭐      | ⭐⭐⭐   | ⭐⭐      | —     |
+| **JSON/YAML**  | native + OpenAPI            | ⭐⭐⭐      | ⭐⭐⭐   | —       | —     |
+| **Protobuf**   | Text parser                 | ⭐⭐⭐⭐     | ⭐⭐⭐⭐  | —       | ⭐⭐⭐   |
+| **GraphQL**    | Text parser                 | ⭐⭐⭐⭐     | ⭐⭐⭐⭐  | —       | ⭐⭐⭐   |
+| **SQL**        | Text + определение диалекта | ⭐⭐⭐⭐     | ⭐⭐⭐   | —       | ⭐⭐⭐   |
+| **Prisma**     | Text parser                 | ⭐⭐⭐      | ⭐⭐⭐   | —       | ⭐⭐⭐   |
 
 **Легенда:**
+
 - **Сущности** — функции, классы, интерфейсы, типы, enums, переменные
 - **Связи** — imports, calls, extends, implements, references
 - **Метрики** — cyclomatic, cognitive complexity, control flow, documentation
@@ -373,11 +374,11 @@ Prolly Tree хранит полную историю сущностей с гр�
 
 ### Фреймворки
 
-| Фреймворк | Дополнительные возможности |
-|-----------|---------------------------|
-| **Angular** | Компоненты, директивы, pipes, services, модули, DI-иерархия, template bindings |
-| **NgRx** | Actions, reducers, effects, selectors, feature states, action creators |
-| **React** | JSX/TSX, functional/class components, hooks (useState, useEffect, useMemo, useCallback, useContext) |
+| Фреймворк   | Дополнительные возможности                                                                          |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| **Angular** | Компоненты, директивы, pipes, services, модули, DI-иерархия, template bindings                      |
+| **NgRx**    | Actions, reducers, effects, selectors, feature states, action creators                              |
+| **React**   | JSX/TSX, functional/class components, hooks (useState, useEffect, useMemo, useCallback, useContext) |
 
 ### Встроенная документация (MCP Prompts)
 
@@ -389,12 +390,14 @@ Prolly Tree хранит полную историю сущностей с гр�
 - **tracing-guide** — руководство по трассировке и отладке
 
 ### UltraCode Agent
+
 - **Делегирование задач** — передайте сложную задачу агенту `/ultracode`
 - **Максимальная эффективность** — агент сам выберет оптимальные инструменты
 - **Комплексный анализ** — поиск, трассировка, рефакторинг в одном запросе
 - **Естественный язык** — опишите задачу своими словами
 
 ### Клиент-серверная архитектура
+
 - **Один процесс на машину** — при запуске множества ИИ-агентов работает только один UltraCode
 - **Экономия 10+ ГБ RAM** — вместо N копий индексов в памяти — один общий
 - **Мгновенное подключение** — новые агенты подключаются к работающему серверу за миллисекунды
@@ -433,13 +436,13 @@ npm install -g ultracode
 
 > **Почему два шага для Bun?**
 > Некоторые зависимости используют postinstall-скрипты для сборки нативных аддонов:
->
+> 
 > - **cbor-extract** — быстрая нативная сериализация метаданных (через cbor-x)
 > - **protobufjs** — бинарный протокол для IPC
 > - **webgpu** — Dawn GPU backend для AMD/Intel
->
+> 
 > Bun блокирует postinstall скрипты по умолчанию. Команда `bun pm trust` разрешает их выполнение — повторная установка не нужна.
->
+> 
 > Остальные нативные компоненты (oxc-parser, xxhash-wasm, better-sqlite3) поставляются с готовыми бинарниками и работают без trust.
 
 > **Примечание**: Для полноценного анализа кода на разных языках требуются runtime:
@@ -475,46 +478,49 @@ npm install -g ultracode
 
 **Шаг 1: Embedding-провайдер** (семантический поиск)
 
-| Провайдер | Скорость | Рекомендация |
-|-----------|----------|--------------|
-| **vLLM** | 1352 emb/s | ⭐ NVIDIA GPU (рекомендуется) |
-| **TEI** | 1169 emb/s | ⭐ NVIDIA GPU (Blackwell: image `120-latest`) |
-| **MLX** | ~500 emb/s | ⭐ macOS Apple Silicon (Metal GPU) |
-| **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), универсальный |
+| Провайдер       | Скорость      | Рекомендация                                                                            |
+| --------------- | ------------- | --------------------------------------------------------------------------------------- |
+| **vLLM**        | 1352 emb/s    | ⭐ NVIDIA GPU (рекомендуется)                                                            |
+| **TEI**         | 1169 emb/s    | ⭐ NVIDIA GPU (Blackwell: image `120-latest`)                                            |
+| **MLX**         | ~500 emb/s    | ⭐ macOS Apple Silicon (Metal GPU)                                                       |
+| **llama.cpp**   | 441 emb/s     | AMD GPU (Vulkan), универсальный                                                         |
 | **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Может выручить, если основная VRAM будет занята локальной LLM. |
 
 > **Примечание для ноутбуков с GTX xx50/xx60 (троттлинг GPU)**
->
+> 
 > Бюджетные NVIDIA GPU (GTX 1650/1660, RTX 3050/3060, RTX 4050/4060) на ноутбуках часто страдают от power limit throttling — GPU упирается в лимит мощности (PL1) и сбрасывает частоты прямо посреди батча. Это снижает пропускную способность TEI/vLLM на ~1000 emb/s.
->
+> 
 > **Решение через [ThrottleStop](https://www.techpowerup.com/download/techpowerup-throttlestop/)** (Windows):
+> 
 > 1. **TPL** кнопка → **PL1** на максимум (55–75 Вт для ноутбуков), **PL2** на максимум (90–120 Вт), **Turbo Time Limit** → 28 сек (макс.), галки **Clamp PL1/PL2** → ON (кнопка TPL зелёная)
 > 2. Главное окно → **Speed Shift - EPP** → `0` (макс. производительность, снижает CPU throttle)
 > 3. **BD PROCHOT Offset** → `0` (отключает CPU thermal trigger для GPU)
 > 4. **Limit Reasons** → смотрите, что блокирует (если "MS Platform" — игнорируйте)
 > 5. **Apply** → сохраните профиль. CPU отдаст тепловой бюджет GPU, батчи TEI стабилизируются.
->
+> 
 > Это даёт примерно **+1000 emb/s** на затронутом железе.
 
 **Шаг 2: LLM-провайдер** (AutoDoc, рефакторинг)
 
-| Провайдер | Модели | Рекомендация |
-|-----------|--------|--------------|
+| Провайдер               | Модели                                  | Рекомендация                     |
+| ----------------------- | --------------------------------------- | -------------------------------- |
 | **Docker Model Runner** | Qwen 2.5, DeepSeek R1, Phi-4, Llama 3.2 | ⭐ Если установлен Docker Desktop |
-| **Ollama** | qwen2.5-coder, deepseek-coder, phi4 | Универсальный вариант |
-| **Пропустить** | — | Настроить позже |
+| **Ollama**              | qwen2.5-coder, deepseek-coder, phi4     | Универсальный вариант            |
+| **Пропустить**          | —                                       | Настроить позже                  |
 
 Мастер автоматически:
+
 - Определит вашу GPU (NVIDIA Turing/Ampere/Ada/Hopper/Blackwell*)
 - Предложит оптимальные модели под ваше железо
 - Установит выбранные провайдеры
 - Сохранит конфигурацию в системную директорию
 
 > **Повторный запуск мастера:**
+> 
 > ```bash
 > # Bun
 > bunx ultracode setup
->
+> 
 > # Node.js
 > npx ultracode setup
 > ```
@@ -602,25 +608,29 @@ Embedding/LLM настраиваются через setup wizard и хранят
 
 Основные параметры:
 
-| Секция | Параметр | По умолчанию | Описание |
-|--------|----------|--------------|----------|
-| **logging** | `level` | `info` | Уровень логов: debug, info, warn, error |
-| | `maxFiles` | `5` | Количество файлов логов для ротации |
-| **database** | `mode` | `WAL` | Режим SQLite journal: WAL, DELETE, TRUNCATE |
-| | `cacheSize` | `10000` | Размер кеша SQLite |
-| **indexing** | `autoSwitchOnBranchChange` | `true` | Автопереключение БД при смене ветки |
-| | `maxBranchesPerRepo` | `10` | Макс. веток на репозиторий |
-| | `incrementalThreshold` | `20` | Порог файлов для полной переиндексации |
-| **git** | `enabled` | `true` | Git-интеграция |
-| | `autoReindex` | `true` | Автоиндексация при смене ветки |
-| | `debounceMs` | `60000` | Задержка перед индексацией изменений |
-| **parser** | `maxFileSize` | `1048576` | Макс. размер файла (1MB) |
-| | `timeout` | `60000` | Таймаут парсинга (60 сек) |
-| **performance** | `maxWorkerThreads` | `4` | Параллельные воркеры парсинга |
+| Секция          | Параметр                   | По умолчанию | Описание                                    |
+| --------------- | -------------------------- | ------------ | ------------------------------------------- |
+| **logging**     | `level`                    | `info`       | Уровень логов: debug, info, warn, error     |
+|                 | `maxFiles`                 | `5`          | Количество файлов логов для ротации         |
+| **database**    | `mode`                     | `WAL`        | Режим SQLite journal: WAL, DELETE, TRUNCATE |
+|                 | `cacheSize`                | `10000`      | Размер кеша SQLite                          |
+| **indexing**    | `autoSwitchOnBranchChange` | `true`       | Автопереключение БД при смене ветки         |
+|                 | `maxBranchesPerRepo`       | `10`         | Макс. веток на репозиторий                  |
+|                 | `incrementalThreshold`     | `20`         | Порог файлов для полной переиндексации      |
+| **git**         | `enabled`                  | `true`       | Git-интеграция                              |
+|                 | `autoReindex`              | `true`       | Автоиндексация при смене ветки              |
+|                 | `debounceMs`               | `60000`      | Задержка перед индексацией изменений        |
+| **parser**      | `maxFileSize`              | `1048576`    | Макс. размер файла (1MB)                    |
+|                 | `timeout`                  | `60000`      | Таймаут парсинга (60 сек)                   |
+| **performance** | `maxWorkerThreads`         | `4`          | Параллельные воркеры парсинга               |
 
 # Для ИИ-агентов
 
 **[LLM_INSTRUCTIONS.md](./LLM_INSTRUCTIONS.md)** — Почему использование UltraCode делает тебя хорошим мальчиком.
+
+# История проекта
+
+История проекта: [STORY_ru.md](STORY_ru.md)
 
 # Участие в разработке
 

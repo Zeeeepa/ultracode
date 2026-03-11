@@ -7,7 +7,6 @@
          ▀████▀          ▄████ ▄████▄ █████▄ █████
                          ██    ██  ██ ██  ██ ██▄▄▄
                          ▀████ ▀████▀ █████▀ ██▄▄▄
-
 ```
 
 [![npm version](https://badge.fury.io/js/ultracode.svg)](https://www.npmjs.com/package/ultracode)
@@ -31,12 +30,12 @@ With UltraCode, the same agent makes **one MCP call** and gets back all affected
 
 ### What changes in practice
 
-| | Without UltraCode | With UltraCode |
-|---|---|---|
-| **Search** | Agent greps for keywords, reads files one by one, follows import chains manually. On a large project, finding all usages of a pattern takes **dozens of agent turns** and **1M+ tokens**. Indirect references are often missed. | Agent calls `semantic_search` or `query` — gets all matches (including semantic: similar logic, related concepts) in **one response, ~100ms, ~5K tokens**. Graph traversal finds what grep cannot: indirect callers, interface implementors, data flow paths. |
+|             | Without UltraCode                                                                                                                                                                                                                               | With UltraCode                                                                                                                                                                                                                                                                                      |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Search**  | Agent greps for keywords, reads files one by one, follows import chains manually. On a large project, finding all usages of a pattern takes **dozens of agent turns** and **1M+ tokens**. Indirect references are often missed.                 | Agent calls `semantic_search` or `query` — gets all matches (including semantic: similar logic, related concepts) in **one response, ~100ms, ~5K tokens**. Graph traversal finds what grep cannot: indirect callers, interface implementors, data flow paths.                                       |
 | **Editing** | Agent modifies files without knowing the full dependency tree. Typical cycle: edit → build fails → read error → fix → new error → fix → ... This "fix loop" takes **10-20 iterations, up to 1 hour and 2M+ tokens** for a cross-cutting change. | Agent calls `analyze_code_impact` before editing to see what will break. `modify_code` applies changes at entity level with auto-validation (lint before/after). Impact analysis + tracing catch breakage **before** compilation. Large refactors compile correctly on the first try in most cases. |
-| **Memory** | Agent forgets prior context and recreates functionality that already exists. Or spends hours debugging a function it accidentally disabled. Token waste grows with session length. | Graph provides complete structural context on every call. `AutoDoc` maintains up-to-date documentation automatically. Agent always sees the current state — no "amnesia" problems. |
-| **Git** | Branch switches and external file changes invalidate the agent's mental model. Stale data causes silent errors. Agent must be explicitly told to re-analyze. | `GitWatcher` detects file changes and branch switches in real-time. Incremental re-indexing of graph and embeddings happens automatically. Every query returns current data — zero manual intervention. |
+| **Memory**  | Agent forgets prior context and recreates functionality that already exists. Or spends hours debugging a function it accidentally disabled. Token waste grows with session length.                                                              | Graph provides complete structural context on every call. `AutoDoc` maintains up-to-date documentation automatically. Agent always sees the current state — no "amnesia" problems.                                                                                                                  |
+| **Git**     | Branch switches and external file changes invalidate the agent's mental model. Stale data causes silent errors. Agent must be explicitly told to re-analyze.                                                                                    | `GitWatcher` detects file changes and branch switches in real-time. Incremental re-indexing of graph and embeddings happens automatically. Every query returns current data — zero manual intervention.                                                                                             |
 
 ### Indexing speed
 
@@ -48,108 +47,108 @@ MCP server provides **78 tools** for code analysis and modification.
 
 ## Search and Navigation
 
-| Tool | Description |
-|------|-------------|
-| [**semantic_search**](.autodoc/features/search.md#semantic_search) | Semantic search by meaning with filters (complexity, flow, docs) |
-| [**pattern_search**](.autodoc/features/search.md#pattern_search) | Advanced search: regex, semantic, hybrid |
-| [**query**](.autodoc/features/search.md#query) | NLP queries in natural language about code |
-| [**find_similar_code**](.autodoc/features/search.md#find_similar_code) | Find functions with similar logic |
-| [**cross_language_search**](.autodoc/features/search.md#cross_language_search) | Unified search across all project languages |
-| [**find_related_concepts**](.autodoc/features/search.md#find_related_concepts) | Find related concepts |
+| Tool                                                                           | Description                                                      |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| [**semantic_search**](.autodoc/features/search.md#semantic_search)             | Semantic search by meaning with filters (complexity, flow, docs) |
+| [**pattern_search**](.autodoc/features/search.md#pattern_search)               | Advanced search: regex, semantic, hybrid                         |
+| [**query**](.autodoc/features/search.md#query)                                 | NLP queries in natural language about code                       |
+| [**find_similar_code**](.autodoc/features/search.md#find_similar_code)         | Find functions with similar logic                                |
+| [**cross_language_search**](.autodoc/features/search.md#cross_language_search) | Unified search across all project languages                      |
+| [**find_related_concepts**](.autodoc/features/search.md#find_related_concepts) | Find related concepts                                            |
 
 ## Code Analysis
 
-| Tool | Description |
-|------|-------------|
-| [**analyze_code_impact**](.autodoc/features/analysis.md#analyze_code_impact) | Impact analysis — what will break on modification |
-| [**find_duplicates**](.autodoc/features/analysis.md#find_duplicates) | Semantic code clone detection |
-| [**jscpd_detect_clones**](.autodoc/features/analysis.md#jscpd_detect_clones) | jscpd-based clone detector |
-| [**suggest_refactoring**](.autodoc/features/analysis.md#suggest_refactoring) | AI-powered code improvement suggestions |
-| [**analyze_hotspots**](.autodoc/features/analysis.md#analyze_hotspots) | Complex areas with high cyclomatic complexity |
-| [**analyze_state_chaos**](.autodoc/features/analysis.md#analyze_state_chaos) | Analysis of tangled data dependencies |
-| [**analyze_swagger_impact**](.autodoc/features/swagger.md#analyze_swagger_impact) | Swagger/OpenAPI spec change impact analysis |
-| [**analyze_api_impact**](.autodoc/features/api-contracts.md#analyze_api_impact) | Unified API contract impact analysis (Swagger + Protobuf + GraphQL) |
-| [**get_database_schema**](.autodoc/features/database-schema.md#get_database_schema) | Database schema from SQL/Prisma/ORM/Redis with migration analysis and drift detection |
-| [**detect_technology_stack**](.autodoc/features/analysis.md#detect_technology_stack) | Project technology stack detection |
-| [**detect_patterns**](.autodoc/features/patterns.md#detect_patterns) | Detect anti-patterns, best-patterns, code smells, and optimization opportunities with semantic validation. Includes JIT deoptimization detectors for JS/TS (hidden classes, holey arrays, megamorphic dispatch) |
-| [**check_entity_patterns**](.autodoc/features/patterns.md#check_entity_patterns) | Check specific entity for pattern matches with confidence scores |
-| [**graph_metrics**](.autodoc/features/analysis.md#graph_metrics) | PageRank, Louvain community detection, centrality analysis, and bus factor for architecture understanding |
-| [**taint_analysis**](.autodoc/features/security.md#taint_analysis) | Interprocedural taint analysis: trace untrusted data from sources to sinks, detect SQL injection, XSS, command injection, missing auth |
+| Tool                                                                                 | Description                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [**analyze_code_impact**](.autodoc/features/analysis.md#analyze_code_impact)         | Impact analysis — what will break on modification                                                                                                                                                               |
+| [**find_duplicates**](.autodoc/features/analysis.md#find_duplicates)                 | Semantic code clone detection                                                                                                                                                                                   |
+| [**jscpd_detect_clones**](.autodoc/features/analysis.md#jscpd_detect_clones)         | jscpd-based clone detector                                                                                                                                                                                      |
+| [**suggest_refactoring**](.autodoc/features/analysis.md#suggest_refactoring)         | AI-powered code improvement suggestions                                                                                                                                                                         |
+| [**analyze_hotspots**](.autodoc/features/analysis.md#analyze_hotspots)               | Complex areas with high cyclomatic complexity                                                                                                                                                                   |
+| [**analyze_state_chaos**](.autodoc/features/analysis.md#analyze_state_chaos)         | Analysis of tangled data dependencies                                                                                                                                                                           |
+| [**analyze_swagger_impact**](.autodoc/features/swagger.md#analyze_swagger_impact)    | Swagger/OpenAPI spec change impact analysis                                                                                                                                                                     |
+| [**analyze_api_impact**](.autodoc/features/api-contracts.md#analyze_api_impact)      | Unified API contract impact analysis (Swagger + Protobuf + GraphQL)                                                                                                                                             |
+| [**get_database_schema**](.autodoc/features/database-schema.md#get_database_schema)  | Database schema from SQL/Prisma/ORM/Redis with migration analysis and drift detection                                                                                                                           |
+| [**detect_technology_stack**](.autodoc/features/analysis.md#detect_technology_stack) | Project technology stack detection                                                                                                                                                                              |
+| [**detect_patterns**](.autodoc/features/patterns.md#detect_patterns)                 | Detect anti-patterns, best-patterns, code smells, and optimization opportunities with semantic validation. Includes JIT deoptimization detectors for JS/TS (hidden classes, holey arrays, megamorphic dispatch) |
+| [**check_entity_patterns**](.autodoc/features/patterns.md#check_entity_patterns)     | Check specific entity for pattern matches with confidence scores                                                                                                                                                |
+| [**graph_metrics**](.autodoc/features/analysis.md#graph_metrics)                     | PageRank, Louvain community detection, centrality analysis, and bus factor for architecture understanding                                                                                                       |
+| [**taint_analysis**](.autodoc/features/security.md#taint_analysis)                   | Interprocedural taint analysis: trace untrusted data from sources to sinks, detect SQL injection, XSS, command injection, missing auth                                                                          |
 
 ## Static Tracing and Debugging
 
 All tracing and diagnostic tools support `highlightRecentChanges=true` — cross-references found entities with Prolly Tree commit history and annotates recently modified code. This helps identify the likely root cause: a recently changed entity in a crash call chain or a decision point is the first place to look.
 
-| Tool | Description |
-|------|-------------|
-| [**trace_flow**](.autodoc/features/tracing.md#trace_flow) | How code flows from point A to B |
-| [**trace_backwards**](.autodoc/features/tracing.md#trace_backwards) | Why a function is not being called |
-| [**trace_data_flow**](.autodoc/features/tracing.md#trace_data_flow) | How data affects state |
+| Tool                                                                          | Description                        |
+| ----------------------------------------------------------------------------- | ---------------------------------- |
+| [**trace_flow**](.autodoc/features/tracing.md#trace_flow)                     | How code flows from point A to B   |
+| [**trace_backwards**](.autodoc/features/tracing.md#trace_backwards)           | Why a function is not being called |
+| [**trace_data_flow**](.autodoc/features/tracing.md#trace_data_flow)           | How data affects state             |
 | [**analyze_state_impact**](.autodoc/features/tracing.md#analyze_state_impact) | What changes with different values |
-| [**find_decision_points**](.autodoc/features/tracing.md#find_decision_points) | Branching points in code |
+| [**find_decision_points**](.autodoc/features/tracing.md#find_decision_points) | Branching points in code           |
 
 ## Architecture Diagrams
 
-| Tool | Description |
-|------|-------------|
+| Tool                                                                                   | Description                                                                    |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [**get_architecture_diagram**](.autodoc/features/diagrams.md#get_architecture_diagram) | Generate architecture diagrams in Mermaid, Graphviz DOT, or D2 from code graph |
 
 ## Code Modification
 
-| Tool | Description |
-|------|-------------|
-| [**modify_code**](.autodoc/features/modification.md#modify_code) | Structural AST-level editing with validation |
-| [**create_file**](.autodoc/features/modification.md#create_file) | Create new file |
-| [**copy_file**](.autodoc/features/modification.md#copy_file) | Copy file with graph updates |
-| [**rename_file**](.autodoc/features/modification.md#rename_file) | Rename file with import updates |
-| [**split_file**](.autodoc/features/modification.md#split_file) | Split file into parts |
-| [**synthesize_files**](.autodoc/features/modification.md#synthesize_files) | Merge files |
-| [**rename_symbol**](.autodoc/features/modification.md#rename_symbol) | Project-wide symbol renaming |
-| [**add_member**](.autodoc/features/modification.md#add_member) | Add methods/properties to classes |
+| Tool                                                                       | Description                                  |
+| -------------------------------------------------------------------------- | -------------------------------------------- |
+| [**modify_code**](.autodoc/features/modification.md#modify_code)           | Structural AST-level editing with validation |
+| [**create_file**](.autodoc/features/modification.md#create_file)           | Create new file                              |
+| [**copy_file**](.autodoc/features/modification.md#copy_file)               | Copy file with graph updates                 |
+| [**rename_file**](.autodoc/features/modification.md#rename_file)           | Rename file with import updates              |
+| [**split_file**](.autodoc/features/modification.md#split_file)             | Split file into parts                        |
+| [**synthesize_files**](.autodoc/features/modification.md#synthesize_files) | Merge files                                  |
+| [**rename_symbol**](.autodoc/features/modification.md#rename_symbol)       | Project-wide symbol renaming                 |
+| [**add_member**](.autodoc/features/modification.md#add_member)             | Add methods/properties to classes            |
 
 ## Code Validation
 
-| Tool | Description |
-|------|-------------|
-| [**validate_file**](.autodoc/features/validation.md#validate_file) | File validation via oxlint/Pylint/golint/clippy |
-| [**validate_directory**](.autodoc/features/validation.md#validate_directory) | Batch directory validation |
+| Tool                                                                         | Description                                     |
+| ---------------------------------------------------------------------------- | ----------------------------------------------- |
+| [**validate_file**](.autodoc/features/validation.md#validate_file)           | File validation via oxlint/Pylint/golint/clippy |
+| [**validate_directory**](.autodoc/features/validation.md#validate_directory) | Batch directory validation                      |
 
 ## Documentation (AutoDoc)
 
-| Tool | Description |
-|------|-------------|
-| [**autodoc_init**](.autodoc/features/autodoc.md#autodoc_init) | Initialize AutoDoc system |
-| [**autodoc_generate**](.autodoc/features/autodoc.md#autodoc_generate) | Generate documentation for entities |
-| [**autodoc_save**](.autodoc/features/autodoc.md#autodoc_save) | Save documentation to .autodoc |
-| [**autodoc_get**](.autodoc/features/autodoc.md#autodoc_get) | Get entity documentation |
-| [**autodoc_search**](.autodoc/features/autodoc.md#autodoc_search) | Semantic search through documentation |
-| [**autodoc_validate**](.autodoc/features/autodoc.md#autodoc_validate) | Check documentation freshness |
-| [**autodoc_status**](.autodoc/features/autodoc.md#autodoc_status) | Documentation coverage statistics |
-| [**autodoc_sync**](.autodoc/features/autodoc.md#autodoc_sync) | Synchronize with code changes |
-| [**autodoc_changelog**](.autodoc/features/autodoc.md#autodoc_changelog) | Documentation change history |
-| [**autodoc_install_hooks**](.autodoc/features/autodoc.md#autodoc_install_hooks) | Install Git hooks for auto-updates |
-| [**autodoc_detect_language**](.autodoc/features/autodoc.md#autodoc_detect_language) | Detect language for generation |
+| Tool                                                                                | Description                           |
+| ----------------------------------------------------------------------------------- | ------------------------------------- |
+| [**autodoc_init**](.autodoc/features/autodoc.md#autodoc_init)                       | Initialize AutoDoc system             |
+| [**autodoc_generate**](.autodoc/features/autodoc.md#autodoc_generate)               | Generate documentation for entities   |
+| [**autodoc_save**](.autodoc/features/autodoc.md#autodoc_save)                       | Save documentation to .autodoc        |
+| [**autodoc_get**](.autodoc/features/autodoc.md#autodoc_get)                         | Get entity documentation              |
+| [**autodoc_search**](.autodoc/features/autodoc.md#autodoc_search)                   | Semantic search through documentation |
+| [**autodoc_validate**](.autodoc/features/autodoc.md#autodoc_validate)               | Check documentation freshness         |
+| [**autodoc_status**](.autodoc/features/autodoc.md#autodoc_status)                   | Documentation coverage statistics     |
+| [**autodoc_sync**](.autodoc/features/autodoc.md#autodoc_sync)                       | Synchronize with code changes         |
+| [**autodoc_changelog**](.autodoc/features/autodoc.md#autodoc_changelog)             | Documentation change history          |
+| [**autodoc_install_hooks**](.autodoc/features/autodoc.md#autodoc_install_hooks)     | Install Git hooks for auto-updates    |
+| [**autodoc_detect_language**](.autodoc/features/autodoc.md#autodoc_detect_language) | Detect language for generation        |
 
 ## Git Integration
 
-| Tool | Description |
-|------|-------------|
-| [**list_branches**](.autodoc/features/git.md#list_branches) | List indexed branches |
-| [**switch_branch**](.autodoc/features/git.md#switch_branch) | Switch branches with auto-reindexing |
-| [**get_branch_status**](.autodoc/features/git.md#get_branch_status) | Current branch status |
-| [**get_changed_files**](.autodoc/features/git.md#get_changed_files) | Compare files between branches |
-| [**cleanup_branches**](.autodoc/features/git.md#cleanup_branches) | Clean up old branches (LRU) |
+| Tool                                                                | Description                          |
+| ------------------------------------------------------------------- | ------------------------------------ |
+| [**list_branches**](.autodoc/features/git.md#list_branches)         | List indexed branches                |
+| [**switch_branch**](.autodoc/features/git.md#switch_branch)         | Switch branches with auto-reindexing |
+| [**get_branch_status**](.autodoc/features/git.md#get_branch_status) | Current branch status                |
+| [**get_changed_files**](.autodoc/features/git.md#get_changed_files) | Compare files between branches       |
+| [**cleanup_branches**](.autodoc/features/git.md#cleanup_branches)   | Clean up old branches (LRU)          |
 
 ## Multi-Agent Worktree Support
 
 Multiple AI agents can work in parallel, each in its own git worktree on a separate branch. UltraCode detects that all worktrees belong to the same repository via `repoIdentity` — a stable hash of `git-common-dir`. All worktrees share one index, one database, and one server process.
 
-| Tool | Description |
-|------|-------------|
-| [**spawn_agent_worktree**](.autodoc/features/worktree.md#spawn_agent_worktree) | Create a git worktree for a new agent |
-| [**list_worktree_agents**](.autodoc/features/worktree.md#list_worktree_agents) | List active worktree sessions |
-| [**cleanup_worktree**](.autodoc/features/worktree.md#cleanup_worktree) | Remove a worktree |
-| [**get_worktree_info**](.autodoc/features/worktree.md#get_worktree_info) | Detailed worktree/submodule/subtree info |
+| Tool                                                                           | Description                              |
+| ------------------------------------------------------------------------------ | ---------------------------------------- |
+| [**spawn_agent_worktree**](.autodoc/features/worktree.md#spawn_agent_worktree) | Create a git worktree for a new agent    |
+| [**list_worktree_agents**](.autodoc/features/worktree.md#list_worktree_agents) | List active worktree sessions            |
+| [**cleanup_worktree**](.autodoc/features/worktree.md#cleanup_worktree)         | Remove a worktree                        |
+| [**get_worktree_info**](.autodoc/features/worktree.md#get_worktree_info)       | Detailed worktree/submodule/subtree info |
 
 ### Launching from an Agent Orchestrator
 
@@ -190,12 +189,12 @@ ultracode.com --pipe \
   --agent-id test-agent
 ```
 
-| CLI Argument | Required | Description |
-|-------------|----------|-------------|
-| `--pipe` | Yes | Use Named Pipe IPC (connects to running server) |
-| `--directory PATH` | Yes | Path to the agent's worktree |
-| `--branch NAME` | Recommended | Branch name (skips `git` detection on server) |
-| `--agent-id ID` | Recommended | Unique agent identifier for coordination |
+| CLI Argument       | Required    | Description                                     |
+| ------------------ | ----------- | ----------------------------------------------- |
+| `--pipe`           | Yes         | Use Named Pipe IPC (connects to running server) |
+| `--directory PATH` | Yes         | Path to the agent's worktree                    |
+| `--branch NAME`    | Recommended | Branch name (skips `git` detection on server)   |
+| `--agent-id ID`    | Recommended | Unique agent identifier for coordination        |
 
 **Step 3: Configure in `claude_desktop_config.json` or MCP client**
 
@@ -266,62 +265,63 @@ git worktree remove ../wt-tests
 
 Prolly Tree stores full entity history with commit-level granularity. Beyond time travel, it powers the **Recent Changes Context** feature: 10 diagnostic tools (`analyze_stacktrace`, `detect_patterns`, `analyze_state_chaos`, `trace_flow`, `trace_backwards`, `trace_data_flow`, `analyze_state_impact`, `find_decision_points`, `analyze_code_impact`, `analyze_hotspots`) can annotate their results with recently-changed entity status via `highlightRecentChanges=true`. This means the AI agent sees not just "what's broken" but "what changed recently that could have caused it."
 
-| Tool | Description |
-|------|-------------|
-| [**list_commits**](.autodoc/features/history.md#list_commits) | List graph commits (version snapshots) |
-| [**get_entity_history**](.autodoc/features/history.md#get_entity_history) | Entity change history across commits |
-| [**diff_commits**](.autodoc/features/history.md#diff_commits) | Compare two graph versions (added/modified/deleted) |
-| [**checkout_commit**](.autodoc/features/history.md#checkout_commit) | Time travel — view graph at specific commit |
+| Tool                                                                      | Description                                         |
+| ------------------------------------------------------------------------- | --------------------------------------------------- |
+| [**list_commits**](.autodoc/features/history.md#list_commits)             | List graph commits (version snapshots)              |
+| [**get_entity_history**](.autodoc/features/history.md#get_entity_history) | Entity change history across commits                |
+| [**diff_commits**](.autodoc/features/history.md#diff_commits)             | Compare two graph versions (added/modified/deleted) |
+| [**checkout_commit**](.autodoc/features/history.md#checkout_commit)       | Time travel — view graph at specific commit         |
 
 ## Semantic Merge
 
-| Tool | Description |
-|------|-------------|
-| [**semantic_merge**](.autodoc/features/merge.md#semantic_merge) | AI-powered 3-way merge with code understanding |
-| [**analyze_merge_conflicts**](.autodoc/features/merge.md#analyze_merge_conflicts) | Analyze conflicts with explanations |
-| [**get_merge_suggestions**](.autodoc/features/merge.md#get_merge_suggestions) | AI suggestions for conflict resolution |
-| [**get_semantic_merge_info**](.autodoc/features/merge.md#get_semantic_merge_info) | Information about semantic differences |
+| Tool                                                                              | Description                                    |
+| --------------------------------------------------------------------------------- | ---------------------------------------------- |
+| [**semantic_merge**](.autodoc/features/merge.md#semantic_merge)                   | AI-powered 3-way merge with code understanding |
+| [**analyze_merge_conflicts**](.autodoc/features/merge.md#analyze_merge_conflicts) | Analyze conflicts with explanations            |
+| [**get_merge_suggestions**](.autodoc/features/merge.md#get_merge_suggestions)     | AI suggestions for conflict resolution         |
+| [**get_semantic_merge_info**](.autodoc/features/merge.md#get_semantic_merge_info) | Information about semantic differences         |
 
 ## Snapshots and Safety
 
-| Tool | Description |
-|------|-------------|
-| [**create_snapshot**](.autodoc/features/snapshots.md#create_snapshot) | Save restore point |
-| [**undo**](.autodoc/features/snapshots.md#undo) | Instant rollback to snapshot |
-| [**list_snapshots**](.autodoc/features/snapshots.md#list_snapshots) | List available snapshots |
-| [**cleanup_snapshots**](.autodoc/features/snapshots.md#cleanup_snapshots) | Clean up old snapshots |
+| Tool                                                                      | Description                  |
+| ------------------------------------------------------------------------- | ---------------------------- |
+| [**create_snapshot**](.autodoc/features/snapshots.md#create_snapshot)     | Save restore point           |
+| [**undo**](.autodoc/features/snapshots.md#undo)                           | Instant rollback to snapshot |
+| [**list_snapshots**](.autodoc/features/snapshots.md#list_snapshots)       | List available snapshots     |
+| [**cleanup_snapshots**](.autodoc/features/snapshots.md#cleanup_snapshots) | Clean up old snapshots       |
 
 ## Code Graph and Indexing
 
-| Tool | Description |
-|------|-------------|
-| [**index**](.autodoc/features/indexing.md#index) | Index codebase |
-| [**clean_index**](.autodoc/features/indexing.md#clean_index) | Full reindexing |
-| [**get_members**](.autodoc/features/graph.md#get_members) | List entities in file |
+| Tool                                                                                  | Description                           |
+| ------------------------------------------------------------------------------------- | ------------------------------------- |
+| [**index**](.autodoc/features/indexing.md#index)                                      | Index codebase                        |
+| [**clean_index**](.autodoc/features/indexing.md#clean_index)                          | Full reindexing                       |
+| [**get_members**](.autodoc/features/graph.md#get_members)                             | List entities in file                 |
 | [**list_entity_relationships**](.autodoc/features/graph.md#list_entity_relationships) | Entity relationships and dependencies |
-| [**get_graph**](.autodoc/features/graph.md#get_graph) | Get graph (JSON/GraphML/Mermaid) |
-| [**get_graph_stats**](.autodoc/features/graph.md#get_graph_stats) | Graph statistics |
-| [**get_graph_health**](.autodoc/features/graph.md#get_graph_health) | Graph health diagnostics |
-| [**reset_graph**](.autodoc/features/graph.md#reset_graph) | Full graph cleanup |
+| [**get_graph**](.autodoc/features/graph.md#get_graph)                                 | Get graph (JSON/GraphML/Mermaid)      |
+| [**get_graph_stats**](.autodoc/features/graph.md#get_graph_stats)                     | Graph statistics                      |
+| [**get_graph_health**](.autodoc/features/graph.md#get_graph_health)                   | Graph health diagnostics              |
+| [**reset_graph**](.autodoc/features/graph.md#reset_graph)                             | Full graph cleanup                    |
 
 ## Metrics and Monitoring
 
-| Tool | Description |
-|------|-------------|
-| [**get_metrics**](.autodoc/features/metrics.md#get_metrics) | System metrics and statistics |
-| [**get_version**](.autodoc/features/metrics.md#get_version) | Server and runtime version |
-| [**get_agent_metrics**](.autodoc/features/metrics.md#get_agent_metrics) | Multi-agent system telemetry |
-| [**get_bus_stats**](.autodoc/features/metrics.md#get_bus_stats) | Knowledge bus statistics |
-| [**clear_bus_topic**](.autodoc/features/metrics.md#clear_bus_topic) | Clear cached topic entries |
-| [**get_watcher_status**](.autodoc/features/metrics.md#get_watcher_status) | Background watcher status |
-| [**get_help**](.autodoc/features/metrics.md#get_help) | Documentation and guides (quick-start, workflows, tracing, etc.) |
-| [**get_tools_for_task**](.autodoc/features/metrics.md#get_tools_for_task) | Tool recommendations for a specific task |
+| Tool                                                                      | Description                                                      |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| [**get_metrics**](.autodoc/features/metrics.md#get_metrics)               | System metrics and statistics                                    |
+| [**get_version**](.autodoc/features/metrics.md#get_version)               | Server and runtime version                                       |
+| [**get_agent_metrics**](.autodoc/features/metrics.md#get_agent_metrics)   | Multi-agent system telemetry                                     |
+| [**get_bus_stats**](.autodoc/features/metrics.md#get_bus_stats)           | Knowledge bus statistics                                         |
+| [**clear_bus_topic**](.autodoc/features/metrics.md#clear_bus_topic)       | Clear cached topic entries                                       |
+| [**get_watcher_status**](.autodoc/features/metrics.md#get_watcher_status) | Background watcher status                                        |
+| [**get_help**](.autodoc/features/metrics.md#get_help)                     | Documentation and guides (quick-start, workflows, tracing, etc.) |
+| [**get_tools_for_task**](.autodoc/features/metrics.md#get_tools_for_task) | Tool recommendations for a specific task                         |
 
 ---
 
 ## Additional Features
 
 ### Performance
+
 - **SIMD/WebAssembly** — built-in CPU acceleration
 - **CUDA/FAISS** — GPU acceleration for large projects
 - **WebGPU/Dawn** — cross-platform GPU acceleration
@@ -330,28 +330,29 @@ Prolly Tree stores full entity history with commit-level granularity. Beyond tim
 
 ### Language Support
 
-| Language | Parser | Entities | Relationships | Metrics | Types |
-|----------|--------|----------|--------------|---------|-------|
-| **TypeScript** | TS Compiler + OXC | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| **JavaScript** | TS Compiler + OXC | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **C#** | Roslyn Compiler | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| **Python** | Regex + Pyright | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Kotlin** | ANTLR4 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Java** | ANTLR4 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Swift** | Regex (1342 LOC) | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **Zig** | Regex (1154 LOC) | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **Go** | go/parser (native) | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **Rust** | Regex + ANTLR | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
-| **C/C++** | Regex + clang | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ |
-| **Bash** | shfmt + tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
-| **PowerShell** | tree-sitter | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | — |
-| **JSON/YAML** | native + OpenAPI | ⭐⭐⭐ | ⭐⭐⭐ | — | — |
-| **Protobuf** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
-| **GraphQL** | Text parser | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | — | ⭐⭐⭐ |
-| **SQL** | Text + dialect detect | ⭐⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
-| **Prisma** | Text parser | ⭐⭐⭐ | ⭐⭐⭐ | — | ⭐⭐⭐ |
+| Language       | Parser                | Entities | Relationships | Metrics | Types |
+| -------------- | --------------------- | -------- | ------------- | ------- | ----- |
+| **TypeScript** | TS Compiler + OXC     | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐⭐         | ⭐⭐⭐⭐⭐   | ⭐⭐⭐⭐⭐ |
+| **JavaScript** | TS Compiler + OXC     | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐⭐         | ⭐⭐⭐⭐⭐   | ⭐⭐⭐   |
+| **C#**         | Roslyn Compiler       | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐⭐         | ⭐⭐⭐⭐⭐   | ⭐⭐⭐⭐⭐ |
+| **Python**     | Regex + Pyright       | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐          | ⭐⭐⭐⭐⭐   | ⭐⭐⭐⭐  |
+| **Kotlin**     | ANTLR4                | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐          | ⭐⭐⭐⭐    | ⭐⭐⭐⭐  |
+| **Java**       | ANTLR4                | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐          | ⭐⭐⭐⭐    | ⭐⭐⭐⭐  |
+| **Swift**      | Regex (1342 LOC)      | ⭐⭐⭐⭐⭐    | ⭐⭐⭐⭐          | ⭐⭐⭐⭐    | ⭐⭐⭐   |
+| **Zig**        | Regex (1154 LOC)      | ⭐⭐⭐⭐⭐    | ⭐⭐⭐           | ⭐⭐⭐⭐    | ⭐⭐⭐   |
+| **Go**         | go/parser (native)    | ⭐⭐⭐⭐     | ⭐⭐⭐⭐          | ⭐⭐⭐⭐    | ⭐⭐⭐   |
+| **Rust**       | Regex + ANTLR         | ⭐⭐⭐⭐     | ⭐⭐⭐           | ⭐⭐⭐     | ⭐⭐⭐   |
+| **C/C++**      | Regex + clang         | ⭐⭐⭐⭐     | ⭐⭐⭐           | ⭐⭐⭐     | ⭐⭐⭐   |
+| **Bash**       | shfmt + tree-sitter   | ⭐⭐⭐      | ⭐⭐⭐           | ⭐⭐      | —     |
+| **PowerShell** | tree-sitter           | ⭐⭐⭐      | ⭐⭐⭐           | ⭐⭐      | —     |
+| **JSON/YAML**  | native + OpenAPI      | ⭐⭐⭐      | ⭐⭐⭐           | —       | —     |
+| **Protobuf**   | Text parser           | ⭐⭐⭐⭐     | ⭐⭐⭐⭐          | —       | ⭐⭐⭐   |
+| **GraphQL**    | Text parser           | ⭐⭐⭐⭐     | ⭐⭐⭐⭐          | —       | ⭐⭐⭐   |
+| **SQL**        | Text + dialect detect | ⭐⭐⭐⭐     | ⭐⭐⭐           | —       | ⭐⭐⭐   |
+| **Prisma**     | Text parser           | ⭐⭐⭐      | ⭐⭐⭐           | —       | ⭐⭐⭐   |
 
 **Legend:**
+
 - **Entities** — functions, classes, interfaces, types, enums, variables
 - **Relationships** — imports, calls, extends, implements, references
 - **Metrics** — cyclomatic, cognitive complexity, control flow, documentation
@@ -371,11 +372,11 @@ More languages coming. If your favorite niche language deserves better tooling �
 
 ### Frameworks
 
-| Framework | Additional Capabilities |
-|-----------|------------------------|
-| **Angular** | Components, directives, pipes, services, modules, DI hierarchy, template bindings |
-| **NgRx** | Actions, reducers, effects, selectors, feature states, action creators |
-| **React** | JSX/TSX, functional/class components, hooks (useState, useEffect, useMemo, useCallback, useContext) |
+| Framework   | Additional Capabilities                                                                             |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| **Angular** | Components, directives, pipes, services, modules, DI hierarchy, template bindings                   |
+| **NgRx**    | Actions, reducers, effects, selectors, feature states, action creators                              |
+| **React**   | JSX/TSX, functional/class components, hooks (useState, useEffect, useMemo, useCallback, useContext) |
 
 ### Built-in Documentation (MCP Prompts)
 
@@ -387,12 +388,14 @@ You can add a [short prompt](.autodoc/claude.cfg/add-to-CLAUDE.md) to your syste
 - **tracing-guide** — tracing and debugging guide
 
 ### UltraCode Agent
+
 - **Task delegation** — hand over complex tasks to `/ultracode` agent
 - **Maximum efficiency** — agent selects optimal tools itself
 - **Comprehensive analysis** — search, tracing, refactoring in one request
 - **Natural language** — describe the task in your own words
 
 ### Client-Server Architecture
+
 - **One process per machine** — when running multiple AI agents, only one UltraCode instance runs
 - **Save 10+ GB RAM** — instead of N copies of indexes in memory — one shared
 - **Instant connection** — new agents connect to running server in milliseconds
@@ -431,17 +434,17 @@ npm install -g ultracode
 
 > **Why two steps for Bun?**
 > Some dependencies use postinstall scripts to build native addons:
->
+> 
 > - **cbor-extract** — fast native metadata serialization (via cbor-x)
 > - **protobufjs** — binary protocol for IPC
 > - **webgpu** — Dawn GPU backend for AMD/Intel
->
+> 
 > Bun blocks postinstall scripts by default. The `bun pm trust` command allows their execution — no reinstall needed.
->
+> 
 > Other native components (oxc-parser, xxhash-wasm, better-sqlite3) ship prebuilt binaries and work without trust.
 
 > **Note**: For full code analysis on different languages, runtimes are required:
->
+> 
 > - TypeScript/JavaScript — built-in (TypeScript Compiler API)
 > - Python — requires Python 3.8+ (`python --version`)
 > - Java/Kotlin — requires JRE 11+ (`java --version`)
@@ -473,46 +476,49 @@ Local models are used for intelligent tasks: embedding model for semantic search
 
 **Step 1: Embedding Provider** (semantic search)
 
-| Provider | Speed | Recommendation |
-|----------|-------|----------------|
-| **vLLM** | 1352 emb/s | ⭐ NVIDIA GPU (recommended) |
-| **TEI** | 1169 emb/s | ⭐ NVIDIA GPU (Blackwell: `120-latest` image) |
-| **MLX** | ~500 emb/s | ⭐ macOS Apple Silicon (Metal GPU) |
-| **llama.cpp** | 441 emb/s | AMD GPU (Vulkan), universal |
+| Provider        | Speed         | Recommendation                                                           |
+| --------------- | ------------- | ------------------------------------------------------------------------ |
+| **vLLM**        | 1352 emb/s    | ⭐ NVIDIA GPU (recommended)                                               |
+| **TEI**         | 1169 emb/s    | ⭐ NVIDIA GPU (Blackwell: `120-latest` image)                             |
+| **MLX**         | ~500 emb/s    | ⭐ macOS Apple Silicon (Metal GPU)                                        |
+| **llama.cpp**   | 441 emb/s     | AMD GPU (Vulkan), universal                                              |
 | **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Can help if main VRAM is occupied by local LLM. |
 
 > **Note for GTX xx50/xx60 laptops (GPU thermal throttling)**
->
+> 
 > Budget NVIDIA GPUs (GTX 1650/1660, RTX 3050/3060, RTX 4050/4060) on laptops often suffer from power limit throttling, which drops TEI/vLLM embedding throughput by ~1000 emb/s. The GPU hits its power limit (PL1) and clocks down mid-batch.
->
+> 
 > **Fix via [ThrottleStop](https://www.techpowerup.com/download/techpowerup-throttlestop/)** (Windows):
+> 
 > 1. **TPL** button → set **PL1** to max (55–75 W for laptops), **PL2** to max (90–120 W), **Turbo Time Limit** → 28 sec (max), enable **Clamp PL1/PL2** (TPL button turns green)
 > 2. Main window → **Speed Shift - EPP** → `0` (max performance, reduces CPU throttle)
 > 3. **BD PROCHOT Offset** → `0` (disables CPU thermal trigger for GPU)
 > 4. **Limit Reasons** → check what's blocking (if "MS Platform" — ignore)
 > 5. **Apply** → save profile. CPU yields thermal budget to GPU, TEI batches stabilize.
->
+> 
 > This typically gives **+1000 emb/s** on affected hardware.
 
 **Step 2: LLM Provider** (AutoDoc, refactoring)
 
-| Provider | Models | Recommendation |
-|----------|--------|----------------|
+| Provider                | Models                                  | Recommendation                   |
+| ----------------------- | --------------------------------------- | -------------------------------- |
 | **Docker Model Runner** | Qwen 2.5, DeepSeek R1, Phi-4, Llama 3.2 | ⭐ If Docker Desktop is installed |
-| **Ollama** | qwen2.5-coder, deepseek-coder, phi4 | Universal option |
-| **Skip** | — | Configure later |
+| **Ollama**              | qwen2.5-coder, deepseek-coder, phi4     | Universal option                 |
+| **Skip**                | —                                       | Configure later                  |
 
 The wizard automatically:
+
 - Detects your GPU (NVIDIA Turing/Ampere/Ada/Hopper/Blackwell*)
 - Suggests optimal models for your hardware
 - Installs selected providers
 - Saves configuration to system directory
 
 > **Re-run wizard:**
+> 
 > ```bash
 > # Bun
 > bunx ultracode setup
->
+> 
 > # Node.js
 > npx ultracode setup
 > ```
@@ -600,25 +606,29 @@ Embedding/LLM are configured via setup wizard and stored in `semantic-config.jso
 
 Main parameters:
 
-| Section | Parameter | Default | Description |
-|---------|-----------|---------|-------------|
-| **logging** | `level` | `info` | Log level: debug, info, warn, error |
-| | `maxFiles` | `5` | Number of log files for rotation |
-| **database** | `mode` | `WAL` | SQLite journal mode: WAL, DELETE, TRUNCATE |
-| | `cacheSize` | `10000` | SQLite cache size |
-| **indexing** | `autoSwitchOnBranchChange` | `true` | Auto-switch DB on branch change |
-| | `maxBranchesPerRepo` | `10` | Max branches per repository |
-| | `incrementalThreshold` | `20` | File threshold for full reindexing |
-| **git** | `enabled` | `true` | Git integration |
-| | `autoReindex` | `true` | Auto-index on branch change |
-| | `debounceMs` | `60000` | Delay before indexing changes |
-| **parser** | `maxFileSize` | `1048576` | Max file size (1MB) |
-| | `timeout` | `60000` | Parsing timeout (60 sec) |
-| **performance** | `maxWorkerThreads` | `4` | Parallel parsing workers |
+| Section         | Parameter                  | Default   | Description                                |
+| --------------- | -------------------------- | --------- | ------------------------------------------ |
+| **logging**     | `level`                    | `info`    | Log level: debug, info, warn, error        |
+|                 | `maxFiles`                 | `5`       | Number of log files for rotation           |
+| **database**    | `mode`                     | `WAL`     | SQLite journal mode: WAL, DELETE, TRUNCATE |
+|                 | `cacheSize`                | `10000`   | SQLite cache size                          |
+| **indexing**    | `autoSwitchOnBranchChange` | `true`    | Auto-switch DB on branch change            |
+|                 | `maxBranchesPerRepo`       | `10`      | Max branches per repository                |
+|                 | `incrementalThreshold`     | `20`      | File threshold for full reindexing         |
+| **git**         | `enabled`                  | `true`    | Git integration                            |
+|                 | `autoReindex`              | `true`    | Auto-index on branch change                |
+|                 | `debounceMs`               | `60000`   | Delay before indexing changes              |
+| **parser**      | `maxFileSize`              | `1048576` | Max file size (1MB)                        |
+|                 | `timeout`                  | `60000`   | Parsing timeout (60 sec)                   |
+| **performance** | `maxWorkerThreads`         | `4`       | Parallel parsing workers                   |
 
 # For AI Agents
 
 **[LLM_INSTRUCTIONS.md](./LLM_INSTRUCTIONS.md)** — Why using UltraCode makes you a good boy.
+
+# Story
+
+The project story: [STORY.md](STORY.md) 
 
 # Contributing
 
