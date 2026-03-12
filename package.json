@@ -175,7 +175,18 @@
     "webgpu": "^0.3.8"
   },
   "overrides": {
-    "boolean": "3.2.0"
+    "boolean": "3.2.0",
+    "hono": "4.12.7",
+    "@hono/node-server": "1.19.11",
+    "minimatch": "10.2.4",
+    "rollup": "4.59.0",
+    "tar": "7.5.11",
+    "qs": "6.15.0",
+    "ajv": "8.18.0",
+    "express-rate-limit": "8.3.1",
+    "lodash": "4.17.23",
+    "lodash-es": "4.17.23",
+    "@isaacs/brace-expansion": "5.0.1"
   },
   "engines": {
     "node": ">=24.0.0"
