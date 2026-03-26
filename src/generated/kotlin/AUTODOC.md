@@ -1,29 +1,55 @@
----
-module_name: kotlin
-description: "ANTLR-generated lexer and parser for Kotlin syntax analysis"
-status: generated
-language: typescript
----
-
 # Kotlin
-
-> ANTLR-generated lexer, parser, listener, and visitor for parsing Kotlin source code into syntax trees.
 
 ## Overview
 
-Provides the full ANTLR toolchain output for Kotlin grammar, enabling tokenization and AST construction of Kotlin source files. Includes a Unicode character class helper required by the lexer.
+This module provides ANTLR-generated Kotlin language tooling including lexical analysis, parsing, and abstract syntax tree (AST) traversal interfaces. It enables tokenization of Kotlin source code and construction of complete syntax trees through visitor and listener patterns, serving as the foundation for static analysis and semantic inspection of Kotlin code.
 
-## Exports
+## Flow
 
+```
+Kotlin Source Code
+        ↓
+  [KotlinLexer]
+        ↓
+    Token Stream
+        ↓
+  [KotlinParser]
+        ↓
+ Syntax Tree (AST)
+        ↓
+  [Visitor / Listener]
+        ↓
+ Code Analysis & Transformation
+```
 
+## Entity Listing
 
-## Files
+### Public API
 
-| File | Description |
-|------|-------------|
-| `index.ts` | Re-exports parser components for internal consumption |
-| `KotlinLexer.ts` | Generated lexer that tokenizes Kotlin source code |
-| `KotlinParser.ts` | Generated parser that builds syntax trees from tokens |
-| `KotlinParserListener.ts` | Listener interface for syntax tree traversal events |
-| `KotlinParserVisitor.ts` | Visitor interface for syntax tree traversal with return values |
-| `UnicodeClasses.ts` | Unicode character class definitions used by the Kotlin lexer |
+- **index.ts** — Central re-export hub that surfaces lexer, parser, listener, and visitor components for downstream consumption.
+
+### Core Parsing Components
+
+- **KotlinLexer.ts** — ANTLR-generated lexer that tokenizes raw Kotlin source code into a labeled token stream representing keywords, identifiers, operators, and literals.
+- **KotlinParser.ts** — ANTLR-generated parser that converts token streams into a context hierarchy representing Kotlin's grammar structure and syntactic rules.
+
+### Traversal Interfaces
+
+- **KotlinParserListener.ts** — Event-based listener interface enabling depth-first tree traversal with hooks that fire as the parser enters and exits each syntax node.
+- **KotlinParserVisitor.ts** — Visitor interface supporting depth-first AST traversal with typed return values, enabling stateful semantic analysis and transformation of parse tree nodes.
+
+### Utilities
+
+- **UnicodeClasses.ts** — Unicode character class definitions and helper functions required by the lexer for correct tokenization of Kotlin identifiers, string literals, and other Unicode-dependent syntax elements.
+
+## Design Patterns
+
+**Listener Pattern** — Automatic callback-driven traversal; effective for simple analysis without return values.
+
+**Visitor Pattern** — Return-value-based traversal; enables staged transformation and semantic analysis with state propagation.
+
+## Dependencies
+
+**ANTLR 4** — Generates the lexer, parser, and traversal interfaces from formal grammar specifications.
+
+**antlr4ts** (Runtime) — Base classes for lexer execution, token streams, and tree traversal primitives.

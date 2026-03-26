@@ -1,26 +1,42 @@
-# AUTODOC.md
+# webgpu-custom
 
-## 1. Title and Overview
+## Overview
 
-The **webgpu-custom** module is designed to provide a custom implementation for interacting with the WebGPU API. It encapsulates the logic for context initialization, resource management, and execution of graphics operations adapted to the specific requirements of the project. The module does not export public APIs and serves as an internal system component.
+The **webgpu-custom** module is a test harness for verifying the custom-built Dawn WebGPU native addon integration. It handles runtime detection, locates the compiled `dawn.node` binary from fallback paths, and validates basic WebGPU API functionality (adapter enumeration and device creation). This is an internal verification script, not a public API module—it serves to confirm that the native WebGPU binding works correctly in both Node.js and Bun environments.
 
-## 2. Files
+## Flow
 
-| File         | Description                                               |
-|--------------|--------------------------------------------------------|
-| `test.js`    | Contains test functions and scenarios for verifying WebGPU functionality. |
-
-## 3. Exports
-
-This module has no public exports. All functions and classes are intended for internal use and are not accessible outside the module.
-
-## 4. Usage
-
-This module is used directly within other parts of the application and does not require direct import or external invocation. Usage example:
-
-```ts
-// Internal usage within the module
-import { someInternalFunction } from './webgpu-custom/test.js';
+```
+Runtime Detection
+      ↓
+Locate dawn.node (primary → fallback path)
+      ↓
+Load Native Addon
+      ↓
+Create GPU Context
+      ↓
+Request Adapter
+      ↓
+Request Device
+      ↓
+Verification Complete
 ```
 
-> Note: the module is intended exclusively for internal use and is not meant for direct use in client code.
+## Entities
+
+### Test Execution
+
+- **Runtime Detection** (`test.js`) — Identifies whether the script runs under Node.js or Bun and logs version information for debugging cross-runtime issues.
+
+- **dawn.node Locator** (`test.js`) — Attempts to load the native addon from the local directory first, then falls back to `../../external-libs/dawn-win32-x64/dawn.node` if not found, with explicit error reporting if both paths fail.
+
+- **Addon Initialization** (`test.js`) — Dynamically requires and instantiates the compiled WebGPU addon, creating the GPU context entry point.
+
+- **Adapter Enumeration** (`test.js`) — Requests an available GPU adapter from the system, with fallback error handling if none are found.
+
+- **Device Creation** (`test.js`) — Requests a logical GPU device from the selected adapter to enable command submission and resource management.
+
+## Dependencies
+
+- **External Binary**: `dawn.node` — custom-built WebGPU native addon (compiled from Dawn project for Windows x64); located in `../../external-libs/dawn-win32-x64/` or current directory.
+- **Node.js/Bun Modules**: Standard `path` and `fs` modules for file system operations and path resolution.

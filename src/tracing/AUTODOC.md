@@ -1,162 +1,140 @@
----
-module_name: tracing
-description: "Static code flow analysis for understanding execution paths, data transformations, and state dependencies"
-status: active
-language: typescript
-entry_point: index.ts
-exports:
-  - TraceEngine
-  - PathBuilder
-  - ConditionAnalyzer
-  - DataFlowAnalyzer
-  - StateTracker
-  - OutputFormatter
-dependencies:
-  - graphology
-  - graphology-shortest-path
-  - src/types/storage.ts
-  - src/logging/index.js
-  - src/storage/graph-storage.ts
-tags:
-  - static-analysis
-  - code-flow
-  - data-flow
-  - state-tracking
-  - ngrx
-  - tracing
----
-
-# Semantic Tracing Module
+# Tracing Module
 
 ## Overview
 
-Static analysis module providing five core analysis capabilities: **trace_flow** (A to B execution paths), **trace_backwards** (why a method is not called), **trace_data_flow** (data transformation tracking), **analyze_state_impact** (state change ripple effects), and **find_decision_points** (branching detection). Uses an optimized graphology-based in-memory graph for O(V+E) traversal instead of repeated storage queries. The `TraceEngine` is the main coordinator, delegating to `PathBuilder`/`GraphologyPathBuilder` for graph traversal, `StateTracker` for state analysis, `ConditionAnalyzer` for decision points, `DataFlowAnalyzer` for data flows, and `OutputFormatter` for results rendering. NgRx-specific tracing is provided via `NgRxTraceEngine`. All analysis is async and operates on the entity/relationship graph from `GraphStorage`.
+The Tracing module provides static code flow analysis without runtime execution, enabling five core analysis patterns: **trace_flow** (forward execution paths from A to B), **trace_backwards** (reverse analysis to find why a method isn't called), **trace_data_flow** (track data transformations through execution), **analyze_state_impact** (ripple effects of state changes), and **find_decision_points** (branching and guard detection). The `TraceEngine` is the primary coordinator, delegating traversal to `GraphologyPathBuilder` (optimized in-memory graph using graphology) or `PathBuilder` (fallback BFS/DFS), while specialized analyzers handle state (`StateTracker`), conditions (`ConditionAnalyzer`), and data sources (`DataFlowAnalyzer`). NgRx patterns are handled by dedicated `NgRxTraceEngine`. All analysis operates on the entity/relationship graph from `GraphStorage` and produces formatted results via `OutputFormatter`.
 
-## Data Flow
+## Flow
 
 ```
-GraphStorage (entities + relationships)
-    |
-TraceEngine (coordinator)
-    |--- GraphologyPathBuilder (optimized in-memory graph, graphology)
-    |--- PathBuilder (legacy BFS/DFS fallback)
-    |--- StateTracker (state change detection)
-    |--- ConditionAnalyzer (decision points)
-    |--- DataFlowAnalyzer (data source/transform tracing)
-    +--- OutputFormatter (text / mermaid / json)
-    |
-Results: TraceFlowResult, TraceBackwardsResult, TraceDataFlowResult,
-         AnalyzeStateImpactResult, FindDecisionPointsResult
+GraphStorage (entities, relationships)
+         ↓
+   TraceEngine (request coordinator)
+    /    |    \    |    \
+   /     |     \   |     \
+  ↓      ↓      ↓  ↓      ↓
+GraphologyPathBuilder  StateTracker  ConditionAnalyzer  DataFlowAnalyzer  PathBuilder
+(optimized traversal)  (state change) (decision points)  (data sources)     (BFS/DFS)
+         |                |                  |                |                |
+         └────────────────┴──────────────────┴────────────────┘
+                          ↓
+                  OutputFormatter
+                   (text/mermaid/json)
+                          ↓
+         TraceFlowResult / TraceBackwardsResult /
+         TraceDataFlowResult / StateImpactResult /
+         DecisionPointsResult
 ```
 
-## Public API
+## Entity Listing
 
-| Export | Kind | Description | Location |
+### Primary Classes (Engines & Analyzers)
+
+| Entity | Kind | Description | Location |
 |--------|------|-------------|----------|
-| `TraceEngine` | class | Main engine: `traceFlow()`, `traceBackwards()`, `getGraphStats()`, `getNodeFlowContext()`, `getBatchNodeContext()` | [`trace-engine.ts:48-48`](./trace-engine.ts) |
-| `NodeFlowContext` | interface | Per-entity flow context: inputTypes, outputType, hasTransformation, conditionalHint, callers, callees | [`trace-engine.ts:53-62`](./trace-engine.ts) |
-| `PathBuilder` | class | BFS/DFS traversal: `findPathsForward()`, `findPathsBackward()`, `getCallers()` | [`path-builder.ts:48-732`](./path-builder.ts) |
-| `GraphologyPathBuilder` | class | Optimized graph: `loadGraph()`, `traceLinearFlow()`, `findPaths()` | [`graphology-path-builder.ts:118-894`](./graphology-path-builder.ts) |
-| `ConditionAnalyzer` | class | Decision points: `findDecisionPoints()`, `analyzeConditions()` | [`condition-analyzer.ts:35-35`](./condition-analyzer.ts) |
-| `DataFlowAnalyzer` | class | Data tracing: `traceDataFlow()`, `buildBehaviorMatrix()` | [`data-flow-analyzer.ts:58-495`](./data-flow-analyzer.ts) |
-| `StateTracker` | class | State analysis: `detectStateChanges()`, `analyzeStateImpact()` | [`state-tracker.ts:38-511`](./state-tracker.ts) |
-| `OutputFormatter` | class | Formatting: `formatTraceFlowAsText()`, `formatMermaidDiagram()` | [`output-formatter.ts:24-24`](./output-formatter.ts) |
-| `NgRxTraceEngine` | class | NgRx-specific action/reducer/selector chain tracing | [`ngrx-trace-engine.ts:98-449`](./ngrx-trace-engine.ts) |
-| `TraceFlowParams` | interface | Params: `from`, `to`, `trackStates?`, `maxDepth?`, `format?` | [`types.ts:76-89`](./types.ts) |
-| `TraceFlowResult` | interface | Result: `paths[]`, `statesSummary`, `conditionsSummary`, `_debug?` | [`types.ts:192-217`](./types.ts) |
-| `TraceBackwardsParams` | interface | Params: `target`, `question`, `depth?`, `includeStates?` | [`types.ts:231-242`](./types.ts) |
-| `TraceBackwardsResult` | interface | Result: `callers[]`, `blockingConditions[]`, `diagnosis` | [`types.ts:321-339`](./types.ts) |
-| `TraceDataFlowParams` | interface | Params: `entryPoint`, `targetState`, `dataSources?` | [`types.ts:348-357`](./types.ts) |
-| `AnalyzeStateImpactParams` | interface | Params: `state`, `scenarios[]`, `scope?` | [`types.ts:442-452`](./types.ts) |
-| `FindDecisionPointsParams` | interface | Params: `scenario`, `includeGuards?`, `groupBy?` | [`types.ts:523-532`](./types.ts) |
+| `TraceEngine` | class | Main coordination engine for all tracing operations; orchestrates `traceFlow()`, `traceBackwards()`, `traceDataFlow()`, `analyzeStateImpact()`, `findDecisionPoints()`; provides `getGraphStats()` and batch context retrieval. | `trace-engine.ts:48-48` |
+| `GraphologyPathBuilder` | class | High-performance path traversal using in-memory graphology graph; loads full graph once, supports `loadGraph()`, `traceLinearFlow()`, `findPaths()`, `computePathMetrics()` with O(V+E) complexity for batch operations. | `graphology-path-builder.ts:118-894` |
+| `PathBuilder` | class | BFS/DFS-based traversal with caching; methods include `findPathsForward()`, `findPathsBackward()`, `getCallers()`, `getCursorHierarchy()`; processes nodes in batches of 16 and caches adjacency graphs by scope. | `path-builder.ts:48-732` |
+| `StateTracker` | class | Detects state changes and analyzes ripple effects; classifies state via setter/getter/boolean patterns; provides `detectStateChanges()`, `analyzeStateImpact()`, `traceStateFlow()`, `buildStateImpactMatrix()`. | `state-tracker.ts:38-511` |
+| `ConditionAnalyzer` | class | Identifies branching logic, guards, and decision points; detects guard patterns (if-return), validation patterns (valid/check/verify), and caches decisions per scenario via `findDecisionPoints()`, `analyzeConditions()`. | `condition-analyzer.ts:35-35` |
+| `DataFlowAnalyzer` | class | Traces data sources and transformations; classifies sources (API, storage, props, state, config, user_input) and transformations (parse, map, validate, normalize); provides `traceDataFlow()`, `buildBehaviorMatrix()`, `findDataSources()`. | `data-flow-analyzer.ts:58-495` |
+| `OutputFormatter` | class | Renders analysis results in multiple formats; implements `formatTraceFlowAsText()`, `formatMermaidDiagram()`, `formatAsJSON()`, `formatDecisionPoints()` with indentation and styling. | `output-formatter.ts:24-24` |
+| `NgRxTraceEngine` | class | NgRx-specific tracing for action→reducer→selector chains; provides `traceActionToEffects()`, `traceActionToReducer()`, `traceReducerToSelectors()`, `analyzeStoreImpact()`; understands dispatches, effects, and store subscriptions. | `ngrx-trace-engine.ts:98-449` |
+
+### Interfaces & Parameter Types
+
+| Entity | Kind | Description | Location |
+|--------|------|-------------|----------|
+| `NodeFlowContext` | interface | Per-entity execution context; contains `inputTypes`, `outputType`, `hasTransformation`, `conditionalHint`, `callers[]`, `callees[]`; used by `TraceEngine.getNodeFlowContext()`. | `trace-engine.ts:53-62` |
+| `TraceFlowParams` | interface | Input parameters for `traceFlow()`; specifies `from`, `to` entity names/ids, optional `trackStates`, `maxDepth`, `format`, `useOptimized` flag. | `types.ts:76-89` |
+| `TraceFlowResult` | interface | Output from `traceFlow()`; contains `paths[]` (execution sequences), `statesSummary`, `conditionsSummary`, optional `_debug`. | `types.ts:192-217` |
+| `TraceBackwardsParams` | interface | Input for `traceBackwards()` reverse analysis; specifies `target` entity, `question` (diagnosis), optional `depth`, `includeStates`, `useOptimized`. | `types.ts:231-242` |
+| `TraceBackwardsResult` | interface | Output from reverse analysis; lists `callers[]`, `blockingConditions[]`, diagnostic `blockingConditionsReason`, `diagnosis` explaining why method is unreachable. | `types.ts:321-339` |
+| `TraceDataFlowParams` | interface | Input for `traceDataFlow()`; specifies `entryPoint`, `targetState`, optional `dataSources[]`, `maxDepth`, `scope`. | `types.ts:348-357` |
+| `TraceDataFlowResult` | interface | Output from data flow analysis; contains `flows[]` (source→transform→state chains), `dataSummary`, `riskAssessment`, optional warnings. | `types.ts:358-380` |
+| `AnalyzeStateImpactParams` | interface | Input for `analyzeStateImpact()`; specifies `state`, `scenarios[]`, optional `scope`, `maxDepth`, `trackActors`. | `types.ts:442-452` |
+| `AnalyzeStateImpactResult` | interface | Output from state impact analysis; lists `impactAreas[]`, `cascades[]`, risk level, affected entities/selectors. | `types.ts:453-476` |
+| `FindDecisionPointsParams` | interface | Input for `findDecisionPoints()`; specifies `scenario`, optional `includeGuards`, `groupBy` strategy (none/byType/byLevel), `minImpactLevel`. | `types.ts:523-532` |
+| `FindDecisionPointsResult` | interface | Output from decision point detection; lists `decisionPoints[]`, `controlFlowMap`, `criticality` summary. | `types.ts:533-546` |
+
+### Supporting Types & Enums
+
+| Entity | Kind | Description | Location |
+|--------|------|-------------|----------|
+| `PathTrace` | interface | Single execution path with `nodes[]`, `edges[]`, `conditions[]`, `confidence`, `warningsCount`. | `types.ts:127-146` |
+| `DecisionPoint` | interface | Identified branching decision; specifies `id`, `condition`, `impactLevel`, `type`, affected `entities[]`, resolved values. | `types.ts:477-499` |
+| `StateChange` | interface | State modification record; contains `entity`, `property`, `previousValue`, `newValue`, `triggeredBy`, cascade info. | `types.ts:547-565` |
+| `DataFlowEdge` | interface | Data source or transformation in sequence; specifies `from`, `to`, `type` (source/transform/sink), `confidence`, metadata. | `types.ts:381-405` |
+| `ConditionsSummary` | interface | Summary of conditions encountered; lists `condition[]` entries with `type`, `frequency`, `impactLevel`. | `types.ts:218-230` |
+| `ImpactLevel` | type | Severity classification: `critical` \| `high` \| `medium` \| `low`. | `types.ts:21` |
+| `DecisionPointType` | type | Classification: `guard` \| `validation` \| `async_boundary` \| `state_check` \| `conditional_call`. | `types.ts:29` |
+
+### Utilities & Helpers
+
+| Entity | Kind | Description | Location |
+|--------|------|-------------|----------|
+| `clearAllGraphCaches()` | function | Clears all cached graphology graphs and analyzer caches; call after major codebase changes. | `graph-cache.ts` |
+| `getCachedGraphBuilder()` | function | Retrieves existing cached `GraphologyPathBuilder` or `null` if cache miss. | `graph-cache.ts` |
+| `invalidateAndPreload()` | function | Invalidates cache and preloads graph for subsequent operations; useful before batch analysis. | `graph-cache.ts` |
+| `getTraceUsageCount()` | function | Returns number of trace operations executed in current session. | `graph-cache.ts` |
+| `incrementTraceUsage()` | function | Increments trace operation counter (internal usage tracking). | `graph-cache.ts` |
+| `NgRxResolution` | class | Resolves NgRx patterns (actions, effects, reducers, selectors); identifies relationships between store members. | `ngrx-resolution.ts:201` |
+| `enrichPathWithMetadata()` | function | Adds confidence scores, summaries, and warnings to `PathTrace` output. | `path-enrichment.ts:189` |
 
 ## Dependencies
 
-| Dependency | Kind | Purpose |
-|------------|------|---------|
-| `graphology` | external | In-memory graph library for optimized traversal |
-| `graphology-shortest-path` | external | Bidirectional shortest path algorithm |
-| `src/types/storage.ts` | internal | `Entity`, `GraphStorage`, `Relationship`, `RelationType` |
-| `src/logging/index.js` | internal | Logging service (`log.i`, `log.d`) |
-| `src/storage/graph-storage.ts` | internal | Graph storage interface |
-| `SemanticSearchService` | optional | Entity resolution via semantic similarity search |
+### External Libraries
 
-## Configuration
+| Dependency | Purpose |
+|------------|---------|
+| `graphology` | In-memory graph library for optimized O(V+E) path traversal and batch operations. |
+| `graphology-shortest-path` | Bidirectional shortest-path algorithm for efficient forward/backward analysis. |
+
+### Internal Dependencies
+
+| Dependency | Purpose | Location |
+|------------|---------|----------|
+| `GraphStorage` | Core entity/relationship graph interface; provides node and edge access. | `src/types/storage.ts` |
+| `Entity`, `Relationship`, `RelationType` | Storage types defining code entities and their relationships. | `src/types/storage.ts` |
+| `logging` | Debug and info logging service for trace operations. | `src/logging/index.js` |
+| `SemanticSearchService` | Optional service for entity resolution via semantic similarity when exact matches fail. | `src/semantic/...` |
+
+## Configuration & Constants
+
+### Optimization Settings
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
-| `maxDepth` | 15 | Maximum traversal depth |
-| `maxPaths` | 5 (engine) / 10 (builder) | Maximum paths returned |
-| `useOptimized` | `true` | Enable graphology-based optimization |
-| `minSimilarity` | 0.6 | Semantic search similarity threshold |
-| `CONDITION_WEIGHT` | 0.3 | Path penalty for conditional branches |
-| `CALL_WEIGHT` | 0.1 | Path penalty for call hops |
-| `ASYNC_WEIGHT` | 0.2 | Path penalty for async boundaries |
+| `useOptimized` | `true` | Enable graphology-based fast path builder instead of BFS fallback. |
+| `maxDepth` | 15 | Maximum traversal depth to prevent infinite cycles and bound complexity. |
+| `maxPaths` | 5–10 | Maximum execution paths returned per analysis (engine: 5, builder: 10). |
+| `CONDITION_WEIGHT` | 0.3 | Path score penalty for conditional branches; lowers confidence. |
+| `CALL_WEIGHT` | 0.1 | Path score penalty for inter-function calls. |
+| `ASYNC_WEIGHT` | 0.2 | Path score penalty for async boundaries (promises, async/await). |
+| `minSimilarity` | 0.6 | Semantic search threshold for fuzzy entity resolution. |
 
-## Behavioral Properties
+### Pattern Recognition
 
-Entity resolution supports file-qualified format (`src/file.ts:symbol`), falling back through exact name, suffix match, partial match, then semantic search. External/import stubs are excluded; real code types are prioritized. `PathBuilder` caches adjacency graphs keyed by `${ids}:${maxDepth}` and processes nodes in batches of 16. `StateTracker` classifies state via setter (`^set[A-Z]`), getter (`^get[A-Z]`), and boolean (`^(is|has|should|can|will)[A-Z]`) patterns. `ConditionAnalyzer` detects guard patterns (if-return), validation patterns (`valid|check|verify|assert`), and caches decision points per scenario. `DataFlowAnalyzer` classifies sources (API, storage, props, state, config, user_input) and transformations (parse, map, validate, normalize, merge) via regex patterns. The optimized mode loads the full graph once, then reuses it for subsequent calls.
+| Pattern | Purpose |
+|---------|---------|
+| Guard patterns: `/^if\s*\([^)]+\)\s*(return\|throw)/` | Detects early-exit guards. |
+| Validation patterns: `/valid\|check\|verify\|assert/i` | Identifies validation logic. |
+| Setter patterns: `/^set[A-Z]/` | Recognizes state setters. |
+| Getter patterns: `/^get[A-Z]/` | Recognizes state getters. |
+| Boolean patterns: `/^(is\|has\|should\|can\|will)[A-Z]/` | Identifies boolean properties. |
+
+## Key Behavioral Properties
+
+- **Entity Resolution**: Supports file-qualified format (`src/file.ts:symbol`); falls back through exact name match → suffix match → partial match → semantic search; excludes external/import stubs; prioritizes real code definitions.
+- **Graph Caching**: `PathBuilder` caches adjacency graphs keyed by `${nodeIds}:${maxDepth}`; processes nodes in batches of 16 for efficiency; `GraphologyPathBuilder` loads full graph once and reuses for subsequent calls.
+- **State Classification**: `StateTracker` uses regex patterns to classify entities (setter, getter, boolean) and tracks property mutations with change history.
+- **Condition Detection**: `ConditionAnalyzer` identifies guards (if-return), validation (valid/verify), and caches decision points per scenario to avoid reanalysis.
+- **Data Source Classification**: `DataFlowAnalyzer` categorizes sources (API, storage, props, state, config, user_input) and transformations (parse, map, validate, normalize, merge) via regex matching.
+- **Optimized vs. Fallback Mode**: Optimized mode (default) loads graphology graph once; fallback uses BFS/DFS with caching; both produce identical results, optimized is 5–10x faster for batch operations.
 
 ## Error Handling
 
-`TraceEngine` throws `Error("Could not find source/target entity: ${name}")` when entities are unresolvable. `DataFlowAnalyzer` throws `Error("Entry point not found: ${entryPoint}")`. Semantic search failures are caught silently for graceful degradation. When optimized mode fails, the engine falls back to legacy `PathBuilder`. Batch entity fetches fall back to individual `getEntity()` calls on failure. All caches expose `clearCache()` or `clear()` methods for invalidation.
-
-## Observability
-
-`TraceFlowResult` includes a `_debug` field with `sourceEntityId`, `targetEntityId`, `graphStats` (`nodes`, `edges`, `loadTimeMs`, `memoryMB`), `nodesVisited`, `found`, and `timeMs`. Info-level logs emit `"graph_loaded"` (load time, node/edge counts) and `"trace_done"` / `"back_trace_done"` (completion time, nodes visited). Debug-level logs emit `"resolved"` (entity resolution details) and `"multiple_suffix_matches"` (disambiguation warnings). `GraphologyPathBuilder.getStats()` returns live graph statistics.
-
-## Diagram Integration
-
-`TraceEngine` provides two methods for diagram data flow enrichment:
-
-| Method | Description |
-|--------|-------------|
-| `getNodeFlowContext(entityId)` | Single entity: extract inputTypes, outputType, hasTransformation, conditionalHint from metadata |
-| `getBatchNodeContext(entityIds[])` | Batch version: 2 SQL queries (`getEntitiesBatch` + `findRelationships`) for all nodes, O(N) in memory |
-
-These methods are used by `SchemaCollector` ([→ src/diagrams/schema-collector.ts](../diagrams/schema-collector.ts)) to enrich diagram edges with data flow annotations without running expensive full-trace operations (O(N) vs O(N²) for trace_flow between all pairs).
-
-## Known Limitations
-
-1. First `traceFlow()` call incurs graph load latency (~100-500ms); subsequent calls reuse the cache.
-2. `maxPaths` cap means complex codebases may have more valid paths than returned.
-3. Semantic search is optional; entity resolution degrades without it.
-4. Static analysis cannot detect runtime-only conditions; state values are marked "unknown".
-5. NgRx support covers common patterns (actions, reducers, selectors, effects) but may miss custom patterns.
-6. Visited-set cycle detection may reduce accuracy in highly cyclic architectures.
-7. Full graph is loaded into memory; large codebases (10k+ entities) may consume 100+ MB.
-
-## TypeScript Notes
-
-Union types enforce valid values for `ConfidenceLevel`, `ImpactLevel`, `CallProbability`, `TraceActionType`, `DataFlowActionType`, and `DecisionPointType`. All analysis methods are `async` with `Promise.all()` for batch operations. Most result fields use optional properties (`?`); `_debug` is always present on `TraceFlowResult`. The `GraphStorage` interface is used as an abstraction for pluggable storage backends. `Entity` uses generic metadata typing via `Record<string, any>`.
-
-## Exports
-
-- `ConditionAnalyzer`
-- `DataFlowAnalyzer`
-- `clearAllGraphCaches`
-- `getCachedGraphBuilder`
-- `getTraceUsageCount`
-- `incrementTraceUsage`
-- `invalidateAndPreload`
-- `OutputFormatter`
-- `PathBuilder`
-- `StateTracker`
-- `TraceEngine`
-
-## Files
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| [`index.ts`](./index.ts) | 39 | Module re-exports for all classes and types |
-| [`types.ts`](./types.ts) | 660 | All interfaces and type aliases for tracing params/results |
-| [`trace-engine.ts`](./trace-engine.ts) | 995 | Main coordinator: entity resolution, flow/backwards tracing |
-| [`path-builder.ts`](./path-builder.ts) | 738 | BFS/DFS graph traversal with adjacency caching |
-| [`graphology-path-builder.ts`](./graphology-path-builder.ts) | 900 | Optimized in-memory graph via graphology library |
-| [`condition-analyzer.ts`](./condition-analyzer.ts) | 617 | Decision point detection, guard/validation analysis |
-| [`data-flow-analyzer.ts`](./data-flow-analyzer.ts) | 501 | Data source classification and transformation tracing |
-| [`state-tracker.ts`](./state-tracker.ts) | 517 | State change detection and impact analysis |
-| [`output-formatter.ts`](./output-formatter.ts) | 571 | Text, Mermaid diagram, and JSON output formatting |
-| [`ngrx-trace-engine.ts`](./ngrx-trace-engine.ts) | 455 | NgRx action/reducer/selector/effect chain tracing |
-| [`ngrx-resolution.ts`](./ngrx-resolution.ts) | 201 | NgRx entity resolution and relationship type constants |
-| [`path-enrichment.ts`](./path-enrichment.ts) | 189 | Path enrichment utilities: confidence, summaries, warnings |
+- **Unresolvable Entities**: `TraceEngine` throws `Error("Could not find source/target entity: ${name}")` when source or target cannot be resolved through all fallback strategies.
+- **Data Flow Resolution**: `DataFlowAnalyzer` throws errors when entry point or target state is unresolvable; includes available entity suggestions in error message.
+- **Circular Dependencies**: Both `PathBuilder` and `GraphologyPathBuilder` detect cycles and mark edges as circular; traced paths halt at cycle detection to prevent infinite output.
+- **Empty Results**: Analysis methods return empty arrays (not errors) when no paths/decisions/flows are found, allowing downstream consumers to handle no-result cases gracefully.

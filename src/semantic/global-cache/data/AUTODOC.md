@@ -1,10 +1,3 @@
----
-module_name: data
-description: "Built-in function and framework pattern definitions for global embedding cache"
-status: active
-language: typescript
----
-
 # Data
 
 > Contains statically defined built-in functions, standard library patterns, and framework-specific patterns for all supported programming languages, used to pre-seed the global embedding cache.
@@ -30,11 +23,13 @@ The data submodule provides curated lists of language built-ins and framework pa
 | `KOTLIN_BUILTINS` | const | Kotlin scope functions, coroutines, and extensions | [`java-kotlin.ts:74-76`](./java-kotlin.ts) |
 | `GO_BUILTINS` | const | Go built-in functions and standard library imports | [`go-rust.ts:10-12`](./go-rust.ts) |
 | `RUST_BUILTINS` | const | Rust built-in types, traits, and error handling patterns | [`go-rust.ts:52-54`](./go-rust.ts) |
+| `NODEJS_BUILTINS` | const | Node.js built-in modules and APIs for file system, HTTP, events, and process management | [`nodejs.ts:10-119`](./nodejs.ts) |
 | `REACT_PATTERNS` | const | React hooks, components, and JSX patterns | [`frameworks.ts:10-12`](./frameworks.ts) |
 | `ANGULAR_PATTERNS` | const | Angular decorators, RxJS operators, and DI patterns | [`frameworks.ts:60-62`](./frameworks.ts) |
 | `VUE_PATTERNS` | const | Vue reactivity, composition API, and template patterns | [`frameworks.ts:127-129`](./frameworks.ts) |
 | `EXPRESS_PATTERNS` | const | Express routes, middleware, and request handling | [`frameworks.ts:169-171`](./frameworks.ts) |
 | `NESTJS_PATTERNS` | const | NestJS decorators, modules, and dependency injection | [`frameworks.ts:201-203`](./frameworks.ts) |
+| `TESTING_PATTERNS` | const | Testing framework patterns including Jest, Mocha, and assertion utilities | [`testing.ts:13-173`](./testing.ts) |
 | `getAllGlobalEntries` | function | Aggregates all entries from all languages and frameworks | [`index.ts:29-44`](./index.ts) |
 
 ## Dependencies
@@ -97,4 +92,6 @@ No runtime errors possible; all data is statically defined constant arrays.
 | `index.ts` | Re-exports all entries and provides getAllGlobalEntries() aggregation |
 | `java-kotlin.ts` | Java Collections/Stream API and Kotlin scope functions/coroutines |
 | `javascript.ts` | JavaScript built-in methods and TypeScript utility types |
+| `nodejs.ts` | Node.js built-in modules and standard library APIs |
 | `python.ts` | Python built-in functions, typing module, and standard library |
+| `testing.ts` | Testing framework patterns and assertion utilities |

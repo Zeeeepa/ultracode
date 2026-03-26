@@ -1,19 +1,31 @@
 # webgpu-npm
 
-## Module Description
+## Overview
 
-The `webgpu-npm` module provides an internal implementation for working with the WebGPU API in a Node.js environment. It is designed for integrating WebGPU functionality into projects using npm packages, enabling GPU-level graphics operations. The module does not provide public APIs and serves as a helper component for other parts of the system.
+The `webgpu-npm` module provides internal integration with the WebGPU API in Node.js and Bun environments by wrapping the `webgpu` npm package. It enables GPU-accelerated graphics operations through a simplified initialization pattern without exposing public APIs. This module serves as a runtime compatibility layer, handling adapter and device creation workflows to verify WebGPU functionality in target environments.
 
-## Files
+## Flow
 
-| File         | Description                                                                 |
-|--------------|--------------------------------------------------------------------------|
-| `test.js`    | Script for running module tests. Contains unit tests and integration checks for WebGPU functionality. |
+```
+Runtime Detection
+      ↓
+Module Load (webgpu)
+      ↓
+GPU Instance Creation
+      ↓
+Adapter Request
+      ↓
+Device Request
+      ↓
+WebGPU Ready
+```
 
-## Exports
+## Entity Listing
 
-The module has no public exports. All functions and classes are intended for internal use and are not accessible outside the module.
+### Test & Validation
 
-## Usage
+- **test.js** — Entry point for validating WebGPU module compatibility across Node.js and Bun runtimes; performs sequential initialization of GPU instance, adapter, and device to verify the webgpu package functions correctly in the target environment.
 
-This module is used internally and does not require direct import in user code. It is automatically loaded when needed for working with WebGPU in a Node.js environment.
+## Dependencies
+
+- **webgpu** — External npm package providing the WebGPU API surface and GPU instance creation methods (`create()`, adapter/device request lifecycle).

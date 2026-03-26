@@ -1,17 +1,10 @@
----
-module_name: schemas
-description: "Zod validation schemas for all MCP tool input parameters"
-status: active
-language: typescript
----
-
 # Schemas
 
 > Centralized Zod validation schemas defining the input parameter contracts for all MCP tools, organized by functional domain.
 
 ## Overview
 
-The schemas module contains all Zod schema definitions that validate and type-check input arguments for MCP tool handlers. Schemas are organized by domain: analysis, autodoc, entity, graph, history, index, merge, modification, semantic, snapshot, and validation. Each schema defines required and optional parameters with descriptions, defaults, and constraints. The central `index.ts` re-exports all schemas for convenient consumption by the tool registry.
+The schemas module contains all Zod schema definitions that validate and type-check input arguments for MCP tool handlers. Schemas are organized by domain: analysis, autodoc, diagram, entity, graph, graph-metrics, history, index, merge, modification, pattern, semantic, snapshot, taint, and validation. Each schema defines required and optional parameters with descriptions, defaults, and constraints. The central `index.ts` re-exports all schemas for convenient consumption by the tool registry.
 
 ## Data Flow
 
@@ -26,7 +19,9 @@ The schemas module contains all Zod schema definitions that validate and type-ch
 | `AnalyzeHotspotsSchema` | const | Hotspot analysis with historical metrics options | [`analysis-schemas.ts:44-57`](./analysis-schemas.ts) |
 | `AnalyzeStateChaosSchema` | const | State chaos and race condition analysis params | [`analysis-schemas.ts:53-53`](./analysis-schemas.ts) |
 | `JscpdCloneDetectionSchema` | const | Duplicate code detection parameters | [`analysis-schemas.ts:8-8`](./analysis-schemas.ts) |
+| `DetectPatternsSchema` | const | Code pattern detection and identification parameters | [`pattern-schemas.ts`](./pattern-schemas.ts) |
 | `AutoDocGenerateSchema` | const | LLM documentation generation parameters | [`autodoc-schemas.ts:61-87`](./autodoc-schemas.ts) |
+| `GetArchitectureDiagramSchema` | const | Architecture diagram generation parameters | [`diagram-schemas.ts:9-47`](./diagram-schemas.ts) |
 | `IndexToolSchema` | const | Project indexing with exclude patterns | [`index-schemas.ts:54-60`](./index-schemas.ts) |
 | `SemanticSearchSchema` | const | Natural language semantic search | [`semantic-schemas.ts:8-13`](./semantic-schemas.ts) |
 | `AnalyzeCodeImpactSchema` | const | Code change impact analysis | [`semantic-schemas.ts:22-37`](./semantic-schemas.ts) |
@@ -61,7 +56,7 @@ The schemas module contains all Zod schema definitions that validate and type-ch
 | Property | Value |
 |----------|-------|
 | Total schemas | 65+ validation schemas |
-| Schema groups | 14 domain files (analysis, autodoc, entity, graph, graph-metrics, history, index, merge, modification, semantic, snapshot, taint, validation) |
+| Schema groups | 16 domain files (analysis, autodoc, diagram, entity, graph, graph-metrics, history, index, merge, modification, pattern, semantic, snapshot, taint, validation) |
 | Validation approach | Zod parse with descriptive error messages |
 
 ## Error Handling
@@ -133,14 +128,17 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 | `index.ts` | Central re-export of all schemas |
 | `analysis-schemas.ts` | Schemas for code analysis, clone detection, hotspots, state chaos |
 | `autodoc-schemas.ts` | Schemas for documentation generation and management |
+| `diagram-schemas.ts` | Schemas for architecture diagram generation |
 | `entity-schemas.ts` | Schemas for entity listing, relationships, queries |
 | `graph-schemas.ts` | Schemas for knowledge graph and data bus operations |
 | `graph-metrics-schemas.ts` | Schema for graph_metrics tool (metric, topN, minCommunitySize, persist) |
-| `taint-schemas.ts` | Schema for taint_analysis tool (category, maxDepth, includeTests, offset, limit) |
 | `history-schemas.ts` | Schemas for entity history and commit time travel |
 | `index-schemas.ts` | Schemas for indexing and exclude patterns |
 | `merge-schemas.ts` | Schemas for semantic merging and conflict resolution |
 | `modification-schemas.ts` | Schemas for code modification and file operations |
+| `pattern-schemas.ts` | Schemas for pattern detection and analysis |
 | `semantic-schemas.ts` | Schemas for semantic search and code analysis |
 | `snapshot-schemas.ts` | Schemas for snapshot management |
+| `taint-schemas.ts` | Schema for taint_analysis tool (category, maxDepth, includeTests, offset, limit) |
 | `validation-schemas.ts` | Schemas for file validation and technology detection |
+```

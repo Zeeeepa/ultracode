@@ -1,55 +1,93 @@
 # Taint
 
-Data flow taint analysis system for detecting security vulnerabilities like SQL injection and XSS
+## Overview
 
-## Response Handling
+Taint is a data flow analysis system that detects security vulnerabilities by tracking how untrusted data (sources) flows through the codebase to dangerous operations (sinks) without sufficient sanitization. The module identifies SQL injection, XSS, command injection, and prototype pollution vulnerabilities by analyzing source code patterns and constructing complete vulnerability flows. It uses regex-based pattern catalogs to classify sources, sinks, and sanitizers, then formats results with pagination and severity classification for developer consumption.
 
-The taint analysis results are paginated at the handler level:
+## Flow
 
-- **Handler** (`TaintAnalysisToolHandler`): accepts `offset`/`limit` params, applies `paginate()` from `response-limits.ts` to `result.vulnerabilities`, formats text only for the current page. Default: 20 vulnerabilities per page (from `SAFE_LIMITS.taintVulnerabilities`), max 200 (from `MAX_PAGE_SIZE`).
-- **Transport safety net** (`enforceResponseLimit` in `index.ts`): if the final response exceeds 50KB (`MAX_RESPONSE_SIZE_BYTES`), it is truncated and a `_responseMeta` hint is injected.
-- **Serialization**: `taint_analysis` is in `HEAVY_ANALYSIS_TOOLS` set, routed through `pLimit(1)` queue to prevent concurrent memory spikes.
-
-Response structure:
-```json
-{
-  "summary": "Taint: 5 flows (2 critical, 3 high, 4 unsanitized)",
-  "pagination": { "offset": 0, "limit": 20, "total": 5, "hasMore": false },
-  "stats": { "sources": 100, "sinks": 68, "sanitizers": 325, "vulnerabilities": 5 },
-  "formatted": "# Taint Analysis Report\n..."
-}
+```
+Source Code
+    ↓
+TaintFlowAnalyzer (core engine)
+    ├─ Extract sources (HTTP inputs, database reads, user-controlled data)
+    ├─ Extract sinks (SQL queries, eval, DOM writes, command execution)
+    ├─ Extract sanitizers (validation, escaping, parameterization)
+    └─ Trace data flows from sources → sinks, classify vulnerabilities
+    ↓
+TaintVulnerability[] (flows with severity, categories, steps)
+    ↓
+TaintFormatter
+    ├─ Format as text report (statistics, vulnerability list)
+    └─ Paginate results (default 20/page, max 200)
+    ↓
+Handler Response (JSON + pagination metadata + 50KB transport limit)
 ```
 
-## Exports
+## Entity Listing
 
-| Name | Type | Description | Location |
-|------|------|-------------|----------|
-| `classifyAsSanitizer` | function | Function to classify entities as sanitizers | [→ catalogs.ts:163-165] |
-| `classifyAsSink` | function | Function to classify entities as dangerous sinks | [→ catalogs.ts:149-151] |
-| `classifyAsSource` | function | Function to classify entities as taint sources | [→ catalogs.ts:135-137] |
-| `SANITIZER_PATTERNS` | const | Array of regex patterns detecting protective functions | [→ catalogs.ts:105-107] |
-| `SanitizerPattern` | interface | Interface for protective function patterns offered | [→ catalogs.ts:18-23] |
-| `SINK_PATTERNS` | const | Array of regex patterns detecting dangerous operations | [→ catalogs.ts:64-66] |
-| `SinkPattern` | interface | Interface for dangerous operation patterns and categories | [→ catalogs.ts:10-16] |
-| `SOURCE_PATTERNS` | const | Array of regex patterns detecting untrusted data | [→ catalogs.ts:28-30] |
-| `SourcePattern` | interface | Interface for untrusted data entry point patterns | [→ catalogs.ts:3-8] |
-| `TaintAnalysisParams` | interface | Interface for taint analysis parameters and options | [→ types.ts:63-68] |
-| `TaintAnalysisResult` | interface | Interface for complete taint analysis report results | [→ types.ts:63-68] |
-| `TaintCategory` | type | Type for vulnerability categories SQL injection XSS command | [→ types.ts:1-8] |
-| `TaintFlowAnalyzer` | class | Class analyzing data flow paths source to sink | [→ taint-flow-analyzer.ts:19-642] |
-| `TaintFlowRole` | type | Type for role in taint analysis flow | [→ types.ts:41] |
-| `TaintFlowStep` | interface | Interface for single step in vulnerability flow | [→ types.ts:41-41] |
-| `TaintFormatter` | class | Class formatting taint analysis results into reports | [→ taint-formatter.ts:3-90] |
-| `TaintSanitizer` | interface | Interface for protective function with protections offered | [→ types.ts:32-39] |
-| `TaintSeverity` | type | Type for vulnerability severity critical high medium low | [→ types.ts:10] |
-| `TaintSink` | interface | Interface for dangerous operation sink and categories | [→ types.ts:22-30] |
-| `TaintSource` | interface | Interface for discovered taint source with location | [→ types.ts:10-10] |
-| `TaintVulnerability` | interface | Interface for detected vulnerability with flow details | [→ types.ts:52-61] |
+### Type Definitions
 
-## Files
+| Name | Description | Location |
+|------|-------------|----------|
+| `TaintCategory` | Vulnerability category enumeration supporting `"sql_injection"`, `"xss"`, `"command_injection"`, and `"prototype_pollution"`. | [types.ts:1-8](types.ts:1-8) |
+| `TaintSeverity` | Vulnerability severity level enumeration with values `"critical"`, `"high"`, `"medium"`, and `"low"`. | [types.ts:10](types.ts:10) |
+| `TaintFlowRole` | Entity role in taint flow analysis: `"source"` for data entry points, `"sink"` for dangerous operations, or `"sanitizer"` for protective functions. | [types.ts:41](types.ts:41) |
 
-- **catalogs.ts** — Regex patterns for detecting sources sinks sanitizers
-- **index.ts** — Public module exports and re-exports
-- **taint-flow-analyzer.ts** — Core taint flow analysis engine
-- **taint-formatter.ts** — Formats taint analysis results into text reports
-- **types.ts** — Type definitions and interfaces for taint analysis
+### Pattern Interfaces
+
+| Name | Description | Location |
+|------|-------------|----------|
+| `SourcePattern` | Configuration for detecting untrusted data entry points with regex pattern, classification type, description, and priority ranking for source prioritization. | [catalogs.ts:3-8](catalogs.ts:3-8) |
+| `SinkPattern` | Configuration for detecting dangerous operations with regex pattern, classification type, list of affected vulnerability categories, and priority ranking. | [catalogs.ts:10-16](catalogs.ts:10-16) |
+| `SanitizerPattern` | Configuration for detecting protective functions with regex pattern, classification type, set of vulnerability categories the sanitizer defends against, and optional location metadata. | [catalogs.ts:18-23](catalogs.ts:18-23) |
+
+### Pattern Catalogs
+
+| Name | Description | Location |
+|------|-------------|----------|
+| `SOURCE_PATTERNS` | Pre-defined array of regex patterns identifying untrusted data sources including HTTP body/parameters/query/headers/cookies, DOM input elements, database output, and websocket messages. | [catalogs.ts:28-30](catalogs.ts:28-30) |
+| `SINK_PATTERNS` | Pre-defined array of regex patterns identifying dangerous operations including SQL query execution, command execution, JavaScript eval, DOM manipulation, and prototype pollution attacks. | [catalogs.ts:64-66](catalogs.ts:64-66) |
+| `SANITIZER_PATTERNS` | Pre-defined array of regex patterns identifying protective functions including SQL parameterization, HTML escaping, command escaping, input validation, and JSON schema validation. | [catalogs.ts:105-107](catalogs.ts:105-107) |
+
+### Flow Entity Types
+
+| Name | Description | Location |
+|------|-------------|----------|
+| `TaintSource` | Discovered taint source with entity name, source type classification (e.g., `"http_body"`), file location, line and column numbers, and detection priority. | [types.ts:10](types.ts:10) |
+| `TaintSink` | Dangerous operation with entity name, sink type classification (e.g., `"sql_execute"`), list of affected vulnerability categories, file location coordinates, and priority ranking. | [types.ts:22-30](types.ts:22-30) |
+| `TaintSanitizer` | Protective function with name, sanitizer type classification (e.g., `"sql_parameterize"`), set of vulnerability categories defended, and file location. | [types.ts:32-39](types.ts:32-39) |
+| `TaintFlowStep` | Single step in a vulnerability propagation path showing the role (source/sink/sanitizer), entity name, file location, and description of data transformation at this step. | [types.ts:41](types.ts:41) |
+| `TaintVulnerability` | Detected security vulnerability with source and sink references, assigned severity level, vulnerability category, complete flow path as sequence of steps, and unsanitized flag. | [types.ts:52-61](types.ts:52-61) |
+
+### Analysis Interfaces
+
+| Name | Description | Location |
+|------|-------------|----------|
+| `TaintAnalysisParams` | Parameters for initiating taint analysis including target entity identifier, code cache reference, optional severity filter, optional category filter, and pagination configuration. | [types.ts:63-68](types.ts:63-68) |
+| `TaintAnalysisResult` | Complete taint analysis report containing summary statistics (source count, sink count, sanitizer count, vulnerability count) and list of detected vulnerabilities. | [types.ts:63-68](types.ts:63-68) |
+
+### Core Engine Classes
+
+| Name | Description | Location |
+|------|-------------|----------|
+| `TaintFlowAnalyzer` | Main analysis engine responsible for discovering taint sources and sinks in code, tracing data flow paths between them, evaluating sanitization effectiveness, detecting vulnerabilities, and building complete vulnerability paths with step-by-step tracking for developer review. | [taint-flow-analyzer.ts:19-642](taint-flow-analyzer.ts:19-642) |
+| `TaintFormatter` | Transformer that converts `TaintAnalysisResult` into human-readable text reports with vulnerability statistics, summary section, and detailed vulnerability descriptions for presentation in analysis interfaces. | [taint-formatter.ts:3-90](taint-formatter.ts:3-90) |
+
+### Classification Utilities
+
+| Name | Description | Location |
+|------|-------------|----------|
+| `classifyAsSource` | Classifies an entity as a taint source by matching against `SOURCE_PATTERNS` and assigns priority ranking based on pattern specificity and risk level. | [catalogs.ts:135-137](catalogs.ts:135-137) |
+| `classifyAsSink` | Classifies an entity as a dangerous operation by matching against `SINK_PATTERNS` and determines which vulnerability categories are affected by the sink. | [catalogs.ts:149-151](catalogs.ts:149-151) |
+| `classifyAsSanitizer` | Classifies an entity as a protective sanitizer by matching against `SANITIZER_PATTERNS` and identifies which vulnerability categories are defended by the sanitizer. | [catalogs.ts:163-165](catalogs.ts:163-165) |
+
+## Dependencies
+
+**Internal:**
+- `response-limits.ts` — Provides `paginate()` utility function and `SAFE_LIMITS.taintVulnerabilities` configuration for result pagination and controlling maximum page size.
+- `index.ts` (handler layer) — Enforces `MAX_RESPONSE_SIZE_BYTES` (50KB) transport safety limit on serialized responses and injects `_responseMeta` metadata for truncated result indication.
+
+**Pattern catalog architecture:**
+- Regex-based pattern matching using pre-compiled patterns for efficient source, sink, and sanitizer detection.
+- Analysis routing through `pLimit(1)` queue ensuring serialized analysis execution to prevent concurrent memory spikes on heavyweight analysis operations.

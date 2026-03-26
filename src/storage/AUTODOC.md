@@ -1,14 +1,3 @@
----
-module_name: storage
-description: "Unified async data storage for code graph and vector embeddings using native SQLite (better-sqlite3 / bun:sqlite)"
-status: active
-language: typescript
-entry_point: ./graph-storage-factory.ts
-exports: [getGraphStorage, configureGraphStorage, setGlobalProjectContext, GraphStorageLibSQL, LibSQLGraphAdapter, BatchOperationsLibSQL, QueryCacheManager]
-dependencies: [logging, types/storage, types/semantic, shared/storage-paths, semantic/faiss]
-tags: [unified-storage, sqlite, vectors, versioning, composite-keys, branching, cache-management]
----
-
 # Storage
 
 > Unified async data storage for the code graph and vector embeddings, built on native SQLite (better-sqlite3 / bun:sqlite) via NativeSQLiteClient with Prolly Tree versioning. Provides multi-project, multi-branch isolation through composite primary keys. Migrated from LibSQL in v6.5 for performance (prepared statement cache, sync FFI, no IPC overhead).
@@ -64,63 +53,39 @@ The storage module is the persistence backbone of the system. It stores code ent
 │  └───────────────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────────────┐  │
 │  │                        LRU Caches                                  │  │
-│  │  embeddingCache (5000, 10m) │ searchCache (500, 2m) │ metadata    │  │
+│  │  ┌──────────────┐  ┌───────────────┐  ┌───────────────┐           │  │
+│  │  │ embeddings   │  │ search results│  │ metadata      │           │  │
+│  │  │ (10 min TTL) │  │ (2 min TTL)   │  │ (5 min TTL)   │           │  │
+│  │  └──────────────┘  └───────────────┘  └───────────────┘           │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     Prolly Tree (Versioning Engine)                      │
+│  - ProllyTree, ProllyNodeStore, CommitManager, TimeTravelManager        │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Data Flow
+## Entities
 
-### Inputs
+### Classes
 
-| Source | Data | Type |
-|--------|------|------|
-| Indexer agents | Entity objects (name, type, filePath, location, metadata) | `Entity` |
-| Indexer agents | Relationships (fromId, toId, type, weight) | `Relationship` |
-| File watcher | File info (path, hash, lastIndexed, entityCount) | `FileInfo` |
-| Semantic agents | Vector embeddings (id, content, vector, metadata) | `VectorEmbedding` |
-| MCP tools | Project context (projectPath, branchName) | `ProjectContext` |
-| Query layer | Search queries with filters, limits, offsets | `EntityQuery`, `GraphQuery` |
+| Name | Description | Reference |
+|------|-------------|-----------|
+| `GraphStorageLibSQL` | Unified storage implementation for code graph and embeddings with composite-key multi-branch support | [`graph-storage-libsql.ts:45-182`](./graph-storage-libsql.ts) |
+| `LibSQLGraphAdapter` | Low-level adapter managing entity/relationship/file tables and DiskANN vector index in unified SQLite | [`libsql-graph-adapter.ts:68-320`](./libsql-graph-adapter.ts) |
+| `BatchOperationsLibSQL` | High-performance async batch processor for entities, relationships, and embeddings with xxHash stable IDs | [`batch-operations-libsql.ts:20-180`](./batch-operations-libsql.ts) |
+| `QueryCacheManager` | LRU cache for query results with TTL-based eviction and memory bounds | [`cache-manager.ts:35-253`](./cache-manager.ts) |
 
-### Processing
+### Functions
 
-1. `getGraphStorage()` creates singleton via mutex; LibSQL client connects to `unified-storage.db`
-2. Tables created if not exist; Prolly Tree and LRU caches initialized
-3. Stable IDs generated via xxHash; reverse relationships auto-created (CALLS -> CALLED_BY)
-4. Entities/relationships upserted via `INSERT OR REPLACE` with composite keys
-5. Vector embeddings converted to Float32Array base64; DiskANN index managed for similarity search
-6. CBOR binary serialization applied to metadata; LRU caches checked before DB reads
-7. Prolly Tree commits created after bulk operations for versioning/time travel
-
-### Outputs
-
-| Target | Data | Type |
-|--------|------|------|
-| Query consumers | Entity/relationship collections | `Entity[]`, `Relationship[]` |
-| Semantic search | Vector similarity results with scores | `SimilarityResult[]` |
-| Batch callers | Success/error counts | `BatchResult` |
-| MCP tools | Statistics, metrics, memory usage | `GraphStatistics` |
-| Time travel | Commits, diffs, historical snapshots | `CommitInfo`, `DiffResult` |
-
-## Public API
-
-| Export | Type | Description | Location |
-|--------|------|-------------|----------|
-| `getGraphStorage` | Function | Get/create singleton GraphStorageLibSQL | [`graph-storage-factory.ts:58-130`](./graph-storage-factory.ts) |
-| `configureGraphStorage` | Function | Configure DiskANN params globally | [`graph-storage-factory.ts:44-52`](./graph-storage-factory.ts) |
-| `setGlobalProjectContext` | Function | Set active project/branch on singleton | [`graph-storage-factory.ts:164-173`](./graph-storage-factory.ts) |
-| `initializeGraphStorage` | Function | Alias for getGraphStorage | [`graph-storage-factory.ts:135-137`](./graph-storage-factory.ts) |
-| `getLibSQLAdapter` | Function | Get underlying LibSQLGraphAdapter | [`graph-storage-factory.ts:142-144`](./graph-storage-factory.ts) |
-| `resetGraphStorage` | Function | Reset singleton (testing) | [`graph-storage-factory.ts:149-157`](./graph-storage-factory.ts) |
-| `isStorageReady` | Function | Check if storage initialized | [`graph-storage-factory.ts:178-180`](./graph-storage-factory.ts) |
-| `handleDatabaseCorruption` | Function | Delete corrupt DB and reinitialize | [`graph-storage-factory.ts:187-232`](./graph-storage-factory.ts) |
-| `isDatabaseCorruptionError` | Function | Type guard for DatabaseCorruptionError | [`graph-storage-factory.ts:237-239`](./graph-storage-factory.ts) |
-| `GraphStorageLibSQL` | Class | Async GraphStorage implementation | [`graph-storage-libsql.ts:63-845`](./graph-storage-libsql.ts) |
-| `createProjectContext` | Function | Create ProjectContext from paths | [`graph-storage-libsql.ts:45-57`](./graph-storage-libsql.ts) |
-| `LibSQLGraphAdapter` | Class | Core adapter (graph + vectors + versioning) | [`libsql-graph-adapter.ts:106-1339`](./libsql-graph-adapter.ts) |
-| `BatchOperationsLibSQL` | Class | Batch entity/relationship operations | [`batch-operations-libsql.ts:28-395`](./batch-operations-libsql.ts) |
-| `QueryCacheManager` | Class | LRU cache for query results | [`cache-manager.ts:35-253`](./cache-manager.ts) |
-| `getCacheManager` | Function | Get singleton cache manager | [`cache-manager.ts:310-315`](./cache-manager.ts) |
+| Name | Description | Reference |
+|------|-------------|-----------|
+| `getGraphStorage` | Get the singleton GraphStorageLibSQL instance | [`graph-storage-factory.ts:80-95`](./graph-storage-factory.ts) |
+| `configureGraphStorage` | Configure global storage settings (dimensions, metric, caching) | [`graph-storage-factory.ts:40-68`](./graph-storage-factory.ts) |
+| `setGlobalProjectContext` | Set the current project and branch for isolation | [`graph-storage-factory.ts:98-115`](./graph-storage-factory.ts) |
+| `getCacheManager` | Get singleton cache manager for query result caching | [`cache-manager.ts:310-315`](./cache-manager.ts) |
 
 ## Dependencies
 
@@ -307,26 +272,8 @@ const commitHash = await adapter.createGraphCommit("Index: 42 files");
 
 const commits = await adapter.getCommitManager().getHistory(100);
 
-const timeTravel = new TimeTravelManager(
-  adapter.getProllyNodeStore(),
-  adapter.getCommitManager()
-);
-const entity = await timeTravel.getEntityAt(entityId, commitHash);
-const diff = await timeTravel.diffCommits(commitA, commitB);
+for (const commit of commits) {
+  const branchDiff = await adapter.getTimeTravelManager().getDiff(commit.hash, 'main');
+  console.log(`Added: ${branchDiff.added.length}, Removed: ${branchDiff.removed.length}`);
+}
 ```
-
-Components: ProllyNodeStore, ProllyTree, CommitManager, BranchDiffCache, TimeTravelManager. See [`prolly/AUTODOC.md`](./prolly/AUTODOC.md).
-
-## Files
-
-| File | Description |
-|------|-------------|
-| [`graph-storage-factory.ts`](./graph-storage-factory.ts) | Singleton factory with mutex init, auto-recovery, global context |
-| [`graph-storage-libsql.ts`](./graph-storage-libsql.ts) | Async GraphStorage implementation, project context, CRUD |
-| [`libsql-graph-adapter.ts`](./libsql-graph-adapter.ts) | Core adapter: unified DB, Prolly Tree, operations delegation, CBOR, caches |
-| [`batch-operations-libsql.ts`](./batch-operations-libsql.ts) | Batch entity/relationship operations with xxHash stable IDs |
-| [`cache-manager.ts`](./cache-manager.ts) | LRU query cache with TTL, hit rate tracking, size estimation |
-| [`sqlite-adapter.ts`](./sqlite-adapter.ts) | Sync SQLite adapter (Bun runtime only) |
-| [`bun-sqlite-adapter.ts`](./bun-sqlite-adapter.ts) | Direct bun:sqlite wrapper for legacy code |
-| [`libsql/`](./libsql/) | Operation delegates: entity-ops, relationship-ops, vector-ops, cache-ops, metadata-ops, cooccurrence-ops, types |
-| [`prolly/`](./prolly/) | Graph versioning: ProllyNodeStore, ProllyTree, CommitManager, TimeTravelManager, BranchDiffCache |

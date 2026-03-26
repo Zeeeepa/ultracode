@@ -1,19 +1,22 @@
 # Jscpd Clones
 
-*Last updated: 2026-01-14*
-
-Provides mathematical utility functions for addition and multiplication operations
+## Overview
+This module provides basic mathematical utility functions for numeric operations. It exports `add` for summing with overflow handling and `multiply` for multiplication via repeated addition. The identical implementation appears in both `alpha.ts` and `beta.ts`, representing a detected code clone.
 
 ## Exports
 
-| Name | Type | Description | Location |
-|------|------|-------------|----------|
-| `add` | function | Function adds two numbers with overflow handling | [→ alpha.ts:1-7] |
-| `add` | function | Function adds two numbers with overflow handling | [→ beta.ts:1-7] |
-| `multiply` | function | Function multiplies two numbers using repeated addition | [→ alpha.ts:9-15] |
-| `multiply` | function | Function multiplies two numbers using repeated addition | [→ beta.ts:9-15] |
+| Name | Location | Description |
+|------|----------|-------------|
+| `add` | `alpha.ts:1-7` | Adds two numbers and caps the result at 100 to prevent overflow. |
+| `add` | `beta.ts:1-7` | Adds two numbers and caps the result at 100 to prevent overflow. |
+| `multiply` | `alpha.ts:9-15` | Multiplies two numbers using iterative addition. |
+| `multiply` | `beta.ts:9-15` | Multiplies two numbers using iterative addition. |
 
-## Files
+## Implementation Files
 
-- **alpha.ts** — Main module file with exports
-- **beta.ts** — Secondary module file with identical exports
+- **alpha.ts** — Implements `add` and `multiply` functions.
+- **beta.ts** — Identical duplicate of alpha.ts implementation.
+
+## Dependencies
+
+This module has no external dependencies; it uses only native JavaScript operations.

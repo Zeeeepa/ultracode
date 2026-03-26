@@ -96,3 +96,27 @@ Worker crashes are caught and pending tasks are rejected with descriptive errors
 | `language-detection.ts` | File extension to programming language detection |
 | `analyzer-loader.ts` | Dynamic language analyzer loading with caching and warmup |
 | `worker-logging.ts` | File-based logging from worker/subprocess processes |
+
+## New (pending description)
+
+- **WorkerGlobalCache** — `worker-global-cache.ts:17-85`
+- **<anonymous>** — `worker-global-cache.ts:17-17`
+- **getWorkerGlobalCache** — `worker-global-cache.ts:90-93`
+- **<anonymous>** — `worker-global-cache.ts:90-90`
+- **load** — `worker-global-cache.ts:28-65`
+- **size** — `worker-global-cache.ts:67-69`
+- **get** — `worker-global-cache.ts:76-84`
+- **selfDir** — `worker-global-cache.ts:37-37`
+- **modelSlug** — `worker-global-cache.ts:38-38`
+- **prebuiltDir** — `worker-global-cache.ts:40-40`
+- **hashesPath** — `worker-global-cache.ts:41-41`
+- **embeddingsPath** — `worker-global-cache.ts:42-42`
+- **hashesBuf** — `worker-global-cache.ts:50-50`
+- **count** — `worker-global-cache.ts:51-51`
+- **i** — `worker-global-cache.ts:52-52`
+- **hash** — `worker-global-cache.ts:53-53`
+- **normalized** — `worker-global-cache.ts:78-78`
+- **hash** — `worker-global-cache.ts:79-79`
+- **idx** — `worker-global-cache.ts:80-80`
+- **start** — `worker-global-cache.ts:82-82`
+- **instance** — `worker-global-cache.ts:88-88`

@@ -1,32 +1,51 @@
----
-module_name: rust
-description: "ANTLR-generated lexer and parser for Rust syntax analysis"
-status: generated
-language: typescript
----
-
 # Rust
-
-> ANTLR-generated lexer, parser, listener, and visitor for parsing Rust source code into syntax trees.
 
 ## Overview
 
-Provides the full ANTLR toolchain output for Rust grammar, enabling tokenization and AST construction of Rust source files. Used internally by the code analysis pipeline.
+This module exports ANTLR-generated lexer and parser components for tokenizing and parsing Rust source code into abstract syntax trees. It serves as the foundation for Rust semantic analysis within the code analysis pipeline. The components support both event-driven (listener) and value-returning (visitor) traversal patterns for AST processing.
 
-## Exports
+## Flow
 
+```
+Rust Source Code
+       ↓
+   RustLexer
+  (Tokenization)
+       ↓
+   RustParser
+ (AST Construction)
+       ↓
+   Listener / Visitor
+    (Tree Traversal)
+       ↓
+  Analysis Results
+```
 
+## Entities
 
-## Files
+### Parser Components
 
-| File | Description |
-|------|-------------|
-| `index.ts` | Re-exports parser components for internal consumption |
-| `RustLexer.ts` | Generated lexer that tokenizes Rust source code |
-| `RustLexer.interp` | ANTLR interpreter data for the Rust lexer |
-| `RustLexer.tokens` | Token vocabulary definitions for the lexer |
-| `RustParser.ts` | Generated parser that builds syntax trees from tokens |
-| `RustParser.interp` | ANTLR interpreter data for the Rust parser |
-| `RustParser.tokens` | Token vocabulary definitions for the parser |
-| `RustParserListener.ts` | Listener interface for syntax tree traversal events |
-| `RustParserVisitor.ts` | Visitor interface for syntax tree traversal with return values |
+- **RustLexer.ts** — ANTLR-generated tokenizer that converts Rust source code into a stream of tokens with position and type information.
+- **RustParser.ts** — ANTLR-generated recursive descent parser that builds a complete abstract syntax tree (AST) from token sequences.
+- **RustParserListener.ts** — Listener interface providing event-driven callbacks (enter/exit) for depth-first AST traversal without return values.
+- **RustParserVisitor.ts** — Visitor interface enabling return-value-based AST traversal where each node visit produces a computed result.
+
+### Module Interface
+
+- **index.ts** — Central re-export barrel file that exposes lexer, parser, and traversal interfaces to internal consumers.
+
+### ANTLR Runtime Metadata
+
+- **RustLexer.tokens** — Token vocabulary mapping terminal symbols to numeric token identifiers for lexer output.
+- **RustLexer.interp** — ANTLR binary interpreter data encoding the lexer's finite state machine.
+- **RustParser.tokens** — Token vocabulary definitions consumed by the parser, synchronized with lexer output.
+- **RustParser.interp** — ANTLR binary interpreter data encoding the parser's LL(*) state machine.
+
+## Design Patterns
+
+- **Pipeline Pattern** — Data flows unidirectionally from lexing through parsing to traversal, enabling stage-based processing.
+- **Visitor/Listener Pattern** — Dual traversal interfaces accommodate both stateful and functional AST processing strategies.
+
+## Dependencies
+
+- **ANTLR 4 Runtime** — Parser and lexer are auto-generated from the Rust grammar specification; runtime is embedded in generated code.

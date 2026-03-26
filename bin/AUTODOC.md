@@ -1,29 +1,42 @@
-# AUTODOC.md
+# bin
 
-## 1. Title and Overview
+## Overview
 
-The `bin` module is responsible for launching and managing the application's command line interface. It contains the executable script used to run the main project functionality from the terminal. This module does not provide public exports and is intended exclusively for internal use.
+The `bin` module provides the command-line entry point for UltraCode, serving as a Node.js executable script that launches the application. It acts as a wrapper that resolves file paths, validates required dependencies (the Comm binary and Core MCP server), and spawns the Comm process to route commands from Claude Code to the Core server. This module ensures the application can be invoked from the terminal with proper error handling and path resolution regardless of installation method (npm, bun, or global).
 
-## 2. Files
+## Flow
 
-| File             | Description                                                   |
-|------------------|------------------------------------------------------------|
-| `ultracode.js` | Main executable script that launches the application from the command line |
-
-## 3. Exports
-
-No public exports. The module is intended for internal use only and does not provide any public API.
-
-## 4. Usage
-
-To launch the application via the command line, use:
-
-```bash
-node bin/ultracode.js
+```
+CLI invocation (node bin/ultracode.js)
+          ↓
+Resolve dist directory & file paths
+          ↓
+Validate Comm binary exists → Exit if missing
+          ↓
+Validate Core MCP server exists → Exit if missing
+          ↓
+Set environment variables (ULTRACODE_CORE_PATH, ULTRACODE_DIST_DIR)
+          ↓
+Spawn Comm process
+          ↓
+Forward Claude Code commands → Core server
 ```
 
-or if the module is installed globally:
+## Entity Listing
 
-```bash
-ultracode
-```
+### Executable Scripts
+
+- **bin/ultracode.js:1-50** — Main CLI entry point script that validates dependencies, resolves paths, sets environment variables, and spawns the Comm binary to route requests from Claude Code to the Core MCP server.
+
+## Dependencies
+
+### Node.js Built-ins
+- `node:child_process` — `spawn` for launching the Comm process
+- `node:fs` — `existsSync` for validating file existence
+- `node:os` — `platform` for detecting operating system
+- `node:path` — `dirname`, `join` for path resolution
+- `node:url` — `fileURLToPath` for converting ES module URLs to file paths
+
+### External Dependencies
+- **Comm binary** (`dist/ultracode.com`) — Cosmopolitan-based proxy binary that routes requests from Claude Code to the Core server
+- **Core MCP server** (`dist/index.js`) — Main UltraCode server that processes requests

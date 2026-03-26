@@ -1,19 +1,40 @@
-# CUDA Custom Module
+# cuda-custom
 
-## Title and Overview
+## Overview
 
-The `cuda-custom` module provides specialized functions for working with CUDA computations in TypeScript/JavaScript projects. It contains helper tools and utilities for integrating GPU computations into applications. The module is intended for internal use and does not provide public exports.
+The `cuda-custom` module provides testing and integration utilities for native CUDA addon support in Node.js and Bun runtimes. It validates GPU device detection and initialization through a native binding, with fallback logic to locate the compiled addon from external library directories. The module serves as a verification point for GPU acceleration capabilities within the ultracode system and includes runtime compatibility checks across different JavaScript runtimes.
 
-## Files
+## Flow
 
-| File       | Description                                      |
-|------------|--------------------------------------------------|
-| `test.js`  | Test file for verifying module functionality |
+```
+Runtime Detection (Node.js vs Bun)
+    ↓
+Locate CUDA Addon (primary path → fallback external-libs path)
+    ↓
+Load Native Module via require()
+    ↓
+Query Device Info (getDeviceInfo if available)
+    ↓
+Report Status (SUCCESS or ERROR with path hints)
+```
 
-## Exports
+## Entities
 
-No public exports. The module is internal and does not export any functions or classes for external use.
+**Test & Validation**
 
-## Usage
+- `test.js:1-1322` — Entry point that detects the JavaScript runtime environment, locates and loads the native CUDA addon with fallback resolution, exports available CUDA functions, and tests GPU device information retrieval with error handling.
 
-This module is used internally by the system and does not require direct import in user code. All functionality is available through internal project mechanisms.
+## Dependencies
+
+**External**
+
+- `ultracode_cuda.node` — Compiled native CUDA addon (C++ binding) providing GPU device information and CUDA operations; resolved from `./ultracode_cuda.node` or fallback `../../external-libs/cuda-win32-x64/ultracode_cuda.node`.
+
+**Built-in Modules**
+
+- `path` — File path resolution and normalization for addon location logic.
+- `fs` — File system checks (`existsSync`) to validate addon availability.
+
+**Runtime Requirements**
+
+- Node.js v14+ or Bun (with documented compatibility issues on Bun causing crashes).

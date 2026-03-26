@@ -1,26 +1,19 @@
 # Integration Module
 
-## Description
+## Overview
 
-The `integration` module is designed for implementing integration solutions and interacting with external systems. It includes tools for testing and working with integration components.
+The `integration` module provides tools for testing and validating Model Control Protocol (MCP) integrations with external systems. It serves as an internal testing utility for verifying MCP tool interactions and does not expose public APIs. The module is designed for integration testing workflows within the system.
 
-## Files
+## Entity Listing
 
-| File                     | Description                                               |
-|--------------------------|--------------------------------------------------------|
-| `test-mcp-tool.mjs`      | Tool for testing MCP (Model Control Protocol) integrations |
+### Tools
+- **test-mcp-tool.mjs** — Internal utility for testing MCP (Model Control Protocol) tool integrations and validating external system interactions.
 
-## Exports
+## Design Notes
 
-This module has no public exports. The module is intended for internal use.
+This module follows an internal-only design pattern with no public API exports. It is intended exclusively for testing MCP protocol implementations and verifying integration points with external systems. The module operates as a self-contained testing utility without exposing reusable abstractions.
 
-## Usage
+## Dependencies
 
-This module is used within the system for running integration tests and interacting with external APIs via the MCP protocol. Usage example:
-
-```javascript
-// Import within the module
-import { testMcpTool } from './integration/test-mcp-tool.mjs';
-```
-
-> Note: The module is intended for internal use and does not export public APIs.
+- MCP Protocol — for integration protocol validation
+- External system APIs — validated through MCP tooling

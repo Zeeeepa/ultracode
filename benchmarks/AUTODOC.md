@@ -1,36 +1,38 @@
-# Auto-documentation for module `benchmarks`
+# benchmarks
 
-## 1. Module Description
+## Overview
 
-The `benchmarks` module is designed for running various benchmarks related to code performance and optimization. It includes tools for testing the performance of large projects, SIMD operations, workers, as well as specific tasks related to LLM and embeddings. The module is used for performance analysis and code optimization in TypeScript/JavaScript projects.
+The `benchmarks` module provides performance testing utilities for evaluating critical subsystems: worker-pool throughput, SIMD vector operations, large-project indexing scalability, and LLM/embedding inference latency. Each benchmark isolates a specific concern to identify bottlenecks and validate optimization gains. These are used for profiling during development and comparing performance across different configurations or environments.
 
-## 2. Module Files
+## Flow
 
-| File                         | Description                                                                 |
-|------------------------------|--------------------------------------------------------------------------|
-| `benchmark-large-project.js` | Benchmark for evaluating performance when working with large projects.     |
-| `benchmark-simd.js`          | Benchmark for testing SIMD operations and their impact on performance. |
-| `benchmark-workers.js`       | Benchmark for comparing worker performance and multithreading.   |
-| `embedding-benchmark.ts`     | Benchmark for evaluating embedding performance. |
-| `granite4-benchmark.ts`      | Benchmark for testing Granite4 model performance.           |
-| `llm-benchmark.ts`           | Benchmark for evaluating LLM model performance and processing.       |
-
-## 3. Exports
-
-The module has no public exports. All files are internal and are used only within the module.
-
-## 4. Usage
-
-To use the benchmarks, run the corresponding scripts or functions from the module files. Example:
-
-```bash
-node benchmark-large-project.js
-node benchmark-simd.js
+```
+Test Setup (configuration, env vars)
+        ↓
+Spawned Process/Function Execution
+        ↓
+Performance Measurement (timing, throughput, latency)
+        ↓
+Results Reporting & Comparison
 ```
 
-or in TypeScript:
+## Entity Listing
 
-```ts
-import './embedding-benchmark.ts';
-import './llm-benchmark.ts';
-```
+### Project Indexing Benchmarks
+
+- **benchmark-large-project.js** — Tests worker-pool indexing performance on a full codebase (200+ files) to measure real-world speedup with parallel workers versus single-threaded execution.
+- **benchmark-workers.js** — Compares worker process spawning and multithreading overhead versus baseline to quantify worker pool benefits.
+- **benchmark-simd.js** — Evaluates SIMD vector operation performance improvements to validate native acceleration gains.
+
+### LLM & Embedding Inference Benchmarks
+
+- **embedding-benchmark.ts** — Measures embedding generation throughput and latency for vector inference pipelines.
+- **llm-benchmark.ts** — Evaluates LLM token generation latency and throughput under various workload conditions.
+
+## Dependencies
+
+- **Node.js child_process module** — Spawns isolated indexer processes with environment-variable configuration for testing different code paths.
+- **Timing utilities** — Uses `Date.now()` or equivalent for measuring wall-clock execution duration and throughput calculations.
+- **Project distribution artifacts** — References compiled `dist/index.js` for running benchmark tests against production build output.
+- **Environment configuration flags** — Respects `PARSER_USE_WORKERS` and similar env vars to toggle optimization features during testing.
+- **File system access** — Reads project directories and test fixtures to establish realistic indexing workloads.

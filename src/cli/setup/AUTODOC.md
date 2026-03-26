@@ -1,10 +1,3 @@
----
-module_name: setup
-description: "Interactive setup wizard for embedding and LLM provider configuration with hardware detection"
-status: active
-language: typescript
----
-
 # Setup
 
 > Interactive setup module that guides users through selecting, configuring, and installing embedding and LLM providers based on detected hardware capabilities.
@@ -41,6 +34,20 @@ The setup module orchestrates the multi-step interactive wizard for configuring 
 | `printBanner` | function | Displays setup welcome banner | [`setup-ui.ts:27-42`](./setup-ui.ts) |
 | `printOK` / `printInfo` / `printWarn` / `printError` | functions | Colored status message printing | [`setup-ui.ts:44-46`](./setup-ui.ts) |
 | `prompt` | function | Interactive string input from stdin | [`setup-ui.ts:60-68`](./setup-ui.ts) |
+| `AgentDef` | interface | MCP agent configuration definition | [`mcp-installer.ts:33-39`](./mcp-installer.ts) |
+| `AgentStatus` | interface | MCP agent installation and runtime status | [`mcp-installer.ts:172-175`](./mcp-installer.ts) |
+| `ENTRY_NAME` | const | Constant name for MCP configuration entry | [`mcp-installer.ts:25-25`](./mcp-installer.ts) |
+| `getAgents` | function | Retrieves list of available MCP agents | [`mcp-installer.ts:41-166`](./mcp-installer.ts) |
+| `stripBom` | function | Removes Byte Order Mark from text content | [`mcp-installer.ts:177-179`](./mcp-installer.ts) |
+| `detectAgents` | function | Detects installed MCP agents from configuration files | [`mcp-installer.ts:181-209`](./mcp-installer.ts) |
+| `buildJsonEntry` | function | Constructs JSON configuration entry for MCP agent | [`mcp-installer.ts:215-232`](./mcp-installer.ts) |
+| `ensureParentDir` | function | Creates parent directory if it does not exist | [`mcp-installer.ts:238-243`](./mcp-installer.ts) |
+| `installJson` | function | Installs MCP agent configuration in JSON format | [`mcp-installer.ts:245-278`](./mcp-installer.ts) |
+| `installToml` | function | Installs MCP agent configuration in TOML format | [`mcp-installer.ts:280-301`](./mcp-installer.ts) |
+| `installToAgent` | function | Routes installation to correct agent configuration format | [`mcp-installer.ts:303-309`](./mcp-installer.ts) |
+| `installMcpConfigs` | function | Main orchestrator for MCP agent installation and configuration | [`mcp-installer.ts:315-361`](./mcp-installer.ts) |
+| `getCommandForAgent` | function | Generates command string for executing MCP agent | [`mcp-installer.ts:370-372`](./mcp-installer.ts) |
+| `performInstall` | function | Executes the actual MCP installation and setup process | [`mcp-installer.ts:374-392`](./mcp-installer.ts) |
 
 ## Dependencies
 
@@ -92,3 +99,4 @@ Provider installation failures are reported but do not block config saving. Miss
 | `setup-selection.ts` | Interactive dialogs for language, provider, model |
 | `setup-types.ts` | TypeScript interfaces for models and providers |
 | `setup-ui.ts` | ANSI colors, message printing, interactive input |
+| `mcp-installer.ts` | MCP agent detection and installation configuration |

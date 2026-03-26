@@ -1,30 +1,52 @@
 # CUDA Module
 
-## Title and Overview
+## Overview
 
-The CUDA module provides interfaces and types for working with GPU computations through CUDA-compatible libraries. It contains type definitions for GPU resource management, computation execution, and interaction with the CUDA driver. Intended for use in projects requiring high-performance computations on graphics processors.
+The CUDA module provides GPU-accelerated vector operations for computing similarity metrics on NVIDIA GPUs. It delivers 100–200x performance improvements over CPU implementations by offloading high-dimensional embedding computations to CUDA-enabled devices. The module exposes device information interfaces and functions for both single-vector and batch-oriented similarity calculations. All operations are TypeScript-bound native extensions compiled against the CUDA Compute Toolkit.
 
-## Files
+## Flow
 
-| File             | Description                                                                 |
-|------------------|-----------------------------------------------------------------------------|
-| `index.d.ts`     | Main type definition file for the CUDA module, containing interfaces and types |
-
-## Exports
-
-No public exports. The module is intended for internal use and provides only types for compilation.
-
-## Usage
-
-The module is used in projects that require typing for CUDA functions:
-
-```typescript
-// Usage example in code
-import { CudaContext, CudaDevice } from 'cuda-module';
-
-// Using types for working with GPU resources
-const context: CudaContext = new CudaContext();
-const device: CudaDevice = context.getDevice(0);
+```
+Input Vectors (GPU or Host Memory)
+    ↓
+GPU Device Availability Check (CUDADeviceInfo)
+    ↓
+Transfer to GPU Global Memory
+    ↓
+Launch CUDA Kernels
+    ├─ cosineSimilarity: single pair
+    └─ batchCosineSimilarity: multiple pairs in parallel
+    ↓
+Synchronize Device → Host
+    ↓
+Output: Similarity Score (0–1) or Score Array
 ```
 
-> Note: the module is internal and is not intended for direct import in user code.
+## Entities
+
+### Interfaces
+
+**CUDADeviceInfo** — `external-tools/native/cuda/src/index.d.ts:10-16`
+
+Exposes NVIDIA GPU device metadata and capabilities: device count, model identifier, compute architecture version, total memory, and multiprocessor count for runtime capability negotiation.
+
+### Functions
+
+**cosineSimilarity** — `external-tools/native/cuda/src/index.d.ts:18-27`
+
+Computes cosine similarity between two equal-length vectors on the GPU, returning a normalized score in [0, 1] range; typical latency 0.1–0.2ms for 8192-dimensional vectors.
+
+**batchCosineSimilarity** — `external-tools/native/cuda/src/index.d.ts:29-40`
+
+Computes cosine similarities for multiple vector pairs in parallel on the GPU, scaling throughput with batch size while maintaining constant per-operation latency.
+
+## Dependencies
+
+### External
+
+- **NVIDIA CUDA Driver** — runtime GPU device management and kernel execution
+- **CUDA Compute Toolkit** — build-time compilation of `.cu` kernels to PTX/binary
+
+### Internal
+
+- None; module is self-contained as a native extension with TypeScript type declarations

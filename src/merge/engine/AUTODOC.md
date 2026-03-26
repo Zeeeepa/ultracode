@@ -1,10 +1,3 @@
----
-module_name: engine
-description: "Three-way merge engine with AI-assisted conflict resolution"
-status: active
-language: typescript
----
-
 # Engine
 
 > Orchestrates 5-phase semantic three-way merge and resolves conflicts using traditional heuristics or AI-powered embedding analysis.
@@ -31,6 +24,19 @@ The engine module is the core of the semantic merge system. ThreeWayMerger perfo
 | `AIConflictResolverConfig` | interface | Similarity thresholds and confidence settings | [`ai-conflict-resolver.ts:16-28`](./ai-conflict-resolver.ts) |
 | `AIAnalysisResult` | interface | Result of AI conflict analysis | [`ai-conflict-resolver.ts:33-52`](./ai-conflict-resolver.ts) |
 | `MultiVersionIndexer` | class | Re-exported from indexing module for convenience | [`index.ts:1-1`](./index.ts) |
+| `Diff3Options` | interface | Configuration options for the diff3 merge algorithm | [`diff3.ts:19-24`](./diff3.ts) |
+| `Diff3Region` | interface | Represents a contiguous region of changes in the three-way diff | [`diff3.ts:26-31`](./diff3.ts) |
+| `Diff3Result` | interface | Result of a diff3 merge operation containing regions and conflict information | [`diff3.ts:33-39`](./diff3.ts) |
+| `Hunk` | interface | A contiguous block of matching or differing lines in a diff | [`diff3.ts:46-51`](./diff3.ts) |
+| `diff3Merge` | function | Performs a three-way merge using the diff3 algorithm | [`diff3.ts:57-126`](./diff3.ts) |
+| `splitLines` | function | Splits text into individual lines for processing | [`diff3.ts:132-135`](./diff3.ts) |
+| `trimCommon` | function | Removes common prefix and suffix lines from three versions | [`diff3.ts:141-180`](./diff3.ts) |
+| `computeLCS` | function | Computes the longest common subsequence between two line arrays | [`diff3.ts:186-202`](./diff3.ts) |
+| `computeHunks` | function | Identifies contiguous blocks of changes in a diff | [`diff3.ts:204-252`](./diff3.ts) |
+| `mergeHunks` | function | Merges hunks from two branches and detects conflicts | [`diff3.ts:264-365`](./diff3.ts) |
+| `emitInsertion` | function | Writes insertion changes to the merge output | [`diff3.ts:367-383`](./diff3.ts) |
+| `classifyInsertion` | function | Determines the conflict classification of an insertion | [`diff3.ts:389-403`](./diff3.ts) |
+| `linesEqual` | function | Compares two lines for equality | [`diff3.ts:405-411`](./diff3.ts) |
 
 ## Dependencies
 
@@ -86,5 +92,6 @@ ThreeWayMerger catches errors during merge and ensures git branch restoration vi
 |------|-------------|
 | `ai-conflict-resolver.ts` | AI-powered conflict resolution using embedding similarity and cosine distance |
 | `conflict-resolver.ts` | Strategy-based conflict resolution with AI fallback and Git-style conflict markers |
+| `diff3.ts` | Three-way merge algorithm with diff computation, hunk merging, and conflict detection |
 | `index.ts` | Re-exports all engine classes and interfaces |
 | `three-way-merger.ts` | Main 5-phase merge orchestrator handling indexing, matching, classification, and conflict detection |

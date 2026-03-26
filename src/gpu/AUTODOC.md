@@ -1,44 +1,8 @@
----
-module_name: gpu
-description: GPU-accelerated vector operations with automatic backend selection and graceful degradation
-status: stable
-language: TypeScript
-entry_point: backend-selector.ts
-exports:
-  - BackendSelector
-  - VectorBackend
-  - BackendCapabilities
-  - GPUBuffer
-  - GPUInfo
-  - GPUDetector
-  - WEBGPU_UNSAFE_MIN_CC
-  - WEBGPU_UNSTABLE_ARCHITECTURES
-dependencies:
-  - node:os
-  - node:child_process
-  - webgpu (optional)
-  - logging
-  - semantic/gpu/gpu-client
-  - utils/simd-vector-ops
-tags:
-  - gpu
-  - cuda
-  - metal
-  - webgpu
-  - wasm
-  - vector-ops
-  - cosine-similarity
-  - backend-selector
----
+# gpu
 
 ## Overview
 
-The `gpu` module abstracts GPU-accelerated vector operations (cosine similarity, batch cosine similarity,
-euclidean distance) behind a unified `VectorBackend` interface. `BackendSelector` (singleton) automatically
-detects available hardware via `GPUDetector` and selects the highest-priority backend. Six backends are
-supported: CUDA Native, CUDA Worker (Bun-compatible subprocess), Metal (Apple Silicon), WebGPU (universal),
-WASM SIMD (CPU), and Pure JS (fallback). The module is runtime-aware (Node.js vs Bun), handles Blackwell
-(RTX 50xx) incompatibilities, and degrades gracefully through the priority chain.
+The `gpu` module abstracts GPU-accelerated vector operations (cosine similarity, batch cosine similarity, euclidean distance) behind a unified `VectorBackend` interface. `BackendSelector` (singleton) automatically detects available hardware via `GPUDetector` and selects the highest-priority backend. Six backends are supported: CUDA Native, CUDA Worker (Bun-compatible subprocess), Metal (Apple Silicon), WebGPU (universal), WASM SIMD (CPU), and Pure JS (fallback). The module is runtime-aware (Node.js vs Bun), handles Blackwell (RTX 50xx) incompatibilities, and degrades gracefully through the priority chain.
 
 ## Architecture
 
@@ -83,9 +47,7 @@ BackendSelector.initialize()
        ├─ isAvailable() ─► hardware/runtime check
        ├─ initialize() ─► load native addon / WGSL shader / WASM
        └─ on failure ─► log warning, try next candidate
-```
 
-```
 Bun Process                           Node.js Subprocess
 ┌─────────────────┐                   ┌─────────────────┐
 │ GpuWorkerBackend│   IPC JSON        │ gpu-worker.ts   │
@@ -96,145 +58,128 @@ Bun Process                           Node.js Subprocess
 
 ## Public API
 
-| Export | Type | Description | Source |
-|--------|------|-------------|--------|
-| `BackendSelector` | class | Singleton selector with priority-based backend selection | [`backend-selector.ts:30-235`](./backend-selector.ts) |
-| `BackendSelector.getInstance()` | static | Get or create singleton instance | [`backend-selector.ts:37-42`](./backend-selector.ts) |
-| `BackendSelector.initialize()` | async | Detect GPU, select and initialize optimal backend | [`backend-selector.ts:47-177`](./backend-selector.ts) |
-| `BackendSelector.getBackend()` | method | Return current selected backend | [`backend-selector.ts:182-184`](./backend-selector.ts) |
-| `BackendSelector.switchBackend(type)` | async | Force-switch to a specific backend type | [`backend-selector.ts:190-202`](./backend-selector.ts) |
-| `BackendSelector.getAvailableBackends()` | method | List all initialized backends | [`backend-selector.ts:207-209`](./backend-selector.ts) |
-| `BackendSelector.getInfo()` | method | Diagnostic info: selected + available backends | [`backend-selector.ts:214-217`](./backend-selector.ts) |
-| `BackendSelector.close()` | async | Cleanup all backends and release resources | [`backend-selector.ts:227-234`](./backend-selector.ts) |
-| `VectorBackend` | interface | Unified interface for all backends | [`backends/base.ts:12-30`](./backends/base.ts) |
-| `BackendCapabilities` | interface | Capabilities report (maxVectorCount, maxDimension, etc.) | [`backends/base.ts:32-38`](./backends/base.ts) |
-| `GPUBuffer` | interface | GPU buffer handle with metadata | [`backends/base.ts:40-45`](./backends/base.ts) |
-| `GPUInfo` | interface | GPU detection result (vendor, model, CC, memory) | [`detection/gpu-detector.ts:72-81`](./detection/gpu-detector.ts) |
-| `GPUDetector` | class | Singleton GPU detection with caching | [`detection/gpu-detector.ts:83-396`](./detection/gpu-detector.ts) |
-| `GPUDetector.detect()` | static async | Detect all GPU capabilities (cached per-process) | [`detection/gpu-detector.ts:89-167`](./detection/gpu-detector.ts) |
-| `GPUDetector.isWebGPUSafe(info)` | static | Check if WebGPU is safe for given GPU (Blackwell filter) | [`detection/gpu-detector.ts:173-173`](./detection/gpu-detector.ts) |
-| `GPUDetector.checkBackendAvailability(type)` | static async | Check if a specific backend type is likely available | [`detection/gpu-detector.ts:327-340`](./detection/gpu-detector.ts) |
-| `GPUDetector.clearCache()` | static | Clear cached GPU info (for testing) | [`detection/gpu-detector.ts:345-347`](./detection/gpu-detector.ts) |
-| `GPUDetector.testWebGPUCompatibility()` | static async | Test WebGPU safety without loading Dawn | [`detection/gpu-detector.ts:360-367`](./detection/gpu-detector.ts) |
-| `WEBGPU_UNSAFE_MIN_CC` | const | Minimum CC that causes WebGPU/Dawn crashes (12.0) | [`detection/gpu-detector.ts:31-31`](./detection/gpu-detector.ts) |
-| `WEBGPU_UNSTABLE_ARCHITECTURES` | const | Known unstable GPU architectures for WebGPU | [`detection/gpu-detector.ts:36-36`](./detection/gpu-detector.ts) |
+### Singleton Selector
+
+| Export | Description | Source |
+|--------|-------------|--------|
+| `BackendSelector` | Singleton class managing GPU detection, backend initialization, and priority-based selection with lifecycle management. | [`backend-selector.ts:30-235`](./backend-selector.ts) |
+
+### BackendSelector Methods
+
+| Method | Description | Source |
+|--------|-------------|--------|
+| `getInstance()` | Returns the singleton BackendSelector instance, creating it if needed. | [`backend-selector.ts:37-42`](./backend-selector.ts) |
+| `initialize()` | Detects GPU hardware, builds priority-ordered backend candidates, and initializes the first available backend with success logging. | [`backend-selector.ts:47-177`](./backend-selector.ts) |
+| `getBackend()` | Returns the currently selected VectorBackend implementation. | [`backend-selector.ts:182-184`](./backend-selector.ts) |
+| `switchBackend(type)` | Asynchronously switches to a specific backend by name and re-initializes it. | [`backend-selector.ts:190-202`](./backend-selector.ts) |
+| `getAvailableBackends()` | Returns array of all successfully initialized backend instances. | [`backend-selector.ts:207-209`](./backend-selector.ts) |
+| `getInfo()` | Returns diagnostic object containing selected backend and list of available backends with their capabilities. | [`backend-selector.ts:214-217`](./backend-selector.ts) |
+| `close()` | Asynchronously closes all backends, releases GPU resources, and resets the selector state. | [`backend-selector.ts:227-234`](./backend-selector.ts) |
+
+### Core Interfaces
+
+| Export | Description | Source |
+|--------|-------------|--------|
+| `VectorBackend` | Unified interface implemented by all backends, defining vector operations (cosineSimilarity, batchCosineSimilarity, euclideanDistance, normalizeVectors) and lifecycle methods (initialize, close, getCapabilities, isAvailable). | [`backends/base.ts:12-30`](./backends/base.ts) |
+| `BackendCapabilities` | Reports backend capabilities including maximum vector count, maximum dimension, async support, normalization support, available memory, and backend identifier. | [`backends/base.ts:32-38`](./backends/base.ts) |
+| `GPUBuffer` | GPU memory buffer handle with buffer reference, data type, shape, and device identifier for managing GPU-allocated memory. | [`backends/base.ts:40-45`](./backends/base.ts) |
+| `GPUInfo` | GPU hardware detection result containing vendor name, model identifier, compute capability, CUDA availability, and WebGPU adapter availability. | [`detection/gpu-detector.ts:72-81`](./detection/gpu-detector.ts) |
+
+### Detection and Utilities
+
+| Export | Description | Source |
+|--------|-------------|--------|
+| `GPUDetector` | Static utility class for hardware GPU detection, WebGPU compatibility validation, and architecture blacklist management with caching. | [`detection/gpu-detector.ts:1-403`](./detection/gpu-detector.ts) |
+| `WEBGPU_UNSAFE_MIN_CC` | Compute capability threshold constant used to identify and exclude unsafe GPU architectures from WebGPU candidates. | [`detection/gpu-detector.ts`](./detection/gpu-detector.ts) |
+| `WEBGPU_UNSTABLE_ARCHITECTURES` | Array of GPU architecture codes (e.g., Blackwell 12.0) known to crash WebGPU or CUDA and excluded from backend selection. | [`detection/gpu-detector.ts`](./detection/gpu-detector.ts) |
+
+## Backend Implementations
+
+| Backend | Priority | Platform | Description | Source |
+|---------|----------|----------|-------------|--------|
+| `CudaBackend` | 100 | Node.js on NVIDIA | Native CUDA via N-API addon; highest performance but requires NVIDIA GPU and Node.js runtime. | [`backends/cuda-backend.ts:1-184`](./backends/cuda-backend.ts) |
+| `GpuWorkerBackend` | 98–100 | Bun on NVIDIA | CUDA via Node.js subprocess IPC; enables CUDA support under Bun runtime which lacks N-API module loading. | [`backends/gpu-worker-backend.ts:1-118`](./backends/gpu-worker-backend.ts) |
+| `MetalBackend` | 95 | macOS ARM64 | Native Metal via N-API addon; second-highest priority, Apple Silicon exclusive, requires macOS. | [`backends/metal-backend.ts:1-180`](./backends/metal-backend.ts) |
+| `WebGpuBackend` | 80 | Universal | WebGPU compute shader (WGSL) for cross-platform GPU acceleration; excluded on Blackwell unless `WEBGPU_FORCE_ENABLE=1`. | [`backends/webgpu-backend.ts:1-401`](./backends/webgpu-backend.ts) |
+| `WasmBackend` | 50 | Universal | WASM SIMD (Rust wasm-pack) for CPU-level acceleration; synchronous, no async operations. | [`backends/wasm-backend.ts:1-100`](./backends/wasm-backend.ts) |
+| `JsBackend` | 1 | Universal | Pure JavaScript with loop unrolling; always available fallback when all other backends fail. | [`backends/js-backend.ts:1-57`](./backends/js-backend.ts) |
 
 ## Dependencies
 
-| Dependency | Type | Used By |
-|------------|------|---------|
-| `node:os` | built-in | `backend-selector.ts` (platform, arch detection) |
-| `node:child_process` | built-in | `gpu-detector.ts` (nvidia-smi via execSync) |
-| `webgpu` | npm, optional | `gpu-detector.ts`, `webgpu-backend.ts` (Dawn bindings) |
-| `../logging/index.js` | internal | All files (contextual logging) |
-| `../../semantic/gpu/gpu-client.js` | internal | `gpu-worker-backend.ts` (IPC to Node.js subprocess) |
-| `../../utils/simd-vector-ops.js` | internal | `js-backend.ts` (optimized loop-unrolled cosine) |
-| Native `.node` addons | build artifact | `cuda-backend.ts`, `metal-backend.ts` (N-API) |
-| Rust WASM module | build artifact | `wasm-backend.ts` (wasm-pack output) |
+### External
+- `node:os` — Runtime platform and architecture detection for Node.js vs Bun awareness
+- `node:child_process` — Subprocess IPC for GpuWorkerBackend CUDA relay under Bun
+- `webgpu` (optional) — WebGPU API support when runtime provides it
 
-## Configuration
+### Internal
+- `logging` — Contextual log output with module prefixes (GPUBACKEND, GPUDETECT, CUDABACKEND, etc.)
+- `semantic/gpu/gpu-client` — GPU-accelerated client utilities
+- `utils/simd-vector-ops` — SIMD optimizations for vector operations
 
-| Environment Variable | Effect |
-|---------------------|--------|
-| `CUDA_FORCE_DISABLE=1` | Skip CUDA backend even if NVIDIA GPU is detected |
-| `WEBGPU_FORCE_ENABLE=1` | Force-enable WebGPU even on Blackwell (CC >= 12.0) |
-| `WEBGPU_FORCE_DISABLE=1` | Force-disable WebGPU detection entirely |
-| `BUNDLED=1` | Skip native addon loading, use nvidia-smi CLI only |
+## Error Handling and Graceful Degradation
 
-## Behavioral Properties
+**GPU Detection** — `GPUDetector.detect()` runs with `timeout: 2000ms`, `windowsHide: true`, stderr suppressed to prevent process noise.
 
-| Property | Detail |
-|----------|--------|
-| Singleton pattern | `BackendSelector` and `GPUDetector` both cache per-process |
-| Lazy initialization | Backends are only loaded on `initialize()`, not on construction |
-| Two-phase init | Each backend goes through `isAvailable()` then `initialize()` |
-| Runtime-aware | Bun gets `GpuWorkerBackend` (priority 100); Node.js gets `CUDABackend` (priority 100) |
-| IPC for Bun | `GpuWorkerBackend` routes CUDA ops through a Node.js subprocess via `gpu-client` |
-| Batch optimization | WebGPU and WASM use vector flattening for GPU-optimal batch operations |
-| Memory reporting | Each backend reports `maxVectorCount`, `maxDimension`, `memoryMB` |
+**Backend Initialization** — Each candidate backend attempts `initialize()` in priority order; failures log warnings and continue to next candidate without throwing.
 
-## Runtime-Aware Backend Selection
+**Blackwell (RTX 50xx) Safety** — Architectures with CC ≥ 12.0 are excluded from WebGPU and CUDA to prevent crashes; override with environment variable `WEBGPU_FORCE_ENABLE=1`.
 
-| Runtime | CUDA Available | Selected Backend |
-|---------|---------------|------------------|
-| Node.js | Yes | CudaBackend (native) |
-| Node.js | No | WasmBackend / JsBackend |
-| Bun | Yes | GpuWorkerBackend (subprocess) |
-| Bun | No | WasmBackend / JsBackend |
-| Browser | WebGPU | WebGpuBackend |
-| Browser | No WebGPU | WasmBackend / JsBackend |
+**WebGPU Adapter** — `GPUAdapter` request returns null gracefully if no GPU adapter is found.
 
-## Error Handling
+**IPC Resilience** — `GpuWorkerBackend` client start failures cause fallback to next backend.
 
-**Fallback chain** (each failure triggers the next candidate):
-
-```
-CUDA Native (100) ──fail──► CUDA Worker (98/100) ──fail──► Metal (95)
-  ──fail──► WebGPU (80) ──fail──► WASM SIMD (50) ──fail──► Pure JS (1)
-```
-
-- Every `candidate.factory()` call is wrapped in try-catch; failures log a warning and continue.
-- Native addon loading tries multiple paths (external-libs, dist/native, build/Release).
-- `nvidia-smi` runs with `timeout: 2000ms`, `windowsHide: true`, stderr suppressed.
-- WebGPU adapter request returns null gracefully if no GPU adapter is found.
-- `GpuWorkerBackend` IPC errors (client.start failure) cause fallback to next backend.
-- If all backends fail, an Error is thrown (theoretically impossible since JS is always available).
-
-**Blackwell (RTX 50xx) special handling:**
-`GPUDetector.isWebGPUSafe()` checks CC >= 12.0. When detected, WebGPU is excluded from candidates
-to prevent Dawn crashes. Override with `WEBGPU_FORCE_ENABLE=1`.
+**Guaranteed Fallback** — `JsBackend` (pure JS) is always initialized last; theoretically impossible for all backends to fail.
 
 ## Observability
 
-Logging uses contextual prefixes via the `log` module:
+Logging via contextual `log` module with module-specific prefixes:
 
 | Prefix | Scope | Key Events |
 |--------|-------|------------|
-| `GPUBACKEND` | backend-selector | `detecting_gpu`, `backend_selected`, `capabilities`, `backend_init_fail` |
-| `GPUDETECT` | gpu-detector | `cuda_found`, `webgpu_avail`, `webgpu_skipped`, `webgpu_forced` |
-| `CUDABACKEND` | cuda-backend | Addon loading, device info |
-| `GPUWORKER` | gpu-worker-backend | IPC start, CUDA info relay |
-| `METALBACKEND` | metal-backend | Addon loading, device info |
-| `WEBGPUBACKEND` | webgpu-backend | Adapter request, shader compilation |
-| `WASMBACKEND` | wasm-backend | Module loading |
-| `JSBACKEND` | js-backend | Initialization |
+| `GPUBACKEND` | BackendSelector | GPU detection, backend selection, capability reports, initialization failures |
+| `GPUDETECT` | GPUDetector | CUDA detection (nvidia-smi or addon), WebGPU availability, Blackwell exclusions, forced enable |
+| `CUDABACKEND` | CudaBackend | N-API addon loading, device info retrieval |
+| `GPUWORKER` | GpuWorkerBackend | Subprocess IPC startup, CUDA info relay, worker communication |
+| `METALBACKEND` | MetalBackend | N-API addon loading, device info retrieval |
+| `WEBGPUBACKEND` | WebGpuBackend | WebGPU adapter request, shader compilation, buffer allocation |
+| `WASMBACKEND` | WasmBackend | WASM module loading and initialization |
+| `JSBACKEND` | JsBackend | Initialization and fallback events |
 
-Diagnostic methods: `BackendSelector.getInfo()`, `GPUDetector.getCachedInfo()`,
-`GPUDetector.testWebGPUCompatibility()`.
+**Diagnostic Methods** — `BackendSelector.getInfo()`, `GPUDetector.getCachedInfo()`, `GPUDetector.testWebGPUCompatibility()`.
 
 ## Known Limitations
 
 | Limitation | Description |
 |------------|-------------|
-| Blackwell incompatibility | RTX 50xx (CC 12.0+) crashes Dawn/WebGPU and CUDA native addon |
-| Bun NAPI gap | Bun cannot load N-API addons directly; requires Node.js subprocess |
-| Per-process GPU cache | GPU info is cached once; hot-plugging GPUs is not detected |
-| WebGPU shader scope | WGSL compute shader is specialized for batch cosine similarity only |
-| Metal platform lock | Metal backend requires macOS ARM64 (Apple Silicon only) |
-| WASM synchronous | WASM backend has `supportsAsync: false` |
-| WebGPU workgroup limit | 256 threads per workgroup in compute shader |
-| nvidia-smi dependency | GPU detection without native addon requires nvidia-smi in PATH |
-| Float32Array conversion | CUDA and Metal require `Array.from()` conversion (minor perf cost) |
+| Blackwell incompatibility | RTX 50xx (CC 12.0+) crashes WebGPU Dawn shader compiler and CUDA native addon; excluded by default. |
+| Bun NAPI gap | Bun runtime cannot load N-API (Node.js native) modules directly; requires subprocess bridge via GpuWorkerBackend. |
+| Per-process GPU cache | GPU hardware info cached once at initialization; hot-plugged GPUs not detected during runtime. |
+| WebGPU shader scope | WGSL compute shader specialized for batch cosine similarity; other operations use scalar fallback. |
+| Metal platform lock | Metal backend requires macOS with ARM64 architecture (Apple Silicon only). |
+| WASM synchronous | WASM backend has `supportsAsync: false`; async API is emulated with Promise wrappers. |
+| WebGPU workgroup limit | Compute shader uses 256 threads per workgroup; limits batch sizes. |
+| nvidia-smi dependency | GPU detection without native addon requires nvidia-smi binary in system PATH. |
+| Float32Array conversion | CUDA and Metal backends require `Array.from()` conversion from input arrays (minor perf cost). |
 
 ## TypeScript Notes
 
-- `VectorBackend` interface enforces strict typing for all backends with required lifecycle methods.
-- `CUDAAddon["getDeviceInfo"]` uses conditional type inference for device info typing.
-- Native addon interfaces (`CUDAAddon`, `MetalAddon`) are declared locally, not exported.
-- All vector operations return `Promise` even when synchronous (unified async API).
-- WebGPU types (`GPUAdapter`, `GPU`, etc.) are declared locally to avoid global type conflicts.
-- `type` field uses `as const` assertions for discriminated union support.
+- `VectorBackend` interface enforces strict method signatures across all implementations.
+- Backend types use discriminated unions via `type` field with `as const` assertions for type narrowing.
+- Native addon interfaces (`CUDAAddon`, `MetalAddon`) declared locally to avoid global namespace conflicts.
+- All vector operations return `Promise` for API uniformity, even when backend is synchronous.
+- WebGPU types (`GPUAdapter`, `GPU`, `GPUBuffer`, `GPUDevice`) declared locally to prevent type collisions with global WebGPU definitions.
 
 ## Files
 
 | File | Lines | Description |
 |------|-------|-------------|
-| [`backend-selector.ts`](./backend-selector.ts) | 236 | Singleton selector with priority-based auto-detection |
-| [`backends/base.ts`](./backends/base.ts) | 46 | VectorBackend, BackendCapabilities, GPUBuffer interfaces |
-| [`backends/cuda-backend.ts`](./backends/cuda-backend.ts) | 184 | CUDA Native via N-API (Node.js only, priority 100) |
-| [`backends/gpu-worker-backend.ts`](./backends/gpu-worker-backend.ts) | 118 | CUDA via Node.js subprocess IPC (Bun-compatible, priority 98/100) |
-| [`backends/js-backend.ts`](./backends/js-backend.ts) | 57 | Pure JS with loop unrolling fallback (priority 1) |
-| [`backends/metal-backend.ts`](./backends/metal-backend.ts) | 180 | Metal Native via N-API (Apple Silicon, priority 95) |
-| [`backends/wasm-backend.ts`](./backends/wasm-backend.ts) | 100 | WASM SIMD via Rust wasm-pack (priority 50) |
-| [`backends/webgpu-backend.ts`](./backends/webgpu-backend.ts) | 401 | WebGPU Compute with WGSL shader (universal, priority 80) |
-| [`detection/gpu-detector.ts`](./detection/gpu-detector.ts) | 403 | GPU detection, Blackwell safety, WebGPU compatibility |
+| [`backend-selector.ts`](./backend-selector.ts) | 236 | Singleton BackendSelector with priority-based GPU detection and backend initialization. |
+| [`backends/base.ts`](./backends/base.ts) | 46 | VectorBackend interface, BackendCapabilities, GPUBuffer, and GPUInfo type definitions. |
+| [`backends/cuda-backend.ts`](./backends/cuda-backend.ts) | 184 | CUDA Native backend via N-API module; Node.js only, priority 100. |
+| [`backends/gpu-worker-backend.ts`](./backends/gpu-worker-backend.ts) | 118 | CUDA Worker backend via subprocess IPC for Bun compatibility; priority 98–100. |
+| [`backends/js-backend.ts`](./backends/js-backend.ts) | 57 | Pure JavaScript backend with loop unrolling; priority 1 fallback. |
+| [`backends/metal-backend.ts`](./backends/metal-backend.ts) | 180 | Metal Native backend via N-API module; Apple Silicon only, priority 95. |
+| [`backends/wasm-backend.ts`](./backends/wasm-backend.ts) | 100 | WASM SIMD backend (Rust-compiled); priority 50. |
+| [`backends/webgpu-backend.ts`](./backends/webgpu-backend.ts) | 401 | WebGPU Compute backend with WGSL shader; universal, priority 80, Blackwell-aware. |
+| [`detection/gpu-detector.ts`](./detection/gpu-detector.ts) | 403 | GPU hardware detection, WebGPU compatibility testing, Blackwell architecture blacklist. |
+```
