@@ -21,6 +21,10 @@ const projectRoot = join(__dirname, "..");
 // Use stderr for all output — npm reliably shows stderr from lifecycle scripts
 const log = (...args) => process.stderr.write(args.join(" ") + "\n");
 
+// Terminal detection: npm may not connect stdin as TTY, but stderr is always
+// connected to the terminal. Use stderr.isTTY to detect "is a human watching?"
+const hasTerminal = !!(process.stderr.isTTY || process.stdout.isTTY || process.stdin.isTTY);
+
 // ANSI colors
 const colors = {
   reset: "\x1b[0m",
@@ -267,18 +271,20 @@ async function main() {
 }
 
 async function runSetupWizard() {
-  // Skip if not interactive
-  if (!process.stdin.isTTY) {
+  // Skip if no terminal at all (CI, piped output, headless)
+  if (!hasTerminal) {
     printInfo("Non-interactive mode - skipping setup wizard");
     printInfo("Run setup manually: npx ultracode-setup");
     return;
   }
 
-  const shouldSkip = await askSkip("Run setup wizard to configure semantic search?");
-
-  if (shouldSkip) {
-    printInfo("Skipping setup. Run later with: npx ultracode-setup");
-    return;
+  // If stdin is a TTY, ask the user; otherwise auto-run (npm may pipe stdin)
+  if (process.stdin.isTTY) {
+    const shouldSkip = await askSkip("Run setup wizard to configure semantic search?");
+    if (shouldSkip) {
+      printInfo("Skipping setup. Run later with: npx ultracode-setup");
+      return;
+    }
   }
 
   log();
