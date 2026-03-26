@@ -2,21 +2,19 @@
 
 /**
  * Post-install script for ultracode
+ * CommonJS format for maximum compatibility with npm lifecycle scripts
  *
  * - CUDA libraries (win32/linux) are bundled in npm package
  * - For Apple Silicon: offers to build Metal backend
  * - For Intel Mac: WASM fallback is used (bundled)
  */
 
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { arch, platform } from "node:os";
-import { dirname, join } from "node:path";
-import * as readline from "node:readline";
-import { fileURLToPath } from "node:url";
+const { spawnSync } = require("node:child_process");
+const { existsSync } = require("node:fs");
+const { arch, platform } = require("node:os");
+const { join } = require("node:path");
+const readline = require("node:readline");
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 const projectRoot = join(__dirname, "..");
 
 // ANSI colors
@@ -47,19 +45,19 @@ function printBox(title, lines) {
 }
 
 function printSuccess(message) {
-  console.log(`${colors.green}✓${colors.reset} ${message}`);
+  console.log(`${colors.green}\u2713${colors.reset} ${message}`);
 }
 
 function printInfo(message) {
-  console.log(`${colors.blue}ℹ${colors.reset} ${message}`);
+  console.log(`${colors.blue}\u2139${colors.reset} ${message}`);
 }
 
 function _printWarning(message) {
-  console.log(`${colors.yellow}⚠${colors.reset} ${message}`);
+  console.log(`${colors.yellow}\u26A0${colors.reset} ${message}`);
 }
 
 function printError(message) {
-  console.log(`${colors.red}✗${colors.reset} ${message}`);
+  console.log(`${colors.red}\u2717${colors.reset} ${message}`);
 }
 
 function isAppleSilicon() {
@@ -171,9 +169,9 @@ async function handleAppleSilicon() {
     "This provides significantly faster semantic search.",
     "",
     `${colors.bright}Requirements to build Metal backend:${colors.reset}`,
-    "  • Xcode Command Line Tools (xcode-select --install)",
-    "  • Homebrew (https://brew.sh)",
-    "  • CMake (brew install cmake)",
+    "  \u2022 Xcode Command Line Tools (xcode-select --install)",
+    "  \u2022 Homebrew (https://brew.sh)",
+    "  \u2022 CMake (brew install cmake)",
     "",
     `${colors.dim}Without Metal, WASM SIMD fallback will be used (slower).${colors.reset}`,
   ]);
@@ -264,7 +262,7 @@ async function main() {
   // Run setup wizard
   await runSetupWizard();
 
-  console.log(`${colors.green}${colors.bright}Ready to use! 🚀${colors.reset}`);
+  console.log(`${colors.green}${colors.bright}Ready to use! \uD83D\uDE80${colors.reset}`);
   console.log();
 }
 
