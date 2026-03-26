@@ -11,19 +11,50 @@
  */
 
 const { spawnSync } = require("node:child_process");
-const { existsSync } = require("node:fs");
+const { existsSync, openSync, writeSync, createReadStream } = require("node:fs");
 const { arch, platform } = require("node:os");
 const { join } = require("node:path");
 const readline = require("node:readline");
 
 const projectRoot = join(__dirname, "..");
 
-// Use stderr for all output — npm reliably shows stderr from lifecycle scripts
-const log = (...args) => process.stderr.write(args.join(" ") + "\n");
+// ═══════════════════════════════════════════════════════════════
+// Terminal device access
+// npm buffers ALL stdout/stderr from lifecycle scripts (foreground-scripts=false).
+// The only way to show output is writing directly to the terminal device:
+//   Unix:    /dev/tty
+//   Windows: CON
+// ═══════════════════════════════════════════════════════════════
+let ttyWriteFd = null;
+let ttyReadable = false;
+const ttyDevice = platform() === "win32" ? "CON" : "/dev/tty";
 
-// Terminal detection: npm may not connect stdin as TTY, but stderr is always
-// connected to the terminal. Use stderr.isTTY to detect "is a human watching?"
-const hasTerminal = !!(process.stderr.isTTY || process.stdout.isTTY || process.stdin.isTTY);
+try {
+  ttyWriteFd = openSync(ttyDevice, "w");
+} catch {
+  // No terminal (CI, headless, daemon)
+}
+
+// Check if we can read from terminal too (for interactive prompts)
+try {
+  const fd = openSync(ttyDevice, "r");
+  require("node:fs").closeSync(fd);
+  ttyReadable = true;
+} catch {
+  ttyReadable = false;
+}
+
+const hasTerminal = ttyWriteFd != null;
+
+const log = (...args) => {
+  const msg = args.join(" ") + "\n";
+  // Write directly to terminal device (bypasses npm's capture)
+  if (ttyWriteFd != null) {
+    try { writeSync(ttyWriteFd, msg); } catch {}
+  }
+  // Also write to stderr as fallback
+  process.stderr.write(msg);
+};
 
 // ANSI colors
 const colors = {
@@ -92,19 +123,25 @@ function checkCudaLibExists() {
   return false;
 }
 
+/**
+ * Create readline interface reading from terminal device directly.
+ * npm may not connect stdin as TTY, so we open /dev/tty (Unix) or CON (Windows).
+ */
+function createTtyReadline() {
+  try {
+    const input = createReadStream(ttyDevice);
+    return readline.createInterface({ input, output: process.stderr });
+  } catch {
+    return null;
+  }
+}
+
 async function askYesNo(question) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stderr,
-  });
+  if (!ttyReadable) return false;
+  const rl = createTtyReadline();
+  if (!rl) return false;
 
   return new Promise((resolve) => {
-    if (!process.stdin.isTTY) {
-      rl.close();
-      resolve(false);
-      return;
-    }
-
     rl.question(`${question} [y/N]: `, (answer) => {
       rl.close();
       resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes");
@@ -113,18 +150,11 @@ async function askYesNo(question) {
 }
 
 async function askSkip(question) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stderr,
-  });
+  if (!ttyReadable) return false;
+  const rl = createTtyReadline();
+  if (!rl) return false;
 
   return new Promise((resolve) => {
-    if (!process.stdin.isTTY) {
-      rl.close();
-      resolve(false);
-      return;
-    }
-
     rl.question(`${question} [Y/n]: `, (answer) => {
       rl.close();
       const skip = answer.toLowerCase() === "n" || answer.toLowerCase() === "no" || answer.toLowerCase() === "s";
@@ -270,6 +300,21 @@ async function main() {
   log();
 }
 
+/**
+ * Get stdio config that connects child process directly to terminal.
+ * Bypasses npm's stdio capture so the setup wizard can show output
+ * and read user input regardless of npm's foreground-scripts setting.
+ */
+function getTtyStdio() {
+  try {
+    const inp = openSync(ttyDevice, "r");
+    const out = openSync(ttyDevice, "w");
+    return [inp, out, out];
+  } catch {
+    return "inherit";
+  }
+}
+
 async function runSetupWizard() {
   // Skip if no terminal at all (CI, piped output, headless)
   if (!hasTerminal) {
@@ -278,8 +323,8 @@ async function runSetupWizard() {
     return;
   }
 
-  // If stdin is a TTY, ask the user; otherwise auto-run (npm may pipe stdin)
-  if (process.stdin.isTTY) {
+  // Ask user if terminal input is available
+  if (ttyReadable) {
     const shouldSkip = await askSkip("Run setup wizard to configure semantic search?");
     if (shouldSkip) {
       printInfo("Skipping setup. Run later with: npx ultracode-setup");
@@ -291,6 +336,9 @@ async function runSetupWizard() {
   printInfo("Starting setup wizard...");
   log();
 
+  // Spawn setup with direct terminal access (bypasses npm's stdio capture)
+  const wizardStdio = getTtyStdio();
+
   // Determine setup script path
   const setupScript =
     platform() === "win32" ? join(projectRoot, "scripts", "setup.cmd") : join(projectRoot, "scripts", "setup.sh");
@@ -300,7 +348,7 @@ async function runSetupWizard() {
     if (existsSync(setupJs)) {
       const result = spawnSync("node", [setupJs], {
         cwd: projectRoot,
-        stdio: "inherit",
+        stdio: wizardStdio,
       });
       if (result.status !== 0) {
         printError("Setup wizard failed");
@@ -315,12 +363,12 @@ async function runSetupWizard() {
   if (platform() === "win32") {
     spawnSync("cmd", ["/c", setupScript], {
       cwd: projectRoot,
-      stdio: "inherit",
+      stdio: wizardStdio,
     });
   } else {
     spawnSync("bash", [setupScript], {
       cwd: projectRoot,
-      stdio: "inherit",
+      stdio: wizardStdio,
     });
   }
 }
