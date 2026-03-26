@@ -9,6 +9,7 @@ REM   2. Recommend best provider (OpenVINO/TEI/Ollama)
 REM   3. Select model (512 tok + 8K legacy)
 REM   4. Install
 REM ==============================================================================
+chcp 65001 >nul 2>&1
 
 cd /d "%~dp0.."
 

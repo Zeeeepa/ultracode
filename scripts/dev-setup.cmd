@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul 2>&1
 REM Development Setup Wrapper
 REM Runs dev-setup.ps1 with proper execution policy
 
