@@ -3,6 +3,7 @@
 /**
  * Post-install script for ultracode
  * CommonJS format for maximum compatibility with npm lifecycle scripts
+ * Uses stderr for output — npm may buffer/suppress stdout in lifecycle scripts
  *
  * - CUDA libraries (win32/linux) are bundled in npm package
  * - For Apple Silicon: offers to build Metal backend
@@ -16,6 +17,9 @@ const { join } = require("node:path");
 const readline = require("node:readline");
 
 const projectRoot = join(__dirname, "..");
+
+// Use stderr for all output — npm reliably shows stderr from lifecycle scripts
+const log = (...args) => process.stderr.write(args.join(" ") + "\n");
 
 // ANSI colors
 const colors = {
@@ -33,31 +37,31 @@ function printBox(title, lines) {
   const width = 70;
   const border = "=".repeat(width);
 
-  console.log(`\n${colors.cyan}${border}${colors.reset}`);
-  console.log(`${colors.cyan}${colors.bright}  ${title}${colors.reset}`);
-  console.log(`${colors.cyan}${border}${colors.reset}\n`);
+  log(`\n${colors.cyan}${border}${colors.reset}`);
+  log(`${colors.cyan}${colors.bright}  ${title}${colors.reset}`);
+  log(`${colors.cyan}${border}${colors.reset}\n`);
 
   for (const line of lines) {
-    console.log(line);
+    log(line);
   }
 
-  console.log();
+  log();
 }
 
 function printSuccess(message) {
-  console.log(`${colors.green}\u2713${colors.reset} ${message}`);
+  log(`${colors.green}\u2713${colors.reset} ${message}`);
 }
 
 function printInfo(message) {
-  console.log(`${colors.blue}\u2139${colors.reset} ${message}`);
+  log(`${colors.blue}\u2139${colors.reset} ${message}`);
 }
 
 function _printWarning(message) {
-  console.log(`${colors.yellow}\u26A0${colors.reset} ${message}`);
+  log(`${colors.yellow}\u26A0${colors.reset} ${message}`);
 }
 
 function printError(message) {
-  console.log(`${colors.red}\u2717${colors.reset} ${message}`);
+  log(`${colors.red}\u2717${colors.reset} ${message}`);
 }
 
 function isAppleSilicon() {
@@ -87,11 +91,10 @@ function checkCudaLibExists() {
 async function askYesNo(question) {
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output: process.stderr,
   });
 
   return new Promise((resolve) => {
-    // Check if stdin is a TTY (interactive terminal)
     if (!process.stdin.isTTY) {
       rl.close();
       resolve(false);
@@ -108,14 +111,13 @@ async function askYesNo(question) {
 async function askSkip(question) {
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output: process.stderr,
   });
 
   return new Promise((resolve) => {
-    // Check if stdin is a TTY (interactive terminal)
     if (!process.stdin.isTTY) {
       rl.close();
-      resolve(false); // Don't skip - run by default in non-TTY
+      resolve(false);
       return;
     }
 
@@ -129,7 +131,7 @@ async function askSkip(question) {
 
 async function buildMetalBackend() {
   printInfo("Building Metal backend for Apple Silicon...");
-  console.log();
+  log();
 
   const buildScript = join(projectRoot, "scripts", "build-native-libs-macos.sh");
 
@@ -138,12 +140,11 @@ async function buildMetalBackend() {
     return false;
   }
 
-  // Run non-interactively with option 1 (Metal)
   const result = spawnSync("bash", ["-c", `echo "1" | bash "${buildScript}"`], {
     cwd: projectRoot,
     encoding: "utf8",
     stdio: "inherit",
-    timeout: 600000, // 10 minutes
+    timeout: 600000,
   });
 
   if (result.status === 0 && checkMetalLibExists()) {
@@ -156,7 +157,6 @@ async function buildMetalBackend() {
 }
 
 async function handleAppleSilicon() {
-  // Check if Metal lib already exists
   if (checkMetalLibExists()) {
     printSuccess("Metal GPU acceleration library found");
     return;
@@ -179,17 +179,17 @@ async function handleAppleSilicon() {
   const shouldBuild = await askYesNo("Build Metal backend now?");
 
   if (shouldBuild) {
-    console.log();
+    log();
     const success = await buildMetalBackend();
     if (!success) {
-      console.log();
+      log();
       printInfo("You can build later by running:");
-      console.log(`  ${colors.cyan}./node_modules/ultracode/scripts/build-native-libs-macos.sh${colors.reset}`);
+      log(`  ${colors.cyan}./node_modules/ultracode/scripts/build-native-libs-macos.sh${colors.reset}`);
     }
   } else {
     printInfo("Skipping Metal build. Using WASM SIMD fallback.");
     printInfo("You can build later by running:");
-    console.log(`  ${colors.cyan}./node_modules/ultracode/scripts/build-native-libs-macos.sh${colors.reset}`);
+    log(`  ${colors.cyan}./node_modules/ultracode/scripts/build-native-libs-macos.sh${colors.reset}`);
   }
 }
 
@@ -215,7 +215,7 @@ function detectPlatformInfo() {
 async function main() {
   // Skip in CI environments
   if (process.env.CI || process.env.CONTINUOUS_INTEGRATION) {
-    console.log("CI environment detected, skipping interactive setup");
+    log("CI environment detected, skipping interactive setup");
     return;
   }
 
@@ -236,13 +236,13 @@ async function main() {
   // Handle Apple Silicon - offer to build Metal
   if (isAppleSilicon()) {
     await handleAppleSilicon();
-    console.log();
+    log();
   } else if (isIntelMac()) {
     printInfo("Intel Mac detected - using WASM SIMD acceleration (GPU not available)");
-    console.log();
+    log();
   } else if (platformInfo.hasGPU) {
     printSuccess(`${platformInfo.gpuType} GPU acceleration library bundled and ready`);
-    console.log();
+    log();
   }
 
   // Quick start
@@ -262,8 +262,8 @@ async function main() {
   // Run setup wizard
   await runSetupWizard();
 
-  console.log(`${colors.green}${colors.bright}Ready to use! \uD83D\uDE80${colors.reset}`);
-  console.log();
+  log(`${colors.green}${colors.bright}Ready to use! \uD83D\uDE80${colors.reset}`);
+  log();
 }
 
 async function runSetupWizard() {
@@ -281,16 +281,15 @@ async function runSetupWizard() {
     return;
   }
 
-  console.log();
+  log();
   printInfo("Starting setup wizard...");
-  console.log();
+  log();
 
   // Determine setup script path
   const setupScript =
     platform() === "win32" ? join(projectRoot, "scripts", "setup.cmd") : join(projectRoot, "scripts", "setup.sh");
 
   if (!existsSync(setupScript)) {
-    // Fallback to running setup-command.js directly
     const setupJs = join(projectRoot, "dist", "cli", "setup-command.js");
     if (existsSync(setupJs)) {
       const result = spawnSync("node", [setupJs], {
@@ -321,7 +320,7 @@ async function runSetupWizard() {
 }
 
 main().catch((error) => {
-  console.error("Postinstall script error:", error.message);
+  process.stderr.write(`Postinstall script error: ${error.message}\n`);
   // Don't exit with error - postinstall failures shouldn't break npm install
   process.exit(0);
 });

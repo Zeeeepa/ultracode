@@ -40,6 +40,7 @@ import {
   type GPUInfo,
   type InstallResult,
   installLLMProvider,
+  installMcpConfigs,
   installProvider,
   type LLMConfig,
   type ModelsConfig,
@@ -225,6 +226,9 @@ async function runLlmOnlySetup(cpu: CPUInfo, gpu: GPUInfo): Promise<void> {
   } else {
     printWarn("No existing config found. Run full setup first.");
   }
+
+  // Auto-detect AI agents and install MCP config
+  await installMcpConfigs();
 }
 
 function buildEmbeddingConfig(
@@ -547,7 +551,9 @@ export async function runSetup(args: string[]): Promise<void> {
   // (Docker Desktop may auto-start com.docker.llama-server.exe when docker commands are invoked)
   cleanupDockerLlamaServer();
 
-  console.error("");
+  // Step 6: Auto-detect AI agents and install MCP config
+  await installMcpConfigs();
+
   console.error(`${c.yellow}Next: Restart your MCP client to enable semantic mode${c.reset}`);
   console.error("");
 }

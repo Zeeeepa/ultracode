@@ -44,13 +44,28 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
   const isLinux = process.platform === "linux";
 
   // ══════════════════════════════════════════════════════════════════════
-  // 1. vLLM - NVIDIA GPU champion (measured: 1352 emb/s with e5-small)
+  // 1. TEI - recommended GPU provider (measured: 1193 emb/s with e5-small)
+  // ══════════════════════════════════════════════════════════════════════
+  if (gpu.available) {
+    options.push({
+      id: "tei",
+      name: t("provider.tei.name"),
+      recommended: true, // Default recommendation for any GPU
+      speed: "1193 emb/s", // Measured with e5-small on RTX 5090
+      pros: ta("provider.tei.pros"),
+      cons: [...ta("provider.tei.cons")],
+      available: true,
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 2. vLLM - NVIDIA GPU alternative (measured: 1352 emb/s with e5-small)
   // ══════════════════════════════════════════════════════════════════════
   if (isNvidiaGPU) {
     options.push({
       id: "vllm",
       name: t("provider.vllm.name"),
-      recommended: true, // Fastest option for NVIDIA
+      recommended: false,
       speed: "1352 emb/s", // Measured with e5-small on RTX 5090
       pros: ta("provider.vllm.pros"),
       cons: ta("provider.vllm.cons"),
@@ -59,42 +74,30 @@ export function getProviderRecommendations(_cpu: CPUInfo, gpu: GPUInfo): Provide
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // 2. TEI - GPU runner-up (measured: 1193 emb/s with e5-small)
+  // 3. llama.cpp - native GGUF (measured: 441 emb/s centralized mode)
+  //    Hidden when NVIDIA GPU detected (TEI/vLLM are better options)
   // ══════════════════════════════════════════════════════════════════════
-  if (gpu.available) {
-    const teiOption: ProviderOption = {
-      id: "tei",
-      name: t("provider.tei.name"),
-      recommended: !isNvidiaGPU && gpu.computeCap >= 8.0, // Recommend if no NVIDIA
-      speed: "1193 emb/s", // Measured with e5-small on RTX 5090
-      pros: ta("provider.tei.pros"),
-      cons: [...ta("provider.tei.cons")],
+  if (!isNvidiaGPU) {
+    options.push({
+      id: "llamacpp",
+      name: t("provider.llamacpp.name"),
+      recommended: isAmdGPU, // Recommend for AMD GPUs (Vulkan backend)
+      speed: "441 emb/s", // Measured with e5-small, centralized mode, parallel=8
+      pros: ta("provider.llamacpp.pros"),
+      cons: ta("provider.llamacpp.cons"),
       available: true,
-    };
-    options.push(teiOption);
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  // 3. llama.cpp - native GGUF (measured: 441 emb/s centralized mode)
-  // ══════════════════════════════════════════════════════════════════════
-  options.push({
-    id: "llamacpp",
-    name: t("provider.llamacpp.name"),
-    recommended: isAmdGPU, // Recommend for AMD GPUs (Vulkan backend)
-    speed: "441 emb/s", // Measured with e5-small, centralized mode, parallel=8
-    pros: ta("provider.llamacpp.pros"),
-    cons: ta("provider.llamacpp.cons"),
-    available: true,
-  });
-
-  // ══════════════════════════════════════════════════════════════════════
   // 4. OVMS Native - OpenVINO (measured: 260-326 emb/s with e5-small)
+  //    Hidden when any GPU detected (GPU providers are faster)
   // ══════════════════════════════════════════════════════════════════════
-  if (isWindows || isLinux) {
+  if (!gpu.available && (isWindows || isLinux)) {
     options.push({
       id: "ovms-native",
       name: t("provider.ovms.name"),
-      recommended: !gpu.available && (isWindows || isLinux), // Recommend for CPU-only without Docker
+      recommended: true, // Best CPU-only option
       speed: "260-326 emb/s", // Measured with e5-small, iGPU + CPU, ratio 3:5
       pros: ta("provider.ovms.pros"),
       cons: ta("provider.ovms.cons"),

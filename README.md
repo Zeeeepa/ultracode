@@ -41,6 +41,164 @@ With UltraCode, the same agent makes **one MCP call** and gets back all affected
 
 Full indexing of a medium project (~500 files) completes in **3-5 seconds** (parallel parsing + batch SQL + streaming embeddings). Large projects like VS Code (~1.8M LOC, 7000+ files) — **~82 seconds** including full embedding generation. After that, `GitWatcher` indexes only changed files — typically **under 200ms** per change.
 
+# Installation
+
+The project is optimized for [Bun](https://bun.sh) (an alternative JavaScript runtime) and runs 50% faster with it.
+
+**Bun + UltraCode** (recommended — one-liner):
+
+```bash
+# macOS / Linux
+curl -fsSL https://bun.sh/install | bash && ~/.bun/bin/bun i -g ultracode && ~/.bun/bin/bun pm -g trust ultracode
+```
+
+```powershell
+# Windows (PowerShell)
+irm bun.sh/install.ps1 | iex; bun i -g ultracode; bun pm -g trust ultracode
+```
+
+**UltraCode only** (Bun already installed):
+
+```bash
+bun i -g ultracode && bun pm -g trust ultracode
+```
+
+**npm** (alternative):
+
+```bash
+npm install -g ultracode
+```
+
+> **Why two steps for Bun?**
+> Some dependencies use postinstall scripts to build native addons:
+> 
+> - **cbor-extract** — fast native metadata serialization (via cbor-x)
+> - **protobufjs** — binary protocol for IPC
+> - **webgpu** — Dawn GPU backend for AMD/Intel
+> 
+> Bun blocks postinstall scripts by default. The `bun pm trust` command allows their execution — no reinstall needed.
+> 
+> Other native components (oxc-parser, xxhash-wasm, better-sqlite3) ship prebuilt binaries and work without trust.
+
+> **Note**: For full code analysis on different languages, runtimes are required:
+> 
+> - TypeScript/JavaScript — built-in (TypeScript Compiler API)
+> - Python — requires Python 3.8+ (`python --version`)
+> - Java/Kotlin — requires JRE 11+ (`java --version`)
+> - Go — requires Go 1.18+ (`go version`)
+> - Rust — requires Rust toolchain (`rustc --version`)
+> - C# — requires .NET SDK 8+ (`dotnet --version`)
+> - Zig — built-in (regex-based, no Zig toolchain required)
+> - C/C++ — requires Clang 12+ (`clang --version`)
+
+**Claude Code Config** (`~/.claude.json`):
+
+```json
+{
+  "mcpServers": {
+    "ultracode": {
+      "command": "ultracode"
+    }
+  }
+}
+```
+
+> Configuration: [.autodoc/claude.cfg/add-to-CLAUDE.md](.autodoc/claude.cfg/add-to-CLAUDE.md)
+
+## **Local Model Setup**
+
+Local models are used for intelligent tasks: embedding model for semantic search and LLM for AutoDoc. This removes token costs from your main AI agent.
+
+**After installation, a setup wizard will launch and download and configure everything needed.**
+
+**Step 1: Embedding Provider** (semantic search)
+
+| Provider        | Speed         | Recommendation                                                           |
+| --------------- | ------------- | ------------------------------------------------------------------------ |
+| **vLLM**        | 1352 emb/s    | ⭐ NVIDIA GPU (recommended)                                               |
+| **TEI**         | 1169 emb/s    | ⭐ NVIDIA GPU (Blackwell: `120-latest` image)                             |
+| **MLX**         | ~500 emb/s    | ⭐ macOS Apple Silicon (Metal GPU)                                        |
+| **llama.cpp**   | 441 emb/s     | AMD GPU (Vulkan), universal                                              |
+| **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Can help if main VRAM is occupied by local LLM. |
+
+> **Note for GTX xx50/xx60 laptops (GPU thermal throttling)**
+> 
+> Budget NVIDIA GPUs (GTX 1650/1660, RTX 3050/3060, RTX 4050/4060) on laptops often suffer from power limit throttling, which drops TEI/vLLM embedding throughput by ~1000 emb/s. The GPU hits its power limit (PL1) and clocks down mid-batch.
+> 
+> **Fix via [ThrottleStop](https://www.techpowerup.com/download/techpowerup-throttlestop/)** (Windows):
+> 
+> 1. **TPL** button → set **PL1** to max (55–75 W for laptops), **PL2** to max (90–120 W), **Turbo Time Limit** → 28 sec (max), enable **Clamp PL1/PL2** (TPL button turns green)
+> 2. Main window → **Speed Shift - EPP** → `0` (max performance, reduces CPU throttle)
+> 3. **BD PROCHOT Offset** → `0` (disables CPU thermal trigger for GPU)
+> 4. **Limit Reasons** → check what's blocking (if "MS Platform" — ignore)
+> 5. **Apply** → save profile. CPU yields thermal budget to GPU, TEI batches stabilize.
+> 
+> This typically gives **+1000 emb/s** on affected hardware.
+
+**Step 2: LLM Provider** (AutoDoc, refactoring)
+
+| Provider                | Models                                  | Recommendation                   |
+| ----------------------- | --------------------------------------- | -------------------------------- |
+| **Docker Model Runner** | Qwen 2.5, DeepSeek R1, Phi-4, Llama 3.2 | ⭐ If Docker Desktop is installed |
+| **Ollama**              | qwen2.5-coder, deepseek-coder, phi4     | Universal option                 |
+| **Skip**                | —                                       | Configure later                  |
+
+The wizard automatically:
+
+- Detects your GPU (NVIDIA Turing/Ampere/Ada/Hopper/Blackwell*)
+- Suggests optimal models for your hardware
+- Installs selected providers
+- Saves configuration to system directory
+
+> **Re-run wizard:**
+> 
+> ```bash
+> # Bun
+> bunx ultracode setup
+> 
+> # Node.js
+> npx ultracode setup
+> ```
+
+*For Blackwell (RTX 50xx), an unofficial TEI fork is used
+
+### AUTODOC Setup
+
+To activate auto-documentation mode - create a `.autodoc` folder in the project root and enable LLM usage (easiest to use the same claude).
+
+After running UltraCode with Autodoc mode enabled:
+
+1. In all folders with source code (from supported languages), AUTODOC.md files will be created with a template listing files in the directory.
+2. LLM will go through these files and generate descriptions in AUTODOC.md — what the code in the files specifically does.
+
+After this, you can yourself (or with an AI agent's help) create needed files with project overview in the .autodoc directory and add "human descriptions" in AUTODOC.md files where needed. There you can use direct references to code lines in files (for describing start and end of code block, use two numbers. Example: FILE:XX-ZZ). UltraCode will track code changes and automatically update all code references to keep them current. It won't touch documentation text.
+
+### macOS Apple Silicon (MLX Embeddings)
+
+Native embedding support via Apple MLX framework (Metal GPU):
+
+- **MLX provider** auto-detects macOS ARM64 and uses Metal GPU
+- Setup wizard offers MLX as the default on Apple Silicon
+- Models: `intfloat/multilingual-e5-base` (768d), `intfloat/multilingual-e5-small` (384d), `BAAI/bge-m3` (1024d, 8K context)
+- Auto-installs Python venv with dependencies, downloads models from HuggingFace
+
+```bash
+# Re-run wizard to switch to MLX:
+bunx ultracode setup
+# Select "MLX" → auto-setup venv + model + server on port 8087
+```
+
+### GPU Acceleration (CUDA/WebGPU/Metal)
+
+```bash
+# macOS: Metal backend for CUDA-like acceleration
+# Build requirements:
+#   - Xcode Command Line Tools: xcode-select --install
+#   - Homebrew: https://brew.sh
+#   - CMake: brew install cmake
+./node_modules/ultracode/scripts/build-native-libs-macos.sh
+```
+
 # Features
 
 MCP server provides **78 tools** for code analysis and modification.
@@ -400,167 +558,6 @@ You can add a [short prompt](.autodoc/claude.cfg/add-to-CLAUDE.md) to your syste
 - **Save 10+ GB RAM** — instead of N copies of indexes in memory — one shared
 - **Instant connection** — new agents connect to running server in milliseconds
 - **Session isolation** — each agent gets independent MCP session
-
-# Installation
-
-The project is optimized for [Bun](https://bun.sh) (an alternative JavaScript runtime) and runs 50% faster with it.
-
-**Installing Bun** (one command):
-
-```bash
-# Windows (PowerShell)
-powershell -c "irm bun.sh/install.ps1 | iex"
-
-# macOS / Linux
-curl -fsSL https://bun.sh/install | bash
-```
-
-**Installing UltraCode**
-
-```bash
-# Bun (recommended) — two steps:
-
-# 1. Install package
-bun install -g ultracode
-
-# 2. Allow postinstall scripts for native modules
-bun pm -g trust ultracode
-```
-
-```bash
-# npm (alternative) — one step:
-npm install -g ultracode
-```
-
-> **Why two steps for Bun?**
-> Some dependencies use postinstall scripts to build native addons:
-> 
-> - **cbor-extract** — fast native metadata serialization (via cbor-x)
-> - **protobufjs** — binary protocol for IPC
-> - **webgpu** — Dawn GPU backend for AMD/Intel
-> 
-> Bun blocks postinstall scripts by default. The `bun pm trust` command allows their execution — no reinstall needed.
-> 
-> Other native components (oxc-parser, xxhash-wasm, better-sqlite3) ship prebuilt binaries and work without trust.
-
-> **Note**: For full code analysis on different languages, runtimes are required:
-> 
-> - TypeScript/JavaScript — built-in (TypeScript Compiler API)
-> - Python — requires Python 3.8+ (`python --version`)
-> - Java/Kotlin — requires JRE 11+ (`java --version`)
-> - Go — requires Go 1.18+ (`go version`)
-> - Rust — requires Rust toolchain (`rustc --version`)
-> - C# — requires .NET SDK 8+ (`dotnet --version`)
-> - Zig — built-in (regex-based, no Zig toolchain required)
-> - C/C++ — requires Clang 12+ (`clang --version`)
-
-**Claude Code Config** (`~/.claude.json`):
-
-```json
-{
-  "mcpServers": {
-    "ultracode": {
-      "command": "ultracode"
-    }
-  }
-}
-```
-
-> Configuration: [.autodoc/claude.cfg/add-to-CLAUDE.md](.autodoc/claude.cfg/add-to-CLAUDE.md)
-
-## **Local Model Setup**
-
-Local models are used for intelligent tasks: embedding model for semantic search and LLM for AutoDoc. This removes token costs from your main AI agent.
-
-**After installation, a setup wizard will launch and download and configure everything needed.**
-
-**Step 1: Embedding Provider** (semantic search)
-
-| Provider        | Speed         | Recommendation                                                           |
-| --------------- | ------------- | ------------------------------------------------------------------------ |
-| **vLLM**        | 1352 emb/s    | ⭐ NVIDIA GPU (recommended)                                               |
-| **TEI**         | 1169 emb/s    | ⭐ NVIDIA GPU (Blackwell: `120-latest` image)                             |
-| **MLX**         | ~500 emb/s    | ⭐ macOS Apple Silicon (Metal GPU)                                        |
-| **llama.cpp**   | 441 emb/s     | AMD GPU (Vulkan), universal                                              |
-| **OVMS Native** | 260-326 emb/s | ⭐ CPU / Intel GPU. <br />Can help if main VRAM is occupied by local LLM. |
-
-> **Note for GTX xx50/xx60 laptops (GPU thermal throttling)**
-> 
-> Budget NVIDIA GPUs (GTX 1650/1660, RTX 3050/3060, RTX 4050/4060) on laptops often suffer from power limit throttling, which drops TEI/vLLM embedding throughput by ~1000 emb/s. The GPU hits its power limit (PL1) and clocks down mid-batch.
-> 
-> **Fix via [ThrottleStop](https://www.techpowerup.com/download/techpowerup-throttlestop/)** (Windows):
-> 
-> 1. **TPL** button → set **PL1** to max (55–75 W for laptops), **PL2** to max (90–120 W), **Turbo Time Limit** → 28 sec (max), enable **Clamp PL1/PL2** (TPL button turns green)
-> 2. Main window → **Speed Shift - EPP** → `0` (max performance, reduces CPU throttle)
-> 3. **BD PROCHOT Offset** → `0` (disables CPU thermal trigger for GPU)
-> 4. **Limit Reasons** → check what's blocking (if "MS Platform" — ignore)
-> 5. **Apply** → save profile. CPU yields thermal budget to GPU, TEI batches stabilize.
-> 
-> This typically gives **+1000 emb/s** on affected hardware.
-
-**Step 2: LLM Provider** (AutoDoc, refactoring)
-
-| Provider                | Models                                  | Recommendation                   |
-| ----------------------- | --------------------------------------- | -------------------------------- |
-| **Docker Model Runner** | Qwen 2.5, DeepSeek R1, Phi-4, Llama 3.2 | ⭐ If Docker Desktop is installed |
-| **Ollama**              | qwen2.5-coder, deepseek-coder, phi4     | Universal option                 |
-| **Skip**                | —                                       | Configure later                  |
-
-The wizard automatically:
-
-- Detects your GPU (NVIDIA Turing/Ampere/Ada/Hopper/Blackwell*)
-- Suggests optimal models for your hardware
-- Installs selected providers
-- Saves configuration to system directory
-
-> **Re-run wizard:**
-> 
-> ```bash
-> # Bun
-> bunx ultracode setup
-> 
-> # Node.js
-> npx ultracode setup
-> ```
-
-*For Blackwell (RTX 50xx), an unofficial TEI fork is used
-
-### AUTODOC Setup
-
-To activate auto-documentation mode - create a `.autodoc` folder in the project root and enable LLM usage (easiest to use the same claude).
-
-After running UltraCode with Autodoc mode enabled:
-
-1. In all folders with source code (from supported languages), AUTODOC.md files will be created with a template listing files in the directory.
-2. LLM will go through these files and generate descriptions in AUTODOC.md — what the code in the files specifically does.
-
-After this, you can yourself (or with an AI agent's help) create needed files with project overview in the .autodoc directory and add "human descriptions" in AUTODOC.md files where needed. There you can use direct references to code lines in files (for describing start and end of code block, use two numbers. Example: FILE:XX-ZZ). UltraCode will track code changes and automatically update all code references to keep them current. It won't touch documentation text.
-
-### macOS Apple Silicon (MLX Embeddings)
-
-Native embedding support via Apple MLX framework (Metal GPU):
-
-- **MLX provider** auto-detects macOS ARM64 and uses Metal GPU
-- Setup wizard offers MLX as the default on Apple Silicon
-- Models: `intfloat/multilingual-e5-base` (768d), `intfloat/multilingual-e5-small` (384d), `BAAI/bge-m3` (1024d, 8K context)
-- Auto-installs Python venv with dependencies, downloads models from HuggingFace
-
-```bash
-# Re-run wizard to switch to MLX:
-bunx ultracode setup
-# Select "MLX" → auto-setup venv + model + server on port 8087
-```
-
-### GPU Acceleration (CUDA/WebGPU/Metal)
-
-```bash
-# macOS: Metal backend for CUDA-like acceleration
-# Build requirements:
-#   - Xcode Command Line Tools: xcode-select --install
-#   - Homebrew: https://brew.sh
-#   - CMake: brew install cmake
-./node_modules/ultracode/scripts/build-native-libs-macos.sh
-```
 
 # Configuration
 

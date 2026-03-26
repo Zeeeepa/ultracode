@@ -15,3 +15,5 @@ export * from "./setup-selection.js";
 export * from "./setup-types.js";
 // UI utilities
 export * from "./setup-ui.js";
+// MCP auto-installer
+export { installMcpConfigs } from "./mcp-installer.js";
