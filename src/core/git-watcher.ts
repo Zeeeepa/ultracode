@@ -11,7 +11,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, type FSWatcher, watch } from "node:fs";
+import { existsSync, type FSWatcher, readFileSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { log } from "../logging/index.js";
 import { areTimersSuspended } from "./indexing-state.js";
@@ -75,7 +75,9 @@ function readCommitFromRefs(gitDir: string, branch: string | null): string | nul
     try {
       const head = readFileSync(join(gitDir, "HEAD"), "utf-8").trim();
       if (/^[0-9a-f]{40}$/.test(head)) return head;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return null;
   }
 
@@ -83,7 +85,9 @@ function readCommitFromRefs(gitDir: string, branch: string | null): string | nul
   const looseRef = join(gitDir, "refs", "heads", branch);
   try {
     return readFileSync(looseRef, "utf-8").trim();
-  } catch { /* not a loose ref — check packed-refs */ }
+  } catch {
+    /* not a loose ref — check packed-refs */
+  }
 
   // Try packed-refs
   try {
@@ -94,7 +98,9 @@ function readCommitFromRefs(gitDir: string, branch: string | null): string | nul
       const sha = line.split(" ")[0];
       if (sha && /^[0-9a-f]{40}$/.test(sha)) return sha;
     }
-  } catch { /* no packed-refs */ }
+  } catch {
+    /* no packed-refs */
+  }
 
   return null;
 }
@@ -240,7 +246,9 @@ export class GitWatcher {
         this.packedRefsWatcher = watch(packedRefsPath, () => {
           if (!this.stopped) this.checkCommitChange();
         });
-      } catch { /* packed-refs may not exist yet — that's OK */ }
+      } catch {
+        /* packed-refs may not exist yet — that's OK */
+      }
     }
 
     // Uncommitted changes: no polling — use notifyFileChange() from FileWatcher
@@ -283,9 +291,18 @@ export class GitWatcher {
 
   /** Close all fs.watch handles. */
   private closeAllWatchers(): void {
-    if (this.headWatcher) { this.headWatcher.close(); this.headWatcher = null; }
-    if (this.refsWatcher) { this.refsWatcher.close(); this.refsWatcher = null; }
-    if (this.packedRefsWatcher) { this.packedRefsWatcher.close(); this.packedRefsWatcher = null; }
+    if (this.headWatcher) {
+      this.headWatcher.close();
+      this.headWatcher = null;
+    }
+    if (this.refsWatcher) {
+      this.refsWatcher.close();
+      this.refsWatcher = null;
+    }
+    if (this.packedRefsWatcher) {
+      this.packedRefsWatcher.close();
+      this.packedRefsWatcher = null;
+    }
   }
 
   /**
@@ -300,12 +317,16 @@ export class GitWatcher {
 
     // Immediate callbacks
     for (const callback of this.uncommittedChangeCallbacks) {
-      try { callback(changedFiles); } catch (error) {
+      try {
+        callback(changedFiles);
+      } catch (error) {
         log.w("GITWATCHER", "uncommitted_cb_err", { err: String(error) });
       }
     }
     for (const callback of this.fileChangeCallbacks) {
-      try { callback(changedFiles); } catch (error) {
+      try {
+        callback(changedFiles);
+      } catch (error) {
         log.w("GITWATCHER", "file_cb_err", { err: String(error) });
       }
     }
