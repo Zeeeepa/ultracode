@@ -19,7 +19,7 @@ import { readFile, writeFile } from "node:fs/promises";
 
 import type { HashFilter } from "./hash-filter.js";
 import type { Tier } from "./quantization.js";
-import { scalarQuantize, type ScalarQuantized } from "./quantization.js";
+import { type ScalarQuantized, scalarQuantize } from "./quantization.js";
 
 // =============================================================================
 // Types

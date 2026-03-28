@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { log } from "../logging/index.js";
 import type { SimilarityResult, VectorEmbedding } from "../types/semantic.js";
 import { HashFilter } from "./hash-filter.js";
-import { IvfIndex, type IvfConfig } from "./ivf-index.js";
+import { type IvfConfig, IvfIndex } from "./ivf-index.js";
 import { NativeVectorIndex } from "./native-vector-index.js";
 
 // =============================================================================
@@ -326,9 +326,7 @@ export class NativeVectorProvider {
 
   private maybeAutoSave(): void {
     if (this.unsavedCount >= this.config.autoSaveThreshold) {
-      this.save().catch((err) =>
-        log.w("NATIVE_VEC", "Auto-save failed", { error: (err as Error).message }),
-      );
+      this.save().catch((err) => log.w("NATIVE_VEC", "Auto-save failed", { error: (err as Error).message }));
     }
   }
 }

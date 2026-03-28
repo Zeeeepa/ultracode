@@ -25,14 +25,14 @@ import { computeNorm } from "./native-vector-index.js";
 
 /** Optimal reconstruction levels for unit Gaussian, 16 levels (4-bit). */
 const LLOYD_MAX_4BIT_LEVELS: Float32Array = new Float32Array([
-  -2.7326, -2.069, -1.618, -1.2562, -0.9423, -0.6568, -0.3881, -0.1284, 0.1284, 0.3881, 0.6568, 0.9423, 1.2562,
-  1.618, 2.069, 2.7326,
+  -2.7326, -2.069, -1.618, -1.2562, -0.9423, -0.6568, -0.3881, -0.1284, 0.1284, 0.3881, 0.6568, 0.9423, 1.2562, 1.618,
+  2.069, 2.7326,
 ]);
 
 /** Decision boundaries between adjacent levels. */
 const LLOYD_MAX_4BIT_THRESHOLDS: Float32Array = new Float32Array([
-  -2.4008, -1.8435, -1.4371, -1.0993, -0.7996, -0.5224, -0.2582, 0.0, 0.2582, 0.5224, 0.7996, 1.0993, 1.4371,
-  1.8435, 2.4008,
+  -2.4008, -1.8435, -1.4371, -1.0993, -0.7996, -0.5224, -0.2582, 0.0, 0.2582, 0.5224, 0.7996, 1.0993, 1.4371, 1.8435,
+  2.4008,
 ]);
 
 /** Quantize scalar to 4-bit code (unrolled binary search). */
