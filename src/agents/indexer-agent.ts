@@ -1576,6 +1576,12 @@ export class IndexerAgent extends BaseAgent {
         this.handleFileWatcherChanges(events, bulkMode).catch((err) => {
           log.e("INDEXER", "FileWatcher change handler error", { error: (err as Error).message });
         });
+
+        // Forward to GitWatcher for uncommitted change tracking (replaces git status polling)
+        const gitWatcher = this.gitWatchers.get(path);
+        if (gitWatcher) {
+          gitWatcher.notifyFileChange(events.map((e) => e.path));
+        }
       });
 
       this.fileWatcher.on("error", (err: Error) => {

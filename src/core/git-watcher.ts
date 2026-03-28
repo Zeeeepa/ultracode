@@ -11,18 +11,10 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, type FSWatcher, watch } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, type FSWatcher, watch } from "node:fs";
+import { join, resolve } from "node:path";
 import { log } from "../logging/index.js";
-import { resolveGitHeadPath } from "../shared/git-worktree.js";
 import { areTimersSuspended } from "./indexing-state.js";
-
-// Event-driven architecture: git polling uses setInterval for Node.js, disabled for Bun
-
-/** Check if running in Bun */
-function isBunRuntime(): boolean {
-  return typeof globalThis.Bun !== "undefined";
-}
 
 /**
  * Runtime-aware sleep - uses Bun.sleep for Bun, setTimeout for Node.js
@@ -33,6 +25,78 @@ async function sleep(ms: number): Promise<void> {
   } else {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
+}
+
+/**
+ * Resolve the .git directory path (handles worktrees).
+ * Returns absolute path to the git directory containing refs/, HEAD, etc.
+ */
+function resolveGitDir(repoPath: string): string {
+  try {
+    const gitDirRaw = execSync("git rev-parse --git-dir", {
+      cwd: repoPath,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
+    }).trim();
+    return resolve(repoPath, gitDirRaw);
+  } catch {
+    return join(repoPath, ".git");
+  }
+}
+
+/**
+ * Read branch name from .git/HEAD file (no child process).
+ * Returns branch name or null for detached HEAD.
+ */
+function readBranchFromHead(gitDir: string): string | null {
+  try {
+    const head = readFileSync(join(gitDir, "HEAD"), "utf-8").trim();
+    // "ref: refs/heads/dev" → "dev"
+    if (head.startsWith("ref: refs/heads/")) {
+      return head.slice(16);
+    }
+    // Detached HEAD — raw SHA
+    if (/^[0-9a-f]{40}$/.test(head)) {
+      return `detached-${head.slice(0, 7)}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read current commit SHA from .git/refs/heads/<branch> or packed-refs (no child process).
+ */
+function readCommitFromRefs(gitDir: string, branch: string | null): string | null {
+  if (!branch || branch.startsWith("detached-")) {
+    // Detached HEAD — SHA is in HEAD directly
+    try {
+      const head = readFileSync(join(gitDir, "HEAD"), "utf-8").trim();
+      if (/^[0-9a-f]{40}$/.test(head)) return head;
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  // Try loose ref first: .git/refs/heads/<branch>
+  const looseRef = join(gitDir, "refs", "heads", branch);
+  try {
+    return readFileSync(looseRef, "utf-8").trim();
+  } catch { /* not a loose ref — check packed-refs */ }
+
+  // Try packed-refs
+  try {
+    const packed = readFileSync(join(gitDir, "packed-refs"), "utf-8");
+    const needle = `refs/heads/${branch}`;
+    for (const line of packed.split("\n")) {
+      if (line.startsWith("#") || !line.includes(needle)) continue;
+      const sha = line.split(" ")[0];
+      if (sha && /^[0-9a-f]{40}$/.test(sha)) return sha;
+    }
+  } catch { /* no packed-refs */ }
+
+  return null;
 }
 
 // =============================================================================
@@ -73,10 +137,11 @@ export interface FileChange {
 export class GitWatcher {
   private config: GitWatcherConfig;
   private repoPath: string | null = null;
-  private watcher: FSWatcher | null = null;
-  private commitPollRunning = false;
-  private uncommittedPollRunning = false;
-  private stopped = false; // Flag to stop async loops
+  private gitDir: string | null = null;
+  private headWatcher: FSWatcher | null = null;
+  private refsWatcher: FSWatcher | null = null;
+  private packedRefsWatcher: FSWatcher | null = null;
+  private stopped = false;
 
   private currentBranch: string | null = null;
   private currentCommit: string | null = null;
@@ -114,7 +179,13 @@ export class GitWatcher {
   }
 
   /**
-   * Start watching a Git repository
+   * Start watching a Git repository.
+   *
+   * Zero-polling architecture:
+   *   - fs.watch('.git/HEAD') → branch changes (was already here)
+   *   - fs.watch('.git/refs/', {recursive}) → commit detection (replaces 5s poll)
+   *   - fs.watch('.git/packed-refs') → packed ref updates
+   *   - FileWatcher events via notifyFileChange() → uncommitted changes (replaces 10s git status poll)
    */
   startWatching(repoPath: string): void {
     if (!this.config.enabled) {
@@ -123,133 +194,58 @@ export class GitWatcher {
     }
 
     this.repoPath = repoPath;
+    this.gitDir = resolveGitDir(repoPath);
 
-    // Resolve correct HEAD path (works for both main repos and linked worktrees)
-    const gitHeadPath = resolveGitHeadPath(repoPath) ?? join(repoPath, ".git", "HEAD");
-
+    const gitHeadPath = join(this.gitDir, "HEAD");
     if (!existsSync(gitHeadPath)) {
       log.i("GITWATCHER", "no_git_dir");
       return;
     }
 
-    // Initialize current state
+    // Initialize current state (file reads, no child processes)
     this.currentBranch = this.getCurrentBranch();
     this.currentCommit = this.getCurrentCommit();
 
-    log.i("GITWATCHER", "started", { path: repoPath });
+    log.i("GITWATCHER", "started", { path: repoPath, mode: "fs.watch (zero-polling)" });
     log.i("GITWATCHER", "current_branch", { branch: this.currentBranch });
     log.i("GITWATCHER", "current_commit", { commit: this.currentCommit });
 
-    // Reset stop flag for new watching session
     this.stopped = false;
+    this.closeAllWatchers();
 
-    // Close existing watcher to prevent leaks on repeated startWatching calls
-    if (this.watcher) {
-      this.watcher.close();
-      this.watcher = null;
-    }
-
-    // Watch .git/HEAD for branch changes
-    this.watcher = watch(gitHeadPath, (eventType) => {
-      if (eventType === "change") {
-        this.checkBranchChange();
-      }
+    // 1. Watch .git/HEAD → branch changes + detached HEAD
+    this.headWatcher = watch(gitHeadPath, () => {
+      if (!this.stopped) this.checkBranchChange();
     });
 
-    // Start async loop for commit changes (safe for Bun + OpenVINO)
-    this.startCommitPollLoop();
+    // 2. Watch .git/refs/ recursively → commit/fetch/tag detection
+    const refsDir = join(this.gitDir, "refs");
+    if (existsSync(refsDir)) {
+      try {
+        this.refsWatcher = watch(refsDir, { recursive: true }, () => {
+          if (!this.stopped) {
+            this.checkBranchChange();
+            this.checkCommitChange();
+          }
+        });
+      } catch (err) {
+        log.w("GITWATCHER", "refs_watch_fail", { err: String(err) });
+      }
+    }
 
-    // Poll for uncommitted file changes (working directory)
+    // 3. Watch .git/packed-refs → git gc / pack-refs
+    const packedRefsPath = join(this.gitDir, "packed-refs");
+    if (existsSync(packedRefsPath)) {
+      try {
+        this.packedRefsWatcher = watch(packedRefsPath, () => {
+          if (!this.stopped) this.checkCommitChange();
+        });
+      } catch { /* packed-refs may not exist yet — that's OK */ }
+    }
+
+    // Uncommitted changes: no polling — use notifyFileChange() from FileWatcher
     if (this.config.watchUncommitted) {
-      log.i("GITWATCHER", "uncommitted_watch_on", { interval: this.config.uncommittedPollIntervalMs });
-
-      // Initial check to populate lastUncommittedFiles
-      this.getUncommittedFiles().then((files) => {
-        this.lastUncommittedFiles = new Set(files.map((f) => f.path));
-        log.i("GITWATCHER", "init_uncommitted", { count: this.lastUncommittedFiles.size });
-      });
-
-      // Start async loop for uncommitted changes (safe for Bun + OpenVINO)
-      this.startUncommittedPollLoop();
-    }
-  }
-
-  /** Timer handles for Node.js setInterval */
-  private commitPollTimer?: ReturnType<typeof setInterval> | undefined;
-  private uncommittedPollTimer?: ReturnType<typeof setInterval> | undefined;
-
-  /**
-   * Start commit and branch polling
-   * Node.js: uses setInterval
-   * Bun: uses async loop with Bun.sleep
-   * Also polls for branch changes as fs.watch() is unreliable on Windows
-   */
-  private startCommitPollLoop(): void {
-    if (this.commitPollRunning) return;
-    this.commitPollRunning = true;
-
-    if (isBunRuntime()) {
-      // Bun: use async loop with Bun.sleep
-      (async () => {
-        while (!this.stopped) {
-          await sleep(this.config.pollIntervalMs);
-          if (this.stopped) break;
-          try {
-            this.checkBranchChange();
-            this.checkCommitChange();
-          } catch (error) {
-            log.w("GITWATCHER", "poll_err", { err: String(error) });
-          }
-        }
-        this.commitPollRunning = false;
-      })();
-    } else {
-      // Node.js: use setInterval
-      this.commitPollTimer = setInterval(() => {
-        if (!this.stopped) {
-          try {
-            this.checkBranchChange();
-            this.checkCommitChange();
-          } catch (error) {
-            log.w("GITWATCHER", "poll_err", { err: String(error) });
-          }
-        }
-      }, this.config.pollIntervalMs);
-    }
-  }
-
-  /**
-   * Start uncommitted file polling
-   * Node.js: uses setInterval
-   * Bun: uses async loop with Bun.sleep
-   */
-  private startUncommittedPollLoop(): void {
-    if (this.uncommittedPollRunning) return;
-    this.uncommittedPollRunning = true;
-
-    if (isBunRuntime()) {
-      // Bun: use async loop with Bun.sleep
-      (async () => {
-        while (!this.stopped) {
-          await sleep(this.config.uncommittedPollIntervalMs!);
-          if (this.stopped) break;
-          try {
-            await this.checkUncommittedChanges();
-          } catch (error) {
-            log.w("GITWATCHER", "uncommitted_poll_err", { err: String(error) });
-          }
-        }
-        this.uncommittedPollRunning = false;
-      })();
-    } else {
-      // Node.js: use setInterval
-      this.uncommittedPollTimer = setInterval(() => {
-        if (!this.stopped) {
-          this.checkUncommittedChanges().catch((error) => {
-            log.w("GITWATCHER", "uncommitted_poll_err", { err: String(error) });
-          });
-        }
-      }, this.config.uncommittedPollIntervalMs!);
+      log.i("GITWATCHER", "uncommitted_watch_on", { mode: "event-driven (FileWatcher)" });
     }
   }
 
@@ -264,30 +260,15 @@ export class GitWatcher {
    * Check if watcher is currently active
    */
   isWatching(): boolean {
-    return !this.stopped && (!!this.watcher || this.commitPollRunning || this.uncommittedPollRunning);
+    return !this.stopped && (!!this.headWatcher || !!this.refsWatcher);
   }
 
   /**
    * Stop watching the repository
    */
   stopWatching(): void {
-    // Stop all async loops
     this.stopped = true;
-
-    // Clear timers
-    if (this.commitPollTimer) {
-      clearInterval(this.commitPollTimer);
-      this.commitPollTimer = undefined;
-    }
-    if (this.uncommittedPollTimer) {
-      clearInterval(this.uncommittedPollTimer);
-      this.uncommittedPollTimer = undefined;
-    }
-
-    if (this.watcher) {
-      this.watcher.close();
-      this.watcher = null;
-    }
+    this.closeAllWatchers();
 
     // Abort pending debounce
     if (this.debounceAbortController) {
@@ -298,6 +279,44 @@ export class GitWatcher {
     this.lastUncommittedFiles.clear();
     this.pendingChanges.clear();
     log.i("GITWATCHER", "stopped");
+  }
+
+  /** Close all fs.watch handles. */
+  private closeAllWatchers(): void {
+    if (this.headWatcher) { this.headWatcher.close(); this.headWatcher = null; }
+    if (this.refsWatcher) { this.refsWatcher.close(); this.refsWatcher = null; }
+    if (this.packedRefsWatcher) { this.packedRefsWatcher.close(); this.packedRefsWatcher = null; }
+  }
+
+  /**
+   * Notify about file changes from external FileWatcher.
+   * Replaces the old git status polling loop — zero child processes.
+   * Call this from FileWatcher's "change" event handler.
+   */
+  notifyFileChange(changedFiles: string[]): void {
+    if (!this.config.watchUncommitted || this.stopped || changedFiles.length === 0) return;
+
+    log.d("GITWATCHER", "file_notify", { count: changedFiles.length });
+
+    // Immediate callbacks
+    for (const callback of this.uncommittedChangeCallbacks) {
+      try { callback(changedFiles); } catch (error) {
+        log.w("GITWATCHER", "uncommitted_cb_err", { err: String(error) });
+      }
+    }
+    for (const callback of this.fileChangeCallbacks) {
+      try { callback(changedFiles); } catch (error) {
+        log.w("GITWATCHER", "file_cb_err", { err: String(error) });
+      }
+    }
+
+    // Accumulate for debounced callbacks
+    if (this.debouncedChangeCallbacks.length > 0) {
+      for (const file of changedFiles) {
+        this.pendingChanges.add(file);
+      }
+      this.scheduleDebouncedFlush();
+    }
   }
 
   /**
@@ -555,49 +574,16 @@ export class GitWatcher {
   // PRIVATE METHODS
   // =============================================================================
 
+  /** Read branch from .git/HEAD file (zero child processes). */
   private getCurrentBranch(): string | null {
-    if (!this.repoPath) return null;
-
-    try {
-      const branch = execSync("git symbolic-ref --short HEAD", {
-        cwd: this.repoPath,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-      }).trim();
-
-      return branch;
-    } catch {
-      // Detached HEAD
-      try {
-        const hash = execSync("git rev-parse --short HEAD", {
-          cwd: this.repoPath,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "ignore"],
-          windowsHide: true,
-        }).trim();
-        return `detached-${hash}`;
-      } catch {
-        return null;
-      }
-    }
+    if (!this.gitDir) return null;
+    return readBranchFromHead(this.gitDir);
   }
 
+  /** Read commit SHA from .git/refs/heads/<branch> or packed-refs (zero child processes). */
   private getCurrentCommit(): string | null {
-    if (!this.repoPath) return null;
-
-    try {
-      const commit = execSync("git rev-parse HEAD", {
-        cwd: this.repoPath,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-      }).trim();
-
-      return commit;
-    } catch {
-      return null;
-    }
+    if (!this.gitDir) return null;
+    return readCommitFromRefs(this.gitDir, this.currentBranch);
   }
 
   private checkBranchChange(): void {
@@ -732,7 +718,7 @@ export class GitWatcher {
   /**
    * Check for uncommitted file changes and trigger callbacks
    */
-  private async checkUncommittedChanges(): Promise<void> {
+  async checkUncommittedChanges(): Promise<void> {
     const currentFiles = await this.getUncommittedFiles();
     const currentSet = new Set(currentFiles.map((f) => f.path));
 
