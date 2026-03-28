@@ -1,310 +1,73 @@
-# Module: src/parsers/__tests__
+# src/parsers/__tests__
 
-**Files:** 1 | **Entities:** 311 | **Language:** TypeScript
+## Overview
 
-## Function
+This module contains the comprehensive test suite for the HelmParser, validating its ability to parse Helm chart files and extract entities, patterns, and metadata. The tests cover Chart.yaml parsing, Helm template pattern detection (nindent, indent, toYaml, include, etc.), incremental parsing behavior, and edge cases in YAML/Helm syntax. Tests use Vitest with mocked file operations and logging to ensure isolated, deterministic validation of parser functionality across realistic Helm chart scenarios.
 
-- **existsSync** — `helm-parser.test.ts:5-12`
-- **path** — `helm-parser.test.ts:6-11`
-- **log** — `helm-parser.test.ts:15-17`
-- **parser** — `helm-parser.test.ts:19-942`
-- **parser** — `helm-parser.test.ts:22-24`
-- **filePath** — `helm-parser.test.ts:29-101`
-- **content** — `helm-parser.test.ts:32-51`
-- **content** — `helm-parser.test.ts:53-60`
-- **content** — `helm-parser.test.ts:62-92`
-- **r** — `helm-parser.test.ts:81-81`
-- **r** — `helm-parser.test.ts:88-88`
-- **content** — `helm-parser.test.ts:94-100`
-- **filePath** — `helm-parser.test.ts:106-170`
-- **content** — `helm-parser.test.ts:109-131`
-- **e** — `helm-parser.test.ts:122-122`
-- **content** — `helm-parser.test.ts:133-141`
-- **content** — `helm-parser.test.ts:143-149`
-- **content** — `helm-parser.test.ts:151-159`
-- **e** — `helm-parser.test.ts:156-156`
-- **content** — `helm-parser.test.ts:161-169`
-- **filePath** — `helm-parser.test.ts:175-256`
-- **content** — `helm-parser.test.ts:178-195`
-- **c** — `helm-parser.test.ts:191-191`
-- **content** — `helm-parser.test.ts:197-206`
-- **c** — `helm-parser.test.ts:202-202`
-- **content** — `helm-parser.test.ts:208-225`
-- **c** — `helm-parser.test.ts:221-221`
-- **d** — `helm-parser.test.ts:223-223`
-- **d** — `helm-parser.test.ts:224-224`
-- **content** — `helm-parser.test.ts:227-243`
-- **c** — `helm-parser.test.ts:239-239`
-- **d** — `helm-parser.test.ts:241-241`
-- **d** — `helm-parser.test.ts:242-242`
-- **content** — `helm-parser.test.ts:245-255`
-- **filePath** — `helm-parser.test.ts:261-327`
-- **content** — `helm-parser.test.ts:264-281`
-- **c** — `helm-parser.test.ts:278-278`
-- **content** — `helm-parser.test.ts:283-291`
-- **c** — `helm-parser.test.ts:290-290`
-- **content** — `helm-parser.test.ts:293-310`
-- **r** — `helm-parser.test.ts:307-307`
-- **content** — `helm-parser.test.ts:312-318`
-- **content** — `helm-parser.test.ts:320-326`
-- **filePath** — `helm-parser.test.ts:332-391`
-- **content** — `helm-parser.test.ts:335-348`
-- **content** — `helm-parser.test.ts:350-358`
-- **content** — `helm-parser.test.ts:360-368`
-- **content** — `helm-parser.test.ts:370-382`
-- **r** — `helm-parser.test.ts:380-380`
-- **content** — `helm-parser.test.ts:384-390`
-- **filePath** — `helm-parser.test.ts:396-477`
-- **content** — `helm-parser.test.ts:399-410`
-- **b** — `helm-parser.test.ts:406-406`
-- **b** — `helm-parser.test.ts:408-408`
-- **content** — `helm-parser.test.ts:412-425`
-- **b** — `helm-parser.test.ts:424-424`
-- **content** — `helm-parser.test.ts:427-443`
-- **b** — `helm-parser.test.ts:439-439`
-- **b** — `helm-parser.test.ts:441-441`
-- **content** — `helm-parser.test.ts:445-452`
-- **l** — `helm-parser.test.ts:451-451`
-- **content** — `helm-parser.test.ts:454-468`
-- **b** — `helm-parser.test.ts:466-466`
-- **content** — `helm-parser.test.ts:470-476`
-- **filePath** — `helm-parser.test.ts:482-523`
-- **content** — `helm-parser.test.ts:485-496`
-- **c** — `helm-parser.test.ts:491-491`
-- **content** — `helm-parser.test.ts:498-513`
-- **c** — `helm-parser.test.ts:509-509`
-- **v** — `helm-parser.test.ts:511-511`
-- **v** — `helm-parser.test.ts:512-512`
-- **content** — `helm-parser.test.ts:515-522`
-- **c** — `helm-parser.test.ts:520-520`
-- **filePath** — `helm-parser.test.ts:528-616`
-- **content** — `helm-parser.test.ts:531-545`
-- **p** — `helm-parser.test.ts:542-542`
-- **content** — `helm-parser.test.ts:547-561`
-- **p** — `helm-parser.test.ts:558-558`
-- **content** — `helm-parser.test.ts:563-575`
-- **content** — `helm-parser.test.ts:577-589`
-- **The** — `helm-parser.test.ts:591-607`
-- **p** — `helm-parser.test.ts:604-604`
-- **content** — `helm-parser.test.ts:609-615`
-- **it** — `helm-parser.test.ts:621-658`
-- **expect** — `helm-parser.test.ts:622-624`
-- **expect** — `helm-parser.test.ts:626-628`
-- **expect** — `helm-parser.test.ts:630-632`
-- **First** — `helm-parser.test.ts:634-642`
-- **Prime** — `helm-parser.test.ts:644-653`
-- **expect** — `helm-parser.test.ts:655-657`
-- **it** — `helm-parser.test.ts:663-671`
-- **expect** — `helm-parser.test.ts:664-666`
-- **expect** — `helm-parser.test.ts:668-670`
-- **it** — `helm-parser.test.ts:676-706`
-- **expect** — `helm-parser.test.ts:677-679`
-- **expect** — `helm-parser.test.ts:681-683`
-- **expect** — `helm-parser.test.ts:685-687`
-- **expect** — `helm-parser.test.ts:689-691`
-- **expect** — `helm-parser.test.ts:693-695`
-- **expect** — `helm-parser.test.ts:697-699`
-- **expect** — `helm-parser.test.ts:701-705`
-- **it** — `helm-parser.test.ts:711-729`
-- **content** — `helm-parser.test.ts:712-716`
-- **content** — `helm-parser.test.ts:718-722`
-- **content** — `helm-parser.test.ts:724-728`
-- **it** — `helm-parser.test.ts:734-738`
-- **expect** — `helm-parser.test.ts:735-737`
-- **it** — `helm-parser.test.ts:740-753`
-- **filePath** — `helm-parser.test.ts:741-752`
-- **it** — `helm-parser.test.ts:755-777`
-- **stats** — `helm-parser.test.ts:756-761`
-- **parser** — `helm-parser.test.ts:763-768`
-- **stats1** — `helm-parser.test.ts:770-776`
-- **it** — `helm-parser.test.ts:782-807`
-- **result** — `helm-parser.test.ts:783-786`
-- **fp** — `helm-parser.test.ts:788-792`
-- **before** — `helm-parser.test.ts:794-801`
-- **result** — `helm-parser.test.ts:803-806`
-- **filePath** — `helm-parser.test.ts:812-860`
-- **content** — `helm-parser.test.ts:815-823`
-- **content** — `helm-parser.test.ts:825-831`
-- **content** — `helm-parser.test.ts:833-843`
-- **content** — `helm-parser.test.ts:845-851`
-- **content** — `helm-parser.test.ts:853-859`
-- **it** — `helm-parser.test.ts:865-941`
-- **filePath** — `helm-parser.test.ts:866-940`
-- **c** — `helm-parser.test.ts:910-910`
-- **b** — `helm-parser.test.ts:924-924`
-- **b** — `helm-parser.test.ts:925-925`
-- **l** — `helm-parser.test.ts:926-926`
-- **c** — `helm-parser.test.ts:930-930`
-- **r** — `helm-parser.test.ts:939-939`
+## Flow
 
-## Variable
+```
+Test Input (filePath + content)
+    ↓
+HelmParser.parse()
+    ↓
+Pattern Detection (functions, variables, includes, range/with)
+    ↓
+Entity Extraction (files, variables, charts, functions, imports)
+    ↓
+Assertion Validation (entities count, properties, categorization)
+    ↓
+Result: Pass/Fail
+```
 
-- **parser** — `helm-parser.test.ts:20-20`
-- **filePath** — `helm-parser.test.ts:30-30`
-- **content** — `helm-parser.test.ts:33-39`
-- **result** — `helm-parser.test.ts:41-41`
-- **entity** — `helm-parser.test.ts:44-44`
-- **content** — `helm-parser.test.ts:54-54`
-- **result** — `helm-parser.test.ts:56-56`
-- **content** — `helm-parser.test.ts:63-74`
-- **result** — `helm-parser.test.ts:76-76`
-- **pgDep** — `helm-parser.test.ts:81-81`
-- **redisDep** — `helm-parser.test.ts:88-88`
-- **content** — `helm-parser.test.ts:95-95`
-- **result** — `helm-parser.test.ts:97-97`
-- **filePath** — `helm-parser.test.ts:107-107`
-- **content** — `helm-parser.test.ts:110-118`
-- **result** — `helm-parser.test.ts:120-120`
-- **names** — `helm-parser.test.ts:122-122`
-- **content** — `helm-parser.test.ts:134-134`
-- **result** — `helm-parser.test.ts:136-136`
-- **content** — `helm-parser.test.ts:144-144`
-- **result** — `helm-parser.test.ts:146-146`
-- **content** — `helm-parser.test.ts:152-152`
-- **result** — `helm-parser.test.ts:154-154`
-- **resources** — `helm-parser.test.ts:156-156`
-- **content** — `helm-parser.test.ts:162-162`
-- **result** — `helm-parser.test.ts:164-164`
-- **filePath** — `helm-parser.test.ts:176-176`
-- **content** — `helm-parser.test.ts:179-183`
-- **result** — `helm-parser.test.ts:185-185`
-- **fileEntity** — `helm-parser.test.ts:187-187`
-- **define** — `helm-parser.test.ts:191-191`
-- **content** — `helm-parser.test.ts:198-198`
-- **result** — `helm-parser.test.ts:200-200`
-- **define** — `helm-parser.test.ts:202-202`
-- **content** — `helm-parser.test.ts:209-217`
-- **result** — `helm-parser.test.ts:219-219`
-- **defines** — `helm-parser.test.ts:221-221`
-- **content** — `helm-parser.test.ts:228-235`
-- **result** — `helm-parser.test.ts:237-237`
-- **defines** — `helm-parser.test.ts:239-239`
-- **content** — `helm-parser.test.ts:246-250`
-- **result** — `helm-parser.test.ts:252-252`
-- **filePath** — `helm-parser.test.ts:262-262`
-- **content** — `helm-parser.test.ts:265-270`
-- **result** — `helm-parser.test.ts:272-272`
-- **fileEntity** — `helm-parser.test.ts:274-274`
-- **callNames** — `helm-parser.test.ts:278-278`
-- **content** — `helm-parser.test.ts:284-284`
-- **result** — `helm-parser.test.ts:286-286`
-- **fileEntity** — `helm-parser.test.ts:288-288`
-- **content** — `helm-parser.test.ts:294-294`
-- **result** — `helm-parser.test.ts:296-296`
-- **targets** — `helm-parser.test.ts:307-307`
-- **content** — `helm-parser.test.ts:313-313`
-- **result** — `helm-parser.test.ts:315-315`
-- **content** — `helm-parser.test.ts:321-321`
-- **result** — `helm-parser.test.ts:323-323`
-- **filePath** — `helm-parser.test.ts:333-333`
-- **content** — `helm-parser.test.ts:336-339`
-- **result** — `helm-parser.test.ts:341-341`
-- **refs** — `helm-parser.test.ts:343-343`
-- **content** — `helm-parser.test.ts:351-351`
-- **result** — `helm-parser.test.ts:353-353`
-- **refs** — `helm-parser.test.ts:355-355`
-- **content** — `helm-parser.test.ts:361-361`
-- **result** — `helm-parser.test.ts:363-363`
-- **refs** — `helm-parser.test.ts:365-365`
-- **content** — `helm-parser.test.ts:371-375`
-- **result** — `helm-parser.test.ts:377-377`
-- **refs** — `helm-parser.test.ts:379-379`
-- **valuesRefs** — `helm-parser.test.ts:380-380`
-- **content** — `helm-parser.test.ts:385-385`
-- **result** — `helm-parser.test.ts:387-387`
-- **filePath** — `helm-parser.test.ts:397-397`
-- **content** — `helm-parser.test.ts:400-400`
-- **result** — `helm-parser.test.ts:402-402`
-- **cf** — `helm-parser.test.ts:404-404`
-- **ifBranch** — `helm-parser.test.ts:408-408`
-- **content** — `helm-parser.test.ts:413-419`
-- **result** — `helm-parser.test.ts:421-421`
-- **cf** — `helm-parser.test.ts:423-423`
-- **content** — `helm-parser.test.ts:428-434`
-- **result** — `helm-parser.test.ts:436-436`
-- **cf** — `helm-parser.test.ts:438-438`
-- **elseIfBranch** — `helm-parser.test.ts:441-441`
-- **content** — `helm-parser.test.ts:446-446`
-- **result** — `helm-parser.test.ts:448-448`
-- **cf** — `helm-parser.test.ts:450-450`
-- **content** — `helm-parser.test.ts:455-460`
-- **result** — `helm-parser.test.ts:462-462`
-- **cf** — `helm-parser.test.ts:464-464`
-- **withBranch** — `helm-parser.test.ts:466-466`
-- **content** — `helm-parser.test.ts:471-471`
-- **result** — `helm-parser.test.ts:473-473`
-- **filePath** — `helm-parser.test.ts:483-483`
-- **content** — `helm-parser.test.ts:486-486`
-- **result** — `helm-parser.test.ts:488-488`
-- **fileEntity** — `helm-parser.test.ts:490-490`
-- **varEntity** — `helm-parser.test.ts:491-491`
-- **content** — `helm-parser.test.ts:499-505`
-- **result** — `helm-parser.test.ts:507-507`
-- **vars** — `helm-parser.test.ts:509-509`
-- **content** — `helm-parser.test.ts:516-516`
-- **result** — `helm-parser.test.ts:518-518`
-- **varEntity** — `helm-parser.test.ts:520-520`
-- **filePath** — `helm-parser.test.ts:529-529`
-- **content** — `helm-parser.test.ts:532-532`
-- **result** — `helm-parser.test.ts:534-534`
-- **patterns** — `helm-parser.test.ts:536-539`
-- **nindentPattern** — `helm-parser.test.ts:542-542`
-- **content** — `helm-parser.test.ts:548-548`
-- **result** — `helm-parser.test.ts:550-550`
-- **patterns** — `helm-parser.test.ts:552-555`
-- **indentPattern** — `helm-parser.test.ts:558-558`
-- **content** — `helm-parser.test.ts:564-564`
-- **result** — `helm-parser.test.ts:566-566`
-- **patterns** — `helm-parser.test.ts:568-571`
-- **content** — `helm-parser.test.ts:578-578`
-- **result** — `helm-parser.test.ts:580-580`
-- **patterns** — `helm-parser.test.ts:582-584`
-- **pattern** — `helm-parser.test.ts:587-587`
-- **content** — `helm-parser.test.ts:594-594`
-- **result** — `helm-parser.test.ts:596-596`
-- **patterns** — `helm-parser.test.ts:598-601`
-- **toYamlPattern** — `helm-parser.test.ts:604-604`
-- **content** — `helm-parser.test.ts:610-610`
-- **result** — `helm-parser.test.ts:612-612`
-- **first** — `helm-parser.test.ts:636-636`
-- **second** — `helm-parser.test.ts:638-638`
-- **content** — `helm-parser.test.ts:713-713`
-- **result** — `helm-parser.test.ts:714-714`
-- **content** — `helm-parser.test.ts:719-719`
-- **result** — `helm-parser.test.ts:720-720`
-- **content** — `helm-parser.test.ts:725-725`
-- **result** — `helm-parser.test.ts:726-726`
-- **filePath** — `helm-parser.test.ts:742-742`
-- **content** — `helm-parser.test.ts:743-743`
-- **fullResult** — `helm-parser.test.ts:745-745`
-- **incrResult** — `helm-parser.test.ts:746-746`
-- **stats** — `helm-parser.test.ts:757-757`
-- **stats** — `helm-parser.test.ts:766-766`
-- **stats1** — `helm-parser.test.ts:771-771`
-- **stats2** — `helm-parser.test.ts:774-774`
-- **result** — `helm-parser.test.ts:784-784`
-- **fp** — `helm-parser.test.ts:789-789`
-- **result** — `helm-parser.test.ts:790-790`
-- **before** — `helm-parser.test.ts:795-795`
-- **result** — `helm-parser.test.ts:796-796`
-- **after** — `helm-parser.test.ts:797-797`
-- **result** — `helm-parser.test.ts:804-804`
-- **filePath** — `helm-parser.test.ts:813-813`
-- **content** — `helm-parser.test.ts:816-816`
-- **result** — `helm-parser.test.ts:818-818`
-- **content** — `helm-parser.test.ts:826-826`
-- **result** — `helm-parser.test.ts:828-828`
-- **content** — `helm-parser.test.ts:834-834`
-- **result** — `helm-parser.test.ts:836-836`
-- **loc** — `helm-parser.test.ts:838-838`
-- **content** — `helm-parser.test.ts:846-846`
-- **result** — `helm-parser.test.ts:848-848`
-- **content** — `helm-parser.test.ts:854-854`
-- **result** — `helm-parser.test.ts:856-856`
-- **filePath** — `helm-parser.test.ts:867-867`
-- **content** — `helm-parser.test.ts:868-897`
-- **result** — `helm-parser.test.ts:899-899`
-- **file** — `helm-parser.test.ts:905-905`
-- **callNames** — `helm-parser.test.ts:910-910`
-- **varEntity** — `helm-parser.test.ts:930-930`
+## Test Infrastructure
 
+- **existsSync mock** (`helm-parser.test.ts:5-12`) — Mocked file existence check that simulates Chart.yaml locations for specific paths to test Helm context detection without filesystem I/O.
+- **log mock** (`helm-parser.test.ts:15-17`) — Mocked logging interface with info, debug, warning, and error methods to capture parser debug output during tests.
+- **parser instance setup** (`helm-parser.test.ts:22-24`) — beforeEach hook that instantiates a fresh HelmParser for each test, ensuring test isolation and preventing state leakage.
+
+## Core Parsing Tests
+
+- **Chart.yaml parsing** (`helm-parser.test.ts:29-101`) — Validates extraction of module entity with name, version, appVersion, and description from Chart.yaml files; tests both standard and edge case YAML formats.
+- **Chart.yaml parsing variations** (`helm-parser.test.ts:106-170`) — Tests multi-chart scenarios, invalid YAML, and misaligned indentation in Chart.yaml; validates error handling and fallback behavior.
+
+## Pattern Detection Tests
+
+- **Helm function patterns** (`helm-parser.test.ts:175-256`) — Tests detection and extraction of Helm built-in functions (nindent, indent, quote, lower) and their arguments; validates regex-based pattern matching.
+- **Advanced function patterns** (`helm-parser.test.ts:261-327`) — Tests complex nested function calls, toYaml patterns, and whitespace handling in template expressions; validates proper tokenization.
+- **Include and define directives** (`helm-parser.test.ts:332-391`) — Tests recognition of Helm include, define, and template directives; validates template name extraction and scope detection.
+- **Control flow directives** (`helm-parser.test.ts:396-477`) — Tests range and with directives for variable bindings; validates context and iterator extraction.
+- **Variable references** (`helm-parser.test.ts:482-523`) — Tests variable references with dot notation, map access, and function calls; validates symbol binding resolution.
+- **String interpolation patterns** (`helm-parser.test.ts:528-616`) — Tests Helm string interpolation with nindent, indent, toYaml, and include patterns; validates quoted and raw string handling.
+
+## Integration and Behavior Tests
+
+- **Batch parsing scenario** (`helm-parser.test.ts:621-658`) — Validates sequential parsing and entity aggregation; tests Prime dependency detection and multiple chart references in batch mode.
+- **Incremental parsing** (`helm-parser.test.ts:663-671`) — Tests incremental parser state management and result merging across multiple file parses; validates cache efficiency.
+- **Entity categorization** (`helm-parser.test.ts:676-706`) — Validates file entity, variable, chart, function, and import categorization; tests proper entity type assignment and filtering.
+- **Large file handling** (`helm-parser.test.ts:711-729`) — Tests parser performance and stability with multi-hundred-line Helm templates; validates incremental parsing on large documents.
+- **Performance regression** (`helm-parser.test.ts:734-738`) — Tests parser speed on repeated parses; validates no unexpected slowdowns.
+- **File system integration** (`helm-parser.test.ts:740-753`) — Tests isHelmContext detection and Chart.yaml discovery; validates mock file operations and path resolution.
+- **Statistics tracking** (`helm-parser.test.ts:755-777`) — Validates entity count, line count, and parse statistics collection; tests incremental stats updates.
+- **Incremental updates** (`helm-parser.test.ts:782-807`) — Tests adding, modifying, and removing entities in incremental parse cycles; validates before/after state correctness.
+- **Complex template structures** (`helm-parser.test.ts:812-860`) — Tests nested conditionals, loops, and variable scoping; validates location tracking and entity nesting.
+- **Comprehensive integration** (`helm-parser.test.ts:865-941`) — End-to-end validation of all parser features: Chart.yaml extraction, pattern detection, variable binding, and entity relationships in a realistic chart.
+
+## Test Fixtures
+
+Test fixtures provide repeatable input scenarios for HelmParser validation:
+
+- **Chart.yaml file paths** (`helm-parser.test.ts:30`, `helm-parser.test.ts:106`, `helm-parser.test.ts:742`, `helm-parser.test.ts:813`, `helm-parser.test.ts:867`) — File path inputs for Chart.yaml and Helm template file processing.
+- **YAML content fixtures** — Helm template and Chart.yaml content spanning multiple scenarios:
+  - Basic structures (`helm-parser.test.ts:33-39`, `helm-parser.test.ts:54`, `helm-parser.test.ts:63-74`)
+  - Multi-chart variations (`helm-parser.test.ts:109-131`, `helm-parser.test.ts:133-141`, `helm-parser.test.ts:143-149`, `helm-parser.test.ts:151-159`, `helm-parser.test.ts:161-169`)
+  - Function patterns (`helm-parser.test.ts:178-195`, `helm-parser.test.ts:197-206`, `helm-parser.test.ts:208-225`, `helm-parser.test.ts:227-243`, `helm-parser.test.ts:245-255`)
+  - Advanced functions (`helm-parser.test.ts:264-281`, `helm-parser.test.ts:283-291`, `helm-parser.test.ts:293-310`, `helm-parser.test.ts:312-318`, `helm-parser.test.ts:320-326`)
+  - Directives and references (`helm-parser.test.ts:335-348`, `helm-parser.test.ts:350-358`, `helm-parser.test.ts:360-368`, `helm-parser.test.ts:370-382`, `helm-parser.test.ts:384-390`)
+  - Control flow (`helm-parser.test.ts:399-410`, `helm-parser.test.ts:412-425`, `helm-parser.test.ts:427-443`, `helm-parser.test.ts:445-452`, `helm-parser.test.ts:454-468`, `helm-parser.test.ts:470-476`)
+  - Variable bindings (`helm-parser.test.ts:485-496`, `helm-parser.test.ts:498-513`, `helm-parser.test.ts:515-522`)
+  - String interpolation (`helm-parser.test.ts:531-545`, `helm-parser.test.ts:547-561`, `helm-parser.test.ts:563-575`, `helm-parser.test.ts:577-589`, `helm-parser.test.ts:594`, `helm-parser.test.ts:609-615`)
+
+## Test Design Patterns
+
+The test suite uses **assertion-based validation** to verify parser behavior: each test parses input content and asserts on entity counts, properties (name, version, description), and type categorization. Tests combine **mock-based isolation** (mocked filesystem and logger) with **fixture-driven scenarios** to validate the parser across standard usage patterns, edge cases, and integration points without requiring external resources.

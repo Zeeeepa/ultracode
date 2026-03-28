@@ -258,9 +258,7 @@ export function setGlobalProjectContext(projectPath: string, branchName?: string
         to: newHash.slice(0, 8),
       });
       // Reset — next getGraphStorage(projectPath) will re-initialize
-      resetGraphStorage().catch((err) =>
-        log.w("STORAGEFACT", "reset_fail", { err: (err as Error).message }),
-      );
+      resetGraphStorage().catch((err) => log.w("STORAGEFACT", "reset_fail", { err: (err as Error).message }));
       return;
     }
 

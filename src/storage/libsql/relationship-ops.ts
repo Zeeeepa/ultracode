@@ -66,30 +66,30 @@ export class RelationshipOperations {
    */
   async insertRelationship(relationship: Relationship): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const now = Date.now();
+      const { projectHash, branchName } = this.getContext();
+      const now = Date.now();
 
-    await client.execute({
-      sql: `
+      await client.execute({
+        sql: `
         INSERT OR REPLACE INTO relationships
         (id, project_hash, branch_name, from_id, to_id, type, metadata, weight, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      args: [
-        relationship.id,
-        projectHash,
-        branchName,
-        relationship.fromId,
-        relationship.toId,
-        relationship.type,
-        relationship.metadata ? encodeMetadata(relationship.metadata as Record<string, unknown>) : null,
-        relationship.weight ?? 1.0,
-        relationship.createdAt ?? now,
-      ],
-    });
+        args: [
+          relationship.id,
+          projectHash,
+          branchName,
+          relationship.fromId,
+          relationship.toId,
+          relationship.type,
+          relationship.metadata ? encodeMetadata(relationship.metadata as Record<string, unknown>) : null,
+          relationship.weight ?? 1.0,
+          relationship.createdAt ?? now,
+        ],
+      });
     }); // end _w
   }
 
@@ -99,86 +99,86 @@ export class RelationshipOperations {
   async insertRelationships(relationships: Relationship[]): Promise<BatchResult> {
     if (relationships.length === 0) return { processed: 0, failed: 0, errors: [], timeMs: 0 };
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const start = Date.now();
-    const errors: Array<{ item: unknown; error: string }> = [];
-    const { projectHash, branchName } = this.getContext();
-    const now = Date.now();
+      const start = Date.now();
+      const errors: Array<{ item: unknown; error: string }> = [];
+      const { projectHash, branchName } = this.getContext();
+      const now = Date.now();
 
-    // Deduplicate
-    const seen = new Set<string>();
-    const unique: Relationship[] = [];
-    for (const r of relationships) {
-      if (!seen.has(r.id)) {
-        seen.add(r.id);
-        unique.push(r);
-      }
-    }
-
-    // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
-    // Much faster than N separate INSERT statements (reduces parsing overhead)
-    // SQLite limit: ~32767 params, 9 fields per rel → batch 1000 = 9000 params (safe)
-    const batchSize = 1000;
-
-    let processed = 0;
-
-    // Staging mode: write to append-only table (no PK, no indexes) for O(1) inserts
-    const staging = this.getStagingMode();
-    const relTable = staging ? "_staging_relationships" : "relationships";
-    const insertVerb = staging ? "INSERT INTO" : "INSERT OR REPLACE INTO";
-
-    // Collect all statements for single transaction
-    const allStatements: Array<{ sql: string; args: (string | number | Buffer | null)[] }> = [];
-
-    for (let i = 0; i < unique.length; i += batchSize) {
-      const batch = unique.slice(i, i + batchSize);
-
-      // Build multi-row VALUES clause
-      const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
-
-      // Flatten all args into single array
-      const args: (string | number | Buffer | null)[] = [];
-      for (const r of batch) {
-        args.push(
-          r.id,
-          projectHash,
-          branchName,
-          r.fromId,
-          r.toId,
-          r.type,
-          r.metadata ? encodeMetadata(r.metadata as Record<string, unknown>) : null,
-          r.weight ?? 1.0,
-          r.createdAt ?? now,
-        );
+      // Deduplicate
+      const seen = new Set<string>();
+      const unique: Relationship[] = [];
+      for (const r of relationships) {
+        if (!seen.has(r.id)) {
+          seen.add(r.id);
+          unique.push(r);
+        }
       }
 
-      allStatements.push({
-        sql: `${insertVerb} ${relTable}
+      // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
+      // Much faster than N separate INSERT statements (reduces parsing overhead)
+      // SQLite limit: ~32767 params, 9 fields per rel → batch 1000 = 9000 params (safe)
+      const batchSize = 1000;
+
+      let processed = 0;
+
+      // Staging mode: write to append-only table (no PK, no indexes) for O(1) inserts
+      const staging = this.getStagingMode();
+      const relTable = staging ? "_staging_relationships" : "relationships";
+      const insertVerb = staging ? "INSERT INTO" : "INSERT OR REPLACE INTO";
+
+      // Collect all statements for single transaction
+      const allStatements: Array<{ sql: string; args: (string | number | Buffer | null)[] }> = [];
+
+      for (let i = 0; i < unique.length; i += batchSize) {
+        const batch = unique.slice(i, i + batchSize);
+
+        // Build multi-row VALUES clause
+        const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+
+        // Flatten all args into single array
+        const args: (string | number | Buffer | null)[] = [];
+        for (const r of batch) {
+          args.push(
+            r.id,
+            projectHash,
+            branchName,
+            r.fromId,
+            r.toId,
+            r.type,
+            r.metadata ? encodeMetadata(r.metadata as Record<string, unknown>) : null,
+            r.weight ?? 1.0,
+            r.createdAt ?? now,
+          );
+        }
+
+        allStatements.push({
+          sql: `${insertVerb} ${relTable}
         (id, project_hash, branch_name, from_id, to_id, type, metadata, weight, created_at)
         VALUES ${valuePlaceholders}`,
-        args,
-      });
-    }
+          args,
+        });
+      }
 
-    // Execute ALL statements in a single transaction
-    try {
-      await client.batch(allStatements, "write");
-      processed = unique.length;
-    } catch (error) {
-      errors.push({
-        item: { batchStart: 0, batchEnd: unique.length },
-        error: (error as Error).message,
-      });
-    }
+      // Execute ALL statements in a single transaction
+      try {
+        await client.batch(allStatements, "write");
+        processed = unique.length;
+      } catch (error) {
+        errors.push({
+          item: { batchStart: 0, batchEnd: unique.length },
+          error: (error as Error).message,
+        });
+      }
 
-    return {
-      processed,
-      failed: errors.length,
-      errors,
-      timeMs: Date.now() - start,
-    };
+      return {
+        processed,
+        failed: errors.length,
+        errors,
+        timeMs: Date.now() - start,
+      };
     }); // end _w
   }
 
@@ -441,21 +441,21 @@ export class RelationshipOperations {
    */
   async deleteRelationship(id: string): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName, baseBranch } = this.getContext();
+      const { projectHash, branchName, baseBranch } = this.getContext();
 
-    // On feature branch: add tombstone to hide relationship from base
-    if (baseBranch && this.tombstoneAdder) {
-      await this.tombstoneAdder(id, "relationship");
-    }
+      // On feature branch: add tombstone to hide relationship from base
+      if (baseBranch && this.tombstoneAdder) {
+        await this.tombstoneAdder(id, "relationship");
+      }
 
-    // Always delete from current branch (delta or base)
-    await client.execute({
-      sql: "DELETE FROM relationships WHERE id = ? AND project_hash = ? AND branch_name = ?",
-      args: [id, projectHash, branchName],
-    });
+      // Always delete from current branch (delta or base)
+      await client.execute({
+        sql: "DELETE FROM relationships WHERE id = ? AND project_hash = ? AND branch_name = ?",
+        args: [id, projectHash, branchName],
+      });
     }); // end _w
   }
 

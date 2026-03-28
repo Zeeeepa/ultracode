@@ -1,21 +1,10 @@
----
-module_name: shared
-description: "Cross-cutting utilities: runtime detection, project context, IPC protocol, storage paths, and adaptive worker pool"
-status: active
-language: typescript
-entry_point: null
-exports: [Runtime, detectRuntime, getRuntimeExecutable, getCoreEntryPath, isCoreRunning, acquireLock, releaseLock, ProjectContextManager, getProjectContext, getCurrentProjectPath, resolveProjectPath, isProjectIndexed, ProjectInfo, ProjectContextState, getDataDir, ensureDataDir, getIPCSocketPath, getLogsDir, getCacheDir, getProjectsDir, getModelsDir, getConfigDir, getConfigPath, getSemanticConfigPath, getCorePidPath, getCoreLockPath, hashProjectPath, getProjectDir, getProjectPaths, getGlobalDbPaths, getProjectHash, normalizeBranchName, DEFAULT_BRANCH, isBaseBranch, getCurrentGitBranch, getCurrentGitBranchOrDefault, ensureProjectDir, ensureGlobalDbDir, getBranchPaths, getFaissIndexPath, getFaissIndexPathByHash, getFaissIdMapPath, getFaissHotBufferPath, getTreeSitterCacheDir, getASTCacheDir, initializeStorageDirs, IPCMessageType, IPCRequest, IPCResponse, IPCEvent, IPCError, IPCMessage, ErrorCodes, Methods, Events, encodeMessage, MessageDecoder, createRequest, createResponse, createErrorResponse, createEvent, PendingRequest, IPCClient, AdaptiveWorkerPool, WorkerMessage, WorkerTask, AdaptiveWorkerOptions, getWorkerPool, shutdownWorkerPool, getCurrentIndexingDirectory, setCurrentIndexingDirectory]
-dependencies: [logging, utils]
-tags: [runtime-detection, project-context, ipc-protocol, storage-paths, worker-pool, cross-platform]
----
-
 # Shared Module
 
-> Foundation utilities providing runtime detection, project state management, binary IPC protocol, platform-aware storage paths, and an adaptive worker pool that abstracts Bun/Node.js differences.
+> Foundation utilities providing runtime detection, project state management, binary IPC protocol, platform-aware storage paths, git worktree/submodule/subtree introspection, and an adaptive worker pool that abstracts Bun/Node.js differences.
 
 ## Overview
 
-The `shared` module contains cross-cutting concerns used throughout the ultracode project. It detects whether the runtime is Bun or Node.js and provides appropriate abstractions. ProjectContextManager tracks the active project as a singleton. The IPC protocol implements length-prefixed JSON over named pipes (Windows) or Unix domain sockets. Storage paths follow platform conventions (LOCALAPPDATA, XDG_DATA_HOME, Application Support) with hash-based project directories. The adaptive worker pool manages concurrency with automatic retry and timeout handling.
+The `shared` module contains cross-cutting concerns used throughout the ultracode project. It detects whether the runtime is Bun or Node.js and provides appropriate abstractions. ProjectContextManager tracks the active project as a singleton. The IPC protocol implements length-prefixed JSON over named pipes (Windows) or Unix domain sockets. Storage paths follow platform conventions (LOCALAPPDATA, XDG_DATA_HOME, Application Support) with hash-based project directories. Git introspection utilities discover worktrees, submodules, and subtrees. The adaptive worker pool manages concurrency with automatic retry and timeout handling.
 
 ## Data Flow
 
@@ -25,18 +14,22 @@ The `shared` module contains cross-cutting concerns used throughout the ultracod
 |--------|------|------|
 | `process.platform` / `process.versions` | OS and runtime info | string |
 | `process.env` | LOCALAPPDATA, XDG_DATA_HOME | string |
-| `git` CLI | Branch name via `execSync` | string |
+| `git` CLI | Branch name via `execSync`, worktree list, submodule status | string |
 | Socket data stream | Binary-framed JSON messages | Buffer |
 | Worker messages | Task requests from queue | WorkerMessage |
+| `.git/`, `.gitmodules`, `git log` | Worktree, submodule, subtree metadata | filesystem / git objects |
 
 ### Processing
 
 1. **Runtime Detection**: Check `globalThis.Bun`, `process.versions.bun`, `process.execPath`, `Bun.version`; cache result.
 2. **Path Resolution**: Platform switch to base directory, append `UltraCode`, hash project path with xxHash for subdirectories.
 3. **Git Branch Detection**: Check `.git` dir, run `symbolic-ref --short HEAD`, fall back to `rev-parse`, handle detached HEAD.
-4. **IPC Decode**: Buffer incoming chunks, extract 4-byte BE length prefix, parse JSON payload, handle partial frames.
-5. **Project Context**: Resolve path, update singleton state, trigger `onProjectChange` callbacks.
-6. **Worker Dispatch**: Queue task, find or create idle worker, post message, collect result via Promise, retry on failure.
+4. **Worktree Introspection**: Parse `.git` file or directory, detect linked worktrees via `git worktree list`, resolve main repo path.
+5. **Submodule Detection**: Parse `.gitmodules`, run `git config --file .gitmodules`, correlate with `git status` for commit hashes.
+6. **Subtree Detection**: Scan `git log` for subtree merge commits, extract split history via regex.
+7. **IPC Decode**: Buffer incoming chunks, extract 4-byte BE length prefix, parse JSON payload, handle partial frames.
+8. **Project Context**: Resolve path, update singleton state, trigger `onProjectChange` callbacks.
+9. **Worker Dispatch**: Queue task, find or create idle worker, post message, collect result via Promise, retry on failure.
 
 ### Outputs
 
@@ -46,6 +39,7 @@ The `shared` module contains cross-cutting concerns used throughout the ultracod
 | File system | Platform-specific storage directories | string paths |
 | IPC wire | Binary-encoded request/response/event | Buffer |
 | Callers | Project state, indexing status | `ProjectInfo` |
+| Callers | Worktree/submodule/subtree metadata | `WorktreeInfo`, `SubmoduleInfo`, etc. |
 | Callers | Worker task results | `Promise<T>` |
 
 ## Public API
@@ -76,75 +70,55 @@ The `shared` module contains cross-cutting concerns used throughout the ultracod
 | `isBaseBranch()` | function | Check if branch is main/master/dev/etc | [`storage-paths.ts:238-242`](./storage-paths.ts) |
 | `getFaissIndexPath()` | function | FAISS index path per project+branch | [`storage-paths.ts:351-361`](./storage-paths.ts) |
 | `initializeStorageDirs()` | function | Create all required directories | [`storage-paths.ts:416-424`](./storage-paths.ts) |
+| `WorktreeInfo` | interface | Metadata about a Git worktree including path, branch, and configuration | [`git-worktree.ts:29-42`](./git-worktree.ts) |
+| `SubmoduleInfo` | interface | Information about a Git submodule including URL, path, and commit hash | [`git-worktree.ts:44-55`](./git-worktree.ts) |
+| `SubtreeInfo` | interface | Details about a Git subtree split including path, hash, and branch | [`git-worktree.ts:57-62`](./git-worktree.ts) |
+| `SiblingWorktree` | interface | Reference to another worktree in the same repository | [`git-worktree.ts:64-71`](./git-worktree.ts) |
+| `clearWorktreeCache()` | function | Clear cached worktree information | [`git-worktree.ts:84-88`](./git-worktree.ts) |
+| `resolveWorktreeInfo()` | function | Resolve cached worktree info with automatic cache miss handling | [`git-worktree.ts:100-110`](./git-worktree.ts) |
+| `resolveWorktreeInfoUncached()` | function | Directly resolve worktree info by inspecting .git and filesystem | [`git-worktree.ts:112-184`](./git-worktree.ts) |
+| `getRepoIdentity()` | function | Get unique identifier for the repository | [`git-worktree.ts:191-194`](./git-worktree.ts) |
+| `isGitWorktree()` | function | Check if the current path is a linked Git worktree | [`git-worktree.ts:199-202`](./git-worktree.ts) |
+| `getMainRepoPath()` | function | Get the main repository path for a worktree | [`git-worktree.ts:209-212`](./git-worktree.ts) |
+| `listSiblingWorktrees()` | function | List all other worktrees in the same repository | [`git-worktree.ts:218-265`](./git-worktree.ts) |
+| `resolveGitHeadPath()` | function | Resolve the path to the Git HEAD file | [`git-worktree.ts:278-295`](./git-worktree.ts) |
+| `detectSubmodules()` | function | Detect all Git submodules with caching | [`git-worktree.ts:305-315`](./git-worktree.ts) |
+| `detectSubmodulesUncached()` | function | Directly detect submodules from .gitmodules and git status | [`git-worktree.ts:317-368`](./git-worktree.ts) |
+| `parseGitmodules()` | function | Parse .gitmodules file into submodule metadata | [`git-worktree.ts:373-408`](./git-worktree.ts) |
+| `getParentRepo()` | function | Get the parent repository information for a submodule | [`git-worktree.ts:415-441`](./git-worktree.ts) |
+| `detectSubtrees()` | function | Detect all Git subtrees with caching | [`git-worktree.ts:454-464`](./git-worktree.ts) |
+| `detectSubtreesUncached()` | function | Directly detect subtrees from git log history | [`git-worktree.ts:466-512`](./git-worktree.ts) |
 | `IPCMessageType` | type | `"request" \| "response" \| "event"` | [`ipc-protocol.ts:17-17`](./ipc-protocol.ts) |
 | `IPCRequest` | interface | Request message shape | [`ipc-protocol.ts:19-25`](./ipc-protocol.ts) |
 | `IPCResponse` | interface | Response message shape | [`ipc-protocol.ts:27-32`](./ipc-protocol.ts) |
 | `IPCEvent` | interface | Event message shape | [`ipc-protocol.ts:34-40`](./ipc-protocol.ts) |
-| `IPCError` | interface | Error object shape | [`ipc-protocol.ts:42-46`](./ipc-protocol.ts) |
-| `ErrorCodes` | const object | JSON-RPC-style error codes | [`ipc-protocol.ts:51-59`](./ipc-protocol.ts) |
-| `Methods` | const object | RPC method names | [`ipc-protocol.ts:62-80`](./ipc-protocol.ts) |
-| `Events` | const object | Event names | [`ipc-protocol.ts:83-89`](./ipc-protocol.ts) |
-| `encodeMessage()` | function | Encode message to binary wire format | [`ipc-protocol.ts:103-109`](./ipc-protocol.ts) |
-| `MessageDecoder` | class | Stateful binary message decoder | [`ipc-protocol.ts:116-192`](./ipc-protocol.ts) |
-| `IPCClient` | class | IPC client with request/response and events | [`ipc-protocol.ts:259-366`](./ipc-protocol.ts) |
-| `createRequest()` | function | Create IPCRequest | [`ipc-protocol.ts:201-209`](./ipc-protocol.ts) |
-| `createResponse()` | function | Create success IPCResponse | [`ipc-protocol.ts:214-220`](./ipc-protocol.ts) |
-| `createErrorResponse()` | function | Create error IPCResponse | [`ipc-protocol.ts:225-231`](./ipc-protocol.ts) |
-| `createEvent()` | function | Create IPCEvent | [`ipc-protocol.ts:236-244`](./ipc-protocol.ts) |
-| `PendingRequest` | interface | Pending request state | [`ipc-protocol.ts:250-254`](./ipc-protocol.ts) |
-| `AdaptiveWorkerPool` | class | EventEmitter-based worker pool | [`adaptive-worker.ts:76-361`](./adaptive-worker.ts) |
-| `WorkerMessage` | interface | Worker message shape | [`adaptive-worker.ts:25-31`](./adaptive-worker.ts) |
-| `WorkerTask` | interface | Task for worker | [`adaptive-worker.ts:33-37`](./adaptive-worker.ts) |
-| `AdaptiveWorkerOptions` | interface | Pool configuration | [`adaptive-worker.ts:39-50`](./adaptive-worker.ts) |
-| `getWorkerPool()` | function | Get or create default pool (singleton) | [`adaptive-worker.ts:372-380`](./adaptive-worker.ts) |
-| `shutdownWorkerPool()` | function | Shutdown default pool | [`adaptive-worker.ts:385-390`](./adaptive-worker.ts) |
-| `getCurrentIndexingDirectory()` | function | Deprecated wrapper | [`indexing-context.ts:16-18`](./indexing-context.ts) |
-| `setCurrentIndexingDirectory()` | function | Deprecated wrapper | [`indexing-context.ts:24-28`](./indexing-context.ts) |
+| `IPCError` | interface | Error payload shape | [`ipc-protocol.ts:42-46`](./ipc-protocol.ts) |
+| `IPCMessage` | type | Union of IPCRequest, IPCResponse, IPCEvent | [`ipc-protocol.ts:48-48`](./ipc-protocol.ts) |
+| `ErrorCodes` | enum | RPC error code constants | [`ipc-protocol.ts:50-58`](./ipc-protocol.ts) |
+| `Methods` | enum | Core RPC method names | [`ipc-protocol.ts:60-66`](./ipc-protocol.ts) |
+| `Events` | enum | Core event names | [`ipc-protocol.ts:68-72`](./ipc-protocol.ts) |
+| `encodeMessage()` | function | Encode IPC message to binary buffer | [`ipc-protocol.ts:80-95`](./ipc-protocol.ts) |
+| `MessageDecoder` | class | Stateful decoder for binary IPC stream | [`ipc-protocol.ts:102-140`](./ipc-protocol.ts) |
+| `createRequest()` | function | Create IPCRequest | [`ipc-protocol.ts:148-153`](./ipc-protocol.ts) |
+| `createResponse()` | function | Create IPCResponse | [`ipc-protocol.ts:158-165`](./ipc-protocol.ts) |
+| `createErrorResponse()` | function | Create error IPCResponse | [`ipc-protocol.ts:170-176`](./ipc-protocol.ts) |
+| `createEvent()` | function | Create IPCEvent | [`ipc-protocol.ts:181-187`](./ipc-protocol.ts) |
+| `PendingRequest` | interface | Pending RPC state | [`ipc-protocol.ts:192-197`](./ipc-protocol.ts) |
+| `IPCClient` | class | Bidirectional IPC client (request/response/events) | [`ipc-protocol.ts:204-290`](./ipc-protocol.ts) |
+| `AdaptiveWorkerPool` | class | Runtime-aware worker pool with queue, retry, and timeout | [`adaptive-worker.ts:57-267`](./adaptive-worker.ts) |
+| `WorkerMessage` | type | Worker message envelope | [`adaptive-worker.ts:20-25`](./adaptive-worker.ts) |
+| `WorkerTask` | interface | Worker task definition | [`adaptive-worker.ts:27-35`](./adaptive-worker.ts) |
+| `AdaptiveWorkerOptions` | interface | Pool configuration | [`adaptive-worker.ts:37-46`](./adaptive-worker.ts) |
+| `getWorkerPool()` | function | Get or create default worker pool | [`adaptive-worker.ts:275-283`](./adaptive-worker.ts) |
+| `shutdownWorkerPool()` | function | Shutdown default worker pool | [`adaptive-worker.ts:288-296`](./adaptive-worker.ts) |
+| `getCurrentIndexingDirectory()` | function | Get current indexing directory from context | [`indexing-context.ts:5-7`](./indexing-context.ts) |
+| `setCurrentIndexingDirectory()` | function | Set current indexing directory in context | [`indexing-context.ts:12-16`](./indexing-context.ts) |
 
-## Dependencies
+## Constraints
 
-### Internal Modules
-
-| Module | Purpose | Interaction |
-|--------|---------|-------------|
-| `logging` | Structured logging | `log.i`, `log.e`, `log.w` with context tags (ADAPTWORK, IPC, PROJCTX) |
-| `utils/runtime-detection` | `sleep()` function | Used for Bun-compatible async timeouts |
-| `utils/fast-hash` | `hashText()` | xxHash for project path hashing |
-
-### External Packages
-
-| Package | Purpose |
-|---------|---------|
-| `node:fs` | File system operations (existsSync, readFileSync, writeFileSync, mkdirSync) |
-| `node:path` | Path manipulation (join, resolve, dirname) |
-| `node:child_process` | Git commands via execSync |
-| `node:os` | homedir(), cpus(), platform detection |
-| `node:url` | fileURLToPath for import.meta.url |
-| `node:events` | EventEmitter base class for AdaptiveWorkerPool |
-| `node:crypto` | randomUUID for IPC message IDs |
-| `node:net` | Socket type for IPCClient |
-| `node:worker_threads` | Node.js Worker (dynamically imported) |
-
-## Configuration
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `maxWorkers` | `cpus().length - 1` | Maximum concurrent workers |
-| `timeout` | `60000` ms | Task timeout |
-| `smolMode` | `true` | Bun-specific reduced memory mode |
-| `retries` | `1` | Retry count for failed tasks |
-| `requestTimeout` | `30000` ms | IPC request timeout |
-| `bufferInitialSize` | `16384` bytes | MessageDecoder initial buffer |
-| `LOCALAPPDATA` | `AppData/Local` | Windows data directory (env var) |
-| `XDG_DATA_HOME` | `~/.local/share` | Linux data directory (env var) |
-
-## Behavioral Properties
-
-| Property | Value |
-|----------|-------|
-| Async | Yes -- `execute()`, `executeAll()`, `shutdown()`, `request()`, `switchProject()` return Promises |
-| Thread Safety | Single-threaded event loop only; no locks on mutable state |
-| Idempotency | Path getters and `ensure*` functions are idempotent; lock/state mutation is not |
+| Concern | Detail |
+|---------|--------|
+| Purity | Most read operations (`get*`, `detect*`, `resolve*`) are idempotent; lock/state mutation is not |
 | Side Effects | File I/O (lock files, mkdir), git execSync, worker process creation |
 | State | Singletons: ProjectContextManager, default AdaptiveWorkerPool, cached Runtime |
 
@@ -159,6 +133,7 @@ Errors use try-catch with fallback values for I/O operations (git, fs). The IPC 
 | `PROJECT_NOT_FOUND (-32001)` | Project not registered | Reject promise |
 | `WORKER_ERROR (-32002)` | Worker task failed | Reject, retry if configured |
 | `EEXIST` on lock file | Another Core process running | Check if PID alive, takeover if dead |
+| Git command failure | git CLI unavailable or parse error | Return null, use defaults |
 | Connection closed | IPC socket closes | Reject all pending, clear handlers |
 | Request timeout | No response in 30s | Reject with timeout error |
 | Task timeout | Worker exceeds time limit | Remove worker, reject, retry |
@@ -182,127 +157,27 @@ Errors use try-catch with fallback values for I/O operations (git, fs). The IPC 
 ## Known Limitations
 
 - **Not thread-safe**: ProjectContextManager and AdaptiveWorkerPool use mutable state without locks; safe only in single-threaded event loop.
-- **Git dependency**: Branch detection requires `.git` directory and git binary; returns null or `detached-{hash}` on failure.
+- **Git dependency**: Worktree and submodule detection require `.git` directory and git binary; returns empty/null on failure.
 - **Platform IPC divergence**: Windows uses named pipe (`\\.\pipe\`), Unix uses domain socket; consumers must handle both.
 - **No stack traces over IPC**: Error responses carry code and message only; stack traces are lost across the wire.
 - **Deprecated APIs**: `indexing-context.ts`, `getProjectDir()`, `getProjectPaths()` kept for backward compatibility; prefer `ProjectContextManager` and `getGlobalDbPaths()`.
 - **Worker pool fixed timeout**: Task timeout is set at pool creation and cannot be overridden per-task.
+- **Worktree cache assumes stable repos**: Cache does not invalidate on external git operations; call `clearWorktreeCache()` after high-level git commands.
 
 ## TypeScript Notes
 
 ### Module Boundary
 
-All types, interfaces, classes, and functions listed in Public API are exported. Internal state (`cachedRuntime`, `state`, `workers`, `taskQueue`, `pendingRequests`, `eventHandlers`, `nodeWorkerModule`, `indexingInProgress`, `onProjectChangeCallbacks`) is private. Generic type parameters on `execute<T>`, `executeAll<T>`, and `request<T>` default to `unknown`. The `BunWorker` and `PooledWorker` interfaces are file-private to `adaptive-worker.ts`. Union types `Runtime`, `IPCMessageType`, and `IPCMessage` discriminate via string literals.
+All types, interfaces, classes, and functions listed in Public API are exported. Internal state (`cachedRuntime`, `state`, `workers`, `taskQueue`, `pendingRequests`, `eventHandlers`, `nodeWorkerModule`, `indexingInProgress`, `onProjectChangeCallbacks`, `worktreeCache`, `submoduleCache`, `subtreeCache`) is private. Generic type parameters on `execute<T>`, `executeAll<T>`, and `request<T>` default to `unknown`. The `BunWorker` and `PooledWorker` interfaces are file-private to `adaptive-worker.ts`. Union types `Runtime`, `IPCMessageType`, and `IPCMessage` discriminate via string literals.
 
 ## Files
 
 | File | Description |
 |------|-------------|
 | [`adaptive-worker.ts`](./adaptive-worker.ts) | Runtime-aware worker pool with Bun/Node.js abstraction, queue, retry, and timeout |
+| [`git-worktree.ts`](./git-worktree.ts) | Git worktree, submodule, and subtree introspection with caching |
 | [`indexing-context.ts`](./indexing-context.ts) | Deprecated backward-compatible wrapper around ProjectContextManager |
 | [`ipc-protocol.ts`](./ipc-protocol.ts) | Binary wire protocol (length-prefixed JSON), message types, encoder/decoder, IPC client |
 | [`project-context.ts`](./project-context.ts) | Singleton project state manager with change callbacks and indexing tracking |
 | [`runtime-detect.ts`](./runtime-detect.ts) | Bun/Node.js runtime detection, Core process lifecycle, lock file management |
 | [`storage-paths.ts`](./storage-paths.ts) | Platform-aware directory structure, project hashing, git branch detection, FAISS paths |
-
-## New (pending description)
-
-- **WorktreeInfo** — `git-worktree.ts:29-42`
-- **SubmoduleInfo** — `git-worktree.ts:44-55`
-- **SubtreeInfo** — `git-worktree.ts:57-62`
-- **SiblingWorktree** — `git-worktree.ts:64-71`
-- **clearWorktreeCache** — `git-worktree.ts:84-88`
-- **<anonymous>** — `git-worktree.ts:84-84`
-- **resolveWorktreeInfo** — `git-worktree.ts:100-110`
-- **<anonymous>** — `git-worktree.ts:100-100`
-- **resolveWorktreeInfoUncached** — `git-worktree.ts:112-184`
-- **<anonymous>** — `git-worktree.ts:112-112`
-- **getRepoIdentity** — `git-worktree.ts:191-194`
-- **<anonymous>** — `git-worktree.ts:191-191`
-- **isGitWorktree** — `git-worktree.ts:199-202`
-- **<anonymous>** — `git-worktree.ts:199-199`
-- **getMainRepoPath** — `git-worktree.ts:209-212`
-- **<anonymous>** — `git-worktree.ts:209-209`
-- **listSiblingWorktrees** — `git-worktree.ts:218-265`
-- **<anonymous>** — `git-worktree.ts:218-218`
-- **resolveGitHeadPath** — `git-worktree.ts:278-295`
-- **<anonymous>** — `git-worktree.ts:278-278`
-- **detectSubmodules** — `git-worktree.ts:305-315`
-- **<anonymous>** — `git-worktree.ts:305-305`
-- **detectSubmodulesUncached** — `git-worktree.ts:317-368`
-- **<anonymous>** — `git-worktree.ts:317-317`
-- **parseGitmodules** — `git-worktree.ts:373-408`
-- **<anonymous>** — `git-worktree.ts:373-373`
-- **getParentRepo** — `git-worktree.ts:415-441`
-- **<anonymous>** — `git-worktree.ts:415-415`
-- **detectSubtrees** — `git-worktree.ts:454-464`
-- **<anonymous>** — `git-worktree.ts:454-454`
-- **detectSubtreesUncached** — `git-worktree.ts:466-512`
-- **<anonymous>** — `git-worktree.ts:466-466`
-- **worktreeCache** — `git-worktree.ts:77-77`
-- **submoduleCache** — `git-worktree.ts:78-78`
-- **subtreeCache** — `git-worktree.ts:79-79`
-- **normalized** — `git-worktree.ts:101-101`
-- **info** — `git-worktree.ts:107-107`
-- **gitPath** — `git-worktree.ts:113-113`
-- **isLinkedWorktree** — `git-worktree.ts:121-121`
-- **gitCommonDirRaw** — `git-worktree.ts:124-129`
-- **gitCommonDir** — `git-worktree.ts:132-132`
-- **mainRepoPath** — `git-worktree.ts:135-135`
-- **normalizedCommon** — `git-worktree.ts:138-138`
-- **repoIdentity** — `git-worktree.ts:139-139`
-- **worktreeName** — `git-worktree.ts:142-142`
-- **gitFileContent** — `git-worktree.ts:147-147`
-- **match** — `git-worktree.ts:149-149`
-- **gitdir** — `git-worktree.ts:151-151`
-- **wtMatch** — `git-worktree.ts:153-153`
-- **info** — `git-worktree.ts:163-170`
-- **info** — `git-worktree.ts:192-192`
-- **info** — `git-worktree.ts:200-200`
-- **info** — `git-worktree.ts:210-210`
-- **output** — `git-worktree.ts:220-225`
-- **worktrees** — `git-worktree.ts:227-227`
-- **entries** — `git-worktree.ts:228-228`
-- **lines** — `git-worktree.ts:233-233`
-- **wtPath** — `git-worktree.ts:234-234`
-- **branch** — `git-worktree.ts:235-235`
-- **isMain** — `git-worktree.ts:236-236`
-- **gitDirRaw** — `git-worktree.ts:280-285`
-- **gitDir** — `git-worktree.ts:288-288`
-- **fallback** — `git-worktree.ts:292-292`
-- **normalized** — `git-worktree.ts:306-306`
-- **result** — `git-worktree.ts:312-312`
-- **gitmodulesPath** — `git-worktree.ts:318-318`
-- **gitmodulesContent** — `git-worktree.ts:325-325`
-- **moduleMap** — `git-worktree.ts:326-326`
-- **statusOutput** — `git-worktree.ts:329-335`
-- **repoIdentity** — `git-worktree.ts:337-337`
-- **submodules** — `git-worktree.ts:338-338`
-- **match** — `git-worktree.ts:344-344`
-- **commitHash** — `git-worktree.ts:347-347`
-- **subPath** — `git-worktree.ts:348-348`
-- **moduleInfo** — `git-worktree.ts:351-351`
-- **result** — `git-worktree.ts:374-374`
-- **currentPath** — `git-worktree.ts:375-375`
-- **currentUrl** — `git-worktree.ts:376-376`
-- **currentBranch** — `git-worktree.ts:377-377`
-- **line** — `git-worktree.ts:380-380`
-- **match** — `git-worktree.ts:391-391`
-- **match** — `git-worktree.ts:394-394`
-- **match** — `git-worktree.ts:397-397`
-- **gitPath** — `git-worktree.ts:416-416`
-- **stat** — `git-worktree.ts:421-421`
-- **content** — `git-worktree.ts:424-424`
-- **match** — `git-worktree.ts:425-425`
-- **gitdir** — `git-worktree.ts:428-428`
-- **modulesMatch** — `git-worktree.ts:432-432`
-- **normalized** — `git-worktree.ts:455-455`
-- **result** — `git-worktree.ts:461-461`
-- **output** — `git-worktree.ts:469-475`
-- **subtreeMap** — `git-worktree.ts:479-479`
-- **spaceIdx** — `git-worktree.ts:484-484`
-- **commitHash** — `git-worktree.ts:487-487`
-- **message** — `git-worktree.ts:488-488`
-- **dirMatch** — `git-worktree.ts:491-491`
-- **prefix** — `git-worktree.ts:494-494`
-- **result** — `git-worktree.ts:505-505`

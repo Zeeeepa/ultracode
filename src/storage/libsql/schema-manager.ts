@@ -172,19 +172,35 @@ export class SchemaManager {
     const zigCompatColumns: Array<{ table: string; column: string; ddl: string }> = [
       // entities: explicit boolean flags (Zig stores as INTEGER, not in CBOR metadata)
       { table: "entities", column: "is_async", ddl: "ALTER TABLE entities ADD COLUMN is_async INTEGER DEFAULT 0" },
-      { table: "entities", column: "is_exported", ddl: "ALTER TABLE entities ADD COLUMN is_exported INTEGER DEFAULT 0" },
+      {
+        table: "entities",
+        column: "is_exported",
+        ddl: "ALTER TABLE entities ADD COLUMN is_exported INTEGER DEFAULT 0",
+      },
       { table: "entities", column: "is_test", ddl: "ALTER TABLE entities ADD COLUMN is_test INTEGER DEFAULT 0" },
       { table: "entities", column: "has_docs", ddl: "ALTER TABLE entities ADD COLUMN has_docs INTEGER DEFAULT 0" },
       // relationships: file_path for provenance tracking
-      { table: "relationships", column: "file_path", ddl: "ALTER TABLE relationships ADD COLUMN file_path TEXT DEFAULT ''" },
-      { table: "relationships", column: "updated_at", ddl: "ALTER TABLE relationships ADD COLUMN updated_at INTEGER DEFAULT 0" },
+      {
+        table: "relationships",
+        column: "file_path",
+        ddl: "ALTER TABLE relationships ADD COLUMN file_path TEXT DEFAULT ''",
+      },
+      {
+        table: "relationships",
+        column: "updated_at",
+        ddl: "ALTER TABLE relationships ADD COLUMN updated_at INTEGER DEFAULT 0",
+      },
       // files: size and language for richer file metadata
       { table: "files", column: "size", ddl: "ALTER TABLE files ADD COLUMN size INTEGER DEFAULT 0" },
       { table: "files", column: "language", ddl: "ALTER TABLE files ADD COLUMN language TEXT DEFAULT ''" },
       // name_tokens: source column (name, doc, etc.)
       { table: "name_tokens", column: "source", ddl: "ALTER TABLE name_tokens ADD COLUMN source TEXT DEFAULT 'name'" },
       // project_metadata: relationship count
-      { table: "project_metadata", column: "relationship_count", ddl: "ALTER TABLE project_metadata ADD COLUMN relationship_count INTEGER DEFAULT 0" },
+      {
+        table: "project_metadata",
+        column: "relationship_count",
+        ddl: "ALTER TABLE project_metadata ADD COLUMN relationship_count INTEGER DEFAULT 0",
+      },
     ];
 
     for (const { table, column, ddl } of zigCompatColumns) {

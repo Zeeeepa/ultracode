@@ -51,7 +51,7 @@ export class BloomFilter {
   private static hashA(item: number): bigint {
     let h = 0xcbf29ce484222325n;
     for (let i = 0; i < 4; i++) {
-      h ^= BigInt((item >>> (i * 8)) & 0xFF);
+      h ^= BigInt((item >>> (i * 8)) & 0xff);
       h = BigInt.asUintN(64, h * 0x100000001b3n);
     }
     return h;
@@ -91,7 +91,9 @@ export class BloomReachIndex {
   private hotspotLookup = new Map<number, number>();
   private _valid = false;
 
-  get valid(): boolean { return this._valid; }
+  get valid(): boolean {
+    return this._valid;
+  }
 
   invalidate(): void {
     this._valid = false;

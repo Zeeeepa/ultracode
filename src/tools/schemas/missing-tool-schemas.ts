@@ -30,15 +30,18 @@ export const BatchModifySchema = z.object({
   preview: z.boolean().optional().default(true).describe("Preview mode (dry-run). Set false to execute"),
   apply: z.boolean().optional().describe("Execute changes (opposite of preview)"),
   max_changes: z.number().optional().default(100).describe("Maximum entities to modify"),
-  where: z.object({
-    entity_type: z.string().optional().describe("Filter by type: function, method, class, interface"),
-    name_matches: z.string().optional().describe("Filter by name substring or glob"),
-    file_pattern: z.string().optional().describe("Filter by file path glob"),
-    is_exported: z.boolean().optional().describe("Filter exported/public only"),
-    is_async: z.boolean().optional().describe("Filter async only"),
-    min_complexity: z.number().optional().describe("Minimum complexity threshold"),
-    semantic: z.string().optional().describe("Natural language query for filtering"),
-  }).optional().describe("Filter conditions"),
+  where: z
+    .object({
+      entity_type: z.string().optional().describe("Filter by type: function, method, class, interface"),
+      name_matches: z.string().optional().describe("Filter by name substring or glob"),
+      file_pattern: z.string().optional().describe("Filter by file path glob"),
+      is_exported: z.boolean().optional().describe("Filter exported/public only"),
+      is_async: z.boolean().optional().describe("Filter async only"),
+      min_complexity: z.number().optional().describe("Minimum complexity threshold"),
+      semantic: z.string().optional().describe("Natural language query for filtering"),
+    })
+    .optional()
+    .describe("Filter conditions"),
   semantic: z.string().optional().describe("Shorthand: same as where.semantic"),
   projectPath: z.string().optional().describe("Project path"),
 });
@@ -52,11 +55,14 @@ export const BatchRenameSchema = z.object({
   replace: z.string().describe("New name"),
   preview: z.boolean().optional().default(true).describe("Preview mode (default true)"),
   apply: z.boolean().optional().describe("Set true to execute"),
-  where: z.object({
-    entity_type: z.string().optional().describe("Filter by type"),
-    file_pattern: z.string().optional().describe("Filter by file path glob"),
-    semantic: z.string().optional().describe("Natural language filter"),
-  }).optional().describe("Additional filters"),
+  where: z
+    .object({
+      entity_type: z.string().optional().describe("Filter by type"),
+      file_pattern: z.string().optional().describe("Filter by file path glob"),
+      semantic: z.string().optional().describe("Natural language filter"),
+    })
+    .optional()
+    .describe("Additional filters"),
   semantic: z.string().optional().describe("Shorthand: same as where.semantic"),
   projectPath: z.string().optional().describe("Project path"),
 });
@@ -112,7 +118,10 @@ export const AutoDocBatchGenerateSchema = z.object({
 // =============================================================================
 
 export const SetupEmbeddingSchema = z.object({
-  model_id: z.string().optional().default("multilingual-e5-small")
+  model_id: z
+    .string()
+    .optional()
+    .default("multilingual-e5-small")
     .describe("Model ID: multilingual-e5-small, snowflake-arctic-embed-xs, all-MiniLM-L6-v2, nomic-embed-text-v1.5"),
   quantization: z.enum(["fp32", "fp16", "int8"]).optional().default("int8").describe("Quantization"),
   download: z.boolean().optional().default(true).describe("Download model if not cached"),

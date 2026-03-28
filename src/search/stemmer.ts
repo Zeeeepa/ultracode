@@ -150,55 +150,81 @@ function applyRules(word: Uint8Array, len: number, rules: StemRule[], minMeasure
 
 function step2(word: Uint8Array, len: number): number {
   if (len < 4) return len;
-  return applyRules(word, len, [
-    { suffix: "ational", replacement: "ate" },
-    { suffix: "tional", replacement: "tion" },
-    { suffix: "enci", replacement: "ence" },
-    { suffix: "anci", replacement: "ance" },
-    { suffix: "izer", replacement: "ize" },
-    { suffix: "abli", replacement: "able" },
-    { suffix: "alli", replacement: "al" },
-    { suffix: "entli", replacement: "ent" },
-    { suffix: "eli", replacement: "e" },
-    { suffix: "ousli", replacement: "ous" },
-    { suffix: "ization", replacement: "ize" },
-    { suffix: "ation", replacement: "ate" },
-    { suffix: "ator", replacement: "ate" },
-    { suffix: "alism", replacement: "al" },
-    { suffix: "iveness", replacement: "ive" },
-    { suffix: "fulness", replacement: "ful" },
-    { suffix: "ousnes", replacement: "ous" },
-    { suffix: "aliti", replacement: "al" },
-    { suffix: "iviti", replacement: "ive" },
-    { suffix: "biliti", replacement: "ble" },
-  ], 0);
+  return applyRules(
+    word,
+    len,
+    [
+      { suffix: "ational", replacement: "ate" },
+      { suffix: "tional", replacement: "tion" },
+      { suffix: "enci", replacement: "ence" },
+      { suffix: "anci", replacement: "ance" },
+      { suffix: "izer", replacement: "ize" },
+      { suffix: "abli", replacement: "able" },
+      { suffix: "alli", replacement: "al" },
+      { suffix: "entli", replacement: "ent" },
+      { suffix: "eli", replacement: "e" },
+      { suffix: "ousli", replacement: "ous" },
+      { suffix: "ization", replacement: "ize" },
+      { suffix: "ation", replacement: "ate" },
+      { suffix: "ator", replacement: "ate" },
+      { suffix: "alism", replacement: "al" },
+      { suffix: "iveness", replacement: "ive" },
+      { suffix: "fulness", replacement: "ful" },
+      { suffix: "ousnes", replacement: "ous" },
+      { suffix: "aliti", replacement: "al" },
+      { suffix: "iviti", replacement: "ive" },
+      { suffix: "biliti", replacement: "ble" },
+    ],
+    0,
+  );
 }
 
 function step3(word: Uint8Array, len: number): number {
   if (len < 4) return len;
-  return applyRules(word, len, [
-    { suffix: "icate", replacement: "ic" },
-    { suffix: "ative", replacement: "" },
-    { suffix: "alize", replacement: "al" },
-    { suffix: "iciti", replacement: "ic" },
-    { suffix: "ical", replacement: "ic" },
-    { suffix: "ful", replacement: "" },
-    { suffix: "ness", replacement: "" },
-  ], 0);
+  return applyRules(
+    word,
+    len,
+    [
+      { suffix: "icate", replacement: "ic" },
+      { suffix: "ative", replacement: "" },
+      { suffix: "alize", replacement: "al" },
+      { suffix: "iciti", replacement: "ic" },
+      { suffix: "ical", replacement: "ic" },
+      { suffix: "ful", replacement: "" },
+      { suffix: "ness", replacement: "" },
+    ],
+    0,
+  );
 }
 
 function step4(word: Uint8Array, len: number): number {
   if (len < 4) return len;
   const suffixes = [
-    "al", "ance", "ence", "er", "ic", "able", "ible", "ant",
-    "ement", "ment", "ent", "ion", "ou", "ism", "ate", "iti",
-    "ous", "ive", "ize",
+    "al",
+    "ance",
+    "ence",
+    "er",
+    "ic",
+    "able",
+    "ible",
+    "ant",
+    "ement",
+    "ment",
+    "ent",
+    "ion",
+    "ou",
+    "ism",
+    "ate",
+    "iti",
+    "ous",
+    "ive",
+    "ize",
   ];
   for (const suffix of suffixes) {
     if (endsWith(word, len, suffix)) {
       const stemLen = len - suffix.length;
       if (suffix === "ion") {
-        if (stemLen > 0 && (word[stemLen - 1] === 115 /* s */ || word[stemLen - 1] === 116 /* t */)) {
+        if (stemLen > 0 && (word[stemLen - 1] === 115 /* s */ || word[stemLen - 1] === 116) /* t */) {
           if (measure(word, stemLen) > 1) return stemLen;
         }
       } else {

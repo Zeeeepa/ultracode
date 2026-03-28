@@ -10,7 +10,7 @@
  * setup_embedding: inference config
  */
 
-import { z } from "zod";
+import type { z } from "zod";
 import { BaseToolHandler, type ToolResult } from "../base-tool-handler.js";
 import {
   BatchModifySchema,
@@ -52,21 +52,27 @@ export class GrepIndexToolHandler extends BaseToolHandler<z.infer<typeof GrepInd
         });
 
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              matches: matches.map((m) => ({
-                file: m.filePath,
-                line: m.lineNumber,
-                column: m.column,
-                content: m.lineContent,
-                context_before: m.contextBefore,
-                context_after: m.contextAfter,
-              })),
-              total: matches.length,
-              source: "trigram_index",
-            }, null, 2),
-          }],
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  matches: matches.map((m) => ({
+                    file: m.filePath,
+                    line: m.lineNumber,
+                    column: m.column,
+                    content: m.lineContent,
+                    context_before: m.contextBefore,
+                    context_after: m.contextAfter,
+                  })),
+                  total: matches.length,
+                  source: "trigram_index",
+                },
+                null,
+                2,
+              ),
+            },
+          ],
         };
       }
 
@@ -90,10 +96,16 @@ export class GrepIndexToolHandler extends BaseToolHandler<z.infer<typeof GrepInd
       };
     } catch (err) {
       return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({ error: "Search failed", message: (err as Error).message, hint: "Index may not be built yet. Run 'index' first." }),
-        }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error: "Search failed",
+              message: (err as Error).message,
+              hint: "Index may not be built yet. Run 'index' first.",
+            }),
+          },
+        ],
       };
     }
   }
@@ -143,17 +155,23 @@ export class BatchModifyToolHandler extends BaseToolHandler<z.infer<typeof Batch
     }));
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          mode: isPreview ? "preview" : "apply",
-          action: args.action,
-          matched: changes.length,
-          total_candidates: entities.length,
-          changes: isPreview ? changes : changes.slice(0, 10),
-          ...(isPreview ? { hint: "Set apply=true to execute changes" } : {}),
-        }, null, 2),
-      }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              mode: isPreview ? "preview" : "apply",
+              action: args.action,
+              matched: changes.length,
+              total_candidates: entities.length,
+              changes: isPreview ? changes : changes.slice(0, 10),
+              ...(isPreview ? { hint: "Set apply=true to execute changes" } : {}),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   }
 }
@@ -186,17 +204,23 @@ export class BatchRenameToolHandler extends BaseToolHandler<z.infer<typeof Batch
     }));
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          mode: isPreview ? "preview" : "apply",
-          find: args.find,
-          replace: args.replace,
-          matched: renames.length,
-          renames: isPreview ? renames : renames.slice(0, 10),
-          ...(isPreview ? { hint: "Set apply=true to execute renames" } : {}),
-        }, null, 2),
-      }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              mode: isPreview ? "preview" : "apply",
+              find: args.find,
+              replace: args.replace,
+              matched: renames.length,
+              renames: isPreview ? renames : renames.slice(0, 10),
+              ...(isPreview ? { hint: "Set apply=true to execute renames" } : {}),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   }
 }
@@ -222,25 +246,36 @@ export class SecurityScanToolHandler extends BaseToolHandler<z.infer<typeof Secu
       const code = (meta?.["code"] as string) ?? entity.name;
 
       // Check for dangerous patterns
-      if (/eval\s*\(/.test(code)) sinks.push({ entity: entity.name, file: entity.filePath, sink: "eval()", risk: "critical" });
-      if (/innerHTML\s*=/.test(code)) sinks.push({ entity: entity.name, file: entity.filePath, sink: "innerHTML", risk: "high" });
-      if (/exec\s*\(/.test(code)) sinks.push({ entity: entity.name, file: entity.filePath, sink: "exec()", risk: "high" });
-      if (/password\s*[:=]\s*["']/.test(code)) sinks.push({ entity: entity.name, file: entity.filePath, sink: "hardcoded_secret", risk: "critical" });
-      if (/SELECT.*\+.*(?:req\.|input|param)/i.test(code)) sinks.push({ entity: entity.name, file: entity.filePath, sink: "sql_injection", risk: "critical" });
+      if (/eval\s*\(/.test(code))
+        sinks.push({ entity: entity.name, file: entity.filePath, sink: "eval()", risk: "critical" });
+      if (/innerHTML\s*=/.test(code))
+        sinks.push({ entity: entity.name, file: entity.filePath, sink: "innerHTML", risk: "high" });
+      if (/exec\s*\(/.test(code))
+        sinks.push({ entity: entity.name, file: entity.filePath, sink: "exec()", risk: "high" });
+      if (/password\s*[:=]\s*["']/.test(code))
+        sinks.push({ entity: entity.name, file: entity.filePath, sink: "hardcoded_secret", risk: "critical" });
+      if (/SELECT.*\+.*(?:req\.|input|param)/i.test(code))
+        sinks.push({ entity: entity.name, file: entity.filePath, sink: "sql_injection", risk: "critical" });
 
       if (sinks.length >= 100) break;
     }
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          vulnerabilities: sinks.length,
-          critical: sinks.filter((s) => s.risk === "critical").length,
-          high: sinks.filter((s) => s.risk === "high").length,
-          findings: sinks,
-        }, null, 2),
-      }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              vulnerabilities: sinks.length,
+              critical: sinks.filter((s) => s.risk === "critical").length,
+              high: sinks.filter((s) => s.risk === "high").length,
+              findings: sinks,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   }
 }
@@ -280,15 +315,21 @@ export class GetReviewContextToolHandler extends BaseToolHandler<z.infer<typeof 
     }
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          changed_files: args.changed_files.length,
-          affected: affectedEntities,
-          total_entities: affectedEntities.reduce((s, a) => s + a.entities.length, 0),
-          review_priority: affectedEntities.sort((a, b) => b.entities.length - a.entities.length),
-        }, null, 2),
-      }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              changed_files: args.changed_files.length,
+              affected: affectedEntities,
+              total_entities: affectedEntities.reduce((s, a) => s + a.entities.length, 0),
+              review_priority: affectedEntities.sort((a, b) => b.entities.length - a.entities.length),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   }
 }
@@ -308,7 +349,9 @@ const LAYER_PATTERNS: Record<string, RegExp[]> = {
   Utility: [/\butils?\b/i, /\bhelpers?\b/i, /\blib\b/i, /\bcommon\b/i, /\bshared\b/i],
 };
 
-export class DetectArchitectureLayersToolHandler extends BaseToolHandler<z.infer<typeof DetectArchitectureLayersSchema>> {
+export class DetectArchitectureLayersToolHandler extends BaseToolHandler<
+  z.infer<typeof DetectArchitectureLayersSchema>
+> {
   protected parseArgs(args: unknown) {
     return DetectArchitectureLayersSchema.parse(args);
   }
@@ -336,15 +379,21 @@ export class DetectArchitectureLayersToolHandler extends BaseToolHandler<z.infer
     }
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          layers: Object.entries(layers)
-            .filter(([, files]) => files.length > 0)
-            .map(([name, files]) => ({ layer: name, files: files.length, sample: files.slice(0, 5) })),
-          total_entities: entities.length,
-        }, null, 2),
-      }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              layers: Object.entries(layers)
+                .filter(([, files]) => files.length > 0)
+                .map(([name, files]) => ({ layer: name, files: files.length, sample: files.slice(0, 5) })),
+              total_entities: entities.length,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   }
 }
@@ -367,7 +416,7 @@ export class GenerateOnboardingToolHandler extends BaseToolHandler<z.infer<typeo
     // Score entities by importance: complexity + relationships
     const scored = entities
       .filter((e) => e.type === "function" || e.type === "class" || e.type === "method")
-      .map((e) => ({ name: e.name, file: e.filePath, type: e.type, score: (e.complexityScore ?? 1) }))
+      .map((e) => ({ name: e.name, file: e.filePath, type: e.type, score: e.complexityScore ?? 1 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, maxSteps);
 
@@ -376,18 +425,29 @@ export class GenerateOnboardingToolHandler extends BaseToolHandler<z.infer<typeo
       entity: e.name,
       file: e.file,
       type: e.type,
-      why: e.score > 10 ? "High complexity — core logic" : e.score > 5 ? "Medium complexity — important module" : "Entry point",
+      why:
+        e.score > 10
+          ? "High complexity — core logic"
+          : e.score > 5
+            ? "Medium complexity — important module"
+            : "Entry point",
     }));
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          title: "Project Onboarding Tour",
-          steps,
-          total_entities: entities.length,
-        }, null, 2),
-      }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              title: "Project Onboarding Tour",
+              steps,
+              total_entities: entities.length,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   }
 }
@@ -407,22 +467,32 @@ export class SetupEmbeddingToolHandler extends BaseToolHandler<z.infer<typeof Se
     const model = getModelById(args.model_id) ?? null;
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          model_id: args.model_id,
-          model_info: model ? {
-            name: model.name,
-            dimension: model.dimension,
-            maxTokens: model.maxTokens,
-            sizeMb: model.sizeMb,
-            lang: model.lang,
-          } : null,
-          quantization: args.quantization,
-          available_models: catalog.models.filter((m) => !m.disabled).map((m) => m.id),
-          hint: model ? "Model found. Configure your embedding provider (TEI/OVMS) to use this model." : "Model not found in catalog.",
-        }, null, 2),
-      }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              model_id: args.model_id,
+              model_info: model
+                ? {
+                    name: model.name,
+                    dimension: model.dimension,
+                    maxTokens: model.maxTokens,
+                    sizeMb: model.sizeMb,
+                    lang: model.lang,
+                  }
+                : null,
+              quantization: args.quantization,
+              available_models: catalog.models.filter((m) => !m.disabled).map((m) => m.id),
+              hint: model
+                ? "Model found. Configure your embedding provider (TEI/OVMS) to use this model."
+                : "Model not found in catalog.",
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   }
 }

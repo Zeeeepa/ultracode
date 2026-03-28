@@ -25,7 +25,7 @@ export const TRIGRAM_ENTRY_SIZE = 24;
 
 export interface Header {
   magic: Uint8Array; // 4 bytes
-  version: number;   // u32
+  version: number; // u32
   fileCount: number;
   trigramCount: number;
   fileTableOffset: number;
@@ -35,17 +35,17 @@ export interface Header {
 }
 
 export interface FileEntry {
-  pathOffset: number;  // u32: offset into StringTable
-  pathLen: number;     // u16
+  pathOffset: number; // u32: offset into StringTable
+  pathLen: number; // u16
   contentHash: bigint; // u64: FNV-1a of file content
 }
 
 export interface TrigramTableEntry {
-  nextMask: bigint;     // u64: bloom for next-char
-  trigram: number;      // u32: lower 24 bits
+  nextMask: bigint; // u64: bloom for next-char
+  trigram: number; // u32: lower 24 bits
   postingOffset: number; // u32: byte offset into PostingsSection
-  postingCount: number;  // u32
-  locMask: number;       // u8: bloom for position
+  postingCount: number; // u32
+  locMask: number; // u8: bloom for position
 }
 
 // =============================================================================
@@ -53,9 +53,9 @@ export interface TrigramTableEntry {
 // =============================================================================
 
 export interface PackedTrigram {
-  trigram: number;  // u32, lower 24 bits
+  trigram: number; // u32, lower 24 bits
   nextMask: bigint; // u64
-  locMask: number;  // u8
+  locMask: number; // u8
 }
 
 export interface FileTrigramData {
@@ -88,12 +88,12 @@ export interface SearchMatch {
 
 /** Pack 3 bytes into a u32 trigram value (lower 24 bits) */
 export function packTrigram(b0: number, b1: number, b2: number): number {
-  return ((b0 & 0xFF) << 16) | ((b1 & 0xFF) << 8) | (b2 & 0xFF);
+  return ((b0 & 0xff) << 16) | ((b1 & 0xff) << 8) | (b2 & 0xff);
 }
 
 /** Unpack a u32 trigram value to 3 bytes */
 export function unpackTrigram(tri: number): [number, number, number] {
-  return [(tri >>> 16) & 0xFF, (tri >>> 8) & 0xFF, tri & 0xFF];
+  return [(tri >>> 16) & 0xff, (tri >>> 8) & 0xff, tri & 0xff];
 }
 
 /** Convert trigram to readable string */
@@ -107,8 +107,10 @@ export function trigramToString(tri: number): string {
 // =============================================================================
 
 export function writeHeader(buf: DataView, h: Header): void {
-  buf.setUint8(0, MAGIC[0]!); buf.setUint8(1, MAGIC[1]!);
-  buf.setUint8(2, MAGIC[2]!); buf.setUint8(3, MAGIC[3]!);
+  buf.setUint8(0, MAGIC[0]!);
+  buf.setUint8(1, MAGIC[1]!);
+  buf.setUint8(2, MAGIC[2]!);
+  buf.setUint8(3, MAGIC[3]!);
   buf.setUint32(4, h.version, true);
   buf.setUint32(8, h.fileCount, true);
   buf.setUint32(12, h.trigramCount, true);

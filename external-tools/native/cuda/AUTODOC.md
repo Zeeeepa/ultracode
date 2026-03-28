@@ -24,6 +24,12 @@ Output: Similarity Score (0–1) or Score Array
 
 ## Entities
 
+### Modules
+
+**ultracode-cuda-addon** — `package.json:1-1`
+
+Native CUDA addon package providing GPU-accelerated vector similarity operations for Node.js.
+
 ### Interfaces
 
 **CUDADeviceInfo** — `external-tools/native/cuda/src/index.d.ts:10-16`

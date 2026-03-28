@@ -49,6 +49,13 @@ GraphQL Schema Files (.graphql, .gql)
 | `GraphQLFieldDef` | Schema field definition including name, type, arguments, and description | types.ts:76-83 |
 | `GraphQLArg` | Field argument definition with type information and default values | types.ts:67-71 |
 
+## Exports
+
+- `analyzeGraphQLCodeLinks`
+- `buildGraphQLRelationships`
+- `getGraphQLCodegenConfigFiles`
+- `getGraphQLGeneratedCodeMarkers`
+
 ## Files
 
 | File | Purpose |

@@ -31,8 +31,8 @@ Handler Response (JSON + pagination metadata + 50KB transport limit)
 | Name | Description | Location |
 |------|-------------|----------|
 | `TaintCategory` | Vulnerability category enumeration supporting `"sql_injection"`, `"xss"`, `"command_injection"`, and `"prototype_pollution"`. | [types.ts:1-8](types.ts:1-8) |
-| `TaintSeverity` | Vulnerability severity level enumeration with values `"critical"`, `"high"`, `"medium"`, and `"low"`. | [types.ts:10](types.ts:10) |
-| `TaintFlowRole` | Entity role in taint flow analysis: `"source"` for data entry points, `"sink"` for dangerous operations, or `"sanitizer"` for protective functions. | [types.ts:41](types.ts:41) |
+| `TaintSeverity` | Vulnerability severity level enumeration with values `"critical"`, `"high"`, `"medium"`, and `"low"`. | [types.ts:10](types.ts:1) |
+| `TaintFlowRole` | Entity role in taint flow analysis: `"source"` for data entry points, `"sink"` for dangerous operations, or `"sanitizer"` for protective functions. | [types.ts:41](types.ts:1) |
 
 ### Pattern Interfaces
 
@@ -54,10 +54,10 @@ Handler Response (JSON + pagination metadata + 50KB transport limit)
 
 | Name | Description | Location |
 |------|-------------|----------|
-| `TaintSource` | Discovered taint source with entity name, source type classification (e.g., `"http_body"`), file location, line and column numbers, and detection priority. | [types.ts:10](types.ts:10) |
+| `TaintSource` | Discovered taint source with entity name, source type classification (e.g., `"http_body"`), file location, line and column numbers, and detection priority. | [types.ts:10](types.ts:1) |
 | `TaintSink` | Dangerous operation with entity name, sink type classification (e.g., `"sql_execute"`), list of affected vulnerability categories, file location coordinates, and priority ranking. | [types.ts:22-30](types.ts:22-30) |
 | `TaintSanitizer` | Protective function with name, sanitizer type classification (e.g., `"sql_parameterize"`), set of vulnerability categories defended, and file location. | [types.ts:32-39](types.ts:32-39) |
-| `TaintFlowStep` | Single step in a vulnerability propagation path showing the role (source/sink/sanitizer), entity name, file location, and description of data transformation at this step. | [types.ts:41](types.ts:41) |
+| `TaintFlowStep` | Single step in a vulnerability propagation path showing the role (source/sink/sanitizer), entity name, file location, and description of data transformation at this step. | [types.ts:41](types.ts:1) |
 | `TaintVulnerability` | Detected security vulnerability with source and sink references, assigned severity level, vulnerability category, complete flow path as sequence of steps, and unsanitized flag. | [types.ts:52-61](types.ts:52-61) |
 
 ### Analysis Interfaces

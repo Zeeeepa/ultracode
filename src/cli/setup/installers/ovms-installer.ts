@@ -232,11 +232,7 @@ async function exportModelNative(
  * Falls back to Docker conversion if CDN download fails.
  * CDN has INT8/FP16 models pre-optimized — saves 5-10 min of Docker conversion.
  */
-async function tryDownloadFromCdn(
-  modelId: string,
-  modelsDir: string,
-  weightFormat: string,
-): Promise<boolean> {
+async function tryDownloadFromCdn(modelId: string, modelsDir: string, weightFormat: string): Promise<boolean> {
   try {
     const { loadModelsCatalog } = await import("../../../config/models-catalog.js");
     const catalog = loadModelsCatalog();
@@ -279,14 +275,19 @@ async function tryDownloadFromCdn(
       await new Promise<void>((resolve, reject) => {
         const file = nodeFs.createWriteStream(tempArchive);
         const doGet = (u: string) => {
-          nodeHttps.get(u, (res: import("node:http").IncomingMessage) => {
-            if ((res.statusCode === 302 || res.statusCode === 301) && res.headers.location) {
-              doGet(res.headers.location);
-            } else {
-              res.pipe(file);
-              file.on("finish", () => { file.close(); resolve(); });
-            }
-          }).on("error", reject);
+          nodeHttps
+            .get(u, (res: import("node:http").IncomingMessage) => {
+              if ((res.statusCode === 302 || res.statusCode === 301) && res.headers.location) {
+                doGet(res.headers.location);
+              } else {
+                res.pipe(file);
+                file.on("finish", () => {
+                  file.close();
+                  resolve();
+                });
+              }
+            })
+            .on("error", reject);
         };
         doGet(archiveUrl);
       });
@@ -297,12 +298,17 @@ async function tryDownloadFromCdn(
 
       await new Promise<void>((resolve, reject) => {
         sevenZip!.unpack(tempArchive, modelDir, (err: Error | null) => {
-          if (err) reject(err); else resolve();
+          if (err) reject(err);
+          else resolve();
         });
       });
 
       // Cleanup archive
-      try { (await import("node:fs/promises")).unlink(tempArchive); } catch { /* ok */ }
+      try {
+        (await import("node:fs/promises")).unlink(tempArchive);
+      } catch {
+        /* ok */
+      }
 
       printOK(`Model downloaded from CDN: ${modelId}`);
       return true;
@@ -317,19 +323,27 @@ async function tryDownloadFromCdn(
 
     printInfo(`Downloading pre-built OpenVINO model from CDN...`);
 
-    for (const [url, filename] of [[xmlUrl, "openvino_model.xml"], [binUrl, "openvino_model.bin"]] as const) {
+    for (const [url, filename] of [
+      [xmlUrl, "openvino_model.xml"],
+      [binUrl, "openvino_model.bin"],
+    ] as const) {
       const destPath = join(modelDir, filename);
       await new Promise<void>((resolve, reject) => {
         const file = nodeFs2.createWriteStream(destPath);
         const doGet = (u: string) => {
-          nodeHttps2.get(u, (res: import("node:http").IncomingMessage) => {
-            if ((res.statusCode === 302 || res.statusCode === 301) && res.headers.location) {
-              doGet(res.headers.location);
-            } else {
-              res.pipe(file);
-              file.on("finish", () => { file.close(); resolve(); });
-            }
-          }).on("error", reject);
+          nodeHttps2
+            .get(u, (res: import("node:http").IncomingMessage) => {
+              if ((res.statusCode === 302 || res.statusCode === 301) && res.headers.location) {
+                doGet(res.headers.location);
+              } else {
+                res.pipe(file);
+                file.on("finish", () => {
+                  file.close();
+                  resolve();
+                });
+              }
+            })
+            .on("error", reject);
         };
         doGet(url);
       });

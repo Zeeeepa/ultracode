@@ -59,65 +59,16 @@ The storage module is the persistence backbone of the system. It stores code ent
 │  │  └──────────────┘  └───────────────┘  └───────────────┘           │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     Prolly Tree (Versioning Engine)                      │
-│  - ProllyTree, ProllyNodeStore, CommitManager, TimeTravelManager        │
-└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Entities
+## Configuration & Constants
 
-### Classes
-
-| Name | Description | Reference |
-|------|-------------|-----------|
-| `GraphStorageLibSQL` | Unified storage implementation for code graph and embeddings with composite-key multi-branch support | [`graph-storage-libsql.ts:45-182`](./graph-storage-libsql.ts) |
-| `LibSQLGraphAdapter` | Low-level adapter managing entity/relationship/file tables and DiskANN vector index in unified SQLite | [`libsql-graph-adapter.ts:68-320`](./libsql-graph-adapter.ts) |
-| `BatchOperationsLibSQL` | High-performance async batch processor for entities, relationships, and embeddings with xxHash stable IDs | [`batch-operations-libsql.ts:20-180`](./batch-operations-libsql.ts) |
-| `QueryCacheManager` | LRU cache for query results with TTL-based eviction and memory bounds | [`cache-manager.ts:35-253`](./cache-manager.ts) |
-
-### Functions
-
-| Name | Description | Reference |
-|------|-------------|-----------|
-| `getGraphStorage` | Get the singleton GraphStorageLibSQL instance | [`graph-storage-factory.ts:80-95`](./graph-storage-factory.ts) |
-| `configureGraphStorage` | Configure global storage settings (dimensions, metric, caching) | [`graph-storage-factory.ts:40-68`](./graph-storage-factory.ts) |
-| `setGlobalProjectContext` | Set the current project and branch for isolation | [`graph-storage-factory.ts:98-115`](./graph-storage-factory.ts) |
-| `getCacheManager` | Get singleton cache manager for query result caching | [`cache-manager.ts:310-315`](./cache-manager.ts) |
-
-## Dependencies
-
-### Internal Modules
-
-| Module | Purpose | Interaction |
-|--------|---------|-------------|
-| `logging` | Structured logging | log.i, log.w, log.e, log.t with tags STORAGEFACT, LIBSQLADAPT, etc. |
-| `types/storage` | Core type definitions | Entity, Relationship, GraphStorage, FileInfo, CacheManager interfaces |
-| `types/semantic` | Vector types | SimilarityResult, VectorEmbedding |
-| `shared/storage-paths` | Path helpers | DB path resolution, project hashing, branch detection |
-| `semantic/faiss` | Branch detection | detectBaseBranch() for layered branch reads |
-| `prolly/` | Graph versioning | ProllyNodeStore, CommitManager, ProllyTree, TimeTravelManager |
-
-### External Packages
-
-| Package | Purpose |
-|---------|---------|
-| `better-sqlite3` / `bun:sqlite` | Native SQLite driver (via NativeSQLiteClient) |
-| `lru-cache` | LRU cache implementation for embedding/search/metadata |
-| `cbor-x` | Binary metadata serialization (faster than JSON) |
-| `xxhash-wasm` | Fast hashing for stable entity/relationship ID generation |
-| `nanoid` | Fallback ID generation when xxHash not ready |
-
-## Configuration
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `dimensions` | `384` | Embedding dimensions (384, 768, 1024, 4096) |
-| `metric` | `"cosine"` | DiskANN distance metric (`"cosine"` or `"l2"`) |
-| `compression` | `"float8"` | DiskANN neighbor compression (40-50% memory savings) |
-| `searchL` | `150` | DiskANN search quality (higher = better recall, slower) |
+| Config | Default | Purpose |
+|--------|---------|---------|
+| `metric` | `"cosine"` | Vector similarity metric (cosine, l2, ip) |
+| `dimensions` | `768` | Vector embedding dimensions |
+| `compression` | none | Optional compression (float8, float16) |
+| `efConstruction` | `200` | DiskANN build quality (higher = better recall, slower) |
 | `insertL` | `30` | DiskANN build quality |
 | `maxNeighbors` | `12` | Max DiskANN neighbors per node |
 | `embeddingCache.max` | `5000` | Max cached embeddings (TTL: 10 min) |
@@ -263,6 +214,48 @@ await adapter.insertEmbedding({
 
 const similar = await adapter.searchVectors(queryVector, 10);
 ```
+
+## Entity Reference
+
+### Classes
+
+| Entity | Location | Description |
+|--------|----------|-------------|
+| `MultiDbManager` | `multi-db-manager.ts:48-196` | Manages lifecycle and access to multiple SQLite database connections (graph, semantic, versioning, cache) with atomic initialization and cleanup. |
+| `NativeSQLiteClient` | `native-sqlite-client.ts:42-163` | Unified SQLite client wrapper supporting both Bun (bun:sqlite) and Node.js (better-sqlite3) runtimes with prepared statement caching. |
+
+### Interfaces & Types
+
+| Entity | Location | Description |
+|--------|----------|-------------|
+| `BunSQLiteOptions` | `bun-sqlite-adapter.ts:16-20` | Configuration options for Bun's native SQLite database including filename and optional parameters. |
+| `BunSQLiteRunResult` | `bun-sqlite-adapter.ts:22-25` | Result object returned from Bun SQLite statement execution containing changes count and last insert row ID. |
+| `BunSQLiteStatement` | `bun-sqlite-adapter.ts:31-36` | Prepared statement interface for Bun SQLite supporting parameterized queries with `.bind()` and execution methods. |
+| `BunSQLiteDatabase` | `bun-sqlite-adapter.ts:41-47` | Bun's native SQLite database handle providing methods for statement preparation and transaction management. |
+| `MultiDbPaths` | `multi-db-manager.ts:19-24` | Container holding file paths for all four database files (graph, semantic, versioning, cache). |
+| `ResultSet` | `native-sqlite-client.ts:25-30` | Result set interface for SQLite queries containing rows array and statement metadata. |
+
+### Functions
+
+| Entity | Location | Description |
+|--------|----------|-------------|
+| `isBunRuntime` | `bun-sqlite-adapter.ts:52-59` | Detects whether the current runtime environment is Bun or Node.js. |
+| `loadBunSQLite` | `bun-sqlite-adapter.ts:65-75` | Dynamically loads the Bun SQLite module with error handling for non-Bun environments. |
+| `createBunDatabase` | `bun-sqlite-adapter.ts:80-83` | Creates and returns a Bun SQLite database connection with specified file path. |
+| `getMultiDbPaths` | `multi-db-manager.ts:26-33` | Returns the filesystem paths for all four database files based on the provided storage directory. |
+
+### Methods (MultiDbManager)
+
+| Entity | Location | Description |
+|--------|----------|-------------|
+| `isInitialized` | `multi-db-manager.ts:59-61` | Returns whether the MultiDbManager has been initialized with database connections. |
+| `initialize` | `multi-db-manager.ts:63-95` | Atomically initializes all four database connections with schema creation and integrity verification. |
+| `getGraphClient` | `multi-db-manager.ts:97-99` | Returns the graph database client for code entity and relationship storage. |
+| `getSemanticClient` | `multi-db-manager.ts:101-103` | Returns the semantic database client for vector embeddings. |
+| `getVersioningClient` | `multi-db-manager.ts:105-107` | Returns the versioning database client for Prolly Tree commit history. |
+| `getCacheClient` | `multi-db-manager.ts:109-111` | Returns the query cache database client. |
+| `getPaths` | `multi-db-manager.ts:113-115` | Returns the MultiDbPaths object containing all database file paths. |
+| `flushClient` | `multi-db-manager.ts:117-*` | Flushes and closes the specified database connection. |
 
 ## Prolly Tree -- Graph Versioning
 

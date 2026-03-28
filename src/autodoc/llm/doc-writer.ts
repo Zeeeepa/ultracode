@@ -11,10 +11,22 @@ import type { LLMProvider } from "./llm-provider.js";
  * Language name mapping — synced with Zig's batch_generator.zig (16 languages).
  */
 const LANGUAGE_NAMES: Record<string, string> = {
-  en: "English", ru: "Russian", de: "German", fr: "French",
-  es: "Spanish", pt: "Portuguese", zh: "Chinese", ja: "Japanese",
-  ko: "Korean", it: "Italian", nl: "Dutch", pl: "Polish",
-  uk: "Ukrainian", tr: "Turkish", ar: "Arabic", hi: "Hindi",
+  en: "English",
+  ru: "Russian",
+  de: "German",
+  fr: "French",
+  es: "Spanish",
+  pt: "Portuguese",
+  zh: "Chinese",
+  ja: "Japanese",
+  ko: "Korean",
+  it: "Italian",
+  nl: "Dutch",
+  pl: "Polish",
+  uk: "Ukrainian",
+  tr: "Turkish",
+  ar: "Arabic",
+  hi: "Hindi",
 };
 
 function getLanguageName(code?: string): string {

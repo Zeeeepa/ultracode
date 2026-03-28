@@ -10,19 +10,19 @@
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
+import { decomposePattern } from "./trigram-extract.js";
+import type { FileTrigramData } from "./trigram-types.js";
 import {
   FILE_ENTRY_SIZE,
   HEADER_SIZE,
   type Header,
+  readHeader,
   type SearchMatch,
   type SearchOptions,
   TRIGRAM_ENTRY_SIZE,
   type TrigramTableEntry,
-  readHeader,
   writeHeader,
 } from "./trigram-types.js";
-import { decomposePattern } from "./trigram-extract.js";
-import type { FileTrigramData } from "./trigram-types.js";
 import { decodeDelta, encodeDelta, maxEncodedSize } from "./varint.js";
 
 // =============================================================================
@@ -200,9 +200,13 @@ export class TrigramIndex {
   }
 
   /** Get file count */
-  get fileCount(): number { return this.header.fileCount; }
+  get fileCount(): number {
+    return this.header.fileCount;
+  }
   /** Get trigram count */
-  get trigramCount(): number { return this.header.trigramCount; }
+  get trigramCount(): number {
+    return this.header.trigramCount;
+  }
 
   /** Get file path by file ID */
   getFilePath(fileId: number): string {
@@ -248,18 +252,12 @@ export class TrigramIndex {
   /**
    * Execute a search query: decompose pattern → intersect postings → verify matches.
    */
-  executeSearch(
-    projectPath: string,
-    pattern: string,
-    options: SearchOptions = {},
-  ): SearchMatch[] {
+  executeSearch(projectPath: string, pattern: string, options: SearchOptions = {}): SearchMatch[] {
     const maxResults = options.maxResults ?? 100;
     const contextLines = options.contextLines ?? 2;
 
     // Step 1: Decompose pattern into trigrams
-    const queryTrigrams = decomposePattern(
-      options.caseInsensitive ? pattern.toLowerCase() : pattern,
-    );
+    const queryTrigrams = decomposePattern(options.caseInsensitive ? pattern.toLowerCase() : pattern);
     if (queryTrigrams.length === 0) return [];
 
     // Step 2: Look up each trigram, get posting lists
@@ -350,7 +348,8 @@ function intersectSorted(a: number[], b: number[]): number[] {
   while (i < a.length && j < b.length) {
     if (a[i]! === b[j]!) {
       result.push(a[i]!);
-      i++; j++;
+      i++;
+      j++;
     } else if (a[i]! < b[j]!) {
       i++;
     } else {

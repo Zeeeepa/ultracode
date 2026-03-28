@@ -955,8 +955,12 @@ export class ClaudeCodeProvider implements LLMProvider {
       let stdout = "";
       let stderr = "";
 
-      proc.stdout.on("data", (data: Buffer) => { stdout += data.toString("utf-8"); });
-      proc.stderr.on("data", (data: Buffer) => { stderr += data.toString("utf-8"); });
+      proc.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString("utf-8");
+      });
+      proc.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString("utf-8");
+      });
 
       proc.on("close", (code: number | null) => {
         if (code !== 0) {
@@ -967,7 +971,9 @@ export class ClaudeCodeProvider implements LLMProvider {
         resolve(stdout);
       });
 
-      proc.on("error", () => { resolve(null); });
+      proc.on("error", () => {
+        resolve(null);
+      });
     });
   }
 
@@ -986,10 +992,13 @@ export class ClaudeCodeProvider implements LLMProvider {
     // For now: don't use --bare (TS doesn't have ultracode-oauth-helper yet)
 
     claudeArgs.push(
-      "--model", this.model,
-      "--output-format", "json",
+      "--model",
+      this.model,
+      "--output-format",
+      "json",
       "--no-session-persistence",
-      "--tools", "",
+      "--tools",
+      "",
       "--strict-mcp-config",
     );
 
@@ -1014,8 +1023,12 @@ export class ClaudeCodeProvider implements LLMProvider {
       let stdout = "";
       let stderr = "";
 
-      proc.stdout.on("data", (data: Buffer) => { stdout += data.toString("utf-8"); });
-      proc.stderr.on("data", (data: Buffer) => { stderr += data.toString("utf-8"); });
+      proc.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString("utf-8");
+      });
+      proc.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString("utf-8");
+      });
 
       proc.stdin.write(Buffer.from(prompt, "utf-8"));
       proc.stdin.end();
@@ -1080,7 +1093,7 @@ export class ClaudeCodeProvider implements LLMProvider {
 
       // Build command: pipe temp file as stdin, capture stdout to temp file
       // Use cmd /c with input redirection — simpler than threads
-      const fullCmd = `"${cmd}" ${args.map((a) => a === "" ? '""' : `"${a}"`).join(" ")} < "${promptPath}" > "${outputPath}"`;
+      const fullCmd = `"${cmd}" ${args.map((a) => (a === "" ? '""' : `"${a}"`)).join(" ")} < "${promptPath}" > "${outputPath}"`;
 
       log.d("CLAUDE_CODE", "win_exec", { cmd: fullCmd.slice(0, 200) });
 
@@ -1116,8 +1129,16 @@ export class ClaudeCodeProvider implements LLMProvider {
       return null;
     } finally {
       // Cleanup temp files
-      try { unlinkSync(promptPath); } catch { /* ok */ }
-      try { unlinkSync(outputPath); } catch { /* ok */ }
+      try {
+        unlinkSync(promptPath);
+      } catch {
+        /* ok */
+      }
+      try {
+        unlinkSync(outputPath);
+      } catch {
+        /* ok */
+      }
     }
   }
 }

@@ -106,22 +106,22 @@ export class CacheOperations {
     textPreview?: string | undefined,
   ): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) return;
+      const client = this.getClient();
+      if (!client) return;
 
-    const now = Date.now();
-    try {
-      // Store embedding as raw BLOB (Float32Array → Buffer)
-      const embeddingBlob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
-      await client.execute({
-        sql: `INSERT OR REPLACE INTO embedding_cache
+      const now = Date.now();
+      try {
+        // Store embedding as raw BLOB (Float32Array → Buffer)
+        const embeddingBlob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
+        await client.execute({
+          sql: `INSERT OR REPLACE INTO embedding_cache
               (content_hash, model, embedding, text_preview, hit_count, created_at, last_used_at)
               VALUES (?, ?, ?, ?, 0, ?, ?)`,
-        args: [contentHash, model, embeddingBlob, textPreview?.slice(0, 100) ?? null, now, now],
-      });
-    } catch {
-      // Ignore cache write errors
-    }
+          args: [contentHash, model, embeddingBlob, textPreview?.slice(0, 100) ?? null, now, now],
+        });
+      } catch {
+        // Ignore cache write errors
+      }
     }); // end _w
   }
 
@@ -133,41 +133,41 @@ export class CacheOperations {
   ): Promise<void> {
     if (entries.length === 0) return;
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) return;
+      const client = this.getClient();
+      if (!client) return;
 
-    const now = Date.now();
-    try {
-      const statements = entries.map((entry) => ({
-        sql: `INSERT OR REPLACE INTO embedding_cache
+      const now = Date.now();
+      try {
+        const statements = entries.map((entry) => ({
+          sql: `INSERT OR REPLACE INTO embedding_cache
               (content_hash, model, embedding, text_preview, hit_count, created_at, last_used_at)
               VALUES (?, ?, ?, ?, 0, ?, ?)`,
-        args: [
-          entry.contentHash,
-          entry.model,
-          Buffer.from(entry.embedding.buffer, entry.embedding.byteOffset, entry.embedding.byteLength),
-          entry.textPreview?.slice(0, 100) ?? null,
-          now,
-          now,
-        ],
-      }));
+          args: [
+            entry.contentHash,
+            entry.model,
+            Buffer.from(entry.embedding.buffer, entry.embedding.byteOffset, entry.embedding.byteLength),
+            entry.textPreview?.slice(0, 100) ?? null,
+            now,
+            now,
+          ],
+        }));
 
-      await client.batch(statements, "write");
-    } catch {
-      // Ignore cache write errors
-    }
+        await client.batch(statements, "write");
+      } catch {
+        // Ignore cache write errors
+      }
     }); // end _w
   }
 
   async clearEmbeddingCache(): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) return;
-    try {
-      await client.execute("DELETE FROM embedding_cache");
-    } catch {
-      // Table may not exist yet
-    }
+      const client = this.getClient();
+      if (!client) return;
+      try {
+        await client.execute("DELETE FROM embedding_cache");
+      } catch {
+        // Table may not exist yet
+      }
     }); // end _w
   }
 }

@@ -122,17 +122,41 @@ const IMPORT_PATTERN = /^\s*import\s+(?:\{\s*(\w+)|(\w+)\s+from)/;
 const PARAM_PATTERN = /\(\s*([\w\s,:=?*&.]+)\)/;
 
 const KEYWORDS = new Set([
-  "function", "return", "if", "else", "while", "for", "do",
-  "switch", "case", "break", "class", "new", "this", "super",
-  "import", "export", "from", "async", "await", "yield", "try",
-  "catch", "throw", "void", "typeof", "null", "undefined",
-  "true", "false", "let", "var", "const",
+  "function",
+  "return",
+  "if",
+  "else",
+  "while",
+  "for",
+  "do",
+  "switch",
+  "case",
+  "break",
+  "class",
+  "new",
+  "this",
+  "super",
+  "import",
+  "export",
+  "from",
+  "async",
+  "await",
+  "yield",
+  "try",
+  "catch",
+  "throw",
+  "void",
+  "typeof",
+  "null",
+  "undefined",
+  "true",
+  "false",
+  "let",
+  "var",
+  "const",
 ]);
 
-function extractDefinitionsFromLines(
-  lines: string[],
-  cfgNodes: CfgNode[],
-): Definition[] {
+function extractDefinitionsFromLines(lines: string[], cfgNodes: CfgNode[]): Definition[] {
   const defs: Definition[] = [];
 
   for (const node of cfgNodes) {
@@ -224,10 +248,7 @@ const MAX_ITERATIONS = 20;
  * @param sourceLines - Source code lines (same as passed to buildCfgFromSource)
  * @returns ReachingDefResult with definitions and per-node bitsets
  */
-export function solveReachingDefinitions(
-  cfg: MethodCfg,
-  sourceLines: string[],
-): ReachingDefResult {
+export function solveReachingDefinitions(cfg: MethodCfg, sourceLines: string[]): ReachingDefResult {
   const nodeCount = cfg.nodes.length;
 
   // Build node ID → index mapping
@@ -328,11 +349,7 @@ export function solveReachingDefinitions(
 /**
  * Check if a specific definition reaches a CFG node.
  */
-export function defReachesNode(
-  result: ReachingDefResult,
-  defIdx: number,
-  nodeId: number,
-): boolean {
+export function defReachesNode(result: ReachingDefResult, defIdx: number, nodeId: number): boolean {
   const idx = result.nodeIdToIdx.get(nodeId);
   if (idx === undefined) return false;
   return result.reachingIn[idx]!.isSet(defIdx);
@@ -341,11 +358,7 @@ export function defReachesNode(
 /**
  * Get all definitions of a variable that reach a CFG node.
  */
-export function defsReachingNode(
-  result: ReachingDefResult,
-  nodeId: number,
-  variable: string,
-): Definition[] {
+export function defsReachingNode(result: ReachingDefResult, nodeId: number, variable: string): Definition[] {
   const idx = result.nodeIdToIdx.get(nodeId);
   if (idx === undefined) return [];
 

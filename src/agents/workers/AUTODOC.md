@@ -1,10 +1,3 @@
----
-module_name: workers
-description: "Worker infrastructure for parallel code parsing, embedding generation, and language detection"
-status: active
-language: typescript
----
-
 # Workers
 
 > Provides subprocess-based and thread-based worker pools for parallel code parsing across 14+ languages, with integrated embedding generation, language detection, and dynamic worker scaling.
@@ -33,10 +26,12 @@ The workers module is the parallel processing backbone for code indexing. It pro
 | `WorkerPoolManager` | class | Thread-based worker pool with task queuing | [`worker-pool-manager.ts:63-407`](./worker-pool-manager.ts) |
 | `LanguageWorkerPool` | class | Language-specific thread pool with runtime detection | [`language-worker-pool.ts:156-763`](./language-worker-pool.ts) |
 | `PythonWorkerPool` | class | Specialized pool for Python with 4-layer timing | [`python-worker-pool.ts:126-522`](./python-worker-pool.ts) |
+| `WorkerGlobalCache` | class | Global cache for worker-wide state, analyzers, and embeddings | [`worker-global-cache.ts:17-85`](./worker-global-cache.ts) |
 | `detectLanguage` | function | Detects language from file extension | [`language-detection.ts:80-83`](./language-detection.ts) |
 | `LANGUAGE_MAP` | const | Extension-to-language mapping | [`language-detection.ts:12-53`](./language-detection.ts) |
 | `SUPPORTED_LANGUAGES` | const | List of all supported language identifiers | [`language-detection.ts:58-83`](./language-detection.ts) |
 | `getAnalyzer` | function | Gets or creates cached language analyzer | [`analyzer-loader.ts:23-54`](./analyzer-loader.ts) |
+| `getWorkerGlobalCache` | function | Retrieves or initializes the global worker cache instance | [`worker-global-cache.ts:90-93`](./worker-global-cache.ts) |
 | `warmupAnalyzer` | function | Pre-warms ANTLR parsers for JIT compilation | [`analyzer-loader.ts:250-282`](./analyzer-loader.ts) |
 | `SUPPORTED_WORKER_LANGUAGES` | const | Languages supported by the generic worker | [`analyzer-loader.ts:287-309`](./analyzer-loader.ts) |
 | `WorkerEmbeddingClient` | class | Lightweight HTTP client for embedding generation in workers | [`worker-embedding-client.ts:60-60`](./worker-embedding-client.ts) |
@@ -96,27 +91,4 @@ Worker crashes are caught and pending tasks are rejected with descriptive errors
 | `language-detection.ts` | File extension to programming language detection |
 | `analyzer-loader.ts` | Dynamic language analyzer loading with caching and warmup |
 | `worker-logging.ts` | File-based logging from worker/subprocess processes |
-
-## New (pending description)
-
-- **WorkerGlobalCache** — `worker-global-cache.ts:17-85`
-- **<anonymous>** — `worker-global-cache.ts:17-17`
-- **getWorkerGlobalCache** — `worker-global-cache.ts:90-93`
-- **<anonymous>** — `worker-global-cache.ts:90-90`
-- **load** — `worker-global-cache.ts:28-65`
-- **size** — `worker-global-cache.ts:67-69`
-- **get** — `worker-global-cache.ts:76-84`
-- **selfDir** — `worker-global-cache.ts:37-37`
-- **modelSlug** — `worker-global-cache.ts:38-38`
-- **prebuiltDir** — `worker-global-cache.ts:40-40`
-- **hashesPath** — `worker-global-cache.ts:41-41`
-- **embeddingsPath** — `worker-global-cache.ts:42-42`
-- **hashesBuf** — `worker-global-cache.ts:50-50`
-- **count** — `worker-global-cache.ts:51-51`
-- **i** — `worker-global-cache.ts:52-52`
-- **hash** — `worker-global-cache.ts:53-53`
-- **normalized** — `worker-global-cache.ts:78-78`
-- **hash** — `worker-global-cache.ts:79-79`
-- **idx** — `worker-global-cache.ts:80-80`
-- **start** — `worker-global-cache.ts:82-82`
-- **instance** — `worker-global-cache.ts:88-88`
+| `worker-global-cache.ts` | Global cache for managing worker-wide state and shared resources |

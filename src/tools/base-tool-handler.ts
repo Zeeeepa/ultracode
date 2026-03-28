@@ -321,7 +321,7 @@ export abstract class BaseToolHandler<TArgs = unknown> {
       // but also preserve the original snake_case key for schemas that expect it
       if (camelKey !== key) {
         normalized[camelKey] = value; // camelCase version
-        normalized[key] = value;     // original snake_case preserved for Zig-compat schemas
+        normalized[key] = value; // original snake_case preserved for Zig-compat schemas
       } else {
         normalized[key] = value;
       }

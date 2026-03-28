@@ -1,161 +1,110 @@
----
-module_name: validation
-description: Multi-language code validation with pluggable linters, batch processing, and before/after comparison
-status: active
-language: TypeScript
-entry_point: code-validator.ts
-exports:
-  - CodeValidator
-  - ValidationReport
-  - ValidationProblem
-  - BeforeAfterReport
-  - Linter
-dependencies:
-  - ../logging/index
-  - ../utils/file-ops
-  - ../utils/shell
-  - oxlint
-  - pylint
-  - "@biomejs/biome"
-tags:
-  - validation
-  - linting
-  - code-quality
-  - oxlint
-  - pylint
-  - biome
----
+# validation
 
 ## Overview
 
-Multi-language code validation module with a pluggable linter architecture.
-`CodeValidator` is the central orchestrator that selects the appropriate linter based on file
-extension, supports single-file and directory-level batch validation with configurable concurrency,
-and provides before/after comparison reports for tracking code quality improvements.
-Three linter implementations are provided: `OxlintLinter` for TypeScript/JavaScript (~100x faster
-than ESLint), `BiomeLinter` as an alternative JS/TS linter, and `PylintLinter` for Python.
-All linters are loaded lazily on first use to avoid import errors when binaries are missing.
-OxlintLinter and BiomeLinter support autofix with a dry-run mode that applies fixes to a
-temporary copy, compares the result, and reports what would change without modifying the original.
+The validation module provides multi-language code quality checking with a pluggable linter architecture. `CodeValidator` orchestrates linter selection based on file type, executes batch validation with configurable concurrency, and generates before/after comparison reports to track code quality improvements. Three linter implementations are included: `OxlintLinter` for TypeScript/JavaScript (100x faster than ESLint), `BiomeLinter` as an alternative JS/TS linter, and `PylintLinter` for Python. All linters load lazily on first use to avoid import errors when binaries are unavailable, and support autofix with dry-run mode that safely tests fixes on temporary copies without modifying originals.
 
-## Data Flow
+## Flow
 
 ```
-validateFile(filePath)
-  -> [1] Determine file extension
-  -> [2] selectLinter(ext) -> lazy-load linter via dynamic import
-  -> [3] readText(filePath) to get file content
-  -> [4] linter.lint(filePath, content) -> spawn external tool (oxlint/pylint/biome)
-  -> [5] Parse JSON output into ValidationProblem[]
-  -> [6] categorizeProblems() -> summary {errors, warnings, info, total}
-  -> Return ValidationReport
+Input: filePath or dirPath
+  ↓
+[1] Determine file extension (.ts, .js, .py, etc)
+  ↓
+[2] selectLinter(ext) — lazy-load appropriate linter
+  ↓
+[3] readText(filePath) — read file content
+  ↓
+[4] linter.lint(filePath, content) — execute external tool
+    (spawn oxlint/biome subprocess or pylint)
+  ↓
+[5] Parse JSON output → ValidationProblem[]
+  ↓
+[6] categorizeProblems() — count errors/warnings/info
+  ↓
+Output: ValidationReport
+  {filePath, problems[], summary{errors, warnings, info}}
 
-validateModification(filePath, beforeReport?)
-  -> [1] Capture before report (existing or fresh)
-  -> [2] Run validateFile() again for after report
-  -> [3] compareReports() -> improvement metrics (errorsFixed, newErrors, netChange)
-  -> Return BeforeAfterReport
+For validateModification():
+before ValidationReport
+  ↓
+validateFile() (after state)
+  ↓
+compareReports()
+  ↓
+Output: BeforeAfterReport
+  {before, after, improvement{errorsFixed, newErrors}}
 ```
 
 ## Public API
 
-| Export | Type | Description | Location |
-|--------|------|-------------|----------|
-| `ValidationReport` | interface | Single-file lint result with problems and summary counts | [`code-validator.ts:26-37`](./code-validator.ts) |
-| `ValidationProblem` | interface | Individual lint problem with severity, message, line, column, ruleId | [`code-validator.ts:39-46`](./code-validator.ts) |
-| `BeforeAfterReport` | interface | Before/after comparison with improvement metrics | [`code-validator.ts:48-58`](./code-validator.ts) |
-| `Linter` | interface | Pluggable linter contract: `name` + `lint()` method | [`code-validator.ts:64-67`](./code-validator.ts) |
-| `CodeValidator` | class | Main validator orchestrator with linter selection and batch support | [`code-validator.ts:73-291`](./code-validator.ts) |
-| `.validateFile(filePath)` | method | Validate a single file, returns `ValidationReport` | [`code-validator.ts:91-121`](./code-validator.ts) |
-| `.validateDirectory(dirPath, extensions?)` | method | Batch validate directory with concurrency limit of 10 | [`code-validator.ts:126-142`](./code-validator.ts) |
-| `.validateModification(filePath, beforeReport?)` | method | Before/after comparison returning `BeforeAfterReport` | [`code-validator.ts:147-154`](./code-validator.ts) |
-| `OxlintLinter` | class | Oxlint linter for JS/TS with autofix and dry-run support | [`linters/oxlint-linter.ts:15-139`](./linters/oxlint-linter.ts) |
-| `PylintLinter` | class | Pylint linter for Python via subprocess | [`linters/pylint-linter.ts:14-97`](./linters/pylint-linter.ts) |
-| `BiomeLinter` | class | Biome linter for JS/TS with autofix and dry-run support | [`linters/biome-linter.ts:8-127`](./linters/biome-linter.ts) |
+### Types and Interfaces
+
+| Export | Location | Description |
+|--------|----------|-------------|
+| `ValidationReport` | `code-validator.ts:26-37` | Single-file lint result containing file path, timestamp, problems array, and summary counts (errors, warnings, info). |
+| `ValidationProblem` | `code-validator.ts:39-46` | Individual lint problem with severity level, message text, line and column position, optional rule identifier, and linter source. |
+| `BeforeAfterReport` | `code-validator.ts:48-58` | Before/after validation comparison containing baseline and current reports with improvement metrics (errors fixed, warnings fixed, new errors introduced). |
+| `Linter` | `code-validator.ts:64-67` | Pluggable linter interface defining `name` property and `lint(filePath: string, content: string)` method returning problems array. |
+
+### Classes
+
+| Export | Location | Description |
+|--------|----------|-------------|
+| `CodeValidator` | `code-validator.ts:73-291` | Main validation orchestrator that selects language-appropriate linters, validates individual files or entire directories with concurrency limits, and generates improvement reports comparing code quality before and after changes. |
+
+### CodeValidator Methods
+
+| Method | Location | Description |
+|--------|----------|-------------|
+| `.validateFile(filePath)` | `code-validator.ts:91-121` | Validates a single file and returns a `ValidationReport` with all lint problems discovered. |
+| `.validateDirectory(dirPath, extensions?)` | `code-validator.ts:126-142` | Batch validates all files in a directory (recursively) matching specified extensions, respecting a concurrency limit of 10 parallel validations. |
+| `.validateModification(filePath, beforeReport?)` | `code-validator.ts:147-154` | Performs before/after validation comparison, accepting an optional pre-computed baseline report or computing one automatically. |
+| `.fixFile(filePath)` | `code-validator.ts:156-191` | Applies autofix for supported linters (oxlint, biome) to correct fixable lint problems in a file. |
+| `.dryRunFix(filePath)` | `code-validator.ts:193-291` | Simulates autofix on a temporary file copy, compares results, and reports what would change without modifying the original file. |
+
+## Linter Implementations
+
+| Export | Location | Description |
+|--------|----------|-------------|
+| `OxlintLinter` | `linters/oxlint-linter.ts:15-139` | Fast oxlint implementation for JavaScript and TypeScript with autofix and dry-run support, using JSON output parsing and subprocess execution. |
+| `BiomeLinter` | `linters/biome-linter.ts:8-127` | Biome-based linter for JavaScript and TypeScript with similar autofix and dry-run capabilities as OxlintLinter, offering an alternative to oxlint. |
+| `PylintLinter` | `linters/pylint-linter.ts:14-97` | Python linter integration that invokes pylint as a subprocess with JSON output format, providing problem detection for `.py` and `.pyi` files. |
 
 ## Dependencies
 
-| Module | Purpose | Import Path |
-|--------|---------|-------------|
-| log | Structured logging for linter load/lint failures | `../logging/index.js` |
-| readdir, readText | File system reading for validation and directory traversal | `../utils/file-ops.js` |
-| exec | Shell command execution for oxlint and biome subprocesses | `../utils/shell.js` |
-| child_process.exec | Shell execution for pylint subprocess | `node:child_process` |
-| fs/promises | copyFile, readFile, unlink for dry-run temp file management | `node:fs/promises` |
-| path | extname, join, dirname for file path operations | `node:path` |
-| os | tmpdir for dry-run temporary file location | `node:os` |
-| module | createRequire for resolving oxlint/biome binary paths | `node:module` |
+| Module | Purpose |
+|--------|---------|
+| `../logging/index` | Structured logging for linter initialization failures and lint operation errors. |
+| `../utils/file-ops` | File reading (`readText`), directory traversal (`readdir`), and file discovery for validation. |
+| `../utils/shell` | Shell command execution wrapper for subprocess-based linters (oxlint, biome). |
+| `oxlint` | External binary for fast JavaScript/TypeScript linting via subprocess. |
+| `pylint` | External binary for Python linting invoked via subprocess. |
+| `@biomejs/biome` | External binary for JavaScript/TypeScript linting as oxlint alternative. |
+| `node:child_process` | Native Node subprocess execution for pylint integration. |
+| `node:fs/promises` | Async file operations (`copyFile`, `readFile`, `unlink`) for dry-run temporary file handling. |
+| `node:path` | Path utilities (`extname`, `join`, `dirname`) for file type detection and path construction. |
+| `node:os` | Temporary directory access (`tmpdir`) for safe dry-run file copies. |
+| `node:module` | Module resolution (`createRequire`) for locating oxlint and biome binary paths. |
 
 ## Configuration
 
-| Setting | Value | Context |
+| Setting | Value | Purpose |
 |---------|-------|---------|
-| Batch concurrency | 10 | Max parallel file validations in `validateDirectory()` |
-| Lint timeout | 30000 ms | Timeout for oxlint and biome subprocess execution |
-| Default extensions | `.ts`, `.tsx`, `.js`, `.jsx`, `.py` | File types scanned in `validateDirectory()` |
-| Excluded directories | `node_modules`, `.git`, `dist`, `build`, `coverage` | Skipped during directory traversal |
-| Pylint output format | `--output-format=json` | JSON parsing of pylint results |
-| Oxlint output format | `--format json` | JSON parsing of oxlint diagnostics |
-| Biome output format | `--reporter=json` | JSON parsing of biome diagnostics |
+| Batch concurrency limit | 10 | Maximum number of parallel file validations in directory scans. |
+| Lint timeout | 30000 ms | Maximum execution time for oxlint and biome subprocess calls. |
+| Default file extensions | `.ts`, `.tsx`, `.js`, `.jsx`, `.py` | File types validated when no extensions filter is specified. |
+| Excluded directories | `node_modules`, `.git`, `dist`, `build`, `coverage` | Directories skipped during recursive directory traversal. |
+| Linter selection strategy | Extension-based routing | `.ts/.tsx/.js/.jsx/.mjs/.cjs` → oxlint; `.py/.pyi` → pylint. |
 
 ## Behavioral Properties
 
 | Behavior | Detail |
 |----------|--------|
-| Lazy linter loading | Linters are loaded via dynamic `import()` on first use; avoids errors if binary is missing |
-| Linter caching | Once loaded, linter instances are cached in a `Map<string, Linter>` for reuse |
-| Graceful degradation | If a linter fails to load or is not installed, returns empty problems array with warning log |
-| Dry-run autofix | OxlintLinter and BiomeLinter copy file to temp, apply fixes, compare, then delete temp file |
-| Extension-based routing | `.ts/.tsx/.js/.jsx/.mjs/.cjs` -> oxlint; `.py/.pyi` -> pylint; unknown -> null (no-op) |
-| Parallel directory walk | `findFiles()` uses recursive `Promise.all()` for concurrent subdirectory traversal |
-| Non-zero exit handling | All linters catch non-zero exit codes (common for lint errors) and attempt JSON parsing |
-
-## Error Handling
-
-| Error | Detection | Response |
-|-------|-----------|----------|
-| Linter binary not found | Dynamic import or subprocess failure | Logs `linter_load_fail`, returns `null` linter |
-| Pylint not in PATH | `pylint --version` check fails | Sets `pylintAvailable = false`, returns empty problems |
-| Biome not installed | `access()` check on resolved binary path fails | Throws `Error("Biome binary not found")` |
-| Lint subprocess error | Non-zero exit code from oxlint/pylint/biome | Attempts to parse stdout/stderr as JSON; returns empty on failure |
-| JSON parse failure | `JSON.parse()` throws on malformed output | Catches silently, returns empty problems array |
-| Dry-run temp file | `finally` block cleanup | Calls `unlink(tempFile).catch(() => {})` to ensure temp is removed |
-
-## Observability
-
-| Component | Event | Level | Tag |
-|-----------|-------|-------|-----|
-| CodeValidator | `linter_load_fail` - linter dynamic import failed | warn | `CODEVALIDATOR` |
-| OxlintLinter | `lint_fail` - oxlint subprocess error | warn | `OXLINT` |
-| PylintLinter | `unavailable` - pylint not in PATH | warn | `PYLINT` |
-| PylintLinter | `detected` - pylint found and available | info | `PYLINT` |
-| PylintLinter | `not_in_path` - pylint version check failed | warn | `PYLINT` |
-| PylintLinter | `lint_fail` - pylint subprocess error | warn | `PYLINT` |
-| BiomeLinter | `lint_fail` - biome subprocess error | warn | `BIOME` |
-| BiomeLinter | `not_found` - biome binary not found in node_modules | error | `BIOME` |
-
-## Known Limitations
-
-1. **No incremental validation** - every call re-lints the entire file; no caching of previous results.
-2. **Biome not wired into CodeValidator** - `selectLinter()` maps JS/TS to oxlint only; BiomeLinter must be used directly.
-3. **Pylint ignores content parameter** - `_content` is unused; pylint always reads from disk.
-4. **Oxlint ignores content parameter** - `_content` is unused; oxlint always reads from disk.
-5. **No ESLint support** - ESLint linter was removed; only oxlint serves the JS/TS linting role in CodeValidator.
-6. **Directory traversal unbounded** - `findFiles()` has no depth limit or file count cap; very large trees may cause memory pressure.
-
-## TypeScript Notes
-
-- `Linter` interface uses optional `autofix` and `dryRun` parameters; PylintLinter omits them in its signature.
-- `ValidationProblem.source` is typed as `string | undefined` (explicit union, not just optional).
-- Linter map uses `Map<string, Linter>` with `has()`/`get()!` pattern (non-null assertion after existence check).
-- Binary resolution in OxlintLinter and BiomeLinter uses `createRequire(import.meta.url)` for ESM compatibility.
-- `exec` error objects are cast via `error as { stdout?: string; stderr?: string }` for subprocess output extraction.
-
-## Files
-
-| File | Lines | Exports | Purpose |
-|------|-------|---------|---------|
-| [`code-validator.ts`](./code-validator.ts) | 291 | ValidationReport, ValidationProblem, BeforeAfterReport, Linter, CodeValidator | Core validator with linter selection, batch validation, and before/after comparison |
-| [`linters/oxlint-linter.ts`](./linters/oxlint-linter.ts) | 139 | OxlintLinter | Oxlint integration for JS/TS with autofix, dry-run, and binary resolution |
-| [`linters/pylint-linter.ts`](./linters/pylint-linter.ts) | 97 | PylintLinter | Pylint integration for Python via subprocess with availability check |
-| [`linters/biome-linter.ts`](./linters/biome-linter.ts) | 127 | BiomeLinter | Biome integration for JS/TS with autofix, dry-run, and binary resolution |
+| Lazy linter loading | Linters are dynamically imported on first use; missing binaries do not cause startup errors. |
+| Linter instance caching | Successfully loaded linters are cached in a Map to avoid repeated initialization. |
+| Graceful degradation | If a linter fails to load or is not installed, validation returns an empty problems array with a warning log. |
+| Dry-run autofix safety | File is copied to temporary location, fixes applied, output compared, then temp file deleted; original never modified. |
+| Parallel directory walk | Recursive directory traversal uses `Promise.all()` for concurrent subdirectory processing. |
+| Non-zero exit tolerance | Linter subprocesses may exit with non-zero codes when problems are found; output is parsed regardless. |
+| Problem categorization | Lint output is parsed and problems grouped by severity level (error, warning, info) for summary counts. |

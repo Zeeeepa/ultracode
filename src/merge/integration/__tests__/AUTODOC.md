@@ -1,109 +1,84 @@
-# Module: src/merge/integration/__tests__
+# src/merge/integration/__tests__
 
-**Files:** 1 | **Entities:** 103 | **Language:** TypeScript
+## Overview
 
-## Function
+This test module validates the `GitIntegration` class, which manages core git repository operations including branch state detection, commit hash retrieval, and file change categorization. The suite verifies constructor validation, branch operations, commit lookups, detection of staged/unstaged/untracked files, diff statistics, and branch listing with comprehensive error handling. Tests use Bun's testing framework with spied `fs.existsSync` and `childProcess.execSync` to isolate git command execution without invoking actual git operations. Mock return values simulate realistic git command outputs, enabling deterministic validation of both successful operations and error conditions.
 
-- **config** — `git-integration.test.ts:6-359`
-- **config** — `git-integration.test.ts:11-21`
-- **it** — `git-integration.test.ts:23-33`
-- **git** — `git-integration.test.ts:24-27`
-- **mockExistsSync** — `git-integration.test.ts:29-32`
-- **GitIntegration** — `git-integration.test.ts:31-31`
-- **it** — `git-integration.test.ts:35-61`
-- **mockExecSync** — `git-integration.test.ts:36-45`
-- **mockExecSync** — `git-integration.test.ts:47-60`
-- **Error** — `git-integration.test.ts:49-51`
-- **it** — `git-integration.test.ts:63-83`
-- **mockExecSync** — `git-integration.test.ts:64-72`
-- **mockExecSync** — `git-integration.test.ts:74-82`
-- **Error** — `git-integration.test.ts:75-77`
-- **git** — `git-integration.test.ts:81-81`
-- **it** — `git-integration.test.ts:85-105`
-- **mockExecSync** — `git-integration.test.ts:86-93`
-- **mockExecSync** — `git-integration.test.ts:95-104`
-- **Error** — `git-integration.test.ts:96-98`
-- **it** — `git-integration.test.ts:107-164`
-- **mockExecSync** — `git-integration.test.ts:108-120`
-- **mockExecSync** — `git-integration.test.ts:122-133`
-- **Error** — `git-integration.test.ts:126-128`
-- **mockExecSync** — `git-integration.test.ts:135-145`
-- **mockExecSync** — `git-integration.test.ts:147-163`
-- **Error** — `git-integration.test.ts:153-155`
-- **it** — `git-integration.test.ts:166-242`
-- **mockExecSync** — `git-integration.test.ts:167-178`
-- **mockExecSync** — `git-integration.test.ts:180-191`
-- **mockExecSync** — `git-integration.test.ts:193-204`
-- **mockExecSync** — `git-integration.test.ts:206-218`
-- **mockExecSync** — `git-integration.test.ts:220-230`
-- **mockExecSync** — `git-integration.test.ts:232-241`
-- **Error** — `git-integration.test.ts:233-235`
-- **it** — `git-integration.test.ts:244-280`
-- **mockExecSync** — `git-integration.test.ts:245-257`
-- **mockExecSync** — `git-integration.test.ts:259-268`
-- **mockExecSync** — `git-integration.test.ts:270-279`
-- **it** — `git-integration.test.ts:282-306`
-- **mockExecSync** — `git-integration.test.ts:283-294`
-- **mockExecSync** — `git-integration.test.ts:296-305`
-- **Error** — `git-integration.test.ts:297-299`
-- **it** — `git-integration.test.ts:308-328`
-- **mockExecSync** — `git-integration.test.ts:309-316`
-- **mockExecSync** — `git-integration.test.ts:318-327`
-- **Error** — `git-integration.test.ts:319-321`
-- **it** — `git-integration.test.ts:330-358`
-- **mockExecSync** — `git-integration.test.ts:331-348`
-- **git** — `git-integration.test.ts:350-357`
+## Flow
 
-## Variable
+```
+Test Suite Initialization
+    ↓
+beforeEach: Mock Setup
+    ├─ Spy on fs.existsSync
+    ├─ Spy on childProcess.execSync
+    └─ Initialize test config
+    ↓
+Test Execution (describe blocks)
+    ├─ Constructor validation
+    ├─ getCurrentBranch tests
+    ├─ getCurrentCommitHash tests
+    ├─ getChanges tests (staged/unstaged/untracked)
+    ├─ getDiffStats tests
+    └─ listBranches tests
+    ↓
+Mock Verification → Assertions → Test Results
+```
 
-- **config** — `git-integration.test.ts:7-7`
-- **mockExecSync** — `git-integration.test.ts:8-8`
-- **mockExistsSync** — `git-integration.test.ts:9-9`
-- **git** — `git-integration.test.ts:25-25`
-- **git** — `git-integration.test.ts:39-39`
-- **branch** — `git-integration.test.ts:40-40`
-- **git** — `git-integration.test.ts:54-54`
-- **branch** — `git-integration.test.ts:55-55`
-- **git** — `git-integration.test.ts:67-67`
-- **hash** — `git-integration.test.ts:68-68`
-- **git** — `git-integration.test.ts:79-79`
-- **git** — `git-integration.test.ts:89-89`
-- **exists** — `git-integration.test.ts:90-90`
-- **git** — `git-integration.test.ts:100-100`
-- **exists** — `git-integration.test.ts:101-101`
-- **git** — `git-integration.test.ts:116-116`
-- **git** — `git-integration.test.ts:130-130`
-- **git** — `git-integration.test.ts:142-142`
-- **git** — `git-integration.test.ts:158-158`
-- **git** — `git-integration.test.ts:170-170`
-- **changes** — `git-integration.test.ts:171-171`
-- **git** — `git-integration.test.ts:183-183`
-- **changes** — `git-integration.test.ts:184-184`
-- **git** — `git-integration.test.ts:196-196`
-- **changes** — `git-integration.test.ts:197-197`
-- **git** — `git-integration.test.ts:209-209`
-- **changes** — `git-integration.test.ts:210-210`
-- **git** — `git-integration.test.ts:223-223`
-- **changes** — `git-integration.test.ts:224-224`
-- **git** — `git-integration.test.ts:237-237`
-- **changes** — `git-integration.test.ts:238-238`
-- **git** — `git-integration.test.ts:250-250`
-- **stats** — `git-integration.test.ts:251-251`
-- **git** — `git-integration.test.ts:262-262`
-- **stats** — `git-integration.test.ts:263-263`
-- **git** — `git-integration.test.ts:273-273`
-- **stats** — `git-integration.test.ts:274-274`
-- **git** — `git-integration.test.ts:286-286`
-- **base** — `git-integration.test.ts:287-287`
-- **git** — `git-integration.test.ts:301-301`
-- **base** — `git-integration.test.ts:302-302`
-- **git** — `git-integration.test.ts:312-312`
-- **branches** — `git-integration.test.ts:313-313`
-- **git** — `git-integration.test.ts:323-323`
-- **branches** — `git-integration.test.ts:324-324`
-- **git** — `git-integration.test.ts:340-340`
-- **calls** — `git-integration.test.ts:345-345`
-- **lastCall** — `git-integration.test.ts:346-346`
-- **git** — `git-integration.test.ts:351-351`
-- **callCount** — `git-integration.test.ts:352-352`
+## Test Configuration and Infrastructure
 
+- **config** `git-integration.test.ts:7-7` — Test configuration object specifying repository path (`/test/repo`), detached head allowance, and error recovery behavior.
+- **mockExecSync** `git-integration.test.ts:8-8` — Spy on `childProcess.execSync` to intercept and mock git command execution.
+- **mockExistsSync** `git-integration.test.ts:9-9` — Spy on `fs.existsSync` to mock file system checks for git repository validation.
+
+## Constructor Tests
+
+- **config (describe)** `git-integration.test.ts:6-359` — Test suite container for all GitIntegration validation tests.
+- **it (valid repository)** `git-integration.test.ts:23-33` — Verifies GitIntegration initializes correctly when repository path contains valid `.git` directory.
+- **git** `git-integration.test.ts:25-25` — GitIntegration instance created during valid repository initialization test.
+- **mockExistsSync** `git-integration.test.ts:29-32` — Mock configuration ensuring `.git` directory check returns true during constructor validation.
+- **GitIntegration** `git-integration.test.ts:31-31` — Constructor invocation creating instance for testing.
+- **it (invalid repository)** `git-integration.test.ts:35-61` — Verifies constructor throws error when repository path does not contain `.git` directory.
+- **mockExecSync** `git-integration.test.ts:36-45` — Mock simulating `git rev-parse --git-dir` command success during initialization.
+- **mockExecSync** `git-integration.test.ts:47-60` — Secondary mock handling additional git command calls during failed initialization.
+- **Error** `git-integration.test.ts:49-51` — Expected error condition when repository initialization fails.
+
+## Branch Operations Tests
+
+- **it (regular branch)** `git-integration.test.ts:63-83` — Verifies retrieval of current branch name returns correct branch and sets `isDetached` to false.
+- **mockExecSync** `git-integration.test.ts:64-72` — Mock configuration for `git symbolic-ref --short HEAD` returning branch name.
+- **mockExecSync** `git-integration.test.ts:74-82` — Secondary mock for subsequent commit hash retrieval.
+- **Error** `git-integration.test.ts:75-77` — Error validation during branch name retrieval.
+- **git** `git-integration.test.ts:81-81` — GitIntegration instance used in branch name test.
+- **it (detached HEAD)** `git-integration.test.ts:85-105` — Tests handling of detached HEAD state and validates error when detached heads are disallowed.
+- **mockExecSync** `git-integration.test.ts:86-93` — Mock configuration simulating detached HEAD detection via symbolic-ref failure.
+- **mockExecSync** `git-integration.test.ts:95-104` — Fallback mock for commit hash retrieval when in detached HEAD state.
+- **Error** `git-integration.test.ts:96-98` — Expected error condition when `allowDetachedHead` is false and HEAD is detached.
+
+## Commit Hash Tests
+
+- **it (commit hash)** `git-integration.test.ts:107-164` — Verifies retrieval of current commit hash from repository HEAD.
+- **mockExecSync** `git-integration.test.ts:108-120` — Mock configuration for `git rev-parse HEAD` command returning commit hash.
+- **mockExecSync** `git-integration.test.ts:122-133` — Secondary mock for branch information retrieval during hash lookup.
+- **Error** `git-integration.test.ts:126-128` — Error handling validation during hash retrieval.
+- **mockExecSync** `git-integration.test.ts:135-145` — Additional mock handling multiple sequential git commands in hash lookup chain.
+- **mockExecSync** `git-integration.test.ts:147-163` — Final mock in command chain for complete commit hash resolution.
+- **Error** `git-integration.test.ts:153-155` — Error validation for failed commit hash retrieval.
+- **git** `git-integration.test.ts:158-158` — GitIntegration instance for commit hash operations.
+
+## File Changes Detection Tests
+
+- **it (file changes)** `git-integration.test.ts:166-242` — Tests detection and categorization of staged, unstaged, untracked, deleted, renamed, and newly added file changes.
+- **mockExecSync** `git-integration.test.ts:167-178` — Mock for `git status --porcelain=v2` showing staged file modifications.
+- **mockExecSync** `git-integration.test.ts:180-191` — Mock for unstaged file changes output.
+- **mockExecSync** `git-integration.test.ts:193-204` — Mock for untracked files detection.
+- **mockExecSync** `git-integration.test.ts:206-218` — Mock for deleted files listing.
+- **mockExecSync** `git-integration.test.ts:220-230` — Mock for renamed files detection.
+- **mockExecSync** `git-integration.test.ts:232-241` — Mock for newly added files output.
+- **Error** `git-integration.test.ts:233-235` — Error condition validation during file changes retrieval.
+- **changes** `git-integration.test.ts:171-171` — Variable storing detected file changes from initial git status call.
+- **git** `git-integration.test.ts:170-170` — GitIntegration instance for file changes categorization.
+
+## Design Patterns
+
+The test suite employs **Mock Injection** via Bun's spy utilities to isolate `GitIntegration` from actual filesystem and child process operations. Each test configures sequential mocks to simulate realistic git command outputs, enabling deterministic assertions without external dependencies. This approach ensures tests run in milliseconds while capturing edge cases (detached HEAD, file deletions, renames) and error conditions that would be difficult to reproduce with actual repositories.

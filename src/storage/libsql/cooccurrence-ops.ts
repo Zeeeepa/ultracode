@@ -57,36 +57,36 @@ export class CooccurrenceOperations {
   async batchUpdateCooccurrence(pairs: Map<string, number>): Promise<void> {
     if (pairs.size === 0) return;
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const now = Date.now();
+      const { projectHash, branchName } = this.getContext();
+      const now = Date.now();
 
-    // Batch size for INSERT statements (avoid too large queries)
-    const BATCH_SIZE = 100;
-    const entries = Array.from(pairs.entries());
+      // Batch size for INSERT statements (avoid too large queries)
+      const BATCH_SIZE = 100;
+      const entries = Array.from(pairs.entries());
 
-    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-      const batch = entries.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+        const batch = entries.slice(i, i + BATCH_SIZE);
 
-      // Build VALUES clause
-      const values: string[] = [];
-      const args: (string | number)[] = [];
+        // Build VALUES clause
+        const values: string[] = [];
+        const args: (string | number)[] = [];
 
-      for (const [key, count] of batch) {
-        const [term1, term2] = key.split("|");
-        if (!term1 || !term2) continue;
+        for (const [key, count] of batch) {
+          const [term1, term2] = key.split("|");
+          if (!term1 || !term2) continue;
 
-        values.push("(?, ?, ?, ?, ?, ?)");
-        args.push(term1, term2, count, projectHash, branchName, now);
-      }
+          values.push("(?, ?, ?, ?, ?, ?)");
+          args.push(term1, term2, count, projectHash, branchName, now);
+        }
 
-      if (values.length === 0) continue;
+        if (values.length === 0) continue;
 
-      // UPSERT: increment count on conflict
-      await client.execute({
-        sql: `
+        // UPSERT: increment count on conflict
+        await client.execute({
+          sql: `
           INSERT INTO cooccurrence (term1, term2, count, project_hash, branch_name, updated_at)
           VALUES ${values.join(", ")}
           ON CONFLICT(term1, term2, project_hash, branch_name)
@@ -94,9 +94,9 @@ export class CooccurrenceOperations {
             count = cooccurrence.count + excluded.count,
             updated_at = excluded.updated_at
         `,
-        args,
-      });
-    }
+          args,
+        });
+      }
     }); // end _w
   }
 
@@ -111,28 +111,28 @@ export class CooccurrenceOperations {
   async updateTermFrequencies(termCounts: Map<string, number>, isNewDocument = true): Promise<void> {
     if (termCounts.size === 0) return;
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const BATCH_SIZE = 100;
-    const entries = Array.from(termCounts.entries());
+      const { projectHash, branchName } = this.getContext();
+      const BATCH_SIZE = 100;
+      const entries = Array.from(termCounts.entries());
 
-    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-      const batch = entries.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+        const batch = entries.slice(i, i + BATCH_SIZE);
 
-      const values: string[] = [];
-      const args: (string | number)[] = [];
+        const values: string[] = [];
+        const args: (string | number)[] = [];
 
-      for (const [term, count] of batch) {
-        values.push("(?, ?, ?, ?, ?)");
-        args.push(term, isNewDocument ? 1 : 0, count, projectHash, branchName);
-      }
+        for (const [term, count] of batch) {
+          values.push("(?, ?, ?, ?, ?)");
+          args.push(term, isNewDocument ? 1 : 0, count, projectHash, branchName);
+        }
 
-      if (values.length === 0) continue;
+        if (values.length === 0) continue;
 
-      await client.execute({
-        sql: `
+        await client.execute({
+          sql: `
           INSERT INTO term_frequency (term, doc_count, total_count, project_hash, branch_name)
           VALUES ${values.join(", ")}
           ON CONFLICT(term, project_hash, branch_name)
@@ -140,9 +140,9 @@ export class CooccurrenceOperations {
             doc_count = term_frequency.doc_count + excluded.doc_count,
             total_count = term_frequency.total_count + excluded.total_count
         `,
-        args,
-      });
-    }
+          args,
+        });
+      }
     }); // end _w
   }
 
@@ -265,89 +265,89 @@ export class CooccurrenceOperations {
    */
   async recalculatePMI(): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const startTime = Date.now();
+      const { projectHash, branchName } = this.getContext();
+      const startTime = Date.now();
 
-    // Step 1: Preload all term frequencies into a Map for O(1) lookups
-    const tfResult = await client.execute({
-      sql: `SELECT term, total_count, doc_count FROM term_frequency WHERE project_hash = ? AND branch_name = ?`,
-      args: [projectHash, branchName],
-    });
+      // Step 1: Preload all term frequencies into a Map for O(1) lookups
+      const tfResult = await client.execute({
+        sql: `SELECT term, total_count, doc_count FROM term_frequency WHERE project_hash = ? AND branch_name = ?`,
+        args: [projectHash, branchName],
+      });
 
-    const termFreqs = new Map<string, number>();
-    let maxDocCount = 1;
-    for (const row of tfResult.rows) {
-      const term = row["term"] as string;
-      const totalCount = row["total_count"] as number;
-      const docCount = row["doc_count"] as number;
-      termFreqs.set(term, totalCount);
-      if (docCount > maxDocCount) maxDocCount = docCount;
-    }
-    const totalDocs = maxDocCount;
+      const termFreqs = new Map<string, number>();
+      let maxDocCount = 1;
+      for (const row of tfResult.rows) {
+        const term = row["term"] as string;
+        const totalCount = row["total_count"] as number;
+        const docCount = row["doc_count"] as number;
+        termFreqs.set(term, totalCount);
+        if (docCount > maxDocCount) maxDocCount = docCount;
+      }
+      const totalDocs = maxDocCount;
 
-    // Step 2: Read all co-occurrence pairs
-    const coocResult = await client.execute({
-      sql: `SELECT term1, term2, count FROM cooccurrence WHERE project_hash = ? AND branch_name = ?`,
-      args: [projectHash, branchName],
-    });
+      // Step 2: Read all co-occurrence pairs
+      const coocResult = await client.execute({
+        sql: `SELECT term1, term2, count FROM cooccurrence WHERE project_hash = ? AND branch_name = ?`,
+        args: [projectHash, branchName],
+      });
 
-    const totalPairsResult = await client.execute({
-      sql: `SELECT SUM(count) as total FROM cooccurrence WHERE project_hash = ? AND branch_name = ?`,
-      args: [projectHash, branchName],
-    });
-    const totalPairs = (totalPairsResult.rows[0]?.["total"] as number) || 1;
+      const totalPairsResult = await client.execute({
+        sql: `SELECT SUM(count) as total FROM cooccurrence WHERE project_hash = ? AND branch_name = ?`,
+        args: [projectHash, branchName],
+      });
+      const totalPairs = (totalPairsResult.rows[0]?.["total"] as number) || 1;
 
-    if (coocResult.rows.length === 0) {
-      log.i("COOCOPS", "pmi_skip", { reason: "no_pairs" });
-      return;
-    }
+      if (coocResult.rows.length === 0) {
+        log.i("COOCOPS", "pmi_skip", { reason: "no_pairs" });
+        return;
+      }
 
-    log.i("COOCOPS", "pmi_start", { pairs: coocResult.rows.length, terms: termFreqs.size, totalDocs, totalPairs });
+      log.i("COOCOPS", "pmi_start", { pairs: coocResult.rows.length, terms: termFreqs.size, totalDocs, totalPairs });
 
-    // Step 3: Calculate PMI in JS and batch update
-    const BATCH_SIZE = 500;
-    let updated = 0;
+      // Step 3: Calculate PMI in JS and batch update
+      const BATCH_SIZE = 500;
+      let updated = 0;
 
-    for (let i = 0; i < coocResult.rows.length; i += BATCH_SIZE) {
-      const batch = coocResult.rows.slice(i, i + BATCH_SIZE);
-      const statements = [];
+      for (let i = 0; i < coocResult.rows.length; i += BATCH_SIZE) {
+        const batch = coocResult.rows.slice(i, i + BATCH_SIZE);
+        const statements = [];
 
-      for (const row of batch) {
-        const term1 = row["term1"] as string;
-        const term2 = row["term2"] as string;
-        const count = row["count"] as number;
+        for (const row of batch) {
+          const term1 = row["term1"] as string;
+          const term2 = row["term2"] as string;
+          const count = row["count"] as number;
 
-        const tf1 = termFreqs.get(term1) || 0;
-        const tf2 = termFreqs.get(term2) || 0;
+          const tf1 = termFreqs.get(term1) || 0;
+          const tf2 = termFreqs.get(term2) || 0;
 
-        let pmi = 0;
-        if (tf1 > 0 && tf2 > 0) {
-          const pXY = count / totalPairs;
-          const pX = tf1 / totalDocs;
-          const pY = tf2 / totalDocs;
-          pmi = Math.log2(pXY / (pX * pY));
+          let pmi = 0;
+          if (tf1 > 0 && tf2 > 0) {
+            const pXY = count / totalPairs;
+            const pX = tf1 / totalDocs;
+            const pY = tf2 / totalDocs;
+            pmi = Math.log2(pXY / (pX * pY));
+          }
+
+          statements.push({
+            sql: `UPDATE cooccurrence SET pmi = ? WHERE term1 = ? AND term2 = ? AND project_hash = ? AND branch_name = ?`,
+            args: [pmi, term1, term2, projectHash, branchName] as (string | number)[],
+          });
         }
 
-        statements.push({
-          sql: `UPDATE cooccurrence SET pmi = ? WHERE term1 = ? AND term2 = ? AND project_hash = ? AND branch_name = ?`,
-          args: [pmi, term1, term2, projectHash, branchName] as (string | number)[],
-        });
+        await client.batch(statements, "write");
+        updated += batch.length;
+
+        // Yield to event loop every batch to prevent CPU blocking
+        if (i + BATCH_SIZE < coocResult.rows.length) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
       }
 
-      await client.batch(statements, "write");
-      updated += batch.length;
-
-      // Yield to event loop every batch to prevent CPU blocking
-      if (i + BATCH_SIZE < coocResult.rows.length) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      }
-    }
-
-    const elapsed = Date.now() - startTime;
-    log.i("COOCOPS", "pmi_recalculated", { ms: elapsed, pairs: updated, terms: termFreqs.size, totalDocs });
+      const elapsed = Date.now() - startTime;
+      log.i("COOCOPS", "pmi_recalculated", { ms: elapsed, pairs: updated, terms: termFreqs.size, totalDocs });
     }); // end _w
   }
 
@@ -391,26 +391,26 @@ export class CooccurrenceOperations {
    */
   async clear(): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+      const { projectHash, branchName } = this.getContext();
 
-    await client.batch(
-      [
-        {
-          sql: "DELETE FROM cooccurrence WHERE project_hash = ? AND branch_name = ?",
-          args: [projectHash, branchName],
-        },
-        {
-          sql: "DELETE FROM term_frequency WHERE project_hash = ? AND branch_name = ?",
-          args: [projectHash, branchName],
-        },
-      ],
-      "write",
-    );
+      await client.batch(
+        [
+          {
+            sql: "DELETE FROM cooccurrence WHERE project_hash = ? AND branch_name = ?",
+            args: [projectHash, branchName],
+          },
+          {
+            sql: "DELETE FROM term_frequency WHERE project_hash = ? AND branch_name = ?",
+            args: [projectHash, branchName],
+          },
+        ],
+        "write",
+      );
 
-    log.i("COOCOPS", "cleared", { projectHash, branchName });
+      log.i("COOCOPS", "cleared", { projectHash, branchName });
     }); // end _w
   }
 
@@ -422,25 +422,25 @@ export class CooccurrenceOperations {
    */
   async pruneRarePairs(minCount = 2): Promise<number> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+      const { projectHash, branchName } = this.getContext();
 
-    const result = await client.execute({
-      sql: `
+      const result = await client.execute({
+        sql: `
         DELETE FROM cooccurrence
         WHERE project_hash = ? AND branch_name = ? AND count < ?
       `,
-      args: [projectHash, branchName, minCount],
-    });
+        args: [projectHash, branchName, minCount],
+      });
 
-    const deleted = result.rowsAffected || 0;
-    if (deleted > 0) {
-      log.i("COOCOPS", "pruned", { deleted, minCount });
-    }
+      const deleted = result.rowsAffected || 0;
+      if (deleted > 0) {
+        log.i("COOCOPS", "pruned", { deleted, minCount });
+      }
 
-    return deleted;
+      return deleted;
     }); // end _w
   }
 }

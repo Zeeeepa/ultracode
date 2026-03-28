@@ -157,17 +157,14 @@ import { getGpuClient, shutdownGpuClient } from "./semantic/gpu/gpu-client.js";
 import { initializeOVMSNative, type OVMSNativeConfig, shutdownOVMSNative } from "./semantic/ovms-native-manager.js";
 // Storage initialization
 import { getCurrentGitBranchOrDefault, getProjectHash, initializeStorageDirs } from "./shared/storage-paths.js";
-import {
-  configureGraphStorage,
-  getGraphStorage,
-  resetGraphStorage,
-} from "./storage/graph-storage-factory.js";
+import { configureGraphStorage, getGraphStorage, resetGraphStorage } from "./storage/graph-storage-factory.js";
 import { createProjectContext } from "./storage/graph-storage-libsql.js";
 import { runWithRequestContext } from "./storage/libsql/request-context.js";
 import type { ToolContext } from "./tools/base-tool-handler.js";
 import { MAX_RESPONSE_SIZE_BYTES, truncateResponse } from "./tools/response-limits.js";
 import { getToolsList } from "./tools/tool-definitions.js";
 import { toolRegistry } from "./tools/tool-registry.js";
+
 // Re-export for external consumers
 export {
   areTimersSuspended,
@@ -293,6 +290,7 @@ const directory = normalize(resolve(expandHome(positionalArgs[0]!)));
 
 // Re-export from shared module for backward compatibility
 import { getCurrentIndexingDirectory, setCurrentIndexingDirectory } from "./shared/indexing-context.js";
+
 export { getCurrentIndexingDirectory };
 
 type DebugRequest = {

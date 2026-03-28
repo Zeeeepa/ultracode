@@ -139,6 +139,5 @@ Invalid inputs produce Zod validation errors with field-level messages describin
 | `pattern-schemas.ts` | Schemas for pattern detection and analysis |
 | `semantic-schemas.ts` | Schemas for semantic search and code analysis |
 | `snapshot-schemas.ts` | Schemas for snapshot management |
-| `taint-schemas.ts` | Schema for taint_analysis tool (category, maxDepth, includeTests, offset, limit) |
-| `validation-schemas.ts` | Schemas for file validation and technology detection |
-```
+| `taint-schemas.ts` | Schemas for taint analysis |
+| `validation-schemas.ts` | Schemas for file validation |

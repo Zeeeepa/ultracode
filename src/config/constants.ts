@@ -286,10 +286,28 @@ export const LIMIT_CONSTANTS = {
 // =============================================================================
 
 export const EXCLUDED_DIRS = new Set([
-  "node_modules", ".git", "dist", "build", ".next", "__pycache__",
-  ".mypy_cache", "target", "vendor", ".zig-cache", "zig-out", ".cache",
-  "output", "third_party", ".tmp", ".build", "coverage", ".venv",
-  "venv", ".tox", ".eggs", "bower_components",
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  "__pycache__",
+  ".mypy_cache",
+  "target",
+  "vendor",
+  ".zig-cache",
+  "zig-out",
+  ".cache",
+  "output",
+  "third_party",
+  ".tmp",
+  ".build",
+  "coverage",
+  ".venv",
+  "venv",
+  ".tox",
+  ".eggs",
+  "bower_components",
 ]);
 
 // =============================================================================

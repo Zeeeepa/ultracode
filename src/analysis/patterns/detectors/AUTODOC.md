@@ -81,6 +81,12 @@ This module provides a collection of language-specific detector functions that i
 - `checkJavaMutableStatic` — Detects unprotected mutable static fields causing race conditions in concurrent access [java.ts:91-108]
 - `checkReflectionInHotpath` — Detects reflection calls in performance-critical code paths reducing throughput [java.ts:115-136]
 
+### Zig Detectors
+- `checkMissingDeferFree` — Detects missing defer statements for memory and resource cleanup preventing leaks [zig.ts:13-34]
+- `checkMissingErrdefer` — Detects missing errdefer blocks for error-path cleanup causing incomplete error recovery [zig.ts:39-66]
+- `checkEmptyCatch` — Detects empty error handling blocks swallowing errors silently without logging or recovery [zig.ts:71-85]
+- `checkSwallowedError` — Detects ignored error returns without proper error handling or propagation [zig.ts:90-108]
+
 ## Dependencies
 
 - **Input Type**: `Entity` from `../../../types/storage.js` — code entity with metadata (metrics, modifiers, signatures)

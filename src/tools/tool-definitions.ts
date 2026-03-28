@@ -76,12 +76,6 @@ import {
   ValidateFileSchema,
 } from "./schemas/index.js";
 import {
-  CleanupWorktreeSchema,
-  GetWorktreeInfoSchema,
-  ListWorktreeAgentsSchema,
-  SpawnAgentWorktreeSchema,
-} from "./schemas/worktree-schemas.js";
-import {
   AutoDocBatchGenerateSchema,
   BatchModifySchema,
   BatchRenameSchema,
@@ -92,6 +86,12 @@ import {
   SecurityScanSchema,
   SetupEmbeddingSchema,
 } from "./schemas/missing-tool-schemas.js";
+import {
+  CleanupWorktreeSchema,
+  GetWorktreeInfoSchema,
+  ListWorktreeAgentsSchema,
+  SpawnAgentWorktreeSchema,
+} from "./schemas/worktree-schemas.js";
 import { traceToolDefinitions } from "./trace-schemas.js";
 
 /**

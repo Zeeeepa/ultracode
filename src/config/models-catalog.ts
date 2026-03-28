@@ -9,7 +9,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // =============================================================================
@@ -64,21 +64,23 @@ export function loadModelsCatalog(): ModelsCatalog {
     _cached = {
       active: "multilingual-e5-small",
       cdnBase: "",
-      models: [{
-        id: "multilingual-e5-small",
-        name: "E5 Small",
-        hfRepo: "intfloat/multilingual-e5-small",
-        onnxFile: "onnx/model.onnx",
-        tokenizerFile: "tokenizer.json",
-        dimension: 384,
-        maxTokens: 512,
-        sizeMb: 118,
-        lang: "multi",
-        note: "Fast, 94 languages",
-        mtebScore: undefined,
-        disabledReason: undefined,
-        cdn: {},
-      }],
+      models: [
+        {
+          id: "multilingual-e5-small",
+          name: "E5 Small",
+          hfRepo: "intfloat/multilingual-e5-small",
+          onnxFile: "onnx/model.onnx",
+          tokenizerFile: "tokenizer.json",
+          dimension: 384,
+          maxTokens: 512,
+          sizeMb: 118,
+          lang: "multi",
+          note: "Fast, 94 languages",
+          mtebScore: undefined,
+          disabledReason: undefined,
+          cdn: {},
+        },
+      ],
     };
     return _cached;
   }

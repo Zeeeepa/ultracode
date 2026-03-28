@@ -1,22 +1,9 @@
 {
   "active": "snowflake-arctic-embed-xs",
   "cdn_base": "https://github.com/faxenoff/ultracode/releases/download/v.6.0.2-zig/",
-  "platforms": [
-    "linux",
-    "windows",
-    "macos"
-  ],
-  "targets": [
-    "vulkan",
-    "metal",
-    "openvino",
-    "tensorrt"
-  ],
-  "cuda_archs": [
-    "sm_86",
-    "sm_89",
-    "sm_120"
-  ],
+  "platforms": ["linux", "windows", "macos"],
+  "targets": ["vulkan", "metal", "openvino", "tensorrt"],
+  "cuda_archs": ["sm_86", "sm_89", "sm_120"],
   "quantize": "int8",
   "opt_level": 3,
   "models": [

@@ -36,18 +36,18 @@ export class MetadataOperations {
    */
   async updateFileInfo(info: FileInfo): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    await client.execute({
-      sql: `
+      const { projectHash, branchName } = this.getContext();
+      await client.execute({
+        sql: `
         INSERT OR REPLACE INTO files
         (path, project_hash, branch_name, hash, last_indexed, entity_count)
         VALUES (?, ?, ?, ?, ?, ?)
       `,
-      args: [info.path, projectHash, branchName, info.hash, info.lastIndexed, info.entityCount],
-    });
+        args: [info.path, projectHash, branchName, info.hash, info.lastIndexed, info.entityCount],
+      });
     }); // end _w
   }
 
@@ -57,24 +57,27 @@ export class MetadataOperations {
   async batchUpdateFileInfo(infos: FileInfo[]): Promise<void> {
     if (infos.length === 0) return;
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const staging = this.getStagingMode();
-    const fileTable = staging ? "_staging_files" : "files";
-    const insertVerb = staging ? "INSERT INTO" : "INSERT OR REPLACE INTO";
+      const { projectHash, branchName } = this.getContext();
+      const staging = this.getStagingMode();
+      const fileTable = staging ? "_staging_files" : "files";
+      const insertVerb = staging ? "INSERT INTO" : "INSERT OR REPLACE INTO";
 
-    const statements = infos.map((info) => ({
-      sql: `
+      const statements = infos.map((info) => ({
+        sql: `
         ${insertVerb} ${fileTable}
         (path, project_hash, branch_name, hash, last_indexed, entity_count)
         VALUES (?, ?, ?, ?, ?, ?)
       `,
-      args: [info.path, projectHash, branchName, info.hash, info.lastIndexed, info.entityCount] as (string | number)[],
-    }));
+        args: [info.path, projectHash, branchName, info.hash, info.lastIndexed, info.entityCount] as (
+          | string
+          | number
+        )[],
+      }));
 
-    await client.batch(statements, "write");
+      await client.batch(statements, "write");
     }); // end _w
   }
 
@@ -160,21 +163,21 @@ export class MetadataOperations {
    */
   async deleteFileInfo(path: string): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const forwardPath = path.replace(/\\/g, "/");
-    const backPath = path.replace(/\//g, "\\");
+      const { projectHash, branchName } = this.getContext();
+      const forwardPath = path.replace(/\\/g, "/");
+      const backPath = path.replace(/\//g, "\\");
 
-    await client.execute({
-      sql: `
+      await client.execute({
+        sql: `
         DELETE FROM files
         WHERE project_hash = ? AND branch_name = ?
         AND (path = ? OR path = ?)
       `,
-      args: [projectHash, branchName, forwardPath, backPath],
-    });
+        args: [projectHash, branchName, forwardPath, backPath],
+      });
     }); // end _w
   }
 
@@ -187,62 +190,62 @@ export class MetadataOperations {
    */
   async updateProjectMetadata(projectPath: string, isFullIndex = false): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const now = Date.now();
+      const { projectHash, branchName } = this.getContext();
+      const now = Date.now();
 
-    // Count entities (active generation only) and files
-    const entityCount = await client.execute({
-      sql: `SELECT COUNT(*) as count FROM entities e
+      // Count entities (active generation only) and files
+      const entityCount = await client.execute({
+        sql: `SELECT COUNT(*) as count FROM entities e
             JOIN file_generations fg
               ON e.file_path = fg.file_path AND e.project_hash = fg.project_hash AND e.branch_name = fg.branch_name
             WHERE e.project_hash = ? AND e.branch_name = ? AND e.file_gen = fg.active_gen`,
-      args: [projectHash, branchName],
-    });
-    const fileCount = await client.execute({
-      sql: "SELECT COUNT(*) as count FROM files WHERE project_hash = ? AND branch_name = ?",
-      args: [projectHash, branchName],
-    });
+        args: [projectHash, branchName],
+      });
+      const fileCount = await client.execute({
+        sql: "SELECT COUNT(*) as count FROM files WHERE project_hash = ? AND branch_name = ?",
+        args: [projectHash, branchName],
+      });
 
-    // Get existing tracking data to preserve it (or reset if full index)
-    const existing = await client.execute({
-      sql: `SELECT last_full_index_at, incremental_changes_count, created_at, trace_usage_count
+      // Get existing tracking data to preserve it (or reset if full index)
+      const existing = await client.execute({
+        sql: `SELECT last_full_index_at, incremental_changes_count, created_at, trace_usage_count
             FROM project_metadata WHERE project_hash = ? AND branch_name = ?`,
-      args: [projectHash, branchName],
-    });
+        args: [projectHash, branchName],
+      });
 
-    const existingRow = existing.rows[0];
-    const createdAt = (existingRow?.["created_at"] as number) || now;
-    const traceUsageCount = (existingRow?.["trace_usage_count"] as number) || 0;
+      const existingRow = existing.rows[0];
+      const createdAt = (existingRow?.["created_at"] as number) || now;
+      const traceUsageCount = (existingRow?.["trace_usage_count"] as number) || 0;
 
-    // On full index: reset counter and update last_full_index_at
-    // On incremental: preserve existing values
-    const lastFullIndexAt = isFullIndex ? now : (existingRow?.["last_full_index_at"] as number) || 0;
-    const incrementalChangesCount = isFullIndex ? 0 : (existingRow?.["incremental_changes_count"] as number) || 0;
+      // On full index: reset counter and update last_full_index_at
+      // On incremental: preserve existing values
+      const lastFullIndexAt = isFullIndex ? now : (existingRow?.["last_full_index_at"] as number) || 0;
+      const incrementalChangesCount = isFullIndex ? 0 : (existingRow?.["incremental_changes_count"] as number) || 0;
 
-    await client.execute({
-      sql: `
+      await client.execute({
+        sql: `
         INSERT OR REPLACE INTO project_metadata
         (project_hash, branch_name, project_path, last_indexed_at, entity_count, file_count,
          created_at, updated_at, last_full_index_at, incremental_changes_count, trace_usage_count)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      args: [
-        projectHash,
-        branchName,
-        projectPath,
-        now,
-        (entityCount.rows[0]?.["count"] as number) || 0,
-        (fileCount.rows[0]?.["count"] as number) || 0,
-        createdAt,
-        now,
-        lastFullIndexAt,
-        incrementalChangesCount,
-        traceUsageCount,
-      ],
-    });
+        args: [
+          projectHash,
+          branchName,
+          projectPath,
+          now,
+          (entityCount.rows[0]?.["count"] as number) || 0,
+          (fileCount.rows[0]?.["count"] as number) || 0,
+          createdAt,
+          now,
+          lastFullIndexAt,
+          incrementalChangesCount,
+          traceUsageCount,
+        ],
+      });
     }); // end _w
   }
 
@@ -282,18 +285,18 @@ export class MetadataOperations {
    */
   async recordIncrementalChanges(changedFileCount: number): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+      const { projectHash, branchName } = this.getContext();
 
-    await client.execute({
-      sql: `UPDATE project_metadata
+      await client.execute({
+        sql: `UPDATE project_metadata
             SET incremental_changes_count = incremental_changes_count + ?,
                 updated_at = ?
             WHERE project_hash = ? AND branch_name = ?`,
-      args: [changedFileCount, Date.now(), projectHash, branchName],
-    });
+        args: [changedFileCount, Date.now(), projectHash, branchName],
+      });
     }); // end _w
   }
 
@@ -302,20 +305,20 @@ export class MetadataOperations {
    */
   async resetIncrementalTracking(): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const now = Date.now();
+      const { projectHash, branchName } = this.getContext();
+      const now = Date.now();
 
-    await client.execute({
-      sql: `UPDATE project_metadata
+      await client.execute({
+        sql: `UPDATE project_metadata
             SET last_full_index_at = ?,
                 incremental_changes_count = 0,
                 updated_at = ?
             WHERE project_hash = ? AND branch_name = ?`,
-      args: [now, now, projectHash, branchName],
-    });
+        args: [now, now, projectHash, branchName],
+      });
     }); // end _w
   }
 
@@ -353,23 +356,23 @@ export class MetadataOperations {
    */
   async incrementTraceUsageCount(): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) return;
+      const client = this.getClient();
+      if (!client) return;
 
-    const { projectHash, branchName } = this.getContext();
+      const { projectHash, branchName } = this.getContext();
 
-    try {
-      await client.execute({
-        sql: `INSERT INTO project_metadata
+      try {
+        await client.execute({
+          sql: `INSERT INTO project_metadata
               (project_hash, branch_name, project_path, last_indexed_at, created_at, updated_at, trace_usage_count)
               VALUES (?, ?, '', 0, 0, 0, 1)
               ON CONFLICT(project_hash, branch_name) DO UPDATE
               SET trace_usage_count = COALESCE(trace_usage_count, 0) + 1`,
-        args: [projectHash, branchName],
-      });
-    } catch {
-      // Column may not exist yet (pre-migration) — non-critical
-    }
+          args: [projectHash, branchName],
+        });
+      } catch {
+        // Column may not exist yet (pre-migration) — non-critical
+      }
     }); // end _w
   }
 
@@ -519,91 +522,91 @@ export class MetadataOperations {
    */
   async clear(): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
+      const { projectHash, branchName } = this.getContext();
 
-    // Check if this is the only project — use fast truncation path if so
-    const otherProjects = await client.execute({
-      sql: "SELECT 1 FROM entities WHERE project_hash != ? LIMIT 1",
-      args: [projectHash],
-    });
-
-    if (otherProjects.rows.length === 0) {
-      // Single project — use clearAll() which includes WAL checkpoint
-      await this.clearAll();
-      // VACUUM reclaims freelist pages so INSERTs don't trigger slow page reuse.
-      // On empty DB this is fast (~100ms).
-      try {
-        await client.execute({ sql: "VACUUM", args: [] });
-      } catch {
-        // Non-critical
-      }
-      log.i("METADATAOPS", "data_cleared_fast", { ctx: `${projectHash}/${branchName}`, mode: "truncate+vacuum" });
-      return;
-    }
-
-    // Multi-project — row-by-row delete + VACUUM to defragment B-trees
-    // Graph tables (entities, relationships, files, project_metadata, name_tokens)
-    await client.batch(
-      [
-        {
-          sql: "DELETE FROM relationships WHERE project_hash = ? AND branch_name = ?",
-          args: [projectHash, branchName],
-        },
-        { sql: "DELETE FROM entities WHERE project_hash = ? AND branch_name = ?", args: [projectHash, branchName] },
-        { sql: "DELETE FROM files WHERE project_hash = ? AND branch_name = ?", args: [projectHash, branchName] },
-        {
-          sql: "DELETE FROM project_metadata WHERE project_hash = ? AND branch_name = ?",
-          args: [projectHash, branchName],
-        },
-        {
-          sql: "DELETE FROM name_tokens WHERE project_hash = ? AND branch_name = ?",
-          args: [projectHash, branchName],
-        },
-      ],
-      "write",
-    );
-
-    // Cache tables (query_cache) — may be on separate DB
-    const cacheClient = this.getCacheClient?.() ?? client;
-    if (cacheClient) {
-      await cacheClient.execute({
-        sql: "DELETE FROM query_cache WHERE project_hash = ? AND branch_name = ?",
-        args: [projectHash, branchName],
+      // Check if this is the only project — use fast truncation path if so
+      const otherProjects = await client.execute({
+        sql: "SELECT 1 FROM entities WHERE project_hash != ? LIMIT 1",
+        args: [projectHash],
       });
-    }
 
-    // Semantic tables (cooccurrence, term_frequency) — may be on separate DB
-    // Try on the main client first; if table doesn't exist there (multi-db), it's in semantic.db
-    try {
+      if (otherProjects.rows.length === 0) {
+        // Single project — use clearAll() which includes WAL checkpoint
+        await this.clearAll();
+        // VACUUM reclaims freelist pages so INSERTs don't trigger slow page reuse.
+        // On empty DB this is fast (~100ms).
+        try {
+          await client.execute({ sql: "VACUUM", args: [] });
+        } catch {
+          // Non-critical
+        }
+        log.i("METADATAOPS", "data_cleared_fast", { ctx: `${projectHash}/${branchName}`, mode: "truncate+vacuum" });
+        return;
+      }
+
+      // Multi-project — row-by-row delete + VACUUM to defragment B-trees
+      // Graph tables (entities, relationships, files, project_metadata, name_tokens)
       await client.batch(
         [
           {
-            sql: "DELETE FROM cooccurrence WHERE project_hash = ? AND branch_name = ?",
+            sql: "DELETE FROM relationships WHERE project_hash = ? AND branch_name = ?",
+            args: [projectHash, branchName],
+          },
+          { sql: "DELETE FROM entities WHERE project_hash = ? AND branch_name = ?", args: [projectHash, branchName] },
+          { sql: "DELETE FROM files WHERE project_hash = ? AND branch_name = ?", args: [projectHash, branchName] },
+          {
+            sql: "DELETE FROM project_metadata WHERE project_hash = ? AND branch_name = ?",
             args: [projectHash, branchName],
           },
           {
-            sql: "DELETE FROM term_frequency WHERE project_hash = ? AND branch_name = ?",
+            sql: "DELETE FROM name_tokens WHERE project_hash = ? AND branch_name = ?",
             args: [projectHash, branchName],
           },
         ],
         "write",
       );
-    } catch {
-      // In multi-db mode, these tables are not on the graph client — that's OK
-    }
 
-    // VACUUM defragments B-trees after mass DELETE, preventing 56x slower INSERTs
-    try {
-      await client.execute({ sql: "VACUUM", args: [] });
-      log.i("METADATAOPS", "data_cleared", { ctx: `${projectHash}/${branchName}`, mode: "delete+vacuum" });
-    } catch (error) {
-      // VACUUM can fail under concurrent access — non-critical
-      log.w("METADATAOPS", "vacuum_fail", { err: (error as Error).message });
-      log.i("METADATAOPS", "data_cleared", { ctx: `${projectHash}/${branchName}`, mode: "delete" });
-    }
+      // Cache tables (query_cache) — may be on separate DB
+      const cacheClient = this.getCacheClient?.() ?? client;
+      if (cacheClient) {
+        await cacheClient.execute({
+          sql: "DELETE FROM query_cache WHERE project_hash = ? AND branch_name = ?",
+          args: [projectHash, branchName],
+        });
+      }
+
+      // Semantic tables (cooccurrence, term_frequency) — may be on separate DB
+      // Try on the main client first; if table doesn't exist there (multi-db), it's in semantic.db
+      try {
+        await client.batch(
+          [
+            {
+              sql: "DELETE FROM cooccurrence WHERE project_hash = ? AND branch_name = ?",
+              args: [projectHash, branchName],
+            },
+            {
+              sql: "DELETE FROM term_frequency WHERE project_hash = ? AND branch_name = ?",
+              args: [projectHash, branchName],
+            },
+          ],
+          "write",
+        );
+      } catch {
+        // In multi-db mode, these tables are not on the graph client — that's OK
+      }
+
+      // VACUUM defragments B-trees after mass DELETE, preventing 56x slower INSERTs
+      try {
+        await client.execute({ sql: "VACUUM", args: [] });
+        log.i("METADATAOPS", "data_cleared", { ctx: `${projectHash}/${branchName}`, mode: "delete+vacuum" });
+      } catch (error) {
+        // VACUUM can fail under concurrent access — non-critical
+        log.w("METADATAOPS", "vacuum_fail", { err: (error as Error).message });
+        log.i("METADATAOPS", "data_cleared", { ctx: `${projectHash}/${branchName}`, mode: "delete" });
+      }
     }); // end _w
   }
 
@@ -612,54 +615,54 @@ export class MetadataOperations {
    */
   async clearAll(): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    // Graph tables
-    await client.batch(
-      [
-        { sql: "DELETE FROM relationships", args: [] },
-        { sql: "DELETE FROM entities", args: [] },
-        { sql: "DELETE FROM files", args: [] },
-        { sql: "DELETE FROM project_metadata", args: [] },
-        { sql: "DELETE FROM name_tokens", args: [] },
-      ],
-      "write",
-    );
-
-    // Cache tables — may be on separate DB
-    const cacheClient = this.getCacheClient?.() ?? client;
-    if (cacheClient) {
-      try {
-        await cacheClient.execute({ sql: "DELETE FROM query_cache", args: [] });
-      } catch {
-        // Table may not exist yet
-      }
-    }
-
-    // Semantic tables — may be on separate DB
-    try {
+      // Graph tables
       await client.batch(
         [
-          { sql: "DELETE FROM cooccurrence", args: [] },
-          { sql: "DELETE FROM term_frequency", args: [] },
+          { sql: "DELETE FROM relationships", args: [] },
+          { sql: "DELETE FROM entities", args: [] },
+          { sql: "DELETE FROM files", args: [] },
+          { sql: "DELETE FROM project_metadata", args: [] },
+          { sql: "DELETE FROM name_tokens", args: [] },
         ],
         "write",
       );
-    } catch {
-      // In multi-db mode, these tables are not on the graph client
-    }
 
-    // Flush and truncate WAL after mass DELETE to prevent slow INSERTs.
-    // Without this, accumulated WAL pages from prior writes cause
-    // automatic checkpoints during INSERT, adding ~12s overhead.
-    try {
-      await client.execute({ sql: "PRAGMA wal_checkpoint(TRUNCATE)", args: [] });
-    } catch {
-      // Non-critical — checkpoint may fail under concurrent access
-    }
+      // Cache tables — may be on separate DB
+      const cacheClient = this.getCacheClient?.() ?? client;
+      if (cacheClient) {
+        try {
+          await cacheClient.execute({ sql: "DELETE FROM query_cache", args: [] });
+        } catch {
+          // Table may not exist yet
+        }
+      }
 
-    log.i("METADATAOPS", "all_data_cleared");
+      // Semantic tables — may be on separate DB
+      try {
+        await client.batch(
+          [
+            { sql: "DELETE FROM cooccurrence", args: [] },
+            { sql: "DELETE FROM term_frequency", args: [] },
+          ],
+          "write",
+        );
+      } catch {
+        // In multi-db mode, these tables are not on the graph client
+      }
+
+      // Flush and truncate WAL after mass DELETE to prevent slow INSERTs.
+      // Without this, accumulated WAL pages from prior writes cause
+      // automatic checkpoints during INSERT, adding ~12s overhead.
+      try {
+        await client.execute({ sql: "PRAGMA wal_checkpoint(TRUNCATE)", args: [] });
+      } catch {
+        // Non-critical — checkpoint may fail under concurrent access
+      }
+
+      log.i("METADATAOPS", "all_data_cleared");
     }); // end _w
   }
 }

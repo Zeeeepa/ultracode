@@ -25,6 +25,7 @@ WebGPU Ready
 ### Test & Validation
 
 - **test.js** — Entry point for validating WebGPU module compatibility across Node.js and Bun runtimes; performs sequential initialization of GPU instance, adapter, and device to verify the webgpu package functions correctly in the target environment.
+- **bun-issue-webgpu-npm** — Documents the WebGPU adapter initialization failure that occurs when test.js executes in Bun runtime (package.json:1-1).
 
 ## Dependencies
 

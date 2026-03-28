@@ -63,13 +63,13 @@ import type { BranchDiffCache, CommitManager, ProllyNodeStore, ProllyTree } from
 
 // Re-export types for backwards compatibility
 export {
-  type LibSQLGraphConfig,
-  type ProjectContext,
-  type SupportedDimension,
-  SUPPORTED_DIMENSIONS,
-  getEmbeddingColumn,
-  normalizeToSupportedDimension,
   DatabaseCorruptionError,
+  getEmbeddingColumn,
+  type LibSQLGraphConfig,
+  normalizeToSupportedDimension,
+  type ProjectContext,
+  SUPPORTED_DIMENSIONS,
+  type SupportedDimension,
 };
 
 // =============================================================================

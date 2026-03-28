@@ -13,7 +13,7 @@
  *   if (!basin.mayReach(from, to)) return UNREACHABLE; // O(1), no BFS needed
  */
 
-export const NO_BASIN = 0xFFFF;
+export const NO_BASIN = 0xffff;
 
 export interface BasinBuildInput {
   /** Total number of nodes */
@@ -30,9 +30,15 @@ export class BasinIndex {
   private _nodeCount = 0;
   private _valid = false;
 
-  get basinCount(): number { return this._basinCount; }
-  get nodeCount(): number { return this._nodeCount; }
-  get valid(): boolean { return this._valid; }
+  get basinCount(): number {
+    return this._basinCount;
+  }
+  get nodeCount(): number {
+    return this._nodeCount;
+  }
+  get valid(): boolean {
+    return this._valid;
+  }
 
   invalidate(): void {
     this._valid = false;
@@ -107,9 +113,11 @@ export class BasinIndex {
    * Build from a string-keyed adjacency map (convenience for GraphAdapter integration).
    * Maps string IDs to numeric indices internally.
    */
-  static buildFromAdjacency(
-    adjacency: Map<string, Set<string>>,
-  ): { index: BasinIndex; nodeIds: string[]; nodeToIdx: Map<string, number> } {
+  static buildFromAdjacency(adjacency: Map<string, Set<string>>): {
+    index: BasinIndex;
+    nodeIds: string[];
+    nodeToIdx: Map<string, number>;
+  } {
     const nodeIds = [...adjacency.keys()];
     const n = nodeIds.length;
     const nodeToIdx = new Map<string, number>();

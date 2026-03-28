@@ -54,7 +54,16 @@ export interface MethodCfg {
 // Line Classification
 // =============================================================================
 
-type CfgStrategy = "plain" | "if_branch" | "else_branch" | "loop" | "return_node" | "throw_node" | "try_catch" | "catch_node" | "skip";
+type CfgStrategy =
+  | "plain"
+  | "if_branch"
+  | "else_branch"
+  | "loop"
+  | "return_node"
+  | "throw_node"
+  | "try_catch"
+  | "catch_node"
+  | "skip";
 
 const IF_PATTERN = /^\s*(if\s*\(|if\s+)/;
 const ELSE_IF_PATTERN = /^\s*(}\s*else\s+if\s*\(|else\s+if\s*\(|elif\s+)/;
@@ -63,7 +72,7 @@ const LOOP_PATTERN = /^\s*(for\s*\(|for\s+|while\s*\(|while\s+|do\s*\{|loop\s*\{
 const RETURN_PATTERN = /^\s*return[\s;(]/;
 const THROW_PATTERN = /^\s*(throw\s|raise\s)/;
 const TRY_PATTERN = /^\s*(try\s*\{|try\s*:)/;
-const CATCH_PATTERN = /^\s*(}\s*catch\s*[\({]|catch\s*[\({]|except\s)/;
+const CATCH_PATTERN = /^\s*(}\s*catch\s*[({]|catch\s*[({]|except\s)/;
 const SKIP_PATTERN = /^\s*(\/\/|\/\*|\*|#|$|\{$|\}$|;$)/;
 
 function classifyLine(line: string): CfgStrategy {
@@ -175,8 +184,8 @@ export function buildCfgFromSource(lines: string[]): MethodCfg {
         const mergeId = builder.addNode("merge", i, i);
         const backId = builder.addNode("loop_back", i, i);
         builder.addEdge(headerId, backId, "sequential"); // body → back
-        builder.addEdge(backId, headerId, "back_edge");   // back → header
-        builder.addEdge(headerId, mergeId, "branch");     // exit loop
+        builder.addEdge(backId, headerId, "back_edge"); // back → header
+        builder.addEdge(headerId, mergeId, "branch"); // exit loop
         current = mergeId;
         break;
       }

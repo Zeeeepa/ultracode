@@ -15,18 +15,33 @@ import type { MethodCfg } from "./cfg-builder.js";
 // =============================================================================
 
 export type CondOp =
-  | "eq" | "neq" | "lt" | "gt" | "lte" | "gte"
-  | "is_null" | "is_not_null"
-  | "is_truthy" | "is_falsy"
-  | "is_type" | "instanceof";
+  | "eq"
+  | "neq"
+  | "lt"
+  | "gt"
+  | "lte"
+  | "gte"
+  | "is_null"
+  | "is_not_null"
+  | "is_truthy"
+  | "is_falsy"
+  | "is_type"
+  | "instanceof";
 
 export function negateOp(op: CondOp): CondOp {
   const negations: Record<CondOp, CondOp> = {
-    eq: "neq", neq: "eq",
-    lt: "gte", gt: "lte", lte: "gt", gte: "lt",
-    is_null: "is_not_null", is_not_null: "is_null",
-    is_truthy: "is_falsy", is_falsy: "is_truthy",
-    is_type: "is_type", instanceof: "instanceof",
+    eq: "neq",
+    neq: "eq",
+    lt: "gte",
+    gt: "lte",
+    lte: "gt",
+    gte: "lt",
+    is_null: "is_not_null",
+    is_not_null: "is_null",
+    is_truthy: "is_falsy",
+    is_falsy: "is_truthy",
+    is_type: "is_type",
+    instanceof: "instanceof",
   };
   return negations[op];
 }
@@ -91,47 +106,88 @@ export function extractCondition(
   sourceLine: number,
   isTrueBranch: boolean,
 ): Condition | null {
-  const trimmed = text.trim().replace(/^\(+|\)+$/g, "").trim();
+  const trimmed = text
+    .trim()
+    .replace(/^\(+|\)+$/g, "")
+    .trim();
   if (!trimmed) return null;
 
   // Constant conditions
   if (CONSTANT_TRUE.has(trimmed)) {
-    if (!isTrueBranch) return { variable: "_constant", operator: "is_falsy", value: trimmed, negated: false, cfgNodeId, sourceLine };
+    if (!isTrueBranch)
+      return { variable: "_constant", operator: "is_falsy", value: trimmed, negated: false, cfgNodeId, sourceLine };
     return null;
   }
   if (CONSTANT_FALSE.has(trimmed)) {
-    if (isTrueBranch) return { variable: "_constant", operator: "is_truthy", value: trimmed, negated: false, cfgNodeId, sourceLine };
+    if (isTrueBranch)
+      return { variable: "_constant", operator: "is_truthy", value: trimmed, negated: false, cfgNodeId, sourceLine };
     return null;
   }
 
   // Negation: !expr
   if (trimmed.startsWith("!")) {
-    const inner = trimmed.slice(1).trim().replace(/^\(+|\)+$/g, "").trim();
+    const inner = trimmed
+      .slice(1)
+      .trim()
+      .replace(/^\(+|\)+$/g, "")
+      .trim();
     if (inner) {
       const cond = extractCondition(inner, cfgNodeId, sourceLine, isTrueBranch);
-      if (cond) { cond.operator = negateOp(cond.operator); return cond; }
+      if (cond) {
+        cond.operator = negateOp(cond.operator);
+        return cond;
+      }
       const ident = extractSimpleIdent(inner);
-      if (ident) return { variable: ident, operator: isTrueBranch ? "is_falsy" : "is_truthy", value: null, negated: !isTrueBranch, cfgNodeId, sourceLine };
+      if (ident)
+        return {
+          variable: ident,
+          operator: isTrueBranch ? "is_falsy" : "is_truthy",
+          value: null,
+          negated: !isTrueBranch,
+          cfgNodeId,
+          sourceLine,
+        };
     }
   }
 
   // typeof x === "string"
   const typeofMatch = TYPEOF_RE.exec(trimmed);
   if (typeofMatch) {
-    return { variable: typeofMatch[1]!, operator: "is_type", value: typeofMatch[3]!, negated: !isTrueBranch, cfgNodeId, sourceLine };
+    return {
+      variable: typeofMatch[1]!,
+      operator: "is_type",
+      value: typeofMatch[3]!,
+      negated: !isTrueBranch,
+      cfgNodeId,
+      sourceLine,
+    };
   }
 
   // x instanceof Foo
   const instMatch = INSTANCEOF_RE.exec(trimmed);
   if (instMatch) {
-    return { variable: instMatch[1]!, operator: "instanceof", value: instMatch[2]!, negated: !isTrueBranch, cfgNodeId, sourceLine };
+    return {
+      variable: instMatch[1]!,
+      operator: "instanceof",
+      value: instMatch[2]!,
+      negated: !isTrueBranch,
+      cfgNodeId,
+      sourceLine,
+    };
   }
 
   // Python: x is None / x is not None
   const pyNoneMatch = PYTHON_IS_NONE_RE.exec(trimmed);
   if (pyNoneMatch) {
     const isNot = !!pyNoneMatch[2];
-    return { variable: pyNoneMatch[1]!, operator: isTrueBranch ? (isNot ? "is_not_null" : "is_null") : (isNot ? "is_null" : "is_not_null"), value: null, negated: false, cfgNodeId, sourceLine };
+    return {
+      variable: pyNoneMatch[1]!,
+      operator: isTrueBranch ? (isNot ? "is_not_null" : "is_null") : isNot ? "is_null" : "is_not_null",
+      value: null,
+      negated: false,
+      cfgNodeId,
+      sourceLine,
+    };
   }
 
   // Null checks: x == null, x !== null, null == x
@@ -140,22 +196,53 @@ export function extractCondition(
     const variable = /^(null|nil|None|undefined)$/.test(nullMatch[1]!) ? nullMatch[3]! : nullMatch[1]!;
     const isEq = nullMatch[2] === "==" || nullMatch[2] === "===";
     const baseOp: CondOp = isEq ? "is_null" : "is_not_null";
-    return { variable: variable, operator: isTrueBranch ? baseOp : negateOp(baseOp), value: null, negated: false, cfgNodeId, sourceLine };
+    return {
+      variable: variable,
+      operator: isTrueBranch ? baseOp : negateOp(baseOp),
+      value: null,
+      negated: false,
+      cfgNodeId,
+      sourceLine,
+    };
   }
 
   // Binary comparisons: x == y, x < y, etc.
   const binMatch = BINARY_CMP_RE.exec(trimmed);
   if (binMatch) {
-    const opMap: Record<string, CondOp> = { "!==": "neq", "===": "eq", "!=": "neq", ">=": "gte", "<=": "lte", "==": "eq", ">": "gt", "<": "lt" };
+    const opMap: Record<string, CondOp> = {
+      "!==": "neq",
+      "===": "eq",
+      "!=": "neq",
+      ">=": "gte",
+      "<=": "lte",
+      "==": "eq",
+      ">": "gt",
+      "<": "lt",
+    };
     const baseOp = opMap[binMatch[2]!];
     if (baseOp) {
-      return { variable: binMatch[1]!, operator: isTrueBranch ? baseOp : negateOp(baseOp), value: binMatch[3]!.trim(), negated: false, cfgNodeId, sourceLine };
+      return {
+        variable: binMatch[1]!,
+        operator: isTrueBranch ? baseOp : negateOp(baseOp),
+        value: binMatch[3]!.trim(),
+        negated: false,
+        cfgNodeId,
+        sourceLine,
+      };
     }
   }
 
   // Simple identifier → truthiness check
   const ident = extractSimpleIdent(trimmed);
-  if (ident) return { variable: ident, operator: isTrueBranch ? "is_truthy" : "is_falsy", value: null, negated: false, cfgNodeId, sourceLine };
+  if (ident)
+    return {
+      variable: ident,
+      operator: isTrueBranch ? "is_truthy" : "is_falsy",
+      value: null,
+      negated: false,
+      cfgNodeId,
+      sourceLine,
+    };
 
   return null;
 }
@@ -208,9 +295,7 @@ export function detectContradictions(conditions: Condition[]): Contradiction[] {
  * Detect dead branches from constant conditions in if-statements.
  */
 export function detectDeadBranches(conditions: Condition[]): number[] {
-  return conditions
-    .filter((c) => c.variable === "_constant")
-    .map((c) => c.cfgNodeId);
+  return conditions.filter((c) => c.variable === "_constant").map((c) => c.cfgNodeId);
 }
 
 /**
@@ -226,10 +311,7 @@ export function extractNarrowedTypes(conditions: Condition[]): NarrowedType[] {
  * Analyze conditions across a CFG.
  * Extracts conditions from branch nodes, detects contradictions and dead branches.
  */
-export function analyzeConditions(
-  cfg: MethodCfg,
-  sourceLines: string[],
-): ConditionResult {
+export function analyzeConditions(cfg: MethodCfg, sourceLines: string[]): ConditionResult {
   const conditions: Condition[] = [];
 
   for (const node of cfg.nodes) {
@@ -250,8 +332,7 @@ export function analyzeConditions(
   const narrowedTypes = extractNarrowedTypes(conditions);
 
   const pathFeasibility: PathFeasibility =
-    contradictions.length > 0 ? "infeasible" :
-    deadBranches.length > 0 ? "infeasible" : "feasible";
+    contradictions.length > 0 ? "infeasible" : deadBranches.length > 0 ? "infeasible" : "feasible";
 
   return { pathFeasibility, conditions, contradictions, deadBranches, narrowedTypes };
 }

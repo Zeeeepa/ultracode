@@ -26,20 +26,14 @@ const BM25_B = 0.75;
  * @param avgDocLen - Average document length across the corpus
  * @returns BM25 score for this term-document pair
  */
-export function bm25Score(
-  tf: number,
-  df: number,
-  totalDocs: number,
-  docLen: number,
-  avgDocLen: number,
-): number {
+export function bm25Score(tf: number, df: number, totalDocs: number, docLen: number, avgDocLen: number): number {
   if (avgDocLen === 0) return tf;
 
   // IDF: BM25 variant — handles edge cases where df ≈ totalDocs
   const idf = Math.log((totalDocs - df + 0.5) / (df + 0.5) + 1);
 
   // TF saturation + length normalization
-  return idf * (tf * (BM25_K1 + 1)) / (tf + BM25_K1 * (1 - BM25_B + BM25_B * docLen / avgDocLen));
+  return (idf * (tf * (BM25_K1 + 1))) / (tf + BM25_K1 * (1 - BM25_B + (BM25_B * docLen) / avgDocLen));
 }
 
 /**

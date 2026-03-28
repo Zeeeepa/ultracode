@@ -36,14 +36,26 @@ export interface FlowSemantic {
 // =============================================================================
 
 const PASSTHROUGH: FlowMapping[] = [{ src: 0, dst: -1 }];
-const CONCAT: FlowMapping[] = [{ src: 0, dst: -1 }, { src: 1, dst: -1 }];
+const CONCAT: FlowMapping[] = [
+  { src: 0, dst: -1 },
+  { src: 1, dst: -1 },
+];
 const SOURCE_RET: FlowMapping[] = [{ src: -1, dst: -1 }];
 const SINK_0: FlowMapping[] = [{ src: 0, dst: -1 }];
-const SINK_01: FlowMapping[] = [{ src: 0, dst: -1 }, { src: 1, dst: -1 }];
+const SINK_01: FlowMapping[] = [
+  { src: 0, dst: -1 },
+  { src: 1, dst: -1 },
+];
 const SANITIZER: FlowMapping[] = [{ src: 0, dst: -1 }];
-const STRCPY: FlowMapping[] = [{ src: 1, dst: 0 }, { src: 1, dst: -1 }];
+const STRCPY: FlowMapping[] = [
+  { src: 1, dst: 0 },
+  { src: 1, dst: -1 },
+];
 const STRCAT: FlowMapping[] = [{ src: 1, dst: 0 }];
-const SPRINTF: FlowMapping[] = [{ src: 2, dst: 0 }, { src: 3, dst: 0 }];
+const SPRINTF: FlowMapping[] = [
+  { src: 2, dst: 0 },
+  { src: 3, dst: 0 },
+];
 const MEMCPY: FlowMapping[] = [{ src: 1, dst: 0 }];
 const STRDUP: FlowMapping[] = [{ src: 0, dst: -1 }];
 
@@ -197,10 +209,7 @@ export const RETURN_IDX = MAX_ARGS;
  * compute which outputs become tainted.
  * Returns boolean array: indices 0..7 for args, index 8 for return value.
  */
-export function propagateTaint(
-  semantic: FlowSemantic,
-  taintedArgs: boolean[],
-): boolean[] {
+export function propagateTaint(semantic: FlowSemantic, taintedArgs: boolean[]): boolean[] {
   const result = new Array<boolean>(MAX_ARGS + 1).fill(false);
 
   if (semantic.isSanitizer) {
@@ -208,9 +217,7 @@ export function propagateTaint(
   }
 
   for (const mapping of semantic.mappings) {
-    const srcTainted = mapping.src === -1
-      ? false
-      : (mapping.src < taintedArgs.length ? taintedArgs[mapping.src] : false);
+    const srcTainted = mapping.src === -1 ? false : mapping.src < taintedArgs.length ? taintedArgs[mapping.src] : false;
 
     if (srcTainted) {
       if (mapping.dst === -1) {

@@ -44,6 +44,37 @@ The Proto module provides the canonical type registry and loader for UltraCode's
 - `IGpuWorkerResponse` — Response message from a GPU worker containing computed analysis results.
 - `IPacketHeader` — Header metadata for data packets including size, type, and sequence identifiers.
 
+### Utility Functions & Accessors
+
+- `getType` — Generic function to retrieve a message type definition by name from the cached protobuf Root instance.
+- `getEntityType` — Returns the Entity message type definition from the loaded protobuf schema.
+- `getRelationshipType` — Returns the Relationship message type definition from the loaded protobuf schema.
+- `getBranchDeltaType` — Returns the BranchDelta message type definition from the loaded protobuf schema.
+- `getIPCMessageType` — Returns the IIPCMessage message type definition from the loaded protobuf schema.
+- `getGpuWorkerResponseType` — Returns the IGpuWorkerResponse message type definition from the loaded protobuf schema.
+- `getPacketHeaderType` — Returns the IPacketHeader message type definition from the loaded protobuf schema.
+- `getEntityBatchType` — Returns the EntityBatch message type definition from the loaded protobuf schema.
+- `getRelationshipBatchType` — Returns the RelationshipBatch message type definition from the loaded protobuf schema.
+
+### Serialization & Encoding
+
+- `encodeEntity` — Serializes an Entity object to binary protobuf format.
+- `decodeEntity` — Deserializes binary protobuf data into an Entity object.
+- `encodeEntityBatch` — Serializes an EntityBatch object to binary protobuf format.
+- `decodeEntityBatch` — Deserializes binary protobuf data into an EntityBatch object.
+- `encodeRelationship` — Serializes a Relationship object to binary protobuf format.
+- `decodeRelationship` — Deserializes binary protobuf data into a Relationship object.
+- `encodeRelationshipBatch` — Serializes a RelationshipBatch object to binary protobuf format.
+- `decodeRelationshipBatch` — Deserializes binary protobuf data into a RelationshipBatch object.
+- `encodeBranchDelta` — Serializes a BranchDelta object to binary protobuf format.
+- `decodeBranchDelta` — Deserializes binary protobuf data into a BranchDelta object.
+- `encodeIPCMessage` — Serializes an IIPCMessage object to binary protobuf format.
+- `decodeIPCMessage` — Deserializes binary protobuf data into an IIPCMessage object.
+- `encodeGpuWorkerResponse` — Serializes an IGpuWorkerResponse object to binary protobuf format.
+- `decodeGpuWorkerResponse` — Deserializes binary protobuf data into an IGpuWorkerResponse object.
+- `encodePacketHeader` — Serializes an IPacketHeader object to binary protobuf format.
+- `decodePacketHeader` — Deserializes binary protobuf data into an IPacketHeader object.
+
 ## Dependencies
 
 **External:**

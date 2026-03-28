@@ -135,145 +135,35 @@ export class EntityOperations {
    */
   async insertEntity(entity: Entity): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName } = this.getContext();
-    const now = Date.now();
+      const { projectHash, branchName } = this.getContext();
+      const now = Date.now();
 
-    // Ensure generation cache is loaded
-    if (!this.genManager.isCacheLoaded) {
-      await this.genManager.loadCache();
-    }
+      // Ensure generation cache is loaded
+      if (!this.genManager.isCacheLoaded) {
+        await this.genManager.loadCache();
+      }
 
-    // Bump generation for this file (append-only model)
-    const newGen = await this.genManager.bumpGeneration(entity.filePath);
+      // Bump generation for this file (append-only model)
+      const newGen = await this.genManager.bumpGeneration(entity.filePath);
 
-    await client.execute({
-      sql: `
+      await client.execute({
+        sql: `
         INSERT OR REPLACE INTO entities
         (id, project_hash, branch_name, name, type, file_path, location, metadata, hash,
          created_at, updated_at, complexity_score, language, size_bytes, embedding_base64, embedding_text, file_gen)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      args: [
-        entity.id,
-        projectHash,
-        branchName,
-        entity.name,
-        entity.type,
-        entity.filePath,
-        JSON.stringify(entity.location),
-        encodeMetadata(entity.metadata as Record<string, unknown>),
-        entity.hash || null,
-        entity.createdAt || now,
-        entity.updatedAt || now,
-        entity.complexityScore || 1,
-        entity.language || null,
-        entity.sizeBytes || 0,
-        entity.embeddingBase64 || null,
-        entity.embeddingText || null,
-        newGen,
-      ],
-    });
-
-    // Update name tokens for fast lookup
-    const tokens = splitToTokens(entity.name);
-    if (tokens.length > 0 && entity.id) {
-      await client.execute({
-        sql: "DELETE FROM name_tokens WHERE entity_id = ? AND project_hash = ? AND branch_name = ?",
-        args: [entity.id, projectHash, branchName],
-      });
-      const valuePlaceholders = tokens.map(() => "(?, ?, ?, ?)").join(", ");
-      const tokenArgs: (string | number | null)[] = [];
-      for (const token of tokens) {
-        tokenArgs.push(token, entity.id, projectHash, branchName);
-      }
-      await client.execute({
-        sql: `INSERT OR IGNORE INTO name_tokens (token, entity_id, project_hash, branch_name) VALUES ${valuePlaceholders}`,
-        args: tokenArgs,
-      });
-    }
-    }); // end _w
-  }
-
-  /**
-   * Insert multiple entities with batch optimization
-   */
-  async insertEntities(entities: Entity[]): Promise<BatchResult> {
-    if (entities.length === 0) return { processed: 0, failed: 0, errors: [], timeMs: 0 };
-    return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
-
-    const start = Date.now();
-    const errors: Array<{ item: unknown; error: string }> = [];
-    const { projectHash, branchName } = this.getContext();
-    const now = Date.now();
-    // DEBUG: Log insert context with language info
-    const withLang = entities.filter((e) => e.language).length;
-    const kotlinCount = entities.filter((e) => e.language === "kotlin").length;
-    const sample = entities.slice(0, 3).map((e) => ({ n: e.name, l: e.language, f: e.filePath?.slice(-30) }));
-    log.w("ENTITY_OPS", "insertEntities", {
-      total: entities.length,
-      withLang,
-      kotlinCount,
-      sample: JSON.stringify(sample),
-    });
-
-    // Deduplicate by ID
-    const seen = new Set<string>();
-    const unique: Entity[] = [];
-    for (const e of entities) {
-      if (!seen.has(e.id)) {
-        seen.add(e.id);
-        unique.push(e);
-      }
-    }
-
-    // Ensure generation cache is loaded
-    if (!this.genManager.isCacheLoaded) {
-      await this.genManager.loadCache();
-    }
-
-    // Collect unique file paths and bump generations in batch
-    const filePaths = [...new Set(unique.map((e) => e.filePath))];
-    const genMap = await this.genManager.bumpGenerationBatch(filePaths);
-
-    // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
-    // Much faster than N separate INSERT statements (reduces parsing overhead)
-    // SQLite limit: ~32767 params, 17 fields per entity → batch 1500 = 25500 params (safe, max 1928)
-    const batchSize = 1500;
-
-    let processed = 0;
-
-    // Staging mode: write to append-only tables (no PK, no indexes) for O(1) inserts
-    const staging = this.getStagingMode();
-    const entityTable = staging ? "_staging_entities" : "entities";
-    const tokenTable = staging ? "_staging_name_tokens" : "name_tokens";
-    const insertVerb = staging ? "INSERT INTO" : "INSERT OR REPLACE INTO";
-
-    // Collect ALL statements (entities + tokens) into single batch for one transaction
-    const allStatements: Array<{ sql: string; args: (string | number | Buffer | null)[] }> = [];
-
-    for (let i = 0; i < unique.length; i += batchSize) {
-      const batch = unique.slice(i, i + batchSize);
-
-      // Build multi-row VALUES clause
-      const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
-
-      // Flatten all args into single array
-      const args: (string | number | Buffer | null)[] = [];
-      for (const entity of batch) {
-        const fileGen = genMap.get(entity.filePath) ?? 1;
-        args.push(
+        args: [
           entity.id,
           projectHash,
           branchName,
           entity.name,
           entity.type,
           entity.filePath,
-          compactLocation(entity.location),
+          JSON.stringify(entity.location),
           encodeMetadata(entity.metadata as Record<string, unknown>),
           entity.hash || null,
           entity.createdAt || now,
@@ -283,79 +173,189 @@ export class EntityOperations {
           entity.sizeBytes || 0,
           entity.embeddingBase64 || null,
           entity.embeddingText || null,
-          fileGen,
-        );
+          newGen,
+        ],
+      });
+
+      // Update name tokens for fast lookup
+      const tokens = splitToTokens(entity.name);
+      if (tokens.length > 0 && entity.id) {
+        await client.execute({
+          sql: "DELETE FROM name_tokens WHERE entity_id = ? AND project_hash = ? AND branch_name = ?",
+          args: [entity.id, projectHash, branchName],
+        });
+        const valuePlaceholders = tokens.map(() => "(?, ?, ?, ?)").join(", ");
+        const tokenArgs: (string | number | null)[] = [];
+        for (const token of tokens) {
+          tokenArgs.push(token, entity.id, projectHash, branchName);
+        }
+        await client.execute({
+          sql: `INSERT OR IGNORE INTO name_tokens (token, entity_id, project_hash, branch_name) VALUES ${valuePlaceholders}`,
+          args: tokenArgs,
+        });
+      }
+    }); // end _w
+  }
+
+  /**
+   * Insert multiple entities with batch optimization
+   */
+  async insertEntities(entities: Entity[]): Promise<BatchResult> {
+    if (entities.length === 0) return { processed: 0, failed: 0, errors: [], timeMs: 0 };
+    return this._w(async () => {
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
+
+      const start = Date.now();
+      const errors: Array<{ item: unknown; error: string }> = [];
+      const { projectHash, branchName } = this.getContext();
+      const now = Date.now();
+      // DEBUG: Log insert context with language info
+      const withLang = entities.filter((e) => e.language).length;
+      const kotlinCount = entities.filter((e) => e.language === "kotlin").length;
+      const sample = entities.slice(0, 3).map((e) => ({ n: e.name, l: e.language, f: e.filePath?.slice(-30) }));
+      log.w("ENTITY_OPS", "insertEntities", {
+        total: entities.length,
+        withLang,
+        kotlinCount,
+        sample: JSON.stringify(sample),
+      });
+
+      // Deduplicate by ID
+      const seen = new Set<string>();
+      const unique: Entity[] = [];
+      for (const e of entities) {
+        if (!seen.has(e.id)) {
+          seen.add(e.id);
+          unique.push(e);
+        }
       }
 
-      allStatements.push({
-        sql: `${insertVerb} ${entityTable}
+      // Ensure generation cache is loaded
+      if (!this.genManager.isCacheLoaded) {
+        await this.genManager.loadCache();
+      }
+
+      // Collect unique file paths and bump generations in batch
+      const filePaths = [...new Set(unique.map((e) => e.filePath))];
+      const genMap = await this.genManager.bumpGenerationBatch(filePaths);
+
+      // OPTIMIZATION: Multi-row INSERT - single SQL statement with multiple VALUES
+      // Much faster than N separate INSERT statements (reduces parsing overhead)
+      // SQLite limit: ~32767 params, 17 fields per entity → batch 1500 = 25500 params (safe, max 1928)
+      const batchSize = 1500;
+
+      let processed = 0;
+
+      // Staging mode: write to append-only tables (no PK, no indexes) for O(1) inserts
+      const staging = this.getStagingMode();
+      const entityTable = staging ? "_staging_entities" : "entities";
+      const tokenTable = staging ? "_staging_name_tokens" : "name_tokens";
+      const insertVerb = staging ? "INSERT INTO" : "INSERT OR REPLACE INTO";
+
+      // Collect ALL statements (entities + tokens) into single batch for one transaction
+      const allStatements: Array<{ sql: string; args: (string | number | Buffer | null)[] }> = [];
+
+      for (let i = 0; i < unique.length; i += batchSize) {
+        const batch = unique.slice(i, i + batchSize);
+
+        // Build multi-row VALUES clause
+        const valuePlaceholders = batch.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+
+        // Flatten all args into single array
+        const args: (string | number | Buffer | null)[] = [];
+        for (const entity of batch) {
+          const fileGen = genMap.get(entity.filePath) ?? 1;
+          args.push(
+            entity.id,
+            projectHash,
+            branchName,
+            entity.name,
+            entity.type,
+            entity.filePath,
+            compactLocation(entity.location),
+            encodeMetadata(entity.metadata as Record<string, unknown>),
+            entity.hash || null,
+            entity.createdAt || now,
+            entity.updatedAt || now,
+            entity.complexityScore || 1,
+            entity.language || null,
+            entity.sizeBytes || 0,
+            entity.embeddingBase64 || null,
+            entity.embeddingText || null,
+            fileGen,
+          );
+        }
+
+        allStatements.push({
+          sql: `${insertVerb} ${entityTable}
         (id, project_hash, branch_name, name, type, file_path, location, metadata, hash,
          created_at, updated_at, complexity_score, language, size_bytes, embedding_base64, embedding_text, file_gen)
         VALUES ${valuePlaceholders}`,
-        args,
-      });
-    }
-
-    // Batch-insert name tokens for all entities (skip vendored — not useful for text search)
-    const tokenRows: [string, string][] = []; // [token, entity_id]
-    for (const entity of unique) {
-      if (!entity.id) continue;
-      if (entity.metadata && (entity.metadata as Record<string, unknown>)["vendored"]) continue;
-      for (const token of splitToTokens(entity.name)) {
-        tokenRows.push([token, entity.id]);
+          args,
+        });
       }
-    }
 
-    if (tokenRows.length > 0) {
-      // In staging mode: skip DELETE (staging table starts empty, no PK conflicts)
-      if (!staging) {
-        // Delete existing tokens first (handles renames / re-index updates)
-        const idsToClean = unique.map((e) => e.id).filter((id) => id) as string[];
-        const DELETE_CHUNK = 400;
-        for (let i = 0; i < idsToClean.length; i += DELETE_CHUNK) {
-          const chunk = idsToClean.slice(i, i + DELETE_CHUNK);
-          const placeholders = chunk.map(() => "?").join(",");
+      // Batch-insert name tokens for all entities (skip vendored — not useful for text search)
+      const tokenRows: [string, string][] = []; // [token, entity_id]
+      for (const entity of unique) {
+        if (!entity.id) continue;
+        if (entity.metadata && (entity.metadata as Record<string, unknown>)["vendored"]) continue;
+        for (const token of splitToTokens(entity.name)) {
+          tokenRows.push([token, entity.id]);
+        }
+      }
+
+      if (tokenRows.length > 0) {
+        // In staging mode: skip DELETE (staging table starts empty, no PK conflicts)
+        if (!staging) {
+          // Delete existing tokens first (handles renames / re-index updates)
+          const idsToClean = unique.map((e) => e.id).filter((id) => id) as string[];
+          const DELETE_CHUNK = 400;
+          for (let i = 0; i < idsToClean.length; i += DELETE_CHUNK) {
+            const chunk = idsToClean.slice(i, i + DELETE_CHUNK);
+            const placeholders = chunk.map(() => "?").join(",");
+            allStatements.push({
+              sql: `DELETE FROM name_tokens WHERE entity_id IN (${placeholders}) AND project_hash = ? AND branch_name = ?`,
+              args: [...chunk, projectHash, branchName],
+            });
+          }
+        }
+
+        // Batch-insert tokens (4 cols × 1000 rows = 4000 params, well within SQLite limit)
+        const tokenInsertVerb = staging ? "INSERT INTO" : "INSERT OR IGNORE INTO";
+        const TOKEN_BATCH = 1000;
+        for (let i = 0; i < tokenRows.length; i += TOKEN_BATCH) {
+          const chunk = tokenRows.slice(i, i + TOKEN_BATCH);
+          const valuePlaceholders = chunk.map(() => "(?, ?, ?, ?)").join(", ");
+          const tokenArgs: (string | number | null)[] = [];
+          for (const [token, entityId] of chunk) {
+            tokenArgs.push(token, entityId, projectHash, branchName);
+          }
           allStatements.push({
-            sql: `DELETE FROM name_tokens WHERE entity_id IN (${placeholders}) AND project_hash = ? AND branch_name = ?`,
-            args: [...chunk, projectHash, branchName],
+            sql: `${tokenInsertVerb} ${tokenTable} (token, entity_id, project_hash, branch_name) VALUES ${valuePlaceholders}`,
+            args: tokenArgs,
           });
         }
       }
 
-      // Batch-insert tokens (4 cols × 1000 rows = 4000 params, well within SQLite limit)
-      const tokenInsertVerb = staging ? "INSERT INTO" : "INSERT OR IGNORE INTO";
-      const TOKEN_BATCH = 1000;
-      for (let i = 0; i < tokenRows.length; i += TOKEN_BATCH) {
-        const chunk = tokenRows.slice(i, i + TOKEN_BATCH);
-        const valuePlaceholders = chunk.map(() => "(?, ?, ?, ?)").join(", ");
-        const tokenArgs: (string | number | null)[] = [];
-        for (const [token, entityId] of chunk) {
-          tokenArgs.push(token, entityId, projectHash, branchName);
-        }
-        allStatements.push({
-          sql: `${tokenInsertVerb} ${tokenTable} (token, entity_id, project_hash, branch_name) VALUES ${valuePlaceholders}`,
-          args: tokenArgs,
+      // Execute ALL statements in a single transaction
+      try {
+        await client.batch(allStatements, "write");
+        processed = unique.length;
+      } catch (error) {
+        errors.push({
+          item: { batchStart: 0, batchEnd: unique.length },
+          error: (error as Error).message,
         });
       }
-    }
 
-    // Execute ALL statements in a single transaction
-    try {
-      await client.batch(allStatements, "write");
-      processed = unique.length;
-    } catch (error) {
-      errors.push({
-        item: { batchStart: 0, batchEnd: unique.length },
-        error: (error as Error).message,
-      });
-    }
-
-    return {
-      processed,
-      failed: errors.length,
-      errors,
-      timeMs: Date.now() - start,
-    };
+      return {
+        processed,
+        failed: errors.length,
+        errors,
+        timeMs: Date.now() - start,
+      };
     }); // end _w
   }
 
@@ -932,27 +932,27 @@ export class EntityOperations {
    */
   async deleteEntity(id: string): Promise<void> {
     return this._w(async () => {
-    const client = this.getClient();
-    if (!client) throw new Error("Client not initialized");
+      const client = this.getClient();
+      if (!client) throw new Error("Client not initialized");
 
-    const { projectHash, branchName, baseBranch } = this.getContext();
+      const { projectHash, branchName, baseBranch } = this.getContext();
 
-    // On feature branch: add tombstone to hide entity from base
-    if (baseBranch && this.tombstoneAdder) {
-      await this.tombstoneAdder(id, "entity");
-    }
+      // On feature branch: add tombstone to hide entity from base
+      if (baseBranch && this.tombstoneAdder) {
+        await this.tombstoneAdder(id, "entity");
+      }
 
-    // Always delete from current branch (delta or base)
-    await client.execute({
-      sql: "DELETE FROM entities WHERE id = ? AND project_hash = ? AND branch_name = ?",
-      args: [id, projectHash, branchName],
-    });
+      // Always delete from current branch (delta or base)
+      await client.execute({
+        sql: "DELETE FROM entities WHERE id = ? AND project_hash = ? AND branch_name = ?",
+        args: [id, projectHash, branchName],
+      });
 
-    // Remove name tokens
-    await client.execute({
-      sql: "DELETE FROM name_tokens WHERE entity_id = ? AND project_hash = ? AND branch_name = ?",
-      args: [id, projectHash, branchName],
-    });
+      // Remove name tokens
+      await client.execute({
+        sql: "DELETE FROM name_tokens WHERE entity_id = ? AND project_hash = ? AND branch_name = ?",
+        args: [id, projectHash, branchName],
+      });
     }); // end _w
   }
 
@@ -1028,14 +1028,14 @@ export class EntityOperations {
    */
   async deleteEntitiesByFilePath(filePath: string): Promise<string[]> {
     return this._w(async () => {
-    // Get IDs of active entities for FAISS cleanup before invalidation
-    const ids = await this.getEntityIdsByFilePath(filePath);
-    if (ids.length === 0) return [];
+      // Get IDs of active entities for FAISS cleanup before invalidation
+      const ids = await this.getEntityIdsByFilePath(filePath);
+      if (ids.length === 0) return [];
 
-    // Invalidate the file generation — all entities become stale (GC will clean them)
-    await this.genManager.invalidateFileGeneration(filePath);
+      // Invalidate the file generation — all entities become stale (GC will clean them)
+      await this.genManager.invalidateFileGeneration(filePath);
 
-    return ids;
+      return ids;
     }); // end _w
   }
 

@@ -1,293 +1,113 @@
-# Module: tests/agents
+# tests/agents
 
-**Files:** 4 | **Entities:** 301 | **Language:** TypeScript
+## Overview
 
-## Class
+This module provides comprehensive test suites for the agent framework, covering core agent functionality, backpressure handling, semantic search capabilities, parser operations, and resource management. Tests validate agent initialization, task processing, error handling, concurrency limits, and integration with storage, caching, and analysis services. The suite uses mock implementations of external services to isolate agent behavior and ensure reliable, deterministic test execution.
 
-- **TestAgent** — `base-agent.test.ts:6-28`
-- **<anonymous>** — `base-agent.test.ts:6-6`
-- **VectorStore** — `semantic-agent.test.ts:28-36`
-- **<anonymous>** — `semantic-agent.test.ts:28-28`
-- **EmbeddingGenerator** — `semantic-agent.test.ts:45-58`
-- **<anonymous>** — `semantic-agent.test.ts:45-45`
-- **HybridSearchEngine** — `semantic-agent.test.ts:67-78`
-- **<anonymous>** — `semantic-agent.test.ts:67-67`
-- **SemanticCache** — `semantic-agent.test.ts:87-112`
-- **<anonymous>** — `semantic-agent.test.ts:87-87`
-- **CodeAnalyzer** — `semantic-agent.test.ts:138-163`
-- **<anonymous>** — `semantic-agent.test.ts:138-138`
+## Flow
 
-## Interface
+```
+Test Input
+    ↓
+Agent Initialize
+    ├─→ Setup Mocks (Storage, Cache, Embedding)
+    ├─→ Configure Task Type/Payload
+    └─→ Verify canProcessTask
+    ↓
+Execute processTask
+    ├─→ Semantic Analysis (if applicable)
+    ├─→ Resource Adjustment (if applicable)
+    ├─→ File Parsing (if applicable)
+    └─→ Collect Results/Metrics
+    ↓
+Verify Output
+    ├─→ Assert Task Results
+    ├─→ Check Metrics/Performance
+    └─→ Validate Error Handling
+    ↓
+Cleanup & Verify State
+    ├─→ Shutdown Agent
+    ├─→ Cleanup Test Files
+    └─→ Verify Memory/Resources
+```
 
-- **TestFile** — `parser-agent.test.ts:33-36`
+## Entity Listing
 
-## Function
+### Public Test Suites
 
-- **resolve** — `base-agent.test.ts:23-23`
-- **it** — `base-agent.test.ts:30-58`
-- **agent** — `base-agent.test.ts:31-57`
-- **createTestFiles** — `parser-agent.test.ts:45-54`
-- **<anonymous>** — `parser-agent.test.ts:45-45`
-- **cleanupTestFiles** — `parser-agent.test.ts:59-65`
-- **<anonymous>** — `parser-agent.test.ts:59-59`
-- **generateSampleCode** — `parser-agent.test.ts:70-99`
-- **<anonymous>** — `parser-agent.test.ts:70-70`
-- **agent** — `parser-agent.test.ts:105-500`
-- **TASK** — `parser-agent.test.ts:109-113`
-- **cleanupTestFiles** — `parser-agent.test.ts:115-117`
-- **agent** — `parser-agent.test.ts:119-122`
-- **agent** — `parser-agent.test.ts:124-126`
-- **test** — `parser-agent.test.ts:128-139`
-- **expect** — `parser-agent.test.ts:129-132`
-- **expect** — `parser-agent.test.ts:134-138`
-- **test** — `parser-agent.test.ts:141-202`
-- **testFile** — `parser-agent.test.ts:142-165`
-- **e** — `parser-agent.test.ts:158-158`
-- **e** — `parser-agent.test.ts:162-162`
-- **testFile** — `parser-agent.test.ts:167-201`
-- **e** — `parser-agent.test.ts:194-194`
-- **e** — `parser-agent.test.ts:198-198`
-- **test** — `parser-agent.test.ts:204-240`
-- **testFiles** — `parser-agent.test.ts:205-221`
-- **_** — `parser-agent.test.ts:206-209`
-- **f** — `parser-agent.test.ts:213-213`
-- **result** — `parser-agent.test.ts:217-220`
-- **testFile** — `parser-agent.test.ts:223-239`
-- **test** — `parser-agent.test.ts:242-308`
-- **originalContent** — `parser-agent.test.ts:243-279`
-- **e** — `parser-agent.test.ts:277-277`
-- **newFilePath** — `parser-agent.test.ts:281-307`
-- **test** — `parser-agent.test.ts:310-379`
-- **TASK** — `parser-agent.test.ts:313-335`
-- **_** — `parser-agent.test.ts:316-319`
-- **f** — `parser-agent.test.ts:323-323`
-- **memoryBefore** — `parser-agent.test.ts:339-359`
-- **_** — `parser-agent.test.ts:343-346`
-- **f** — `parser-agent.test.ts:349-349`
-- **Cache** — `parser-agent.test.ts:361-378`
-- **_** — `parser-agent.test.ts:363-366`
-- **f** — `parser-agent.test.ts:369-369`
-- **test** — `parser-agent.test.ts:381-460`
-- **testFile** — `parser-agent.test.ts:382-403`
-- **testFiles** — `parser-agent.test.ts:405-429`
-- **_** — `parser-agent.test.ts:406-409`
-- **f** — `parser-agent.test.ts:418-418`
-- **testFile** — `parser-agent.test.ts:431-459`
-- **event** — `parser-agent.test.ts:440-445`
-- **test** — `parser-agent.test.ts:462-499`
-- **result** — `parser-agent.test.ts:463-469`
-- **invalidTask** — `parser-agent.test.ts:471-482`
-- **task** — `parser-agent.test.ts:484-498`
-- **it** — `resource-adjustment.test.ts:6-36`
-- **agent** — `resource-adjustment.test.ts:7-20`
-- **agent** — `resource-adjustment.test.ts:22-35`
-- **<anonymous>** — `semantic-agent.test.ts:15-15`
-- **globalThis** — `semantic-agent.test.ts:17-19`
-- **globalThis** — `semantic-agent.test.ts:21-23`
-- **VectorStore** — `semantic-agent.test.ts:27-38`
-- **EmbeddingGenerator** — `semantic-agent.test.ts:44-60`
-- **Float32Array** — `semantic-agent.test.ts:52-52`
-- **HybridSearchEngine** — `semantic-agent.test.ts:66-80`
-- **SemanticCache** — `semantic-agent.test.ts:86-114`
-- **executeQuery** — `semantic-agent.test.ts:118-125`
-- **entities** — `semantic-agent.test.ts:119-123`
-- **_id** — `semantic-agent.test.ts:124-124`
-- **getGraphStorage** — `semantic-agent.test.ts:129-131`
-- **CodeAnalyzer** — `semantic-agent.test.ts:137-165`
-- **agent** — `semantic-agent.test.ts:175-566`
-- **warmupMock** — `semantic-agent.test.ts:178-202`
-- **entities** — `semantic-agent.test.ts:192-196`
-- **id** — `semantic-agent.test.ts:197-197`
-- **e** — `semantic-agent.test.ts:197-197`
-- **agent** — `semantic-agent.test.ts:204-206`
-- **it** — `semantic-agent.test.ts:208-239`
-- **expect** — `semantic-agent.test.ts:209-214`
-- **expect** — `semantic-agent.test.ts:216-218`
-- **subscribeSpy** — `semantic-agent.test.ts:220-233`
-- **warmup** — `semantic-agent.test.ts:235-238`
-- **it** — `semantic-agent.test.ts:241-379`
-- **task** — `semantic-agent.test.ts:242-264`
-- **task** — `semantic-agent.test.ts:266-294`
-- **task** — `semantic-agent.test.ts:296-325`
-- **task** — `semantic-agent.test.ts:327-348`
-- **task** — `semantic-agent.test.ts:350-378`
-- **it** — `semantic-agent.test.ts:381-432`
-- **task** — `semantic-agent.test.ts:382-401`
-- **task** — `semantic-agent.test.ts:403-426`
-- **memoryUsage** — `semantic-agent.test.ts:428-431`
-- **it** — `semantic-agent.test.ts:434-459`
-- **searchSpy** — `semantic-agent.test.ts:435-458`
-- **it** — `semantic-agent.test.ts:461-481`
-- **entities** — `semantic-agent.test.ts:462-480`
-- **it** — `semantic-agent.test.ts:483-514`
-- **task** — `semantic-agent.test.ts:484-496`
-- **task** — `semantic-agent.test.ts:498-513`
-- **it** — `semantic-agent.test.ts:516-565`
-- **startTime** — `semantic-agent.test.ts:517-546`
-- **Promise** — `semantic-agent.test.ts:533-540`
-- **resolve** — `semantic-agent.test.ts:534-534`
-- **texts** — `semantic-agent.test.ts:548-564`
-- **Promise** — `semantic-agent.test.ts:553-556`
-- **resolve** — `semantic-agent.test.ts:554-554`
-- **Float32Array** — `semantic-agent.test.ts:555-555`
+- **base-agent.test.ts:31-57** — Backpressure test suite validating AgentBusyError when agent reaches concurrency limit during concurrent task processing.
+- **parser-agent.test.ts:105-500** — Comprehensive parser agent test suite covering file parsing, error handling, and file modification workflows.
+- **resource-adjustment.test.ts:7-35** — Resource allocation adjustment test suite validating dynamic reallocation during concurrent processing.
+- **semantic-agent.test.ts:176-566** — Comprehensive semantic agent test suite covering embedding generation, code analysis, caching, and hybrid search workflows.
 
-## Method
+### Mock Implementations
 
-- **constructor** — `base-agent.test.ts:7-13`
-- **onInitialize** — `base-agent.test.ts:15-15`
-- **onShutdown** — `base-agent.test.ts:16-16`
-- **canProcessTask** — `base-agent.test.ts:18-20`
-- **processTask** — `base-agent.test.ts:22-25`
-- **handleMessage** — `base-agent.test.ts:27-27`
-- **initialize** — `semantic-agent.test.ts:29-29`
-- **close** — `semantic-agent.test.ts:30-30`
-- **count** — `semantic-agent.test.ts:31-33`
-- **insertBatch** — `semantic-agent.test.ts:34-34`
-- **update** — `semantic-agent.test.ts:35-35`
-- **initialize** — `semantic-agent.test.ts:46-46`
-- **cleanup** — `semantic-agent.test.ts:47-47`
-- **generateEmbedding** — `semantic-agent.test.ts:48-50`
-- **generateBatch** — `semantic-agent.test.ts:51-53`
-- **generateCodeEmbedding** — `semantic-agent.test.ts:54-56`
-- **setBatchSize** — `semantic-agent.test.ts:57-57`
-- **setQueryAgent** — `semantic-agent.test.ts:68-68`
-- **semanticSearch** — `semantic-agent.test.ts:69-77`
-- **get** — `semantic-agent.test.ts:91-96`
-- **set** — `semantic-agent.test.ts:97-99`
-- **clear** — `semantic-agent.test.ts:100-104`
-- **getStats** — `semantic-agent.test.ts:105-108`
-- **warmup** — `semantic-agent.test.ts:109-111`
-- **generateCodeEmbedding** — `semantic-agent.test.ts:139-141`
-- **analyzeCodeSemantics** — `semantic-agent.test.ts:142-150`
-- **detectClones** — `semantic-agent.test.ts:151-153`
-- **findSimilarCode** — `semantic-agent.test.ts:154-156`
-- **crossLanguageSearch** — `semantic-agent.test.ts:157-159`
-- **suggestRefactoring** — `semantic-agent.test.ts:160-162`
+- **TestAgent** (base-agent.test.ts:6-28) — Mock agent extending BaseAgent for backpressure testing with configurable concurrency and memory limits.
+- **VectorStore** (semantic-agent.test.ts:28-36) — Mock vector database supporting batch insertion, count queries, and retrieval operations for semantic search testing.
+- **EmbeddingGenerator** (semantic-agent.test.ts:45-58) — Mock embedding service generating deterministic Float32Array embeddings for test inputs.
+- **HybridSearchEngine** (semantic-agent.test.ts:67-78) — Mock search engine combining vector and keyword search with configurable relevance scores.
+- **SemanticCache** (semantic-agent.test.ts:87-112) — Mock semantic caching layer with hit-rate tracking and query result storage for cache behavior validation.
+- **CodeAnalyzer** (semantic-agent.test.ts:138-163) — Mock code analysis service generating complexity metrics, dependencies, and performance estimates.
 
-## Variable
+### Test Infrastructure & Utilities
 
-- **agent** — `base-agent.test.ts:32-32`
-- **taskA** — `base-agent.test.ts:35-41`
-- **taskB** — `base-agent.test.ts:43-46`
-- **running** — `base-agent.test.ts:48-48`
-- **TEST_TIMEOUT** — `parser-agent.test.ts:27-27`
-- **TEMP_DIR** — `parser-agent.test.ts:28-28`
-- **filePath** — `parser-agent.test.ts:49-49`
-- **dir** — `parser-agent.test.ts:50-50`
-- **agent** — `parser-agent.test.ts:106-106`
-- **knowledgeBus** — `parser-agent.test.ts:107-107`
-- **testFile** — `parser-agent.test.ts:143-146`
-- **result** — `parser-agent.test.ts:150-150`
-- **classEntity** — `parser-agent.test.ts:158-158`
-- **functionEntity** — `parser-agent.test.ts:162-162`
-- **testFile** — `parser-agent.test.ts:168-186`
-- **result** — `parser-agent.test.ts:190-190`
-- **interfaceEntity** — `parser-agent.test.ts:194-194`
-- **typeEntity** — `parser-agent.test.ts:198-198`
-- **testFiles** — `parser-agent.test.ts:206-209`
-- **filePaths** — `parser-agent.test.ts:213-213`
-- **results** — `parser-agent.test.ts:214-214`
-- **testFile** — `parser-agent.test.ts:224-227`
-- **filePath** — `parser-agent.test.ts:230-230`
-- **result1** — `parser-agent.test.ts:233-233`
-- **result2** — `parser-agent.test.ts:237-237`
-- **originalContent** — `parser-agent.test.ts:244-244`
-- **modifiedContent** — `parser-agent.test.ts:245-245`
-- **testFile** — `parser-agent.test.ts:247-250`
-- **filePath** — `parser-agent.test.ts:253-253`
-- **result1** — `parser-agent.test.ts:256-256`
-- **hash1** — `parser-agent.test.ts:257-257`
-- **change** — `parser-agent.test.ts:263-268`
-- **results** — `parser-agent.test.ts:270-270`
-- **result2** — `parser-agent.test.ts:273-273`
-- **modifiedClass** — `parser-agent.test.ts:277-277`
-- **newFilePath** — `parser-agent.test.ts:282-282`
-- **content** — `parser-agent.test.ts:283-283`
-- **createChange** — `parser-agent.test.ts:289-293`
-- **createResults** — `parser-agent.test.ts:295-295`
-- **deleteChange** — `parser-agent.test.ts:300-303`
-- **deleteResults** — `parser-agent.test.ts:305-305`
-- **fileCount** — `parser-agent.test.ts:315-315`
-- **testFiles** — `parser-agent.test.ts:316-319`
-- **filePaths** — `parser-agent.test.ts:323-323`
-- **startTime** — `parser-agent.test.ts:324-324`
-- **results** — `parser-agent.test.ts:326-326`
-- **elapsed** — `parser-agent.test.ts:328-328`
-- **throughput** — `parser-agent.test.ts:329-329`
-- **memoryBefore** — `parser-agent.test.ts:340-340`
-- **testFiles** — `parser-agent.test.ts:343-346`
-- **filePaths** — `parser-agent.test.ts:349-349`
-- **memoryAfter** — `parser-agent.test.ts:353-353`
-- **memoryIncrease** — `parser-agent.test.ts:354-354`
-- **testFiles** — `parser-agent.test.ts:363-366`
-- **filePaths** — `parser-agent.test.ts:369-369`
-- **results1** — `parser-agent.test.ts:371-371`
-- **results2** — `parser-agent.test.ts:372-372`
-- **i** — `parser-agent.test.ts:375-375`
-- **testFile** — `parser-agent.test.ts:383-386`
-- **task** — `parser-agent.test.ts:390-398`
-- **results** — `parser-agent.test.ts:400-400`
-- **testFiles** — `parser-agent.test.ts:406-409`
-- **task** — `parser-agent.test.ts:413-425`
-- **results** — `parser-agent.test.ts:427-427`
-- **testFile** — `parser-agent.test.ts:432-435`
-- **eventReceived** — `parser-agent.test.ts:439-439`
-- **task** — `parser-agent.test.ts:447-455`
-- **result** — `parser-agent.test.ts:464-464`
-- **hasErrors** — `parser-agent.test.ts:466-466`
-- **emptyEntities** — `parser-agent.test.ts:467-467`
-- **invalidTask** — `parser-agent.test.ts:472-478`
-- **canHandle** — `parser-agent.test.ts:480-480`
-- **task** — `parser-agent.test.ts:485-493`
-- **result** — `parser-agent.test.ts:496-496`
-- **agent** — `resource-adjustment.test.ts:8-8`
-- **entry** — `resource-adjustment.test.ts:9-14`
-- **agent** — `resource-adjustment.test.ts:23-23`
-- **entry** — `resource-adjustment.test.ts:24-29`
-- **warmupMock** — `semantic-agent.test.ts:15-15`
-- **v** — `semantic-agent.test.ts:93-93`
-- **hitRate** — `semantic-agent.test.ts:106-106`
-- **getGraphStorageMock** — `semantic-agent.test.ts:118-125`
-- **agent** — `semantic-agent.test.ts:176-176`
-- **entities** — `semantic-agent.test.ts:181-189`
-- **subscribeSpy** — `semantic-agent.test.ts:221-221`
-- **newAgent** — `semantic-agent.test.ts:222-222`
-- **task** — `semantic-agent.test.ts:243-252`
-- **canHandle** — `semantic-agent.test.ts:254-254`
-- **mockEmbedding** — `semantic-agent.test.ts:258-258`
-- **result** — `semantic-agent.test.ts:261-261`
-- **task** — `semantic-agent.test.ts:267-277`
-- **canHandle** — `semantic-agent.test.ts:279-279`
-- **mockResult** — `semantic-agent.test.ts:283-287`
-- **result** — `semantic-agent.test.ts:290-290`
-- **task** — `semantic-agent.test.ts:297-306`
-- **canHandle** — `semantic-agent.test.ts:308-308`
-- **mockAnalysis** — `semantic-agent.test.ts:312-318`
-- **result** — `semantic-agent.test.ts:321-321`
-- **task** — `semantic-agent.test.ts:328-337`
-- **canHandle** — `semantic-agent.test.ts:339-339`
-- **mockClones** — `semantic-agent.test.ts:343-343`
-- **result** — `semantic-agent.test.ts:346-346`
-- **task** — `semantic-agent.test.ts:351-360`
-- **canHandle** — `semantic-agent.test.ts:362-362`
-- **mockSuggestions** — `semantic-agent.test.ts:366-373`
-- **result** — `semantic-agent.test.ts:376-376`
-- **task** — `semantic-agent.test.ts:383-392`
-- **metrics** — `semantic-agent.test.ts:399-399`
-- **task** — `semantic-agent.test.ts:404-413`
-- **metrics** — `semantic-agent.test.ts:424-424`
-- **memoryUsage** — `semantic-agent.test.ts:429-429`
-- **searchSpy** — `semantic-agent.test.ts:436-436`
-- **task** — `semantic-agent.test.ts:438-448`
-- **entities** — `semantic-agent.test.ts:463-472`
-- **subscribeSpy** — `semantic-agent.test.ts:475-475`
-- **task** — `semantic-agent.test.ts:485-493`
-- **task** — `semantic-agent.test.ts:499-508`
-- **startTime** — `semantic-agent.test.ts:518-518`
-- **task** — `semantic-agent.test.ts:520-530`
-- **elapsed** — `semantic-agent.test.ts:544-544`
-- **texts** — `semantic-agent.test.ts:549-549`
-- **startTime** — `semantic-agent.test.ts:550-550`
-- **embeddings** — `semantic-agent.test.ts:559-559`
-- **elapsed** — `semantic-agent.test.ts:561-561`
+- **TestFile** (parser-agent.test.ts:33-36) — Defines test file structure with path, content, and expected parse results for parser validation.
+- **createTestFiles** (parser-agent.test.ts:45-54) — Creates temporary test files with sample code for parser agent testing.
+- **cleanupTestFiles** (parser-agent.test.ts:59-65) — Removes temporary test files and directories after test completion.
+- **generateSampleCode** (parser-agent.test.ts:70-99) — Generates TypeScript/JavaScript code snippets for parser test scenarios.
 
+### Test Cases by Feature
+
+#### Parser Agent Coverage
+
+- **supported file types** (parser-agent.test.ts:128-139) — Validates parser agent can identify and process supported file types.
+- **error recovery** (parser-agent.test.ts:141-202) — Tests error recovery in parser agent with both valid and invalid file paths.
+- **batch processing** (parser-agent.test.ts:204-240) — Validates batch file processing with progress tracking and result aggregation.
+- **file modification** (parser-agent.test.ts:242-308) — Tests file modification workflow including parsing, transformation, and file writing.
+- **memory and metrics** (parser-agent.test.ts:310-379) — Verifies parser agent memory cache efficiency and metric collection.
+- **event subscription** (parser-agent.test.ts:381-460) — Tests event subscription and message handling during parser operations.
+- **error handling** (parser-agent.test.ts:462-499) — Validates error handling for invalid tasks and missing handlers.
+
+#### Semantic Agent Coverage
+
+- **agent warmup** (semantic-agent.test.ts:208-239) — Validates agent warmup initialization with mock vector storage and embedding cache.
+- **semantic search** (semantic-agent.test.ts:241-379) — Tests semantic search queries with embedding generation and relevance ranking.
+- **resource metrics** (semantic-agent.test.ts:381-432) — Tests resource metrics collection during agent operations.
+- **cache hit rate** (semantic-agent.test.ts:434-459) — Validates semantic cache hit-rate tracking and search performance optimization.
+- **graph storage** (semantic-agent.test.ts:461-514) — Tests graph storage integration and entity relationship analysis.
+- **parallel embeddings** (semantic-agent.test.ts:516-565) — Tests parallel embedding generation performance and concurrent request handling.
+
+### Test Fixtures & Helpers
+
+- **TASK** (parser-agent.test.ts:109-113) — Task configuration constants for test execution with specific parameters.
+- **testFile** (parser-agent.test.ts:142-165, parser-agent.test.ts:167-201, parser-agent.test.ts:223-239, parser-agent.test.ts:382-403, parser-agent.test.ts:431-459) — Test file instances with content and paths for parser validation scenarios.
+- **testFiles** (parser-agent.test.ts:205-221, parser-agent.test.ts:405-429) — Collections of multiple test files for batch processing scenarios.
+- **Cache** (parser-agent.test.ts:361-378) — Mock cache instance tracking memory usage and hit rates for cache behavior verification.
+- **task** (semantic-agent.test.ts:243-252, semantic-agent.test.ts:267-277, semantic-agent.test.ts:297-306, semantic-agent.test.ts:328-337, semantic-agent.test.ts:351-360, semantic-agent.test.ts:383-392, semantic-agent.test.ts:404-413, semantic-agent.test.ts:485-493, semantic-agent.test.ts:499-508, semantic-agent.test.ts:520-530) — Agent task configurations for different operation types including search, analysis, and clone detection.
+- **entities** (semantic-agent.test.ts:119-123, semantic-agent.test.ts:181-189, semantic-agent.test.ts:462-472) — Entity collections for semantic graph testing and relationship validation.
+
+## Key Patterns & Dependencies
+
+### Testing Patterns
+
+**Mock Service Layer** — Isolates agent behavior by replacing real dependencies (vector store, embedding service, code analyzer) with deterministic test doubles. Each mock enforces contract compatibility while enabling controlled test scenarios and performance measurement.
+
+**Fixture-Driven Test Design** — Uses centralized task, file, and entity fixtures to ensure consistency across test suites and reduce test setup boilerplate. Fixtures are re-used across multiple test cases within each suite.
+
+**Backpressure & Concurrency Testing** — Validates agent queue limits and concurrent processing through deliberate overload scenarios, ensuring AgentBusyError is thrown when task backlog exceeds configured capacity.
+
+**Resource Lifecycle Management** — Test infrastructure automatically creates and cleans up temporary test files, mock service instances, and agent state, ensuring no test pollution or resource leaks between test runs.
+
+### Dependencies Between Test Suites
+
+- **base-agent.test.ts** — Foundation for all agent tests; validates core concurrency and backpressure mechanisms inherited by specialized agents.
+- **parser-agent.test.ts** — Depends on file system utilities and sample code generation; exercises agent task dispatch and result collection.
+- **semantic-agent.test.ts** — Depends on mock embedding and vector store implementations; validates embedding pipeline, hybrid search, and graph storage integration.
+- **resource-adjustment.test.ts** — Validates concurrent resource allocation across all agent types during high-load scenarios.
+
+### Mock Service Contracts
+
+- **VectorStore** implements insertion, retrieval, and count operations mirroring production graph storage APIs.
+- **EmbeddingGenerator** produces fixed-size Float32Array outputs with deterministic values based on input hash.
+- **HybridSearchEngine** combines vector similarity and keyword matching with configurable scoring for relevance validation.
+- **SemanticCache** tracks hit/miss rates and stores query results, enabling cache behavior assertions.

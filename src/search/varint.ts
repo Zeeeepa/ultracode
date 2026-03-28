@@ -18,7 +18,7 @@ export function encode(value: number, buf: Uint8Array, offset = 0): number {
   let v = value >>> 0; // ensure u32
   let i = offset;
   while (true) {
-    const byte = v & 0x7F;
+    const byte = v & 0x7f;
     v >>>= 7;
     if (v === 0) {
       buf[i] = byte;
@@ -40,10 +40,10 @@ export function decode(buf: Uint8Array, offset = 0): { value: number; len: numbe
     const byte = buf[i]!;
     if (shift >= 28) {
       // 5th byte: only lower 4 bits valid for u32
-      result |= (byte & 0x0F) << 28;
+      result |= (byte & 0x0f) << 28;
       return { value: result >>> 0, len: i - offset + 1 };
     }
-    result |= (byte & 0x7F) << shift;
+    result |= (byte & 0x7f) << shift;
     if ((byte & 0x80) === 0) {
       return { value: result >>> 0, len: i - offset + 1 };
     }

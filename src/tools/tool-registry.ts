@@ -275,7 +275,10 @@ export class ToolRegistry {
     this.registerLazy("batch_rename", async () => (await zigCompatLoader()).BatchRenameToolHandler);
     this.registerLazy("security_scan", async () => (await zigCompatLoader()).SecurityScanToolHandler);
     this.registerLazy("get_review_context", async () => (await zigCompatLoader()).GetReviewContextToolHandler);
-    this.registerLazy("detect_architecture_layers", async () => (await zigCompatLoader()).DetectArchitectureLayersToolHandler);
+    this.registerLazy(
+      "detect_architecture_layers",
+      async () => (await zigCompatLoader()).DetectArchitectureLayersToolHandler,
+    );
     this.registerLazy("generate_onboarding", async () => (await zigCompatLoader()).GenerateOnboardingToolHandler);
     this.registerLazy("setup_embedding", async () => (await zigCompatLoader()).SetupEmbeddingToolHandler);
   }

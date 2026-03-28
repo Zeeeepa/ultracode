@@ -28,10 +28,7 @@ export interface BrandesResult {
  * @param maxSources - Maximum number of source nodes to use (default 500, for performance)
  * @returns BrandesResult with scores for each node
  */
-export function computeBetweenness(
-  adjacency: Map<string, Set<string>>,
-  maxSources = 500,
-): BrandesResult {
+export function computeBetweenness(adjacency: Map<string, Set<string>>, maxSources = 500): BrandesResult {
   // Build node list and index mapping
   const allNodes: string[] = [...adjacency.keys()];
   const n = allNodes.length;
@@ -67,8 +64,8 @@ export function computeBetweenness(
   // Predecessor lists — flat linked list approach from Zig
   const SENTINEL = -1;
   const predHead = new Int32Array(n);
-  let predValue: number[] = [];
-  let predNext: number[] = [];
+  const predValue: number[] = [];
+  const predNext: number[] = [];
 
   // BFS queue and stack (reused)
   const queue: number[] = [];

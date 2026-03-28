@@ -128,27 +128,27 @@ export class VersioningOps {
     const relationships = await getAllRelationships();
 
     return this._wv(async () => {
-    const entries = entities.map((e) => ({
-      key: e.id,
-      value: serializeEntity(e),
-    }));
+      const entries = entities.map((e) => ({
+        key: e.id,
+        value: serializeEntity(e),
+      }));
 
-    const rootHash = await this.prollyTree!.build(entries);
+      const rootHash = await this.prollyTree!.build(entries);
 
-    const commit = await this.commitManager!.commit(
-      rootHash,
-      null,
-      { entityCount: entities.length, relationshipCount: relationships.length },
-      message,
-    );
+      const commit = await this.commitManager!.commit(
+        rootHash,
+        null,
+        { entityCount: entities.length, relationshipCount: relationships.length },
+        message,
+      );
 
-    log.i("LIBSQLADAPT", "commit_created", {
-      hash: commit.commitHash.slice(0, 8),
-      entities: entities.length,
-      relationships: relationships.length,
-    });
+      log.i("LIBSQLADAPT", "commit_created", {
+        hash: commit.commitHash.slice(0, 8),
+        entities: entities.length,
+        relationships: relationships.length,
+      });
 
-    return commit.commitHash;
+      return commit.commitHash;
     }); // end _wv
   }
 
@@ -172,19 +172,19 @@ export class VersioningOps {
     this.lastGcRunAt = now;
 
     return this._wv(async () => {
-    const pruned = await this.commitManager!.pruneHistory(keepCommits);
-    if (pruned === 0) return { pruned: 0, gcDeleted: 0 };
+      const pruned = await this.commitManager!.pruneHistory(keepCommits);
+      if (pruned === 0) return { pruned: 0, gcDeleted: 0 };
 
-    const roots = await this.commitManager!.getAllActiveRootHashes();
-    const gcDeleted = await this.prollyNodeStore!.collectGarbage([...roots]);
+      const roots = await this.commitManager!.getAllActiveRootHashes();
+      const gcDeleted = await this.prollyNodeStore!.collectGarbage([...roots]);
 
-    if (gcDeleted > 1000 && client) {
-      await client.execute("VACUUM");
-      log.i("LIBSQLADAPT", "vacuum_after_gc", { gcDeleted });
-    }
+      if (gcDeleted > 1000 && client) {
+        await client.execute("VACUUM");
+        log.i("LIBSQLADAPT", "vacuum_after_gc", { gcDeleted });
+      }
 
-    log.i("LIBSQLADAPT", "prune_gc_complete", { pruned, gcDeleted });
-    return { pruned, gcDeleted };
+      log.i("LIBSQLADAPT", "prune_gc_complete", { pruned, gcDeleted });
+      return { pruned, gcDeleted };
     }); // end _wv
   }
 
