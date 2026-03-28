@@ -362,6 +362,9 @@ export class EmbeddingRouter {
   private startFlushTimer(): void {
     if (this.flushTimer) return;
 
+    // Bun: skip polling timer — flush is triggered on-demand by addEmbedding/addBatch
+    if (typeof globalThis.Bun !== "undefined") return;
+
     this.flushTimer = setInterval(() => {
       if (this.pendingItems.length > 0 && !this.isFlushing) {
         this.triggerFlush();

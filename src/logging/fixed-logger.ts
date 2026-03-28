@@ -45,8 +45,8 @@ export class FixedLogger {
       mkdirSync(this.config.logDir, { recursive: true });
     }
 
-    // Set up flush timer
-    if (this.config.flushInterval > 0) {
+    // Set up flush timer (skip under Bun — use event-driven flush instead)
+    if (this.config.flushInterval > 0 && typeof globalThis.Bun === "undefined") {
       this.flushTimer = setInterval(() => this.flush(), this.config.flushInterval);
     }
 

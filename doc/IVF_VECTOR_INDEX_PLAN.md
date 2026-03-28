@@ -125,19 +125,17 @@ Zig-версия заменила FAISS на нативный IVF (Inverted File
 ## Execution Order
 
 ```
-Step 1 (VectorIndex base)    ████ ~200 LOC   — FOUNDATION
-Step 2 (Quantization)        ██ ~100 LOC     — 4x compression
-Step 3 (HashFilter)          ██ ~100 LOC     — pre-filter
-Step 4 (KMeans)              ███ ~150 LOC    — partitioning
-Step 5 (IvfIndex)            █████ ~250 LOC  — IVF search
-Step 6 (TurboQuant)          ████ ~200 LOC   — PQ encoding
-Step 7 (Provider)            ████ ~200 LOC   — FAISS replacement
-Step 8 (Hybrid)              ██ ~100 LOC     — scoring integration
+Step 1 (VectorIndex base)    ████ ~230 LOC   — DONE ✅ native-vector-index.ts
+Step 2 (Quantization)        ██ ~80 LOC      — DONE ✅ quantization.ts
+Step 3 (HashFilter)          ██ ~90 LOC      — DONE ✅ hash-filter.ts
+Step 4 (KMeans)              ████ ~240 LOC   — DONE ✅ kmeans.ts
+Step 5 (IvfIndex)            █████ ~270 LOC  — DONE ✅ ivf-index.ts
+Step 6 (TurboQuant)          █████ ~250 LOC  — DONE ✅ turbo-quant.ts
+Step 7 (Provider)            █████ ~250 LOC  — DONE ✅ native-vector-provider.ts
+Step 8 (Hybrid)              — DEFERRED (HybridSearchEngine already uses VectorStore)
 ────────────────────────────────────────────
-TOTAL:                       ~1300 LOC
-
-Dependency chain: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
-Steps 2,3 can be parallel. Step 4,5,6 sequential (IVF needs KMeans needs TQ).
+TOTAL:                       ~1410 LOC (7 files)
+COMPLETED:                   2026-03-29
 ```
 
 ---
