@@ -210,16 +210,57 @@ export class FileWatcher extends EventEmitter {
 
   /**
    * Start Node.js fs.watch()
+   *
+   * On Windows and macOS: use a single recursive watcher on rootDir (1 handle instead of N).
+   * On Linux: recursive fs.watch() is not supported — fall back to per-directory watchers.
    */
   private async startNodeWatcher(files: string[]): Promise<void> {
-    // Get unique directories to watch
-    const dirs = new Set<string>();
     for (const file of files) {
-      dirs.add(dirname(file));
       this.watchedFiles.add(file);
     }
 
-    // Watch each directory
+    const supportsRecursive = process.platform === "win32" || process.platform === "darwin";
+
+    if (supportsRecursive) {
+      // Single recursive watcher — 1 OS handle instead of 1,657
+      try {
+        const watcher = fsWatch(this.config.rootDir, { persistent: true, recursive: true }, (event, filename) => {
+          if (!filename) return;
+          const fullPath = join(this.config.rootDir, filename).replace(/\\/g, "/");
+
+          if (!this.matchesPatterns(fullPath)) return;
+
+          if (event === "rename") {
+            stat(fullPath)
+              .then(() => this.queueChange(fullPath, this.watchedFiles.has(fullPath) ? "change" : "add"))
+              .catch(() => this.queueChange(fullPath, "unlink"));
+          } else {
+            this.queueChange(fullPath, "change");
+          }
+        });
+
+        watcher.on("error", (err) => {
+          log.w("FILEWATCHER", "Recursive watcher error", { error: err.message });
+        });
+
+        this.watchers.set(this.config.rootDir, watcher);
+        log.i("FILEWATCHER", "fs.watch started (recursive)", { handles: 1, files: files.length });
+      } catch (err) {
+        log.w("FILEWATCHER", "Recursive watch failed, falling back to per-dir", { error: (err as Error).message });
+        await this.startPerDirWatcher(files);
+      }
+    } else {
+      await this.startPerDirWatcher(files);
+    }
+  }
+
+  /** Fallback: per-directory watchers for Linux (no recursive support). */
+  private async startPerDirWatcher(files: string[]): Promise<void> {
+    const dirs = new Set<string>();
+    for (const file of files) {
+      dirs.add(dirname(file));
+    }
+
     for (const dir of dirs) {
       try {
         const watcher = fsWatch(dir, { persistent: true }, (event, filename) => {
@@ -247,7 +288,7 @@ export class FileWatcher extends EventEmitter {
       }
     }
 
-    log.i("FILEWATCHER", "fs.watch started", { dirs: this.watchers.size, files: files.length });
+    log.i("FILEWATCHER", "fs.watch started (per-dir)", { dirs: this.watchers.size, files: files.length });
   }
 
   /**
