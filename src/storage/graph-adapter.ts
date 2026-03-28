@@ -124,6 +124,12 @@ export class GraphAdapter {
     const getContext = () => getRequestContext() ?? this._fallbackContext;
     const getStagingMode = () => this.versioningOps.stagingMode;
 
+    // Per-DB write mutexes — serialize writes to prevent async race conditions.
+    // Only active in multi-DB mode (dbManager present); absent in single-DB/test mode.
+    const writeGraph = dbManager ? <T>(fn: () => T | Promise<T>) => dbManager.writeGraph(fn) : undefined;
+    const writeSemantic = dbManager ? <T>(fn: () => T | Promise<T>) => dbManager.writeSemantic(fn) : undefined;
+    const writeCache = dbManager ? <T>(fn: () => T | Promise<T>) => dbManager.writeCache(fn) : undefined;
+
     this.generationManager = new GenerationManager(getGraphClient, getContext);
     this.entityOps = new EntityOperations(
       getGraphClient,
@@ -131,12 +137,14 @@ export class GraphAdapter {
       (row) => rowToEntity(row as EntityRow),
       this.generationManager,
       getStagingMode,
+      writeGraph,
     );
     this.relationshipOps = new RelationshipOperations(
       getGraphClient,
       getContext,
       (row) => rowToRelationship(row as RelationshipRow),
       getStagingMode,
+      writeGraph,
     );
 
     const vectorOpsContext: VectorOpsContext = {
@@ -155,9 +163,9 @@ export class GraphAdapter {
     };
     this.vectorOps = new VectorOperations(vectorOpsContext);
 
-    this.cacheOps = new CacheOperations(getCacheClient);
-    this.metadataOps = new MetadataOperations(getGraphClient, getContext, getCacheClient, getStagingMode);
-    this.cooccurrenceOps = new CooccurrenceOperations(getSemanticClient, getContext);
+    this.cacheOps = new CacheOperations(getCacheClient, writeCache);
+    this.metadataOps = new MetadataOperations(getGraphClient, getContext, getCacheClient, getStagingMode, writeGraph);
+    this.cooccurrenceOps = new CooccurrenceOperations(getSemanticClient, getContext, writeSemantic);
     this.schemaManager = new SchemaManager(getGraphClient, this.dbManager);
     this.versioningOps = new VersioningOps(getGraphClient, this.dbManager);
   }
@@ -417,6 +425,18 @@ export class GraphAdapter {
   }
   async loadGenerationCache(): Promise<void> {
     await this.generationManager.loadCache();
+  }
+
+  /** Invalidate file generation — wrapped with graphMutex for independent callers */
+  async invalidateFileGeneration(filePath: string): Promise<void> {
+    const doInvalidate = () => this.generationManager.invalidateFileGeneration(filePath);
+    return this.dbManager ? this.dbManager.writeGraph(doInvalidate) : doInvalidate();
+  }
+
+  /** Run full GC — wrapped with graphMutex for independent callers */
+  async runGenerationGC(): Promise<{ entities: number; tokens: number }> {
+    const doGC = () => this.generationManager.runFullGC();
+    return this.dbManager ? this.dbManager.writeGraph(doGC) : doGC();
   }
 
   // ===========================================================================

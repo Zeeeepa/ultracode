@@ -10,7 +10,7 @@
 
 import type { BatchResult, Relationship, RelationType } from "../../types/storage.js";
 import { encodeMetadata } from "./cbor-utils.js";
-import type { ClientGetter, ContextGetter } from "./types.js";
+import type { ClientGetter, ContextGetter, WriteMutexFn } from "./types.js";
 
 // =============================================================================
 // ROW MAPPER TYPE
@@ -44,6 +44,7 @@ export class RelationshipOperations {
     private getContext: ContextGetter,
     private rowToRelationship: RowToRelationshipMapper,
     private getStagingMode: () => boolean = () => false,
+    private writeMutex?: WriteMutexFn,
   ) {}
 
   /**
@@ -55,10 +56,16 @@ export class RelationshipOperations {
     this.tombstoneGetter = getter;
   }
 
+  /** Route write through per-DB mutex if available */
+  private _w<T>(fn: () => Promise<T>): Promise<T> {
+    return this.writeMutex ? this.writeMutex(fn) : fn();
+  }
+
   /**
    * Insert a single relationship
    */
   async insertRelationship(relationship: Relationship): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -83,15 +90,17 @@ export class RelationshipOperations {
         relationship.createdAt ?? now,
       ],
     });
+    }); // end _w
   }
 
   /**
    * Insert multiple relationships with batch optimization
    */
   async insertRelationships(relationships: Relationship[]): Promise<BatchResult> {
+    if (relationships.length === 0) return { processed: 0, failed: 0, errors: [], timeMs: 0 };
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
-    if (relationships.length === 0) return { processed: 0, failed: 0, errors: [], timeMs: 0 };
 
     const start = Date.now();
     const errors: Array<{ item: unknown; error: string }> = [];
@@ -170,6 +179,7 @@ export class RelationshipOperations {
       errors,
       timeMs: Date.now() - start,
     };
+    }); // end _w
   }
 
   /**
@@ -430,6 +440,7 @@ export class RelationshipOperations {
    * On feature branches with baseBranch set, adds tombstone instead of deleting.
    */
   async deleteRelationship(id: string): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -445,6 +456,7 @@ export class RelationshipOperations {
       sql: "DELETE FROM relationships WHERE id = ? AND project_hash = ? AND branch_name = ?",
       args: [id, projectHash, branchName],
     });
+    }); // end _w
   }
 
   /**

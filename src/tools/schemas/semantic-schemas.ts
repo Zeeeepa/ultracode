@@ -1,16 +1,38 @@
 /**
  * Semantic Tool Schemas
  * Schemas for semantic search, similarity, and code analysis tools
+ *
+ * Zig compatibility: accepts both camelCase and snake_case param names.
+ * Aliases: topN/top_n → limit, entity_name → entityId, max_depth → depth
  */
 
 import { z } from "zod";
 
-export const SemanticSearchSchema = z.object({
-  query: z.string().describe("Natural language search query"),
-  limit: z.number().optional().default(10).describe("Maximum results to return"),
-  branch: z.string().optional().describe("Branch name (null = main branch)"),
-  projectPath: z.string().optional().describe("Project directory path for cross-project search"),
-});
+/** Helper: resolve Zig aliases for limit/topN/top_n */
+function resolveLimit(args: Record<string, unknown>): Record<string, unknown> {
+  if (!args["limit"] && (args["topN"] || args["top_n"])) {
+    args["limit"] = args["topN"] ?? args["top_n"];
+  }
+  // entity_name → entityId alias
+  if (!args["entityId"] && args["entity_name"]) {
+    args["entityId"] = args["entity_name"];
+  }
+  // max_depth → depth alias
+  if (!args["depth"] && args["max_depth"]) {
+    args["depth"] = args["max_depth"];
+  }
+  return args;
+}
+
+export const SemanticSearchSchema = z.preprocess(
+  (args) => resolveLimit(args as Record<string, unknown>),
+  z.object({
+    query: z.string().describe("Natural language search query"),
+    limit: z.number().optional().default(10).describe("Maximum results to return (alias: topN, top_n)"),
+    branch: z.string().optional().describe("Branch name (null = main branch)"),
+    projectPath: z.string().optional().describe("Project directory path for cross-project search"),
+  }),
+);
 
 export const FindSimilarCodeSchema = z.object({
   code: z.string().describe("Code snippet to find similar code for"),
@@ -38,32 +60,38 @@ export const AnalyzeApiImpactSchema = z.object({
   projectPath: z.string().optional().describe("Project directory path"),
 });
 
-export const AnalyzeCodeImpactSchema = z.object({
-  entityId: z.string().describe("Entity ID or name to analyze impact for"),
-  filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
-  depth: z.number().optional().default(2).describe("Depth of impact analysis"),
-  branch: z.string().optional().describe("Branch name (null = main branch)"),
-  highlightRecentChanges: z
-    .boolean()
-    .optional()
-    .default(false)
-    .describe("Annotate impacted entities with recently-changed status (Prolly Tree)"),
-  recentCommitsCount: z
-    .number()
-    .optional()
-    .default(10)
-    .describe("Number of recent commits to consider for highlighting"),
-});
+export const AnalyzeCodeImpactSchema = z.preprocess(
+  (args) => resolveLimit(args as Record<string, unknown>),
+  z.object({
+    entityId: z.string().describe("Entity ID or name to analyze impact for (alias: entity_name)"),
+    filePath: z.string().optional().describe("Optional file path hint to disambiguate entity"),
+    depth: z.number().optional().default(2).describe("Depth of impact analysis (alias: max_depth)"),
+    branch: z.string().optional().describe("Branch name (null = main branch)"),
+    highlightRecentChanges: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("Annotate impacted entities with recently-changed status"),
+    recentCommitsCount: z
+      .number()
+      .optional()
+      .default(10)
+      .describe("Number of recent commits to consider for highlighting"),
+  }),
+);
 
 export const DetectCodeClonesSchema = z.object({
   minSimilarity: z.number().optional().default(0.8).describe("Minimum similarity for clones"),
   scope: z.string().optional().default("all").describe("Scope: all, file, or module"),
 });
 
-export const FindRelatedConceptsSchema = z.object({
-  entityId: z.string().describe("Entity to find related concepts for"),
-  limit: z.number().optional().default(10).describe("Maximum results to return"),
-});
+export const FindRelatedConceptsSchema = z.preprocess(
+  (args) => resolveLimit(args as Record<string, unknown>),
+  z.object({
+    entityId: z.string().describe("Entity to find related concepts for (alias: entity_name)"),
+    limit: z.number().optional().default(10).describe("Maximum results to return (alias: topN)"),
+  }),
+);
 
 export const CrossLanguageSearchSchema = z.object({
   query: z.string().describe("Search query"),

@@ -8,7 +8,10 @@
  * - Unicode-aware (supports Cyrillic, CJK, etc.)
  * - Stop word filtering (English + Russian)
  * - CamelCase/snake_case splitting for code identifiers
+ * - Porter stemming for English words (reduces "running"→"run")
  */
+
+import { stem } from "../search/stemmer.js";
 
 // =============================================================================
 // STOP WORDS
@@ -328,8 +331,11 @@ export function tokenize(text: string, minLength = 2): string[] {
     }
   }
 
-  // Filter: remove stop words and short tokens
-  return tokens.map((t) => t.toLowerCase()).filter((t) => t.length >= minLength && !STOP_WORDS.has(t));
+  // Filter: remove stop words and short tokens, then stem English words
+  return tokens
+    .map((t) => t.toLowerCase())
+    .filter((t) => t.length >= minLength && !STOP_WORDS.has(t))
+    .map((t) => (/^[a-z]+$/.test(t) ? stem(t) : t)); // Only stem pure ASCII words (skip CJK, Cyrillic)
 }
 
 /**

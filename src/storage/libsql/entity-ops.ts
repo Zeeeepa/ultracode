@@ -12,7 +12,7 @@ import { log } from "../../logging/index.js";
 import type { BatchResult, Entity, EntityType } from "../../types/storage.js";
 import { encodeMetadata } from "./cbor-utils.js";
 import type { GenerationManager } from "./generation-ops.js";
-import type { ClientGetter, ContextGetter } from "./types.js";
+import type { ClientGetter, ContextGetter, WriteMutexFn } from "./types.js";
 
 // =============================================================================
 // COMPACT LOCATION SERIALIZATION
@@ -113,6 +113,7 @@ export class EntityOperations {
     private rowToEntity: RowToEntityMapper,
     private genManager: GenerationManager,
     private getStagingMode: () => boolean = () => false,
+    private writeMutex?: WriteMutexFn,
   ) {}
 
   /**
@@ -124,10 +125,16 @@ export class EntityOperations {
     this.tombstoneGetter = getter;
   }
 
+  /** Route write through per-DB mutex if available, otherwise direct call */
+  private _w<T>(fn: () => Promise<T>): Promise<T> {
+    return this.writeMutex ? this.writeMutex(fn) : fn();
+  }
+
   /**
    * Insert a single entity
    */
   async insertEntity(entity: Entity): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -187,15 +194,17 @@ export class EntityOperations {
         args: tokenArgs,
       });
     }
+    }); // end _w
   }
 
   /**
    * Insert multiple entities with batch optimization
    */
   async insertEntities(entities: Entity[]): Promise<BatchResult> {
+    if (entities.length === 0) return { processed: 0, failed: 0, errors: [], timeMs: 0 };
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
-    if (entities.length === 0) return { processed: 0, failed: 0, errors: [], timeMs: 0 };
 
     const start = Date.now();
     const errors: Array<{ item: unknown; error: string }> = [];
@@ -347,6 +356,7 @@ export class EntityOperations {
       errors,
       timeMs: Date.now() - start,
     };
+    }); // end _w
   }
 
   /**
@@ -921,6 +931,7 @@ export class EntityOperations {
    * On feature branches with baseBranch set, adds tombstone instead of deleting.
    */
   async deleteEntity(id: string): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -942,6 +953,7 @@ export class EntityOperations {
       sql: "DELETE FROM name_tokens WHERE entity_id = ? AND project_hash = ? AND branch_name = ?",
       args: [id, projectHash, branchName],
     });
+    }); // end _w
   }
 
   /**
@@ -1015,6 +1027,7 @@ export class EntityOperations {
    * Returns the IDs of deleted entities (for FAISS cleanup)
    */
   async deleteEntitiesByFilePath(filePath: string): Promise<string[]> {
+    return this._w(async () => {
     // Get IDs of active entities for FAISS cleanup before invalidation
     const ids = await this.getEntityIdsByFilePath(filePath);
     if (ids.length === 0) return [];
@@ -1023,6 +1036,7 @@ export class EntityOperations {
     await this.genManager.invalidateFileGeneration(filePath);
 
     return ids;
+    }); // end _w
   }
 
   /**

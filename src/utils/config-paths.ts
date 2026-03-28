@@ -17,7 +17,8 @@ import { basename, join } from "node:path";
 import { log } from "../logging/index.js";
 import { existsSync, mkdirSync, readJSONSync, writeFileSync } from "./file-ops.js";
 
-const APP_NAME = "UltraCode";
+const APP_NAME = "ultracode";
+const LEGACY_APP_NAME = "UltraCode";
 
 /**
  * Get the central configuration directory for UltraCode
@@ -65,7 +66,18 @@ export function getDataDir(): string {
     }
   }
 
-  return join(baseDir, APP_NAME);
+  // Windows is case-insensitive — use legacy "UltraCode" to avoid path confusion.
+  // Unix: prefer lowercase "ultracode" (Zig compat).
+  if (platform() === "win32") {
+    return join(baseDir, LEGACY_APP_NAME);
+  }
+
+  const newDir = join(baseDir, APP_NAME);
+  const legacyDir = join(baseDir, LEGACY_APP_NAME);
+  if (!existsSync(newDir) && existsSync(legacyDir)) {
+    return legacyDir;
+  }
+  return newDir;
 }
 
 /**
@@ -110,6 +122,29 @@ export function ensureDataDir(): string {
     mkdirSync(dataDir, true);
   }
   return dataDir;
+}
+
+/**
+ * Shared config fields between Zig and TS (written by either, read by both).
+ * These live at the root or in shared namespaces of semantic-config.json.
+ */
+export interface SharedBaseConfig {
+  /** Zig: embedding.model / TS: resolved from platform config */
+  embedding_model?: string | undefined;
+  /** Zig: embedding.dimension */
+  embedding_dimension?: number | undefined;
+  /** Zig: doc_language (ISO 639-1: en, ru, de, ...) */
+  doc_language?: string | undefined;
+  /** Zig: llm.platform ("claude_cli", "ollama", etc.) */
+  llm_platform?: string | undefined;
+  /** Zig: llm.model */
+  llm_model?: string | undefined;
+  /** Zig: inference section (preserved as-is when TS writes) */
+  inference?: Record<string, unknown> | undefined;
+  /** Zig: io_threads */
+  io_threads?: number | undefined;
+  /** Zig: optimal_qd */
+  optimal_qd?: number | undefined;
 }
 
 /**
@@ -256,7 +291,10 @@ export interface SemanticConfig {
 }
 
 /**
- * Load semantic configuration from central config directory
+ * Load semantic configuration from central config directory.
+ * Supports both TS-native format and Zig shared format.
+ * If the file has Zig-format fields (embedding.model, llm, doc_language),
+ * they are parsed into SharedBaseConfig for cross-project compatibility.
  */
 export function loadSemanticConfig(): SemanticConfig | null {
   const configPath = getSemanticConfigPath();
@@ -274,14 +312,60 @@ export function loadSemanticConfig(): SemanticConfig | null {
 }
 
 /**
- * Save semantic configuration to central config directory
+ * Load shared base config fields (readable by both Zig and TS).
+ * Reads from the same semantic-config.json but extracts the shared fields.
+ */
+export function loadSharedBaseConfig(): SharedBaseConfig | null {
+  const configPath = getSemanticConfigPath();
+  if (!existsSync(configPath)) return null;
+
+  try {
+    const raw = readJSONSync<Record<string, unknown>>(configPath);
+    if (!raw) return null;
+
+    const embedding = raw["embedding"] as Record<string, unknown> | undefined;
+    const llm = raw["llm"] as Record<string, unknown> | undefined;
+
+    return {
+      embedding_model: (embedding?.["model"] as string) ?? undefined,
+      embedding_dimension: (embedding?.["dimension"] as number) ?? undefined,
+      doc_language: (raw["doc_language"] as string) ?? undefined,
+      llm_platform: (llm?.["platform"] as string) ?? undefined,
+      llm_model: (llm?.["model"] as string) ?? undefined,
+      inference: (raw["inference"] as Record<string, unknown>) ?? undefined,
+      io_threads: (raw["io_threads"] as number) ?? undefined,
+      optimal_qd: (raw["optimal_qd"] as number) ?? undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save semantic configuration to central config directory.
+ * MERGE strategy: reads existing file first, preserves Zig-written fields
+ * (inference, io_threads, optimal_qd, doc_language, etc.), then overlays TS fields.
+ * This ensures neither Zig nor TS overwrites the other's settings.
  */
 export function saveSemanticConfig(config: SemanticConfig): void {
   ensureConfigDir();
   const configPath = getSemanticConfigPath();
 
   try {
-    writeFileSync(configPath, JSON.stringify(config, null, 2));
+    // Read existing file to preserve Zig-written fields
+    let existing: Record<string, unknown> = {};
+    if (existsSync(configPath)) {
+      try {
+        existing = readJSONSync<Record<string, unknown>>(configPath) ?? {};
+      } catch {
+        // Corrupt file — overwrite
+      }
+    }
+
+    // Merge: existing (Zig fields preserved) + new TS config on top
+    const merged = { ...existing, ...config };
+
+    writeFileSync(configPath, JSON.stringify(merged, null, 2));
   } catch (error) {
     log.i("CONFIGPATH", `[Config] Failed to save semantic config: ${error}`);
     throw error;

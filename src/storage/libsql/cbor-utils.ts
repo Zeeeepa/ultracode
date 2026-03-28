@@ -14,14 +14,66 @@ import { CACHE_CONFIG } from "./types.js";
 const metadataCache = new LRUCache<string, Record<string, unknown>>(CACHE_CONFIG.metadataCache);
 
 /**
- * Encode metadata object to CBOR binary.
+ * CBOR compact key mapping (Zig-compat).
+ * Reduces metadata BLOB size by ~30% for repeated keys.
+ * Full key → compact key (encode), compact key → full key (decode).
+ */
+const COMPACT_KEYS: Record<string, string> = {
+  params: "p",
+  return_type: "r",
+  returnType: "r",
+  decorators: "dc",
+  visibility: "vs",
+  doc_comment: "doc",
+  docComment: "doc",
+  is_async: "a",
+  isAsync: "a",
+  is_generator: "g",
+  isGenerator: "g",
+  is_static: "st",
+  isStatic: "st",
+  extends: "ex",
+  implements: "im",
+  generic_params: "gp",
+  genericParams: "gp",
+};
+
+const EXPAND_KEYS: Record<string, string> = {};
+// Build reverse mapping (compact → full). Use snake_case for consistency with Zig.
+for (const [full, compact] of Object.entries(COMPACT_KEYS)) {
+  // Only map the snake_case form back (avoid duplicates from camelCase aliases)
+  if (full.includes("_") || !full.match(/[A-Z]/)) {
+    EXPAND_KEYS[compact] = full;
+  }
+}
+
+/** Compact metadata keys before CBOR encoding */
+function compactKeys(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[COMPACT_KEYS[key] ?? key] = value;
+  }
+  return result;
+}
+
+/** Expand compact keys after CBOR decoding */
+function expandKeys(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[EXPAND_KEYS[key] ?? key] = value;
+  }
+  return result;
+}
+
+/**
+ * Encode metadata object to CBOR binary with compact keys.
  * Returns null for empty/null metadata.
  * Falls back to JSON if CBOR encoding fails.
  */
 export function encodeMetadata(metadata: Record<string, unknown> | null | undefined): Buffer | null {
   if (!metadata) return null;
   try {
-    return Buffer.from(cbor.encode(metadata));
+    return Buffer.from(cbor.encode(compactKeys(metadata)));
   } catch {
     // Fallback to JSON if CBOR fails (e.g., unsupported types)
     return Buffer.from(JSON.stringify(metadata));
@@ -49,19 +101,22 @@ export function decodeMetadata(data: Buffer | Uint8Array | string | null): Recor
   if (cached) return cached;
 
   try {
-    let result: Record<string, unknown>;
+    let raw: Record<string, unknown>;
 
     if (typeof data === "string") {
       // Legacy JSON string
-      result = JSON.parse(data);
+      raw = JSON.parse(data);
     } else {
       // Try CBOR first, fallback to JSON
       try {
-        result = cbor.decode(data instanceof Uint8Array ? data : Buffer.from(data));
+        raw = cbor.decode(data instanceof Uint8Array ? data : Buffer.from(data));
       } catch {
-        result = JSON.parse(Buffer.from(data).toString("utf8"));
+        raw = JSON.parse(Buffer.from(data).toString("utf8"));
       }
     }
+
+    // Expand compact keys (handles both Zig compact and legacy full keys)
+    const result = expandKeys(raw);
 
     metadataCache.set(cacheKey, result);
     return result;

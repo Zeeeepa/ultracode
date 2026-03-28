@@ -41,20 +41,28 @@ export const SuggestRefactoringSchema = z
     },
   );
 
-export const AnalyzeHotspotsSchema = z.object({
-  metric: z
-    .enum(["complexity", "changes", "coupling", "all"])
-    .optional()
-    .default("complexity")
-    .describe("Metric: complexity, changes, coupling, or all"),
-  limit: z.number().optional().default(10).describe("Maximum hotspots to return"),
-  includeHistoricalMetrics: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe("Use Prolly Tree history for changeFrequency calculation"),
-  lookbackDays: z.number().optional().default(30).describe("Number of days to look back for change frequency"),
-});
+export const AnalyzeHotspotsSchema = z.preprocess(
+  (args) => {
+    const a = args as Record<string, unknown>;
+    // Zig compat aliases: topN/top_n → limit
+    if (!a["limit"] && (a["topN"] || a["top_n"])) a["limit"] = a["topN"] ?? a["top_n"];
+    return a;
+  },
+  z.object({
+    metric: z
+      .enum(["complexity", "changes", "coupling", "all"])
+      .optional()
+      .default("complexity")
+      .describe("Metric: complexity, changes, coupling, or all"),
+    limit: z.number().optional().default(10).describe("Maximum hotspots to return (alias: topN, top_n)"),
+    includeHistoricalMetrics: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Use Prolly Tree history for changeFrequency calculation"),
+    lookbackDays: z.number().optional().default(30).describe("Number of days to look back for change frequency"),
+  }),
+);
 
 export const AnalyzeStateChaosSchema = z.object({
   projectPath: z.string().optional().describe("Project directory path"),

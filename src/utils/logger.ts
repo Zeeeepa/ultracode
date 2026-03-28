@@ -385,15 +385,29 @@ function loadLogConfig(): LogConfig {
     const raw = readFileSync(configPath, "utf-8");
     const parsed = JSON.parse(raw);
     const cfg: LogConfig = {};
+
+    // TS format: minLevel ("D", "I", "W", "E")
     if (parsed?.minLevel && "TDIWE".includes(parsed.minLevel)) {
       cfg.minLevel = parsed.minLevel as LogLevelChar;
     }
+    // Zig format: level ("debug", "info", "warn", "error") — convert to TS char
+    if (!cfg.minLevel && parsed?.level) {
+      const zigToTs: Record<string, LogLevelChar> = { debug: "D", info: "I", warn: "W", error: "E" };
+      const mapped = zigToTs[parsed.level];
+      if (mapped) cfg.minLevel = mapped;
+    }
+
     if (typeof parsed?.teiBatchDump === "boolean") {
       cfg.teiBatchDump = parsed.teiBatchDump;
     }
+
+    // TS format: syncWrite / Zig format: sync_mode
     if (typeof parsed?.syncWrite === "boolean") {
       cfg.syncWrite = parsed.syncWrite;
+    } else if (typeof parsed?.sync_mode === "boolean") {
+      cfg.syncWrite = parsed.sync_mode;
     }
+
     return cfg;
   } catch {
     return {};

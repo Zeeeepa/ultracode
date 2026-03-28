@@ -524,7 +524,7 @@ export class GraphStorageLibSQL implements GraphStorage {
    * Marks all entities for this file as stale without blocking DELETE.
    */
   async invalidateFileGeneration(filePath: string): Promise<void> {
-    await this.adapter.getGenerationManager().invalidateFileGeneration(filePath);
+    await this.adapter.invalidateFileGeneration(filePath);
   }
 
   /**
@@ -532,7 +532,7 @@ export class GraphStorageLibSQL implements GraphStorage {
    * Call after incremental reindex completes.
    */
   async runGenerationGC(): Promise<{ entities: number; tokens: number }> {
-    return await this.adapter.getGenerationManager().runFullGC();
+    return await this.adapter.runGenerationGC();
   }
 
   // ===========================================================================

@@ -157,6 +157,14 @@ export type ClientGetter = () => Client | null;
 export type ContextGetter = () => ProjectContext;
 
 /**
+ * Delegate type for serializing writes through a per-DB mutex.
+ * Analog of Zig's db_mutex — ensures only one write runs at a time.
+ * When provided, all write operations are wrapped: `writeMutex(() => client.batch(...))`.
+ * When absent (tests, single-DB mode), writes go directly without serialization.
+ */
+export type WriteMutexFn = <T>(fn: () => T | Promise<T>) => Promise<T>;
+
+/**
  * Delegate type for encoding metadata (CBOR serialization)
  */
 export type MetadataEncoder = (metadata: Record<string, unknown> | null | undefined) => Buffer | null;

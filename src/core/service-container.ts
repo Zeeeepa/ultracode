@@ -6,7 +6,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { ConductorOrchestrator } from "../agents/conductor-orchestrator.js";
 import type { TechnologyDetector } from "../analysis/technology-detector.js";
 import { TechnologyDetector as TechnologyDetectorClass } from "../analysis/technology-detector.js";
@@ -19,7 +19,6 @@ import { FileOperations as FileOperationsClass } from "../modification/file-oper
 import { PreviewManager } from "../modification/preview-manager.js";
 import type { PatternSearch } from "../search/pattern-search.js";
 import { PatternSearch as PatternSearchClass } from "../search/pattern-search.js";
-import { getGlobalDbPaths } from "../shared/storage-paths.js";
 import { getGraphStorage } from "../storage/graph-storage-factory.js";
 import { sleep } from "../utils/runtime-detection.js";
 import type { CodeValidator } from "../validation/code-validator.js";
@@ -70,9 +69,9 @@ export class ServiceContainer {
     return this.config.directory;
   }
 
-  /** Get graph storage (delegated to factory) */
+  /** Get graph storage (delegated to factory, per-project layout) */
   async getGraphStorage() {
-    return getGraphStorage();
+    return getGraphStorage(this.config.directory);
   }
 
   /** Get conductor orchestrator */
@@ -159,8 +158,13 @@ export class ServiceContainer {
     }
 
     if (!this._autoDocManager) {
-      const paths = getGlobalDbPaths();
-      const autodocDbPath = join(dirname(paths.graphDbPath), "autodoc.db");
+      // Per-project layout: autodoc.db in same dir as graph.db (projects/{hash}/)
+      const { getPerProjectMultiDbPaths, hashProjectPath } = await import("../shared/storage-paths.js");
+      const projectHash = hashProjectPath(this.config.directory);
+      const perProject = getPerProjectMultiDbPaths(projectHash);
+      const { mkdirSync, existsSync } = await import("node:fs");
+      if (!existsSync(perProject.baseDir)) mkdirSync(perProject.baseDir, { recursive: true });
+      const autodocDbPath = join(perProject.baseDir, "autodoc.db");
       this._autoDocManager = getAutoDocManagerFactory(autodocDbPath);
       const graphStorage = await this.getGraphStorage();
       await this._autoDocManager.initialize(graphStorage);

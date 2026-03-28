@@ -35,10 +35,8 @@ export const CACHE_CONSTANTS = {
    */
   CACHE_TTL_MS: 3600000,
 
-  /**
-   * Default embedding batch size
-   */
-  EMBEDDING_BATCH_SIZE: 16,
+  /** Default embedding batch size — 1024 (synced with Zig, was 16) */
+  EMBEDDING_BATCH_SIZE: 1024,
 
   /**
    * Vector store batch size for bulk operations
@@ -56,40 +54,18 @@ export const CACHE_CONSTANTS = {
  * Used in: src/storage/sqlite-manager.ts
  */
 export const DATABASE_CONSTANTS = {
-  /**
-   * Default database path
-   */
-  DEFAULT_DB_PATH: "", // Empty = use centralized storage via getProjectPaths()
-
-  /**
-   * Page size in bytes (optimal for most systems)
-   */
-  PAGE_SIZE: 4096,
-
-  /**
-   * Cache size in KB (64MB)
-   */
-  CACHE_SIZE_KB: 65536,
-
-  /**
-   * Memory-mapped I/O size (268MB)
-   */
-  MMAP_SIZE: 268435456,
-
-  /**
-   * WAL auto-checkpoint threshold (pages)
-   */
-  WAL_AUTOCHECKPOINT: 1000,
-
-  /**
-   * Busy timeout in milliseconds
-   */
+  /** Page size — 8KB optimal for CBOR BLOBs (synced with Zig constants.zig) */
+  PAGE_SIZE: 8192,
+  /** Cache size — 256MB negative=bytes (synced with Zig) */
+  CACHE_SIZE: -262144,
+  /** Memory-mapped I/O — 256MB */
+  MMAP_SIZE: 268_435_456,
+  /** Busy timeout ms */
   BUSY_TIMEOUT: 5000,
-
-  /**
-   * Connection pool size
-   */
-  CONNECTION_POOL_SIZE: 5,
+  /** Versioning.db busy timeout (longer for WAL checkpoints) */
+  VERSIONING_BUSY_TIMEOUT: 30_000,
+  /** WAL auto-checkpoint threshold (pages) */
+  WAL_AUTOCHECKPOINT: 1000,
 } as const;
 
 // =============================================================================
@@ -102,25 +78,14 @@ export const DATABASE_CONSTANTS = {
  * Used in: go-analyzer.ts, java-analyzer.ts, base-parser-utils.ts
  */
 export const PARSER_CONSTANTS = {
-  /**
-   * Maximum recursion depth to prevent stack overflow
-   */
+  /** Maximum recursion depth to prevent stack overflow */
   MAX_RECURSION_DEPTH: 100,
-
-  /**
-   * Parse timeout in milliseconds (5 seconds for individual parsers)
-   */
+  /** Parse timeout ms */
   PARSE_TIMEOUT_MS: 5000,
-
-  /**
-   * Complexity threshold for circuit breaker
-   */
+  /** Complexity threshold for circuit breaker */
   COMPLEXITY_THRESHOLD: 100,
-
-  /**
-   * Maximum file size to parse (10MB)
-   */
-  MAX_FILE_SIZE_BYTES: 10 * 1024 * 1024,
+  /** Maximum file size to parse — 5MB (synced with Zig, was 10MB) */
+  MAX_FILE_SIZE_BYTES: 5 * 1024 * 1024,
 } as const;
 
 // =============================================================================
@@ -200,25 +165,18 @@ export const RESOURCE_CONSTANTS = {
  * Used in: dev-agent.ts, indexer-agent.ts
  */
 export const INDEXING_CONSTANTS = {
-  /**
-   * Default batch size for entity indexing
-   */
-  DEFAULT_BATCH_SIZE: 100,
-
-  /**
-   * Large codebase threshold (files)
-   */
+  /** Default batch size — 1000 (synced with Zig) */
+  DEFAULT_BATCH_SIZE: 1000,
+  /** Generation GC limit */
+  GENERATION_GC_LIMIT: 10_000,
+  /** Large codebase threshold (files) */
   LARGE_CODEBASE_THRESHOLD: 2000,
-
-  /**
-   * Very large codebase threshold (files)
-   */
+  /** Very large codebase threshold (files) */
   VERY_LARGE_CODEBASE_THRESHOLD: 5000,
-
-  /**
-   * Maximum entities per batch
-   */
+  /** Maximum entities per batch */
   MAX_ENTITIES_PER_BATCH: 1000,
+  /** Name token minimum length */
+  NAME_TOKEN_MIN_LENGTH: 2,
 } as const;
 
 // =============================================================================
@@ -271,6 +229,87 @@ export const VECTOR_CONSTANTS = {
 // EXPORTS
 // =============================================================================
 
+// =============================================================================
+// TRACING CONSTANTS (synced with Zig constants.zig)
+// =============================================================================
+
+export const TRACING_CONSTANTS = {
+  /** Maximum trace depth */
+  MAX_DEPTH: 20,
+  /** Maximum paths to return */
+  MAX_PATHS: 10,
+  /** Maximum callers to analyze */
+  MAX_CALLERS: 100,
+  /** BFS timeout ms */
+  BFS_TIMEOUT_MS: 5000,
+} as const;
+
+// =============================================================================
+// ANALYSIS CONSTANTS (synced with Zig constants.zig)
+// =============================================================================
+
+export const ANALYSIS_CONSTANTS = {
+  MAX_TAINT_SOURCES: 100,
+  MAX_TAINT_SINKS: 150,
+  TAINT_TIMEOUT_MS: 25_000,
+  MAX_HOTSPOTS: 50,
+  MAX_DUPLICATES: 100,
+  PAGERANK_ALPHA: 0.85,
+  PAGERANK_MAX_ITERATIONS: 100,
+  BETWEENNESS_MAX_SOURCES: 500,
+} as const;
+
+// =============================================================================
+// WATCH CONSTANTS (synced with Zig constants.zig)
+// =============================================================================
+
+export const WATCH_CONSTANTS = {
+  /** File watcher debounce — 100ms (Zig: 100, was 60000 in TS) */
+  DEBOUNCE_MS: 100,
+  MAX_BATCH_SIZE: 500,
+  FALLBACK_POLL_INTERVAL_MS: 10_000,
+  WIN32_BUFFER_SIZE: 65_536,
+} as const;
+
+// =============================================================================
+// QUERY/MESSAGE LIMITS (synced with Zig constants.zig)
+// =============================================================================
+
+export const LIMIT_CONSTANTS = {
+  MAX_ENTITIES_PER_QUERY: 2000,
+  MAX_MESSAGE_SIZE: 65_536,
+  READ_BUFFER_SIZE: 65_536,
+} as const;
+
+// =============================================================================
+// EXCLUDED DIRECTORIES (synced with Zig constants.zig — 22 entries)
+// =============================================================================
+
+export const EXCLUDED_DIRS = new Set([
+  "node_modules", ".git", "dist", "build", ".next", "__pycache__",
+  ".mypy_cache", "target", "vendor", ".zig-cache", "zig-out", ".cache",
+  "output", "third_party", ".tmp", ".build", "coverage", ".venv",
+  "venv", ".tox", ".eggs", "bower_components",
+]);
+
+// =============================================================================
+// EMBEDDING CONSTANTS (synced with Zig constants.zig)
+// =============================================================================
+
+export const EMBEDDING_CONSTANTS = {
+  DEFAULT_DIMENSION: 384,
+  BATCH_SIZE: 1024,
+  DEFAULT_MODEL: "multilingual-e5-small",
+  /** Hybrid search weights */
+  VECTOR_WEIGHT: 0.6,
+  TEXT_WEIGHT: 0.3,
+  GRAPH_WEIGHT: 0.1,
+} as const;
+
+// =============================================================================
+// EXPORTS
+// =============================================================================
+
 /**
  * All constants exported as a single object for convenience
  */
@@ -282,6 +321,12 @@ export const CONSTANTS = {
   RESOURCE: RESOURCE_CONSTANTS,
   INDEXING: INDEXING_CONSTANTS,
   VECTOR: VECTOR_CONSTANTS,
+  TRACING: TRACING_CONSTANTS,
+  ANALYSIS: ANALYSIS_CONSTANTS,
+  WATCH: WATCH_CONSTANTS,
+  LIMITS: LIMIT_CONSTANTS,
+  EMBEDDING: EMBEDDING_CONSTANTS,
+  EXCLUDED_DIRS,
 } as const;
 
 /**

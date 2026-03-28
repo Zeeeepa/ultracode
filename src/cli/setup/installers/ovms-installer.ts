@@ -227,6 +227,122 @@ async function exportModelNative(
   }
 }
 
+/**
+ * Try downloading pre-built OpenVINO IR model from CDN (Zig-compatible).
+ * Falls back to Docker conversion if CDN download fails.
+ * CDN has INT8/FP16 models pre-optimized — saves 5-10 min of Docker conversion.
+ */
+async function tryDownloadFromCdn(
+  modelId: string,
+  modelsDir: string,
+  weightFormat: string,
+): Promise<boolean> {
+  try {
+    const { loadModelsCatalog } = await import("../../../config/models-catalog.js");
+    const catalog = loadModelsCatalog();
+    const model = catalog.models.find((m) => m.id === modelId);
+    if (!model || !catalog.cdnBase) return false;
+
+    // Determine CDN keys based on weight format
+    const xmlKey = weightFormat === "int8" ? "ov_cpu_int8" : "ov_npu_fp16";
+    const binKey = xmlKey + "_bin";
+    const xmlPath = model.cdn[xmlKey];
+    const binPath = model.cdn[binKey];
+
+    if (!xmlPath || !binPath) {
+      printInfo(`No CDN artifacts for ${modelId} (${weightFormat})`);
+      return false;
+    }
+
+    const xmlUrl = catalog.cdnBase + xmlPath;
+    const binUrl = catalog.cdnBase + binPath;
+
+    // Check if these are inside .7z archives or direct files
+    if (xmlPath.endsWith(".7z") || binPath.endsWith(".7z")) {
+      // Need 7z extraction
+      let sevenZip: typeof import("7zip-min") | null = null;
+      try {
+        sevenZip = await import("7zip-min");
+      } catch {
+        printInfo("7zip-min not available — skipping CDN download");
+        return false;
+      }
+
+      // Download .7z archive
+      const archiveUrl = catalog.cdnBase + xmlPath; // archive contains both
+      const nodeHttps = await import("node:https");
+      const nodeFs = await import("node:fs");
+      const tempArchive = join(modelsDir, `${modelId}-ov.7z`);
+
+      printInfo(`Downloading model from CDN: ${modelId}...`);
+
+      await new Promise<void>((resolve, reject) => {
+        const file = nodeFs.createWriteStream(tempArchive);
+        const doGet = (u: string) => {
+          nodeHttps.get(u, (res: import("node:http").IncomingMessage) => {
+            if ((res.statusCode === 302 || res.statusCode === 301) && res.headers.location) {
+              doGet(res.headers.location);
+            } else {
+              res.pipe(file);
+              file.on("finish", () => { file.close(); resolve(); });
+            }
+          }).on("error", reject);
+        };
+        doGet(archiveUrl);
+      });
+
+      // Extract
+      const modelDir = join(modelsDir, modelId, "1");
+      mkdirSync(modelDir, { recursive: true });
+
+      await new Promise<void>((resolve, reject) => {
+        sevenZip!.unpack(tempArchive, modelDir, (err: Error | null) => {
+          if (err) reject(err); else resolve();
+        });
+      });
+
+      // Cleanup archive
+      try { (await import("node:fs/promises")).unlink(tempArchive); } catch { /* ok */ }
+
+      printOK(`Model downloaded from CDN: ${modelId}`);
+      return true;
+    }
+
+    // Direct file download (no archive)
+    const modelDir = join(modelsDir, modelId, "1");
+    mkdirSync(modelDir, { recursive: true });
+
+    const nodeHttps2 = await import("node:https");
+    const nodeFs2 = await import("node:fs");
+
+    printInfo(`Downloading pre-built OpenVINO model from CDN...`);
+
+    for (const [url, filename] of [[xmlUrl, "openvino_model.xml"], [binUrl, "openvino_model.bin"]] as const) {
+      const destPath = join(modelDir, filename);
+      await new Promise<void>((resolve, reject) => {
+        const file = nodeFs2.createWriteStream(destPath);
+        const doGet = (u: string) => {
+          nodeHttps2.get(u, (res: import("node:http").IncomingMessage) => {
+            if ((res.statusCode === 302 || res.statusCode === 301) && res.headers.location) {
+              doGet(res.headers.location);
+            } else {
+              res.pipe(file);
+              file.on("finish", () => { file.close(); resolve(); });
+            }
+          }).on("error", reject);
+        };
+        doGet(url);
+      });
+    }
+
+    printOK(`Pre-built OpenVINO model downloaded: ${modelId} (${weightFormat})`);
+    return true;
+  } catch (err) {
+    printInfo(`CDN download failed: ${(err as Error).message} — falling back to Docker`);
+    return false;
+  }
+}
+
 async function exportModelDocker(
   hfModel: string,
   modelId: string,
@@ -234,6 +350,10 @@ async function exportModelDocker(
   modelDirName: string,
   weightFormat: string,
 ): Promise<boolean> {
+  // Try CDN first — pre-built models, no Docker needed
+  const cdnSuccess = await tryDownloadFromCdn(modelId, modelsDir, weightFormat);
+  if (cdnSuccess) return true;
+
   printWarn(t("ovms.docker_fallback"));
   printInfo(t("ovms.no_mediapipe_note"));
 

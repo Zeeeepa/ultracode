@@ -942,31 +942,23 @@ export class ClaudeCodeProvider implements LLMProvider {
 
       const proc = spawnProcess(claudeCmd.cmd, fullArgs, {
         stdio: ["pipe", "pipe", "pipe"],
-        shell: false, // Direct execution - prevents infinite spawning
+        shell: false,
         windowsHide: true,
+        timeout: timeoutMs, // Process killed after timeout (no setTimeout)
         env: {
           ...process.env,
-          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1", // Disable temp file creation
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+          ...(process.platform !== "win32" ? { LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } : {}),
         },
       });
 
       let stdout = "";
       let stderr = "";
 
-      proc.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
-      });
-      proc.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
-      });
-
-      const timeout = setTimeout(() => {
-        proc.kill();
-        resolve(null);
-      }, timeoutMs);
+      proc.stdout.on("data", (data: Buffer) => { stdout += data.toString("utf-8"); });
+      proc.stderr.on("data", (data: Buffer) => { stderr += data.toString("utf-8"); });
 
       proc.on("close", (code: number | null) => {
-        clearTimeout(timeout);
         if (code !== 0) {
           log.d("CLAUDE_CODE", "cli_error", { code, stderr: stderr.slice(0, 200) });
           resolve(null);
@@ -975,10 +967,7 @@ export class ClaudeCodeProvider implements LLMProvider {
         resolve(stdout);
       });
 
-      proc.on("error", () => {
-        clearTimeout(timeout);
-        resolve(null);
-      });
+      proc.on("error", () => { resolve(null); });
     });
   }
 
@@ -989,56 +978,49 @@ export class ClaudeCodeProvider implements LLMProvider {
       return null;
     }
 
+    // Build args — synced with Zig's llm_provider.generateClaudeCli
+    const claudeArgs: string[] = ["-p"];
+
+    // --bare only with oauth helper (Zig compat: --bare requires --settings with apiKeyHelper)
+    // Without oauth helper, --bare may cause auth failures
+    // For now: don't use --bare (TS doesn't have ultracode-oauth-helper yet)
+
+    claudeArgs.push(
+      "--model", this.model,
+      "--output-format", "json",
+      "--no-session-persistence",
+      "--tools", "",
+      "--strict-mcp-config",
+    );
+
+    const fullArgs = [...claudeCmd.args, ...claudeArgs];
+    log.d("CLAUDE_CODE", "generate", { cmd: claudeCmd.cmd, args: claudeArgs, model: this.model });
+
+    // Windows: use temp files for stdin/stdout (Zig compat — avoids pipe encoding issues)
+    if (process.platform === "win32") {
+      return this.runClaudeWindows(claudeCmd.cmd, fullArgs, prompt);
+    }
+
+    // Unix: direct pipe I/O
     return new Promise((resolve) => {
-      // --no-session-persistence: don't save sessions to history (avoids clutter)
-      // --mcp-config {"mcpServers":{}} --strict-mcp-config: disable MCP servers (prevents recursive spawning)
-      // --allowedTools Commands: only allow built-in Commands, no file/MCP tools
-      const claudeArgs = [
-        "-p",
-        "--model",
-        this.model,
-        "--output-format",
-        "json",
-        "--no-session-persistence",
-        "--mcp-config",
-        '{"mcpServers":{}}',
-        "--strict-mcp-config",
-        "--allowedTools",
-        "Commands",
-      ];
-      const fullArgs = [...claudeCmd.args, ...claudeArgs];
-
-      log.d("CLAUDE_CODE", "generate", { cmd: claudeCmd.cmd, args: claudeArgs, model: this.model });
-
       const proc = spawnProcess(claudeCmd.cmd, fullArgs, {
         stdio: ["pipe", "pipe", "pipe"],
-        shell: false, // Direct execution - prevents infinite spawning
+        shell: false,
         windowsHide: true,
-        env: {
-          ...process.env,
-          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1", // Disable temp file creation
-        },
+        timeout: 120000, // Kill after 2 minutes (no setTimeout needed)
+        env: { ...process.env, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1", LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" },
       });
 
       let stdout = "";
       let stderr = "";
 
-      proc.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
-      });
-      proc.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
-      });
+      proc.stdout.on("data", (data: Buffer) => { stdout += data.toString("utf-8"); });
+      proc.stderr.on("data", (data: Buffer) => { stderr += data.toString("utf-8"); });
 
-      // 2 minute timeout for generation
-      const timeout = setTimeout(() => {
-        proc.kill();
-        log.e("CLAUDE_CODE", "timeout", { model: this.model });
-        resolve(null);
-      }, 120000);
+      proc.stdin.write(Buffer.from(prompt, "utf-8"));
+      proc.stdin.end();
 
       proc.on("close", (code: number | null) => {
-        clearTimeout(timeout);
         if (code !== 0) {
           log.e("CLAUDE_CODE", "cli_error", { code, stderr: stderr.slice(0, 500) });
           resolve(null);
@@ -1071,15 +1053,72 @@ export class ClaudeCodeProvider implements LLMProvider {
       });
 
       proc.on("error", (err: Error) => {
-        clearTimeout(timeout);
         log.e("CLAUDE_CODE", "spawn_error", { error: err.message });
         resolve(null);
       });
-
-      // Write prompt to stdin and close
-      proc.stdin.write(prompt);
-      proc.stdin.end();
     });
+  }
+
+  /**
+   * Windows-specific Claude CLI execution using temp files.
+   * Zig compat: avoids pipe encoding issues on Windows by writing prompt
+   * to a temp file as raw UTF-8, then reading output from another temp file.
+   */
+  private async runClaudeWindows(cmd: string, args: string[], prompt: string): Promise<ClaudeCodeResponse | null> {
+    const { writeFileSync: writeFs, readFileSync: readFs, unlinkSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { execFileSync } = await import("node:child_process");
+
+    const tmpDir = process.env["TEMP"] || process.env["TMP"] || ".";
+    const tid = process.pid;
+    const promptPath = join(tmpDir, `.autodoc_in.${tid}.tmp`);
+    const outputPath = join(tmpDir, `.autodoc_out.${tid}.tmp`);
+
+    try {
+      // Write prompt as raw UTF-8 to temp file
+      writeFs(promptPath, Buffer.from(prompt, "utf-8"));
+
+      // Build command: pipe temp file as stdin, capture stdout to temp file
+      // Use cmd /c with input redirection — simpler than threads
+      const fullCmd = `"${cmd}" ${args.map((a) => a === "" ? '""' : `"${a}"`).join(" ")} < "${promptPath}" > "${outputPath}"`;
+
+      log.d("CLAUDE_CODE", "win_exec", { cmd: fullCmd.slice(0, 200) });
+
+      execFileSync("cmd", ["/c", fullCmd], {
+        windowsHide: true,
+        timeout: 120000,
+        stdio: ["ignore", "ignore", "ignore"],
+        env: { ...process.env, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" },
+      });
+
+      // Read output
+      const response = readFs(outputPath, "utf-8");
+      if (!response || response.length === 0) {
+        log.w("CLAUDE_CODE", "win_empty_response");
+        return null;
+      }
+
+      log.d("CLAUDE_CODE", "win_response", { len: response.length });
+      const parsed = JSON.parse(response) as ClaudeCodeResponse;
+
+      // Accumulate usage
+      ClaudeCodeProvider._totalUsage.requests++;
+      if (parsed.usage) {
+        ClaudeCodeProvider._totalUsage.inputTokens += parsed.usage.input_tokens || 0;
+        ClaudeCodeProvider._totalUsage.outputTokens += parsed.usage.output_tokens || 0;
+        ClaudeCodeProvider._totalUsage.cacheReadTokens += parsed.usage.cache_read_input_tokens || 0;
+        ClaudeCodeProvider._totalUsage.cacheCreationTokens += parsed.usage.cache_creation_input_tokens || 0;
+      }
+
+      return parsed;
+    } catch (err) {
+      log.e("CLAUDE_CODE", "win_error", { err: (err as Error).message?.slice(0, 300) });
+      return null;
+    } finally {
+      // Cleanup temp files
+      try { unlinkSync(promptPath); } catch { /* ok */ }
+      try { unlinkSync(outputPath); } catch { /* ok */ }
+    }
   }
 }
 

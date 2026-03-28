@@ -6,14 +6,22 @@
  * embeddings across projects when content is identical.
  */
 
-import type { ClientGetter } from "./types.js";
+import type { ClientGetter, WriteMutexFn } from "./types.js";
 
 // =============================================================================
 // CACHE OPERATIONS CLASS
 // =============================================================================
 
 export class CacheOperations {
-  constructor(private getClient: ClientGetter) {}
+  constructor(
+    private getClient: ClientGetter,
+    private writeMutex?: WriteMutexFn,
+  ) {}
+
+  /** Route write through per-DB mutex if available */
+  private _w<T>(fn: () => Promise<T>): Promise<T> {
+    return this.writeMutex ? this.writeMutex(fn) : fn();
+  }
 
   /**
    * Get cached embedding by content hash.
@@ -97,6 +105,7 @@ export class CacheOperations {
     embedding: Float32Array,
     textPreview?: string | undefined,
   ): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) return;
 
@@ -113,6 +122,7 @@ export class CacheOperations {
     } catch {
       // Ignore cache write errors
     }
+    }); // end _w
   }
 
   /**
@@ -121,8 +131,10 @@ export class CacheOperations {
   async setEmbeddingsInCache(
     entries: Array<{ contentHash: string; model: string; embedding: Float32Array; textPreview?: string }>,
   ): Promise<void> {
+    if (entries.length === 0) return;
+    return this._w(async () => {
     const client = this.getClient();
-    if (!client || entries.length === 0) return;
+    if (!client) return;
 
     const now = Date.now();
     try {
@@ -144,9 +156,11 @@ export class CacheOperations {
     } catch {
       // Ignore cache write errors
     }
+    }); // end _w
   }
 
   async clearEmbeddingCache(): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) return;
     try {
@@ -154,5 +168,6 @@ export class CacheOperations {
     } catch {
       // Table may not exist yet
     }
+    }); // end _w
   }
 }

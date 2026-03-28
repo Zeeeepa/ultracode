@@ -8,7 +8,12 @@
 import { existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { log } from "../logging/index.js";
-import { getCurrentGitBranchOrDefault, getGlobalDbPaths } from "../shared/storage-paths.js";
+import {
+  getCurrentGitBranchOrDefault,
+  getGlobalDbPaths,
+  getPerProjectMultiDbPaths,
+  hashProjectPath,
+} from "../shared/storage-paths.js";
 import {
   DatabaseCorruptionError,
   GraphAdapter,
@@ -33,6 +38,9 @@ let graphStorage: GraphStorageLibSQL | null = null;
 let libsqlAdapter: LibSQLGraphAdapter | null = null;
 let multiDbManager: MultiDbManager | null = null;
 let initializationPromise: Promise<GraphStorageLibSQL> | null = null;
+
+/** Current project hash the DBs are opened for (per-project layout) */
+let currentDbProjectHash: string | null = null;
 
 // Configuration from yaml-config
 // NOTE: These are defaults, may be overridden by configureGraphStorage()
@@ -59,10 +67,28 @@ export function configureGraphStorage(config: LibSQLGraphConfig): void {
 }
 
 /**
- * Get the unified GraphStorage instance using LibSQL
- * Uses mutex pattern to prevent race conditions during initialization
+ * Get the GraphStorage instance using LibSQL.
+ * Per-project layout: each project gets its own 4 DBs in projects/{hash}/.
+ * Uses mutex pattern to prevent race conditions during initialization.
+ *
+ * @param projectPath - Optional. If provided, opens DBs for this project.
+ *   If different from current, re-initializes with new project's DBs.
  */
-export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
+export async function getGraphStorage(projectPath?: string): Promise<GraphStorageLibSQL> {
+  // Check if we need to switch to a different project's DBs
+  if (projectPath && graphStorage && libsqlAdapter?.isReady()) {
+    const requestedHash = hashProjectPath(projectPath);
+    if (currentDbProjectHash && currentDbProjectHash !== requestedHash) {
+      // Different project — reinitialize with new per-project DBs
+      log.i("STORAGEFACT", "project_switch", {
+        from: currentDbProjectHash.slice(0, 8),
+        to: requestedHash.slice(0, 8),
+      });
+      await resetGraphStorage();
+      // Fall through to initialization below
+    }
+  }
+
   // Fast path: return existing singleton
   if (graphStorage && libsqlAdapter?.isReady()) {
     return graphStorage;
@@ -76,11 +102,27 @@ export async function getGraphStorage(): Promise<GraphStorageLibSQL> {
   // Start initialization (only one will run)
   initializationPromise = (async () => {
     try {
-      log.i("STORAGEFACT", "creating_singleton");
+      log.i("STORAGEFACT", "creating_singleton", {
+        projectPath: projectPath ?? "NONE",
+        type: typeof projectPath,
+      });
 
-      // Get global database path
-      const paths = getGlobalDbPaths();
-      const basePath = dirname(paths.graphDbPath);
+      // Determine base path: per-project if projectPath known, else global fallback
+      let basePath: string;
+      if (projectPath) {
+        const projectHash = hashProjectPath(projectPath);
+        const perProject = getPerProjectMultiDbPaths(projectHash);
+        basePath = perProject.baseDir;
+        currentDbProjectHash = projectHash;
+        log.i("STORAGEFACT", "per_project_layout", {
+          hash: projectHash.slice(0, 8),
+          dir: basePath,
+        });
+      } else {
+        const paths = getGlobalDbPaths();
+        basePath = dirname(paths.graphDbPath);
+        currentDbProjectHash = null;
+      }
 
       // Ensure directory exists
       if (!existsSync(basePath)) {
@@ -194,6 +236,7 @@ export async function resetGraphStorage(): Promise<void> {
   }
   graphStorage = null;
   initializationPromise = null;
+  currentDbProjectHash = null;
   log.i("STORAGEFACT", "storage_reset");
 }
 
@@ -201,9 +244,26 @@ export async function resetGraphStorage(): Promise<void> {
  * Set project context on the global GraphStorage singleton.
  * @deprecated Use runWithRequestContext() for tool calls. Only needed for initial startup.
  * If branchName is null/undefined, detects from git or uses "main" fallback.
+ *
+ * In per-project layout: if the project hash changed, triggers DB re-initialization
+ * on next getGraphStorage() call.
  */
 export function setGlobalProjectContext(projectPath: string, branchName?: string | null): void {
   if (graphStorage) {
+    // Check if project changed (per-project layout: may need DB switch)
+    const newHash = hashProjectPath(projectPath);
+    if (currentDbProjectHash && currentDbProjectHash !== newHash) {
+      log.i("STORAGEFACT", "project_changed_will_reinit", {
+        from: currentDbProjectHash.slice(0, 8),
+        to: newHash.slice(0, 8),
+      });
+      // Reset — next getGraphStorage(projectPath) will re-initialize
+      resetGraphStorage().catch((err) =>
+        log.w("STORAGEFACT", "reset_fail", { err: (err as Error).message }),
+      );
+      return;
+    }
+
     // Resolve branch: use provided, detect from git, or fallback to "main"
     const resolvedBranch = branchName ?? getCurrentGitBranchOrDefault(projectPath);
     graphStorage.setProject(projectPath, resolvedBranch);

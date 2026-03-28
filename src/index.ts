@@ -160,7 +160,6 @@ import { getCurrentGitBranchOrDefault, getProjectHash, initializeStorageDirs } f
 import {
   configureGraphStorage,
   getGraphStorage,
-  initializeGraphStorage,
   resetGraphStorage,
 } from "./storage/graph-storage-factory.js";
 import { createProjectContext } from "./storage/graph-storage-libsql.js";
@@ -371,7 +370,7 @@ const vectorDimensions = getVectorDimensions();
 configureGraphStorage({ dimensions: vectorDimensions });
 
 _startTimer("initializeGraphStorage");
-await initializeGraphStorage();
+await getGraphStorage(directory); // per-project layout: pass directory for projects/{hash}/ DBs
 _endTimer("initializeGraphStorage");
 
 // Early GPU worker startup (non-blocking) - starts Named Pipe connection in background
@@ -405,8 +404,8 @@ if (slnPath && isRoslynAvailable()) {
     });
 }
 
-// v3: Set initial project context for GraphStorage
-const initialStorage = await getGraphStorage();
+// v3: Set initial project context for GraphStorage (per-project DB layout)
+const initialStorage = await getGraphStorage(directory);
 const initialBranch = getCurrentGitBranchOrDefault(directory);
 initialStorage.setProject(directory, initialBranch);
 log.i("STORAGE", "project_set", { proj: getProjectHash(directory), branch: initialBranch });
@@ -958,7 +957,8 @@ async function executeToolCall(
       getGraphStorage: async () => {
         // Context is already set via runWithRequestContext() (line 974).
         // ALS context takes priority in graph-adapter.ts getContext().
-        return await getGraphStorage();
+        // Pass projectPath for per-project DB layout (Phase 5.2).
+        return await getGraphStorage(projectPath);
       },
       getSQLiteManager: () => null, // Legacy - now using libsql via getGraphStorage()
       getSemanticAgent: getSemanticAgent as () => Promise<any>,
@@ -1584,8 +1584,8 @@ async function main() {
             // Wrap background auto-index in request context (no tool-level ALS here)
             const bgCtx = createProjectContext(clientProjectPath);
             await runWithRequestContext(bgCtx, async () => {
-              // Check if this project is already indexed
-              const graphStorage = await getGraphStorage();
+              // Check if this project is already indexed (per-project DB layout)
+              const graphStorage = await getGraphStorage(clientProjectPath);
               const projectHash = getProjectHash(clientProjectPath);
               const stats = await graphStorage.getStatistics();
               const entityCount = stats.totalEntities ?? 0;
@@ -1690,7 +1690,7 @@ async function main() {
         try {
           // Check if we already have entities for THIS directory (not global count)
           // v4: Use libsql unified storage instead of better-sqlite3
-          const graphStorage = await getGraphStorage();
+          const graphStorage = await getGraphStorage(directory);
           const projectHash = getProjectHash(directory);
           log.t("INDEXER", "check_index", { dir: directory, hash: projectHash, branch: bgCtx.branchName });
           const stats = await graphStorage.getStatistics();

@@ -104,8 +104,14 @@ export class VersioningOps {
   // GRAPH COMMITS
   // ===========================================================================
 
+  /** Route versioning write through per-DB mutex if available */
+  private _wv<T>(fn: () => Promise<T>): Promise<T> {
+    return this.dbManager ? this.dbManager.writeVersioning(fn) : fn();
+  }
+
   /**
    * Create a new commit from current graph state.
+   * Writes to versioning.db (prolly_nodes + graph_commits) — serialized via mutex.
    */
   async createGraphCommit(
     getAllEntities: () => Promise<Entity[]>,
@@ -117,17 +123,19 @@ export class VersioningOps {
       return null;
     }
 
+    // Read entities/relationships OUTSIDE mutex (they read from graph.db, not versioning.db)
     const entities = await getAllEntities();
     const relationships = await getAllRelationships();
 
+    return this._wv(async () => {
     const entries = entities.map((e) => ({
       key: e.id,
       value: serializeEntity(e),
     }));
 
-    const rootHash = await this.prollyTree.build(entries);
+    const rootHash = await this.prollyTree!.build(entries);
 
-    const commit = await this.commitManager.commit(
+    const commit = await this.commitManager!.commit(
       rootHash,
       null,
       { entityCount: entities.length, relationshipCount: relationships.length },
@@ -141,6 +149,7 @@ export class VersioningOps {
     });
 
     return commit.commitHash;
+    }); // end _wv
   }
 
   /**
@@ -162,11 +171,12 @@ export class VersioningOps {
     }
     this.lastGcRunAt = now;
 
-    const pruned = await this.commitManager.pruneHistory(keepCommits);
+    return this._wv(async () => {
+    const pruned = await this.commitManager!.pruneHistory(keepCommits);
     if (pruned === 0) return { pruned: 0, gcDeleted: 0 };
 
-    const roots = await this.commitManager.getAllActiveRootHashes();
-    const gcDeleted = await this.prollyNodeStore.collectGarbage([...roots]);
+    const roots = await this.commitManager!.getAllActiveRootHashes();
+    const gcDeleted = await this.prollyNodeStore!.collectGarbage([...roots]);
 
     if (gcDeleted > 1000 && client) {
       await client.execute("VACUUM");
@@ -175,6 +185,7 @@ export class VersioningOps {
 
     log.i("LIBSQLADAPT", "prune_gc_complete", { pruned, gcDeleted });
     return { pruned, gcDeleted };
+    }); // end _wv
   }
 
   // ===========================================================================
@@ -221,6 +232,7 @@ export class VersioningOps {
 
     await client.batch(
       [
+        // Staging tables must match main table columns exactly (for SELECT * in commitStaging)
         `CREATE TABLE IF NOT EXISTS _staging_entities (
         id TEXT NOT NULL, project_hash TEXT NOT NULL, branch_name TEXT NOT NULL,
         name TEXT NOT NULL, type TEXT NOT NULL, file_path TEXT NOT NULL,
@@ -228,20 +240,25 @@ export class VersioningOps {
         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
         complexity_score INTEGER DEFAULT 1, language TEXT,
         size_bytes INTEGER DEFAULT 0, embedding_base64 TEXT,
-        embedding_text TEXT, file_gen INTEGER NOT NULL DEFAULT 1
+        embedding_text TEXT, file_gen INTEGER NOT NULL DEFAULT 1,
+        is_async INTEGER DEFAULT 0, is_exported INTEGER DEFAULT 0,
+        is_test INTEGER DEFAULT 0, has_docs INTEGER DEFAULT 0
       )`,
         `CREATE TABLE IF NOT EXISTS _staging_relationships (
         id TEXT NOT NULL, project_hash TEXT NOT NULL, branch_name TEXT NOT NULL,
         from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL,
-        metadata BLOB, weight REAL DEFAULT 1.0, created_at INTEGER NOT NULL
+        metadata BLOB, weight REAL DEFAULT 1.0, created_at INTEGER NOT NULL,
+        file_path TEXT DEFAULT '', updated_at INTEGER DEFAULT 0
       )`,
         `CREATE TABLE IF NOT EXISTS _staging_name_tokens (
         token TEXT NOT NULL, entity_id TEXT NOT NULL,
-        project_hash TEXT NOT NULL, branch_name TEXT NOT NULL
+        project_hash TEXT NOT NULL, branch_name TEXT NOT NULL,
+        source TEXT DEFAULT 'name'
       )`,
         `CREATE TABLE IF NOT EXISTS _staging_files (
         path TEXT NOT NULL, project_hash TEXT NOT NULL, branch_name TEXT NOT NULL,
-        hash TEXT, last_indexed INTEGER NOT NULL, entity_count INTEGER DEFAULT 0
+        hash TEXT, last_indexed INTEGER NOT NULL, entity_count INTEGER DEFAULT 0,
+        size INTEGER DEFAULT 0, language TEXT DEFAULT ''
       )`,
         // Clear any leftover data from previous crash
         `DELETE FROM _staging_entities`,
@@ -285,10 +302,27 @@ export class VersioningOps {
     // 2. Bulk move with deduplication
     await client.batch(
       [
-        `INSERT OR REPLACE INTO entities SELECT * FROM _staging_entities`,
-        `INSERT OR REPLACE INTO relationships SELECT * FROM _staging_relationships`,
-        `INSERT OR IGNORE INTO name_tokens SELECT * FROM _staging_name_tokens`,
-        `INSERT OR REPLACE INTO files SELECT * FROM _staging_files`,
+        // Explicit column lists — safe even if ALTER TABLE added columns in different order
+        `INSERT OR REPLACE INTO entities (id, project_hash, branch_name, name, type, file_path,
+          location, metadata, hash, created_at, updated_at, complexity_score, language,
+          size_bytes, embedding_base64, embedding_text, file_gen,
+          is_async, is_exported, is_test, has_docs)
+         SELECT id, project_hash, branch_name, name, type, file_path,
+          location, metadata, hash, created_at, updated_at, complexity_score, language,
+          size_bytes, embedding_base64, embedding_text, file_gen,
+          is_async, is_exported, is_test, has_docs
+         FROM _staging_entities`,
+        `INSERT OR REPLACE INTO relationships (id, project_hash, branch_name, from_id, to_id, type,
+          metadata, weight, created_at, file_path, updated_at)
+         SELECT id, project_hash, branch_name, from_id, to_id, type,
+          metadata, weight, created_at, file_path, updated_at
+         FROM _staging_relationships`,
+        `INSERT OR IGNORE INTO name_tokens (token, entity_id, project_hash, branch_name, source)
+         SELECT token, entity_id, project_hash, branch_name, source
+         FROM _staging_name_tokens`,
+        `INSERT OR REPLACE INTO files (path, project_hash, branch_name, hash, last_indexed, entity_count, size, language)
+         SELECT path, project_hash, branch_name, hash, last_indexed, entity_count, size, language
+         FROM _staging_files`,
       ],
       "write",
     );

@@ -7,7 +7,7 @@
 
 import { log } from "../../logging/index.js";
 import type { FileInfo } from "../../types/storage.js";
-import type { ClientGetter, ContextGetter } from "./types.js";
+import type { ClientGetter, ContextGetter, WriteMutexFn } from "./types.js";
 
 // =============================================================================
 // METADATA OPERATIONS CLASS
@@ -19,7 +19,13 @@ export class MetadataOperations {
     private getContext: ContextGetter,
     private getCacheClient?: ClientGetter,
     private getStagingMode: () => boolean = () => false,
+    private writeMutex?: WriteMutexFn,
   ) {}
+
+  /** Route write through per-DB mutex if available */
+  private _w<T>(fn: () => Promise<T>): Promise<T> {
+    return this.writeMutex ? this.writeMutex(fn) : fn();
+  }
 
   // ===========================================================================
   // FILE OPERATIONS
@@ -29,6 +35,7 @@ export class MetadataOperations {
    * Update or insert file info
    */
   async updateFileInfo(info: FileInfo): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -41,6 +48,7 @@ export class MetadataOperations {
       `,
       args: [info.path, projectHash, branchName, info.hash, info.lastIndexed, info.entityCount],
     });
+    }); // end _w
   }
 
   /**
@@ -48,6 +56,7 @@ export class MetadataOperations {
    */
   async batchUpdateFileInfo(infos: FileInfo[]): Promise<void> {
     if (infos.length === 0) return;
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -66,6 +75,7 @@ export class MetadataOperations {
     }));
 
     await client.batch(statements, "write");
+    }); // end _w
   }
 
   /**
@@ -149,6 +159,7 @@ export class MetadataOperations {
    * Delete file info by path
    */
   async deleteFileInfo(path: string): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -164,6 +175,7 @@ export class MetadataOperations {
       `,
       args: [projectHash, branchName, forwardPath, backPath],
     });
+    }); // end _w
   }
 
   // ===========================================================================
@@ -174,6 +186,7 @@ export class MetadataOperations {
    * Update project metadata after indexing
    */
   async updateProjectMetadata(projectPath: string, isFullIndex = false): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -230,6 +243,7 @@ export class MetadataOperations {
         traceUsageCount,
       ],
     });
+    }); // end _w
   }
 
   /**
@@ -267,6 +281,7 @@ export class MetadataOperations {
    * Record incremental file changes (called after each incremental update)
    */
   async recordIncrementalChanges(changedFileCount: number): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -279,12 +294,14 @@ export class MetadataOperations {
             WHERE project_hash = ? AND branch_name = ?`,
       args: [changedFileCount, Date.now(), projectHash, branchName],
     });
+    }); // end _w
   }
 
   /**
    * Reset incremental tracking (called after full index)
    */
   async resetIncrementalTracking(): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -299,6 +316,7 @@ export class MetadataOperations {
             WHERE project_hash = ? AND branch_name = ?`,
       args: [now, now, projectHash, branchName],
     });
+    }); // end _w
   }
 
   // ===========================================================================
@@ -334,6 +352,7 @@ export class MetadataOperations {
    * Called on each trace_flow / trace_backwards invocation.
    */
   async incrementTraceUsageCount(): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) return;
 
@@ -351,6 +370,7 @@ export class MetadataOperations {
     } catch {
       // Column may not exist yet (pre-migration) — non-critical
     }
+    }); // end _w
   }
 
   /**
@@ -498,6 +518,7 @@ export class MetadataOperations {
    * to avoid SQLite B-tree fragmentation that causes 56x slower INSERTs.
    */
   async clear(): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -583,12 +604,14 @@ export class MetadataOperations {
       log.w("METADATAOPS", "vacuum_fail", { err: (error as Error).message });
       log.i("METADATAOPS", "data_cleared", { ctx: `${projectHash}/${branchName}`, mode: "delete" });
     }
+    }); // end _w
   }
 
   /**
    * Clear ALL data in the database
    */
   async clearAll(): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -637,5 +660,6 @@ export class MetadataOperations {
     }
 
     log.i("METADATAOPS", "all_data_cleared");
+    }); // end _w
   }
 }

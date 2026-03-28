@@ -7,54 +7,69 @@
 import type { ModuleInfo } from "../generator/doc-generator.js";
 import type { LLMProvider } from "./llm-provider.js";
 
+/**
+ * Language name mapping — synced with Zig's batch_generator.zig (16 languages).
+ */
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: "English", ru: "Russian", de: "German", fr: "French",
+  es: "Spanish", pt: "Portuguese", zh: "Chinese", ja: "Japanese",
+  ko: "Korean", it: "Italian", nl: "Dutch", pl: "Polish",
+  uk: "Ukrainian", tr: "Turkish", ar: "Arabic", hi: "Hindi",
+};
+
+function getLanguageName(code?: string): string {
+  return LANGUAGE_NAMES[code ?? "en"] ?? "English";
+}
+
+/**
+ * System prompt for FULL documentation generation.
+ * Synced with Zig's batch_generator.buildSystemPromptFull().
+ */
 function getSystemPrompt(language?: string): string {
-  if (language === "ru") {
-    return `Ты технический писатель документации для TypeScript/JavaScript проектов.
-Пиши понятную, практичную документацию в формате Markdown.
-ОБЯЗАТЕЛЬНО пиши ВСЁ на РУССКОМ языке.
-
-Правила:
-- Определяй назначение по именам файлов (например, "logger.ts" → логирование, "cache-manager.ts" → кэширование)
-- Будь конкретным в описании каждого файла
-- Описания должны быть краткими (1-2 предложения на файл)
-- Используй форматирование кода для имён файлов и экспортов
-
-КРИТИЧЕСКИ ВАЖНО:
-- Выводи ТОЛЬКО markdown-документацию, БЕЗ вступлений и заключений
-- НЕ пиши фразы типа "Документация готова", "Вот документация", "Для применения..." и т.п.
-- Начинай сразу с заголовка "# ..." и заканчивай последним разделом документации`;
-  }
-
-  if (language === "zh") {
-    return `You are a technical documentation writer for TypeScript/JavaScript projects.
+  const langName = getLanguageName(language);
+  return `You are a technical documentation writer for software projects.
 Write clear, practical documentation in Markdown format.
-IMPORTANT: Write ALL documentation in CHINESE.
+Write in ${langName} only.
 
 Rules:
-- Infer purpose from file names (e.g., "logger.ts" → logging, "cache-manager.ts" → caching)
-- Be specific about what each file likely does based on its name
-- Keep descriptions concise (1-2 sentences per file)
-- Use code formatting for file names and exports
+- Infer purpose from names, types, and signatures
+- 1 sentence per entity (function, class, type)
+- Preserve ALL file:line references (e.g., \`filename.ts:123-456\`)
+- Group: public API first, then internals, then types
+- Add "## Overview" section (2-4 sentences summarizing the module)
+- Add "## Flow" section with ASCII diagram for pipelines, handlers, transformers, parsers
+- Detect design patterns (factory, builder, observer, pipeline, strategy) and mention them
+- Name key dependencies
 
 CRITICAL:
-- Output ONLY the markdown documentation, NO preamble or closing remarks
-- Do NOT write phrases like "Here is the documentation", "Documentation ready", etc.
-- Start directly with the "# ..." heading and end with the last section`;
-  }
+- Output ONLY markdown, NO preamble or closing remarks
+- NO conversational text, questions, or meta-commentary
+- NO raw code samples (only inline \`code\` references)
+- Start directly with "# ..." heading`;
+}
 
-  return `You are a technical documentation writer for TypeScript/JavaScript projects.
-Write clear, practical documentation in Markdown format.
+/**
+ * System prompt for INCREMENTAL documentation update.
+ * Synced with Zig's batch_generator.buildSystemPromptIncremental().
+ */
+export function getIncrementalSystemPrompt(language?: string): string {
+  const langName = getLanguageName(language);
+  return `You are updating existing documentation with new entities.
+Write in ${langName} only.
 
 Rules:
-- Infer purpose from file names (e.g., "logger.ts" → logging, "cache-manager.ts" → caching)
-- Be specific about what each file likely does based on its name
-- Keep descriptions concise (1-2 sentences per file)
-- Use code formatting for file names and exports
+- Keep Overview and Flow sections UNCHANGED
+- Keep existing entity descriptions UNCHANGED
+- ONLY add 1-sentence descriptions for NEW entities
+- Insert new entries into the correct type-group section
+- Preserve file:line references exactly as provided
+- Output the COMPLETE updated markdown (existing + new merged)
+
+If the entity listing is unchanged, output existing doc AS IS.
 
 CRITICAL:
-- Output ONLY the markdown documentation, NO preamble or closing remarks
-- Do NOT write phrases like "Here is the documentation", "Documentation ready", etc.
-- Start directly with the "# ..." heading and end with the last section`;
+- Output ONLY markdown, NO preamble or closing remarks
+- Start directly with "# ..." heading`;
 }
 
 /**
@@ -76,6 +91,49 @@ export async function generateModuleDoc(
   });
 
   return formatResponse(module.name, response.text);
+}
+
+/**
+ * Generate incremental documentation update — only adds new entities.
+ * Synced with Zig's enrichSingleDoc(.incremental) mode.
+ *
+ * @param existingDoc - Current AUTODOC content
+ * @param newEntities - Description of new entities to add
+ * @returns Updated documentation with new entities merged in
+ */
+export async function generateIncrementalDoc(
+  llm: LLMProvider,
+  existingDoc: string,
+  newEntities: string,
+  options?: { language?: string },
+): Promise<string> {
+  const prompt = `Update this documentation by adding ONLY the new entities listed below.
+Do NOT modify existing content.
+
+## Existing Documentation
+${existingDoc}
+
+## New Entities to Add
+${newEntities}
+
+## Updated Documentation (complete, with new entities merged):`;
+
+  const systemPrompt = getIncrementalSystemPrompt(options?.language);
+
+  const response = await llm.generate(prompt, {
+    systemPrompt,
+    maxTokens: 16000,
+    temperature: 0.3,
+  });
+
+  const result = response.text.trim();
+
+  // Truncation detection: reject if output is <70% of input length (Zig compat)
+  if (result.length < existingDoc.length * 0.7 && existingDoc.length > 200) {
+    return existingDoc; // Likely truncated — keep original
+  }
+
+  return formatResponse("", result);
 }
 
 /**

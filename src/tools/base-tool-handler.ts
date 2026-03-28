@@ -31,6 +31,22 @@ export interface ToolResult {
   }>;
 }
 
+/**
+ * Output format for tool responses (synced with Zig's registry.OutputFormat).
+ * - "text": human-readable plain text (DEFAULT — best for LLM consumption)
+ * - "json": structured JSON (for programmatic use)
+ * - "markdown": rich formatting with tables, headers, code blocks
+ */
+export type OutputFormat = "text" | "json" | "markdown";
+
+/** Parse _format parameter from tool args */
+export function parseOutputFormat(args: Record<string, unknown>): OutputFormat {
+  const fmt = args["_format"] ?? args["format"];
+  if (fmt === "json") return "json";
+  if (fmt === "markdown" || fmt === "md") return "markdown";
+  return "text"; // default
+}
+
 export interface ToolContext {
   requestId: string;
   config: unknown;
@@ -291,6 +307,29 @@ export abstract class BaseToolHandler<TArgs = unknown> {
   }
 
   /**
+   * Normalize parameter names: accept both snake_case and camelCase.
+   * Zig sends snake_case, TS expects camelCase — this bridge ensures MCP compatibility.
+   * Converts: entity_name→entityName, file_path→filePath, max_depth→maxDepth, etc.
+   */
+  private normalizeArgs(args: unknown): unknown {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+    const normalized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+      // Convert snake_case to camelCase
+      const camelKey = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+      // Keep both forms: if snake_case key has a camelCase equivalent, set camelCase
+      // but also preserve the original snake_case key for schemas that expect it
+      if (camelKey !== key) {
+        normalized[camelKey] = value; // camelCase version
+        normalized[key] = value;     // original snake_case preserved for Zig-compat schemas
+      } else {
+        normalized[key] = value;
+      }
+    }
+    return normalized;
+  }
+
+  /**
    * Main entry point for tool execution
    */
   async handle(args: unknown): Promise<ToolResult> {
@@ -298,7 +337,7 @@ export abstract class BaseToolHandler<TArgs = unknown> {
     const toolName = this.constructor.name.replace("ToolHandler", "").toLowerCase();
 
     try {
-      const parsedArgs = this.parseArgs(args);
+      const parsedArgs = this.parseArgs(this.normalizeArgs(args));
       const result = await this.execute(parsedArgs);
 
       // Apply response size limits

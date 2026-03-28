@@ -687,11 +687,13 @@ export class VectorStore {
         try {
           if (!adm) {
             const { getAutoDocManager } = await import("../autodoc/storage/autodoc-manager.js");
-            const { getGlobalDbPaths } = await import("../shared/storage-paths.js");
-            const { dirname, join } = await import("node:path");
+            const { getPerProjectMultiDbPaths, hashProjectPath } = await import("../shared/storage-paths.js");
+            const { join } = await import("node:path");
 
-            const paths = getGlobalDbPaths();
-            const autodocDbPath = join(dirname(paths.graphDbPath), "autodoc.db");
+            // Per-project layout: autodoc.db next to graph.db in projects/{hash}/
+            const projPath = this.currentProjectPath || this.config.workingDirectory || "";
+            const perProject = getPerProjectMultiDbPaths(hashProjectPath(projPath));
+            const autodocDbPath = join(perProject.baseDir, "autodoc.db");
             adm = getAutoDocManager(autodocDbPath);
             this.cachedAutoDocManager = adm;
           }

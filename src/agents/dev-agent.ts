@@ -742,7 +742,12 @@ export class DevAgent extends BaseAgent implements ResourceAdjustmentCapable {
             });
           }
           // GC: keep last 20 commits per branch, clean orphaned Prolly nodes
-          adapter.pruneAndGC?.(20)?.catch?.((err: unknown) => log.w("DEVAGENT", "prune_gc_fail", { err: String(err) }));
+          // Awaited (not fire-and-forget) — mutex serializes writes to versioning.db
+          try {
+            await adapter.pruneAndGC?.(20);
+          } catch (gcErr) {
+            log.w("DEVAGENT", "prune_gc_fail", { err: String(gcErr) });
+          }
         }
       } catch (err) {
         log.w("DEVAGENT", "graph_commit_failed", { error: (err as Error).message });

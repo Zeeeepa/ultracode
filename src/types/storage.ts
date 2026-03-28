@@ -3,7 +3,7 @@
  * caching, connection pooling, and the GraphStorage contract.
  */
 
-import { CACHE_CONSTANTS, DATABASE_CONSTANTS } from "../config/constants.js";
+import { CACHE_CONSTANTS } from "../config/constants.js";
 import { log } from "../logging/index.js";
 import type { ParsedEntity } from "./parser.js";
 
@@ -13,7 +13,7 @@ export type { ParsedEntity };
 
 export const MAX_BATCH_SIZE = 1000;
 export const DEFAULT_CACHE_TTL = CACHE_CONSTANTS.CACHE_TTL_MS;
-export const MAX_CONNECTIONS = DATABASE_CONSTANTS.CONNECTION_POOL_SIZE;
+export const MAX_CONNECTIONS = 5; // Connection pool size (not in Zig — TS-specific)
 
 // -- Enumerations -----------------------------------------------------------
 

@@ -81,6 +81,17 @@ import {
   ListWorktreeAgentsSchema,
   SpawnAgentWorktreeSchema,
 } from "./schemas/worktree-schemas.js";
+import {
+  AutoDocBatchGenerateSchema,
+  BatchModifySchema,
+  BatchRenameSchema,
+  DetectArchitectureLayersSchema,
+  GenerateOnboardingSchema,
+  GetReviewContextSchema,
+  GrepIndexSchema,
+  SecurityScanSchema,
+  SetupEmbeddingSchema,
+} from "./schemas/missing-tool-schemas.js";
 import { traceToolDefinitions } from "./trace-schemas.js";
 
 /**
@@ -658,6 +669,77 @@ export function getToolsList(): ToolDefinition[] {
         "for the current repository. Shows repo identity, sibling worktrees, active sessions, " +
         "and detected submodules/subtrees.",
       inputSchema: zodToJsonSchema(GetWorktreeInfoSchema),
+    },
+
+    // ==========================================================================
+    // Zig-synced tools (ported from ultracode.zig)
+    // ==========================================================================
+    {
+      name: "grep_index",
+      description:
+        "[SEARCH] Fast trigram-accelerated text/regex search across project files. " +
+        "Uses pre-built trigram index for O(1) candidate filtering before verification. " +
+        "Much faster than ripgrep for large codebases with indexed trigrams.",
+      inputSchema: zodToJsonSchema(GrepIndexSchema),
+    },
+    {
+      name: "batch_modify",
+      description:
+        "[MODIFY] Mass-modify entities matching conditions. Actions: rename, replace, remove, wrap. " +
+        "Filter by entity_type, name_matches, file_pattern, is_exported, is_async, min_complexity. " +
+        "Use 'semantic' for natural language queries (e.g. 'god classes', 'async handlers without error handling'). " +
+        "Preview by default — set apply=true to execute.",
+      inputSchema: zodToJsonSchema(BatchModifySchema),
+    },
+    {
+      name: "batch_rename",
+      description:
+        "[MODIFY] Rename multiple symbols matching a pattern. Simpler interface than batch_modify. " +
+        "Preview by default — set apply=true to execute.",
+      inputSchema: zodToJsonSchema(BatchRenameSchema),
+    },
+    {
+      name: "security_scan",
+      description:
+        "[ANALYSIS] Run security vulnerability scanners on the codebase. Detects: SQL injection, XSS, " +
+        "command injection, dangerous functions, hardcoded secrets, insecure crypto, god classes.",
+      inputSchema: zodToJsonSchema(SecurityScanSchema),
+    },
+    {
+      name: "get_review_context",
+      description:
+        "[ANALYSIS] Get minimal review context for a set of changed files (PR review). " +
+        "Returns affected entities, dependency depth, token estimates, and files to review vs skip.",
+      inputSchema: zodToJsonSchema(GetReviewContextSchema),
+    },
+    {
+      name: "detect_architecture_layers",
+      description:
+        "[ANALYSIS] Detect architecture layers in the project. Classifies files into: " +
+        "API, Service, Data, UI, Middleware, Config, Test, Utility. Shows cross-layer dependencies.",
+      inputSchema: zodToJsonSchema(DetectArchitectureLayersSchema),
+    },
+    {
+      name: "generate_onboarding",
+      description:
+        "[INFO] Generate a project-specific onboarding tour for new developers. " +
+        "Finds entry points, detects architecture, scores entities by importance, " +
+        "creates step-by-step guided tour.",
+      inputSchema: zodToJsonSchema(GenerateOnboardingSchema),
+    },
+    {
+      name: "autodoc_batch_generate",
+      description:
+        "[AUTODOC] Generate module-level AUTODOC.md documentation for changed directories. " +
+        "Use enrich=true to rewrite with LLM. Use target for a specific directory.",
+      inputSchema: zodToJsonSchema(AutoDocBatchGenerateSchema),
+    },
+    {
+      name: "setup_embedding",
+      description:
+        "[CONFIG] Configure embedding inference. Detects available devices (CUDA GPU, Vulkan, " +
+        "Intel NPU/iGPU, CPU), selects optimal model, configures inference workers.",
+      inputSchema: zodToJsonSchema(SetupEmbeddingSchema),
     },
   ];
 }

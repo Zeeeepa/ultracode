@@ -20,7 +20,9 @@ import { getRepoIdentity } from "./git-worktree.js";
 // =============================================================================
 
 /**
- * Get the base data directory for UltraCode
+ * Get the base data directory for UltraCode.
+ * Uses lowercase "ultracode" (synced with Zig version).
+ * Legacy: if old "UltraCode" dir exists but new "ultracode" doesn't, uses old dir.
  */
 export function getDataDir(): string {
   let baseDir: string;
@@ -37,7 +39,21 @@ export function getDataDir(): string {
       baseDir = process.env["XDG_DATA_HOME"] || join(homedir(), ".local", "share");
   }
 
-  return join(baseDir, "UltraCode");
+  // Windows is case-insensitive: "ultracode" and "UltraCode" are the same dir.
+  // Use "ultracode" on Linux/macOS (Zig compat), "UltraCode" on Windows (legacy compat).
+  if (process.platform === "win32") {
+    return join(baseDir, "UltraCode");
+  }
+
+  const newDir = join(baseDir, "ultracode");
+  const legacyDir = join(baseDir, "UltraCode");
+
+  // Unix: prefer lowercase; fall back to legacy if it exists and new doesn't
+  if (!existsSync(newDir) && existsSync(legacyDir)) {
+    return legacyDir;
+  }
+
+  return newDir;
 }
 
 /**
@@ -231,6 +247,25 @@ export function getMultiDbPaths(basePath?: string) {
     semantic: join(dir, "semantic.db"),
     versioning: join(dir, "versioning.db"),
     cache: join(dir, "cache.db"),
+  };
+}
+
+/**
+ * Get per-project DB paths (Zig-compatible layout).
+ * Each project gets its own directory: projects/{hash}/graph.db, etc.
+ * This isolates project data and enables clean deletion.
+ *
+ * @param projectHash - xxHash of the project path
+ * @returns Base directory + 4 DB paths
+ */
+export function getPerProjectMultiDbPaths(projectHash: string) {
+  const baseDir = join(getDataDir(), "projects", projectHash);
+  return {
+    baseDir,
+    graph: join(baseDir, "graph.db"),
+    semantic: join(baseDir, "semantic.db"),
+    versioning: join(baseDir, "versioning.db"),
+    cache: join(baseDir, "cache.db"),
   };
 }
 

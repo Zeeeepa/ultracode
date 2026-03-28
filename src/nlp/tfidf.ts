@@ -1,14 +1,15 @@
 /**
- * TF-IDF Extractor for Pseudo-Relevance Feedback (PRF)
+ * TF-IDF / BM25 Extractor for Pseudo-Relevance Feedback (PRF)
  *
- * Extracts top terms from a set of documents using TF-IDF scoring.
- * Used in query expansion to identify relevant terms from initial search results.
+ * Extracts top terms from a set of documents using BM25 scoring
+ * (upgraded from basic TF-IDF). BM25 adds document length normalization
+ * and term frequency saturation for better ranking quality.
  *
- * TF-IDF = Term Frequency × Inverse Document Frequency
- * - TF: How often a term appears in a document
- * - IDF: log(N / df) where N = total docs, df = docs containing term
+ * BM25 IDF: ln((N - df + 0.5) / (df + 0.5) + 1)
+ * BM25 TF:  (tf * (k1+1)) / (tf + k1 * (1 - b + b * dl/avgdl))
  */
 
+import { bm25Idf, bm25Score } from "../search/bm25.js";
 import { tokenize, tokenizeUnique } from "./tokenizer.js";
 
 // =============================================================================
@@ -63,7 +64,7 @@ export class TfIdfExtractor {
     }
 
     const N = documents.length;
-    const { minLength, logNormTf, minDocFreq, maxDocFreqRatio } = this.options;
+    const { minLength, minDocFreq, maxDocFreqRatio } = this.options;
 
     // Step 1: Calculate document frequency for each term
     const docFreq = new Map<string, number>();
@@ -84,9 +85,12 @@ export class TfIdfExtractor {
       }
     }
 
-    // Step 3: Calculate TF-IDF scores
+    // Step 3: Calculate BM25 scores (upgraded from basic TF-IDF)
     const maxDocFreq = Math.floor(N * maxDocFreqRatio);
     const scores: TermScore[] = [];
+    // Average document length for BM25 normalization
+    const totalTokens = [...termFreq.values()].reduce((a, b) => a + b, 0);
+    const avgDocLen = totalTokens / Math.max(N, 1);
 
     for (const [term, tf] of termFreq) {
       // Skip excluded terms
@@ -97,14 +101,11 @@ export class TfIdfExtractor {
       // Skip terms with too low or too high document frequency
       if (df < minDocFreq || df > maxDocFreq) continue;
 
-      // Calculate TF (optionally with log normalization)
-      const normalizedTf = logNormTf ? 1 + Math.log(tf) : tf;
+      // BM25 IDF variant
+      const idf = bm25Idf(df, N);
 
-      // Calculate IDF
-      const idf = Math.log(N / df);
-
-      // TF-IDF score
-      const score = normalizedTf * idf;
+      // BM25 score with document length normalization
+      const score = bm25Score(tf, df, N, totalTokens / N, avgDocLen);
 
       scores.push({ term, score, tf, idf });
     }
@@ -178,10 +179,10 @@ export class TfIdfExtractor {
       }
     }
 
-    // Calculate IDF
+    // Calculate IDF (BM25 variant)
     const idfMap = new Map<string, number>();
     for (const [term, df] of docFreq) {
-      idfMap.set(term, Math.log(N / df));
+      idfMap.set(term, bm25Idf(df, N));
     }
 
     return idfMap;

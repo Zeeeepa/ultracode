@@ -9,7 +9,7 @@
  */
 
 import { log } from "../../logging/index.js";
-import type { ClientGetter, ContextGetter } from "./types.js";
+import type { ClientGetter, ContextGetter, WriteMutexFn } from "./types.js";
 
 // =============================================================================
 // TYPES
@@ -35,7 +35,13 @@ export class CooccurrenceOperations {
   constructor(
     private getClient: ClientGetter,
     private getContext: ContextGetter,
+    private writeMutex?: WriteMutexFn,
   ) {}
+
+  /** Route write through per-DB mutex if available */
+  private _w<T>(fn: () => Promise<T>): Promise<T> {
+    return this.writeMutex ? this.writeMutex(fn) : fn();
+  }
 
   // ===========================================================================
   // BATCH UPDATE
@@ -44,14 +50,15 @@ export class CooccurrenceOperations {
   /**
    * Batch update co-occurrence counts from extracted term pairs.
    * Uses UPSERT (INSERT OR REPLACE) for atomic updates.
+   * Entire loop is inside the mutex — prevents partial writes from interleaving.
    *
    * @param pairs - Map of "term1|term2" → count (terms must be sorted alphabetically)
    */
   async batchUpdateCooccurrence(pairs: Map<string, number>): Promise<void> {
+    if (pairs.size === 0) return;
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
-
-    if (pairs.size === 0) return;
 
     const { projectHash, branchName } = this.getContext();
     const now = Date.now();
@@ -90,20 +97,22 @@ export class CooccurrenceOperations {
         args,
       });
     }
+    }); // end _w
   }
 
   /**
    * Update term frequencies for PMI calculation.
    * Called during indexing alongside co-occurrence updates.
+   * Entire loop is inside the mutex.
    *
    * @param termCounts - Map of term → count in the document
    * @param isNewDocument - Whether this is a new document (for doc_count increment)
    */
   async updateTermFrequencies(termCounts: Map<string, number>, isNewDocument = true): Promise<void> {
+    if (termCounts.size === 0) return;
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
-
-    if (termCounts.size === 0) return;
 
     const { projectHash, branchName } = this.getContext();
     const BATCH_SIZE = 100;
@@ -134,6 +143,7 @@ export class CooccurrenceOperations {
         args,
       });
     }
+    }); // end _w
   }
 
   // ===========================================================================
@@ -254,6 +264,7 @@ export class CooccurrenceOperations {
    * then updates in batches with event loop yields to prevent CPU blocking.
    */
   async recalculatePMI(): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -337,6 +348,7 @@ export class CooccurrenceOperations {
 
     const elapsed = Date.now() - startTime;
     log.i("COOCOPS", "pmi_recalculated", { ms: elapsed, pairs: updated, terms: termFreqs.size, totalDocs });
+    }); // end _w
   }
 
   // ===========================================================================
@@ -378,6 +390,7 @@ export class CooccurrenceOperations {
    * Clear all co-occurrence data for current project/branch.
    */
   async clear(): Promise<void> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -398,6 +411,7 @@ export class CooccurrenceOperations {
     );
 
     log.i("COOCOPS", "cleared", { projectHash, branchName });
+    }); // end _w
   }
 
   /**
@@ -407,6 +421,7 @@ export class CooccurrenceOperations {
    * @param minCount - Minimum count to keep (default: 2)
    */
   async pruneRarePairs(minCount = 2): Promise<number> {
+    return this._w(async () => {
     const client = this.getClient();
     if (!client) throw new Error("Client not initialized");
 
@@ -426,5 +441,6 @@ export class CooccurrenceOperations {
     }
 
     return deleted;
+    }); // end _w
   }
 }

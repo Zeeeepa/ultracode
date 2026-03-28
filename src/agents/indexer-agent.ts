@@ -188,7 +188,7 @@ export class IndexerAgent extends BaseAgent {
   private pendingRelationships: Relationship[] = [];
   private pendingParsedEntities: Array<{ entities: ParsedEntity[]; filePath: string }> = [];
   private pendingFilesCount = 0;
-  private flushChain: Promise<void> = Promise.resolve();
+  // flushChain removed — graphMutex in *Ops classes now serializes all DB writes
 
   // Incremental entity name map — avoids O(n²) full rebuild on each file
   private entityNameMap = new Map<string, Entity[]>();
@@ -1077,10 +1077,8 @@ export class IndexerAgent extends BaseAgent {
       return { entities: 0, relationships: 0, files: 0 };
     }
 
-    // Chain this flush after all previous ones — guarantees sequential DB writes.
-    // Unlike await+assign pattern, .then() chaining has no race conditions:
-    // each caller appends to the chain, order is deterministic.
-    const flushPromise = this.flushChain.then(async () => {
+    // DB writes are serialized by graphMutex in *Ops classes — no manual chaining needed.
+    {
       const flushStart = Date.now();
       // Publish for embedding generation BEFORE DB write — TEI starts work in parallel
       // Build lookup: name+type+filePath → stableEntityId for correct embedding IDs
@@ -1207,10 +1205,7 @@ export class IndexerAgent extends BaseAgent {
         filesTracked: fileEntityCounts.size,
         ms: Date.now() - flushStart,
       });
-    });
-    this.flushChain = flushPromise;
-
-    await flushPromise;
+    }
 
     return {
       entities: entitiesToFlush.length,

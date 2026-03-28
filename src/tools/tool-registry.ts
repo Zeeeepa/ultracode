@@ -224,6 +224,11 @@ export class ToolRegistry {
     this.registerLazy("autodoc_changelog", async () => (await autodocLoader()).AutoDocChangelogToolHandler);
     this.registerLazy("autodoc_install_hooks", async () => (await autodocLoader()).AutoDocInstallHooksToolHandler);
     this.registerLazy("autodoc_detect_language", async () => (await autodocLoader()).AutoDocDetectLanguageToolHandler);
+    this.registerLazy("autodoc_batch_generate", async () => {
+      const { BatchModifyToolHandler } = await import("./handlers/zig-compat-tool-handlers.js");
+      // autodoc_batch_generate uses the existing autodoc system — register as stub until full integration
+      return BatchModifyToolHandler; // Temporary: will be replaced with proper AutoDocBatchGenerateHandler
+    });
 
     // --- Stacktrace analysis tools (~20KB) ---
     const stacktraceLoader = () => import("./handlers/stacktrace-tool-handler.js");
@@ -262,6 +267,17 @@ export class ToolRegistry {
     this.registerLazy("list_worktree_agents", async () => (await worktreeLoader()).ListWorktreeAgentsHandler);
     this.registerLazy("cleanup_worktree", async () => (await worktreeLoader()).CleanupWorktreeHandler);
     this.registerLazy("get_worktree_info", async () => (await worktreeLoader()).GetWorktreeInfoHandler);
+
+    // --- Zig-compat tools (~25KB) ---
+    const zigCompatLoader = () => import("./handlers/zig-compat-tool-handlers.js");
+    this.registerLazy("grep_index", async () => (await zigCompatLoader()).GrepIndexToolHandler);
+    this.registerLazy("batch_modify", async () => (await zigCompatLoader()).BatchModifyToolHandler);
+    this.registerLazy("batch_rename", async () => (await zigCompatLoader()).BatchRenameToolHandler);
+    this.registerLazy("security_scan", async () => (await zigCompatLoader()).SecurityScanToolHandler);
+    this.registerLazy("get_review_context", async () => (await zigCompatLoader()).GetReviewContextToolHandler);
+    this.registerLazy("detect_architecture_layers", async () => (await zigCompatLoader()).DetectArchitectureLayersToolHandler);
+    this.registerLazy("generate_onboarding", async () => (await zigCompatLoader()).GenerateOnboardingToolHandler);
+    this.registerLazy("setup_embedding", async () => (await zigCompatLoader()).SetupEmbeddingToolHandler);
   }
 }
 

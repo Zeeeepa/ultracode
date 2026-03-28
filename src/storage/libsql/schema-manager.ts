@@ -164,6 +164,59 @@ export class SchemaManager {
       ],
       "write",
     );
+
+    // ── Zig-compat columns (added via ALTER TABLE for existing DBs) ────────
+    // These are new columns from the Zig schema that don't exist in the
+    // original TS schema. ALTER TABLE ADD COLUMN is safe — SQLite fills
+    // existing rows with the DEFAULT value automatically.
+    const zigCompatColumns: Array<{ table: string; column: string; ddl: string }> = [
+      // entities: explicit boolean flags (Zig stores as INTEGER, not in CBOR metadata)
+      { table: "entities", column: "is_async", ddl: "ALTER TABLE entities ADD COLUMN is_async INTEGER DEFAULT 0" },
+      { table: "entities", column: "is_exported", ddl: "ALTER TABLE entities ADD COLUMN is_exported INTEGER DEFAULT 0" },
+      { table: "entities", column: "is_test", ddl: "ALTER TABLE entities ADD COLUMN is_test INTEGER DEFAULT 0" },
+      { table: "entities", column: "has_docs", ddl: "ALTER TABLE entities ADD COLUMN has_docs INTEGER DEFAULT 0" },
+      // relationships: file_path for provenance tracking
+      { table: "relationships", column: "file_path", ddl: "ALTER TABLE relationships ADD COLUMN file_path TEXT DEFAULT ''" },
+      { table: "relationships", column: "updated_at", ddl: "ALTER TABLE relationships ADD COLUMN updated_at INTEGER DEFAULT 0" },
+      // files: size and language for richer file metadata
+      { table: "files", column: "size", ddl: "ALTER TABLE files ADD COLUMN size INTEGER DEFAULT 0" },
+      { table: "files", column: "language", ddl: "ALTER TABLE files ADD COLUMN language TEXT DEFAULT ''" },
+      // name_tokens: source column (name, doc, etc.)
+      { table: "name_tokens", column: "source", ddl: "ALTER TABLE name_tokens ADD COLUMN source TEXT DEFAULT 'name'" },
+      // project_metadata: relationship count
+      { table: "project_metadata", column: "relationship_count", ddl: "ALTER TABLE project_metadata ADD COLUMN relationship_count INTEGER DEFAULT 0" },
+    ];
+
+    for (const { table, column, ddl } of zigCompatColumns) {
+      try {
+        await client.execute(ddl);
+      } catch (e) {
+        // "duplicate column" means it already exists — expected for subsequent runs
+        const msg = (e as Error).message || "";
+        if (!msg.includes("duplicate column")) {
+          log.w("SCHEMA", `alter_table_failed`, { table, column, err: msg });
+        }
+      }
+    }
+
+    // ── FTS5 virtual table for full-text entity search (Zig compat) ────────
+    try {
+      await client.execute(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(entity_id UNINDEXED, name, file_path)`,
+      );
+    } catch (e) {
+      // FTS5 may not be available in all SQLite builds
+      log.w("SCHEMA", "fts5_create_failed", { err: (e as Error).message });
+    }
+
+    // ── Index for relationships.file_path ──────────────────────────────────
+    try {
+      await client.execute(
+        `CREATE INDEX IF NOT EXISTS idx_relationships_file ON relationships(file_path, project_hash, branch_name)`,
+      );
+    } catch {
+      // Column may not exist on very old DBs
+    }
   }
 
   /**
@@ -193,6 +246,8 @@ export class SchemaManager {
         `CREATE INDEX IF NOT EXISTS idx_cooc_term1 ON cooccurrence(term1, project_hash, branch_name)`,
         `CREATE INDEX IF NOT EXISTS idx_cooc_pmi ON cooccurrence(pmi DESC, project_hash, branch_name)`,
         `CREATE INDEX IF NOT EXISTS idx_term_freq_project ON term_frequency(project_hash, branch_name)`,
+        // Zig-compat: meta table for key-value storage in semantic.db
+        `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
       ],
       "write",
     );
@@ -241,6 +296,22 @@ export class SchemaManager {
         entity_count INTEGER DEFAULT 0,
         memory_usage INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL
+      )`,
+        // Zig-compat: git churn cache for hotspot analysis
+        `CREATE TABLE IF NOT EXISTS git_churn_cache (
+        file_path TEXT NOT NULL,
+        project_hash TEXT NOT NULL,
+        commit_hash TEXT NOT NULL DEFAULT '',
+        churn_count INTEGER DEFAULT 0,
+        PRIMARY KEY (file_path, project_hash)
+      )`,
+        // Zig-compat: metric results cache (PageRank, betweenness, etc.)
+        `CREATE TABLE IF NOT EXISTS metric_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        metric_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        score REAL NOT NULL,
+        created_at INTEGER DEFAULT 0
       )`,
       ],
       "write",
