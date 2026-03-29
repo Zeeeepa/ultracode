@@ -47,6 +47,26 @@ export class TrigramBuilder {
     this.files.push({ path, contentHash, trigrams });
   }
 
+  /** Get current file count */
+  get fileCount(): number {
+    return this.files.length;
+  }
+
+  /**
+   * Merge another builder's postings into this one.
+   * Used for parallel build: each worker builds a local TrigramBuilder,
+   * then merge into the global builder.
+   *
+   * Ported from ultracode.zig TrigramBuilder.mergePostings.
+   * Assumes the other builder's files have been added to this builder's
+   * file list separately (with correct global file IDs).
+   */
+  mergeFrom(other: TrigramBuilder): void {
+    for (const file of other.files) {
+      this.addFile(file.path, file.contentHash, file.trigrams);
+    }
+  }
+
   /** Serialize the index to a binary buffer and write to disk */
   build(outputPath: string): void {
     // Collect all unique trigrams across files → posting lists

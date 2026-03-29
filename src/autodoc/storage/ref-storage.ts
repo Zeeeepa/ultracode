@@ -61,6 +61,15 @@ export class RefStorage {
     // Create native SQLite client
     this.client = new NativeSQLiteClient(this.dbPath);
 
+    // Same PRAGMAs as DocStorage — autodoc.db is shared between DocStorage and RefStorage.
+    // WAL + NORMAL sync for non-regeneratable data. Same file = same journal mode.
+    await this.client.execute("PRAGMA journal_mode = WAL");
+    await this.client.execute("PRAGMA synchronous = NORMAL");
+    await this.client.execute("PRAGMA cache_size = -65536");
+    await this.client.execute("PRAGMA busy_timeout = 5000");
+    await this.client.execute("PRAGMA temp_store = MEMORY");
+    await this.client.execute("PRAGMA mmap_size = 268435456");
+
     await this.createTables();
     this.initialized = true;
   }

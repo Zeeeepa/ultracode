@@ -175,27 +175,36 @@ export class MultiDbManager {
   }
 
   /**
-   * Flush a specific database by closing and reopening its client.
-   * With journal_mode=OFF, this ensures OS buffers are flushed.
+   * Flush a specific database. Does NOT close+reopen — that causes EXCLUSIVE
+   * lock lag on Windows (~20-30s) leading to "database is locked" on reconnect.
+   *
+   * - graph/semantic/cache (journal_mode=OFF, locking_mode=EXCLUSIVE):
+   *   Data is written directly to file, no journal to flush. PRAGMA optimize
+   *   is sufficient to update statistics for query planner.
+   *
+   * - versioning (journal_mode=WAL):
+   *   PRAGMA wal_checkpoint(TRUNCATE) flushes WAL to main DB file.
    */
   async flushClient(which: keyof MultiDbPaths): Promise<NativeSQLiteClient | null> {
     const client = this.clients[which];
-    const path = this.paths?.[which];
-    if (!client || !path) return null;
+    if (!client) return null;
 
-    client.close();
-
-    const newClient = new NativeSQLiteClient(path);
-    for (const pragma of PRAGMA_STATEMENTS) {
-      await newClient.execute(pragma);
+    try {
+      if (which === "versioning") {
+        // WAL mode: checkpoint flushes WAL → main DB file
+        await client.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+      }
+      // For all DBs: optimize query planner statistics
+      await client.execute("PRAGMA optimize");
+      return client;
+    } catch (err) {
+      log.e("MULTIDB", "flush_pragma_fail", { db: which, err: (err as Error).message });
+      return client; // client is still usable — PRAGMA failure is non-fatal
     }
-
-    this.clients[which] = newClient;
-    return newClient;
   }
 
   /**
-   * Flush all databases.
+   * Flush all databases (non-destructive — no close/reopen).
    */
   async flushAll(): Promise<void> {
     const keys: (keyof MultiDbPaths)[] = ["graph", "semantic", "versioning", "cache"];

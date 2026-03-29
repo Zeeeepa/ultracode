@@ -640,13 +640,9 @@ export class GraphAdapter {
 
     if (this.dbManager?.isInitialized) {
       log.d("LIBSQLADAPT", "flush_start_multidb");
+      // flushAll() no longer closes/reopens clients — just runs PRAGMA optimize
+      // and wal_checkpoint. Client references remain valid, no reassignment needed.
       await this.dbManager.flushAll();
-      this.client = this.dbManager.getGraphClient();
-
-      const versioningClient = this.dbManager.getVersioningClient();
-      if (versioningClient) {
-        this.versioningOps.updateClientsAfterFlush(versioningClient);
-      }
 
       log.i("LIBSQLADAPT", "flush_complete", { ms: Date.now() - startTime, mode: "multi-db" });
       return;

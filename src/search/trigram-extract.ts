@@ -12,6 +12,7 @@
  * without reading the actual file content.
  */
 
+import { buildCodeBitmap, isCodeByte } from "./code-classifier.js";
 import type { FileTrigramData, PackedTrigram } from "./trigram-types.js";
 import { packTrigram } from "./trigram-types.js";
 
@@ -68,6 +69,61 @@ export function extractTrigrams(content: Uint8Array): FileTrigramData {
  */
 export function extractTrigramsFromString(content: string): FileTrigramData {
   return extractTrigrams(Buffer.from(content, "utf-8"));
+}
+
+/**
+ * Extract trigrams only from "live code" bytes (not strings/comments).
+ * Uses CodeClassifier bitmap to skip trigrams that span non-code regions.
+ * Produces a higher-quality index: "function" inside a string won't pollute results.
+ *
+ * @param content - Raw file content as Uint8Array
+ * @param hashComments - true for Python/Bash (# starts line comment)
+ * @returns FileTrigramData with only code-region trigrams
+ */
+export function extractTrigramsFiltered(content: Uint8Array, hashComments: boolean): FileTrigramData {
+  if (content.length < 3) return { entries: [] };
+
+  // Build code bitmap once for the entire file
+  const bitmap = buildCodeBitmap(content, hashComments);
+
+  const map = new Map<number, { nextMask: bigint; locMask: number }>();
+
+  const last = content.length - 2;
+  for (let i = 0; i < last; i++) {
+    // All 3 bytes of the trigram must be in live code
+    if (!isCodeByte(bitmap, i) || !isCodeByte(bitmap, i + 1) || !isCodeByte(bitmap, i + 2)) {
+      continue;
+    }
+
+    const tri = packTrigram(content[i]!, content[i + 1]!, content[i + 2]!);
+
+    const hasNext = i + 3 < content.length;
+    const nextChar = hasNext ? content[i + 3]! % 64 : 0;
+    const locBit = i % 8;
+
+    const existing = map.get(tri);
+    if (existing) {
+      if (hasNext) existing.nextMask |= 1n << BigInt(nextChar);
+      existing.locMask |= 1 << locBit;
+    } else {
+      map.set(tri, {
+        nextMask: hasNext ? 1n << BigInt(nextChar) : 0n,
+        locMask: 1 << locBit,
+      });
+    }
+  }
+
+  if (map.size === 0) return { entries: [] };
+
+  const entries: PackedTrigram[] = new Array(map.size);
+  let idx = 0;
+  for (const [trigram, { nextMask, locMask }] of map) {
+    entries[idx++] = { trigram, nextMask, locMask };
+  }
+
+  entries.sort((a, b) => a.trigram - b.trigram);
+
+  return { entries };
 }
 
 /**

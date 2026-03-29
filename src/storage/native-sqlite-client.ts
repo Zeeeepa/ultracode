@@ -54,6 +54,12 @@ export class NativeSQLiteClient {
    * Compatible with libsql client.execute().
    */
   async execute(stmtOrSql: string | { sql: string; args: unknown[] }): Promise<ResultSet> {
+    if (this._closed) {
+      throw new Error(
+        `NativeSQLiteClient: database already closed (attempted: ${typeof stmtOrSql === "string" ? stmtOrSql.slice(0, 60) : stmtOrSql.sql.slice(0, 60)})`,
+      );
+    }
+
     const { sql, args } = typeof stmtOrSql === "string" ? { sql: stmtOrSql, args: [] as unknown[] } : stmtOrSql;
 
     const stmt = this.getOrPrepare(sql);
