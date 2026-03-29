@@ -96,6 +96,52 @@ export enum ChangeType {
  */
 export type DocLanguage = "en" | "ru" | "zh";
 
+/**
+ * Change kind for a directory — drives template vs LLM strategy.
+ * Ported from Zig batch_generator.zig ChangeKind enum.
+ */
+export enum ChangeKind {
+  /** No previous doc — needs full LLM enrich */
+  NEW = "new",
+  /** Entity count increased — incremental LLM */
+  ENTITIES_ADDED = "entities_added",
+  /** >10% LOC change — incremental LLM */
+  LOC_CHANGED = "loc_changed",
+  /** <10% entities removed — just delete lines, no LLM */
+  ENTITIES_REMOVED_MINOR = "entities_removed_minor",
+  /** Skip entirely */
+  UNCHANGED = "unchanged",
+}
+
+/**
+ * Parsed source_hash metadata.
+ * Format: "hash:count:loc" with optional prefixes: "enriched|", "synced|", "edited".
+ */
+export interface SourceMeta {
+  hash: string;
+  entityCount: number;
+  totalLoc: number;
+}
+
+/**
+ * Parse source_hash metadata string.
+ * Handles formats: "hash:count:loc", "enriched|hash:count:loc", "synced|hash:count:loc", "edited".
+ */
+export function parseSourceMeta(meta: string): SourceMeta {
+  if (meta === "edited") return { hash: "", entityCount: 0, totalLoc: 0 };
+
+  // Strip "enriched|" or "synced|" prefix
+  let effective = meta;
+  if (effective.startsWith("enriched|")) effective = effective.slice("enriched|".length);
+  else if (effective.startsWith("synced|")) effective = effective.slice("synced|".length);
+
+  const parts = effective.split(":");
+  const hash = parts[0] ?? meta;
+  const entityCount = parts[1] ? parseInt(parts[1], 10) || 0 : 0;
+  const totalLoc = parts[2] ? parseInt(parts[2], 10) || 0 : 0;
+  return { hash, entityCount, totalLoc };
+}
+
 // =============================================================================
 // 2. LOCATION TYPES
 // =============================================================================
@@ -153,6 +199,8 @@ export interface DocEntity {
   confidence: number;
   /** Last sync with code timestamp */
   lastSync: number;
+  /** Source hash for change detection: "hash:count:loc" with prefixes */
+  sourceHash?: string;
   /** Creation timestamp */
   createdAt: number;
   /** Last update timestamp */

@@ -4,6 +4,7 @@
  * Uses LLM to generate meaningful documentation from code.
  */
 
+import { log } from "../../logging/index.js";
 import type { ModuleInfo } from "../generator/doc-generator.js";
 import type { LLMProvider } from "./llm-provider.js";
 
@@ -39,25 +40,30 @@ function getLanguageName(code?: string): string {
  */
 function getSystemPrompt(language?: string): string {
   const langName = getLanguageName(language);
-  return `You are a technical documentation writer for software projects.
-Write clear, practical documentation in Markdown format.
-Write in ${langName} only.
+  return `You are a senior technical documentation writer for a multi-language codebase.
+Write clear, practical, developer-facing documentation in Markdown.
+ALWAYS write in ${langName} regardless of source code comments or surrounding context.
 
 Rules:
-- Infer purpose from names, types, and signatures
-- 1 sentence per entity (function, class, type)
-- Preserve ALL file:line references (e.g., \`filename.ts:123-456\`)
-- Group: public API first, then internals, then types
-- Add "## Overview" section (2-4 sentences summarizing the module)
-- Add "## Flow" section with ASCII diagram for pipelines, handlers, transformers, parsers
-- Detect design patterns (factory, builder, observer, pipeline, strategy) and mention them
-- Name key dependencies
+- Infer purpose from entity names, types, and file structure
+- Be specific: describe WHAT each entity does, not just its type
+- Keep per-entity descriptions to 1 sentence
+- Preserve ALL entity listings with exact file:start_line-end_line references — do NOT omit any
+  Format: \`filename.ext:123-456\` (start line dash end line). NEVER drop the end line number.
+- Group logically: public API first, then internals, then types
+- Add a "## Overview" section (2-4 sentences) explaining the module's role and design
+- Add a "## Flow" section with a short ASCII diagram showing data/control flow through the module:
+  Input → Processing steps → Output. Use arrows (→, ↓) and boxes. Only where applicable
+  (pipelines, request handlers, data transformers, parsers). Skip for pure utility/type modules.
+- If you see patterns (factory, builder, observer, pipeline), name them
+- If you see key dependencies between entities, mention them briefly
 
 CRITICAL:
 - Output ONLY markdown, NO preamble or closing remarks
-- NO conversational text, questions, or meta-commentary
-- NO raw code samples (only inline \`code\` references)
-- Start directly with "# ..." heading`;
+- Start directly with "# ..." heading, end with last section
+- NEVER include conversational text, questions, or meta-commentary
+- NEVER include raw code samples or code blocks with source code
+- Language: ${langName} only.`;
 }
 
 /**
@@ -66,22 +72,24 @@ CRITICAL:
  */
 export function getIncrementalSystemPrompt(language?: string): string {
   const langName = getLanguageName(language);
-  return `You are updating existing documentation with new entities.
-Write in ${langName} only.
+  return `You are updating existing module documentation with new entities.
+ALWAYS write in ${langName} regardless of source code comments or surrounding context.
 
 Rules:
-- Keep Overview and Flow sections UNCHANGED
-- Keep existing entity descriptions UNCHANGED
-- ONLY add 1-sentence descriptions for NEW entities
-- Insert new entries into the correct type-group section
-- Preserve file:line references exactly as provided
-- Output the COMPLETE updated markdown (existing + new merged)
-
-If the entity listing is unchanged, output existing doc AS IS.
+- DO NOT rewrite the Overview or Flow sections — keep them exactly as is
+- DO NOT change descriptions of existing entities — keep them word-for-word
+- ONLY add 1-sentence descriptions for the NEW entities listed below
+- Insert new entities into the correct type-group section
+- Preserve all file:start_line-end_line references exactly (e.g. \`file.ts:10-25\`)
+- If a new entity clearly relates to existing ones, you may add a brief note
 
 CRITICAL:
-- Output ONLY markdown, NO preamble or closing remarks
-- Start directly with "# ..." heading`;
+- Output the COMPLETE updated markdown (existing + new descriptions merged)
+- NO preamble, NO closing remarks, NO questions, NO meta-commentary
+- Start with "# ..." heading
+- If the entity listing is unchanged, output the existing documentation AS IS
+- NEVER include raw code samples or code blocks with source code
+- Language: ${langName} only.`;
 }
 
 /**
@@ -223,6 +231,133 @@ Architecture documentation:`;
   });
 
   return `# ${projectName} Architecture\n\n${response.text.trim()}`;
+}
+
+// ============================================================================
+// Zig-compat Enrichment (ported from batch_generator.enrichSingleDoc)
+// ============================================================================
+
+export type EnrichMode = "full" | "incremental";
+
+export interface EnrichableDoc {
+  entityId: string;
+  content: string;
+  sourceHash: string;
+  version: number;
+}
+
+export interface EnrichResult {
+  enriched: string;
+  newSourceHash: string;
+  newVersion: number;
+}
+
+/**
+ * Enrich a single document with LLM.
+ * Ported from Zig batch_generator.enrichSingleDoc.
+ *
+ * For "full" mode: rewrites the entire doc with descriptions.
+ * For "incremental" mode: only adds descriptions for "## New (pending description)" entries.
+ *
+ * Returns enriched content and updated source_hash, or null on failure/skip.
+ */
+export async function enrichSingleDoc(
+  llm: LLMProvider,
+  doc: EnrichableDoc,
+  mode: EnrichMode,
+  codeContext: string | null,
+  options?: { language?: string },
+): Promise<EnrichResult | null> {
+  if (doc.sourceHash === "edited") return null;
+
+  // For incremental: skip if no pending entries and not a synced doc
+  if (mode === "incremental") {
+    const hasPending = doc.content.includes("## New (pending description)");
+    const isSynced = doc.sourceHash.startsWith("synced|");
+    if (!hasPending && !isSynced) return null;
+  }
+
+  const prompt =
+    mode === "full"
+      ? buildFullEnrichPrompt(doc.content, codeContext)
+      : buildIncrementalEnrichPrompt(doc.content, codeContext);
+
+  const systemPrompt =
+    mode === "full" ? getSystemPrompt(options?.language) : getIncrementalSystemPrompt(options?.language);
+
+  const response = await llm.generate(prompt, {
+    systemPrompt,
+    maxTokens: 16000,
+    temperature: 0.3,
+  });
+
+  const { postProcessLlmOutput } = await import("../generator/batch-autodoc.js");
+  const enriched = postProcessLlmOutput(response.text);
+  if (!enriched) return null;
+
+  // Reject if output is significantly shorter (likely truncated)
+  if (enriched.length < doc.content.length * 0.7 && doc.content.length > 200) {
+    log.w("AUTODOC", "enrich-truncated", {
+      entity: doc.entityId,
+      llmLen: enriched.length,
+      origLen: doc.content.length,
+    });
+    return null;
+  }
+
+  const newSourceHash = `enriched|${doc.sourceHash}`;
+  return {
+    enriched,
+    newSourceHash,
+    newVersion: doc.version + 1,
+  };
+}
+
+// ============================================================================
+// Zig-compat Prompt Builders (batch autodoc enrichment)
+// ============================================================================
+
+/**
+ * Build full enrichment prompt for a new module.
+ * Synced with Zig batch_generator.buildFullPrompt.
+ */
+export function buildFullEnrichPrompt(templateContent: string, codeContext?: string | null): string {
+  return `Generate documentation for this module.
+
+## Auto-generated entity listing (preserve ALL entries with file:line refs):
+
+${templateContent}
+${codeContext ?? ""}
+## Task:
+Write a complete AUTODOC.md with:
+1. **Title** — module name as heading
+2. **Overview** — what this module does, its role, key design decisions (2-4 sentences)
+3. **Flow** — ASCII diagram of data/control flow IF this module has a pipeline, request path,
+   or data transformation. Show: Input → Step1 → Step2 → Output. Skip for utility/type modules.
+4. **Entity listing** — ALL entities from above, grouped by type, with 1-sentence descriptions added
+5. **Dependencies** — key internal/external dependencies if visible from code
+
+Generate the documentation now:`;
+}
+
+/**
+ * Build incremental enrichment prompt for updated module.
+ * Synced with Zig batch_generator.buildIncrementalPrompt.
+ */
+export function buildIncrementalEnrichPrompt(existingContent: string, codeContext?: string | null): string {
+  return `Here is the current module documentation with some NEW entities that need descriptions:
+
+${existingContent}
+
+${codeContext ?? ""}
+
+## Task:
+- Keep ALL existing sections and descriptions EXACTLY as they are
+- For entries under "## New (pending description)" — write a 1-sentence description
+  and move them into the appropriate existing section (by entity type)
+- Remove the "## New (pending description)" heading after integrating entries
+- Preserve all \`filename:start_line-end_line\` references exactly
+- Output the complete updated AUTODOC.md`;
 }
 
 // ============================================================================

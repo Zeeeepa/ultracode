@@ -225,9 +225,8 @@ export class ToolRegistry {
     this.registerLazy("autodoc_install_hooks", async () => (await autodocLoader()).AutoDocInstallHooksToolHandler);
     this.registerLazy("autodoc_detect_language", async () => (await autodocLoader()).AutoDocDetectLanguageToolHandler);
     this.registerLazy("autodoc_batch_generate", async () => {
-      const { BatchModifyToolHandler } = await import("./handlers/zig-compat-tool-handlers.js");
-      // autodoc_batch_generate uses the existing autodoc system — register as stub until full integration
-      return BatchModifyToolHandler; // Temporary: will be replaced with proper AutoDocBatchGenerateHandler
+      const { AutoDocBatchGenerateHandler } = await import("./handlers/autodoc-batch-handler.js");
+      return AutoDocBatchGenerateHandler;
     });
 
     // --- Stacktrace analysis tools (~20KB) ---
