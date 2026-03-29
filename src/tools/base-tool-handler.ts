@@ -23,6 +23,7 @@ import { getProjectContext, type ProjectContextManager } from "../shared/project
 import type { GraphStorage } from "../types/storage.js";
 import type { VersionManager } from "../versioning/version-manager.js";
 import { MAX_RESPONSE_SIZE_BYTES, truncateResponse } from "./response-limits.js";
+import { formatAsMarkdown, formatAsText } from "./text-formatter.js";
 
 export interface ToolResult {
   content: Array<{
@@ -330,18 +331,64 @@ export abstract class BaseToolHandler<TArgs = unknown> {
   }
 
   /**
+   * Convert a JSON tool result to the requested output format.
+   * Override in subclass for custom formatting.
+   *
+   * Called automatically when _format is not "json".
+   *
+   * Override priority for text mode: _text > formatted > auto-format
+   * Override priority for markdown mode: _markdown > auto-format
+   *
+   * Synced with Zig's server.zig dispatch logic.
+   */
+  protected convertToOutputFormat(result: ToolResult, format: OutputFormat): ToolResult {
+    if (!result.content?.[0]?.text) return result;
+    const text = result.content[0].text;
+
+    // Already plain text (not JSON) — return as-is
+    if (!text.startsWith("{") && !text.startsWith("[")) return result;
+
+    try {
+      const data = JSON.parse(text);
+
+      if (format === "markdown") {
+        // Markdown: check _markdown override, else auto-format
+        if (data._markdown && typeof data._markdown === "string" && data._markdown.length > 0) {
+          return { content: [{ type: "text", text: data._markdown }] };
+        }
+        return { content: [{ type: "text", text: formatAsMarkdown(data) }] };
+      }
+
+      // Text mode (default): check _text (Zig convention) > formatted (TS convention) > auto
+      if (data._text && typeof data._text === "string" && data._text.length > 0) {
+        return { content: [{ type: "text", text: data._text }] };
+      }
+      if (data.formatted && typeof data.formatted === "string" && data.formatted.length > 0) {
+        return { content: [{ type: "text", text: data.formatted }] };
+      }
+      return { content: [{ type: "text", text: formatAsText(data) }] };
+    } catch {
+      return result; // Not valid JSON, return as-is
+    }
+  }
+
+  /**
    * Main entry point for tool execution
    */
   async handle(args: unknown): Promise<ToolResult> {
     const startTime = Date.now();
     const toolName = this.constructor.name.replace("ToolHandler", "").toLowerCase();
+    const format = parseOutputFormat((args ?? {}) as Record<string, unknown>);
 
     try {
       const parsedArgs = this.parseArgs(this.normalizeArgs(args));
       const result = await this.execute(parsedArgs);
 
+      // Apply text/markdown formatting if not JSON mode
+      const formattedResult = format === "json" ? result : this.convertToOutputFormat(result, format);
+
       // Apply response size limits
-      const limitedResult = this.applyResponseLimits(result);
+      const limitedResult = this.applyResponseLimits(formattedResult);
 
       const duration = Date.now() - startTime;
       const respSize = this.responseSize(limitedResult);
@@ -364,16 +411,15 @@ export abstract class BaseToolHandler<TArgs = unknown> {
         reqId: this.context.requestId,
       });
 
+      // Error response: text format by default, JSON only if requested
+      const errorMsg = (error as Error).message;
+      if (format === "json") {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ success: false, error: errorMsg }) }],
+        };
+      }
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              success: false,
-              error: (error as Error).message,
-            }),
-          },
-        ],
+        content: [{ type: "text", text: `Error: ${errorMsg}` }],
       };
     }
   }
