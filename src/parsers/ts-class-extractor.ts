@@ -9,7 +9,13 @@ import { log } from "../logging/index.js";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { extractAntipatternHints } from "./ts-antipattern-hints-extractor.js";
 import { getDecorators, getLocation, getModifiers, getParameters, getReturnType } from "./ts-ast-helpers.js";
-import { type CallInfo, extractCalls, extractTypeReferences, type TypeReference } from "./ts-call-extractor.js";
+import {
+  type CallInfo,
+  extractCalls,
+  extractFieldReferences,
+  extractTypeReferences,
+  type TypeReference,
+} from "./ts-call-extractor.js";
 import { extractComplexity } from "./ts-complexity-analyzer.js";
 import { extractControlFlow } from "./ts-control-flow-extractor.js";
 import { extractDocumentation } from "./ts-doc-extractor.js";
@@ -242,6 +248,7 @@ function extractMethod(member: ts.MethodDeclaration, ctx: MemberContext): void {
   const methodModifiers = getModifiers(member);
   const isAsync = methodModifiers.includes("async");
   const methodCalls = extractCalls(member, sourceFile);
+  const methodFieldRefs = extractFieldReferences(member, sourceFile);
   const methodControlFlow = extractControlFlow(member, sourceFile);
   const methodDoc = extractDocumentation(member, sourceFile);
   const methodTypeRefs = extractTypeReferences(member, sourceFile);
@@ -282,6 +289,18 @@ function extractMethod(member: ts.MethodDeclaration, ctx: MemberContext): void {
   });
 
   ctx.addMemberRelationships(methodName, methodLocation, methodCalls);
+
+  // Add field access references (obj.field, non-call)
+  for (const ref of methodFieldRefs) {
+    const refTarget = ref.target ? `${ref.target}.${ref.name}` : ref.name;
+    relationships.push({
+      from: `${className}.${methodName}`,
+      to: refTarget,
+      type: "references",
+      sourceFile: filePath,
+      metadata: { line: ref.location.start.line, referenceKind: "field_access" },
+    });
+  }
 
   // Add NgRx dispatches relationships
   for (const dispatch of ngrxStoreUsage.dispatches) {
@@ -438,6 +457,7 @@ function extractProperty(member: ts.PropertyDeclaration, ctx: MemberContext): vo
 function extractConstructor(member: ts.ConstructorDeclaration, ctx: MemberContext): void {
   const { className, classEntity, sourceFile, filePath } = ctx;
   const constructorCalls = extractCalls(member, sourceFile);
+  const constructorFieldRefs = extractFieldReferences(member, sourceFile);
   const constructorControlFlow = extractControlFlow(member, sourceFile);
   const constructorDoc = extractDocumentation(member, sourceFile);
   const constructorTypeRefs = extractTypeReferences(member, sourceFile);
@@ -461,6 +481,18 @@ function extractConstructor(member: ts.ConstructorDeclaration, ctx: MemberContex
   });
 
   ctx.addMemberRelationships("constructor", constructorLocation, constructorCalls);
+
+  for (const ref of constructorFieldRefs) {
+    const refTarget = ref.target ? `${ref.target}.${ref.name}` : ref.name;
+    ctx.relationships.push({
+      from: `${className}.constructor`,
+      to: refTarget,
+      type: "references",
+      sourceFile: filePath,
+      metadata: { line: ref.location.start.line, referenceKind: "field_access" },
+    });
+  }
+
   ctx.addTypeReferenceRelationships(`${className}.constructor`, constructorTypeRefs);
 }
 
@@ -475,6 +507,7 @@ function extractAccessor(
   const { className, classEntity, sourceFile, filePath } = ctx;
   const accessorName = member.name!.getText(sourceFile);
   const accessorCalls = extractCalls(member, sourceFile);
+  const accessorFieldRefs = extractFieldReferences(member, sourceFile);
   const accessorControlFlow = extractControlFlow(member, sourceFile);
   const accessorDoc = extractDocumentation(member, sourceFile);
   const accessorTypeRefs = extractTypeReferences(member, sourceFile);
@@ -502,5 +535,17 @@ function extractAccessor(
 
   classEntity.children!.push(entity);
   ctx.addMemberRelationships(accessorName, accessorLocation, accessorCalls);
+
+  for (const ref of accessorFieldRefs) {
+    const refTarget = ref.target ? `${ref.target}.${ref.name}` : ref.name;
+    ctx.relationships.push({
+      from: `${className}.${accessorName}`,
+      to: refTarget,
+      type: "references",
+      sourceFile: filePath,
+      metadata: { line: ref.location.start.line, referenceKind: "field_access" },
+    });
+  }
+
   ctx.addTypeReferenceRelationships(`${className}.${accessorName}`, accessorTypeRefs);
 }

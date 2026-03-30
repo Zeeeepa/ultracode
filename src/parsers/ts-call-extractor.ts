@@ -161,6 +161,72 @@ function extractCallInfo(
 }
 
 // =============================================================================
+// FIELD ACCESS REFERENCE EXTRACTION
+// =============================================================================
+
+export interface FieldReference {
+  name: string;
+  target?: string;
+  location: ParsedEntity["location"];
+}
+
+/**
+ * Extract non-call property access expressions as field references.
+ * obj.field → reference, but obj.method() is excluded (that's a call).
+ */
+export function extractFieldReferences(node: ts.Node, sourceFile: ts.SourceFile): FieldReference[] {
+  const refs: FieldReference[] = [];
+  const seen = new Set<string>();
+
+  function visit(n: ts.Node): void {
+    // PropertyAccessExpression that is NOT the callee of a CallExpression/NewExpression
+    if (ts.isPropertyAccessExpression(n)) {
+      const parent = n.parent;
+      const isCallCallee =
+        (ts.isCallExpression(parent) && parent.expression === n) ||
+        (ts.isNewExpression(parent) && parent.expression === n);
+
+      if (!isCallCallee) {
+        const fieldName = n.name.text;
+        const loc = getLocation(sourceFile, n);
+        const key = `${fieldName}:${loc.start.line}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          let target: string | undefined;
+          if (ts.isIdentifier(n.expression)) {
+            target = n.expression.text;
+          } else if (n.expression.kind === ts.SyntaxKind.ThisKeyword) {
+            target = "this";
+          }
+          refs.push({ name: fieldName, ...(target && { target }), location: loc });
+        }
+      }
+    }
+
+    ts.forEachChild(n, visit);
+  }
+
+  // Only extract from function/method bodies, not signatures
+  if (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessor(node) ||
+    ts.isSetAccessor(node)
+  ) {
+    if ((node as ts.FunctionLikeDeclaration).body) {
+      visit((node as ts.FunctionLikeDeclaration).body!);
+    }
+  } else {
+    visit(node);
+  }
+
+  return refs;
+}
+
+// =============================================================================
 // TYPE REFERENCE EXTRACTION
 // =============================================================================
 

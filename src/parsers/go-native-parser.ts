@@ -73,9 +73,17 @@ type Parameter struct {
 	Type string \`json:"type,omitempty"\`
 }
 
+type Relationship struct {
+	From     string            \`json:"from"\`
+	To       string            \`json:"to"\`
+	Type     string            \`json:"type"\`
+	Metadata map[string]string \`json:"metadata,omitempty"\`
+}
+
 type Result struct {
-	Entities []Entity \`json:"entities"\`
-	Errors   []Error  \`json:"errors"\`
+	Entities      []Entity       \`json:"entities"\`
+	Relationships []Relationship \`json:"relationships,omitempty"\`
+	Errors        []Error        \`json:"errors"\`
 }
 
 type Error struct {
@@ -310,7 +318,61 @@ func main() {
 		}
 	}
 
-	result := Result{Entities: entities}
+	// Extract relationships: calls and field access references from function bodies
+	var relationships []Relationship
+	for _, decl := range f.Decls {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok || funcDecl.Body == nil {
+			continue
+		}
+		funcName := funcDecl.Name.Name
+		if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
+			recvType := typeToString(funcDecl.Recv.List[0].Type)
+			funcName = recvType + "." + funcName
+		}
+		ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
+			switch expr := n.(type) {
+			case *ast.CallExpr:
+				// Extract call target
+				switch fn := expr.Fun.(type) {
+				case *ast.Ident:
+					relationships = append(relationships, Relationship{
+						From: funcName, To: fn.Name, Type: "calls",
+					})
+				case *ast.SelectorExpr:
+					target := ""
+					if ident, ok := fn.X.(*ast.Ident); ok {
+						target = ident.Name
+					}
+					fullTarget := fn.Sel.Name
+					if target != "" {
+						fullTarget = target + "." + fn.Sel.Name
+					}
+					relationships = append(relationships, Relationship{
+						From: funcName, To: fullTarget, Type: "calls",
+					})
+				}
+				return true
+			case *ast.SelectorExpr:
+				// Field access (non-call) — check parent is NOT a CallExpr.Fun
+				// Since ast.Inspect doesn't give parent, we emit all and deduplicate
+				// by checking if this SelectorExpr position matches any call target.
+				// Simpler: just emit references for all selectors; call dedup happens in graph.
+				if ident, ok := expr.X.(*ast.Ident); ok {
+					relationships = append(relationships, Relationship{
+						From: funcName,
+						To:   ident.Name + "." + expr.Sel.Name,
+						Type: "references",
+						Metadata: map[string]string{"referenceKind": "field_access"},
+					})
+				}
+				return true
+			}
+			return true
+		})
+	}
+
+	result := Result{Entities: entities, Relationships: relationships}
 	json.NewEncoder(os.Stdout).Encode(result)
 }
 `;
@@ -671,8 +733,10 @@ export class GoNativeParser {
 
         try {
           const result = JSON.parse(stdout);
-          // Add empty relationships for inline script
-          result.relationships = [];
+          // Ensure relationships array exists
+          if (!result.relationships) {
+            result.relationships = [];
+          }
           // Ensure entity IDs for inline script
           for (const entity of result.entities) {
             if (!entity.id) {

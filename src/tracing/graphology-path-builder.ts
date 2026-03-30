@@ -279,6 +279,97 @@ export class GraphologyPathBuilder {
       log.d("GRAPHPATH", "resolved_ext_refs", { count: resolvedExternalRefs });
     }
 
+    // Phase 3.5: File→entity containment for orphan top-level entities.
+    // Entities without incoming "contains" or "member_of" edges are orphans —
+    // unreachable from file nodes. Create file module nodes and link them.
+    {
+      const hasParent = new Set<string>();
+      this.graph.forEachEdge((_edge, attrs, _source, target) => {
+        if (attrs.type === "contains" || attrs.type === "member_of") {
+          hasParent.add(target);
+        }
+      });
+
+      const fileNodes = new Map<string, string>(); // filePath → fileNodeId
+      let fileContainsCount = 0;
+
+      this.graph.forEachNode((nodeId, attrs) => {
+        if (hasParent.has(nodeId)) return;
+        if (!attrs.file) return;
+        // Skip file module nodes themselves
+        if (attrs.type === "module" || attrs.type === "file") return;
+
+        const filePath = attrs.file;
+        let fileNodeId = fileNodes.get(filePath);
+        if (!fileNodeId) {
+          fileNodeId = `file:${filePath}`;
+          if (!this.graph.hasNode(fileNodeId)) {
+            this.graph.addNode(fileNodeId, {
+              name: filePath.split("/").pop() || filePath,
+              type: "module",
+              file: filePath,
+              line: 0,
+            });
+          }
+          fileNodes.set(filePath, fileNodeId);
+        }
+
+        try {
+          this.graph.addEdge(fileNodeId, nodeId, { type: "contains", weight: 1 });
+          fileContainsCount++;
+        } catch {
+          // Skip duplicate edges
+        }
+      });
+
+      if (fileContainsCount > 0) {
+        log.i("GRAPHPATH", "orphan_linked", { count: fileContainsCount, fileNodes: fileNodes.size });
+      }
+    }
+
+    // Phase 3.6: Forward declaration → definition linking.
+    // For C/C++ headers: when multiple entities share the same name,
+    // one from .h (declaration) and one from .c (definition), link them.
+    {
+      let fwdLinkCount = 0;
+      const nameGroups = new Map<string, Array<{ id: string; file: string }>>();
+
+      this.graph.forEachNode((nodeId, attrs) => {
+        if (!attrs.name || !attrs.file) return;
+        const key = attrs.name.toLowerCase();
+        if (!nameGroups.has(key)) nameGroups.set(key, []);
+        nameGroups.get(key)!.push({ id: nodeId, file: attrs.file });
+      });
+
+      for (const [, group] of nameGroups) {
+        if (group.length < 2) continue;
+
+        let hCandidate: (typeof group)[0] | undefined;
+        let cCandidate: (typeof group)[0] | undefined;
+
+        for (const entry of group) {
+          if (isImplementationFile(entry.file)) {
+            cCandidate = entry;
+          } else if (isHeaderFile(entry.file)) {
+            if (!hCandidate) hCandidate = entry;
+          }
+        }
+
+        if (hCandidate && cCandidate) {
+          try {
+            this.graph.addEdge(hCandidate.id, cCandidate.id, { type: "references", weight: 1 });
+            fwdLinkCount++;
+          } catch {
+            // Skip duplicate edges
+          }
+        }
+      }
+
+      if (fwdLinkCount > 0) {
+        log.i("GRAPHPATH", "fwd_decl_linked", { count: fwdLinkCount });
+      }
+    }
+
     const loadTimeMs = performance.now() - startTime;
     const memoryMB = this.estimateMemoryUsage();
 
@@ -778,6 +869,129 @@ export class GraphologyPathBuilder {
   }
 
   /**
+   * Multi-segment path finding: when direct BFS fails, stitch forward+backward
+   * reachability through bridge nodes. Returns a LinearTrace result.
+   */
+  async findPathMultiSegment(fromId: string, toId: string, maxDepth = DEFAULT_MAX_DEPTH): Promise<LinearTrace> {
+    await this.ensureLoaded();
+    const startTime = performance.now();
+
+    if (!this.graph.hasNode(fromId) || !this.graph.hasNode(toId)) {
+      return { steps: [], found: false, summary: "Node not found", nodesVisited: 0, timeMs: 0 };
+    }
+
+    const halfDepth = Math.floor(maxDepth / 2) + 1;
+
+    // Forward BFS: all nodes reachable from source
+    const fwdParent = new Map<string, string>(); // node → parent
+    const fwdQueue: Array<{ id: string; depth: number }> = [{ id: fromId, depth: 0 }];
+    fwdParent.set(fromId, "");
+
+    let head = 0;
+    while (head < fwdQueue.length) {
+      const { id, depth } = fwdQueue[head++]!;
+      if (depth >= halfDepth) continue;
+      for (const neighbor of this.getCallNeighbors(id)) {
+        if (!fwdParent.has(neighbor)) {
+          fwdParent.set(neighbor, id);
+          fwdQueue.push({ id: neighbor, depth: depth + 1 });
+        }
+      }
+    }
+
+    // Backward BFS: all nodes from which target is reachable
+    const bwdChild = new Map<string, string>(); // node → child (toward target)
+    const bwdQueue: Array<{ id: string; depth: number }> = [{ id: toId, depth: 0 }];
+    bwdChild.set(toId, "");
+
+    head = 0;
+    while (head < bwdQueue.length) {
+      const { id, depth } = bwdQueue[head++]!;
+      if (depth >= halfDepth) continue;
+      for (const caller of this.getCallerNeighbors(id)) {
+        if (!bwdChild.has(caller)) {
+          bwdChild.set(caller, id);
+          bwdQueue.push({ id: caller, depth: depth + 1 });
+        }
+      }
+    }
+
+    // Find bridge: node in forward set whose outgoing neighbor is in backward set
+    let bestPath: string[] | null = null;
+
+    for (const [bridgeFrom] of fwdParent) {
+      if (bestPath) break;
+      for (const neighbor of this.getCallNeighbors(bridgeFrom)) {
+        if (!bwdChild.has(neighbor)) continue;
+        if (bridgeFrom === fromId && neighbor === toId) continue; // skip direct (already tried)
+
+        // Reconstruct: source → ... → bridgeFrom → neighbor → ... → target
+        const pathNodes: string[] = [];
+
+        // Trace forward: source → bridgeFrom
+        const fwdTrace: string[] = [];
+        let cur = bridgeFrom;
+        while (cur) {
+          fwdTrace.push(cur);
+          cur = fwdParent.get(cur)!;
+          if (fwdTrace.length > maxDepth) break;
+        }
+        fwdTrace.reverse();
+        pathNodes.push(...fwdTrace);
+
+        // Add bridge target
+        pathNodes.push(neighbor);
+
+        // Trace backward: neighbor → target
+        cur = bwdChild.get(neighbor)!;
+        while (cur) {
+          pathNodes.push(cur);
+          cur = bwdChild.get(cur)!;
+          if (pathNodes.length > maxDepth * 2) break;
+        }
+
+        if (pathNodes.length >= 2) {
+          bestPath = pathNodes;
+          break;
+        }
+      }
+    }
+
+    const timeMs = performance.now() - startTime;
+
+    if (!bestPath) {
+      return {
+        steps: [],
+        found: false,
+        summary: `Multi-segment: no bridge found. Forward: ${fwdParent.size}, Backward: ${bwdChild.size}`,
+        nodesVisited: fwdParent.size + bwdChild.size,
+        timeMs,
+      };
+    }
+
+    // Convert to LinearTraceStep
+    const steps: LinearTraceStep[] = bestPath.map((nodeId, i) => {
+      const attrs = this.graph.getNodeAttributes(nodeId);
+      return {
+        order: i + 1,
+        entity: attrs.name,
+        entityId: nodeId,
+        file: attrs.file,
+        line: attrs.line,
+        action: this.determineAction(attrs, i, bestPath!.length),
+      };
+    });
+
+    return {
+      steps,
+      found: true,
+      summary: `Multi-segment path via ${bestPath.length} nodes (stitched forward+backward BFS)`,
+      nodesVisited: fwdParent.size + bwdChild.size,
+      timeMs,
+    };
+  }
+
+  /**
    * Convert raw paths to enriched TracePaths
    */
   enrichPaths(rawPaths: RawPath[]): TracePath[] {
@@ -935,6 +1149,21 @@ export class GraphologyPathBuilder {
     if (score >= 0.4) return "medium";
     return "low";
   }
+}
+
+// =============================================================================
+// FILE TYPE HELPERS
+// =============================================================================
+
+const IMPL_EXTS = [".c", ".cpp", ".cc", ".cxx", ".c++", ".m", ".mm"];
+const HEADER_EXTS = [".h", ".hpp", ".hh", ".hxx", ".h++"];
+
+function isImplementationFile(path: string): boolean {
+  return IMPL_EXTS.some((ext) => path.endsWith(ext));
+}
+
+function isHeaderFile(path: string): boolean {
+  return HEADER_EXTS.some((ext) => path.endsWith(ext));
 }
 
 // =============================================================================

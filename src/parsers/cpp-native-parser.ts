@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { log } from "../logging/index.js";
-import type { ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
+import type { EntityRelationship, ParsedEntity, ParseResult, SupportedLanguage } from "../types/parser.js";
 import { type RegexExtractionRule, runRegexExtractors } from "./regex-entity-extractor.js";
 
 // =============================================================================
@@ -53,7 +53,13 @@ export interface ParserStats {
 
 interface CppParseResult {
   entities: ParsedEntity[];
+  relationships: EntityRelationship[];
   errors: Array<{ message: string; location?: { line: number; column: number } }>;
+}
+
+const NULL_LITERALS = new Set(["NULL", "nullptr", "null", "false", "true", "0"]);
+function isNullLiteral(name: string): boolean {
+  return NULL_LITERALS.has(name);
 }
 
 export class CppNativeParser {
@@ -155,6 +161,7 @@ export class CppNativeParser {
         filePath,
         language: (isCpp ? "cpp" : "c") as SupportedLanguage,
         entities: result.entities,
+        ...(result.relationships.length > 0 && { relationships: result.relationships }),
         contentHash,
         timestamp: Date.now(),
         parseTimeMs,
@@ -255,8 +262,8 @@ export class CppNativeParser {
 
         try {
           const ast = JSON.parse(stdout);
-          const entities = this.extractEntitiesFromClangAST(ast, originalPath);
-          resolve({ entities, errors: [] });
+          const { entities, relationships } = this.extractEntitiesAndRelationships(ast, originalPath);
+          resolve({ entities, relationships, errors: [] });
         } catch (_e) {
           // Fall back to regex on JSON parse error
           resolve(this.parseWithRegex(originalPath, "", isCpp));
@@ -271,40 +278,94 @@ export class CppNativeParser {
   }
 
   /**
-   * Extract entities from clang AST JSON
+   * Extract entities and relationships from clang AST JSON.
+   * Ported from ultracode.zig c_cpp.zig extractor:
+   * - 12+ entity types (function, class, struct, enum, constant, variable, property, type, module, import)
+   * - Relationships: calls, references, contains, inherits, imports, dispatches
+   * - Forward declaration handling: skip FunctionDecl without body
+   * - Include path normalization
+   * - Function pointer resolution and dispatch table detection
    */
-  private extractEntitiesFromClangAST(ast: ClangASTNode, filePath: string): ParsedEntity[] {
+  private extractEntitiesAndRelationships(
+    ast: ClangASTNode,
+    filePath: string,
+  ): { entities: ParsedEntity[]; relationships: EntityRelationship[] } {
     const entities: ParsedEntity[] = [];
+    const relationships: EntityRelationship[] = [];
+    const funcNames = new Set<string>();
+    const funcPtrCandidates: Array<{ from: string; targetName: string }> = [];
 
-    const processNode = (node: ClangASTNode): void => {
+    const mkLoc = (loc?: ClangLocation) => ({
+      start: { line: loc?.line || 1, column: loc?.col || 0, index: 0 },
+      end: { line: loc?.line || 1, column: (loc?.col || 0) + 1, index: 1 },
+    });
+
+    const processNode = (node: ClangASTNode, parentEntity?: string): void => {
       if (!node || typeof node !== "object") return;
 
       const kind = node.kind;
-      const name = node.name;
+      const name = node.name as string | undefined;
       const loc = node.loc;
+      let currentEntity: string | undefined;
 
       if (name && loc) {
         let entityType: ParsedEntity["type"] | null = null;
+        const metadata: Record<string, unknown> = {};
+        const modifiers: string[] = [];
 
         switch (kind) {
-          case "FunctionDecl":
+          case "FunctionDecl": {
+            // Skip forward declarations (no body) — real definition creates the entity
+            const hasBody = node.inner?.some((c) => c.kind === "CompoundStmt");
+            if (!hasBody) break; // forward decl → skip
             entityType = "function";
+            funcNames.add(name);
+            // Visibility from storage class
+            const storageClass = node["storageClass"] as string | undefined;
+            if (storageClass === "static") modifiers.push("static");
+            if (storageClass === "extern") modifiers.push("extern");
             break;
+          }
           case "CXXMethodDecl":
-            entityType = "function";
+            entityType = "method";
+            break;
+          case "CXXConstructorDecl":
+            entityType = "method";
+            metadata["isConstructor"] = true;
             break;
           case "CXXRecordDecl":
-          case "RecordDecl":
             entityType = "class";
             break;
+          case "RecordDecl": {
+            // Distinguish struct vs union
+            const tagUsed = node["tagUsed"] as string | undefined;
+            entityType = tagUsed === "union" ? "struct" : "struct";
+            if (tagUsed === "union") metadata["isUnion"] = true;
+            break;
+          }
           case "EnumDecl":
             entityType = "enum";
             break;
-          case "VarDecl":
-            entityType = "variable";
+          case "EnumConstantDecl":
+            entityType = "constant";
             break;
+          case "VarDecl": {
+            entityType = "variable";
+            const sc = node["storageClass"] as string | undefined;
+            if (sc === "static") modifiers.push("static");
+            if (sc === "extern") modifiers.push("extern");
+            // Check for function pointer init (dispatch candidate)
+            const initNode = node.inner?.find((c) => c.kind === "DeclRefExpr");
+            if (initNode && initNode["referencedDecl"]) {
+              const refName = (initNode["referencedDecl"] as ClangASTNode).name as string | undefined;
+              if (refName) {
+                funcPtrCandidates.push({ from: name, targetName: refName });
+              }
+            }
+            break;
+          }
           case "FieldDecl":
-            entityType = "field";
+            entityType = "property";
             break;
           case "TypedefDecl":
           case "TypeAliasDecl":
@@ -320,24 +381,188 @@ export class CppNativeParser {
             name,
             type: entityType,
             filePath,
-            location: {
-              start: { line: loc.line || 1, column: loc.col || 0, index: 0 },
-              end: { line: loc.line || 1, column: (loc.col || 0) + 1, index: 1 },
-            },
+            location: mkLoc(loc),
+            ...(modifiers.length > 0 && { modifiers }),
+            ...(Object.keys(metadata).length > 0 && { metadata }),
           });
+          currentEntity = name;
+
+          // Containment relationship
+          if (parentEntity) {
+            relationships.push({ from: parentEntity, to: name, type: "contains" });
+          }
         }
       }
 
-      // Process children
+      // Relationship extraction from inner nodes
       if (node.inner && Array.isArray(node.inner)) {
+        const enclosing = currentEntity || parentEntity;
+
         for (const child of node.inner) {
-          processNode(child);
+          // CallExpr → calls relationship
+          if (child.kind === "CallExpr" && enclosing) {
+            const callee = this.extractCallTarget(child);
+            if (callee) {
+              relationships.push({ from: enclosing, to: callee, type: "calls" });
+            }
+          }
+          // MemberExpr → references (field access)
+          else if (child.kind === "MemberExpr" && enclosing) {
+            const memberName = child.name as string | undefined;
+            if (memberName && !this.isParentCall(child, node)) {
+              relationships.push({
+                from: enclosing,
+                to: memberName,
+                type: "references",
+                metadata: { referenceKind: "field_access" },
+              });
+            }
+          }
+          // CXXBaseSpecifier → inherits
+          else if (child.kind === "CXXBaseSpecifier" && currentEntity) {
+            const baseType = child["type"] as Record<string, unknown> | undefined;
+            const baseName = (baseType?.["qualType"] as string)?.replace(/\s*(class|struct)\s*/g, "");
+            if (baseName) {
+              relationships.push({ from: currentEntity, to: baseName, type: "inherits" });
+            }
+          }
+          // Include (preprocessor — may not appear in clang AST; handled in regex fallback)
+
+          // SwitchStmt → dispatch detection
+          if (child.kind === "SwitchStmt" && enclosing) {
+            this.extractSwitchDispatch(child, enclosing, relationships);
+          }
+
+          // InitListExpr → dispatch table / vtable detection
+          if (child.kind === "InitListExpr" && currentEntity) {
+            this.extractDispatchTable(child, currentEntity, relationships);
+          }
+
+          processNode(child, currentEntity || parentEntity);
         }
       }
     };
 
     processNode(ast);
-    return entities;
+
+    // Phase 6a: resolve function pointer candidates
+    for (const cand of funcPtrCandidates) {
+      if (funcNames.has(cand.targetName)) {
+        relationships.push({ from: cand.from, to: cand.targetName, type: "references" });
+      }
+    }
+
+    return { entities, relationships };
+  }
+
+  /**
+   * Extract call target from CallExpr node
+   */
+  private extractCallTarget(callNode: ClangASTNode): string | null {
+    if (!callNode.inner) return null;
+    for (const child of callNode.inner) {
+      if (child.kind === "DeclRefExpr") {
+        const refDecl = child["referencedDecl"] as ClangASTNode | undefined;
+        return (refDecl?.name as string) || (child.name as string) || null;
+      }
+      if (child.kind === "MemberExpr") {
+        return (child.name as string) || null;
+      }
+      // Recurse into ImplicitCastExpr etc
+      const nested = this.extractCallTarget(child);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  /**
+   * Check if a MemberExpr is the callee of a CallExpr (to avoid double-counting)
+   */
+  private isParentCall(memberNode: ClangASTNode, parentNode: ClangASTNode): boolean {
+    // In clang AST, if parent is CallExpr and memberNode is the first child, it's the callee
+    if (parentNode.kind === "CallExpr" && parentNode.inner?.[0] === memberNode) return true;
+    return false;
+  }
+
+  /**
+   * Extract dispatch targets from switch/case statements
+   */
+  private extractSwitchDispatch(
+    switchNode: ClangASTNode,
+    enclosing: string,
+    relationships: EntityRelationship[],
+  ): void {
+    const walk = (node: ClangASTNode): void => {
+      if (!node.inner) return;
+      for (const child of node.inner) {
+        if (child.kind === "CaseStmt" || child.kind === "DefaultStmt") {
+          // Look for CallExpr in case body
+          this.collectCallsFromNode(child, enclosing, relationships);
+        }
+        walk(child);
+      }
+    };
+    walk(switchNode);
+  }
+
+  /**
+   * Collect call targets from a node tree (for switch dispatch)
+   */
+  private collectCallsFromNode(node: ClangASTNode, enclosing: string, relationships: EntityRelationship[]): void {
+    if (!node.inner) return;
+    for (const child of node.inner) {
+      if (child.kind === "CallExpr") {
+        const target = this.extractCallTarget(child);
+        if (target && !isNullLiteral(target)) {
+          relationships.push({ from: enclosing, to: target, type: "dispatches" });
+        }
+      }
+      this.collectCallsFromNode(child, enclosing, relationships);
+    }
+  }
+
+  /**
+   * Extract dispatch table from initializer list (vtable-style)
+   * Pattern: { .field = func_name, ... } or { { func_ptr1, func_ptr2 }, ... }
+   */
+  private extractDispatchTable(initList: ClangASTNode, entityName: string, relationships: EntityRelationship[]): void {
+    if (!initList.inner) return;
+    for (const elem of initList.inner) {
+      // DeclRefExpr → direct function reference in init list
+      if (elem.kind === "DeclRefExpr") {
+        const refDecl = elem["referencedDecl"] as ClangASTNode | undefined;
+        const refName = (refDecl?.name as string) || (elem.name as string);
+        if (refName && !isNullLiteral(refName)) {
+          relationships.push({ from: entityName, to: refName, type: "dispatches" });
+        }
+      }
+      // DesignatedInitExpr → .field = func
+      if (elem.kind === "DesignatedInitExpr" || elem.kind === "DesignatedInitUpdateExpr") {
+        const valRef = elem.inner?.find((c) => c.kind === "DeclRefExpr");
+        if (valRef) {
+          const refDecl = valRef["referencedDecl"] as ClangASTNode | undefined;
+          const refName = (refDecl?.name as string) || (valRef.name as string);
+          if (refName && !isNullLiteral(refName)) {
+            relationships.push({ from: entityName, to: refName, type: "dispatches" });
+          }
+        }
+      }
+      // Nested InitListExpr → recurse
+      if (elem.kind === "InitListExpr") {
+        this.extractDispatchTable(elem, entityName, relationships);
+      }
+      // ImplicitCastExpr wrapping DeclRefExpr
+      if (elem.kind === "ImplicitCastExpr") {
+        const inner = elem.inner?.find((c) => c.kind === "DeclRefExpr");
+        if (inner) {
+          const refDecl = inner["referencedDecl"] as ClangASTNode | undefined;
+          const refName = (refDecl?.name as string) || (inner.name as string);
+          if (refName && !isNullLiteral(refName)) {
+            relationships.push({ from: entityName, to: refName, type: "dispatches" });
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -477,7 +702,7 @@ export class CppNativeParser {
     }
 
     const entities = runRegexExtractors(content, filePath, rules);
-    return { entities, errors: [] };
+    return { entities, relationships: [], errors: [] };
   }
 
   /**

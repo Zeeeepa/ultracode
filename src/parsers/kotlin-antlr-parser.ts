@@ -19,6 +19,7 @@ import { KotlinLexer } from "../generated/kotlin/KotlinLexer.js";
 import {
   type ClassDeclarationContext,
   type ClassMemberDeclarationContext,
+  type ClassParameterContext,
   type CompanionObjectContext,
   type DeclarationContext,
   type DelegationSpecifiersContext,
@@ -327,6 +328,15 @@ function processClassDeclaration(classDecl: ClassDeclarationContext | null, ctx:
     });
   }
 
+  // Process primary constructor val/var parameters as properties
+  const primaryCtor = classDecl.primaryConstructor();
+  if (primaryCtor) {
+    const classParams = primaryCtor.classParameters()?.classParameter() || [];
+    for (const param of classParams) {
+      processClassParameter(param, className, ctx);
+    }
+  }
+
   // Process class members
   const prevClass = ctx.currentClass;
   ctx.currentClass = className;
@@ -408,9 +418,10 @@ function processEnumEntry(entry: EnumEntryContext, ctx: ParserContext): void {
 
   ctx.entities.push({
     name: entryName,
-    type: "enum_variant",
+    type: "constant",
     filePath: ctx.filePath,
     location: getLocation(entry),
+    metadata: { isEnumEntry: true },
   });
 
   if (ctx.currentClass) {
@@ -421,6 +432,44 @@ function processEnumEntry(entry: EnumEntryContext, ctx: ParserContext): void {
       metadata: {},
     });
   }
+}
+
+// =============================================================================
+// PRIMARY CONSTRUCTOR PARAMETER → PROPERTY
+// =============================================================================
+
+function processClassParameter(param: ClassParameterContext, className: string, ctx: ParserContext): void {
+  const hasVal = param.VAL() !== null;
+  const hasVar = param.VAR() !== null;
+  // Only val/var parameters become class properties
+  if (!hasVal && !hasVar) return;
+
+  const nameCtx = param.simpleIdentifier();
+  if (!nameCtx) return;
+  const propName = nameCtx.getText();
+
+  const typeText = param.type()?.getText();
+  const modInfo = param.modifiers() ? extractModifiers(param.modifiers()) : { modifiers: [], annotations: [] };
+
+  ctx.entities.push({
+    name: propName,
+    type: "property",
+    filePath: ctx.filePath,
+    location: getLocation(param),
+    ...(modInfo.modifiers.length > 0 && { modifiers: modInfo.modifiers }),
+    metadata: {
+      mutable: hasVar,
+      ...(typeText && { propertyType: typeText }),
+      isConstructorParam: true,
+    },
+  });
+
+  ctx.relationships.push({
+    from: className,
+    to: propName,
+    type: "contains",
+    metadata: {},
+  });
 }
 
 // =============================================================================
@@ -600,7 +649,7 @@ function processFunctionDeclaration(funcDecl: FunctionDeclarationContext, ctx: P
     });
   }
 
-  // Use calls from unified extraction (already computed, no extra traversal)
+  // Use calls + field references from unified extraction (already computed, no extra traversal)
   if (unified) {
     for (const call of unified.calls) {
       const callTarget = call.target ? `${call.target}.${call.name}` : call.name;
@@ -614,6 +663,17 @@ function processFunctionDeclaration(funcDecl: FunctionDeclarationContext, ctx: P
           isExtensionCall: call.isExtensionCall,
           ...(call.typeArguments && call.typeArguments.length > 0 && { typeArguments: call.typeArguments }),
         },
+      });
+    }
+
+    // Field access references (obj.field, non-call navigation)
+    for (const ref of unified.fieldReferences) {
+      const refTarget = ref.target ? `${ref.target}.${ref.name}` : ref.name;
+      ctx.relationships.push({
+        from: fullName,
+        to: refTarget,
+        type: "references",
+        metadata: { line: ref.line, referenceKind: "field_access" },
       });
     }
   }

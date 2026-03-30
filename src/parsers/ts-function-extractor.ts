@@ -8,7 +8,13 @@ import ts from "typescript";
 import type { EntityRelationship, ParsedEntity } from "../types/parser.js";
 import { extractAntipatternHints } from "./ts-antipattern-hints-extractor.js";
 import { getDecorators, getLocation, getModifiers, getParameters, getReturnType } from "./ts-ast-helpers.js";
-import { type CallInfo, extractCalls, extractTypeReferences, type TypeReference } from "./ts-call-extractor.js";
+import {
+  type CallInfo,
+  extractCalls,
+  extractFieldReferences,
+  extractTypeReferences,
+  type TypeReference,
+} from "./ts-call-extractor.js";
 import { extractComplexity } from "./ts-complexity-analyzer.js";
 import { extractControlFlow } from "./ts-control-flow-extractor.js";
 import { extractDocumentation } from "./ts-doc-extractor.js";
@@ -54,6 +60,27 @@ function addFunctionCallRelationships(
 }
 
 /**
+ * Add field access reference relationships (obj.field, non-call)
+ */
+function addFieldReferenceRelationships(
+  entityName: string,
+  fieldRefs: import("./ts-call-extractor.js").FieldReference[],
+  filePath: string,
+  relationships: EntityRelationship[],
+): void {
+  for (const ref of fieldRefs) {
+    const refTarget = ref.target ? `${ref.target}.${ref.name}` : ref.name;
+    relationships.push({
+      from: entityName,
+      to: refTarget,
+      type: "references",
+      sourceFile: filePath,
+      metadata: { line: ref.location.start.line, referenceKind: "field_access" },
+    });
+  }
+}
+
+/**
  * Add type reference relationships
  */
 function addTypeReferenceRelationships(
@@ -90,6 +117,7 @@ export function extractFunctionDeclaration(node: ts.FunctionDeclaration, ctx: Fu
   const modifiers = getModifiers(node);
   const isAsync = modifiers.includes("async");
   const calls = extractCalls(node, sourceFile);
+  const fieldRefs = extractFieldReferences(node, sourceFile);
   const controlFlow = extractControlFlow(node, sourceFile);
   const documentation = extractDocumentation(node, sourceFile);
   const typeRefs = extractTypeReferences(node, sourceFile);
@@ -118,6 +146,7 @@ export function extractFunctionDeclaration(node: ts.FunctionDeclaration, ctx: Fu
   if (calls.length > 0) {
     addFunctionCallRelationships(functionName, calls, filePath, relationships);
   }
+  addFieldReferenceRelationships(functionName, fieldRefs, filePath, relationships);
   addTypeReferenceRelationships(functionName, typeRefs, filePath, relationships);
 }
 
@@ -137,6 +166,7 @@ export function extractArrowFunctionOrExpression(node: ts.VariableStatement, ctx
         (ts.canHaveModifiers(decl.initializer) &&
           ts.getModifiers(decl.initializer)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword));
       const calls = extractCalls(decl.initializer, sourceFile);
+      const fieldRefs = extractFieldReferences(decl.initializer, sourceFile);
       const controlFlow = extractControlFlow(decl.initializer, sourceFile);
       const documentation = extractDocumentation(node, sourceFile);
       const typeRefs = extractTypeReferences(decl.initializer, sourceFile);
@@ -164,6 +194,7 @@ export function extractArrowFunctionOrExpression(node: ts.VariableStatement, ctx
       if (calls.length > 0) {
         addFunctionCallRelationships(name, calls, filePath, relationships);
       }
+      addFieldReferenceRelationships(name, fieldRefs, filePath, relationships);
       addTypeReferenceRelationships(name, typeRefs, filePath, relationships);
       extracted = true;
     }

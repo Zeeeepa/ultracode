@@ -14,7 +14,7 @@
 
 import path, { join } from "node:path";
 import { TS_JS_EXTENSIONS } from "../../agents/dev/file-extensions.js";
-import { areTimersSuspended } from "../../core/indexing-state.js";
+import { areTimersSuspended, isIndexing } from "../../core/indexing-state.js";
 import { type KnowledgeEntry, knowledgeBus } from "../../core/knowledge-bus.js";
 import { log } from "../../logging/index.js";
 import { fileExists, readdir, readText, setFileChangeHook, writeFile } from "../../utils/file-ops.js";
@@ -393,9 +393,9 @@ export class AutoDocWatcher {
   private async handleFileChange(filePath: string): Promise<void> {
     if (!filePath) return;
 
-    // Defer if heavy analysis is running (prevents bun:sqlite concurrent access crash)
-    if (areTimersSuspended()) {
-      log.d("AUTODOCWATCH", "deferred_suspended", { file: filePath });
+    // Defer if indexing or heavy analysis is running
+    if (areTimersSuspended() || isIndexing()) {
+      log.d("AUTODOCWATCH", "deferred_suspended", { file: filePath, indexing: isIndexing() });
       return;
     }
 
@@ -497,6 +497,12 @@ export class AutoDocWatcher {
   private async processUpdate(modulePath: string): Promise<void> {
     const pending = this.pendingUpdates.get(modulePath);
     if (!pending) return;
+
+    // Defer if indexing is in progress — re-queue after indexing completes
+    if (isIndexing()) {
+      log.d("AUTODOCWATCH", "process_deferred_indexing", { module: modulePath });
+      return;
+    }
 
     // Remove from pending
     this.pendingUpdates.delete(modulePath);

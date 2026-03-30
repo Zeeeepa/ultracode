@@ -203,12 +203,14 @@ export class TraceEngine {
     }
 
     // 5. If multiple paths requested, find additional paths (limited)
+    // Bound DFS depth to BFS path + 2 to avoid exponential explosion on high-fanout graphs
     if (params.trackConditions && linearTrace.found) {
+      const boundedDepth = Math.min(maxDepth, linearTrace.steps.length + 2);
       const additionalPaths = await this.graphologyBuilder.findPaths(
         sourceEntity.id,
         targetEntity.id,
         DEFAULT_MAX_PATHS - 1,
-        maxDepth,
+        boundedDepth,
       );
       const enrichedPaths = this.graphologyBuilder.enrichPaths(additionalPaths);
       // Add unique paths (not duplicate of linear trace)
@@ -216,6 +218,21 @@ export class TraceEngine {
         if (p.steps.length !== paths[0]?.steps.length) {
           paths.push(p);
         }
+      }
+    }
+
+    // 5b. Multi-segment fallback: when BFS+DFS found no paths,
+    // stitch forward+backward reachability through bridge nodes
+    if (paths.length === 0) {
+      const multiSegment = await this.graphologyBuilder.findPathMultiSegment(
+        sourceEntity.id,
+        targetEntity.id,
+        maxDepth,
+      );
+      if (multiSegment.found) {
+        const msPath = this.linearTraceToTracePath(multiSegment);
+        msPath.warnings = [...(msPath.warnings || []), "multi-segment: stitched via forward+backward BFS"];
+        paths.push(msPath);
       }
     }
 
@@ -683,17 +700,71 @@ export class TraceEngine {
       return exactMatch;
     }
 
+    // 1b. If exact match was not a real entity (import stub) or not found at all,
+    // bypass name_tokens index and search ALL entities for a real entity with the same name.
+    // name_tokens may only index one entity_id per unique name, losing duplicates.
+    // Also handles file:name format where filePath filter causes findEntityByName to return null.
+    if (!exactMatch || !isRealEntity(exactMatch)) {
+      const allEntities = await this.storage.getAllEntities();
+      let sameNameReal = allEntities.filter((e) => e.name === name && isRealEntity(e));
+      // If filePath provided, prefer entities from that file
+      if (normalizedFilter && sameNameReal.length > 1) {
+        const fileFiltered = sameNameReal.filter((e) => {
+          const ep = (e.filePath || "").replace(/\\/g, "/").toLowerCase();
+          return ep.includes(normalizedFilter) || ep.endsWith(normalizedFilter);
+        });
+        if (fileFiltered.length > 0) sameNameReal = fileFiltered;
+      }
+      if (sameNameReal.length > 0) {
+        const best = sameNameReal.sort((a, b) => {
+          const aR = REAL_CODE_TYPES.has(a.type) ? 0 : 1;
+          const bR = REAL_CODE_TYPES.has(b.type) ? 0 : 1;
+          return aR - bR;
+        })[0]!;
+        return best;
+      }
+    }
     // 2. Try partial name match via pattern (uses index, faster than suffix scan)
     // 2D: Moved before suffix match since searchEntities uses DB index
     const patternEntities = await this.storage.searchEntities({
       namePattern: name,
     });
     if (patternEntities.length > 0) {
+      // Filter out import stubs and external entities, prefer real code entities
+      const realPatternEntities = patternEntities.filter(isRealEntity);
+
+      // If name_tokens only returned import stubs, try direct name match as fallback
+      // (name_tokens table may only index one entity per unique name)
+      if (realPatternEntities.length === 0) {
+        const allByName = await this.storage.searchEntities({});
+        const directMatches = allByName.filter(
+          (e) => (e.name === name || e.name.endsWith(`.${name}`)) && isRealEntity(e),
+        );
+        if (directMatches.length > 0) {
+          const sorted = directMatches.sort((a, b) => {
+            const aReal = REAL_CODE_TYPES.has(a.type) ? 0 : 1;
+            const bReal = REAL_CODE_TYPES.has(b.type) ? 0 : 1;
+            return aReal - bReal;
+          });
+          log.d("TRACEENGINE", "resolve_step2_fallback", { name, id: sorted[0]?.id, type: sorted[0]?.type });
+          return sorted[0]!;
+        }
+      }
+
+      const candidates = realPatternEntities.length > 0 ? realPatternEntities : patternEntities;
+
       if (normalizedFilter) {
-        const filtered = filterByFile(patternEntities);
+        const filtered = filterByFile(candidates);
         if (filtered) return filtered;
       }
-      return patternEntities[0]!;
+
+      // Prefer real code types (function, method, class) over others
+      const prioritized = candidates.sort((a, b) => {
+        const aReal = REAL_CODE_TYPES.has(a.type) ? 0 : 1;
+        const bReal = REAL_CODE_TYPES.has(b.type) ? 0 : 1;
+        return aReal - bReal;
+      });
+      return prioritized[0]!;
     }
 
     // 3. Try suffix match for partial names (e.g., "methodName" -> "ClassName.methodName")

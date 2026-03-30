@@ -39,8 +39,15 @@ import { getLocation, isKotlinKeyword } from "../utils/ast-helpers.js";
 /**
  * Result of unified extraction
  */
+export interface FieldReferenceInfo {
+  name: string;
+  target?: string;
+  line: number;
+}
+
 export interface UnifiedExtractionResult {
   calls: CallInfo[];
+  fieldReferences: FieldReferenceInfo[];
   controlFlow: ControlFlowInfo;
   complexity: ComplexityMetrics;
 }
@@ -106,6 +113,7 @@ const NESTING_NODES = new Set([
 export function extractUnified(bodyCtx: ParserRuleContext | null): UnifiedExtractionResult {
   const result: UnifiedExtractionResult = {
     calls: [],
+    fieldReferences: [],
     controlFlow: {
       branches: [],
       loops: [],
@@ -143,13 +151,21 @@ export function extractUnified(bodyCtx: ParserRuleContext | null): UnifiedExtrac
 
     // === CALL EXTRACTION ===
     if (nodeName === "PostfixUnaryExpressionContext") {
-      const extractedCalls = extractCallsFromPostfix(node as PostfixUnaryExpressionContext);
+      const postfix = node as PostfixUnaryExpressionContext;
+      const extractedCalls = extractCallsFromPostfix(postfix);
       for (const callInfo of extractedCalls) {
         const key = `${callInfo.location.start.line}:${callInfo.location.start.column}:${callInfo.name}`;
         if (!seenCalls.has(key)) {
           seenCalls.add(key);
           result.calls.push(callInfo);
         }
+      }
+
+      // === FIELD REFERENCE EXTRACTION ===
+      // When the last suffix is navigationSuffix (no callSuffix follows), it's field access
+      const fieldRefs = extractFieldRefsFromPostfix(postfix);
+      for (const ref of fieldRefs) {
+        result.fieldReferences.push(ref);
       }
     }
 
@@ -288,6 +304,55 @@ function extractCallsFromPostfix(ctx: PostfixUnaryExpressionContext): CallInfo[]
   }
 
   return calls;
+}
+
+/**
+ * Extract field references from postfix expression.
+ * When the last suffix is navigationSuffix with no callSuffix following, it's a field access.
+ */
+function extractFieldRefsFromPostfix(ctx: PostfixUnaryExpressionContext): FieldReferenceInfo[] {
+  const refs: FieldReferenceInfo[] = [];
+  const primaryExpr = ctx.primaryExpression?.();
+  if (!primaryExpr) return refs;
+
+  let currentTarget: string | undefined;
+  let baseName = primaryExpr.getText?.() || "";
+
+  const suffixes = ctx.postfixUnarySuffix?.() || [];
+  if (!Array.isArray(suffixes) || suffixes.length === 0) return refs;
+
+  for (let i = 0; i < suffixes.length; i++) {
+    const suffix = suffixes[i];
+    if (!suffix) continue;
+
+    const navSuffix = suffix.navigationSuffix?.();
+    if (navSuffix) {
+      currentTarget = currentTarget ? `${currentTarget}.${baseName}` : baseName;
+      baseName = extractNavigationName(navSuffix);
+
+      // Check if this is the last suffix OR next suffix is NOT a callSuffix
+      const nextSuffix = i + 1 < suffixes.length ? suffixes[i + 1] : undefined;
+      const nextIsCall = nextSuffix?.callSuffix?.() != null;
+
+      if (!nextIsCall && baseName) {
+        const loc = getLocation(navSuffix);
+        refs.push({
+          name: baseName,
+          ...(currentTarget && { target: currentTarget }),
+          line: loc.start.line,
+        });
+      }
+      continue;
+    }
+
+    const callSuffix = suffix.callSuffix?.();
+    if (callSuffix) {
+      currentTarget = currentTarget ? `${currentTarget}.${baseName}` : baseName;
+      baseName = "";
+    }
+  }
+
+  return refs;
 }
 
 /**
