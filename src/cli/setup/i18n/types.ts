@@ -65,6 +65,7 @@ export interface SetupStrings {
     section_8k_hint: string;
     selected: string;
     no_models: string;
+    skip: string;
   };
 
   // ═══════════════════════════════════════════════════════════════
@@ -88,12 +89,31 @@ export interface SetupStrings {
     ollama: ProviderStrings;
     ollama_blackwell: string;
     skip: ProviderStrings;
+    // Zig-compatible LLM flow
+    doc_lang_title: string;
+    zig: {
+      claude_cli: string;
+      claude_api: string;
+      openai_compat: string;
+      skip: string;
+      claude_cli_detected: string;
+      claude_cli_not_found: string;
+      claude_api_title: string;
+      api_key_from_env: string;
+      api_key_prompt: string;
+      openai_title: string;
+      endpoint_prompt: string;
+      api_key_optional: string;
+      model_prompt: string;
+      context_prompt: string;
+    };
   };
 
   // ═══════════════════════════════════════════════════════════════
   // LLM Models
   // ═══════════════════════════════════════════════════════════════
   llmModels: {
+    claude_model_title: string;
     claude_haiku: string;
     claude_haiku_hint: string;
     claude_sonnet: string;

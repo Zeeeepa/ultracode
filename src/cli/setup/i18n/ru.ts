@@ -70,6 +70,7 @@ export const ru: SetupStrings = {
     section_8k_hint: "Smart Chunker эффективно обрабатывает длинный код с 512 моделями.",
     selected: "Выбрана модель: {name}",
     no_models: "Нет доступных моделей для {provider} + {language}",
+    skip: "Пропустить (только текстовый поиск)",
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -112,12 +113,31 @@ export const ru: SetupStrings = {
       pros: ["Можно настроить позже"],
       cons: [],
     },
+    // Zig-compatible LLM flow keys
+    doc_lang_title: "Язык документации",
+    zig: {
+      claude_cli: "Claude Code CLI (локально, через вашу авторизацию)",
+      claude_api: "Claude API (прямой доступ, нужен API ключ)",
+      openai_compat: "OpenAI-совместимый (Ollama / vLLM / LMStudio)",
+      skip: "Пропустить настройку LLM",
+      claude_cli_detected: "Claude CLI обнаружен и доступен",
+      claude_cli_not_found: "Claude CLI не найден — установка: npm i -g @anthropic-ai/claude-code",
+      claude_api_title: "Настройка Claude API",
+      api_key_from_env: "API ключ из ANTHROPIC_API_KEY",
+      api_key_prompt: "Anthropic API ключ (sk-ant-...)",
+      openai_title: "OpenAI-совместимый эндпоинт",
+      endpoint_prompt: "URL эндпоинта",
+      api_key_optional: "API ключ (необязательно, Enter чтобы пропустить)",
+      model_prompt: "Имя модели",
+      context_prompt: "Размер контекста (токены)",
+    },
   },
 
   // ═══════════════════════════════════════════════════════════════
   // LLM Models
   // ═══════════════════════════════════════════════════════════════
   llmModels: {
+    claude_model_title: "Выбор модели Claude",
     claude_haiku: "Haiku",
     claude_haiku_hint: "Быстрый, дешёвый (~$0.04/100 модулей)",
     claude_sonnet: "Sonnet",

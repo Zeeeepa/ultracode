@@ -70,6 +70,7 @@ export const en: SetupStrings = {
     section_8k_hint: "Smart Chunker effectively handles long code with 512 models.",
     selected: "Selected model: {name}",
     no_models: "No models available for {provider} + {language}",
+    skip: "Skip (text search only)",
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -112,12 +113,31 @@ export const en: SetupStrings = {
       pros: ["Can configure later"],
       cons: [],
     },
+    // Zig-compatible LLM flow keys
+    doc_lang_title: "Documentation language",
+    zig: {
+      claude_cli: "Claude Code CLI (local, uses your authorization)",
+      claude_api: "Claude API (direct, needs API key)",
+      openai_compat: "OpenAI-compatible (Ollama / vLLM / LMStudio)",
+      skip: "Skip LLM setup",
+      claude_cli_detected: "Claude CLI detected and available",
+      claude_cli_not_found: "Claude CLI not found — install: npm i -g @anthropic-ai/claude-code",
+      claude_api_title: "Claude API configuration",
+      api_key_from_env: "API key from ANTHROPIC_API_KEY",
+      api_key_prompt: "Anthropic API key (sk-ant-...)",
+      openai_title: "OpenAI-compatible endpoint",
+      endpoint_prompt: "Endpoint URL",
+      api_key_optional: "API key (optional, press Enter to skip)",
+      model_prompt: "Model name",
+      context_prompt: "Context window (tokens)",
+    },
   },
 
   // ═══════════════════════════════════════════════════════════════
   // LLM Models
   // ═══════════════════════════════════════════════════════════════
   llmModels: {
+    claude_model_title: "Claude model selection",
     claude_haiku: "Haiku",
     claude_haiku_hint: "Fast, cheap (~$0.04/100 modules)",
     claude_sonnet: "Sonnet",

@@ -1,6 +1,8 @@
 /**
  * LLM provider selection and installation for setup command
- * Handles TGI and Ollama LLM providers for AutoDoc
+ *
+ * New (Zig-compatible) flow: setupLLM() → Claude CLI / Claude API / OpenAI-compat / Skip
+ * Legacy flow: selectLLMProvider() + selectLLMModel() + installLLMProvider() (kept for compat)
  */
 
 import { execSync, spawn, spawnSync } from "node:child_process";
@@ -843,4 +845,224 @@ async function installOllamaLLM(model: SelectedLLMModel): Promise<boolean> {
 
   printOK(t("install.model_downloaded"));
   return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NEW: Zig-compatible LLM setup (single entry point)
+// Source: ultracode.zig/src/cli/setup.zig:87-227
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * LLM configuration result (Zig-compatible format).
+ * Maps directly to Zig's LLMSettings + doc_language.
+ */
+export interface LLMResult {
+  /** Zig platform name: "claude_cli" | "claude_api" | "openai_compat" */
+  platform: "claude_cli" | "claude_api" | "openai_compat";
+  /** API endpoint (empty for claude_cli) */
+  endpoint: string;
+  /** API key (empty for claude_cli, optional for openai_compat) */
+  api_key: string;
+  /** Model name: "haiku"/"sonnet"/"opus" for Claude, free-form for openai_compat */
+  model: string;
+  /** Context window size in tokens */
+  context_tokens: number;
+  /** Documentation language (ISO 639-1) */
+  doc_language: string;
+}
+
+/**
+ * Detect if `claude` CLI is available on PATH (matches Zig's detectClaudeCli).
+ */
+function detectClaudeCli(): boolean {
+  try {
+    const result = spawnSync("claude", ["--version"], {
+      encoding: "utf-8",
+      timeout: 10000,
+      windowsHide: true,
+      stdio: "pipe",
+    });
+    if (result.status === 0) return true;
+    // Also check output for "claude" string (some versions output to stderr)
+    const output = (result.stdout || "") + (result.stderr || "");
+    return /claude/i.test(output);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Select Claude model (haiku/sonnet/opus).
+ * Matches Zig's selectClaudeModel().
+ */
+async function selectClaudeModel(): Promise<string> {
+  console.error("");
+  console.error(`  ${c.bright}${t("llmModels.claude_model_title")}${c.reset}`);
+  console.error(`  ${c.bright}1)${c.reset} ${t("llmModels.claude_haiku")} ${c.green}[default]${c.reset}`);
+  console.error(`     ${c.dim}${t("llmModels.claude_haiku_hint")}${c.reset}`);
+  console.error("");
+  console.error(`  ${c.bright}2)${c.reset} ${t("llmModels.claude_sonnet")}`);
+  console.error(`     ${c.dim}${t("llmModels.claude_sonnet_hint")}${c.reset}`);
+  console.error("");
+  console.error(`  ${c.bright}3)${c.reset} ${t("llmModels.claude_opus")}`);
+  console.error(`     ${c.dim}${t("llmModels.claude_opus_hint")}${c.reset}`);
+  console.error("");
+
+  const choice = await prompt(`  ${ti("common.prompt_choice", { max: 3, def: 1 })} `);
+  const idx = parseInt(choice, 10) || 1;
+  switch (idx) {
+    case 2:
+      return "sonnet";
+    case 3:
+      return "opus";
+    default:
+      return "haiku";
+  }
+}
+
+/**
+ * Select documentation language.
+ * Matches Zig's setup.zig:206-227.
+ */
+export async function selectDocLanguage(): Promise<string> {
+  console.error("");
+  console.error(`  ${c.bright}${t("llm.doc_lang_title")}${c.reset}`);
+  console.error(`  ${c.bright}1)${c.reset} English  ${c.green}[DEFAULT]${c.reset}`);
+  console.error(`  ${c.bright}2)${c.reset} Russian`);
+  console.error(`  ${c.bright}3)${c.reset} German`);
+  console.error(`  ${c.bright}4)${c.reset} French`);
+  console.error(`  ${c.bright}5)${c.reset} Spanish`);
+  console.error(`  ${c.bright}6)${c.reset} Chinese`);
+  console.error(`  ${c.bright}7)${c.reset} Japanese`);
+  console.error("");
+
+  const choice = await prompt(`  ${ti("common.prompt_choice", { max: 7, def: 1 })} `);
+  const idx = parseInt(choice, 10) || 1;
+  const langs = ["en", "ru", "de", "fr", "es", "zh", "ja"];
+  return langs[Math.min(Math.max(idx - 1, 0), 6)] ?? "en";
+}
+
+/**
+ * Unified LLM setup following the Zig reference flow.
+ * Returns LLMResult or null (Skip).
+ *
+ * Flow:
+ * 1. Detect Claude CLI
+ * 2. Show 4 options: Claude CLI / Claude API / OpenAI-compat / Skip
+ * 3. Per choice: select model, prompt for keys/endpoints
+ * 4. Select documentation language
+ * 5. Return result
+ */
+export async function setupLLM(): Promise<LLMResult | null> {
+  clearScreen();
+  console.error("");
+  console.error(`  ${c.bright}${t("llm.title")}${c.reset}`);
+  console.error("");
+
+  // Detect Claude CLI availability
+  const claudeCliAvailable = detectClaudeCli();
+  const cliTag = claudeCliAvailable ? `  ${c.green}[DETECTED]${c.reset}` : "";
+
+  console.error(`  ${c.bright}1)${c.reset} ${t("llm.zig.claude_cli")}${cliTag}`);
+  console.error(`  ${c.bright}2)${c.reset} ${t("llm.zig.claude_api")}`);
+  console.error(`  ${c.bright}3)${c.reset} ${t("llm.zig.openai_compat")}`);
+  console.error(`  ${c.bright}4)${c.reset} ${t("llm.zig.skip")}`);
+  console.error("");
+
+  const defaultChoice = claudeCliAvailable ? 1 : 2;
+  const choice = await prompt(`  ${ti("common.prompt_choice", { max: 4, def: defaultChoice })} `);
+  const idx = parseInt(choice, 10) || defaultChoice;
+
+  let result: LLMResult | null = null;
+
+  switch (idx) {
+    case 1: {
+      // Claude CLI (local)
+      console.error("");
+      if (claudeCliAvailable) {
+        printOK(t("llm.zig.claude_cli_detected"));
+      } else {
+        printWarn(t("llm.zig.claude_cli_not_found"));
+      }
+      const model = await selectClaudeModel();
+      result = {
+        platform: "claude_cli",
+        endpoint: "",
+        api_key: "",
+        model,
+        context_tokens: 200000,
+        doc_language: "en",
+      };
+      break;
+    }
+    case 2: {
+      // Claude API
+      console.error("");
+      console.error(`  ${c.bright}${t("llm.zig.claude_api_title")}${c.reset}`);
+
+      // Check env for API key
+      const envKey = process.env["ANTHROPIC_API_KEY"] || "";
+      let apiKey = "";
+
+      if (envKey.length > 0) {
+        const prefix = envKey.slice(0, 7);
+        const suffix = envKey.length > 10 ? envKey.slice(-4) : "";
+        console.error(`  ${t("llm.zig.api_key_from_env")}: ${prefix}...${suffix}`);
+        apiKey = envKey;
+      } else {
+        apiKey = await prompt(`  ${t("llm.zig.api_key_prompt")}: `);
+      }
+
+      const model = await selectClaudeModel();
+      result = {
+        platform: "claude_api",
+        endpoint: "https://api.anthropic.com/v1",
+        api_key: apiKey,
+        model,
+        context_tokens: 200000,
+        doc_language: "en",
+      };
+      break;
+    }
+    case 3: {
+      // OpenAI-compatible
+      console.error("");
+      console.error(`  ${c.bright}${t("llm.zig.openai_title")}${c.reset}`);
+      console.error(`  ${c.dim}Ollama:    http://localhost:11434/v1${c.reset}`);
+      console.error(`  ${c.dim}vLLM:     http://localhost:8000/v1${c.reset}`);
+      console.error(`  ${c.dim}LMStudio: http://localhost:1234/v1${c.reset}`);
+      console.error("");
+
+      const endpoint =
+        (await prompt(`  ${t("llm.zig.endpoint_prompt")} [http://localhost:11434/v1]: `)) ||
+        "http://localhost:11434/v1";
+      const apiKey = (await prompt(`  ${t("llm.zig.api_key_optional")}: `)) || "";
+      const model = (await prompt(`  ${t("llm.zig.model_prompt")} [qwen2.5-coder:7b]: `)) || "qwen2.5-coder:7b";
+      const ctxStr = (await prompt(`  ${t("llm.zig.context_prompt")} [32768]: `)) || "32768";
+      const contextTokens = parseInt(ctxStr, 10) || 32768;
+
+      result = {
+        platform: "openai_compat",
+        endpoint,
+        api_key: apiKey,
+        model,
+        context_tokens: contextTokens,
+        doc_language: "en",
+      };
+      break;
+    }
+    default: {
+      // Skip
+      clearScreen();
+      return null;
+    }
+  }
+
+  // Documentation language selection (only if LLM was selected)
+  if (result) {
+    result.doc_language = await selectDocLanguage();
+  }
+
+  clearScreen();
+  return result;
 }

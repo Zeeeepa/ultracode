@@ -26,23 +26,18 @@ import {
   saveSemanticConfig,
 } from "../utils/config-paths.js";
 
-// Type alias for LLM platform
-type LLMPlatform = NonNullable<SemanticConfig["llm"]>["platform"];
-
 import { setSetupLanguage } from "./setup/i18n/index.js";
 
 // Import from setup modules
 import {
-  askEnableLLM,
   c,
   detectGPU,
   type EmbeddingModel,
   type GPUInfo,
   type InstallResult,
-  installLLMProvider,
   installMcpConfigs,
   installProvider,
-  type LLMConfig,
+  type LLMResult,
   type ModelsConfig,
   printBanner,
   printCompleteBanner,
@@ -51,13 +46,13 @@ import {
   printInfo,
   printOK,
   printWarn,
-  type SelectedLLMModel,
   selectLanguage,
-  selectLLMModel,
-  selectLLMProvider,
   selectModel,
   selectProvider,
+  setupLLM,
+  ZIG_EMBEDDING_MODELS,
 } from "./setup/index.js";
+import { checkDocker } from "./setup/setup-installers.js";
 import { cleanupDockerLlamaServer } from "./setup/utils/docker.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -96,7 +91,6 @@ function getPackageRoot(): string {
 
 const PACKAGE_ROOT = getPackageRoot();
 const MODELS_CONFIG_PATH = join(PACKAGE_ROOT, "config", "embedding-models.json");
-const LLM_MODELS_CONFIG_PATH = join(PACKAGE_ROOT, "config", "llm-models.json");
 
 // ═══════════════════════════════════════════════════════════════
 // Config Loading
@@ -112,35 +106,6 @@ function loadModelsConfig(): ModelsConfig | null {
   } catch (error) {
     printError(`Failed to parse models config: ${error}`);
     return null;
-  }
-}
-
-function loadLLMConfig(): LLMConfig | null {
-  if (!existsSync(LLM_MODELS_CONFIG_PATH)) {
-    return null;
-  }
-  try {
-    return JSON.parse(readFileSync(LLM_MODELS_CONFIG_PATH, "utf-8")) as LLMConfig;
-  } catch (error) {
-    printWarn(`Failed to parse LLM config: ${error}`);
-    return null;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Helper functions
-// ═══════════════════════════════════════════════════════════════
-
-function getDefaultEndpoint(provider: string): string {
-  switch (provider) {
-    case "ollama":
-      return "http://127.0.0.1:11434";
-    case "tgi":
-      return "http://127.0.0.1:8081";
-    case "docker-model-runner":
-      return "http://127.0.0.1:12434";
-    default:
-      return "";
   }
 }
 
@@ -179,57 +144,7 @@ function parseSetupArgs(args: string[]): SetupArgs {
   return { providerArg, modelArg, langArg, llmOnly };
 }
 
-async function runLlmOnlySetup(cpu: CPUInfo, gpu: GPUInfo): Promise<void> {
-  console.error("");
-  printInfo("Пропускаем embedding setup, переходим к LLM...");
-  console.error("");
-
-  const llmConfig = loadLLMConfig();
-  if (!llmConfig) {
-    printWarn("LLM config not found");
-    process.exit(1);
-  }
-
-  const llmProvider = await selectLLMProvider(cpu, gpu);
-  if (!llmProvider) {
-    printWarn("LLM setup cancelled");
-    process.exit(0);
-  }
-
-  const llmModel = await selectLLMModel(llmProvider, llmConfig, gpu);
-  if (!llmModel) {
-    printWarn("LLM model selection cancelled");
-    process.exit(0);
-  }
-
-  const llmSuccess = await installLLMProvider(llmProvider, llmModel, gpu);
-  if (llmSuccess) {
-    printOK("LLM setup completed!");
-  } else {
-    printWarn("LLM setup had issues");
-  }
-
-  // Load existing config and update LLM section
-  const existingConfig = loadSemanticConfig();
-  if (existingConfig) {
-    existingConfig.llm = {
-      enabled: true,
-      platform: llmProvider as LLMPlatform,
-      [llmProvider === "claude-code" ? "claude" : llmProvider]: {
-        endpoint: llmProvider === "claude-code" ? undefined : getDefaultEndpoint(llmProvider),
-        model_id: llmModel.model_id,
-        context_tokens: llmModel.context_tokens,
-      },
-    };
-    saveSemanticConfig(existingConfig);
-    printOK("Config saved to semantic-config.json");
-  } else {
-    printWarn("No existing config found. Run full setup first.");
-  }
-
-  // Auto-detect AI agents and install MCP config
-  await installMcpConfigs();
-}
+// runLlmOnlySetup removed — replaced by inline code in runSetup() using setupLLM()
 
 function buildEmbeddingConfig(
   provider: string,
@@ -265,6 +180,7 @@ function buildEmbeddingConfig(
   return {
     enabled: true,
     embedding: {
+      // TS-specific fields
       platform: provider as "tei" | "ovms" | "ovms-native" | "vllm" | "llamacpp",
       architecture: gpu.architecture,
       ovms: isOVMS
@@ -363,42 +279,62 @@ function buildEmbeddingConfig(
   };
 }
 
-function buildLlmConfig(llmProvider: string, llmModel: SelectedLLMModel): NonNullable<SemanticConfig["llm"]> {
-  return {
+/**
+ * Build Zig-compatible LLM config from setupLLM() result.
+ * Writes BOTH Zig fields (platform, model, endpoint, api_key, context_tokens)
+ * AND TS fields (enabled, claude/ollama nested objects).
+ */
+function buildLlmConfigFromResult(llmResult: LLMResult): Record<string, unknown> {
+  const config: Record<string, unknown> = {
+    // Zig-readable fields
+    platform: llmResult.platform,
+    endpoint: llmResult.endpoint,
+    api_key: llmResult.api_key,
+    model: llmResult.model,
+    context_tokens: llmResult.context_tokens,
+    // TS-readable fields
     enabled: true,
-    platform: llmProvider as LLMPlatform,
-    claude:
-      llmProvider === "claude-code"
-        ? {
-            model_id: llmModel.model_id,
-            context_tokens: llmModel.context_tokens,
-          }
-        : undefined,
-    ollama:
-      llmProvider === "ollama"
-        ? {
-            endpoint: "http://127.0.0.1:11434",
-            model_id: llmModel.model_id,
-            context_tokens: llmModel.context_tokens,
-          }
-        : undefined,
-    tgi:
-      llmProvider === "tgi"
-        ? {
-            endpoint: "http://127.0.0.1:8081",
-            model_id: llmModel.model_id,
-            context_tokens: llmModel.context_tokens,
-            container_name: "tgi-llm-server",
-          }
-        : undefined,
-    docker_model_runner:
-      llmProvider === "docker-model-runner"
-        ? {
-            endpoint: "http://127.0.0.1:12434",
-            model_id: llmModel.model_id,
-            context_tokens: llmModel.context_tokens,
-          }
-        : undefined,
+  };
+
+  // Add TS nested objects based on platform
+  if (llmResult.platform === "claude_cli" || llmResult.platform === "claude_api") {
+    config["claude"] = {
+      model_id: llmResult.model,
+      context_tokens: llmResult.context_tokens,
+    };
+  } else if (llmResult.platform === "openai_compat") {
+    config["ollama"] = {
+      endpoint: llmResult.endpoint,
+      model_id: llmResult.model,
+      context_tokens: llmResult.context_tokens,
+    };
+  }
+
+  return config;
+}
+
+/**
+ * Build Zig-compatible inference section (default settings).
+ * Source: ultracode.zig/src/config/semantic_config.zig:InferenceSettings
+ */
+function buildInferenceConfig(modelId: string): Record<string, unknown> {
+  return {
+    model_id: modelId,
+    quantization: "int8",
+    distribution_mode: "aggressive",
+    aggressive_mode: true,
+    min_batch_per_device: 16,
+    efficient_target_seconds: 10.0,
+    dump_batches: false,
+    worker_stderr_log: false,
+    workers: {
+      "gpu-cuda": true,
+      "gpu-vulkan": true,
+      "gpu-metal": true,
+      "cpu-all": true,
+      "igpu-intel": true,
+      "npu-intel": true,
+    },
   };
 }
 
@@ -409,9 +345,6 @@ function buildLlmConfig(llmProvider: string, llmModel: SelectedLLMModel): NonNul
 export async function runSetup(args: string[]): Promise<void> {
   printBanner();
 
-  const config = loadModelsConfig();
-  if (!config) process.exit(1);
-
   // Parse args
   const { providerArg, modelArg, langArg, llmOnly } = parseSetupArgs(args);
 
@@ -419,16 +352,44 @@ export async function runSetup(args: string[]): Promise<void> {
   const localeConfig = detectSystemLocale(langArg);
   setSetupLanguage(localeConfig.language);
 
-  // Step 0: Detect hardware
+  // Step 0: Docker check (required for embedding providers)
+  if (!checkDocker()) {
+    printError("Docker is required for embedding providers (OVMS / TEI / vLLM).");
+    console.error("");
+    console.error(`  Install Docker: ${c.cyan}https://docker.com${c.reset}`);
+    console.error("");
+    process.exit(1);
+  }
+  printOK("Docker detected");
+
+  // Step 0.5: Detect hardware
   const cpu = CPUDetector.detect();
   const gpu = detectGPU();
   printHardwareInfo(cpu, gpu);
 
   // If --llm-only, skip embedding setup and go directly to LLM
   if (llmOnly) {
-    await runLlmOnlySetup(cpu, gpu);
+    const llmResult = await setupLLM();
+    if (llmResult) {
+      const existingConfig = loadSemanticConfig();
+      if (existingConfig) {
+        // Merge LLM into existing config via raw JSON to include both Zig and TS fields
+        const merged: Record<string, unknown> = { ...(existingConfig as unknown as Record<string, unknown>) };
+        merged["llm"] = buildLlmConfigFromResult(llmResult);
+        merged["doc_language"] = llmResult.doc_language;
+        saveSemanticConfig(merged as unknown as SemanticConfig);
+        printOK("Config saved with LLM settings");
+      } else {
+        printWarn("No existing config found. Run full setup first.");
+      }
+    }
+    await installMcpConfigs();
     return;
   }
+
+  // Load models config (still needed for provider-specific metadata, but model list is from Zig catalog)
+  const config = loadModelsConfig();
+  if (!config) process.exit(1);
 
   // Step 1: Language selection
   const language = await selectLanguage();
@@ -436,93 +397,105 @@ export async function runSetup(args: string[]): Promise<void> {
   // Step 2: Provider selection
   const provider = providerArg || (await selectProvider(cpu, gpu));
 
-  // Step 3: Model selection
+  // Step 3: Model selection (from Zig catalog, filtered by language)
   let selectedModel: EmbeddingModel;
+  const embeddingSkipped = { value: false };
 
   if (modelArg) {
-    const found = config.models.find((m) => m.id === modelArg || m.model_id === modelArg);
-    if (!found) {
-      printError(`Model not found: ${modelArg}`);
-      process.exit(1);
+    // Look up in Zig catalog first, then fallback to JSON config
+    const zigModel = ZIG_EMBEDDING_MODELS.find((m) => m.id === modelArg);
+    if (zigModel) {
+      const { zigModelToEmbeddingModel } = await import("./setup/setup-selection.js");
+      selectedModel = zigModelToEmbeddingModel(zigModel, provider);
+    } else {
+      const found = config.models.find((m) => m.id === modelArg || m.model_id === modelArg);
+      if (!found) {
+        printError(`Model not found: ${modelArg}`);
+        process.exit(1);
+      }
+      selectedModel = found;
     }
-    selectedModel = found;
     printInfo(`Using model: ${selectedModel.name}`);
   } else {
     selectedModel = await selectModel(provider, language, config, gpu);
+    if (selectedModel.id === "none") {
+      embeddingSkipped.value = true;
+    }
   }
 
-  // Step 4: Installation
-  const installResult = await installProvider(provider, selectedModel, gpu, cpu);
-
-  if (!installResult.success) {
-    printWarn("Installation had issues, but config will be saved");
+  // Step 4: Installation (skip if user chose "Skip")
+  let installResult: InstallResult = { success: true };
+  if (!embeddingSkipped.value) {
+    installResult = await installProvider(provider, selectedModel, gpu, cpu);
+    if (!installResult.success) {
+      printWarn("Installation had issues, but config will be saved");
+    }
   }
 
   // Build and save embedding config
   const finalConfig = buildEmbeddingConfig(provider, selectedModel, installResult, gpu, cpu);
 
+  // Override embedding.enabled if skipped
+  if (embeddingSkipped.value) {
+    (finalConfig as unknown as Record<string, unknown>)["enabled"] = false;
+  }
+
   ensureConfigDir();
-  saveSemanticConfig(finalConfig);
 
-  // Step 5: LLM Model Selection (optional)
-  console.error("");
-  const enableLLM = await askEnableLLM();
+  // Step 5: LLM setup (Zig-compatible flow: Claude CLI / Claude API / OpenAI-compat / Skip)
+  const llmResult = await setupLLM();
 
-  if (enableLLM) {
-    const llmConfig = loadLLMConfig();
-    if (llmConfig) {
-      const llmProvider = await selectLLMProvider(cpu, gpu);
-      if (llmProvider) {
-        const llmModel = await selectLLMModel(llmProvider, llmConfig, gpu);
-        if (llmModel) {
-          // Install LLM provider and download model
-          const llmSuccess = await installLLMProvider(llmProvider, llmModel, gpu);
+  // Build final merged config with Zig-compatible fields
+  const mergedConfig: Record<string, unknown> = { ...(finalConfig as unknown as Record<string, unknown>) };
 
-          if (!llmSuccess) {
-            printWarn("LLM installation had issues, but config will be saved");
-          }
-
-          // Update config with LLM settings
-          finalConfig.llm = buildLlmConfig(llmProvider, llmModel);
-
-          // auto_start is already set in llamacpp config above
-          saveSemanticConfig(finalConfig);
-        }
-      }
-    } else {
-      printWarn("LLM config not found, skipping LLM setup");
+  // Add Zig-compatible embedding fields (embedding.model, embedding.dimension, embedding.enabled)
+  if (!embeddingSkipped.value) {
+    const embObj = mergedConfig["embedding"] as Record<string, unknown> | undefined;
+    if (embObj) {
+      embObj["enabled"] = true;
+      embObj["model"] = selectedModel.id;
+      embObj["dimension"] = selectedModel.dimensions;
     }
   }
+
+  // Add Zig inference section
+  if (!embeddingSkipped.value) {
+    mergedConfig["inference"] = buildInferenceConfig(selectedModel.id);
+  }
+
+  // Add LLM config (Zig + TS compatible)
+  if (llmResult) {
+    mergedConfig["llm"] = buildLlmConfigFromResult(llmResult);
+    mergedConfig["doc_language"] = llmResult.doc_language;
+  } else {
+    mergedConfig["llm"] = null;
+    mergedConfig["doc_language"] = "en";
+  }
+
+  saveSemanticConfig(mergedConfig as unknown as SemanticConfig);
 
   // Summary
   printCompleteBanner();
   console.error(`  ${c.bright}Embedding:${c.reset}`);
-  console.error(`  ${c.cyan}  Provider:${c.reset}   ${provider}`);
-  console.error(`  ${c.cyan}  Model:${c.reset}      ${selectedModel.name}`);
-  console.error(`  ${c.cyan}  Context:${c.reset}    ${selectedModel.context_tokens} tokens`);
-  console.error(`  ${c.cyan}  Language:${c.reset}   ${language === "en" ? "English" : "Multilingual"}`);
+  if (embeddingSkipped.value) {
+    console.error(`  ${c.dim}  Skipped (text search only)${c.reset}`);
+  } else {
+    console.error(`  ${c.cyan}  Provider:${c.reset}   ${provider}`);
+    console.error(`  ${c.cyan}  Model:${c.reset}      ${selectedModel.name}`);
+    console.error(`  ${c.cyan}  Context:${c.reset}    ${selectedModel.context_tokens} tokens`);
+    console.error(`  ${c.cyan}  Language:${c.reset}   ${language === "en" ? "English" : "Multilingual"}`);
+  }
   console.error("");
 
-  if (finalConfig.llm?.enabled) {
+  if (llmResult) {
     console.error(`  ${c.bright}LLM (AutoDoc):${c.reset}`);
-    console.error(`  ${c.cyan}  Provider:${c.reset}   ${finalConfig.llm.platform}`);
-    const llmModelId =
-      finalConfig.llm.claude?.model_id ||
-      finalConfig.llm.ollama?.model_id ||
-      finalConfig.llm.tgi?.model_id ||
-      finalConfig.llm.docker_model_runner?.model_id;
-    const llmContext =
-      finalConfig.llm.claude?.context_tokens ||
-      finalConfig.llm.ollama?.context_tokens ||
-      finalConfig.llm.tgi?.context_tokens ||
-      finalConfig.llm.docker_model_runner?.context_tokens;
-    console.error(`  ${c.cyan}  Model:${c.reset}      ${llmModelId}`);
-    console.error(
-      `  ${c.cyan}  Context:${c.reset}    ${llmContext ? `${Math.round(llmContext / 1024)}K` : "?"} tokens`,
-    );
-    if (finalConfig.llm.tgi) {
-      console.error(`  ${c.cyan}  Endpoint:${c.reset}   ${finalConfig.llm.tgi.endpoint}`);
+    console.error(`  ${c.cyan}  Platform:${c.reset}   ${llmResult.platform}`);
+    console.error(`  ${c.cyan}  Model:${c.reset}      ${llmResult.model}`);
+    console.error(`  ${c.cyan}  Context:${c.reset}    ${Math.round(llmResult.context_tokens / 1024)}K tokens`);
+    if (llmResult.endpoint) {
+      console.error(`  ${c.cyan}  Endpoint:${c.reset}   ${llmResult.endpoint}`);
     }
+    console.error(`  ${c.cyan}  Doc lang:${c.reset}   ${llmResult.doc_language}`);
     console.error("");
   }
 
@@ -539,16 +512,7 @@ export async function runSetup(args: string[]): Promise<void> {
     console.error(`${c.dim}  docker restart vllm-server  # Restart${c.reset}`);
   }
 
-  // LLM management hints
-  if (finalConfig.llm?.tgi) {
-    console.error("");
-    console.error(`${c.dim}TGI LLM Management:${c.reset}`);
-    console.error(`${c.dim}  docker logs tgi-llm-server    # View logs${c.reset}`);
-    console.error(`${c.dim}  docker restart tgi-llm-server # Restart${c.reset}`);
-  }
-
   // Cleanup: Kill Docker's built-in llama-server if running
-  // (Docker Desktop may auto-start com.docker.llama-server.exe when docker commands are invoked)
   cleanupDockerLlamaServer();
 
   // Step 6: Auto-detect AI agents and install MCP config

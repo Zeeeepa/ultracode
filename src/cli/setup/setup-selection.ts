@@ -1,11 +1,134 @@
 /**
  * Selection UI for setup command - language, provider, model
+ *
+ * Model catalog is hardcoded from the Zig reference implementation
+ * (ultracode.zig/src/config/semantic_config.zig) to keep both versions in sync.
  */
 
 import type { CPUInfo } from "../../cpu/cpu-detector.js";
-import { t, ta, ti } from "./i18n/index.js";
+import { getSetupLanguage, t, ta, ti } from "./i18n/index.js";
 import type { EmbeddingModel, GPUInfo, ModelsConfig, ProviderOption } from "./setup-types.js";
 import { c, clearScreen, printBanner, printError, printInfo, prompt } from "./setup-ui.js";
+
+// ═══════════════════════════════════════════════════════════════
+// Zig Embedding Model Catalog
+// Source: ultracode.zig/src/config/semantic_config.zig:26-37
+// This is the single source of truth for available models.
+// ═══════════════════════════════════════════════════════════════
+
+export interface ZigEmbeddingModel {
+  id: string;
+  name: string;
+  dimension: number;
+  context: number;
+  lang: "en" | "multi";
+  mteb: number;
+  note_en: string;
+  note_ru: string;
+  hf_repo: string;
+  size_mb: number;
+}
+
+export const ZIG_EMBEDDING_MODELS: ZigEmbeddingModel[] = [
+  // Multilingual (sorted by size: fastest first)
+  {
+    id: "multilingual-e5-small",
+    name: "E5 Small",
+    dimension: 384,
+    context: 512,
+    lang: "multi",
+    mteb: 57.79,
+    note_en: "Fast, 94 languages",
+    note_ru: "Быстрая, 94 языка",
+    hf_repo: "intfloat/multilingual-e5-small",
+    size_mb: 118,
+  },
+  {
+    id: "multilingual-e5-base",
+    name: "E5 Base",
+    dimension: 768,
+    context: 512,
+    lang: "multi",
+    mteb: 59.45,
+    note_en: "Balanced, 94 languages",
+    note_ru: "Сбалансированная, 94 языка",
+    hf_repo: "intfloat/multilingual-e5-base",
+    size_mb: 470,
+  },
+  // English-only (sorted by size: fastest first)
+  {
+    id: "snowflake-arctic-embed-xs",
+    name: "Arctic XS",
+    dimension: 384,
+    context: 512,
+    lang: "en",
+    mteb: 50.0,
+    note_en: "Smallest, code-optimized",
+    note_ru: "Самая компактная, для кода",
+    hf_repo: "Snowflake/snowflake-arctic-embed-xs",
+    size_mb: 90,
+  },
+  {
+    id: "all-MiniLM-L6-v2",
+    name: "MiniLM L6 v2",
+    dimension: 384,
+    context: 512,
+    lang: "en",
+    mteb: 56.26,
+    note_en: "Fastest, English",
+    note_ru: "Быстрейшая, English",
+    hf_repo: "sentence-transformers/all-MiniLM-L6-v2",
+    size_mb: 91,
+  },
+  {
+    id: "mxbai-embed-xsmall-v1",
+    name: "MxbAI XSmall",
+    dimension: 384,
+    context: 4096,
+    lang: "en",
+    mteb: 0,
+    note_en: "MiniLM upgrade, Matryoshka, 24MB INT8",
+    note_ru: "Замена MiniLM, Matryoshka, 24МБ INT8",
+    hf_repo: "mixedbread-ai/mxbai-embed-xsmall-v1",
+    size_mb: 23,
+  },
+  {
+    id: "nomic-embed-text-v1.5",
+    name: "Nomic v1.5",
+    dimension: 768,
+    context: 8192,
+    lang: "en",
+    mteb: 62.28,
+    note_en: "8K context — best for Java/C#",
+    note_ru: "8K контекст — рек. для Java/C#",
+    hf_repo: "nomic-ai/nomic-embed-text-v1.5",
+    size_mb: 548,
+  },
+  {
+    id: "gte-modernbert-base",
+    name: "GTE ModernBERT",
+    dimension: 768,
+    context: 8192,
+    lang: "en",
+    mteb: 64.38,
+    note_en: "Top quality 8K — best for Java/C#",
+    note_ru: "Лучшее качество 8K — рек. для Java/C#",
+    hf_repo: "Alibaba-NLP/gte-modernbert-base",
+    size_mb: 149,
+  },
+  {
+    id: "modernbert-embed-base",
+    name: "Nomic ModernBERT",
+    dimension: 768,
+    context: 8192,
+    lang: "en",
+    mteb: 62.62,
+    note_en: "Matryoshka 768>256d 8K — best for Java/C#",
+    note_ru: "Matryoshka 768>256d 8K — рек. для Java/C#",
+    hf_repo: "nomic-ai/modernbert-embed-base",
+    size_mb: 149,
+  },
+];
 
 // ═══════════════════════════════════════════════════════════════
 // Language Selection
@@ -149,141 +272,109 @@ export async function selectProvider(cpu: CPUInfo, gpu: GPUInfo): Promise<string
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Model Selection
+// Model Selection (Zig catalog — single source of truth)
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * Convert a ZigEmbeddingModel to the EmbeddingModel interface used by installers.
+ * The `provider` field is set later based on the selected provider.
+ */
+export function zigModelToEmbeddingModel(zigModel: ZigEmbeddingModel, provider: string): EmbeddingModel {
+  return {
+    id: zigModel.id,
+    provider,
+    name: zigModel.name,
+    model_id: provider === "ovms" || provider === "ovms-native" ? zigModel.id : zigModel.hf_repo,
+    gpu_architectures: ["cpu", "turing", "ampere", "ada", "hopper", "blackwell"],
+    gpu_support: true,
+    language: zigModel.lang,
+    context_tokens: zigModel.context,
+    dimensions: zigModel.dimension,
+    size_mb: zigModel.size_mb,
+    use_case: "general",
+    description: getSetupLanguage() === "ru" ? zigModel.note_ru : zigModel.note_en,
+    hf_model: zigModel.hf_repo,
+  };
+}
+
+/**
+ * Select an embedding model from the Zig catalog.
+ * Filters by language: "en" → English-only models, "multi" → multilingual-only models.
+ * Returns null if the user chooses "Skip (text search only)".
+ */
 export async function selectModel(
   provider: string,
   language: "en" | "multi",
-  config: ModelsConfig,
-  gpu: GPUInfo,
+  _config: ModelsConfig,
+  _gpu: GPUInfo,
 ): Promise<EmbeddingModel> {
   clearScreen();
   console.error("");
   console.error(`  ${c.bright}${t("model.title")}${c.reset}`);
   console.error("");
-  console.error("");
 
-  // Filter models by provider and language
-  // ovms-native uses models with provider === "ovms", vllm has its own provider
-  let modelProvider = provider;
-  if (provider.startsWith("ovms")) {
-    modelProvider = "ovms";
-  }
-  let models = config.models.filter((m) => m.provider === modelProvider);
+  const isRu = getSetupLanguage() === "ru";
 
-  // Filter out unavailable models (e.g., jina-v3 with Task LoRA)
-  type ModelWithAvailable = EmbeddingModel & { available?: boolean };
-  models = models.filter((m) => (m as ModelWithAvailable).available !== false);
+  // Filter by language (strict: en→en only, multi→multi only)
+  const filtered = ZIG_EMBEDDING_MODELS.filter((m) => m.lang === language);
 
-  // Filter by language - code models appear in both modes (code is language-agnostic)
-  if (language === "en") {
-    models = models.filter((m) => m.language === "en" || m.language === "code");
-  } else {
-    // For multi, show multilingual + code models
-    models = models.filter((m) => m.language === "multi" || m.language === "code");
-  }
-
-  // Filter by GPU compatibility
-  if (provider === "tei" && gpu.available) {
-    const arch = gpu.architecture;
-    models = models.filter((m) => m.gpu_architectures.includes(arch) || m.gpu_architectures.includes("cpu"));
-  }
-
-  // Filter by VRAM for GPU models (Ollama, TEI)
-  if (gpu.available && gpu.vramMB > 0 && (provider === "ollama" || provider === "tei")) {
-    const availableVRAM = gpu.vramMB;
-    models = models.filter((m) => {
-      const requiredVRAM = m.vram_mb || 0;
-      // Allow models that fit in VRAM with 500MB headroom, or CPU-capable models
-      return requiredVRAM <= availableVRAM + 500 || m.gpu_architectures?.includes("cpu");
-    });
-  }
-
-  if (models.length === 0) {
+  if (filtered.length === 0) {
     printError(ti("model.no_models", { provider, language }));
     process.exit(1);
   }
 
-  // Split into 512 and 8K, then sort by benchmark (faster first)
-  const models512 = models
-    .filter((m) => m.context_tokens <= 512)
-    .sort((a, b) => (b.benchmark_chunks_per_sec || 0) - (a.benchmark_chunks_per_sec || 0));
-  const models8K = models
-    .filter((m) => m.context_tokens > 512)
-    .sort((a, b) => (b.benchmark_chunks_per_sec || 0) - (a.benchmark_chunks_per_sec || 0));
+  // Display models
+  for (let i = 0; i < filtered.length; i++) {
+    const m = filtered[i]!;
+    const num = i + 1;
+    const recommended = i === 0 ? `  ${c.green}[RECOMMENDED]${c.reset}` : "";
+    const note = isRu ? m.note_ru : m.note_en;
+    const mtebStr = m.mteb > 0 ? `MTEB:${m.mteb.toFixed(1)}` : "";
 
-  // Display 512 models (limit to 5)
-  console.error(`  ${c.bright}${t("model.section_512")}${c.reset}`);
+    console.error(`  ${c.bright}${num})${c.reset} ${m.name}${recommended}`);
+    console.error(
+      `     ${c.dim}${m.dimension}d | ${m.context} tok | ${m.size_mb}MB${mtebStr ? ` | ${mtebStr}` : ""}${c.reset}`,
+    );
+    console.error(`     ${c.dim}${note}${c.reset}`);
+    console.error("");
+  }
+
+  // Skip option
+  const skipNum = filtered.length + 1;
+  console.error(`  ${c.bright}${skipNum})${c.reset} ${c.dim}${t("model.skip")}${c.reset}`);
   console.error("");
 
-  const display512 = models512.slice(0, 5);
-  let idx = 0;
+  const choice = await prompt(`  ${ti("common.prompt_choice", { max: skipNum, def: 1 })} `);
+  const idx = (parseInt(choice, 10) || 1) - 1;
 
-  for (const model of display512) {
-    idx++;
-    const recBadge = idx === 1 ? ` ${c.green}${t("model.recommended")}${c.reset}` : "";
-    const badge = model.badge ? ` ${model.badge}` : "";
-    console.error(`  ${c.bright}${idx})${c.reset} ${model.name}${badge}${recBadge}`);
-
-    // Build info line with memory and benchmark
-    const memInfo = model.vram_mb
-      ? `${model.vram_mb}MB VRAM`
-      : model.ram_mb
-        ? `${model.ram_mb}MB RAM`
-        : `${model.size_mb}MB`;
-    const tokInfo = model.benchmark_toks ? `${c.green}${Math.round(model.benchmark_toks / 1000)}K tok/s${c.reset}` : "";
-    let info = `${model.context_tokens} tok | ${memInfo}`;
-    if (tokInfo) info += ` | ${tokInfo}`;
-    console.error(`     ${c.dim}${info}${c.reset}`);
-    console.error(`     ${c.dim}${model.description}${c.reset}`);
-    console.error("");
+  if (idx === filtered.length) {
+    // Skip — return a dummy "disabled" model; setup-command will handle embedding.enabled = false
+    return zigModelToEmbeddingModel(
+      {
+        id: "none",
+        name: "None",
+        dimension: 384,
+        context: 0,
+        lang: language,
+        mteb: 0,
+        note_en: "Text search only",
+        note_ru: "Только текстовый поиск",
+        hf_repo: "",
+        size_mb: 0,
+      },
+      provider,
+    );
   }
 
-  // Display 8K models (limit to 2)
-  if (models8K.length > 0) {
-    console.error(`  ${c.bright}${t("model.section_8k")}${c.reset}`);
-    console.error(`  ${c.yellow}⚠️ ${t("model.section_8k_warning")}${c.reset}`);
-    console.error(`  ${c.dim}   ${t("model.section_8k_hint")}${c.reset}`);
-    console.error("");
-
-    const display8K = models8K.slice(0, 2);
-
-    for (const model of display8K) {
-      idx++;
-      const badge = model.badge ? ` ${model.badge}` : "";
-      console.error(`  ${c.bright}${idx})${c.reset} ${model.name}${badge} ${c.yellow}${t("model.legacy")}${c.reset}`);
-
-      // Build info line with memory and benchmark
-      const memInfo = model.vram_mb
-        ? `${model.vram_mb}MB VRAM`
-        : model.ram_mb
-          ? `${model.ram_mb}MB RAM`
-          : `${model.size_mb}MB`;
-      const tokInfo = model.benchmark_toks
-        ? `${c.green}${Math.round(model.benchmark_toks / 1000)}K tok/s${c.reset}`
-        : "";
-      let info = `${model.context_tokens} tok | ${memInfo}`;
-      if (tokInfo) info += ` | ${tokInfo}`;
-      console.error(`     ${c.dim}${info}${c.reset}`);
-      console.error(`     ${c.dim}${model.description}${c.reset}`);
-      console.error("");
-    }
-  }
-
-  const allDisplayed = [...display512, ...models8K.slice(0, 2)];
-  const choice = await prompt(`  ${ti("common.prompt_choice", { max: allDisplayed.length, def: 1 })} `);
-  const modelIdx = (parseInt(choice, 10) || 1) - 1;
-
-  if (modelIdx < 0 || modelIdx >= allDisplayed.length) {
+  if (idx < 0 || idx >= filtered.length) {
     printError(t("common.invalid_choice"));
     process.exit(1);
   }
 
-  const selected = allDisplayed[modelIdx]!;
+  const selected = filtered[idx]!;
   clearScreen();
   printInfo(ti("model.selected", { name: selected.name }));
   console.error("");
 
-  return selected;
+  return zigModelToEmbeddingModel(selected, provider);
 }
