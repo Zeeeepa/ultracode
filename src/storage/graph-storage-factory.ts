@@ -241,6 +241,17 @@ export async function resetGraphStorage(): Promise<void> {
 }
 
 /**
+ * Force-drain write mutex queues and clear all tables on the EXISTING connection.
+ * Does NOT close/reopen connections — safe even when background writers hold references.
+ * Call only when background watchers are suspended (suspendTimers).
+ */
+export async function forcedrainAndClear(): Promise<void> {
+  if (multiDbManager) {
+    await multiDbManager.drainAndClear();
+  }
+}
+
+/**
  * Set project context on the global GraphStorage singleton.
  * @deprecated Use runWithRequestContext() for tool calls. Only needed for initial startup.
  * If branchName is null/undefined, detects from git or uses "main" fallback.

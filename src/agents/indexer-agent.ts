@@ -396,6 +396,24 @@ export class IndexerAgent extends BaseAgent {
       log.w("INDEXER", "gs_ctx_not_ready");
     }
 
+    // Recreate BatchOperations if adapter was closed (project switch does resetGraphStorage)
+    const currentAdapter = getLibSQLAdapter();
+    if (currentAdapter && this.batchOps) {
+      const adapterIsStale = !currentAdapter.isReady();
+      if (adapterIsStale) {
+        log.w("INDEXER", "batch_adapter_stale", { path: projectPath });
+      }
+    }
+    // If adapter changed (or was recreated after project switch), rebuild batchOps
+    if (currentAdapter && currentAdapter.isReady()) {
+      const config = getIndexerConfig();
+      this.batchOps = new BatchOperationsLibSQL(currentAdapter, config.batchSize);
+      this.batchOps.initialize().catch((err) => {
+        log.w("INDEXER", "batch_reinit_fail", { err: (err as Error).message });
+      });
+      log.d("INDEXER", "batch_ops_recreated", { path: projectPath });
+    }
+
     // Set fallback context on BatchOperations (ALS takes priority when available)
     if (this.batchOps && typeof this.batchOps.setProject === "function") {
       this.batchOps.setProject(projectPath, branchName);

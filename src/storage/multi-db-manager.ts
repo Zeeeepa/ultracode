@@ -211,6 +211,53 @@ export class MultiDbManager {
     await Promise.all(keys.map((k) => this.flushClient(k)));
   }
 
+  /**
+   * Force-drain all write mutex queues and clear all tables.
+   * Bypasses the normal writeMutex path — safe only when background watchers are suspended.
+   */
+  async drainAndClear(): Promise<void> {
+    // 1. Drain all mutexes — unblock any queued writers
+    this.mutexes.graph.drain();
+    this.mutexes.semantic.drain();
+    this.mutexes.versioning.drain();
+    this.mutexes.cache.drain();
+
+    // 2. Brief yield to let unblocked writers error out
+    await new Promise((r) => setTimeout(r, 50));
+
+    // 3. Clear tables directly on the existing connection (bypasses writeMutex)
+    const graph = this.clients.graph;
+    if (graph) {
+      try {
+        await graph.execute("DELETE FROM relationships");
+        await graph.execute("DELETE FROM entities");
+        await graph.execute("DELETE FROM files");
+        await graph.execute("DELETE FROM project_metadata");
+        await graph.execute("DELETE FROM name_tokens");
+      } catch (e) {
+        log.w("MULTIDB", "drain_clear_graph_fail", { err: (e as Error).message });
+      }
+    }
+    const semantic = this.clients.semantic;
+    if (semantic) {
+      try {
+        await semantic.execute("DELETE FROM cooccurrence");
+        await semantic.execute("DELETE FROM term_frequency");
+      } catch (e) {
+        log.w("MULTIDB", "drain_clear_semantic_fail", { err: (e as Error).message });
+      }
+    }
+    const cache = this.clients.cache;
+    if (cache) {
+      try {
+        await cache.execute("DELETE FROM query_cache");
+      } catch {
+        // Table may not exist
+      }
+    }
+    log.i("MULTIDB", "drain_and_clear_done");
+  }
+
   async close(): Promise<void> {
     for (const [key, client] of Object.entries(this.clients)) {
       if (client) {

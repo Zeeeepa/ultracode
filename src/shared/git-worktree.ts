@@ -110,11 +110,15 @@ export function resolveWorktreeInfo(projectPath: string): WorktreeInfo | null {
 }
 
 function resolveWorktreeInfoUncached(projectPath: string): WorktreeInfo | null {
-  const gitPath = join(projectPath, ".git");
-
-  if (!existsSync(gitPath)) {
-    return null; // Not a git repo
+  // Walk up to find .git (supports subdirectories of a git repo)
+  let dir = projectPath;
+  while (!existsSync(join(dir, ".git"))) {
+    const parent = dirname(dir);
+    if (parent === dir) return null; // Reached filesystem root — not a git repo
+    dir = parent;
   }
+  // Use the directory containing .git as the effective project path
+  const gitPath = join(dir, ".git");
 
   try {
     // Determine if .git is a file (linked worktree) or directory (main worktree)
@@ -128,7 +132,7 @@ function resolveWorktreeInfoUncached(projectPath: string): WorktreeInfo | null {
       windowsHide: true,
     }).trim();
 
-    // Make gitCommonDir absolute
+    // Make gitCommonDir absolute (resolve from CWD used in execSync, not the .git parent)
     const gitCommonDir = normalize(resolve(projectPath, gitCommonDirRaw));
 
     // mainRepoPath = parent of gitCommonDir (since gitCommonDir ends with .git)

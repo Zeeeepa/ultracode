@@ -10,8 +10,9 @@
  */
 
 import { z } from "zod";
+import { resumeTimers, suspendTimers, waitForPostIndexing } from "../../core/indexing-state.js";
 import { log } from "../../logging/index.js";
-import { AgentType } from "../../types/agent.js";
+
 import type { Entity, EntityType, Relationship } from "../../types/storage.js";
 import { toError } from "../../utils/error-handling.js";
 import { projectPathParam } from "../base-schemas.js";
@@ -59,53 +60,48 @@ export class CleanIndexToolHandler extends BaseToolHandler<z.infer<typeof CleanI
   protected async execute(args: z.infer<typeof CleanIndexSchema>): Promise<ToolResult> {
     const targetDir = this.resolveProjectPath(args);
 
-    // v3: Ensure correct project context for GraphStorage queries
-    const storage = await this.ensureGraphStorageForProject(targetDir);
-    await storage.clear();
+    // Suspend background watchers FIRST to stop new writes from queuing
+    suspendTimers();
+    try {
+      // Wait for any background post-indexing to finish
+      await waitForPostIndexing(targetDir, 30_000);
 
-    // Ensure SemanticAgent uses the correct project's VectorStore before indexing
-    if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
-      try {
-        const semanticAgent = await this.ensureSemanticAgentForProject(targetDir);
-        // Also clear vector store for clean index
-        const vectorStore = semanticAgent?.getVectorStore?.();
-        if (vectorStore) {
-          await vectorStore.clear();
+      // Ensure storage singleton is alive for this project (may have been closed by project switch)
+      const { forcedrainAndClear, getGraphStorage: getGS } = await import("../../storage/graph-storage-factory.js");
+      await getGS(targetDir);
+
+      // Force-drain write mutex queues and clear all tables on the EXISTING connection.
+      // This bypasses writeMutex (which may be blocked by background writers) and
+      // executes DELETE directly on the same SQLite connection.
+      await forcedrainAndClear();
+
+      // Ensure SemanticAgent uses the correct project's VectorStore before indexing
+      if (process.env["MCP_DEBUG_DISABLE_SEMANTIC"] !== "1") {
+        try {
+          const semanticAgent = await this.ensureSemanticAgentForProject(targetDir);
+          // Also clear vector store for clean index
+          const vectorStore = semanticAgent?.getVectorStore?.();
+          if (vectorStore) {
+            await vectorStore.clearAllVectors();
+          }
+        } catch (error: unknown) {
+          // Semantic agent may not be available, that's ok for clean_index
+          const err = toError(error);
+          log.w("CLEANINDEX", "sem_reinit_fail", { err: err.message, stack: err.stack });
         }
-      } catch (error: unknown) {
-        // Semantic agent may not be available, that's ok for clean_index
-        const err = toError(error);
-        log.w("CLEANINDEX", "sem_reinit_fail", { err: err.message, stack: err.stack });
       }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ success: true, message: "Index cleared. Run 'index' to rebuild." }, null, 2),
+          },
+        ],
+      };
+    } finally {
+      resumeTimers();
     }
-
-    // Re-index via DevAgent (conductor no longer processes tasks directly)
-    const conductor = this.context.getConductor();
-    await conductor.initialize();
-
-    const devAgent = conductor.getAgentByType?.(AgentType.DEV);
-    if (!devAgent) {
-      throw new Error("DevAgent not available for indexing");
-    }
-
-    const task = {
-      id: `clean-index-${Date.now()}`,
-      type: "index",
-      priority: 9,
-      payload: { directory: targetDir, incremental: false, excludePatterns: [] },
-      createdAt: Date.now(),
-    };
-
-    const result = await devAgent.process(task);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({ success: true, message: "Clean index completed", result }, null, 2),
-        },
-      ],
-    };
   }
 }
 

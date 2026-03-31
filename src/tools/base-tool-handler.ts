@@ -76,7 +76,7 @@ export interface ToolContext {
   getServiceContainer?: (() => unknown) | undefined; // DI Container for services
   normalizeInputPath: (path?: string) => string | undefined;
   withTimeout: <T>(promise: Promise<T>, ms: number, operation: string, reqId: string) => Promise<T>;
-  createAutoIndexContext?: (() => AutoIndexContext) | undefined;
+  createAutoIndexContext?: ((projectPath?: string) => AutoIndexContext) | undefined;
 }
 
 export abstract class BaseToolHandler<TArgs = unknown> {

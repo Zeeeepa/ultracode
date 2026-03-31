@@ -44,6 +44,16 @@ export class DbWriteMutex {
     }
   }
 
+  /**
+   * Reset the mutex chain — unblocks all queued writers immediately.
+   * Pending writers will proceed (and likely fail if connections are closed).
+   * Use before force-clearing a database.
+   */
+  drain(): void {
+    this.chain = Promise.resolve();
+    this._queueDepth = 0;
+  }
+
   /** Current number of waiters (0 = idle, 1 = running, 2+ = contention) */
   get queueDepth(): number {
     return this._queueDepth;

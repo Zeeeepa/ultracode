@@ -81,7 +81,7 @@ export class IndexToolHandler extends BaseToolHandler<IndexToolArgs> {
     }
 
     // performAutoIndex manages setIndexingState internally (set+clear in try/finally)
-    const ctx = this.context.createAutoIndexContext!();
+    const ctx = this.context.createAutoIndexContext!(targetDir);
     const extensions = this.getExtensions();
 
     const excludePatterns = args.excludePatterns?.length ? args.excludePatterns : undefined;

@@ -977,7 +977,7 @@ async function executeToolCall(
       getServiceContainer: () => getOrInitServiceContainer(),
       normalizeInputPath,
       withTimeout,
-      createAutoIndexContext: () => createAutoIndexContext(projectPath),
+      createAutoIndexContext: (overridePath?: string) => createAutoIndexContext(overridePath ?? projectPath),
     };
 
     if (toolRegistry.has(name)) {
