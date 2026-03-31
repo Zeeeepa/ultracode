@@ -8,7 +8,7 @@
  * Architecture:
  *   - Small datasets (<10K): brute-force cosine (NativeVectorIndex)
  *   - Large datasets (≥10K): IVF+TurboQuant with automatic train trigger
- *   - Tier system: hot (f32), warm (int8), cold (hash-only)
+ *   - Tier system: hot (TQ 4-bit), warm (TQ 3-bit), cold (TQ 2-bit)
  *
  * @history
  *  - 2026-03-29: Created — Zig→TS sync, IVF+TurboQuant Phase Step 7
@@ -40,6 +40,10 @@ export interface NativeVectorProviderConfig {
   autoSaveThreshold?: number;
   /** TurboQuant seed for deterministic encoding */
   seed?: bigint;
+  /** TurboQuant bit width: 2, 3, or 4 (default: 4) */
+  tqBits?: number;
+  /** QJL-corrected search: +1-5% recall, ~15% CPU overhead (default: true) */
+  useQjl?: boolean;
 }
 
 const VECTORS_FILENAME = "vectors.idx";
@@ -75,6 +79,8 @@ export class NativeVectorProvider {
       trainingThreshold: config.trainingThreshold ?? 9984,
       autoSaveThreshold: config.autoSaveThreshold ?? 1000,
       seed: config.seed ?? 42n,
+      tqBits: config.tqBits ?? 4,
+      useQjl: config.useQjl ?? true,
     };
 
     this.hashFilter = new HashFilter(config.dimensions);
@@ -321,6 +327,8 @@ export class NativeVectorProvider {
       nprobe: this.config.nprobe,
       trainingThreshold: this.config.trainingThreshold,
       seed: this.config.seed,
+      tqBits: this.config.tqBits,
+      useQjl: this.config.useQjl,
     };
   }
 

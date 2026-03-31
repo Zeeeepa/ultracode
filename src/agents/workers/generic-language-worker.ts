@@ -15,7 +15,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { ParseResult, ParserOptions } from "../../types/parser.js";
+import type { ParsedEntity, ParseResult, ParserOptions } from "../../types/parser.js";
 import type { WorkerEmbeddingConfig } from "../../types/semantic.js";
 // Extracted modules
 import { clearAnalyzerCache, getAnalyzer, SUPPORTED_WORKER_LANGUAGES, warmupAnalyzer } from "./analyzer-loader.js";
@@ -267,6 +267,26 @@ const GENERATED_FILENAME_MARKERS = [
   { check: (f: string) => f.includes("_grpc.pb."), type: "gRPC" },
   { check: (f: string) => f.endsWith(".min.js") || f.endsWith(".min.css"), type: "Minified" },
 ];
+
+/** Flatten entity tree: collect parent + all children recursively for embedding.
+ *  Children get parent-qualified names (e.g. "push" → "BoundedMinHeap.push")
+ *  so embeddings contain class context for better search recall. */
+function flattenEntities(entities: ParsedEntity[]): ParsedEntity[] {
+  const result: ParsedEntity[] = [];
+  const walk = (list: ParsedEntity[], parentName?: string): void => {
+    for (const e of list) {
+      if (parentName && e.name && !e.name.includes(".")) {
+        // Qualify child name with parent for richer embedding text
+        result.push({ ...e, name: `${parentName}.${e.name}` });
+      } else {
+        result.push(e);
+      }
+      if (e.children) walk(e.children, e.name?.split(".").pop() ?? e.name);
+    }
+  };
+  walk(entities);
+  return result;
+}
 
 /**
  * Check if file content indicates generated code
@@ -611,7 +631,9 @@ async function processTask(task: WorkerTask): Promise<WorkerResult> {
       const embConfig = getEmbeddingConfig();
       if (embConfig?.enabled && result.entities && result.entities.length > 0) {
         const content = fileContents.get(file) || "";
-        await generateEmbeddingsForEntities(result.entities, content, result.filePath);
+        // Flatten entity tree: include children (class methods, properties) for embedding
+        const flatEntities = flattenEntities(result.entities);
+        await generateEmbeddingsForEntities(flatEntities, content, result.filePath);
 
         // Send embeddings every 10 files to reduce IPC contention
         // With smaller chunks (40 files), this means ~4 IPC calls per chunk

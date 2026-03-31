@@ -19,7 +19,6 @@ import { readFile, writeFile } from "node:fs/promises";
 
 import type { HashFilter } from "./hash-filter.js";
 import type { Tier } from "./quantization.js";
-import { type ScalarQuantized, scalarQuantize } from "./quantization.js";
 
 // =============================================================================
 // Types
@@ -42,7 +41,6 @@ export class NativeVectorIndex {
   private norms: Float32Array;
   private hashes: BigUint64Array;
   private tiers: Uint8Array;
-  private warmVectors: (ScalarQuantized | null)[] = [];
   private vectorsFlat: Float32Array;
   private vecCount = 0;
   private vecCapacity = 0;
@@ -86,20 +84,14 @@ export class NativeVectorIndex {
     this.norms[this.vecCount] = norm;
     this.hashes[this.vecCount] = this.hashFilter ? this.hashFilter.computeHash(vector) : 0n;
     this.tiers[this.vecCount] = 0; // hot
-    this.warmVectors.push(null);
 
     this.vecCount++;
   }
 
-  /** Add a vector with explicit tier. Warm vectors get int8 quantized copy. */
+  /** Add a vector with explicit tier. Tier determines TQ bit width in IVF index. */
   addWithTier(entityId: string, vector: Float32Array, tier: Tier): void {
     this.add(entityId, vector);
     this.tiers[this.vecCount - 1] = tier;
-
-    if (tier === 1) {
-      // warm
-      this.warmVectors[this.vecCount - 1] = scalarQuantize(vector);
-    }
   }
 
   /** Batch-add vectors. Returns number actually added. */
@@ -121,7 +113,6 @@ export class NativeVectorIndex {
       this.norms[this.vecCount] = norm;
       this.hashes[this.vecCount] = this.hashFilter ? this.hashFilter.computeHash(vec) : 0n;
       this.tiers[this.vecCount] = 0;
-      this.warmVectors.push(null);
 
       this.vecCount++;
       added++;
@@ -148,7 +139,6 @@ export class NativeVectorIndex {
       this.norms[this.vecCount] = norm;
       this.hashes[this.vecCount] = this.hashFilter ? this.hashFilter.computeHash(vec) : 0n;
       this.tiers[this.vecCount] = 0;
-      this.warmVectors.push(null);
 
       this.vecCount++;
       added++;
@@ -167,13 +157,11 @@ export class NativeVectorIndex {
           this.norms[i] = this.norms[last]!;
           this.hashes[i] = this.hashes[last]!;
           this.tiers[i] = this.tiers[last]!;
-          this.warmVectors[i] = this.warmVectors[last]!;
 
           const dim = this.dimension;
           this.vectorsFlat.copyWithin(i * dim, last * dim, last * dim + dim);
         }
         this.entityIds.pop();
-        this.warmVectors.pop();
         this.vecCount--;
         return true;
       }
@@ -343,7 +331,6 @@ export class NativeVectorIndex {
         idx.norms[i] = computeNorm(vec);
         idx.hashes[i] = idx.hashFilter ? idx.hashFilter.computeHash(vec) : 0n;
         idx.tiers[i] = 0; // hot default
-        idx.warmVectors.push(null);
       }
       idx.vecCount = entryCount;
     } else {

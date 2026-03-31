@@ -6,6 +6,7 @@
  */
 
 import { log } from "../logging/index.js";
+import { getMainRepoPath } from "../shared/git-worktree.js";
 import type { Agent, AgentTask } from "../types/agent.js";
 import { AgentType } from "../types/agent.js";
 import { createRequestId } from "../utils/logger.js";
@@ -523,8 +524,10 @@ export async function performAutoIndex(
                 | undefined;
               const indexerAgent = devAgent?.getIndexerAgent?.() ?? undefined;
               if (indexerAgent?.setRepositoryPath) {
-                await indexerAgent.setRepositoryPath(postIndexDir);
-                log.i("INDEXER", "watcher_started", { dir: postIndexDir });
+                // Use Git root, not the indexed subdirectory — watcher must cover the whole repo
+                const watcherDir = getMainRepoPath(postIndexDir) ?? postIndexDir;
+                await indexerAgent.setRepositoryPath(watcherDir);
+                log.i("INDEXER", "watcher_started", { dir: watcherDir, indexedDir: postIndexDir });
               } else {
                 log.w("INDEXER", "watcher_skip", {
                   reason: !devAgent ? "no DevAgent" : !indexerAgent ? "no IndexerAgent" : "no setRepositoryPath",

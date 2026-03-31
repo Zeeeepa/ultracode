@@ -6,13 +6,19 @@
  * Architecture:
  *   1. K-Means partitions vectors into n_lists clusters
  *   2. Each vector is TQ-encoded and stored in its cluster's inverted list
- *   3. Search: find nprobe nearest centroids → scan only those lists
+ *   3. Search: find nprobe nearest centroids -> scan only those lists
  *
- * Reverse map: masterIdx → (listIdx, position) for O(1) remove.
- * Binary format: "IVTQ" magic + KMeans centroids + TQ params + inverted lists.
+ * Improvements over v1:
+ *   - Multi-bit TQ (2/3/4-bit via tqBits config)
+ *   - QJL-corrected search (optional, +1-5% recall)
+ *   - Bounded min-heap for top-k selection (O(N log k) vs O(N log N))
+ *
+ * Reverse map: masterIdx -> (listIdx, position) for O(1) remove.
+ * Binary format v2: "IVTQ" magic + KMeans centroids + TQ params + inverted lists.
  *
  * @history
- *  - 2026-03-29: Created — Zig→TS sync, IVF+TurboQuant Phase Step 5
+ *  - 2026-03-29: Created — Zig->TS sync, IVF+TurboQuant Phase Step 5
+ *  - 2026-03-31: TurboQuant+ — multi-bit, QJL search, bounded heap, format v2
  */
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -32,6 +38,7 @@ export interface IvfConfig {
   tqBits?: number;
   maxIter?: number;
   seed?: bigint;
+  useQjl?: boolean;
 }
 
 export interface IvfResult {
@@ -42,6 +49,76 @@ export interface IvfResult {
 interface ListPos {
   list: number;
   pos: number;
+}
+
+const FILE_MAGIC = "IVTQ";
+const FILE_VERSION = 2;
+
+// =============================================================================
+// BoundedMinHeap for top-k selection
+// =============================================================================
+
+class BoundedMinHeap {
+  private readonly items: IvfResult[];
+  private _len = 0;
+  private readonly capacity: number;
+
+  constructor(capacity: number) {
+    this.items = new Array(capacity);
+    this.capacity = capacity;
+  }
+
+  get len(): number {
+    return this._len;
+  }
+
+  push(item: IvfResult): void {
+    if (this._len < this.capacity) {
+      this.items[this._len] = item;
+      this._len++;
+      this.bubbleUp(this._len - 1);
+    } else if (this.capacity > 0 && item.score > this.items[0]!.score) {
+      this.items[0] = item;
+      this.siftDown(0);
+    }
+  }
+
+  private bubbleUp(idx: number): void {
+    let i = idx;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (this.items[i]!.score < this.items[parent]!.score) {
+        const tmp = this.items[i]!;
+        this.items[i] = this.items[parent]!;
+        this.items[parent] = tmp;
+        i = parent;
+      } else {
+        break;
+      }
+    }
+  }
+
+  private siftDown(idx: number): void {
+    let i = idx;
+    for (;;) {
+      let smallest = i;
+      const left = 2 * i + 1;
+      const right = 2 * i + 2;
+      if (left < this._len && this.items[left]!.score < this.items[smallest]!.score) smallest = left;
+      if (right < this._len && this.items[right]!.score < this.items[smallest]!.score) smallest = right;
+      if (smallest === i) break;
+      const tmp = this.items[i]!;
+      this.items[i] = this.items[smallest]!;
+      this.items[smallest] = tmp;
+      i = smallest;
+    }
+  }
+
+  sortDescending(): IvfResult[] {
+    const result = this.items.slice(0, this._len);
+    result.sort((a, b) => b.score - a.score);
+    return result;
+  }
 }
 
 // =============================================================================
@@ -59,7 +136,6 @@ class InvertedList {
     return this.count++;
   }
 
-  /** Swap-remove at position. Returns swapped element's masterIdx (if any). */
   swapRemove(pos: number): number | null {
     if (this.count === 0) return null;
     const last = this.count - 1;
@@ -74,15 +150,6 @@ class InvertedList {
     this.count--;
 
     return pos !== last ? this.masterIndices[pos]! : null;
-  }
-
-  /** Get contiguous encoded data for batch scanning. */
-  getPackedData(encodedSize: number): Uint8Array {
-    const packed = new Uint8Array(this.count * encodedSize);
-    for (let i = 0; i < this.count; i++) {
-      packed.set(this.encodedData[i]!, i * encodedSize);
-    }
-    return packed;
   }
 }
 
@@ -108,33 +175,26 @@ export class IvfIndex {
       tqBits: config.tqBits ?? 4,
       maxIter: config.maxIter ?? 20,
       seed: config.seed ?? 42n,
+      useQjl: config.useQjl ?? true,
     };
   }
 
-  /**
-   * Train IVF on raw vectors and encode all into inverted lists.
-   * vectorsFlat: [n × dim] contiguous f32.
-   */
+  /** Train IVF on raw vectors and encode all into inverted lists. */
   trainAndBuild(vectorsFlat: Float32Array, n: number): void {
     const dim = this.config.dimension;
     if (vectorsFlat.length < n * dim) throw new Error("InsufficientData");
 
-    // Adaptive n_lists
     this.nLists = KMeans.computeNLists(n);
 
-    // 1. Train K-Means
     const km = new KMeans(this.nLists, dim);
     km.train(vectorsFlat, n, this.config.maxIter);
     this.kmeans = km;
 
-    // 2. Init TurboQuant
     const tq = new TurboQuant(dim, this.config.tqBits, this.config.seed);
     this.tq = tq;
 
-    // 3. Allocate inverted lists
     this.lists = Array.from({ length: this.nLists }, () => new InvertedList());
 
-    // 4. Encode and assign all vectors
     this.reverseMap.clear();
     for (let i = 0; i < n; i++) {
       const vec = vectorsFlat.subarray(i * dim, (i + 1) * dim);
@@ -166,7 +226,6 @@ export class IvfIndex {
 
     const swappedMaster = this.lists[entry.list]!.swapRemove(entry.pos);
     if (swappedMaster !== null) {
-      // Update reverse map for swapped element
       const swapEntry = this.reverseMap.get(swappedMaster);
       if (swapEntry) swapEntry.pos = entry.pos;
     }
@@ -175,7 +234,7 @@ export class IvfIndex {
     return true;
   }
 
-  /** Search: find topK most similar vectors. */
+  /** Search: top_k most similar vectors using bounded min-heap. */
   search(query: Float32Array, topK: number): IvfResult[] {
     if (!this.tq || !this.kmeans) return [];
     if (this.totalEncoded === 0) return [];
@@ -183,41 +242,48 @@ export class IvfIndex {
     const tq = this.tq;
     const km = this.kmeans;
 
-    // 1. Rotate query once
+    // 1. Rotate query
     const rotated = tq.rotateQuery(query);
     const queryNorm = computeNorm(query);
     if (queryNorm < 1e-10) return [];
 
-    // 2. Find nprobe nearest centroids
+    // 2. Precompute JL projection (if QJL enabled)
+    const jlProj = this.config.useQjl ? tq.precomputeJlProjection(rotated) : null;
+
+    // 3. Find nprobe nearest centroids
     const nprobe = Math.min(this.config.nprobe, this.nLists);
     const probeIndices = this.findNearestCentroids(km, query, nprobe);
 
-    // 3. Scan lists, collect results
-    const results: IvfResult[] = [];
+    // 4. Scan lists with bounded min-heap (top-k selection)
+    const heapCap = Math.min(topK, this.totalEncoded);
+    if (heapCap === 0) return [];
+
+    const heap = new BoundedMinHeap(heapCap);
+
     for (const listIdx of probeIndices) {
       const list = this.lists[listIdx]!;
       if (list.count === 0) continue;
 
       for (let i = 0; i < list.count; i++) {
         const enc = list.encodedData[i]!;
-        const score = tq.asymmetricCosine(rotated, queryNorm, enc);
-        results.push({ masterIdx: list.masterIndices[i]!, score });
+        const score = jlProj
+          ? tq.asymmetricCosineCorrected(rotated, queryNorm, jlProj, enc)
+          : tq.asymmetricCosine(rotated, queryNorm, enc);
+        heap.push({ masterIdx: list.masterIndices[i]!, score });
       }
     }
 
-    // 4. Sort by score descending
-    results.sort((a, b) => b.score - a.score);
-    return results.slice(0, topK);
+    // 5. Extract sorted results
+    return heap.sortDescending();
   }
 
-  /** Check if retrain is needed. */
   needsRetrain(currentTotal: number): boolean {
     if (!this.trained) return currentTotal >= this.config.trainingThreshold;
     return currentTotal > this.totalEncoded * 1.5;
   }
 
   // ===========================================================================
-  // Persistence
+  // Persistence (version 2: multi-bit TQ + residual_norm)
   // ===========================================================================
 
   async save(path: string): Promise<void> {
@@ -227,31 +293,28 @@ export class IvfIndex {
     const km = this.kmeans;
     const esize = tq.encodedSize();
 
-    // Calculate total size
     const tqBuf = tq.saveToBuffer();
     const kmBuf = km.saveToBuffer();
 
-    // Header: "IVTQ" + version + dimension + n_lists + total_encoded = 4+4+4+4+4 = 20
+    // Header: magic(4) + version(4) + dimension(4) + n_lists(4) + total_encoded(4) = 20
     let totalSize = 20 + tqBuf.length + kmBuf.length;
 
-    // Inverted lists: [count:u32][esize:u32] + encoded_data + master_indices
     for (let li = 0; li < this.nLists; li++) {
       const list = this.lists[li]!;
-      totalSize += 8; // header
+      totalSize += 8; // count + esize header
       if (list.count > 0) {
-        totalSize += list.count * esize; // encoded
-        totalSize += list.count * 4; // master indices
+        totalSize += list.count * esize;
+        totalSize += list.count * 4;
       }
     }
 
     const buf = Buffer.alloc(totalSize);
     let pos = 0;
 
-    // Header
-    buf.write("IVTQ", 0, "ascii");
+    buf.write(FILE_MAGIC, 0, "ascii");
     pos = 4;
-    buf.writeUInt32LE(1, pos);
-    pos += 4; // version
+    buf.writeUInt32LE(FILE_VERSION, pos);
+    pos += 4;
     buf.writeUInt32LE(this.config.dimension, pos);
     pos += 4;
     buf.writeUInt32LE(this.nLists, pos);
@@ -259,15 +322,12 @@ export class IvfIndex {
     buf.writeUInt32LE(this.totalEncoded, pos);
     pos += 4;
 
-    // TQ params
     tqBuf.copy(buf, pos);
     pos += tqBuf.length;
 
-    // KMeans centroids
     kmBuf.copy(buf, pos);
     pos += kmBuf.length;
 
-    // Inverted lists
     for (let li = 0; li < this.nLists; li++) {
       const list = this.lists[li]!;
       buf.writeUInt32LE(list.count, pos);
@@ -275,16 +335,14 @@ export class IvfIndex {
       pos += 8;
 
       if (list.count > 0) {
-        // Encoded data (pack contiguous)
         for (let i = 0; i < list.count; i++) {
           const enc = list.encodedData[i]!;
-          enc.forEach((b, j) => {
-            buf[pos + i * esize + j] = b;
-          });
+          for (let j = 0; j < esize; j++) {
+            buf[pos + i * esize + j] = enc[j]!;
+          }
         }
         pos += list.count * esize;
 
-        // Master indices
         for (let i = 0; i < list.count; i++) {
           buf.writeUInt32LE(list.masterIndices[i]!, pos);
           pos += 4;
@@ -300,14 +358,13 @@ export class IvfIndex {
 
     let pos = 0;
 
-    // Header
     const magic = data.subarray(0, 4).toString("ascii");
-    if (magic !== "IVTQ") throw new Error("InvalidMagic");
+    if (magic !== FILE_MAGIC) throw new Error("InvalidMagic");
     pos = 4;
 
     const version = data.readUInt32LE(pos);
     pos += 4;
-    if (version !== 1) throw new Error("UnsupportedVersion");
+    if (version !== FILE_VERSION) throw new Error("UnsupportedVersion");
 
     const dimension = data.readUInt32LE(pos);
     pos += 4;
@@ -318,15 +375,12 @@ export class IvfIndex {
     const totalEncoded = data.readUInt32LE(pos);
     pos += 4;
 
-    // TQ params
     const { tq, bytesRead: tqBytes } = TurboQuant.loadFromBuffer(data as unknown as Buffer, pos);
     pos += tqBytes;
 
-    // KMeans centroids
     const { kmeans: km, bytesRead: kmBytes } = KMeans.loadFromBuffer(data as unknown as Buffer, pos);
     pos += kmBytes;
 
-    // Inverted lists
     const lists: InvertedList[] = Array.from({ length: nLists }, () => new InvertedList());
     const reverseMap = new Map<number, ListPos>();
 
@@ -381,7 +435,6 @@ export class IvfIndex {
 
       if (sim > best[probeCount - 1]!.sim) {
         best[probeCount - 1] = { idx: c, sim };
-        // Bubble up
         let j = probeCount - 1;
         while (j > 0 && best[j]!.sim > best[j - 1]!.sim) {
           const tmp = best[j]!;
