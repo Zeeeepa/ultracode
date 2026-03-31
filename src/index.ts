@@ -977,7 +977,7 @@ async function executeToolCall(
       getServiceContainer: () => getOrInitServiceContainer(),
       normalizeInputPath,
       withTimeout,
-      createAutoIndexContext,
+      createAutoIndexContext: () => createAutoIndexContext(projectPath),
     };
 
     if (toolRegistry.has(name)) {
@@ -1109,13 +1109,13 @@ registerDebugSignalHandler();
 /**
  * Create context for auto-indexer
  */
-function createAutoIndexContext(): AutoIndexContext {
+function createAutoIndexContext(projectPath?: string): AutoIndexContext {
   return {
     getSemanticAgent,
     getDevAgent,
     getDoraAgent,
     getConductor,
-    getGraphStorage,
+    getGraphStorage: projectPath ? async () => getGraphStorage(projectPath) : getGraphStorage,
     setCurrentIndexingDirectory,
     processStartTime: PROCESS_START_TIME,
   };
@@ -1284,7 +1284,7 @@ function scheduleDeferredAutoIndex(dir: string, extensions: string[]): void {
       deferredAutoIndexDirs.delete(normalizedDir);
       const bgCtx = createProjectContext(dir);
       await runWithRequestContext(bgCtx, async () => {
-        await performAutoIndex(dir, extensions, createAutoIndexContext(), false);
+        await performAutoIndex(dir, extensions, createAutoIndexContext(dir), false);
       });
     } catch (error) {
       log.w("INDEXER", "deferred_poll_error", { dir, attempt, err: (error as Error).message });
@@ -1616,7 +1616,7 @@ async function main() {
               // Set indexing directory for this project
               setCurrentIndexingDirectory(clientProjectPath);
 
-              await performAutoIndex(clientProjectPath, extensions, createAutoIndexContext(), false);
+              await performAutoIndex(clientProjectPath, extensions, createAutoIndexContext(clientProjectPath), false);
 
               log.i("INDEXER", "client_autoindex_done", { client: clientId, dir: clientProjectPath });
             });
@@ -1805,7 +1805,7 @@ async function main() {
 
           // Perform indexing with extension filter
           // Use incremental mode when resuming incomplete index
-          await performAutoIndex(directory, extensions, createAutoIndexContext(), useIncrementalMode);
+          await performAutoIndex(directory, extensions, createAutoIndexContext(directory), useIncrementalMode);
         } catch (error) {
           log.e("INDEXER", "autoindex_failed", { err: (error as Error).message });
         }
