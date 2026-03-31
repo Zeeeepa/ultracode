@@ -253,11 +253,12 @@ export class GitDeltaComputer {
     // Extract entities from the file
     const entities = await this.extractEntitiesFromFile(fileChange.path);
 
-    for (const entity of entities) {
-      // Check if entity exists in base index
-      const existsInBase = await this.entityExistsInBase(entity.id);
+    // Batch-check which entities exist in base (single DB query instead of N)
+    const entityIds = entities.map((e) => e.id);
+    const baseEntities = await this.entitiesExistInBaseBatch(entityIds);
 
-      if (existsInBase) {
+    for (const entity of entities) {
+      if (baseEntities.has(entity.id)) {
         // Entity modified
         delta.entityDelta.modified.set(entity.id, entity);
       } else {
@@ -396,13 +397,17 @@ export class GitDeltaComputer {
    * @param entityId - Entity ID
    * @returns True if entity exists in base index
    */
-  private async entityExistsInBase(entityId: string): Promise<boolean> {
+  /**
+   * Batch-check which entity IDs exist in base index.
+   * Single DB query instead of N sequential getEntity() calls.
+   */
+  private async entitiesExistInBaseBatch(entityIds: string[]): Promise<Set<string>> {
+    if (entityIds.length === 0) return new Set();
     try {
-      const entity = await this.baseIndex.getEntity(entityId);
-      return entity !== null;
+      const existing = await this.baseIndex.getEntitiesBatch(entityIds);
+      return new Set(existing.keys());
     } catch (_error) {
-      // Assume not exists on error
-      return false;
+      return new Set();
     }
   }
 

@@ -653,17 +653,21 @@ export class GitWatcher {
 
       // Get changed files since last commit
       if (oldCommit) {
-        this.getChangedFiles(oldCommit).then((files) => {
-          if (files.length > 0) {
-            for (const callback of this.fileChangeCallbacks) {
-              try {
-                callback(files.map((f) => f.path));
-              } catch (error) {
-                log.w("GITWATCHER", "file_cb_err", { err: String(error) });
+        this.getChangedFiles(oldCommit)
+          .then((files) => {
+            if (files.length > 0) {
+              for (const callback of this.fileChangeCallbacks) {
+                try {
+                  callback(files.map((f) => f.path));
+                } catch (error) {
+                  log.w("GITWATCHER", "file_cb_err", { err: String(error) });
+                }
               }
             }
-          }
-        });
+          })
+          .catch((err) => {
+            log.w("GITWATCHER", "get_changed_files_fail", { err: String(err) });
+          });
       }
 
       // Clear uncommitted tracking after commit (files are now committed)

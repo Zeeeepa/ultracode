@@ -285,6 +285,55 @@ export function getToolsList(): ToolDefinition[] {
       inputSchema: zodToJsonSchema(GraphMetricsSchema),
     },
     {
+      name: "pagerank",
+      description:
+        "[PLAN] Compute PageRank scores to find the most architecturally important entities. Higher score = more dependencies flow through this entity. Use persist=true to store scores in entity metadata for semantic search boosting.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          projectPath: z.string().optional().describe("Project directory path"),
+          topN: z.number().optional().default(20).describe("Number of top entities to return"),
+          persist: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe("Persist PageRank scores to entity metadata for semantic search boosting"),
+        }),
+      ),
+    },
+    {
+      name: "louvain_communities",
+      description:
+        "[PLAN] Detect code communities/clusters using Louvain algorithm. Groups tightly coupled entities into communities with cohesion metrics. Use persist=true to store community IDs in entity metadata. Returns modularity score, community sizes, and main files per community.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          projectPath: z.string().optional().describe("Project directory path"),
+          minCommunitySize: z.number().optional().default(2).describe("Minimum community size to include"),
+          persist: z.boolean().optional().default(false).describe("Persist community IDs to entity metadata"),
+        }),
+      ),
+    },
+    {
+      name: "centrality_analysis",
+      description:
+        "[PLAN] Compute degree centrality and classify entities by role: hub (calls many), authority (called by many), bridge (balanced), leaf (isolated). Finds key connection points in the codebase architecture.",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          projectPath: z.string().optional().describe("Project directory path"),
+          topN: z.number().optional().default(20).describe("Number of top entities to return"),
+        }),
+      ),
+    },
+    {
+      name: "bus_factor",
+      description:
+        "[PLAN] Analyze knowledge concentration risk per file and module. Shows how many developers contribute 80% of changes — low bus factor means high risk if key contributors leave. Based on git history (last 500 commits).",
+      inputSchema: zodToJsonSchema(
+        z.object({
+          projectPath: z.string().optional().describe("Project directory path"),
+        }),
+      ),
+    },
+    {
       name: "detect_technology_stack",
       description:
         "[EXPLORE] Automatically detect languages, frameworks, build tools, and dependencies. Useful for understanding project context. Can generate tech context for embeddings.",

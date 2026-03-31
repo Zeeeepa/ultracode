@@ -759,12 +759,12 @@ export class LayeredGraphIndex implements ILayeredIndex {
       },
     };
 
-    // Update delta with new entities
-    for (const entity of entities) {
-      // Check if entity exists in base
-      const existsInBase = await this.entityExistsInBase(entity.id);
+    // Batch-check which entities exist in base (single DB query instead of N)
+    const entityIds = entities.map((e) => e.id);
+    const baseEntities = await this.entitiesExistInBaseBatch(entityIds);
 
-      if (existsInBase) {
+    for (const entity of entities) {
+      if (baseEntities.has(entity.id)) {
         // Modified entity
         delta.entityDelta.modified.set(entity.id, entity);
         // Remove from deleted if present
@@ -790,11 +790,12 @@ export class LayeredGraphIndex implements ILayeredIndex {
    * Update branch delta with new entities
    */
   private async updateBranchDeltaWithEntities(branchDelta: IBranchDelta, entities: Entity[]): Promise<void> {
-    for (const entity of entities) {
-      // Check if entity exists in base
-      const existsInBase = await this.entityExistsInBase(entity.id);
+    // Batch-check which entities exist in base (single DB query instead of N)
+    const entityIds = entities.map((e) => e.id);
+    const baseEntities = await this.entitiesExistInBaseBatch(entityIds);
 
-      if (existsInBase) {
+    for (const entity of entities) {
+      if (baseEntities.has(entity.id)) {
         // Modified entity
         if (branchDelta.entityDelta?.modified) {
           branchDelta.entityDelta.modified.set(entity.id, entity);
@@ -815,14 +816,17 @@ export class LayeredGraphIndex implements ILayeredIndex {
   }
 
   /**
-   * Check if entity exists in base index
+   * Batch-check which entity IDs exist in base index.
+   * Single DB query instead of N sequential getEntity() calls.
    */
-  private async entityExistsInBase(entityId: string): Promise<boolean> {
+  private async entitiesExistInBaseBatch(entityIds: string[]): Promise<Set<string>> {
+    if (entityIds.length === 0) return new Set();
     try {
-      const entity = await this.baseIndex.getEntity(entityId);
-      return entity !== null;
+      const existing = await this.baseIndex.getEntitiesBatch(entityIds);
+      return new Set(existing.keys());
     } catch (_error) {
-      return false;
+      // Fallback: return empty set (all treated as new)
+      return new Set();
     }
   }
 

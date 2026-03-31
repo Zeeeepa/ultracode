@@ -247,6 +247,10 @@ export class ToolRegistry {
     // --- Graph metrics tools (~15KB) ---
     const graphMetricsLoader = () => import("./handlers/graph-metrics-tool-handlers.js");
     this.registerLazy("graph_metrics", async () => (await graphMetricsLoader()).GraphMetricsToolHandler);
+    this.registerLazy("pagerank", async () => (await graphMetricsLoader()).PageRankToolHandler);
+    this.registerLazy("louvain_communities", async () => (await graphMetricsLoader()).LouvainCommunitiesToolHandler);
+    this.registerLazy("centrality_analysis", async () => (await graphMetricsLoader()).CentralityAnalysisToolHandler);
+    this.registerLazy("bus_factor", async () => (await graphMetricsLoader()).BusFactorToolHandler);
 
     // --- Pattern detection tools (~20KB) ---
     const patternLoader = () => import("./handlers/pattern-tool-handlers.js");

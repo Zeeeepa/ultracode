@@ -93,7 +93,7 @@ export class AutoDocWatcher {
   private pendingUpdates: Map<string, PendingUpdate> = new Map();
   private debounceControllers: Map<string, AbortController> = new Map();
   private subscriptionId: string | null = null;
-  private isProcessing = false;
+  private processingModules = new Set<string>();
   private moduleCache: Map<string, ModuleInfo> = new Map();
   private moduleCacheControllers: Map<string, AbortController> = new Map();
   /** Cached result of .autodoc folder check */
@@ -213,7 +213,9 @@ export class AutoDocWatcher {
         // Only handle code files
         const ext = path.extname(filePath).toLowerCase();
         if (TS_JS_EXTENSIONS.has(ext)) {
-          this.handleFileChange(filePath);
+          this.handleFileChange(filePath).catch((err) => {
+            log.w("AUTODOCWATCH", "file_change_hook_error", { file: filePath, error: String(err) });
+          });
         }
       }
     });
@@ -454,12 +456,12 @@ export class AutoDocWatcher {
     if (!pending) return;
 
     // Calculate adaptive debounce delay
-    // More changes = longer delay (up to max)
+    // More changes = longer delay (logarithmic growth, capped at maxDebounceMs)
     const changeCount = pending.changedFiles.size;
     const baseDelay = this.config.debounceMs;
     const adaptiveDelay = Math.min(
       this.config.maxDebounceMs,
-      Math.max(this.config.minDebounceMs, baseDelay + changeCount * 1000),
+      Math.max(this.config.minDebounceMs, baseDelay + Math.log2(changeCount + 1) * 1000),
     );
 
     // Check if we've been waiting too long (force update after maxDebounceMs from first change)
@@ -469,7 +471,9 @@ export class AutoDocWatcher {
 
     if (finalDelay <= 0) {
       // Max wait exceeded, update immediately
-      this.processUpdate(modulePath);
+      this.processUpdate(modulePath).catch((err) => {
+        log.e("AUTODOCWATCH", "process_update_error", { module: modulePath, error: String(err) });
+      });
       return;
     }
 
@@ -480,9 +484,11 @@ export class AutoDocWatcher {
     (async () => {
       await sleep(finalDelay);
       if (!abortController.signal.aborted) {
-        this.processUpdate(modulePath);
+        await this.processUpdate(modulePath);
       }
-    })();
+    })().catch((err) => {
+      log.e("AUTODOCWATCH", "scheduled_update_error", { module: modulePath, error: String(err) });
+    });
 
     log.d("AUTODOCWATCH", "update_scheduled", {
       module_path: modulePath,
@@ -508,8 +514,8 @@ export class AutoDocWatcher {
     this.pendingUpdates.delete(modulePath);
     this.debounceControllers.delete(modulePath);
 
-    // Skip if already processing
-    if (this.isProcessing) {
+    // Skip if this module is already being processed
+    if (this.processingModules.has(modulePath)) {
       // Re-queue for later
       for (const file of pending.changedFiles) {
         await this.handleFileChange(file);
@@ -517,7 +523,7 @@ export class AutoDocWatcher {
       return;
     }
 
-    this.isProcessing = true;
+    this.processingModules.add(modulePath);
 
     try {
       log.i("AUTODOCWATCH", "processing_update", {
@@ -641,7 +647,7 @@ export class AutoDocWatcher {
         error: String(error),
       });
     } finally {
-      this.isProcessing = false;
+      this.processingModules.delete(modulePath);
     }
   }
 

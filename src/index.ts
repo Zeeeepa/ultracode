@@ -1011,7 +1011,7 @@ async function executeToolCall(
         const result = await handler.handle(args);
         const elapsedMs = Date.now() - startTime;
         log.i("MCP", "tool_done", { tool: name, req: requestId, ms: elapsedMs });
-        return sanitizeResponseSurrogates(appendElapsed(result, elapsedMs));
+        return sanitizeResponseSurrogates(appendElapsed(enforceResponseLimit(name, result), elapsedMs));
       });
     }
 
@@ -1269,7 +1269,7 @@ function scheduleDeferredAutoIndex(dir: string, extensions: string[]): void {
       if (!detection.supported) {
         log.d("INDEXER", "deferred_still_empty", { dir, attempt, nextMs: INTERVALS[attempt] ?? 0 });
         // Schedule next check
-        poll();
+        void poll();
         return;
       }
 
@@ -1289,7 +1289,7 @@ function scheduleDeferredAutoIndex(dir: string, extensions: string[]): void {
     } catch (error) {
       log.w("INDEXER", "deferred_poll_error", { dir, attempt, err: (error as Error).message });
       // Continue polling despite error
-      poll();
+      void poll();
     }
   };
 
